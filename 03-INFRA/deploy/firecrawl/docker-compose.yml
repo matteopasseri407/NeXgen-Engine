@@ -1,0 +1,48 @@
+# Firecrawl self-hosted stack.
+# Upstream: https://github.com/mendableai/firecrawl
+# This compose deploys the API + a single worker. For production scale-out
+# add more workers or a Redis cluster; see the upstream repo.
+
+services:
+  firecrawl-api:
+    image: ghcr.io/mendableai/firecrawl:latest
+    container_name: firecrawl-api
+    restart: unless-stopped
+    command: ["pnpm", "start:production"]
+    ports:
+      - "127.0.0.1:3002:3002"
+    environment:
+      - PORT=3002
+      - REDIS_URL=redis://firecrawl-redis:6379
+      - PLAYWRIGHT_MICROSERVICE_URL=http://firecrawl-playwright:3000
+      # Secrets: set these in .env on the VPS, never commit them.
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+    depends_on:
+      - firecrawl-redis
+      - firecrawl-playwright
+    mem_limit: 1g
+
+  firecrawl-worker:
+    image: ghcr.io/mendableai/firecrawl:latest
+    container_name: firecrawl-worker
+    restart: unless-stopped
+    command: ["pnpm", "worker:production"]
+    environment:
+      - REDIS_URL=redis://firecrawl-redis:6379
+      - PLAYWRIGHT_MICROSERVICE_URL=http://firecrawl-playwright:3000
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+    depends_on:
+      - firecrawl-redis
+    mem_limit: 1g
+
+  firecrawl-redis:
+    image: redis:alpine
+    container_name: firecrawl-redis
+    restart: unless-stopped
+    mem_limit: 512m
+
+  firecrawl-playwright:
+    image: ghcr.io/mendableai/firecrawl-playwright-service:latest
+    container_name: firecrawl-playwright
+    restart: unless-stopped
+    mem_limit: 1g

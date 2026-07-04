@@ -1,0 +1,50 @@
+# ============================================================================
+# MANIFEST CANONICO SKILL  ·  Agent-OS (fonte unica di verità)
+# ----------------------------------------------------------------------------
+# Elenca OGNI skill "scelta" dell'agent-layer UNA volta sola. skills-sync.py la
+# materializza nell'hub ~/.agents/skills e la aggancia ai runtime (Claude,
+# Codex) su OGNI macchina. Si sceglie QUI; il resto e' sincronizzato.
+#
+# Workflow "scelgo una skill una volta -> sta ovunque":
+#   1. aggiungi una voce qui sotto
+#   2. git commit + push
+#   3. su ogni macchina: git pull && python3 03-INFRA/scripts/skills-sync.py --apply
+#
+# REGOLE (specchio del manifest MCP):
+#   - origin: vault   -> vendorizzata nel vault (UL/skills/<name>); git la porta
+#                        ovunque. Per le skill che the user possiede o modifica.
+#   - origin: github  -> third-party NON vendorizzata: qui e' solo INVENTARIATA,
+#                        i byte si reinstallano da upstream con `skills add <repo>`.
+#                        (rispetta la regola del vault: third-party = restorable)
+#   - targets: quali runtime montano la skill. L'hub ~/.agents e' sempre popolato;
+#              i runtime ci si agganciano (Claude via symlink dell'intera
+#              cartella, Codex via symlink per-skill).
+#   - credit: per le skill third-party, il credito all'autore originale e' sempre
+#             dato in questo manifest e in CREDITS.md alla radice del repo.
+#
+# NOTA: questo manifest e' ADDITIVO, non autoritativo per la cancellazione.
+#       skills-sync non rimuove skill assenti dal manifest.
+# ============================================================================
+
+skills:
+
+  # default di scrittura per ogni agente (vedi AGENTS.md > Operating Style).
+  # Third-party: blader/humanizer (https://github.com/blader/humanizer).
+  # Skill che stripa i "tells" del testo AI-generated. Credit: blader.
+  humanizer:
+    origin: github
+    repo: blader/humanizer
+    credit: "blader (https://github.com/blader/humanizer)"
+    targets: [claude, codex]
+
+  # skill custom: gia' vendorizzata nel vault, git le sincronizza.
+  knowledge-vault-hygiene:
+    origin: vault
+    targets: [claude, codex]
+
+  # design UI/frontend distintivo; vendorizzata nel vault.
+  # Origin: Claude Code official skill (Anthropic).
+  frontend-design:
+    origin: vault
+    credit: "Anthropic (Claude Code official skill)"
+    targets: [claude, codex]

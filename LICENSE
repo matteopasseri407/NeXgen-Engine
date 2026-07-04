@@ -1,0 +1,76 @@
+# Agent-OS — NeXgen Vault
+
+**Attribution + Non-Commercial License**
+
+Version 1.0 — 2026
+
+Copyright (c) 2026 Matteo Passeri. All rights reserved.
+
+---
+
+## 1. Grant
+
+You may use, copy, modify, merge, publish, and distribute this software and
+derivative works, and you may install and run it for personal, internal, or
+organizational use, **subject to the conditions in Section 2**.
+
+## 2. Conditions
+
+This license is granted ONLY while ALL of the following hold:
+
+**(a) Attribution in place.** You must keep the following credit in a prominent,
+visible location in every copy of the software, every derivative work, and
+every deployment that exposes a user interface:
+
+> "Agent-OS — NeXgen Vault" by Matteo Passeri
+> https://github.com/matteopasseri407/NeXgen-Vault-OL
+
+The credit must be visible to end users (e.g. in the README, the about/settings
+screen, the footer, or any equivalent prominent surface). Burying it in a source
+file header that users never see does not satisfy this condition.
+
+**(b) No commercial resale.** You may NOT sell, sublicense for a fee, or
+otherwise monetize THIS software, derivative works, or any product/service whose
+core value is this software or a derivative of it. "Monetize" includes charging
+a price for the software itself, for a hosted/SaaS version of it, for support
+contracts whose primary deliverable is this software, or for training/consulting
+whose primary deliverable is this software.
+
+Charging for your OWN time, for unrelated services that merely USE the software
+as an internal tool, or for hardware/bundled offerings where the software is not
+the core value, is permitted.
+
+**(c) Derivatives inherit this license.** Derivative works must be licensed
+under the same terms (attribution + non-commercial), and must carry the credit
+in Section 2(a) including the original author's name and project URL.
+
+**(d) Notices preserved.** This license file, all copyright notices, and the
+CREDITS.md file (third-party attributions) must be preserved in all copies and
+derivatives.
+
+## 3. Third-party components
+
+This software includes third-party components (n8n, Firecrawl, RapidOCR,
+Playwright MCP, the humanizer skill, and others) each governed by their own
+upstream license. See `CREDITS.md` for the full list. Nothing in this license
+overrides those upstream licenses for those components.
+
+## 4. No warranty
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS
+FOR A PARTICULAR PURPOSE, AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHOR BE
+LIABLE FOR ANY CLAIM, DAMAGES, OR OTHER LIABILITY ARISING FROM THE USE OF THE
+SOFTWARE.
+
+## 5. Termination
+
+Any violation of Section 2 terminates your license immediately. You must then
+cease all distribution and use of the software and derivatives.
+
+---
+
+If you want to use this software commercially (e.g. bundle it into a paid
+product, offer a hosted version for a fee, or build a paid consulting practice
+whose primary deliverable is this software), contact the author for a separate
+commercial license.

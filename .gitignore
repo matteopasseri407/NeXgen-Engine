@@ -1,0 +1,26 @@
+# Never commit secrets or local-only state.
+# Ignore the folder CONTENTS (not the folder itself, so the whitelist below
+# works — a trailing-slash `99-SECRETS/` would exclude the dir and kill the
+# negations, leaving the scaffold untracked).
+99-SECRETS/*
+!99-SECRETS/.gitkeep
+!99-SECRETS/README.md
+!99-SECRETS/secrets-registry.md
+# archive/ (the encrypted .gpg vault) stays ignored: created on first secret.
+99-SECRETS/archive/
+
+# Deploy secrets
+03-INFRA/deploy/.env
+
+# Python noise (scripts generate this on run)
+__pycache__/
+*.pyc
+
+# OS/editor noise
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~
+.idea/
+.vscode/

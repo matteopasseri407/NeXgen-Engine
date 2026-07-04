@@ -1,0 +1,4 @@
+interface:
+  display_name: "Knowledge Vault Hygiene"
+  short_description: "Keep KnowledgeVault useful and low-noise."
+  default_prompt: "Update the KnowledgeVault only with stable, reusable information and avoid raw debug noise."

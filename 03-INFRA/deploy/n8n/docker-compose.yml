@@ -1,0 +1,21 @@
+services:
+  n8n:
+    image: n8nio/n8n:latest
+    container_name: n8n
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:5678:5678"
+    environment:
+      - N8N_HOST=127.0.0.1
+      - N8N_PORT=5678
+      - N8N_PROTOCOL=http
+      - NODE_ENV=production
+      - GENERIC_TIMEZONE=${TZ:-UTC}
+      # MCP server (enable in n8n Settings → MCP Server)
+      # - N8N_MCP_TOKEN=${N8N_MCP_TOKEN}
+    volumes:
+      - n8n-data:/home/node/.n8n
+    mem_limit: 1g
+
+volumes:
+  n8n-data:

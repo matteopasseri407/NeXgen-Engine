@@ -1,0 +1,2 @@
+# Keeps 99-SECRETS/ present in git. The folder is git-ignored except for
+# .gitkeep, README.md, and secrets-registry.md (see ../.gitignore).
