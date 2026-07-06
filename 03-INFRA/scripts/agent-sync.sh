@@ -81,8 +81,15 @@ if [ "$DO_PULL" = 1 ]; then
       log "pull: cloud unreachable or state not syncable — continuing with the local copy"
     fi
   elif git -C "$AGENT_VAULT_DATA" remote get-url "$REMOTE" >/dev/null 2>&1; then
-    # standard case: git pull --ff-only from the configured remote ($REMOTE, default origin)
-    if git -C "$AGENT_VAULT_DATA" pull --ff-only "$REMOTE" "$BRANCH" >>"$LOG" 2>&1; then
+    # standard case: git pull --ff-only from the configured remote ($REMOTE, default origin).
+    # Check for a dirty tree first (mirrors agent-sync.ps1): git itself would
+    # refuse a pull that overwrites uncommitted tracked changes, so this is
+    # not a safety fix, just an accurate log message instead of a generic
+    # "unreachable or not fast-forward" that would otherwise mask the real
+    # reason.
+    if [ -n "$(git -C "$AGENT_VAULT_DATA" status --porcelain --untracked-files=no)" ]; then
+      log "pull: skipped because the vault has uncommitted tracked changes (untracked files do not block)"
+    elif git -C "$AGENT_VAULT_DATA" pull --ff-only "$REMOTE" "$BRANCH" >>"$LOG" 2>&1; then
       log "pull: ok (git pull --ff-only from $REMOTE)"
     else
       log "pull: $REMOTE unreachable or not fast-forward — continuing with the local copy"
