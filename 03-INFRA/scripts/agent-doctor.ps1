@@ -113,6 +113,14 @@ if ($env:DEEPSEEK_API_KEY) { ok "DEEPSEEK_API_KEY present" } else { warn "DEEPSE
 sec "MCP configured in the runtimes (Vault 2.0 drift detection)"
 if ((Get-Command "python" -ErrorAction SilentlyContinue) -and (Test-Path -LiteralPath "$Layer\mcp\render.py")) {
   $renderOut = python "$Layer\mcp\render.py" 2>&1
+  if ($LASTEXITCODE -ne 0) {
+    # A crash here (missing PyYAML, a broken manifest, a permission error...)
+    # must never read as "no drift found": empty/error output would otherwise
+    # fall through to the "100% aligned" branch below, the worst possible
+    # false-green in the one check whose job is to catch misconfiguration.
+    $lastLine = ($renderOut | Select-Object -Last 1)
+    bad "render.py failed to run (exit $LASTEXITCODE): $lastLine"
+  } else {
   $driftLines = @($renderOut | Where-Object { $_ -match '\[DIFF\]|\[MISSING\]|\[ERROR\]' })
   if ($driftLines.Count -gt 0) {
     # render.py does not have a Windows dialect yet (paths/npx are expected in
@@ -141,6 +149,7 @@ if ((Get-Command "python" -ErrorAction SilentlyContinue) -and (Test-Path -Litera
       }
       if ($have) { warn "$cli is installed but has never been launched: its MCP config doesn't exist yet, open it once and re-run agent-sync.ps1" }
     }
+  }
   }
 } else {
   warn "python or render.py not found, skipping MCP drift check"

@@ -130,7 +130,15 @@ done
 
 sec "MCP configured in the runtimes (Vault 2.0 drift detection)"
 if command -v python3 >/dev/null 2>&1 && [ -f "$UL/mcp/render.py" ]; then
-  render_out="$(python3 "$UL/mcp/render.py" 2>/dev/null)"
+  render_out="$(python3 "$UL/mcp/render.py" 2>&1)"
+  render_rc=$?
+  if [ "$render_rc" -ne 0 ]; then
+    # A crash here (missing PyYAML, a broken manifest, a permission error...)
+    # must never read as "no drift found": empty/error output would otherwise
+    # fall through to the "100% aligned" branch below, the worst possible
+    # false-green in the one check whose job is to catch misconfiguration.
+    fail "render.py failed to run (exit $render_rc): $(printf '%s' "$render_out" | tail -1)"
+  else
   drift_scan="$render_out"
   claude_pending=0
   if pgrep -x claude >/dev/null 2>&1; then
@@ -167,6 +175,7 @@ if command -v python3 >/dev/null 2>&1 && [ -f "$UL/mcp/render.py" ]; then
       [ "$have" = 1 ] && warn "$cli is installed but has never been launched: its MCP config doesn't exist yet, open it once and re-run agent-sync"
     fi
   done
+  fi
 else
   warn "python3 or render.py not found, skipping MCP drift check"
 fi
