@@ -587,10 +587,11 @@ function Sync-AntigravityMcp {
 }
 
 function Sync-OpenCode {
-    # OpenCode: config canonica del vault -> runtime locale (symlink, fallback copia).
-    $canonical = Join-Path $LayerDir "opencode\opencode.json"
-    $target = Join-Path $HomeDir ".config\opencode\opencode.json"
-    Set-CanonicalFile -Source $canonical -Target $target
+    # OpenCode: self-managed config on Windows too, same as Linux. There is no
+    # canonical opencode.json template in the vault to sync from (render.py
+    # already covers OpenCode's MCP section directly via `--write opencode`
+    # once its Windows dialect lands; until then this is intentionally a
+    # no-op, not a dead sync pointed at a file that doesn't exist).
 }
 
 function Ensure-AlertCreds {
