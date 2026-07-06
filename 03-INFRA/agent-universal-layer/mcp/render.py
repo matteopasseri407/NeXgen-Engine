@@ -1,17 +1,17 @@
 #!/usr/bin/env python3
-"""Generatore MCP — Vault 2.0 Fase 1.
-Legge manifest.yaml e, per ogni CLI, costruisce la config MCP nel dialetto
-giusto.
-  - default (--diff): confronta col file vivo, NON scrive. I segreti sono
-    ridotti a <AUTH> su entrambi i lati: si confronta la struttura senza mai
-    toccare i token.
-  - --write CLI: rigenera SOLO la sezione MCP di quella CLI dal manifest, con
-    una sostituzione chirurgica (il resto del file resta intatto), nello stile
-    del file. Fa backup, valida, e si AUTOBLOCCA se una sezione non-MCP
-    risulterebbe modificata.
-  - Server FUORI MANIFEST nel file vivo: mai cancellati. Vengono CONSERVATI
-    tali e quali e segnalati (regola additiva: una novità installata da un
-    agente è il nuovo standard da registrare nel manifest e propagare)."""
+"""MCP generator — Vault 2.0 Phase 1.
+Reads manifest.yaml and, for each CLI, builds the MCP config in the right
+dialect.
+  - default (--diff): compares against the live file, does NOT write. Secrets
+    are reduced to <AUTH> on both sides: the structure is compared without
+    ever touching the tokens.
+  - --write CLI: regenerates ONLY that CLI's MCP section from the manifest,
+    with a surgical substitution (the rest of the file stays intact), in the
+    file's own style. Makes a backup, validates, and AUTO-BLOCKS if a non-MCP
+    section would end up modified.
+  - Servers OUTSIDE THE MANIFEST in the live file: never deleted. They are
+    KEPT as-is and flagged (additive rule: something new installed by an
+    agent is the new standard to register in the manifest and propagate)."""
 from __future__ import annotations
 import argparse, difflib, json, os, platform, re, sys, time, tomllib
 from pathlib import Path
@@ -41,13 +41,13 @@ def redact(obj, key=None):
             return "<AUTH>"
     return obj
 
-# ---- render per dialetto (valori REALI: env-ref dove serve) ------------------
+# ---- per-dialect rendering (REAL values: env-ref where needed) ------------------
 
 def r_claude(name, s):
     if s["transport"] == "stdio":
         return {"type": "stdio", "command": s["command"], "args": s.get("args", []), "env": s.get("env", {})}
-    # header via env-ref: Claude Code espande ${VAR} negli header all'avvio,
-    # cosi' il token non resta in chiaro in .claude.json.
+    # header via env-ref: Claude Code expands ${VAR} in headers at startup,
+    # so the token never stays in plaintext in .claude.json.
     return {"type": "http", "url": s["url"],
             "headers": {"Authorization": f"Bearer ${{{s['auth']['env']}}}"}}
 
@@ -88,10 +88,11 @@ CLI = {
 }
 
 def os_view(s):
-    """Vista del server per l'OS corrente: se siamo su Windows e il server ha un
-    blocco 'windows:' (override di command/args/env/...), lo applica; altrimenti
-    scarta la chiave 'windows'. Cosi' il manifest unico serve entrambi gli OS —
-    i valori Windows si popolano girando render.py sul fisso, non si indovinano."""
+    """View of the server for the current OS: if we're on Windows and the
+    server has a 'windows:' block (command/args/env/... override), apply it;
+    otherwise discard the 'windows' key. This way the single manifest serves
+    both OSes — Windows values get populated by running render.py on the
+    Windows machine, not guessed."""
     if IS_WINDOWS and isinstance(s.get("windows"), dict):
         merged = {**s, **s["windows"]}
         merged.pop("windows", None)
@@ -99,7 +100,7 @@ def os_view(s):
     return {k: v for k, v in s.items() if k != "windows"}
 
 def _env_present(var):
-    """True se la env var e' definita e non vuota."""
+    """True if the env var is defined and non-empty."""
     v = os.environ.get(var, "").strip()
     return bool(v)
 
@@ -118,25 +119,25 @@ def load_manifest():
     for n, s in raw.items():
         s = os_view(s)
         if not _required_ok(s):
-            print(f">>> skip [{n}]: require_env non soddisfatto (Local-Only?)")
+            print(f">>> skip [{n}]: require_env not satisfied (Local-Only?)")
             continue
         out[n] = s
     return out
 
 def keep_extras(gen, live, label):
-    """Un server nel file vivo ma NON nel manifest non è drift da cancellare:
-    è una novità installata da un agente (regola del vault: 'non è drift, è il
-    nuovo standard che va per tutti'). Si CONSERVA tale e quale e si segnala
-    finché non viene registrato nel manifest. Codex fa già
-    così by-design (patch per-sezione); qui si allineano i writer JSON."""
+    """A server in the live file but NOT in the manifest is not drift to be
+    deleted: it's something new installed by an agent (vault rule: 'it's not
+    drift, it's the new standard everyone should get'). It is KEPT as-is and
+    flagged until it gets registered in the manifest. Codex already does this
+    by design (per-section patch); here the JSON writers get aligned to it."""
     out = dict(gen)
     for k in live:
         if k not in out:
             out[k] = live[k]
-            print(f">>> FUORI MANIFEST [{label}]: server '{k}' CONSERVATO. Registralo in manifest.yaml per propagarlo ovunque.")
+            print(f">>> OUTSIDE THE MANIFEST [{label}]: server '{k}' KEPT. Register it in manifest.yaml to propagate it everywhere.")
     return out
 
-# ---- caricamento config viventi (solo sezione MCP) ---------------------------
+# ---- loading live configs (MCP section only) ---------------------------
 
 def load_current(cli):
     try:
@@ -151,22 +152,22 @@ def load_current(cli):
         if cli == "opencode":
             return json.loads((HOME / ".config/opencode/opencode.json").read_text("utf-8")).get("mcp", {})
     except FileNotFoundError:
-        return None     # CLI non installata su questa macchina
+        return None     # CLI not installed on this machine
     return {}
 
-# ---- diff strutturale (modalita' --diff) -------------------------------------
+# ---- structural diff (--diff mode) -------------------------------------
 
 def diff_struct(path, cur, exp, out):
     if isinstance(exp, dict) and isinstance(cur, dict):
         for k in sorted(set(exp) | set(cur)):
             if k not in cur:
-                out.append(f"    - {path}{k}: MANCA nel file vivo (atteso: {json.dumps(exp[k], ensure_ascii=False)})")
+                out.append(f"    - {path}{k}: MISSING in the live file (expected: {json.dumps(exp[k], ensure_ascii=False)})")
             elif k not in exp:
-                out.append(f"    + {path}{k}: in piu' nel file vivo (valore: {json.dumps(cur[k], ensure_ascii=False)})")
+                out.append(f"    + {path}{k}: extra in the live file (value: {json.dumps(cur[k], ensure_ascii=False)})")
             else:
                 diff_struct(f"{path}{k}.", cur[k], exp[k], out)
     elif cur != exp:
-        out.append(f"    ~ {path[:-1]}: vivo={json.dumps(cur, ensure_ascii=False)}  atteso={json.dumps(exp, ensure_ascii=False)}")
+        out.append(f"    ~ {path[:-1]}: live={json.dumps(cur, ensure_ascii=False)}  expected={json.dumps(exp, ensure_ascii=False)}")
 
 def cmd_diff():
     man = load_manifest()
@@ -175,14 +176,14 @@ def cmd_diff():
         current = load_current(cli)
         print(f"\n========== {cli.upper()} ==========")
         if current is None:
-            print("  (config non presente: CLI non installata su questa macchina, saltata)"); continue
+            print("  (config not present: CLI not installed on this machine, skipped)"); continue
         wanted = {n: s for n, s in man.items() if cli in s["targets"]}
         seen = set()
         for name, s in wanted.items():
             key = spec["name"](name); seen.add(key)
             exp = redact(spec["render"](name, s))
             if key not in current:
-                print(f"  [MANCA]  {name} -> il file vivo non ha '{key}'"); bad += 1; continue
+                print(f"  [MISSING]  {name} -> the live file has no '{key}'"); bad += 1; continue
             out = []
             diff_struct("", redact(current[key]), exp, out)
             if out:
@@ -190,13 +191,13 @@ def cmd_diff():
             else:
                 print(f"  [OK]     {name}"); ok += 1
         for k in sorted(set(current) - seen):
-            print(f"  [EXTRA]  '{k}' nel file vivo ma non nel manifest (conservato dai --write: registralo per propagarlo)"); extra += 1
-    print(f"\n---- riepilogo: {ok} server combaciano, {bad} con differenze, {extra} fuori manifest ----")
+            print(f"  [EXTRA]  '{k}' in the live file but not in the manifest (kept by --write: register it to propagate it)"); extra += 1
+    print(f"\n---- summary: {ok} servers match, {bad} with differences, {extra} outside the manifest ----")
 
-# ---- serializzatori per-stile ------------------------------------------------
+# ---- per-style serializers ------------------------------------------------
 
 def s_inline(obj, ind=0):
-    """OpenCode: array di scalari inline, oggetti espansi."""
+    """OpenCode: inline array of scalars, expanded objects."""
     pad, pad2 = "  " * ind, "  " * (ind + 1)
     if isinstance(obj, dict):
         if not obj:
@@ -211,11 +212,11 @@ def s_inline(obj, ind=0):
     return json.dumps(obj, ensure_ascii=False)
 
 def s_standard(obj, ind=0):
-    """Antigravity: json.dump standard indent=2 (array espansi)."""
+    """Antigravity: standard json.dump indent=2 (expanded arrays)."""
     return json.dumps(obj, indent=2, ensure_ascii=False)
 
 def reorder(gen, live):
-    """Allinea l'ordine delle chiavi di gen a quello di live (valori da gen)."""
+    """Aligns gen's key order to live's (values still come from gen)."""
     if isinstance(gen, dict) and isinstance(live, dict):
         out = {k: reorder(gen[k], live[k]) for k in live if k in gen}
         for k in gen:
@@ -224,8 +225,8 @@ def reorder(gen, live):
     return gen
 
 def _value_span(text, brace_idx):
-    """Indice subito dopo la '}' che chiude l'oggetto iniziato a brace_idx,
-    saltando le stringhe (e le graffe dentro le stringhe, es. {env:...})."""
+    """Index right after the '}' that closes the object started at brace_idx,
+    skipping strings (and braces inside strings, e.g. {env:...})."""
     depth = 0; i = brace_idx; in_str = esc = False
     while i < len(text):
         c = text[i]
@@ -240,12 +241,12 @@ def _value_span(text, brace_idx):
             if depth == 0:
                 return i + 1
         i += 1
-    raise ValueError("graffa di chiusura non trovata")
+    raise ValueError("closing brace not found")
 
-# ---- scrittura chirurgica generica per file JSON -----------------------------
+# ---- generic surgical writer for JSON files -----------------------------
 
 def _prune_backups(path, keep=3):
-    """Tiene solo gli ultimi `keep` backup .bak-* di un file, elimina i piu' vecchi."""
+    """Keeps only the last `keep` .bak-* backups of a file, deletes older ones."""
     backs = sorted(path.parent.glob(path.name + ".bak-*"))
     for old in backs[:-keep]:
         try:
@@ -255,15 +256,15 @@ def _prune_backups(path, keep=3):
 
 def write_json_section(path, key, new_section, live_section, serialize, indent_exact=None):
     if not path.exists():
-        print(f">>> {path.name} non presente: CLI non configurata, salto."); return 0
+        print(f">>> {path.name} not present: CLI not configured, skipping."); return 0
     raw = path.read_text("utf-8")
     live = json.loads(raw)
-    # indent_exact: se dato, aggancia SOLO la chiave a quell'indentazione esatta
-    # (per .claude.json, dove "mcpServers" compare anche annidato nei projects).
+    # indent_exact: if given, only match the key at that exact indentation
+    # (for .claude.json, where "mcpServers" also appears nested in projects).
     ind_pat = re.escape(indent_exact) if indent_exact is not None else r'[ \t]*'
     m = re.search(rf'(?m)^({ind_pat}){re.escape(json.dumps(key))}[ \t]*:[ \t]*', raw)
     if not m or raw[m.end():m.end() + 1] != "{":
-        print(f">>> STOP: non trovo la sezione {json.dumps(key)} all'indent atteso."); return 2
+        print(f">>> STOP: can't find the {json.dumps(key)} section at the expected indent."); return 2
     indent = m.group(1)
     end = _value_span(raw, m.end())
     inner = serialize(new_section)
@@ -273,39 +274,39 @@ def write_json_section(path, key, new_section, live_section, serialize, indent_e
     new_text = raw[:m.start()] + block + raw[end:]
 
     if new_text[:m.start()] != raw[:m.start()] or not new_text.endswith(raw[end:]):
-        print(">>> STOP: la sostituzione tocca testo fuori dalla sezione."); return 2
+        print(">>> STOP: the replacement touches text outside the section."); return 2
     try:
         new_parsed = json.loads(new_text)
     except json.JSONDecodeError as e:
-        print(f">>> STOP: risultato non JSON valido ({e})."); return 2
+        print(f">>> STOP: result is not valid JSON ({e})."); return 2
     for k in live:
         if k != key and new_parsed.get(k) != live[k]:
-            print(f">>> STOP: la sezione non-MCP '{k}' risulterebbe modificata."); return 2
+            print(f">>> STOP: the non-MCP section '{k}' would end up modified."); return 2
 
-    def _mask(line):   # mai un token in chiaro in NESSUN output del generatore
+    def _mask(line):   # never a plaintext token in ANY generator output
         return re.sub(r'(Bearer )[^"\s]+', r'\1<MASK>', line)
     d = list(difflib.unified_diff(raw.splitlines(), new_text.splitlines(),
-                                  f"{path.name} (vivo)", f"{path.name} (generato)", lineterm=""))
-    print("\n".join(_mask(l) for l in d) if d else "(nessuna differenza testuale: gia' conforme)")
+                                  f"{path.name} (live)", f"{path.name} (generated)", lineterm=""))
+    print("\n".join(_mask(l) for l in d) if d else "(no textual difference: already compliant)")
     sem = []
     diff_struct("", live_section, new_section, sem)
-    print("\nDifferenze SEMANTICHE nella sezione MCP (ordine-indipendenti):")
-    print("\n".join(_mask(l) for l in sem) if sem else "    (nessuna: gia' conforme al manifest)")
+    print("\nSEMANTIC differences in the MCP section (order-independent):")
+    print("\n".join(_mask(l) for l in sem) if sem else "    (none: already compliant with the manifest)")
     if not d:
-        print("\n>>> Niente da scrivere."); return 0
+        print("\n>>> Nothing to write."); return 0
 
     bak = path.with_name(path.name + ".bak-" + time.strftime("%Y%m%d-%H%M%S"))
     bak.write_text(raw, "utf-8")
     _prune_backups(path)
     path.write_text(new_text, "utf-8")
     json.loads(path.read_text("utf-8"))
-    print(f"\n>>> SCRITTO e validato (JSON ok). Backup: {bak}")
+    print(f"\n>>> WRITTEN and validated (JSON ok). Backup: {bak}")
     return 0
 
 def write_opencode():
     path = HOME / ".config/opencode/opencode.json"
     if not path.exists():
-        print(">>> opencode.json non presente: OpenCode non configurato, salto."); return 0
+        print(">>> opencode.json not present: OpenCode not configured, skipping."); return 0
     live = json.loads(path.read_text("utf-8"))
     man = load_manifest()
     gen = {n: r_opencode(n, s) for n, s in man.items() if "opencode" in s["targets"]}
@@ -316,7 +317,7 @@ def write_opencode():
 def write_antigravity():
     path = HOME / ".gemini/antigravity/mcp_config.json"
     if not path.exists():
-        print(">>> mcp_config.json non presente: Antigravity non configurato, salto."); return 0
+        print(">>> mcp_config.json not present: Antigravity not configured, skipping."); return 0
     live = json.loads(path.read_text("utf-8"))
     live_servers = live.get("mcpServers", {})
     man = load_manifest()
@@ -325,14 +326,14 @@ def write_antigravity():
         if "antigravity" not in s["targets"]:
             continue
         d = r_antigravity(n, s)
-        for k, v in live_servers.get(n, {}).items():   # preserva extra interni (es. $typeName)
+        for k, v in live_servers.get(n, {}).items():   # preserve internal extras (e.g. $typeName)
             d.setdefault(k, v)
         gen[n] = d
     gen = keep_extras(gen, live_servers, "antigravity")
     new_servers = reorder(gen, live_servers)
     return write_json_section(path, "mcpServers", new_servers, live_servers, s_standard)
 
-# ---- scrittura chirurgica per Codex (TOML, patch mirato per-sezione) ---------
+# ---- surgical writer for Codex (TOML, targeted per-section patch) ---------
 
 def _toml_scalar(v):
     if isinstance(v, bool):
@@ -357,8 +358,8 @@ def _section_headers(lines):
     return out
 
 def _content_range(lines, header_idx):
-    """Righe-contenuto subito dopo un header di sezione: fino a riga vuota,
-    prossimo header, o EOF. Non tocca header ne' righe vuote di separazione."""
+    """Content lines right after a section header: up to a blank line, the
+    next header, or EOF. Never touches headers or separating blank lines."""
     s = header_idx + 1
     e = s
     while e < len(lines) and lines[e].strip() != "" and not lines[e].startswith("["):
@@ -368,7 +369,7 @@ def _content_range(lines, header_idx):
 def write_codex(path=None):
     path = path or HOME / ".codex/config.toml"
     if not path.exists():
-        print(f">>> {path.name} non presente: Codex non configurato, salto."); return 0
+        print(f">>> {path.name} not present: Codex not configured, skipping."); return 0
     raw = path.read_text("utf-8")
     lines = raw.split("\n")
     live = tomllib.loads(raw)
@@ -384,13 +385,13 @@ def write_codex(path=None):
         targets[n.replace("-", "_")] = (full, env)
 
     headers = _section_headers(lines)
-    # punto di inserimento per server NUOVI = fine dell'ultimo blocco mcp_servers.*
+    # insertion point for NEW servers = end of the last mcp_servers.* block
     mcp_ends = [_content_range(lines, idx)[1] for h, idx in headers.items()
                 if h == "mcp_servers" or h.startswith("mcp_servers.")]
     insert_pos = max(mcp_ends) if mcp_ends else len(lines)
 
-    edits = []        # (start, end, new_lines) — patch in-place di sezioni esistenti
-    add_block = []    # righe dei server NUOVI da accodare al blocco mcp_servers
+    edits = []        # (start, end, new_lines) — in-place patch of existing sections
+    add_block = []    # lines for NEW servers to append to the mcp_servers block
     for cname, (direct, env) in targets.items():
         if f"mcp_servers.{cname}" in headers:
             s, e = _content_range(lines, headers[f"mcp_servers.{cname}"])
@@ -400,7 +401,7 @@ def write_codex(path=None):
                     s2, e2 = _content_range(lines, headers[f"mcp_servers.{cname}.env"])
                     edits.append((s2, e2, _codex_body(env)))
                 else:
-                    print(f">>> STOP: [mcp_servers.{cname}] esiste ma manca [.env] — caso raro, non patcho."); return 2
+                    print(f">>> STOP: [mcp_servers.{cname}] exists but [.env] is missing — rare case, not patching."); return 2
         else:
             add_block += ["", f"[mcp_servers.{cname}]"] + _codex_body(direct)
             if env is not None:
@@ -413,51 +414,52 @@ def write_codex(path=None):
         new_lines[s:e] = nl
     new_text = "\n".join(new_lines)
 
-    # --- guard: parsing + non-MCP intatto + tools preservati + campi == manifest
+    # --- guard: parsing + non-MCP untouched + tools preserved + fields == manifest
     try:
         np_ = tomllib.loads(new_text)
     except Exception as ex:
-        print(f">>> STOP: risultato non TOML valido ({ex})."); return 2
+        print(f">>> STOP: result is not valid TOML ({ex})."); return 2
     for k in live:
         if k != "mcp_servers" and np_.get(k) != live[k]:
-            print(f">>> STOP: la sezione non-MCP '{k}' risulterebbe modificata."); return 2
+            print(f">>> STOP: the non-MCP section '{k}' would end up modified."); return 2
     for cname, (direct, env) in targets.items():
         ns = np_["mcp_servers"][cname]
-        ls = live_srv.get(cname)              # None se e' un server nuovo
+        ls = live_srv.get(cname)              # None if it's a new server
         if ls is not None and ns.get("tools") != ls.get("tools"):
-            print(f">>> STOP: l'overlay 'tools' di {cname} risulterebbe modificato."); return 2
+            print(f">>> STOP: the 'tools' overlay of {cname} would end up modified."); return 2
         for kk, vv in direct.items():
             if ns.get(kk) != vv:
-                print(f">>> STOP: campo {cname}.{kk} non combacia col manifest."); return 2
+                print(f">>> STOP: field {cname}.{kk} does not match the manifest."); return 2
         if env is not None and ns.get("env") != env:
-            print(f">>> STOP: env di {cname} non combacia."); return 2
-    for cname in live_srv:                          # nessun altro server MCP toccato
+            print(f">>> STOP: env of {cname} does not match."); return 2
+    for cname in live_srv:                          # no other MCP server touched
         if cname not in targets and np_["mcp_servers"][cname] != live_srv[cname]:
-            print(f">>> STOP: il server non-manifest '{cname}' risulterebbe modificato."); return 2
+            print(f">>> STOP: the non-manifest server '{cname}' would end up modified."); return 2
 
     d = list(difflib.unified_diff(raw.splitlines(), new_text.splitlines(),
-                                  f"{path.name} (vivo)", f"{path.name} (generato)", lineterm=""))
-    print("\n".join(d) if d else "(nessuna differenza testuale: Codex gia' conforme)")
+                                  f"{path.name} (live)", f"{path.name} (generated)", lineterm=""))
+    print("\n".join(d) if d else "(no textual difference: Codex already compliant)")
     if not d:
-        print("\n>>> Niente da scrivere."); return 0
+        print("\n>>> Nothing to write."); return 0
 
     bak = path.with_name(path.name + ".bak-" + time.strftime("%Y%m%d-%H%M%S"))
     bak.write_text(raw, "utf-8")
     _prune_backups(path)
     path.write_text(new_text, "utf-8")
     tomllib.loads(path.read_text("utf-8"))
-    print(f"\n>>> SCRITTO e validato (TOML ok). Backup: {bak}")
+    print(f"\n>>> WRITTEN and validated (TOML ok). Backup: {bak}")
     return 0
 
 def write_claude(path=None):
-    """Patch chirurgico del SOLO mcpServers top-level (indent 2) di .claude.json.
-    Preserva i token letterali del file vivo (il manifest non li contiene) e
-    ignora i mcpServers annidati nei projects. Fail-safe: i guard di
-    write_json_section bloccano se toccherebbe altro. Da eseguire a Claude
-    CHIUSO (Claude riscrive .claude.json a caldo)."""
+    """Surgical patch of ONLY the top-level mcpServers (indent 2) of
+    .claude.json. Preserves the live file's literal tokens (the manifest
+    doesn't contain them) and ignores the mcpServers nested inside projects.
+    Fail-safe: write_json_section's guards block it if anything else would be
+    touched. Meant to run while Claude is CLOSED (Claude rewrites .claude.json
+    live)."""
     path = path or HOME / ".claude.json"
     if not path.exists():
-        print(">>> .claude.json non presente: Claude non configurato, salto."); return 0
+        print(">>> .claude.json not present: Claude not configured, skipping."); return 0
     live = json.loads(path.read_text("utf-8"))
     live_mcp = live.get("mcpServers", {})
     man = load_manifest()
@@ -465,7 +467,7 @@ def write_claude(path=None):
     for n, s in man.items():
         if "claude" not in s["targets"]:
             continue
-        d = r_claude(n, s)   # header http gia' come ${VAR}: niente token letterale in .claude.json
+        d = r_claude(n, s)   # http header already as ${VAR}: no literal token in .claude.json
         gen[n] = d
     gen = keep_extras(gen, live_mcp, "claude")
     new_mcp = reorder(gen, live_mcp)
@@ -480,12 +482,12 @@ def cmd_write(cli):
         return write_codex()
     if cli == "claude":
         return write_claude()
-    print(f"--write per '{cli}' non ancora implementato.")
+    print(f"--write for '{cli}' not implemented yet.")
     return 1
 
 def main():
-    ap = argparse.ArgumentParser(description="Generatore MCP da manifest unico (Vault 2.0 Fase 1).")
-    ap.add_argument("--write", metavar="CLI", choices=list(CLI), help="rigenera la config MCP di una CLI (default: solo diff).")
+    ap = argparse.ArgumentParser(description="MCP generator from a single manifest (Vault 2.0 Phase 1).")
+    ap.add_argument("--write", metavar="CLI", choices=list(CLI), help="regenerate a CLI's MCP config (default: diff only).")
     args = ap.parse_args()
     if args.write:
         return cmd_write(args.write)

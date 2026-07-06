@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# agent-healthcheck — alert raggruppato: avvisa SOLO se qualcosa non va (FAIL).
-# Eseguito da agent-sync ad ogni giro, ma INVIA solo:
-#   - subito quando compare/cambia un problema (FAIL), e
-#   - come promemoria 1/giorno se il problema persiste.
-# Nessun report "verde" di routine.
-# Contenuto = riepilogo di agent-doctor (include drift sync, MCP, istruzioni, token, skill...).
-# Trasporto (primo disponibile): Telegram diretto (env) > webhook > notify-send desktop > log.
+# agent-healthcheck — grouped alert: notifies ONLY if something is wrong (FAIL).
+# Run by agent-sync on every pass, but SENDS only:
+#   - immediately when a problem appears/changes (FAIL), and
+#   - as a once-a-day reminder if the problem persists.
+# No routine "green" report.
+# Content = summary from agent-doctor (includes sync drift, MCP, instructions, tokens, skills...).
+# Transport (first available): direct messaging bot (env) > webhook > desktop notify-send > log.
 set -u
 
 VAULT="${KNOWLEDGE_VAULT_PATH:-$HOME/KnowledgeVault}"
@@ -13,7 +13,7 @@ DOCTOR="$VAULT/03-INFRA/scripts/agent-doctor.sh"
 STATE_DIR="$HOME/.local/state"
 HB_FILE="$STATE_DIR/agent-healthcheck.state"
 LOG="$STATE_DIR/agent-sync.log"
-INTERVAL="${AGENT_HEALTHCHECK_INTERVAL:-86400}"   # routine: 1/giorno
+INTERVAL="${AGENT_HEALTHCHECK_INTERVAL:-86400}"   # routine: once a day
 HOSTN="$(hostname)"
 mkdir -p "$STATE_DIR"
 
@@ -25,7 +25,7 @@ summary="$("$DOCTOR" --summary 2>/dev/null | tail -1)"
 
 problem=0
 printf '%s' "$summary" | grep -q 'FAIL=[1-9]' && problem=1
-# firma stabile (toglie i numeri lunghi tipo timestamp), per rilevare un problema NUOVO
+# stable signature (strips long numbers like timestamps), to detect a NEW problem
 sig="$(printf '%s' "$summary" | tr -d ' ')"
 
 last=0; last_sig=""
@@ -35,32 +35,33 @@ if [ -f "$HB_FILE" ]; then
 fi
 case "$last" in ''|*[!0-9]*) last=0 ;; esac
 
-# Invia SOLO se qualcosa non va (FAIL). Nessun report verde di routine.
+# Send ONLY if something is wrong (FAIL). No routine green report.
 if [ "$problem" != 1 ]; then
   printf '%s\nok\n' "$now" > "$HB_FILE"
   exit 0
 fi
 
 send=0
-[ "$sig" != "$last_sig" ] && send=1                  # problema nuovo o cambiato -> subito
-[ $(( now - last )) -ge "$INTERVAL" ] && send=1      # promemoria se il problema persiste (1/giorno)
+[ "$sig" != "$last_sig" ] && send=1                  # new or changed problem -> immediately
+[ $(( now - last )) -ge "$INTERVAL" ] && send=1      # reminder if the problem persists (once a day)
 [ "$send" = 1 ] || exit 0
 
-# Messaggio in linguaggio umano (per the user); il dettaglio tecnico resta in coda
-# così può girarlo a un agente com'è. Le righe ✗ vengono dal run completo del doctor.
+# Plain-language message (for the user); the technical detail stays at the
+# end so it can be handed to an agent as-is. The ✗ lines come from the
+# doctor's full run.
 failn="$(printf '%s' "$summary" | sed -n 's/.*FAIL=\([0-9]\{1,\}\).*/\1/p')"
 fail_lines="$("$DOCTOR" 2>/dev/null | sed 's/\x1b\[[0-9;]*m//g' | grep '✗' | sed 's/^[[:space:]]*✗[[:space:]]*/• /' | head -6)"
-[ -n "$fail_lines" ] || fail_lines="• dettaglio non disponibile (vedi log)"
+[ -n "$fail_lines" ] || fail_lines="• detail not available (see log)"
 
-msg="🔴 ${failn:-Alcuni} controlli automatici degli agenti sono falliti su ${HOSTN} — $(date '+%d/%m %H:%M')
+msg="🔴 ${failn:-Some} automatic agent checks failed on ${HOSTN} — $(date '+%Y-%m-%d %H:%M')
 
-Cosa non va:
+What's wrong:
 ${fail_lines}
 
-Cosa fare tu: niente a mano. Apri Claude e incolla:
-«gira agent-doctor e sistema i FAIL»
+What to do: nothing by hand. Open your agent CLI and paste:
+«run agent-doctor and fix the FAILs»
 
-[tecnico: ${summary}]"
+[technical: ${summary}]"
 
 sent=0
 if [ -n "${TELEGRAM_BOT_TOKEN:-}" ] && [ -n "${TELEGRAM_CHAT_ID:-}" ]; then
@@ -73,9 +74,9 @@ elif [ -n "${VAULT_ALERT_WEBHOOK:-}" ]; then
     --data-urlencode "text=${msg}" >/dev/null 2>&1 && sent=1
 fi
 if [ "$sent" -ne 1 ] && command -v notify-send >/dev/null 2>&1; then
-  notify-send -u critical -a agent-healthcheck "Agenti: qualcosa non va" "$msg" >/dev/null 2>&1 && sent=1
+  notify-send -u critical -a agent-healthcheck "Agents: something is wrong" "$msg" >/dev/null 2>&1 && sent=1
 fi
-[ "$sent" -ne 1 ] && printf '%s healthcheck (nessun transport): %s\n' "$(date -Is)" "$summary" >> "$LOG"
+[ "$sent" -ne 1 ] && printf '%s healthcheck (no transport): %s\n' "$(date -Is)" "$summary" >> "$LOG"
 
 printf '%s\n%s\n' "$now" "$sig" > "$HB_FILE"
 exit 0

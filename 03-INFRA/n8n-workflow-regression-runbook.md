@@ -7,131 +7,131 @@ status: active
 type: runbook
 ---
 
-# n8n Workflow, runbook anti-regressione
+# n8n Workflow Anti-Regression Runbook
 
-Procedura obbligatoria per modificare, pubblicare o diagnosticare qualsiasi workflow n8n. Le regole valgono per tutti i workflow: trigger, trasformazione, LLM/API, parser, persistenza, output esterno.
+Mandatory procedure for modifying, publishing, or diagnosing any n8n workflow. The rules apply to every workflow: trigger, transformation, LLM/API, parser, persistence, external output.
 
-## Regola fondamentale
+## Core rule
 
-Un workflow `success` non prova che lo screener abbia funzionato.
-La verifica è valida solo se l'esecuzione di produzione completa la sua catena reale end-to-end.
+A `success` execution does not prove the screener actually worked.
+Verification is only valid if the production execution completes its real chain end-to-end.
 
-Il comando MCP `execute_workflow` può indicare che l'avvio è stato accettato mentre l'esecuzione è ancora `running`, sospesa o successivamente cancellata.
-Controllare sempre `execution_entity.status`, `stoppedAt` e i dati dei nodi.
+The `execute_workflow` MCP command can report that the start was accepted while the execution is still `running`, suspended, or later cancelled.
+Always check `execution_entity.status`, `stoppedAt`, and the node data.
 
-## Pubblicazione n8n 2.x
+## Publishing on n8n 2.x
 
-Le esecuzioni schedulate usano lo snapshot in `workflow_history` puntato da `activeVersionId`.
-Modificare soltanto `workflow_entity.nodes` non aggiorna la produzione.
+Scheduled executions use the snapshot in `workflow_history` pointed to by `activeVersionId`.
+Editing only `workflow_entity.nodes` does not update production.
 
-Procedura:
+Procedure:
 
-1. Esportare e salvare un backup del workflow.
-2. Creare un nuovo `versionId` e una nuova riga in `workflow_history`.
-3. Aggiornare il draft in `workflow_entity`.
-4. Pubblicare esplicitamente la nuova versione.
-5. Verificare che `versionId = activeVersionId`.
-6. Verificare nuovamente cron, timezone e `active=true`.
+1. Export and save a backup of the workflow.
+2. Create a new `versionId` and a new row in `workflow_history`.
+3. Update the draft in `workflow_entity`.
+4. Explicitly publish the new version.
+5. Verify that `versionId = activeVersionId`.
+6. Re-check cron, timezone, and `active=true`.
 
-## Contratto prompt e parser LLM
+## Prompt and LLM parser contract
 
-Per ogni nodo LLM con testo dinamico:
+For every LLM node with dynamic text:
 
-- `parameters.text` deve iniziare con `=`.
-- La coda del prompt deve contenere l'espressione dinamica dei dati, non `{{ ... }}` come testo letterale.
-- Se il modello è configurato per `json_object`, il parser deve accettare JSON puro `{ ... }`.
-- Prompt e parser devono usare lo stesso formato. Non combinare JSON puro con parser basato solo su delimitatori legacy.
-- Il prompt deve imporre: primo carattere `{`, ultimo `}`, nessun ragionamento, Markdown o testo esterno.
+- `parameters.text` must start with `=`.
+- The prompt tail must contain the dynamic data expression, not `{{ ... }}` as literal text.
+- If the model is configured for `json_object`, the parser must accept pure JSON `{ ... }`.
+- Prompt and parser must use the same format. Never combine pure JSON with a parser based only on legacy delimiters.
+- The prompt must enforce: first character `{`, last character `}`, no reasoning, no Markdown, no external text.
 
-Segnale di regressione:
+Regression signal:
 
-- il nodo batch contiene dati reali;
-- il nodo LLM restituisce `analyzed: 0`;
-- oppure restituisce ragionamento libero e nessun JSON.
+- the batch node contains real data;
+- the LLM node returns `analyzed: 0`;
+- or it returns free-form reasoning and no JSON.
 
-## Giudici LLM con reasoning
+## Reasoning-capable LLM judges
 
-I modelli "reasoning" normalmente mettono il pensiero in `reasoning_content` e il JSON in `content`. Ma sotto pressione di budget token il ragionamento **rifuoriesce dentro `content` e tronca il JSON**. Due difese obbligatorie, sempre insieme:
+"Reasoning" models normally put their thinking in `reasoning_content` and the JSON in `content`. But under token-budget pressure the reasoning **leaks back into `content` and truncates the JSON**. Two mandatory defenses, always together:
 
-1. **Headroom di token.** `maxTokens` ampio. Il costo è trascurabile, la troncatura del JSON sparisce.
-2. **Parser tollerante.** Mai `JSON.parse` diretto sull'output. Estrarre il JSON con brace-matching (ignorando testo/ragionamento prima o dopo) e, se troncato, recuperare i singoli oggetti completi via regex. Marcare "batch fallito" SOLO se non si recupera nessun oggetto. Così un hiccup del modello non perde dati né genera falsi alert.
+1. **Token headroom.** A generous `maxTokens`. The cost is negligible, and JSON truncation disappears.
+2. **Tolerant parser.** Never `JSON.parse` directly on the output. Extract the JSON via brace-matching (ignoring text/reasoning before or after it) and, if truncated, recover the individual complete objects via regex. Mark "batch failed" ONLY if no object at all can be recovered. That way a model hiccup never loses data or triggers a false alert.
 
-Inoltre rendere non-fatali i nodi esterni critici (LLM, scritture DB, notifiche) con `onError: continueRegularOutput` + `retryOnFail`, così un outage diventa un esito leggibile e non un crash che fa scattare l'error-workflow.
+Also make critical external nodes (LLM calls, DB writes, notifications) non-fatal with `onError: continueRegularOutput` + `retryOnFail`, so an outage turns into a readable outcome instead of a crash that trips the error workflow.
 
-## Controlli per workflow con batching
+## Checks for batching workflows
 
-- Scegliere una batch size che eviti sia il troncamento dell'output LLM sia il superamento della finestra MCP (5 minuti tipici). Testare con volumi reali.
-- Deduplica intra-run prima del batching per le chiavi rilevanti.
+- Pick a batch size that avoids both LLM output truncation and exceeding the MCP window (typically 5 minutes). Test with real volumes.
+- Deduplicate within the run before batching, on the relevant keys.
 
-## Deduplica e scritture
+## Deduplication and writes
 
-Non scrivere nel database prima che il parser abbia prodotto un verdetto valido.
-Un batch LLM fallito non deve trasformare automaticamente tutti gli item in `PASS`.
+Never write to the database before the parser has produced a valid verdict.
+A failed LLM batch must never silently turn every item into a `PASS`.
 
-Prima del run di verifica:
+Before a verification run:
 
-- fare backup delle righe che si intende rimuovere;
-- eliminare soltanto le chiavi contaminate dal run difettoso;
-- non svuotare le cache globali alla cieca.
+- back up the rows you intend to remove;
+- delete only the keys contaminated by the faulty run;
+- never blindly flush global caches.
 
-Deduplicare dentro la stessa esecuzione oltre che contro il database.
+Deduplicate within the same execution, in addition to against the database.
 
-## Output esterni
+## External outputs
 
-Se il contratto del workflow prevede una notifica o un messaggio, ogni run deve produrre un esito osservabile anche quando non trova elementi utili.
-Il riepilogo deve leggere le statistiche direttamente dai nodi che le producono, non dai metadati `pairedItem` dopo batching LLM.
+If the workflow's contract includes a notification or a message, every run must produce an observable outcome even when it finds nothing useful.
+The summary must read its statistics directly from the nodes that produce them, not from `pairedItem` metadata after LLM batching.
 
-Il messaggio deve contenere numeri reali: item ricevuti, analizzati, scartati, duplicati, passati al gate, valutati dal LLM, esiti per categoria, errori API e batch falliti.
+The message must contain real numbers: items received, analyzed, discarded, duplicates, passed the gate, evaluated by the LLM, outcomes per category, API errors, and failed batches.
 
-La consegna è verificata solo dalla risposta positiva del sistema esterno.
+Delivery is verified only by a positive response from the external system.
 
-## Come distinguere un esito vuoto reale da una pipeline rotta
+## Telling a genuine empty result from a broken pipeline
 
-Zero reale:
+Genuinely zero:
 
-- le fonti hanno prodotto dati oppure un conteggio esplicito pari a zero;
-- il gate ha statistiche numeriche;
-- la somma `analyzed` dei batch LLM coincide con gli item inviati al LLM;
-- ogni batch contiene JSON valido;
+- the sources produced data, or an explicit count of zero;
+- the gate has numeric statistics;
+- the `analyzed` sum across LLM batches matches the items sent to the LLM;
+- every batch contains valid JSON;
 - `has_partial_failures=false`;
-- il parser produce conteggi numerici;
-- la notifica risponde `ok=true`.
+- the parser produces numeric counts;
+- the notification responds `ok=true`.
 
-Pipeline rotta:
+Broken pipeline:
 
-- `N/A` nel riepilogo;
-- item nei batch ma `analyzed: 0`;
-- item inviati al LLM senza output JSON;
-- `success` con nodo notifica non eseguito;
-- esecuzione ancora `running` o cancellata;
-- falsi `PASS` creati come fallback di batch non parsabili;
-- `versionId` diverso da `activeVersionId`.
+- `N/A` in the summary;
+- items in the batches but `analyzed: 0`;
+- items sent to the LLM with no JSON output;
+- `success` with the notification node not executed;
+- execution still `running` or cancelled;
+- false `PASS` values created as a fallback for unparseable batches;
+- `versionId` different from `activeVersionId`.
 
-## Gate di accettazione prima di lasciare lo schedule attivo
+## Acceptance gate before leaving the schedule active
 
-Non dichiarare conclusa una modifica finché non sono veri tutti i punti:
+Do not call a change done until every point below is true:
 
-1. Backup presente.
-2. Nuova versione pubblicata.
-3. `activeVersionId` corretto.
-4. Cron e timezone verificati.
-5. Run di produzione con `status=success` e `stoppedAt` valorizzato.
-6. Tutti i batch LLM parsabili.
-7. Conteggio item in ingresso uguale agli item valutati, salvo dedup/scarti esplicitamente numerati.
-8. Nessun errore parziale.
-9. Scritture database coerenti.
-10. Notifica `ok=true`, `message_id` presente e nessun `N/A`.
+1. Backup exists.
+2. New version published.
+3. `activeVersionId` correct.
+4. Cron and timezone verified.
+5. Production run with `status=success` and `stoppedAt` populated.
+6. Every LLM batch parseable.
+7. Input item count equals evaluated item count, except for explicitly counted dedup/discards.
+8. No partial errors.
+9. Database writes consistent.
+10. Notification `ok=true`, `message_id` present, no `N/A`.
 
-## Regola: LLM negli healthcheck
+## Rule: LLMs inside healthchecks
 
-Negli healthcheck operativi l'LLM può tradurre l'alert, ma non deve decidere lo stato.
-Il gate deve restare deterministico e produrre fatti minimi: workflow, stato attivo, HTTP/status, execution o conteggi verificabili quando disponibili.
-Il nodo LLM deve stare a valle del gate e deve avere fallback tecnico: se modello, gateway o parser falliscono, l'alert viene comunque inviato con il testo deterministico.
+In operational healthchecks, the LLM may translate the alert, but must not decide the status.
+The gate must stay deterministic and produce minimal facts: workflow, active state, HTTP/status, execution or verifiable counts when available.
+The LLM node must sit downstream of the gate and must have a technical fallback: if the model, gateway, or parser fail, the alert is still sent with the deterministic text.
 
-## Verifica live senza MCP n8n
+## Live verification without the n8n MCP
 
-`n8n execute` da CLI nel container in produzione può fallire: collide sul Task Broker e, in modalità `internal`, non inizializza il license provider → la decifratura delle credenziali fallisce. Quindi la CLI non verifica i nodi che usano credenziali. Per la verifica end-to-end usare l'istanza live: pubblicare una versione temporanea con cron a +pochi minuti, riavviare, far partire il run reale, poi ripristinare `activeVersionId` alla versione definitiva e cancellare la temporanea.
+`n8n execute` from the CLI inside the production container can fail: it collides on the Task Broker, and in `internal` mode it does not initialize the license provider, so credential decryption fails. So the CLI cannot verify nodes that use credentials. For end-to-end verification, use the live instance instead: publish a temporary version with a cron a few minutes out, restart, let the real run fire, then restore `activeVersionId` to the definitive version and delete the temporary one.
 
-## Note correlate
+## Related notes
 
 - `03-INFRA/remote-automation.md`

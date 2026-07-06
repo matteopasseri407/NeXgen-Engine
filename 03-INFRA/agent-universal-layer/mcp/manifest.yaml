@@ -1,27 +1,27 @@
 # ============================================================================
-# MANIFEST CANONICO MCP  ·  Agent-OS (fonte unica di verità)
+# CANONICAL MCP MANIFEST  ·  Agent-OS (single source of truth)
 # ----------------------------------------------------------------------------
-# Questo file descrive OGNI server MCP UNA volta sola, in forma astratta.
-# Un generatore (mcp/render.py) lo traduce nei dialetti delle CLI (Claude,
-# Codex, Antigravity, OpenCode) su ogni macchina. Si modifica QUI; il resto
-# e' generato.
+# This file describes EVERY MCP server exactly once, in abstract form.
+# A generator (mcp/render.py) translates it into each CLI's dialect (Claude,
+# Codex, Antigravity, OpenCode) on every machine. You edit HERE; everything
+# else is generated.
 #
-# REGOLE:
-#  - Nessun segreto qui dentro. I token si referenziano per NOME di variabile
-#    d'ambiente, mai col valore. I segreti vivono in env / 99-SECRETS.
-#  - transport: "stdio" (processo locale) | "http" (server remoto con bearer).
-#  - targets: quali CLI montano questo server.
-#  - Condizionalita': i server marcati `require_env` sono inclusi solo se
-#    l'utente ha impostato la relativa variabile d'ambiente. In questo modo
-#    una installazione Local-Only non carica MCP che puntano a backend
-#    assenti. L'utente configura l'architettura in 99-INDEX/USER-PROFILE.md
-#    e imposta le env var coerenti. Il renderer deve omettere i server il cui
-#    `require_env` non e' soddisfatto.
+# RULES:
+#  - No secrets in here. Tokens are referenced by environment variable NAME,
+#    never by value. Secrets live in env / 99-SECRETS.
+#  - transport: "stdio" (local process) | "http" (remote server with bearer).
+#  - targets: which CLIs mount this server.
+#  - Conditionality: servers marked `require_env` are included only if the
+#    user has set the matching environment variable. This way, a Local-Only
+#    install doesn't load MCP servers pointing at absent backends. The user
+#    configures the architecture in 99-INDEX/USER-PROFILE.md and sets the
+#    matching env vars. The renderer must omit any server whose `require_env`
+#    is not satisfied.
 # ============================================================================
 
 servers:
 
-  # ---- spina dorsale (presente in ogni CLI, sempre) ------------------------
+  # ---- backbone (present in every CLI, always) ------------------------
 
   playwright:
     transport: stdio
@@ -29,10 +29,10 @@ servers:
     args: ["-y", "@playwright/mcp@latest", "--cdp-endpoint", "http://localhost:9222"]
     targets: [claude, codex, antigravity, opencode]
 
-  # ---- backend self-hosted (solo modalita' Cloud-Server) --------------------
-  # Le porte derivano dalle env var impostate dall'utente; default sensati
-  # allineati a 03-INFRA/deploy/*.yml. Se la env var non c'e', il renderer
-  # omette il server (require_env).
+  # ---- self-hosted backend (Cloud-Server mode only) --------------------
+  # Ports come from env vars set by the user; sane defaults aligned with
+  # 03-INFRA/deploy/*.yml. If the env var is absent, the renderer omits the
+  # server (require_env).
 
   firecrawl:
     transport: stdio
@@ -48,13 +48,13 @@ servers:
     url: "http://127.0.0.1:${N8N_TUNNEL_PORT:-5678}/mcp-server/http"
     auth: { type: bearer, env: N8N_MCP_TOKEN }
     require_env: N8N_MCP_TOKEN
-    timeouts: { startup: 120, tool: 600 }          # usati solo da Codex
+    timeouts: { startup: 120, tool: 600 }          # only used by Codex
     targets: [claude, codex, antigravity, opencode]
 
   vault-library:
     transport: http
     url: "${VAULT_LIBRARY_URL}"
-    url_env: VAULT_LIBRARY_URL                      # OpenCode parametrizza la url via env
+    url_env: VAULT_LIBRARY_URL                      # OpenCode parameterizes the url via env
     auth: { type: bearer, env: VAULT_LIBRARY_TOKEN }
     require_env: VAULT_LIBRARY_URL
     timeouts: { startup: 120, tool: 120 }
@@ -67,7 +67,7 @@ servers:
     env:
       VAULT_OCR_API_URL: "http://127.0.0.1:${OCR_TUNNEL_PORT:-33003}"
     require_env: OCR_TUNNEL_PORT
-    timeouts: { startup: 30, tool: 120 }           # tool 120s: RapidOCR su VPS 1.5 CPU puo' superare il default 30s
+    timeouts: { startup: 30, tool: 120 }           # tool 120s: RapidOCR on a 1.5-CPU VPS can exceed the 30s default
     targets: [claude, codex, antigravity, opencode]
     windows:
       command: python

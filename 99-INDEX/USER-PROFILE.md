@@ -1,63 +1,63 @@
-# Profilo Utente e Host Awareness
+# User Profile and Host Awareness
 
-> **NOTA PER L'AGENTE INSTALLATORE**: Sostituisci i placeholder `[BRACKETS]` con i dati reali raccolti durante l'intervista in `INIT.md`. Questo file è la "mappa" della macchina dell'utente.
+> **NOTE FOR THE INSTALLER AGENT**: Replace the `[BRACKET]` placeholders with the real data collected during the `INIT.md` interview. This file is the "map" of the user's machine.
 
-Questo file contiene il contesto personale e le specificità hardware dell'utente. Gli agenti devono leggerlo in fase di inizializzazione per mappare i concetti astratti del framework sulla macchina reale.
+This file contains the user's personal context and hardware specifics. Agents must read it at initialization to map the framework's abstract concepts onto the real machine.
 
-## Profilo di installazione
+## Installation profile
 
-- **profile**: `[MINIMAL | MULTI]` — MINIMAL = 1 CLI su 1 macchina. MULTI = 2+ CLI e/o 2+ macchine, usa `agent-sync` per propagare. La maggior parte delle regole "single source / propagate to all / cross-platform" in `AGENTS.md` è condizionale al `profile: MULTI`.
-- **clis**: `[elenco CLI installate, es. claude-code | codex | opencode | antigravity]`
-- **machines**: `[elenco macchine, es. primary (questa) | secondary (opzionale)]`
-- **sync_method**: `[manual | agent-sync]` — in MINIMAL basta installare la CLI e montare MCP/skill a mano; in MULTI usa il provisioner `agent-sync` per allineare ogni CLI e macchina alla fonte canonica.
+- **profile**: `[MINIMAL | MULTI]` — MINIMAL = 1 CLI on 1 machine. MULTI = 2+ CLIs and/or 2+ machines, uses `agent-sync` to propagate. Most "single source / propagate to all / cross-platform" rules in `AGENTS.md` are conditional on `profile: MULTI`.
+- **clis**: `[list of installed CLIs, e.g. claude-code | codex | opencode | antigravity]`
+- **machines**: `[list of machines, e.g. primary (this one) | secondary (optional)]`
+- **sync_method**: `[manual | agent-sync]` — in MINIMAL, just install the CLI and mount MCP/skills by hand; in MULTI, use the `agent-sync` provisioner to align every CLI and machine to the canonical source.
 
 ## Host Awareness
 
-- **Workstation Principale**: `[INSERIRE OS — es. Windows/Mac/Linux]`, `[INSERIRE SPECIFICHE — es. M2 Max, RTX 4090, 32GB RAM]`. `[INSERIRE NOTE — es. Usala per modelli locali / Non adatta a modelli locali]`.
-- **Dispositivo Secondario (Opzionale)**: `[INSERIRE SPECIFICHE SECONDO DEVICE, o Rimuovere se non presente]`.
+- **Primary workstation**: `[FILL IN OS — e.g. Windows/Mac/Linux]`, `[FILL IN SPECS — e.g. M2 Max, RTX 4090, 32GB RAM]`. `[FILL IN NOTES — e.g. Use it for local models / Not suited for local models]`.
+- **Secondary device (optional)**: `[FILL IN SECOND DEVICE SPECS, or remove if not present]`.
 
 ## Knowledge Vault
 
-- **Workstation Principale**: `[INSERIRE PATH ASSOLUTO — es. /home/utente/KnowledgeVault o C:\Users\utente\KnowledgeVault]`
-- **Git remoto (opzionale)**: `[INSERIRE URL DEL TUO FORK, o Rimuovere se non versioni il vault su remoto]`
+- **Primary workstation**: `[FILL IN ABSOLUTE PATH — e.g. /home/user/KnowledgeVault or C:\Users\user\KnowledgeVault]`
+- **Git remote (optional)**: `[FILL IN YOUR FORK'S URL, or remove if you don't version the vault remotely]`
 
-## Architettura: Local-Only o Cloud-Server
+## Architecture: Local-Only or Cloud-Server
 
-- **Modalità**: `[LOCAL-ONLY] oppure [CLOUD-SERVER]`
+- **Mode**: `[LOCAL-ONLY] or [CLOUD-SERVER]`
 
-### Se LOCAL-ONLY
+### If LOCAL-ONLY
 
-- Tutto gira sulla macchina locale. Nessun VPS.
-- Web search → tool nativo della CLI (firecrawl assente).
-- OCR → vision del modello (OCR self-hosted assente).
-- Automazioni remote → non disponibili (n8n remoto assente).
-- Variabile d'ambiente: `KNOWLEDGE_VAULT_REMOTE="local"`
+- Everything runs on the local machine. No VPS.
+- Web search → the CLI's native tool (Firecrawl absent).
+- OCR → model vision (self-hosted OCR absent).
+- Remote automations → not available (remote n8n absent).
+- Environment variable: `KNOWLEDGE_VAULT_REMOTE="local"`
 
-### Se CLOUD-SERVER
+### If CLOUD-SERVER
 
 - **Remote backend (VPS)**:
-  - SSH alias: `[INSERIRE ALIAS SSH]`
-  - IP pubblico: `[INSERIRE IP]`
-  - Home directory sul VPS: `[INSERIRE PATH REMOTO]`
-- **Tunnel SSH locali**:
-  - n8n: `127.0.0.1:[PORTA_N8N]` → remoto `127.0.0.1:5678`
-  - Firecrawl: `127.0.0.1:[PORTA_FIRECRAWL]` → remoto `127.0.0.1:3002`
-  - OCR: `127.0.0.1:[PORTA_OCR]` → remoto `127.0.0.1:3033`
+  - SSH alias: `[FILL IN SSH ALIAS]`
+  - Public IP: `[FILL IN IP]`
+  - Home directory on the VPS: `[FILL IN REMOTE PATH]`
+- **Local SSH tunnels**:
+  - n8n: `127.0.0.1:[N8N_PORT]` → remote `127.0.0.1:5678`
+  - Firecrawl: `127.0.0.1:[FIRECRAWL_PORT]` → remote `127.0.0.1:3002`
+  - OCR: `127.0.0.1:[OCR_PORT]` → remote `127.0.0.1:3033`
 
-## Model team (configurato dall'utente)
+## Model team (configured by the user)
 
-- **Frontier (reasoning/architecture)**: `[INSERIRE MODELLO/CLI — es. Claude Opus, GPT-5, Gemini Pro]`
-- **Frontier (orchestration/build)**: `[INSERIRE MODELLO/CLI]`
-- **Mid-tier (component execution)**: `[INSERIRE MODELLO/CLI — es. DeepSeek V4-Pro]`
-- **Frontier (terminal/sysadmin)**: `[INSERIRE MODELLO/CLI]`
-- **Bulk (mechanical data)**: `[INSERIRE MODELLO/CLI — es. Gemini Flash, DeepSeek Flash]`
-- **Local worker (fallback)**: `[INSERIRE MODELLO LOCALE — es. Ollama/Gemma, o "nessuno"]`
+- **Frontier (reasoning/architecture)**: `[FILL IN MODEL/CLI — e.g. Claude Opus, GPT-5, Gemini Pro]`
+- **Frontier (orchestration/build)**: `[FILL IN MODEL/CLI]`
+- **Mid-tier (component execution)**: `[FILL IN MODEL/CLI — e.g. DeepSeek V4-Pro]`
+- **Frontier (terminal/sysadmin)**: `[FILL IN MODEL/CLI]`
+- **Bulk (mechanical data)**: `[FILL IN MODEL/CLI — e.g. Gemini Flash, DeepSeek Flash]`
+- **Local worker (fallback)**: `[FILL IN LOCAL MODEL — e.g. Ollama/Gemma, or "none"]`
 
-In MINIMAL con una sola CLI, puoi mappare più lane sullo stesso modello/CLI. In MULTI, di solito ogni lane corrisponde a una CLI diversa.
+In MINIMAL with a single CLI, you can map several lanes onto the same model/CLI. In MULTI, each lane usually corresponds to a different CLI.
 
 ## Identity & Tone
 
 - You operate inside the user's KnowledgeVault as a disciplined member of their agent team.
 - Keep the user visible: close substantial work with a short summary.
 - The default browser profile is the user's single working profile. Never drive it headless.
-- `[AGGIUNGERE QUI LE PREFERENZE DI COMUNICAZIONE DELL'UTENTE (es. lingua, stile, formalità)]`
+- `[ADD THE USER'S COMMUNICATION PREFERENCES HERE (e.g. language, style, formality)]`

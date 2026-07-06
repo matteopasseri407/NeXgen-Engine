@@ -1,44 +1,44 @@
-# Mappa dei guardiani del layer agenti
+# Agent Layer Guardians Map
 
-Complemento operativo di [[agentic-layer-concept-map]]: la vista "osservabilità" del layer, cioè chi esegue, chi diagnostica e chi avvisa. Nato dalla domanda "quante sentinelle ci sono e come si allineano?" (2026-07-04). Versione visuale (artifact): https://
+Operational companion to [[agentic-layer-concept-map]]: the "observability" view of the layer, i.e. who executes, who diagnoses, and who alerts.
 
-## Regola d'oro
+## Golden rule
 
-Un posto solo decide se qualcosa è rotto, un posto solo te lo dice, tutti gli altri eseguono in silenzio.
+One single place decides whether something is broken, one single place tells the user, everything else executes silently.
 
-## I tre ruoli
+## The three roles
 
-- **Un cervello, `agent-doctor`.** La diagnosi completa: git vs remote, MCP raggiungibili, drift MCP via `render.py`, istruzioni canoniche, token in env, skill, worker locale risolto, hook Claude, strict-check dei consumatori reali. È l'unico giudice e l'unico comando da lanciare a mano: `agent-doctor` (o `--summary` per la riga `PASS/WARN/FAIL`).
-- **Un megafono, `agent-healthcheck`.** L'UNICO autorizzato a notificare. Interroga il dottore, avvisa solo su FAIL, con debounce (subito se il problema è nuovo, 1 volta al giorno se persiste), messaggio in italiano semplice con `[tecnico: ...]` in coda. Trasporto in ordine: Telegram, webhook, `notify-send` desktop, log.
-- **Un orologio, `agent-sync.timer`** (Linux ogni 30 min, Windows task schedulato). L'unico scheduler ricorrente. Lancia `agent-sync guard` = pull + apply dei derivati + healthcheck. `agent-sync` esegue e logga soltanto, NON notifica.
+- **A brain, `agent-doctor`.** Full diagnosis: git vs remote, MCP reachability, MCP drift via `render.py`, canonical instructions, tokens in env, skills, resolved local worker, Claude hooks, strict-check of real consumers. It is the only judge and the only command meant to be run by hand: `agent-doctor` (or `--summary` for the one-line `PASS/WARN/FAIL`).
+- **A megaphone, `agent-healthcheck`.** The ONLY thing authorized to notify. It queries the doctor and alerts only on FAIL, with debounce (immediately if the problem is new, once a day if it persists), plain-language message with `[technical: ...]` appended. Transport order: messaging bot, webhook, desktop `notify-send`, log.
+- **A clock, `agent-sync.timer`** (Linux every 30 min, a scheduled task on Windows). The only recurring scheduler. It runs `agent-sync guard` = pull + apply derived config + healthcheck. `agent-sync` only executes and logs, it does NOT notify.
 
-## Consolidamento 2026-07-04 (un solo megafono)
+## Consolidation pass (single megaphone)
 
-Fino al 3/7 `agent-sync` notificava il drift MCP per conto suo (sentinella inline, senza debounce, mittente separato), duplicando ciò che `agent-doctor` già calcola e `agent-healthcheck` già annuncia a fine giro. Rimossa: ora esiste UNA sola superficie di alert. `agent-sync` è muto. Verificato: l'unico `notify-send` del layer è in `agent-healthcheck.sh`.
+`agent-sync` used to notify MCP drift on its own (an inline sentinel, no debounce, separate sender), duplicating what `agent-doctor` already computes and `agent-healthcheck` already announces at the end of each run. That path was removed: there is now ONE single alert surface, and `agent-sync` stays silent. Verified: the only `notify-send` call in the layer lives in `agent-healthcheck.sh`.
 
-## Flusso del giro automatico
+## Automatic run flow
 
-`agent-sync.timer` fa partire `agent-sync guard`:
+`agent-sync.timer` triggers `agent-sync guard`:
 
 1. pull the vault from the remote
-2. apply: config MCP (`render.py`, additivo) + skill (`skills-sync.py`)
-3. `agent-healthcheck` interroga `agent-doctor` e notifica SOLO se FAIL
+2. apply: MCP config (`render.py`, additive) + skills (`skills-sync.py`)
+3. `agent-healthcheck` queries `agent-doctor` and notifies ONLY on FAIL
 
-## Inventario
+## Inventory
 
-| Guardiano | Ruolo | Cosa fa |
+| Guardian | Role | What it does |
 |---|---|---|
-| `agent-sync` (+ `.timer`) | orologio | giro ricorrente: pull, apply config e skill, chiama l'healthcheck. Muto. |
-| `agent-doctor` | cervello | diagnosi completa dell'allineamento; unico giudice |
-| `agent-healthcheck` | megafono | notifica solo su FAIL, con debounce e formato umano; unico alert |
-| `render.py` | esecutore | genera le config MCP dal manifest (additivo); calcola il drift |
-| `skills-sync.py` | esecutore | propaga le skill dal manifest a tutte le macchine |
-| `skill-check` | esecutore | controllo advisory di sicurezza di una skill (SkillSpector) |
-| `sync-vault-from-remote` | esecutore | pull the vault from the remote before apply |
-| `n8n-vault-backup` | esecutore | backup notturno dei workflow n8n (cron on the remote backend) |
-| `sync-job-pipeline` | esecutore | aggiorna la dashboard della ricerca lavoro |
-| tunnels to the remote | esecutore | tunnel SSH persistenti (OCR, n8n, firecrawl) |
+| `agent-sync` (+ `.timer`) | clock | recurring run: pull, apply config and skills, calls the healthcheck. Silent. |
+| `agent-doctor` | brain | full alignment diagnosis; the only judge |
+| `agent-healthcheck` | megaphone | notifies only on FAIL, with debounce and human-readable format; the only alert |
+| `render.py` | executor | generates MCP configs from the manifest (additive); computes drift |
+| `skills-sync.py` | executor | propagates skills from the manifest to every machine |
+| `skill-check` | executor | advisory security check of a skill (SkillSpector) |
+| `sync-vault-from-remote` | executor | pulls the vault from the remote before apply |
+| `n8n-vault-backup` | executor | nightly backup of n8n workflows (cron on the remote backend) |
+| `sync-job-pipeline` | executor | refreshes the job-search dashboard |
+| tunnels to the remote | executor | persistent SSH tunnels (OCR, n8n, firecrawl) |
 
-## Principio di estensione
+## Extension principle
 
-Un controllo nuovo va DENTRO `agent-doctor`, non in un nuovo script che notifica. Una cosa nuova da dire a the user passa da `agent-healthcheck`. Mai aggiungere `notify-send` altrove: spezzerebbe il megafono unico e riporta il rumore sparso che questo consolidamento ha eliminato.
+A new check goes INSIDE `agent-doctor`, not into a new script that notifies on its own. Anything new that needs to reach the user goes through `agent-healthcheck`. Never add `notify-send` anywhere else: it would break the single-megaphone rule and bring back the scattered noise this consolidation removed.

@@ -493,26 +493,26 @@ function New-McpStdioServer {
 }
 
 function Sync-ManifestSkills {
-    # Skill dal manifest (incluse le third-party github) + catalogo INDEX.md.
-    # skills-sync.py e' idempotente e additivo: sicuro nella corsia ricorrente.
-    # Senza questa chiamata una skill registrata nel manifest arriva solo dove
-    # qualcuno lancia --apply a mano (buco humanizer, 2026-07-03).
+    # Skills from the manifest (including third-party GitHub ones) + INDEX.md catalog.
+    # skills-sync.py is idempotent and additive: safe in the recurring lane.
+    # Without this call, a skill registered in the manifest only arrives
+    # wherever someone runs --apply by hand (the humanizer bug).
     $skillsSync = Join-Path $EngineRoot "scripts\skills-sync.py"
     if (-not (Test-Path -LiteralPath $skillsSync)) {
-        Write-Log "skills-manifest: script mancante $skillsSync"
+        Write-Log "skills-manifest: missing script $skillsSync"
         return
     }
     if (-not (Get-Command "python" -ErrorAction SilentlyContinue)) {
-        Write-Log "skills-manifest: python non in PATH, salto"
+        Write-Log "skills-manifest: python not in PATH, skipping"
         return
     }
     $out = & python $skillsSync --apply 2>&1
     if ($LASTEXITCODE -eq 0) {
-        $summary = ($out | Select-String -Pattern "Totale:" | Select-Object -Last 1)
+        $summary = ($out | Select-String -Pattern "Total:" | Select-Object -Last 1)
         Write-Log "skills-manifest: apply ok ($($summary -replace '\e\[[0-9;]*m', ''))"
     }
     else {
-        Write-Log "skills-manifest: apply con FAIL (best-effort, dettaglio nel diff manuale)"
+        Write-Log "skills-manifest: apply had a FAIL (best-effort, detail in the manual diff)"
     }
 }
 

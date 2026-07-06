@@ -4,7 +4,6 @@ tags:
   - agents
   - ocr
   - mcp
-last_updated: <past-date>
 ---
 
 # Vault OCR

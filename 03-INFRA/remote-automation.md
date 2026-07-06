@@ -55,7 +55,7 @@ ssh <remote-alias> "sudo docker logs --tail 200 n8n-n8n-1"
 - Workflow backups: `[remote-home]/n8n/backups/`.
 - The user's vault is backed up separately by the vault sync pipeline.
 
-## Notes correlated
+## Related notes
 
 - `03-INFRA/n8n-workflow-regression-runbook.md`
 - `03-INFRA/firecrawl.md`

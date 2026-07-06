@@ -1,36 +1,38 @@
 #!/usr/bin/env python3
-"""Sincronizzatore SKILL — agent-layer (specchio di mcp/render.py).
+"""SKILL synchronizer — agent-layer (mirror of mcp/render.py).
 
-Legge skills.manifest.yaml e fa sì che, su QUESTA macchina, l'hub
-~/.agents/skills e i runtime (Claude, Codex) contengano esattamente le skill
-scelte nel manifest. Un solo script per Fedora e Windows.
+Reads skills.manifest.yaml and makes sure that, on THIS machine, the
+~/.agents/skills hub and the runtimes (Claude, Codex) contain exactly the
+skills chosen in the manifest. One single script for Fedora and Windows.
 
-  - default (--diff): READ-ONLY. Mostra cosa farebbe, NON tocca nulla.
-  - --apply:          esegue le azioni (crea/ripara link, segnala installazioni
-                      mancanti). Idempotente: se è già allineato non fa niente.
+  - default (--diff): READ-ONLY. Shows what it would do, touches nothing.
+  - --apply:          runs the actions (creates/repairs links, flags missing
+                      installs). Idempotent: does nothing if already aligned.
 
-Modello dei byte (come da manifest):
-  - origin vault  -> l'hub punta (symlink, o copia su Windows) alla cartella
-                     vendorizzata nel vault. Git ha già portato i byte ovunque.
-  - origin github -> third-party non vendorizzata: i byte si reinstallano da
-                     upstream con `skills add <repo>` (npx). Se manca, --apply
-                     prova a installarla; se manca node/npx, lo segnala.
+Byte model (per the manifest):
+  - origin vault  -> the hub points (symlink, or a copy on Windows) to the
+                     folder vendored in the vault. Git has already carried
+                     the bytes everywhere.
+  - origin github -> third-party, not vendored: the bytes get reinstalled
+                     from upstream with `skills add <repo>` (npx). If
+                     missing, --apply tries to install it; if node/npx is
+                     missing, it flags it.
 
 Runtime:
-  - Codex: symlink (o copia su Windows) per-skill in ~/.codex/skills/<name>.
-  - Claude: ~/.claude/skills di norma è un symlink dell'INTERA cartella verso
-            l'hub, quindi vede tutto in automatico; lo script lo verifica. Se
-            invece è una cartella reale (modello a copie, tipico Windows),
-            rispecchia la singola skill.
+  - Codex: per-skill symlink (or copy on Windows) in ~/.codex/skills/<name>.
+  - Claude: ~/.claude/skills is normally a symlink of the ENTIRE folder
+            pointing at the hub, so it sees everything automatically; the
+            script verifies this. If instead it's a real folder (the
+            copy-based model, typical on Windows), it mirrors the single skill.
 
-NON è autoritativo per la cancellazione: non rimuove skill assenti dal manifest.
+NOT authoritative for deletion: it never removes a skill absent from the manifest.
 """
 from __future__ import annotations
 import argparse, platform, shutil, subprocess, sys, tempfile
 from pathlib import Path
 import yaml
 
-# Console Windows in cp1252: i glifi unicode (checkmark) crasherebbero la print.
+# Windows console in cp1252: the unicode glyphs (checkmark) would crash the print.
 if sys.stdout.encoding and sys.stdout.encoding.lower().replace("-", "") != "utf8":
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
@@ -58,7 +60,7 @@ def sec(m):  print(f"\n\033[1m{m}\033[0m")
 
 
 def resolves_to(link: Path, target: Path) -> bool:
-    """True se `link` è un symlink che risolve a `target`."""
+    """True if `link` is a symlink that resolves to `target`."""
     try:
         return link.is_symlink() and link.resolve() == target.resolve()
     except OSError:
@@ -66,39 +68,39 @@ def resolves_to(link: Path, target: Path) -> bool:
 
 
 def ensure_link(src: Path, dst: Path, apply: bool, label: str) -> None:
-    """Fa in modo che `dst` punti a / rispecchi `src`. Non distrugge cartelle
-    reali inattese: in quel caso segnala e si ferma (no clobber)."""
+    """Makes `dst` point to / mirror `src`. Never destroys an unexpected real
+    folder: in that case it flags it and stops (no clobber)."""
     if resolves_to(dst, src):
-        ok(f"{label}: già allineato")
+        ok(f"{label}: already aligned")
         return
     if dst.exists() and not dst.is_symlink():
-        # cartella reale: su Windows (modello a copie) è accettabile se ha il
-        # contenuto; non la cancelliamo mai.
+        # real folder: on Windows (copy-based model) this is fine as long as
+        # it has content; never delete it.
         if (dst / "SKILL.md").exists():
-            ok(f"{label}: presente come copia reale (lascio com'è)")
+            ok(f"{label}: present as a real copy (leaving it as-is)")
         else:
-            warn(f"{label}: esiste come cartella reale senza SKILL.md, non tocco (controlla a mano)")
+            warn(f"{label}: exists as a real folder with no SKILL.md, not touching it (check by hand)")
         return
-    # qui dst manca o è un symlink rotto/sbagliato: lo (ri)creiamo.
+    # dst is missing or a broken/wrong symlink here: (re)create it.
     if not apply:
-        act(f"{label}: creerei link -> {src}")
+        act(f"{label}: would create link -> {src}")
         return
     if dst.is_symlink() or dst.exists():
         dst.unlink()
     dst.parent.mkdir(parents=True, exist_ok=True)
     try:
         dst.symlink_to(src, target_is_directory=True)
-        act(f"{label}: symlink creato -> {src}")
+        act(f"{label}: symlink created -> {src}")
     except OSError:
-        # Windows senza privilegio symlink: fallback a copia.
+        # Windows without symlink privilege: fall back to a copy.
         shutil.copytree(src, dst)
-        act(f"{label}: copiato (symlink non disponibile) <- {src}")
+        act(f"{label}: copied (symlink unavailable) <- {src}")
 
 
 def load_excludes(cli: str) -> set:
-    """Skill escluse dal precarico per un runtime (lazy: restano nell'hub,
-    lette on-demand). Stessa fonte usata da agent-sync §4: i due provisioner
-    DEVONO leggere la stessa lista, o si riparano/rompono a vicenda."""
+    """Skills excluded from preloading for a runtime (lazy: they stay in the
+    hub, read on-demand). Same source used by agent-sync §4: the two
+    provisioners MUST read the same list, or they'll fight/break each other."""
     f = UL / f"skills-exclude-{cli}.txt"
     if not f.exists():
         return set()
@@ -107,49 +109,50 @@ def load_excludes(cli: str) -> set:
 
 
 def ensure_absent_link(dst: Path, apply: bool, label: str) -> None:
-    """La skill è esclusa dal runtime: il link per-skill NON deve esserci.
-    Rimuove solo symlink; una cartella reale non è nostra e non si tocca."""
+    """The skill is excluded from the runtime: the per-skill link must NOT be
+    there. Only removes symlinks; a real folder isn't ours and isn't touched."""
     if dst.is_symlink():
         if apply:
             dst.unlink()
-            act(f"{label}: link rimosso (esclusa dal precarico, lazy nell'hub)")
+            act(f"{label}: link removed (excluded from preload, lazy in the hub)")
         else:
-            act(f"{label}: rimuoverei il link (esclusa, lazy)")
+            act(f"{label}: would remove the link (excluded, lazy)")
     elif dst.exists():
-        warn(f"{label}: esclusa ma esiste come cartella reale, non tocco (controlla a mano)")
+        warn(f"{label}: excluded but exists as a real folder, not touching it (check by hand)")
     else:
-        ok(f"{label}: esclusa (lazy, on-demand dall'hub)")
+        ok(f"{label}: excluded (lazy, on-demand from the hub)")
 
 
 def install_github(name: str, spec: dict, apply: bool) -> bool:
-    """Skill third-party assente dall'hub: la reinstalla da upstream con un
-    `git clone` controllato (niente npx: collide col symlink dell'intera
-    cartella di Claude). `path` nel manifest = sottocartella col SKILL.md
-    (default: radice del repo). Ritorna True se al termine è presente."""
+    """Third-party skill missing from the hub: reinstalls it from upstream
+    with a controlled `git clone` (no npx: it collides with Claude's
+    whole-folder symlink). `path` in the manifest = subfolder containing
+    SKILL.md (default: repo root). Returns True if present at the end."""
     repo = spec.get("repo", "")
     sub = spec.get("path", ".")
     dst = HUB / name
-    # difensiva: nell'hub una skill github dev'essere una cartella reale (copia).
-    # se qui trovo un symlink (self-loop, rotto o residuo), non è mai uno stato
-    # valido e manderebbe il `.exists()` qui sotto in ELOOP, bloccando il sync.
-    # lo rimuovo subito così il sync si auto-ripara invece di piantarsi.
+    # defensive: in the hub, a github skill must be a real folder (a copy).
+    # if a symlink is found here (self-loop, broken, or leftover), that's
+    # never a valid state and would send the `.exists()` check below into
+    # ELOOP, blocking the sync. Remove it right away so the sync self-heals
+    # instead of getting stuck.
     if dst.is_symlink():
         if not apply:
-            act(f"hub/{name}: symlink anomalo nell'hub (self-loop/rotto), in --apply lo rimuoverei e reinstallerei da {repo}")
+            act(f"hub/{name}: anomalous symlink in the hub (self-loop/broken), --apply would remove it and reinstall from {repo}")
             return False
-        warn(f"hub/{name}: symlink anomalo nell'hub, lo rimuovo e reinstallo da {repo}")
+        warn(f"hub/{name}: anomalous symlink in the hub, removing it and reinstalling from {repo}")
         dst.unlink()
     if (dst / "SKILL.md").exists():
-        ok(f"hub/{name}: presente (third-party {repo})")
+        ok(f"hub/{name}: present (third-party {repo})")
         return True
     if not apply:
         extra = f" [{sub}]" if sub != "." else ""
-        act(f"hub/{name}: MANCANTE, installerei da {repo}{extra}  (git clone)")
+        act(f"hub/{name}: MISSING, would install from {repo}{extra}  (git clone)")
         return False
     if shutil.which("git") is None:
-        fail(f"hub/{name}: manca e git non c'è. Copia a mano la skill da https://github.com/{repo}")
+        fail(f"hub/{name}: missing and git isn't available. Copy the skill by hand from https://github.com/{repo}")
         return False
-    # dst inesistente o rotta/vuota (qui non ha SKILL.md): ripuliamo prima.
+    # dst missing or broken/empty (no SKILL.md here): clean it up first.
     if dst.is_symlink():
         dst.unlink()
     elif dst.exists():
@@ -161,26 +164,27 @@ def install_github(name: str, spec: dict, apply: bool) -> bool:
         r = subprocess.run(["git", "clone", "--depth", "1", url, str(repo_dir)],
                            capture_output=True, text=True)
         if r.returncode != 0:
-            fail(f"hub/{name}: clone fallito. {r.stderr.strip()[:200]}")
+            fail(f"hub/{name}: clone failed. {r.stderr.strip()[:200]}")
             return False
         src = repo_dir / sub
         if not (src / "SKILL.md").exists():
-            fail(f"hub/{name}: SKILL.md non trovato in '{sub}' del repo {repo}")
+            fail(f"hub/{name}: SKILL.md not found in '{sub}' of repo {repo}")
             return False
         shutil.copytree(src, dst, ignore=shutil.ignore_patterns(".git", ".claude-plugin"))
         (dst / ".source").write_text(
             f"source: https://github.com/{repo}\nupstream: {repo}\npath: {sub}\n"
-            f"model: vendored-as-is (non modificata)\n", encoding="utf-8")
-        act(f"hub/{name}: installata da {repo}")
+            f"model: vendored-as-is (unmodified)\n", encoding="utf-8")
+        act(f"hub/{name}: installed from {repo}")
         return True
 
 
 def write_index(apply: bool) -> None:
-    """Genera ~/.agents/skills/INDEX.md: catalogo one-line-per-skill (nome +
-    descrizione dal frontmatter di SKILL.md). È il lazy-loading UNIVERSALE:
-    ogni CLI/modello (anche senza formato skill: Antigravity, OpenCode, worker
-    locale) legge il catalogo e apre la SKILL.md giusta solo quando il task la
-    richiede. Idempotente: riscrive solo se il contenuto cambia."""
+    """Generates ~/.agents/skills/INDEX.md: a one-line-per-skill catalog
+    (name + description from SKILL.md's frontmatter). This is the UNIVERSAL
+    lazy-loading mechanism: every CLI/model (even without a skill format:
+    Antigravity, OpenCode, local worker) reads the catalog and opens the
+    right SKILL.md only when the task requires it. Idempotent: rewrites only
+    if the content changes."""
     rows = []
     for d in sorted(HUB.iterdir()):
         md = d / "SKILL.md"
@@ -189,7 +193,7 @@ def write_index(apply: bool) -> None:
                 continue
             text = md.read_text(encoding="utf-8", errors="replace")
         except OSError:
-            continue  # symlink rotto/self-loop: non deve uccidere l'indice
+            continue  # broken/self-loop symlink: must not kill the index
         desc = ""
         if text.startswith("---"):
             end = text.find("\n---", 3)
@@ -201,29 +205,29 @@ def write_index(apply: bool) -> None:
                     pass
         if len(desc) > 240:
             desc = desc[:237].rstrip() + "..."
-        rows.append(f"- **{d.name}**: {desc or '(senza descrizione)'}")
+        rows.append(f"- **{d.name}**: {desc or '(no description)'}")
     body = (
-        "# Skill catalog (GENERATO da skills-sync.py --index, non editare)\n\n"
-        "Catalogo per TUTTI gli agenti e le CLI, lazy by design.\n"
-        "Uso: quando il task matcha una voce, leggi `~/.agents/skills/<skill>/SKILL.md` e seguila.\n"
-        "Non precaricare mai l'intero set.\n\n"
+        "# Skill catalog (GENERATED by skills-sync.py --index, do not edit)\n\n"
+        "Catalog for ALL agents and CLIs, lazy by design.\n"
+        "Usage: when the task matches an entry, read `~/.agents/skills/<skill>/SKILL.md` and follow it.\n"
+        "Never preload the whole set.\n\n"
         + "\n".join(rows) + "\n")
     dst = HUB / "INDEX.md"
     old = dst.read_text(encoding="utf-8") if dst.exists() else ""
     if old == body:
-        ok(f"INDEX.md: già aggiornato ({len(rows)} skill)")
+        ok(f"INDEX.md: already up to date ({len(rows)} skills)")
         return
     if not apply:
-        act(f"INDEX.md: rigenererei il catalogo ({len(rows)} skill)")
+        act(f"INDEX.md: would regenerate the catalog ({len(rows)} skills)")
         return
     dst.write_text(body, encoding="utf-8")
-    act(f"INDEX.md: catalogo rigenerato ({len(rows)} skill)")
+    act(f"INDEX.md: catalog regenerated ({len(rows)} skills)")
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser(description="Sincronizza le skill dell'agent-layer dal manifest.")
-    ap.add_argument("--apply", action="store_true", help="esegue le azioni (default: solo diff read-only)")
-    ap.add_argument("--index", action="store_true", help="rigenera SOLO il catalogo INDEX.md ed esce")
+    ap = argparse.ArgumentParser(description="Syncs the agent-layer's skills from the manifest.")
+    ap.add_argument("--apply", action="store_true", help="run the actions (default: read-only diff only)")
+    ap.add_argument("--index", action="store_true", help="regenerate ONLY the INDEX.md catalog and exit")
     args = ap.parse_args()
     apply = args.apply
 
@@ -234,7 +238,7 @@ def main() -> int:
         return 1 if FAILN else 0
 
     if not MANIFEST.exists():
-        print(f"manifest non trovato: {MANIFEST}", file=sys.stderr)
+        print(f"manifest not found: {MANIFEST}", file=sys.stderr)
         return 2
     data = yaml.safe_load(MANIFEST.read_text(encoding="utf-8")) or {}
     skills = data.get("skills") or {}
@@ -243,7 +247,7 @@ def main() -> int:
     print(f"\033[1m=== skills-sync [{mode}] · {platform.system()} ===\033[0m")
     HUB.mkdir(parents=True, exist_ok=True)
 
-    # stato del runtime Claude: cartella-symlink verso l'hub (vede tutto)?
+    # state of the Claude runtime: symlink-folder pointing at the hub (sees everything)?
     claude_is_hub_link = resolves_to(RUNTIME["claude"], HUB)
     excludes = {cli: load_excludes(cli) for cli in RUNTIME}
 
@@ -252,40 +256,40 @@ def main() -> int:
         origin = spec.get("origin")
         targets = spec.get("targets", [])
 
-        # 1) materializza nell'hub
+        # 1) materialize in the hub
         if origin == "vault":
             ensure_link(UL / "skills" / name, HUB / name, apply, f"hub/{name}")
             present = (HUB / name / "SKILL.md").exists() or resolves_to(HUB / name, UL / "skills" / name)
         elif origin == "github":
             present = install_github(name, spec, apply)
         else:
-            fail(f"origin sconosciuto '{origin}' per {name}")
+            fail(f"unknown origin '{origin}' for {name}")
             continue
 
-        # 2) aggancia i runtime (rispettando le exclude-list: lazy > precarico)
+        # 2) hook up the runtimes (honoring the exclude lists: lazy > preload)
         for t in targets:
             if t in RUNTIME and name in excludes[t]:
                 if t == "claude" and claude_is_hub_link:
-                    warn(f"claude/{name}: esclusione IMPOSSIBILE finché ~/.claude/skills è un symlink all'hub")
+                    warn(f"claude/{name}: exclusion IMPOSSIBLE while ~/.claude/skills is a symlink to the hub")
                 else:
                     ensure_absent_link(RUNTIME[t] / name, apply, f"{t}/{name}")
                 continue
             if t == "claude":
                 if claude_is_hub_link:
-                    ok("claude: coperta (symlink dell'intera cartella verso l'hub)")
+                    ok("claude: covered (whole-folder symlink pointing at the hub)")
                 else:
                     ensure_link(HUB / name, RUNTIME["claude"] / name, apply, f"claude/{name}")
             elif t == "codex":
                 ensure_link(HUB / name, RUNTIME["codex"] / name, apply, f"codex/{name}")
             else:
-                warn(f"target sconosciuto '{t}'")
+                warn(f"unknown target '{t}'")
 
-    sec("catalogo universale")
+    sec("universal catalog")
     write_index(apply)
 
-    print(f"\n\033[1mTotale:\033[0m {PASS} ok · {ACT} azioni · {WARN} warn · {FAILN} fail")
+    print(f"\n\033[1mTotal:\033[0m {PASS} ok · {ACT} actions · {WARN} warn · {FAILN} fail")
     if not apply and ACT:
-        print("  (esegui di nuovo con --apply per applicarle)")
+        print("  (run again with --apply to apply them)")
     return 1 if FAILN else 0
 
 
