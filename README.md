@@ -85,6 +85,10 @@ You don't need to fill out configuration files manually.
 - Optional: [OpenCode](https://opencode.ai/go?ref=RK9MPMS1TB) as one of the supported CLIs
 - `jq` and `curl` on Linux/Mac (only needed for the MULTI profile sync and health scripts)
 
+## Platform status
+
+Linux is the daily-driven platform and the most tested. Windows support is an early preview, actively being worked on: the MULTI-profile PowerShell scripts (`agent-sync.ps1`, `agent-doctor.ps1`) run, but the MCP config generator (`render.py`) does not have a Windows dialect yet, and a couple of runtime paths (e.g. where Antigravity reads its instructions file) are inferred by analogy with Linux rather than confirmed live. MINIMAL profile is the safer starting point on Windows today. macOS follows the Linux code paths but has seen less real-world use.
+
 ## License
 
 See `LICENSE`.
@@ -177,6 +181,10 @@ Non devi compilare i file di configurazione a mano.
 - Node.js (per `npx`, necessario se monti server MCP o skill esterne)
 - Opzionale: [OpenCode](https://opencode.ai/go?ref=RK9MPMS1TB) come una delle CLI supportate
 - `jq` e `curl` su Linux/Mac (solo per il profilo MULTI, necessari per sync e health)
+
+## Stato per piattaforma
+
+Linux è la piattaforma usata quotidianamente e la più testata. Il supporto Windows è in early preview, ci sto lavorando attivamente: gli script PowerShell del profilo MULTI (`agent-sync.ps1`, `agent-doctor.ps1`) girano, ma il generatore di config MCP (`render.py`) non ha ancora un dialetto Windows, e un paio di percorsi runtime (ad esempio dove Antigravity legge il suo file di istruzioni) sono dedotti per analogia con Linux, non ancora confermati dal vivo. Il profilo MINIMAL è il punto di partenza più sicuro su Windows oggi. macOS segue gli stessi percorsi di codice di Linux ma ha visto meno uso reale.
 
 ## Licenza
 

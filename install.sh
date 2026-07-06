@@ -48,11 +48,23 @@ detect_os(){
 
 have(){ command -v "$1" >/dev/null 2>&1; }
 
+# Resolve the Python 3 interpreter: `python3` everywhere except stock Windows
+# installs (python.org installer), which only expose `python` — and that
+# `python` is Python 3 in every supported case (Python 2 is long EOL).
+pybin(){
+  if have python3; then echo python3; return; fi
+  if have python && python -c 'import sys; sys.exit(0 if sys.version_info[0] == 3 else 1)' 2>/dev/null; then
+    echo python; return
+  fi
+  echo ""
+}
+
 check_prereqs(){
   hdr "1 · Prerequisites"
   if have git; then ok "git — $(git --version 2>/dev/null | head -1)"; else bad "git MISSING (required) → $HINT_PKG git"; MISS_REQ=1; fi
-  if have python3; then ok "python3 — $(python3 --version 2>&1)"; else bad "python3 MISSING (required) → $HINT_PKG python3"; MISS_REQ=1; fi
-  if have python3 && python3 -c 'import yaml' 2>/dev/null; then
+  PY="$(pybin)"
+  if [ -n "$PY" ]; then ok "python3 — $($PY --version 2>&1) (as '$PY')"; else bad "python3 MISSING (required) → $HINT_PKG python3"; MISS_REQ=1; fi
+  if [ -n "$PY" ] && $PY -c 'import yaml' 2>/dev/null; then
     ok "PyYAML (python module 'yaml')"
   else
     bad "PyYAML MISSING (required for the engine) → pip install pyyaml"; MISS_REQ=1
@@ -61,6 +73,10 @@ check_prereqs(){
   if have jq; then ok "jq"; else warn "jq not found — needed only for the MULTI sync/health scripts"; fi
   if have curl; then ok "curl"; else warn "curl not found — needed only for the MULTI health scripts"; fi
   if have gpg; then ok "gpg — for the encrypted 99-SECRETS archive"; else warn "gpg not found — needed only if you store secrets in 99-SECRETS/"; fi
+}
+
+windows_note(){
+  [ "$OS" = windows ] && printf '\n  %sWindows: early preview, actively being worked on. The MULTI-profile\n  PowerShell scripts (agent-sync.ps1, agent-doctor.ps1) run, but the MCP\n  config generator (render.py) does not have a Windows dialect yet and a\n  couple of paths (e.g. the Antigravity instructions file) are inferred by\n  analogy with Linux, not yet confirmed live. MINIMAL profile is the safer\n  bet on Windows today.%s\n' "$YEL" "$R"
 }
 
 check_scaffold(){
@@ -130,6 +146,7 @@ EOF
 # ---- run -------------------------------------------------------------------
 banner
 detect_os
+windows_note
 check_prereqs
 check_scaffold
 detect_clis
