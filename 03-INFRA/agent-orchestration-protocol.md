@@ -44,7 +44,7 @@ When a cheaper agent or subagent returns work, it brings back: result, files tou
 
 Before launching a repetitive, high-volume, tool-less batch (multi-item translation/extraction/classification, audits across many files, large log sweeps), offload it to a cheap direct API instead of burning the interactive session's quota. Micro-task → interactive; big batch → direct API. Full rule in `03-INFRA/batch-vs-go-routing.md`.
 
-## Notes correlated
+## Related notes
 
 - `03-INFRA/model-routing-cost-strategy.md`
 - `03-INFRA/agent-universal-layer/templates/cheap-model-handoff.md`

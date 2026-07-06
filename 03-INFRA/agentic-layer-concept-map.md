@@ -52,7 +52,7 @@ The user runs one agent system across multiple CLIs and machines that must act a
 
 ## Why one source
 
-Hand-patching per-CLI configs creates drift: one CLIbehaves differently from another, one machine falls behind, a fix on one side does not propagate. The single-source + provisioner model means a change is made once and carries everywhere. The cost is the provisioner machinery; the benefit is a system that stays coherent as it grows.
+Hand-patching per-CLI configs creates drift: one CLI behaves differently from another, one machine falls behind, a fix on one side does not propagate. The single-source + provisioner model means a change is made once and carries everywhere. The cost is the provisioner machinery; the benefit is a system that stays coherent as it grows.
 
 ## Guardians
 
@@ -67,7 +67,7 @@ Full guardian map: `03-INFRA/agent-guardians-map.md`.
 
 No architecture change is "done" until it is carried and verified on every machine and CLI it touches. The map is part of "done": if a change alters the architecture, update this map in the same pass.
 
-## Notes correlated
+## Related notes
 
 - `03-INFRA/vault-write-architecture.md`
 - `03-INFRA/agent-guardians-map.md`

@@ -37,7 +37,7 @@ Registering it in the manifest IS part of the install. A tool added for one agen
 
 No architecture change is "done" until it is carried and verified on every machine and CLI it touches. The dialects: `agent-sync.sh`/`.ps1`, path `~/` vs the Windows user profile, `npx` vs `npx.cmd`/wrappers, symlinks vs junctions. Changing only the current machine and calling it done is the recurring bug to avoid.
 
-## Notes correlated
+## Related notes
 
 - `03-INFRA/agentic-layer-concept-map.md`
 - `03-INFRA/vault-write-architecture.md`

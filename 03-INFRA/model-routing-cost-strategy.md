@@ -35,7 +35,7 @@ Maximum verified high-quality output per scarce frontier token. Do not ship medi
 
 API keys live in env vars or the encrypted archive, never in notes or configs. Reference by env var name only. See `AGENTS.md` → `# Secrets`.
 
-## Notes correlated
+## Related notes
 
 - `03-INFRA/agent-orchestration-protocol.md`
 - `03-INFRA/batch-vs-go-routing.md`

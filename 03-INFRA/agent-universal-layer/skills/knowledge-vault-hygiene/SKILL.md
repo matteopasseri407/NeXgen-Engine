@@ -11,7 +11,7 @@ Use the KnowledgeVault as durable operational memory, not as a transcript, log s
 
 Use the local KnowledgeVault for the current machine:
 
-- Linux/Linux: `<vault-root>`
+- Linux/Mac: `<vault-root>`
 - Windows: `%USERPROFILE%\KnowledgeVault`
 - If agent instructions define a different local vault path, use that path.
 

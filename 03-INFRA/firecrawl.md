@@ -9,7 +9,7 @@ status: active
 
 # Firecrawl — default web scraping/search lane (self-hosted)
 
-Agent-facing runbook. For deployment/infra (containers, remote repo, fixes) see `03-INFRA/remote-automation.md`. For per-provider config see `agent-universal-layer/mcp/registry.md`.
+Agent-facing runbook. For deployment/infra (containers, remote repo, fixes) see `03-INFRA/remote-automation.md`. For per-provider config see `agent-universal-layer/mcp/manifest.yaml`.
 
 ## Usage rule
 
