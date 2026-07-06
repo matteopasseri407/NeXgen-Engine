@@ -30,8 +30,8 @@ KNOWN_NO_FRONTMATTER_PREFIXES = (
     "03-INFRA/agent-universal-layer/instructions/",
 )
 HISTORICAL_HINTS = re.compile(
-    r"(versione storica|nota storica|log storico|superseded|deprecated|"
-    r"superata|superato|non canonico|non usare|legacy|ritirato|ritirata)",
+    r"(historical version|historical note|historical log|superseded|deprecated|"
+    r"outdated|not canonical|do not use|legacy|retired|obsolete)",
     re.IGNORECASE,
 )
 
@@ -125,7 +125,7 @@ def print_section(title: str, rows: list[str], limit: int) -> None:
         print(row)
     remaining = len(rows) - limit
     if remaining > 0:
-        print(f"... +{remaining} altri")
+        print(f"... +{remaining} more")
 
 
 def main() -> int:

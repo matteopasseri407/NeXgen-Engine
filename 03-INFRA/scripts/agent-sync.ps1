@@ -739,10 +739,12 @@ function Push-LocalCommits {
         Write-Log "push: skipped (Local-Only mode)"
         return
     }
-    # Le due workstation condividono lo stesso branch su Oracle. Se l'altra ha pubblicato
-    # nel frattempo il push viene RIFIUTATO (non-fast-forward): diverso da "Oracle offline".
-    # Allora rebase PULITO + retry (divergenza benigna risolta da sola); solo il conflitto
-    # VERO resta manuale (rebase --abort, lo segnala il healthcheck). Mai merge auto, mai perdite.
+    # The workstations share the same branch on the remote hub. If the other
+    # one has published in the meantime, the push gets REJECTED (non-fast-
+    # forward): different from "remote hub offline". In that case, clean
+    # rebase + retry (benign divergence resolves itself); only a REAL
+    # conflict stays manual (rebase --abort, the healthcheck flags it). Never
+    # an automatic merge, never lost work.
     try {
         Invoke-GitLogged -Arguments @("fetch", "--prune", $Remote, $Branch)
         $ahead = Get-GitText -Arguments @("rev-list", "--count", "$Remote/$Branch..$Branch")
@@ -755,7 +757,7 @@ function Push-LocalCommits {
             Write-Log "push: published $ahead local commit(s) to $Remote"
         }
         else {
-            # fetch gia' fatto sopra -> oracle/$Branch e' aggiornato: il push e' stato rifiutato, non offline.
+            # fetch already ran above -> the remote branch is up to date: the push was rejected, not offline.
             $dirty = Get-GitText -Arguments @("status", "--porcelain", "--untracked-files=no")
             if (-not [string]::IsNullOrWhiteSpace($dirty)) {
                 Write-Log "push: rejected but tracked changes uncommitted; not rebasing, resolve manually"
