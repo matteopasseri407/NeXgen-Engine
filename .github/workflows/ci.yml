@@ -1,0 +1,77 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  self-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+
+      - name: Install PyYAML
+        run: pip install pyyaml
+
+      - name: Python syntax check
+        run: find . -path ./.git -prune -o -name "*.py" -print0 | xargs -0 -n1 python3 -m py_compile
+
+      - name: YAML syntax check
+        run: |
+          python3 - <<'EOF'
+          import sys, glob, yaml
+
+          failed = False
+          patterns = ["**/*.yaml", "**/*.yml"]
+          seen = set()
+          for pattern in patterns:
+              for path in glob.glob(pattern, recursive=True):
+                  if ".git/" in path or path in seen:
+                      continue
+                  seen.add(path)
+                  try:
+                      with open(path) as f:
+                          yaml.safe_load(f)
+                  except Exception as exc:
+                      print(f"INVALID YAML: {path}: {exc}")
+                      failed = True
+          sys.exit(1 if failed else 0)
+          EOF
+
+      - name: Shell syntax check
+        run: find . -path ./.git -prune -o -name "*.sh" -print0 | xargs -0 -n1 bash -n
+
+      - name: Preflight (install.sh --check)
+        run: bash install.sh --check
+
+      - name: No committed Python bytecode or caches
+        run: |
+          hits="$(git ls-files | grep -E '\.pyc$|(^|/)__pycache__/' || true)"
+          if [ -n "$hits" ]; then
+            echo "Found committed Python bytecode/cache:"
+            echo "$hits"
+            exit 1
+          fi
+
+      - name: No hardcoded personal home paths
+        run: |
+          hits="$(git grep -In "/home/matteopasseri" -- . ':(exclude).github/workflows/ci.yml' || true)"
+          if [ -n "$hits" ]; then
+            echo "Found the maintainer's personal home path hardcoded:"
+            echo "$hits"
+            exit 1
+          fi
+
+      - name: Basic secret pattern scan
+        run: |
+          hits="$(git grep -InE '(AKIA[0-9A-Z]{16}|-----BEGIN (RSA|OPENSSH|EC) PRIVATE KEY-----|ghp_[A-Za-z0-9]{36}|gho_[A-Za-z0-9]{36}|sk-[A-Za-z0-9]{20,})' || true)"
+          if [ -n "$hits" ]; then
+            echo "Possible secret pattern found:"
+            echo "$hits"
+            exit 1
+          fi

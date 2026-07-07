@@ -1,0 +1,60 @@
+# Uninstall
+
+There is no single uninstall command yet. Removal is manual because every write this project makes is a patch to a file you own (see `docs/what-gets-written.md`), not a package installed through a system manager. This walks through undoing each piece.
+
+## 1. Stop the recurring sync (MULTI profile, Linux/systemd only)
+
+```bash
+systemctl --user disable --now agent-sync.timer
+rm -f ~/.config/systemd/user/agent-sync.service ~/.config/systemd/user/agent-sync.timer
+systemctl --user daemon-reload
+```
+
+If you're on Windows, remove the equivalent Task Scheduler entry you created when you set up `agent-sync.ps1`.
+
+## 2. Restore per-CLI config from the backups, or edit by hand
+
+Before `agent-sync` overwrites a file it manages, it saves the previous version next to it as `<file>.pre-<reason>-<timestamp>.bak`. Look for those next to:
+
+- `~/.claude.json` (the `mcpServers` entries this project added)
+- `~/.codex/` config
+- `opencode.json` (the `instructions` field and its MCP section)
+- `~/.gemini/antigravity/mcp_config.json`
+
+If a `.bak` file exists from before this project touched the config, restore it. If not, remove only the MCP entries and the `instructions`/bootstrap pointer this project added; the table in `docs/what-gets-written.md` tells you exactly which field to look at per CLI.
+
+## 3. Remove the bootstrap pointer files
+
+```bash
+rm -f ~/CLAUDE.md ~/.codex/AGENTS.md ~/.gemini/config/AGENTS.md
+```
+
+Only remove these if you're not using them for something else unrelated to this project.
+
+## 4. Remove the skill folders this project copied in
+
+```bash
+rm -rf ~/.claude/skills/knowledge-vault-hygiene ~/.claude/skills/frontend-design ~/.claude/skills/humanizer
+rm -rf ~/.codex/skills/knowledge-vault-hygiene ~/.codex/skills/frontend-design ~/.codex/skills/humanizer
+rm -rf ~/.agents/skills/knowledge-vault-hygiene ~/.agents/skills/frontend-design ~/.agents/skills/humanizer
+rm -rf ~/.gemini/skills/knowledge-vault-hygiene ~/.gemini/skills/frontend-design ~/.gemini/skills/humanizer
+```
+
+Adjust the list to whatever `skills.manifest.yaml` had at install time; only delete folders you recognize as coming from this project.
+
+## 5. Remove the vault clone
+
+```bash
+rm -rf ~/KnowledgeVault   # or wherever you cloned it
+```
+
+This deletes your notes, projects, and `99-INDEX/USER-PROFILE.md` along with the engine. Back up anything under `01-NOTES/`, `02-PROJECTS/`, or `04-NOW/` first if you want to keep it.
+
+## 6. Cloud-Server mode: tear down the VPS stack separately
+
+If you deployed `03-INFRA/deploy/` (n8n, Firecrawl, OCR) on a VPS, that's a separate Docker Compose stack on a separate machine. `docker compose down -v` in that stack's folder removes its containers and volumes; this repo's uninstall does not reach your VPS over the network.
+
+## 7. Log and secrets left behind
+
+- `~/.local/state/agent-sync.log`: safe to delete, plain text, no secrets.
+- `99-SECRETS/`: only relevant if it lived inside the vault clone you just removed in step 5. If you copied the GPG archive elsewhere, that copy is untouched by any of the above.

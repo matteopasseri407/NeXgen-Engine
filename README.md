@@ -1,8 +1,26 @@
-# NeXgen Vault (AgentOps Governance Framework)
+# NeXgen Vault
 
-Most companies struggle to move AI agents from individual laptops to structured workflows. This repository provides the infrastructure and governance layer to run AI agents (Claude, Gemini, DeepSeek) predictably and safely.
+A Git-backed AgentOps control layer for AI coding CLIs.
 
-Instead of hiding data in proprietary vector databases or relying on black-box autonomous swarms, NeXgen Vault uses standard Git repositories, predictable scripts, and strict compliance checks to keep operations under control.
+Shared instructions, generated MCP config, drift checks, secrets discipline, and cross-machine agent memory, all as plain files in a Git repo, not a hosted service.
+
+You use Claude Code, Codex, OpenCode, or Antigravity, maybe more than one, maybe on two machines. Each CLI reads its bootstrap instructions from a different file, keeps its own MCP config, and has no idea what the others are doing. Change one and the rest drift out of sync, usually without anyone noticing until something breaks. NeXgen Vault gives them one canonical source and a way to check whether they've drifted from it.
+
+## Who this is for
+
+You run at least one agentic CLI on your own machine and want the actual vault, not a demo of one. If you run several CLIs, or the same setup across more than one machine, that's where the framework does most of its work: the provisioner and doctor scripts described below exist for that case. If it's just one CLI on one machine, you still get the knowledge vault and the bootstrap discipline, without needing to run any of the sync tooling.
+
+## Demo path
+
+1. Clone the repo and run the preflight: `bash install.sh --check`. It checks prerequisites, verifies the vault scaffold, and lists which agentic CLIs it finds on your machine. It writes nothing.
+2. Open `INIT.md` and paste it into a filesystem-capable agent CLI (Claude Code, Codex, OpenCode, Antigravity), not a web chat, which can't write files. The agent interviews you (how many CLIs, how many machines, Local-Only or Cloud-Server) and writes `99-INDEX/USER-PROFILE.md`.
+3. The agent mounts the MCP servers and skills for your chosen CLI(s), following the manifests in `03-INFRA/`.
+4. If you're on the MULTI profile (2+ CLIs or machines), run `agent-sync apply` to propagate the canonical config, then `agent-doctor` to see the actual compliance check: 30+ live checks against your running CLIs, VPS services, and secrets handling, with a pass, warn, or fail on each line.
+5. Change something by hand afterward (a stray MCP entry, a config file edited outside the vault) and run `agent-doctor` again. That's the drift check working.
+
+## What this does not do
+
+No UI, no hosted dashboard, no proprietary memory store. It doesn't compete with a RAG builder or a workflow orchestrator; it assumes you already have opinions about which agents and tools you want, and gives them a shared, auditable floor to run on.
 
 ## Core concepts
 
@@ -58,7 +76,7 @@ The AI-guided setup (`INIT.md`) configures the correct mode for your environment
 
 The framework fits two shapes of usage. The installer (`INIT.md`) asks and picks the right one.
 
-- **MINIMAL.** One CLI on one machine (e.g., only Claude Code on your laptop, or [OpenCode](https://opencode.ai/go?ref=RK9MPMS1TB) for a DeepSeek-based single-CLI setup). You get the knowledge vault, the bootstrap rules, lazy skills, and the discipline of writing memory through one door. There is no provisioner to run, no doctor to schedule, no cross-machine sync. Mount the MCP servers and skills you want directly in your CLI by hand. Best for solo users who just want AgentOps governance on top of a single agent.
+- **MINIMAL.** One CLI on one machine (e.g., only Claude Code on your laptop, or [OpenCode](https://opencode.ai) for a DeepSeek-based single-CLI setup). You get the knowledge vault, the bootstrap rules, lazy skills, and the discipline of writing memory through one door. There is no provisioner to run, no doctor to schedule, no cross-machine sync. Mount the MCP servers and skills you want directly in your CLI by hand. Best for solo users who just want AgentOps governance on top of a single agent.
 - **MULTI.** Two or more CLIs and/or two or more machines. The provisioner (`agent-sync`), the generator (`render.py`), the doctor, and the healthcheck come online and keep every CLI and machine aligned to the canonical source in the vault. Best for a workstation + laptop setup, or for running multiple CLIs side by side.
 
 You can start MINIMAL and switch to MULTI later. The canonical files in the vault do not change between profiles.
@@ -72,9 +90,9 @@ You don't need to fill out configuration files manually.
    git clone https://github.com/matteopasseri407/NeXgen-Vault-OL.git ~/KnowledgeVault
    cd ~/KnowledgeVault
    ```
-   > Optional preflight: `bash install.sh` — checks prerequisites, verifies the scaffold, detects your CLIs, and prints the next step. It writes nothing and is safe to re-run.
+   > Optional preflight: `bash install.sh` checks prerequisites, verifies the scaffold, detects your CLIs, and prints the next step. It writes nothing and is safe to re-run.
 2. Open `INIT.md`.
-3. Paste its contents into a **filesystem-capable agent CLI** (Claude Code, Codex, OpenCode, Antigravity) opened in this folder — not a plain web chat (claude.ai / gemini), which cannot write files.
+3. Paste its contents into a **filesystem-capable agent CLI** (Claude Code, Codex, OpenCode, Antigravity) opened in this folder, not a plain web chat (claude.ai / gemini), which cannot write files.
 4. The agent will ask how many CLIs and machines you have, your hardware, and your deployment mode, then configure the vault automatically.
 
 ## Prerequisites
@@ -82,7 +100,7 @@ You don't need to fill out configuration files manually.
 - Git
 - Python 3 with PyYAML (`pip install pyyaml`)
 - Node.js (for `npx`, needed if you mount MCP servers or external skills)
-- Optional: [OpenCode](https://opencode.ai/go?ref=RK9MPMS1TB) as one of the supported CLIs
+- Optional: [OpenCode](https://opencode.ai) as one of the supported CLIs
 - `jq` and `curl` on Linux/Mac (only needed for the MULTI profile sync and health scripts)
 
 ## Platform status
@@ -91,15 +109,37 @@ Linux is the daily-driven platform and the most tested. Windows support is an ea
 
 ## License
 
-See `LICENSE`.
+PolyForm Noncommercial License 1.0.0. Free for any noncommercial use, including reading, running, forking, and modifying it. See `LICENSE` for the full text. Any commercial use, of the original software or a derivative, needs a separate license from the author: see `COMMERCIAL.md`.
+
+## Support
+
+This project is free to use. Some optional links (like the OpenCode one above) are referral links that fund maintenance at no extra cost to you: see `SUPPORT.md` for the one place they're declared.
 
 ---
 
-# NeXgen Vault (Framework AgentOps) — Italiano
+# NeXgen Vault (Italiano)
 
-Portare gli agenti AI dai portatili dei singoli sviluppatori a un flusso di lavoro aziendale strutturato è difficile. Questo repository fornisce l'infrastruttura e i controlli necessari per far operare agenti AI (Claude, Gemini, DeepSeek) in modo sicuro e prevedibile.
+Un control layer AgentOps basato su Git per le CLI agentiche di coding.
 
-Invece di nascondere i dati in database proprietari o affidarsi a sciami autonomi incontrollabili, NeXgen Vault usa repository Git standard, script leggibili e controlli di conformità rigorosi per mantenere la governance sulle operazioni.
+Istruzioni condivise, config MCP generata, controlli di drift, disciplina sui segreti e memoria degli agenti tra macchine diverse: tutto come file di testo in un repo Git, non un servizio ospitato.
+
+Usi Claude Code, Codex, OpenCode o Antigravity, magari più di una, magari su due macchine. Ogni CLI legge le sue istruzioni di bootstrap da un file diverso, tiene una sua config MCP e non sa cosa fanno le altre. Cambi una cosa e il resto si disallinea, di solito senza che nessuno se ne accorga finché qualcosa non si rompe. NeXgen Vault dà loro una fonte canonica unica e un modo per verificare se se ne sono allontanate.
+
+## Per chi è pensato
+
+Fai girare almeno una CLI agentica sulla tua macchina e vuoi il vault vero, non una demo. Se ne usi più di una, o lo stesso setup su più macchine, è lì che il framework lavora di più: il provisioner e lo script doctor descritti sotto esistono per quel caso. Se è solo una CLI su una macchina, hai comunque il knowledge vault e la disciplina del bootstrap, senza dover far girare nessuno strumento di sync.
+
+## Percorso demo
+
+1. Clona il repo e lancia il preflight: `bash install.sh --check`. Controlla i prerequisiti, verifica lo scaffold del vault ed elenca quali CLI agentiche trova sulla tua macchina. Non scrive nulla.
+2. Apri `INIT.md` e incollalo in una CLI agentica capace di scrivere file (Claude Code, Codex, OpenCode, Antigravity), non una chat web, che non può scrivere file. L'agente ti intervista (quante CLI, quante macchine, Local-Only o Cloud-Server) e scrive `99-INDEX/USER-PROFILE.md`.
+3. L'agente monta i server MCP e le skill per la CLI scelta, seguendo i manifest in `03-INFRA/`.
+4. Se sei sul profilo MULTI (2+ CLI o macchine), lancia `agent-sync apply` per propagare la config canonica, poi `agent-doctor` per vedere il controllo di conformità vero e proprio: oltre 30 check dal vivo sulle tue CLI in esecuzione, sui servizi VPS e sulla gestione dei segreti, con un pass, warn o fail per riga.
+5. Cambia qualcosa a mano dopo (una entry MCP fuori posto, un file di config modificato fuori dal vault) e rilancia `agent-doctor`. Quello è il controllo di drift che funziona.
+
+## Cosa non fa
+
+Nessuna UI, nessuna dashboard ospitata, nessun motore di memoria proprietario. Non compete con un RAG builder o un workflow orchestrator; presuppone che tu abbia già idee chiare su quali agenti e tool vuoi usare, e dà loro un pavimento condiviso e verificabile su cui girare.
 
 ## Concetti base
 
@@ -155,7 +195,7 @@ Il setup guidato dall'AI (`INIT.md`) configurerà la modalità adatta al tuo amb
 
 Il framework si adatta a due forme d'uso. L'installer (`INIT.md`) chiede e sceglie quella giusta.
 
-- **MINIMAL.** Una CLI su una macchina (es. solo Claude Code sul portatile, oppure [OpenCode](https://opencode.ai/go?ref=RK9MPMS1TB) per un setup single-CLI basato su DeepSeek). Ottieni il knowledge vault, le regole del bootstrap, le skill lazy e la disciplina della scrittura memoria tramite una sola porta. Non c'è provisioner da lanciare, nessun doctor da schedulare, niente sync tra macchine. Monti MCP server e skill a mano nella tua CLI. Indicato per chi lavora da solo e vuole governance AgentOps sopra un singolo agente.
+- **MINIMAL.** Una CLI su una macchina (es. solo Claude Code sul portatile, oppure [OpenCode](https://opencode.ai) per un setup single-CLI basato su DeepSeek). Ottieni il knowledge vault, le regole del bootstrap, le skill lazy e la disciplina della scrittura memoria tramite una sola porta. Non c'è provisioner da lanciare, nessun doctor da schedulare, niente sync tra macchine. Monti MCP server e skill a mano nella tua CLI. Indicato per chi lavora da solo e vuole governance AgentOps sopra un singolo agente.
 - **MULTI.** Due o più CLI e/o due o più macchine. Il provisioner (`agent-sync`), il generatore (`render.py`), il doctor e l'healthcheck entrano in funzione e tengono ogni CLI e ogni macchina allineata alla fonte canonica del vault. Indicato per un setup desktop + portatile, o per girare più CLI in parallelo.
 
 Puoi partire da MINIMAL e passare a MULTI in seguito. I file canonici del vault non cambiano tra i profili.
@@ -169,9 +209,9 @@ Non devi compilare i file di configurazione a mano.
    git clone https://github.com/matteopasseri407/NeXgen-Vault-OL.git ~/KnowledgeVault
    cd ~/KnowledgeVault
    ```
-   > Preflight opzionale: `bash install.sh` — controlla i prerequisiti, verifica lo scaffold, rileva le tue CLI e stampa il passo successivo. Non scrive nulla ed è sicuro da ri-lanciare.
+   > Preflight opzionale: `bash install.sh` controlla i prerequisiti, verifica lo scaffold, rileva le tue CLI e stampa il passo successivo. Non scrive nulla ed è sicuro da ri-lanciare.
 2. Apri `INIT.md`.
-3. Incolla il contenuto in una **CLI agentica capace di scrivere file** (Claude Code, Codex, OpenCode, Antigravity) aperta in questa cartella — non una chat web (claude.ai / gemini), che non può scrivere file.
+3. Incolla il contenuto in una **CLI agentica capace di scrivere file** (Claude Code, Codex, OpenCode, Antigravity) aperta in questa cartella, non una chat web (claude.ai / gemini), che non può scrivere file.
 4. L'agente ti chiederà quante CLI e macchine hai, il tuo hardware e la modalità di deployment, poi configurerà il vault in automatico.
 
 ## Prerequisiti
@@ -179,7 +219,7 @@ Non devi compilare i file di configurazione a mano.
 - Git
 - Python 3 con PyYAML (`pip install pyyaml`)
 - Node.js (per `npx`, necessario se monti server MCP o skill esterne)
-- Opzionale: [OpenCode](https://opencode.ai/go?ref=RK9MPMS1TB) come una delle CLI supportate
+- Opzionale: [OpenCode](https://opencode.ai) come una delle CLI supportate
 - `jq` e `curl` su Linux/Mac (solo per il profilo MULTI, necessari per sync e health)
 
 ## Stato per piattaforma
@@ -188,4 +228,8 @@ Linux è la piattaforma usata quotidianamente e la più testata. Il supporto Win
 
 ## Licenza
 
-Vedi `LICENSE`.
+PolyForm Noncommercial License 1.0.0. Gratuita per qualsiasi uso non commerciale, incluso leggerla, eseguirla, forkarla e modificarla. Vedi `LICENSE` per il testo completo. Qualsiasi uso commerciale, del software originale o di un derivato, richiede una licenza separata dall'autore: vedi `COMMERCIAL.md`.
+
+## Supporto
+
+Questo progetto è gratuito da usare. Alcuni link opzionali (come quello di OpenCode sopra) sono link referral che finanziano la manutenzione senza costi aggiuntivi per te: vedi `SUPPORT.md` per l'unico punto in cui sono dichiarati.

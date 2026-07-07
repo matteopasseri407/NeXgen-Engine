@@ -15,7 +15,6 @@ Segui **scrupolosamente** questi passi nell'ordine indicato. Non saltare alla fi
 Chiedi all'utente, una domanda alla volta:
 
 1. **Quante CLI vuole usare?** Una sola (es. solo Claude Code), o più di una?
-   - Se menziona OpenCode, segnala che può registrarsi tramite questo referral: https://opencode.ai/go?ref=RK9MPMS1TB
 2. **Quante macchine?** Solo questa, o più workstation (es. laptop + desktop) che devono restare allineate?
 3. **Hardware della macchina principale**: sistema operativo (Windows, Mac, Linux) e GPU dedicata (se presente, per modelli locali).
 4. **Architettura Cloud vs Locale**:
@@ -78,7 +77,7 @@ Usa il comando appropriato al profilo:
 File di destinazione per ogni CLI (corrispondono a quelli che il sync MULTI scriverebbe):
 - **Claude Code**: bootstrap in `~/CLAUDE.md` con un puntatore a questo `AGENTS.md`; server MCP nel campo `mcpServers` di `~/.claude.json`; skill in `~/.claude/skills/`.
 - **Codex**: bootstrap in `~/.codex/AGENTS.md`; server MCP nel file di configurazione di Codex; skill in `~/.codex/skills/`.
-- **OpenCode**: bootstrap nel campo `instructions` di `opencode.json`; server MCP nella sezione MCP dello stesso file; skill nell'hub condiviso `~/.agents/skills/`. (Per registrarti su OpenCode puoi usare: https://opencode.ai/go?ref=RK9MPMS1TB)
+- **OpenCode**: bootstrap nel campo `instructions` di `opencode.json`; server MCP nella sezione MCP dello stesso file; skill nell'hub condiviso `~/.agents/skills/`.
 - **Antigravity**: bootstrap in `~/.gemini/config/AGENTS.md`; server MCP in `~/.gemini/antigravity/mcp_config.json`; skill in `~/.gemini/skills/`.
 
 Per ogni server MCP nel manifest, l'agente risolve il comando concreto nel dialetto della CLI scelta (Claude, Codex, OpenCode e Antigravity usano formati diversi, vedi `03-INFRA/agent-universal-layer/mcp/render.py` come riferimento per i dialetti).
@@ -126,7 +125,6 @@ Follow these steps **strictly** in the order shown. Do not skip to the end. Ask 
 Ask the user, one question at a time:
 
 1. **How many CLIs do they want to use?** Just one (e.g. only Claude Code), or more than one (Claude Code, Codex, OpenCode, Antigravity)?
-   - If they mention OpenCode, note they can sign up via this referral: https://opencode.ai/go?ref=RK9MPMS1TB
 2. **How many machines?** Just this one, or multiple workstations (e.g. laptop + desktop) that must stay aligned?
 3. **Hardware of the main machine**: operating system (Windows, Mac, Linux) and dedicated GPU (if any, for local models).
 4. **Cloud vs Local architecture**:
@@ -189,7 +187,7 @@ Use the command appropriate to the profile:
 Destination file for each CLI (these match what the MULTI sync would write):
 - **Claude Code**: bootstrap in `~/CLAUDE.md` with a pointer to this `AGENTS.md`; MCP servers in the `mcpServers` field of `~/.claude.json`; skills in `~/.claude/skills/`.
 - **Codex**: bootstrap in `~/.codex/AGENTS.md`; MCP servers in Codex's config file; skills in `~/.codex/skills/`.
-- **OpenCode**: bootstrap in the `instructions` field of `opencode.json`; MCP servers in the MCP section of the same file; skills in the shared hub `~/.agents/skills/`. (To sign up for OpenCode you can use: https://opencode.ai/go?ref=RK9MPMS1TB)
+- **OpenCode**: bootstrap in the `instructions` field of `opencode.json`; MCP servers in the MCP section of the same file; skills in the shared hub `~/.agents/skills/`.
 - **Antigravity**: bootstrap in `~/.gemini/config/AGENTS.md`; MCP servers in `~/.gemini/antigravity/mcp_config.json`; skills in `~/.gemini/skills/`.
 
 For each MCP server in the manifest, the agent resolves the concrete command in the chosen CLI's dialect (Claude, Codex, OpenCode, and Antigravity use different formats, see `03-INFRA/agent-universal-layer/mcp/render.py` as a reference for the dialects).
