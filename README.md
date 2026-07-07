@@ -4,11 +4,16 @@ A Git-backed AgentOps control layer for AI coding CLIs.
 
 Shared instructions, generated MCP config, drift checks, secrets discipline, and cross-machine agent memory, all as plain files in a Git repo, not a hosted service.
 
-You use Claude Code, Codex, OpenCode, or Antigravity, maybe more than one, maybe on two machines. Each CLI reads its bootstrap instructions from a different file, keeps its own MCP config, and has no idea what the others are doing. Change one and the rest drift out of sync, usually without anyone noticing until something breaks. NeXgen Vault gives them one canonical source and a way to check whether they've drifted from it.
+You use Claude Code, Codex, OpenCode, or Antigravity, maybe more than one, maybe on two machines.
+Each CLI reads its bootstrap instructions from a different file, keeps its own MCP config, and has no idea what the others are doing.
+Change one and the rest drift out of sync, usually without anyone noticing until something breaks.
+NeXgen Vault gives them one canonical source and a way to check whether they've drifted from it.
 
 ## Who this is for
 
-You run at least one agentic CLI on your own machine and want the actual vault, not a demo of one. If you run several CLIs, or the same setup across more than one machine, that's where the framework does most of its work: the provisioner and doctor scripts described below exist for that case. If it's just one CLI on one machine, you still get the knowledge vault and the bootstrap discipline, without needing to run any of the sync tooling.
+You run at least one agentic CLI on your own machine and want the actual vault, not a demo of one.
+If you run several CLIs, or the same setup across more than one machine, that's where the framework does most of its work: the provisioner and doctor scripts described below exist for that case.
+If it's just one CLI on one machine, you still get the knowledge vault and the bootstrap discipline, without needing to run any of the sync tooling.
 
 ## Demo path
 
@@ -20,7 +25,9 @@ You run at least one agentic CLI on your own machine and want the actual vault, 
 
 ## What this does not do
 
-No UI, no hosted dashboard, no proprietary memory store. It doesn't compete with a RAG builder or a workflow orchestrator; it assumes you already have opinions about which agents and tools you want, and gives them a shared, auditable floor to run on.
+No UI, no hosted dashboard, no proprietary memory store.
+It doesn't compete with a RAG builder or a workflow orchestrator.
+It assumes you already have opinions about which agents and tools you want, and gives them a shared, auditable floor to run on.
 
 ## Core concepts
 
@@ -119,27 +126,35 @@ This project is free to use. Some optional links (like the OpenCode one above) a
 
 # NeXgen Vault (Italiano)
 
-Un control layer AgentOps basato su Git per le CLI agentiche di coding.
+Un control layer AgentOps basato su Git, per le CLI agentiche di sviluppo.
 
-Istruzioni condivise, config MCP generata, controlli di drift, disciplina sui segreti e memoria degli agenti tra macchine diverse: tutto come file di testo in un repo Git, non un servizio ospitato.
+Istruzioni condivise, configurazione MCP generata automaticamente, controlli anti-drift, disciplina sui segreti e memoria degli agenti condivisa tra più macchine.
+Tutto file di testo dentro un repo Git, non un servizio in cloud.
 
-Usi Claude Code, Codex, OpenCode o Antigravity, magari più di una, magari su due macchine. Ogni CLI legge le sue istruzioni di bootstrap da un file diverso, tiene una sua config MCP e non sa cosa fanno le altre. Cambi una cosa e il resto si disallinea, di solito senza che nessuno se ne accorga finché qualcosa non si rompe. NeXgen Vault dà loro una fonte canonica unica e un modo per verificare se se ne sono allontanate.
+Usi Claude Code, Codex, OpenCode o Antigravity, magari più di una CLI, magari su due macchine diverse.
+Ogni CLI legge le sue istruzioni di bootstrap da un file diverso, ha una propria configurazione MCP e non sa niente delle altre.
+Basta cambiare qualcosa in una perché le altre si disallineino, quasi sempre senza che nessuno se ne accorga finché non si rompe qualcosa.
+NeXgen Vault mette tutte le CLI davanti a un'unica fonte canonica e ti dà un modo per controllare se se ne sono allontanate.
 
-## Per chi è pensato
+## A chi serve
 
-Fai girare almeno una CLI agentica sulla tua macchina e vuoi il vault vero, non una demo. Se ne usi più di una, o lo stesso setup su più macchine, è lì che il framework lavora di più: il provisioner e lo script doctor descritti sotto esistono per quel caso. Se è solo una CLI su una macchina, hai comunque il knowledge vault e la disciplina del bootstrap, senza dover far girare nessuno strumento di sync.
+Fai girare almeno una CLI agentica sulla tua macchina e vuoi il vault vero, non una demo.
+Se ne usi più di una, o lo stesso setup su più macchine, è lì che il framework rende di più: il provisioner e lo script doctor descritti sotto servono esattamente a quello.
+Se invece hai una sola CLI su una sola macchina, ti restano comunque il knowledge vault e la disciplina del bootstrap, senza dover far girare nessuno strumento di sync.
 
 ## Percorso demo
 
 1. Clona il repo e lancia il preflight: `bash install.sh --check`. Controlla i prerequisiti, verifica lo scaffold del vault ed elenca quali CLI agentiche trova sulla tua macchina. Non scrive nulla.
-2. Apri `INIT.md` e incollalo in una CLI agentica capace di scrivere file (Claude Code, Codex, OpenCode, Antigravity), non una chat web, che non può scrivere file. L'agente ti intervista (quante CLI, quante macchine, Local-Only o Cloud-Server) e scrive `99-INDEX/USER-PROFILE.md`.
-3. L'agente monta i server MCP e le skill per la CLI scelta, seguendo i manifest in `03-INFRA/`.
-4. Se sei sul profilo MULTI (2+ CLI o macchine), lancia `agent-sync apply` per propagare la config canonica, poi `agent-doctor` per vedere il controllo di conformità vero e proprio: oltre 30 check dal vivo sulle tue CLI in esecuzione, sui servizi VPS e sulla gestione dei segreti, con un pass, warn o fail per riga.
-5. Cambia qualcosa a mano dopo (una entry MCP fuori posto, un file di config modificato fuori dal vault) e rilancia `agent-doctor`. Quello è il controllo di drift che funziona.
+2. Apri `INIT.md` e incollalo in una CLI agentica capace di scrivere file (Claude Code, Codex, OpenCode, Antigravity): una chat web non va bene, perché i file non li può scrivere. L'agente ti fa qualche domanda (quante CLI, quante macchine, Local-Only o Cloud-Server) e scrive `99-INDEX/USER-PROFILE.md`.
+3. L'agente monta i server MCP e le skill per la CLI che hai scelto, seguendo i manifest in `03-INFRA/`.
+4. Se sei sul profilo MULTI (2+ CLI o macchine), lancia `agent-sync apply` per propagare la configurazione canonica, poi `agent-doctor` per vedere il controllo di conformità vero e proprio: oltre 30 check dal vivo sulle CLI in esecuzione, sui servizi VPS e sulla gestione dei segreti, con un pass, warn o fail riga per riga.
+5. A quel punto cambia qualcosa a mano (una entry MCP fuori posto, un file di config modificato fuori dal vault) e rilancia `agent-doctor`. Quello è il controllo di drift che funziona.
 
 ## Cosa non fa
 
-Nessuna UI, nessuna dashboard ospitata, nessun motore di memoria proprietario. Non compete con un RAG builder o un workflow orchestrator; presuppone che tu abbia già idee chiare su quali agenti e tool vuoi usare, e dà loro un pavimento condiviso e verificabile su cui girare.
+Nessuna UI, nessuna dashboard in cloud, nessun motore di memoria proprietario.
+Non è in competizione con un RAG builder o un workflow orchestrator.
+Parte dal presupposto che tu abbia già le idee chiare su quali agenti e strumenti usare, e gli dà un terreno comune e verificabile su cui girare.
 
 ## Concetti base
 
