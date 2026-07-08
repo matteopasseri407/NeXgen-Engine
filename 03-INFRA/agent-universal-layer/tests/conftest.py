@@ -116,7 +116,7 @@ class Sandbox:
 def _make_bin_stubs(sandbox: Sandbox) -> None:
     """Neutra systemctl e notify-send per i test:
     - systemctl: per evitare ricaricamenti daemon-reload nel systemd VERO
-    - notify-send: per evitare notifiche desktop reali quando agent-healthcheck.sh 
+    - notify-send: per evitare notifiche desktop reali quando agent-healthcheck.sh
       gira nella sandbox, fallisce (atteso) e cerca di avvisare."""
     sandbox.bin_stubs.mkdir(parents=True, exist_ok=True)
     for cmd in ("systemctl", "notify-send"):
