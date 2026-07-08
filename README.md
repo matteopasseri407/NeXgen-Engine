@@ -29,13 +29,13 @@ No UI, no hosted dashboard, no proprietary memory store.
 It doesn't compete with a RAG builder or a workflow orchestrator.
 It assumes you already have opinions about which agents and tools you want, and gives them a shared, auditable floor to run on.
 
-**Runtime enforcement:** `agent-doctor` is a configuration drift detector. It does **not** sit between an agent and its tools at runtime to block hallucinated arguments. Actual runtime safety boundaries are enforced by your CLI harness (user approval prompts) and the MCP servers themselves (e.g., the `expected_hash` lock in `vault-library`).
+**What NeXgen does not do:** NeXgen governs configuration — one canonical source, generated derivatives, drift detection, single-door writes. It does **not** sit between an agent and its tools at runtime: `agent-doctor` cannot block a call made with hallucinated but valid-looking arguments. That boundary is enforced by your CLI harness (permission modes, user approval prompts) and by server-side validation in the MCP servers themselves (e.g., the `expected_hash` lock in `vault-library`).
 
 ## Core concepts
 
 - **Infrastructure as Code for AI.** Manifest files define tools, permissions, and agent behaviors. A generator script creates the correct configuration for different CLIs.
 - **Git-backed memory.** The agents read and write Markdown files. Every change is version-controlled, diffable, and easy to revert.
-- **Continuous compliance.** In MULTI profile, the `agent-doctor` script runs drift detection across over 30 system parameters, reporting a pass, warn, or fail for each. It alerts you to configuration drift or exposed credentials. In MINIMAL, there is no doctor: a single CLI on a single machine is verified visually.
+- **Drift detection.** In MULTI profile, the `agent-doctor` script runs 30+ read-only checks against your CLIs' live configuration, vault wiring, skills, and secrets handling, reporting pass/warn/fail per line (non-zero exit code on failures). It detects drift and misconfiguration; it does not sit in the execution path. In MINIMAL, there is no doctor: a single CLI on a single machine is verified visually.
 - **Cross-platform consistency (optional).** In MULTI profile, the system forces agents to behave identically across different machines (e.g., a Windows workstation and a Linux laptop) through a provisioner. In MINIMAL, there is only one machine, so the provisioner is a no-op and is not installed.
 
 ## Architecture: The Three Planes
@@ -158,13 +158,13 @@ Nessuna UI, nessuna dashboard in cloud, nessun motore di memoria proprietario.
 Non è in competizione con un RAG builder o un workflow orchestrator.
 Parte dal presupposto che tu abbia già le idee chiare su quali agenti e strumenti usare, e gli dà un terreno comune e verificabile su cui girare.
 
-**Enforcement a runtime:** `agent-doctor` fa controlli di configurazione (drift detection), ma **non** blocca un agente in esecuzione se inventa argomenti sbagliati per un tool. Le barriere a runtime sono gestite dall'harness della tua CLI (richieste di permesso all'utente) e dai server MCP di destinazione (es. `expected_hash` nel `vault-library`).
+**Cosa NON fa NeXgen:** NeXgen governa la configurazione — una fonte canonica, derivati generati, rilevamento del drift, scritture da una sola porta. **Non** si mette tra l'agente e i suoi tool a runtime: `agent-doctor` non può bloccare una chiamata fatta con argomenti inventati ma plausibili. Quel confine è gestito dall'harness della tua CLI (modalità permessi, richieste di conferma all'utente) e dalla validazione lato server dei server MCP stessi (es. il lock `expected_hash` nel `vault-library`).
 
 ## Concetti base
 
 - **Infrastruttura come codice per l'AI.** I file manifest definiscono tool, permessi e regole di comportamento. Uno script genera poi la configurazione corretta per le diverse CLI.
 - **Memoria basata su Git.** Gli agenti leggono e scrivono file Markdown. Ogni modifica è tracciata, verificabile e facile da annullare.
-- **Conformità continua.** Nel profilo MULTI lo script `agent-doctor` esegue una drift detection su oltre 30 parametri di sistema, stampando pass, warn o fail per ciascuno. Segnala configurazioni alterate o credenziali esposte. In MINIMAL non c'è doctor: una CLI su una macchina si verifica a vista.
+- **Rilevamento del drift.** Nel profilo MULTI lo script `agent-doctor` esegue oltre 30 controlli in sola lettura su configurazione viva delle CLI, collegamento al vault, skill e gestione dei segreti, riportando pass, warn o fail riga per riga (exit code non-zero in caso di fallimenti). Rileva drift e configurazioni sbagliate; non sta nel percorso di esecuzione. In MINIMAL non c'è doctor: una CLI su una macchina si verifica a vista.
 - **Coerenza tra macchine (opzionale).** Nel profilo MULTI il sistema forza gli agenti a comportarsi in modo identico su hardware diverso (ad esempio, una workstation Windows e un portatile Linux) tramite un provisioner. In MINIMAL c'è una sola macchina, quindi il provisioner è no-op e non viene installato.
 
 ## Architettura: I Tre Piani
