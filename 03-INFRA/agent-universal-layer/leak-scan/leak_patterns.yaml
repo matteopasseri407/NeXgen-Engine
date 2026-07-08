@@ -1,0 +1,42 @@
+# Leak-check patterns for the anti-leak gates (S0).
+#
+# FORMS ONLY, NEVER REAL VALUES: this file is meant to be identical in both
+# places it lives — here (public repo, used by CI) and in the maintainer's
+# private vault (used by the local pre-commit/commit-msg hooks and by
+# engine-push). Never add a real value here: actual secrets/personal data
+# live only in a private denylist file that this repo never contains and
+# that CI never sees.
+
+leak_hard:
+  - '\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b'            # IPv4
+  - '/home/[A-Za-z0-9._-]+'                              # Linux home dir
+  - 'C:\\Users\\[A-Za-z0-9._-]+'                         # Windows home dir
+  - '[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}'     # email
+  - '\b[0-9a-f]{40,}\b'                                  # long hex token/hash
+  - '\b\d{7,}\b'                                         # long numeric id: chat id, phone, project number
+  # HIGH-ENTROPY token in quotes: 16+ chars, mixed Aa0, no separators.
+  - '["\x27](?=[A-Za-z0-9]{16,}["\x27])(?=[A-Za-z0-9]*[a-z])(?=[A-Za-z0-9]*[A-Z])(?=[A-Za-z0-9]*\d)[A-Za-z0-9]{16,}["\x27]'
+  - 'AKIA[0-9A-Z]{16}'                                   # AWS access key id
+  - '-----BEGIN (RSA|OPENSSH|EC) PRIVATE KEY-----'       # private key
+  - 'gh[po]_[A-Za-z0-9]{36}'                              # GitHub token (ghp_/gho_)
+  - 'sk-[A-Za-z0-9]{20,}'                                 # OpenAI/Anthropic-style API key
+
+leak_soft:
+  - '(?i)\bmatteo\b'
+
+leak_allow:
+  - '127\.0\.0\.1'
+  - '0\.0\.0\.0'
+  - '255\.255\.255\.255'
+  # noreply@anthropic.com: Claude Code's generic "Co-Authored-By" trailer,
+  # present in every commit made with the tool. Not personal data (found as
+  # a real false positive during S0 testing, 2026-07-08).
+  - 'noreply@anthropic\.com'
+  # Generic placeholders used in docs (e.g. USER-PROFILE.md), not a real path
+  # (found as a real false positive during S0 testing, 2026-07-08).
+  - '/home/user\b'
+  - 'C:\\Users\\user\b'
+  # Git's null SHA (40 zeros, used to detect a new/deleted branch in a
+  # push/webhook): a degenerate value, not a secret (found as a false
+  # positive in the gate's own commit, S0 2026-07-08).
+  - '^0+$'

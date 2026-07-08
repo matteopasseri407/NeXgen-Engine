@@ -9,8 +9,31 @@
 # archive/ (the encrypted .gpg vault) stays ignored: created on first secret.
 99-SECRETS/archive/
 
-# Deploy secrets
-03-INFRA/deploy/.env
+# Any local env file, anywhere in the tree (not just deploy/.env) — but
+# .env.example files are meant to be committed (placeholders only, see
+# SECURITY.md), so they're explicitly un-ignored.
+.env
+.env.*
+*.env
+!.env.example
+!*.env.example
+
+# Backups, logs, and sandbox residue from local runs (render.py backups,
+# test sandboxes, leftover scratch dirs) — S0 anti-leak hardening, 2026-07-08
+*.bak-*
+*.log
+*.sandbox
+tmp-sandbox-*/
+
+# Keys and credentials, wherever they land
+*.key
+*.pem
+*.pfx
+id_rsa
+id_ed25519
+
+# Session artifacts from agent CLIs, if ever run inside this repo
+.claude/
 
 # Python noise (scripts generate this on run)
 __pycache__/
@@ -19,6 +42,8 @@ __pycache__/
 # OS/editor noise
 .DS_Store
 Thumbs.db
+desktop.ini
+*.lnk
 *.swp
 *.swo
 *~

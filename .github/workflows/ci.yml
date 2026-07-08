@@ -10,6 +10,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - uses: actions/setup-python@v5
         with:
@@ -58,20 +60,25 @@ jobs:
             exit 1
           fi
 
-      - name: No hardcoded personal home paths
+      - name: Leak-scan (anti-leak gates, S0)
+        # Supersedes the old ad hoc "hardcoded home path" / "secret pattern"
+        # greps: same patterns, but now scans EVERY commit newly introduced by
+        # this push/PR (not just the final tree), so a value that lands in an
+        # intermediate commit and is removed later still gets caught. Matches
+        # are always redacted in the output — this log is public.
         run: |
-          hits="$(git grep -In "/home/matteopasseri" -- . ':(exclude).github/workflows/ci.yml' || true)"
-          if [ -n "$hits" ]; then
-            echo "Found the maintainer's personal home path hardcoded:"
-            echo "$hits"
-            exit 1
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            RANGE="${{ github.event.pull_request.base.sha }}..${{ github.event.pull_request.head.sha }}"
+          else
+            BEFORE="${{ github.event.before }}"
+            if [ -z "$BEFORE" ] || [ "$BEFORE" = "0000000000000000000000000000000000000000" ]; then
+              RANGE="${{ github.sha }}"
+            else
+              RANGE="$BEFORE..${{ github.sha }}"
+            fi
           fi
-
-      - name: Basic secret pattern scan
-        run: |
-          hits="$(git grep -InE '(AKIA[0-9A-Z]{16}|-----BEGIN (RSA|OPENSSH|EC) PRIVATE KEY-----|ghp_[A-Za-z0-9]{36}|gho_[A-Za-z0-9]{36}|sk-[A-Za-z0-9]{20,})' || true)"
-          if [ -n "$hits" ]; then
-            echo "Possible secret pattern found:"
-            echo "$hits"
-            exit 1
-          fi
+          python3 03-INFRA/agent-universal-layer/leak-scan/leak_scan.py \
+            --patterns 03-INFRA/agent-universal-layer/leak-scan/leak_patterns.yaml \
+            --repo . \
+            --commit-range "$RANGE"
