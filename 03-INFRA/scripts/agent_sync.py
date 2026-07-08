@@ -447,20 +447,45 @@ def local_model_runtime(env: Env) -> None:
 # closes, per Fable's adapter list naming install_scheduler() as a normal
 # per-run step, not an opt-in one.
 
-def _systemd_service_content() -> str:
-    """Carries AGENT_ENGINE_ROOT/AGENT_VAULT_DATA into the recurring timer,
-    if and only if they're set in THIS run's environment. The timer re-reads
-    its unit file, not a shell environment, so a one-off engine-cutover run
-    (env var passed on the command line) makes the switch persistent for
-    every future guard run — and dropping the env var and re-running apply
-    is the rollback: no Environment= line gets written, back to the default."""
+def _persisted_engine_root(env: "Env") -> str | None:
+    """Fallback source of truth for AGENT_ENGINE_ROOT when this run's own
+    environment doesn't carry it: where ~/.local/bin/agent-sync currently
+    resolves to. Without this, any apply/guard invoked in a plain shell
+    (no env var exported) would silently rewrite the timer's unit file with
+    no Environment= line -- reverting a live cutover by accident, even
+    though the symlink itself (the real, durable cutover marker) never
+    changed. engine-rollback.sh is the one intentional way to undo a
+    cutover; it swaps the symlink back first, which this function then
+    picks up as "already at the default", the honest un-cut-over state."""
+    link = env.local_bin / "agent-sync"
+    if not link.is_symlink():
+        return None
+    try:
+        target = link.resolve()
+        default_root = (env.vault / "03-INFRA").resolve()
+    except OSError:
+        return None
+    root = target.parent.parent          # .../<engine-root>/scripts/agent-sync.sh -> <engine-root>
+    return None if root == default_root else str(root)
+
+
+def _systemd_service_content(env: "Env") -> str:
+    """Carries AGENT_ENGINE_ROOT/AGENT_VAULT_DATA into the recurring timer.
+    The timer re-reads its unit file, not a shell environment, so a one-off
+    engine-cutover run (env var passed on the command line) makes the switch
+    persistent for every future guard run. AGENT_ENGINE_ROOT falls back to
+    the persisted symlink state (see _persisted_engine_root) when this run's
+    environment doesn't have it, so a plain unadorned 'agent-sync apply'
+    never silently reverts an already-live cutover."""
     lines = ["[Unit]",
              "Description=KnowledgeVault agent sync guard (pull + apply + healthcheck, no publish)",
              "", "[Service]", "Type=oneshot"]
-    for var in ("AGENT_ENGINE_ROOT", "AGENT_VAULT_DATA"):
-        val = os.environ.get(var)
-        if val:
-            lines.append(f"Environment={var}={val}")
+    engine_root = os.environ.get("AGENT_ENGINE_ROOT") or _persisted_engine_root(env)
+    if engine_root:
+        lines.append(f"Environment=AGENT_ENGINE_ROOT={engine_root}")
+    vault_data = os.environ.get("AGENT_VAULT_DATA")
+    if vault_data:
+        lines.append(f"Environment=AGENT_VAULT_DATA={vault_data}")
     lines.append("ExecStart=%h/.local/bin/agent-sync guard")
     return "\n".join(lines) + "\n"
 
@@ -483,7 +508,7 @@ def _install_systemd_units(env: Env) -> None:
     unit_dir.mkdir(parents=True, exist_ok=True)
     changed = False
     for path, content, label in (
-        (unit_dir / "agent-sync.service", _systemd_service_content(), "agent-sync.service set to pull mode"),
+        (unit_dir / "agent-sync.service", _systemd_service_content(env), "agent-sync.service set to pull mode"),
         (unit_dir / "agent-sync.timer", _SYSTEMD_TIMER, "agent-sync.timer updated"),
     ):
         if path.exists():
@@ -599,7 +624,7 @@ def mcp_render(env: Env) -> None:
 # ── 3. vault_skills ──────────────────────────────────────────────────────
 
 def vault_skills(env: Env) -> None:
-    skills_src = env.ul / "skills"
+    skills_src = env.instance_ul / "skills"
     if not skills_src.is_dir():
         return
     for d in sorted(skills_src.iterdir()):
@@ -652,7 +677,7 @@ def runtimes(env: Env) -> None:
             rt.mkdir(parents=True, exist_ok=True)
             env.log(f"runtime: {rt} was a symlink to the hub — converted to a real folder (per-skill links + active exclusions)")
 
-        excl_path = env.ul / excl_name
+        excl_path = env.instance_ul / excl_name
         excludes = set()
         if excl_path.is_file():
             excludes = {ln.strip() for ln in excl_path.read_text(encoding="utf-8").splitlines()
