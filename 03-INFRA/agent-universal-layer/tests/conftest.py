@@ -113,16 +113,16 @@ class Sandbox:
         return out
 
 
-def _make_systemctl_stub(sandbox: Sandbox) -> None:
-    """Neutra systemctl per i test: agent-sync.sh chiama 'systemctl --user
-    daemon-reload' se aggiorna le unit. Le unit finiscono comunque dentro la
-    sandbox (HOME finto), ma daemon-reload parlerebbe al systemd --user VERO
-    della macchina: lo intercettiamo con uno stub no-op, cosi' zero effetti
-    fuori sandbox, lettera E spirito del criterio di accettazione B1."""
+def _make_bin_stubs(sandbox: Sandbox) -> None:
+    """Neutra systemctl e notify-send per i test:
+    - systemctl: per evitare ricaricamenti daemon-reload nel systemd VERO
+    - notify-send: per evitare notifiche desktop reali quando agent-healthcheck.sh 
+      gira nella sandbox, fallisce (atteso) e cerca di avvisare."""
     sandbox.bin_stubs.mkdir(parents=True, exist_ok=True)
-    stub = sandbox.bin_stubs / "systemctl"
-    stub.write_text("#!/bin/sh\nexit 0\n")
-    stub.chmod(stub.stat().st_mode | stat.S_IEXEC)
+    for cmd in ("systemctl", "notify-send"):
+        stub = sandbox.bin_stubs / cmd
+        stub.write_text("#!/bin/sh\nexit 0\n")
+        stub.chmod(stub.stat().st_mode | stat.S_IEXEC)
 
 
 def _copy_engine_scripts(sandbox: Sandbox) -> None:
@@ -173,7 +173,7 @@ def sandbox(tmp_path, monkeypatch) -> Sandbox:
     )
     sb = Sandbox(home)
     _copy_engine_scripts(sb)
-    _make_systemctl_stub(sb)
+    _make_bin_stubs(sb)
     monkeypatch.setenv("HOME", str(home))
     monkeypatch.setenv("KNOWLEDGE_VAULT_PATH", str(sb.vault))
     return sb

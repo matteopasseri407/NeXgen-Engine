@@ -51,17 +51,18 @@ send=0
 # doctor's full run.
 failn="$(printf '%s' "$summary" | sed -n 's/.*FAIL=\([0-9]\{1,\}\).*/\1/p')"
 fail_lines="$("$DOCTOR" 2>/dev/null | sed 's/\x1b\[[0-9;]*m//g' | grep '✗' | sed 's/^[[:space:]]*✗[[:space:]]*/• /' | head -6)"
-[ -n "$fail_lines" ] || fail_lines="• detail not available (see log)"
+[ -n "$fail_lines" ] || fail_lines="• dettaglio non disponibile (vedi log)"
 
-msg="🔴 ${failn:-Some} automatic agent checks failed on ${HOSTN} — $(date '+%Y-%m-%d %H:%M')
+msg="🔴 Fallimento nei controlli automatici degli agenti su ${HOSTN} — $(date '+%d/%m %H:%M')
 
-What's wrong:
+Errori rilevati:
 ${fail_lines}
 
-What to do: nothing by hand. Open your agent CLI and paste:
-«run agent-doctor and fix the FAILs»
+Risoluzione:
+Delega la diagnosi a un agente incollando questo prompt in Claude/Antigravity:
+«Gira agent-doctor, spiegami in soldoni cosa è saltato e sistema i FAIL»
 
-[technical: ${summary}]"
+(Stato: ${summary})"
 
 sent=0
 if [ -n "${TELEGRAM_BOT_TOKEN:-}" ] && [ -n "${TELEGRAM_CHAT_ID:-}" ]; then
