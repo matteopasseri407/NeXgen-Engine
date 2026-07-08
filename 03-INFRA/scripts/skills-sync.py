@@ -176,6 +176,15 @@ def install_github(name: str, spec: dict, apply: bool) -> bool:
             fail(f"hub/{name}: clone failed. {r.stderr.strip()[:200]}")
             return False
         src = repo_dir / sub
+        # `sub` comes from the manifest. If it's absolute (e.g. "/etc") or
+        # escapes via "..", pathlib's `/` operator honors that and silently
+        # walks src outside repo_dir -- the copytree below would then vendor
+        # arbitrary host paths into ~/.agents/skills. Confine it.
+        repo_real = repo_dir.resolve()
+        src_real = src.resolve()
+        if src_real != repo_real and repo_real not in src_real.parents:
+            fail(f"hub/{name}: invalid path '{sub}' (escapes the cloned repo)")
+            return False
         if not (src / "SKILL.md").exists():
             fail(f"hub/{name}: SKILL.md not found in '{sub}' of repo {repo}")
             return False
