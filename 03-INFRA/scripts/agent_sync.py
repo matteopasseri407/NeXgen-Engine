@@ -447,13 +447,23 @@ def local_model_runtime(env: Env) -> None:
 # closes, per Fable's adapter list naming install_scheduler() as a normal
 # per-run step, not an opt-in one.
 
-_SYSTEMD_SERVICE = """[Unit]
-Description=KnowledgeVault agent sync guard (pull + apply + healthcheck, no publish)
+def _systemd_service_content() -> str:
+    """Carries AGENT_ENGINE_ROOT/AGENT_VAULT_DATA into the recurring timer,
+    if and only if they're set in THIS run's environment. The timer re-reads
+    its unit file, not a shell environment, so a one-off engine-cutover run
+    (env var passed on the command line) makes the switch persistent for
+    every future guard run — and dropping the env var and re-running apply
+    is the rollback: no Environment= line gets written, back to the default."""
+    lines = ["[Unit]",
+             "Description=KnowledgeVault agent sync guard (pull + apply + healthcheck, no publish)",
+             "", "[Service]", "Type=oneshot"]
+    for var in ("AGENT_ENGINE_ROOT", "AGENT_VAULT_DATA"):
+        val = os.environ.get(var)
+        if val:
+            lines.append(f"Environment={var}={val}")
+    lines.append("ExecStart=%h/.local/bin/agent-sync guard")
+    return "\n".join(lines) + "\n"
 
-[Service]
-Type=oneshot
-ExecStart=%h/.local/bin/agent-sync guard
-"""
 
 _SYSTEMD_TIMER = """[Unit]
 Description=agent-sync guard every 30 minutes and shortly after login
@@ -473,7 +483,7 @@ def _install_systemd_units(env: Env) -> None:
     unit_dir.mkdir(parents=True, exist_ok=True)
     changed = False
     for path, content, label in (
-        (unit_dir / "agent-sync.service", _SYSTEMD_SERVICE, "agent-sync.service set to pull mode"),
+        (unit_dir / "agent-sync.service", _systemd_service_content(), "agent-sync.service set to pull mode"),
         (unit_dir / "agent-sync.timer", _SYSTEMD_TIMER, "agent-sync.timer updated"),
     ):
         if path.exists():
