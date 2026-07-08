@@ -75,6 +75,11 @@ class Env:
         self.engine_root = Path(os.environ.get("AGENT_ENGINE_ROOT") or str(self.vault / "03-INFRA"))
         self.engine_scripts = self.engine_root / "scripts"
         self.ul = self.engine_root / "agent-universal-layer"
+        # Instance data (Matteo's own AGENTS.md, host-specific files): ALWAYS
+        # from vault_data, regardless of where the engine lives. The engine
+        # only ships the generic/universal AGENTS.md template; the personal
+        # instance is data, never something the engine repo should serve.
+        self.instance_ul = self.vault_data / "03-INFRA" / "agent-universal-layer"
         self.agents_hub = self.home / ".agents" / "skills"
         self.local_bin = self.home / ".local" / "bin"
         self.log_dir = self.home / ".local" / "state"
@@ -304,7 +309,7 @@ def pull(env: Env) -> None:
 # uniformly instead of kept Windows-only.
 
 def instructions(env: Env) -> None:
-    canon = env.ul / "instructions" / "AGENTS.md"
+    canon = env.instance_ul / "instructions" / "AGENTS.md"
     if not canon.is_file():
         env.log(f"WARNING: missing {canon} — instructions not relinked")
         return
@@ -339,7 +344,7 @@ def instructions(env: Env) -> None:
 
     if IS_WINDOWS:
         for src_name, target_name in (("GEMMA.md", "GEMMA.md"), ("LOCAL-WORKER.md", "LOCAL-WORKER.md")):
-            src = env.ul / "instructions" / src_name
+            src = env.instance_ul / "instructions" / src_name
             if src.is_file() and make_link(src, env.home / target_name, is_dir=False):
                 env.log(f"instructions: relinked {target_name}")
 

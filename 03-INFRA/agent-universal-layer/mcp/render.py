@@ -27,7 +27,12 @@ except ModuleNotFoundError:
 
 HOME = Path.home()
 HERE = Path(__file__).parent
-MANIFEST = HERE / "manifest.yaml"
+# The manifest is DATA (Matteo's real server list, concrete values), never
+# something the engine repo should serve — read it from vault_data, not from
+# HERE (this script may be running from a cloned engine, where the sibling
+# manifest.yaml is only the generic product template).
+VAULT_DATA = Path(os.environ.get("AGENT_VAULT_DATA") or str(HOME / "KnowledgeVault"))
+MANIFEST = VAULT_DATA / "03-INFRA" / "agent-universal-layer" / "mcp" / "manifest.yaml"
 IS_WINDOWS = platform.system() == "Windows"
 
 SECRET_KEY = re.compile(r"(token|secret|password|authorization|bearer|api[_-]?key|cookie)", re.I)
