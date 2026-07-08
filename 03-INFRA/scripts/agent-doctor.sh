@@ -344,6 +344,46 @@ else
   warn "Claude settings.json missing (Claude not installed here?)"
 fi
 
+# Public engine repo — anti-leak gates (S0). Maintainer lane: these checks
+# only apply where a working clone of the public engine repo exists (the
+# machine that publishes engine code). On machines without one, the whole
+# section is skipped silently — a consumer install has nothing to verify here.
+ENGINE_REPO="${ENGINE_REPO:-$HOME/NeXgen-Vault-OL}"
+if [ -d "$ENGINE_REPO/.git" ]; then
+  sec "Public engine repo — anti-leak gates (S0)"
+  pushurl=$(git -C "$ENGINE_REPO" config --get remote.origin.pushurl 2>/dev/null || echo "")
+  case "$pushurl" in
+    PUSH-DISABLED*) ok "direct push disabled on the engine clone ($ENGINE_REPO)" ;;
+    *) fail "direct push NOT disabled on the engine clone: git -C $ENGINE_REPO remote set-url --push origin PUSH-DISABLED-use-engine-push" ;;
+  esac
+  fetchurl=$(git -C "$ENGINE_REPO" config --get remote.origin.url 2>/dev/null || echo "")
+  case "$fetchurl" in
+    PUSH-DISABLED*|"") fail "the engine clone's remote.origin.url is not a valid URL" ;;
+    *) ok "engine clone fetch url intact" ;;
+  esac
+  HOOKS_SRC="$UL/sanitize/engine-hooks"
+  if [ -d "$HOOKS_SRC" ]; then
+    for h in pre-commit commit-msg; do
+      if [ -f "$ENGINE_REPO/.git/hooks/$h" ] && [ -f "$HOOKS_SRC/$h" ]; then
+        if cmp -s "$ENGINE_REPO/.git/hooks/$h" "$HOOKS_SRC/$h"; then
+          ok "hook $h installed and aligned with its tracked source"
+        else
+          warn "hook $h installed but DIFFERENT from its tracked source (drift — reinstall from $HOOKS_SRC/$h)"
+        fi
+      else
+        fail "hook $h missing from the engine clone (.git/hooks/$h) — reinstall from $HOOKS_SRC/$h"
+      fi
+    done
+  else
+    warn "anti-leak hook sources not found ($HOOKS_SRC) — cannot verify the engine clone's hooks"
+  fi
+  if command -v engine-push >/dev/null 2>&1; then
+    ok "engine-push available in PATH"
+  else
+    fail "engine-push not found in PATH (expected in ~/.local/bin) — it is the only allowed push channel for the engine repo"
+  fi
+fi
+
 if [ "$QUIET" = 1 ]; then
   line="agent-doctor [$HOST] PASS=$PASS WARN=$WARN FAIL=$FAILN"
   [ "$FAILN" -gt 0 ] && line="$line | FAIL: $FAILS"
