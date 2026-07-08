@@ -28,7 +28,7 @@ Runtime:
 NOT authoritative for deletion: it never removes a skill absent from the manifest.
 """
 from __future__ import annotations
-import argparse, platform, shutil, subprocess, sys, tempfile
+import argparse, os, platform, shutil, subprocess, sys, tempfile
 from pathlib import Path
 try:
     import yaml
@@ -42,7 +42,12 @@ if sys.stdout.encoding and sys.stdout.encoding.lower().replace("-", "") != "utf8
 
 HOME = Path.home()
 HERE = Path(__file__).resolve().parent
-VAULT = HERE.parent.parent                      # 03-INFRA/scripts -> vault root
+# NOT HERE.parent.parent: when this script runs from a separate engine
+# checkout (AGENT_ENGINE_ROOT), the manifest and exclude lists still need
+# to come from the user's actual data, same resolution as agent_sync.py's
+# Env.vault_data.
+_vault = Path(os.environ.get("KNOWLEDGE_VAULT_PATH") or str(HOME / "KnowledgeVault"))
+VAULT = Path(os.environ.get("AGENT_VAULT_DATA") or str(_vault))
 UL = VAULT / "03-INFRA" / "agent-universal-layer"
 MANIFEST = UL / "skills" / "skills.manifest.yaml"
 
