@@ -362,6 +362,8 @@ def slugify(text: str) -> str:
 
 
 MAX_CONTEXT_FILE_BYTES = 2_000_000  # ~2MB: generoso per un brief/diff di testo, non per un binario
+POSIX_SINGLE_ARG_SAFE_BYTES = 120_000
+WINDOWS_COMMAND_LINE_SAFE_CHARS = 30_000
 
 
 def _read_or_exit(path_str: str, label: str) -> str:
@@ -460,6 +462,31 @@ def _build_seat_command(seat: dict, prompt: str, session_dir: Path) -> tuple[lis
     )
 
 
+def _validate_seat_argv_size(argv: list[str]) -> None:
+    """The supported CLIs currently receive the whole prompt as one argv item.
+    That is cheaper and deterministic for small briefs, but it has hard OS
+    limits: Windows has a ~32k command line cap and Linux has a per-argument
+    cap well below the 2MB context-file guard. Fail before Popen so the user
+    gets an actionable council error instead of an opaque OS invocation crash.
+    """
+    encoded_lengths = [len(arg.encode("utf-8")) for arg in argv]
+    total_chars = sum(len(arg) + 3 for arg in argv)
+    if os.name == "nt" and total_chars > WINDOWS_COMMAND_LINE_SAFE_CHARS:
+        raise SeatRunError(
+            "[council] brief troppo grande per i seat CLI su Windows: il prompt viene passato "
+            "come argomento e supererebbe il limite della riga di comando. Riduci il contesto "
+            "o spezza la review in batch piu' piccoli.",
+            "prompt_too_large",
+        )
+    if os.name != "nt" and encoded_lengths and max(encoded_lengths) > POSIX_SINGLE_ARG_SAFE_BYTES:
+        raise SeatRunError(
+            "[council] brief troppo grande per i seat CLI: il prompt viene passato come singolo "
+            "argomento e supererebbe il limite pratico del sistema. Riduci il contesto o spezza "
+            "la review in batch piu' piccoli.",
+            "prompt_too_large",
+        )
+
+
 def run_seat(seat: dict, prompt: str, session_dir: Path) -> tuple[str, dict]:
     """Legge stdout in streaming (non subprocess.run in blocco): un timeout senza
     aver mai ricevuto una riga e' un segnale diagnostico diverso da un timeout a
@@ -471,6 +498,7 @@ def run_seat(seat: dict, prompt: str, session_dir: Path) -> tuple[str, dict]:
     model = seat["model"]
     cli = seat["cli"]
     argv, output_file = _build_seat_command(seat, prompt, session_dir)
+    _validate_seat_argv_size(argv)
     try:
         try:
             proc = subprocess.Popen(

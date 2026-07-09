@@ -846,8 +846,8 @@ def runtimes(env: Env) -> None:
             name = d.name
             link = rt / name
             if name in excludes:
-                if link.is_symlink():
-                    link.unlink()
+                if _is_link_like(link) or link.exists():
+                    _remove_path(link)
                     env.log(f"runtime: {name} excluded from {rt} (lazy)")
                 continue
             if not link.is_symlink():
@@ -987,10 +987,17 @@ def _ensure_alert_creds(env: Env) -> None:
         env.log("alert-creds: n8n source not configured (N8N_TELEGRAM_CRED_ID / TELEGRAM_CHAT_ID / REMOTE_ALIAS) — skipping, using env-based alerts if present")
         return
     remote_script = (
-        "n8n export:credentials --all --decrypted --output=/tmp/c.json >/dev/null 2>&1\n"
-        f'node -e \'const d=require("/tmp/c.json");const c=d.find(x=>x.id==="{cred_id}");'
-        'process.stdout.write((c&&c.data&&(c.data.accessToken||c.data.token))||"")\' 2>/dev/null\n'
-        "rm -f /tmp/c.json\n"
+        "set -eu\n"
+        "cred_id=$1\n"
+        "tmpfile=$(mktemp /tmp/agent-sync-n8n-creds.XXXXXX)\n"
+        "trap 'rm -f \"$tmpfile\"' EXIT HUP INT TERM\n"
+        "chmod 600 \"$tmpfile\"\n"
+        "n8n export:credentials --all --decrypted --output=\"$tmpfile\" >/dev/null 2>&1\n"
+        "CRED_FILE=\"$tmpfile\" N8N_TELEGRAM_CRED_ID=\"$cred_id\" "
+        "node -e 'const d=require(process.env.CRED_FILE);"
+        "const list=Array.isArray(d)?d:[];"
+        "const c=list.find(x=>x&&x.id===process.env.N8N_TELEGRAM_CRED_ID);"
+        "process.stdout.write((c&&c.data&&(c.data.accessToken||c.data.token))||\"\")' 2>/dev/null\n"
     )
     token = ""
     for attempt in range(3):
@@ -1004,7 +1011,7 @@ def _ensure_alert_creds(env: Env) -> None:
             # Gemini via agy, 2026-07-09.
             r = subprocess.run(
                 ["ssh", "-o", "ConnectTimeout=12", "-o", "BatchMode=yes", remote_alias,
-                 f"sudo -n docker exec -i {shlex.quote(container)} sh -s"],
+                 f"sudo -n docker exec -i {shlex.quote(container)} sh -s -- {shlex.quote(cred_id)}"],
                 input=remote_script, capture_output=True, text=True, timeout=20,
             )
             token = r.stdout.strip()

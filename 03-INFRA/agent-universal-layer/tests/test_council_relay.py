@@ -192,3 +192,20 @@ def test_relay_enforces_hard_five_stage_limit(monkeypatch, tmp_path):
         council.cmd_relay(relay_args(sequence=sequence, max_seats=5))
 
     assert "relay supporta al massimo 5 stadi" in str(exc.value)
+
+
+def test_run_seat_rejects_prompt_too_large_before_popen(monkeypatch, tmp_path):
+    council = load_council(monkeypatch, tmp_path)
+
+    def fail_if_called(*args, **kwargs):
+        raise AssertionError("Popen should not be reached for oversized prompts")
+
+    monkeypatch.setattr(council.subprocess, "Popen", fail_if_called)
+    seat = {"cli": "agy", "model": "Gemini 3.5 Flash (High)"}
+    oversized_prompt = "x" * (council.POSIX_SINGLE_ARG_SAFE_BYTES + 1)
+
+    with pytest.raises(council.SeatRunError) as exc:
+        council.run_seat(seat, oversized_prompt, tmp_path)
+
+    assert exc.value.kind == "prompt_too_large"
+    assert "spezza la review in batch" in str(exc.value)

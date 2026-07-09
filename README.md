@@ -110,7 +110,7 @@ You don't need to fill out configuration files manually.
 ## Prerequisites
 
 - Git
-- Python 3 with PyYAML (`pip install pyyaml`)
+- Python 3.11+ with PyYAML (`pip install pyyaml`), or Python 3.10 with `tomli` too (`pip install pyyaml tomli`)
 - Node.js (for `npx`, needed if you mount MCP servers or external skills)
 - Optional: [OpenCode](https://opencode.ai) as one of the supported CLIs
 - `jq` and `curl` on Linux/Mac (only needed for the MULTI profile sync and health scripts)
@@ -245,7 +245,7 @@ Non devi compilare i file di configurazione a mano.
 ## Prerequisiti
 
 - Git
-- Python 3 con PyYAML (`pip install pyyaml`)
+- Python 3.11+ con PyYAML (`pip install pyyaml`), oppure Python 3.10 con anche `tomli` (`pip install pyyaml tomli`)
 - Node.js (per `npx`, necessario se monti server MCP o skill esterne)
 - Opzionale: [OpenCode](https://opencode.ai) come una delle CLI supportate
 - `jq` e `curl` su Linux/Mac (solo per il profilo MULTI, necessari per sync e health)

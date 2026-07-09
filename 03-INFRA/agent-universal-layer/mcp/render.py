@@ -17,8 +17,16 @@ dialect.
     does not exist yet (it has never been launched once) — nothing to patch
     until it has been opened at least once."""
 from __future__ import annotations
-import argparse, difflib, json, os, platform, re, sys, time, tomllib
+import argparse, difflib, json, os, platform, re, sys, time
 from pathlib import Path
+try:
+    import tomllib
+except ModuleNotFoundError:
+    try:
+        import tomli as tomllib
+    except ModuleNotFoundError:
+        tomllib = None
+TOMLDecodeError = tomllib.TOMLDecodeError if tomllib is not None else ValueError
 try:
     import yaml
 except ModuleNotFoundError:
@@ -37,6 +45,11 @@ IS_WINDOWS = platform.system() == "Windows"
 
 SECRET_KEY = re.compile(r"(token|secret|password|authorization|bearer|api[_-]?key|cookie)", re.I)
 LONGTOK = re.compile(r"^[A-Za-z0-9_\-\.=+/]{40,}$")
+
+def toml_loads(text):
+    if tomllib is None:
+        sys.exit("render.py needs Python 3.11+ or tomli for TOML: pip install tomli")
+    return tomllib.loads(text)
 
 def redact(obj, key=None):
     if isinstance(obj, dict):
@@ -157,7 +170,7 @@ def load_current(cli):
         if cli == "claude":
             return json.loads((HOME / ".claude.json").read_text("utf-8")).get("mcpServers", {})
         if cli == "codex":
-            d = tomllib.loads((HOME / ".codex/config.toml").read_text("utf-8"))
+            d = toml_loads((HOME / ".codex/config.toml").read_text("utf-8"))
             return {k: {kk: vv for kk, vv in v.items() if kk != "tools"} for k, v in d.get("mcp_servers", {}).items()}
         if cli == "antigravity":
             d = json.loads((HOME / ".gemini/antigravity/mcp_config.json").read_text("utf-8"))
@@ -474,8 +487,8 @@ def write_codex(path=None):
     raw = path.read_text("utf-8")
     lines = raw.split("\n")
     try:
-        live = tomllib.loads(raw)
-    except tomllib.TOMLDecodeError as e:
+        live = toml_loads(raw)
+    except TOMLDecodeError as e:
         print(f">>> STOP: {path.name} is not valid TOML ({e}). Fix it or restore a .bak-* backup before rerunning."); return 2
     live_srv = live.get("mcp_servers", {})
     man = load_manifest()
@@ -520,7 +533,7 @@ def write_codex(path=None):
 
     # --- guard: parsing + non-MCP untouched + tools preserved + fields == manifest
     try:
-        np_ = tomllib.loads(new_text)
+        np_ = toml_loads(new_text)
     except Exception as ex:
         print(f">>> STOP: result is not valid TOML ({ex})."); return 2
     for k in live:
@@ -549,7 +562,7 @@ def write_codex(path=None):
     bak = _secure_backup(path, raw, "utf-8")
     _prune_backups(path)
     _atomic_write_text(path, new_text, "utf-8")
-    tomllib.loads(path.read_text("utf-8"))
+    toml_loads(path.read_text("utf-8"))
     print(f"\n>>> WRITTEN and validated (TOML ok). Backup: {bak}")
     return 0
 

@@ -6,7 +6,9 @@ prove the shared implementation runs in a sandboxed USERPROFILE.
 """
 from __future__ import annotations
 
+import os
 from pathlib import Path
+import shlex
 import subprocess
 import sys
 
@@ -100,6 +102,29 @@ def test_windows_runtime_skill_dirs_are_created(sandbox, monkeypatch):
     assert (sandbox.home / ".codex" / "skills").is_dir()
 
 
+def test_windows_excluded_copy_fallback_skill_is_removed(sandbox, monkeypatch):
+    mod = load_agent_sync_module(sandbox)
+    monkeypatch.setattr(mod, "IS_WINDOWS", True)
+    monkeypatch.setenv("HOME", str(sandbox.home))
+    monkeypatch.setenv("USERPROFILE", str(sandbox.home))
+    monkeypatch.setenv("KNOWLEDGE_VAULT_PATH", str(sandbox.vault))
+
+    hub_skill = sandbox.hub / "fake-skill-excluded"
+    hub_skill.mkdir(parents=True, exist_ok=True)
+    (hub_skill / "SKILL.md").write_text("canonical excluded skill\n", encoding="utf-8")
+    for runtime in (sandbox.home / ".claude" / "skills", sandbox.home / ".codex" / "skills"):
+        copied_skill = runtime / "fake-skill-excluded"
+        copied_skill.mkdir(parents=True, exist_ok=True)
+        (copied_skill / "SKILL.md").write_text("stale copy\n", encoding="utf-8")
+
+    env = mod.Env()
+    mod.runtimes(env)
+
+    assert not (sandbox.home / ".claude" / "skills" / "fake-skill-excluded").exists()
+    assert not (sandbox.home / ".codex" / "skills" / "fake-skill-excluded").exists()
+    assert (sandbox.hub / "fake-skill-excluded" / "SKILL.md").is_file()
+
+
 def test_windows_backup_failure_does_not_delete_local_edit(sandbox, monkeypatch):
     """A local edit differs from src on Windows (no link privilege, fell back
     to a real copy) and the backup-before-overwrite fails (locked file, full
@@ -147,3 +172,44 @@ def test_claude_hooks_skips_non_dict_settings_root(sandbox, monkeypatch):
     mod.claude_hooks(env)  # must not raise
 
     assert settings_path.read_text(encoding="utf-8") == "[]"
+
+
+def test_alert_creds_credential_id_is_not_interpolated_into_remote_script(sandbox, monkeypatch):
+    mod = load_agent_sync_module(sandbox)
+    monkeypatch.setenv("HOME", str(sandbox.home))
+    monkeypatch.setenv("KNOWLEDGE_VAULT_PATH", str(sandbox.vault))
+    monkeypatch.setenv("KNOWLEDGE_VAULT_REMOTE", "origin")
+    monkeypatch.delenv("TELEGRAM_BOT_TOKEN", raising=False)
+    monkeypatch.setenv("TELEGRAM_CHAT_ID", "12345")
+    dangerous_cred_id = 'dummy"); require("child_process").execSync("touch /tmp/pwned"); //'
+    monkeypatch.setenv("N8N_TELEGRAM_CRED_ID", dangerous_cred_id)
+    monkeypatch.setenv("REMOTE_ALIAS", "oracle")
+    monkeypatch.setenv("N8N_CONTAINER", "n8n-n8n-1")
+
+    calls = []
+
+    def fake_run(args, *, input, capture_output, text, timeout):
+        calls.append((args, input, capture_output, text, timeout))
+        return subprocess.CompletedProcess(args, 0, stdout="retrieved-token\n", stderr="")
+
+    monkeypatch.setattr(mod.subprocess, "run", fake_run)
+
+    env = mod.Env()
+    mod._ensure_alert_creds(env)
+
+    assert os.environ["TELEGRAM_BOT_TOKEN"] == "retrieved-token"
+    args, remote_script, capture_output, text, timeout = calls[0]
+    assert args[:4] == ["ssh", "-o", "ConnectTimeout=12", "-o"]
+    assert args[-2] == "oracle"
+    remote_command = args[-1]
+    assert remote_command.endswith(f" sh -s -- {shlex.quote(dangerous_cred_id)}")
+    assert dangerous_cred_id not in remote_script
+    assert 'x.id==="' not in remote_script
+    assert "process.env.N8N_TELEGRAM_CRED_ID" in remote_script
+    assert "mktemp /tmp/agent-sync-n8n-creds.XXXXXX" in remote_script
+    assert 'chmod 600 "$tmpfile"' in remote_script
+    assert 'trap \'rm -f "$tmpfile"\'' in remote_script
+    assert '--output="$tmpfile"' in remote_script
+    assert capture_output is True
+    assert text is True
+    assert timeout == 20
