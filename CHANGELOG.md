@@ -8,6 +8,14 @@ This file tracks the **engine** (this repo). Your own data — manifests,
 instructions, skills, secrets — lives in your KnowledgeVault and is not part
 of any engine release.
 
+## [0.3.2] - 2026-07-10
+
+### Fixed
+
+- Windows CI no longer applies POSIX mode-bit assertions to NTFS files.
+  The test still verifies that the generated configuration and backup exist;
+  owner-only mode checks remain enforced on POSIX, where they are meaningful.
+
 ## [0.3.1] - 2026-07-10
 
 ### Fixed

@@ -9,6 +9,7 @@ gli altri.
 from __future__ import annotations
 
 import json
+import os
 import tomllib
 from pathlib import Path
 
@@ -252,8 +253,9 @@ def test_write_creates_owner_only_backup_and_output(sandbox_with_live_configs, c
 
     backups = list(path.parent.glob(path.name + ".bak-*"))
     assert backups, f"{cli}: nessun backup creato dopo --write"
-    assert all((p.stat().st_mode & 0o077) == 0 for p in backups), f"{cli}: backup leggibile da gruppo/altri"
-    assert (path.stat().st_mode & 0o077) == 0, f"{cli}: output leggibile da gruppo/altri"
+    if os.name != "nt":
+        assert all((p.stat().st_mode & 0o077) == 0 for p in backups), f"{cli}: backup leggibile da gruppo/altri"
+        assert (path.stat().st_mode & 0o077) == 0, f"{cli}: output leggibile da gruppo/altri"
 
 
 def test_write_rejects_invalid_json_without_touching_file(sandbox_with_live_configs, capsys):
