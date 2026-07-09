@@ -1,6 +1,6 @@
-# NeXgen Vault
+# NeXgen Vault (Alpha)
 
-A Git-backed AgentOps control layer for AI coding CLIs.
+A Git-backed AgentOps control layer for AI coding CLIs. Note: This project is currently in Alpha.
 
 Shared instructions, generated MCP config, drift checks, secrets discipline, and cross-machine agent memory, all as plain files in a Git repo, not a hosted service.
 
@@ -35,8 +35,9 @@ NeXgen's public-engine safety gates are maintainer tooling, not an end-user chor
 
 ## Core concepts
 
-- **Infrastructure as Code for AI.** Manifest files define tools, permissions, and agent behaviors. A generator script creates the correct configuration for different CLIs.
+- **Infrastructure as Code for AI.** Manifest files define tools, permissions, and agent behaviors. A unified Python script (`agent_sync.py`) generates the correct configuration for different CLIs.
 - **Git-backed memory.** The agents read and write Markdown files. Every change is version-controlled, diffable, and easy to revert.
+- **Deterministic AI Council (Alpha).** A local orchestrator (`council.py`) that coordinates multiple models for brainstorming and relay tasks. It uses explicit Python code to pass control, rather than relying on an LLM to manage the rules.
 - **Drift detection.** In MULTI profile, the `agent-doctor` script runs 30+ read-only checks against your CLIs' live configuration, vault wiring, skills, and secrets handling, reporting pass/warn/fail per line (non-zero exit code on failures). It detects drift and misconfiguration; it does not sit in the execution path. In MINIMAL, there is no doctor: a single CLI on a single machine is verified visually.
 - **Cross-platform consistency (optional).** In MULTI profile, the system forces agents to behave identically across different machines (e.g., a Windows workstation and a Linux laptop) through a provisioner. In MINIMAL, there is only one machine, so the provisioner is a no-op and is not installed.
 
@@ -88,7 +89,7 @@ The AI-guided setup (`INIT.md`) configures the correct mode for your environment
 The framework fits two shapes of usage. The installer (`INIT.md`) asks and picks the right one.
 
 - **MINIMAL.** One CLI on one machine (e.g., only Claude Code on your laptop, or [OpenCode](https://opencode.ai) for a DeepSeek-based single-CLI setup). You get the knowledge vault, the bootstrap rules, lazy skills, and the discipline of writing memory through one door. There is no provisioner to run, no doctor to schedule, no cross-machine sync. Mount the MCP servers and skills you want directly in your CLI by hand. Best for solo users who just want AgentOps governance on top of a single agent.
-- **MULTI.** Two or more CLIs and/or two or more machines. The provisioner (`agent-sync`), the generator (`render.py`), the doctor, and the healthcheck come online and keep every CLI and machine aligned to the canonical source in the vault. Best for a workstation + laptop setup, or for running multiple CLIs side by side.
+- **MULTI.** Two or more CLIs and/or two or more machines. The unified Python provisioner (`agent_sync.py`), the doctor, and the healthcheck come online and keep every CLI and machine aligned to the canonical source in the vault. Best for a workstation + laptop setup, or for running multiple CLIs side by side.
 
 You can start MINIMAL and switch to MULTI later. The canonical files in the vault do not change between profiles.
 
@@ -116,7 +117,12 @@ You don't need to fill out configuration files manually.
 
 ## Platform status
 
-Linux is the daily-driven platform and the most tested. Windows support is an early preview, actively being worked on: the MULTI-profile PowerShell scripts (`agent-sync.ps1`, `agent-doctor.ps1`) run, but the MCP config generator (`render.py`) does not have a Windows dialect yet, and a couple of runtime paths (e.g. where Antigravity reads its instructions file) are inferred by analogy with Linux rather than confirmed live. MINIMAL profile is the safer starting point on Windows today. macOS follows the Linux code paths but has seen less real-world use.
+**Why is this Alpha?**
+Linux is the daily-driven platform and the most tested, but the framework is still in Alpha because cross-platform support and core orchestrators are actively settling. Specifically:
+- **Windows Support:** While the core provisioner was just unified into a single Python script (`agent_sync.py`), the MCP config generator (`render.py`) still lacks a Windows dialect, and some runtime paths are inferred rather than confirmed live.
+- **AI Council:** The new deterministic orchestrator (`council.py`) is functional but still has known edge cases (e.g., crashing on large binary files or race conditions in session folders) that need ironing out.
+
+MINIMAL profile is the safer starting point on Windows today. macOS follows the Linux code paths but has seen less real-world use.
 
 ## License
 
@@ -128,9 +134,9 @@ This project is free to use. Some optional links (like the OpenCode one above) a
 
 ---
 
-# NeXgen Vault (Italiano)
+# NeXgen Vault (Italiano) - Alpha
 
-Un control layer AgentOps basato su Git, per le CLI agentiche di sviluppo.
+Un control layer AgentOps basato su Git, per le CLI agentiche di sviluppo. Nota: Questo progetto è attualmente in fase Alpha.
 
 Istruzioni condivise, configurazione MCP generata automaticamente, controlli anti-drift, disciplina sui segreti e memoria degli agenti condivisa tra più macchine.
 Tutto file di testo dentro un repo Git, non un servizio in cloud.
@@ -164,8 +170,9 @@ Parte dal presupposto che tu abbia già le idee chiare su quali agenti e strumen
 
 ## Concetti base
 
-- **Infrastruttura come codice per l'AI.** I file manifest definiscono tool, permessi e regole di comportamento. Uno script genera poi la configurazione corretta per le diverse CLI.
+- **Infrastruttura come codice per l'AI.** I file manifest definiscono tool, permessi e regole di comportamento. Uno script Python unificato (`agent_sync.py`) genera la configurazione corretta per le diverse CLI.
 - **Memoria basata su Git.** Gli agenti leggono e scrivono file Markdown. Ogni modifica è tracciata, verificabile e facile da annullare.
+- **Consiglio AI deterministico (Alpha).** Un orchestratore locale (`council.py`) che coordina più modelli per compiti di brainstorming o a staffetta. Usa codice Python esplicito per cedere il controllo, anziché affidare le regole di gestione a un LLM.
 - **Rilevamento del drift.** Nel profilo MULTI lo script `agent-doctor` esegue oltre 30 controlli in sola lettura su configurazione viva delle CLI, collegamento al vault, skill e gestione dei segreti, riportando pass, warn o fail riga per riga (exit code non-zero in caso di fallimenti). Rileva drift e configurazioni sbagliate; non sta nel percorso di esecuzione. In MINIMAL non c'è doctor: una CLI su una macchina si verifica a vista.
 - **Coerenza tra macchine (opzionale).** Nel profilo MULTI il sistema forza gli agenti a comportarsi in modo identico su hardware diverso (ad esempio, una workstation Windows e un portatile Linux) tramite un provisioner. In MINIMAL c'è una sola macchina, quindi il provisioner è no-op e non viene installato.
 
@@ -217,7 +224,7 @@ Il setup guidato dall'AI (`INIT.md`) configurerà la modalità adatta al tuo amb
 Il framework si adatta a due forme d'uso. L'installer (`INIT.md`) chiede e sceglie quella giusta.
 
 - **MINIMAL.** Una CLI su una macchina (es. solo Claude Code sul portatile, oppure [OpenCode](https://opencode.ai) per un setup single-CLI basato su DeepSeek). Ottieni il knowledge vault, le regole del bootstrap, le skill lazy e la disciplina della scrittura memoria tramite una sola porta. Non c'è provisioner da lanciare, nessun doctor da schedulare, niente sync tra macchine. Monti MCP server e skill a mano nella tua CLI. Indicato per chi lavora da solo e vuole governance AgentOps sopra un singolo agente.
-- **MULTI.** Due o più CLI e/o due o più macchine. Il provisioner (`agent-sync`), il generatore (`render.py`), il doctor e l'healthcheck entrano in funzione e tengono ogni CLI e ogni macchina allineata alla fonte canonica del vault. Indicato per un setup desktop + portatile, o per girare più CLI in parallelo.
+- **MULTI.** Due o più CLI e/o due o più macchine. Il provisioner unificato in Python (`agent_sync.py`), il doctor e l'healthcheck entrano in funzione e tengono ogni CLI e ogni macchina allineata alla fonte canonica del vault. Indicato per un setup desktop + portatile, o per girare più CLI in parallelo.
 
 Puoi partire da MINIMAL e passare a MULTI in seguito. I file canonici del vault non cambiano tra i profili.
 
@@ -245,7 +252,12 @@ Non devi compilare i file di configurazione a mano.
 
 ## Stato per piattaforma
 
-Linux è la piattaforma usata quotidianamente e la più testata. Il supporto Windows è in early preview, ci sto lavorando attivamente: gli script PowerShell del profilo MULTI (`agent-sync.ps1`, `agent-doctor.ps1`) girano, ma il generatore di config MCP (`render.py`) non ha ancora un dialetto Windows, e un paio di percorsi runtime (ad esempio dove Antigravity legge il suo file di istruzioni) sono dedotti per analogia con Linux, non ancora confermati dal vivo. Il profilo MINIMAL è il punto di partenza più sicuro su Windows oggi. macOS segue gli stessi percorsi di codice di Linux ma ha visto meno uso reale.
+**Perché siamo in Alpha?**
+Linux è la piattaforma usata quotidianamente e la più testata, ma il framework è in Alpha perché il supporto cross-platform e gli orchestratori principali si stanno ancora stabilizzando. Nello specifico:
+- **Supporto Windows:** Anche se il provisioner principale è appena stato unificato in uno script Python (`agent_sync.py`), il generatore di config MCP (`render.py`) non ha ancora un dialetto Windows, e alcuni percorsi runtime sono dedotti per analogia con Linux piuttosto che confermati dal vivo.
+- **Consiglio AI:** Il nuovo orchestratore deterministico (`council.py`) funziona ma presenta ancora degli edge case noti (es. crash su file binari o race condition nelle cartelle di sessione) che vanno sistemati.
+
+Il profilo MINIMAL è il punto di partenza più sicuro su Windows oggi. macOS segue gli stessi percorsi di codice di Linux ma ha visto meno uso reale.
 
 ## Licenza
 
