@@ -98,3 +98,52 @@ def test_windows_runtime_skill_dirs_are_created(sandbox, monkeypatch):
 
     assert (sandbox.home / ".claude" / "skills").is_dir()
     assert (sandbox.home / ".codex" / "skills").is_dir()
+
+
+def test_windows_backup_failure_does_not_delete_local_edit(sandbox, monkeypatch):
+    """A local edit differs from src on Windows (no link privilege, fell back
+    to a real copy) and the backup-before-overwrite fails (locked file, full
+    disk, ...): make_link must not fall through to deleting dst without a
+    confirmed backup. Regression for a full-codebase audit finding,
+    2026-07-09."""
+    mod = load_agent_sync_module(sandbox)
+    monkeypatch.setattr(mod, "IS_WINDOWS", True)
+
+    src = sandbox.home / "src.txt"
+    dst = sandbox.home / "dst.txt"
+    src.write_text("canonical\n", encoding="utf-8")
+    dst.write_text("local edit, different from src\n", encoding="utf-8")
+
+    def fail_copy2(*args, **kwargs):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(mod.shutil, "copy2", fail_copy2)
+
+    result = mod.make_link(src, dst, is_dir=False)
+
+    assert result is False
+    assert dst.read_text(encoding="utf-8") == "local edit, different from src\n"
+
+
+def test_claude_hooks_skips_non_dict_settings_root(sandbox, monkeypatch):
+    """settings.json can be syntactically valid JSON with a non-object root
+    (e.g. "[]"); claude_hooks must skip cleanly instead of crashing with
+    AttributeError on settings.setdefault(...), which would abort the rest
+    of the agent-sync run (publish/creds/health run after it in main()).
+    Regression for a full-codebase audit finding, 2026-07-09."""
+    mod = load_agent_sync_module(sandbox)
+    monkeypatch.setenv("HOME", str(sandbox.home))
+    monkeypatch.setenv("KNOWLEDGE_VAULT_PATH", str(sandbox.vault))
+
+    hooks_dir = sandbox.ul / "hooks"
+    hooks_dir.mkdir(parents=True, exist_ok=True)
+    (hooks_dir / "claude-vault-checkpoint.mjs").write_text("// hook\n", encoding="utf-8")
+    claude_dir = sandbox.home / ".claude"
+    claude_dir.mkdir(parents=True, exist_ok=True)
+    settings_path = claude_dir / "settings.json"
+    settings_path.write_text("[]", encoding="utf-8")
+
+    env = mod.Env()
+    mod.claude_hooks(env)  # must not raise
+
+    assert settings_path.read_text(encoding="utf-8") == "[]"

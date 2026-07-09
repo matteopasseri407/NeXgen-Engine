@@ -27,6 +27,7 @@ import json
 import os
 import platform
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -220,13 +221,36 @@ def make_link(src: Path, dst: Path, *, is_dir: bool) -> bool:
             else:
                 shutil.copy2(dst, bak)
         except OSError:
-            pass
+            # Backup failed (locked file, permission denied, ...): do not
+            # fall through to _remove_path below without a confirmed backup,
+            # that would silently destroy a local edit with nothing to
+            # restore it from. Bail out and retry on the next run. Found in
+            # a full-codebase audit, Gemini via agy, 2026-07-09.
+            return False
     _remove_path(dst)
     dst.parent.mkdir(parents=True, exist_ok=True)
     if not IS_WINDOWS:
-        dst.symlink_to(src, target_is_directory=is_dir)
+        try:
+            dst.symlink_to(src, target_is_directory=is_dir)
+        except FileExistsError:
+            # Two overlapping agent-sync runs (cron timer + manual run) can
+            # both pass _remove_path above and then race here -- if the
+            # other one already created the same correct link, that's a race
+            # we lost harmlessly, not a real error. Found in a full-codebase
+            # audit, Gemini via agy, 2026-07-09.
+            if not (_is_link_like(dst) and dst.resolve() == src.resolve()):
+                raise
         return True
     if is_dir:
+        # RISK (flagged in a full-codebase audit, Gemini via agy, 2026-07-09,
+        # NOT verified live on Windows -- needs physical access, see
+        # agentic-layer-concept-map.md backlog): subprocess's list2cmdline
+        # only quotes on space/tab/quote, not on cmd.exe metacharacters
+        # (&, |, <, >, ^). A dst/src path containing one of those without a
+        # space would reach cmd.exe unquoted and be parsed as a shell
+        # operator. Do not "fix" this blind with hand-rolled quoting; a
+        # wrong escaping scheme is its own bug and this needs a real
+        # Windows run to confirm behavior before changing it.
         r = subprocess.run(["cmd", "/c", "mklink", "/J", str(dst), str(src)],
                             capture_output=True, text=True)
         if r.returncode == 0:
@@ -790,7 +814,17 @@ def runtimes(env: Env) -> None:
                 continue
             rt.mkdir(parents=True, exist_ok=True)
         try:
-            is_hub_loop = rt.is_symlink() and rt.resolve() == env.agents_hub.resolve()
+            # _is_link_like, not is_symlink() alone: on Windows rt can be a
+            # Junction (is_symlink() is False for those). Missing this made
+            # the loop go undetected and fall through to the per-skill link
+            # loop below, where `link = rt / name` resolves (via the
+            # junction) to the SAME real hub entry as `d` -- shutil.rmtree(link)
+            # then deletes the actual hub source content (found in a
+            # full-codebase audit, Gemini via agy, 2026-07-09; not verified
+            # live on Windows, but this only makes rt's loop detection
+            # consistent with the same check already used in make_link and
+            # _remove_path elsewhere in this file).
+            is_hub_loop = _is_link_like(rt) and rt.resolve() == env.agents_hub.resolve()
         except OSError:
             is_hub_loop = False
         if is_hub_loop:
@@ -846,6 +880,13 @@ def claude_hooks(env: Env) -> None:
         settings = json.loads(settings_path.read_text(encoding="utf-8"))
     except json.JSONDecodeError:
         env.log("claude-hooks: settings.json not valid JSON; skipping merge")
+        return
+    if not isinstance(settings, dict):
+        # Valid JSON but not an object (e.g. "[]") -- settings.setdefault
+        # below would crash with AttributeError, aborting the rest of this
+        # agent-sync run (publish/creds/health all run after this call in
+        # main()). Found in a full-codebase audit, Gemini via agy, 2026-07-09.
+        env.log("claude-hooks: settings.json root is not an object; skipping merge")
         return
 
     command = f'node "{hook_dst}"'
@@ -954,9 +995,16 @@ def _ensure_alert_creds(env: Env) -> None:
     token = ""
     for attempt in range(3):
         try:
+            # shlex.quote(container): N8N_CONTAINER is attacker-controllable
+            # by anything that can set a local env var before this runs (a
+            # compromised dependency, a malicious skill/MCP server) -- an
+            # unquoted value becomes a command the remote shell parses,
+            # turning a local env-var write into arbitrary root execution on
+            # the remote host via sudo. Found in a full-codebase audit,
+            # Gemini via agy, 2026-07-09.
             r = subprocess.run(
                 ["ssh", "-o", "ConnectTimeout=12", "-o", "BatchMode=yes", remote_alias,
-                 f"sudo -n docker exec -i {container} sh -s"],
+                 f"sudo -n docker exec -i {shlex.quote(container)} sh -s"],
                 input=remote_script, capture_output=True, text=True, timeout=20,
             )
             token = r.stdout.strip()
