@@ -7,7 +7,7 @@ A2: tre mode (brainstorm multi-round, challenge, code-review), prompt di
 ruolo dedicati, parsing VERDICT per ogni round.
 """
 from __future__ import annotations
-import argparse, importlib.util, json, os, re, shutil, subprocess, sys
+import argparse, importlib.util, json, os, queue, re, shutil, subprocess, sys, threading, time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -140,22 +140,66 @@ def new_session_dir(label: str) -> Path:
     return session_dir
 
 
+def _drain_lines(stream, line_queue: "queue.Queue[str | None]") -> None:
+    for line in stream:
+        line_queue.put(line)
+    line_queue.put(None)
+
+
+def _drain_text(stream, sink: list[str]) -> None:
+    for line in stream:
+        sink.append(line)
+
+
 def run_seat(model: str, prompt: str, session_dir: Path) -> tuple[str, dict]:
+    """Legge stdout in streaming (non subprocess.run in blocco): un timeout senza
+    aver mai ricevuto una riga e' un segnale diagnostico diverso da un timeout a
+    meta' risposta (es. quota abbonamento esaurita o blocco lato provider senza
+    errore visibile lato client, verificato dal vivo su un seat a quota esaurita:
+    TimeoutExpired non porta output parziale, va letto mentre arriva)."""
     try:
-        proc = subprocess.run(
+        proc = subprocess.Popen(
             ["opencode", "run", prompt, "-m", model, "--format", "json", "--dir", str(session_dir)],
-            capture_output=True, text=True, timeout=SEAT_TIMEOUT_SECONDS,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
         )
     except OSError as e:
         sys.exit(f"[council] impossibile invocare il seat (brief troppo grande per la riga di comando?): {e}")
-    except subprocess.TimeoutExpired:
-        sys.exit(f"[council] il seat '{model}' non ha risposto entro {SEAT_TIMEOUT_SECONDS}s: timeout, nessun verdetto per questo round.")
-    if proc.returncode != 0:
-        sys.exit(f"[council] il seat non ha risposto (exit {proc.returncode}):\n{proc.stderr}")
+
+    line_queue: "queue.Queue[str | None]" = queue.Queue()
+    stderr_lines: list[str] = []
+    stdout_reader = threading.Thread(target=_drain_lines, args=(proc.stdout, line_queue), daemon=True)
+    stderr_reader = threading.Thread(target=_drain_text, args=(proc.stderr, stderr_lines), daemon=True)
+    stdout_reader.start()
+    stderr_reader.start()
 
     text_chunks = []
     usage = {}
-    for line in proc.stdout.splitlines():
+    got_any_line = False
+    deadline = time.monotonic() + SEAT_TIMEOUT_SECONDS
+
+    while True:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            proc.kill()
+            proc.wait()
+            if not got_any_line:
+                sys.exit(
+                    f"[council] il seat '{model}' non ha risposto entro {SEAT_TIMEOUT_SECONDS}s "
+                    "senza produrre alcun output: probabile quota abbonamento esaurita o blocco "
+                    "lato provider (nessun errore diagnosticabile dal client). Verifica manualmente "
+                    "prima di riprovare."
+                )
+            sys.exit(
+                f"[council] il seat '{model}' ha iniziato a rispondere ma non ha finito entro "
+                f"{SEAT_TIMEOUT_SECONDS}s: timeout a meta' risposta, nessun verdetto per questo round."
+            )
+        try:
+            line = line_queue.get(timeout=remaining)
+        except queue.Empty:
+            continue
+        if line is None:
+            break
+        got_any_line = True
         line = line.strip()
         if not line:
             continue
@@ -164,12 +208,20 @@ def run_seat(model: str, prompt: str, session_dir: Path) -> tuple[str, dict]:
         except json.JSONDecodeError:
             continue
         if event.get("type") == "error":
+            proc.kill()
+            proc.wait()
             sys.exit(f"[council] errore dal seat: {event.get('error')}")
         part = event.get("part") or {}
         if event.get("type") == "text" and "text" in part:
             text_chunks.append(part["text"])
         if event.get("type") == "step_finish":
             usage = {"tokens": part.get("tokens"), "cost": part.get("cost")}
+
+    stdout_reader.join(timeout=5)
+    stderr_reader.join(timeout=5)
+    returncode = proc.wait()
+    if returncode != 0:
+        sys.exit(f"[council] il seat non ha risposto (exit {returncode}):\n{''.join(stderr_lines)}")
     if not text_chunks:
         sys.exit("[council] il seat ha risposto ma senza testo utilizzabile (output vuoto).")
     return "".join(text_chunks), usage
