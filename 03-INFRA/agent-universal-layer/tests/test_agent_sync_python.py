@@ -9,8 +9,10 @@ from __future__ import annotations
 import os
 from pathlib import Path
 import shlex
+import shutil
 import subprocess
 import sys
+from types import SimpleNamespace
 
 from conftest import load_agent_sync_module, run_agent_sync_python
 
@@ -100,6 +102,126 @@ def test_windows_runtime_skill_dirs_are_created(sandbox, monkeypatch):
 
     assert (sandbox.home / ".claude" / "skills").is_dir()
     assert (sandbox.home / ".codex" / "skills").is_dir()
+
+
+def test_windows_reparse_point_is_detected_without_pathlib_junction_support(sandbox, monkeypatch):
+    """Older supported Python builds lack Path.is_junction(). The Windows
+    adapter must still recognize a directory reparse point as link-like."""
+    mod = load_agent_sync_module(sandbox)
+    monkeypatch.setattr(mod, "IS_WINDOWS", True)
+
+    class ReparsePoint:
+        def is_symlink(self):
+            return False
+
+    monkeypatch.setattr(
+        mod.os,
+        "lstat",
+        lambda _path: SimpleNamespace(st_file_attributes=mod._REPARSE_POINT),
+    )
+
+    assert mod._is_link_like(ReparsePoint())
+
+
+def test_windows_junction_runtime_is_converted_without_touching_hub(sandbox, monkeypatch):
+    """A runtime directory can be a Junction to the complete skill hub.
+    It must become a real runtime directory before per-skill links are made,
+    without deleting any source data in the hub."""
+    mod = load_agent_sync_module(sandbox)
+    monkeypatch.setattr(mod, "IS_WINDOWS", True)
+    monkeypatch.setenv("HOME", str(sandbox.home))
+    monkeypatch.setenv("USERPROFILE", str(sandbox.home))
+    monkeypatch.setenv("KNOWLEDGE_VAULT_PATH", str(sandbox.vault))
+
+    env = mod.Env()
+    source = env.agents_hub / "fake-skill-a"
+    source.mkdir(parents=True)
+    source_file = source / "SKILL.md"
+    source_file.write_text("canonical source\n", encoding="utf-8")
+    source_bytes = source_file.read_bytes()
+
+    runtime = sandbox.home / ".claude" / "skills"
+    runtime.mkdir(parents=True)
+
+    real_resolve = Path.resolve
+
+    def simulate_junction_resolve(self, *args, **kwargs):
+        if self == runtime:
+            return real_resolve(env.agents_hub)
+        return real_resolve(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "is_junction", lambda self: self == runtime, raising=False)
+    monkeypatch.setattr(Path, "resolve", simulate_junction_resolve)
+
+    removed = []
+
+    def remove_simulated_junction(path):
+        removed.append(path)
+        shutil.rmtree(path)
+
+    created = []
+
+    def make_test_link(src, dst, *, is_dir):
+        created.append((src, dst, is_dir))
+        dst.symlink_to(src, target_is_directory=is_dir)
+        return True
+
+    monkeypatch.setattr(mod, "_remove_path", remove_simulated_junction)
+    monkeypatch.setattr(mod, "make_link", make_test_link)
+
+    mod.runtimes(env)
+
+    assert removed == [runtime]
+    assert source_file.read_bytes() == source_bytes
+    assert runtime.is_dir() and not runtime.is_symlink()
+    assert (runtime / source.name).is_symlink()
+    assert any(dst == runtime / source.name for _src, dst, _is_dir in created)
+
+
+def test_windows_junction_skill_is_not_relinked(sandbox, monkeypatch):
+    """A per-skill Junction already targeting its hub source is correct.
+    Treating it as a normal directory calls rmtree on a Junction and aborts
+    the Windows sync, so it must be left in place."""
+    mod = load_agent_sync_module(sandbox)
+    monkeypatch.setattr(mod, "IS_WINDOWS", True)
+    monkeypatch.setenv("HOME", str(sandbox.home))
+    monkeypatch.setenv("USERPROFILE", str(sandbox.home))
+    monkeypatch.setenv("KNOWLEDGE_VAULT_PATH", str(sandbox.vault))
+
+    env = mod.Env()
+    source = env.agents_hub / "fake-skill-a"
+    source.mkdir(parents=True)
+    source_file = source / "SKILL.md"
+    source_file.write_text("canonical source\n", encoding="utf-8")
+    source_bytes = source_file.read_bytes()
+
+    runtime_links = []
+    for rel in (".claude/skills", ".codex/skills"):
+        link = sandbox.home / rel / source.name
+        link.mkdir(parents=True)
+        (link / "SKILL.md").write_text("simulated junction target\n", encoding="utf-8")
+        runtime_links.append(link)
+
+    original_points_to = getattr(mod, "_points_to", None)
+
+    def simulate_junction_target(path, target):
+        if path in runtime_links and target == source:
+            return True
+        return original_points_to(path, target) if original_points_to else False
+
+    created = []
+
+    def make_test_link(src, dst, *, is_dir):
+        created.append((src, dst, is_dir))
+        return True
+
+    monkeypatch.setattr(mod, "_points_to", simulate_junction_target, raising=False)
+    monkeypatch.setattr(mod, "make_link", make_test_link)
+
+    mod.runtimes(env)
+
+    assert source_file.read_bytes() == source_bytes
+    assert not any(dst in runtime_links for _src, dst, _is_dir in created)
 
 
 def test_windows_excluded_copy_fallback_skill_is_removed(sandbox, monkeypatch):

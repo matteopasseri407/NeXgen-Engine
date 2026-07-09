@@ -140,10 +140,33 @@ def _append_log(env: Env, *chunks: str) -> None:
 
 # ── generic OS adapters (the only place OS differences are allowed) ─────────
 
+_REPARSE_POINT = 0x0400
+
+
 def _is_link_like(path: Path) -> bool:
     if path.is_symlink():
         return True
-    return bool(IS_WINDOWS and hasattr(path, "is_junction") and path.is_junction())
+    if not IS_WINDOWS:
+        return False
+    is_junction = getattr(path, "is_junction", None)
+    try:
+        if callable(is_junction) and is_junction():
+            return True
+        # Path.is_junction() is unavailable on older supported Python builds.
+        # Junctions are still directory reparse points there, so inspect the
+        # Windows lstat attribute directly instead of treating them as normal
+        # directories and recursing into their target.
+        attributes = getattr(os.lstat(path), "st_file_attributes", 0)
+        return bool(attributes & _REPARSE_POINT)
+    except OSError:
+        return False
+
+
+def _points_to(path: Path, target: Path) -> bool:
+    try:
+        return _is_link_like(path) and path.resolve() == target.resolve()
+    except OSError:
+        return False
 
 
 def _same_file_content(left: Path, right: Path) -> bool:
@@ -197,11 +220,8 @@ def make_link(src: Path, dst: Path, *, is_dir: bool) -> bool:
     files, Junction for directories (no elevated privilege needed), falling
     back to a copy if the privilege is missing. Returns True if it changed
     anything on disk."""
-    try:
-        if _is_link_like(dst) and dst.resolve() == src.resolve():
-            return False
-    except OSError:
-        pass
+    if _points_to(dst, src):
+        return False
     if IS_WINDOWS and dst.exists() and not _is_link_like(dst):
         if is_dir and _same_tree_content(src, dst):
             return False
@@ -813,22 +833,8 @@ def runtimes(env: Env) -> None:
             if not IS_WINDOWS:
                 continue
             rt.mkdir(parents=True, exist_ok=True)
-        try:
-            # _is_link_like, not is_symlink() alone: on Windows rt can be a
-            # Junction (is_symlink() is False for those). Missing this made
-            # the loop go undetected and fall through to the per-skill link
-            # loop below, where `link = rt / name` resolves (via the
-            # junction) to the SAME real hub entry as `d` -- shutil.rmtree(link)
-            # then deletes the actual hub source content (found in a
-            # full-codebase audit, Gemini via agy, 2026-07-09; not verified
-            # live on Windows, but this only makes rt's loop detection
-            # consistent with the same check already used in make_link and
-            # _remove_path elsewhere in this file).
-            is_hub_loop = _is_link_like(rt) and rt.resolve() == env.agents_hub.resolve()
-        except OSError:
-            is_hub_loop = False
-        if is_hub_loop:
-            rt.unlink()
+        if _points_to(rt, env.agents_hub):
+            _remove_path(rt)
             rt.mkdir(parents=True, exist_ok=True)
             env.log(f"runtime: {rt} was a symlink to the hub — converted to a real folder (per-skill links + active exclusions)")
 
@@ -850,10 +856,7 @@ def runtimes(env: Env) -> None:
                     _remove_path(link)
                     env.log(f"runtime: {name} excluded from {rt} (lazy)")
                 continue
-            if not link.is_symlink():
-                if link.exists():
-                    shutil.rmtree(link) if link.is_dir() else link.unlink()
-                make_link(d, link, is_dir=True)
+            if not _points_to(link, d) and make_link(d, link, is_dir=True):
                 env.log(f"runtime: relinked {name} in {rt}")
 
 

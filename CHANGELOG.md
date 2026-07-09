@@ -8,6 +8,16 @@ This file tracks the **engine** (this repo). Your own data — manifests,
 instructions, skills, secrets — lives in your KnowledgeVault and is not part
 of any engine release.
 
+## [0.3.1] - 2026-07-10
+
+### Fixed
+
+- Windows runtime skill directories backed by Junctions now recover safely.
+  The provisioner recognizes directory reparse points even on Python builds
+  without `Path.is_junction()`, removes a whole-hub loop through the shared
+  path adapter, and preserves per-skill Junctions already pointing at their
+  hub source instead of recursing into them.
+
 ## [0.3.0] - 2026-07-09
 
 ### Added
