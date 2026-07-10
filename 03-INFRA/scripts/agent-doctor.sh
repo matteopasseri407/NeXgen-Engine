@@ -63,7 +63,23 @@ if git -C "$VAULT" rev-parse >/dev/null 2>&1; then
   a=$(git -C "$VAULT" rev-list --count "$REMOTE/$BRANCH..$BRANCH" 2>/dev/null || echo '?')
   d=$(git -C "$VAULT" status --porcelain --untracked-files=no 2>/dev/null | wc -l | tr -d ' ')
   [ "$b" = 0 ] && ok "aligned with $REMOTE/$BRANCH (0 behind)" || fail "$b commits behind the cloud"
-  [ "$a" = 0 ] && ok "no unpublished local commits" || warn "$a unpublished local commits"
+  # TODO(2026-07-10): Alert per dangling commit (da riguardare in review)
+  if [ "$a" = 0 ] || [ "$a" = "?" ]; then
+    ok "no unpublished local commits"
+  else
+    oldest_ts=$(git -C "$VAULT" log --reverse --format=%ct "$REMOTE/$BRANCH..$BRANCH" 2>/dev/null | head -n 1)
+    if [ -n "$oldest_ts" ]; then
+      now=$(date +%s)
+      age=$((now - oldest_ts))
+      if [ "$age" -gt 7200 ]; then
+        fail "$a dangling commit(s) in Vault (oldest is $((age / 3600))h old) — RUN vault-push!"
+      else
+        warn "$a unpublished local commits (recent, < 2h old)"
+      fi
+    else
+      warn "$a unpublished local commits"
+    fi
+  fi
   [ "$d" = 0 ] && ok "working tree clean (tracked files)" || warn "$d tracked files not committed (blocks the pull)"
 else
   fail "the vault is not a git repo: $VAULT"

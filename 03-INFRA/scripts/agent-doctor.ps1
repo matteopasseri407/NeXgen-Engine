@@ -43,7 +43,24 @@ if (Test-Path -LiteralPath (Join-Path $Vault ".git")) {
   $a = (gitc @("rev-list","--count","$Remote/$Branch..$Branch")); if (-not $a) { $a = "?" }
   $d = @(gitc @("status","--porcelain","--untracked-files=no")).Where({ $_ }).Count
   if ("$b" -eq "0") { ok "aligned with $Remote/$Branch (0 behind)" } else { bad "$b commits behind the cloud" }
-  if ("$a" -eq "0") { ok "no unpublished local commits" } else { warn "$a unpublished local commits" }
+  # TODO(2026-07-10): Alert per dangling commit (da riguardare in review)
+  if ("$a" -eq "0" -or "$a" -eq "?") {
+    ok "no unpublished local commits"
+  } else {
+    $oldest_ts = (gitc @("log","--reverse","--format=%ct","$Remote/$Branch..$Branch") | Select-Object -First 1)
+    if ($oldest_ts) {
+      $now = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
+      $age = $now - [int]$oldest_ts
+      if ($age -gt 7200) {
+        $hours = [math]::Floor($age / 3600)
+        bad "$a dangling commit(s) in Vault (oldest is ${hours}h old) - RUN vault-push!"
+      } else {
+        warn "$a unpublished local commits (recent, < 2h old)"
+      }
+    } else {
+      warn "$a unpublished local commits"
+    }
+  }
   if ($d -eq 0)     { ok "working tree clean (tracked files)" } else { warn "$d tracked files not committed (blocks the pull)" }
 } else { bad "the vault is not a git repo: $Vault" }
 
