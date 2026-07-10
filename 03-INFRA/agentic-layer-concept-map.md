@@ -56,7 +56,7 @@ Hand-patching per-CLI configs creates drift: one CLI behaves differently from an
 
 ## Council prompt transport
 
-Council keeps the full user brief out of the operating system command line. Codex and Antigravity receive it through stdin. OpenCode receives a protected temporary attachment, because that is its documented non-argv interface. The attachment is created inside the private session tree and removed after the seat exits, including on failure. This prevents Windows and POSIX command-line limits from turning a valid large review into an opaque invocation error, while keeping the existing ephemeral-session policy intact.
+Council keeps the full user brief out of the operating system command line. Codex and Antigravity receive it through stdin. OpenCode receives a protected temporary attachment, because that is its documented non-argv interface. The attachment is created inside the private session tree and removed after the seat exits, including on failure. This prevents Windows and POSIX command-line limits from turning a valid large review into an opaque invocation error, while keeping the existing ephemeral-session policy intact. Each seat call has a 300-second conservative default, an optional positive `timeout_seconds` per seat, and a per-command `--timeout-seconds` override. The command line wins over the seat policy, so an urgent invocation can be bounded without editing the data plane.
 
 ## Guardians
 

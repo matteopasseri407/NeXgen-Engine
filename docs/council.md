@@ -25,7 +25,8 @@ completely inert. Nothing about the rest of the engine depends on it.
    of `opencode`, `agy`, `codex`. Those are the only CLIs `council.py`
    knows how to invoke today. Set `zero_retention: true` only if you've
    confirmed that with a primary source (the provider's own privacy page),
-   not a summary.
+   not a summary. You can also set an optional positive `timeout_seconds`
+   for a seat that is known to need more or less time.
 3. In a MULTI setup, run `agent-sync apply` once to install the `council`
    launcher on Linux and the `council.cmd` wrapper on Windows.
    Then run any command below.
@@ -77,6 +78,18 @@ Every mode accepts `--context FILE` for extra background and
 `--allow-training-risk` to use a seat that lacks a confirmed zero-retention
 guarantee. Use it only for non-sensitive technical checks, never for a real brief.
 
+## Timeouts
+
+Every seat call is bounded by a conservative default of 300 seconds. Set a
+positive `timeout_seconds` in one seat to make that its normal budget, or use
+`--timeout-seconds` to override the budget for one invocation. The command-line
+value wins over the seat value, which wins over the default. Zero, negative,
+infinite, and boolean values are rejected.
+
+```bash
+council challenge "Review this plan" --seat gemini --timeout-seconds 90
+```
+
 ## Session handling
 
 Council creates a private working directory for the brief, per-stage output,
@@ -122,8 +135,8 @@ council clean --all           # removes every kept session now
   seats, so they do not replace live checks of each vendor CLI.
 - The Windows launcher has a portable regression test, but still needs a
   physical Windows run before this Alpha feature can be called cross-platform.
-- Large prompts still need a per-CLI transport design that avoids command-line
-  limits. Council rejects unsafe sizes rather than letting the operating system
-  fail with an opaque error.
+- Large prompts use stdin for Codex and Antigravity, and a protected temporary
+  attachment for OpenCode. The automated regression coverage is portable, but
+  the current vendor adapters still need live end-to-end verification.
 - Seats via CLI are slow (minutes, not seconds): this is for brainstorming,
   challenging, and review, not a quick question mid-task.

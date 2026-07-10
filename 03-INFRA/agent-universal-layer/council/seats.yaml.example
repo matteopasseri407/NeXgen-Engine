@@ -29,6 +29,7 @@
 #     cli: <CLI locale che lo invoca in headless, es. opencode/agy/codex>
 #     model: <identificatore modello nel formato atteso dalla CLI>
 #     quota_pool: <pool reale condiviso, es. opencode-go>  # opzionale ma consigliato
+#     timeout_seconds: 300  # opzionale, default conservativo: 300 secondi
 #     zero_retention: true|false   # garanzia contrattuale di non-training,
 #                                  # da verificare con fonte primaria
 #

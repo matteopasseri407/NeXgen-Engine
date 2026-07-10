@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import importlib.util
 import json
+import math
 import os
 import queue
 import re
@@ -35,7 +36,7 @@ SESSIONS_DIR = Path.home() / ".local" / "state" / "council" / "sessions"
 DEFAULT_TTL_DAYS = 7
 DEFAULT_MAX_ROUNDS = 3
 DEFAULT_MAX_SEATS = 5
-SEAT_TIMEOUT_SECONDS = 300
+DEFAULT_SEAT_TIMEOUT_SECONDS = 300.0
 SHORT_QUARANTINE_SECONDS = 5 * 60
 EXTENDED_QUARANTINE_SECONDS = 15 * 60
 RETRYABLE_SEAT_ERROR_KINDS = frozenset({
@@ -107,6 +108,39 @@ def load_config() -> dict:
     return data
 
 
+def _parse_timeout_seconds(value: object) -> float:
+    """Validate one positive, finite timeout expressed in seconds."""
+    if isinstance(value, bool):
+        raise ValueError("deve essere un numero finito maggiore di zero")
+    try:
+        seconds = float(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("deve essere un numero finito maggiore di zero") from exc
+    if not math.isfinite(seconds) or seconds <= 0:
+        raise ValueError("deve essere un numero finito maggiore di zero")
+    return seconds
+
+
+def _timeout_seconds_argument(value: str) -> float:
+    try:
+        return _parse_timeout_seconds(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(str(exc)) from exc
+
+
+def _format_timeout_seconds(seconds: float) -> str:
+    return f"{seconds:g}"
+
+
+def _resolve_timeout_seconds(seat: dict, invocation_timeout: float | None) -> float:
+    """Apply invocation override, then the seat policy, then the safe default."""
+    if invocation_timeout is not None:
+        return _parse_timeout_seconds(invocation_timeout)
+    if "timeout_seconds" in seat:
+        return _parse_timeout_seconds(seat["timeout_seconds"])
+    return DEFAULT_SEAT_TIMEOUT_SECONDS
+
+
 def load_seats() -> dict:
     data = load_config()
     seats = data.get("seats", {})
@@ -121,6 +155,13 @@ def load_seats() -> dict:
                 f"[council] seat '{name}' in {SEATS_PATH}: cli '{seat['cli']}' non supportata "
                 f"(attese: {', '.join(SUPPORTED_CLIS)})."
             )
+        if "timeout_seconds" in seat:
+            try:
+                _parse_timeout_seconds(seat["timeout_seconds"])
+            except ValueError as exc:
+                sys.exit(
+                    f"[council] seat '{name}' in {SEATS_PATH}: timeout_seconds {exc}."
+                )
     return seats
 
 
@@ -648,7 +689,12 @@ def _build_seat_command(seat: dict, prompt: str, session_dir: Path) -> SeatInvoc
     )
 
 
-def run_seat(seat: dict, prompt: str, session_dir: Path) -> tuple[str, dict]:
+def run_seat(
+    seat: dict,
+    prompt: str,
+    session_dir: Path,
+    timeout_seconds: float | None = None,
+) -> tuple[str, dict]:
     """Legge stdout in streaming (non subprocess.run in blocco): un timeout senza
     aver mai ricevuto una riga e' un segnale diagnostico diverso da un timeout a
     meta' risposta (es. quota abbonamento esaurita o blocco lato provider senza
@@ -658,6 +704,11 @@ def run_seat(seat: dict, prompt: str, session_dir: Path) -> tuple[str, dict]:
     altre CLI supportate stampano testo semplice."""
     model = seat["model"]
     cli = seat["cli"]
+    try:
+        resolved_timeout_seconds = _resolve_timeout_seconds(seat, timeout_seconds)
+    except ValueError as exc:
+        raise SeatRunError(f"[council] timeout del seat '{model}' non valido: {exc}.", "invalid_timeout") from exc
+    timeout_label = _format_timeout_seconds(resolved_timeout_seconds)
     invocation = _build_seat_command(seat, prompt, session_dir)
     stdin_writer: threading.Thread | None = None
     try:
@@ -690,7 +741,7 @@ def run_seat(seat: dict, prompt: str, session_dir: Path) -> tuple[str, dict]:
         text_chunks = []
         usage = {}
         got_any_line = False
-        deadline = time.monotonic() + SEAT_TIMEOUT_SECONDS
+        deadline = time.monotonic() + resolved_timeout_seconds
 
         while True:
             remaining = deadline - time.monotonic()
@@ -699,7 +750,7 @@ def run_seat(seat: dict, prompt: str, session_dir: Path) -> tuple[str, dict]:
                 proc.wait()
                 if not got_any_line:
                     raise SeatRunError(
-                        f"[council] il seat '{model}' non ha risposto entro {SEAT_TIMEOUT_SECONDS}s "
+                        f"[council] il seat '{model}' non ha risposto entro {timeout_label}s "
                         "senza produrre alcun output: probabile quota abbonamento esaurita o blocco "
                         "lato provider (nessun errore diagnosticabile dal client). Verifica manualmente "
                         "prima di riprovare.",
@@ -707,7 +758,7 @@ def run_seat(seat: dict, prompt: str, session_dir: Path) -> tuple[str, dict]:
                     )
                 raise SeatRunError(
                     f"[council] il seat '{model}' ha iniziato a rispondere ma non ha finito entro "
-                    f"{SEAT_TIMEOUT_SECONDS}s: timeout a meta' risposta, nessun verdetto per questo round.",
+                    f"{timeout_label}s: timeout a meta' risposta, nessun verdetto per questo round.",
                     "partial_timeout",
                 )
             try:
@@ -772,6 +823,7 @@ def extract_verdict(text: str) -> str:
 def run_rounds(
     seat_name: str, seat: dict, session_dir: Path, mode_label: str, brief: str,
     role_prompt_initial: str, role_prompt_continue: str | None, rounds: int,
+    timeout_seconds: float,
 ) -> tuple[list[str], list[str]]:
     responses: list[str] = []
     verdicts: list[str] = []
@@ -779,7 +831,7 @@ def run_rounds(
     for r in range(1, rounds + 1):
         print(f"[council] round {r}/{rounds} — seat: {seat_name} ({seat['model']})")
         try:
-            response, _usage = run_seat(seat, prompt, session_dir)
+            response, _usage = run_seat(seat, prompt, session_dir, timeout_seconds)
         except SeatRunError as e:
             sys.exit(str(e))
         seat_file = session_dir / f"{r:02d}-{seat_name}-{mode_label}-r{r}.md"
@@ -831,7 +883,7 @@ def _is_retryable_seat_error(error: SeatRunError) -> bool:
 def _run_relay_stage(
     idx: int, stage: RelayStage, seats: dict, session_dir: Path, brief: str,
     records: list[RelayRecord], model_costs: dict[str, float], quarantine: RelayQuarantine,
-    allow_training_risk: bool,
+    allow_training_risk: bool, invocation_timeout: float | None,
 ) -> RelayRecord:
     ordered_candidates = _sort_candidates_by_usage(stage.candidates, seats, model_costs)
     attempted: set[str] = set()
@@ -871,13 +923,15 @@ def _run_relay_stage(
         seat = seats[chosen_name]
         pool = _seat_quota_pool(seat)
         prompt = build_relay_prompt(stage.role, brief, records)
+        timeout_seconds = _resolve_timeout_seconds(seat, invocation_timeout)
 
         print(
             f"[council] relay {idx:02d} — ruolo: {stage.role} — "
-            f"seat: {chosen_name} ({seat['model']}, pool {pool})"
+            f"seat: {chosen_name} ({seat['model']}, pool {pool}, "
+            f"timeout {_format_timeout_seconds(timeout_seconds)}s)"
         )
         try:
-            response, _usage = run_seat(seat, prompt, session_dir)
+            response, _usage = run_seat(seat, prompt, session_dir, timeout_seconds)
         except SeatRunError as e:
             attempted.add(chosen_name)
             if not _is_retryable_seat_error(e):
@@ -909,6 +963,7 @@ def _run_relay_stage(
 def _run_mode(args: argparse.Namespace, mode: str, label: str, brief: str, role_initial_name: str, role_continue_name: str | None, rounds: int) -> None:
     seat_name, seat = resolve_seat(args)
     egress_gate(brief)
+    timeout_seconds = _resolve_timeout_seconds(seat, getattr(args, "timeout_seconds", None))
 
     keep_session = bool(getattr(args, "keep_session", False))
     session_dir = new_session_dir(label)
@@ -923,9 +978,15 @@ def _run_mode(args: argparse.Namespace, mode: str, label: str, brief: str, role_
 
         if keep_session:
             print(f"[council] sessione mantenuta: {session_dir}")
-        print(f"[council] seat: {seat_name} ({seat['model']}) — mode: {mode}")
+        print(
+            f"[council] seat: {seat_name} ({seat['model']}) — mode: {mode}, "
+            f"timeout {_format_timeout_seconds(timeout_seconds)}s"
+        )
 
-        responses, verdicts = run_rounds(seat_name, seat, session_dir, mode, brief, role_initial, role_continue, rounds)
+        responses, verdicts = run_rounds(
+            seat_name, seat, session_dir, mode, brief, role_initial, role_continue, rounds,
+            timeout_seconds,
+        )
 
         write_verdict(session_dir, seat_name, seat, mode, verdicts, responses[-1])
 
@@ -984,7 +1045,7 @@ def cmd_relay(args: argparse.Namespace) -> None:
         for idx, stage in enumerate(stages, 1):
             record = _run_relay_stage(
                 idx, stage, seats, session_dir, brief, records, model_costs, quarantine,
-                args.allow_training_risk,
+                args.allow_training_risk, getattr(args, "timeout_seconds", None),
             )
             records.append(record)
 
@@ -1016,6 +1077,13 @@ def _add_common_args(parser: argparse.ArgumentParser, *, include_seat: bool = Tr
     parser.add_argument(
         "--keep-session", action="store_true",
         help="conserva gli artefatti locali per debug, altrimenti vengono rimossi al termine",
+    )
+    parser.add_argument(
+        "--timeout-seconds", metavar="SECONDS", type=_timeout_seconds_argument,
+        help=(
+            "timeout per questa invocazione, prevale su seat.timeout_seconds "
+            f"(default: {int(DEFAULT_SEAT_TIMEOUT_SECONDS)}s)"
+        ),
     )
 
 

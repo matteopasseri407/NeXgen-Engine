@@ -7,6 +7,7 @@ import os
 import stat
 import subprocess
 import sys
+import types
 from pathlib import Path
 
 import pytest
@@ -43,6 +44,7 @@ def relay_args(**overrides):
         "no_stats_precheck": True,
         "allow_training_risk": False,
         "keep_session": False,
+        "timeout_seconds": None,
     }
     values.update(overrides)
     return argparse.Namespace(**values)
@@ -57,6 +59,7 @@ def single_mode_args(**overrides):
         "seat": None,
         "allow_training_risk": False,
         "keep_session": False,
+        "timeout_seconds": None,
     }
     values.update(overrides)
     return argparse.Namespace(**values)
@@ -107,7 +110,7 @@ def test_relay_runs_declared_sequence_and_writes_stage_files(monkeypatch, tmp_pa
     seat_prompts = []
     monkeypatch.setattr(council, "egress_gate", lambda text: egress_prompts.append(text))
 
-    def fake_run_seat(seat, prompt, session_dir):
+    def fake_run_seat(seat, prompt, session_dir, timeout_seconds=None):
         seat_prompts.append(prompt)
         return f"Risposta da {seat['model']}\nVERDICT: APPROVE\n", {}
 
@@ -154,7 +157,7 @@ def test_relay_fallback_moves_to_different_quota_pool(monkeypatch, tmp_path, cap
     monkeypatch.setattr(council, "egress_gate", lambda text: None)
     attempts = []
 
-    def fake_run_seat(seat, prompt, session_dir):
+    def fake_run_seat(seat, prompt, session_dir, timeout_seconds=None):
         attempts.append(seat["model"])
         if seat["model"] == "opencode-go/primary":
             raise council.SeatRunError("zero output", "no_output_timeout")
@@ -193,7 +196,7 @@ def test_relay_retries_explicit_seat_error_on_fallback(monkeypatch, tmp_path):
     monkeypatch.setattr(council, "egress_gate", lambda text: None)
     attempts = []
 
-    def fake_run_seat(seat, prompt, session_dir):
+    def fake_run_seat(seat, prompt, session_dir, timeout_seconds=None):
         attempts.append(seat["model"])
         if seat["model"] == "opencode/primary":
             raise council.SeatRunError("quota exhausted", "seat_error")
@@ -228,7 +231,7 @@ def test_relay_redacts_generated_secret_before_the_next_stage(monkeypatch, tmp_p
     prompts = []
     synthetic_secret = "AKIA" + "12345" + "67890" + "ABCDEF"
 
-    def fake_run_seat(seat, prompt, session_dir):
+    def fake_run_seat(seat, prompt, session_dir, timeout_seconds=None):
         prompts.append(prompt)
         if seat["model"] == "opencode/one":
             return f"Prima analisi\n{synthetic_secret}\nVERDICT: REVISE\n", {}
@@ -379,6 +382,162 @@ def test_opencode_transport_file_is_removed_when_invocation_fails(monkeypatch, t
     assert not captured["input_file"].exists()
 
 
+def test_per_seat_timeout_drives_the_watchdog(monkeypatch, tmp_path):
+    council = load_council(monkeypatch, tmp_path)
+
+    class FakeProcess:
+        def __init__(self):
+            self.stdout = io.StringIO()
+            self.stderr = io.StringIO()
+
+        def kill(self):
+            return None
+
+        def wait(self):
+            return 0
+
+    monkeypatch.setattr(council.subprocess, "Popen", lambda *_args, **_kwargs: FakeProcess())
+    ticks = iter((100.0, 102.0))
+    monkeypatch.setattr(council, "time", types.SimpleNamespace(monotonic=lambda: next(ticks)))
+
+    with pytest.raises(council.SeatRunError) as exc:
+        council.run_seat(
+            {"cli": "opencode", "model": "vendor/test", "timeout_seconds": 1.5},
+            "brief",
+            tmp_path,
+        )
+
+    assert exc.value.kind == "no_output_timeout"
+    assert "entro 1.5s" in str(exc.value)
+
+
+def test_invocation_timeout_overrides_the_seat_timeout(monkeypatch, tmp_path):
+    council = load_council(monkeypatch, tmp_path)
+    write_seats(
+        council,
+        """
+        seats:
+          one:
+            vendor: vendor-a
+            cli: opencode
+            model: opencode/test-one
+            timeout_seconds: 45
+            zero_retention: true
+        """,
+    )
+    monkeypatch.setattr(council, "egress_gate", lambda text: None)
+    captured_timeouts = []
+
+    def fake_run_seat(seat, prompt, session_dir, timeout_seconds=None):
+        captured_timeouts.append(timeout_seconds)
+        return "Risposta finale\nVERDICT: APPROVE\n", {}
+
+    monkeypatch.setattr(council, "run_seat", fake_run_seat)
+
+    council.cmd_brainstorm(single_mode_args(timeout_seconds=12))
+    council.cmd_brainstorm(single_mode_args(timeout_seconds=None))
+
+    assert captured_timeouts == [12.0, 45.0]
+
+
+def test_default_timeout_remains_300_seconds(monkeypatch, tmp_path):
+    council = load_council(monkeypatch, tmp_path)
+    write_seats(
+        council,
+        """
+        seats:
+          one:
+            vendor: vendor-a
+            cli: opencode
+            model: opencode/test-one
+            zero_retention: true
+        """,
+    )
+    monkeypatch.setattr(council, "egress_gate", lambda text: None)
+    captured_timeouts = []
+
+    def fake_run_seat(seat, prompt, session_dir, timeout_seconds=None):
+        captured_timeouts.append(timeout_seconds)
+        return "Risposta finale\nVERDICT: APPROVE\n", {}
+
+    monkeypatch.setattr(council, "run_seat", fake_run_seat)
+
+    council.cmd_brainstorm(single_mode_args())
+
+    assert captured_timeouts == [300.0]
+
+
+def test_relay_uses_each_seat_timeout_without_an_invocation_override(monkeypatch, tmp_path):
+    council = load_council(monkeypatch, tmp_path)
+    write_seats(
+        council,
+        """
+        seats:
+          one:
+            vendor: vendor-a
+            cli: opencode
+            model: opencode/test-one
+            timeout_seconds: 11
+            zero_retention: true
+          two:
+            vendor: vendor-b
+            cli: opencode
+            model: opencode/test-two
+            timeout_seconds: 22
+            zero_retention: true
+        """,
+    )
+    monkeypatch.setattr(council, "egress_gate", lambda text: None)
+    captured = []
+
+    def fake_run_seat(seat, prompt, session_dir, timeout_seconds=None):
+        captured.append((seat["model"], timeout_seconds))
+        return "Risposta finale\nVERDICT: APPROVE\n", {}
+
+    monkeypatch.setattr(council, "run_seat", fake_run_seat)
+
+    council.cmd_relay(relay_args(timeout_seconds=None))
+
+    assert captured == [("opencode/test-one", 11.0), ("opencode/test-two", 22.0)]
+
+    captured.clear()
+    council.cmd_relay(relay_args(timeout_seconds=7))
+
+    assert captured == [("opencode/test-one", 7.0), ("opencode/test-two", 7.0)]
+
+
+def test_load_seats_rejects_a_nonpositive_timeout(monkeypatch, tmp_path):
+    council = load_council(monkeypatch, tmp_path)
+    write_seats(
+        council,
+        """
+        seats:
+          one:
+            vendor: vendor-a
+            cli: opencode
+            model: opencode/test-one
+            timeout_seconds: 0
+            zero_retention: true
+        """,
+    )
+
+    with pytest.raises(SystemExit) as exc:
+        council.load_seats()
+
+    assert "timeout_seconds deve essere un numero finito maggiore di zero" in str(exc.value)
+
+
+def test_cli_rejects_a_nonpositive_invocation_timeout(monkeypatch, tmp_path, capsys):
+    council = load_council(monkeypatch, tmp_path)
+    monkeypatch.setattr(sys, "argv", ["council", "brainstorm", "question", "--timeout-seconds", "0"])
+
+    with pytest.raises(SystemExit) as exc:
+        council.main()
+
+    assert exc.value.code == 2
+    assert "deve essere un numero finito maggiore di zero" in capsys.readouterr().err
+
+
 def test_extract_verdict_uses_last_valid_verdict(monkeypatch, tmp_path):
     council = load_council(monkeypatch, tmp_path)
 
@@ -425,7 +584,7 @@ def test_challenge_and_code_review_run_without_retaining_a_session(monkeypatch, 
     monkeypatch.setattr(
         council,
         "run_seat",
-        lambda seat, prompt, session_dir: ("Risposta finale\nVERDICT: APPROVE\n", {}),
+        lambda seat, prompt, session_dir, timeout_seconds=None: ("Risposta finale\nVERDICT: APPROVE\n", {}),
     )
     diff_path = tmp_path / "changes.diff"
     diff_path.write_text("+test\n", encoding="utf-8")
@@ -471,7 +630,7 @@ def test_default_session_is_removed_after_success(monkeypatch, tmp_path):
     monkeypatch.setattr(
         council,
         "run_seat",
-        lambda seat, prompt, session_dir: ("Risposta finale\nVERDICT: APPROVE\n", {}),
+        lambda seat, prompt, session_dir, timeout_seconds=None: ("Risposta finale\nVERDICT: APPROVE\n", {}),
     )
 
     council.cmd_brainstorm(single_mode_args())
@@ -525,7 +684,7 @@ def test_kept_session_uses_private_directory_and_file_modes(monkeypatch, tmp_pat
     monkeypatch.setattr(
         council,
         "run_seat",
-        lambda seat, prompt, session_dir: ("Risposta finale\nVERDICT: APPROVE\n", {}),
+        lambda seat, prompt, session_dir, timeout_seconds=None: ("Risposta finale\nVERDICT: APPROVE\n", {}),
     )
 
     council.cmd_brainstorm(single_mode_args(keep_session=True))
