@@ -407,16 +407,30 @@ if [ "$HOST" = linux ] && command -v xdg-settings >/dev/null 2>&1; then
 fi
 
 sec "Skills"
-# Counting entries is not enough: a broken/self-loop symlink (humanizer bug,
-# found 2026-07-01) "exists" for ls but is empty to whoever reads it.
-# [ -e ] fails on ELOOP/broken links.
+# The active root is deliberately small. Bodies live in the non-discovered
+# library and are opened via `agent-skill show`, so do not mistake zero core
+# folders for a broken fresh install.
+SKILL_ACTIVE="$HOME/.agents/skills"
+SKILL_LIBRARY="$HOME/.agents/skill-library"
 n=0; broken=""
-for s in "$HOME/.agents/skills"/*; do
+for s in "$SKILL_LIBRARY"/*; do
   [ -L "$s" ] || [ -d "$s" ] || continue
-  if [ -e "$s" ]; then n=$((n+1)); else broken="$broken $(basename "$s")"; fi
+  if [ -L "$s" ] && [ ! -e "$s" ]; then
+    broken="$broken $(basename "$s")"
+    continue
+  fi
+  [ -f "$s/SKILL.md" ] || continue
+  n=$((n+1))
 done
-[ "${n:-0}" -gt 0 ] && ok "$n readable skills in ~/.agents/skills" || warn "no skill in ~/.agents/skills (fresh install, or none configured in the manifest yet)"
-[ -n "$broken" ] && fail "BROKEN skills (self-loop/dangling symlink):$broken — fix with: python3 $ENGINE_ROOT/scripts/skills-sync.py --apply"
+[ "${n:-0}" -gt 0 ] && ok "$n readable managed skills in ~/.agents/skill-library" || warn "no managed skill in ~/.agents/skill-library (fresh install, or none configured in the manifest yet)"
+[ -n "$broken" ] && fail "BROKEN skill-library entries (self-loop/dangling symlink):$broken — fix with: python3 $ENGINE_ROOT/scripts/skills-sync.py --apply"
+[ -f "$SKILL_ACTIVE/INDEX.md" ] && ok "lazy skill catalog present in ~/.agents/skills/INDEX.md" || warn "lazy skill catalog missing — run: agent-sync guard"
+core=0
+for s in "$SKILL_ACTIVE"/*; do
+  [ -L "$s" ] || [ -d "$s" ] || continue
+  [ -f "$s/SKILL.md" ] && core=$((core+1))
+done
+ok "$core core skills exposed to eager runtimes"
 
 # Third-party CLI compatibility: a short, pruneable list of known-broken
 # releases. NOT a general version pin -- only versions confirmed broken here

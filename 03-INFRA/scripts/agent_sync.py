@@ -98,11 +98,17 @@ class Env:
         # repo (sync-vault-from-oracle.sh, vault-push.sh, ...): always
         # data-anchored, regardless of where the engine lives.
         self.vault_scripts = self.vault_data / "03-INFRA" / "scripts"
-        self.agents_hub = self.home / ".agents" / "skills"
+        # `skills` is the intentionally tiny discovery view. The complete
+        # library lives next to it, outside eager runtime discovery roots.
+        self.active_skills = self.home / ".agents" / "skills"
+        self.skill_library = self.home / ".agents" / "skill-library"
         self.log_dir = self.home / ".local" / "state"
         self.log_path = self.log_dir / "agent-sync.log"
         self.log_dir.mkdir(parents=True, exist_ok=True)
-        self.agents_hub.mkdir(parents=True, exist_ok=True)
+        # Skill roots may still be broken whole-root links from a previous
+        # eager layout. `vault_skills()` normalizes them before creating
+        # anything, so do not call mkdir here and turn that recoverable state
+        # into a FileExistsError.
 
     def _persisted_engine_root(self, default_engine_root: Path) -> str | None:
         link = self.local_bin / "agent-sync"
@@ -577,11 +583,18 @@ def _link_util(src: Path, dst: Path, env: Env, label: str) -> None:
 
 def utils(env: Env) -> None:
     env.local_bin.mkdir(parents=True, exist_ok=True)
+    skill_source = env.engine_scripts / "agent-skill.py"
     if not IS_WINDOWS:
         _link_util(env.engine_scripts / "agent-now.sh", env.local_bin / "agent-now", env, "agent-now")
         _link_util(env.engine_scripts / "council.sh", env.local_bin / "council", env, "council")
         _link_util(env.vault_scripts / "vault-push.sh", env.local_bin / "vault-push", env, "vault-push")
         _link_util(env.vault_scripts / "vault-ocr-local.sh", env.local_bin / "vault-ocr-local", env, "vault-ocr-local")
+        if skill_source.is_file():
+            wrapper = f"#!/bin/sh\nexec {shlex.quote(sys.executable)} {shlex.quote(str(skill_source))} \"$@\"\n"
+            target = env.local_bin / "agent-skill"
+            if _write_if_different(target, wrapper):
+                env.log("utils: installed agent-skill")
+            target.chmod(0o755)
         return
     for name in ("agent-now", "council"):
         src = env.engine_scripts / f"{name}.ps1"
@@ -602,6 +615,13 @@ def utils(env: Env) -> None:
         )
         if _write_if_different(env.local_bin / f"{name}.cmd", wrapper):
             env.log(f"utils: installed {name}.cmd wrapper")
+    if skill_source.is_file():
+        wrapper = (
+            "@echo off\r\n"
+            f"\"{sys.executable}\" \"{skill_source}\" %*\r\n"
+        )
+        if _write_if_different(env.local_bin / "agent-skill.cmd", wrapper):
+            env.log("utils: installed agent-skill.cmd")
 
 
 def local_model_runtime(env: Env) -> None:
@@ -796,21 +816,24 @@ def mcp_render(env: Env) -> None:
 # ── 3. vault_skills ──────────────────────────────────────────────────────
 
 def vault_skills(env: Env) -> None:
-    skills_src = env.instance_ul / "skills"
-    if not skills_src.is_dir():
-        return
-    for d in sorted(skills_src.iterdir()):
-        if not d.is_dir():
-            continue
-        dst = env.agents_hub / d.name
-        try:
-            same = dst.is_symlink() and dst.resolve() == d.resolve()
-        except OSError:
-            same = False
-        if same:
-            continue
-        make_link(d, dst, is_dir=True)
-        env.log(f"vault skill: relinked {d.name}")
+    """Reserve the two local views; skills-sync materializes their contents.
+
+    Directly linking every Vault skill into ~/.agents/skills was the eager
+    discovery bug: Codex enumerated the entire library before any task began.
+    The dedicated synchronizer now owns library materialization and exposure.
+    """
+    for label, root in (("active skill view", env.active_skills), ("skill library", env.skill_library)):
+        # A whole-root link was the original eager-discovery failure. Unlinking
+        # the view is safe: it never removes the destination or any old bodies,
+        # which the explicit legacy migration can quarantine afterwards.
+        if root.is_symlink():
+            _remove_path(root)
+            root.mkdir(parents=True, exist_ok=True)
+            env.log(f"skills: converted {label} from a whole-root link to a real directory")
+        elif not root.exists():
+            root.mkdir(parents=True, exist_ok=True)
+        elif not root.is_dir():
+            env.log(f"skills: {label} is not a directory, leaving it untouched for manual repair")
 
 
 # ── 3.5 skills_index ─────────────────────────────────────────────────────
@@ -829,42 +852,25 @@ def skills_index(env: Env) -> None:
 
 
 # ── 4. runtimes ──────────────────────────────────────────────────────────
-# Hub -> per-CLI runtime links, honoring exclude lists (lazy loading) and
-# guarding against the 2026-07-01 self-loop bug (runtime = whole-hub symlink).
+# Runtime directory hygiene. skills-sync.py alone owns the per-skill views.
+# Claude may point at the non-discovered library because its native loader is
+# lazy. Codex must never point at the library or active shared root wholesale.
 
 def runtimes(env: Env) -> None:
-    for rel, excl_name in ((".claude/skills", "skills-exclude-claude.txt"),
-                            (".codex/skills", "skills-exclude-codex.txt")):
+    for cli, rel in (("claude", ".claude/skills"), ("codex", ".codex/skills")):
         rt = env.home / Path(rel)
-        if not rt.is_dir():
-            if not IS_WINDOWS:
-                continue
-            rt.mkdir(parents=True, exist_ok=True)
-        if _points_to(rt, env.agents_hub):
+        points_to_library = _points_to(rt, env.skill_library)
+        # Claude's native loader may see the non-discovered library as a whole.
+        # Every other whole-root link, including a broken one, is unsafe:
+        # normalize it before skills-sync creates any per-skill view.
+        if _is_link_like(rt) and not (cli == "claude" and points_to_library):
             _remove_path(rt)
             rt.mkdir(parents=True, exist_ok=True)
-            env.log(f"runtime: {rt} was a symlink to the hub — converted to a real folder (per-skill links + active exclusions)")
-
-        excl_path = env.instance_ul / excl_name
-        excludes = set()
-        if excl_path.is_file():
-            excludes = {ln.strip() for ln in excl_path.read_text(encoding="utf-8").splitlines()
-                        if ln.strip() and not ln.strip().startswith("#")}
-
-        if not env.agents_hub.is_dir():
-            continue
-        for d in sorted(env.agents_hub.iterdir()):
-            if not d.is_dir():
-                continue
-            name = d.name
-            link = rt / name
-            if name in excludes:
-                if _is_link_like(link) or link.exists():
-                    _remove_path(link)
-                    env.log(f"runtime: {name} excluded from {rt} (lazy)")
-                continue
-            if not _points_to(link, d) and make_link(d, link, is_dir=True):
-                env.log(f"runtime: relinked {name} in {rt}")
+            env.log(f"runtime: {rt} was an eager whole-library link — converted to a real folder")
+        elif not rt.exists():
+            rt.mkdir(parents=True, exist_ok=True)
+        elif not rt.is_dir():
+            env.log(f"runtime: {rt} is not a directory, leaving it untouched for manual repair")
 
 
 # ── 4.5 claude_hooks ─────────────────────────────────────────────────────
@@ -1198,8 +1204,8 @@ def main(argv: list[str] | None = None) -> int:
         else:
             mcp_render(env)
         vault_skills(env)
-        skills_index(env)
         runtimes(env)
+        skills_index(env)
         claude_hooks(env)
 
     if flags["push"]:
@@ -1208,7 +1214,7 @@ def main(argv: list[str] | None = None) -> int:
     creds_health(env, do_creds=flags["creds"], do_health=flags["health"])
 
     dirty = _git(env, "status", "--porcelain")
-    dirty_lines = [l for l in dirty.stdout.splitlines() if l.strip()]
+    dirty_lines = [line for line in dirty.stdout.splitlines() if line.strip()]
     if dirty_lines:
         env.log(f"note: {len(dirty_lines)} uncommitted file(s) in the vault (not touching them)")
 

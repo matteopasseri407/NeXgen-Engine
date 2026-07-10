@@ -21,9 +21,9 @@ exactly what each step removes:
    user might be using any of them for something unrelated to this
    project.
 4. **Remove the skill folders this project added** — read
-   `~/.agents/skills/INDEX.md` or list the hub to see what's actually
-   there (never assume specific names, see `docs/uninstall.md`) — **ask
-   for confirmation** before deleting, this removes real folders.
+   `~/.agents/skills/INDEX.md`, then inspect `~/.agents/skill-library/` to
+   see the real bodies (never assume specific names, see `docs/uninstall.md`)
+   — **ask for confirmation** before deleting, this removes real folders.
 5. **Remove the vault clone** — **ask for explicit confirmation**, this
    deletes the user's own notes, projects, and secrets registry along with
    the engine. Suggest a backup first if there's any doubt.

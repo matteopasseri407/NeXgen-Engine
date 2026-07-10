@@ -1,2 +1,0 @@
-# Exclude-list sintetica per i test (runtime claude)
-fake-skill-excluded

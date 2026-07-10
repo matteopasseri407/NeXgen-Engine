@@ -248,10 +248,32 @@ if ($Strict) {
 }
 
 sec "Skills"
-$sk = Join-Path $HomeDir ".agents\skills"
-$n = if (Test-Path -LiteralPath $sk) { @(Get-ChildItem -LiteralPath $sk -Directory).Count } else { 0 }
-if ($n -gt 0) { ok "$n skills in ~/.agents/skills" } else { warn "no skill in ~/.agents/skills (fresh install, or none configured in the manifest yet)" }
-# Manifest -> hub coverage: without this assert, a skill registered in the
+$skActive = Join-Path $HomeDir ".agents\skills"
+$skLibrary = Join-Path $HomeDir ".agents\skill-library"
+$libraryEntries = if (Test-Path -LiteralPath $skLibrary) { @(Get-ChildItem -LiteralPath $skLibrary -Directory -Force) } else { @() }
+$brokenLibrary = @(
+  $libraryEntries | Where-Object {
+    (($_.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) -and
+      -not (Test-Path -LiteralPath $_.FullName)
+  }
+)
+$managed = @(
+  $libraryEntries | Where-Object {
+    (Test-Path -LiteralPath $_.FullName) -and
+      (Test-Path -LiteralPath (Join-Path $_.FullName "SKILL.md") -PathType Leaf)
+  }
+)
+if ($managed.Count -gt 0) { ok "$($managed.Count) managed skills in ~/.agents/skill-library" } else { warn "no managed skill in ~/.agents/skill-library (fresh install, or none configured in the manifest yet)" }
+if ($brokenLibrary.Count -gt 0) { bad "broken skill-library entries: $($brokenLibrary.Name -join ', ') — run: agent-sync guard" }
+if (Test-Path -LiteralPath (Join-Path $skActive "INDEX.md") -PathType Leaf) { ok "lazy skill catalog present in ~/.agents/skills/INDEX.md" } else { warn "lazy skill catalog missing — run: agent-sync guard" }
+$core = if (Test-Path -LiteralPath $skActive) {
+  @(
+    Get-ChildItem -LiteralPath $skActive -Directory |
+      Where-Object { Test-Path -LiteralPath (Join-Path $_.FullName "SKILL.md") -PathType Leaf }
+  ).Count
+} else { 0 }
+ok "$core core skills exposed to eager runtimes"
+# Manifest -> library coverage: without this assert, a skill registered in the
 # manifest can go missing on a host for weeks (the humanizer bug).
 $skillsSyncScript = Join-Path $Vault "03-INFRA\scripts\skills-sync.py"
 if ((Get-Command "python" -ErrorAction SilentlyContinue) -and (Test-Path -LiteralPath $skillsSyncScript)) {

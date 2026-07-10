@@ -53,8 +53,12 @@ class Sandbox:
         return self.ul / "skills"
 
     @property
-    def hub(self) -> Path:
+    def active_skills(self) -> Path:
         return self.home / ".agents" / "skills"
+
+    @property
+    def skill_library(self) -> Path:
+        return self.home / ".agents" / "skill-library"
 
     @property
     def bin_stubs(self) -> Path:
@@ -135,7 +139,7 @@ def _copy_engine_scripts(sandbox: Sandbox) -> None:
 
     shutil.copy2(REAL_UL / "mcp" / "render.py", sandbox.mcp_dir / "render.py")
     for name in (
-        "agent-sync.sh", "agent_sync.py", "skills-sync.py", "agent-doctor.sh",
+        "agent-sync.sh", "agent_sync.py", "agent-skill.py", "skills-sync.py", "agent-doctor.sh",
         "council.sh", "council.ps1",
     ):
         dst = sandbox.scripts_dir / name
@@ -144,8 +148,6 @@ def _copy_engine_scripts(sandbox: Sandbox) -> None:
 
     shutil.copy2(FIXTURES / "manifest.yaml", sandbox.mcp_dir / "manifest.yaml")
     shutil.copy2(FIXTURES / "AGENTS.md", sandbox.ul / "instructions" / "AGENTS.md")
-    shutil.copy2(FIXTURES / "skills-exclude-claude.txt", sandbox.ul / "skills-exclude-claude.txt")
-    shutil.copy2(FIXTURES / "skills-exclude-codex.txt", sandbox.ul / "skills-exclude-codex.txt")
     shutil.copy2(FIXTURES / "claude-vault-checkpoint.mjs", sandbox.ul / "hooks" / "claude-vault-checkpoint.mjs")
     shutil.copy2(FIXTURES / "skills.manifest.yaml", sandbox.skills_dir / "skills.manifest.yaml")
     for skill_dir in (FIXTURES / "skills").iterdir():
@@ -208,7 +210,7 @@ def load_render_module(sandbox: Sandbox):
 
 
 def load_skills_sync_module(sandbox: Sandbox):
-    """Same for skills-sync.py: HOME, HUB, RUNTIME, UL, MANIFEST pointed at
+    """Same for skills-sync.py: HOME, LIBRARY, RUNTIME, UL, MANIFEST pointed at
     the sandbox (skills-sync derives these paths from HOME and __file__,
     not from env)."""
     spec = importlib.util.spec_from_file_location(
@@ -219,7 +221,9 @@ def load_skills_sync_module(sandbox: Sandbox):
     mod.HOME = sandbox.home
     mod.UL = sandbox.ul
     mod.MANIFEST = sandbox.skills_dir / "skills.manifest.yaml"
-    mod.HUB = sandbox.hub
+    mod.LIBRARY = sandbox.skill_library
+    mod.ACTIVE = sandbox.active_skills
+    mod.LEGACY = sandbox.skill_library / "legacy"
     mod.RUNTIME = {
         "claude": sandbox.home / ".claude" / "skills",
         "codex": sandbox.home / ".codex" / "skills",

@@ -5,7 +5,6 @@ che si rifiuta di partire se manca il sentinel di sandbox.
 from __future__ import annotations
 
 import os
-from pathlib import Path
 
 import pytest
 
@@ -19,16 +18,19 @@ pytestmark = pytest.mark.skipif(
 RUNTIME_DIRS = (".claude/skills", ".codex/skills")
 
 
-def _make_hub_symlink_runtime(sandbox) -> None:
-    """Riproduce lo stato del bug 2026-07-01: il runtime e' un symlink
-    all'INTERA hub, non ancora convertito in cartella reale."""
+def _make_eager_root_symlink_runtime(sandbox) -> None:
+    """Set up one valid Claude library view and one invalid Codex eager view."""
     (sandbox.home / ".agents").mkdir(parents=True, exist_ok=True)
-    for rt in RUNTIME_DIRS:
+    targets = {
+        ".claude/skills": sandbox.skill_library,
+        ".codex/skills": sandbox.active_skills,
+    }
+    for rt, source in targets.items():
         p = sandbox.home / rt
         p.parent.mkdir(parents=True, exist_ok=True)
         if p.exists() or p.is_symlink():
             p.unlink()
-        os.symlink(sandbox.hub, p, target_is_directory=True)
+        os.symlink(source, p, target_is_directory=True)
 
 
 def _make_real_runtime_dirs(sandbox) -> None:
@@ -38,9 +40,9 @@ def _make_real_runtime_dirs(sandbox) -> None:
 
 # ---- test 9: regressione self-loop (bug 2026-07-01) ------------------------
 
-def test_self_loop_regression_hub_bytes_survive(sandbox):
+def test_eager_root_regression_keeps_library_bytes_and_repairs_codex_view(sandbox):
     sb = sandbox
-    _make_hub_symlink_runtime(sb)
+    _make_eager_root_symlink_runtime(sb)
     vault_skill_md = sb.skills_dir / "fake-skill-a" / "SKILL.md"
     original_bytes = vault_skill_md.read_bytes()
 
@@ -50,27 +52,45 @@ def test_self_loop_regression_hub_bytes_survive(sandbox):
     # i byte veri nella sorgente vault non sono mai stati toccati
     assert vault_skill_md.read_bytes() == original_bytes
 
-    # l'hub deve contenere la skill, leggibile fino al SKILL.md vero
-    hub_skill_md = sb.hub / "fake-skill-a" / "SKILL.md"
-    assert hub_skill_md.is_file(), "hub: fake-skill-a non leggibile dopo il run"
-    assert hub_skill_md.read_bytes() == original_bytes
+    library_skill_md = sb.skill_library / "fake-skill-a" / "SKILL.md"
+    assert library_skill_md.is_file(), "library: fake-skill-a non leggibile dopo il run"
+    assert library_skill_md.read_bytes() == original_bytes
+    assert not (sb.active_skills / "fake-skill-a").exists()
 
-    for rt in RUNTIME_DIRS:
-        rt_path = sb.home / rt
-        assert rt_path.is_dir() and not rt_path.is_symlink(), (
-            f"{rt}: doveva diventare cartella reale (era symlink all'hub), trovato altro"
-        )
-        per_skill_link = rt_path / "fake-skill-a"
-        assert per_skill_link.is_symlink(), f"{rt}/fake-skill-a: atteso link per-skill"
-        resolved = per_skill_link.resolve()
-        assert resolved == (sb.hub / "fake-skill-a").resolve(), (
-            f"{rt}/fake-skill-a: non punta all'hub ({resolved})"
-        )
-        # niente self-loop: il link risolto non deve mai ricadere dentro rt_path stesso
-        assert rt_path.resolve() not in resolved.parents and resolved != rt_path.resolve(), (
-            f"{rt}/fake-skill-a: self-loop rilevato (risolve dentro se stesso: {resolved})"
-        )
-        assert (per_skill_link / "SKILL.md").read_bytes() == original_bytes
+    claude = sb.home / ".claude" / "skills"
+    assert claude.is_symlink() and claude.resolve() == sb.skill_library.resolve()
+    assert (claude / "fake-skill-a" / "SKILL.md").read_bytes() == original_bytes
+
+    codex = sb.home / ".codex" / "skills"
+    assert codex.is_dir() and not codex.is_symlink()
+    assert not (codex / "fake-skill-a").exists()
+
+
+def test_old_claude_link_to_active_view_is_normalized_before_skill_sync(sandbox):
+    sb = sandbox
+    (sb.home / ".agents").mkdir(parents=True, exist_ok=True)
+    sb.active_skills.mkdir(parents=True, exist_ok=True)
+    claude = sb.home / ".claude" / "skills"
+    claude.parent.mkdir(parents=True, exist_ok=True)
+    os.symlink(sb.active_skills, claude, target_is_directory=True)
+
+    proc = run_agent_sync(sb, "apply")
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+
+    assert claude.is_dir() and not claude.is_symlink()
+    assert (claude / "fake-skill-a").resolve() == (sb.skill_library / "fake-skill-a").resolve()
+
+
+def test_broken_active_root_link_is_repaired_before_sync(sandbox):
+    sb = sandbox
+    active = sb.active_skills
+    active.parent.mkdir(parents=True, exist_ok=True)
+    os.symlink(sb.home / "missing-skill-root", active, target_is_directory=True)
+
+    proc = run_agent_sync(sb, "apply")
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert active.is_dir() and not active.is_symlink()
+    assert (active / "INDEX.md").is_file()
 
 
 # ---- test 10: self-healing symlink -----------------------------------------
@@ -96,23 +116,24 @@ def test_self_healing_symlink_restored_after_deletion(sandbox):
     assert codex_agents.resolve() == canonical.resolve()
 
 
-# ---- test 11: exclude-list rispettata --------------------------------------
+# ---- test 11: manual exposure ----------------------------------------------
 
-def test_exclude_list_respected(sandbox):
+def test_manual_skills_are_available_to_claude_but_not_eager_runtime_views(sandbox):
     sb = sandbox
     _make_real_runtime_dirs(sb)
 
     proc = run_agent_sync(sb, "apply")
     assert proc.returncode == 0, proc.stdout + proc.stderr
 
-    # esclusa dal precarico nei runtime...
-    assert not (sb.home / ".claude" / "skills" / "fake-skill-excluded").exists()
+    # Claude riceve la vista native-lazy dichiarata dal manifest.
+    assert (sb.home / ".claude" / "skills" / "fake-skill-excluded").exists()
+    assert (sb.home / ".claude" / "skills" / "fake-skill-a").exists()
+    # Codex non riceve corpi manuali nella vista eager.
     assert not (sb.home / ".codex" / "skills" / "fake-skill-excluded").exists()
-    # ...ma presente nell'hub (lazy, on-demand)
-    assert (sb.hub / "fake-skill-excluded" / "SKILL.md").is_file()
-    # la skill NON esclusa invece e' collegata in entrambi i runtime
-    assert (sb.home / ".claude" / "skills" / "fake-skill-a").is_symlink()
-    assert (sb.home / ".codex" / "skills" / "fake-skill-a").is_symlink()
+    assert not (sb.home / ".codex" / "skills" / "fake-skill-a").exists()
+    # Le due restano nel library cache, non nella discovery root.
+    assert (sb.skill_library / "fake-skill-excluded" / "SKILL.md").is_file()
+    assert not (sb.active_skills / "fake-skill-excluded").exists()
 
 
 # ---- test 12: idempotenza (doppio giro = zero modifiche al filesystem) ----
@@ -122,7 +143,7 @@ def test_apply_is_idempotent(sandbox):
     _make_real_runtime_dirs(sb)
 
     # priming run: porta la sandbox a regime (la prima esecuzione fa sempre
-    # qualche scrittura iniziale: pointer, hub, backup di render.py, ecc.)
+    # qualche scrittura iniziale: pointer, catalogo skill, backup di render.py, ecc.)
     proc0 = run_agent_sync(sb, "apply")
     assert proc0.returncode == 0, proc0.stdout + proc0.stderr
 

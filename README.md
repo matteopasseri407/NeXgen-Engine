@@ -51,6 +51,11 @@ NeXgen Engine separates operations into three distinct planes:
 
 Writes go through one door per kind of thing. Knowledge notes are written only through a memory tool server that serializes with a lock and an expected-hash check, preventing agents from overwriting each other's work.
 
+**Skills stay lazy by design.** Tool awareness and policy remain in the
+bootstrap and MCP manifest. Optional task playbooks live outside eager
+discovery roots and are opened only when needed. See
+[`docs/lazy-skills.md`](docs/lazy-skills.md).
+
 ## Shared Tools via MCP (Modular & Free-Tier Ready)
 
 Agents share infrastructure rather than reinventing it. A few services run once, and every agent reaches them over the Model Context Protocol (MCP):
@@ -185,6 +190,11 @@ NeXgen Engine separa le operazioni in tre piani distinti:
 3. **Memoria:** Un vault in puro Markdown, scritto tramite percorsi serializzati.
 
 Le scritture passano attraverso una sola porta per tipologia. Le note vengono scritte esclusivamente tramite un tool server che serializza le richieste con un lock e un controllo sull'hash atteso, impedendo agli agenti di sovrascrivere il lavoro altrui.
+
+**Le skill restano lazy per scelta.** La conoscenza dei tool e la policy
+restano nel bootstrap e nel manifest MCP. I playbook opzionali vivono fuori
+dalle root di discovery eager e si aprono solo quando servono. Vedi
+[`docs/lazy-skills.md`](docs/lazy-skills.md).
 
 ## Tool Condivisi tramite MCP (Modulari e ottimizzati per Free-Tier)
 

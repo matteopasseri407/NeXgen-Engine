@@ -2,15 +2,15 @@
 """SKILL synchronizer — agent-layer (mirror of mcp/render.py).
 
 Reads skills.manifest.yaml and makes sure that, on THIS machine, the
-~/.agents/skills hub and the runtimes (Claude, Codex) contain exactly the
-skills chosen in the manifest. One single script for Fedora and Windows.
+non-discovered skill library and the runtime views contain exactly the skills
+chosen in the manifest. One single script for Fedora and Windows.
 
   - default (--diff): READ-ONLY. Shows what it would do, touches nothing.
   - --apply:          runs the actions (creates/repairs links, flags missing
                       installs). Idempotent: does nothing if already aligned.
 
 Byte model (per the manifest):
-  - origin vault  -> the hub points (symlink, or a copy on Windows) to the
+  - origin vault  -> the library points (symlink, or a copy on Windows) to the
                      folder vendored in the vault. Git has already carried
                      the bytes everywhere.
   - origin github -> third-party, not vendored: the manifest pins a full Git
@@ -18,17 +18,26 @@ Byte model (per the manifest):
                      verifies it, then copies the skill. If missing, --apply
                      fails promptly when Git cannot fetch without interaction.
 
-Runtime:
-  - Codex: per-skill symlink (or copy on Windows) in ~/.codex/skills/<name>.
-  - Claude: ~/.claude/skills is normally a symlink of the ENTIRE folder
-            pointing at the hub, so it sees everything automatically; the
-            script verifies this. If instead it's a real folder (the
-            copy-based model, typical on Windows), it mirrors the single skill.
+Layout:
+  - ~/.agents/skill-library: complete managed library, intentionally not a
+    discovery root for eager runtimes.
+  - ~/.agents/skills: tiny active view, containing only `exposure: core`
+    skills plus INDEX.md. It is the safe discovery root for Codex-like CLIs.
+  - Claude may receive a native per-skill or whole-library view because it
+    loads skill bodies lazily. Other runtimes use `agent-skill find/show`.
 
 NOT authoritative for deletion: it never removes a skill absent from the manifest.
 """
 from __future__ import annotations
-import argparse, os, platform, re, shutil, subprocess, sys, tempfile
+import argparse
+import os
+import platform
+import re
+import shutil
+import subprocess
+import sys
+import tempfile
+import time
 from pathlib import Path
 try:
     import yaml
@@ -43,7 +52,7 @@ if sys.stdout.encoding and sys.stdout.encoding.lower().replace("-", "") != "utf8
 HOME = Path.home()
 HERE = Path(__file__).resolve().parent
 # NOT HERE.parent.parent: when this script runs from a separate engine
-# checkout (AGENT_ENGINE_ROOT), the manifest and exclude lists still need
+# checkout (AGENT_ENGINE_ROOT), the manifest still needs
 # to come from the user's actual data, same resolution as agent_sync.py's
 # Env.vault_data.
 _vault = Path(os.environ.get("KNOWLEDGE_VAULT_PATH") or str(HOME / "KnowledgeVault"))
@@ -51,7 +60,9 @@ VAULT = Path(os.environ.get("AGENT_VAULT_DATA") or str(_vault))
 UL = VAULT / "03-INFRA" / "agent-universal-layer"
 MANIFEST = UL / "skills" / "skills.manifest.yaml"
 
-HUB = HOME / ".agents" / "skills"
+LIBRARY = HOME / ".agents" / "skill-library"
+ACTIVE = HOME / ".agents" / "skills"
+LEGACY = LIBRARY / "legacy"
 RUNTIME = {
     "claude": HOME / ".claude" / "skills",
     "codex": HOME / ".codex" / "skills",
@@ -63,11 +74,32 @@ GIT_COMMIT_SHA = re.compile(r"[0-9a-fA-F]{40}\Z")
 PASS = WARN = ACT = FAILN = 0
 
 
-def ok(m):   global PASS; PASS += 1; print(f"  \033[32m✓\033[0m {m}")
-def warn(m): global WARN; WARN += 1; print(f"  \033[33m⚠\033[0m {m}")
-def act(m):  global ACT;  ACT += 1;  print(f"  \033[36m+\033[0m {m}")
-def fail(m): global FAILN; FAILN += 1; print(f"  \033[31m✗\033[0m {m}")
-def sec(m):  print(f"\n\033[1m{m}\033[0m")
+def ok(m):
+    global PASS
+    PASS += 1
+    print(f"  \033[32m✓\033[0m {m}")
+
+
+def warn(m):
+    global WARN
+    WARN += 1
+    print(f"  \033[33m⚠\033[0m {m}")
+
+
+def act(m):
+    global ACT
+    ACT += 1
+    print(f"  \033[36m+\033[0m {m}")
+
+
+def fail(m):
+    global FAILN
+    FAILN += 1
+    print(f"  \033[31m✗\033[0m {m}")
+
+
+def sec(m):
+    print(f"\n\033[1m{m}\033[0m")
 
 
 def resolves_to(link: Path, target: Path) -> bool:
@@ -78,20 +110,80 @@ def resolves_to(link: Path, target: Path) -> bool:
         return False
 
 
+def same_tree_content(src: Path, dst: Path) -> bool:
+    """Byte-compare directory trees, including names and symlink targets."""
+    if not src.is_dir() or not dst.is_dir():
+        return False
+    try:
+        src_entries = {path.relative_to(src).as_posix(): path for path in src.rglob("*")}
+        dst_entries = {path.relative_to(dst).as_posix(): path for path in dst.rglob("*")}
+    except OSError:
+        return False
+    if set(src_entries) != set(dst_entries):
+        return False
+    for rel, src_entry in src_entries.items():
+        dst_entry = dst_entries[rel]
+        try:
+            if src_entry.is_symlink() or dst_entry.is_symlink():
+                if not (
+                    src_entry.is_symlink()
+                    and dst_entry.is_symlink()
+                    and os.readlink(src_entry) == os.readlink(dst_entry)
+                ):
+                    return False
+            elif src_entry.is_dir() or dst_entry.is_dir():
+                if not (src_entry.is_dir() and dst_entry.is_dir()):
+                    return False
+            elif not (src_entry.is_file() and dst_entry.is_file() and src_entry.read_bytes() == dst_entry.read_bytes()):
+                return False
+        except OSError:
+            return False
+    return True
+
+
+def next_backup_path(dst: Path, label: str) -> Path:
+    """Pick a non-discovered, non-clobbering backup path for a stale copy."""
+    scope = label.split("/", 1)[0]
+    backup_root = LEGACY / "refreshed-copies" / scope
+    base = backup_root / (dst.name + ".local-edit.bak-" + time.strftime("%Y%m%d-%H%M%S"))
+    candidate = base
+    suffix = 1
+    while candidate.exists() or candidate.is_symlink():
+        candidate = base.with_name(base.name + f"-{suffix}")
+        suffix += 1
+    return candidate
+
+
 def ensure_link(src: Path, dst: Path, apply: bool, label: str) -> None:
-    """Makes `dst` point to / mirror `src`. Never destroys an unexpected real
-    folder: in that case it flags it and stops (no clobber)."""
+    """Make ``dst`` point to / mirror ``src``.
+
+    Windows can fall back to a real copy when links are unavailable. A stale
+    generated copy must not silently prevent a canonical change from reaching
+    Windows, so it is backed up before being replaced. A malformed folder with
+    no SKILL.md remains untouched for manual inspection.
+    """
     if resolves_to(dst, src):
         ok(f"{label}: already aligned")
         return
     if dst.exists() and not dst.is_symlink():
-        # real folder: on Windows (copy-based model) this is fine as long as
-        # it has content; never delete it.
-        if (dst / "SKILL.md").exists():
-            ok(f"{label}: present as a real copy (leaving it as-is)")
-        else:
+        if not dst.is_dir() or not (dst / "SKILL.md").is_file():
             warn(f"{label}: exists as a real folder with no SKILL.md, not touching it (check by hand)")
-        return
+            return
+        if same_tree_content(src, dst):
+            ok(f"{label}: already aligned as a real copy")
+            return
+        if not apply:
+            act(f"{label}: would back up and refresh a stale real copy")
+            return
+        backup = next_backup_path(dst, label)
+        try:
+            backup.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copytree(dst, backup)
+        except OSError as exc:
+            fail(f"{label}: cannot back up stale real copy before refresh: {exc}")
+            return
+        shutil.rmtree(dst)
+        act(f"{label}: backed up stale real copy to {backup.name}")
     # dst is missing or a broken/wrong symlink here: (re)create it.
     if not apply:
         act(f"{label}: would create link -> {src}")
@@ -108,30 +200,18 @@ def ensure_link(src: Path, dst: Path, apply: bool, label: str) -> None:
         act(f"{label}: copied (symlink unavailable) <- {src}")
 
 
-def load_excludes(cli: str) -> set:
-    """Skills excluded from preloading for a runtime (lazy: they stay in the
-    hub, read on-demand). Same source used by agent-sync §4: the two
-    provisioners MUST read the same list, or they'll fight/break each other."""
-    f = UL / f"skills-exclude-{cli}.txt"
-    if not f.exists():
-        return set()
-    return {ln.strip() for ln in f.read_text(encoding="utf-8").splitlines()
-            if ln.strip() and not ln.strip().startswith("#")}
-
-
 def ensure_absent_link(dst: Path, apply: bool, label: str) -> None:
-    """The skill is excluded from the runtime: the per-skill link must NOT be
-    there. Only removes symlinks; a real folder isn't ours and isn't touched."""
+    """Remove one managed manual view without touching a real local folder."""
     if dst.is_symlink():
         if apply:
             dst.unlink()
-            act(f"{label}: link removed (excluded from preload, lazy in the hub)")
+            act(f"{label}: link removed (manual skill, loaded on demand)")
         else:
-            act(f"{label}: would remove the link (excluded, lazy)")
+            act(f"{label}: would remove the link (manual, lazy)")
     elif dst.exists():
-        warn(f"{label}: excluded but exists as a real folder, not touching it (check by hand)")
+        warn(f"{label}: manual but exists as a real folder, not touching it (check by hand)")
     else:
-        ok(f"{label}: excluded (lazy, on-demand from the hub)")
+        ok(f"{label}: manual (loaded on demand)")
 
 
 def github_source_matches(dst: Path, repo: str, sub: str, commit: str) -> bool:
@@ -177,41 +257,41 @@ def run_git(command: list[str], env: dict[str, str]) -> subprocess.CompletedProc
 
 
 def install_github(name: str, spec: dict, apply: bool) -> bool:
-    """Third-party skill missing from the hub: reinstalls it from upstream
+    """Third-party skill missing from the library: reinstall it from upstream
     at the manifest's immutable commit (no npx: it collides with Claude's
     whole-folder symlink). `path` in the manifest = subfolder containing
     SKILL.md (default: repo root). Returns True if present at the end."""
     repo = spec.get("repo", "")
     sub = spec.get("path", ".")
     commit = spec.get("commit", "")
-    dst = HUB / name
+    dst = LIBRARY / name
     if not isinstance(commit, str) or not GIT_COMMIT_SHA.fullmatch(commit):
-        fail(f"hub/{name}: GitHub skill needs a full 40-character commit SHA")
+        fail(f"library/{name}: GitHub skill needs a full 40-character commit SHA")
         return False
     expected_commit = commit.lower()
-    # defensive: in the hub, a github skill must be a real folder (a copy).
+    # defensive: in the library, a GitHub skill must be a real folder (a copy).
     # if a symlink is found here (self-loop, broken, or leftover), that's
     # never a valid state and would send the `.exists()` check below into
     # ELOOP, blocking the sync. Remove it right away so the sync self-heals
     # instead of getting stuck.
     if dst.is_symlink():
         if not apply:
-            act(f"hub/{name}: anomalous symlink in the hub (self-loop/broken), --apply would remove it and reinstall from {repo}")
+            act(f"library/{name}: anomalous symlink (self-loop/broken), --apply would remove it and reinstall from {repo}")
             return False
-        warn(f"hub/{name}: anomalous symlink in the hub, removing it and reinstalling from {repo}")
+        warn(f"library/{name}: anomalous symlink, removing it and reinstalling from {repo}")
         dst.unlink()
     if github_source_matches(dst, repo, sub, expected_commit):
-        ok(f"hub/{name}: present (third-party {repo} at {expected_commit})")
+        ok(f"library/{name}: present (third-party {repo} at {expected_commit})")
         return True
     if not apply:
         extra = f" [{sub}]" if sub != "." else ""
         act(
-            f"hub/{name}: missing or unverified for {expected_commit}, "
+            f"library/{name}: missing or unverified for {expected_commit}, "
             f"would install from {repo}{extra}"
         )
         return False
     if shutil.which("git") is None:
-        fail(f"hub/{name}: missing and git isn't available. Copy the skill by hand from https://github.com/{repo}")
+        fail(f"library/{name}: missing and git isn't available. Copy the skill by hand from https://github.com/{repo}")
         return False
     # dst missing or broken/empty (no SKILL.md here): clean it up first.
     if dst.is_symlink():
@@ -229,17 +309,17 @@ def install_github(name: str, spec: dict, apply: bool) -> bool:
         print(f"    … git fetch --depth 1 {url} {expected_commit}")
         init = run_git(["git", "init", "--quiet", str(repo_dir)], clone_env)
         if init is None:
-            fail(f"hub/{name}: Git setup timed out after {GIT_CLONE_TIMEOUT_SECONDS}s")
+            fail(f"library/{name}: Git setup timed out after {GIT_CLONE_TIMEOUT_SECONDS}s")
             return False
         if init.returncode != 0:
-            fail(f"hub/{name}: Git setup failed. {init.stderr.strip()[:200]}")
+            fail(f"library/{name}: Git setup failed. {init.stderr.strip()[:200]}")
             return False
         remote = run_git(["git", "-C", str(repo_dir), "remote", "add", "origin", url], clone_env)
         if remote is None:
-            fail(f"hub/{name}: Git remote setup timed out after {GIT_CLONE_TIMEOUT_SECONDS}s")
+            fail(f"library/{name}: Git remote setup timed out after {GIT_CLONE_TIMEOUT_SECONDS}s")
             return False
         if remote.returncode != 0:
-            fail(f"hub/{name}: Git remote setup failed. {remote.stderr.strip()[:200]}")
+            fail(f"library/{name}: Git remote setup failed. {remote.stderr.strip()[:200]}")
             return False
         fetched = run_git(
             [
@@ -249,31 +329,31 @@ def install_github(name: str, spec: dict, apply: bool) -> bool:
             clone_env,
         )
         if fetched is None:
-            fail(f"hub/{name}: fetch timed out after {GIT_CLONE_TIMEOUT_SECONDS}s")
+            fail(f"library/{name}: fetch timed out after {GIT_CLONE_TIMEOUT_SECONDS}s")
             return False
         if fetched.returncode != 0:
-            fail(f"hub/{name}: fetch failed. {fetched.stderr.strip()[:200]}")
+            fail(f"library/{name}: fetch failed. {fetched.stderr.strip()[:200]}")
             return False
         resolved = run_git(["git", "-C", str(repo_dir), "rev-parse", "FETCH_HEAD"], clone_env)
         if resolved is None:
-            fail(f"hub/{name}: commit verification timed out after {GIT_CLONE_TIMEOUT_SECONDS}s")
+            fail(f"library/{name}: commit verification timed out after {GIT_CLONE_TIMEOUT_SECONDS}s")
             return False
         if resolved.returncode != 0:
-            fail(f"hub/{name}: commit verification failed. {resolved.stderr.strip()[:200]}")
+            fail(f"library/{name}: commit verification failed. {resolved.stderr.strip()[:200]}")
             return False
         actual_commit = resolved.stdout.strip().lower()
         if actual_commit != expected_commit:
-            fail(f"hub/{name}: fetched commit {actual_commit or '<none>'} does not match {expected_commit}")
+            fail(f"library/{name}: fetched commit {actual_commit or '<none>'} does not match {expected_commit}")
             return False
         checkout = run_git(
             ["git", "-C", str(repo_dir), "checkout", "--detach", "--quiet", expected_commit],
             clone_env,
         )
         if checkout is None:
-            fail(f"hub/{name}: checkout timed out after {GIT_CLONE_TIMEOUT_SECONDS}s")
+            fail(f"library/{name}: checkout timed out after {GIT_CLONE_TIMEOUT_SECONDS}s")
             return False
         if checkout.returncode != 0:
-            fail(f"hub/{name}: checkout failed. {checkout.stderr.strip()[:200]}")
+            fail(f"library/{name}: checkout failed. {checkout.stderr.strip()[:200]}")
             return False
         src = repo_dir / sub
         # `sub` comes from the manifest. If it's absolute (e.g. "/etc") or
@@ -283,29 +363,31 @@ def install_github(name: str, spec: dict, apply: bool) -> bool:
         repo_real = repo_dir.resolve()
         src_real = src.resolve()
         if src_real != repo_real and repo_real not in src_real.parents:
-            fail(f"hub/{name}: invalid path '{sub}' (escapes the cloned repo)")
+            fail(f"library/{name}: invalid path '{sub}' (escapes the cloned repo)")
             return False
         if not (src / "SKILL.md").exists():
-            fail(f"hub/{name}: SKILL.md not found in '{sub}' of repo {repo}")
+            fail(f"library/{name}: SKILL.md not found in '{sub}' of repo {repo}")
             return False
         shutil.copytree(src, dst, ignore=shutil.ignore_patterns(".git", ".claude-plugin"))
         (dst / ".source").write_text(
             f"source: https://github.com/{repo}\nupstream: {repo}\npath: {sub}\n"
             f"commit: {expected_commit}\n"
             f"model: vendored-as-is (unmodified)\n", encoding="utf-8")
-        act(f"hub/{name}: installed from {repo} at {expected_commit}")
+        act(f"library/{name}: installed from {repo} at {expected_commit}")
         return True
 
 
 def write_index(apply: bool) -> None:
-    """Generates ~/.agents/skills/INDEX.md: a one-line-per-skill catalog
-    (name + description from SKILL.md's frontmatter). This is the UNIVERSAL
-    lazy-loading mechanism: every CLI/model (even without a skill format:
-    Antigravity, OpenCode, local worker) reads the catalog and opens the
-    right SKILL.md only when the task requires it. Idempotent: rewrites only
-    if the content changes."""
+    """Generate the tiny active catalog from the non-discovered library.
+
+    The index deliberately lives in ~/.agents/skills, but its bodies live in
+    ~/.agents/skill-library. Eager runtimes therefore see no optional skill
+    metadata at startup, while every CLI can run `agent-skill find/show` when
+    a vertical workflow is actually needed.
+    """
     rows = []
-    for d in sorted(HUB.iterdir()):
+    directories = sorted(LIBRARY.iterdir()) if LIBRARY.is_dir() else []
+    for d in directories:
         md = d / "SKILL.md"
         try:
             if not md.is_file():
@@ -327,20 +409,90 @@ def write_index(apply: bool) -> None:
         rows.append(f"- **{d.name}**: {desc or '(no description)'}")
     body = (
         "# Skill catalog (GENERATED by skills-sync.py --index, do not edit)\n\n"
-        "Catalog for ALL agents and CLIs, lazy by design.\n"
-        "Usage: when the task matches an entry, read `~/.agents/skills/<skill>/SKILL.md` and follow it.\n"
-        "Never preload the whole set.\n\n"
+        "Managed skills are lazy. Their bodies live outside discovery roots.\n"
+        "Use `agent-skill find <words>` when the matching skill is uncertain, "
+        "then `agent-skill show <name>` and follow only that body.\n"
+        "Never preload or scan the whole library.\n\n"
         + "\n".join(rows) + "\n")
-    dst = HUB / "INDEX.md"
+    dst = ACTIVE / "INDEX.md"
     old = dst.read_text(encoding="utf-8") if dst.exists() else ""
     if old == body:
-        ok(f"INDEX.md: already up to date ({len(rows)} skills)")
+        ok(f"INDEX.md: already up to date ({len(rows)} managed skills)")
         return
     if not apply:
-        act(f"INDEX.md: would regenerate the catalog ({len(rows)} skills)")
+        act(f"INDEX.md: would regenerate the catalog ({len(rows)} managed skills)")
         return
+    dst.parent.mkdir(parents=True, exist_ok=True)
     dst.write_text(body, encoding="utf-8")
-    act(f"INDEX.md: catalog regenerated ({len(rows)} skills)")
+    act(f"INDEX.md: catalog regenerated ({len(rows)} managed skills)")
+
+
+def _has_skill_body(path: Path) -> bool:
+    """True for a readable skill directory or a link to one, never crashes."""
+    try:
+        return path.is_dir() and (path / "SKILL.md").is_file()
+    except OSError:
+        return False
+
+
+def migrate_legacy_views(apply: bool, skills: dict[str, dict]) -> None:
+    """Quarantine pre-existing eager skill folders only on explicit request.
+
+    Older installs put arbitrary third-party folders directly under discovery
+    roots. They must not be deleted, nor silently moved by the recurring
+    guard. `--migrate-legacy` preserves each body under a local, non-indexed
+    quarantine so the user can later promote it into the pinned manifest.
+    """
+    views = {
+        "shared": ACTIVE,
+        "codex": RUNTIME["codex"],
+        "claude": RUNTIME["claude"],
+    }
+    for scope, root in views.items():
+        if not root.is_dir() or root.is_symlink():
+            continue
+        for entry in sorted(root.iterdir()):
+            if entry.name.startswith(".") or entry.name == "INDEX.md":
+                continue
+            if not _has_skill_body(entry):
+                continue
+            # A managed view is already backed by the library. Keep views that
+            # the manifest still declares. Remove only stale managed links,
+            # never a real local folder. In particular, Claude's native-lazy
+            # manual links must survive the migration.
+            managed = LIBRARY / entry.name
+            if resolves_to(entry, managed):
+                spec = skills.get(entry.name, {})
+                targets = spec.get("targets", [])
+                exposure = spec.get("exposure", "manual")
+                expected = (
+                    (scope == "shared" and exposure == "core")
+                    or (scope == "claude" and "claude" in targets)
+                    or (scope == "codex" and exposure == "core" and "codex" in targets)
+                )
+                if expected:
+                    ok(f"legacy/{scope}/{entry.name}: declared managed view kept")
+                    continue
+                if entry.is_symlink():
+                    if apply:
+                        entry.unlink()
+                        act(f"legacy/{scope}/{entry.name}: removed stale managed view")
+                    else:
+                        act(f"legacy/{scope}/{entry.name}: would remove stale managed view")
+                continue
+            destination = LEGACY / scope / entry.name
+            if destination.exists() or destination.is_symlink():
+                warn(
+                    f"legacy/{scope}/{entry.name}: destination already exists; "
+                    "leaving the eager copy untouched"
+                )
+                continue
+            if not apply:
+                act(f"legacy/{scope}/{entry.name}: would quarantine outside discovery roots")
+                continue
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            shutil.move(str(entry), str(destination))
+            act(f"legacy/{scope}/{entry.name}: quarantined outside discovery roots")
 
 
 def load_skills_manifest() -> dict | None:
@@ -382,6 +534,13 @@ def load_skills_manifest() -> dict | None:
         if not isinstance(targets, list) or not all(isinstance(target, str) for target in targets):
             fail(f"invalid skills manifest: skill '{name}' targets must be a list of strings")
             return None
+        exposure = spec.get("exposure", "manual")
+        if exposure not in {"manual", "core"}:
+            fail(
+                f"invalid skills manifest: skill '{name}' exposure must be "
+                "'manual' or 'core'"
+            )
+            return None
         if origin == "github":
             repo = spec.get("repo")
             if not isinstance(repo, str) or not repo.strip():
@@ -405,19 +564,25 @@ def main() -> int:
     ap = argparse.ArgumentParser(description="Syncs the agent-layer's skills from the manifest.")
     ap.add_argument("--apply", action="store_true", help="run the actions (default: read-only diff only)")
     ap.add_argument("--index", action="store_true", help="regenerate ONLY the INDEX.md catalog and exit")
+    ap.add_argument(
+        "--migrate-legacy",
+        action="store_true",
+        help="explicitly quarantine old eager skill folders outside discovery roots",
+    )
     args = ap.parse_args()
     apply = args.apply
 
     if args.index:
         print(f"\033[1m=== skills-sync [INDEX] · {platform.system()} ===\033[0m")
-        HUB.mkdir(parents=True, exist_ok=True)
+        LIBRARY.mkdir(parents=True, exist_ok=True)
+        ACTIVE.mkdir(parents=True, exist_ok=True)
         write_index(apply=True)
         return 1 if FAILN else 0
 
     # The manifest is vault DATA (a user's personal skill choices), not
     # something the engine ships with. A fresh install has none yet -- that
     # is a valid state, not an error: fall through with an empty set instead
-    # of exiting, so the rest of the sync (hub scan, INDEX.md) still runs.
+    # of exiting, so the rest of the sync (library scan, INDEX.md) still runs.
     if MANIFEST.exists():
         skills = load_skills_manifest()
         if skills is None:
@@ -428,47 +593,60 @@ def main() -> int:
 
     mode = "APPLY" if apply else "DIFF (read-only)"
     print(f"\033[1m=== skills-sync [{mode}] · {platform.system()} ===\033[0m")
-    HUB.mkdir(parents=True, exist_ok=True)
+    if apply:
+        LIBRARY.mkdir(parents=True, exist_ok=True)
+        ACTIVE.mkdir(parents=True, exist_ok=True)
 
-    # state of the Claude runtime: symlink-folder pointing at the hub (sees everything)?
-    claude_is_hub_link = resolves_to(RUNTIME["claude"], HUB)
-    excludes = {cli: load_excludes(cli) for cli in RUNTIME}
-
+    # state of the Claude runtime: symlink-folder pointing at the library?
+    claude_is_library_link = resolves_to(RUNTIME["claude"], LIBRARY)
     for name, spec in skills.items():
         sec(f"skill: {name}")
         origin = spec.get("origin")
         targets = spec.get("targets", [])
+        exposure = spec.get("exposure", "manual")
 
-        # 1) materialize in the hub
+        # 1) materialize in the non-discovered library
         if origin == "vault":
-            ensure_link(UL / "skills" / name, HUB / name, apply, f"hub/{name}")
-            present = (HUB / name / "SKILL.md").exists() or resolves_to(HUB / name, UL / "skills" / name)
+            source = UL / "skills" / name
+            if not (source / "SKILL.md").is_file():
+                fail(f"library/{name}: missing canonical Vault source {source / 'SKILL.md'}")
+                continue
+            ensure_link(source, LIBRARY / name, apply, f"library/{name}")
         elif origin == "github":
-            present = install_github(name, spec, apply)
+            install_github(name, spec, apply)
         else:
             fail(f"unknown origin '{origin}' for {name}")
             continue
 
-        # 2) hook up the runtimes (honoring the exclude lists: lazy > preload)
+        # 2) expose only core skills through the eager shared root. Manual
+        # skills stay in the non-discovered library and are read with
+        # `agent-skill show <name>`.
+        if exposure == "core":
+            ensure_link(LIBRARY / name, ACTIVE / name, apply, f"active/{name}")
+        else:
+            ensure_absent_link(ACTIVE / name, apply, f"active/{name}")
+
+        # 3) Claude is the native lazy runtime. It may see its declared
+        # skills directly. Codex gets only explicit core views; OpenCode,
+        # Antigravity and local workers use the universal command/catalog.
         for t in targets:
-            if t in RUNTIME and name in excludes[t]:
-                if t == "claude" and claude_is_hub_link:
-                    warn(f"claude/{name}: exclusion IMPOSSIBLE while ~/.claude/skills is a symlink to the hub")
-                else:
-                    ensure_absent_link(RUNTIME[t] / name, apply, f"{t}/{name}")
-                continue
             if t == "claude":
-                if claude_is_hub_link:
-                    ok("claude: covered (whole-folder symlink pointing at the hub)")
+                if claude_is_library_link:
+                    ok("claude: covered (whole-library lazy view)")
                 else:
-                    ensure_link(HUB / name, RUNTIME["claude"] / name, apply, f"claude/{name}")
+                    ensure_link(LIBRARY / name, RUNTIME["claude"] / name, apply, f"claude/{name}")
+            elif t == "codex" and exposure == "core":
+                ensure_link(LIBRARY / name, RUNTIME["codex"] / name, apply, f"codex/{name}")
             elif t == "codex":
-                ensure_link(HUB / name, RUNTIME["codex"] / name, apply, f"codex/{name}")
+                ensure_absent_link(RUNTIME["codex"] / name, apply, f"codex/{name}")
             else:
                 warn(f"unknown target '{t}'")
 
     sec("universal catalog")
     write_index(apply)
+    if args.migrate_legacy:
+        sec("legacy eager-skill migration")
+        migrate_legacy_views(apply, skills)
 
     print(f"\n\033[1mTotal:\033[0m {PASS} ok · {ACT} actions · {WARN} warn · {FAILN} fail")
     if not apply and ACT:

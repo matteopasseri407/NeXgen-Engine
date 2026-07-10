@@ -8,6 +8,29 @@ This file tracks the **engine** (this repo). Your own data — manifests,
 instructions, skills, secrets — lives in your KnowledgeVault and is not part
 of any engine release.
 
+## [Unreleased]
+
+### Added
+
+- `agent-skill list|find|show|path`, the small cross-platform command for
+  loading exactly one managed skill body on demand.
+- Explicit `exposure: manual|core` in the skill manifest, plus a generated
+  safe catalog and a one-time `--migrate-legacy` quarantine for old eager
+  folders.
+
+### Changed
+
+- Managed skill bodies now live in `~/.agents/skill-library/`, outside eager
+  discovery roots. Only explicitly core bodies enter `~/.agents/skills/` or
+  Codex's runtime view. Claude retains declared native-lazy views.
+- `agent-sync` normalizes unsafe whole-root links before materializing skill
+  views, and `agent-doctor` verifies the library, catalog, and core exposure.
+
+### Fixed
+
+- Legacy migration preserves declared Claude native-lazy links instead of
+  treating them as stale eager copies.
+
 ## [0.3.2] - 2026-07-10
 
 ### Fixed

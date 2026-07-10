@@ -75,18 +75,20 @@ Usa il comando appropriato al profilo:
 **Se MINIMAL**: non c'è uno script di provisioning da lanciare. Monta manualmente MCP e skill nella CLI scelta, usando come riferimento i file canonici `03-INFRA/agent-universal-layer/mcp/manifest.yaml` (elenco server MCP) e `03-INFRA/agent-universal-layer/skills/skills.manifest.yaml` (elenco skill). L'agente (questo LLM) svolge l'installazione interattivamente: legge il manifest, installa i server MCP, copia le skill di base.
 
 File di destinazione per ogni CLI (corrispondono a quelli che il sync MULTI scriverebbe):
-- **Claude Code**: bootstrap in `~/CLAUDE.md` con un puntatore a questo `AGENTS.md`; server MCP nel campo `mcpServers` di `~/.claude.json`; skill in `~/.claude/skills/`.
-- **Codex**: bootstrap in `~/.codex/AGENTS.md`; server MCP nel file di configurazione di Codex; skill in `~/.codex/skills/`.
-- **OpenCode**: bootstrap nel campo `instructions` di `opencode.json`; server MCP nella sezione MCP dello stesso file; skill nell'hub condiviso `~/.agents/skills/`.
-- **Antigravity**: bootstrap in `~/.gemini/config/AGENTS.md`; server MCP in `~/.gemini/antigravity/mcp_config.json`; skill in `~/.gemini/skills/`.
+- **Claude Code**: bootstrap in `~/CLAUDE.md` con un puntatore a questo `AGENTS.md`; server MCP nel campo `mcpServers` di `~/.claude.json`; può ricevere una vista native-lazy in `~/.claude/skills/`.
+- **Codex**: bootstrap in `~/.codex/AGENTS.md`; server MCP nel file di configurazione di Codex; riceve solo eventuali skill `exposure: core` in `~/.codex/skills/`.
+- **OpenCode**: bootstrap nel campo `instructions` di `opencode.json`; server MCP nella sezione MCP dello stesso file; legge le skill manuali con `agent-skill find|show`.
+- **Antigravity**: bootstrap in `~/.gemini/config/AGENTS.md`; server MCP in `~/.gemini/antigravity/mcp_config.json`; legge le skill manuali con `agent-skill find|show`.
 
 Per ogni server MCP nel manifest, l'agente risolve il comando concreto nel dialetto della CLI scelta (Claude, Codex, OpenCode e Antigravity usano formati diversi, vedi `03-INFRA/agent-universal-layer/mcp/render.py` come riferimento per i dialetti).
 
 Le skill sono dati personali dell'utente, non del motore: se le vuole, le sceglie lui, listandole nel proprio `skills.manifest.yaml` dentro il Vault (`03-INFRA/agent-universal-layer/skills/skills.manifest.yaml`). Su un'installazione nuova questo file potrebbe non esistere ancora o essere vuoto — è uno stato normale, non un errore: salta questo passo finché l'utente non decide di aggiungere skill.
 
 Se il manifest esiste, leggilo e installa ogni voce elencata secondo il suo `origin`, SENZA assumere nomi specifici (i nomi sono scelte dell'utente, non skill "di base" del framework):
-- **`origin: vault`** (vendorizzata, i byte vivono nel Vault stesso): copia la cartella da `03-INFRA/agent-universal-layer/skills/<name>/` (nel Vault dell'utente, non nel motore) direttamente nello store della CLI scelta.
-- **`origin: github`** (third-party, repo indicato nel campo `repo` della voce): scaricala con `git clone https://github.com/<repo>.git` in una cartella temporanea e copia la cartella indicata dal campo `path` della voce (default: la radice del repo) nello store della CLI scelta.
+- **`origin: vault`** (vendorizzata, i byte vivono nel Vault stesso): materializza la cartella da `03-INFRA/agent-universal-layer/skills/<name>/` in `~/.agents/skill-library/<name>/`.
+- **`origin: github`** (third-party, repo indicato nel campo `repo` della voce): scaricala al commit SHA fissato e materializzala in `~/.agents/skill-library/<name>/`.
+
+Genera poi `~/.agents/skills/INDEX.md`. Monta nei runtime eager soltanto le skill con `exposure: core`; le altre si aprono al bisogno con `agent-skill show <name>`.
 
 In tutti i casi, solo la CLI scelta riceve la config. Niente script ricorrenti.
 
@@ -189,18 +191,20 @@ Use the command appropriate to the profile:
 **If MINIMAL**: there is no provisioning script to run. Mount MCP and skills manually in the chosen CLI, using the canonical files `03-INFRA/agent-universal-layer/mcp/manifest.yaml` (MCP server list) and `03-INFRA/agent-universal-layer/skills/skills.manifest.yaml` (skill list) as reference. The agent (this LLM) performs the install interactively: reads the manifest, installs MCP servers, copies the base skills.
 
 Destination file for each CLI (these match what the MULTI sync would write):
-- **Claude Code**: bootstrap in `~/CLAUDE.md` with a pointer to this `AGENTS.md`; MCP servers in the `mcpServers` field of `~/.claude.json`; skills in `~/.claude/skills/`.
-- **Codex**: bootstrap in `~/.codex/AGENTS.md`; MCP servers in Codex's config file; skills in `~/.codex/skills/`.
-- **OpenCode**: bootstrap in the `instructions` field of `opencode.json`; MCP servers in the MCP section of the same file; skills in the shared hub `~/.agents/skills/`.
-- **Antigravity**: bootstrap in `~/.gemini/config/AGENTS.md`; MCP servers in `~/.gemini/antigravity/mcp_config.json`; skills in `~/.gemini/skills/`.
+- **Claude Code**: bootstrap in `~/CLAUDE.md` with a pointer to this `AGENTS.md`; MCP servers in the `mcpServers` field of `~/.claude.json`; it may receive a native-lazy view in `~/.claude/skills/`.
+- **Codex**: bootstrap in `~/.codex/AGENTS.md`; MCP servers in Codex's config file; it receives only explicit `exposure: core` skills in `~/.codex/skills/`.
+- **OpenCode**: bootstrap in the `instructions` field of `opencode.json`; MCP servers in the MCP section of the same file; it opens manual skills through `agent-skill find|show`.
+- **Antigravity**: bootstrap in `~/.gemini/config/AGENTS.md`; MCP servers in `~/.gemini/antigravity/mcp_config.json`; it opens manual skills through `agent-skill find|show`.
 
 For each MCP server in the manifest, the agent resolves the concrete command in the chosen CLI's dialect (Claude, Codex, OpenCode, and Antigravity use different formats, see `03-INFRA/agent-universal-layer/mcp/render.py` as a reference for the dialects).
 
 Skills are the user's own data, not the engine's: if they want any, they choose them, listed in their own `skills.manifest.yaml` inside the Vault (`03-INFRA/agent-universal-layer/skills/skills.manifest.yaml`). On a fresh install this file may not exist yet or may be empty -- that's a normal state, not an error: skip this step until the user decides to add skills.
 
 If the manifest exists, read it and install every entry per its `origin`, WITHOUT assuming specific names (names are the user's own choices, not "base" skills of the framework):
-- **`origin: vault`** (vendored, the bytes live in the Vault itself): copy the folder from `03-INFRA/agent-universal-layer/skills/<name>/` (in the user's Vault, not the engine) directly into the chosen CLI's store.
-- **`origin: github`** (third-party, repo given in the entry's `repo` field): download with `git clone https://github.com/<repo>.git` into a temporary folder and copy the folder given by the entry's `path` field (default: the repo root) into the chosen CLI's store.
+- **`origin: vault`** (vendored, the bytes live in the Vault itself): materialize the folder from `03-INFRA/agent-universal-layer/skills/<name>/` into `~/.agents/skill-library/<name>/`.
+- **`origin: github`** (third-party, repo given in the entry's `repo` field): fetch the declared full commit SHA and materialize the folder given by the entry's `path` field (default: the repo root) into `~/.agents/skill-library/<name>/`.
+
+Generate `~/.agents/skills/INDEX.md`. Mount only `exposure: core` skills in eager runtimes; open all other bodies on demand with `agent-skill show <name>`.
 
 In every case, only the chosen CLI receives the config. No recurring scripts.
 

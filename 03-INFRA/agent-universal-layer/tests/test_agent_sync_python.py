@@ -96,6 +96,25 @@ def test_windows_utils_installs_council_command_wrapper(sandbox, monkeypatch):
     assert launcher.exists()
     assert launcher.resolve() == (sandbox.scripts_dir / "council.ps1").resolve()
     assert 'council.ps1' in wrapper.read_text(encoding="utf-8")
+    skill_wrapper = sandbox.home / ".local" / "bin" / "agent-skill.cmd"
+    assert skill_wrapper.exists()
+    assert "agent-skill.py" in skill_wrapper.read_text(encoding="utf-8")
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX launcher behavior is covered on Linux and macOS.")
+def test_posix_utils_installs_agent_skill_command(sandbox, monkeypatch):
+    mod = load_agent_sync_module(sandbox)
+    monkeypatch.setattr(mod, "IS_WINDOWS", False)
+    monkeypatch.setenv("HOME", str(sandbox.home))
+    monkeypatch.setenv("KNOWLEDGE_VAULT_PATH", str(sandbox.vault))
+
+    env = mod.Env()
+    mod.utils(env)
+
+    wrapper = sandbox.home / ".local" / "bin" / "agent-skill"
+    assert wrapper.exists()
+    assert wrapper.stat().st_mode & 0o111
+    assert "agent-skill.py" in wrapper.read_text(encoding="utf-8")
 
 
 def test_windows_file_copy_fallback_is_idempotent(sandbox, monkeypatch):
@@ -173,10 +192,8 @@ def test_windows_reparse_point_is_detected_without_pathlib_junction_support(sand
     assert mod._is_link_like(ReparsePoint())
 
 
-def test_windows_junction_runtime_is_converted_without_touching_hub(sandbox, monkeypatch):
-    """A runtime directory can be a Junction to the complete skill hub.
-    It must become a real runtime directory before per-skill links are made,
-    without deleting any source data in the hub."""
+def test_windows_codex_eager_junction_is_converted_without_touching_active_view(sandbox, monkeypatch):
+    """Codex must not point at an entire eager discovery root."""
     mod = load_agent_sync_module(sandbox)
     monkeypatch.setattr(mod, "IS_WINDOWS", True)
     monkeypatch.setenv("HOME", str(sandbox.home))
@@ -184,20 +201,20 @@ def test_windows_junction_runtime_is_converted_without_touching_hub(sandbox, mon
     monkeypatch.setenv("KNOWLEDGE_VAULT_PATH", str(sandbox.vault))
 
     env = mod.Env()
-    source = env.agents_hub / "fake-skill-a"
+    source = env.active_skills / "fake-skill-a"
     source.mkdir(parents=True)
     source_file = source / "SKILL.md"
     source_file.write_text("canonical source\n", encoding="utf-8")
     source_bytes = source_file.read_bytes()
 
-    runtime = sandbox.home / ".claude" / "skills"
+    runtime = sandbox.home / ".codex" / "skills"
     runtime.mkdir(parents=True)
 
     real_resolve = Path.resolve
 
     def simulate_junction_resolve(self, *args, **kwargs):
         if self == runtime:
-            return real_resolve(env.agents_hub)
+            return real_resolve(env.active_skills)
         return real_resolve(self, *args, **kwargs)
 
     monkeypatch.setattr(Path, "is_junction", lambda self: self == runtime, raising=False)
@@ -209,29 +226,18 @@ def test_windows_junction_runtime_is_converted_without_touching_hub(sandbox, mon
         removed.append(path)
         shutil.rmtree(path)
 
-    created = []
-
-    def make_test_link(src, dst, *, is_dir):
-        created.append((src, dst, is_dir))
-        dst.symlink_to(src, target_is_directory=is_dir)
-        return True
-
     monkeypatch.setattr(mod, "_remove_path", remove_simulated_junction)
-    monkeypatch.setattr(mod, "make_link", make_test_link)
 
     mod.runtimes(env)
 
     assert removed == [runtime]
     assert source_file.read_bytes() == source_bytes
     assert runtime.is_dir() and not runtime.is_symlink()
-    assert (runtime / source.name).is_symlink()
-    assert any(dst == runtime / source.name for _src, dst, _is_dir in created)
+    assert not (runtime / source.name).exists()
 
 
-def test_windows_junction_skill_is_not_relinked(sandbox, monkeypatch):
-    """A per-skill Junction already targeting its hub source is correct.
-    Treating it as a normal directory calls rmtree on a Junction and aborts
-    the Windows sync, so it must be left in place."""
+def test_windows_claude_library_junction_is_preserved(sandbox, monkeypatch):
+    """Claude may retain its native lazy whole-library view."""
     mod = load_agent_sync_module(sandbox)
     monkeypatch.setattr(mod, "IS_WINDOWS", True)
     monkeypatch.setenv("HOME", str(sandbox.home))
@@ -239,51 +245,43 @@ def test_windows_junction_skill_is_not_relinked(sandbox, monkeypatch):
     monkeypatch.setenv("KNOWLEDGE_VAULT_PATH", str(sandbox.vault))
 
     env = mod.Env()
-    source = env.agents_hub / "fake-skill-a"
+    source = env.skill_library / "fake-skill-a"
     source.mkdir(parents=True)
     source_file = source / "SKILL.md"
     source_file.write_text("canonical source\n", encoding="utf-8")
     source_bytes = source_file.read_bytes()
 
-    runtime_links = []
-    for rel in (".claude/skills", ".codex/skills"):
-        link = sandbox.home / rel / source.name
-        link.mkdir(parents=True)
-        (link / "SKILL.md").write_text("simulated junction target\n", encoding="utf-8")
-        runtime_links.append(link)
+    runtime = sandbox.home / ".claude" / "skills"
+    runtime.mkdir(parents=True)
+    real_resolve = Path.resolve
 
-    original_points_to = getattr(mod, "_points_to", None)
+    def simulate_junction_resolve(self, *args, **kwargs):
+        if self == runtime:
+            return real_resolve(env.skill_library)
+        return real_resolve(self, *args, **kwargs)
 
-    def simulate_junction_target(path, target):
-        if path in runtime_links and target == source:
-            return True
-        return original_points_to(path, target) if original_points_to else False
-
-    created = []
-
-    def make_test_link(src, dst, *, is_dir):
-        created.append((src, dst, is_dir))
-        return True
-
-    monkeypatch.setattr(mod, "_points_to", simulate_junction_target, raising=False)
-    monkeypatch.setattr(mod, "make_link", make_test_link)
+    monkeypatch.setattr(Path, "is_junction", lambda self: self == runtime, raising=False)
+    monkeypatch.setattr(Path, "resolve", simulate_junction_resolve)
+    removed = []
+    monkeypatch.setattr(mod, "_remove_path", lambda path: removed.append(path))
 
     mod.runtimes(env)
 
     assert source_file.read_bytes() == source_bytes
-    assert not any(dst in runtime_links for _src, dst, _is_dir in created)
+    assert removed == []
+    assert runtime.is_dir()
 
 
-def test_windows_excluded_copy_fallback_skill_is_removed(sandbox, monkeypatch):
+def test_windows_runtimes_leave_manual_child_copies_for_explicit_migration(sandbox, monkeypatch):
     mod = load_agent_sync_module(sandbox)
     monkeypatch.setattr(mod, "IS_WINDOWS", True)
     monkeypatch.setenv("HOME", str(sandbox.home))
     monkeypatch.setenv("USERPROFILE", str(sandbox.home))
     monkeypatch.setenv("KNOWLEDGE_VAULT_PATH", str(sandbox.vault))
 
-    hub_skill = sandbox.hub / "fake-skill-excluded"
-    hub_skill.mkdir(parents=True, exist_ok=True)
-    (hub_skill / "SKILL.md").write_text("canonical excluded skill\n", encoding="utf-8")
+    library_skill = sandbox.skill_library / "fake-skill-excluded"
+    library_skill.mkdir(parents=True, exist_ok=True)
+    (library_skill / "SKILL.md").write_text("canonical manual skill\n", encoding="utf-8")
     for runtime in (sandbox.home / ".claude" / "skills", sandbox.home / ".codex" / "skills"):
         copied_skill = runtime / "fake-skill-excluded"
         copied_skill.mkdir(parents=True, exist_ok=True)
@@ -292,9 +290,9 @@ def test_windows_excluded_copy_fallback_skill_is_removed(sandbox, monkeypatch):
     env = mod.Env()
     mod.runtimes(env)
 
-    assert not (sandbox.home / ".claude" / "skills" / "fake-skill-excluded").exists()
-    assert not (sandbox.home / ".codex" / "skills" / "fake-skill-excluded").exists()
-    assert (sandbox.hub / "fake-skill-excluded" / "SKILL.md").is_file()
+    assert (sandbox.home / ".claude" / "skills" / "fake-skill-excluded").is_dir()
+    assert (sandbox.home / ".codex" / "skills" / "fake-skill-excluded").is_dir()
+    assert (sandbox.skill_library / "fake-skill-excluded" / "SKILL.md").is_file()
 
 
 def test_windows_backup_failure_does_not_delete_local_edit(sandbox, monkeypatch):

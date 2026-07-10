@@ -15,10 +15,10 @@ Writes nothing. It only creates missing scaffold folders inside the repo itself 
 
 | CLI | Bootstrap file | MCP config | Skills folder |
 |---|---|---|---|
-| Claude Code | `~/CLAUDE.md` (pointer to this repo's `AGENTS.md`) | `mcpServers` field in `~/.claude.json` | `~/.claude/skills/` |
-| Codex | `~/.codex/AGENTS.md` | Codex's own config file | `~/.codex/skills/` |
-| OpenCode | `instructions` field in `opencode.json` | MCP section of the same `opencode.json` | shared hub `~/.agents/skills/` |
-| Antigravity | `~/.gemini/config/AGENTS.md` | `~/.gemini/antigravity/mcp_config.json` | `~/.gemini/skills/` |
+| Claude Code | `~/CLAUDE.md` (pointer to this repo's `AGENTS.md`) | `mcpServers` field in `~/.claude.json` | declared native-lazy view in `~/.claude/skills/` |
+| Codex | `~/.codex/AGENTS.md` | Codex's own config file | only `exposure: core` views in `~/.codex/skills/` |
+| OpenCode | `instructions` field in `opencode.json` | MCP section of the same `opencode.json` | `agent-skill find|show`, backed by `~/.agents/skill-library/` |
+| Antigravity | `~/.gemini/config/AGENTS.md` | `~/.gemini/antigravity/mcp_config.json` | `agent-skill find|show`, backed by `~/.agents/skill-library/` |
 
 These are patches to files that must already exist (each CLI creates its own default config the first time you open it). Nothing here creates a CLI's config file from scratch; if a chosen CLI has never been opened, that step is skipped for it.
 

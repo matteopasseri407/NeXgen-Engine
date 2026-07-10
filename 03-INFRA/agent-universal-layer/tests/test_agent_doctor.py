@@ -43,11 +43,11 @@ def test_doctor_smoke_detects_injected_broken_symlink(sandbox):
     baseline = run_agent_doctor(sb, "--summary")
     base_pass, base_warn, base_fail = _parse_summary(baseline.stdout)
 
-    # drift iniettato: un symlink rotto/pendente nell'hub (l'esempio del design)
-    hub_link = sb.hub / "fake-skill-a"
-    assert hub_link.is_symlink(), "precondizione: l'hub deve gia' avere il link creato da agent-sync"
-    hub_link.unlink()
-    hub_link.symlink_to(sb.home / "questo-target-non-esiste-affatto")
+    # drift iniettato: un symlink rotto nella library non scoperta.
+    library_link = sb.skill_library / "fake-skill-a"
+    assert library_link.is_symlink(), "precondizione: la library deve gia' avere il link creato da agent-sync"
+    library_link.unlink()
+    library_link.symlink_to(sb.home / "questo-target-non-esiste-affatto")
 
     drifted = run_agent_doctor(sb, "--summary")
     drift_pass, drift_warn, drift_fail = _parse_summary(drifted.stdout)

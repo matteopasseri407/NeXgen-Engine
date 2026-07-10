@@ -19,7 +19,7 @@ The universal layer is a set of canonical sources in the vault plus provisioners
 
 - **Instructions:** `agent-universal-layer/instructions/AGENTS.md` is the single bootstrap. Each CLI's pointer file (`~/CLAUDE.md`, `~/.codex/AGENTS.md`, etc.) references it. One file, every agent, drift impossible.
 - **MCP config:** `agent-universal-layer/mcp/manifest.yaml` describes every MCP server once; `render.py` translates it into each CLI's dialect.
-- **Skills:** `agent-universal-layer/skills/skills.manifest.yaml` lists every chosen skill; `scripts/skills-sync.py` materializes them in the shared hub and wires them to each runtime.
+- **Skills:** `agent-universal-layer/skills/skills.manifest.yaml` lists every chosen skill; `scripts/skills-sync.py` materializes bodies in `~/.agents/skill-library`, creates a tiny catalog in `~/.agents/skills`, and wires only declared core or Claude-native views to runtimes.
 - **Scripts:** `scripts/agent-sync.sh` (Linux/Mac) and `scripts/agent-sync.ps1` (Windows) reconcile the live CLI configs with the canonical sources, run healthchecks, and keep the vault in sync.
 
 ## Provisioning flow
