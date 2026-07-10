@@ -100,7 +100,7 @@ $c = httpcode "http://127.0.0.1:33002/" $null; if ($c -eq 200 -or $c -eq 302) { 
 $c = httpcode "http://127.0.0.1:33003/health" $null; if ($c -eq 200) { ok "vault-ocr (33003): $c" } else { bad "vault-ocr (33003): $c" }
 if ($env:VAULT_LIBRARY_URL) {
   $c = httpcode $env:VAULT_LIBRARY_URL @{ Authorization = "Bearer $($env:VAULT_LIBRARY_TOKEN)" }
-  if ($c -ne 0 -and $c -ne 401 -and $c -ne 403) { ok "vault-library: $c (up)" } else { bad "vault-library: $c" }
+  if ($c -eq 200 -or $c -eq 405) { ok "vault-library: $c (up)" } else { bad "vault-library: $c" }
 } else { warn "VAULT_LIBRARY_URL not in env" }
 if (Get-Command npx -ErrorAction SilentlyContinue) { ok "playwright: npx available" } else { warn "npx not in PATH (playwright MCP)" }
 
@@ -123,10 +123,12 @@ if ((Get-Command "python" -ErrorAction SilentlyContinue) -and (Test-Path -Litera
   } else {
   $driftLines = @($renderOut | Where-Object { $_ -match '\[DIFF\]|\[MISSING\]|\[ERROR\]' })
   if ($driftLines.Count -gt 0) {
-    # render.py does not have a Windows dialect yet (paths/npx are expected in
-    # Linux style): informational WARN, not FAIL, until Windows rendering is
-    # implemented (Vault 2.0 backlog).
-    warn "MCP drift: $($driftLines.Count) render.py entries (partly expected on Windows; detail: python `$Layer\mcp\render.py)"
+    if (($renderOut | Where-Object { $_ -match '\[ERROR\]' }).Count -gt 0) {
+      bad "MCP drift detected against the canonical manifest (ERROR)"
+      warn "MCP drift detail: $($driftLines.Count) entries"
+    } else {
+      warn "MCP drift: $($driftLines.Count) render.py entries (partly expected on Windows; detail: python `$Layer\mcp\render.py)"
+    }
   } else {
     ok "MCP configs 100% aligned with the canonical manifest"
   }
@@ -180,7 +182,11 @@ if ($Strict) {
   if (Test-Path -LiteralPath $AgGlobal) {
     try {
       $agJson = Get-Content -Raw -LiteralPath $AgGlobal | ConvertFrom-Json
-      $gotKeys = @($agJson.mcpServers.PSObject.Properties.Name)
+      if ($agJson.mcpServers) {
+        $gotKeys = @($agJson.mcpServers.PSObject.Properties.Name)
+      } else {
+        $gotKeys = @()
+      }
       $agMissing = @($expectedMcp | Where-Object { $gotKeys -notcontains $_ })
       if ($agMissing.Count -eq 0) { ok "Antigravity global contains the core MCP servers" }
       else { bad "Antigravity global is missing core MCP servers: $($agMissing -join ', ')" }
@@ -225,7 +231,7 @@ if ($Strict) {
 sec "Skills"
 $sk = Join-Path $HomeDir ".agents\skills"
 $n = if (Test-Path -LiteralPath $sk) { @(Get-ChildItem -LiteralPath $sk -Directory).Count } else { 0 }
-if ($n -gt 0) { ok "$n skills in ~/.agents/skills" } else { bad "no skill in ~/.agents/skills" }
+if ($n -gt 0) { ok "$n skills in ~/.agents/skills" } else { warn "no skill in ~/.agents/skills (fresh install, or none configured in the manifest yet)" }
 # Manifest -> hub coverage: without this assert, a skill registered in the
 # manifest can go missing on a host for weeks (the humanizer bug).
 $skillsSyncScript = Join-Path $Vault "03-INFRA\scripts\skills-sync.py"

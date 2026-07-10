@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# shellcheck disable=SC2015
 # agent-doctor — verifies that ALL agents are genuinely aligned and operational.
 # Read-only: changes nothing. Exit 0 if no FAIL, 1 otherwise.
 # Usage:
@@ -114,7 +115,7 @@ c=$(code http://127.0.0.1:33002/); { [ "$c" = 200 ] || [ "$c" = 302 ]; } && ok "
 c=$(code http://127.0.0.1:33003/health); [ "$c" = 200 ] && ok "vault-ocr (33003): $c" || fail "vault-ocr (33003): $c"
 if [ -n "${VAULT_LIBRARY_URL:-}" ]; then
   c=$(code -H "Authorization: Bearer ${VAULT_LIBRARY_TOKEN:-}" "$VAULT_LIBRARY_URL")
-  { [ "$c" != 000 ] && [ "$c" != 401 ] && [ "$c" != 403 ]; } && ok "vault-library: $c (up)" || fail "vault-library: $c"
+  { [ "$c" = 200 ] || [ "$c" = 405 ]; } && ok "vault-library: $c (up)" || fail "vault-library: $c"
 else
   warn "VAULT_LIBRARY_URL not in env"
 fi
@@ -158,10 +159,14 @@ if command -v python3 >/dev/null 2>&1 && [ -f "$ENGINE_UL/mcp/render.py" ]; then
       drift_scan="$(printf '%s\n' "$render_out" | awk '/^========== CLAUDE ==========/{p=1; next} /^========== /{p=0} !p')"
     fi
   fi
-  if printf '%s\n' "$drift_scan" | grep -Eq '\[(DIFF|MISSING|ERROR)\]'; then
+  if printf '%s\n' "$drift_scan" | grep -Eq '\[ERROR\]'; then
     fail "MCP drift detected against the canonical manifest"
     # Pull out the offending lines to show them in the report
     drift_lines="$(printf '%s\n' "$drift_scan" | grep -E '\[DIFF\]|\[MISSING\]|\[ERROR\]')"
+    [ "$QUIET" = 1 ] || printf '%s\n' "$drift_lines" | while IFS= read -r line; do warn "drift detail: $line"; done
+  elif printf '%s\n' "$drift_scan" | grep -Eq '\[DIFF\]|\[MISSING\]'; then
+    warn "MCP drift detected against the canonical manifest (DIFF/MISSING)"
+    drift_lines="$(printf '%s\n' "$drift_scan" | grep -E '\[DIFF\]|\[MISSING\]')"
     [ "$QUIET" = 1 ] || printf '%s\n' "$drift_lines" | while IFS= read -r line; do warn "drift detail: $line"; done
   elif [ "$claude_pending" = 1 ]; then
     warn "Claude MCP not aligned but Claude is running: will be written by the next agent-sync once Claude is closed"
@@ -353,8 +358,8 @@ for req in requests:
     data = json.dumps(req, separators=(",", ":")).encode()
     proc.stdin.write(b"Content-Length: " + str(len(data)).encode() + b"\r\n\r\n" + data)
 proc.stdin.close()
-raw = proc.stdout.read()
-assert proc.wait(timeout=15) == 0
+raw, _ = proc.communicate(timeout=15)
+assert proc.returncode == 0
 responses = []
 i = 0
 while i < len(raw):

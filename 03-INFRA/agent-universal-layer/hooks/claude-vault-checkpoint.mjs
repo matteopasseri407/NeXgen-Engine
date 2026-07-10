@@ -3,14 +3,15 @@
 // Universal across machines: lives in the vault, deployed by agent-sync to the Claude runtime
 // (~/.claude/) and wired into ~/.claude/settings.json on every OS.
 //
-// Two events, one script:
+// One event, one script:
 //   SessionStart (source resume|compact): inject a short briefing so a reloaded/compacted
 //     session re-grounds in the vault instead of guessing.
-//   PreCompact: remind the agent to persist durable state BEFORE context is compacted,
-//     turning the "vault checkpoint" rule from prose into a mechanical nudge.
 //
 // The hook only injects context; the actual write still needs the model. It never blocks,
 // never writes, never prints secrets. On any error it exits 0 silently (must not break sessions).
+
+process.stdin.on("error", () => process.exit(0));
+process.stdout.on("error", () => process.exit(0));
 
 const chunks = [];
 process.stdin.on("data", (c) => chunks.push(c));
@@ -36,21 +37,17 @@ process.stdin.on("end", () => {
         "Do not reload the whole vault.",
       ].join(" ");
     }
-  } else if (name === "PreCompact") {
-    context = [
-      "[KnowledgeVault checkpoint] Context is about to be compacted.",
-      "If this session produced durable knowledge not yet saved",
-      "(a final diagnosis, root cause, canonical command, architecture decision, project state, runbook, verified preference, infra change),",
-      "persist it NOW in the vault following knowledge-vault-hygiene: a compressed summary, no debug diary, no secrets, then commit and push.",
-    ].join(" ");
   }
 
   if (context) {
-    process.stdout.write(
-      JSON.stringify({
-        hookSpecificOutput: { hookEventName: name, additionalContext: context },
-      })
-    );
+    try {
+      process.stdout.write(
+        JSON.stringify({
+          hookSpecificOutput: { hookEventName: name, additionalContext: context },
+        }) + "\n"
+      );
+    } catch {
+      // ignore
+    }
   }
-  process.exit(0);
 });

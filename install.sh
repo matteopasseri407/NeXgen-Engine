@@ -82,7 +82,18 @@ windows_note(){
 check_scaffold(){
   hdr "2 · Vault scaffold"
   for d in 01-NOTES 02-PROJECTS 04-NOW 99-INDEX 99-SECRETS; do
-    if [ -d "$ROOT/$d" ]; then ok "$d/"; else warn "$d/ missing — creating"; mkdir -p "$ROOT/$d"; : > "$ROOT/$d/.gitkeep"; fi
+    if [ -d "$ROOT/$d" ]; then
+      ok "$d/"
+    else
+      if [ "$MODE" = "--check" ]; then
+        bad "$d/ missing (read-only check)"
+        MISS_REQ=1
+      else
+        warn "$d/ missing — creating"
+        mkdir -p "$ROOT/$d"
+        : > "$ROOT/$d/.gitkeep"
+      fi
+    fi
   done
   for f in INIT.md 00-START-HERE.md 99-INDEX/USER-PROFILE.md 03-INFRA/agent-universal-layer/instructions/AGENTS.md; do
     if [ -f "$ROOT/$f" ]; then ok "$f"; else bad "$f MISSING — is this a full clone?"; MISS_REQ=1; fi

@@ -22,7 +22,13 @@ MSG=""
 FILES=()
 while [ $# -gt 0 ]; do
   case "$1" in
-    -m) MSG="${2:-}"; shift 2 ;;
+    -m)
+      if [ $# -lt 2 ]; then
+        echo "vault-push: argument missing for -m"
+        exit 2
+      fi
+      MSG="$2"; shift 2 
+      ;;
     -m*) MSG="${1#-m}"; shift ;;
     --) shift; while [ $# -gt 0 ]; do FILES+=("$1"); shift; done ;;
     *) FILES+=("$1"); shift ;;
