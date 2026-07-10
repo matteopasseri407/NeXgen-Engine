@@ -50,3 +50,24 @@ def test_show_rejects_path_traversal_and_unknown_skills(sandbox):
     missing = _run(sandbox, "show", "does-not-exist")
     assert missing.returncode == 1
     assert "not installed" in missing.stderr
+
+
+def test_list_and_find_use_multiline_frontmatter_description(sandbox):
+    skill = sandbox.skill_library / "multiline-skill"
+    skill.mkdir(parents=True)
+    (skill / "SKILL.md").write_text(
+        "---\n"
+        "name: multiline-skill\n"
+        "description: |\n"
+        "  Finds a specific capability without loading every playbook.\n"
+        "  Use for a focused manual lookup.\n"
+        "---\n",
+        encoding="utf-8",
+    )
+
+    listed = _run(sandbox, "list")
+    assert "Finds a specific capability without loading every playbook." in listed.stdout
+
+    found = _run(sandbox, "find", "focused", "lookup")
+    assert found.returncode == 0
+    assert "multiline-skill" in found.stdout

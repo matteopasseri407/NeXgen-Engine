@@ -28,12 +28,22 @@ def _description(skill_md: Path) -> str:
         return ""
     if not lines or lines[0].strip() != "---":
         return ""
-    for line in lines[1:]:
+    for index, line in enumerate(lines[1:], start=1):
         if line.strip() == "---":
             break
         key, separator, value = line.partition(":")
         if separator and key.strip() == "description":
-            return " ".join(value.strip().strip('"\'').split())
+            value = value.strip().strip('"\'')
+            if value not in {"|", ">"}:
+                return " ".join(value.split())
+            # YAML block scalar: collect its indented lines without requiring
+            # PyYAML at every on-demand command invocation.
+            block = []
+            for child in lines[index + 1:]:
+                if child.strip() == "---" or (child and not child[0].isspace()):
+                    break
+                block.append(child.strip())
+            return " ".join(part for part in block if part)
     return ""
 
 
