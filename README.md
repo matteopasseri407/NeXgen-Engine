@@ -80,7 +80,7 @@ There are no complex "agent-to-agent negotiations", no autonomous Swarm A* plann
 ## Deployment modes
 
 1. **Local-Only.** Runs entirely on your machine. Relies on native CLI tools and local models. Good for testing and single-user setups.
-2. **Cloud-Server.** Connects to a self-hosted stack (like n8n for orchestration, Firecrawl for scraping, and dedicated OCR) over an SSH tunnel. Built for production workflows.
+2. **Cloud-Server.** Connects to a self-hosted stack (like n8n for orchestration, Firecrawl for scraping, and dedicated OCR) deployed in **your own private environment** (VPS or local server) over an SSH tunnel. You maintain full ownership of your data; NeXgen does not provide or host these services for you.
 
 The AI-guided setup (`INIT.md`) configures the correct mode for your environment.
 
@@ -215,7 +215,7 @@ Non ci sono complesse "negoziazioni tra agenti", né pianificatori Swarm A* auto
 ## Modalità di deployment
 
 1. **Locale.** Gira interamente sulla tua macchina. Usa i tool nativi delle CLI e modelli locali. Adatto per test e setup mono-utente.
-2. **Cloud-Server.** Si collega a uno stack remoto (come n8n per l'orchestrazione, Firecrawl per lo scraping e OCR dedicato) tramite tunnel SSH. Pensato per i flussi di lavoro in produzione.
+2. **Cloud-Server.** Si collega a uno stack remoto (come n8n per l'orchestrazione, Firecrawl per lo scraping e OCR dedicato) installato e gestito nel **tuo ambiente privato** (VPS o server locale) tramite tunnel SSH. Mantieni il pieno controllo dei tuoi dati; NeXgen non fornisce né ospita questi servizi per te.
 
 Il setup guidato dall'AI (`INIT.md`) configurerà la modalità adatta al tuo ambiente.
 
