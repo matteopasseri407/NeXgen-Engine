@@ -7,7 +7,18 @@ A2: tre mode (brainstorm multi-round, challenge, code-review), prompt di
 ruolo dedicati, parsing VERDICT per ogni round.
 """
 from __future__ import annotations
-import argparse, importlib.util, json, os, queue, re, shutil, subprocess, sys, tempfile, threading, time
+import argparse
+import importlib.util
+import json
+import os
+import queue
+import re
+import shutil
+import subprocess
+import sys
+import tempfile
+import threading
+import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -56,6 +67,16 @@ class RelayRecord:
     model: str
     verdict: str
     response: str
+
+
+@dataclass
+class SeatInvocation:
+    """A vendor command plus the private transport it needs for the prompt."""
+
+    argv: list[str]
+    stdin_text: str | None
+    output_file: Path | None
+    input_file: Path | None
 
 
 def _vault_data_root() -> Path:
@@ -400,8 +421,9 @@ def slugify(text: str) -> str:
 
 
 MAX_CONTEXT_FILE_BYTES = 2_000_000  # ~2MB: generoso per un brief/diff di testo, non per un binario
-POSIX_SINGLE_ARG_SAFE_BYTES = 120_000
-WINDOWS_COMMAND_LINE_SAFE_CHARS = 30_000
+OPENCODE_ATTACHED_PROMPT = (
+    "Read the attached file as the complete Council task and answer it exactly as instructed."
+)
 
 
 def _read_or_exit(path_str: str, label: str) -> str:
@@ -537,64 +559,93 @@ def _drain_text(stream, sink: list[str]) -> None:
         sink.append(line)
 
 
-def _build_seat_command(seat: dict, prompt: str, session_dir: Path) -> tuple[list[str], Path | None]:
-    """Costruisce l'argv per la CLI dichiarata dal seat. Ritorna anche il path del
-    file di output se quella CLI scrive la risposta su file invece che su stdout
-    (piu' robusto di un parser di banner/log: codex exec stampa anche header,
-    warning e progress su stdout, -o isola il solo messaggio finale)."""
+def _write_transport_file(session_dir: Path, prompt: str) -> Path:
+    """Create a short-lived private file for a CLI that accepts attachments.
+
+    The session directory is already private.  ``mkstemp`` also gives the file
+    mode 0600 before it is populated, so there is no permissive creation window.
+    The caller always unlinks this transport file, including after a failed seat.
+    """
+    fd, tmp_name = tempfile.mkstemp(prefix="council-prompt-", suffix=".md", dir=session_dir)
+    os.close(fd)
+    path = Path(tmp_name)
+    try:
+        _write_private_text(path, prompt)
+    except Exception:
+        path.unlink(missing_ok=True)
+        raise
+    return path
+
+
+def _feed_stdin(stream, prompt: str) -> None:
+    """Write a potentially large prompt without blocking the output watchdog."""
+    try:
+        stream.write(prompt)
+        stream.flush()
+    except (BrokenPipeError, OSError, ValueError):
+        # The child process will return its own diagnostic if it exits before
+        # consuming stdin.  Do not mask that with a writer-thread traceback.
+        pass
+    finally:
+        try:
+            stream.close()
+        except (OSError, ValueError):
+            pass
+
+
+def _build_seat_command(seat: dict, prompt: str, session_dir: Path) -> SeatInvocation:
+    """Build a vendor command without putting the user prompt in ``argv``.
+
+    Codex documents ``-`` as stdin.  Antigravity's print mode consumes stdin
+    when no positional prompt is supplied.  OpenCode exposes file attachments,
+    so it receives a static instruction plus a protected prompt file instead.
+    Codex keeps its final response in a separate protected output file because
+    its stdout also carries progress and warnings.
+    """
     cli = seat["cli"]
     model = seat["model"]
     if cli == "opencode":
-        return (
-            ["opencode", "run", prompt, "-m", model, "--format", "json", "--dir", str(session_dir)],
+        input_file = _write_transport_file(session_dir, prompt)
+        return SeatInvocation(
+            [
+                "opencode", "run", OPENCODE_ATTACHED_PROMPT,
+                "-m", model, "--format", "json", "--file", str(input_file),
+                "--dir", str(session_dir),
+            ],
             None,
+            None,
+            input_file,
         )
     if cli == "agy":
-        # Verificato dal vivo 2026-07-09: `agy --print <prompt> --model <m> --sandbox`
-        # stampa SOLO la risposta su stdout (nessun banner, nessun JSON), exit 0.
+        # Print mode reads stdin when no positional prompt is supplied.  Keeping
+        # the brief out of argv avoids both the Windows command-line cap and the
+        # POSIX single-argument cap.
         # --sandbox = restrizioni terminale, mai --dangerously-skip-permissions
         # (coerente con "consulenti senza mani": qualunque tool richieda conferma
         # interattiva non ha modo di ottenerla in modalita' non interattiva).
-        return (["agy", "--print", prompt, "--model", model, "--sandbox"], None)
+        return SeatInvocation(
+            ["agy", "--print", "--model", model, "--sandbox"],
+            prompt,
+            None,
+            None,
+        )
     if cli == "codex":
-        # Verificato dal vivo 2026-07-09: senza -o, stdout include banner/warning/
-        # progress oltre alla risposta. -s read-only = stessa sandbox gia' validata
-        # in A0, nessun accesso in scrittura per il seat.
+        # ``codex exec -`` reads the initial prompt from stdin.  Without -o,
+        # stdout includes banner/warning/progress beyond the final answer.
+        # -s read-only is the same sandbox validated in A0, with no write access
+        # for the consultant seat.
         fd, tmp_name = tempfile.mkstemp(prefix="council-codex-", suffix=".txt")
         os.close(fd)
         output_file = Path(tmp_name)
-        return (
-            ["codex", "exec", prompt, "-m", model, "-s", "read-only", "-o", str(output_file)],
+        return SeatInvocation(
+            ["codex", "exec", "-", "-m", model, "-s", "read-only", "-o", str(output_file)],
+            prompt,
             output_file,
+            None,
         )
     raise SeatRunError(
         f"[council] cli '{cli}' non supportata (attese: {', '.join(SUPPORTED_CLIS)}).", "unsupported_cli"
     )
-
-
-def _validate_seat_argv_size(argv: list[str]) -> None:
-    """The supported CLIs currently receive the whole prompt as one argv item.
-    That is cheaper and deterministic for small briefs, but it has hard OS
-    limits: Windows has a ~32k command line cap and Linux has a per-argument
-    cap well below the 2MB context-file guard. Fail before Popen so the user
-    gets an actionable council error instead of an opaque OS invocation crash.
-    """
-    encoded_lengths = [len(arg.encode("utf-8")) for arg in argv]
-    total_chars = sum(len(arg) + 3 for arg in argv)
-    if os.name == "nt" and total_chars > WINDOWS_COMMAND_LINE_SAFE_CHARS:
-        raise SeatRunError(
-            "[council] brief troppo grande per i seat CLI su Windows: il prompt viene passato "
-            "come argomento e supererebbe il limite della riga di comando. Riduci il contesto "
-            "o spezza la review in batch piu' piccoli.",
-            "prompt_too_large",
-        )
-    if os.name != "nt" and encoded_lengths and max(encoded_lengths) > POSIX_SINGLE_ARG_SAFE_BYTES:
-        raise SeatRunError(
-            "[council] brief troppo grande per i seat CLI: il prompt viene passato come singolo "
-            "argomento e supererebbe il limite pratico del sistema. Riduci il contesto o spezza "
-            "la review in batch piu' piccoli.",
-            "prompt_too_large",
-        )
 
 
 def run_seat(seat: dict, prompt: str, session_dir: Path) -> tuple[str, dict]:
@@ -607,16 +658,27 @@ def run_seat(seat: dict, prompt: str, session_dir: Path) -> tuple[str, dict]:
     altre CLI supportate stampano testo semplice."""
     model = seat["model"]
     cli = seat["cli"]
-    argv, output_file = _build_seat_command(seat, prompt, session_dir)
-    _validate_seat_argv_size(argv)
+    invocation = _build_seat_command(seat, prompt, session_dir)
+    stdin_writer: threading.Thread | None = None
     try:
         try:
             proc = subprocess.Popen(
-                argv,
-                stdout=subprocess.PIPE, stderr=subprocess.PIPE, stdin=subprocess.DEVNULL, text=True,
+                invocation.argv,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                stdin=subprocess.PIPE if invocation.stdin_text is not None else subprocess.DEVNULL,
+                text=True,
             )
         except OSError as e:
-            raise SeatRunError(f"[council] impossibile invocare il seat (brief troppo grande per la riga di comando?): {e}", "invocation")
+            raise SeatRunError(f"[council] impossibile invocare il seat: {e}", "invocation")
+
+        if invocation.stdin_text is not None:
+            stdin_writer = threading.Thread(
+                target=_feed_stdin,
+                args=(proc.stdin, invocation.stdin_text),
+                daemon=True,
+            )
+            stdin_writer.start()
 
         line_queue: "queue.Queue[str | None]" = queue.Queue()
         stderr_lines: list[str] = []
@@ -684,8 +746,8 @@ def run_seat(seat: dict, prompt: str, session_dir: Path) -> tuple[str, dict]:
         if returncode != 0:
             raise SeatRunError(f"[council] il seat non ha risposto (exit {returncode}):\n{''.join(stderr_lines)}", "process_error")
 
-        if output_file is not None:
-            output_text = output_file.read_text(encoding="utf-8") if output_file.is_file() else ""
+        if invocation.output_file is not None:
+            output_text = invocation.output_file.read_text(encoding="utf-8") if invocation.output_file.is_file() else ""
             if not output_text.strip():
                 raise SeatRunError("[council] il seat ha risposto ma senza testo utilizzabile (output vuoto).", "empty_response")
             return output_text, usage
@@ -694,8 +756,12 @@ def run_seat(seat: dict, prompt: str, session_dir: Path) -> tuple[str, dict]:
             raise SeatRunError("[council] il seat ha risposto ma senza testo utilizzabile (output vuoto).", "empty_response")
         return "".join(text_chunks), usage
     finally:
-        if output_file is not None:
-            output_file.unlink(missing_ok=True)
+        if stdin_writer is not None:
+            stdin_writer.join(timeout=5)
+        if invocation.output_file is not None:
+            invocation.output_file.unlink(missing_ok=True)
+        if invocation.input_file is not None:
+            invocation.input_file.unlink(missing_ok=True)
 
 
 def extract_verdict(text: str) -> str:

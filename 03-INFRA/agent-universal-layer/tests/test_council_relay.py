@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import importlib.util
+import io
 import os
 import stat
 import subprocess
@@ -287,21 +288,95 @@ def test_relay_enforces_hard_five_stage_limit(monkeypatch, tmp_path):
     assert "relay supporta al massimo 5 stadi" in str(exc.value)
 
 
-def test_run_seat_rejects_prompt_too_large_before_popen(monkeypatch, tmp_path):
+@pytest.mark.parametrize("cli", ["opencode", "agy", "codex"])
+def test_large_prompt_uses_private_non_argv_transport_for_every_cli(monkeypatch, tmp_path, cli):
+    # This parametrization runs in the Linux and Windows CI jobs.  Keep the
+    # host's real ``os.name`` so the private-file path exercises its native
+    # permission branch instead of spoofing POSIX calls on Windows.
     council = load_council(monkeypatch, tmp_path)
+    prompt = "x" * 130_000
+    captured = {}
 
-    def fail_if_called(*args, **kwargs):
-        raise AssertionError("Popen should not be reached for oversized prompts")
+    class FakeStdin:
+        def __init__(self):
+            self.text = ""
+            self.closed = False
 
-    monkeypatch.setattr(council.subprocess, "Popen", fail_if_called)
-    seat = {"cli": "agy", "model": "Gemini 3.5 Flash (High)"}
-    oversized_prompt = "x" * (council.POSIX_SINGLE_ARG_SAFE_BYTES + 1)
+        def write(self, text):
+            self.text += text
+
+        def flush(self):
+            return None
+
+        def close(self):
+            self.closed = True
+
+    class FakeProcess:
+        def __init__(self, stdout_text):
+            self.stdin = FakeStdin()
+            self.stdout = io.StringIO(stdout_text)
+            self.stderr = io.StringIO()
+
+        def kill(self):
+            return None
+
+        def wait(self):
+            return 0
+
+    def fake_popen(argv, **kwargs):
+        captured["argv"] = argv
+        captured["stdin_mode"] = kwargs["stdin"]
+        if cli == "opencode":
+            input_file = Path(argv[argv.index("--file") + 1])
+            captured["input_file"] = input_file
+            captured["input_text"] = input_file.read_text(encoding="utf-8")
+            captured["input_mode"] = stat.S_IMODE(input_file.stat().st_mode)
+            process = FakeProcess('{"type":"text","part":{"text":"Risposta\\nVERDICT: APPROVE\\n"}}\n')
+            captured["process"] = process
+            return process
+        if cli == "codex":
+            output_file = Path(argv[argv.index("-o") + 1])
+            output_file.write_text("Risposta\nVERDICT: APPROVE\n", encoding="utf-8")
+        process = FakeProcess("Risposta\nVERDICT: APPROVE\n")
+        captured["process"] = process
+        return process
+
+    monkeypatch.setattr(council.subprocess, "Popen", fake_popen)
+    response, _usage = council.run_seat({"cli": cli, "model": "vendor/test"}, prompt, tmp_path)
+
+    assert response.endswith("VERDICT: APPROVE\n")
+    assert all(prompt not in arg for arg in captured["argv"])
+
+    if cli == "opencode":
+        assert captured["stdin_mode"] is subprocess.DEVNULL
+        assert captured["input_text"] == prompt
+        assert not captured["input_file"].exists()
+        if os.name != "nt":
+            assert captured["input_mode"] == 0o600
+    else:
+        assert captured["stdin_mode"] is subprocess.PIPE
+        assert captured["process"].stdin.text == prompt
+        assert captured["process"].stdin.closed is True
+
+
+def test_opencode_transport_file_is_removed_when_invocation_fails(monkeypatch, tmp_path):
+    council = load_council(monkeypatch, tmp_path)
+    captured = {}
+
+    def fail_after_reading_transport(argv, **_kwargs):
+        input_file = Path(argv[argv.index("--file") + 1])
+        captured["input_file"] = input_file
+        captured["input_text"] = input_file.read_text(encoding="utf-8")
+        raise OSError("simulated missing opencode")
+
+    monkeypatch.setattr(council.subprocess, "Popen", fail_after_reading_transport)
 
     with pytest.raises(council.SeatRunError) as exc:
-        council.run_seat(seat, oversized_prompt, tmp_path)
+        council.run_seat({"cli": "opencode", "model": "vendor/test"}, "private prompt", tmp_path)
 
-    assert exc.value.kind == "prompt_too_large"
-    assert "spezza la review in batch" in str(exc.value)
+    assert exc.value.kind == "invocation"
+    assert captured["input_text"] == "private prompt"
+    assert not captured["input_file"].exists()
 
 
 def test_extract_verdict_uses_last_valid_verdict(monkeypatch, tmp_path):
