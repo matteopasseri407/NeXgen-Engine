@@ -1,6 +1,6 @@
 # Credits
 
-Agent-OS (NeXgen Vault) builds on the work of others. This file lists the
+Agent-OS (NeXgen Engine) builds on the work of others. This file lists the
 third-party components and their authors. Each component keeps its own upstream
 license; this file gives credit and points to the source.
 

@@ -28,8 +28,8 @@ deploy/
 
 ```bash
 # on the VPS
-git clone https://github.com/<github-user>/NeXgen-Vault-OL.git
-cd NeXgen-Vault-OL/03-INFRA/deploy
+git clone https://github.com/<github-user>/NeXgen-Engine.git
+cd NeXgen-Engine/03-INFRA/deploy
 cp .env.example .env        # edit and fill in secrets
 bash bootstrap-vps.sh
 ```

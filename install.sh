@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# NeXgen Vault (Agent-OS) — bootstrap / preflight
+# NeXgen Engine (Agent-OS) — bootstrap / preflight
 # ---------------------------------------------------------------------------
 # Deterministic first-run helper. It does NOT replace the AI-guided installer
 # (INIT.md): it does the mechanical part — check prerequisites, verify the
@@ -31,7 +31,7 @@ MISS_REQ=0
 banner(){
   printf '%s\n' "$B$CYN"
   printf '  ┌───────────────────────────────────────────────┐\n'
-  printf '  │   NeXgen Vault (Agent-OS)  ·  bootstrap        │\n'
+  printf '  │   NeXgen Engine (Agent-OS)  ·  bootstrap        │\n'
   printf '  └───────────────────────────────────────────────┘%s\n' "$R"
   printf '  %sAgentOps governance for AI agents — Git-backed vault.%s\n' "$DIM" "$R"
 }

@@ -291,7 +291,7 @@ else { warn "Claude settings.json missing (Claude not installed here?)" }
 # engine code. Normal end users never push this repo; they only publish their
 # private vault data.
 # Ported from agent-doctor.sh (bash never had a Windows twin for this).
-$EngineRepo = if ($env:ENGINE_REPO) { $env:ENGINE_REPO } else { Join-Path $HomeDir "NeXgen-Vault-OL" }
+$EngineRepo = if ($env:ENGINE_REPO) { $env:ENGINE_REPO } else { Join-Path $HomeDir "NeXgen-Engine" }
 $EngineMaintainer = if ($env:NEXGEN_ENGINE_MAINTAINER) { $env:NEXGEN_ENGINE_MAINTAINER } else { "0" }
 if (($EngineMaintainer -eq "1") -and (Test-Path -LiteralPath (Join-Path $EngineRepo ".git"))) {
   sec "Public engine repo - anti-leak gates (S0)"

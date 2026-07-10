@@ -1,4 +1,4 @@
-# NeXgen Vault (Alpha)
+# NeXgen Engine (Alpha)
 
 A Git-backed AgentOps control layer for AI coding CLIs. Note: This project is currently in Alpha.
 
@@ -7,7 +7,7 @@ Shared instructions, generated MCP config, drift checks, secrets discipline, and
 You use Claude Code, Codex, OpenCode, or Antigravity, maybe more than one, maybe on two machines.
 Each CLI reads its bootstrap instructions from a different file, keeps its own MCP config, and has no idea what the others are doing.
 Change one and the rest drift out of sync, usually without anyone noticing until something breaks.
-NeXgen Vault gives them one canonical source and a way to check whether they've drifted from it.
+NeXgen Engine gives them one canonical source and a way to check whether they've drifted from it.
 
 ## Who this is for
 
@@ -43,7 +43,7 @@ NeXgen's public-engine safety gates are maintainer tooling, not an end-user chor
 
 ## Architecture: The Three Planes
 
-NeXgen Vault separates operations into three distinct planes:
+NeXgen Engine separates operations into three distinct planes:
 
 1. **Behavior:** A single operating policy (`AGENTS.md`) linked into every runtime.
 2. **Configuration:** An abstract MCP manifest compiled into each CLI's specific dialect by a generator script.
@@ -99,7 +99,7 @@ You don't need to fill out configuration files manually.
 
 1. Clone the repository:
    ```bash
-   git clone https://github.com/matteopasseri407/NeXgen-Vault-OL.git ~/KnowledgeVault
+   git clone https://github.com/matteopasseri407/NeXgen-Engine.git ~/KnowledgeVault
    cd ~/KnowledgeVault
    ```
    > Optional preflight: `bash install.sh` checks prerequisites, verifies the scaffold, detects your CLIs, and prints the next step. It writes nothing and is safe to re-run.
@@ -134,7 +134,7 @@ This project is free to use. Some optional links (like the OpenCode one above) a
 
 ---
 
-# NeXgen Vault (Italiano) - Alpha
+# NeXgen Engine (Italiano) - Alpha
 
 Un control layer AgentOps basato su Git, per le CLI agentiche di sviluppo. Nota: Questo progetto è attualmente in fase Alpha.
 
@@ -144,7 +144,7 @@ Tutto file di testo dentro un repo Git, non un servizio in cloud.
 Usi Claude Code, Codex, OpenCode o Antigravity, magari più di una CLI, magari su due macchine diverse.
 Ogni CLI legge le sue istruzioni di bootstrap da un file diverso, ha una propria configurazione MCP e non sa niente delle altre.
 Basta cambiare qualcosa in una perché le altre si disallineino, quasi sempre senza che nessuno se ne accorga finché non si rompe qualcosa.
-NeXgen Vault mette tutte le CLI davanti a un'unica fonte canonica e ti dà un modo per controllare se se ne sono allontanate.
+NeXgen Engine mette tutte le CLI davanti a un'unica fonte canonica e ti dà un modo per controllare se se ne sono allontanate.
 
 ## A chi serve
 
@@ -178,7 +178,7 @@ Parte dal presupposto che tu abbia già le idee chiare su quali agenti e strumen
 
 ## Architettura: I Tre Piani
 
-NeXgen Vault separa le operazioni in tre piani distinti:
+NeXgen Engine separa le operazioni in tre piani distinti:
 
 1. **Comportamento:** Una singola policy operativa (`AGENTS.md`) collegata a ogni runtime.
 2. **Configurazione:** Un manifest MCP astratto, compilato nei dialetti specifici di ogni CLI da uno script generatore.
@@ -234,7 +234,7 @@ Non devi compilare i file di configurazione a mano.
 
 1. Clona il repository:
    ```bash
-   git clone https://github.com/matteopasseri407/NeXgen-Vault-OL.git ~/KnowledgeVault
+   git clone https://github.com/matteopasseri407/NeXgen-Engine.git ~/KnowledgeVault
    cd ~/KnowledgeVault
    ```
    > Preflight opzionale: `bash install.sh` controlla i prerequisiti, verifica lo scaffold, rileva le tue CLI e stampa il passo successivo. Non scrive nulla ed è sicuro da ri-lanciare.

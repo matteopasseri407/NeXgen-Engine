@@ -457,7 +457,7 @@ fi
 # only apply when explicitly enabled by a contributor/maintainer that publishes
 # engine code. Normal end users never push this repo; they only publish their
 # private vault data.
-ENGINE_REPO="${ENGINE_REPO:-$HOME/NeXgen-Vault-OL}"
+ENGINE_REPO="${ENGINE_REPO:-$HOME/NeXgen-Engine}"
 ENGINE_MAINTAINER="${NEXGEN_ENGINE_MAINTAINER:-0}"
 if [ "$ENGINE_MAINTAINER" = 1 ] && [ -d "$ENGINE_REPO/.git" ]; then
   sec "Public engine repo — anti-leak gates (S0)"

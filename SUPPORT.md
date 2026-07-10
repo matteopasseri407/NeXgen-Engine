@@ -1,6 +1,6 @@
 # Support this project
 
-Agent-OS (NeXgen Vault) is free to use under its license (see `LICENSE`). This file covers the one optional, declared way to support ongoing maintenance. It has no effect on installation, and the installer (`INIT.md`) never mentions it.
+Agent-OS (NeXgen Engine) is free to use under its license (see `LICENSE`). This file covers the one optional, declared way to support ongoing maintenance. It has no effect on installation, and the installer (`INIT.md`) never mentions it.
 
 ## OpenCode referral
 
@@ -14,7 +14,7 @@ Use it or use the plain `opencode.ai` link instead: both lead to the same signup
 
 # Sostenere il progetto
 
-Agent-OS (NeXgen Vault) è gratuito da usare secondo la sua licenza (vedi `LICENSE`). Questo file copre l'unico modo facoltativo e dichiarato per sostenere la manutenzione. Non ha alcun effetto sull'installazione, e l'installer (`INIT.md`) non lo cita mai.
+Agent-OS (NeXgen Engine) è gratuito da usare secondo la sua licenza (vedi `LICENSE`). Questo file copre l'unico modo facoltativo e dichiarato per sostenere la manutenzione. Non ha alcun effetto sull'installazione, e l'installer (`INIT.md`) non lo cita mai.
 
 ## Referral OpenCode
 

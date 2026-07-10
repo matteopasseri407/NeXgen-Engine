@@ -1,7 +1,7 @@
 # Bootstrap VPS — deploy the Agent-OS self-hosted stack.
 #
-# Run ON the VPS, from the repo root (after cloning NeXgen-Vault-OL):
-#   cd NeXgen-Vault-OL/03-INFRA/deploy
+# Run ON the VPS, from the repo root (after cloning NeXgen-Engine):
+#   cd NeXgen-Engine/03-INFRA/deploy
 #   cp .env.example .env   # fill in secrets
 #   bash bootstrap-vps.sh
 #
