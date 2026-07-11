@@ -13,11 +13,44 @@ param([switch]$Summary, [switch]$Strict)
 $ErrorActionPreference = "Continue"
 $HomeDir = [Environment]::GetFolderPath("UserProfile")
 $Vault   = if ($env:KNOWLEDGE_VAULT_PATH) { $env:KNOWLEDGE_VAULT_PATH } else { Join-Path $HomeDir "KnowledgeVault" }
-$Remote  = if ($env:KNOWLEDGE_VAULT_REMOTE) { $env:KNOWLEDGE_VAULT_REMOTE } else { "origin" }
 $Branch  = if ($env:KNOWLEDGE_VAULT_BRANCH) { $env:KNOWLEDGE_VAULT_BRANCH } else { "main" }
 $Layer   = Join-Path $Vault "03-INFRA\agent-universal-layer"
 $Canon   = Join-Path $Layer "instructions\AGENTS.md"
 $OcJson  = Join-Path $HomeDir ".config\opencode\opencode.json"
+
+$RemoteConfigError = $false
+if ($env:KNOWLEDGE_VAULT_REMOTE) {
+  $Remote = $env:KNOWLEDGE_VAULT_REMOTE
+  $Mirrors = if ($env:KNOWLEDGE_VAULT_MIRRORS) { @($env:KNOWLEDGE_VAULT_MIRRORS -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ }) } else { @() }
+} else {
+  $AgentSyncPy = Join-Path $PSScriptRoot "agent_sync.py"
+  $Py = Get-Command py -ErrorAction SilentlyContinue
+  if ($Py) {
+    $Remote = (& $Py.Source -3 $AgentSyncPy config authoritative_remote 2>$null)
+    $RemoteExit = $LASTEXITCODE
+    $Mirrors = @(& $Py.Source -3 $AgentSyncPy config mirrors 2>$null | Where-Object { $_ })
+    $MirrorsExit = $LASTEXITCODE
+  } else {
+    $Python = Get-Command python -ErrorAction SilentlyContinue
+    if ($Python) {
+      $Remote = (& $Python.Source $AgentSyncPy config authoritative_remote 2>$null)
+      $RemoteExit = $LASTEXITCODE
+      $Mirrors = @(& $Python.Source $AgentSyncPy config mirrors 2>$null | Where-Object { $_ })
+      $MirrorsExit = $LASTEXITCODE
+    } else {
+      $RemoteConfigError = $true
+      $Remote = "origin"
+      $Mirrors = @()
+      $RemoteExit = 1
+      $MirrorsExit = 1
+    }
+  }
+  if (-not $Remote -or $RemoteExit -ne 0 -or $MirrorsExit -ne 0) {
+    $RemoteConfigError = $true
+    $Remote = "origin"
+    $Mirrors = @()
+  }
+}
 
 $script:PASS = 0; $script:WARN = 0; $script:FAILN = 0; $script:FAILS = @()
 function ok($m)   { $script:PASS++;  if (-not $Summary) { Write-Host "  [OK]   $m" -ForegroundColor Green } }
@@ -36,7 +69,8 @@ if (-not $Summary) { Write-Host "=== agent-doctor: agent alignment check ===" -F
 sec "Host"
 ok "detected: windows ($env:COMPUTERNAME)"
 
-sec "Vault (memory) - git vs remote hub + GitHub mirror"
+sec "Vault (memory) - authoritative remote and mirrors"
+if ($RemoteConfigError) { bad "invalid sync remote config - run: agent-sync config authoritative_remote" } else { ok "sync remote config resolved ($Remote)" }
 if (Test-Path -LiteralPath (Join-Path $Vault ".git")) {
   gitc @("fetch","--prune",$Remote,$Branch) | Out-Null
   $b = (gitc @("rev-list","--count","$Branch..$Remote/$Branch")); if (-not $b) { $b = "?" }
@@ -62,6 +96,13 @@ if (Test-Path -LiteralPath (Join-Path $Vault ".git")) {
     }
   }
   if ($d -eq 0)     { ok "working tree clean (tracked files)" } else { warn "$d tracked files not committed (blocks the pull)" }
+  foreach ($mirror in $Mirrors) {
+    gitc @("fetch","--prune",$mirror,$Branch) | Out-Null
+    $authHead = (gitc @("rev-parse","$Remote/$Branch"))
+    $mirrorHead = (gitc @("rev-parse","$mirror/$Branch"))
+    if ($authHead -and "$authHead" -eq "$mirrorHead") { ok "mirror $mirror aligned with authoritative $Remote" }
+    else { warn "mirror $mirror differs from authoritative $Remote (canonical Vault remains $Remote)" }
+  }
 } else { bad "the vault is not a git repo: $Vault" }
 
 sec "Canonical instructions (single AGENTS.md, Claude anti-duplication pointer)"

@@ -86,7 +86,10 @@ class Sandbox:
         e["HOME"] = str(self.home)
         e["USERPROFILE"] = str(self.home)
         e["KNOWLEDGE_VAULT_PATH"] = str(self.vault)
-        e["KNOWLEDGE_VAULT_REMOTE"] = "origin-does-not-exist-in-sandbox"
+        # Most provisioning tests exercise local mutations, not Git transport.
+        # Keep their pull state explicitly healthy and offline from real remotes.
+        # Tests for remote failures override this value deliberately.
+        e["KNOWLEDGE_VAULT_REMOTE"] = "local"
         e["PATH"] = f"{self.bin_stubs}:{e.get('PATH', '')}"
         for key in (
             "TELEGRAM_BOT_TOKEN",
@@ -140,7 +143,7 @@ def _copy_engine_scripts(sandbox: Sandbox) -> None:
     shutil.copy2(REAL_UL / "mcp" / "render.py", sandbox.mcp_dir / "render.py")
     for name in (
         "agent-sync.sh", "agent_sync.py", "agent-skill.py", "skills-sync.py", "agent-doctor.sh",
-        "council.sh", "council.ps1",
+        "council.sh", "council.ps1", "vault-push.sh",
     ):
         dst = sandbox.scripts_dir / name
         shutil.copy2(REAL_SCRIPTS / name, dst)
@@ -236,6 +239,10 @@ def load_agent_sync_module(sandbox: Sandbox):
         f"agent_sync_under_test_{id(sandbox)}", sandbox.scripts_dir / "agent_sync.py"
     )
     mod = importlib.util.module_from_spec(spec)
+    # Dataclasses with postponed annotations resolve their module through
+    # sys.modules while the class decorator runs. A normal import registers
+    # this automatically; the fixture's manual import must do the same.
+    sys.modules[spec.name] = mod
     spec.loader.exec_module(mod)
     return mod
 

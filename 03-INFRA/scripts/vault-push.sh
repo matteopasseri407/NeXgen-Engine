@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # vault-push — commits + publishes the KnowledgeVault's INFRA FILES to the
-# configured remote (origin), with a CLEAN rebase on benign divergence and a
-# safe STOP on real conflicts (never forces, never merges, never loses work).
+# configured authoritative remote, then its optional mirrors. It uses a CLEAN
+# rebase on benign authoritative divergence and stops on real conflicts.
 #
 # Scope: the vault's code/config files (scripts, manifests, hooks...).
 # NOTES (markdown knowledge) do NOT go through here: they are written via MCP
@@ -16,7 +16,28 @@ set -u
 
 VAULT="${AGENT_VAULT_DATA:-${KNOWLEDGE_VAULT_PATH:-$HOME/KnowledgeVault}}"
 BRANCH="${KNOWLEDGE_VAULT_BRANCH:-main}"
-REMOTE="${KNOWLEDGE_VAULT_REMOTE:-origin}"
+SELF="$0"
+while [ -L "$SELF" ]; do
+  TARGET="$(readlink "$SELF")"
+  case "$TARGET" in
+    /*) SELF="$TARGET" ;;
+    *) SELF="$(dirname "$SELF")/$TARGET" ;;
+  esac
+done
+SCRIPT_DIR="$(CDPATH='' cd -- "$(dirname -- "$SELF")" && pwd)"
+
+if [ -n "${KNOWLEDGE_VAULT_REMOTE:-}" ]; then
+  REMOTE="$KNOWLEDGE_VAULT_REMOTE"
+  MIRRORS="$(printf '%s' "${KNOWLEDGE_VAULT_MIRRORS:-}" | tr ',' '\n')"
+else
+  command -v python3 >/dev/null 2>&1 || {
+    echo "vault-push: python3 is required to resolve the sync remote policy"
+    exit 2
+  }
+  REMOTE="$(python3 "$SCRIPT_DIR/agent_sync.py" config authoritative_remote)" || exit 2
+  MIRRORS="$(python3 "$SCRIPT_DIR/agent_sync.py" config mirrors)" || exit 2
+fi
+[ -n "$REMOTE" ] || { echo "vault-push: authoritative remote is empty"; exit 2; }
 
 MSG=""
 FILES=()
@@ -36,6 +57,10 @@ while [ $# -gt 0 ]; do
 done
 [ -z "$MSG" ] && { echo "vault-push: needs -m \"message\""; exit 2; }
 cd "$VAULT" || { echo "vault-push: vault not found ($VAULT)"; exit 1; }
+git remote get-url "$REMOTE" >/dev/null 2>&1 || {
+  echo "vault-push: authoritative remote '$REMOTE' is not configured"
+  exit 1
+}
 
 if [ "${#FILES[@]}" -gt 0 ]; then
   git add -- "${FILES[@]}" || { echo "vault-push: git add failed"; exit 1; }
@@ -47,22 +72,49 @@ fi
 git commit -q -m "$MSG" || { echo "vault-push: commit failed"; exit 1; }
 echo "vault-push: commit $(git rev-parse --short HEAD)"
 
-# Publish to the remote: direct if fast-forward; otherwise a CLEAN rebase
+# Publish to the authoritative remote: direct if fast-forward; otherwise a CLEAN rebase
 # (only on a clean working tree); aborts and flags on a real conflict.
 if git push "$REMOTE" "$BRANCH" >/dev/null 2>&1; then
-  echo "vault-push: push $REMOTE OK"; exit 0
-fi
-if ! git fetch --prune "$REMOTE" "$BRANCH" >/dev/null 2>&1; then
-  echo "vault-push: $REMOTE OFFLINE — the commit stays local (agent-sync will publish it)"; exit 1
-fi
-if [ -n "$(git status --porcelain --untracked-files=no)" ]; then
-  echo "vault-push: $REMOTE rejected but the working tree has uncommitted changes — NOT rebasing, resolve by hand"; exit 1
-fi
-if git rebase "$REMOTE/$BRANCH" >/dev/null 2>&1; then
-  if git push "$REMOTE" "$BRANCH" >/dev/null 2>&1; then
-    echo "vault-push: push $REMOTE OK (after a clean rebase)"; exit 0
+  echo "vault-push: push $REMOTE OK"
+else
+  if ! git fetch --prune "$REMOTE" "$BRANCH" >/dev/null 2>&1; then
+    echo "vault-push: $REMOTE OFFLINE — the commit stays local; run agent-sync publish later"
+    exit 1
   fi
-  echo "vault-push: $REMOTE still rejected after rebase — try again"; exit 1
+  if [ -n "$(git status --porcelain --untracked-files=no)" ]; then
+    echo "vault-push: $REMOTE rejected but the working tree has uncommitted changes — NOT rebasing, resolve by hand"
+    exit 1
+  fi
+  if git rebase "$REMOTE/$BRANCH" >/dev/null 2>&1; then
+    if ! git push "$REMOTE" "$BRANCH" >/dev/null 2>&1; then
+      echo "vault-push: $REMOTE still rejected after rebase — try again"
+      exit 1
+    fi
+    echo "vault-push: push $REMOTE OK (after a clean rebase)"
+  else
+    git rebase --abort >/dev/null 2>&1
+    echo "vault-push: $REMOTE DIVERGENCE WITH CONFLICT — needs a manual 'git pull --rebase $REMOTE $BRANCH'"
+    exit 1
+  fi
 fi
-git rebase --abort >/dev/null 2>&1
-echo "vault-push: $REMOTE DIVERGENCE WITH CONFLICT — needs a manual 'git pull --rebase $REMOTE $BRANCH'"; exit 1
+
+# Mirrors are explicit downstream replicas. They never rewrite the canonical
+# local history. A stale mirror is aligned with force-with-lease only after the
+# authoritative remote has accepted the same commit.
+printf '%s\n' "$MIRRORS" | while IFS= read -r mirror; do
+  mirror="$(printf '%s' "$mirror" | xargs)"
+  [ -n "$mirror" ] || continue
+  [ "$mirror" != "$REMOTE" ] || continue
+  if ! git remote get-url "$mirror" >/dev/null 2>&1; then
+    echo "vault-push: mirror '$mirror' is not configured; skipped"
+    continue
+  fi
+  if git push "$mirror" "$BRANCH" >/dev/null 2>&1; then
+    echo "vault-push: push mirror $mirror OK"
+  elif git fetch --prune "$mirror" "$BRANCH" >/dev/null 2>&1 \
+       && git push --force-with-lease "$mirror" "$BRANCH" >/dev/null 2>&1; then
+    echo "vault-push: mirror $mirror aligned to authoritative $REMOTE"
+  else
+    echo "vault-push: mirror $mirror not updated; authoritative $REMOTE is safe"
+  fi
+done

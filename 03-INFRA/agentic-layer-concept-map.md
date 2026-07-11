@@ -50,6 +50,23 @@ The user runs one agent system across multiple CLIs and machines that must act a
 2. **Config** — `mcp/manifest.yaml` describes every MCP server once; `render.py` translates it into each CLI's dialect. Every local MCP package launched through `npx` has an exact version pin, so an upgrade is a tested engine change rather than an implicit upstream update. `skills/skills.manifest.yaml` does the same for skills. GitHub skills declare a full commit SHA, and `skills-sync.py` fetches and checks that exact object before materializing it in `~/.agents/skill-library`. Only explicit `exposure: core` skills enter the discovery-safe `~/.agents/skills`; all other bodies are selected with `agent-skill find|show`.
 3. **Memory** — the KnowledgeVault (markdown notes, Git-backed). Written through one door per type: notes via the `vault-library` MCP, infra files via `vault-push`.
 
+## Sync transaction boundary
+
+`agent-sync guard` is a host-wide locked transaction: resolve the data-owned
+remote policy, prove the local branch fresh against its authoritative remote,
+then regenerate derivatives and run health checks. Dirty, wrong-branch, ahead,
+diverged, missing-remote, and failed-fetch states block apply. A network-only manual
+override exists as `agent-sync apply --allow-offline`; the recurring guard can
+never use it. Each phase returns an explicit result and any required failure
+propagates to the process exit code.
+
+The authoritative remote and publication mirrors are declared once in the
+private data vault at `03-INFRA/agent-universal-layer/sync/remotes.yaml`. Doctor and
+publish resolve that same policy. Mirrors may lag without becoming a second
+source of truth. Running `agent-sync` without a command is help-only, and the
+old implicit `full` operation no longer exists. Full contract:
+`docs/sync-contract.md`.
+
 ## Why one source
 
 Hand-patching per-CLI configs creates drift: one CLI behaves differently from another, one machine falls behind, a fix on one side does not propagate. The single-source + provisioner model means a change is made once and carries everywhere. The cost is the provisioner machinery; the benefit is a system that stays coherent as it grows.
@@ -60,7 +77,7 @@ Council keeps the full user brief out of the operating system command line. Code
 
 ## Guardians
 
-- **`agent-sync`** — reconciles live configs with the canonical sources on each machine.
+- **`agent-sync`** — locks, proves authoritative data freshness, then reconciles live configs with the canonical sources on each machine.
 - **`agent-doctor`** — the single diagnostic: git state, MCP reachability, instruction drift, env tokens, skills, local worker. The only command to run by hand when something seems off.
 - **healthcheck step (inside `agent-sync`)** — grouped health summary; sends an alert only on FAIL. Was a standalone `agent-healthcheck.sh`, folded into `agent_sync.py`.
 - **`vault-lifecycle-audit.py`** — read-only heat-map for vault grooming candidates.

@@ -19,6 +19,54 @@ import pytest
 from conftest import load_agent_sync_module, run_agent_sync_python
 
 
+def _patch_apply_phases(monkeypatch, mod, called: list[str]) -> None:
+    for name in (
+        "data_migrations",
+        "instructions",
+        "antigravity_mcp",
+        "utils",
+        "local_model_runtime",
+        "install_scheduler",
+        "mcp_render",
+        "vault_skills",
+        "runtimes",
+        "skills_index",
+        "claude_hooks",
+    ):
+        monkeypatch.setattr(mod, name, lambda _env, phase=name: called.append(phase))
+    monkeypatch.setattr(mod, "creds_health", lambda *_args, **_kwargs: None)
+
+
+def _git(repo: Path, *args: str, capture_output: bool = True) -> subprocess.CompletedProcess:
+    return subprocess.run(
+        ["git", "-C", str(repo), *args],
+        check=True,
+        capture_output=capture_output,
+        text=True,
+    )
+
+
+def _init_git_vault(sandbox, *remote_names: str) -> dict[str, Path]:
+    subprocess.run(
+        ["git", "init", "-b", "main", str(sandbox.vault)],
+        check=True,
+        capture_output=True,
+    )
+    _git(sandbox.vault, "config", "user.email", "nexgen-tests.invalid")
+    _git(sandbox.vault, "config", "user.name", "NeXgen tests")
+    _git(sandbox.vault, "add", ".")
+    _git(sandbox.vault, "commit", "-m", "fixture")
+    remotes = {}
+    for name in remote_names:
+        path = sandbox.home / f"{name}.git"
+        subprocess.run(["git", "init", "--bare", str(path)], check=True, capture_output=True)
+        _git(sandbox.vault, "remote", "add", name, str(path))
+        remotes[name] = path
+    if remote_names:
+        _git(sandbox.vault, "push", "-u", remote_names[0], "main")
+    return remotes
+
+
 def test_agent_sync_python_guard_smoke(sandbox):
     sb = sandbox
     for rt in (".claude/skills", ".codex/skills"):
@@ -48,6 +96,283 @@ def test_agent_sync_python_accepts_legacy_powershell_mode_flag(sandbox):
     log = (sandbox.home / ".local" / "state" / "agent-sync.log").read_text(encoding="utf-8")
     assert "agent-sync: start mode=guard" in log
     assert "unknown mode" not in proc.stderr
+
+
+def test_no_arguments_only_prints_help_and_does_not_mutate_home(sandbox):
+    before = sandbox.tree_snapshot()
+
+    proc = subprocess.run(
+        [sys.executable, str(sandbox.scripts_dir / "agent_sync.py")],
+        env=sandbox.env(),
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert "agent_sync modes:" in proc.stdout
+    assert sandbox.tree_snapshot() == before
+
+
+def test_unexpected_arguments_fail_before_mutating_home(sandbox):
+    before = sandbox.tree_snapshot()
+
+    proc = subprocess.run(
+        [sys.executable, str(sandbox.scripts_dir / "agent_sync.py"), "guard", "surprise"],
+        env=sandbox.env(),
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+
+    assert proc.returncode == 2
+    assert "unexpected arguments" in proc.stderr
+    assert sandbox.tree_snapshot() == before
+
+
+def test_remote_config_is_loaded_from_vault_data_and_env_can_override(sandbox, monkeypatch):
+    mod = load_agent_sync_module(sandbox)
+    config = sandbox.ul / "sync" / "remotes.yaml"
+    config.parent.mkdir(parents=True, exist_ok=True)
+    config.write_text(
+        "schema_version: 1\nauthoritative_remote: oracle\nmirrors: [origin]\n",
+        encoding="utf-8",
+    )
+    monkeypatch.delenv("KNOWLEDGE_VAULT_REMOTE", raising=False)
+    monkeypatch.delenv("KNOWLEDGE_VAULT_MIRRORS", raising=False)
+    monkeypatch.setenv("HOME", str(sandbox.home))
+    monkeypatch.setenv("KNOWLEDGE_VAULT_PATH", str(sandbox.vault))
+
+    configured = mod.Env()
+    assert configured.remote == "oracle"
+    assert configured.mirrors == ("origin",)
+
+    monkeypatch.setenv("KNOWLEDGE_VAULT_REMOTE", "emergency")
+    monkeypatch.setenv("KNOWLEDGE_VAULT_MIRRORS", "backup-a,backup-b")
+    overridden = mod.Env()
+    assert overridden.remote == "emergency"
+    assert overridden.mirrors == ("backup-a", "backup-b")
+
+
+def test_invalid_remote_config_fails_before_mutating_home(sandbox):
+    config = sandbox.ul / "sync" / "remotes.yaml"
+    config.parent.mkdir(parents=True, exist_ok=True)
+    config.write_text(
+        "schema_version: 1\nauthoritative_remote: [not, a, string]\n",
+        encoding="utf-8",
+    )
+    before = sandbox.tree_snapshot()
+    env = sandbox.env()
+    env.pop("KNOWLEDGE_VAULT_REMOTE", None)
+
+    proc = subprocess.run(
+        [sys.executable, str(sandbox.scripts_dir / "agent_sync.py"), "guard"],
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+
+    assert proc.returncode == 2
+    assert "remote config" in proc.stderr.lower()
+    assert sandbox.tree_snapshot() == before
+
+
+def test_invalid_environment_remote_name_fails_before_mutating_home(sandbox):
+    before = sandbox.tree_snapshot()
+
+    proc = subprocess.run(
+        [sys.executable, str(sandbox.scripts_dir / "agent_sync.py"), "guard"],
+        env=sandbox.env(KNOWLEDGE_VAULT_REMOTE="--upload-pack=surprise"),
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+
+    assert proc.returncode == 2
+    assert "invalid Git remote name" in proc.stderr
+    assert sandbox.tree_snapshot() == before
+
+
+def test_guard_blocks_apply_when_pull_state_is_dirty(sandbox, monkeypatch):
+    mod = load_agent_sync_module(sandbox)
+    monkeypatch.setenv("HOME", str(sandbox.home))
+    monkeypatch.setenv("KNOWLEDGE_VAULT_PATH", str(sandbox.vault))
+    monkeypatch.setenv("KNOWLEDGE_VAULT_REMOTE", "origin")
+    called: list[str] = []
+    _patch_apply_phases(monkeypatch, mod, called)
+    monkeypatch.setattr(
+        mod,
+        "pull",
+        lambda _env: mod.PullOutcome(mod.PullState.DIRTY, "tracked changes"),
+    )
+
+    rc = mod.main(["guard"])
+
+    assert rc == 1
+    assert called == []
+
+
+def test_offline_apply_requires_explicit_override(sandbox, monkeypatch):
+    mod = load_agent_sync_module(sandbox)
+    monkeypatch.setenv("HOME", str(sandbox.home))
+    monkeypatch.setenv("KNOWLEDGE_VAULT_PATH", str(sandbox.vault))
+    monkeypatch.setenv("KNOWLEDGE_VAULT_REMOTE", "origin")
+    called: list[str] = []
+    _patch_apply_phases(monkeypatch, mod, called)
+    monkeypatch.setattr(
+        mod,
+        "pull",
+        lambda _env: mod.PullOutcome(mod.PullState.FETCH_FAILED, "network unavailable"),
+    )
+
+    assert mod.main(["apply"]) == 1
+    assert called == []
+
+    assert mod.main(["apply", "--allow-offline"]) == 0
+    assert "mcp_render" in called
+    assert "skills_index" in called
+
+
+def test_apply_returns_nonzero_when_a_declared_phase_fails(sandbox, monkeypatch):
+    mod = load_agent_sync_module(sandbox)
+    monkeypatch.setenv("HOME", str(sandbox.home))
+    monkeypatch.setenv("KNOWLEDGE_VAULT_PATH", str(sandbox.vault))
+    monkeypatch.setenv("KNOWLEDGE_VAULT_REMOTE", "local")
+    called: list[str] = []
+    _patch_apply_phases(monkeypatch, mod, called)
+    monkeypatch.setattr(mod, "mcp_render", lambda _env: False)
+
+    rc = mod.main(["apply"])
+
+    assert rc == 1
+    assert "skills_index" in called
+    log = (sandbox.home / ".local" / "state" / "agent-sync.log").read_text(encoding="utf-8")
+    assert "phase mcp_render: ERROR" in log
+
+
+def test_real_dirty_git_tree_blocks_guard_before_runtime_mutation(sandbox):
+    _init_git_vault(sandbox, "oracle")
+    agents = sandbox.ul / "instructions" / "AGENTS.md"
+    agents.write_text(agents.read_text(encoding="utf-8") + "local edit\n", encoding="utf-8")
+
+    proc = subprocess.run(
+        [sys.executable, str(sandbox.scripts_dir / "agent_sync.py"), "guard"],
+        env=sandbox.env(KNOWLEDGE_VAULT_REMOTE="oracle"),
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+
+    assert proc.returncode == 1, proc.stdout + proc.stderr
+    assert not (sandbox.home / "CLAUDE.md").exists()
+    assert not (sandbox.home / ".local" / "bin" / "agent-skill").exists()
+    log = (sandbox.home / ".local" / "state" / "agent-sync.log").read_text(encoding="utf-8")
+    assert "pull: blocked (the vault has uncommitted tracked changes" in log
+    assert "apply: BLOCKED" in log
+
+
+def test_real_wrong_branch_blocks_guard_before_runtime_mutation(sandbox):
+    _init_git_vault(sandbox, "oracle")
+    _git(sandbox.vault, "switch", "-c", "offline-work")
+
+    proc = subprocess.run(
+        [sys.executable, str(sandbox.scripts_dir / "agent_sync.py"), "guard"],
+        env=sandbox.env(KNOWLEDGE_VAULT_REMOTE="oracle"),
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+
+    assert proc.returncode == 1, proc.stdout + proc.stderr
+    assert not (sandbox.home / "CLAUDE.md").exists()
+    assert not (sandbox.home / ".local" / "bin" / "agent-skill").exists()
+    log = (sandbox.home / ".local" / "state" / "agent-sync.log").read_text(encoding="utf-8")
+    assert "pull: blocked (current branch is offline-work, expected main)" in log
+
+
+def test_publish_blocks_when_local_branch_is_behind_authoritative_remote(sandbox):
+    remotes = _init_git_vault(sandbox, "oracle")
+    writer = sandbox.home / "other-writer"
+    subprocess.run(
+        ["git", "clone", "-b", "main", str(remotes["oracle"]), str(writer)],
+        check=True,
+        capture_output=True,
+    )
+    _git(writer, "config", "user.email", "nexgen-writer.invalid")
+    _git(writer, "config", "user.name", "Other writer")
+    (writer / "remote-change.txt").write_text("new authoritative data\n", encoding="utf-8")
+    _git(writer, "add", "remote-change.txt")
+    _git(writer, "commit", "-m", "remote change")
+    _git(writer, "push", "origin", "main")
+
+    proc = subprocess.run(
+        [sys.executable, str(sandbox.scripts_dir / "agent_sync.py"), "publish"],
+        env=sandbox.env(KNOWLEDGE_VAULT_REMOTE="oracle"),
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+
+    assert proc.returncode == 1, proc.stdout + proc.stderr
+    log = (sandbox.home / ".local" / "state" / "agent-sync.log").read_text(encoding="utf-8")
+    assert "push: BLOCKED because local main is behind authoritative oracle/main" in log
+
+
+def test_publish_aligns_mirror_even_when_authoritative_is_already_current(sandbox):
+    remotes = _init_git_vault(sandbox, "oracle", "origin")
+
+    proc = subprocess.run(
+        [sys.executable, str(sandbox.scripts_dir / "agent_sync.py"), "publish"],
+        env=sandbox.env(
+            KNOWLEDGE_VAULT_REMOTE="oracle",
+            KNOWLEDGE_VAULT_MIRRORS="origin",
+        ),
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    local_head = _git(sandbox.vault, "rev-parse", "main").stdout.strip()
+    mirror_head = subprocess.run(
+        ["git", "--git-dir", str(remotes["origin"]), "rev-parse", "main"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    assert mirror_head == local_head
+
+
+@pytest.mark.parametrize(
+    ("relative_manifest", "expected_phase"),
+    [
+        ("mcp/manifest.yaml", "mcp_render"),
+        ("skills/skills.manifest.yaml", "skills_index"),
+    ],
+)
+def test_real_manifest_subprocess_failure_propagates_nonzero(
+    sandbox, relative_manifest, expected_phase
+):
+    (sandbox.ul / relative_manifest).write_text("- invalid-root\n", encoding="utf-8")
+
+    proc = run_agent_sync_python(sandbox, "apply")
+
+    assert proc.returncode == 1, proc.stdout + proc.stderr
+    log = (sandbox.home / ".local" / "state" / "agent-sync.log").read_text(encoding="utf-8")
+    assert f"phase {expected_phase}: ERROR" in log
+
+
+def test_host_wide_lock_rejects_second_manual_run(sandbox, monkeypatch):
+    mod = load_agent_sync_module(sandbox)
+    monkeypatch.setenv("HOME", str(sandbox.home))
+    monkeypatch.setenv("KNOWLEDGE_VAULT_PATH", str(sandbox.vault))
+    env = mod.Env()
+
+    with mod.SyncRunLock(env.lock_path, timeout=0) as first:
+        assert first.acquired
+        with mod.SyncRunLock(env.lock_path, timeout=0) as second:
+            assert not second.acquired
 
 
 @pytest.mark.skipif(os.name == "nt", reason="POSIX symlink launcher behavior is covered on Linux and macOS.")

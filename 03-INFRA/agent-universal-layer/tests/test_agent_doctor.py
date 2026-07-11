@@ -70,3 +70,14 @@ def test_vault_library_probe_uses_mcp_protocol_headers():
     assert "httpcode $env:VAULT_LIBRARY_URL" in powershell
     assert "Accept = \"application/json, text/event-stream\"" in powershell
     assert '"Options"' in powershell
+
+
+def test_doctor_resolves_the_authoritative_remote_from_agent_sync():
+    repo = Path(__file__).resolve().parents[3]
+    bash = (repo / "03-INFRA/scripts/agent-doctor.sh").read_text(encoding="utf-8")
+    powershell = (repo / "03-INFRA/scripts/agent-doctor.ps1").read_text(encoding="utf-8")
+
+    assert "config authoritative_remote" in bash
+    assert "config authoritative_remote" in powershell
+    assert 'KNOWLEDGE_VAULT_REMOTE:-origin' not in bash
+    assert 'else { "origin" }' not in powershell

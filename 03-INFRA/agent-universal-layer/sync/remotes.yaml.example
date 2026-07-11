@@ -1,0 +1,8 @@
+# Copy this file into the private data root as:
+# 03-INFRA/agent-universal-layer/sync/remotes.yaml
+#
+# The authoritative remote accepts canonical Vault writes. Mirrors are
+# optional replicas and never decide whether local work is published.
+schema_version: 1
+authoritative_remote: origin
+mirrors: []

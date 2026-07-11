@@ -96,6 +96,11 @@ The framework fits two shapes of usage. The installer (`INIT.md`) asks and picks
 - **MINIMAL.** One CLI on one machine (e.g., only Claude Code on your laptop, or [OpenCode](https://opencode.ai) for a DeepSeek-based single-CLI setup). You get the knowledge vault, the bootstrap rules, lazy skills, and the discipline of writing memory through one door. There is no provisioner to run, no doctor to schedule, no cross-machine sync. Mount the MCP servers and skills you want directly in your CLI by hand. Best for solo users who just want AgentOps governance on top of a single agent.
 - **MULTI.** Two or more CLIs and/or two or more machines. The unified Python provisioner (`agent_sync.py`), the doctor, and the healthcheck come online and keep every CLI and machine aligned to the canonical source in the vault. Best for a workstation + laptop setup, or for running multiple CLIs side by side.
 
+MULTI propagation is a locked, fail-closed transaction. The pull must prove the
+data fresh against one authoritative remote before runtime files are regenerated;
+publishing is always a separate command. See
+[`docs/sync-contract.md`](docs/sync-contract.md).
+
 You can start MINIMAL and switch to MULTI later. The canonical files in the vault do not change between profiles.
 
 ## Installation
@@ -235,6 +240,11 @@ Il framework si adatta a due forme d'uso. L'installer (`INIT.md`) chiede e scegl
 
 - **MINIMAL.** Una CLI su una macchina (es. solo Claude Code sul portatile, oppure [OpenCode](https://opencode.ai) per un setup single-CLI basato su DeepSeek). Ottieni il knowledge vault, le regole del bootstrap, le skill lazy e la disciplina della scrittura memoria tramite una sola porta. Non c'è provisioner da lanciare, nessun doctor da schedulare, niente sync tra macchine. Monti MCP server e skill a mano nella tua CLI. Indicato per chi lavora da solo e vuole governance AgentOps sopra un singolo agente.
 - **MULTI.** Due o più CLI e/o due o più macchine. Il provisioner unificato in Python (`agent_sync.py`), il doctor e l'healthcheck entrano in funzione e tengono ogni CLI e ogni macchina allineata alla fonte canonica del vault. Indicato per un setup desktop + portatile, o per girare più CLI in parallelo.
+
+Nel profilo MULTI la propagazione è una transazione con lock e blocco sicuro in caso di errore.
+Il pull deve dimostrare che i dati sono aggiornati rispetto a un unico remote autorevole prima di rigenerare i file runtime.
+La pubblicazione resta sempre un comando separato.
+Il contratto completo è in [`docs/sync-contract.md`](docs/sync-contract.md).
 
 Puoi partire da MINIMAL e passare a MULTI in seguito. I file canonici del vault non cambiano tra i profili.
 

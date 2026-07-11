@@ -10,19 +10,21 @@ agent-sync.ps1 now only launch this script; the CLI, exit codes and log
 file are unchanged, so the systemd timer, the Windows scheduled task and the
 B1 test suite see no difference.
 
-Modes (same contract as before):
+Modes:
   pull     Pull the KnowledgeVault from the remote and run healthcheck. Does not rewrite CLI runtime files.
   guard    Recurring safe propagation: pull, regenerate CLI runtime files, run healthcheck. Does not push.
   apply    Same as guard, explicit manual name for provisioning.
-  publish  Push already-committed local vault changes to the remote (and mirror origin if configured).
+  publish  Push already-committed local vault changes to the authoritative remote, then configured mirrors.
   doctor   Run healthcheck/alerts only.
-  full     Legacy full run: pull, apply runtime files, publish, creds, healthcheck.
-With no arguments: full, for backward compatibility. The recurring
-timer/scheduled task should use: agent_sync.py guard
+  bootstrap-alerts  Provision optional alert credentials and run healthcheck.
+With no arguments: print help and change nothing. The recurring
+timer/scheduled task uses: agent_sync.py guard
 Never auto-commits content: whoever writes commits (agents or the user).
 """
 from __future__ import annotations
 
+from dataclasses import dataclass
+from enum import Enum
 import json
 import os
 import platform
@@ -37,18 +39,23 @@ import urllib.request
 from pathlib import Path
 from typing import Callable
 
+import yaml
+
 IS_WINDOWS = platform.system() == "Windows"
 
 HELP_TEXT = """agent_sync modes:
   pull     Pull the KnowledgeVault from the remote and run healthcheck. Does not rewrite CLI runtime files.
   guard    Recurring safe propagation: pull, regenerate CLI runtime files, run healthcheck. Does not push.
   apply    Same as guard, explicit manual name for provisioning.
-  publish  Push already-committed local vault changes to the remote (and mirror origin if configured).
+  publish  Push already-committed local vault changes to the authoritative remote, then configured mirrors.
   doctor   Run healthcheck/alerts only.
-  full     Legacy full run: pull, apply runtime files, publish, creds, healthcheck.
+  bootstrap-alerts  Provision optional alert credentials and run healthcheck.
+  config FIELD  Print resolved sync data. FIELD is authoritative_remote or mirrors.
 
-Default without arguments: full, for backward compatibility.
+Default without arguments: help only, no writes.
 The recurring timer/scheduled task should use: agent_sync.py guard
+Use --allow-offline only with a deliberate manual apply when the authoritative
+remote is temporarily unreachable and the local tracked tree is known-good.
 """
 
 MODES = {
@@ -57,8 +64,78 @@ MODES = {
     "apply":   dict(pull=True,  apply=True,  push=False, creds=False, health=True),
     "publish": dict(pull=False, apply=False, push=True,  creds=False, health=False),
     "doctor":  dict(pull=False, apply=False, push=False, creds=False, health=True),
-    "full":    dict(pull=True,  apply=True,  push=True,  creds=True,  health=True),
+    "bootstrap-alerts": dict(pull=False, apply=False, push=False, creds=True, health=True),
 }
+
+
+class RemoteConfigError(ValueError):
+    pass
+
+
+@dataclass(frozen=True)
+class RemoteConfig:
+    authoritative_remote: str
+    mirrors: tuple[str, ...]
+    source: str
+
+
+_REMOTE_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/-]*$")
+
+
+def _validate_remote_name(value: str, source: str) -> str:
+    value = value.strip()
+    if not value or not _REMOTE_NAME_RE.fullmatch(value):
+        raise RemoteConfigError(
+            f"remote config {source}: invalid Git remote name {value!r}"
+        )
+    return value
+
+
+def _parse_mirrors(value: object, source: str) -> tuple[str, ...]:
+    if value is None:
+        return ()
+    if isinstance(value, str):
+        items = [item.strip() for item in value.split(",") if item.strip()]
+    elif isinstance(value, list) and all(isinstance(item, str) for item in value):
+        items = [item.strip() for item in value if item.strip()]
+    else:
+        raise RemoteConfigError(f"remote config {source}: mirrors must be a list of strings")
+    return tuple(dict.fromkeys(_validate_remote_name(item, source) for item in items))
+
+
+def load_remote_config(*, home: Path | None = None, vault_data: Path | None = None) -> RemoteConfig:
+    """Resolve the authoritative Vault remote before any runtime mutation.
+
+    A complete environment override is the emergency/bootstrap lane. Normal
+    operation reads one data-owned YAML file shared by sync, doctor and
+    publish. Missing data keeps the portable product default, origin.
+    """
+    env_remote = os.environ.get("KNOWLEDGE_VAULT_REMOTE", "").strip()
+    if env_remote:
+        env_remote = _validate_remote_name(env_remote, "environment")
+        mirrors = _parse_mirrors(os.environ.get("KNOWLEDGE_VAULT_MIRRORS"), "environment")
+        mirrors = tuple(item for item in mirrors if item != env_remote)
+        return RemoteConfig(env_remote, mirrors, "environment")
+
+    home = home or Path.home()
+    vault_data = vault_data or Path(os.environ.get("AGENT_VAULT_DATA") or os.environ.get("KNOWLEDGE_VAULT_PATH") or str(home / "KnowledgeVault"))
+    path = Path(os.environ.get("AGENT_SYNC_REMOTES_FILE") or str(vault_data / "03-INFRA" / "agent-universal-layer" / "sync" / "remotes.yaml"))
+    if not path.exists():
+        return RemoteConfig("origin", (), "default")
+    try:
+        data = yaml.safe_load(path.read_text(encoding="utf-8"))
+    except (OSError, yaml.YAMLError) as exc:
+        raise RemoteConfigError(f"remote config {path}: {exc}") from exc
+    if not isinstance(data, dict):
+        raise RemoteConfigError(f"remote config {path}: root must be a mapping")
+    if type(data.get("schema_version")) is not int or data["schema_version"] != 1:
+        raise RemoteConfigError(f"remote config {path}: schema_version must be 1")
+    remote = data.get("authoritative_remote")
+    if not isinstance(remote, str) or not remote.strip():
+        raise RemoteConfigError(f"remote config {path}: authoritative_remote must be a non-empty string")
+    remote = _validate_remote_name(remote, str(path))
+    mirrors = tuple(item for item in _parse_mirrors(data.get("mirrors"), str(path)) if item != remote)
+    return RemoteConfig(remote, mirrors, str(path))
 
 
 class Env:
@@ -69,11 +146,14 @@ class Env:
     def __init__(self) -> None:
         self.home = Path.home()
         self.vault = Path(os.environ.get("KNOWLEDGE_VAULT_PATH") or str(self.home / "KnowledgeVault"))
-        self.remote = os.environ.get("KNOWLEDGE_VAULT_REMOTE") or "origin"
         self.branch = os.environ.get("KNOWLEDGE_VAULT_BRANCH") or "main"
         # Engine/data separation (Vault 2.1, Strangler Fig): defaults reproduce
         # the historical single-tree layout exactly, zero breakage.
         self.vault_data = Path(os.environ.get("AGENT_VAULT_DATA") or str(self.vault))
+        remote_config = load_remote_config(home=self.home, vault_data=self.vault_data)
+        self.remote = remote_config.authoritative_remote
+        self.mirrors = remote_config.mirrors
+        self.remote_config_source = remote_config.source
         self.local_bin = self.home / ".local" / "bin"
         default_engine_root = self.vault / "03-INFRA"
         # AGENT_ENGINE_ROOT wins when set. Otherwise, fall back to where
@@ -104,6 +184,7 @@ class Env:
         self.skill_library = self.home / ".agents" / "skill-library"
         self.log_dir = self.home / ".local" / "state"
         self.log_path = self.log_dir / "agent-sync.log"
+        self.lock_path = self.log_dir / "agent-sync.lock"
         self.log_dir.mkdir(parents=True, exist_ok=True)
         # Skill roots may still be broken whole-root links from a previous
         # eager layout. `vault_skills()` normalizes them before creating
@@ -382,6 +463,76 @@ def _git(env: Env, *args: str, timeout: int = 30) -> subprocess.CompletedProcess
         return subprocess.CompletedProcess(args, 1, "", str(exc))
 
 
+class SyncRunLock:
+    """Small standard-library cross-platform lock for the whole sync run."""
+
+    def __init__(self, path: Path, *, timeout: float = 2.0) -> None:
+        self.path = path
+        self.timeout = max(0.0, timeout)
+        self.acquired = False
+        self._fh = None
+
+    def __enter__(self) -> "SyncRunLock":
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self._fh = self.path.open("a+b")
+        if self.path.stat().st_size == 0:
+            self._fh.write(b"0")
+            self._fh.flush()
+        deadline = time.monotonic() + self.timeout
+        while True:
+            try:
+                self._fh.seek(0)
+                if IS_WINDOWS:
+                    import msvcrt
+                    msvcrt.locking(self._fh.fileno(), msvcrt.LK_NBLCK, 1)
+                else:
+                    import fcntl
+                    fcntl.flock(self._fh.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                self.acquired = True
+                return self
+            except (BlockingIOError, OSError):
+                if time.monotonic() >= deadline:
+                    return self
+                time.sleep(0.1)
+
+    def __exit__(self, exc_type, exc, tb) -> None:
+        if self._fh is None:
+            return
+        try:
+            if self.acquired:
+                self._fh.seek(0)
+                if IS_WINDOWS:
+                    import msvcrt
+                    msvcrt.locking(self._fh.fileno(), msvcrt.LK_UNLCK, 1)
+                else:
+                    import fcntl
+                    fcntl.flock(self._fh.fileno(), fcntl.LOCK_UN)
+        finally:
+            self._fh.close()
+
+
+class PullState(Enum):
+    FRESH = "fresh"
+    LOCAL_ONLY = "local_only"
+    WRONG_BRANCH = "wrong_branch"
+    DIRTY = "dirty"
+    REMOTE_MISSING = "remote_missing"
+    FETCH_FAILED = "fetch_failed"
+    AHEAD = "ahead"
+    DIVERGED = "diverged"
+    ERROR = "error"
+
+
+@dataclass(frozen=True)
+class PullOutcome:
+    state: PullState
+    message: str
+
+    @property
+    def allows_apply(self) -> bool:
+        return self.state in {PullState.FRESH, PullState.LOCAL_ONLY}
+
+
 # ── 0.5 data_migrations ──────────────────────────────────────────────────
 # Schema version of the DATA the engine reads (manifest.yaml,
 # skills.manifest.yaml, USER-PROFILE.md, ...) -- separate from the engine's
@@ -415,14 +566,14 @@ def _backup_before_migration(env: Env, paths: list[Path]) -> None:
             stale.unlink(missing_ok=True)
 
 
-def data_migrations(env: Env) -> None:
+def data_migrations(env: Env) -> bool:
     schema_file = env.vault_data / "99-INDEX" / "DATA-SCHEMA-VERSION.txt"
     if schema_file.is_file():
         try:
             current = int(schema_file.read_text(encoding="utf-8").strip() or "0")
         except ValueError:
             env.log(f"data-migrations: {schema_file} has non-numeric content, leaving data untouched")
-            return
+            return False
     else:
         # No marker yet: today's data shape already IS the target version,
         # there is nothing to migrate -- just stamp the baseline.
@@ -430,64 +581,78 @@ def data_migrations(env: Env) -> None:
 
     if current > TARGET_SCHEMA_VERSION:
         env.log(f"data-migrations: data schema v{current} is newer than this engine supports (v{TARGET_SCHEMA_VERSION}) -- leaving data untouched, upgrade the engine")
-        return
+        return False
 
     while current < TARGET_SCHEMA_VERSION:
         step = MIGRATIONS.get(current)
         if step is None:
             env.log(f"data-migrations: no migration registered for v{current} -> v{current + 1}, stopping (data left at v{current})")
-            return
+            return False
         touched = step(env)
         env.log(f"data-migrations: applied v{current} -> v{current + 1}, touched {touched}")
         current += 1
 
     if _write_if_different(schema_file, f"{TARGET_SCHEMA_VERSION}\n"):
         env.log(f"data-migrations: stamped {schema_file} at v{TARGET_SCHEMA_VERSION}")
+    return True
 
 
 # ── 1. pull ──────────────────────────────────────────────────────────────
 
-def pull(env: Env) -> None:
+def pull(env: Env) -> PullOutcome:
     if env.remote in ("local", "none"):
         env.log("pull: skipped (Local-Only mode)")
-        return
-    helper = env.vault_scripts / "sync-vault-from-oracle.sh"
-    if not IS_WINDOWS and helper.is_file() and os.access(helper, os.X_OK):
-        r = subprocess.run(["bash", str(helper)], capture_output=True, text=True)
-        _append_log(env, r.stdout, r.stderr)
-        if r.returncode == 0:
-            env.log("pull: ok (dedicated helper)")
-        else:
-            env.log("pull: cloud unreachable or state not syncable — continuing with the local copy")
-        return
+        return PullOutcome(PullState.LOCAL_ONLY, "Local-Only mode")
     if _git(env, "remote", "get-url", env.remote).returncode != 0:
-        env.log(f"pull: no remote '{env.remote}' configured — local copy only (fine for a single machine)")
-        return
+        message = f"no authoritative remote '{env.remote}' configured"
+        env.log(f"pull: blocked ({message})")
+        return PullOutcome(PullState.REMOTE_MISSING, message)
+    current = _git(env, "symbolic-ref", "--quiet", "--short", "HEAD")
+    if current.returncode != 0 or current.stdout.strip() != env.branch:
+        found = current.stdout.strip() or "detached HEAD"
+        message = f"current branch is {found}, expected {env.branch}"
+        env.log(f"pull: blocked ({message})")
+        return PullOutcome(PullState.WRONG_BRANCH, message)
     status = _git(env, "status", "--porcelain", "--untracked-files=no")
+    if status.returncode != 0:
+        message = "cannot inspect tracked working-tree state"
+        env.log(f"pull: blocked ({message})")
+        return PullOutcome(PullState.ERROR, message)
     if status.stdout.strip():
-        env.log("pull: skipped because the vault has uncommitted tracked changes (untracked files do not block)")
-        return
+        message = "the vault has uncommitted tracked changes"
+        env.log(f"pull: blocked ({message}; untracked files do not block)")
+        return PullOutcome(PullState.DIRTY, message)
     if _git(env, "fetch", "--prune", env.remote, env.branch).returncode != 0:
-        env.log(f"pull: {env.remote} unreachable or not fast-forward — continuing with the local copy")
-        return
+        message = f"fetch of {env.remote}/{env.branch} failed"
+        env.log(f"pull: blocked ({message})")
+        return PullOutcome(PullState.FETCH_FAILED, message)
     lh = _git(env, "rev-parse", env.branch)
     rh = _git(env, "rev-parse", f"{env.remote}/{env.branch}")
     mb = _git(env, "merge-base", env.branch, f"{env.remote}/{env.branch}")
     if lh.returncode or rh.returncode or mb.returncode:
-        env.log(f"pull: {env.remote} unreachable or not fast-forward — continuing with the local copy")
-        return
+        message = f"cannot compare local branch with {env.remote}/{env.branch}"
+        env.log(f"pull: blocked ({message})")
+        return PullOutcome(PullState.ERROR, message)
     lh, rh, mb = lh.stdout.strip(), rh.stdout.strip(), mb.stdout.strip()
     if lh == rh:
         env.log("pull: already up to date")
+        return PullOutcome(PullState.FRESH, "already up to date")
     elif mb == lh:
         if _git(env, "merge", "--ff-only", f"{env.remote}/{env.branch}").returncode == 0:
             env.log(f"pull: fast-forwarded from {env.remote}/{env.branch}")
+            return PullOutcome(PullState.FRESH, "fast-forwarded")
         else:
-            env.log(f"pull: {env.remote} unreachable or not fast-forward — continuing with the local copy")
+            message = f"fast-forward from {env.remote}/{env.branch} failed"
+            env.log(f"pull: blocked ({message})")
+            return PullOutcome(PullState.ERROR, message)
     elif mb == rh:
-        env.log(f"pull: local branch ahead of {env.remote}/{env.branch}; skipping merge")
+        message = f"local branch is ahead of {env.remote}/{env.branch}"
+        env.log(f"pull: blocked ({message})")
+        return PullOutcome(PullState.AHEAD, message)
     else:
-        env.log(f"pull: local branch diverged from {env.remote}/{env.branch}; manual resolution required")
+        message = f"local branch diverged from {env.remote}/{env.branch}"
+        env.log(f"pull: blocked ({message}; manual resolution required)")
+        return PullOutcome(PullState.DIVERGED, message)
 
 
 # ── 2. instructions ──────────────────────────────────────────────────────
@@ -498,11 +663,11 @@ def pull(env: Env) -> None:
 # so the fix (stop managing it, clean up the leftover symlink) is ported
 # uniformly instead of kept Windows-only.
 
-def instructions(env: Env) -> None:
+def instructions(env: Env) -> bool:
     canon = env.instance_ul / "instructions" / "AGENTS.md"
     if not canon.is_file():
         env.log(f"WARNING: missing {canon} — instructions not relinked")
-        return
+        return False
     claude_md = env.home / "CLAUDE.md"
     content = (
         "# Claude compatibility pointer\n\n"
@@ -537,6 +702,7 @@ def instructions(env: Env) -> None:
             src = env.instance_ul / "instructions" / src_name
             if src.is_file() and make_link(src, env.home / target_name, is_dir=False):
                 env.log(f"instructions: relinked {target_name}")
+    return True
 
 
 # ── 2.5 antigravity_mcp ──────────────────────────────────────────────────
@@ -772,10 +938,12 @@ _SUMMARY_RE_MATCH = re.compile(r"match, (\d+) with differences")
 _SUMMARY_RE_EXTRA = re.compile(r"differences, (\d+) outside the manifest")
 
 
-def mcp_render(env: Env) -> None:
+def mcp_render(env: Env) -> bool:
     render_path = env.ul / "mcp" / "render.py"
     if not render_path.is_file():
-        return
+        env.log(f"mcp-gen: missing renderer {render_path}")
+        return False
+    healthy = True
     for cli in ("opencode", "antigravity", "codex"):
         r = subprocess.run([sys.executable, str(render_path), "--write", cli], capture_output=True, text=True)
         _append_log(env, r.stdout, r.stderr)
@@ -785,6 +953,7 @@ def mcp_render(env: Env) -> None:
             env.log(f"mcp-gen: {cli} has no default config file yet (never launched?) — open it once, then re-run agent-sync")
         else:
             env.log(f"mcp-gen: {cli} NOT aligned (best-effort, continuing)")
+            healthy = False
 
     if _process_running("claude"):
         env.log("mcp-gen: claude ACTIVE -> not touching .claude.json live (sentinel only)")
@@ -797,8 +966,13 @@ def mcp_render(env: Env) -> None:
             env.log("mcp-gen: claude has no .claude.json yet (never launched?) — open Claude Code once, then re-run agent-sync")
         else:
             env.log("mcp-gen: claude not aligned (best-effort)")
+            healthy = False
 
     diag = subprocess.run([sys.executable, str(render_path)], capture_output=True, text=True)
+    if diag.returncode != 0:
+        _append_log(env, diag.stdout, diag.stderr)
+        env.log("mcp-gen: final drift diagnostic failed")
+        return False
     lines = [ln for ln in diag.stdout.strip().splitlines() if ln.strip()]
     last = lines[-1] if lines else ""
     m_drift = _SUMMARY_RE_MATCH.search(last)
@@ -811,17 +985,19 @@ def mcp_render(env: Env) -> None:
         env.log(f"mcp-gen: NOTE — {extra} servers outside the manifest (kept as-is): register them in manifest.yaml to propagate them everywhere")
     # Drift notification: NOT here (single-megaphone rule). agent_sync stays
     # silent; the only alert surface is creds_health -> agent-doctor.
+    return healthy and drift == 0
 
 
 # ── 3. vault_skills ──────────────────────────────────────────────────────
 
-def vault_skills(env: Env) -> None:
+def vault_skills(env: Env) -> bool:
     """Reserve the two local views; skills-sync materializes their contents.
 
     Directly linking every Vault skill into ~/.agents/skills was the eager
     discovery bug: Codex enumerated the entire library before any task began.
     The dedicated synchronizer now owns library materialization and exposure.
     """
+    healthy = True
     for label, root in (("active skill view", env.active_skills), ("skill library", env.skill_library)):
         # A whole-root link was the original eager-discovery failure. Unlinking
         # the view is safe: it never removes the destination or any old bodies,
@@ -834,14 +1010,17 @@ def vault_skills(env: Env) -> None:
             root.mkdir(parents=True, exist_ok=True)
         elif not root.is_dir():
             env.log(f"skills: {label} is not a directory, leaving it untouched for manual repair")
+            healthy = False
+    return healthy
 
 
 # ── 3.5 skills_index ─────────────────────────────────────────────────────
 
-def skills_index(env: Env) -> None:
+def skills_index(env: Env) -> bool:
     skills_sync = env.engine_scripts / "skills-sync.py"
     if not skills_sync.is_file():
-        return
+        env.log(f"skills-manifest: missing synchronizer {skills_sync}")
+        return False
     r = subprocess.run([sys.executable, str(skills_sync), "--apply"], capture_output=True, text=True)
     if r.returncode == 0:
         summary = next((ln for ln in r.stdout.splitlines() if "Total:" in ln), "")
@@ -849,6 +1028,8 @@ def skills_index(env: Env) -> None:
         env.log(f"skills-manifest: apply ok ({summary})")
     else:
         env.log("skills-manifest: apply failed (best-effort, detail in the manual diff)")
+        return False
+    return True
 
 
 # ── 4. runtimes ──────────────────────────────────────────────────────────
@@ -856,7 +1037,8 @@ def skills_index(env: Env) -> None:
 # Claude may point at the non-discovered library because its native loader is
 # lazy. Codex must never point at the library or active shared root wholesale.
 
-def runtimes(env: Env) -> None:
+def runtimes(env: Env) -> bool:
+    healthy = True
     for cli, rel in (("claude", ".claude/skills"), ("codex", ".codex/skills")):
         rt = env.home / Path(rel)
         points_to_library = _points_to(rt, env.skill_library)
@@ -871,6 +1053,8 @@ def runtimes(env: Env) -> None:
             rt.mkdir(parents=True, exist_ok=True)
         elif not rt.is_dir():
             env.log(f"runtime: {rt} is not a directory, leaving it untouched for manual repair")
+            healthy = False
+    return healthy
 
 
 # ── 4.5 claude_hooks ─────────────────────────────────────────────────────
@@ -878,11 +1062,11 @@ def runtimes(env: Env) -> None:
 # dependency agent-sync.sh silently no-ops without): same behavior, one
 # fewer thing that has to be installed on either OS.
 
-def claude_hooks(env: Env) -> None:
+def claude_hooks(env: Env) -> bool:
     hook_src = env.ul / "hooks" / "claude-vault-checkpoint.mjs"
     claude_dir = env.home / ".claude"
     if not hook_src.is_file() or not claude_dir.is_dir():
-        return
+        return True
     hook_dst = claude_dir / "claude-vault-checkpoint.mjs"
     src_bytes = hook_src.read_bytes()
     if not hook_dst.exists() or hook_dst.read_bytes() != src_bytes:
@@ -891,19 +1075,19 @@ def claude_hooks(env: Env) -> None:
 
     settings_path = claude_dir / "settings.json"
     if not settings_path.is_file():
-        return
+        return True
     try:
         settings = json.loads(settings_path.read_text(encoding="utf-8"))
     except json.JSONDecodeError:
         env.log("claude-hooks: settings.json not valid JSON; skipping merge")
-        return
+        return False
     if not isinstance(settings, dict):
         # Valid JSON but not an object (e.g. "[]") -- settings.setdefault
         # below would crash with AttributeError, aborting the rest of this
         # agent-sync run (publish/creds/health all run after this call in
         # main()). Found in a full-codebase audit, Gemini via agy, 2026-07-09.
         env.log("claude-hooks: settings.json root is not an object; skipping merge")
-        return
+        return False
 
     command = f'node "{hook_dst}"'
     hooks = settings.setdefault("hooks", {})
@@ -915,55 +1099,63 @@ def claude_hooks(env: Env) -> None:
             entries.append({"hooks": [{"type": "command", "command": command, "timeout": 5}]})
             changed = True
     if not changed:
-        return
+        return True
     stamp = time.strftime("%Y%m%d-%H%M%S")
     shutil.copy2(settings_path, settings_path.with_name(f"settings.json.pre-hooks-{stamp}.bak"))
     _atomic_write_text(settings_path, json.dumps(settings, indent=2) + "\n")
     env.log(f"claude-hooks: merged SessionStart/PreCompact into {settings_path}")
+    return True
 
 
 # ── 5. publish ───────────────────────────────────────────────────────────
 
-def publish(env: Env) -> None:
+def publish(env: Env) -> bool:
     if env.remote in ("local", "none"):
         env.log("push: skipped (Local-Only mode)")
-        return
-    if _git(env, "rev-parse", "--verify", f"{env.remote}/{env.branch}").returncode != 0:
-        return
-    ahead_r = _git(env, "rev-list", "--count", f"{env.remote}/{env.branch}..{env.branch}")
-    try:
-        ahead = int(ahead_r.stdout.strip() or "0")
-    except ValueError:
-        ahead = 0
-    if ahead <= 0:
-        return
+        return True
+    if _git(env, "remote", "get-url", env.remote).returncode != 0:
+        env.log(f"push: authoritative remote {env.remote} is not configured")
+        return False
+    if _git(env, "fetch", "--prune", env.remote, env.branch).returncode != 0:
+        env.log(f"push: {env.remote} unreachable — no publication attempted")
+        return False
 
-    push_ok = False
-    if _git(env, "push", env.remote, env.branch).returncode == 0:
-        push_ok = True
+    lh = _git(env, "rev-parse", env.branch)
+    rh = _git(env, "rev-parse", f"{env.remote}/{env.branch}")
+    mb = _git(env, "merge-base", env.branch, f"{env.remote}/{env.branch}")
+    if lh.returncode or rh.returncode or mb.returncode:
+        env.log(f"push: cannot compare local branch with {env.remote}/{env.branch}")
+        return False
+    lh, rh, mb = lh.stdout.strip(), rh.stdout.strip(), mb.stdout.strip()
+
+    if lh == rh:
+        env.log(f"push: authoritative {env.remote}/{env.branch} already aligned")
+    elif mb == rh:
+        ahead_r = _git(env, "rev-list", "--count", f"{env.remote}/{env.branch}..{env.branch}")
+        ahead = ahead_r.stdout.strip() or "?"
+        if _git(env, "push", env.remote, env.branch).returncode != 0:
+            env.log(f"push: authoritative publication to {env.remote} failed")
+            return False
         env.log(f"push: {ahead} commit(s) published to {env.remote}")
-    elif _git(env, "fetch", "--prune", env.remote, env.branch).returncode == 0:
-        dirty = _git(env, "status", "--porcelain", "--untracked-files=no")
-        if dirty.stdout.strip():
-            env.log("push: rejected but the working tree has uncommitted tracked changes — not rebasing, resolve by hand")
-        elif _git(env, "rebase", f"{env.remote}/{env.branch}").returncode == 0:
-            if _git(env, "push", env.remote, env.branch).returncode == 0:
-                push_ok = True
-                env.log(f"push: divergence resolved via clean rebase, published to {env.remote}")
-            else:
-                env.log("push: still rejected after rebase — will retry next run")
-        else:
-            _git(env, "rebase", "--abort")
-            env.log("push: DIVERGENCE WITH CONFLICTS — manual 'git pull --rebase' needed (the healthcheck will flag it)")
+    elif mb == lh:
+        env.log(f"push: BLOCKED because local {env.branch} is behind authoritative {env.remote}/{env.branch}")
+        return False
     else:
-        env.log(f"push: {env.remote} unreachable (offline) — commits stay local, will retry")
+        env.log(f"push: BLOCKED because local {env.branch} diverged from authoritative {env.remote}/{env.branch}")
+        return False
 
-    if push_ok and _git(env, "push", "origin", env.branch).returncode != 0:
-        if (_git(env, "fetch", "--prune", "origin", env.branch).returncode == 0
-                and _git(env, "push", "--force-with-lease", "origin", env.branch).returncode == 0):
-            env.log("push: origin (mirror) realigned to the remote-hub line (force-with-lease)")
+    for mirror in env.mirrors:
+        if _git(env, "push", mirror, env.branch).returncode == 0:
+            env.log(f"push: mirror {mirror} aligned")
+            continue
+        if (_git(env, "fetch", "--prune", mirror, env.branch).returncode == 0
+                and _git(env, "push", "--force-with-lease", mirror, env.branch).returncode == 0):
+            env.log(f"push: mirror {mirror} realigned to the authoritative line (force-with-lease)")
         else:
-            env.log("push: GitHub (origin) unreachable or lease expired — will retry next run")
+            # The authoritative publish succeeded. A mirror outage is
+            # observable debt, not grounds to call the canonical write lost.
+            env.log(f"push: mirror {mirror} unreachable or lease expired — authoritative remote is safe")
+    return True
 
 
 # ── 6. creds_health ──────────────────────────────────────────────────────
@@ -1146,80 +1338,164 @@ def creds_health(env: Env, *, do_creds: bool, do_health: bool) -> None:
             env.log(f"healthcheck: non-fatal error ({exc})")
 
 
-def _parse_cli(argv: list[str]) -> tuple[str, bool]:
+def _parse_cli(argv: list[str]) -> tuple[str, bool, bool, list[str]]:
     skip_mcp = False
+    allow_offline = False
     cleaned: list[str] = []
     i = 0
     while i < len(argv):
         arg = argv[i]
         if arg in ("-Mode", "--mode"):
             if i + 1 >= len(argv):
-                return arg, skip_mcp
+                return arg, skip_mcp, allow_offline, []
             cleaned.append(argv[i + 1])
             i += 2
             continue
         if arg in ("-InstallScheduledTask", "--install-scheduled-task"):
             # Backward-compatible no-op: B2.5 installs/repairs the scheduler
-            # during every apply/guard/full run.
+            # during every apply/guard run.
             i += 1
             continue
         if arg in ("-SkipMcp", "--skip-mcp"):
             skip_mcp = True
             i += 1
             continue
+        if arg == "--allow-offline":
+            allow_offline = True
+            i += 1
+            continue
         cleaned.append(arg)
         i += 1
-    return (cleaned[0] if cleaned else "full"), skip_mcp
+    return (cleaned[0] if cleaned else "help"), skip_mcp, allow_offline, cleaned[1:]
+
+
+def _print_config(argv: list[str]) -> int:
+    if len(argv) != 2 or argv[1] not in {"authoritative_remote", "mirrors"}:
+        print("Use: agent-sync config authoritative_remote|mirrors", file=sys.stderr)
+        return 2
+    try:
+        config = load_remote_config()
+    except RemoteConfigError as exc:
+        print(f"agent_sync: {exc}", file=sys.stderr)
+        return 2
+    if argv[1] == "authoritative_remote":
+        print(config.authoritative_remote)
+    else:
+        print("\n".join(config.mirrors))
+    return 0
+
+
+def _run_phase(env: Env, name: str, fn: Callable[[Env], object]) -> bool:
+    try:
+        result = fn(env)
+    except Exception as exc:
+        env.log(f"phase {name}: ERROR ({type(exc).__name__}: {exc})")
+        return False
+    if result is False:
+        env.log(f"phase {name}: ERROR (reported incomplete)")
+        return False
+    env.log(f"phase {name}: ok")
+    return True
 
 
 # ── entry point ──────────────────────────────────────────────────────────
 
 def main(argv: list[str] | None = None) -> int:
     argv = sys.argv[1:] if argv is None else argv
-    env = Env()
-    mode, skip_mcp = _parse_cli(argv)
-
-    if mode in ("-h", "--help", "help"):
+    if not argv or argv[0] in ("-h", "--help", "help"):
         print(HELP_TEXT)
         return 0
+    if argv[0] == "config":
+        return _print_config(argv)
+
+    mode, skip_mcp, allow_offline, extras = _parse_cli(argv)
     if mode not in MODES:
         print(f"agent_sync: unknown mode: {mode}\nUse: agent_sync --help", file=sys.stderr)
         return 2
+    if extras:
+        print(f"agent_sync: unexpected arguments: {' '.join(extras)}", file=sys.stderr)
+        return 2
+    if allow_offline and mode != "apply":
+        print("agent_sync: --allow-offline is accepted only with manual apply", file=sys.stderr)
+        return 2
+    try:
+        env = Env()
+    except RemoteConfigError as exc:
+        print(f"agent_sync: {exc}", file=sys.stderr)
+        return 2
 
     flags = MODES[mode]
-    env.log(f"agent-sync: start mode={mode}")
+    try:
+        lock_timeout = float(os.environ.get("AGENT_SYNC_LOCK_TIMEOUT_SECONDS") or "2")
+    except ValueError:
+        print("agent_sync: AGENT_SYNC_LOCK_TIMEOUT_SECONDS must be numeric", file=sys.stderr)
+        return 2
 
-    if flags["pull"]:
-        pull(env)
+    with SyncRunLock(env.lock_path, timeout=lock_timeout) as lock:
+        if not lock.acquired:
+            env.log(f"agent-sync: lock busy, skipped mode={mode}")
+            if mode == "guard":
+                return 0
+            print("agent_sync: another sync run is active", file=sys.stderr)
+            return 75
 
-    if flags["apply"]:
-        data_migrations(env)
-        instructions(env)
-        antigravity_mcp(env)
-        utils(env)
-        local_model_runtime(env)
-        install_scheduler(env)
-        if skip_mcp:
-            env.log("mcp-gen: skipped by --skip-mcp")
-        else:
-            mcp_render(env)
-        vault_skills(env)
-        runtimes(env)
-        skills_index(env)
-        claude_hooks(env)
+        env.log(
+            f"agent-sync: start mode={mode} authoritative_remote={env.remote} "
+            f"config_source={env.remote_config_source}"
+        )
+        errors: list[str] = []
+        apply_allowed = True
 
-    if flags["push"]:
-        publish(env)
+        if flags["pull"]:
+            outcome = pull(env)
+            if outcome.allows_apply:
+                pass
+            elif outcome.state is PullState.FETCH_FAILED and allow_offline:
+                env.log(f"pull: manual offline override accepted ({outcome.message})")
+            else:
+                errors.append(f"pull:{outcome.state.value}")
+                apply_allowed = False
 
-    creds_health(env, do_creds=flags["creds"], do_health=flags["health"])
+        if flags["apply"] and apply_allowed:
+            phases: list[tuple[str, Callable[[Env], object]]] = [
+                ("data_migrations", data_migrations),
+                ("instructions", instructions),
+                ("antigravity_mcp", antigravity_mcp),
+                ("utils", utils),
+                ("local_model_runtime", local_model_runtime),
+                ("install_scheduler", install_scheduler),
+            ]
+            if skip_mcp:
+                env.log("mcp-gen: skipped by explicit --skip-mcp")
+            else:
+                phases.append(("mcp_render", mcp_render))
+            phases.extend([
+                ("vault_skills", vault_skills),
+                ("runtimes", runtimes),
+                ("skills_index", skills_index),
+                ("claude_hooks", claude_hooks),
+            ])
+            for name, fn in phases:
+                if not _run_phase(env, name, fn):
+                    errors.append(name)
+        elif flags["apply"]:
+            env.log("apply: BLOCKED because the authoritative data state is not safe")
 
-    dirty = _git(env, "status", "--porcelain")
-    dirty_lines = [line for line in dirty.stdout.splitlines() if line.strip()]
-    if dirty_lines:
-        env.log(f"note: {len(dirty_lines)} uncommitted file(s) in the vault (not touching them)")
+        if flags["push"] and not _run_phase(env, "publish", publish):
+            errors.append("publish")
 
-    env.log(f"agent-sync: completed mode={mode}")
-    return 0
+        creds_health(env, do_creds=flags["creds"], do_health=flags["health"])
+
+        dirty = _git(env, "status", "--porcelain")
+        dirty_lines = [line for line in dirty.stdout.splitlines() if line.strip()]
+        if dirty_lines:
+            env.log(f"note: {len(dirty_lines)} uncommitted file(s) in the vault (not touching them)")
+
+        if errors:
+            env.log(f"agent-sync: completed mode={mode} status=failed errors={','.join(errors)}")
+            return 1
+        env.log(f"agent-sync: completed mode={mode} status=ok")
+        return 0
 
 
 if __name__ == "__main__":

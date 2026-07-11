@@ -92,11 +92,12 @@ Genera poi `~/.agents/skills/INDEX.md`. Monta nei runtime eager soltanto le skil
 
 In tutti i casi, solo la CLI scelta riceve la config. Niente script ricorrenti.
 
-**Se MULTI**: prima di lanciare il provisioning, verifica che l'utente abbia già aperto ALMENO UNA VOLTA ogni CLI scelta (Claude Code, Codex, OpenCode, Antigravity), così il suo file di configurazione di default esiste. Il generatore MCP patcha chirurgicamente un file esistente, non lo crea da zero: su una CLI mai aperta il passo si limita a segnalarlo e passare oltre, senza errori vistosi, e sembrerebbe tutto a posto anche se quella CLI resta senza server MCP montati. Poi istruisci l'utente a lanciare nel terminale il comando di provisioning:
+**Se MULTI**: prima di lanciare il provisioning, verifica che l'utente abbia già aperto ALMENO UNA VOLTA ogni CLI scelta (Claude Code, Codex, OpenCode, Antigravity), così il suo file di configurazione di default esiste. Il generatore MCP patcha chirurgicamente un file esistente, non lo crea da zero: su una CLI mai aperta il passo si limita a segnalarlo e passare oltre, senza errori vistosi, e sembrerebbe tutto a posto anche se quella CLI resta senza server MCP montati. Crea inoltre `03-INFRA/agent-universal-layer/sync/remotes.yaml` dal relativo `.example`: usa come `authoritative_remote` il remote Git che rappresenta la verità condivisa, normalmente `origin`, e inserisci in `mirrors` solo copie di pubblicazione secondarie. Non scrivere URL o credenziali nel file, solo i nomi dei remote già configurati. Poi istruisci l'utente a lanciare nel terminale il comando di provisioning:
 - Su Linux/Mac: `bash 03-INFRA/scripts/agent-sync.sh apply`
 - Su Windows: `.\03-INFRA\scripts\agent-sync.ps1 apply`
 
 Questo script reconcile la configurazione dei CLI con le fonti canoniche del vault, installa i server MCP e propaga le skill su tutti i runtime.
+Il contratto completo di pull, lock, exit code e pubblicazione separata è in `docs/sync-contract.md`.
 
 Attendi la conferma dell'utente che il comando sia andato a buon fine. Se ci sono errori, suggerisci di lanciare `agent-doctor` (in MULTI) per la diagnostica. In MINIMAL la diagnostica è visiva: verifica che la CLI scelta carichi AGENTS.md, monti i server MCP, e veda le skill.
 
@@ -208,11 +209,12 @@ Generate `~/.agents/skills/INDEX.md`. Mount only `exposure: core` skills in eage
 
 In every case, only the chosen CLI receives the config. No recurring scripts.
 
-**If MULTI**: before running the provisioner, check that the user has already opened EACH chosen CLI (Claude Code, Codex, OpenCode, Antigravity) at least once, so its default config file exists. The MCP generator surgically patches an existing file, it does not create one from scratch: on a CLI that has never been launched, that step just flags it and moves on with no loud error, so it can look like everything is fine even though that CLI ends up with no MCP servers mounted. Then instruct the user to run the provisioning command in their terminal:
+**If MULTI**: before running the provisioner, check that the user has already opened EACH chosen CLI (Claude Code, Codex, OpenCode, Antigravity) at least once, so its default config file exists. The MCP generator surgically patches an existing file, it does not create one from scratch: on a CLI that has never been launched, that step just flags it and moves on with no loud error, so it can look like everything is fine even though that CLI ends up with no MCP servers mounted. Also create `03-INFRA/agent-universal-layer/sync/remotes.yaml` from its `.example`: set `authoritative_remote` to the Git remote that represents shared truth, normally `origin`, and list only downstream publication copies under `mirrors`. Store remote names only, never URLs or credentials. Then instruct the user to run the provisioning command in their terminal:
 - On Linux/Mac: `bash 03-INFRA/scripts/agent-sync.sh apply`
 - On Windows: `.\03-INFRA\scripts\agent-sync.ps1 apply`
 
 This script reconciles the CLI configuration with the vault's canonical sources, installs MCP servers, and propagates skills to every runtime.
+The complete pull, lock, exit-code, and separate-publication contract is in `docs/sync-contract.md`.
 
 Wait for the user's confirmation that the command succeeded. If there are errors, suggest running `agent-doctor` (in MULTI) for diagnostics. In MINIMAL, diagnostics are visual: verify that the chosen CLI loads AGENTS.md, mounts the MCP servers, and sees the skills.
 

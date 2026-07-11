@@ -48,6 +48,9 @@ This is informational only. Nothing else changes because of it.
    `agent-sync apply` also runs any pending data migrations for that engine
    version at this point (see below) — before anything else touches your
    data files.
+   It first proves that the data branch is fresh against the authoritative
+   remote declared in `03-INFRA/agent-universal-layer/sync/remotes.yaml`; unsafe Git
+   states stop the apply. See `docs/sync-contract.md`.
 5. If `agent-doctor` reports new `FAIL`s that weren't there before the
    upgrade, something in the new version doesn't fit your setup. Roll back
    by checking out your previous pin's commit and moving `ENGINE-PIN.txt`

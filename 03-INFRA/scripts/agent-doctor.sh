@@ -20,10 +20,19 @@ ENGINE_ROOT="${AGENT_ENGINE_ROOT:-$(dirname "$SELF_DIR")}"
 ENGINE_UL="$ENGINE_ROOT/agent-universal-layer"
 UL="$VAULT_DATA/03-INFRA/agent-universal-layer"
 CANON="$UL/instructions/AGENTS.md"
-REMOTE="${KNOWLEDGE_VAULT_REMOTE:-origin}"
 BRANCH="${KNOWLEDGE_VAULT_BRANCH:-main}"
 OCJSON="$HOME/.config/opencode/opencode.json"
 PASS=0; WARN=0; FAILN=0; FAILS=""
+
+REMOTE_CONFIG_ERROR=""
+if [ -n "${KNOWLEDGE_VAULT_REMOTE:-}" ]; then
+  REMOTE="$KNOWLEDGE_VAULT_REMOTE"
+  MIRRORS="$(printf '%s' "${KNOWLEDGE_VAULT_MIRRORS:-}" | tr ',' '\n')"
+else
+  REMOTE="$(python3 "$SELF_DIR/agent_sync.py" config authoritative_remote 2>/dev/null)" || REMOTE_CONFIG_ERROR=1
+  MIRRORS="$(python3 "$SELF_DIR/agent_sync.py" config mirrors 2>/dev/null)" || REMOTE_CONFIG_ERROR=1
+  [ -n "$REMOTE" ] || { REMOTE="origin"; REMOTE_CONFIG_ERROR=1; }
+fi
 
 QUIET=0
 STRICT=0
@@ -56,7 +65,8 @@ sec "Host"
 case "$(uname -s)" in Linux) HOST=linux;; Darwin) HOST=mac;; *) HOST=other;; esac
 ok "detected: $HOST ($(hostname), $(uname -s))"
 
-sec "Vault (memory) — git vs remote hub + GitHub mirror"
+sec "Vault (memory) — authoritative remote and mirrors"
+[ -z "$REMOTE_CONFIG_ERROR" ] && ok "sync remote config resolved ($REMOTE)" || fail "invalid sync remote config — run: agent-sync config authoritative_remote"
 if git -C "$VAULT" rev-parse >/dev/null 2>&1; then
   git -C "$VAULT" fetch --prune "$REMOTE" "$BRANCH" >/dev/null 2>&1 || warn "fetch $REMOTE failed (offline?)"
   b=$(git -C "$VAULT" rev-list --count "$BRANCH..$REMOTE/$BRANCH" 2>/dev/null || echo '?')
@@ -81,6 +91,22 @@ if git -C "$VAULT" rev-parse >/dev/null 2>&1; then
     fi
   fi
   [ "$d" = 0 ] && ok "working tree clean (tracked files)" || warn "$d tracked files not committed (blocks the pull)"
+  while IFS= read -r mirror; do
+    [ -n "$mirror" ] || continue
+    if ! git -C "$VAULT" fetch --prune "$mirror" "$BRANCH" >/dev/null 2>&1; then
+      warn "mirror $mirror fetch failed"
+      continue
+    fi
+    auth_head=$(git -C "$VAULT" rev-parse "$REMOTE/$BRANCH" 2>/dev/null || echo "")
+    mirror_head=$(git -C "$VAULT" rev-parse "$mirror/$BRANCH" 2>/dev/null || echo "")
+    if [ -n "$auth_head" ] && [ "$auth_head" = "$mirror_head" ]; then
+      ok "mirror $mirror aligned with authoritative $REMOTE"
+    else
+      warn "mirror $mirror differs from authoritative $REMOTE (canonical Vault remains $REMOTE)"
+    fi
+  done <<EOF
+$MIRRORS
+EOF
 else
   fail "the vault is not a git repo: $VAULT"
 fi

@@ -27,7 +27,13 @@ These are patches to files that must already exist (each CLI creates its own def
 - `~/.config/systemd/user/agent-sync.service` and `agent-sync.timer`: a recurring user-level timer that runs `agent-sync guard` (pull + regenerate CLI runtime files + healthcheck, no push). Only on Linux/systemd.
 - Before overwriting a file it manages, `agent-sync` copies the previous version alongside it with a `.pre-<reason>-<timestamp>.bak` suffix in the same folder.
 - `~/.local/state/agent-sync.log`: a plain-text run log.
+- `~/.local/state/agent-sync.lock`: the stable one-byte host-wide transaction lock.
 - `~/ANTIGRAVITY.md`: removed if present as a dead symlink (Antigravity doesn't read that path).
+
+The remote policy itself is private data, not an engine runtime derivative. In
+a MULTI vault it may be declared at
+`03-INFRA/agent-universal-layer/sync/remotes.yaml`, starting from the public
+`remotes.yaml.example`. See `docs/sync-contract.md`.
 
 ## `99-SECRETS/`
 

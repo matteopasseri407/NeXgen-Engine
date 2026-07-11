@@ -17,6 +17,8 @@ of any engine release.
 - Explicit `exposure: manual|core` in the skill manifest, plus a generated
   safe catalog and a one-time `--migrate-legacy` quarantine for old eager
   folders.
+- A data-owned `sync/remotes.yaml` policy, typed pull states, and a host-wide
+  lock for the complete sync transaction.
 
 ### Changed
 
@@ -25,11 +27,20 @@ of any engine release.
   Codex's runtime view. Claude retains declared native-lazy views.
 - `agent-sync` normalizes unsafe whole-root links before materializing skill
   views, and `agent-doctor` verifies the library, catalog, and core exposure.
+- `guard` and `apply` now regenerate runtime derivatives only after proving
+  the vault fresh against its authoritative remote. Required phase failures
+  are aggregated into a non-zero exit code. Publishing is a separate action,
+  with configured mirrors downstream of the authoritative remote.
+- Running `agent-sync` without arguments is help-only. The implicit combined
+  `full` operation was removed.
 
 ### Fixed
 
 - Legacy migration preserves declared Claude native-lazy links instead of
   treating them as stale eager copies.
+- Dirty, wrong-branch, ahead, diverged, missing-remote, fetch-failed, and
+  malformed-manifest states can no longer degrade into a successful-looking
+  propagation run.
 
 ## [0.3.2] - 2026-07-10
 
