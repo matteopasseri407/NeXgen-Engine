@@ -12,6 +12,8 @@ from rapidocr import RapidOCR
 
 
 MAX_BYTES = int(os.getenv("VAULT_OCR_MAX_BYTES", "15728640"))
+READ_CHUNK_BYTES = 65536
+ALLOWED_IMAGE_FORMATS = {"JPEG", "PNG", "WEBP"}
 ENGINE: RapidOCR | None = None
 
 app = FastAPI(
@@ -28,6 +30,27 @@ def get_engine() -> RapidOCR:
     return ENGINE
 
 
+async def read_upload_within_limit(file: UploadFile, max_bytes: int) -> bytes:
+    """Reads an UploadFile in bounded chunks, aborting as soon as the
+    running total exceeds max_bytes instead of buffering the whole body
+    first. Keeps a hostile client from forcing a full read (and full
+    memory allocation) of an oversized upload before it gets rejected."""
+    chunks: list[bytes] = []
+    total = 0
+    while True:
+        chunk = await file.read(READ_CHUNK_BYTES)
+        if not chunk:
+            break
+        total += len(chunk)
+        if total > max_bytes:
+            raise HTTPException(
+                status_code=413,
+                detail=f"image too large: exceeds {max_bytes} bytes",
+            )
+        chunks.append(chunk)
+    return b"".join(chunks)
+
+
 def validate_image(data: bytes) -> dict[str, Any]:
     try:
         with Image.open(io.BytesIO(data)) as img:
@@ -36,6 +59,11 @@ def validate_image(data: bytes) -> dict[str, Any]:
             img.verify()
     except Exception as exc:
         raise HTTPException(status_code=415, detail=f"unsupported or invalid image: {exc}") from exc
+    if fmt not in ALLOWED_IMAGE_FORMATS:
+        raise HTTPException(
+            status_code=415,
+            detail=f"unsupported image format: {fmt}. allowed: {sorted(ALLOWED_IMAGE_FORMATS)}",
+        )
     return {"format": fmt, "width": width, "height": height}
 
 
@@ -66,11 +94,9 @@ async def ocr(
     file: UploadFile = File(...),
     min_confidence: float = Form(0.0),
 ) -> dict[str, Any]:
-    data = await file.read()
+    data = await read_upload_within_limit(file, MAX_BYTES)
     if not data:
         raise HTTPException(status_code=400, detail="empty upload")
-    if len(data) > MAX_BYTES:
-        raise HTTPException(status_code=413, detail=f"image too large: {len(data)} bytes > {MAX_BYTES}")
     if min_confidence < 0 or min_confidence > 1:
         raise HTTPException(status_code=400, detail="min_confidence must be between 0 and 1")
 
