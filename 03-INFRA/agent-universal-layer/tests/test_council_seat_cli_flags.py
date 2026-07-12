@@ -32,8 +32,6 @@ import importlib.util
 import sys
 from pathlib import Path
 
-import pytest
-
 COUNCIL_PATH = Path(__file__).resolve().parents[1] / "council" / "council.py"
 
 
