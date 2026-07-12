@@ -756,6 +756,157 @@ def test_generated_secret_is_redacted_without_blocking_the_next_stage(monkeypatc
     assert "[REDACTED POSSIBLE SECRET]" in clean
 
 
+# --- Audit FINDING B (2026-07-12, package P4) -------------------------------
+#
+# redact_generated_output() was wired only into _run_relay_stage. brainstorm/
+# challenge/code-review (run_rounds -> _run_mode) wrote the seat's raw
+# response straight to the kept-session file, the printed verdict, and (in
+# brainstorm) the next round's continuation prompt, with no pass through the
+# same gate relay already used. These tests pin that the single-seat modes
+# now redact exactly where relay does: right after run_seat, before the
+# response reaches disk, stdout, or the next round.
+
+_SYNTHETIC_SECRET = "AKIA" + "12345" + "67890" + "ABCDEF"
+
+
+@pytest.mark.parametrize(
+    ("cmd_name", "cmd_args"),
+    [
+        ("cmd_brainstorm", lambda: single_mode_args(keep_session=True)),
+        (
+            "cmd_challenge",
+            lambda: argparse.Namespace(
+                plan="Piano da stressare", context=None, seat="one",
+                allow_training_risk=False, keep_session=True,
+            ),
+        ),
+    ],
+)
+def test_single_seat_modes_redact_a_secret_before_it_reaches_the_session(monkeypatch, tmp_path, cmd_name, cmd_args):
+    council = load_council(monkeypatch, tmp_path)
+    write_seats(
+        council,
+        """
+        seats:
+          one:
+            vendor: vendor-a
+            cli: opencode
+            model: opencode/test-one
+            zero_retention: true
+        """,
+    )
+    monkeypatch.setattr(council, "egress_gate", lambda text: None)
+    monkeypatch.setattr(
+        council,
+        "run_seat",
+        lambda seat, prompt, session_dir, timeout_seconds=None: (
+            f"Analisi\n{_SYNTHETIC_SECRET}\nVERDICT: APPROVE\n", {},
+        ),
+    )
+
+    getattr(council, cmd_name)(cmd_args())
+
+    session_dir = next(council.SESSIONS_DIR.iterdir())
+    verdict_text = (session_dir / "verdict.md").read_text(encoding="utf-8")
+    assert _SYNTHETIC_SECRET not in verdict_text
+    assert "[REDACTED POSSIBLE SECRET]" in verdict_text
+    round_files = [p for p in session_dir.iterdir() if p.name != "verdict.md" and p.name != "00-brief.md"]
+    assert round_files, "expected at least one per-round seat file"
+    for round_file in round_files:
+        text = round_file.read_text(encoding="utf-8")
+        assert _SYNTHETIC_SECRET not in text
+
+
+def test_code_review_redacts_a_secret_before_it_reaches_the_session(monkeypatch, tmp_path):
+    council = load_council(monkeypatch, tmp_path)
+    write_seats(
+        council,
+        """
+        seats:
+          one:
+            vendor: vendor-a
+            cli: opencode
+            model: opencode/test-one
+            zero_retention: true
+        """,
+    )
+    monkeypatch.setattr(council, "egress_gate", lambda text: None)
+    monkeypatch.setattr(
+        council,
+        "run_seat",
+        lambda seat, prompt, session_dir, timeout_seconds=None: (
+            f"Review\n{_SYNTHETIC_SECRET}\nVERDICT: APPROVE\n", {},
+        ),
+    )
+    diff_path = tmp_path / "changes.diff"
+    diff_path.write_text("+test\n", encoding="utf-8")
+
+    council.cmd_code_review(
+        argparse.Namespace(
+            diff=str(diff_path), context=None, author_vendor="vendor-b",
+            seat="one", allow_training_risk=False, keep_session=True,
+        )
+    )
+
+    session_dir = next(council.SESSIONS_DIR.iterdir())
+    verdict_text = (session_dir / "verdict.md").read_text(encoding="utf-8")
+    assert _SYNTHETIC_SECRET not in verdict_text
+    assert "[REDACTED POSSIBLE SECRET]" in verdict_text
+
+
+def test_run_rounds_calls_redact_generated_output_for_every_round(monkeypatch, tmp_path):
+    """Spy on redact_generated_output itself (not just its externally
+    visible effect) so a future refactor that bypasses it on some code path
+    fails loudly, matching how relay's own wiring would be caught."""
+    council = load_council(monkeypatch, tmp_path)
+    calls = []
+    real_redact = council.redact_generated_output
+
+    def spy_redact(text):
+        calls.append(text)
+        return real_redact(text)
+
+    monkeypatch.setattr(council, "redact_generated_output", spy_redact)
+
+    def fake_run_seat(seat, prompt, session_dir, timeout_seconds=None):
+        return "Round response\nVERDICT: APPROVE\n", {}
+
+    monkeypatch.setattr(council, "run_seat", fake_run_seat)
+
+    council.run_rounds(
+        "one", {"model": "vendor/test"}, tmp_path, "brainstorm", "brief text",
+        "{brief}", None, 1, 60.0,
+    )
+
+    assert calls == ["Round response\nVERDICT: APPROVE\n"]
+
+
+def test_brainstorm_redacts_a_secret_before_the_next_round_sees_it(monkeypatch, tmp_path):
+    """Mirrors test_relay_redacts_generated_secret_before_the_next_stage for
+    the single-seat, multi-round path: a secret hallucinated in round 1 must
+    not survive into the round-2 continuation prompt."""
+    council = load_council(monkeypatch, tmp_path)
+    prompts = []
+
+    def fake_run_seat(seat, prompt, session_dir, timeout_seconds=None):
+        prompts.append(prompt)
+        if len(prompts) == 1:
+            return f"Prima bozza\n{_SYNTHETIC_SECRET}\nVERDICT: REVISE\n", {}
+        return "Bozza finale\nVERDICT: APPROVE\n", {}
+
+    monkeypatch.setattr(council, "run_seat", fake_run_seat)
+
+    responses, verdicts = council.run_rounds(
+        "one", {"model": "vendor/test"}, tmp_path, "brainstorm", "brief text",
+        "{brief}", "Riprendi: {previous}", 2, 60.0,
+    )
+
+    assert _SYNTHETIC_SECRET not in prompts[1]
+    assert "[REDACTED POSSIBLE SECRET]" in prompts[1]
+    assert _SYNTHETIC_SECRET not in responses[0]
+    assert verdicts == ["REVISE", "APPROVE"]
+
+
 @pytest.mark.skipif(os.name == "nt", reason="The POSIX launcher is exercised on Linux and macOS.")
 def test_posix_launcher_reaches_the_same_engine_help(tmp_path):
     launcher_dir = tmp_path / "bin"

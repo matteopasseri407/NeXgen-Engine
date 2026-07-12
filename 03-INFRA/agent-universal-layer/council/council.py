@@ -92,6 +92,11 @@ class SeatInvocation:
     stdin_text: str | None
     output_file: Path | None
     input_file: Path | None
+    # None => Popen inherits the operator's full os.environ, unchanged
+    # (claude, ollama: see ISOLATED_SEAT_CLIS). A dict => the seat runs with
+    # exactly that environment and nothing else (codex, agy, opencode: see
+    # _isolated_seat_env).
+    env: dict[str, str] | None = None
 
 
 def _vault_data_root() -> Path:
@@ -800,6 +805,135 @@ def _feed_stdin(stream, prompt: str) -> None:
             pass
 
 
+# Seats whose vendor CLI can reach an MCP server (see the long note below
+# _build_seat_command): every seat here is launched with an *explicit*
+# environment, never a full copy of the operator's os.environ. claude and
+# ollama are deliberately absent -- claude because --tools "" already makes
+# every tool, MCP included, uninvocable by construction, and ollama because
+# it never gets the (opt-in, unused here) --experimental flag that would
+# give it a tool-calling surface at all. Neither needs env-level isolation
+# on top of a guarantee that already holds at the process-capability level.
+ISOLATED_SEAT_CLIS = ("codex", "agy", "opencode")
+
+# Explicit ALLOWLIST, not a denylist of today's known application tokens.
+# A denylist only excludes names someone remembered to add to it; the next
+# service this machine grows a bearer token for (n8n, the vault library and
+# Firecrawl already exist -- see the audit finding) would leak into every
+# isolated seat by default until someone noticed and patched the blocklist.
+# An allowlist inverts that: anything not named here is absent by
+# construction, including tokens that do not exist yet.
+_ISOLATED_SEAT_ENV_ALLOWLIST = (
+    # POSIX: process/user identity, locale, the CLI's own runtime plumbing.
+    "PATH", "HOME", "USER", "LOGNAME", "SHELL", "LANG", "LC_ALL", "TERM", "TMPDIR",
+    "XDG_RUNTIME_DIR", "XDG_CACHE_HOME", "XDG_DATA_HOME", "XDG_STATE_HOME",
+    # Windows equivalents (council.ps1/Windows CI: same code path, not
+    # separately re-verified live -- kept conservative rather than
+    # excluded, since a missing USERPROFILE/APPDATA is the kind of gap
+    # that silently breaks a seat rather than loudly failing it).
+    "USERPROFILE", "APPDATA", "LOCALAPPDATA", "SystemRoot", "SystemDrive",
+    "ComSpec", "PATHEXT", "windir", "TEMP", "TMP",
+    "HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "http_proxy", "https_proxy", "no_proxy",
+)
+
+
+def _isolated_seat_env(cli: str, session_dir: Path) -> dict[str, str]:
+    """Minimal environment for a codex/agy/opencode seat (audit FINDING A,
+    2026-07-12): the Popen that launches these three CLIs used to omit
+    ``env=`` entirely, so the child inherited os.environ in full -- every
+    applicative bearer token this machine holds (``N8N_MCP_TOKEN``,
+    ``VAULT_LIBRARY_TOKEN``, ``FIRECRAWL_*``) plus the real, non-sandboxed
+    vendor config was reachable by a seat, even though the seat prompt is
+    told in words only (see the relay/no-tools prompts) never to use them.
+    ``-s read-only``/``--sandbox`` scope the shell tool, not MCP servers
+    (see the long note above ``_build_seat_command``), so the prompt was
+    the only thing standing between a prompt-injected diff and a real MCP
+    call with real credentials. This closes the env half of that gap.
+
+    Two layers, applied per seat and verified live against the installed
+    binaries on this machine on 2026-07-12 (not merely inferred from
+    ``--help``):
+
+    1. Replace, never extend, the child's environment with the short
+       allowlist above: nothing not named there can be present, whether or
+       not it exists yet.
+    2. Where a config-isolation mechanism exists AND was confirmed live not
+       to break the seat's own model resolution, point the CLI's config
+       lookup at an empty, session-private directory so the MCP server
+       list itself never loads (stronger than (1) alone, which only denies
+       *credential* substitution into a server entry that may still be
+       declared on disk):
+
+       - codex: ``CODEX_HOME`` -> a fresh dir under this session containing
+         only a copy of the real ``auth.json`` (no ``config.toml``, so no
+         ``[mcp_servers.*]`` table is ever read). Verified with
+         ``codex doctor`` under that isolated ``CODEX_HOME``: "0 MCP
+         servers", "stored ChatGPT tokens: true", 0 warn / 0 fail. ``codex
+         --ignore-user-config`` was considered instead (see the note above
+         _build_seat_command) and rejected there for an unverified risk of
+         breaking the seat; copying only ``auth.json`` into an isolated
+         ``CODEX_HOME`` sidesteps that -- it was verified end to end, not
+         merely inferred from a flag's documented scope.
+       - opencode: ``XDG_CONFIG_HOME`` -> a fresh, empty dir under this
+         session (no ``opencode.json``, so no ``"mcp"`` key is ever read).
+         Auth lives under ``XDG_DATA_HOME``
+         (``~/.local/share/opencode/auth.json``), which this function does
+         not touch, so login survives. Verified live: ``opencode debug
+         paths`` (only the config path moves), ``opencode providers list``
+         (credentials still listed) and ``opencode models`` (the built-in
+         ``opencode``/``opencode-go`` providers this project's seats use --
+         see seats.yaml -- still resolve with no config file present, since
+         they are bundled with the CLI, not declared in opencode.json).
+       - agy: no config-isolation mechanism found. Antigravity's MCP
+         manifest lives at a hardcoded ``~/.gemini/antigravity/
+         mcp_config.json`` with no override flag in ``agy --help`` and no
+         candidate env var found in the installed binary's string table
+         (checked live, not just documentation). Layer (1) still helps
+         concretely here: that manifest's own server entries interpolate
+         their bearer token from the *child process's* environment at
+         connect time (``"Authorization: Bearer ${N8N_MCP_TOKEN}"``,
+         verified by reading the manifest), so even though the server
+         entry is still listed, the credential it needs is absent from
+         this seat's environment. Documented as a known residual gap, same
+         posture as the CLI-sandbox-flag gap above ``_build_seat_command``:
+         mitigated as far as verified, not claimed closed.
+
+    The isolated directories live under ``session_dir`` (already private,
+    mode 0700 -- see ``new_session_dir``) and share its lifecycle: removed
+    with the rest of the session on the normal path, hardened to 0700/0600
+    alongside it when ``--keep-session`` is used.
+    """
+    env = {name: os.environ[name] for name in _ISOLATED_SEAT_ENV_ALLOWLIST if name in os.environ}
+    isolation_dir = Path(tempfile.mkdtemp(prefix=f"council-env-{cli}-", dir=session_dir))
+    _set_private_mode(isolation_dir, 0o700)
+
+    if cli == "codex":
+        codex_home = isolation_dir / "codex-home"
+        codex_home.mkdir(mode=0o700)
+        _set_private_mode(codex_home, 0o700)
+        real_codex_home = Path(os.environ.get("CODEX_HOME") or (Path.home() / ".codex"))
+        real_auth = real_codex_home / "auth.json"
+        if real_auth.is_file():
+            auth_copy = codex_home / "auth.json"
+            auth_copy.write_bytes(real_auth.read_bytes())
+            _set_private_mode(auth_copy, 0o600)
+        env["CODEX_HOME"] = str(codex_home)
+        if "OPENAI_API_KEY" in os.environ:
+            # An alternative to the auth.json/ChatGPT-login flow above;
+            # some installs authenticate codex this way instead. Not a
+            # Council application token, so it is not excluded by the
+            # allowlist rule above -- it is simply not on it by default.
+            env["OPENAI_API_KEY"] = os.environ["OPENAI_API_KEY"]
+    elif cli == "opencode":
+        config_home = isolation_dir / "opencode-config"
+        config_home.mkdir(mode=0o700)
+        _set_private_mode(config_home, 0o700)
+        env["XDG_CONFIG_HOME"] = str(config_home)
+    # agy: base allowlist only -- see the docstring above for what was
+    # checked and why no directory isolation was applied.
+
+    return env
+
+
 def _build_seat_command(seat: dict, prompt: str, session_dir: Path) -> SeatInvocation:
     """Build a vendor command without putting the user prompt in ``argv``.
 
@@ -815,7 +949,12 @@ def _build_seat_command(seat: dict, prompt: str, session_dir: Path) -> SeatInvoc
     baseline.  Verified 2026-07-12 against the real installed binaries
     (``--help`` output plus, where the flag's actual scope was ambiguous
     from ``--help`` alone, live invocations inspected via the CLI's own
-    JSONL session logs):
+    JSONL session logs). NOTE: the per-CLI gaps documented below are about
+    *argv flags* (sandbox/tool scoping) only. ``codex``/``agy``/``opencode``
+    additionally run under the env-level isolation built by
+    ``_isolated_seat_env`` (no application tokens, and for codex/opencode
+    also no on-disk MCP manifest) -- read that function's docstring first,
+    this one is about the residual, still-open gap on top of it:
 
     - ``claude``: ``--tools ""`` is a comprehensive, documented, CLI-enforced
       block — no tool is invocable by construction, independent of the
@@ -874,6 +1013,7 @@ def _build_seat_command(seat: dict, prompt: str, session_dir: Path) -> SeatInvoc
             None,
             None,
             input_file,
+            env=_isolated_seat_env(cli, session_dir),
         )
     if cli == "agy":
         # Print mode reads stdin when no positional prompt is supplied.  Keeping
@@ -888,8 +1028,13 @@ def _build_seat_command(seat: dict, prompt: str, session_dir: Path) -> SeatInvoc
             prompt,
             None,
             None,
+            env=_isolated_seat_env(cli, session_dir),
         )
     if cli == "claude":
+        # --tools "" already makes every tool, MCP included, uninvocable by
+        # construction (see the note above): no env-level isolation needed
+        # or applied here, unlike codex/agy/opencode. Full os.environ, same
+        # as before this fix.
         argv = [
             "claude", "--print", "--model", model,
             "--permission-mode", "plan", "--tools", "", "--no-session-persistence",
@@ -917,6 +1062,7 @@ def _build_seat_command(seat: dict, prompt: str, session_dir: Path) -> SeatInvoc
             prompt,
             output_file,
             None,
+            env=_isolated_seat_env(cli, session_dir),
         )
     if cli == "ollama":
         return SeatInvocation(["ollama", "run", model], prompt, None, None)
@@ -955,6 +1101,10 @@ def run_seat(
                 stderr=subprocess.PIPE,
                 stdin=subprocess.PIPE if invocation.stdin_text is not None else subprocess.DEVNULL,
                 text=True,
+                # None => inherit os.environ (claude, ollama, unchanged).
+                # dict => exactly that environment, nothing else (codex,
+                # agy, opencode). See _isolated_seat_env.
+                env=invocation.env,
             )
         except OSError as e:
             raise SeatRunError(f"[council] impossibile invocare il seat: {e}", "invocation")
@@ -1070,6 +1220,20 @@ def run_rounds(
             response, _usage = run_seat(seat, prompt, session_dir, timeout_seconds)
         except SeatRunError as e:
             sys.exit(str(e))
+        # Audit FINDING B (2026-07-12): this gate used to be wired only into
+        # _run_relay_stage. brainstorm/challenge/code-review wrote the raw
+        # seat response straight to disk and to the continuation prompt,
+        # so a hallucinated secret in a seat's own output could reach the
+        # kept-session file, the printed verdict, and (in brainstorm) the
+        # next round's prompt unredacted. Same gate, same place in the
+        # pipeline as relay: right after run_seat, before anything else
+        # sees the response.
+        response, generated_output_redacted = redact_generated_output(response)
+        if generated_output_redacted:
+            print(
+                "[council] output del seat con possibile segreto: il frammento è stato redatto, "
+                "la sessione continua."
+            )
         seat_file = session_dir / f"{r:02d}-{seat_name}-{mode_label}-r{r}.md"
         _write_private_text(seat_file, response)
         verdict = extract_verdict(response)
