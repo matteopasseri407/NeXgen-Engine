@@ -78,7 +78,10 @@ def test_isolated_seat_env_still_carries_what_the_binary_needs_to_run(monkeypatc
     invocation = council._build_seat_command({"cli": cli, "model": "vendor/test"}, "prompt", session_dir)
 
     assert invocation.env["PATH"]  # otherwise Popen can't even locate the binary
-    assert invocation.env["HOME"]
+    # POSIX carries HOME; Windows has no HOME by default and carries
+    # USERPROFILE instead (both are on the allowlist -- see council.py).
+    home_var = "USERPROFILE" if sys.platform == "win32" else "HOME"
+    assert invocation.env[home_var]
 
 
 @pytest.mark.parametrize("cli", ["claude", "ollama"])
@@ -168,7 +171,10 @@ def test_agy_gets_no_directory_isolation_only_the_allowlist(monkeypatch, tmp_pat
 
     assert "CODEX_HOME" not in invocation.env
     assert "XDG_CONFIG_HOME" not in invocation.env
-    assert invocation.env["HOME"]  # real HOME preserved: agy's config is scattered under it, not overridable
+    # real HOME (or USERPROFILE on Windows) preserved: agy's config is
+    # scattered under it, not overridable -- see council.py's allowlist.
+    home_var = "USERPROFILE" if sys.platform == "win32" else "HOME"
+    assert invocation.env[home_var]
 
 
 def test_run_seat_passes_the_isolated_env_through_to_popen(monkeypatch, tmp_path):
