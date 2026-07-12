@@ -140,6 +140,148 @@ def test_allowlisted_values_still_pass_clean(leak_scan, real_patterns, line):
     assert findings == [], f"legit allowlisted case wrongly flagged: {line!r} -> {findings}"
 
 
+# --- SHA/digest pinning must not be mistaken for a leaked hex secret -------
+#
+# Packages P8 (GitHub Actions SHA-pinning) and P10 (Docker digest-pinning) of
+# the 2026-07-12 hardening pass both hit the h4 long-hex pattern as a false
+# positive on a legitimate, publicly-verifiable pin. The fix narrows h4 with
+# two fixed-width negative lookbehinds instead of allowlisting individual SHA
+# values one at a time (which would not scale to future action/image bumps).
+
+
+def _synthetic_sha40() -> str:
+    """Built by concatenation, not written out whole (see module docstring
+    and the existing AWS-key test below): a 40-char hex run that must never
+    appear contiguous in this file's own source, or the leak-scan hook that
+    guards this very repo would (correctly) flag this test file itself."""
+    return "9c091bb2" + "1b7c1c1d" + "1991bb90" + "8d89e4e9" + "dddfe3e0"
+
+
+def test_github_actions_sha_pin_after_at_is_not_flagged(leak_scan, real_patterns):
+    patterns, allow = real_patterns
+    line = f"uses: actions/checkout@{_synthetic_sha40()}  # v7.0.0"
+
+    findings = _scan_line(leak_scan, patterns, allow, line)
+
+    hex_hits = [f for f in findings if f.blocking and f.kind.startswith("pattern:h")]
+    assert hex_hits == [], f"a SHA right after '@' must not be flagged: {hex_hits}"
+
+
+def test_docker_digest_pin_after_sha256_is_not_flagged(leak_scan, real_patterns):
+    patterns, allow = real_patterns
+    digest = "ab" * 32  # 64 hex chars, sha256 digest shape
+    line = f"FROM python:3.12-slim@sha256:{digest}"
+
+    findings = _scan_line(leak_scan, patterns, allow, line)
+
+    hex_hits = [f for f in findings if f.blocking and f.kind.startswith("pattern:h")]
+    assert hex_hits == [], f"a digest right after 'sha256:' must not be flagged: {hex_hits}"
+
+
+def test_bare_long_hex_without_safe_prefix_is_still_flagged(leak_scan, real_patterns):
+    """The exclusion is narrow: the exact same 40-hex-char value with no
+    '@'/'sha256:' immediately before it must still be caught (this is not a
+    blanket exemption for anything that looks like a commit SHA)."""
+    patterns, allow = real_patterns
+    line = f"token={_synthetic_sha40()}"
+
+    findings = _scan_line(leak_scan, patterns, allow, line)
+
+    hex_hits = [f for f in findings if f.blocking and f.kind.startswith("pattern:h")]
+    assert hex_hits, "a long hex value with no safe-context prefix must still be flagged"
+
+
+# --- unquoted high-entropy token (audit finding, 2026-07-12) ---------------
+#
+# leak_hard used to catch a 16+ char mixed-case alnum token only when it was
+# wrapped in quotes. The same token unquoted -- a .env line (NOME=valore),
+# a bare "Authorization: Bearer <token>" / "X-Api-Key: <token>" header, or
+# the same thing pasted into a markdown table cell -- used to pass clean.
+
+
+def _synthetic_unquoted_token() -> str:
+    """Built by concatenation, not written out whole (see module docstring):
+    a 16+ char run mixing upper/lower/digit, used WITHOUT surrounding quotes
+    so it only exercises the new unquoted leak_hard pattern (the older
+    quoted-only pattern requires literal quote chars around the token)."""
+    return "Zq7" + "Rk9" + "Tn2" + "Vb8" + "Wp4" + "Xy6"
+
+
+def test_unquoted_token_in_dotenv_style_line_is_now_flagged(leak_scan, real_patterns):
+    patterns, allow = real_patterns
+    token = _synthetic_unquoted_token()
+    line = f"API_TOKEN={token}"
+
+    findings = _scan_line(leak_scan, patterns, allow, line)
+
+    assert findings, "unquoted .env-style NAME=value with a high-entropy value must be flagged"
+    assert any(f.blocking for f in findings)
+
+
+def test_unquoted_bearer_token_in_authorization_header_is_now_flagged(leak_scan, real_patterns):
+    patterns, allow = real_patterns
+    token = _synthetic_unquoted_token()
+    line = f"Authorization: Bearer {token}"
+
+    findings = _scan_line(leak_scan, patterns, allow, line)
+
+    assert findings, "a bare 'Authorization: Bearer <token>' header must be flagged"
+    assert any(f.blocking for f in findings)
+
+
+def test_unquoted_bearer_token_in_markdown_table_cell_is_now_flagged(leak_scan, real_patterns):
+    """Same token as the header test above, just pasted into a markdown
+    table row (pipe-delimited cells) instead of a plain header line."""
+    patterns, allow = real_patterns
+    token = _synthetic_unquoted_token()
+    line = f"| Authorization | Bearer {token} |"
+
+    findings = _scan_line(leak_scan, patterns, allow, line)
+
+    assert findings, "the same token inside a markdown table cell must be flagged"
+    assert any(f.blocking for f in findings)
+
+
+def test_unquoted_high_entropy_generic_header_value_is_now_flagged(leak_scan, real_patterns):
+    """Generic 'Header-Name: value' shape, not just the Bearer scheme."""
+    patterns, allow = real_patterns
+    token = _synthetic_unquoted_token()
+    line = f"X-Api-Key: {token}"
+
+    findings = _scan_line(leak_scan, patterns, allow, line)
+
+    assert findings, "a generic 'Header: <high-entropy value>' line must be flagged"
+    assert any(f.blocking for f in findings)
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        # comparison/walrus operators must not be mistaken for an assignment
+        "if resultValueOne == expectedValueTwo:",
+        "if a <= someLongVariableName1:",
+        "if a != someOtherVariable2Yes:",
+        "walrus := someLongVariableName1here",
+        # snake/kebab identifiers: no contiguous 16+ alnum run (matches the
+        # existing rationale for the quoted pattern -- see comment in
+        # leak_patterns.yaml)
+        "bearer_token_env_var=some_snake_case_value_here",
+        "Authorization: Bearer TELEGRAM_BOT_TOKEN_NAME",
+        "agent-universal-layer",
+    ],
+)
+def test_unquoted_pattern_does_not_flag_identifiers_and_operators(leak_scan, real_patterns, line):
+    """The new unquoted pattern must stay anchored to '=', 'Bearer ', ': ' --
+    ordinary code (comparisons, walrus assignment) and snake/kebab
+    identifiers must not trip it."""
+    patterns, allow = real_patterns
+
+    findings = _scan_line(leak_scan, patterns, allow, line)
+
+    hard_unquoted_hits = [f for f in findings if f.blocking and f.kind.startswith("pattern:h")]
+    assert hard_unquoted_hits == [], f"must not be flagged: {line!r} -> {hard_unquoted_hits}"
+
+
 # --- explicit non-regression: an AWS-shaped key is never let through -------
 
 def test_synthetic_aws_key_id_is_still_blocked(leak_scan, real_patterns):

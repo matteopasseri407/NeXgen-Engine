@@ -12,7 +12,14 @@ leak_hard:
   - '/home/[A-Za-z0-9._-]+'                              # Linux home dir
   - 'C:\\Users\\[A-Za-z0-9._-]+'                         # Windows home dir
   - '[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}'     # email
-  - '\b[0-9a-f]{40,}\b'                                  # long hex token/hash
+  # long hex token/hash, EXCLUDING a full-commit-SHA/digest pin in a known-safe
+  # syntactic context: right after '@' (GitHub Actions `uses: owner/repo@<sha>`)
+  # or right after 'sha256:' (Docker `image@sha256:<digest>`). Both lookbehinds
+  # are fixed-width (stdlib re requirement). This is a security-pinning value
+  # verified against a public registry/API, not a secret — do not widen this
+  # to any other prefix without the same reasoning (2026-07-12, packages P8/P10
+  # of the security hardening pass both hit this as a real false positive).
+  - '(?<!@)(?<!sha256:)\b[0-9a-f]{40,}\b'
   - '\b\d{7,}\b'                                         # long numeric id: chat id, phone, project number
   # HIGH-ENTROPY token in quotes: 16+ chars, mixed Aa0, no separators.
   # Deliberately alnum-only: catches cred-ids/api-keys but NOT snake/kebab env
@@ -20,6 +27,21 @@ leak_hard:
   # Widening the charset instead of adding a targeted pattern reintroduces
   # exactly that false-positive class (do not "fix" this by broadening it).
   - '["\x27](?=[A-Za-z0-9]{16,}["\x27])(?=[A-Za-z0-9]*[a-z])(?=[A-Za-z0-9]*[A-Z])(?=[A-Za-z0-9]*\d)[A-Za-z0-9]{16,}["\x27]'
+  # Same shape, UNQUOTED (audit finding, 2026-07-12): a .env line
+  # (NOME=valore), a bare header value ("Authorization: Bearer <token>",
+  # "X-Api-Key: <token>"), or the same wrapped in a markdown table cell all
+  # carry this token with no surrounding quotes and used to pass clean.
+  # Anchored to three concrete contexts only (never a bare word boundary,
+  # to avoid exploding on ordinary prose/identifiers):
+  #   - after '=' or '= ', where the char before '=' is itself alnum/'_'
+  #     (an identifier), so it never fires on '==', '!=', '<=', '>=', ':='
+  #     comparison/walrus operators in source code;
+  #   - after literal 'Bearer ';
+  #   - after ': ' (generic "Header-Name: value" line).
+  # Same alnum-only, mixed Aa0 entropy check as the quoted pattern above
+  # (same false-positive rationale: catches cred-ids/api-keys but not
+  # snake/kebab env names or identifiers).
+  - '(?:(?<=[A-Za-z0-9_]=)|(?<=[A-Za-z0-9_]= )|(?<=Bearer )|(?<=: ))(?=[A-Za-z0-9]{16,}\b)(?=[A-Za-z0-9]*[a-z])(?=[A-Za-z0-9]*[A-Z])(?=[A-Za-z0-9]*\d)[A-Za-z0-9]{16,}'
   - 'AKIA[0-9A-Z]{16}'                                   # AWS access key id
   - '-----BEGIN (RSA|OPENSSH|EC) PRIVATE KEY-----'       # private key
   - 'gh[po]_[A-Za-z0-9]{36}'                              # GitHub token (ghp_/gho_)
