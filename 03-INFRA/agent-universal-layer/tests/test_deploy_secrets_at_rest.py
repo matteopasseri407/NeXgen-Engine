@@ -60,17 +60,25 @@ def test_env_example_documents_n8n_encryption_key_as_blank_and_auto_generated():
 def test_bootstrap_vps_generates_n8n_encryption_key_idempotently():
     content = BOOTSTRAP.read_text(encoding="utf-8")
     assert "openssl rand -hex 32" in content, (
-        "expected bootstrap-vps.sh to generate N8N_ENCRYPTION_KEY "
-        "programmatically with openssl rand, never a value the user has to "
-        "invent or remember"
+        "expected bootstrap-vps.sh to generate secrets programmatically "
+        "with openssl rand, never a value the user has to invent or remember"
     )
     assert "N8N_ENCRYPTION_KEY" in content
-    # Idempotence guard: must check whether a *non-empty* key already
-    # exists before generating a new one, so re-running never clobbers a
-    # key already in use (that would brick every credential n8n holds).
-    assert "N8N_ENCRYPTION_KEY=.\\+" in content, (
-        "expected a non-empty-value guard (e.g. grep "
-        "'^N8N_ENCRYPTION_KEY=.\\+') before generating a new key"
+    # N8N_ENCRYPTION_KEY is generated via the shared ensure_env_secret()
+    # helper (also used for FIRECRAWL_REDIS_PASSWORD), not a bespoke inline
+    # block. Idempotence guard lives inside that helper: it only generates
+    # when the existing value is empty, so re-running never clobbers a key
+    # already in use (that would brick every credential n8n holds).
+    assert "ensure_env_secret N8N_ENCRYPTION_KEY" in content, (
+        "expected N8N_ENCRYPTION_KEY to be generated via the shared "
+        "ensure_env_secret() helper"
+    )
+    helper_start = content.index("ensure_env_secret()")
+    helper_body_end = content.index("ensure_env_secret N8N_ENCRYPTION_KEY")
+    helper_body = content[helper_start:helper_body_end]
+    assert 'if [ -n "$current" ]; then' in helper_body, (
+        "expected ensure_env_secret() to check for a *non-empty* existing "
+        "value before generating a new one"
     )
 
 
@@ -88,20 +96,26 @@ def test_n8n_compose_passes_encryption_key_to_the_container():
 
 
 def test_bootstrap_vps_key_generation_runs_after_env_chmod():
-    """The key-generation block must run after .env is confirmed to exist
-    and chmod 600'd, and must re-chmod 600 after rewriting it (a bare
-    `>>`/`mv` can reset the mode depending on umask)."""
+    """The key-generation call must run after .env is confirmed to exist
+    and chmod 600'd, and the shared helper it calls must re-chmod 600 after
+    rewriting the file (a bare `>>`/`mv` can reset the mode depending on
+    umask)."""
     content = BOOTSTRAP.read_text(encoding="utf-8")
     env_chmod_idx = content.index("chmod 600 .env")
-    key_idx = content.index("N8N_ENCRYPTION_KEY")
-    assert key_idx > env_chmod_idx, (
-        "key generation should come after the .env existence/chmod check"
+    call_idx = content.index("ensure_env_secret N8N_ENCRYPTION_KEY")
+    assert call_idx > env_chmod_idx, (
+        "N8N_ENCRYPTION_KEY generation should come after the .env "
+        "existence/chmod check"
     )
-    # The block must re-tighten permissions itself (it rewrites the file).
-    after_key_block = content[key_idx:]
-    assert "chmod 600 .env" in after_key_block or "chmod 600 \"$" in after_key_block, (
-        "expected the key-generation block to re-chmod 600 .env after "
-        "rewriting it"
+    # The shared helper itself must re-tighten permissions (it rewrites the
+    # file) -- checked on the helper's own body, not by text position
+    # relative to the call site, since the helper is defined once and
+    # called for multiple secrets.
+    helper_start = content.index("ensure_env_secret()")
+    helper_end = content.index("\n}\n", helper_start)
+    helper_body = content[helper_start:helper_end]
+    assert "chmod 600 .env" in helper_body, (
+        "expected ensure_env_secret() to re-chmod 600 .env after rewriting it"
     )
 
 
