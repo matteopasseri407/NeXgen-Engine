@@ -137,7 +137,20 @@ jobs:
         # No package.json/package-lock.json exists in this repo (checked at
         # the time this job was added) so there is no npm audit step; add
         # one alongside this if a Node project shows up later.
-        run: find . -path ./.git -prune -o -iname "requirements*.txt" -print0 | xargs -0 -n1 pip-audit -r
+        #
+        # --ignore-vuln entries below are a known, tracked debt, not a
+        # blanket suppression: fastapi==0.115.6 (03-INFRA/deploy/ocr/api/
+        # requirements.txt) pins `starlette<0.42.0`, which cannot satisfy any
+        # patched starlette release (fixes start at 0.47.2) -- fixing these
+        # needs a validated fastapi major-version bump against a real
+        # rapidocr/onnxruntime stack, out of scope for the pass that added
+        # this gate (verified live via pip-audit, 2026-07-12). Any OTHER new
+        # finding, on starlette or any other package, still fails the build.
+        # Remove these IDs the moment fastapi is bumped and re-verified.
+        run: |
+          IGNORE_STARLETTE_UNTIL_FASTAPI_BUMP="--ignore-vuln PYSEC-2026-161 --ignore-vuln PYSEC-2026-249 --ignore-vuln PYSEC-2026-248 --ignore-vuln PYSEC-2026-1942 --ignore-vuln PYSEC-2026-1941 --ignore-vuln CVE-2026-48818 --ignore-vuln CVE-2026-48817"
+          find . -path ./.git -prune -o -iname "requirements*.txt" -print0 \
+            | xargs -0 -n1 pip-audit -r $IGNORE_STARLETTE_UNTIL_FASTAPI_BUMP
 
   compose-validate:
     runs-on: ubuntu-latest
@@ -188,7 +201,11 @@ jobs:
             Write-Host "No .ps1 files found."
             exit 0
           }
-          $results = Invoke-ScriptAnalyzer -Path $files.FullName -Severity Warning, Error
+          # Looped, not `-Path $files.FullName`: with more than one file that
+          # binds an array where Invoke-ScriptAnalyzer's -Path expects a
+          # single string and throws "Cannot convert System.Object[]"
+          # (verified live in CI, 2026-07-12).
+          $results = $files.FullName | ForEach-Object { Invoke-ScriptAnalyzer -Path $_ -Severity Warning, Error }
           $results | Format-Table -AutoSize
           $blocking = $results | Where-Object { $_.Severity -eq 'Error' }
           if ($blocking) {

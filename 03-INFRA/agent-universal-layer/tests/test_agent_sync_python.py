@@ -777,8 +777,12 @@ def test_systemd_service_content_emits_quoted_environment_lines(sandbox, monkeyp
 
     content = mod._systemd_service_content(env)
 
-    assert f'Environment="AGENT_ENGINE_ROOT={engine_root_with_space.resolve()}"' in content
-    assert f'Environment="AGENT_VAULT_DATA={vault_data_with_space.resolve()}"' in content
+    # Built through the same helper under test, not a raw f-string: on
+    # Windows CI, engine_root_with_space.resolve() contains backslashes,
+    # which _systemd_env_line C-escapes -- a literal expected string would
+    # mismatch there even though the production code is correct.
+    assert mod._systemd_env_line("AGENT_ENGINE_ROOT", str(engine_root_with_space.resolve())) in content
+    assert mod._systemd_env_line("AGENT_VAULT_DATA", str(vault_data_with_space.resolve())) in content
     # No unquoted Environment= line should slip through for these two keys.
     assert "Environment=AGENT_ENGINE_ROOT=" not in content
     assert "Environment=AGENT_VAULT_DATA=" not in content
