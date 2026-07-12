@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import os
 import re
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -95,3 +96,171 @@ def test_antigravity_quota_is_a_warning_not_a_false_mcp_failure(sandbox):
 
     assert "Antigravity behavioral probe skipped: the selected model quota is unavailable" in result.stdout
     assert "Antigravity behavioral probe does not confirm" not in result.stdout
+
+
+# ── Local-Only vault-remote sentinel ("local"/"none") ────────────────────
+# Architectural-review finding: agent_sync.py's pull()/publish() already
+# special-case `env.remote in ("local", "none")` (the Local-Only sentinel
+# from USER-PROFILE.md's "Environment variable: KNOWLEDGE_VAULT_REMOTE=local").
+# agent-doctor.sh/.ps1 did NOT: the vault section tried a real `git fetch`
+# against a remote literally named "local"/"none" (which never exists), and
+# the resulting "?" ahead/behind comparison hard-FAILed a correctly
+# configured Local-Only install every single run.
+
+def _init_vault_git_repo(sandbox) -> None:
+    subprocess.run(["git", "init", "-b", "main", str(sandbox.vault)], check=True, capture_output=True)
+    subprocess.run(
+        ["git", "-C", str(sandbox.vault), "config", "user.email", "nexgen-tests.invalid"],
+        check=True, capture_output=True,
+    )
+    subprocess.run(
+        ["git", "-C", str(sandbox.vault), "config", "user.name", "NeXgen tests"],
+        check=True, capture_output=True,
+    )
+    subprocess.run(["git", "-C", str(sandbox.vault), "add", "."], check=True, capture_output=True)
+    subprocess.run(["git", "-C", str(sandbox.vault), "commit", "-m", "fixture"], check=True, capture_output=True)
+
+
+# These are exactly the connector-gating vars agent-doctor.sh's Mode-gating
+# reads (N8N_MCP_TOKEN, and vault-library's own two, kept isolated too for
+# the same reason). A dev machine actually running this project's own
+# Cloud-Server stack can have these set for real in the ambient shell
+# environment that sandbox.env() inherits via dict(os.environ); the
+# Mode-gating tests below need deterministic control over them regardless
+# of what the host running the suite happens to have configured.
+_CONNECTOR_ENV_VARS = ("N8N_MCP_TOKEN", "VAULT_LIBRARY_TOKEN", "VAULT_LIBRARY_URL",
+                       "FIRECRAWL_TUNNEL_PORT", "OCR_TUNNEL_PORT")
+
+
+def _run_doctor(sandbox, *args: str, env_overrides: dict | None = None, timeout: int = 60):
+    """Like conftest.run_agent_doctor, but lets a test override env vars
+    (KNOWLEDGE_VAULT_REMOTE, connector tokens, ...) -- run_agent_doctor()
+    itself calls sandbox.env() with no extra kwargs, and sandbox.env()
+    hardcodes KNOWLEDGE_VAULT_REMOTE=local, so overriding it (e.g. to
+    "none", or to a real remote name for the Mode-gating tests) requires
+    going through sandbox.env() directly. Always starts from a clean slate
+    for _CONNECTOR_ENV_VARS (see above), then applies env_overrides on top."""
+    sandbox.assert_is_sandbox()
+    env = sandbox.env()
+    for var in _CONNECTOR_ENV_VARS:
+        env.pop(var, None)
+    env.update(env_overrides or {})
+    return subprocess.run(
+        ["bash", str(sandbox.scripts_dir / "agent-doctor.sh"), *args],
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=timeout,
+    )
+
+
+@pytest.mark.parametrize("sentinel", ["local", "none"])
+def test_local_only_remote_sentinel_skips_fetch_and_never_fails(sandbox, sentinel):
+    _init_vault_git_repo(sandbox)
+
+    result = _run_doctor(sandbox, env_overrides={"KNOWLEDGE_VAULT_REMOTE": sentinel})
+
+    assert "commits behind the cloud" not in result.stdout, result.stdout
+    assert "the vault is not a git repo" not in result.stdout, result.stdout
+    assert f"Local-Only mode ({sentinel})" in result.stdout, result.stdout
+
+
+def test_non_local_remote_still_runs_the_real_fetch_ahead_behind_checks(sandbox):
+    """Guard against over-fixing: a REAL remote name must still go through
+    the fetch/ahead/behind path (and, since no such remote is configured in
+    this sandbox, still legitimately FAIL) -- the Local-Only branch must not
+    swallow genuine misconfiguration for non-local/non-none remotes."""
+    _init_vault_git_repo(sandbox)
+
+    result = _run_doctor(sandbox, env_overrides={"KNOWLEDGE_VAULT_REMOTE": "oracle"})
+
+    assert "Local-Only mode" not in result.stdout, result.stdout
+    assert "commits behind the cloud" in result.stdout, result.stdout
+
+
+# ── Mode-based gating of MCP connector checks ─────────────────────────────
+# Architectural-review finding: the "MCP connectors — reachability" and
+# "Tokens in env" sections hard-FAILed unconditionally on n8n/firecrawl/
+# vault-ocr, with no gating on the Mode declared in USER-PROFILE.md or on
+# what the user actually configured -- unlike vault-library, which already
+# WARNs (not FAILs) when VAULT_LIBRARY_URL is absent. A Cloud-Server user
+# with a real missing connector and a Local-Only user who never needed one
+# got the identical FAIL either way.
+
+def _lines_with(stdout: str, marker: str, needle: str) -> list[str]:
+    return [line for line in stdout.splitlines() if marker in line and needle in line]
+
+
+def _stub_curl_always_unreachable(sandbox) -> None:
+    """Deterministic http_code stub for agent-doctor's `code()` helper (which
+    shells out to curl against hardcoded 127.0.0.1 ports). Some dev machines
+    legitimately run real n8n/firecrawl/vault-ocr services on those exact
+    ports (5678/33002/33003), which would otherwise make these Mode-gating
+    tests flaky depending on what happens to be running locally. Forces
+    every reachability probe to read as unreachable (000) regardless of the
+    host's real local services, so the tests exercise only the gating LOGIC
+    (Mode / env-var presence), never real network state."""
+    curl_stub = sandbox.bin_stubs / "curl"
+    curl_stub.write_text("#!/bin/sh\nprintf '000'\nexit 0\n", encoding="utf-8")
+    curl_stub.chmod(0o755)
+
+
+def _write_user_profile_mode(sandbox, mode_value: str) -> Path:
+    profile = sandbox.vault / "99-INDEX" / "USER-PROFILE.md"
+    profile.parent.mkdir(parents=True, exist_ok=True)
+    profile.write_text(
+        "# User Profile and Host Awareness\n\n"
+        "## Architecture: Local-Only or Cloud-Server\n\n"
+        f"- **Mode**: `{mode_value}`\n",
+        encoding="utf-8",
+    )
+    return profile
+
+
+def test_no_user_profile_treats_missing_connectors_as_ok_not_fail(sandbox):
+    """Fresh sandbox has no USER-PROFILE.md at all: Mode must be treated as
+    unknown (WARN, never a crash), and n8n/firecrawl/vault-ocr -- genuinely
+    unreachable in this sandbox, with no token ever set -- must read as
+    correct-by-design (OK), not FAIL."""
+    _stub_curl_always_unreachable(sandbox)
+
+    result = _run_doctor(sandbox)
+
+    assert "Mode not found or not parseable" in result.stdout, result.stdout
+    assert not _lines_with(result.stdout, "✗", "n8n-mcp (5678)"), result.stdout
+    assert not _lines_with(result.stdout, "✗", "firecrawl (33002)"), result.stdout
+    assert not _lines_with(result.stdout, "✗", "vault-ocr (33003)"), result.stdout
+    assert not _lines_with(result.stdout, "✗", "N8N_MCP_TOKEN"), result.stdout
+    assert _lines_with(result.stdout, "✓", "not expected in current Mode"), result.stdout
+
+
+def test_mode_cloud_server_makes_a_really_missing_connector_fail(sandbox):
+    """The bug this closes: a Cloud-Server install with a genuinely missing
+    connector (nothing running/configured in this sandbox) must now produce
+    a real FAIL instead of the same silent pass a Local-Only install gets."""
+    _stub_curl_always_unreachable(sandbox)
+    _write_user_profile_mode(sandbox, "CLOUD-SERVER")
+
+    result = _run_doctor(sandbox)
+
+    assert "USER-PROFILE.md declares Mode: CLOUD-SERVER" in result.stdout, result.stdout
+    assert _lines_with(result.stdout, "✗", "n8n-mcp (5678)"), result.stdout
+    assert _lines_with(result.stdout, "✗", "N8N_MCP_TOKEN missing"), result.stdout
+
+
+def test_configured_env_var_is_checked_even_when_mode_says_local_only(sandbox):
+    """Hard product requirement: Mode is a floor, never a ceiling. A user who
+    declares LOCAL-ONLY but has already set N8N_MCP_TOKEN (mid-upgrade, or a
+    single cloud connector added while staying local for the rest) must have
+    that connector actually checked, not silently waved through just
+    because Mode says Local-Only."""
+    _stub_curl_always_unreachable(sandbox)
+    _write_user_profile_mode(sandbox, "LOCAL-ONLY")
+
+    result = _run_doctor(sandbox, env_overrides={"N8N_MCP_TOKEN": "fake-token-value"})
+
+    assert "USER-PROFILE.md declares Mode: LOCAL-ONLY" in result.stdout, result.stdout
+    assert "N8N_MCP_TOKEN present" in result.stdout, result.stdout
+    # n8n itself is still unreachable in the sandbox: now expected (the var is
+    # set), so it must FAIL for real instead of being waved through by Mode.
+    assert _lines_with(result.stdout, "✗", "n8n-mcp (5678)"), result.stdout

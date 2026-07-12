@@ -72,36 +72,47 @@ ok "detected: windows ($env:COMPUTERNAME)"
 sec "Vault (memory) - authoritative remote and mirrors"
 if ($RemoteConfigError) { bad "invalid sync remote config - run: agent-sync config authoritative_remote" } else { ok "sync remote config resolved ($Remote)" }
 if (Test-Path -LiteralPath (Join-Path $Vault ".git")) {
-  gitc @("fetch","--prune",$Remote,$Branch) | Out-Null
-  $b = (gitc @("rev-list","--count","$Branch..$Remote/$Branch")); if (-not $b) { $b = "?" }
-  $a = (gitc @("rev-list","--count","$Remote/$Branch..$Branch")); if (-not $a) { $a = "?" }
-  $d = @(gitc @("status","--porcelain","--untracked-files=no")).Where({ $_ }).Count
-  if ("$b" -eq "0") { ok "aligned with $Remote/$Branch (0 behind)" } else { bad "$b commits behind the cloud" }
-  # TODO(2026-07-10): Alert per dangling commit (da riguardare in review)
-  if ("$a" -eq "0" -or "$a" -eq "?") {
-    ok "no unpublished local commits"
+  if ($Remote -eq "local" -or $Remote -eq "none") {
+    # Local-Only sentinel (matches agent_sync.py's pull()/publish(): env.remote
+    # in ("local", "none")): there is no authoritative remote to compare
+    # against, so a fetch/ahead/behind/mirror check would otherwise try
+    # `git fetch` from a remote literally named "local"/"none" -- which never
+    # exists -- and hard-FAIL a correctly configured Local-Only install.
+    ok "Local-Only mode ($Remote): no authoritative remote to compare against, skipping fetch/ahead/behind/mirror checks"
+    $d = @(gitc @("status","--porcelain","--untracked-files=no")).Where({ $_ }).Count
+    if ($d -eq 0) { ok "working tree clean (tracked files)" } else { warn "$d tracked files not committed" }
   } else {
-    $oldest_ts = (gitc @("log","--reverse","--format=%ct","$Remote/$Branch..$Branch") | Select-Object -First 1)
-    if ($oldest_ts) {
-      $now = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
-      $age = $now - [int]$oldest_ts
-      if ($age -gt 7200) {
-        $hours = [math]::Floor($age / 3600)
-        bad "$a dangling commit(s) in Vault (oldest is ${hours}h old) - RUN vault-push!"
-      } else {
-        warn "$a unpublished local commits (recent, < 2h old)"
-      }
+    gitc @("fetch","--prune",$Remote,$Branch) | Out-Null
+    $b = (gitc @("rev-list","--count","$Branch..$Remote/$Branch")); if (-not $b) { $b = "?" }
+    $a = (gitc @("rev-list","--count","$Remote/$Branch..$Branch")); if (-not $a) { $a = "?" }
+    $d = @(gitc @("status","--porcelain","--untracked-files=no")).Where({ $_ }).Count
+    if ("$b" -eq "0") { ok "aligned with $Remote/$Branch (0 behind)" } else { bad "$b commits behind the cloud" }
+    # TODO(2026-07-10): Alert per dangling commit (da riguardare in review)
+    if ("$a" -eq "0" -or "$a" -eq "?") {
+      ok "no unpublished local commits"
     } else {
-      warn "$a unpublished local commits"
+      $oldest_ts = (gitc @("log","--reverse","--format=%ct","$Remote/$Branch..$Branch") | Select-Object -First 1)
+      if ($oldest_ts) {
+        $now = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
+        $age = $now - [int]$oldest_ts
+        if ($age -gt 7200) {
+          $hours = [math]::Floor($age / 3600)
+          bad "$a dangling commit(s) in Vault (oldest is ${hours}h old) - RUN vault-push!"
+        } else {
+          warn "$a unpublished local commits (recent, < 2h old)"
+        }
+      } else {
+        warn "$a unpublished local commits"
+      }
     }
-  }
-  if ($d -eq 0)     { ok "working tree clean (tracked files)" } else { warn "$d tracked files not committed (blocks the pull)" }
-  foreach ($mirror in $Mirrors) {
-    gitc @("fetch","--prune",$mirror,$Branch) | Out-Null
-    $authHead = (gitc @("rev-parse","$Remote/$Branch"))
-    $mirrorHead = (gitc @("rev-parse","$mirror/$Branch"))
-    if ($authHead -and "$authHead" -eq "$mirrorHead") { ok "mirror $mirror aligned with authoritative $Remote" }
-    else { warn "mirror $mirror differs from authoritative $Remote (canonical Vault remains $Remote)" }
+    if ($d -eq 0)     { ok "working tree clean (tracked files)" } else { warn "$d tracked files not committed (blocks the pull)" }
+    foreach ($mirror in $Mirrors) {
+      gitc @("fetch","--prune",$mirror,$Branch) | Out-Null
+      $authHead = (gitc @("rev-parse","$Remote/$Branch"))
+      $mirrorHead = (gitc @("rev-parse","$mirror/$Branch"))
+      if ($authHead -and "$authHead" -eq "$mirrorHead") { ok "mirror $mirror aligned with authoritative $Remote" }
+      else { warn "mirror $mirror differs from authoritative $Remote (canonical Vault remains $Remote)" }
+    }
   }
 } else { bad "the vault is not a git repo: $Vault" }
 
@@ -152,10 +163,56 @@ else {
   bad "agent-now not in PATH (run agent-sync.ps1)"
 }
 
+sec "Architecture Mode (99-INDEX/USER-PROFILE.md)"
+# Mode is a MINIMUM baseline the user commits to, never a ceiling (see the
+# clarifying paragraph in USER-PROFILE.md itself). It only gates whether a
+# missing/unreachable connector below counts as a real FAIL: a connector is
+# "expected" when Mode declares CLOUD-SERVER, OR when its own env var
+# (matching manifest.yaml's require_env) is already set regardless of Mode --
+# so an upgrade past the declared Mode, or a single cloud connector added
+# while staying Local-Only for the rest, is recognized automatically and
+# never punished for going beyond what Mode declares. A missing/unparseable
+# Mode is treated as unknown (same gating as Local-Only, never a crash).
+$UserProfileMd = Join-Path $Vault "99-INDEX\USER-PROFILE.md"
+$DeclaredMode = "unknown"
+if (Test-Path -LiteralPath $UserProfileMd) {
+  $modeLine = Select-String -LiteralPath $UserProfileMd -Pattern '\*\*Mode\*\*' | Select-Object -First 1
+  if ($modeLine) {
+    $modeValue = ($modeLine.Line -replace '.*\*\*Mode\*\*\s*:\s*', '') -replace '[`\[\]]', ''
+    $modeValue = $modeValue.Trim().ToUpperInvariant()
+    switch ($modeValue) {
+      "LOCAL-ONLY"   { $DeclaredMode = "local-only" }
+      "CLOUD-SERVER" { $DeclaredMode = "cloud-server" }
+      default        { $DeclaredMode = "unknown" }
+    }
+  }
+}
+switch ($DeclaredMode) {
+  "local-only"   { ok "USER-PROFILE.md declares Mode: LOCAL-ONLY" }
+  "cloud-server" { ok "USER-PROFILE.md declares Mode: CLOUD-SERVER" }
+  default        { warn "USER-PROFILE.md Mode not found or not parseable ($UserProfileMd) -- treated as unknown (same gating as Local-Only unless a connector's own env var is already set)" }
+}
+function Test-ConnectorExpected([string]$VarName) {
+  # A connector is "expected" (missing/unreachable is a real FAIL) when Mode
+  # declares CLOUD-SERVER, OR when its own env var (see manifest.yaml's
+  # require_env) is already set regardless of Mode.
+  if ($DeclaredMode -eq "cloud-server") { return $true }
+  return [bool][Environment]::GetEnvironmentVariable($VarName)
+}
+
 sec "MCP connectors - reachability"
-$c = httpcode "http://127.0.0.1:5678/healthz" $null; if ($c -eq 200) { ok "n8n-mcp (5678): $c" } else { bad "n8n-mcp (5678): $c" }
-$c = httpcode "http://127.0.0.1:33002/" $null; if ($c -eq 200 -or $c -eq 302) { ok "firecrawl (33002): $c" } else { bad "firecrawl (33002): $c" }
-$c = httpcode "http://127.0.0.1:33003/health" $null; if ($c -eq 200) { ok "vault-ocr (33003): $c" } else { bad "vault-ocr (33003): $c" }
+$c = httpcode "http://127.0.0.1:5678/healthz" $null
+if ($c -eq 200) { ok "n8n-mcp (5678): $c" }
+elseif (Test-ConnectorExpected "N8N_MCP_TOKEN") { bad "n8n-mcp (5678): $c" }
+else { ok "n8n-mcp (5678): not reachable ($c) - not expected in current Mode (Local-Only / N8N_MCP_TOKEN not set)" }
+$c = httpcode "http://127.0.0.1:33002/" $null
+if ($c -eq 200 -or $c -eq 302) { ok "firecrawl (33002): $c" }
+elseif (Test-ConnectorExpected "FIRECRAWL_TUNNEL_PORT") { bad "firecrawl (33002): $c" }
+else { ok "firecrawl (33002): not reachable ($c) - not expected in current Mode (Local-Only / FIRECRAWL_TUNNEL_PORT not set)" }
+$c = httpcode "http://127.0.0.1:33003/health" $null
+if ($c -eq 200) { ok "vault-ocr (33003): $c" }
+elseif (Test-ConnectorExpected "OCR_TUNNEL_PORT") { bad "vault-ocr (33003): $c" }
+else { ok "vault-ocr (33003): not reachable ($c) - not expected in current Mode (Local-Only / OCR_TUNNEL_PORT not set)" }
 if ($env:VAULT_LIBRARY_URL) {
   # Streamable HTTP MCP rejects a generic GET without its protocol Accept
   # header. OPTIONS is a bounded, authenticated route probe.
@@ -165,7 +222,10 @@ if ($env:VAULT_LIBRARY_URL) {
 if (Get-Command npx -ErrorAction SilentlyContinue) { ok "playwright: npx available" } else { warn "npx not in PATH (playwright MCP)" }
 
 sec "Tokens in env"
-foreach ($v in @("N8N_MCP_TOKEN","VAULT_LIBRARY_TOKEN","VAULT_LIBRARY_URL")) {
+if ([Environment]::GetEnvironmentVariable("N8N_MCP_TOKEN")) { ok "N8N_MCP_TOKEN present" }
+elseif (Test-ConnectorExpected "N8N_MCP_TOKEN") { bad "N8N_MCP_TOKEN missing" }
+else { ok "N8N_MCP_TOKEN not set - not expected in current Mode (Local-Only / n8n not configured)" }
+foreach ($v in @("VAULT_LIBRARY_TOKEN","VAULT_LIBRARY_URL")) {
   if ([Environment]::GetEnvironmentVariable($v)) { ok "$v present" } else { bad "$v missing" }
 }
 if ($env:DEEPSEEK_API_KEY) { ok "DEEPSEEK_API_KEY present" } else { warn "DEEPSEEK_API_KEY missing (OpenCode's default DeepSeek won't start)" }
