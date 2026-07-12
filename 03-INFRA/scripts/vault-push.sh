@@ -57,10 +57,23 @@ while [ $# -gt 0 ]; do
 done
 [ -z "$MSG" ] && { echo "vault-push: needs -m \"message\""; exit 2; }
 cd "$VAULT" || { echo "vault-push: vault not found ($VAULT)"; exit 1; }
-git remote get-url "$REMOTE" >/dev/null 2>&1 || {
-  echo "vault-push: authoritative remote '$REMOTE' is not configured"
-  exit 1
-}
+
+# Local-Only sentinel (same "local"/"none" values agent_sync.py's publish()
+# already special-cases): no remote is ever meant to exist, so skip the
+# "is it configured" check below instead of failing on a git remote that
+# was never supposed to be there. The commit itself still happens further
+# down — Local-Only means no publication target, not no local history.
+LOCAL_ONLY=0
+case "$REMOTE" in
+  local|none) LOCAL_ONLY=1 ;;
+esac
+
+if [ "$LOCAL_ONLY" != 1 ]; then
+  git remote get-url "$REMOTE" >/dev/null 2>&1 || {
+    echo "vault-push: authoritative remote '$REMOTE' is not configured"
+    exit 1
+  }
+fi
 
 if [ "${#FILES[@]}" -gt 0 ]; then
   git add -- "${FILES[@]}" || { echo "vault-push: git add failed"; exit 1; }
@@ -71,6 +84,11 @@ fi
 
 git commit -q -m "$MSG" || { echo "vault-push: commit failed"; exit 1; }
 echo "vault-push: commit $(git rev-parse --short HEAD)"
+
+if [ "$LOCAL_ONLY" = 1 ]; then
+  echo "vault-push: push skipped (Local-Only mode, remote=$REMOTE)"
+  exit 0
+fi
 
 # Publish to the authoritative remote: direct if fast-forward; otherwise a CLEAN rebase
 # (only on a clean working tree); aborts and flags on a real conflict.

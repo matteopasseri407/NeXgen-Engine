@@ -130,6 +130,34 @@ def test_vault_push_resolves_engine_sibling_when_invoked_through_symlink(sandbox
     assert local_head == oracle_head == mirror_head
 
 
+def test_vault_push_commits_locally_and_skips_publication_in_local_only_mode(sandbox):
+    _init_repo(sandbox)
+    before = _git(sandbox.vault, "rev-parse", "HEAD").stdout.strip()
+    target = sandbox.vault / "note.txt"
+    target.write_text("local-only change\n", encoding="utf-8")
+    env = sandbox.env()
+    env["KNOWLEDGE_VAULT_REMOTE"] = "local"
+
+    proc = subprocess.run(
+        [
+            "bash",
+            str(sandbox.scripts_dir / "vault-push.sh"),
+            "-m",
+            "local-only infra change",
+            str(target.relative_to(sandbox.vault)),
+        ],
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert "push skipped" in proc.stdout
+    after = _git(sandbox.vault, "rev-parse", "HEAD").stdout.strip()
+    assert after != before, "the local commit must still happen in Local-Only mode"
+
+
 def test_vault_push_rejects_invalid_remote_policy_before_commit(sandbox):
     _init_repo(sandbox)
     before = _git(sandbox.vault, "rev-parse", "HEAD").stdout.strip()
