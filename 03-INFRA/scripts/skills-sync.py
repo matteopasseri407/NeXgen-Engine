@@ -51,6 +51,17 @@ if sys.stdout.encoding and sys.stdout.encoding.lower().replace("-", "") != "utf8
 
 HOME = Path.home()
 HERE = Path(__file__).resolve().parent
+# Reuse the manifest-entry-name safety contract already enforced for MCP
+# server and Council seat names (config_schema.ENTRY_NAME_RE): a skill name
+# becomes a path component below (library/name, active/name, runtime
+# targets), so the same "single segment, no path separators, no leading
+# dot" rule applies here. Same import pattern as agent_sync.py; a validator
+# import must not create __pycache__ on a read-only --diff run.
+sys.dont_write_bytecode = True
+if str(HERE) not in sys.path:
+    sys.path.insert(0, str(HERE))
+from config_schema import ENTRY_NAME_RE  # noqa: E402
+
 # NOT HERE.parent.parent: when this script runs from a separate engine
 # checkout (AGENT_ENGINE_ROOT), the manifest still needs
 # to come from the user's actual data, same resolution as agent_sync.py's
@@ -110,6 +121,29 @@ def resolves_to(link: Path, target: Path) -> bool:
         return link.is_symlink() and link.resolve() == target.resolve()
     except OSError:
         return False
+
+
+def safe_name(name: str, label: str) -> bool:
+    """Defense in depth: re-validate `name` as a single safe path segment
+    right where it is about to become a filesystem path component (mirrors
+    ENTRY_NAME_RE, already enforced once by load_skills_manifest). This
+    protects any caller that builds a library/runtime path from a name
+    that did not go through the manifest loader -- e.g. install_github()
+    invoked directly, as the test suite already does.
+
+    Deliberately NOT a `dst.resolve()`-must-stay-inside-root check like the
+    one install_github applies to a GitHub skill's `sub` subpath: a
+    library entry is *meant* to become a symlink pointing outside its
+    immediate parent by design (a vault-origin skill's library entry links
+    back into the vault; runtime views link into the library), so
+    resolving the destination and demanding it stay "inside" would
+    misfire on that legitimate, by-design case -- confirmed by an existing
+    regression test that fails against exactly that check.
+    """
+    if not ENTRY_NAME_RE.fullmatch(name):
+        fail(f"{label}: unsafe name {name!r}, refusing to build a path from it")
+        return False
+    return True
 
 
 def same_tree_content(src: Path, dst: Path) -> bool:
@@ -263,6 +297,8 @@ def install_github(name: str, spec: dict, apply: bool) -> bool:
     at the manifest's immutable commit (no npx: it collides with Claude's
     whole-folder symlink). `path` in the manifest = subfolder containing
     SKILL.md (default: repo root). Returns True if present at the end."""
+    if not safe_name(name, f"library/{name}"):
+        return False
     repo = spec.get("repo", "")
     sub = spec.get("path", ".")
     commit = spec.get("commit", "")
@@ -544,6 +580,13 @@ def load_skills_manifest() -> dict | None:
         if not isinstance(name, str) or not name.strip():
             fail("invalid skills manifest: every skill name must be a non-empty string")
             return None
+        if not ENTRY_NAME_RE.fullmatch(name):
+            fail(
+                f"invalid skills manifest: skill name {name!r} must use only letters, "
+                "digits, '.', '_' or '-' (single path segment, no '/', '\\', no leading dot) -- "
+                f"'{name}' would be used as a library/runtime folder name"
+            )
+            return None
         if not isinstance(spec, dict):
             fail(f"invalid skills manifest: skill '{name}' must be a mapping")
             return None
@@ -688,6 +731,15 @@ def main() -> int:
         origin = spec.get("origin")
         targets = spec.get("targets", [])
         exposure = spec.get("exposure", "manual")
+
+        # Defense in depth: `name` is already restricted to a single safe
+        # path segment by ENTRY_NAME_RE inside load_skills_manifest(), so
+        # every join below (LIBRARY/name, ACTIVE/name, RUNTIME[...]/name)
+        # is guaranteed safe by construction. Re-check anyway in case a
+        # future caller ever feeds `main()` a `skills` mapping that did not
+        # go through the manifest loader.
+        if not safe_name(name, f"skill '{name}'"):
+            continue
 
         # 1) materialize in the non-discovered library
         if origin == "vault":

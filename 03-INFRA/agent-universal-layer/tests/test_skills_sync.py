@@ -383,6 +383,30 @@ def test_github_skill_rejects_a_different_fetched_commit(sandbox, monkeypatch, c
             "skills:\n  bad:\n    origin: vault\n    targets: []\n    owner: 5\n",
             "owner must be a string",
         ),
+        # PACCHETTO 6 (security audit, MEDIUM): a skill name is used
+        # unconfined as a path component (LIBRARY/name, RUNTIME[...]/name).
+        # Anything that isn't a single safe path segment must be rejected
+        # at manifest-load time, before any of those paths get built.
+        (
+            "skills:\n  \"../../../../marker-escape-dir/payload\":\n    origin: vault\n    targets: []\n",
+            "must use only letters, digits",
+        ),
+        (
+            "skills:\n  \"../escape\":\n    origin: vault\n    targets: []\n",
+            "must use only letters, digits",
+        ),
+        (
+            "skills:\n  \".hidden-leading-dot\":\n    origin: vault\n    targets: []\n",
+            "must use only letters, digits",
+        ),
+        (
+            "skills:\n  \"nested/slash\":\n    origin: vault\n    targets: []\n",
+            "must use only letters, digits",
+        ),
+        (
+            "skills:\n  back\\slash:\n    origin: vault\n    targets: []\n",
+            "must use only letters, digits",
+        ),
     ],
 )
 def test_invalid_manifest_returns_a_readable_error_without_traceback(sandbox, monkeypatch, capsys, manifest, message):
@@ -394,3 +418,72 @@ def test_invalid_manifest_returns_a_readable_error_without_traceback(sandbox, mo
     output = capsys.readouterr().out
     assert message in output
     assert "AttributeError" not in output
+
+
+def test_path_traversal_skill_name_is_rejected_before_any_write_to_disk(sandbox, tmp_path, monkeypatch):
+    """Reproduces the audit's PoC directly: a manifest whose skill name is a
+    traversal payload must never reach LIBRARY/name, ACTIVE/name, or any
+    RUNTIME[...]/name construction -- --apply must fail closed with zero
+    filesystem mutation, not just zero write to the *escaped* location."""
+    (sandbox.skills_dir / "skills.manifest.yaml").write_text(
+        "skills:\n"
+        "  \"../../../../marker-escape-dir/payload\":\n"
+        "    origin: vault\n"
+        "    targets: [claude, codex]\n"
+        "    exposure: core\n",
+        encoding="utf-8",
+    )
+    mod = load_skills_sync_module(sandbox)
+    monkeypatch.setattr(mod.sys, "argv", ["skills-sync.py", "--apply"])
+
+    assert mod.main() == 1
+
+    # Nothing was ever created: load_skills_manifest() fails before main()
+    # reaches the `if apply: LIBRARY.mkdir(...)` line, so not even the
+    # library/active roots exist, let alone anything escaping them.
+    assert not sandbox.skill_library.exists()
+    assert not sandbox.active_skills.exists()
+    assert not (sandbox.home / ".claude" / "skills").exists()
+    assert not (sandbox.home / ".codex" / "skills").exists()
+
+    # Belt and suspenders: the literal escape target the payload names must
+    # not exist anywhere near the scratch HOME (proves the traversal never
+    # executed, not just that we didn't look for it in the right place).
+    assert not any(tmp_path.parent.rglob("marker-escape-dir"))
+
+
+def test_valid_skill_names_with_dots_and_dashes_still_sync_normally(sandbox, monkeypatch):
+    """Guardrail against a too-strict regex: ordinary manifest names (the
+    only kind real manifests use) must be unaffected by the new check."""
+    (sandbox.skills_dir / "skills.manifest.yaml").write_text(
+        "skills:\n"
+        "  fake-skill-a:\n"
+        "    origin: vault\n"
+        "    targets: [claude, codex]\n"
+        "    exposure: core\n",
+        encoding="utf-8",
+    )
+    mod = load_skills_sync_module(sandbox)
+    monkeypatch.setattr(mod.sys, "argv", ["skills-sync.py", "--apply"])
+
+    assert mod.main() == 0
+    library = sandbox.skill_library / "fake-skill-a"
+    assert (library / "SKILL.md").is_file()
+    assert (sandbox.active_skills / "fake-skill-a").resolve() == library.resolve()
+    assert (sandbox.home / ".claude" / "skills" / "fake-skill-a").resolve() == library.resolve()
+    assert (sandbox.home / ".codex" / "skills" / "fake-skill-a").resolve() == library.resolve()
+
+
+def test_install_github_rejects_a_path_traversal_name_called_directly(sandbox):
+    """Defense in depth: install_github() takes a raw `name` string and is
+    called directly by other code/tests, bypassing load_skills_manifest's
+    regex check. It must independently refuse to build LIBRARY/name from an
+    unsafe name instead of trusting its caller."""
+    mod = load_skills_sync_module(sandbox)
+
+    assert not mod.install_github(
+        "../../../../marker-escape-dir/payload",
+        {"repo": "example/remote-skill", "commit": PINNED_COMMIT},
+        apply=True,
+    )
+    assert not sandbox.skill_library.exists()
