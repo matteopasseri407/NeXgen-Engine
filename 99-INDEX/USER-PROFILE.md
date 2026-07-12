@@ -16,6 +16,36 @@ This file contains the user's personal context and hardware specifics. Agents mu
 - **Primary workstation**: `[FILL IN OS — e.g. Windows/Mac/Linux]`, `[FILL IN SPECS — e.g. M2 Max, RTX 4090, 32GB RAM]`. `[FILL IN NOTES — e.g. Use it for local models / Not suited for local models]`.
 - **Secondary device (optional)**: `[FILL IN SECOND DEVICE SPECS, or remove if not present]`.
 
+## Team members (optional)
+
+> Leave this whole section out for a single-user install — the default,
+> and the overwhelming majority of installs today. Nothing below changes
+> any existing behavior (Council, skills sync, or anything else) unless
+> this section is present.
+
+This section declares who else uses this framework alongside the vault
+owner, so a small team can route Council seats and skills without
+contending for the same files. **It is a ROUTING/organizational aid
+only — who owns which host, which seat file, which skills. It is NOT a
+security boundary**: it grants no per-person credential isolation, no
+access control, no audit trail. For the real state of multi-user support
+(deliberately not built yet), see `docs/team.md`.
+
+- **`[MEMBER NAME/ID, e.g. marco]`**:
+  - **Host(s)**: `[one or more entries from "Host Awareness" above, e.g. Primary workstation]`
+  - **CLI(s)**: `[the CLIs this person uses, e.g. claude-code | codex]`
+  - **Seats file (optional)**: `[FILL IN, e.g. seats.marco.yaml — see council/seats.yaml.example for the naming convention. Omit to keep using the shared default seats.yaml]`
+
+Repeat one entry per member. The identifier you write above only becomes
+actual behavior through the `AGENT_TEAM_MEMBER` environment variable, set
+per machine (e.g. in that person's own shell profile) to their name/id
+from this list — this file's entries are read by humans and agents, not
+parsed field-by-field by code. Setting `AGENT_TEAM_MEMBER` is what makes
+Council resolve `seats.<member>.yaml` (see `council/seats.yaml.example`)
+and lets `skills-sync.py` propagate a skill's `scope: personal` only to
+its declared owner's machine(s) — and only once this section exists at
+all; see `docs/lazy-skills.md`.
+
 ## Knowledge Vault
 
 - **Primary workstation**: `[FILL IN ABSOLUTE PATH — e.g. /home/user/KnowledgeVault or C:\Users\user\KnowledgeVault]`
