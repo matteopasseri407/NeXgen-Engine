@@ -25,6 +25,15 @@ This file contains the user's personal context and hardware specifics. Agents mu
 
 - **Mode**: `[LOCAL-ONLY] or [CLOUD-SERVER]`
 
+Mode declares a MINIMUM baseline that `agent-doctor` verifies, never a maximum.
+It only decides which connector checks are "expected" (a real FAIL if
+missing/unreachable) versus correct-by-design for a Local-Only install. You
+can always add more than Mode declares — upgrading from Local-Only to
+Cloud-Server, or wiring in a single cloud connector while staying local for
+everything else — and `agent-doctor` recognizes it automatically the moment
+the matching environment variable is set, with no manual edits to the doctor
+itself required.
+
 ### If LOCAL-ONLY
 
 - Everything runs on the local machine. No VPS.
