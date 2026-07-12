@@ -15,6 +15,8 @@ You run at least one agentic CLI on your own machine and want the actual vault, 
 If you run several CLIs, or the same setup across more than one machine, that's where the framework does most of its work: the provisioner and doctor scripts described below exist for that case.
 If it's just one CLI on one machine, you still get the knowledge vault and the bootstrap discipline, without needing to run any of the sync tooling.
 
+Evaluating this for more than one person (a couple of colleagues, a small company)? The security and identity model is mono-user today. Read [`docs/team.md`](docs/team.md) before you adopt it as shared infrastructure.
+
 ## Demo path
 
 1. Clone the repo and run the preflight: `bash install.sh --check`. It checks prerequisites, verifies the vault scaffold, and lists which agentic CLIs it finds on your machine. It writes nothing.
@@ -161,6 +163,8 @@ NeXgen Engine mette tutte le CLI davanti a un'unica fonte canonica e ti dà un m
 Fai girare almeno una CLI agentica sulla tua macchina e vuoi il vault vero, non una demo.
 Se ne usi più di una, o lo stesso setup su più macchine, è lì che il framework rende di più: il provisioner e lo script doctor descritti sotto servono esattamente a quello.
 Se invece hai una sola CLI su una sola macchina, ti restano comunque il knowledge vault e la disciplina del bootstrap, senza dover far girare nessuno strumento di sync.
+
+Lo stai valutando per più di una persona (qualche collega, una piccola azienda)? Il modello di sicurezza e identità oggi è mono-utente. Leggi [`docs/team.md`](docs/team.md) prima di adottarlo come infrastruttura condivisa.
 
 ## Percorso demo
 
