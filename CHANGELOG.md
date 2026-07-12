@@ -41,6 +41,14 @@ of any engine release.
 - Dirty, wrong-branch, ahead, diverged, missing-remote, fetch-failed, and
   malformed-manifest states can no longer degrade into a successful-looking
   propagation run.
+- The distributed MCP manifest's `filesystem` server no longer mounts the
+  user's entire home (a bare `${HOME}` argument). It now mounts two
+  explicit, configurable roots — `AGENT_ENGINE_ROOT` and `AGENT_VAULT_DATA`,
+  the same canonical engine/data roots the rest of the layer already
+  resolves — and a user can add more roots as extra `args` entries. The
+  `memory` server is no longer mounted by default: it required
+  `MCP_MEMORY_OPT_IN` because it is a second, non-authoritative memory
+  channel outside the KnowledgeVault.
 
 ## [0.3.2] - 2026-07-10
 

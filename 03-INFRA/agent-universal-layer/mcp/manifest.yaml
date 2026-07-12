@@ -83,14 +83,31 @@ servers:
 
   # ---- extra per-CLI (opzionali, non bloccanti) ----------------------------
 
+  # filesystem: EXPLICIT roots only, never the whole home. The default here
+  # is limited to the two canonical product roots — the installed engine
+  # (AGENT_ENGINE_ROOT) and the private data root (AGENT_VAULT_DATA), the
+  # same variables agent_sync.py/council.py/vault-push.sh already resolve
+  # (falling back to ~/.nexgen-engine/03-INFRA and ~/KnowledgeVault). This
+  # keeps the agent's filesystem trust plane scoped to what the product
+  # actually needs instead of every personal file under the user's home.
+  # To extend it: add more absolute paths as extra `args` entries below (the
+  # filesystem server accepts any number of root directories) — do not widen
+  # this back to a single `${HOME}` argument in the shared template.
   filesystem:
     transport: stdio
     command: npx
-    args: ["-y", "@modelcontextprotocol/server-filesystem@2026.7.10", "${HOME}"]
+    args: ["-y", "@modelcontextprotocol/server-filesystem@2026.7.10", "${AGENT_ENGINE_ROOT}", "${AGENT_VAULT_DATA}"]
     targets: [codex]
 
+  # memory: a SECOND, non-authoritative memory channel that lives outside the
+  # KnowledgeVault (the single source of truth for memory in this layer) and
+  # is never synced, versioned, or reviewed the way vault notes are. Off by
+  # default; opt in per-machine by setting MCP_MEMORY_OPT_IN (any non-empty
+  # value) if you specifically want this separate scratch memory and accept
+  # that it diverges from the Vault.
   memory:
     transport: stdio
     command: npx
     args: ["-y", "@modelcontextprotocol/server-memory@2026.7.4"]
+    require_env: MCP_MEMORY_OPT_IN
     targets: [codex]
