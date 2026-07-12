@@ -166,8 +166,17 @@ jobs:
         # (env var interpolation, schema) - it doesn't need a running daemon,
         # pull images, or build anything. Docker is preinstalled on
         # ubuntu-latest runners.
+        #
+        # FIRECRAWL_REDIS_PASSWORD is declared `${VAR:?message}` (required)
+        # on purpose (2026-07-12 hardening, finding C): a silent empty
+        # default there would mean `--requirepass ""`, i.e. auth silently
+        # disabled. CI has no real .env, so a CI-only placeholder is
+        # exported here purely to let `config` validate the template's
+        # syntax/interpolation -- this never reaches a real deploy, which
+        # still gets its own value from bootstrap-vps.sh's ensure_env_secret.
         run: |
           set -euo pipefail
+          export FIRECRAWL_REDIS_PASSWORD="ci-validate-only-placeholder"
           for f in \
             03-INFRA/deploy/ocr/docker-compose.yml \
             03-INFRA/deploy/n8n/docker-compose.yml \
