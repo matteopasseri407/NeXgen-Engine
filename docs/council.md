@@ -76,11 +76,17 @@ council code-review \
 
 **Relay.** A sequential staffage of up to 5 stages, for example
 architect→builder→reviewer→judge), each stage seeing the full original
-brief plus the previous stage's output quoted as untrusted data, never as
-an instruction. Every supported CLI can participate when its seat is declared
-in the sequence. The OpenCode cost pre-check only reorders OpenCode candidates
-within their original decision-document order; it never promotes another provider merely
-because it has no OpenCode usage data.
+brief plus the previous stage's output formatted as a quoted block and
+prefaced with an instruction to evaluate it, not obey it. That framing is a
+prompt-level convention, not a technical control: nothing stops a
+compromised or adversarially steered seat from ignoring the instruction and
+producing a misleading verdict for the next stage to read. Treat a relay's
+final VERDICT as consultative input for your own judgment, never as proof
+that the chain's output is correct. Every supported CLI can participate
+when its seat is declared in the sequence. The OpenCode cost pre-check only
+reorders OpenCode candidates within their original decision-document order;
+it never promotes another provider merely because it has no OpenCode usage
+data.
 ```bash
 council relay \
   "Design a rate limiter for the public API." \

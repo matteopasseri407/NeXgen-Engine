@@ -37,6 +37,16 @@ unrelated gates — don't conflate them:
   pushing a real secret or personal path into the public engine history.
   Normal users never run `engine-push`; it has nothing to do with your own
   vault data or your own Council sessions.
+  The `remote.origin.pushurl` trick (`PUSH-DISABLED-use-engine-push`) and
+  the local `pre-commit`/`commit-msg` hooks that back this discipline are
+  UX guardrails against an accidental `git push`, not an enforced security
+  boundary: both live in a local clone's config and `.git/hooks`, so anyone
+  with filesystem access to that clone (or a fresh clone that never had
+  `engine-push` installed) can bypass them. The technical control that
+  actually survives a malicious or careless local setup is on GitHub's
+  side — branch protection on `main` requires every commit to carry a
+  signature GitHub itself verifies (see "Release signing" below), not a
+  local hook's say-so.
 
 ## Supported versions
 
