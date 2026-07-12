@@ -76,7 +76,7 @@ check_prereqs(){
 }
 
 windows_note(){
-  [ "$OS" = windows ] && printf '\n  %sWindows: early preview, actively being worked on. The MULTI-profile\n  PowerShell scripts (agent-sync.ps1, agent-doctor.ps1) run, but the MCP\n  config generator (render.py) does not have a Windows dialect yet and a\n  couple of paths (e.g. the Antigravity instructions file) are inferred by\n  analogy with Linux, not yet confirmed live. MINIMAL profile is the safer\n  bet on Windows today.%s\n' "$YEL" "$R"
+  [ "$OS" = windows ] && printf '\n  %sWindows: early preview, actively being worked on. The MULTI-profile\n  PowerShell scripts (agent-sync.ps1, agent-doctor.ps1) run, and the MCP\n  config generator (render.py) does have a Windows dialect, exercised by\n  CI on windows-latest. A couple of paths (e.g. the Antigravity\n  instructions file) are still inferred by analogy with Linux, not yet\n  confirmed on physical hardware. MINIMAL profile is the safer bet on\n  Windows today.%s\n' "$YEL" "$R"
 }
 
 check_scaffold(){

@@ -4,7 +4,9 @@ This lists every file the installer (`INIT.md`), `install.sh`, and the MULTI-pro
 
 ## `install.sh`
 
-Writes nothing. It only creates missing scaffold folders inside the repo itself (`01-NOTES/`, `02-PROJECTS/`, `04-NOW/`, `99-INDEX/`, `99-SECRETS/`, each with a `.gitkeep`) if they're missing from your clone, which normally does not happen on a full clone.
+`bash install.sh --check` is strictly read-only: a missing scaffold folder is reported as a failed check (`✗`), never created.
+
+Plain `bash install.sh` (the default, guided mode) is almost as quiet: the only thing it can write is missing scaffold folders inside the repo itself (`01-NOTES/`, `02-PROJECTS/`, `04-NOW/`, `99-INDEX/`, `99-SECRETS/`, each with a `.gitkeep`), and only if they're missing from your clone — which normally does not happen on a full clone. It never writes outside the repo and asks no questions it doesn't discard afterward (the guided profile interview at the end is recommendation-only; nothing you answer is persisted by this script).
 
 ## `INIT.md` (the AI-guided installer, any profile)
 
@@ -29,6 +31,26 @@ These are patches to files that must already exist (each CLI creates its own def
 - `~/.local/state/agent-sync.log`: a plain-text run log.
 - `~/.local/state/agent-sync.lock`: the stable one-byte host-wide transaction lock.
 - `~/ANTIGRAVITY.md`: removed if present as a dead symlink (Antigravity doesn't read that path).
+
+### Windows equivalent: scheduled task and hidden wrapper
+
+On Windows, every `agent-sync apply`/`guard` run (`install_scheduler` in
+`agent_sync.py`) self-heals the same recurring trigger that systemd provides
+on Linux, using only your own user account (no admin elevation, no service):
+
+- A hidden VBS wrapper, `start-agent-sync-hidden.vbs`, is written next to the
+  engine's PowerShell scripts (`<engine root>/scripts/`). It shells out to
+  `agent-sync.ps1 guard` via `powershell.exe -NoProfile -ExecutionPolicy
+  Bypass`, run with a hidden window so no console flashes on each cycle.
+- Two Task Scheduler entries named `KnowledgeVault Agent Sync` and
+  `KnowledgeVault Agent Sync Logon` are created or updated via `schtasks.exe`:
+  one fires every 30 minutes, the other on logon. Both invoke the hidden VBS
+  wrapper through `wscript.exe`.
+- If the logon trigger can't be registered (`schtasks.exe` failure), a copy
+  of the same hidden VBS wrapper is placed in your Startup folder
+  (`%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup\KnowledgeVault
+  Agent Sync.vbs`) as a fallback so the recurring guard still runs after you
+  log in.
 
 The remote policy itself is private data, not an engine runtime derivative. In
 a MULTI vault it may be declared at

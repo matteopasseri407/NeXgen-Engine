@@ -58,13 +58,13 @@ discovery roots and are opened only when needed. See
 
 ## Shared Tools via MCP (Modular & Free-Tier Ready)
 
-Agents share infrastructure rather than reinventing it. A few services run once, and every agent reaches them over the Model Context Protocol (MCP):
+Agents share infrastructure rather than reinventing it. A few services run once, in an environment you deploy and own (not a service this project or its author operates for you), and every agent reaches them over the Model Context Protocol (MCP):
 
-> **Note:** These specific tools are completely interchangeable. They were selected because they run comfortably and at zero cost on an **Oracle Cloud Always Free VPS** (4 ARM Ampere cores, 24GB RAM, 200GB SSD). You can easily swap them for enterprise equivalents.
+> **Note:** These specific tools are completely interchangeable. They were selected because they run comfortably and at zero cost on an **Oracle Cloud Always Free VPS** (4 ARM Ampere cores, 24GB RAM, 200GB SSD) — a tier anyone can provision for themselves. You can easily swap them for enterprise equivalents.
 
-- **Semantic Search:** A self-hosted retrieval layer (static embeddings via model2vec + BM25) runs CPU-only on a private VPS. Agents query the knowledge base by meaning without sending internal data to cloud models.
-- **Web Scraping:** A self-hosted Firecrawl instance serves as the default read-only lane.
-- **Local OCR:** A self-hosted OCR service extracts text from screenshots, logs, and scanned documents locally.
+- **Semantic Search:** A self-hosted retrieval layer (static embeddings via model2vec + BM25) you run CPU-only on your own private VPS. Agents query the knowledge base by meaning without sending internal data to cloud models.
+- **Web Scraping:** A self-hosted Firecrawl instance you deploy serves as the default read-only lane.
+- **Local OCR:** A self-hosted OCR service you deploy extracts text from screenshots, logs, and scanned documents locally.
 - **Visible Browser:** For interactive tasks (forms, logins, page checks), agents attach to a real, visible Chrome window via the DevTools protocol. **Agents are strictly forbidden from running headless browsers behind the user's back.**
 
 ## What We Deliberately Didn't Build
@@ -129,7 +129,7 @@ You don't need to fill out configuration files manually.
 
 **Why is this Alpha?**
 Linux is the daily-driven platform and the most tested, but the framework is still in Alpha because cross-platform support and core orchestrators are actively settling. Specifically:
-- **Windows Support:** While the core provisioner was just unified into a single Python script (`agent_sync.py`), the MCP config generator (`render.py`) still lacks a Windows dialect, and some runtime paths are inferred rather than confirmed live.
+- **Windows Support:** The core provisioner (`agent_sync.py`) and the MCP config generator (`render.py`, via a per-server `windows:` override block in the manifest) both have a Windows dialect, and CI runs the full pytest suite on `windows-latest` (job `engine-tests-windows`) on every push. That proves the shared code paths, not a physical machine: a couple of runtime paths (e.g. the Antigravity instructions file) are still inferred by analogy with Linux rather than confirmed live, and the vendor adapters and Windows launcher below still need that physical verification.
 - **AI Council:** The deterministic orchestrator (`council.py`) supports `opencode`, `agy`, `codex`, `claude`, and `ollama` seats. Its optional routing adapter proposes exact locally verified models and efforts, with declared fallbacks, without letting an external workflow rewrite private cross-machine data or auto-invoke a seat. A human explicitly chooses the seat count and models. Vendor adapters and the Windows launcher still need physical cross-platform verification.
 
 MINIMAL profile is the safer starting point on Windows today. macOS follows the Linux code paths but has seen less real-world use.
@@ -203,13 +203,13 @@ dalle root di discovery eager e si aprono solo quando servono. Vedi
 
 ## Tool Condivisi tramite MCP (Modulari e ottimizzati per Free-Tier)
 
-Gli agenti condividono l'infrastruttura invece di reinventarla. Alcuni servizi girano in singola istanza e tutti gli agenti vi accedono tramite Model Context Protocol (MCP):
+Gli agenti condividono l'infrastruttura invece di reinventarla. Alcuni servizi girano in singola istanza, in un ambiente che installi e possiedi tu (non un servizio gestito centralmente da questo progetto o dal suo autore), e tutti gli agenti vi accedono tramite Model Context Protocol (MCP):
 
-> **Nota importante:** Questi tool specifici sono completamente intercambiabili. Sono stati scelti perché girano comodamente e a costo zero su una **VPS Oracle Cloud Always Free** (4 core ARM Ampere, 24GB di RAM, 200GB di SSD). Possono essere sostituiti con alternative Enterprise in base alle necessità.
+> **Nota importante:** Questi tool specifici sono completamente intercambiabili. Sono stati scelti perché girano comodamente e a costo zero su una **VPS Oracle Cloud Always Free** (4 core ARM Ampere, 24GB di RAM, 200GB di SSD) — un tier che chiunque può attivare per sé. Possono essere sostituiti con alternative Enterprise in base alle necessità.
 
-- **Ricerca Semantica:** Un livello di retrieval self-hosted (embedding statici via model2vec + BM25) gira in CPU-only su una VPS privata. Gli agenti interrogano la knowledge base per significato senza inviare dati interni a modelli cloud.
-- **Web Scraping:** Un'istanza Firecrawl self-hosted funge da corsia read-only predefinita.
-- **OCR Locale:** Un servizio OCR self-hosted estrae testo da screenshot, log e documenti scansionati localmente.
+- **Ricerca Semantica:** Un livello di retrieval self-hosted (embedding statici via model2vec + BM25) che fai girare in CPU-only sulla tua VPS privata. Gli agenti interrogano la knowledge base per significato senza inviare dati interni a modelli cloud.
+- **Web Scraping:** Un'istanza Firecrawl self-hosted che installi tu, che funge da corsia read-only predefinita.
+- **OCR Locale:** Un servizio OCR self-hosted che installi tu, che estrae testo da screenshot, log e documenti scansionati localmente.
 - **Browser Visibile:** Per i task interattivi (form, login, controlli su pagine), gli agenti si collegano a una finestra Chrome reale e visibile tramite protocollo DevTools. **Agli agenti è severamente vietato eseguire browser headless all'insaputa dell'utente.**
 
 ## Cosa NON abbiamo costruito (di proposito)
@@ -274,7 +274,7 @@ Non devi compilare i file di configurazione a mano.
 
 **Perché siamo in Alpha?**
 Linux è la piattaforma usata quotidianamente e la più testata, ma il framework è in Alpha perché il supporto cross-platform e gli orchestratori principali si stanno ancora stabilizzando. Nello specifico:
-- **Supporto Windows:** Anche se il provisioner principale è appena stato unificato in uno script Python (`agent_sync.py`), il generatore di config MCP (`render.py`) non ha ancora un dialetto Windows, e alcuni percorsi runtime sono dedotti per analogia con Linux piuttosto che confermati dal vivo.
+- **Supporto Windows:** Sia il provisioner principale (`agent_sync.py`) sia il generatore di config MCP (`render.py`, tramite un blocco `windows:` di override per-server nel manifest) hanno un dialetto Windows, e la CI esegue l'intera suite pytest su `windows-latest` (job `engine-tests-windows`) a ogni push. Questo dimostra che il codice condiviso funziona, non che è stato verificato su una macchina fisica: un paio di percorsi runtime (es. il file di istruzioni di Antigravity) restano dedotti per analogia con Linux piuttosto che confermati dal vivo, e gli adapter dei vendor e il launcher Windows citati sotto necessitano ancora di quella verifica fisica.
 - **Consiglio AI:** L'orchestratore deterministico (`council.py`) supporta i seat `opencode`, `agy`, `codex`, `claude` e `ollama`.
 L'adattatore opzionale di routing propone modelli ed effort verificabili localmente, con fallback dichiarati, senza far riscrivere a un workflow esterno i dati privati cross-machine o invocare un seat in automatico.
 L'umano sceglie esplicitamente quanti seat chiamare e quali modelli usare.
