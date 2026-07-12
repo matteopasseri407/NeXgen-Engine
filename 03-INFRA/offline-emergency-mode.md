@@ -9,7 +9,7 @@ type: reference
 
 # Emergency Mode — Remote Backend Down or Machine Offline
 
-When the remote backend is unreachable, these fall together: note writes (MCP `vault-library`), semantic RAG, Firecrawl (the default web lane), and n8n. The local layer keeps working in read mode. This runbook says what to do and what not to do, so nobody has to improvise.
+When the remote backend is unreachable, these fall together: note writes (MCP `vault-library`), semantic RAG, Firecrawl (the default web lane), Vault OCR (the default OCR lane, same remote backend), and n8n. The local layer keeps working in read mode. This runbook says what to do and what not to do, so nobody has to improvise.
 
 ## First: figure out what is down
 
@@ -39,4 +39,4 @@ When the remote backend is unreachable, these fall together: note writes (MCP `v
 ## Remote recovery (if the VPS itself is down)
 
 - Known precedent: OOM from a container with no memory cap, a past incident. Never launch containers without `--memory`.
-- Restart from the cloud provider's web console, then `ssh <remote-alias> "sudo docker ps"` and health-check the containers (`vault-mcp`, `vault-semantic`, `n8n`, the Firecrawl stack).
+- Restart from the cloud provider's web console, then `ssh <remote-alias> "sudo docker ps"` and health-check the containers (`vault-mcp`, `vault-semantic`, `n8n`, the Firecrawl stack, `vault-ocr-api`).

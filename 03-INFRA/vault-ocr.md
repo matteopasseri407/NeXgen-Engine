@@ -36,6 +36,8 @@ Batch images sequentially. The remote backend is shared with n8n, Firecrawl, vau
 
 If OCR is down, fall back to vision for non-sensitive content and report the outage. For sensitive documents, do not send them to cloud vision automatically.
 
+In a **Local-Only setup** (no remote backend), OCR is absent. Model vision is the default for image-contained text. See `99-INDEX/USER-PROFILE.md` for the user's architecture.
+
 ## Commands
 
 Health:
