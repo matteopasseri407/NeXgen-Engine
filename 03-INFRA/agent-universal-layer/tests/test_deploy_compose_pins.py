@@ -182,3 +182,87 @@ def test_backup_restore_rollback_passes_env_file():
     assert rollback_invocations, "expected a real `docker compose -f ... up` in the rollback path"
     for line in rollback_invocations:
         assert "--env-file" in line, f"missing --env-file: {line!r}"
+
+
+# --- P7 audit finding (MEDIUM): no host firewall baseline -----------------
+#
+# 127.0.0.1 binding in each docker-compose.yml is the only thing standing
+# between these services and the public internet. bootstrap-vps.sh must
+# add a second, independent layer: a ufw baseline (deny incoming by
+# default, SSH always allowed), applied only if ufw is present, and never
+# in an order that could lock out the SSH session running the script.
+
+def _bootstrap_lines():
+    """Real (non-comment) lines only, so a comment that merely *mentions*
+    a ufw command (e.g. explaining why ordering matters) can't masquerade
+    as the actual invocation when checking ordering."""
+    return [
+        line for line in BOOTSTRAP.read_text(encoding="utf-8").splitlines()
+        if not line.strip().startswith("#")
+    ]
+
+
+def _first_index(lines, pattern):
+    for i, line in enumerate(lines):
+        if re.search(pattern, line):
+            return i
+    return None
+
+
+def test_bootstrap_vps_degrades_gracefully_without_ufw():
+    """Must not hard-require ufw: check with `command -v`, not `require()`
+    (which exits 1), so boxes without ufw still deploy the stacks, just
+    with a visible warning."""
+    content = BOOTSTRAP.read_text(encoding="utf-8")
+    assert re.search(r"command -v ufw\b", content), "expected a `command -v ufw` presence check"
+    assert not re.search(r"require\s+ufw\b", content), (
+        "must not use require() for ufw -- that exits 1 and blocks deploy "
+        "entirely on boxes without ufw"
+    )
+    assert re.search(r"(?i)warn", content), "expected a visible warning when ufw is missing"
+
+
+def test_bootstrap_vps_ufw_baseline_rules_present():
+    content = BOOTSTRAP.read_text(encoding="utf-8")
+    assert re.search(r"ufw\s+allow\s+OpenSSH\b", content), "expected 'ufw allow OpenSSH'"
+    assert re.search(r"ufw\s+default\s+deny\s+incoming\b", content), "expected 'ufw default deny incoming'"
+    assert re.search(r"ufw\s+default\s+allow\s+outgoing\b", content), "expected 'ufw default allow outgoing'"
+    assert re.search(r"ufw\s+(--force\s+enable|enable\s+--force)\b", content), (
+        "expected 'ufw enable' with --force (non-interactive, safe for automation)"
+    )
+
+
+def test_bootstrap_vps_ufw_allows_ssh_before_denying_incoming():
+    """The SSH allow rule must be applied before default-deny/enable, or a
+    fresh `ufw enable` on a box with no prior rules can cut off the very
+    SSH session running this script."""
+    lines = _bootstrap_lines()
+    allow_ssh_idx = _first_index(lines, r"ufw\s+allow\s+OpenSSH\b")
+    deny_incoming_idx = _first_index(lines, r"ufw\s+default\s+deny\s+incoming\b")
+    enable_idx = _first_index(lines, r"ufw\s+(--force\s+enable|enable\s+--force)\b")
+
+    assert allow_ssh_idx is not None, "expected 'ufw allow OpenSSH'"
+    assert deny_incoming_idx is not None, "expected 'ufw default deny incoming'"
+    assert enable_idx is not None, "expected 'ufw enable'"
+
+    assert allow_ssh_idx < deny_incoming_idx, (
+        "'ufw allow OpenSSH' must appear before 'ufw default deny incoming' "
+        "to avoid locking out the running SSH session"
+    )
+    assert allow_ssh_idx < enable_idx, (
+        "'ufw allow OpenSSH' must appear before 'ufw enable' "
+        "to avoid locking out the running SSH session"
+    )
+
+
+def test_bootstrap_vps_ufw_baseline_documented_as_minimum():
+    """Finding explicitly requires this be documented as a minimum
+    baseline, not an enterprise firewall, so operators do not mistake it
+    for full hardening."""
+    content = BOOTSTRAP.read_text(encoding="utf-8")
+    assert re.search(r"(?i)minimum baseline", content), (
+        "expected the ufw step to document itself as a minimum baseline"
+    )
+    assert re.search(r"(?i)not.{0,40}enterprise", content), (
+        "expected an explicit disclaimer that this is not an enterprise firewall"
+    )

@@ -98,6 +98,20 @@ Each stack binds to `127.0.0.1` only — they are NOT exposed on the public
 interface. You reach them from your workstation over SSH tunnels (see
 `03-INFRA/remote-automation.md`).
 
+That binding is the primary defense, but it is a single point of failure —
+one mis-typed `127.0.0.1:` in a `docker-compose.yml` and a service is
+reachable from the internet with nothing else in the way. As a second,
+independent layer, `bootstrap-vps.sh` also configures a **minimum** host
+firewall baseline via `ufw` if it is installed: allow OpenSSH, default deny
+incoming, default allow outgoing, then enable. It is idempotent (safe to
+re-run) and applies the SSH allow rule before enabling deny-by-default, so
+it will not lock you out of an existing SSH session. This is not an
+enterprise firewall — no rate limiting, no egress filtering, no per-service
+rules — just a fail-closed backstop for the compose binding. If `ufw` is
+not available, the script prints a warning and skips it rather than
+failing; install `ufw` (or configure an equivalent firewall by hand) and
+re-run.
+
 ## Reach the stacks from your workstation
 
 Create persistent SSH tunnels (port variables come from

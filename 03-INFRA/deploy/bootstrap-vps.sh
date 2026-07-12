@@ -35,6 +35,45 @@ docker compose version >/dev/null 2>&1 || {
   exit 1
 }
 
+configure_firewall() {
+  # Host-level baseline: 127.0.0.1 binding in each docker-compose.yml is
+  # the primary defense against exposing these services to the internet,
+  # but that is a single point of failure -- one mis-typed binding and a
+  # service is world-reachable with nothing else in the way. ufw is a
+  # second, independent layer.
+  #
+  # This is a MINIMUM baseline, not an enterprise firewall: it only
+  # guarantees "deny inbound except SSH" so a bad compose binding fails
+  # closed instead of open. It does not do rate limiting, egress
+  # filtering, fail2ban, or per-service rules -- add those separately if
+  # the threat model needs them.
+  #
+  # Idempotent and safe to re-run: `ufw allow`/`ufw default` are no-ops
+  # (or overwrite harmlessly) if already set, and `ufw enable --force`
+  # on an already-enabled firewall just reasserts the same rules.
+  if ! command -v ufw >/dev/null 2>&1; then
+    echo "WARNING: ufw not found -- skipping host firewall setup."
+    echo "  The only thing standing between these services and the public"
+    echo "  internet is the 127.0.0.1 binding in each docker-compose.yml."
+    echo "  Install ufw (e.g. 'apt-get install ufw' on Debian/Ubuntu) and"
+    echo "  re-run this script, or configure an equivalent firewall by hand."
+    return 0
+  fi
+
+  echo "==> Host firewall (ufw baseline)"
+  # Allow SSH FIRST -- must land before default-deny/enable below, or a
+  # fresh `ufw enable` on a box with no prior rules can cut off the very
+  # SSH session running this script.
+  ufw allow OpenSSH
+  ufw default deny incoming
+  ufw default allow outgoing
+  ufw --force enable
+  echo "  ufw enabled: deny incoming by default, OpenSSH allowed, outgoing allowed."
+  echo "  This is a minimum baseline, not a substitute for per-service hardening."
+}
+
+configure_firewall
+
 if [ -f .env ]; then
   # .env.example is world-readable on purpose (placeholder values, no
   # secrets, lives in a public repo). A plain `cp .env.example .env` does
