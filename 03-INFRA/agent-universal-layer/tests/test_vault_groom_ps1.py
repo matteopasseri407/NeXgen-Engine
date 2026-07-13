@@ -193,6 +193,11 @@ def _run(groom_env, *args, extra_env=None, stdin_input=None):
         env=env,
         input=stdin_input,
         capture_output=True,
+        # Decode the wrapper's (now UTF-8) output deterministically, not with
+        # the pytest process's platform-default code page -- on Windows that
+        # default would turn an accented tranche into mojibake here even
+        # though vault-groom.ps1 emitted it correctly.
+        encoding="utf-8",
         text=True,
         timeout=60,
     )
@@ -363,6 +368,7 @@ def test_apply_toctou_guard_aborts_if_plan_record_changes_before_write_pass(groo
         [PWSH, "-NoProfile", "-File", str(GROOM_PS1), "apply"],
         env=groom_env["env"],
         stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        encoding="utf-8",
         text=True,
     )
 
@@ -407,11 +413,20 @@ def test_apply_toctou_guard_aborts_if_plan_record_changes_before_write_pass(groo
     err_reader.start()
 
     def tamper_then_confirm():
+        # Trigger on the Write-Host banner's last line, NOT the Read-Host
+        # "Procedere?" prompt: on Windows PowerShell delivers a Read-Host
+        # prompt to the console host, not the redirected stdout pipe, so it
+        # never appears in what this thread drains and the feeder would time
+        # out (the process then blocks on Read-Host forever). The banner is
+        # printed strictly after $TrancheHash is computed and the plan record
+        # is written, and right before Read-Host blocks -- the exact window
+        # this TOCTOU test needs -- and Write-Host lands on stdout on both
+        # platforms.
         deadline = time.monotonic() + 25
         while time.monotonic() < deadline:
             with stdout_lock:
                 seen = "".join(stdout_chunks)
-            if "Procedere?" in seen:
+            if "Qualunque altra risposta annulla" in seen:
                 break
             time.sleep(0.02)
         else:
@@ -567,7 +582,7 @@ def test_apply_runner_non_zero_exit_still_writes_audit_record_and_quarantines(gr
 @pytest.mark.parametrize("target_runner", ["claude", "agy"])
 def test_prompt_special_characters_survive_the_ps1_shim_byte_intact(groom_env, target_runner):
     tricky_tranche = (
-        "| Nota | Azione | Perché |\n"
+        "| Nota | Azione | Perch\u00e9 |\n"
         "|---|---|---|\n"
         "| `stub-groomed.md` | **archive** | a < b, superato |\n"
     )

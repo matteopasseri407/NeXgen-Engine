@@ -52,7 +52,7 @@ GROOM_SH = REAL_VAULT / "03-INFRA" / "scripts" / "vault-groom.sh"
 # flow in most of these tests has CLEAN coverage end to end -- a dedicated
 # mismatched tranche is used separately for the dirty-coverage test.
 FIXED_TRANCHE = (
-    "| Nota | Azione | Perché |\n"
+    "| Nota | Azione | Perch\u00e9 |\n"
     "|---|---|---|\n"
     "| `stub-groomed.md` | **archive** | superseded by new-note.md |\n"
 )
@@ -60,7 +60,7 @@ FIXED_TRANCHE = (
 # Names a file the write-pass stub never touches -- guarantees dirty
 # coverage (unaddressed target + the stub's real commit becomes unplanned).
 DIRTY_TRANCHE = (
-    "| Nota | Azione | Perché |\n"
+    "| Nota | Azione | Perch\u00e9 |\n"
     "|---|---|---|\n"
     "| `never-touched.md` | **archive** | ok |\n"
 )
