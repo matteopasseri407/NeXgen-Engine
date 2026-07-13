@@ -230,6 +230,143 @@ def test_backup_restore_actually_produces_restricted_permissions(tmp_path):
     assert archive_mode == 0o600, f"expected archive mode 0600, got {oct(archive_mode)}"
 
 
+# --- restore path (beta-readiness review, 2026-07-13) ---------------------
+# Only `backup` had a dynamic test before this; `cmd_restore` -- the
+# destructive half, wipes a volume's current content -- had never been
+# exercised by anything beyond shellcheck. Same no-real-daemon-needed stub
+# philosophy as the backup test above, extended to `docker volume create`
+# and the restore's own `sh -c "rm -rf ...; tar xzf ..."` invocation: a
+# real host directory stands in for the named docker volume, and the stub
+# actually performs the wipe + extract for real, so the test proves the
+# restore logic works, not just that the right docker flags are present in
+# the source.
+
+def _restore_docker_stub(stub_dir: Path) -> None:
+    docker_stub = stub_dir / "docker"
+    docker_stub.write_text(
+        "#!/usr/bin/env bash\n"
+        "set -euo pipefail\n"
+        "STAND_IN=\"${VOLUME_STAND_IN_ROOT:?VOLUME_STAND_IN_ROOT must be set}\"\n"
+        "if [ \"$1\" = volume ] && [ \"$2\" = create ]; then\n"
+        "  mkdir -p \"$STAND_IN/$3\"\n"
+        "  exit 0\n"
+        "fi\n"
+        "if [ \"$1\" = run ]; then\n"
+        "  shift\n"
+        "  volume_name=\"\"\n"
+        "  backup_host=\"\"\n"
+        "  args=(\"$@\")\n"
+        "  i=0\n"
+        "  while [ $i -lt ${#args[@]} ]; do\n"
+        "    if [ \"${args[$i]}\" = -v ]; then\n"
+        "      i=$((i+1))\n"
+        "      mount=\"${args[$i]}\"\n"
+        "      case \"$mount\" in\n"
+        "        *:/volume) volume_name=\"${mount%:/volume}\" ;;\n"
+        "        *:/backup:ro) backup_host=\"${mount%:/backup:ro}\" ;;\n"
+        "      esac\n"
+        "    fi\n"
+        "    i=$((i+1))\n"
+        "  done\n"
+        "  volume_host=\"$STAND_IN/$volume_name\"\n"
+        "  mkdir -p \"$volume_host\"\n"
+        "  archive=\"$(ls \"$backup_host\"/*.tar.gz 2>/dev/null | head -n1)\"\n"
+        "  rm -rf \"${volume_host:?}\"/* \"${volume_host:?}\"/.[!.]* 2>/dev/null || true\n"
+        "  if [ -n \"$archive\" ]; then tar xzf \"$archive\" -C \"$volume_host\"; fi\n"
+        "  exit 0\n"
+        "fi\n"
+        "exit 0\n"
+    )
+    docker_stub.chmod(docker_stub.stat().st_mode | stat.S_IEXEC)
+
+
+@WINDOWS_SKIP
+def test_backup_restore_restore_replaces_volume_content_after_confirmation(tmp_path):
+    stub_dir = tmp_path / "stub-bin"
+    stub_dir.mkdir()
+    _restore_docker_stub(stub_dir)
+
+    stand_in_root = tmp_path / "volumes"
+    volume_stand_in = stand_in_root / "n8n-data-test"
+    volume_stand_in.mkdir(parents=True)
+    (volume_stand_in / "stale-file.txt").write_text("must be gone after restore\n", encoding="utf-8")
+
+    archive_dir = tmp_path / "backups"
+    archive_dir.mkdir()
+    restore_source = tmp_path / "restore-source"
+    restore_source.mkdir()
+    (restore_source / "database.sqlite").write_text("restored content\n", encoding="utf-8")
+    archive = archive_dir / "n8n-data_20260713T000000Z.tar.gz"
+    subprocess.run(
+        ["tar", "czf", str(archive), "-C", str(restore_source), "."],
+        check=True, capture_output=True,
+    )
+
+    env = dict(os.environ)
+    env["PATH"] = f"{stub_dir}:{env.get('PATH', '')}"
+    env["VOLUME_STAND_IN_ROOT"] = str(stand_in_root)
+
+    result = subprocess.run(
+        ["bash", str(BACKUP_RESTORE), "restore", str(archive), "n8n-data-test"],
+        cwd=DEPLOY, env=env, input="yes\n", capture_output=True, text=True, timeout=30,
+    )
+
+    assert result.returncode == 0, f"restore failed:\n{result.stdout}\n{result.stderr}"
+    assert not (volume_stand_in / "stale-file.txt").exists(), "old volume content must be wiped, not merged"
+    assert (volume_stand_in / "database.sqlite").read_text(encoding="utf-8") == "restored content\n"
+
+
+@WINDOWS_SKIP
+def test_backup_restore_restore_aborts_without_explicit_yes(tmp_path):
+    stub_dir = tmp_path / "stub-bin"
+    stub_dir.mkdir()
+    _restore_docker_stub(stub_dir)
+
+    stand_in_root = tmp_path / "volumes"
+    volume_stand_in = stand_in_root / "n8n-data-test"
+    volume_stand_in.mkdir(parents=True)
+    (volume_stand_in / "must-survive.txt").write_text("untouched\n", encoding="utf-8")
+
+    archive_dir = tmp_path / "backups"
+    archive_dir.mkdir()
+    archive = archive_dir / "n8n-data_20260713T000000Z.tar.gz"
+    archive.write_bytes(b"")  # never read: the abort must happen before docker is ever invoked
+
+    env = dict(os.environ)
+    env["PATH"] = f"{stub_dir}:{env.get('PATH', '')}"
+    env["VOLUME_STAND_IN_ROOT"] = str(stand_in_root)
+
+    result = subprocess.run(
+        ["bash", str(BACKUP_RESTORE), "restore", str(archive), "n8n-data-test"],
+        cwd=DEPLOY, env=env, input="not-yes\n", capture_output=True, text=True, timeout=30,
+    )
+
+    assert result.returncode != 0
+    assert "aborted" in result.stdout
+    assert (volume_stand_in / "must-survive.txt").read_text(encoding="utf-8") == "untouched\n"
+
+
+def test_backup_restore_restore_rejects_a_missing_archive_before_any_docker_call(tmp_path):
+    # `require docker` runs before dispatch regardless of subcommand, so a
+    # docker stub still needs to exist on PATH -- it must just never be
+    # CALLED for this case. Make it fail loudly if it ever is.
+    stub_dir = tmp_path / "stub-bin"
+    stub_dir.mkdir()
+    docker_stub = stub_dir / "docker"
+    docker_stub.write_text("#!/usr/bin/env bash\necho 'docker should never be invoked here' >&2\nexit 1\n")
+    docker_stub.chmod(docker_stub.stat().st_mode | stat.S_IEXEC)
+    env = dict(os.environ)
+    env["PATH"] = f"{stub_dir}:{env.get('PATH', '')}"
+
+    result = subprocess.run(
+        ["bash", str(BACKUP_RESTORE), "restore", str(tmp_path / "does-not-exist.tar.gz"), "n8n-data-test"],
+        cwd=DEPLOY, env=env, capture_output=True, text=True, timeout=30,
+    )
+
+    assert result.returncode != 0
+    assert "no such backup file" in result.stderr
+
+
 # --- Finding C: /tmp/secrets.md decrypted world-readable ------------------
 
 def test_secrets_readme_never_redirects_gpg_straight_to_a_bare_tmp_path():
