@@ -46,6 +46,16 @@ and lets `skills-sync.py` propagate a skill's `scope: personal` only to
 its declared owner's machine(s) — and only once this section exists at
 all; see `docs/lazy-skills.md`.
 
+> **If you (the vault owner) have your own `scope: personal` skills:** the
+> moment this section exists at all, `skills-sync.py` starts filtering
+> every personal-scoped skill by `AGENT_TEAM_MEMBER`, on every machine —
+> including yours. If your own machine never sets `AGENT_TEAM_MEMBER`
+> (nothing above told you to, since you're "the owner", not a listed
+> member), your own personal skills silently stop syncing to yourself the
+> moment you add the first teammate. Fix: add your own entry to the list
+> above and set `AGENT_TEAM_MEMBER=<your-id>` on your own machine(s) too,
+> matching whatever `owner:` your personal skills already declare.
+
 ## Knowledge Vault
 
 - **Primary workstation**: `[FILL IN ABSOLUTE PATH — e.g. /home/user/KnowledgeVault or C:\Users\user\KnowledgeVault]`
