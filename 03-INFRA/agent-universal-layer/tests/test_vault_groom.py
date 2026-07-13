@@ -18,6 +18,13 @@ from pathlib import Path
 
 import pytest
 
+pytestmark = pytest.mark.skipif(
+    os.name == "nt",
+    reason="vault-groom.sh is the POSIX gardener launcher; Windows CI's `bash` "
+           "resolves to WSL, which has no distribution installed there and fails "
+           "immediately -- vault-groom.ps1 is the untested-here Windows twin.",
+)
+
 TESTS_DIR = Path(__file__).resolve().parent
 REAL_UL = TESTS_DIR.parent
 REAL_VAULT = REAL_UL.parent.parent

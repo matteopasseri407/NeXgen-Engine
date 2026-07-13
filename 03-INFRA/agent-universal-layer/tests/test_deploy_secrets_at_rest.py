@@ -346,6 +346,7 @@ def test_backup_restore_restore_aborts_without_explicit_yes(tmp_path):
     assert (volume_stand_in / "must-survive.txt").read_text(encoding="utf-8") == "untouched\n"
 
 
+@WINDOWS_SKIP
 def test_backup_restore_restore_rejects_a_missing_archive_before_any_docker_call(tmp_path):
     # `require docker` runs before dispatch regardless of subcommand, so a
     # docker stub still needs to exist on PATH -- it must just never be
