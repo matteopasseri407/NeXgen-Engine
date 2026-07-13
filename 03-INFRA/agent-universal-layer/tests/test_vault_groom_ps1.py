@@ -248,7 +248,9 @@ def test_apply_confirmation_is_case_sensitive(groom_env):
 
 
 def test_apply_confirmed_executes_exact_approved_tranche_inside_the_clone(groom_env):
-    proc = _run(groom_env, "apply", stdin_input="yes\n")
+    # GROOM_KEEP_CLONE: the promoted clone is removed by default; keep it
+    # so the write pass's recorded cwd can be compared against it below.
+    proc = _run(groom_env, "apply", stdin_input="yes\n", extra_env={"GROOM_KEEP_CLONE": "1"})
     assert proc.returncode == 0, proc.stdout + proc.stderr
     recs = _records(groom_env)
     assert len(recs) == 2, "confirming must invoke propose, then write"
@@ -281,7 +283,9 @@ def test_apply_confirmed_executes_exact_approved_tranche_inside_the_clone(groom_
 
 
 def test_clone_has_no_remotes_after_setup(groom_env):
-    proc = _run(groom_env, "apply", stdin_input="yes\n")
+    # GROOM_KEEP_CLONE: keep the promoted clone (removed by default) so its
+    # remote configuration can be inspected after the run.
+    proc = _run(groom_env, "apply", stdin_input="yes\n", extra_env={"GROOM_KEEP_CLONE": "1"})
     assert proc.returncode == 0, proc.stdout + proc.stderr
     clone_dirs = _clone_dirs(groom_env)
     assert len(clone_dirs) == 1
@@ -290,7 +294,9 @@ def test_clone_has_no_remotes_after_setup(groom_env):
 
 
 def test_clean_run_promotes_exactly_the_audited_oid(groom_env):
-    proc = _run(groom_env, "apply", stdin_input="yes\n")
+    # GROOM_KEEP_CLONE: keep the promoted clone (removed by default) so the
+    # exact OID it audited can be read back and compared to what got promoted.
+    proc = _run(groom_env, "apply", stdin_input="yes\n", extra_env={"GROOM_KEEP_CLONE": "1"})
     assert proc.returncode == 0, proc.stdout + proc.stderr
 
     clone_dirs = _clone_dirs(groom_env)
@@ -348,22 +354,32 @@ def test_apply_toctou_guard_aborts_if_plan_record_changes_before_write_pass(groo
     # as if it were the original, missing the TOCTOU trigger entirely. See
     # the matching comment in test_vault_groom.py's own TOCTOU test.
     stdout_chunks: list[str] = []
+    stderr_chunks: list[str] = []
     stdout_lock = threading.Lock()
 
-    def read_stdout():
-        # Character-by-character, NOT `for line in proc.stdout`: Read-Host's
-        # own prompt text has no trailing newline -- a readline-based
-        # iterator blocks forever waiting for one that never comes before
-        # the human answers, deadlocking this exact banner-detection wait.
+    def _drain(stream, sink):
+        # Character-by-character, NOT `for line in stream`: Read-Host's own
+        # prompt text has no trailing newline -- a readline-based iterator
+        # blocks forever waiting for one that never comes before the human
+        # answers, deadlocking this exact banner-detection wait. Both pipes
+        # are drained on DAEMON threads: on Windows a grandchild that
+        # inherited a pipe's write end (the clone's git) can keep read(1)
+        # from ever seeing EOF, and a non-daemon reader stuck there would
+        # wedge the whole pytest process at interpreter exit -- a daemon one
+        # is abandoned instead. stderr is drained concurrently for the same
+        # reason, so the trailing assertions never do a blocking main-thread
+        # read. See the matching comment in test_vault_groom.py's TOCTOU test.
         while True:
-            ch = proc.stdout.read(1)
+            ch = stream.read(1)
             if not ch:
                 break
             with stdout_lock:
-                stdout_chunks.append(ch)
+                sink.append(ch)
 
-    reader = threading.Thread(target=read_stdout)
+    reader = threading.Thread(target=_drain, args=(proc.stdout, stdout_chunks), daemon=True)
+    err_reader = threading.Thread(target=_drain, args=(proc.stderr, stderr_chunks), daemon=True)
     reader.start()
+    err_reader.start()
 
     def tamper_then_confirm():
         deadline = time.monotonic() + 25
@@ -384,13 +400,23 @@ def test_apply_toctou_guard_aborts_if_plan_record_changes_before_write_pass(groo
     # Not proc.communicate(): with input=None it closes stdin immediately on
     # entry, which would race the feeder thread's write -- see the matching
     # comment in test_vault_groom.py's own TOCTOU test.
-    feeder = threading.Thread(target=tamper_then_confirm)
+    feeder = threading.Thread(target=tamper_then_confirm, daemon=True)
     feeder.start()
     feeder.join(timeout=30)
-    proc.wait(timeout=30)
+    try:
+        proc.wait(timeout=30)
+    except subprocess.TimeoutExpired:
+        # The banner never appeared (feeder never fed stdin, Read-Host still
+        # blocking) or the process wedged: kill it so the pipes close, the
+        # daemon drains end, and the assertions below fail loudly instead of
+        # the job hanging.
+        proc.kill()
+        proc.wait(timeout=10)
     reader.join(timeout=5)
-    stdout = "".join(stdout_chunks)
-    stderr = proc.stderr.read()
+    err_reader.join(timeout=5)
+    with stdout_lock:
+        stdout = "".join(stdout_chunks)
+        stderr = "".join(stderr_chunks)
 
     assert proc.returncode == 1, stdout + stderr
     assert "plan record changed after approval" in stderr

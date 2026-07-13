@@ -249,6 +249,10 @@ jobs:
     # the runner's real HOME. Canonical runner is `python -m pytest` (not
     # tests/run.sh, which is a thin Fedora-only convenience wrapper).
     runs-on: ubuntu-latest
+    # The suite finishes in ~80s; a run past this window means a subprocess
+    # wedged (a pwsh/git child holding a pipe open, a Read-Host with no
+    # stdin). Fail with a captured log instead of hanging to the 6h default.
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
@@ -268,6 +272,10 @@ jobs:
     # shell/doctor tests are skipped by pytest markers; the Windows-specific
     # value is the direct agent_sync.py guard smoke in a sandboxed USERPROFILE.
     runs-on: windows-latest
+    # windows-latest is slow but not unbounded: a normal run is minutes. Cap
+    # it so a Windows-only subprocess deadlock surfaces as a failed job with
+    # a log, not a silent 6h hang burning a Windows runner.
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
