@@ -136,12 +136,11 @@ Prefer fewer questions and more autonomy? `AI-INSTALLER.md` is the same install 
 
 ## Platform status
 
-**Why is this Alpha?**
-Linux is the daily-driven platform and the most tested, but the framework is still in Alpha because cross-platform support and core orchestrators are actively settling. Specifically:
-- **Windows Support:** The core provisioner (`agent_sync.py`) and the MCP config generator (`render.py`, via a per-server `windows:` override block in the manifest) both have a Windows dialect, and CI runs the full pytest suite on `windows-latest` (job `engine-tests-windows`) on every push. That proves the shared code paths, not a physical machine: a couple of runtime paths (e.g. the Antigravity instructions file) are still inferred by analogy with Linux rather than confirmed live, and the vendor adapters and Windows launcher below still need that physical verification.
-- **AI Council:** The deterministic orchestrator (`council.py`) supports `opencode`, `agy`, `codex`, `claude`, and `ollama` seats. Its optional routing adapter proposes exact locally verified models and efforts, with declared fallbacks, without letting an external workflow rewrite private cross-machine data or auto-invoke a seat. A human explicitly chooses the seat count and models. Vendor adapters and the Windows launcher still need physical cross-platform verification.
+**Linux: released.** Linux is the daily-driven, most-tested platform, and this is the cut to run there: the whole engine — provisioner, doctor, gardener, council, sync — is exercised end to end on Fedora and green on CI. macOS follows the same POSIX code paths but has seen less real-world use.
 
-MINIMAL profile is the safer starting point on Windows today. macOS follows the Linux code paths but has seen less real-world use.
+**Why is this still Alpha?** Cross-platform support and the core orchestrators are still settling:
+- **Windows: software-complete, not yet physically verified.** The provisioner (`agent_sync.py`), the MCP config generator (`render.py`, via a per-server `windows:` override block in the manifest), and the PowerShell launchers all have a Windows dialect, and CI runs the *full* pytest suite — including the pwsh gardener tests — on `windows-latest` (job `engine-tests-windows`) on every push, now genuinely green after a round of real portability fixes (console UTF-8, plan-record byte-parity, prompt delivery through the launcher, and file locking). That proves the shared code paths on a CI runner, not a physical install: a couple of runtime paths (e.g. the Antigravity instructions file) are still inferred by analogy with Linux, and the vendor adapters still want a live cross-platform pass. Treat Windows as preview until that physical verification lands; the MINIMAL profile is the safer starting point there today.
+- **AI Council:** The deterministic orchestrator (`council.py`) supports `opencode`, `agy`, `codex`, `claude`, and `ollama` seats. Its optional routing adapter proposes exact locally verified models and efforts, with declared fallbacks, without letting an external workflow rewrite private cross-machine data or auto-invoke a seat. A human explicitly chooses the seat count and models.
 
 ## License
 
@@ -286,16 +285,11 @@ Preferisci meno domande e più autonomia? `AI-INSTALLER.md` è la stessa install
 
 ## Stato per piattaforma
 
-**Perché siamo in Alpha?**
-Linux è la piattaforma usata quotidianamente e la più testata, ma il framework è in Alpha perché il supporto cross-platform e gli orchestratori principali si stanno ancora stabilizzando. Nello specifico:
-- **Supporto Windows:** Sia il provisioner principale (`agent_sync.py`) sia il generatore di config MCP (`render.py`, tramite un blocco `windows:` di override per-server nel manifest) hanno un dialetto Windows, e la CI esegue l'intera suite pytest su `windows-latest` (job `engine-tests-windows`) a ogni push. Questo dimostra che il codice condiviso funziona, non che è stato verificato su una macchina fisica: un paio di percorsi runtime (es. il file di istruzioni di Antigravity) restano dedotti per analogia con Linux piuttosto che confermati dal vivo, e gli adapter dei vendor e il launcher Windows citati sotto necessitano ancora di quella verifica fisica.
-- **Consiglio AI:** L'orchestratore deterministico (`council.py`) supporta i seat `opencode`, `agy`, `codex`, `claude` e `ollama`.
-L'adattatore opzionale di routing propone modelli ed effort verificabili localmente, con fallback dichiarati, senza far riscrivere a un workflow esterno i dati privati cross-machine o invocare un seat in automatico.
-L'umano sceglie esplicitamente quanti seat chiamare e quali modelli usare.
-I test automatici coprono il flusso dei quattro mode.
-Gli adapter dei vendor e il launcher Windows devono ancora essere verificati fisicamente su entrambe le piattaforme.
+**Linux: rilasciato.** Linux è la piattaforma usata quotidianamente e la più testata, ed è questo il taglio da usare lì: l'intero engine — provisioner, doctor, giardiniere, council, sync — è esercitato end to end su Fedora ed è verde in CI. macOS segue gli stessi percorsi di codice POSIX ma ha visto meno uso reale.
 
-Il profilo MINIMAL è il punto di partenza più sicuro su Windows oggi. macOS segue gli stessi percorsi di codice di Linux ma ha visto meno uso reale.
+**Perché è ancora Alpha?** Il supporto cross-platform e gli orchestratori principali si stanno ancora stabilizzando:
+- **Windows: software-completo, non ancora verificato fisicamente.** Il provisioner (`agent_sync.py`), il generatore di config MCP (`render.py`, tramite un blocco `windows:` di override per-server nel manifest) e i launcher PowerShell hanno tutti un dialetto Windows, e la CI esegue l'intera suite pytest — inclusi i test pwsh del giardiniere — su `windows-latest` (job `engine-tests-windows`) a ogni push, ora davvero verde dopo un giro di fix di portabilità reali (encoding UTF-8 della console, byte-parity del plan record, consegna del prompt attraverso il launcher, file locking). Questo dimostra che il codice condiviso funziona su un runner CI, non su un'installazione fisica: un paio di percorsi runtime (es. il file di istruzioni di Antigravity) restano dedotti per analogia con Linux, e gli adapter dei vendor vogliono ancora un passaggio cross-platform dal vivo. Tratta Windows come preview finché non arriva quella verifica fisica; lì il profilo MINIMAL è il punto di partenza più sicuro oggi.
+- **Consiglio AI:** L'orchestratore deterministico (`council.py`) supporta i seat `opencode`, `agy`, `codex`, `claude` e `ollama`. L'adattatore opzionale di routing propone modelli ed effort verificabili localmente, con fallback dichiarati, senza far riscrivere a un workflow esterno i dati privati cross-machine o invocare un seat in automatico. L'umano sceglie esplicitamente quanti seat chiamare e quali modelli usare. I test automatici coprono il flusso dei quattro mode.
 
 ## Licenza
 
