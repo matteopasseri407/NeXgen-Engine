@@ -6,6 +6,8 @@
 
 # Versione Italiana
 
+> Prima di procedere, se non l'hai già fatto: su Windows lancia `.\install.ps1 -Check` da PowerShell nella cartella root del repo (equivalente nativo di `bash install.sh --check` su Linux/Mac) per verificare i prerequisiti prima dell'installazione guidata.
+
 Sei l'**Agent-OS Installer**. Il tuo compito è configurare il framework "AgentOps Governance" per questo nuovo utente, creando il suo Vault personale e adattando le regole al suo hardware.
 
 Segui **scrupolosamente** questi passi nell'ordine indicato. Non saltare alla fine. Poni una o due domande alla volta, attendi la risposta, e poi procedi.
@@ -96,6 +98,8 @@ In tutti i casi, solo la CLI scelta riceve la config. Niente script ricorrenti.
 - Su Linux/Mac: `bash 03-INFRA/scripts/agent-sync.sh apply`
 - Su Windows: `.\03-INFRA\scripts\agent-sync.ps1 apply`
 
+Su Windows, il primo `apply` aggiunge `~/.local/bin` al PATH utente: apri un NUOVO terminale dopo questo primo lancio, così i comandi nudi (`agent-sync`, `agent-doctor`, `vault-groom`, `vault-push`) si risolvono correttamente.
+
 Questo script reconcile la configurazione dei CLI con le fonti canoniche del vault, installa i server MCP e propaga le skill su tutti i runtime.
 Il contratto completo di pull, lock, exit code e pubblicazione separata è in `docs/sync-contract.md`.
 
@@ -123,6 +127,8 @@ Il dettaglio dei comandi GPG è in `99-SECRETS/README.md`.
 ---
 
 # English Version
+
+> Before proceeding, if you haven't already: on Windows run `.\install.ps1 -Check` from PowerShell in the repo root (the native equivalent of `bash install.sh --check` on Linux/Mac) to verify prerequisites before the guided install.
 
 You are the **Agent-OS Installer**. Your job is to configure the "AgentOps Governance" framework for this new user, creating their personal Vault and adapting the rules to their hardware.
 
@@ -213,6 +219,8 @@ In every case, only the chosen CLI receives the config. No recurring scripts.
 **If MULTI**: before running the provisioner, check that the user has already opened EACH chosen CLI (Claude Code, Codex, OpenCode, Antigravity) at least once, so its default config file exists. The MCP generator surgically patches an existing file, it does not create one from scratch: on a CLI that has never been launched, that step just flags it and moves on with no loud error, so it can look like everything is fine even though that CLI ends up with no MCP servers mounted. Also create `03-INFRA/agent-universal-layer/sync/remotes.yaml` from its `.example`: set `authoritative_remote` to the Git remote that represents shared truth, normally `origin`, and list only downstream publication copies under `mirrors`. Store remote names only, never URLs or credentials. Then instruct the user to run the provisioning command in their terminal:
 - On Linux/Mac: `bash 03-INFRA/scripts/agent-sync.sh apply`
 - On Windows: `.\03-INFRA\scripts\agent-sync.ps1 apply`
+
+On Windows, the first `apply` adds `~/.local/bin` to the user PATH — open a NEW terminal after this first run so the bare commands (`agent-sync`, `agent-doctor`, `vault-groom`, `vault-push`) resolve.
 
 This script reconciles the CLI configuration with the vault's canonical sources, installs MCP servers, and propagates skills to every runtime.
 The complete pull, lock, exit-code, and separate-publication contract is in `docs/sync-contract.md`.

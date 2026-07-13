@@ -20,7 +20,7 @@ When the remote backend is unreachable, these fall together: note writes (MCP `v
 
 - The local mirror of the vault, in full READ mode: notes, skills, INDEX, manifest.
 - CLI agents with cloud models, as long as internet works even if the remote backend does not.
-- On the Windows desktop, if internet is also down: the local Gemma 4 12B worker via Ollama is the only agent still operational (instructions in `agent-universal-layer/instructions/LOCAL-WORKER.md`).
+- If internet is also down: the locally-configured worker via Ollama (see `agent-universal-layer/instructions/LOCAL-WORKER.md` for the model and setup), if one is configured, is the only agent still operational. With no local model configured, offline means no agent at all until connectivity returns.
 
 ## Rules during an emergency
 

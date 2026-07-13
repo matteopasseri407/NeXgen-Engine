@@ -87,6 +87,11 @@ GIT_CLONE_TIMEOUT_SECONDS = 60
 # that loads bodies on demand. A big `core` skill landing there defeats that
 # discipline silently -- this is the tripwire for it (2026-07-13 review).
 CODEX_CORE_SIZE_WARN_BYTES = 4096
+# Several core skills can each stay under the per-skill guideline above and
+# still pile up into a large eagerly-scanned directory for Codex. The
+# aggregate is the actual thing that hurts (total bytes Codex reads on every
+# run), so it gets its own, independent tripwire.
+CODEX_CORE_AGGREGATE_WARN_BYTES = 8192
 GIT_COMMIT_SHA = re.compile(r"[0-9a-fA-F]{40}\Z")
 TEAM_MEMBERS_HEADING_RE = re.compile(r"(?im)^##\s+team members\b")
 
@@ -716,6 +721,7 @@ def main() -> int:
     # state of the Claude runtime: symlink-folder pointing at the library?
     claude_is_library_link = resolves_to(RUNTIME["claude"], LIBRARY)
     team_mode = team_mode_active()
+    codex_core_total_bytes = 0
     for name, spec in skills.items():
         sec(f"skill: {name}")
 
@@ -780,18 +786,29 @@ def main() -> int:
             elif t == "codex" and exposure == "core":
                 ensure_link(LIBRARY / name, RUNTIME["codex"] / name, apply, f"codex/{name}")
                 skill_md = LIBRARY / name / "SKILL.md"
-                if skill_md.is_file() and skill_md.stat().st_size > CODEX_CORE_SIZE_WARN_BYTES:
-                    warn(
-                        f"codex/{name}: SKILL.md is {skill_md.stat().st_size}B, over the "
-                        f"{CODEX_CORE_SIZE_WARN_BYTES}B core-on-Codex guideline -- Codex has no "
-                        "native lazy loading, so this sits in its eagerly-scanned directory on "
-                        "every run. Consider exposure: manual (read via `agent-skill show`) "
-                        "instead of core if Codex doesn't need this every session."
-                    )
+                if skill_md.is_file():
+                    size = skill_md.stat().st_size
+                    codex_core_total_bytes += size
+                    if size > CODEX_CORE_SIZE_WARN_BYTES:
+                        warn(
+                            f"codex/{name}: SKILL.md is {size}B, over the "
+                            f"{CODEX_CORE_SIZE_WARN_BYTES}B core-on-Codex guideline -- Codex has no "
+                            "native lazy loading, so this sits in its eagerly-scanned directory on "
+                            "every run. Consider exposure: manual (read via `agent-skill show`) "
+                            "instead of core if Codex doesn't need this every session."
+                        )
             elif t == "codex":
                 ensure_absent_link(RUNTIME["codex"] / name, apply, f"codex/{name}")
             else:
                 warn(f"unknown target '{t}'")
+
+    if codex_core_total_bytes > CODEX_CORE_AGGREGATE_WARN_BYTES:
+        warn(
+            f"codex: core skills total {codex_core_total_bytes}B in its eagerly-scanned "
+            f"directory, over the {CODEX_CORE_AGGREGATE_WARN_BYTES}B aggregate guideline -- "
+            "each one can be under the per-skill limit and still add up on every run. Consider "
+            "demoting rarely-used ones to exposure: manual (read via `agent-skill show`)."
+        )
 
     sec("universal catalog")
     write_index(apply)

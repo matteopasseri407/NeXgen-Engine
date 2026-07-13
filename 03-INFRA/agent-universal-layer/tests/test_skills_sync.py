@@ -111,6 +111,59 @@ def test_oversized_core_skill_targeted_at_codex_warns_it_has_no_native_lazy_load
     assert "exposure: manual" in out
 
 
+def _write_fake_skill(sandbox, name: str, body_bytes: int) -> None:
+    skill_dir = sandbox.skills_dir / name
+    skill_dir.mkdir(parents=True, exist_ok=True)
+    header = f"---\ndescription: {name} fixture\n---\n"
+    (skill_dir / "SKILL.md").write_text(header + ("x" * body_bytes) + "\n", encoding="utf-8")
+
+
+def test_several_undersized_core_skills_on_codex_trigger_the_aggregate_warning(sandbox, monkeypatch, capsys):
+    # Each skill individually stays under CODEX_CORE_SIZE_WARN_BYTES (4096B),
+    # so the per-skill warning must stay silent -- but three of them together
+    # cross CODEX_CORE_AGGREGATE_WARN_BYTES (8192B), which is the actual cost
+    # Codex pays on every run (2026-07-13 review finding).
+    for name in ("fake-skill-b", "fake-skill-c", "fake-skill-d"):
+        _write_fake_skill(sandbox, name, 3000)
+    (sandbox.skills_dir / "skills.manifest.yaml").write_text(
+        "skills:\n"
+        + "".join(
+            f"  {name}:\n    origin: vault\n    targets: [codex]\n    exposure: core\n"
+            for name in ("fake-skill-b", "fake-skill-c", "fake-skill-d")
+        ),
+        encoding="utf-8",
+    )
+    mod = load_skills_sync_module(sandbox)
+    monkeypatch.setattr(mod.sys, "argv", ["skills-sync.py", "--apply"])
+
+    assert mod.main() == 0
+    out = capsys.readouterr().out
+    assert "no native lazy loading" not in out
+    assert "core skills total" in out
+    assert "aggregate guideline" in out
+    assert "exposure: manual" in out
+
+
+def test_core_skills_on_codex_under_the_aggregate_threshold_stay_silent(sandbox, monkeypatch, capsys):
+    for name in ("fake-skill-b", "fake-skill-c"):
+        _write_fake_skill(sandbox, name, 1000)
+    (sandbox.skills_dir / "skills.manifest.yaml").write_text(
+        "skills:\n"
+        + "".join(
+            f"  {name}:\n    origin: vault\n    targets: [codex]\n    exposure: core\n"
+            for name in ("fake-skill-b", "fake-skill-c")
+        ),
+        encoding="utf-8",
+    )
+    mod = load_skills_sync_module(sandbox)
+    monkeypatch.setattr(mod.sys, "argv", ["skills-sync.py", "--apply"])
+
+    assert mod.main() == 0
+    out = capsys.readouterr().out
+    assert "no native lazy loading" not in out
+    assert "core skills total" not in out
+
+
 def test_small_core_skill_targeted_at_codex_does_not_warn(sandbox, monkeypatch, capsys):
     (sandbox.skills_dir / "skills.manifest.yaml").write_text(
         "skills:\n"

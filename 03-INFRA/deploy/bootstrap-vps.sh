@@ -89,14 +89,41 @@ configure_firewall() {
   $SUDO ufw allow OpenSSH
   # OpenSSH's ufw profile only covers the default port 22. A host with SSH
   # moved to a non-standard port (a common hardening step) would otherwise
-  # lock itself out on `default deny incoming` below. Best-effort: only
-  # works when actually connected over SSH (SSH_CONNECTION set); silently
-  # a no-op otherwise (console/serial access, or port 22 already covered).
-  ssh_port="$(printf '%s' "${SSH_CONNECTION:-}" | awk '{print $4}')"
-  if [ -n "$ssh_port" ] && [ "$ssh_port" != "22" ]; then
+  # lock itself out on `default deny incoming` below. Derive the real
+  # listening port(s) from sshd itself rather than only from this session's
+  # own connection: SSH_CONNECTION alone is blind on the browser/serial
+  # console case (no SSH_CONNECTION at all) -- exactly the lockout this
+  # exists to catch -- and only ever reports the one port THIS session
+  # happens to be using, missing any other port sshd also listens on.
+  # Preference order: sshd's own effective config (authoritative, requires
+  # the sshd binary and enough privilege to dump it) -> the raw config file
+  # (works even when `sshd -T` can't run) -> this session's SSH_CONNECTION
+  # (works with neither of the above, but only sees its own port) -> no
+  # extra port detected, same as before (the OpenSSH profile above still
+  # covers 22).
+  detected_ssh_ports=""
+  if command -v sshd >/dev/null 2>&1; then
+    detected_ssh_ports="$($SUDO sshd -T 2>/dev/null | awk '/^port /{print $2}')"
+  fi
+  if [ -z "$detected_ssh_ports" ] && [ -f /etc/ssh/sshd_config ]; then
+    detected_ssh_ports="$(awk 'tolower($1)=="port"{print $2}' /etc/ssh/sshd_config 2>/dev/null)"
+  fi
+  if [ -z "$detected_ssh_ports" ]; then
+    detected_ssh_ports="$(printf '%s' "${SSH_CONNECTION:-}" | awk '{print $4}')"
+  fi
+  # sshd can listen on several ports at once -- allow every one detected,
+  # not just the first.
+  while IFS= read -r ssh_port; do
+    case "$ssh_port" in
+      '') continue ;;
+      *[!0-9]*) continue ;;  # defensive: never pass a non-numeric token to ufw
+      22) continue ;;        # already covered by the OpenSSH profile above
+    esac
     $SUDO ufw allow "$ssh_port"/tcp
     echo "  also allowed detected non-default SSH port $ssh_port/tcp"
-  fi
+  done <<EOF
+$detected_ssh_ports
+EOF
   $SUDO ufw default deny incoming
   $SUDO ufw default allow outgoing
   $SUDO ufw --force enable
