@@ -109,3 +109,58 @@ def test_ollama_seat_never_passes_the_experimental_tool_loop_flags(monkeypatch, 
     assert argv == ["ollama", "run", "vendor/test"]
     for flag in ("--experimental", "--experimental-websearch", "--experimental-yolo"):
         assert flag not in argv
+
+
+# ── reasoning_effort forwarding (beta-readiness review, 2026-07-13) ───────
+# routing-status showed reasoning_effort as active for every seat regardless
+# of whether the underlying CLI branch actually read it. claude/codex always
+# did (--effort / model_reasoning_effort); ollama/opencode did not, silently.
+
+def test_ollama_seat_forwards_a_recognized_reasoning_effort(monkeypatch, tmp_path):
+    """--think <low|medium|high> is ollama's real reasoning-effort control
+    (verified via `ollama run --help`), the same concept as claude's
+    --effort. Only forwarded for the values ollama documents."""
+    council = load_council(monkeypatch, tmp_path)
+    invocation = council._build_seat_command(
+        {"cli": "ollama", "model": "vendor/test", "reasoning_effort": "high"}, "prompt", tmp_path
+    )
+
+    argv = invocation.argv
+    assert "--think" in argv and argv[argv.index("--think") + 1] == "high"
+
+
+def test_ollama_seat_drops_an_unrecognized_reasoning_effort(monkeypatch, tmp_path):
+    """A value ollama doesn't document (e.g. 'xhigh', a valid claude/codex
+    tier) must never reach --think as a literal -- ollama would reject an
+    unknown value outright, failing the whole seat over a flag it can't
+    honor anyway."""
+    council = load_council(monkeypatch, tmp_path)
+    invocation = council._build_seat_command(
+        {"cli": "ollama", "model": "vendor/test", "reasoning_effort": "xhigh"}, "prompt", tmp_path
+    )
+
+    assert "--think" not in invocation.argv
+
+
+def test_opencode_seat_forwards_reasoning_effort_as_variant(monkeypatch, tmp_path):
+    """--variant is opencode's real reasoning-effort control (verified via
+    `opencode run --help`: "model variant (provider-specific reasoning
+    effort, e.g., high, max, minimal)"), forwarded as-is since opencode
+    documents it as provider-specific with no fixed enum to validate here."""
+    council = load_council(monkeypatch, tmp_path)
+    invocation = council._build_seat_command(
+        {"cli": "opencode", "model": "vendor/test", "reasoning_effort": "max"}, "prompt", tmp_path
+    )
+
+    argv = invocation.argv
+    assert "--variant" in argv and argv[argv.index("--variant") + 1] == "max"
+
+
+def test_opencode_seat_omits_variant_when_effort_is_none_or_unset(monkeypatch, tmp_path):
+    council = load_council(monkeypatch, tmp_path)
+    for seat in (
+        {"cli": "opencode", "model": "vendor/test"},
+        {"cli": "opencode", "model": "vendor/test", "reasoning_effort": "none"},
+    ):
+        invocation = council._build_seat_command(seat, "prompt", tmp_path)
+        assert "--variant" not in invocation.argv

@@ -289,7 +289,10 @@ def test_relay_without_sequence_requires_human_selection(monkeypatch, tmp_path, 
 
     output = capsys.readouterr().out
     assert "proposta per relay" in output
-    assert "gemini: Gemini 3.1 Pro (High) via agy, effort high" in output
+    # agy has no reasoning-effort CLI flag (verified via `agy --help`,
+    # 2026-07-13): the label must say so, not show effort as if honored
+    # identically to a claude/codex/ollama/opencode seat.
+    assert "gemini: Gemini 3.1 Pro (High) via agy, effort high (non applicato da questa CLI)" in output
     assert "deepseek: opencode-go/deepseek-v4-pro via opencode" in output
 
 

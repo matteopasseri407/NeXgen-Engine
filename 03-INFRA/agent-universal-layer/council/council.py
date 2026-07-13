@@ -224,6 +224,22 @@ def _routing_context_or_exit(config: dict):
         sys.exit(f"[council] proposta di routing non disponibile: {exc}.")
 
 
+def _effort_label(seat: dict) -> str:
+    """Shared by every place that renders a seat's reasoning_effort to the
+    user (propose, the static menu, routing-status): a single source so the
+    "agy doesn't honor this" caveat can't drift out of sync between them
+    the way three separate copies of this line already had (beta-readiness
+    review, 2026-07-13) -- reasoning_effort was shown identically for every
+    CLI even though only claude/codex/ollama/opencode actually forward it
+    to a real flag (see the branches in _build_seat_command); agy has no
+    reasoning-effort CLI flag at all (verified via `agy --help`)."""
+    effort = seat.get("reasoning_effort")
+    if not effort or effort == "none":
+        return ""
+    not_honored = " (non applicato da questa CLI)" if seat.get("cli") == "agy" else ""
+    return f", effort {effort}{not_honored}"
+
+
 def _routing_role_for_mode(args: argparse.Namespace, config: dict, default_routing_role: str | None) -> str | None:
     """Map a Council mode to a *proposal* role, never to an execution choice."""
     mode_defaults = ((config.get("routing") or {}).get("mode_defaults") or {})
@@ -249,8 +265,7 @@ def _proposal_lines_for_role(
     if candidates:
         for index, name in enumerate(candidates, 1):
             seat = seats[name]
-            effort = seat.get("reasoning_effort")
-            effort_label = f", effort {effort}" if effort and effort != "none" else ""
+            effort_label = _effort_label(seat)
             retention = "zero-retention verificata" if seat.get("zero_retention", False) else "rischio training consentito"
             lines.append(
                 f"    {index}. {name}: {seat['model']} via {seat['cli']}{effort_label}, {retention}."
@@ -284,8 +299,7 @@ def _print_routing_proposal(
 def _print_static_seat_menu(seats: dict) -> None:
     print("[council] nessun routing privato configurato. Seat dichiarati, scegli tu:")
     for name, seat in seats.items():
-        effort = seat.get("reasoning_effort")
-        effort_label = f", effort {effort}" if effort and effort != "none" else ""
+        effort_label = _effort_label(seat)
         print(f"  {name}: {seat['model']} via {seat['cli']}{effort_label}.")
 
 
@@ -1085,12 +1099,23 @@ def _build_seat_command(seat: dict, prompt: str, session_dir: Path) -> SeatInvoc
     model = seat["model"]
     if cli == "opencode":
         input_file = _write_transport_file(session_dir, prompt)
+        argv = [
+            "opencode", "run", OPENCODE_ATTACHED_PROMPT,
+            "-m", model, "--format", "json", "--file", str(input_file),
+            "--dir", str(session_dir),
+        ]
+        # --variant is opencode's real reasoning-effort control (verified via
+        # `opencode run --help`: "model variant (provider-specific reasoning
+        # effort, e.g., high, max, minimal)"), same concept as claude's
+        # --effort above. Forwarded as-is: unlike ollama's --think, opencode
+        # documents this as provider-specific with no fixed enum this script
+        # could validate against, so an unrecognized value is the target
+        # provider's problem to reject, not something to filter here.
+        effort = seat.get("reasoning_effort")
+        if effort and effort != "none":
+            argv.extend(["--variant", str(effort)])
         return SeatInvocation(
-            [
-                "opencode", "run", OPENCODE_ATTACHED_PROMPT,
-                "-m", model, "--format", "json", "--file", str(input_file),
-                "--dir", str(session_dir),
-            ],
+            argv,
             None,
             None,
             input_file,
@@ -1150,7 +1175,18 @@ def _build_seat_command(seat: dict, prompt: str, session_dir: Path) -> SeatInvoc
             env=_isolated_seat_env(cli, session_dir),
         )
     if cli == "ollama":
-        return SeatInvocation(["ollama", "run", model], prompt, None, None)
+        # --think <low|medium|high> is ollama's real reasoning-effort control
+        # (verified via `ollama run --help`), same concept as claude's
+        # --effort / codex's model_reasoning_effort above. Only forwarded for
+        # the three values ollama actually documents; an unrecognized value
+        # (xhigh, max, ...) is silently NOT translated to --think=<value> --
+        # ollama would reject a value it doesn't know, and this branch would
+        # rather run without the flag than fail the whole seat over it.
+        argv = ["ollama", "run", model]
+        effort = seat.get("reasoning_effort")
+        if effort in ("low", "medium", "high"):
+            argv.extend(["--think", effort])
+        return SeatInvocation(argv, prompt, None, None)
     raise SeatRunError(
         f"[council] cli '{cli}' non supportata (attese: {', '.join(SUPPORTED_CLIS)}).", "unsupported_cli"
     )
@@ -1592,8 +1628,7 @@ def cmd_routing_status(args: argparse.Namespace) -> None:
             rendered = []
             for name in candidates:
                 seat = seats[name]
-                effort = seat.get("reasoning_effort")
-                effort_label = f", effort {effort}" if effort and effort != "none" else ""
+                effort_label = _effort_label(seat)
                 rendered.append(f"{name} ({seat['model']}{effort_label})")
             print(f"  {role}: " + " -> ".join(rendered))
         else:
