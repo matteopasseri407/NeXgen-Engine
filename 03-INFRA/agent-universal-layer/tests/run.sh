@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
 # tests/run.sh — guscio sottile su Fedora/Linux. Il runner CANONICO e'
-# `python3 -m pytest` (verdetto Fable sulla review Codex, 2026-07-08, punto 5):
-# questo script esiste solo per comodita' da riga di comando e per includere
+# `python3 -m pytest`: questo script esiste solo per comodita' da riga di comando e per includere
 # il leak-check sulle fixture (criterio di accettazione B1). Il gemello
 # Windows (run.ps1) invochera' lo stesso `python -m pytest`, non questo file.
 set -u
