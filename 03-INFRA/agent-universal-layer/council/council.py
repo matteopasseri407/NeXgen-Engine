@@ -1538,12 +1538,20 @@ def cmd_relay(args: argparse.Namespace) -> None:
             print(f"[council] sessione mantenuta: {session_dir}")
         print(f"[council] mode: relay — stadi: {len(stages)}")
 
+        continue_on_reject = bool(getattr(args, "continue_on_reject", False))
         for idx, stage in enumerate(stages, 1):
             record = _run_relay_stage(
                 idx, stage, seats, session_dir, brief, records, model_costs, quarantine,
                 args.allow_training_risk, getattr(args, "timeout_seconds", None),
             )
             records.append(record)
+            if record.verdict == "REJECT" and not continue_on_reject and idx < len(stages):
+                print(
+                    f"[council] stadio {idx} ({record.role}): VERDICT: REJECT — "
+                    f"interrompo la staffetta, salto gli {len(stages) - idx} stadi restanti "
+                    "(usa --continue-on-reject per eseguirli comunque)."
+                )
+                break
 
         write_relay_verdict(session_dir, records)
         print(f"[council] verdetto finale: {records[-1].verdict}")
@@ -1699,6 +1707,10 @@ def main() -> int:
     )
     relay.add_argument("--max-seats", type=int, default=DEFAULT_MAX_SEATS, help=f"tetto invalicabile agli stadi (1-{DEFAULT_MAX_SEATS})")
     relay.add_argument("--no-stats-precheck", action="store_true", help="salta il pre-check euristico opencode stats")
+    relay.add_argument(
+        "--continue-on-reject", action="store_true",
+        help="non interrompere la staffetta su un VERDICT: REJECT intermedio (default: interrompe)",
+    )
     _add_common_args(relay, include_seat=False)
     relay.set_defaults(func=cmd_relay)
 

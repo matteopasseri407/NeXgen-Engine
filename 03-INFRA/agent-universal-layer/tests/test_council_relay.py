@@ -337,6 +337,99 @@ def test_relay_enforces_hard_five_stage_limit(monkeypatch, tmp_path):
     assert "relay supporta al massimo 5 stadi" in str(exc.value)
 
 
+def _three_stage_seats():
+    return """
+        seats:
+          one:
+            vendor: vendor-a
+            cli: opencode
+            model: opencode/test-one
+            zero_retention: true
+          two:
+            vendor: vendor-b
+            cli: opencode
+            model: opencode/test-two
+            zero_retention: true
+          three:
+            vendor: vendor-c
+            cli: opencode
+            model: opencode/test-three
+            zero_retention: true
+        """
+
+
+def test_relay_stops_after_a_reject_verdict_by_default(monkeypatch, tmp_path, capsys):
+    council = load_council(monkeypatch, tmp_path)
+    write_seats(council, _three_stage_seats())
+    monkeypatch.setattr(council, "egress_gate", lambda text: None)
+    attempted = []
+
+    def fake_run_seat(seat, prompt, session_dir, timeout_seconds=None):
+        attempted.append(seat["model"])
+        if seat["model"] == "opencode/test-two":
+            return "Piano pericoloso\nVERDICT: REJECT\n", {}
+        return f"Risposta da {seat['model']}\nVERDICT: APPROVE\n", {}
+
+    monkeypatch.setattr(council, "run_seat", fake_run_seat)
+
+    council.cmd_relay(
+        relay_args(sequence="architect=one,builder=two,reviewer=three", keep_session=True)
+    )
+
+    assert attempted == ["opencode/test-one", "opencode/test-two"]
+    session_dir = next((tmp_path / "sessions").iterdir())
+    assert not (session_dir / "03-three-relay-reviewer.md").exists()
+    verdict_text = (session_dir / "verdict.md").read_text(encoding="utf-8")
+    assert "Stadi eseguiti: 2" in verdict_text
+    assert "interrompo la staffetta" in capsys.readouterr().out
+
+
+def test_relay_continue_on_reject_flag_runs_remaining_stages(monkeypatch, tmp_path):
+    council = load_council(monkeypatch, tmp_path)
+    write_seats(council, _three_stage_seats())
+    monkeypatch.setattr(council, "egress_gate", lambda text: None)
+    attempted = []
+
+    def fake_run_seat(seat, prompt, session_dir, timeout_seconds=None):
+        attempted.append(seat["model"])
+        if seat["model"] == "opencode/test-two":
+            return "Piano pericoloso\nVERDICT: REJECT\n", {}
+        return f"Risposta da {seat['model']}\nVERDICT: APPROVE\n", {}
+
+    monkeypatch.setattr(council, "run_seat", fake_run_seat)
+
+    council.cmd_relay(
+        relay_args(
+            sequence="architect=one,builder=two,reviewer=three",
+            continue_on_reject=True,
+        )
+    )
+
+    assert attempted == ["opencode/test-one", "opencode/test-two", "opencode/test-three"]
+
+
+def test_relay_does_not_stop_when_the_last_stage_itself_rejects(monkeypatch, tmp_path, capsys):
+    """A REJECT on the FINAL stage has nothing left to skip -- must not print
+    the 'interrompo la staffetta' message (there is nothing to interrupt)."""
+    council = load_council(monkeypatch, tmp_path)
+    write_seats(council, _three_stage_seats())
+    monkeypatch.setattr(council, "egress_gate", lambda text: None)
+    attempted = []
+
+    def fake_run_seat(seat, prompt, session_dir, timeout_seconds=None):
+        attempted.append(seat["model"])
+        if seat["model"] == "opencode/test-three":
+            return "Piano pericoloso\nVERDICT: REJECT\n", {}
+        return f"Risposta da {seat['model']}\nVERDICT: APPROVE\n", {}
+
+    monkeypatch.setattr(council, "run_seat", fake_run_seat)
+
+    council.cmd_relay(relay_args(sequence="architect=one,builder=two,reviewer=three"))
+
+    assert attempted == ["opencode/test-one", "opencode/test-two", "opencode/test-three"]
+    assert "interrompo la staffetta" not in capsys.readouterr().out
+
+
 @pytest.mark.parametrize("cli", ["opencode", "agy", "codex", "claude", "ollama"])
 def test_large_prompt_uses_private_non_argv_transport_for_every_cli(monkeypatch, tmp_path, cli):
     # This parametrization runs in the Linux and Windows CI jobs.  Keep the
