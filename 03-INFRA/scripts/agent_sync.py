@@ -763,7 +763,46 @@ def instructions(env: Env) -> bool:
             src = env.instance_ul / "instructions" / src_name
             if src.is_file() and make_link(src, env.home / target_name, is_dir=False):
                 env.log(f"instructions: relinked {target_name}")
+
+    _sync_opencode_instructions(env, canon)
     return True
+
+
+def _sync_opencode_instructions(env: Env, canon: Path) -> None:
+    # OpenCode has no separate pointer/symlink mechanism like Claude/Gemini/
+    # Codex above: the canonical bootstrap path is an entry in opencode.json's
+    # own top-level "instructions" array (confirmed against a real working
+    # config, not guessed). Was previously never written by this provisioner
+    # at all -- a fresh install left OpenCode with no bootstrap pointer, and
+    # agent-doctor's "OpenCode instructions -> AGENTS.md" check failed
+    # permanently with no code path that could ever fix it.
+    oc_path = env.home / ".config" / "opencode" / "opencode.json"
+    if not oc_path.is_file():
+        env.log("instructions: opencode.json not present (OpenCode never launched yet) -- skipping")
+        return
+    try:
+        config = json.loads(oc_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        env.log("instructions: opencode.json not valid JSON; skipping instructions merge")
+        return
+    if not isinstance(config, dict):
+        env.log("instructions: opencode.json root is not an object; skipping instructions merge")
+        return
+    try:
+        canon_entry = "~/" + str(canon.relative_to(env.home))
+    except ValueError:
+        canon_entry = str(canon)
+    entries = config.setdefault("instructions", [])
+    if not isinstance(entries, list):
+        env.log("instructions: opencode.json 'instructions' is not a list; skipping instructions merge")
+        return
+    if canon_entry in entries or str(canon) in entries:
+        return
+    entries.append(canon_entry)
+    stamp = time.strftime("%Y%m%d-%H%M%S")
+    shutil.copy2(oc_path, oc_path.with_name(f"opencode.json.pre-instructions-{stamp}.bak"))
+    _atomic_write_text(oc_path, json.dumps(config, indent=2) + "\n")
+    env.log(f"instructions: added canonical AGENTS.md to opencode.json instructions ({oc_path})")
 
 
 # ── 2.5 antigravity_mcp ──────────────────────────────────────────────────
@@ -881,9 +920,9 @@ def local_model_runtime(env: Env) -> None:
 
 # ── 2.75 scheduler ───────────────────────────────────────────────────────
 # Self-healing recurring trigger on EVERY apply/guard, on both OSes: the
-# opt-in-only Windows switch (-InstallScheduledTask) is the gap this section
-# closes, per Fable's adapter list naming install_scheduler() as a normal
-# per-run step, not an opt-in one.
+# opt-in-only Windows switch (-InstallScheduledTask) was the gap this section
+# closes -- install_scheduler() runs as a normal per-run step, not an
+# opt-in one.
 
 def _systemd_env_line(key: str, value: str) -> str:
     """Quotes the whole assignment per systemd.syntax(7): unquoted

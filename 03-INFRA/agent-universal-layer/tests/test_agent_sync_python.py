@@ -6,6 +6,7 @@ prove the shared implementation runs in a sandboxed USERPROFILE.
 """
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
 import shlex
@@ -396,6 +397,80 @@ seats:
 
     assert proc.returncode == 1, proc.stdout + proc.stderr
     assert not (sandbox.vault / "99-INDEX" / "DATA-SCHEMA-VERSION.txt").exists()
+
+
+# ── OpenCode instructions pointer (beta-readiness review, 2026-07-13) ─────
+# The bug this closes: instructions() relinked Claude/Gemini/Codex/Antigravity
+# but never touched OpenCode at all -- opencode.json's own "instructions"
+# array (its equivalent of a bootstrap pointer, confirmed against a real
+# working config) was left permanently unset by any code path, so
+# agent-doctor's "OpenCode instructions -> AGENTS.md" check failed forever
+# on a fresh install, for one of the 4 officially supported CLIs.
+
+def test_instructions_adds_opencode_pointer_to_existing_config(sandbox_with_live_configs, monkeypatch):
+    sandbox = sandbox_with_live_configs
+    mod = load_agent_sync_module(sandbox)
+    monkeypatch.setenv("HOME", str(sandbox.home))
+    monkeypatch.setenv("KNOWLEDGE_VAULT_PATH", str(sandbox.vault))
+    env = mod.Env()
+
+    assert mod.instructions(env) is True
+
+    oc_path = sandbox.live_config_path("opencode")
+    config = json.loads(oc_path.read_text(encoding="utf-8"))
+    canon = env.instance_ul / "instructions" / "AGENTS.md"
+    expected_entry = "~/" + str(canon.relative_to(sandbox.home))
+    assert expected_entry in config["instructions"]
+    # Additive: pre-existing MCP section and other keys must survive untouched.
+    assert config["model"] == "fake-provider/fake-model"
+    assert "fake-stdio-tool" in config["mcp"]
+
+
+def test_instructions_opencode_missing_config_is_a_noop(sandbox, monkeypatch):
+    mod = load_agent_sync_module(sandbox)
+    monkeypatch.setenv("HOME", str(sandbox.home))
+    monkeypatch.setenv("KNOWLEDGE_VAULT_PATH", str(sandbox.vault))
+    env = mod.Env()
+
+    assert mod.instructions(env) is True
+
+    assert not (sandbox.home / ".config" / "opencode" / "opencode.json").exists()
+
+
+def test_instructions_opencode_pointer_is_idempotent(sandbox_with_live_configs, monkeypatch):
+    sandbox = sandbox_with_live_configs
+    mod = load_agent_sync_module(sandbox)
+    monkeypatch.setenv("HOME", str(sandbox.home))
+    monkeypatch.setenv("KNOWLEDGE_VAULT_PATH", str(sandbox.vault))
+    env = mod.Env()
+
+    mod.instructions(env)
+    oc_path = sandbox.live_config_path("opencode")
+    first_pass = json.loads(oc_path.read_text(encoding="utf-8"))
+
+    mod.instructions(env)
+    second_pass = json.loads(oc_path.read_text(encoding="utf-8"))
+
+    assert first_pass["instructions"] == second_pass["instructions"]
+    assert second_pass["instructions"].count(second_pass["instructions"][0]) == 1
+    # Exactly one backup, from the first (real) write -- the second, no-op
+    # call must not detect a "change" and back up again.
+    assert len(list(oc_path.parent.glob("opencode.json.pre-instructions-*.bak"))) == 1
+
+
+def test_instructions_opencode_malformed_json_does_not_crash(sandbox_with_live_configs, monkeypatch):
+    sandbox = sandbox_with_live_configs
+    mod = load_agent_sync_module(sandbox)
+    monkeypatch.setenv("HOME", str(sandbox.home))
+    monkeypatch.setenv("KNOWLEDGE_VAULT_PATH", str(sandbox.vault))
+    oc_path = sandbox.live_config_path("opencode")
+    oc_path.write_text("{not valid json", encoding="utf-8")
+    env = mod.Env()
+
+    # instructions() must still relink Claude/Gemini/Codex and return True --
+    # one CLI's broken config must not abort the rest of the fan-out.
+    assert mod.instructions(env) is True
+    assert oc_path.read_text(encoding="utf-8") == "{not valid json"
 
 
 def test_host_wide_lock_rejects_second_manual_run(sandbox, monkeypatch):
