@@ -10,6 +10,82 @@ of any engine release.
 
 ## [Unreleased]
 
+A follow-up pass closing every remaining item from the 2026-07-13
+beta-readiness review that didn't make the 0.4.0 cut, plus the vault
+grooming ("gardener") work that review called for.
+
+### Added
+
+- Vault grooming (`vault-groom.sh`/`.ps1`) now supports `codex` and `agy`
+  as runners via `GROOM_RUNNER`, not just `claude` — each using that
+  CLI's own verified read-only/write-scoping mechanism (`-s
+  read-only`/`workspace-write` for codex, `--mode plan`/`accept-edits`
+  for agy). `opencode` fails loudly with an explanation instead of
+  guessing, since it has no per-invocation permission-scoping flag today.
+  First behavioral test coverage this script has ever had (12 tests
+  pinning the exact argv/stdin per mode x runner).
+- An import-ready n8n workflow
+  (`03-INFRA/deploy/n8n/workflows/vault-grooming-reminder.json`) for the
+  gardener's 14-day reminder the playbook already described but nothing
+  shipped. Deliberately reminder-only, no notification channel baked in
+  — the grooming pass itself stays on-demand, never self-scheduled, to
+  avoid two machines colliding on the same vault's git history.
+- `council relay --continue-on-reject`, to run the full declared stage
+  sequence anyway when you want every seat's opinion regardless of an
+  intermediate rejection.
+
+### Changed
+
+- `council relay` now stops on an intermediate `VERDICT: REJECT` by
+  default instead of running (and spending quota on) every remaining
+  stage after a plan was already rejected.
+- `council`'s reasoning-effort forwarding is now honest per seat:
+  `--think` for ollama and `--variant` for opencode are actually
+  forwarded (previously silently ignored); agy, which has no such flag,
+  is now labeled "(non applicato da questa CLI)" instead of implying it
+  applies.
+- `vault-groom.sh`/`.ps1` default to the read-only `plan` lane; `run`
+  (and its push) now requires an explicit argument on both launchers.
+
+### Fixed
+
+- `agent-doctor`'s "Tokens in env" check no longer fails a Local-Only
+  install permanently on `VAULT_LIBRARY_TOKEN`/`VAULT_LIBRARY_URL` — it
+  is now Mode-gated like every other connector.
+- `bootstrap-vps.sh`'s firewall step no longer aborts with a bare
+  "Permission denied" on Oracle Cloud's default non-root, no-sudo image;
+  it escalates via `sudo` when available and warns clearly when it
+  can't. Also allows the SSH port actually in use, not just the OpenSSH
+  profile.
+- `agent_sync.py` never actually wrote OpenCode's bootstrap-instructions
+  pointer into `opencode.json` — one of the 4 officially supported CLIs
+  had a permanently-failing doctor check with nothing that could ever
+  fix it.
+- The shipped policy files (`AGENTS.md`, `LOCAL-WORKER.md`, `GEMMA.md`)
+  carried the maintainer's own dogfooding into files every install
+  receives verbatim: a stray Italian phrase, a hardcoded personal
+  local-model name, a maintainer-specific GPU-contention detail. The
+  single highest-severity finding of the whole review, since these are
+  the first files a PMI evaluator reads to understand what they're
+  installing.
+- Five resilience gaps in the sync control plane: unprotected subprocess
+  calls inside the host-wide lock could hang it forever; `vault-push.sh`
+  ran without taking that same lock at all; the systemd install path
+  wrote timer units but never actually enabled them; three provisioning
+  phases could never report failure regardless of what went wrong
+  inside them; a non-UTF-8 alert config silently skipped the healthcheck
+  step whose job is warning about exactly that kind of problem.
+- `render.py --diff` no longer reports a corrupted (present but
+  unparseable) live config as "CLI not installed here" — it now stops
+  with the same explicit error every write path already uses.
+- `agent-doctor.ps1` was missing the Codex known-bad-version check
+  entirely; Windows users got no warning the Linux/Mac doctor already
+  gives for a known tool-dispatcher regression.
+- Stale `ghcr.io/mendableai/*` registry references in `.env.example` and
+  deploy docs, pointing at repos that no longer resolve.
+- `engine-tests-windows` CI: two bash-only test files were missing the
+  Windows skip pattern every sibling test already uses.
+
 ## [0.4.0] - 2026-07-13
 
 A security-hardening and small-team-readiness pass: a dedicated audit found
