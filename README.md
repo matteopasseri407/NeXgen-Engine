@@ -152,149 +152,220 @@ This project is free to use. Some optional links (like the OpenCode one above) a
 
 ---
 
-# NeXgen Engine (Italiano) - Alpha
+# NeXgen Engine, versione italiana, Alpha
 
-Un control layer AgentOps basato su Git, per le CLI agentiche di sviluppo — in parole povere, un regolamento condiviso e una memoria per tool AI agentici come Claude Code, utile tanto per lavori non di programmazione (note, ricerca, documenti di carriera) quanto per progetti software. Nota: Questo progetto è attualmente in fase Alpha.
+NeXgen Engine è un control layer AgentOps basato su Git per le CLI agentiche.
+In pratica, raccoglie in un unico repository le regole condivise e la memoria di lavoro per strumenti come Claude Code.
+Può essere usato per programmare, prendere note, fare ricerca o preparare documenti professionali.
+Il progetto è ancora in fase Alpha.
 
-Istruzioni condivise, configurazione MCP generata automaticamente, controlli anti-drift, disciplina sui segreti e memoria degli agenti condivisa tra più macchine.
-Tutto file di testo dentro un repo Git, non un servizio in cloud.
+Le istruzioni, la configurazione MCP, i controlli di drift, la gestione dei segreti e la memoria condivisa sono tutti file di testo dentro un repository Git.
+Non c'è un servizio cloud proprietario da attivare o da cui dipendere.
 
-Usi Claude Code, Codex, OpenCode o Antigravity, magari più di una CLI, magari su due macchine diverse.
-Ogni CLI legge le sue istruzioni di bootstrap da un file diverso, ha una propria configurazione MCP e non sa niente delle altre.
-Basta cambiare qualcosa in una perché le altre si disallineino, quasi sempre senza che nessuno se ne accorga finché non si rompe qualcosa.
-NeXgen Engine mette tutte le CLI davanti a un'unica fonte canonica e ti dà un modo per controllare se se ne sono allontanate.
+Se usi Claude Code, Codex, OpenCode o Antigravity, ogni CLI ha il proprio file di bootstrap e la propria configurazione MCP.
+Di default, una CLI non sa cosa è stato cambiato nelle altre.
+NeXgen mette tutto questo sotto una fonte canonica e controlla quando le configurazioni si sono allontanate da essa.
 
 ## A chi serve
 
-Fai girare almeno una CLI agentica sulla tua macchina e vuoi il vault vero, non una demo.
-Se ne usi più di una, o lo stesso setup su più macchine, è lì che il framework rende di più: il provisioner e lo script doctor descritti sotto servono esattamente a quello.
-Se invece hai una sola CLI su una sola macchina, ti restano comunque il knowledge vault e la disciplina del bootstrap, senza dover far girare nessuno strumento di sync.
+Serve a chi usa almeno una CLI agentica sul proprio computer e vuole un vault vero, non una demo usa e getta.
+Il vantaggio maggiore arriva quando usi più CLI oppure lo stesso setup su più macchine, perché il provisioner e gli script di controllo tengono tutto allineato.
+Con una sola CLI su una sola macchina puoi comunque usare il knowledge vault e le regole di bootstrap, senza installare gli strumenti di sincronizzazione.
 
-Lo stai valutando per più di una persona (qualche collega, una piccola azienda)? Il modello di sicurezza e identità oggi è mono-utente. Leggi [`docs/team.md`](docs/team.md) e, se stai valutando un backend Cloud-Server condiviso, [`docs/org-deployment.md`](docs/org-deployment.md) prima di adottarlo come infrastruttura condivisa. La postura di sicurezza e come segnalare un problema sono in [`SECURITY.md`](SECURITY.md).
+Se lo stai valutando per più persone, tieni presente che il modello di identità e sicurezza è ancora pensato per un solo utente.
+Prima di usarlo come infrastruttura condivisa, leggi [`docs/team.md`](docs/team.md) e, se stai pensando a un backend Cloud-Server comune, [`docs/org-deployment.md`](docs/org-deployment.md).
+La postura di sicurezza e le istruzioni per segnalare problemi sono in [`SECURITY.md`](SECURITY.md).
 
 ## Percorso demo
 
-1. Clona il repo e lancia il preflight: `bash install.sh --check` su Linux/Mac, oppure `.\install.ps1 -Check` da PowerShell su Windows. Controlla i prerequisiti, verifica lo scaffold del vault ed elenca quali CLI agentiche trova sulla tua macchina. Non scrive nulla.
-2. Apri `INIT.md` e incollalo in una CLI agentica capace di scrivere file (Claude Code, Codex, OpenCode, Antigravity): una chat web non va bene, perché i file non li può scrivere. L'agente ti fa qualche domanda (quante CLI, quante macchine, Local-Only o Cloud-Server) e scrive `99-INDEX/USER-PROFILE.md`.
-3. L'agente monta i server MCP e le skill per la CLI che hai scelto, seguendo i manifest in `03-INFRA/`.
-4. Se sei sul profilo MULTI (2+ CLI o macchine), lancia `agent-sync apply` per propagare la configurazione canonica, poi `agent-doctor` per vedere il controllo di conformità vero e proprio: oltre 30 check dal vivo sulle CLI in esecuzione, sui servizi VPS e sulla gestione dei segreti, con un pass, warn o fail riga per riga. Su Windows il primo `apply` aggiunge anche la cartella dei comandi al PATH utente: apri un nuovo terminale, così `agent-sync`, `agent-doctor`, `vault-groom` e `vault-push` si risolvono come comandi semplici.
-5. A quel punto cambia qualcosa a mano (una entry MCP fuori posto, un file di config modificato fuori dal vault) e rilancia `agent-doctor`. Quello è il controllo di drift che funziona.
+1. Clona il repository ed esegui il preflight: `bash install.sh --check` su Linux o macOS, oppure `.\install.ps1 -Check` da PowerShell su Windows.
+   Il comando controlla i prerequisiti, verifica la struttura del vault e mostra quali CLI agentiche trova.
+   Non modifica nulla.
+2. Apri `INIT.md` e incollalo in una CLI agentica che possa scrivere file, come Claude Code, Codex, OpenCode o Antigravity.
+   Una chat web non basta, perché non può modificare il repository.
+   L'agente ti chiede quante CLI e quante macchine vuoi usare, oltre alla modalità Local-Only o Cloud-Server, poi compila `99-INDEX/USER-PROFILE.md`.
+3. L'agente monta i server MCP e le skill per le CLI scelte, usando i manifest presenti in `03-INFRA/`.
+4. Se usi il profilo MULTI, cioè almeno due CLI o due macchine, esegui `agent-sync apply` per propagare la configurazione canonica.
+   Poi esegui `agent-doctor` per controllare lo stato reale, con oltre 30 verifiche su CLI, servizi VPS e gestione dei segreti.
+   Ogni verifica restituisce `pass`, `warn` o `fail`.
+   Su Windows, il primo `apply` aggiunge anche la cartella dei comandi al PATH dell'utente, quindi dopo devi aprire un nuovo terminale per usare direttamente `agent-sync`, `agent-doctor`, `vault-groom` e `vault-push`.
+5. Modifica qualcosa fuori dal vault, per esempio una voce MCP o un file di configurazione, poi esegui di nuovo `agent-doctor`.
+   Vedrai il controllo del drift in azione.
 
-## Cosa non fa
+## Cosa fa e cosa non fa
 
-Nessuna UI, nessuna dashboard in cloud, nessun motore di memoria proprietario.
-Non è in competizione con un RAG builder o un workflow orchestrator.
-Parte dal presupposto che tu abbia già le idee chiare su quali agenti e strumenti usare, e gli dà un terreno comune e verificabile su cui girare.
+NeXgen non è un'applicazione con interfaccia grafica, non offre una dashboard online e non include un motore di memoria proprietario.
+Non è un builder RAG e non è un orchestratore di workflow.
+Parte dal presupposto che tu abbia già scelto gli agenti e gli strumenti da usare, poi fornisce loro una base comune, versionata e verificabile.
 
-**Cosa NON fa NeXgen:** NeXgen governa la configurazione — una fonte canonica, derivati generati, rilevamento del drift, scritture da una sola porta. **Non** si mette tra l'agente e i suoi tool a runtime: `agent-doctor` non può bloccare una chiamata fatta con argomenti inventati ma plausibili. Quel confine è gestito dall'harness della tua CLI (modalità permessi, richieste di conferma all'utente) e dalla validazione lato server dei server MCP stessi (es. il lock `expected_hash` nel `vault-library`).
+NeXgen governa la configurazione, usando una fonte canonica, file derivati generati automaticamente, controlli di drift e una porta separata per ogni tipo di scrittura.
+Non si mette però tra l'agente e i suoi tool mentre lavorano.
+Per esempio, `agent-doctor` non può bloccare una chiamata che contiene argomenti plausibili ma sbagliati.
+I controlli a runtime spettano all'harness della CLI, con i suoi permessi e le richieste di conferma, e ai server MCP, che validano le richieste lato server, per esempio con il lock `expected_hash` di `vault-library`.
 
 ## Concetti base
 
-- **Infrastruttura come codice per l'AI.** I file manifest definiscono tool, permessi e regole di comportamento. Uno script Python unificato (`agent_sync.py`) genera la configurazione corretta per le diverse CLI.
-- **Memoria basata su Git.** Gli agenti leggono e scrivono file Markdown. Ogni modifica è tracciata, verificabile e facile da annullare.
-- **Giardinaggio del vault (opzionale, a richiesta).** `vault-groom.sh`/`.ps1` fa passare un playbook di grooming a un'LLM per segnalare note vecchie, duplicate o morte. L'invocazione semplice (o `preview`) è sempre in sola lettura. `vault-groom apply` è la corsia protetta: propone una tranche, te la mostra per intero e solo dopo il tuo `yes` parte la passata di scrittura, dentro un clone usa-e-getta del vault senza remote configurati, che quindi non può fisicamente fare push. Un audit meccanico confronta poi i commit reali con la tranche approvata, in entrambe le direzioni, e solo una run del tutto pulita viene promossa (fast-forward) nel tuo vault vero; tutto il resto resta in quarantena nel clone, col vault intatto. Funziona con quella che hai già tra `claude`, `codex` o `agy` (`GROOM_RUNNER`). Un workflow n8n opzionale si limita a ricordarti che è ora ogni 14 giorni — la passata di grooming vera e propria non è mai schedulata né gira incustodita.
-- **Consiglio AI deterministico (Alpha).** Un orchestratore locale (`council.py`) che coordina più modelli per compiti di brainstorming o a staffetta. Usa codice Python esplicito per cedere il controllo, anziché affidare le regole di gestione a un LLM.
-- **Rilevamento del drift.** Nel profilo MULTI lo script `agent-doctor` esegue oltre 30 controlli in sola lettura su configurazione viva delle CLI, collegamento al vault, skill e gestione dei segreti, riportando pass, warn o fail riga per riga (exit code non-zero in caso di fallimenti). Rileva drift e configurazioni sbagliate; non sta nel percorso di esecuzione. In MINIMAL non c'è doctor: una CLI su una macchina si verifica a vista.
-- **Coerenza tra macchine (opzionale).** Nel profilo MULTI il sistema forza gli agenti a comportarsi in modo identico su hardware diverso (ad esempio, una workstation Windows e un portatile Linux) tramite un provisioner. In MINIMAL c'è una sola macchina, quindi il provisioner è no-op e non viene installato.
+- **Infrastruttura come codice per gli agenti.** I manifest descrivono tool, permessi e regole di comportamento.
+  Lo script Python unificato `agent_sync.py` genera poi il file di configurazione corretto per ogni CLI.
+- **Memoria versionata in Git.** Gli agenti leggono e scrivono file Markdown.
+  Ogni modifica entra nella storia del repository, si può controllare con un diff e si può annullare.
+- **Grooming del vault, opzionale e manuale.** `vault-groom.sh` e `vault-groom.ps1` usano un playbook e un LLM per trovare note obsolete, duplicate o scollegate.
+  L'esecuzione semplice, così come `preview`, è sempre in sola lettura.
+  Con `vault-groom apply`, lo strumento propone una tranche di modifiche, la mostra per intero e avvia la scrittura solo dopo che hai digitato `yes`.
+  La scrittura avviene in un clone usa e getta del vault, senza remote configurato, quindi da quel clone non è possibile fare push.
+  Un audit confronta il risultato con la tranche approvata e promuove il lavoro nel vault reale solo se tutto torna.
+  Se qualcosa non torna, il clone resta in quarantena e il vault originale non viene toccato.
+  Puoi usare la CLI che hai già tra `claude`, `codex` e `agy`, tramite `GROOM_RUNNER`.
+  Un workflow n8n opzionale ti ricorda ogni 14 giorni di eseguire il grooming, ma non avvia mai il lavoro al posto tuo.
+- **Consiglio AI deterministico, in Alpha.** `council.py` è un orchestratore locale per coordinare più modelli in attività di brainstorming o relay.
+  Le regole di passaggio sono scritte in Python, non affidate a un altro LLM.
+- **Controllo del drift.** Nel profilo MULTI, `agent-doctor` esegue oltre 30 verifiche in sola lettura sulla configurazione delle CLI, sul collegamento al vault, sulle skill e sulla gestione dei segreti.
+  Per ogni voce mostra `pass`, `warn` o `fail` e restituisce un exit code diverso da zero se trova errori.
+  Rileva configurazioni fuori posto, ma non blocca l'esecuzione degli agenti.
+  Nel profilo MINIMAL non c'è un doctor, perché una sola CLI su una sola macchina si controlla direttamente.
+- **Coerenza tra macchine, opzionale.** Nel profilo MULTI il provisioner mantiene lo stesso comportamento su macchine diverse, per esempio una workstation Windows e un portatile Linux.
+  Nel profilo MINIMAL, con una sola macchina, il provisioner non serve e non viene installato.
 
-## Architettura: I Tre Piani
+## Architettura: i tre piani
 
-NeXgen Engine separa le operazioni in tre piani distinti:
+NeXgen separa il sistema in tre piani:
 
-1. **Comportamento:** Una singola policy operativa (`AGENTS.md`) collegata a ogni runtime.
-2. **Configurazione:** Un manifest MCP astratto, compilato nei dialetti specifici di ogni CLI da uno script generatore.
-3. **Memoria:** Un vault in puro Markdown, scritto tramite percorsi serializzati.
+1. **Comportamento.** Una sola policy operativa, `AGENTS.md`, collegata a ogni ambiente in cui gira una CLI.
+2. **Configurazione.** Un manifest MCP astratto, trasformato dal generatore nel formato richiesto da ciascuna CLI.
+3. **Memoria.** Un vault in Markdown, con le scritture serializzate per evitare conflitti.
 
-Le scritture passano attraverso una sola porta per tipologia. Le note vengono scritte esclusivamente tramite un tool server che serializza le richieste con un lock e un controllo sull'hash atteso, impedendo agli agenti di sovrascrivere il lavoro altrui.
+Ogni tipo di scrittura passa dalla propria porta.
+Le note, per esempio, vengono scritte solo tramite un server MCP che usa un lock e controlla l'hash atteso, così un agente non può sovrascrivere per errore il lavoro di un altro.
 
-**Le skill restano lazy per scelta.** La conoscenza dei tool e la policy
-restano nel bootstrap e nel manifest MCP. I playbook opzionali vivono fuori
-dalle root di discovery eager e si aprono solo quando servono. Vedi
-[`docs/lazy-skills.md`](docs/lazy-skills.md).
+**Le skill vengono caricate solo quando servono.** Le regole e la conoscenza dei tool restano nel bootstrap e nel manifest MCP.
+I playbook opzionali vivono fuori dalle cartelle di discovery automatica e vengono aperti solo per i task che ne hanno bisogno.
+Vedi [`docs/lazy-skills.md`](docs/lazy-skills.md).
 
-## Tool Condivisi tramite MCP (Modulari e ottimizzati per Free-Tier)
+## Tool condivisi tramite MCP
 
-Gli agenti condividono l'infrastruttura invece di reinventarla. Alcuni servizi girano in singola istanza, in un ambiente che installi e possiedi tu (non un servizio gestito centralmente da questo progetto o dal suo autore), e tutti gli agenti vi accedono tramite Model Context Protocol (MCP):
+Gli agenti possono usare gli stessi servizi invece di configurarli da capo ogni volta.
+Sono servizi che installi e gestisci tu in un ambiente di tua proprietà, non servizi offerti o amministrati dall'autore di NeXgen.
+Gli agenti li raggiungono tramite il Model Context Protocol, MCP.
 
-> **Nota importante:** Questi tool specifici sono completamente intercambiabili. Sono stati scelti perché girano comodamente e a costo zero su una **VPS Oracle Cloud Always Free** (4 core ARM Ampere, 24GB di RAM, 200GB di SSD) — un tier che chiunque può attivare per sé. Possono essere sostituiti con alternative Enterprise in base alle necessità.
+> **Nota:** questi servizi sono intercambiabili.
+> Sono stati scelti perché possono girare a costo zero su una **VPS Oracle Cloud Always Free** con 4 core ARM Ampere, 24 GB di RAM e 200 GB di SSD.
+> Puoi sostituirli con equivalenti Enterprise o con servizi self-hosted diversi.
 
-- **Ricerca Semantica (a carico tuo):** il contratto MCP `vault-library` (`semantic_search`, vedi `manifest.yaml`) è pronto da chiamare, e la governance di retrieval in `AGENTS.md` vi instrada. A differenza dei tre tool sotto, **nessun codice di deploy per il backend di ricerca è incluso in questo repo** — `03-INFRA/deploy/` non ha una cartella `semantic-search/`. Costruisci e ospita tu un servizio dietro quel contratto (un livello di retrieval self-hosted su embedding statici + BM25 è una forma collaudata) se vuoi che questa corsia risponda davvero; senza, gli agenti ripiegano sulla ricerca lessicale secondo la governance.
-- **Web Scraping:** Un'istanza Firecrawl self-hosted che installi tu (inclusa in `03-INFRA/deploy/firecrawl/`), che funge da corsia read-only predefinita.
-- **OCR Locale:** Un servizio OCR self-hosted che installi tu (incluso in `03-INFRA/deploy/ocr/`), che estrae testo da screenshot, log e documenti scansionati localmente.
-- **Browser Visibile:** Per i task interattivi (form, login, controlli su pagine), gli agenti si collegano a una finestra Chrome reale e visibile tramite protocollo DevTools. **Agli agenti è severamente vietato eseguire browser headless all'insaputa dell'utente.**
+- **Ricerca semantica, da configurare a parte.** Il contratto MCP `vault-library` espone già `semantic_search`, il manifest `manifest.yaml` lo dichiara e la governance di retrieval in `AGENTS.md` sa come usarlo.
+  Il repository, però, non contiene il backend di ricerca né il suo codice di deploy: in `03-INFRA/deploy/` non c'è una cartella `semantic-search/`.
+  Se vuoi usare questa funzione, devi costruire e gestire un servizio compatibile con quel contratto.
+  In sua assenza, gli agenti ricadono sulla ricerca lessicale prevista dalla governance.
+- **Web scraping.** Puoi installare una tua istanza self-hosted di Firecrawl, con i file di deploy in `03-INFRA/deploy/firecrawl/`.
+  È la corsia predefinita per le letture web in sola lettura.
+- **OCR locale.** Puoi installare un servizio OCR self-hosted, con i file in `03-INFRA/deploy/ocr/`, per estrarre testo da screenshot, log e documenti scansionati senza inviarli a un servizio esterno.
+- **Browser visibile.** Per form, login e controlli interattivi, gli agenti si collegano a una finestra Chrome reale tramite il protocollo DevTools.
+  Non devono eseguire browser headless alle tue spalle.
 
-## Cosa NON abbiamo costruito (di proposito)
+## Cosa non abbiamo costruito
 
-Non abbiamo scritto un motore di memoria proprietario. Markdown, Git e un semplice tool server offrono già una memoria durevole e auditabile che umani e agenti possono leggere. 
-Non ci sono complesse "negoziazioni tra agenti", né pianificatori Swarm A* autonomi, né CRDT, né database secondari. Lo sforzo è andato interamente sul livello *sopra* lo storage: la governance operativa e i binari di sicurezza.
+Non abbiamo creato un motore di memoria proprietario.
+Markdown, Git e un semplice server MCP bastano a fornire una memoria durevole, versionata e leggibile sia dagli umani sia dagli agenti.
+Non troverai un sistema di negoziazione autonoma tra agenti, un pianificatore Swarm A*, CRDT o un secondo database.
+Il lavoro è concentrato sul livello che sta sopra lo storage, cioè sulla governance operativa e sui controlli di sicurezza.
 
 ## Contenuto
 
 | Directory | Scopo |
 |---|---|
-| `03-INFRA/` | Il motore. Contiene le regole base (`AGENTS.md`), le definizioni dei server MCP e gli script di validazione (`agent-sync`, `agent-doctor`). |
-| `99-INDEX/` | Il livello di identità. Informa gli agenti sull'hardware, il sistema operativo e il contesto attuale (`USER-PROFILE.md`). |
-| `01-NOTES/` | Spazio di lavoro standard per la documentazione. |
-| `02-PROJECTS/` | Tracciamento dei progetti e log operativi. |
-| `04-NOW/` | Priorità attive. Evita che gli agenti si disperdano su task non rilevanti. |
+| `03-INFRA/` | Il motore, con le regole base (`AGENTS.md`), i manifest dei server MCP e gli script di validazione (`agent-sync`, `agent-doctor`). |
+| `99-INDEX/` | Il livello di identità, con le informazioni su hardware, sistema operativo e contesto di deployment (`USER-PROFILE.md`). |
+| `01-NOTES/` | Lo spazio di lavoro per la documentazione. |
+| `02-PROJECTS/` | Il tracciamento dei progetti e delle attività. |
+| `04-NOW/` | Le priorità attive, per evitare che gli agenti si disperdano in aree non pertinenti. |
 
 ## Modalità di deployment
 
-1. **Locale.** Gira interamente sulla tua macchina. Usa i tool nativi delle CLI e modelli locali. Adatto per test e setup mono-utente.
-2. **Cloud-Server.** Si collega a uno stack remoto (come n8n per l'orchestrazione, Firecrawl per lo scraping e OCR dedicato) installato e gestito nel **tuo ambiente privato** (VPS o server locale) tramite tunnel SSH. Mantieni il pieno controllo dei tuoi dati; NeXgen non fornisce né ospita questi servizi per te.
+1. **Local-Only.** Tutto gira sulla tua macchina, usando i tool nativi delle CLI e, se vuoi, modelli locali.
+   È la modalità adatta per i test e per un setup personale.
+2. **Cloud-Server.** Il vault si collega a uno stack remoto, per esempio n8n per l'orchestrazione, Firecrawl per lo scraping e un servizio OCR dedicato.
+   Lo stack gira in un ambiente privato che installi e amministri tu, come una VPS o un server locale, e viene raggiunto tramite tunnel SSH.
+   NeXgen non fornisce né ospita questi servizi, quindi i dati restano sotto il tuo controllo.
 
-Il setup guidato dall'AI (`INIT.md`) configurerà la modalità adatta al tuo ambiente.
+Il setup guidato dall'AI in `INIT.md` configura la modalità più adatta al tuo ambiente.
 
 ## Profili di installazione
 
-Il framework si adatta a due forme d'uso. L'installer (`INIT.md`) chiede e sceglie quella giusta.
+Il setup guidato da `INIT.md` ti chiede quale dei due profili descrive meglio il tuo caso.
 
-- **MINIMAL.** Una CLI su una macchina (es. solo Claude Code sul portatile, oppure [OpenCode](https://opencode.ai) per un setup single-CLI basato su DeepSeek). Ottieni il knowledge vault, le regole del bootstrap, le skill lazy e la disciplina della scrittura memoria tramite una sola porta. Non c'è provisioner da lanciare, nessun doctor da schedulare, niente sync tra macchine. Monti MCP server e skill a mano nella tua CLI. Indicato per chi lavora da solo e vuole governance AgentOps sopra un singolo agente.
-- **MULTI.** Due o più CLI e/o due o più macchine. Il provisioner unificato in Python (`agent_sync.py`), il doctor e l'healthcheck entrano in funzione e tengono ogni CLI e ogni macchina allineata alla fonte canonica del vault. Indicato per un setup desktop + portatile, o per girare più CLI in parallelo.
+- **MINIMAL.** Una sola CLI su una sola macchina, per esempio Claude Code sul portatile oppure [OpenCode](https://opencode.ai) in un setup basato su DeepSeek.
+  Ottieni il knowledge vault, le regole di bootstrap, le skill caricate quando servono e la scrittura della memoria attraverso una sola porta.
+  Non devi avviare un provisioner, programmare un doctor o sincronizzare più macchine.
+  Monti manualmente nella CLI i server MCP e le skill che vuoi usare.
+  È il profilo giusto per chi lavora da solo e vuole una governance AgentOps sopra una singola CLI.
+- **MULTI.** Due o più CLI, oppure due o più macchine.
+  Il provisioner Python `agent_sync.py`, il doctor e l'healthcheck mantengono ogni ambiente allineato alla fonte canonica nel vault.
+  È il profilo adatto a una configurazione desktop più portatile o a chi usa più CLI in parallelo.
 
-Nel profilo MULTI la propagazione è una transazione con lock e blocco sicuro in caso di errore.
-Il pull deve dimostrare che i dati sono aggiornati rispetto a un unico remote autorevole prima di rigenerare i file runtime.
-La pubblicazione resta sempre un comando separato.
+Nel profilo MULTI, la propagazione avviene come una transazione con lock e si interrompe in modo sicuro se qualcosa non torna.
+Prima di rigenerare i file runtime, il pull deve dimostrare che i dati arrivano dal remote autorevole e sono aggiornati.
+La pubblicazione è sempre un comando separato.
 Il contratto completo è in [`docs/sync-contract.md`](docs/sync-contract.md).
 
-Puoi partire da MINIMAL e passare a MULTI in seguito. I file canonici del vault non cambiano tra i profili.
+Puoi iniziare con MINIMAL e passare a MULTI in seguito.
+I file canonici del vault restano gli stessi in entrambi i profili.
 
 ## Installazione
 
-Non devi compilare i file di configurazione a mano.
+Non devi preparare a mano i file di configurazione.
 
 1. Clona il repository:
    ```bash
    git clone https://github.com/matteopasseri407/NeXgen-Engine.git ~/KnowledgeVault
    cd ~/KnowledgeVault
    ```
-   > Preflight opzionale: `bash install.sh` controlla i prerequisiti, verifica lo scaffold, rileva le tue CLI e stampa il passo successivo. Non scrive nulla ed è sicuro da ri-lanciare.
+   > Preflight facoltativo: `bash install.sh` controlla i prerequisiti, verifica la struttura del vault, rileva le CLI installate e mostra il passo successivo.
+   > Non scrive nulla ed è sicuro da eseguire più volte.
 2. Apri `INIT.md`.
-3. Incolla il contenuto in una **CLI agentica capace di scrivere file** (Claude Code, Codex, OpenCode, Antigravity) aperta in questa cartella, non una chat web (claude.ai / gemini), che non può scrivere file.
-4. L'agente ti chiederà quante CLI e macchine hai, il tuo hardware e la modalità di deployment, poi configurerà il vault in automatico.
+3. Incolla il contenuto in una **CLI agentica capace di modificare file**, come Claude Code, Codex, OpenCode o Antigravity, aperta nella cartella del repository.
+   Non usare una chat web come claude.ai o gemini, perché non può scrivere i file del progetto.
+4. L'agente ti chiederà quante CLI e quante macchine vuoi usare, quali sono le caratteristiche del tuo computer e quale modalità di deployment preferisci.
+   Poi configurerà il vault in automatico.
 
-Preferisci meno domande e più autonomia? `AI-INSTALLER.md` è la stessa installazione con il minimo indispensabile di domande: incollalo al posto di `INIT.md` e l'agente esegue i passi da solo invece di intervistarti uno alla volta.
+Se vuoi ridurre al minimo le domande, usa `AI-INSTALLER.md` al posto di `INIT.md`.
+L'agente eseguirà la stessa procedura in autonomia, chiedendo solo le informazioni indispensabili.
 
 ## Prerequisiti
 
-- Git
-- Python 3.11+ con PyYAML (`pip install pyyaml`), oppure Python 3.10 con anche `tomli` (`pip install pyyaml tomli`)
-- Node.js (per `npx`, necessario se monti server MCP o skill esterne)
-- Opzionale: [OpenCode](https://opencode.ai) come una delle CLI supportate
-- `jq` e `curl` su Linux/Mac (solo per il profilo MULTI, necessari per sync e health)
+- Git.
+- Python 3.11 o superiore con PyYAML, installabile con `pip install pyyaml`.
+- Python 3.10 con PyYAML e `tomli`, installabili con `pip install pyyaml tomli`.
+- Node.js, necessario per `npx` se vuoi montare server MCP o skill esterne.
+- [OpenCode](https://opencode.ai), opzionale, come una delle CLI supportate.
+- `jq` e `curl` su Linux o macOS, necessari solo per il sync e gli healthcheck del profilo MULTI.
 
 ## Stato per piattaforma
 
-**Linux: rilasciato.** Linux è la piattaforma usata quotidianamente e la più testata, ed è questo il taglio da usare lì: l'intero engine — provisioner, doctor, giardiniere, council, sync — è esercitato end to end su Fedora ed è verde in CI. macOS segue gli stessi percorsi di codice POSIX ma ha visto meno uso reale.
+**Linux: rilasciato.** È la piattaforma usata ogni giorno e quella su cui il progetto è stato provato di più.
+In questa versione, provisioner, doctor, grooming, council e sync sono stati verificati end to end su Fedora e passano la CI.
+macOS segue gli stessi percorsi POSIX, ma ha ricevuto meno verifiche nell'uso reale.
 
-**Perché è ancora Alpha?** Il supporto cross-platform e gli orchestratori principali si stanno ancora stabilizzando:
-- **Windows: software-completo, non ancora verificato fisicamente.** Il provisioner (`agent_sync.py`), il generatore di config MCP (`render.py`, tramite un blocco `windows:` di override per-server nel manifest) e i launcher PowerShell hanno tutti un dialetto Windows, e la CI esegue l'intera suite pytest — inclusi i test pwsh del giardiniere — su `windows-latest` (job `engine-tests-windows`) a ogni push, ora davvero verde dopo un giro di fix di portabilità reali (encoding UTF-8 della console, byte-parity del plan record, consegna del prompt attraverso il launcher, file locking). Questo dimostra che il codice condiviso funziona su un runner CI, non su un'installazione fisica: un paio di percorsi runtime (es. il file di istruzioni di Antigravity) restano dedotti per analogia con Linux, e gli adapter dei vendor vogliono ancora un passaggio cross-platform dal vivo. Tratta Windows come preview finché non arriva quella verifica fisica; lì il profilo MINIMAL è il punto di partenza più sicuro oggi.
-- **Consiglio AI:** L'orchestratore deterministico (`council.py`) supporta i seat `opencode`, `agy`, `codex`, `claude` e `ollama`. L'adattatore opzionale di routing propone modelli ed effort verificabili localmente, con fallback dichiarati, senza far riscrivere a un workflow esterno i dati privati cross-machine o invocare un seat in automatico. L'umano sceglie esplicitamente quanti seat chiamare e quali modelli usare. I test automatici coprono il flusso dei quattro mode.
+**Perché il progetto è ancora in Alpha?** Il supporto multipiattaforma e gli orchestratori principali non sono ancora considerati definitivi.
+- **Windows: completo a livello software, ma non ancora verificato su una macchina reale.** `agent_sync.py`, il generatore della configurazione MCP `render.py`, tramite un blocco di override `windows:` per ogni server nel manifest, e i launcher PowerShell includono un dialetto Windows.
+  La CI esegue l'intera suite pytest su `windows-latest`, compresi i test PowerShell del grooming, nel job `engine-tests-windows` a ogni push.
+  I test sono verdi dopo i fix di portabilità per encoding UTF-8, byte parity dei plan record, passaggio dei prompt attraverso i launcher e file locking.
+  Questo dimostra che il codice condiviso funziona su un runner CI, non che l'installazione sia stata provata su un PC reale.
+  Alcuni percorsi runtime, come il file di istruzioni di Antigravity, sono ancora dedotti per analogia con Linux, e gli adapter dei vendor richiedono una verifica multipiattaforma dal vivo.
+  Considera quindi Windows una preview e parti dal profilo MINIMAL.
+- **Consiglio AI.** L'orchestratore deterministico `council.py` supporta i seat `opencode`, `agy`, `codex`, `claude` e `ollama`.
+  Il routing opzionale propone modelli ed effort verificati localmente, con fallback espliciti.
+  Non permette a un workflow esterno di riscrivere dati privati tra più macchine o di avviare automaticamente un seat.
+  La scelta del numero di seat e dei modelli resta sempre esplicita e umana.
+  I test automatici coprono il flusso dei quattro mode.
 
 ## Licenza
 
-PolyForm Noncommercial License 1.0.0. Gratuita per qualsiasi uso non commerciale, incluso leggerla, eseguirla, forkarla e modificarla. Vedi `LICENSE` per il testo completo. Qualsiasi uso commerciale, del software originale o di un derivato, richiede una licenza separata dall'autore: vedi `COMMERCIAL.md`.
+PolyForm Noncommercial License 1.0.0.
+Il progetto è gratuito per qualsiasi uso non commerciale, compresi lettura, esecuzione, fork e modifiche.
+Il testo completo è in `LICENSE`.
+Qualsiasi uso commerciale del software originale o di un suo derivato richiede una licenza separata dell'autore, come spiegato in `COMMERCIAL.md`.
 
 ## Supporto
 
-Questo progetto è gratuito da usare. Alcuni link opzionali (come quello di OpenCode sopra) sono link referral che finanziano la manutenzione senza costi aggiuntivi per te: vedi `SUPPORT.md` per l'unico punto in cui sono dichiarati.
+Il progetto è gratuito.
+Alcuni link opzionali, incluso quello di OpenCode, sono referral link che aiutano a finanziare la manutenzione senza costi aggiuntivi per te.
+Sono dichiarati tutti in `SUPPORT.md`.
