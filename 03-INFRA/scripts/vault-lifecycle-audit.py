@@ -1,7 +1,11 @@
 #!/usr/bin/env python3
 """Read-only lifecycle audit for the KnowledgeVault.
 
-Flags notes that are likely stale, oversized, missing metadata, or historical.
+Flags notes that are likely stale, oversized, missing metadata, or historical,
+plus ad-hoc agent handoff notes (AGENTS.md: "must be explicitly deleted by
+the receiving agent once the task is complete") still sitting in the vault --
+this is the audit's only line of sight on those, since the gardener
+(vault-groom.sh/.ps1) never leaves the vault root and can't see them either.
 It never edits files and it never reads decrypted secrets.
 """
 
@@ -39,6 +43,16 @@ HISTORICAL_HINTS = re.compile(
     r"(historical version|historical note|historical log|superseded|deprecated|"
     r"outdated|not canonical|do not use|legacy|retired|obsolete)",
     re.IGNORECASE,
+)
+
+# Ad-hoc agent handoff notes (see the "Cheap Model Handoff Template") are
+# meant to be short-lived: created for one step, deleted by the receiving
+# agent once done. Two independent markers, not one, to keep false positives
+# low -- a note that merely mentions "handoff" in passing shouldn't match.
+HANDOFF_TEMPLATE_PATH = "03-INFRA/agent-universal-layer/templates/cheap-model-handoff.md"
+HANDOFF_HEADING = re.compile(r"^##\s+Handoff\s*$", re.MULTILINE)
+HANDOFF_SCOPE_HINT = re.compile(
+    r"^###\s+Scope\s*$|^\s*(Read only|May edit only|Do not touch):", re.MULTILINE
 )
 
 
@@ -222,9 +236,15 @@ def main() -> int:
     stale: list[tuple[int, str]] = []
     large: list[tuple[int, str]] = []
     historical: list[str] = []
+    handoff: list[str] = []
 
     status_counts: dict[str, int] = {}
     for note in notes:
+        if note.rel != HANDOFF_TEMPLATE_PATH:
+            body = "\n".join(note.lines)
+            if HANDOFF_HEADING.search(body) and HANDOFF_SCOPE_HINT.search(body):
+                handoff.append(note.rel)
+
         if not note.has_frontmatter:
             if note.line_count >= args.large_lines:
                 large.append((note.line_count, note.rel))
@@ -280,6 +300,7 @@ def main() -> int:
     print_section("Stale by review date", [row for _, row in sorted(stale, reverse=True)], args.limit)
     print_section("Large notes", [f"{lines} lines\t{rel}" for lines, rel in sorted(large, reverse=True)], args.limit)
     print_section("Historical or superseded hints near top", historical, args.limit)
+    print_section("Handoff notes still in the vault (delete once the task is done, per AGENTS.md)", handoff, args.limit)
 
     print("\nThis is an audit list, not an automatic deletion list.")
     return 0

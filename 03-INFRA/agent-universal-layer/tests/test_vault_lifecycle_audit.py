@@ -76,3 +76,45 @@ def test_lifecycle_audit_accepts_private_generated_dir_config(tmp_path):
     assert proc.returncode == 0, proc.stdout + proc.stderr
     assert "Generated dirs: 03-INFRA/n8n-backup, 01-LOCAL/artifacts" in proc.stdout
     assert "01-LOCAL/artifacts/export.md" not in proc.stdout
+
+
+def test_lifecycle_audit_flags_a_leftover_handoff_note(tmp_path):
+    vault = tmp_path / "vault"
+    write_note(
+        vault / "04-NOW" / "handoff-to-cheap-model.md",
+        "## Handoff\n\n### Objective\n\nDo the thing.\n\n### Scope\n\nRead only:\n\n- `foo.py`\n",
+    )
+
+    proc = run_audit(vault)
+
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert "Handoff notes still in the vault" in proc.stdout
+    assert "04-NOW/handoff-to-cheap-model.md" in proc.stdout
+
+
+def test_lifecycle_audit_does_not_flag_a_note_merely_mentioning_handoff(tmp_path):
+    vault = tmp_path / "vault"
+    write_note(
+        vault / "01-NOTES" / "meeting.md",
+        "---\nstatus: active\ntype: note\nlast_reviewed: 2026-07-01\n---\n"
+        "# Meeting notes\n\nWe discussed the handoff process for new hires.\n",
+    )
+
+    proc = run_audit(vault)
+
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert "01-NOTES/meeting.md" not in proc.stdout.split("Handoff notes")[-1]
+
+
+def test_lifecycle_audit_excludes_the_canonical_handoff_template_itself(tmp_path):
+    vault = tmp_path / "vault"
+    write_note(
+        vault / "03-INFRA" / "agent-universal-layer" / "templates" / "cheap-model-handoff.md",
+        "# Cheap Model Handoff Template\n\n## Handoff\n\n### Scope\n\nRead only:\n\n- `path/or/pattern`\n",
+    )
+
+    proc = run_audit(vault)
+
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    handoff_section = proc.stdout.split("Handoff notes still in the vault")[-1]
+    assert "cheap-model-handoff.md" not in handoff_section
