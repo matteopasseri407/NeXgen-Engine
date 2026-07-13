@@ -69,6 +69,24 @@ def _git(vault, *args):
 def _write_stub_source(bin_dir: Path, name: str, source: str) -> None:
     if os.name == "nt":
         (bin_dir / f"{name}.py").write_text(source, encoding="utf-8")
+        # A *.ps1 shim ALONGSIDE the *.cmd, mirroring the launcher shape
+        # agent-sync's utils() actually installs on Windows (it writes both a
+        # .ps1 and a .cmd). vault-groom.ps1's Resolve-CliInvoker prefers the
+        # .ps1, invoked in-process by the PowerShell engine, so the
+        # -p/--prompt argument (a multi-line markdown tranche full of | and
+        # <) arrives byte-intact instead of being re-parsed by cmd.exe
+        # through the .cmd's %* -- without this the write pass never sees
+        # "APPROVED TRANCHE" and the audit blocks as coverage-dirty. Same
+        # forwarder as _write_direct_ps1_shim below.
+        (bin_dir / f"{name}.ps1").write_text(
+            "$pyScript = Join-Path $PSScriptRoot '" + name + ".py'\n"
+            "$py = (Get-Command python3 -ErrorAction SilentlyContinue).Source\n"
+            "if (-not $py) { $py = (Get-Command python -ErrorAction SilentlyContinue).Source }\n"
+            "$piped = @($input) -join \"`n\"\n"
+            "$piped | & $py $pyScript @args\n"
+            "exit $LASTEXITCODE\n",
+            encoding="utf-8",
+        )
         (bin_dir / f"{name}.cmd").write_text(
             f'@echo off\r\npython "%~dp0{name}.py" %*\r\n', encoding="utf-8"
         )
@@ -144,6 +162,13 @@ def groom_env(tmp_path):
     env["GROOM_TEST_RECORD"] = str(record)
     env["GROOM_STATE_DIR"] = str(state_dir)
     env["GROOM_NOPUSH"] = "1"  # no remote configured in these fixtures
+    # The Python stub stands in for a real CLI runner (claude/codex/agy),
+    # which emits UTF-8. On Windows a redirected Python stdout defaults to
+    # the ANSI code page, so an accented tranche would reach vault-groom.ps1
+    # as mojibake even after the wrapper's own [Console]::OutputEncoding fix.
+    # PYTHONUTF8=1 makes the stand-in faithful to what it emulates; a no-op
+    # on the already-UTF-8 POSIX runners.
+    env["PYTHONUTF8"] = "1"
     isolated_home = tmp_path / "isolated-home"
     isolated_home.mkdir()
     env["HOME"] = str(isolated_home)

@@ -72,6 +72,18 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 
+# Force UTF-8 for every byte that crosses a native-process boundary. Without
+# this, Windows PowerShell decodes a runner's stdout with the console's OEM
+# code page and re-encodes piped stdin the same way, so a tranche with any
+# non-ASCII char (accented Italian, an em dash) round-trips through
+# propose-log -> Get-Content -> plan record as mojibake, and the sha256 the
+# audit hashes stops matching what the human approved. The bash twin never
+# had this problem (its pipes are raw bytes); UTF-8 makes the twins agree.
+$Utf8NoBom = [System.Text.UTF8Encoding]::new($false)
+try { [Console]::OutputEncoding = $Utf8NoBom } catch { }
+try { [Console]::InputEncoding = $Utf8NoBom } catch { }
+$OutputEncoding = $Utf8NoBom
+
 $Vault    = if ($env:VAULT) { $env:VAULT } else { Join-Path $env:USERPROFILE 'KnowledgeVault' }
 $Playbook = '03-INFRA/vault-grooming-playbook.md'
 # Resolved via $PSScriptRoot (this script's own real directory), not $Vault:
@@ -272,7 +284,16 @@ if ([string]::IsNullOrWhiteSpace($Tranche)) {
 
 New-Item -ItemType Directory -Force -Path $StateDir | Out-Null
 $PlanRecord = Join-Path $StateDir "$Ts-plan.txt"
-Set-Content -Path $PlanRecord -Value $Tranche -Encoding utf8
+# Byte-for-byte parity with vault-groom.sh's `printf '%s\n' "$(cat ...)"`:
+# normalize CRLF/CR to LF and strip trailing newlines (what bash's $(...)
+# does), then write UTF-8 no-BOM with exactly one trailing LF via .NET --
+# NOT Set-Content, whose Windows CRLF and BOM handling would make the plan
+# record (and therefore its sha256) differ from the Linux twin's for the
+# very same approved tranche. Everything downstream -- the banner, the
+# write prompt, the TOCTOU re-hash -- reads this normalized value.
+$Tranche = ($Tranche -replace "`r`n", "`n") -replace "`r", "`n"
+$Tranche = $Tranche.TrimEnd("`n")
+[System.IO.File]::WriteAllText($PlanRecord, $Tranche + "`n", $Utf8NoBom)
 # Hash the FILE's raw bytes, not the in-memory string: the confirmation
 # banner and the write prompt both quote this hash, and the TOCTOU
 # re-check below re-hashes the same file -- all three must agree on

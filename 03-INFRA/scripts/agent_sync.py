@@ -557,8 +557,17 @@ class SyncRunLock:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self._fh = self.path.open("a+b")
         if self.path.stat().st_size == 0:
-            self._fh.write(b"0")
-            self._fh.flush()
+            # Best-effort seed byte. On Windows another process may already
+            # hold an msvcrt byte-range lock on byte 0 of a still-empty file
+            # (exactly the "lock is busy" case): the write/flush then raises
+            # PermissionError, and letting it propagate turned a clean
+            # exit-75 "busy" into an uncaught crash. Swallow it -- the lock
+            # loop below re-detects the contention and returns not-acquired.
+            try:
+                self._fh.write(b"0")
+                self._fh.flush()
+            except OSError:
+                pass
         deadline = time.monotonic() + self.timeout
         while True:
             try:
@@ -589,7 +598,15 @@ class SyncRunLock:
                     import fcntl
                     fcntl.flock(self._fh.fileno(), fcntl.LOCK_UN)
         finally:
-            self._fh.close()
+            # close() re-flushes any buffered seed byte; on Windows that can
+            # re-raise the same PermissionError the busy-lock path already
+            # tolerated in __enter__. A close failure when we never acquired
+            # the lock is harmless -- don't let it clobber the caller's
+            # exit-75 return with a crash.
+            try:
+                self._fh.close()
+            except OSError:
+                pass
 
 
 class PullState(Enum):
