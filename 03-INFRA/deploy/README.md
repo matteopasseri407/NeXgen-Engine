@@ -46,19 +46,22 @@ not the legacy standalone `docker-compose`).
 ## Image pins
 
 Every service image in the three `docker-compose.yml` files is pinned to an
-explicit version tag — none of them use `:latest`, so a redeploy on a fresh
-VPS reproduces the same images instead of drifting to whatever shipped that
-day. Each compose file's header comment explains how to also pin a sha256
-digest once you have Docker/registry access (this repo's CI and sandboxes
-don't). Every pin can be overridden with an env var (`N8N_IMAGE`,
+explicit version tag, with one deliberate exception (below) — so a redeploy
+on a fresh VPS reproduces the same images instead of drifting to whatever
+shipped that day. Each compose file's header comment explains how to also
+pin a sha256 digest once you have Docker/registry access (this repo's CI and
+sandboxes don't). Every pin can be overridden with an env var (`N8N_IMAGE`,
 `OCR_IMAGE`, `FIRECRAWL_IMAGE`, `FIRECRAWL_REDIS_IMAGE`,
 `FIRECRAWL_PLAYWRIGHT_IMAGE`) — see `.env.example`.
 
-Note: the Firecrawl images below use the `ghcr.io/mendableai/*` path that
-matches this repo's existing simple API+worker+Redis+Playwright shape.
-Upstream Firecrawl has been reorganizing its self-host images and
-architecture; confirm the pinned image still resolves before a production
-deploy (see the comment in `firecrawl/docker-compose.yml`).
+Note: the Firecrawl images use the `ghcr.io/firecrawl/*` path. The project
+moved there from `ghcr.io/mendableai/*` upstream; the old path no longer
+resolves at all (VERIFIED 2026-07-12, see the comment in
+`firecrawl/docker-compose.yml`) — do not use it if you find it in an older
+note or a search result. `firecrawl/playwright-service` is the one
+deliberate `:latest` pin: upstream publishes no versioned tags for it today,
+so pinning a sha256 digest (see above) is the only way to make it fully
+reproducible.
 
 ## Healthchecks
 
