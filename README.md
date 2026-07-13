@@ -68,9 +68,9 @@ Agents share infrastructure rather than reinventing it. A few services run once,
 
 > **Note:** These specific tools are completely interchangeable. They were selected because they run comfortably and at zero cost on an **Oracle Cloud Always Free VPS** (4 ARM Ampere cores, 24GB RAM, 200GB SSD) — a tier anyone can provision for themselves. You can easily swap them for enterprise equivalents.
 
-- **Semantic Search:** A self-hosted retrieval layer (static embeddings via model2vec + BM25) you run CPU-only on your own private VPS. Agents query the knowledge base by meaning without sending internal data to cloud models.
-- **Web Scraping:** A self-hosted Firecrawl instance you deploy serves as the default read-only lane.
-- **Local OCR:** A self-hosted OCR service you deploy extracts text from screenshots, logs, and scanned documents locally.
+- **Semantic Search (bring-your-own):** the `vault-library` MCP contract (`semantic_search`, see `manifest.yaml`) is ready to call, and the retrieval governance in `AGENTS.md` routes to it. Unlike the three tools below, **no deploy code for the search backend itself ships in this repo** — `03-INFRA/deploy/` has no `semantic-search/` folder. Build and host your own service behind that contract (a self-hosted retrieval layer over static embeddings + BM25 is a proven shape for it) if you want this lane to actually answer; without one, agents fall back to lexical search per the governance doc.
+- **Web Scraping:** A self-hosted Firecrawl instance you deploy (included in `03-INFRA/deploy/firecrawl/`) serves as the default read-only lane.
+- **Local OCR:** A self-hosted OCR service you deploy (included in `03-INFRA/deploy/ocr/`) extracts text from screenshots, logs, and scanned documents locally.
 - **Visible Browser:** For interactive tasks (forms, logins, page checks), agents attach to a real, visible Chrome window via the DevTools protocol. **Agents are strictly forbidden from running headless browsers behind the user's back.**
 
 ## What We Deliberately Didn't Build
@@ -215,9 +215,9 @@ Gli agenti condividono l'infrastruttura invece di reinventarla. Alcuni servizi g
 
 > **Nota importante:** Questi tool specifici sono completamente intercambiabili. Sono stati scelti perché girano comodamente e a costo zero su una **VPS Oracle Cloud Always Free** (4 core ARM Ampere, 24GB di RAM, 200GB di SSD) — un tier che chiunque può attivare per sé. Possono essere sostituiti con alternative Enterprise in base alle necessità.
 
-- **Ricerca Semantica:** Un livello di retrieval self-hosted (embedding statici via model2vec + BM25) che fai girare in CPU-only sulla tua VPS privata. Gli agenti interrogano la knowledge base per significato senza inviare dati interni a modelli cloud.
-- **Web Scraping:** Un'istanza Firecrawl self-hosted che installi tu, che funge da corsia read-only predefinita.
-- **OCR Locale:** Un servizio OCR self-hosted che installi tu, che estrae testo da screenshot, log e documenti scansionati localmente.
+- **Ricerca Semantica (a carico tuo):** il contratto MCP `vault-library` (`semantic_search`, vedi `manifest.yaml`) è pronto da chiamare, e la governance di retrieval in `AGENTS.md` vi instrada. A differenza dei tre tool sotto, **nessun codice di deploy per il backend di ricerca è incluso in questo repo** — `03-INFRA/deploy/` non ha una cartella `semantic-search/`. Costruisci e ospita tu un servizio dietro quel contratto (un livello di retrieval self-hosted su embedding statici + BM25 è una forma collaudata) se vuoi che questa corsia risponda davvero; senza, gli agenti ripiegano sulla ricerca lessicale secondo la governance.
+- **Web Scraping:** Un'istanza Firecrawl self-hosted che installi tu (inclusa in `03-INFRA/deploy/firecrawl/`), che funge da corsia read-only predefinita.
+- **OCR Locale:** Un servizio OCR self-hosted che installi tu (incluso in `03-INFRA/deploy/ocr/`), che estrae testo da screenshot, log e documenti scansionati localmente.
 - **Browser Visibile:** Per i task interattivi (form, login, controlli su pagine), gli agenti si collegano a una finestra Chrome reale e visibile tramite protocollo DevTools. **Agli agenti è severamente vietato eseguire browser headless all'insaputa dell'utente.**
 
 ## Cosa NON abbiamo costruito (di proposito)
