@@ -882,7 +882,13 @@ def utils(env: Env) -> bool:
         healthy = True
         healthy = _link_util(env.engine_scripts / "agent-now.sh", env.local_bin / "agent-now", env, "agent-now") and healthy
         healthy = _link_util(env.engine_scripts / "council.sh", env.local_bin / "council", env, "council") and healthy
+        # Linux/Mac only by design (no .ps1 twin ships) -- README/AGENTS.md/
+        # firecrawl.md all document it as a bare command; it was never
+        # actually wired here, same bug class the 2026-07-13 review found on
+        # vault-groom.
+        healthy = _link_util(env.engine_scripts / "firecrawl-local.sh", env.local_bin / "firecrawl-local", env, "firecrawl-local") and healthy
         healthy = _link_util(env.vault_scripts / "vault-push.sh", env.local_bin / "vault-push", env, "vault-push") and healthy
+        healthy = _link_util(env.vault_scripts / "vault-groom.sh", env.local_bin / "vault-groom", env, "vault-groom") and healthy
         healthy = _link_util(env.vault_scripts / "vault-ocr-local.sh", env.local_bin / "vault-ocr-local", env, "vault-ocr-local", optional=True) and healthy
         if skill_source.is_file():
             wrapper = f"#!/bin/sh\nexec {shlex.quote(sys.executable)} {shlex.quote(str(skill_source))} \"$@\"\n"
@@ -895,8 +901,15 @@ def utils(env: Env) -> bool:
             healthy = False
         return healthy
     healthy = True
-    for name in ("agent-now", "council"):
-        src = env.engine_scripts / f"{name}.ps1"
+    # vault-push has no .ps1 twin yet (real, separate gap: it was never
+    # ported to Windows at all, not just never linked -- out of scope for
+    # today's fix, flagged separately). Only link what actually exists.
+    for name, src_dir in (
+        ("agent-now", env.engine_scripts),
+        ("council", env.engine_scripts),
+        ("vault-groom", env.vault_scripts),
+    ):
+        src = src_dir / f"{name}.ps1"
         if not src.is_file():
             env.log(f"utils: missing source {src}")
             healthy = False

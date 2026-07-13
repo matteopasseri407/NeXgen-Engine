@@ -639,6 +639,42 @@ def test_posix_utils_links_council_launcher(sandbox, monkeypatch):
     assert launcher.resolve() == (sandbox.scripts_dir / "council.sh").resolve()
 
 
+@pytest.mark.skipif(os.name == "nt", reason="POSIX symlink launcher behavior is covered on Linux and macOS.")
+def test_posix_utils_links_vault_groom_launcher(sandbox, monkeypatch):
+    # Real gap found on the gardener's first live run (2026-07-13): the
+    # README/n8n reminder/playbook all say "run `vault-groom`" as a bare
+    # command, but nothing ever actually linked it onto PATH -- it was
+    # never invokable without the full script path.
+    mod = load_agent_sync_module(sandbox)
+    monkeypatch.setattr(mod, "IS_WINDOWS", False)
+    monkeypatch.setenv("HOME", str(sandbox.home))
+    monkeypatch.setenv("KNOWLEDGE_VAULT_PATH", str(sandbox.vault))
+
+    env = mod.Env()
+    mod.utils(env)
+
+    launcher = sandbox.home / ".local" / "bin" / "vault-groom"
+    assert launcher.is_symlink()
+    assert launcher.resolve() == (sandbox.scripts_dir / "vault-groom.sh").resolve()
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX symlink launcher behavior is covered on Linux and macOS.")
+def test_posix_utils_links_firecrawl_local_launcher(sandbox, monkeypatch):
+    # Same bug class as vault-groom, found by the same cascading check
+    # (2026-07-13): documented everywhere as a bare command, never linked.
+    mod = load_agent_sync_module(sandbox)
+    monkeypatch.setattr(mod, "IS_WINDOWS", False)
+    monkeypatch.setenv("HOME", str(sandbox.home))
+    monkeypatch.setenv("KNOWLEDGE_VAULT_PATH", str(sandbox.vault))
+
+    env = mod.Env()
+    mod.utils(env)
+
+    launcher = sandbox.home / ".local" / "bin" / "firecrawl-local"
+    assert launcher.is_symlink()
+    assert launcher.resolve() == (sandbox.scripts_dir / "firecrawl-local.sh").resolve()
+
+
 @pytest.mark.skipif(os.name == "nt", reason="POSIX executable bits are not the Windows permission model.")
 def test_posix_utils_does_not_change_the_engine_source_mode(sandbox, monkeypatch):
     mod = load_agent_sync_module(sandbox)
@@ -673,6 +709,26 @@ def test_windows_utils_installs_council_command_wrapper(sandbox, monkeypatch):
     skill_wrapper = sandbox.home / ".local" / "bin" / "agent-skill.cmd"
     assert skill_wrapper.exists()
     assert "agent-skill.py" in skill_wrapper.read_text(encoding="utf-8")
+
+
+def test_windows_utils_installs_vault_groom_command_wrapper(sandbox, monkeypatch):
+    # Same real gap as the POSIX test above, Windows side: vault-groom.ps1
+    # existed but was never linked, so `vault-groom` was not a real command
+    # on Windows either.
+    mod = load_agent_sync_module(sandbox)
+    monkeypatch.setattr(mod, "IS_WINDOWS", True)
+    monkeypatch.setenv("HOME", str(sandbox.home))
+    monkeypatch.setenv("USERPROFILE", str(sandbox.home))
+    monkeypatch.setenv("KNOWLEDGE_VAULT_PATH", str(sandbox.vault))
+
+    env = mod.Env()
+    mod.utils(env)
+
+    launcher = sandbox.home / ".local" / "bin" / "vault-groom.ps1"
+    wrapper = sandbox.home / ".local" / "bin" / "vault-groom.cmd"
+    assert launcher.exists()
+    assert launcher.resolve() == (sandbox.scripts_dir / "vault-groom.ps1").resolve()
+    assert "vault-groom.ps1" in wrapper.read_text(encoding="utf-8")
 
 
 @pytest.mark.skipif(os.name == "nt", reason="POSIX launcher behavior is covered on Linux and macOS.")
