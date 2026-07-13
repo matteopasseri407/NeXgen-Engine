@@ -84,6 +84,50 @@ def test_core_skill_is_the_only_kind_exposed_to_eager_views(sandbox, monkeypatch
     assert (sandbox.home / ".codex" / "skills" / "fake-skill-a").resolve() == library.resolve()
 
 
+def test_oversized_core_skill_targeted_at_codex_warns_it_has_no_native_lazy_loading(sandbox, monkeypatch, capsys):
+    # Codex has no progressive-disclosure mechanism like Claude's: its "lazy"
+    # guarantee is entirely the discipline of keeping RUNTIME["codex"] near
+    # empty. A big `core` skill defeats that discipline silently unless this
+    # warns (2026-07-13 review finding).
+    (sandbox.skills_dir / "fake-skill-a" / "SKILL.md").write_text(
+        "---\ndescription: oversized on purpose\n---\n" + ("x " * 3000) + "\n",
+        encoding="utf-8",
+    )
+    (sandbox.skills_dir / "skills.manifest.yaml").write_text(
+        "skills:\n"
+        "  fake-skill-a:\n"
+        "    origin: vault\n"
+        "    targets: [codex]\n"
+        "    exposure: core\n",
+        encoding="utf-8",
+    )
+    mod = load_skills_sync_module(sandbox)
+    monkeypatch.setattr(mod.sys, "argv", ["skills-sync.py", "--apply"])
+
+    assert mod.main() == 0
+    out = capsys.readouterr().out
+    assert "codex/fake-skill-a" in out
+    assert "no native lazy loading" in out
+    assert "exposure: manual" in out
+
+
+def test_small_core_skill_targeted_at_codex_does_not_warn(sandbox, monkeypatch, capsys):
+    (sandbox.skills_dir / "skills.manifest.yaml").write_text(
+        "skills:\n"
+        "  fake-skill-a:\n"
+        "    origin: vault\n"
+        "    targets: [codex]\n"
+        "    exposure: core\n",
+        encoding="utf-8",
+    )
+    mod = load_skills_sync_module(sandbox)
+    monkeypatch.setattr(mod.sys, "argv", ["skills-sync.py", "--apply"])
+
+    assert mod.main() == 0
+    out = capsys.readouterr().out
+    assert "no native lazy loading" not in out
+
+
 def _write_user_profile_with_team_members(sandbox) -> None:
     profile_dir = sandbox.vault / "99-INDEX"
     profile_dir.mkdir(parents=True, exist_ok=True)

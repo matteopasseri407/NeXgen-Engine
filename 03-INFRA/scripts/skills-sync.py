@@ -81,6 +81,12 @@ RUNTIME = {
 }
 IS_WINDOWS = platform.system() == "Windows"
 GIT_CLONE_TIMEOUT_SECONDS = 60
+# Codex has no native progressive-disclosure mechanism the way Claude does:
+# its "lazy" guarantee is entirely the discipline of keeping RUNTIME["codex"]
+# near-empty (only rare `exposure: core` entries), not a CLI-side mechanism
+# that loads bodies on demand. A big `core` skill landing there defeats that
+# discipline silently -- this is the tripwire for it (2026-07-13 review).
+CODEX_CORE_SIZE_WARN_BYTES = 4096
 GIT_COMMIT_SHA = re.compile(r"[0-9a-fA-F]{40}\Z")
 TEAM_MEMBERS_HEADING_RE = re.compile(r"(?im)^##\s+team members\b")
 
@@ -773,6 +779,15 @@ def main() -> int:
                     ensure_link(LIBRARY / name, RUNTIME["claude"] / name, apply, f"claude/{name}")
             elif t == "codex" and exposure == "core":
                 ensure_link(LIBRARY / name, RUNTIME["codex"] / name, apply, f"codex/{name}")
+                skill_md = LIBRARY / name / "SKILL.md"
+                if skill_md.is_file() and skill_md.stat().st_size > CODEX_CORE_SIZE_WARN_BYTES:
+                    warn(
+                        f"codex/{name}: SKILL.md is {skill_md.stat().st_size}B, over the "
+                        f"{CODEX_CORE_SIZE_WARN_BYTES}B core-on-Codex guideline -- Codex has no "
+                        "native lazy loading, so this sits in its eagerly-scanned directory on "
+                        "every run. Consider exposure: manual (read via `agent-skill show`) "
+                        "instead of core if Codex doesn't need this every session."
+                    )
             elif t == "codex":
                 ensure_absent_link(RUNTIME["codex"] / name, apply, f"codex/{name}")
             else:
