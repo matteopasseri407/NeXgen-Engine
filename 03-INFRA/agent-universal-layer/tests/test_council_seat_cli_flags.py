@@ -32,6 +32,8 @@ import importlib.util
 import sys
 from pathlib import Path
 
+import pytest
+
 COUNCIL_PATH = Path(__file__).resolve().parents[1] / "council" / "council.py"
 
 
@@ -129,17 +131,46 @@ def test_ollama_seat_forwards_a_recognized_reasoning_effort(monkeypatch, tmp_pat
     assert "--think" in argv and argv[argv.index("--think") + 1] == "high"
 
 
-def test_ollama_seat_drops_an_unrecognized_reasoning_effort(monkeypatch, tmp_path):
-    """A value ollama doesn't document (e.g. 'xhigh', a valid claude/codex
-    tier) must never reach --think as a literal -- ollama would reject an
-    unknown value outright, failing the whole seat over a flag it can't
-    honor anyway."""
+def test_ollama_seat_downmaps_xhigh_and_max_to_think_high(monkeypatch, tmp_path):
+    """'xhigh' and 'max' are valid claude/codex/opencode tiers that ollama's
+    --think does not document at all (only low/medium/high). Rather than
+    dropping them like a truly unknown value, _effort_forwarding downmaps
+    both to --think high -- closer to the requested effort than running
+    with no thinking flag at all."""
+    council = load_council(monkeypatch, tmp_path)
+    for effort in ("xhigh", "max"):
+        invocation = council._build_seat_command(
+            {"cli": "ollama", "model": "vendor/test", "reasoning_effort": effort}, "prompt", tmp_path
+        )
+        argv = invocation.argv
+        assert "--think" in argv and argv[argv.index("--think") + 1] == "high"
+
+
+def test_ollama_seat_drops_a_truly_unrecognized_reasoning_effort(monkeypatch, tmp_path):
+    """A value that is neither an ollama tier nor a known claude/codex/
+    opencode tier (e.g. 'turbo') must never reach --think as a literal --
+    ollama would reject an unknown value outright, failing the whole seat
+    over a flag it can't honor anyway."""
     council = load_council(monkeypatch, tmp_path)
     invocation = council._build_seat_command(
-        {"cli": "ollama", "model": "vendor/test", "reasoning_effort": "xhigh"}, "prompt", tmp_path
+        {"cli": "ollama", "model": "vendor/test", "reasoning_effort": "turbo"}, "prompt", tmp_path
     )
 
     assert "--think" not in invocation.argv
+
+
+def test_codex_seat_skips_the_git_repo_trust_check(monkeypatch, tmp_path):
+    """codex exec refuses to start outside a trusted directory unless
+    --skip-git-repo-check is passed, and the council's session dir is
+    deliberately a private non-repo dir. Found on the first real
+    multi-vendor run (2026-07-13): every codex seat died with 'Not inside
+    a trusted directory' before the model ever ran."""
+    council = load_council(monkeypatch, tmp_path)
+    invocation = council._build_seat_command(
+        {"cli": "codex", "model": "gpt-test", "reasoning_effort": "high"}, "prompt", tmp_path
+    )
+
+    assert "--skip-git-repo-check" in invocation.argv
 
 
 def test_opencode_seat_forwards_reasoning_effort_as_variant(monkeypatch, tmp_path):
@@ -164,3 +195,30 @@ def test_opencode_seat_omits_variant_when_effort_is_none_or_unset(monkeypatch, t
     ):
         invocation = council._build_seat_command(seat, "prompt", tmp_path)
         assert "--variant" not in invocation.argv
+
+
+@pytest.mark.parametrize(
+    "seat",
+    [
+        {"cli": "ollama", "model": "vendor/test", "reasoning_effort": "xhigh"},
+        {"cli": "agy", "model": "vendor/test", "reasoning_effort": "high"},
+    ],
+)
+def test_effort_label_reflects_exactly_what_build_seat_command_does(monkeypatch, tmp_path, seat):
+    """_effort_label must never be a second, hand-maintained copy of this
+    mapping (that is exactly how the ollama/agy caveats drifted out of sync
+    with the real argv before, see _effort_forwarding's docstring). Assert
+    the label and the real argv both come out of the same seat dict for the
+    two seats whose CLI does NOT forward reasoning_effort verbatim:
+    ollama's xhigh downmapping and agy's total absence of a flag."""
+    council = load_council(monkeypatch, tmp_path)
+    invocation = council._build_seat_command(seat, "prompt", tmp_path)
+    label = council._effort_label(seat)
+
+    if seat["cli"] == "ollama":
+        assert "--think" in invocation.argv and invocation.argv[invocation.argv.index("--think") + 1] == "high"
+        assert label == ", effort xhigh (mappato a high per ollama)"
+    else:
+        assert "--effort" not in invocation.argv
+        assert not any("reasoning_effort" in part for part in invocation.argv)
+        assert label == ", effort high (non applicato da questa CLI)"

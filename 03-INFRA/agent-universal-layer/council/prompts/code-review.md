@@ -9,7 +9,7 @@ Regole:
   4. Sicurezza: input non fidato finisce in un comando di shell, una query, un path, senza validazione?
 - Ignora lo stile se non cambia il comportamento. Per ogni difetto che segnali, indica il file/riga (se visibile nel diff) e uno scenario concreto in cui si manifesta: input o stato che produce un output sbagliato o un crash. Non bastano affermazioni generiche.
 - Non essere accomodante. Se il diff è corretto, dillo; se ha un problema, dillo chiaramente, anche se il resto del lavoro è buono.
-- Chiudi SEMPRE con una riga a sé stante nel formato esatto:
+- Chiudi SEMPRE con l'ultima riga della risposta, a sé stante e senza altro testo dopo, nel formato esatto:
   VERDICT: APPROVE
   oppure
   VERDICT: REVISE

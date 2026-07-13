@@ -678,11 +678,71 @@ def test_cli_rejects_a_nonpositive_invocation_timeout(monkeypatch, tmp_path, cap
 
 
 def test_extract_verdict_uses_last_valid_verdict(monkeypatch, tmp_path):
+    """Positional, not textual search: only the LAST non-blank line can carry
+    the verdict (the seat prompts promise 'chiudi SEMPRE con l'ultima riga
+    della risposta, a se' stante')."""
     council = load_council(monkeypatch, tmp_path)
 
     response = "Prima bozza\nVERDICT: REJECT\nCorrezione finale\nVERDICT: REVISE\n"
 
     assert council.extract_verdict(response) == "REVISE"
+
+
+def test_extract_verdict_ignores_a_verdict_quoted_earlier_in_the_body(monkeypatch, tmp_path):
+    """A relay stage citing a prior stage's 'VERDICT: REJECT' as untrusted
+    input (see build_relay_prompt's quoted-material block) must not have
+    that citation picked up as its OWN verdict, even though the word appears
+    in the text -- only the response's actual last line counts."""
+    council = load_council(monkeypatch, tmp_path)
+
+    response = (
+        "Lo stadio precedente ha scritto:\n"
+        "> [stadio 01 | ruolo: architect | seat: uno | verdict: REJECT]\n"
+        "> Piano pericoloso\n"
+        "> VERDICT: REJECT\n"
+        "Ho verificato quel punto sul brief originale e non regge: il rischio non c'e'.\n"
+        "VERDICT: APPROVE\n"
+    )
+
+    assert council.extract_verdict(response) == "APPROVE"
+
+
+def test_extract_verdict_accepts_a_verdict_with_a_trailing_caveat_on_the_same_line(monkeypatch, tmp_path):
+    """Anchored at line start, not fullmatch: 'VERDICT: REJECT perche'...'
+    is still that seat's own final verdict. Reading it as '(assente)' would
+    fail open -- the relay's stop-on-REJECT fix would silently not fire on
+    exactly the responses where the seat explained its rejection inline."""
+    council = load_council(monkeypatch, tmp_path)
+
+    response = "Analisi completa\nVERDICT: APPROVE, ma con una riserva minore\n"
+
+    assert council.extract_verdict(response) == "APPROVE"
+
+
+def test_extract_verdict_still_ignores_a_quoted_verdict_as_the_literal_last_line(monkeypatch, tmp_path):
+    """The quote prefix survives the tolerance strip, so a response whose
+    final line is quoted material ('> VERDICT: REJECT') never reads as the
+    seat's own verdict -- the spoof the positional parser exists for."""
+    council = load_council(monkeypatch, tmp_path)
+
+    response = "La mia analisi cita lo stadio precedente:\n> VERDICT: REJECT\n"
+
+    assert council.extract_verdict(response) == "(assente)"
+
+
+def test_extract_verdict_tolerates_markdown_emphasis_and_terminal_punctuation(monkeypatch, tmp_path):
+    """The two near-universal LLM closing tics -- '**VERDICT: APPROVE**' and
+    'VERDICT: APPROVE.' -- must not read as '(assente)': the standalone-line
+    contract is about position and absence of prose, not about a period."""
+    council = load_council(monkeypatch, tmp_path)
+
+    assert council.extract_verdict("Analisi\n**VERDICT: APPROVE**\n") == "APPROVE"
+    assert council.extract_verdict("Analisi\nVERDICT: REJECT.\n") == "REJECT"
+    # Emphasis plus punctuation together, still a clean standalone line.
+    assert council.extract_verdict("Analisi\n*VERDICT: REVISE.*\n") == "REVISE"
+    # Emphasis plus a trailing caveat: still the seat's own verdict (anchored
+    # prefix match), consistent with the trailing-caveat test above.
+    assert council.extract_verdict("Analisi\n**VERDICT: APPROVE** ma con riserva\n") == "APPROVE"
 
 
 def test_brainstorm_rejects_zero_rounds_before_creating_a_session(monkeypatch, tmp_path):

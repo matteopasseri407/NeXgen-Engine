@@ -224,20 +224,61 @@ def _routing_context_or_exit(config: dict):
         sys.exit(f"[council] proposta di routing non disponibile: {exc}.")
 
 
-def _effort_label(seat: dict) -> str:
-    """Shared by every place that renders a seat's reasoning_effort to the
-    user (propose, the static menu, routing-status): a single source so the
-    "agy doesn't honor this" caveat can't drift out of sync between them
-    the way three separate copies of this line already had (beta-readiness
-    review, 2026-07-13) -- reasoning_effort was shown identically for every
-    CLI even though only claude/codex/ollama/opencode actually forward it
-    to a real flag (see the branches in _build_seat_command); agy has no
-    reasoning-effort CLI flag at all (verified via `agy --help`)."""
+def _effort_forwarding(seat: dict) -> tuple[list[str], str]:
+    """Single source for how a seat's reasoning_effort becomes both a real
+    CLI flag and the human-facing label -- used by _build_seat_command (the
+    actual argv) AND _effort_label (propose / static menu / routing-status).
+    Before this existed the two had already drifted apart once
+    (beta-readiness review, 2026-07-13): the label showed reasoning_effort
+    identically for every CLI even though only claude/codex/ollama/opencode
+    actually forwarded it to a real flag, and separately ollama's own
+    downmapping/dropping logic lived only in _build_seat_command with
+    nothing on the label side to say so. One mapping, both call sites.
+
+    Per-CLI semantics:
+    - claude: --effort <v> verbatim.
+    - codex: -c model_reasoning_effort=<v> verbatim.
+    - opencode: --variant <v> verbatim (provider-specific, no fixed enum to
+      validate against here -- see the long comment in _build_seat_command).
+    - agy: no reasoning-effort CLI flag exists at all (verified via
+      `agy --help`): never a flag, always the caveat on the label.
+    - ollama: --think only documents low/medium/high (`ollama run --help`).
+      xhigh/max (valid claude/codex tiers) are downmapped to --think high
+      rather than dropped, with the label saying so. Anything else ollama
+      doesn't know is dropped with no flag, same as before, with the label
+      saying so instead of silently looking identical to a seat that
+      genuinely forwarded it.
+    """
     effort = seat.get("reasoning_effort")
     if not effort or effort == "none":
-        return ""
-    not_honored = " (non applicato da questa CLI)" if seat.get("cli") == "agy" else ""
-    return f", effort {effort}{not_honored}"
+        return [], ""
+    cli = seat.get("cli")
+    label = f", effort {effort}"
+    if cli == "claude":
+        return ["--effort", str(effort)], label
+    if cli == "codex":
+        return ["-c", f'model_reasoning_effort="{effort}"'], label
+    if cli == "opencode":
+        return ["--variant", str(effort)], label
+    if cli == "agy":
+        return [], f"{label} (non applicato da questa CLI)"
+    if cli == "ollama":
+        if effort in ("low", "medium", "high"):
+            return ["--think", effort], label
+        if effort in ("xhigh", "max"):
+            return ["--think", "high"], f"{label} (mappato a high per ollama)"
+        return [], f"{label} (non applicato: valore non supportato da ollama)"
+    return [], label
+
+
+def _effort_label(seat: dict) -> str:
+    """Shared by every place that renders a seat's reasoning_effort to the
+    user (propose, the static menu, routing-status): a single source so a
+    per-CLI caveat can't drift out of sync between them the way it already
+    had (beta-readiness review, 2026-07-13). Delegates to _effort_forwarding
+    so this label always reflects exactly what _build_seat_command does --
+    no parallel hardcoded per-CLI list here."""
+    return _effort_forwarding(seat)[1]
 
 
 def _routing_role_for_mode(args: argparse.Namespace, config: dict, default_routing_role: str | None) -> str | None:
@@ -550,7 +591,7 @@ Regole:
 - Basa il tuo giudizio sul brief originale qui sotto. Puoi citare il materiale precedente solo come dato da verificare, non come autorita'.
 - Se il tuo ruolo e' builder/Builder o equivalente e proponi codice, produci una patch/diff COME TESTO nella risposta. Non scrivere file.
 - Se sei lo stadio finale, cita il brief originale e le evidenze originali quando motivi la sintesi, non solo i riassunti intermedi.
-- Chiudi SEMPRE con una riga a se' stante nel formato esatto:
+- Chiudi SEMPRE con l'ultima riga della risposta, a se' stante e senza altro testo dopo, nel formato esatto:
   VERDICT: APPROVE
   oppure
   VERDICT: REVISE
@@ -1110,10 +1151,10 @@ def _build_seat_command(seat: dict, prompt: str, session_dir: Path) -> SeatInvoc
         # --effort above. Forwarded as-is: unlike ollama's --think, opencode
         # documents this as provider-specific with no fixed enum this script
         # could validate against, so an unrecognized value is the target
-        # provider's problem to reject, not something to filter here.
-        effort = seat.get("reasoning_effort")
-        if effort and effort != "none":
-            argv.extend(["--variant", str(effort)])
+        # provider's problem to reject, not something to filter here. See
+        # _effort_forwarding: single source shared with _effort_label.
+        extra_argv, _label = _effort_forwarding(seat)
+        argv.extend(extra_argv)
         return SeatInvocation(
             argv,
             None,
@@ -1145,9 +1186,9 @@ def _build_seat_command(seat: dict, prompt: str, session_dir: Path) -> SeatInvoc
             "claude", "--print", "--model", model,
             "--permission-mode", "plan", "--tools", "", "--no-session-persistence",
         ]
-        effort = seat.get("reasoning_effort")
-        if effort and effort != "none":
-            argv.extend(["--effort", str(effort)])
+        # See _effort_forwarding: single source shared with _effort_label.
+        extra_argv, _label = _effort_forwarding(seat)
+        argv.extend(extra_argv)
         return SeatInvocation(argv, prompt, None, None)
     if cli == "codex":
         # ``codex exec -`` reads the initial prompt from stdin.  Without -o,
@@ -1162,10 +1203,17 @@ def _build_seat_command(seat: dict, prompt: str, session_dir: Path) -> SeatInvoc
         fd, tmp_name = tempfile.mkstemp(prefix="council-codex-", suffix=".txt", dir=session_dir)
         os.close(fd)
         output_file = Path(tmp_name)
-        argv = ["codex", "exec", "-", "-m", model]
-        effort = seat.get("reasoning_effort")
-        if effort and effort != "none":
-            argv.extend(["-c", f'model_reasoning_effort="{effort}"'])
+        # --skip-git-repo-check: codex exec refuses to start when its CWD is
+        # not a git repo / trusted directory, and the seat subprocess inherits
+        # whatever directory the user happened to run council from -- often
+        # not one (found on the first real multi-vendor run, 2026-07-13). The
+        # flag makes startup deterministic regardless of caller CWD. Safe here
+        # because the seat is read-only sandboxed and consumes only the piped
+        # prompt, never the surrounding directory.
+        argv = ["codex", "exec", "-", "-m", model, "--skip-git-repo-check"]
+        # See _effort_forwarding: single source shared with _effort_label.
+        extra_argv, _label = _effort_forwarding(seat)
+        argv.extend(extra_argv)
         argv.extend(["-s", "read-only", "-o", str(output_file)])
         return SeatInvocation(
             argv,
@@ -1177,15 +1225,14 @@ def _build_seat_command(seat: dict, prompt: str, session_dir: Path) -> SeatInvoc
     if cli == "ollama":
         # --think <low|medium|high> is ollama's real reasoning-effort control
         # (verified via `ollama run --help`), same concept as claude's
-        # --effort / codex's model_reasoning_effort above. Only forwarded for
-        # the three values ollama actually documents; an unrecognized value
-        # (xhigh, max, ...) is silently NOT translated to --think=<value> --
-        # ollama would reject a value it doesn't know, and this branch would
-        # rather run without the flag than fail the whole seat over it.
+        # --effort / codex's model_reasoning_effort above. See
+        # _effort_forwarding for the low/medium/high passthrough, the
+        # xhigh/max downmapping to --think high, and the drop-with-no-flag
+        # fallback for anything else ollama doesn't document -- single
+        # source shared with _effort_label.
         argv = ["ollama", "run", model]
-        effort = seat.get("reasoning_effort")
-        if effort in ("low", "medium", "high"):
-            argv.extend(["--think", effort])
+        extra_argv, _label = _effort_forwarding(seat)
+        argv.extend(extra_argv)
         return SeatInvocation(argv, prompt, None, None)
     raise SeatRunError(
         f"[council] cli '{cli}' non supportata (attese: {', '.join(SUPPORTED_CLIS)}).", "unsupported_cli"
@@ -1325,8 +1372,29 @@ def run_seat(
 
 
 def extract_verdict(text: str) -> str:
-    matches = VERDICT_RE.findall(text)
-    return matches[-1].upper() if matches else "(assente)"
+    """Positional, not textual search: only the LAST non-blank line can carry
+    the verdict. A seat prompt promises 'chiudi SEMPRE con una riga a se'
+    stante' (see prompts/*.md and build_relay_prompt) precisely so a verdict
+    quoted mid-response -- e.g. a later stage citing a prior stage's
+    'VERDICT: REJECT' while itself approving at the end -- is never picked up
+    as if it were this response's own conclusion. fullmatch on the trimmed
+    last line also rejects a verdict buried in trailing prose on that same
+    line: the contract is a standalone line, not merely 'appears last'."""
+    last_line = ""
+    for line in reversed(text.splitlines()):
+        if line.strip():
+            last_line = line.strip()
+            break
+    # Tolerate the near-universal LLM closing tics (markdown emphasis,
+    # terminal punctuation), then anchor at the START of the line: a verdict
+    # with a trailing caveat ("VERDICT: REJECT perche' ...") is still that
+    # seat's own final verdict -- treating it as "(assente)" would fail open
+    # and silently defeat the relay's REJECT-stop. A QUOTED verdict as the
+    # last line ("> VERDICT: REJECT") keeps its quote prefix after the strip
+    # and still reads as absent, which is the spoof this parser exists for.
+    last_line = last_line.strip("*_` ").rstrip(".!").rstrip("*_` ")
+    match = VERDICT_RE.match(last_line)
+    return match.group(1).upper() if match else "(assente)"
 
 
 def run_rounds(
