@@ -162,6 +162,53 @@ else {
   bad "agent-now not in PATH (run agent-sync.ps1)"
 }
 
+sec "Windows PATH persistence (user registry)"
+# agent-sync apply appends %USERPROFILE%\.local\bin to the user's registry
+# PATH (HKCU:\Environment) so agent-now/agent-doctor/etc resolve as bare
+# commands in every NEW terminal, not just the one that happened to run the
+# installer.
+$localBin = Join-Path $HomeDir ".local\bin"
+
+# PRIMARY probe (external architect's review, accepted 2026-07-13): actually
+# resolve 'agent-sync' as a bare command in a FRESH process (a brand-new
+# powershell.exe, not this already-running session's own command table), so
+# execution-policy restrictions and PATHEXT/.cmd-association problems
+# surface here instead of only showing up the first time a user opens a
+# real new terminal -- a directory merely being a substring of some PATH
+# value proves nothing about whether the command actually runs. -NoProfile:
+# a broken/slow profile script must not make this probe itself unreliable.
+$freshProbeOk = $false
+try {
+  $probeOutput = (& powershell.exe -NoProfile -Command "if (Get-Command agent-sync -ErrorAction SilentlyContinue) { 'FOUND' } else { 'MISSING' }" 2>&1 | Out-String)
+  $freshProbeOk = ($LASTEXITCODE -eq 0) -and ($probeOutput -match 'FOUND')
+} catch {
+  $freshProbeOk = $false
+}
+
+if ($freshProbeOk) {
+  ok "agent-sync resolves as a bare command in a fresh process"
+} else {
+  # Fallback/diagnostic detail only, NOT an alternate pass path: the
+  # persisted registry value (HKCU:\Environment) and this CURRENT process's
+  # own $env:Path snapshot, read directly via Get-ItemProperty (not just
+  # $env:Path, which is only a snapshot taken at THIS process's start and
+  # can't prove what a brand-new terminal will actually inherit) -- just to
+  # say WHY the fresh probe likely failed.
+  $procPathHasIt = @($env:Path -split ';') -contains $localBin
+  $regPathHasIt = $false
+  try {
+    $regPathValue = (Get-ItemProperty -Path "HKCU:\Environment" -Name "Path" -ErrorAction Stop).Path
+    if ($regPathValue) { $regPathHasIt = @($regPathValue -split ';') -contains $localBin }
+  } catch {
+    $regPathHasIt = $false
+  }
+  if ($regPathHasIt -or $procPathHasIt) {
+    bad "$localBin is on the user PATH but agent-sync did not resolve in a fresh process (execution-policy or PATHEXT association?) -- run agent-sync apply, then open a NEW terminal"
+  } else {
+    bad "$localBin missing from the user PATH -- run agent-sync apply, then open a NEW terminal"
+  }
+}
+
 sec "Architecture Mode (99-INDEX/USER-PROFILE.md)"
 # Mode is a MINIMUM baseline the user commits to, never a ceiling (see the
 # clarifying paragraph in USER-PROFILE.md itself). It only gates whether a
@@ -239,8 +286,19 @@ if ((Get-Command "python" -ErrorAction SilentlyContinue) -and (Test-Path -Litera
     # must never read as "no drift found": empty/error output would otherwise
     # fall through to the "100% aligned" branch below, the worst possible
     # false-green in the one check whose job is to catch misconfiguration.
-    $lastLine = ($renderOut | Select-Object -Last 1)
-    bad "render.py failed to run (exit $LASTEXITCODE): $lastLine"
+    # cmd_diff now isolates a broken CLI PER SECTION instead of aborting on
+    # the first one (2026-07-13 follow-up): the actual reason is one or more
+    # '>>> STOP: ...' lines, not necessarily the last line of output (which
+    # can just be the trailing summary) -- surface those specifically when
+    # present, fall back to the last line only when there's no STOP marker
+    # to show (e.g. a manifest-load crash outside the per-CLI loop).
+    $stopLines = @($renderOut | Where-Object { $_ -match '>>> STOP' })
+    if ($stopLines.Count -gt 0) {
+      bad "render.py failed to run (exit $LASTEXITCODE): $($stopLines -join '; ')"
+    } else {
+      $lastLine = ($renderOut | Select-Object -Last 1)
+      bad "render.py failed to run (exit $LASTEXITCODE): $lastLine"
+    }
   } else {
   $driftLines = @($renderOut | Where-Object { $_ -match '\[DIFF\]|\[MISSING\]|\[ERROR\]' })
   if ($driftLines.Count -gt 0) {
@@ -287,6 +345,35 @@ if ($Strict) {
   # JSONL/Content-Length framing check from agent-doctor.sh is intentionally
   # NOT ported: too easy to get subtly wrong blind, flag it in the backlog
   # instead of shipping an unverified process-framing test.
+  # Expected MCP server set for the strict consumer checks below: used to be
+  # a single hardcoded 4-name array (firecrawl / n8n-mcp / vault-library /
+  # vault-ocr) reused for both Antigravity and OpenCode, so a manifest
+  # change (server added/removed, a require_env gate flipped) silently went
+  # stale, and a CLI-specific target (e.g. a server that only targets one
+  # of the two) would have been checked against the wrong list. Derived
+  # per-CLI instead, via render.py --expected-servers (same require_env
+  # filtering agent-sync's --write uses -- see agent-doctor.sh's twin for
+  # the parity rationale). An empty result (e.g. Local-Only) is legitimate
+  # and different from "couldn't derive it" -- both skip the checks below
+  # explicitly (never silently pass on an empty expected set, never fail).
+  $RenderPy = Join-Path $Layer "mcp\render.py"
+  $expectedAg = @()
+  $expectedOc = @()
+  # python3 first, then bare python (mirrors install.ps1's Get-PyBin order):
+  # a python3-only install (WSL/Chocolatey/py-launcher shims) used to make
+  # every --strict check below skip silently instead of finding it.
+  $StrictPyBin = $null
+  if (Get-Command python3 -ErrorAction SilentlyContinue) { $StrictPyBin = "python3" }
+  elseif (Get-Command "python" -ErrorAction SilentlyContinue) { $StrictPyBin = "python" }
+  if (-not $StrictPyBin) {
+    warn "python3/python not found -- cannot derive the expected MCP server set, skipping its strict checks"
+  } elseif (-not (Test-Path -LiteralPath $RenderPy)) {
+    warn "render.py not found ($RenderPy) -- cannot derive the expected MCP server set, skipping its strict checks"
+  } else {
+    $expectedAg = @(& $StrictPyBin $RenderPy --expected-servers antigravity 2>$null | Where-Object { $_ })
+    $expectedOc = @(& $StrictPyBin $RenderPy --expected-servers opencode 2>$null | Where-Object { $_ })
+  }
+
   $AgSrc = Join-Path $HomeDir ".gemini\antigravity\mcp_config.json"
   $AgGlobal = Join-Path $HomeDir ".gemini\config\mcp_config.json"
   if ((Test-Path -LiteralPath $AgGlobal) -and (Test-Path -LiteralPath $AgSrc) -and ((hashOf $AgGlobal) -eq (hashOf $AgSrc))) {
@@ -299,8 +386,9 @@ if ($Strict) {
   } else {
     bad "Antigravity global mcp_config.json empty or missing"
   }
-  $expectedMcp = @("firecrawl", "n8n-mcp", "vault-library", "vault-ocr")
-  if (Test-Path -LiteralPath $AgGlobal) {
+  if ($expectedAg.Count -eq 0) {
+    warn "no expected Antigravity MCP servers derived from the manifest -- skipping the core-servers content check"
+  } elseif (Test-Path -LiteralPath $AgGlobal) {
     try {
       $agJson = Get-Content -Raw -LiteralPath $AgGlobal | ConvertFrom-Json
       if ($agJson.mcpServers) {
@@ -308,14 +396,16 @@ if ($Strict) {
       } else {
         $gotKeys = @()
       }
-      $agMissing = @($expectedMcp | Where-Object { $gotKeys -notcontains $_ })
+      $agMissing = @($expectedAg | Where-Object { $gotKeys -notcontains $_ })
       if ($agMissing.Count -eq 0) { ok "Antigravity global contains the core MCP servers" }
       else { bad "Antigravity global is missing core MCP servers: $($agMissing -join ', ')" }
     } catch { bad "Antigravity global mcp_config.json: invalid JSON" }
   }
   # Real behavioral probe: agy has no deterministic "mcp list" subcommand
   # like opencode, so the only real check is asking the model itself.
-  if (Get-Command agy -ErrorAction SilentlyContinue) {
+  if ($expectedAg.Count -eq 0) {
+    warn "no expected Antigravity MCP servers derived from the manifest -- skipping the Antigravity behavioral probe"
+  } elseif (Get-Command agy -ErrorAction SilentlyContinue) {
     $agPrompt = "Elenca SOLO i nomi dei server MCP disponibili in questa sessione, una riga per server, NESSUN dettaglio sui singoli tool e NESSUNA invocazione."
     $agJob = Start-Job -ScriptBlock { param($p) & agy --print $p --model "Gemini 3.5 Flash (Medium)" --sandbox 2>&1 } -ArgumentList $agPrompt
     if (Wait-Job $agJob -Timeout 45) {
@@ -325,7 +415,7 @@ if ($Strict) {
         warn "Antigravity behavioral probe skipped: the selected model quota is unavailable"
       }
       else {
-        $agProbeMissing = @($expectedMcp | Where-Object { $agProbeOut -notmatch [regex]::Escape($_) })
+        $agProbeMissing = @($expectedAg | Where-Object { $agProbeOut -notmatch [regex]::Escape($_) })
         if ($agProbeMissing.Count -eq 0) { ok "Antigravity behavioral probe confirms the core MCP servers are visible" }
         else { bad "Antigravity behavioral probe does not confirm: $($agProbeMissing -join ', ')" }
       }
@@ -336,12 +426,14 @@ if ($Strict) {
   } else {
     warn "agy not in PATH, skipping Antigravity behavioral probe"
   }
-  if (Get-Command opencode -ErrorAction SilentlyContinue) {
+  if ($expectedOc.Count -eq 0) {
+    warn "no expected OpenCode MCP servers derived from the manifest -- skipping the OpenCode consumer test"
+  } elseif (Get-Command opencode -ErrorAction SilentlyContinue) {
     $ocJob = Start-Job -ScriptBlock { & opencode mcp list 2>&1 }
     if (Wait-Job $ocJob -Timeout 25) {
       $ocOut = (Receive-Job $ocJob | Out-String)
       Remove-Job $ocJob -Force
-      $ocMissing = @($expectedMcp | Where-Object { $ocOut -notmatch "(?i)$([regex]::Escape($_)).*connected" })
+      $ocMissing = @($expectedOc | Where-Object { $ocOut -notmatch "(?i)$([regex]::Escape($_)).*connected" })
       if ($ocMissing.Count -eq 0) { ok "OpenCode mcp list shows the core servers connected" }
       else { bad "OpenCode mcp list does not confirm: $($ocMissing -join ', ')" }
     } else {

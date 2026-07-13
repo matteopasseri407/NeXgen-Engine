@@ -444,12 +444,89 @@ def test_diff_mode_stops_loudly_on_corrupted_config_not_silently_skips_it(sandbo
     path.write_text("{not json at all", encoding="utf-8")
 
     mod = load_render_module(sb)
-    with pytest.raises(SystemExit) as exc:
-        mod.cmd_diff()
+    rc = mod.cmd_diff()
 
-    assert exc.value.code == 2
+    assert rc != 0, "a corrupted live config must make cmd_diff() exit non-zero"
     out = capsys.readouterr().out
     assert "not installed here" not in out
+
+
+def test_diff_mode_isolates_a_corrupted_cli_and_keeps_scanning_the_rest(sandbox_with_live_configs, capsys):
+    """The bug this closes (beta-readiness review, 2026-07-13): load_current()
+    used to sys.exit(2) straight through cmd_diff()'s loop, aborting the
+    whole process on the FIRST corrupted CLI and hiding drift on every other
+    CLI that would otherwise still have been scanned. One broken CLI must be
+    reported and isolated; the remaining CLIs must still get their own
+    section, with real [DIFF]/[MISSING]/[OK] findings."""
+    sb = sandbox_with_live_configs
+    path = sb.live_config_path("claude")
+    path.write_text('{"mcpServers": ', encoding="utf-8")
+
+    mod = load_render_module(sb)
+    rc = mod.cmd_diff()
+    out = capsys.readouterr().out
+
+    assert rc != 0
+    sections = {}
+    current = None
+    for line in out.splitlines():
+        if line.startswith("========== "):
+            current = line.strip("= ").strip().lower()
+            sections[current] = []
+        elif current:
+            sections[current].append(line)
+    assert ">>> STOP:" in "\n".join(sections["claude"]), "claude's own section must carry the STOP message"
+    # the other 3 CLIs must still have been scanned for real, not skipped
+    # (the trailing summary line legitimately says "CLI(s) STOPPED", so
+    # match the per-CLI ">>> STOP:" marker specifically, not the word alone).
+    for cli in ("codex", "opencode", "antigravity"):
+        text = "\n".join(sections[cli])
+        assert ">>> STOP:" not in text, f"{cli}: a claude-only corruption must not bleed into other sections"
+        assert "[DIFF]" in text or "[MISSING]" in text or "[OK]" in text, f"{cli}: section not scanned after claude stopped"
+
+
+def test_diff_mode_isolates_a_cli_whose_config_is_unreadable(sandbox_with_live_configs, capsys, monkeypatch):
+    """A locked/unreadable config file (chmod 000, held open exclusively
+    elsewhere -- the realistic Windows failure mode) is a DIFFERENT
+    exception class than the corrupted-JSON case above: load_current()
+    only converts a PARSE failure to SystemExit, a read failure propagates
+    as a plain OSError untouched. cmd_diff() must isolate it the exact
+    same way as the SystemExit case: STOP that CLI's section, keep
+    scanning the rest, never crash the whole diff (2026-07-13 follow-up).
+    monkeypatched open, not chmod 000: portable, and immune to a test
+    process running as root (which ignores file permission bits)."""
+    sb = sandbox_with_live_configs
+    path = sb.live_config_path("claude")
+    real_read_text = Path.read_text
+
+    def flaky_read_text(self, *args, **kwargs):
+        if self == path:
+            raise PermissionError(13, "Permission denied", str(path))
+        return real_read_text(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", flaky_read_text)
+
+    mod = load_render_module(sb)
+    rc = mod.cmd_diff()
+    out = capsys.readouterr().out
+
+    assert rc != 0, "an unreadable live config must make cmd_diff() exit non-zero"
+    sections = {}
+    current = None
+    for line in out.splitlines():
+        if line.startswith("========== "):
+            current = line.strip("= ").strip().lower()
+            sections[current] = []
+        elif current:
+            sections[current].append(line)
+    assert ">>> STOP:" in "\n".join(sections["claude"]), "claude's own section must carry the STOP message"
+    # the trailing summary line legitimately says "CLI(s) STOPPED", so match
+    # the per-CLI ">>> STOP:" marker specifically, not the word alone (same
+    # distinction the corrupted-JSON isolation test above relies on).
+    for cli in ("codex", "opencode", "antigravity"):
+        text = "\n".join(sections[cli])
+        assert ">>> STOP:" not in text, f"{cli}: claude's read failure must not bleed into other sections"
+        assert "[DIFF]" in text or "[MISSING]" in text or "[OK]" in text, f"{cli}: section not scanned after claude stopped"
 
 
 def test_prune_backups_keeps_at_most_three(tmp_path):
@@ -512,6 +589,117 @@ def test_redact_masks_secrets_and_env_refs(sandbox):
     assert mod.redact("Bearer sometoken123", key="headers") in ("<AUTH>",) or "sometoken123" not in mod.redact("Bearer sometoken123")
     assert mod.redact("plain-value", key="command") == "plain-value"
     assert mod.redact("abc123", key="token") == "<AUTH>"
+
+
+# ---- --expected-servers: machine-consumable listing for agent-doctor -------
+# Feeds agent-doctor.sh/.ps1's --strict block (which used to hardcode the
+# {firecrawl, n8n-mcp, vault-library, vault-ocr} set): the expected set must
+# now be DERIVED from the manifest at runtime, including require_env
+# filtering, so a Local-Only install expects only what agent-sync actually
+# writes -- never the full manifest.
+
+_GATED_MANIFEST = """schema_version: 1
+servers:
+  fake-open-tool:
+    transport: stdio
+    command: fake-cmd
+    targets: [codex, claude]
+  fake-gated-tool:
+    transport: stdio
+    command: fake-cmd2
+    targets: [codex]
+    require_env: FAKE_GATE_VAR
+"""
+
+
+def _write_gated_manifest(sandbox):
+    (sandbox.mcp_dir / "manifest.yaml").write_text(_GATED_MANIFEST, encoding="utf-8")
+
+
+def test_expected_servers_excludes_gated_server_when_env_unset(sandbox, monkeypatch, capsys):
+    _write_gated_manifest(sandbox)
+    monkeypatch.delenv("FAKE_GATE_VAR", raising=False)
+    mod = load_render_module(sandbox)
+
+    rc = mod.cmd_expected_servers("codex")
+    out = capsys.readouterr().out
+
+    assert rc == 0
+    assert out.splitlines() == ["fake-open-tool"], f"il server con require_env non soddisfatto non deve comparire: {out!r}"
+
+
+def test_expected_servers_includes_gated_server_when_env_set(sandbox, monkeypatch, capsys):
+    _write_gated_manifest(sandbox)
+    monkeypatch.setenv("FAKE_GATE_VAR", "1")
+    mod = load_render_module(sandbox)
+
+    rc = mod.cmd_expected_servers("codex")
+    out = capsys.readouterr().out
+
+    assert rc == 0
+    assert set(out.splitlines()) == {"fake-open-tool", "fake-gated-tool"}
+
+
+def test_expected_servers_filters_by_cli_target(sandbox, monkeypatch, capsys):
+    _write_gated_manifest(sandbox)
+    monkeypatch.setenv("FAKE_GATE_VAR", "1")
+    mod = load_render_module(sandbox)
+
+    rc = mod.cmd_expected_servers("claude")
+    out = capsys.readouterr().out
+
+    assert rc == 0
+    # fake-gated-tool targets only codex: must not leak into claude's list
+    # even though its require_env is satisfied.
+    assert out.splitlines() == ["fake-open-tool"]
+
+
+def test_expected_servers_output_is_pure_no_skip_chatter(sandbox, monkeypatch, capsys):
+    """Machine-consumable contract: stdout must be names only, one per line,
+    no '>>> skip [...]' line for the gated-out server, no blank lines."""
+    _write_gated_manifest(sandbox)
+    monkeypatch.delenv("FAKE_GATE_VAR", raising=False)
+    mod = load_render_module(sandbox)
+
+    mod.cmd_expected_servers("codex")
+    out = capsys.readouterr().out
+
+    lines = out.splitlines()
+    assert lines, "expected at least one server name"
+    assert all(line.strip() == line and not line.startswith(">>>") for line in lines), out
+    assert "" not in lines
+
+
+def test_expected_servers_exit_2_on_invalid_manifest(sandbox, capsys):
+    (sandbox.mcp_dir / "manifest.yaml").write_text(
+        """schema_version: 1
+servers:
+  missing-auth:
+    transport: http
+    url: https://example.invalid/mcp
+    targets: [codex]
+""",
+        encoding="utf-8",
+    )
+    mod = load_render_module(sandbox)
+
+    rc = mod.cmd_expected_servers("codex")
+    err = capsys.readouterr().err
+
+    assert rc == 2
+    assert "invalid MCP manifest" in err
+
+
+def test_expected_servers_rejects_unknown_cli_via_argparse(sandbox, monkeypatch, capsys):
+    _write_gated_manifest(sandbox)
+    mod = load_render_module(sandbox)
+    monkeypatch.setattr("sys.argv", ["render.py", "--expected-servers", "not-a-real-cli"])
+
+    with pytest.raises(SystemExit) as exc:
+        mod.main()
+
+    assert exc.value.code == 2
+    assert "invalid choice" in capsys.readouterr().err
 
 
 @pytest.mark.parametrize("cli", DIALECTS)

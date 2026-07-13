@@ -303,7 +303,18 @@ if command -v python3 >/dev/null 2>&1 && [ -f "$ENGINE_UL/mcp/render.py" ]; then
     # must never read as "no drift found": empty/error output would otherwise
     # fall through to the "100% aligned" branch below, the worst possible
     # false-green in the one check whose job is to catch misconfiguration.
-    fail "render.py failed to run (exit $render_rc): $(printf '%s' "$render_out" | tail -1)"
+    # cmd_diff now isolates a broken CLI PER SECTION instead of aborting on
+    # the first one (2026-07-13 follow-up): the actual reason is one or more
+    # '>>> STOP: ...' lines, not necessarily the last line of output (which
+    # can just be the trailing summary) -- surface those specifically when
+    # present, fall back to the last line only when there's no STOP marker
+    # to show (e.g. a manifest-load crash outside the per-CLI loop).
+    stop_lines="$(printf '%s\n' "$render_out" | grep '>>> STOP' || true)"
+    if [ -n "$stop_lines" ]; then
+      fail "render.py failed to run (exit $render_rc): $(printf '%s' "$stop_lines" | tr '\n' '; ')"
+    else
+      fail "render.py failed to run (exit $render_rc): $(printf '%s' "$render_out" | tail -1)"
+    fi
   else
   drift_scan="$render_out"
   claude_pending=0
@@ -352,6 +363,30 @@ fi
 
 if [ "$STRICT" = 1 ]; then
   sec "CLI consumer conformance (--strict)"
+
+  # Expected MCP server set for the strict consumer checks below: used to be
+  # hardcoded here in 4 separate spots ({firecrawl, n8n-mcp, vault-library,
+  # vault-ocr}), so a manifest change (server added/removed, a require_env
+  # gate flipped) silently went stale. Derived ONCE here instead, straight
+  # from the manifest via render.py --expected-servers, which already
+  # applies the same require_env filtering agent-sync's --write uses -- what
+  # this check expects is exactly what a correctly-configured install
+  # actually has. An empty result (e.g. Local-Only, nothing require_env-gated
+  # for that CLI) is legitimate and different from "couldn't derive it" --
+  # both skip the checks below explicitly (never silently pass on an empty
+  # expected set, never fail), the messages just say why.
+  RENDER_PY="$ENGINE_UL/mcp/render.py"
+  expected_ag=""
+  expected_oc=""
+  if ! command -v python3 >/dev/null 2>&1; then
+    warn "python3 not found -- cannot derive the expected MCP server set, skipping its strict checks"
+  elif [ ! -f "$RENDER_PY" ]; then
+    warn "render.py not found ($RENDER_PY) -- cannot derive the expected MCP server set, skipping its strict checks"
+  else
+    expected_ag="$(python3 "$RENDER_PY" --expected-servers antigravity 2>/dev/null)"
+    expected_oc="$(python3 "$RENDER_PY" --expected-servers opencode 2>/dev/null)"
+  fi
+
   AG_SRC="$HOME/.gemini/antigravity/mcp_config.json"
   AG_GLOBAL="$HOME/.gemini/config/mcp_config.json"
   if [ "$(readlink -f "$AG_GLOBAL" 2>/dev/null)" = "$(readlink -f "$AG_SRC" 2>/dev/null)" ]; then
@@ -364,11 +399,22 @@ if [ "$STRICT" = 1 ]; then
   else
     fail "Antigravity global mcp_config.json empty or missing"
   fi
-  if command -v python3 >/dev/null 2>&1 && [ -s "$AG_GLOBAL" ]; then
-    ag_missing="$(python3 - "$AG_GLOBAL" <<'PY' 2>/dev/null || true
+  if [ -z "$expected_ag" ]; then
+    warn "no expected Antigravity MCP servers derived from the manifest -- skipping the core-servers content check"
+  elif [ -s "$AG_GLOBAL" ]; then
+    # Expected server list comes in as $expected_ag (one name per line from
+    # render.py); read into an array first so each name reaches python3 as
+    # its OWN argv element -- an unquoted `$expected_ag` expansion here
+    # would both word-split on IFS AND glob-expand against this directory's
+    # actual filenames, which a server name containing a shell glob
+    # metacharacter would silently corrupt into whatever files happen to
+    # match. mapfile + a quoted "${arr[@]}" expansion carries each element
+    # through verbatim, with no reinterpretation.
+    mapfile -t expected_ag_arr <<<"$expected_ag"
+    ag_missing="$(python3 - "$AG_GLOBAL" "${expected_ag_arr[@]}" <<'PY' 2>/dev/null || true
 import json, sys
 path = sys.argv[1]
-expected = {"firecrawl", "n8n-mcp", "vault-library", "vault-ocr"}
+expected = set(sys.argv[2:])
 data = json.load(open(path, encoding="utf-8"))
 got = set((data.get("mcpServers") or {}).keys())
 print(",".join(sorted(expected - got)))
@@ -383,10 +429,12 @@ PY
   # ANTIGRAVITY.md symlink). agy has no deterministic "mcp list" subcommand
   # like opencode, so the only real probe is asking the model itself: slower
   # by design, not a bug.
-  if command -v agy >/dev/null 2>&1; then
+  if [ -z "$expected_ag" ]; then
+    warn "no expected Antigravity MCP servers derived from the manifest -- skipping the Antigravity behavioral probe"
+  elif command -v agy >/dev/null 2>&1; then
     ag_probe_best_out=""
-    ag_probe_best_missing="firecrawl, n8n-mcp, vault-library, vault-ocr"
-    ag_probe_best_count=4
+    ag_probe_best_missing="${expected_ag//$'\n'/, }"
+    ag_probe_best_count=$(printf '%s\n' "$expected_ag" | grep -c .)
     ag_probe_had_non_timeout=0
     ag_probe_timed_out=0
     ag_probe_quota=0
@@ -407,7 +455,8 @@ PY
       ag_probe_had_non_timeout=1
       ag_probe_missing=""
       ag_probe_count=0
-      for srv in firecrawl n8n-mcp vault-library vault-ocr; do
+      # shellcheck disable=SC2086
+      for srv in $expected_ag; do
         if ! printf '%s\n' "$ag_probe_out" | grep -Fqi "$srv"; then
           ag_probe_missing="${ag_probe_missing}${ag_probe_missing:+, }$srv"
           ag_probe_count=$((ag_probe_count + 1))
@@ -455,7 +504,8 @@ PY
       esac
 
       ag_probe_missing=""
-      for srv in firecrawl n8n-mcp vault-library vault-ocr; do
+      # shellcheck disable=SC2086
+      for srv in $expected_ag; do
         [ "$srv" = "n8n-mcp" ] && [ "$ag_n8n_ok" = 1 ] && continue
         [ "$srv" = "vault-library" ] && [ "$ag_vault_library_ok" = 1 ] && continue
         printf '%s\n' "$ag_probe_best_out" | grep -Fqi "$srv" || ag_probe_missing="${ag_probe_missing}${ag_probe_missing:+, }$srv"
@@ -470,7 +520,9 @@ PY
     warn "agy not in PATH, skipping Antigravity behavioral probe"
   fi
 
-  if command -v opencode >/dev/null 2>&1; then
+  if [ -z "$expected_oc" ]; then
+    warn "no expected OpenCode MCP servers derived from the manifest -- skipping the OpenCode consumer test"
+  elif command -v opencode >/dev/null 2>&1; then
     oc_tmp="$(mktemp)"
     if command -v setsid >/dev/null 2>&1; then
       setsid timeout -k 5s 25s opencode mcp list >"$oc_tmp" 2>&1
@@ -482,7 +534,8 @@ PY
     oc_out="$(cat "$oc_tmp" 2>/dev/null)"
     rm -f "$oc_tmp"
     oc_missing=""
-    for srv in firecrawl n8n-mcp vault-library vault-ocr; do
+    # shellcheck disable=SC2086
+    for srv in $expected_oc; do
       printf '%s\n' "$oc_out" | grep -F "$srv" | grep -Fqi "connected" || oc_missing="${oc_missing}${oc_missing:+, }$srv"
     done
     if [ "$oc_rc" = 124 ] || [ "$oc_rc" = 137 ]; then

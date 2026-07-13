@@ -369,3 +369,185 @@ def test_vault_library_bearer_token_never_appears_in_curl_argv(sandbox):
     assert "Authorization: Bearer super-secret-argv-must-not-see-this" in cfg_content, (
         f"the -K config file did not carry the expected Authorization header:\n{cfg_content}"
     )
+
+
+# ── --strict expected-server set now derived from the manifest, not
+# hardcoded (beta-readiness review, 2026-07-13) ───────────────────────────
+# The bug this closes: agent-doctor.sh (5 spots) and agent-doctor.ps1 (1
+# shared literal, reused in 3 places) both hardcoded
+# {firecrawl, n8n-mcp, vault-library, vault-ocr} for the --strict consumer
+# checks. A manifest change (a server added/removed, a require_env gate
+# flipped) silently went stale: the doctor kept checking for a set that no
+# longer matched what agent-sync actually writes. Both twins now derive it
+# at runtime via render.py --expected-servers, computed once near the top
+# of the --strict block.
+
+ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
+
+
+def _strip_ansi(s: str) -> str:
+    return ANSI_RE.sub("", s)
+
+
+def test_strict_block_source_no_longer_hardcodes_the_4_server_set():
+    """Content assertion on the SOURCE (not a run): the literal set/loop
+    that used to enumerate {firecrawl, n8n-mcp, vault-library, vault-ocr}
+    for the --strict checks must be gone from both twins, replaced by a
+    render.py --expected-servers call."""
+    repo = Path(__file__).resolve().parents[3]
+    bash = (repo / "03-INFRA/scripts/agent-doctor.sh").read_text(encoding="utf-8")
+    powershell = (repo / "03-INFRA/scripts/agent-doctor.ps1").read_text(encoding="utf-8")
+
+    assert '{"firecrawl", "n8n-mcp", "vault-library", "vault-ocr"}' not in bash
+    assert "for srv in firecrawl n8n-mcp vault-library vault-ocr" not in bash
+    assert 'ag_probe_best_missing="firecrawl, n8n-mcp, vault-library, vault-ocr"' not in bash
+    assert '@("firecrawl", "n8n-mcp", "vault-library", "vault-ocr")' not in powershell
+
+    assert "--expected-servers antigravity" in bash
+    assert "--expected-servers opencode" in bash
+    assert "--expected-servers antigravity" in powershell
+    assert "--expected-servers opencode" in powershell
+
+
+def test_strict_block_skips_explicitly_when_the_expected_set_cant_be_derived():
+    """Empty/undeliverable expected-server set (python3/python missing,
+    render.py missing, or a genuinely empty manifest result) must produce an
+    explicit skip/warn in both twins, never a silent pass -- comparing
+    live config content against an EMPTY expected set would otherwise
+    trivially "match" and read as a false green."""
+    repo = Path(__file__).resolve().parents[3]
+    bash = (repo / "03-INFRA/scripts/agent-doctor.sh").read_text(encoding="utf-8")
+    powershell = (repo / "03-INFRA/scripts/agent-doctor.ps1").read_text(encoding="utf-8")
+
+    assert "python3 not found -- cannot derive the expected MCP server set" in bash
+    assert "python not found -- cannot derive the expected MCP server set" in powershell
+    assert "render.py not found" in bash
+    assert "render.py not found" in powershell
+    for text in (bash, powershell):
+        assert "no expected Antigravity MCP servers derived from the manifest" in text
+        assert "no expected OpenCode MCP servers derived from the manifest" in text
+
+
+def test_ps1_has_windows_path_persistence_check():
+    """Release-critical check (Task 5, external-architect review accepted
+    2026-07-13): the PRIMARY signal is actually resolving 'agent-sync' as a
+    bare command in a FRESH process (execution-policy/PATHEXT problems
+    surface this way, a PATH string substring match does not); the
+    registry value (HKCU:\\Environment) and this process's own $env:Path
+    remain as fallback/diagnostic detail only, not an alternate pass path.
+    The plain remediation text stays the same either way."""
+    repo = Path(__file__).resolve().parents[3]
+    powershell = (repo / "03-INFRA/scripts/agent-doctor.ps1").read_text(encoding="utf-8")
+
+    start = powershell.index("Windows PATH persistence")
+    end = powershell.index("Architecture Mode", start)
+    section = powershell[start:end]
+
+    assert "Get-Command agent-sync" in section, "the primary probe must actually resolve the bare command"
+    assert "-NoProfile" in section
+    assert "HKCU:\\Environment" in section
+    assert "Get-ItemProperty" in section
+    assert ".local\\bin" in section
+    assert "$env:Path" in section
+    assert "run agent-sync apply, then open a NEW terminal" in section
+    # the fresh-process resolution result must gate the pass/fail, not the
+    # registry/process PATH detail alone.
+    assert powershell.index("$freshProbeOk = ($LASTEXITCODE") < powershell.index('ok "agent-sync resolves')
+
+
+def test_vault_push_remediation_text_matches_between_twins():
+    """Task 6: both twins must say the same thing for the dangling-commits
+    remediation, and it must stay nested under the non-Local-Only branch
+    (Local-Only has no authoritative remote to be 'ahead' of)."""
+    repo = Path(__file__).resolve().parents[3]
+    bash = (repo / "03-INFRA/scripts/agent-doctor.sh").read_text(encoding="utf-8")
+    powershell = (repo / "03-INFRA/scripts/agent-doctor.ps1").read_text(encoding="utf-8")
+
+    assert "RUN vault-push!" in bash
+    assert "RUN vault-push!" in powershell
+    # sanity: the remediation line sits after the Local-Only sentinel branch
+    # in both files, not before it (the ordering is what keeps Local-Only
+    # from ever hitting this remediation).
+    assert bash.index("Local-Only mode (") < bash.index("RUN vault-push!")
+    assert powershell.index("Local-Only mode (") < powershell.index("RUN vault-push!")
+
+
+def test_doctor_strict_derives_expected_servers_from_manifest_not_hardcoded(sandbox):
+    """Behavioral proof (not just a source grep): the --strict OpenCode
+    check must report the SANDBOX's synthetic manifest server names
+    (fake-*), not a residual hardcoded {firecrawl, n8n-mcp, vault-library,
+    vault-ocr} set that would happen to still look plausible."""
+    opencode = sandbox.bin_stubs / "opencode"
+    opencode.write_text("#!/bin/sh\necho 'nothing connected'\nexit 0\n", encoding="utf-8")
+    opencode.chmod(0o755)
+    # A real `agy` on the host running this test (this project's own dev
+    # machine has one) would otherwise get invoked for real -- a live model
+    # call with a 45s timeout, tried twice -- and blow the test's own
+    # subprocess timeout. Stub it out fast and deterministic, same as
+    # test_antigravity_quota_is_a_warning_not_a_false_mcp_failure above.
+    agy = sandbox.bin_stubs / "agy"
+    agy.write_text("#!/bin/sh\nprintf '%s\\n' 'fake-stdio-tool' 'fake-http-api' 'fake-cross-os-tool'\nexit 0\n", encoding="utf-8")
+    agy.chmod(0o755)
+
+    result = run_agent_doctor(sandbox, "--strict")
+    clean = _strip_ansi(result.stdout)
+    start = clean.index("CLI consumer conformance (--strict)")
+    end = clean.index("Shared browser and defaults", start)
+    strict_section = clean[start:end]
+
+    assert "OpenCode mcp list does not confirm:" in strict_section, strict_section
+    assert "fake-stdio-tool" in strict_section or "fake-http-api" in strict_section, strict_section
+    assert "firecrawl" not in strict_section, strict_section
+    assert "n8n-mcp" not in strict_section, strict_section
+
+
+# ── render.py failure detail (2026-07-13 adversarial review) ─────────────
+# cmd_diff() now isolates a broken CLI PER SECTION (a '>>> STOP: ...' line
+# inside that CLI's own section) instead of aborting on the first one --
+# agent-doctor.sh used to show only the LAST line of render.py's captured
+# output, which is the trailing summary ("N CLI(s) STOPPED, see above"), not
+# the actual reason. The fail message must surface the real STOP line(s).
+
+def test_doctor_surfaces_the_actual_stop_line_not_just_the_last_output_line(sandbox_with_live_configs):
+    # No agent-sync priming needed: the "MCP configured in the runtimes"
+    # section runs render.py straight against whatever live config files
+    # already exist under HOME, independent of an apply/guard cycle.
+    sb = sandbox_with_live_configs
+    claude_config = sb.live_config_path("claude")
+    claude_config.write_text('{"mcpServers": ', encoding="utf-8")
+
+    result = run_agent_doctor(sb)
+
+    assert "render.py failed to run" in result.stdout
+    assert ">>> STOP:" in result.stdout
+    assert ".claude.json" in result.stdout, (
+        "the fail message must carry render.py's own STOP line (which names "
+        "the broken file), not just the trailing 'N CLI(s) STOPPED' summary"
+    )
+
+
+def test_doctor_sh_quotes_the_expected_server_argv_passing():
+    """Source assertion (Task 4 follow-up): the unquoted `$expected_ag`
+    word-split/glob-risk expansion into python3's argv must be gone,
+    replaced by an array built with mapfile so each server name reaches
+    python3 as its own literal argv element."""
+    repo = Path(__file__).resolve().parents[3]
+    bash = (repo / "03-INFRA/scripts/agent-doctor.sh").read_text(encoding="utf-8")
+
+    assert 'python3 - "$AG_GLOBAL" $expected_ag <<' not in bash
+    assert "mapfile -t expected_ag_arr" in bash
+    assert '"${expected_ag_arr[@]}"' in bash
+
+
+def test_doctor_ps1_strict_python_resolution_probes_python3_too():
+    """Task 4 follow-up: agent-doctor.ps1's --strict block only ever probed
+    bare 'python', unlike install.ps1's Get-PyBin (python3 first, then
+    python) -- a python3-only Windows install (WSL/Chocolatey/py-launcher
+    shims) silently skipped every --strict check instead of finding it."""
+    repo = Path(__file__).resolve().parents[3]
+    powershell = (repo / "03-INFRA/scripts/agent-doctor.ps1").read_text(encoding="utf-8")
+
+    start = powershell.index("CLI consumer conformance (--strict)")
+    end = powershell.index("Antigravity global MCP path", start)
+    strict_prelude = powershell[start:end]
+    assert "python3" in strict_prelude, strict_prelude

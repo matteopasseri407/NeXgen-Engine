@@ -15,7 +15,12 @@ dialect.
   - Exit codes for --write: 0 = written or already compliant, 2 = blocked by
     a safety guard (see the STOP message), 3 = the CLI's default config file
     does not exist yet (it has never been launched once) — nothing to patch
-    until it has been opened at least once."""
+    until it has been opened at least once.
+  - --expected-servers CLI: prints (one name per line, nothing else) the
+    manifest server names that target CLI and pass require_env filtering.
+    Machine-consumable, meant for other scripts (agent-doctor.sh/.ps1's
+    --strict block) to derive their own expected-server set instead of
+    hardcoding it. Exit 0, or 2 on a manifest error."""
 from __future__ import annotations
 import argparse, difflib, json, os, platform, re, sys, time
 from pathlib import Path
@@ -147,21 +152,25 @@ def _required_ok(s):
         return True
     return _env_present(req)
 
-def load_manifest():
+def load_manifest(quiet=False):
+    """quiet=True suppresses the '>>> skip [...]' chatter -- used by
+    --expected-servers, whose output must be machine-consumable (names
+    only, one per line), never mixed with human-readable status lines."""
     raw = load_mcp_manifest(MANIFEST)
     out = {}
     for n, s in raw.items():
         s = os_view(s)
         if not _required_ok(s):
-            print(f">>> skip [{n}]: require_env not satisfied (Local-Only?)")
+            if not quiet:
+                print(f">>> skip [{n}]: require_env not satisfied (Local-Only?)")
             continue
         out[n] = s
     return out
 
 
-def _load_manifest_or_stop():
+def _load_manifest_or_stop(quiet=False):
     try:
-        return load_manifest()
+        return load_manifest(quiet=quiet)
     except ConfigValidationError as exc:
         print(f">>> STOP: invalid MCP manifest ({exc}). Fix the data source before retrying.", file=sys.stderr)
         return None
@@ -232,10 +241,31 @@ def cmd_diff():
     man = _load_manifest_or_stop()
     if man is None:
         return 2
-    ok = bad = extra = 0
+    ok = bad = extra = stopped = 0
     for cli, spec in CLI.items():
-        current = load_current(cli)
         print(f"\n========== {cli.upper()} ==========")
+        try:
+            current = load_current(cli)
+        except SystemExit:
+            # load_current() already printed the '>>> STOP: ... not valid
+            # JSON/TOML ...' message for THIS CLI's section and exits(2).
+            # One corrupted live config must not abort the whole diff loop
+            # (that would hide real drift on every OTHER CLI behind a single
+            # broken file) -- isolate it here, keep scanning the rest, and
+            # let the overall exit code reflect that something stopped.
+            stopped += 1
+            continue
+        except OSError as exc:
+            # A locked/unreadable config file (chmod 000, held open
+            # exclusively elsewhere, a permission error -- the realistic
+            # Windows failure mode) is a different exception class than the
+            # SystemExit path above (load_current only converts a PARSE
+            # failure to SystemExit; a read failure propagates as OSError
+            # untouched) but deserves the exact same per-CLI isolation:
+            # STOP this CLI's section, keep scanning the rest.
+            print(f">>> STOP: {cli} config unreadable ({exc}).")
+            stopped += 1
+            continue
         if current is None:
             print("  (config not present: CLI not installed here, or installed but never launched yet, skipped)"); continue
         wanted = {n: s for n, s in man.items() if cli in s["targets"]}
@@ -253,8 +283,12 @@ def cmd_diff():
                 print(f"  [OK]     {name}"); ok += 1
         for k in sorted(set(current) - seen):
             print(f"  [EXTRA]  '{k}' in the live file but not in the manifest (kept by --write: register it to propagate it)"); extra += 1
-    print(f"\n---- summary: {ok} servers match, {bad} with differences, {extra} outside the manifest ----")
-    return 0
+    summary = f"\n---- summary: {ok} servers match, {bad} with differences, {extra} outside the manifest"
+    if stopped:
+        summary += f", {stopped} CLI(s) STOPPED (corrupted live config, see above)"
+    summary += " ----"
+    print(summary)
+    return 2 if stopped else 0
 
 # ---- per-style serializers ------------------------------------------------
 
@@ -638,6 +672,20 @@ def write_claude(path=None):
     new_mcp = reorder(gen, live_mcp)
     return write_json_section(path, "mcpServers", new_mcp, live_mcp, s_standard, indent_exact="  ")
 
+def cmd_expected_servers(cli):
+    """Machine-consumable listing for agent-doctor.sh/.ps1's --strict block:
+    the server names from the manifest that target `cli` AND pass the
+    require_env filter (so a Local-Only install expects the SAME reduced
+    set agent-sync actually writes, not the full manifest). One name per
+    line, nothing else on stdout -- no '>>> skip' chatter (quiet=True)."""
+    man = _load_manifest_or_stop(quiet=True)
+    if man is None:
+        return 2
+    for n, s in man.items():
+        if cli in s["targets"]:
+            print(n)
+    return 0
+
 def cmd_write(cli):
     if cli == "opencode":
         return write_opencode()
@@ -653,7 +701,11 @@ def cmd_write(cli):
 def main():
     ap = argparse.ArgumentParser(description="MCP generator from a single manifest (Vault 2.0 Phase 1).")
     ap.add_argument("--write", metavar="CLI", choices=list(CLI), help="regenerate a CLI's MCP config (default: diff only).")
+    ap.add_argument("--expected-servers", metavar="CLI", choices=list(CLI),
+                     help="print (one per line) the manifest server names that target CLI and pass require_env filtering; machine-consumable, exit 0.")
     args = ap.parse_args()
+    if args.expected_servers:
+        return cmd_expected_servers(args.expected_servers)
     if args.write:
         return cmd_write(args.write)
     return cmd_diff()
