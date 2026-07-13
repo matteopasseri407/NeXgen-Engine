@@ -394,6 +394,64 @@ def test_write_rejects_invalid_toml_without_touching_file(sandbox_with_live_conf
     assert path.read_text(encoding="utf-8") == bad
 
 
+# ── load_current() on a corrupted-but-present config (beta-readiness
+# review, 2026-07-13) ───────────────────────────────────────────────────
+# load_current() only caught FileNotFoundError, mapping it to None ("CLI
+# not installed here"). A file that EXISTS but fails to parse (a stray
+# binary write, a bad manual edit, a crash mid-save) fell through to an
+# unhandled JSONDecodeError/TOMLDecodeError -- and every write_* function
+# below already treats a raw crash here as unacceptable (the whole point of
+# their own "STOP: not valid JSON/TOML" guards), so --diff mode having no
+# equivalent guard for the SAME failure mode was the one gap.
+
+def test_load_current_stops_loudly_on_corrupted_json_instead_of_crashing(sandbox_with_live_configs, capsys):
+    sb = sandbox_with_live_configs
+    path = sb.live_config_path("claude")
+    path.write_text('{"mcpServers": ', encoding="utf-8")
+
+    mod = load_render_module(sb)
+    with pytest.raises(SystemExit) as exc:
+        mod.load_current("claude")
+
+    assert exc.value.code == 2
+    out = capsys.readouterr().out
+    assert "STOP" in out
+    assert ".claude.json" in out
+
+
+def test_load_current_stops_loudly_on_corrupted_toml_instead_of_crashing(sandbox_with_live_configs, capsys):
+    sb = sandbox_with_live_configs
+    path = sb.live_config_path("codex")
+    path.write_text("[mcp_servers", encoding="utf-8")
+
+    mod = load_render_module(sb)
+    with pytest.raises(SystemExit) as exc:
+        mod.load_current("codex")
+
+    assert exc.value.code == 2
+    out = capsys.readouterr().out
+    assert "STOP" in out
+    assert "config.toml" in out
+
+
+def test_diff_mode_stops_loudly_on_corrupted_config_not_silently_skips_it(sandbox_with_live_configs, capsys):
+    """The end-to-end contract from cmd_diff()'s side: a corrupted live
+    config must never print the same "not installed here, skipped" message
+    a genuinely absent config gets -- that would silently hide real drift
+    on a broken file behind a message that says nothing is wrong."""
+    sb = sandbox_with_live_configs
+    path = sb.live_config_path("opencode")
+    path.write_text("{not json at all", encoding="utf-8")
+
+    mod = load_render_module(sb)
+    with pytest.raises(SystemExit) as exc:
+        mod.cmd_diff()
+
+    assert exc.value.code == 2
+    out = capsys.readouterr().out
+    assert "not installed here" not in out
+
+
 def test_prune_backups_keeps_at_most_three(tmp_path):
     mod_spec_path = None
     # import diretto della sola funzione via file reale (non serve una sandbox

@@ -182,19 +182,36 @@ def keep_extras(gen, live, label):
 # ---- loading live configs (MCP section only) ---------------------------
 
 def load_current(cli):
+    path = None
     try:
         if cli == "claude":
-            return json.loads((HOME / ".claude.json").read_text("utf-8")).get("mcpServers", {})
+            path = HOME / ".claude.json"
+            return json.loads(path.read_text("utf-8")).get("mcpServers", {})
         if cli == "codex":
-            d = toml_loads((HOME / ".codex/config.toml").read_text("utf-8"))
+            path = HOME / ".codex/config.toml"
+            d = toml_loads(path.read_text("utf-8"))
             return {k: {kk: vv for kk, vv in v.items() if kk != "tools"} for k, v in d.get("mcp_servers", {}).items()}
         if cli == "antigravity":
-            d = json.loads((HOME / ".gemini/antigravity/mcp_config.json").read_text("utf-8"))
+            path = HOME / ".gemini/antigravity/mcp_config.json"
+            d = json.loads(path.read_text("utf-8"))
             return {k: {kk: vv for kk, vv in v.items() if kk != "$typeName"} for k, v in d.get("mcpServers", {}).items()}
         if cli == "opencode":
-            return json.loads((HOME / ".config/opencode/opencode.json").read_text("utf-8")).get("mcp", {})
+            path = HOME / ".config/opencode/opencode.json"
+            return json.loads(path.read_text("utf-8")).get("mcp", {})
     except FileNotFoundError:
         return None     # CLI not installed on this machine
+    except (json.JSONDecodeError, TOMLDecodeError) as e:
+        # A file that EXISTS but fails to parse is a materially different
+        # state than "CLI not installed" (the FileNotFoundError case above):
+        # returning None here would read as "not installed" to every caller
+        # and silently skip real drift on a corrupted live config -- exactly
+        # the "worst possible false-green" agent-doctor.sh already guards
+        # against for render.py's own exit code, but this path bypassed it
+        # by never reaching a STOP/exit at all (beta-readiness review,
+        # 2026-07-13). Same message/exit-code convention as every --write
+        # path below (`>>> STOP: ... not valid JSON/TOML ...`, exit 2).
+        print(f">>> STOP: {path.name} is not valid JSON/TOML ({e}). Fix it or restore a .bak-* backup before rerunning.")
+        sys.exit(2)
     return {}
 
 # ---- structural diff (--diff mode) -------------------------------------
