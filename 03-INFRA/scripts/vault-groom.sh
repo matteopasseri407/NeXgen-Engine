@@ -218,7 +218,7 @@ WRITE_PROMPT="Read $PLAYBOOK. The user already reviewed and approved EXACTLY the
 ${TRANCHE}
 ---END APPROVED TRANCHE---
 
-Execute precisely this tranche, nothing more and nothing less -- do not re-derive or expand it. Commit atomically per action with clear messages. $PUSH_CLAUSE"
+Execute precisely this tranche, nothing more and nothing less -- do not re-derive or expand it. Commit atomically per action with clear messages. $PUSH_CLAUSE Before finishing, re-read the approved tranche row by row and end your response with an explicit checklist, one line per note that has a real action (skip rows marked \"nessuna azione\"): DONE (with the commit it landed in) or NOT DONE (with the concrete reason). Every actioned row must appear on that list -- do not let anything go unmentioned."
 
 WRITE_LOG="$(mk_log .execute)"
 HEAD_BEFORE="$(git rev-parse HEAD)"

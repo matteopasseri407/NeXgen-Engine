@@ -212,7 +212,7 @@ Read $Playbook. The user already reviewed and approved EXACTLY the following gro
 $Tranche
 ---END APPROVED TRANCHE---
 
-Execute precisely this tranche, nothing more and nothing less -- do not re-derive or expand it. Commit atomically per action with clear messages. $PushClause
+Execute precisely this tranche, nothing more and nothing less -- do not re-derive or expand it. Commit atomically per action with clear messages. $PushClause Before finishing, re-read the approved tranche row by row and end your response with an explicit checklist, one line per note that has a real action (skip rows marked "nessuna azione"): DONE (with the commit it landed in) or NOT DONE (with the concrete reason). Every actioned row must appear on that list -- do not let anything go unmentioned.
 "@
 
 $WriteLog = New-GroomLog 'execute'

@@ -16,11 +16,15 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import subprocess
 import sys
 from pathlib import Path
 
 BACKLOG_NOTE = "99-INDEX/vault-cleanup-backlog.md"
+
+FILENAME_RE = re.compile(r"`([\w./-]+\.md)`")
+NO_ACTION_RE = re.compile(r"nessuna azione|no action", re.IGNORECASE)
 
 
 def git(vault: str, *args: str) -> str:
@@ -31,6 +35,51 @@ def git(vault: str, *args: str) -> str:
         check=True,
     )
     return result.stdout
+
+
+def extract_action_targets(tranche_text: str) -> set[str]:
+    """Best-effort extraction of the files the approved tranche commits to touching.
+
+    Parses the markdown table the playbook's own format always produces:
+    "| `note.md` ... | **action** | reason |". Rows whose action column says
+    "nessuna azione" (flag-only, no work planned) are excluded on purpose --
+    those are legitimately never expected to show up in files_touched.
+
+    This is a heuristic, not a strict parser: it exists to catch a silently
+    dropped item (found for real on the gardener's first live run,
+    2026-07-13: the write pass finished and reported success while having
+    silently left 4 of the tranche's own planned file fixes undone), not to
+    be a hard contract on tranche formatting.
+    """
+    targets: set[str] = set()
+    for line in tranche_text.splitlines():
+        line = line.strip()
+        if not line.startswith("|"):
+            continue
+        cols = [c.strip() for c in line.strip("|").split("|")]
+        if len(cols) < 2:
+            continue
+        note_col, action_col = cols[0], cols[1]
+        if NO_ACTION_RE.search(action_col):
+            continue
+        targets.update(FILENAME_RE.findall(note_col))
+    return targets
+
+
+def check_coverage(plan_record: str, files_touched: list[str]) -> list[str]:
+    """Files the approved tranche planned to act on but never shows up touched.
+
+    Compared by basename, not full path: an archive/merge action legitimately
+    moves a file to a different directory (or deletes it into a merged note),
+    and git diff --name-only reports the old path as touched (deleted)
+    either way -- basename comparison survives that without false positives.
+    """
+    plan_path = Path(plan_record)
+    if not plan_path.is_file():
+        return []
+    targets = extract_action_targets(plan_path.read_text(encoding="utf-8"))
+    touched_basenames = {Path(f).name for f in files_touched}
+    return sorted(targets - touched_basenames)
 
 
 def build_record(args: argparse.Namespace) -> dict:
@@ -60,6 +109,7 @@ def build_record(args: argparse.Namespace) -> dict:
         "pushed": args.pushed == "true",
         "commits": commits,
         "files_touched": files_touched,
+        "unaddressed_targets": check_coverage(args.plan_record, files_touched),
         "propose_log": args.propose_log,
         "write_log": args.write_log,
     }
@@ -73,11 +123,14 @@ def append_backlog_line(vault: str, record: dict) -> tuple[str, bool]:
     retried step, a re-run after a partial failure), it does not duplicate
     the backlog entry.
     """
+    unaddressed = record.get("unaddressed_targets") or []
     line = (
         f"- {record['timestamp']}: runner={record['runner']} "
         f"commits={len(record['commits'])} files={len(record['files_touched'])} "
         f"pushed={str(record['pushed']).lower()} "
-        f"tranche={record['tranche_sha256'][:12]}\n"
+        f"tranche={record['tranche_sha256'][:12]}"
+        + (f" UNADDRESSED={','.join(unaddressed)}" if unaddressed else "")
+        + "\n"
     )
     note_path = Path(vault) / BACKLOG_NOTE
     existing = note_path.read_text(encoding="utf-8") if note_path.exists() else ""
@@ -139,6 +192,16 @@ def main() -> int:
     print(f"audit record: {record_path}")
     print(f"backlog line: {line.rstrip()}")
     print(f"backlog commit: {backlog_commit or '(nothing to commit)'}")
+
+    if record["unaddressed_targets"]:
+        print(
+            "WARNING: the approved tranche named these files for action, but "
+            "none of them appear among the commits' changed files -- the "
+            "write pass may have silently left them undone, review by hand: "
+            + ", ".join(record["unaddressed_targets"]),
+            file=sys.stderr,
+        )
+
     return 0
 
 
