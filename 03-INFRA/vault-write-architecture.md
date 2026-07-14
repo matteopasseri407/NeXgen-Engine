@@ -35,6 +35,7 @@ itself uses:
 1. One source of truth for everything; everything else is generated or a read-only mirror.
 2. Notes → MCP; infra → `vault-push`. Never two doors on the same thing.
 3. Volatile data (e.g. a calendar agenda) is never versioned: read it live from the MCP connectors instead. The n8n workflow that used to sync it into the vault was archived for this reason.
+4. Every new stable note must be made **discoverable from the hub**: right after `create_note`, add the INBOUND pointer in `00-START-HERE.md` — under `Current high-value topics` (permanent/high-value) or the `Retrieval rule` (conditional/task-scoped), with a one-line description and the note path. An outbound note→hub link is not enough: a note the hub does not list is orphaned and unfindable by other agents without semantic search.
 
 ## Known follow-ups
 
