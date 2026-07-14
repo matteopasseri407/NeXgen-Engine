@@ -8,16 +8,27 @@ This file tracks the **engine** (this repo). Your own data — manifests,
 instructions, skills, secrets — lives in your KnowledgeVault and is not part
 of any engine release.
 
-## [Unreleased]
+## [0.5.0] - 2026-07-14
 
-The 2026-07-13 pre-beta hardening round: everything between the 0.4.0 tag
-and handing the engine to its first two (Windows) beta testers. Fed by an
-independent second-model review of the whole range, an external
-architecture challenge (Council relay to a real codex seat), and three
-implementation waves with adversarial re-review.
+The pre-beta hardening round (2026-07-13) plus the end-user fixes from the
+first real client install (2026-07-14): everything between the 0.4.0 tag
+and this release. Fed by an independent second-model review of the whole
+range, an external architecture challenge (Council relay to a real codex
+seat), three implementation waves with adversarial re-review — and one day
+of installing the engine at a paying user's site, which surfaced the two
+gaps this release closes (vault-mcp not bundled, Firecrawl not
+installable). The engine is running end-to-end on a physical Windows
+machine as of this release.
 
 ### Added
 
+- **Update alert on the default install**: `agent-doctor` (both twins) now
+  warns when a released tag newer than the running `VERSION` exists, on the
+  single-clone topology every `INIT.md` install actually produces — not
+  just on the future split-clone one. Informational only (a warn, never a
+  FAIL): upgrading stays deliberate per `docs/upgrade.md`. A pure data
+  vault (no `VERSION` file, or an origin with no engine tags) skips the
+  check silently.
 - **The `vault-library` MCP server is now bundled and deployable**
   (`03-INFRA/deploy/vault-mcp/`): source, Dockerfile, compose (127.0.0.1
   binding, 512m cap, read-only container), and an idempotent
