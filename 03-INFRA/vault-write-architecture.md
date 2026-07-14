@@ -14,13 +14,13 @@ itself uses:
 ## The two doors
 
 - **Notes / knowledge (markdown)**:
-  - **Cloud-Server mode** → ONLY via the `vault-library` MCP (`create_note`, `append_note`, `update_note`). The MCP serializes writes with a lock (`flock`) and an `expected_hash` check, and commits directly to the remote bare repo as author "Vault MCP". Agents **never commit notes by hand with git**. (This branch is unconditional and unchanged — it is correct as-is.)
+  - **Cloud-Server mode** → ONLY via the `vault-library` MCP (`create_note`, `append_note`, `update_note`). The MCP serializes writes with a lock (`flock`) and an `expected_hash` check, and commits directly to the remote bare repo as author "Vault MCP". Agents **never commit notes by hand with git** — an unreachable server is an outage to report (`03-INFRA/offline-emergency-mode.md`), never permission to fall back to raw git. (This branch is unconditional and unchanged — it is correct as-is.)
   - **Local-Only mode** → direct edits to the local Markdown files, committed with plain `git` by the agent, are the correct and only path. The whole premise of the Cloud-Server rule — "the MCP serializes concurrent writes against a shared remote" — does not apply: a genuinely single-machine Local-Only install has no remote `vault-library` container and nothing to serialize against. There is no second door being opened here; there is no first door (no MCP) to begin with.
 - **Infra files (scripts, manifests, hooks, config)** → `vault-push -m "message" <file...>`: git commit + publication to the configured authoritative remote, then its mirrors. A mirror never becomes an independent source of truth. This bullet describes Cloud-Server mode; `vault-push` recognizes the Local-Only `local`/`none` sentinel the same way `agent_sync.py`'s `publish()` does — it commits locally and skips only the remote push, it never refuses the local commit.
 
 ## Live components
 
-- **`vault-library` MCP** (remote backend, container `vault-mcp`, `:rw`): serialized note writes, commits to the bare repo.
+- **`vault-library` MCP** (remote backend, container `vault-mcp`, `:rw`): serialized note writes, commits to the bare repo. The deployable source ships in this repo at `03-INFRA/deploy/vault-mcp/` and is stood up by `bootstrap-vps.sh` (bare repo + worktree provisioning included) — a Cloud-Server install without it is incomplete, not a different mode.
 - **`cloud-pull.service`** (enabled): refreshes the local mirror by pulling from the remote backend.
 - **`agent-sync.timer` / Windows scheduled task `KnowledgeVault Agent Sync`**: `guard` mode, i.e. locked authoritative pull + automatic propagation of runtime derivatives + healthcheck, with no automatic push. Unsafe Git states block propagation. `apply` is the manual alias of guard. Publishing already-made local commits is a separate `publish` or `vault-push` action. Running without arguments is help-only; there is no combined `full` mode.
 - **`sync/remotes.yaml`**: the data-owned declaration of one authoritative remote and optional publication mirrors. `agent-sync`, `agent-doctor`, and the private publishing helper resolve this same policy.

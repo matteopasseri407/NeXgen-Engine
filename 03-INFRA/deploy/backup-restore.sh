@@ -7,7 +7,12 @@
 #     Tars + gzips every named volume declared in the target stack's
 #     docker-compose.yml, writes it to $BACKUP_DIR, then prunes old
 #     archives so only the $RETENTION_COUNT most recent per volume remain.
-#     A stack with no named volumes (firecrawl, ocr today) is a no-op.
+#     A stack with no named volumes (ocr today) is a no-op. firecrawl now
+#     declares firecrawl-nuq-data (the NUQ queue Postgres) and is picked up
+#     automatically; restoring it requires the matching
+#     FIRECRAWL_POSTGRES_PASSWORD in .env (see .env.example). vault-mcp uses
+#     host bind mounts, not volumes — the vault is backed up by its own Git
+#     remotes, not by this script.
 #
 #   backup-restore.sh restore <backup-file> <volume-name>
 #     Restores one archive into a docker volume, replacing its current

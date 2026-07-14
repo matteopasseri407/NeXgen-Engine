@@ -122,20 +122,57 @@ def test_firecrawl_redis_requires_a_password():
     assert "FIRECRAWL_REDIS_PASSWORD" in joined
 
 
-def test_firecrawl_api_and_worker_connect_to_redis_with_credentials():
+def test_firecrawl_api_connects_to_redis_with_credentials():
+    """The 2.11 harness architecture runs the workers inside the api
+    container, so the api service is the only Redis consumer left besides
+    Redis itself -- both of its Redis URLs must carry the password."""
     data = _load_compose(FIRECRAWL_COMPOSE)
-    for service in ("firecrawl-api", "firecrawl-worker"):
-        env = _env_list_to_dict(data["services"][service]["environment"])
-        assert "REDIS_URL" in env, f"{service}: no REDIS_URL"
-        redis_url = env["REDIS_URL"]
+    env = _env_list_to_dict(data["services"]["firecrawl-api"]["environment"])
+    for var in ("REDIS_URL", "REDIS_RATE_LIMIT_URL"):
+        assert var in env, f"firecrawl-api: no {var}"
+        redis_url = env[var]
         assert "FIRECRAWL_REDIS_PASSWORD" in redis_url, (
-            f"{service}: REDIS_URL does not reference FIRECRAWL_REDIS_PASSWORD: {redis_url!r}"
+            f"firecrawl-api: {var} does not reference FIRECRAWL_REDIS_PASSWORD: {redis_url!r}"
         )
-        # redis://:password@host:port -- a colon right after the scheme's
-        # "//" marks a password-only auth URL, not just a bare host.
-        assert re.search(r"redis://:", redis_url), (
-            f"{service}: REDIS_URL is not in the redis://:<password>@host form: {redis_url!r}"
+        assert redis_url.startswith("redis://:"), (
+            f"firecrawl-api: {var} is not in the redis://:<password>@host form: {redis_url!r}"
         )
+
+
+# --- 2.11 architecture: the NUQ Postgres gets the same treatment. -----------
+
+
+def test_firecrawl_nuq_postgres_password_fails_fast_if_unset():
+    """Same rationale as the Redis password: a compose run outside
+    bootstrap-vps.sh must fail loudly, never start Postgres with a silent
+    empty password. api's POSTGRES_PASSWORD + both NUQ database URLs +
+    nuq-postgres's own POSTGRES_PASSWORD = 4 fail-fast references."""
+    content = FIRECRAWL_COMPOSE.read_text(encoding="utf-8")
+    occurrences = content.count("${FIRECRAWL_POSTGRES_PASSWORD:?")
+    assert occurrences >= 4, (
+        f"expected >=4 fail-fast FIRECRAWL_POSTGRES_PASSWORD references, found {occurrences}"
+    )
+
+
+def test_firecrawl_api_requires_nuq_database_url():
+    """The regression that motivated the 2.11 migration: these images
+    crash-loop without NUQ_DATABASE_URL. It must be set explicitly on the
+    api service, credentialed, not left to be derived."""
+    data = _load_compose(FIRECRAWL_COMPOSE)
+    env = _env_list_to_dict(data["services"]["firecrawl-api"]["environment"])
+    for var in ("NUQ_DATABASE_URL", "NUQ_DATABASE_URL_LISTEN", "NUQ_RABBITMQ_URL"):
+        assert var in env, f"firecrawl-api: no {var}"
+    assert "FIRECRAWL_POSTGRES_PASSWORD" in env["NUQ_DATABASE_URL"]
+
+
+def test_env_example_documents_firecrawl_postgres_password():
+    content = (DEPLOY / ".env.example").read_text(encoding="utf-8")
+    assert re.search(r"^FIRECRAWL_POSTGRES_PASSWORD=", content, re.MULTILINE)
+
+
+def test_bootstrap_autogenerates_firecrawl_postgres_password():
+    content = (DEPLOY / "bootstrap-vps.sh").read_text(encoding="utf-8")
+    assert re.search(r"ensure_env_secret\s+FIRECRAWL_POSTGRES_PASSWORD", content)
 
 
 def test_firecrawl_redis_password_interpolation_fails_fast_if_unset():

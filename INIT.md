@@ -109,7 +109,7 @@ Menziona il Consiglio AI come espansione opzionale, a prescindere dal profilo: s
 
 ### Step 7: (Solo Cloud-Server) Deploy dello stack remoto
 
-Se l'utente ha scelto la modalità Cloud-Server, spiega che dovrà deployare lo stack self-hosted (n8n, Firecrawl, OCR) sul suo VPS. I docker-compose e il bootstrap sono in `03-INFRA/deploy/`: clona il repo sul VPS, copia `.env.example` in `.env`, riempi i segreti, e lancia `bash 03-INFRA/deploy/bootstrap-vps.sh`. Rimanda a `03-INFRA/deploy/README.md` e `03-INFRA/remote-automation.md` per i dettagli.
+Se l'utente ha scelto la modalità Cloud-Server, spiega che dovrà deployare lo stack self-hosted (n8n, Firecrawl, OCR, vault-mcp) sul suo VPS. I docker-compose e il bootstrap sono in `03-INFRA/deploy/`: clona il repo sul VPS, copia `.env.example` in `.env`, riempi i segreti, e lancia `bash 03-INFRA/deploy/bootstrap-vps.sh` (provisiona anche il repo bare del vault e genera `VAULT_LIBRARY_TOKEN`). Poi, sulla workstation, esporta `VAULT_LIBRARY_URL` (porta del tunnel, path `/mcp`) e `VAULT_LIBRARY_TOKEN` così le CLI montano il server `vault-library`: in Cloud-Server le note del vault si scrivono SOLO da lì, mai con git diretto. Rimanda a `03-INFRA/deploy/README.md` e `03-INFRA/remote-automation.md` per i dettagli.
 
 Dai il benvenuto in Agent-OS.
 
@@ -231,7 +231,7 @@ Mention the AI Council as an optional expansion, regardless of profile: if the u
 
 ### Step 7: (Cloud-Server only) Remote stack deployment
 
-If the user chose Cloud-Server mode, explain that they will need to deploy the self-hosted stack (n8n, Firecrawl, OCR) on their VPS. The docker-compose and bootstrap are in `03-INFRA/deploy/`: clone the repo on the VPS, copy `.env.example` to `.env`, fill in the secrets, and run `bash 03-INFRA/deploy/bootstrap-vps.sh`. Refer to `03-INFRA/deploy/README.md` and `03-INFRA/remote-automation.md` for details.
+If the user chose Cloud-Server mode, explain that they will need to deploy the self-hosted stack (n8n, Firecrawl, OCR, vault-mcp) on their VPS. The docker-compose and bootstrap are in `03-INFRA/deploy/`: clone the repo on the VPS, copy `.env.example` to `.env`, fill in the secrets, and run `bash 03-INFRA/deploy/bootstrap-vps.sh` (it also provisions the vault's bare repo and generates `VAULT_LIBRARY_TOKEN`). Then, on the workstation, export `VAULT_LIBRARY_URL` (tunnel port, `/mcp` path) and `VAULT_LIBRARY_TOKEN` so the CLIs mount the `vault-library` server: in Cloud-Server mode vault notes are written ONLY through it, never with raw git. Refer to `03-INFRA/deploy/README.md` and `03-INFRA/remote-automation.md` for details.
 
 Welcome to Agent-OS.
 

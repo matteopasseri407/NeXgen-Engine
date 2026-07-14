@@ -25,6 +25,7 @@ COMPOSE_FILES = {
     "n8n": DEPLOY / "n8n" / "docker-compose.yml",
     "ocr": DEPLOY / "ocr" / "docker-compose.yml",
     "firecrawl": DEPLOY / "firecrawl" / "docker-compose.yml",
+    "vault-mcp": DEPLOY / "vault-mcp" / "docker-compose.yml",
 }
 BOOTSTRAP = DEPLOY / "bootstrap-vps.sh"
 
@@ -33,13 +34,13 @@ BOOTSTRAP = DEPLOY / "bootstrap-vps.sh"
 # other floating tags.
 VERSION_TAG = re.compile(r"^\d+(\.\d+){1,2}(-[A-Za-z0-9][A-Za-z0-9.]*)?$")
 
-# Narrow, documented exception: verified 2026-07-12 that ghcr.io/firecrawl/
-# playwright-service publishes NO version-numbered tag at all (only
-# latest/linux-amd64/buildcache variants) -- there is no floating-vs-pinned
-# choice to make here, "latest" is the only tag that exists. Real
-# reproducibility for this one service has to come from a pinned sha256
-# digest (documented in the compose file's header comment), not a tag.
-FLOATING_TAG_EXCEPTIONS = {("firecrawl", "firecrawl-playwright")}
+# Narrow, documented exception list for services whose upstream publishes
+# NO version-numbered tag at all. Empty since 2026-07-14: the two such
+# images in the firecrawl stack (playwright-service, nuq-postgres) are now
+# pinned by sha256 DIGEST instead -- stronger than a tag, no floating
+# reference left. The list and its guard test stay so any future exception
+# must be added here explicitly and documented in its compose header.
+FLOATING_TAG_EXCEPTIONS: set[tuple[str, str]] = set()
 
 
 def _load_compose(path: Path) -> dict:
@@ -69,6 +70,14 @@ def test_no_compose_image_uses_a_latest_tag():
                 continue
             image = cfg.get("image")
             assert image, f"{name}/{service}: no image key"
+            if "@sha256:" in image:
+                # Digest pin: immutable by construction, stronger than any
+                # version tag (used where upstream publishes only `latest`).
+                digest = image.rsplit("@sha256:", 1)[-1].rstrip("}")
+                assert re.fullmatch(r"[0-9a-f]{64}", digest), (
+                    f"{name}/{service}: malformed sha256 digest pin (image={image!r})"
+                )
+                continue
             tag = _image_tag(image)
             assert tag != "latest", f"{name}/{service}: image pinned to :latest ({image!r})"
             assert VERSION_TAG.match(tag), (
@@ -96,6 +105,28 @@ def test_floating_tag_exception_is_actually_floating_and_documented():
             f"{name}/{service}'s floating tag must stay explained in the "
             f"compose file's header comment"
         )
+
+
+def test_healthcheck_env_references_survive_compose_interpolation():
+    """Regression (found live, 2026-07-14): a healthcheck like
+    `node -e "$HEALTHCHECK_JS"` gets $HEALTHCHECK_JS interpolated by
+    docker compose at PARSE time from the host env — unset means empty
+    string, i.e. the container runs `node -e ""`: always healthy, testing
+    nothing. Container-env references inside healthcheck tests must be
+    escaped as $$VAR so they survive to the container shell."""
+    single_dollar_ref = re.compile(r'(?<!\$)\$HEALTHCHECK_JS')
+    for name, path in COMPOSE_FILES.items():
+        data = _load_compose(path)
+        for service, cfg in data["services"].items():
+            test_cmd = " ".join(str(part) for part in (cfg.get("healthcheck") or {}).get("test", []))
+            # PyYAML has already collapsed compose's $$ escape? No — $$ is a
+            # compose-level escape, YAML keeps it literally, so a correct
+            # file shows $$HEALTHCHECK_JS here and a broken one shows $HEALTHCHECK_JS.
+            assert not single_dollar_ref.search(test_cmd), (
+                f"{name}/{service}: healthcheck references $HEALTHCHECK_JS with a "
+                f"single dollar — compose interpolates it to an empty string at "
+                f"parse time; escape it as $$HEALTHCHECK_JS"
+            )
 
 
 def test_every_service_has_a_coherent_healthcheck():
@@ -150,6 +181,7 @@ def test_bootstrap_vps_uses_compose_v2_not_legacy():
     assert re.search(r"n8n/docker-compose\.yml", content)
     assert re.search(r"firecrawl/docker-compose\.yml", content)
     assert re.search(r"ocr/docker-compose\.yml", content)
+    assert re.search(r"vault-mcp/docker-compose\.yml", content)
 
 
 def test_bootstrap_vps_passes_env_file_to_every_stack():

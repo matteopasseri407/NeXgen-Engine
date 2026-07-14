@@ -195,10 +195,17 @@ jobs:
         run: |
           set -euo pipefail
           export FIRECRAWL_REDIS_PASSWORD="ci-validate-only-placeholder"
+          # Same rationale for every other ${VAR:?} guard below: CI-only
+          # placeholders so `config` can validate the template; real deploys
+          # get their values from bootstrap-vps.sh.
+          export FIRECRAWL_POSTGRES_PASSWORD="ci-validate-only-placeholder"
+          export VAULT_LIBRARY_TOKEN="ci-validate-only-placeholder"
+          export VAULT_MCP_UID=1000 VAULT_MCP_GID=1000
           for f in \
             03-INFRA/deploy/ocr/docker-compose.yml \
             03-INFRA/deploy/n8n/docker-compose.yml \
             03-INFRA/deploy/firecrawl/docker-compose.yml \
+            03-INFRA/deploy/vault-mcp/docker-compose.yml \
           ; do
             echo "== $f =="
             docker compose -f "$f" config >/dev/null
@@ -243,6 +250,85 @@ jobs:
             Write-Error "PSScriptAnalyzer found $($blocking.Count) Error-severity finding(s)."
             exit 1
           }
+
+  vault-mcp-smoke:
+    # The bundled vault-library MCP server, exercised for real (2026-07-14):
+    # build the image, run it read-only on a fixture vault + bare repo (same
+    # uid trick bootstrap-vps.sh uses), then drive the actual write path over
+    # streamable-http MCP — create/read/update with the hash guard, plus the
+    # 99-SECRETS refusal — and verify the commits landed in the bare repo as
+    # author "Vault MCP". This is the repeatable proof that a Cloud-Server
+    # install's notes door actually works, not just parses.
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: "3.x"
+
+      - name: Build image
+        run: docker build -t vault-mcp:ci 03-INFRA/deploy/vault-mcp
+
+      - name: Provision fixture vault + bare repo
+        run: |
+          set -euo pipefail
+          FIX=/tmp/vault-mcp-fixture
+          mkdir -p "$FIX/seed"
+          printf '# Start Here\n\nfixture vault for CI.\n' > "$FIX/seed/00-START-HERE.md"
+          mkdir -p "$FIX/seed/01-NOTES" "$FIX/seed/99-SECRETS"
+          printf 'placeholder\n' > "$FIX/seed/01-NOTES/.gitkeep"
+          printf 'placeholder\n' > "$FIX/seed/99-SECRETS/.gitkeep"
+          git -C "$FIX/seed" init -q --initial-branch=main
+          git -C "$FIX/seed" add -A
+          git -C "$FIX/seed" -c user.name=ci -c user.email=ci@localhost commit -qm "fixture seed"
+          git clone -q --bare "$FIX/seed" "$FIX/vault.git"
+          mkdir -p "$FIX/worktree"
+          GIT_DIR="$FIX/vault.git" GIT_WORK_TREE="$FIX/worktree" git checkout -f main
+
+      - name: Run container (compose-equivalent flags)
+        run: |
+          set -euo pipefail
+          docker run -d --name vault-mcp \
+            --read-only --tmpfs /tmp \
+            --user "$(id -u):$(id -g)" \
+            -p 127.0.0.1:8081:8080 \
+            -e VAULT_ROOT=/vault \
+            -e VAULT_GIT_DIR=/vault.git \
+            -e VAULT_TOKEN=ci-smoke-token \
+            -e VAULT_WRITE_ENABLED=true \
+            -e MCP_HOST=0.0.0.0 -e MCP_PORT=8080 \
+            -v /tmp/vault-mcp-fixture/worktree:/vault \
+            -v /tmp/vault-mcp-fixture/vault.git:/vault.git \
+            vault-mcp:ci
+          for i in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:8081/healthz >/dev/null 2>&1; then
+              echo "healthy after ${i}s"; exit 0
+            fi
+            sleep 1
+          done
+          echo "vault-mcp never became healthy"; docker logs vault-mcp; exit 1
+
+      - name: MCP write-path smoke
+        run: |
+          set -euo pipefail
+          pip install "mcp>=1.0,<2"
+          SMOKE_TOKEN=ci-smoke-token python3 03-INFRA/deploy/vault-mcp/ci-smoke.py || {
+            docker logs vault-mcp; exit 1;
+          }
+
+      - name: Verify commits landed in the bare repo
+        run: |
+          set -euo pipefail
+          FIX=/tmp/vault-mcp-fixture
+          git --git-dir="$FIX/vault.git" log --format='%an %s' main | head -5
+          count=$(git --git-dir="$FIX/vault.git" log --format='%an' main | grep -c "Vault MCP")
+          [ "$count" -ge 2 ] || { echo "expected >=2 'Vault MCP' commits, got $count"; exit 1; }
+          # The refused 99-SECRETS write must NOT have produced a commit.
+          if git --git-dir="$FIX/vault.git" log --name-only main | grep -q "99-SECRETS/should-never-land"; then
+            echo "guardrail breach: a 99-SECRETS write was committed"; exit 1
+          fi
 
   engine-tests:
     # Regression net for the engine (B1, 2026-07-08): sandboxed, never touches

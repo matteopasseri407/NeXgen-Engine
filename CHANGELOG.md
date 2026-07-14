@@ -18,6 +18,18 @@ implementation waves with adversarial re-review.
 
 ### Added
 
+- **The `vault-library` MCP server is now bundled and deployable**
+  (`03-INFRA/deploy/vault-mcp/`): source, Dockerfile, compose (127.0.0.1
+  binding, 512m cap, read-only container), and an idempotent
+  `provision-vault-repo.sh` that stands up the vault bare repo + worktree +
+  post-receive hook on the VPS. `bootstrap-vps.sh` deploys it as the fourth
+  stack and auto-generates `VAULT_LIBRARY_TOKEN`. This closes the gap where
+  Cloud-Server installs had no way to honor the "notes only via MCP" write
+  model (the server's deployment source used to live outside the repo
+  entirely) and installer agents fell back to raw git for notes.
+  `AGENTS.md`'s push-discipline rule now states the door explicitly:
+  vault-library down in Cloud-Server mode is an outage, never a license to
+  commit notes with git.
 - `vault-push` is cross-platform: its staging/commit/push logic moved into
   an `agent_sync.py vault-push` subcommand (same host-wide lock and
   subprocess timeouts as the rest of the control plane), with
@@ -75,9 +87,29 @@ implementation waves with adversarial re-review.
   (`03-INFRA/deploy/n8n/workflows/vault-grooming-reminder.json`) for the
   gardener's 14-day reminder. Reminder-only by design — the grooming pass
   itself stays on-demand, never self-scheduled.
+- `03-INFRA/deploy/semantic-search-recipe.md`: a build specification for a
+  `semantic_search` backend compatible with `vault-mcp`'s contract — exact
+  embedding model, hybrid RRF ranking with title-boost, cross-encoder
+  reranker, and resource footprint, precise enough for an AI coding agent
+  to implement a compatible service from scratch. The backend's source
+  still is not bundled (deliberate — see `README.md`'s "Shared services via
+  MCP"); this closes the gap between "bring your own" and "no idea what
+  'ours' actually looks like."
 
 ### Changed
 
+- **Firecrawl deploy migrated to the current upstream architecture**
+  (NUQ/Postgres, image line 2.11.x): the previous compose pinned the 2.11
+  image but wired the retired API+worker+Redis-only shape, which
+  crash-loops (missing `NUQ_DATABASE_URL`) — end users could not install
+  Firecrawl at all. The stack is now api (upstream docker harness, runs the
+  workers in-process), Redis (requirepass kept), RabbitMQ (pinned
+  3.13.7-management, no host port), NUQ Postgres (upstream image pinned by
+  digest, password auto-generated as `FIRECRAWL_POSTGRES_PASSWORD`, durable
+  `firecrawl-nuq-data` volume now covered by `backup-restore.sh`), and
+  Playwright (pinned by digest). Verified against upstream's compose at
+  v2.11.91 and a production deployment of the same architecture. Budget
+  note: the stack cap grew to ~6g total — see `03-INFRA/deploy/README.md`.
 - `vault-groom` CLI contract: a bare run (or `preview`) is always
   read-only; the guarded propose → typed-yes → write lane is the explicit
   `vault-groom apply`. The interim `plan`/`run` arguments exit with a
@@ -127,6 +159,17 @@ implementation waves with adversarial re-review.
 
 ### Fixed
 
+- Firecrawl healthchecks were vacuous: `node -e "$HEALTHCHECK_JS"` let
+  compose interpolate `$HEALTHCHECK_JS` at parse time (host env, unset →
+  empty string), so the container actually ran `node -e ""` — always
+  healthy, testing nothing. Caught during the live verification of the
+  2.11 migration (`docker compose config` renders the empty string, plus a
+  parse-time warning). Now `$$HEALTHCHECK_JS`, so the reference survives
+  to the container shell and the probe really runs. Fixing that unmasked a
+  second, stacked bug the vacuous check had been hiding: the TCP-connect
+  probe read the socket from the `'connect'` callback argument, which Node
+  passes as `undefined` — every real probe threw. The socket is now
+  captured from `connect()`'s return value.
 - `agent-sync`, `agent-doctor`, `vault-groom` and `firecrawl-local` were
   documented everywhere as bare PATH commands but never linked by any
   code path on any OS — including the systemd guard timer's own

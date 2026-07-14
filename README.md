@@ -76,7 +76,7 @@ The tools reach them through the Model Context Protocol (MCP).
 
 > **Note:** These services are examples, not fixed dependencies. They were selected because they can run on an **Oracle Cloud Always Free VPS** with 4 ARM Ampere cores, 24 GB of RAM, and 200 GB of SSD storage. You can replace them with other services.
 
-- **Semantic search, configured separately.** The `vault-library` MCP contract exposes `semantic_search`, and the repository includes the manifest and retrieval rules for using it. The search backend and its deployment code are not included in this repository. Without a compatible backend, tools fall back to lexical search.
+- **Semantic search, configured separately.** The `vault-library` MCP contract exposes `semantic_search`, and the repository includes the manifest and retrieval rules for using it. The search backend and its deployment code are not included in this repository, but [`03-INFRA/deploy/semantic-search-recipe.md`](03-INFRA/deploy/semantic-search-recipe.md) is a complete build specification — embedding model, hybrid ranking algorithm, weights, reranker, resource footprint — precise enough for an AI coding agent to build a compatible backend from scratch. Without a compatible backend, tools fall back to lexical search.
 - **Web scraping.** You can deploy a Firecrawl instance using the files in `03-INFRA/deploy/firecrawl/`. It is the default read-only path for web content.
 - **Local OCR.** You can deploy an OCR service using the files in `03-INFRA/deploy/ocr/` to extract text from screenshots, logs, and scanned documents locally.
 - **Visible browser.** For forms, logins, and other interactive tasks, tools attach to a real Chrome window through the DevTools protocol. They must not use a headless browser for interactive tasks.
@@ -259,7 +259,8 @@ Gli agenti li raggiungono tramite il Model Context Protocol, MCP.
 > Puoi sostituirli con altri servizi.
 
 - **Ricerca semantica, da configurare a parte.** Il contratto MCP `vault-library` espone già `semantic_search`, il manifest `manifest.yaml` lo dichiara e la governance di retrieval in `AGENTS.md` sa come usarlo.
-  Il repository, però, non contiene il backend di ricerca né il suo codice di deploy: in `03-INFRA/deploy/` non c'è una cartella `semantic-search/`.
+  Il repository, però, non contiene il backend di ricerca né il suo codice di deploy: in `03-INFRA/deploy/` non c'è una cartella `semantic-search/` con un compose funzionante.
+  C'è però [`03-INFRA/deploy/semantic-search-recipe.md`](03-INFRA/deploy/semantic-search-recipe.md): una ricetta di build completa — modello di embedding, algoritmo di ranking ibrido, pesi, reranker, ingombro di risorse — precisa abbastanza perché un agente AI possa costruire da zero un backend compatibile.
   Se vuoi usare questa funzione, devi costruire e gestire un servizio compatibile con quel contratto.
   In sua assenza, gli agenti ricadono sulla ricerca lessicale prevista dalla governance.
 - **Web scraping.** Puoi installare un'istanza di Firecrawl usando i file di deploy in `03-INFRA/deploy/firecrawl/`.

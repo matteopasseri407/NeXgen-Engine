@@ -6,8 +6,9 @@
 #   cp .env.example .env   # fill in secrets
 #   bash bootstrap-vps.sh
 #
-# Brings up: n8n, Firecrawl, Vault OCR. Each stack is independent; you can
-# comment out the ones you do not need.
+# Brings up: n8n, Firecrawl, Vault OCR, vault-mcp (the Git-backed write door
+# for vault notes). Each stack is independent; you can comment out the ones
+# you do not need (vault-mcp also honors VAULT_MCP_ENABLED=0).
 #
 # Images are pinned to explicit version tags in each docker-compose.yml (no
 # :latest — see the comment at the top of each compose file for how to also
@@ -188,6 +189,41 @@ ensure_env_secret N8N_ENCRYPTION_KEY
 # you want to turn enforcement on.
 ensure_env_secret FIRECRAWL_REDIS_PASSWORD
 
+# FIRECRAWL_POSTGRES_PASSWORD: the NUQ queue Postgres (2.11 architecture,
+# firecrawl/docker-compose.yml) gets the same auto-generated treatment as
+# Redis -- never an unauthenticated datastore, never a hand-invented value.
+ensure_env_secret FIRECRAWL_POSTGRES_PASSWORD
+
+# VAULT_LIBRARY_TOKEN: bearer auth for the vault-mcp container AND the
+# workstation CLIs (manifest.yaml reads the same variable name). Generated
+# unconditionally, like the n8n key: a write-enabled vault server must never
+# come up open, and the value has to exist before its compose stack starts.
+ensure_env_secret VAULT_LIBRARY_TOKEN
+
+# Non-secret sibling of ensure_env_secret: pins a machine-derived value
+# (e.g. the deploy user's uid/gid) into .env on first run, so later compose
+# invocations — cron, CI, another shell — resolve the exact same value.
+# Same idempotence rule: a non-empty value already in .env is never touched.
+ensure_env_value() {
+  local var="$1"
+  local value="$2"
+  local current
+  current="$(grep -E "^${var}=" .env | tail -1 | cut -d '=' -f2-)"
+  if [ -n "$current" ]; then
+    return 0
+  fi
+  if grep -qE "^${var}=" .env; then
+    local tmp
+    tmp="$(mktemp)"
+    awk -v var="$var" -v val="$value" -F'=' 'BEGIN{OFS="="} $1==var{$0=var"="val} {print}' .env > "$tmp"
+    mv "$tmp" .env
+  else
+    printf '%s=%s\n' "$var" "$value" >> .env
+  fi
+  chmod 600 .env
+  echo "  pinned ${var} in .env (auto, first run)"
+}
+
 # --env-file .env is explicit and REQUIRED here, not cosmetic: docker
 # compose's default .env lookup is relative to the directory of the first
 # -f file (e.g. n8n/), not this script's cwd, so a bare `-f n8n/docker-
@@ -205,11 +241,27 @@ docker compose -f firecrawl/docker-compose.yml --env-file .env up -d --build
 echo "==> Vault OCR"
 docker compose -f ocr/docker-compose.yml --env-file .env up -d --build
 
+# vault-mcp: the Git-backed write door for vault NOTES (notes go through
+# MCP, never raw git — see 03-INFRA/vault-write-architecture.md). Provision
+# the bare repo + worktree first (idempotent), then start the container.
+# VAULT_MCP_ENABLED=0 skips the whole stack (e.g. a VPS that only hosts n8n
+# for a Local-Only install, which has no remote vault at all).
+if [ "${VAULT_MCP_ENABLED:-1}" != "0" ]; then
+  echo "==> vault-mcp"
+  bash vault-mcp/provision-vault-repo.sh
+  ensure_env_value VAULT_MCP_UID "$(id -u)"
+  ensure_env_value VAULT_MCP_GID "$(id -g)"
+  docker compose -f vault-mcp/docker-compose.yml --env-file .env up -d --build
+else
+  echo "==> vault-mcp skipped (VAULT_MCP_ENABLED=0)"
+fi
+
 echo
 echo "Stacks up. Health checks:"
 echo "  n8n:        http://127.0.0.1:5678/healthz"
 echo "  firecrawl:  curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:3002/"
 echo "  ocr:        curl -s http://127.0.0.1:3033/health"
+echo "  vault-mcp:  curl -s http://127.0.0.1:8081/healthz"
 echo "  (or: docker compose -f <stack>/docker-compose.yml ps, once the"
 echo "  per-service healthchecks above have had time to run)"
 echo

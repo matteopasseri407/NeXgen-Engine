@@ -1,0 +1,63 @@
+# vault-library MCP server (Git-backed vault writes), built locally from ./.
+#
+# Tagged with an explicit version (matching src/vault_mcp_server/__init__.py
+# __version__) instead of "latest", same rationale as ocr/docker-compose.yml.
+# Rollback: keep the previous build tagged, then
+#   VAULT_MCP_IMAGE=vault-mcp:0.1.0-prev docker compose -f vault-mcp/docker-compose.yml up -d --no-build
+#
+# The vault data itself lives OUTSIDE docker (host bind mounts, created by
+# ./provision-vault-repo.sh) — there is no named volume to back up here; the
+# vault is backed up by its own Git remotes/mirrors, not by backup-restore.sh.
+#
+# Run through bootstrap-vps.sh (it generates VAULT_LIBRARY_TOKEN and pins
+# VAULT_MCP_UID/GID into .env first). If you run this file by hand, pass
+# --env-file ../.env or the ${VAR:?...} guards below will stop you — that is
+# deliberate: a write-enabled vault server must never come up with no auth
+# token or with a uid that cannot own the mounted repo.
+
+services:
+  vault-mcp:
+    build: .
+    image: ${VAULT_MCP_IMAGE:-vault-mcp:0.1.0}
+    container_name: vault-mcp
+    restart: unless-stopped
+    read_only: true
+    # Run as the host deploy user so Git sees one consistent owner across
+    # the mounted worktree and bare repo (bootstrap-vps.sh pins the real
+    # uid/gid into .env on first run).
+    user: "${VAULT_MCP_UID:?run bootstrap-vps.sh first (pins host uid into .env)}:${VAULT_MCP_GID:?run bootstrap-vps.sh first (pins host gid into .env)}"
+    tmpfs:
+      - /tmp
+    ports:
+      - "127.0.0.1:8081:8080"
+    environment:
+      VAULT_ROOT: /vault
+      VAULT_GIT_DIR: /vault.git
+      # Same token the workstation exports as VAULT_LIBRARY_TOKEN for the
+      # CLIs (manifest.yaml bearer auth) — one value covers both sides,
+      # like VAULT_OCR_TOKEN. Required, not optional: this instance has
+      # write tools enabled.
+      VAULT_TOKEN: ${VAULT_LIBRARY_TOKEN:?empty VAULT_LIBRARY_TOKEN — run bootstrap-vps.sh (auto-generates it) or set it in .env}
+      VAULT_WRITE_ENABLED: "true"
+      VAULT_GIT_AUTHOR_NAME: ${VAULT_GIT_AUTHOR_NAME:-Vault MCP}
+      VAULT_GIT_AUTHOR_EMAIL: ${VAULT_GIT_AUTHOR_EMAIL:-vault-mcp@localhost}
+      MCP_HOST: 0.0.0.0
+      MCP_PORT: 8080
+      MCP_PATH: /mcp
+      HEALTH_PATH: /healthz
+      MCP_STATELESS_HTTP: "true"
+      MCP_JSON_RESPONSE: "true"
+      MAX_WRITE_BYTES: ${VAULT_MCP_MAX_WRITE_BYTES:-262144}
+      WRITE_EXCLUDE_PATH_PREFIXES: ${VAULT_MCP_WRITE_EXCLUDE:-99-SECRETS,.git}
+      # Semantic sidecar is NOT part of the bundled stack; keep it off.
+      SEMANTIC_ENABLED: "false"
+    volumes:
+      - ${VAULT_WORKTREE_DIR:-/opt/knowledge-vault}:/vault:rw
+      - ${VAULT_BARE_DIR:-/opt/knowledge-vault.git}:/vault.git:rw
+    mem_limit: 512m
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/healthz', timeout=4).read()"]
+      interval: 30s
+      timeout: 5s
+      start_period: 30s
+      retries: 3
