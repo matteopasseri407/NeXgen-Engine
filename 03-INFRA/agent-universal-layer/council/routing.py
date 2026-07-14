@@ -212,10 +212,18 @@ def _probe_codex_seat(seat: dict[str, Any]) -> SeatCapability:
     except (OSError, tomllib.TOMLDecodeError) as exc:
         return SeatCapability(False, f"config Codex non leggibile: {exc}")
     if config.get("model") != seat["model"]:
-        return SeatCapability(False, "il modello non è quello configurato in Codex")
+        return SeatCapability(
+            False,
+            "il modello non è quello configurato in Codex "
+            f"(configurato: {config.get('model')!r}, seat: {seat['model']!r}, file: {config_path})",
+        )
     requested_effort = seat.get("reasoning_effort")
     if requested_effort and requested_effort != "none" and config.get("model_reasoning_effort") != requested_effort:
-        return SeatCapability(False, "l'effort non coincide con la configurazione Codex")
+        return SeatCapability(
+            False,
+            "l'effort non coincide con la configurazione Codex "
+            f"(configurato: {config.get('model_reasoning_effort')!r}, seat: {requested_effort!r}, file: {config_path})",
+        )
     return SeatCapability(True, "modello ed effort confermati dalla configurazione Codex")
 
 

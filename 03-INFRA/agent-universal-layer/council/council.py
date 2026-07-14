@@ -42,6 +42,7 @@ if str(ENGINE_ROOT) not in sys.path:
 from config_schema import ConfigValidationError, load_council_config  # noqa: E402
 from routing import (  # noqa: E402
     RoutingContractError,
+    _probe_codex_seat,
     load_routing_plan,
     resolve_role_candidates,
     seat_capabilities,
@@ -387,6 +388,7 @@ def resolve_seat(args: argparse.Namespace, *, default_routing_role: str | None =
         sys.exit(f"[council] seat sconosciuto: {seat_name}. Disponibili: {', '.join(seats)}")
     seat = seats[seat_name]
     _check_seat_allowed(seat_name, seat, args)
+    _warn_if_explicit_codex_seat_not_default(seat_name, seat)
     author_vendor = getattr(args, "author_vendor", None)
     if author_vendor and seat["vendor"].lower() == author_vendor.lower():
         sys.exit(
@@ -395,6 +397,26 @@ def resolve_seat(args: argparse.Namespace, *, default_routing_role: str | None =
             "ha prodotto il materiale (--author-vendor)."
         )
     return seat_name, seat
+
+
+def _warn_if_explicit_codex_seat_not_default(seat_name: str, seat: dict) -> None:
+    """An explicit --seat bypasses the routing probe by design (the human
+    decided). But for a codex seat that bypass can silently hide a stale
+    default: if the seat's model/effort no longer match Codex's own
+    config.toml, every call is forwarded with an explicit -m instead of
+    riding the CLI default the human may still believe is active. Only
+    codex is probed here (a local config.toml read); other CLIs would need
+    a subprocess probe, too costly for this non-blocking, informational
+    path."""
+    if seat.get("cli") != "codex":
+        return
+    capability = _probe_codex_seat(seat)
+    if capability.available:
+        return
+    print(
+        f"[council] avviso: il seat '{seat_name}' non è il default corrente della CLI codex "
+        f"({capability.reason}); verrà inoltrato esplicitamente con -m."
+    )
 
 
 def _check_seat_allowed(seat_name: str, seat: dict, args: argparse.Namespace) -> None:
