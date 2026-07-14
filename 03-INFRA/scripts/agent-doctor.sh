@@ -774,6 +774,37 @@ if [ -d "$CONSUMER_ENGINE_REPO/.git" ]; then
   fi
 fi
 
+# New-version-available check for the DEFAULT single-clone install — the
+# topology INIT.md actually produces (one clone = engine code + data root).
+# Same informational-only contract as the consumer-clone check above (B3):
+# it never auto-updates anything, upgrading stays a deliberate act
+# (docs/upgrade.md). Gated on the consumer clone NOT existing (no double
+# warning after the cutover) and on this vault actually tracking the engine
+# (a VERSION file at its root — a pure data vault has none and skips).
+if [ ! -d "$CONSUMER_ENGINE_REPO/.git" ] && [ -d "$VAULT_DATA/.git" ] && [ -f "$VAULT_DATA/VERSION" ]; then
+  sec "Engine version (single-clone install)"
+  current_version=$(head -1 "$VAULT_DATA/VERSION" | tr -d '[:space:]')
+  # Fetch is read-only (only moves remote-tracking refs/tags); bounded so an
+  # unreachable origin can't hang the doctor run.
+  if timeout -k 5s 20s git -C "$VAULT_DATA" fetch --quiet --tags origin >/dev/null 2>&1; then
+    latest_tag=$(git -C "$VAULT_DATA" tag --merged origin/main --sort=-v:refname 2>/dev/null | head -1)
+    if [ -z "$latest_tag" ]; then
+      ok "origin has no released engine tags -- nothing to compare (origin is not the engine repo?)"
+    else
+      # sort -V so a maintainer clone sitting AHEAD of the last tag doesn't
+      # get told to "upgrade" backwards.
+      newest=$(printf '%s\n%s\n' "v$current_version" "$latest_tag" | sort -V | tail -1)
+      if [ "$newest" = "v$current_version" ]; then
+        ok "engine at (or ahead of) the latest released version ($latest_tag, running v$current_version)"
+      else
+        warn "new engine version available: $latest_tag (running: v$current_version) -- see docs/upgrade.md, update is always deliberate"
+      fi
+    fi
+  else
+    warn "cannot fetch origin -- engine version check skipped (offline, or origin unreachable)"
+  fi
+fi
+
 if [ "$QUIET" = 1 ]; then
   line="agent-doctor [$HOST] PASS=$PASS WARN=$WARN FAIL=$FAILN"
   [ "$FAILN" -gt 0 ] && line="$line | FAIL: $FAILS"

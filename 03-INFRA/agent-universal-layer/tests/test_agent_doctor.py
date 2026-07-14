@@ -551,3 +551,86 @@ def test_doctor_ps1_strict_python_resolution_probes_python3_too():
     end = powershell.index("Antigravity global MCP path", start)
     strict_prelude = powershell[start:end]
     assert "python3" in strict_prelude, strict_prelude
+
+
+# --- New-version alert on the DEFAULT single-clone install (2026-07-14) -----
+#
+# docs/upgrade.md used to say the update warning only existed for the split
+# consumer-clone topology; these lock in the single-clone variant: a doctor
+# run must TELL the user a newer released tag exists, informationally (warn,
+# never fail), and must stay silent on a pure data vault that doesn't track
+# the engine at all.
+
+
+def _git(cwd, *args):
+    subprocess.run(
+        ["git", "-C", str(cwd), *args], check=True, capture_output=True, text=True
+    )
+
+
+def _make_engine_tracking_vault(sb, running_version, released):
+    """Turns the sandbox vault into a single-clone engine checkout: VERSION
+    committed on main, plus a local bare `origin` whose main carries the
+    given (version, tag) releases."""
+    vault = sb.vault
+    _git(vault, "init", "-q", "-b", "main")
+    _git(vault, "config", "user.name", "sb")
+    _git(vault, "config", "user.email", "sb@localhost")
+    (vault / "VERSION").write_text(running_version + "\n", encoding="utf-8")
+    _git(vault, "add", "-A")
+    _git(vault, "commit", "-qm", f"sandbox at {running_version}")
+
+    origin = vault.parent / "engine-origin.git"
+    subprocess.run(
+        ["git", "clone", "-q", "--bare", str(vault), str(origin)],
+        check=True, capture_output=True,
+    )
+    work = vault.parent / "engine-work"
+    subprocess.run(
+        ["git", "clone", "-q", str(origin), str(work)],
+        check=True, capture_output=True,
+    )
+    _git(work, "config", "user.name", "sb")
+    _git(work, "config", "user.email", "sb@localhost")
+    for version, tag in released:
+        (work / "VERSION").write_text(version + "\n", encoding="utf-8")
+        _git(work, "add", "-A")
+        _git(work, "commit", "-qm", f"release {version}", "--allow-empty")
+        _git(work, "tag", tag)
+    _git(work, "push", "-q", "origin", "main", "--tags")
+    _git(vault, "remote", "add", "origin", str(origin))
+
+
+def test_single_clone_update_alert_warns_when_a_newer_tag_exists(sandbox):
+    sb = sandbox
+    _make_engine_tracking_vault(sb, "0.4.0", [("0.4.0", "v0.4.0"), ("0.5.0", "v0.5.0")])
+    result = run_agent_doctor(sb)
+    assert "Engine version (single-clone install)" in result.stdout
+    assert "new engine version available: v0.5.0 (running: v0.4.0)" in result.stdout
+
+
+def test_single_clone_update_alert_ok_at_latest(sandbox):
+    sb = sandbox
+    _make_engine_tracking_vault(sb, "0.5.0", [("0.5.0", "v0.5.0")])
+    result = run_agent_doctor(sb)
+    assert "engine at (or ahead of) the latest released version (v0.5.0" in result.stdout
+    assert "new engine version available" not in result.stdout
+
+
+def test_single_clone_update_alert_skips_a_pure_data_vault(sandbox):
+    # No VERSION file at the vault root -> the section must not run at all.
+    result = run_agent_doctor(sandbox)
+    assert "Engine version (single-clone install)" not in result.stdout
+
+
+def test_single_clone_update_alert_parity_with_the_ps1_twin():
+    repo = Path(__file__).resolve().parents[3]
+    bash = (repo / "03-INFRA/scripts/agent-doctor.sh").read_text(encoding="utf-8")
+    powershell = (repo / "03-INFRA/scripts/agent-doctor.ps1").read_text(encoding="utf-8")
+    for content in (bash, powershell):
+        assert "Engine version (single-clone install)" in content
+        assert "update is always deliberate" in content
+    # Informational-only contract: the alert is a warn, never a fail, in
+    # both twins.
+    assert 'fail "new engine version' not in bash
+    assert 'bad "new engine version' not in powershell

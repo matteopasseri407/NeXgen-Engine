@@ -30,9 +30,15 @@ you're actually running; move it only when you choose to.
 
 ## Checking whether an upgrade is available
 
-On the default single-clone setup there is no automated check for this yet
-— the `agent-doctor` warning described above only fires once you've set up
-the split-clone topology. Check by hand instead:
+`agent-doctor` checks this for you on **both** topologies: on the default
+single-clone install it fetches `origin`'s tags (read-only, bounded) and
+warns — informationally, never a FAIL — when a released tag newer than your
+`VERSION` file exists ("new engine version available: vX.Y.Z"). Nothing is
+ever updated automatically; the warning just tells you the choice exists.
+A vault whose `origin` is your own private data remote (no engine tags) or
+that has no `VERSION` file skips the check silently.
+
+To check by hand instead:
 
 ```bash
 cd ~/KnowledgeVault   # or wherever you cloned it

@@ -620,6 +620,40 @@ if (Test-Path -LiteralPath (Join-Path $ConsumerEngineRepo ".git")) {
   }
 }
 
+# New-version-available check for the DEFAULT single-clone install - twin of
+# the bash check: informational only, never auto-updates, upgrading stays a
+# deliberate act (docs/upgrade.md). Gated on the consumer clone NOT existing
+# (no double warning after the cutover) and on this vault actually tracking
+# the engine (a VERSION file at its root - a pure data vault has none).
+if (-not (Test-Path -LiteralPath (Join-Path $ConsumerEngineRepo ".git")) -and
+    (Test-Path -LiteralPath (Join-Path $Vault ".git")) -and
+    (Test-Path -LiteralPath (Join-Path $Vault "VERSION"))) {
+  sec "Engine version (single-clone install)"
+  $currentVersion = (Get-Content -LiteralPath (Join-Path $Vault "VERSION") -TotalCount 1).Trim()
+  & git -C $Vault fetch --quiet --tags origin 2>$null | Out-Null
+  if ($LASTEXITCODE -eq 0) {
+    $latestTag = (& git -C $Vault tag --merged origin/main --sort=-v:refname 2>$null | Select-Object -First 1)
+    if (-not $latestTag) {
+      ok "origin has no released engine tags - nothing to compare (origin is not the engine repo?)"
+    } else {
+      # Semantic comparison so a clone sitting AHEAD of the last tag doesn't
+      # get told to "upgrade" backwards; falls back to string inequality if
+      # either side isn't parseable as a version.
+      $cur = $null; $lat = $null
+      $curOk = [System.Version]::TryParse($currentVersion, [ref]$cur)
+      $latOk = [System.Version]::TryParse(($latestTag -replace '^v', ''), [ref]$lat)
+      if ($curOk -and $latOk) {
+        if ($lat -gt $cur) { warn "new engine version available: $latestTag (running: v$currentVersion) - see docs/upgrade.md, update is always deliberate" }
+        else { ok "engine at (or ahead of) the latest released version ($latestTag, running v$currentVersion)" }
+      } elseif ("v$currentVersion" -ne $latestTag) {
+        warn "new engine version available: $latestTag (running: v$currentVersion) - see docs/upgrade.md, update is always deliberate"
+      } else {
+        ok "engine at the latest released version ($latestTag)"
+      }
+    }
+  } else { warn "cannot fetch origin - engine version check skipped (offline, or origin unreachable)" }
+}
+
 if ($Summary) {
   $line = "agent-doctor [windows] PASS=$($script:PASS) WARN=$($script:WARN) FAIL=$($script:FAILN)"
   if ($script:FAILN -gt 0) { $line += " | FAIL: " + ($script:FAILS -join ', ') }
