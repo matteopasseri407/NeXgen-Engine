@@ -1,17 +1,24 @@
-"""Regression tests — best-effort cleanup on SIGTERM/interpreter exit.
+"""Regression tests — best-effort cleanup on SIGTERM/SIGINT/interpreter exit.
 
 Security audit finding (LOW, correlated with the codex output-file mkstemp
 fix): council.py had no signal handling at all. A SIGTERM (or a crash) left
 an active seat subprocess running and the ephemeral session directory
 un-cleaned. SIGKILL is uncatchable by any userspace handler and stays out of
-scope by construction; SIGTERM and normal interpreter exit are what these
-tests cover.
+scope by construction; SIGTERM, SIGINT and normal interpreter exit are what
+these tests cover.
+
+SIGINT hardening covers the supervisor case, not the interactive one: an
+interactive Ctrl+C already reaches the vendor CLI child directly (the
+kernel delivers SIGINT to the whole foreground process group), so the
+child exits on its own without council.py's help. The gap this closes is a
+SIGINT delivered only to council.py's own pid -- a supervisor, a timeout
+manager, or another agent interrupting just this process.
 
 Tests exercise the cleanup primitives directly (``_best_effort_cleanup``,
 ``_set_active_proc``, ``_set_active_session``) rather than actually sending
 signals to the test process, and monkeypatch ``signal.signal``/``os.kill``
-when checking the SIGTERM handler itself so the pytest process's own signal
-disposition is never touched.
+when checking the signal handlers themselves so the pytest process's own
+signal disposition is never touched.
 """
 from __future__ import annotations
 
@@ -185,7 +192,44 @@ def test_sigterm_handler_cleans_up_then_redelivers_the_signal(monkeypatch, tmp_p
     assert killed["signum"] == signal.SIGTERM
 
 
-def test_install_shutdown_handlers_wires_sigterm_and_atexit_without_touching_real_process_state(monkeypatch, tmp_path):
+def test_sigint_handler_cleans_up_then_redelivers_the_signal(monkeypatch, tmp_path):
+    """Gemello SIGINT of test_sigterm_handler_cleans_up_then_redelivers_the_signal:
+    same cleanup-then-re-raise pattern, wired for the supervisor-SIGINT case."""
+    council = load_council(monkeypatch, tmp_path)
+    session_dir = tmp_path / "sessions" / "council-sigint"
+    session_dir.mkdir(parents=True)
+    proc = _FakeProc(running=True)
+    council._set_active_proc(proc)
+    council._set_active_session(session_dir, keep=False)
+
+    restored = {}
+
+    def fake_signal(signum, handler):
+        restored["signum"] = signum
+        restored["handler"] = handler
+
+    killed = {}
+
+    def fake_kill(pid, signum):
+        killed["pid"] = pid
+        killed["signum"] = signum
+
+    monkeypatch.setattr(council.signal, "signal", fake_signal)
+    monkeypatch.setattr(council.os, "kill", fake_kill)
+
+    council._handle_sigint(signal.SIGINT, None)
+
+    # Cleanup ran (process asked to terminate, session dir gone)...
+    assert proc.terminate_calls == 1
+    assert not session_dir.exists()
+    # ...the default disposition was restored...
+    assert restored["signum"] == signal.SIGINT
+    assert restored["handler"] == signal.SIG_DFL
+    # ...and the signal was re-delivered to self instead of being swallowed.
+    assert killed["signum"] == signal.SIGINT
+
+
+def test_install_shutdown_handlers_wires_sigterm_sigint_and_atexit_without_touching_real_process_state(monkeypatch, tmp_path):
     council = load_council(monkeypatch, tmp_path)
     signal_calls = []
     atexit_calls = []
@@ -195,7 +239,10 @@ def test_install_shutdown_handlers_wires_sigterm_and_atexit_without_touching_rea
 
     council._install_shutdown_handlers()
 
-    assert signal_calls == [(signal.SIGTERM, council._handle_sigterm)]
+    assert signal_calls == [
+        (signal.SIGTERM, council._handle_sigterm),
+        (signal.SIGINT, council._handle_sigint),
+    ]
     assert atexit_calls == [council._best_effort_cleanup]
 
 

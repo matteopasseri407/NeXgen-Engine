@@ -908,13 +908,26 @@ def _handle_sigterm(signum, frame) -> None:  # pragma: no cover - exercised via 
     os.kill(os.getpid(), signum)
 
 
+# Same handler body as _handle_sigterm, registered separately for SIGINT.
+# An interactive Ctrl+C is NOT the gap this closes: the kernel delivers
+# SIGINT to the whole foreground process group, so the vendor CLI child
+# already receives it directly and exits on its own. The gap is a SIGINT
+# sent only to council.py's own pid -- a supervisor, a timeout manager, or
+# another agent interrupting just this process, all realistic in agentic
+# use -- which would otherwise leave the child orphaned: run_seat's finally
+# clears _ACTIVE_PROC without killing it, so atexit later finds nothing to
+# stop.
+_handle_sigint = _handle_sigterm
+
+
 def _install_shutdown_handlers() -> None:
-    """Wire the best-effort cleanup into SIGTERM and interpreter exit. Only
-    called from main() (real CLI invocation), never at import time, so
-    importing council.py as a library (tests) never mutates the importing
-    process's signal disposition."""
+    """Wire the best-effort cleanup into SIGTERM, SIGINT and interpreter
+    exit. Only called from main() (real CLI invocation), never at import
+    time, so importing council.py as a library (tests) never mutates the
+    importing process's signal disposition."""
     if threading.current_thread() is threading.main_thread():
         signal.signal(signal.SIGTERM, _handle_sigterm)
+        signal.signal(signal.SIGINT, _handle_sigint)
     atexit.register(_best_effort_cleanup)
 
 
