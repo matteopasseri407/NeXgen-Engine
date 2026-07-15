@@ -430,7 +430,12 @@ def test_relay_does_not_stop_when_the_last_stage_itself_rejects(monkeypatch, tmp
     assert "interrompo la staffetta" not in capsys.readouterr().out
 
 
-@pytest.mark.parametrize("cli", ["opencode", "agy", "codex", "claude", "ollama"])
+@pytest.mark.parametrize("cli", ["opencode", "codex", "claude", "ollama"])
+# agy deliberately excluded here: run_seat refuses it outright (2026-07-15,
+# see AGY_BLOCK_REASON) before this transport logic is ever reached. Its
+# _build_seat_command plumbing is still covered directly, not through
+# run_seat -- see test_council_agy_blocked.py's
+# test_agy_transport_plumbing_still_builds_correctly_though_run_seat_refuses_it.
 def test_large_prompt_uses_private_non_argv_transport_for_every_cli(monkeypatch, tmp_path, cli):
     # This parametrization runs in the Linux and Windows CI jobs.  Keep the
     # host's real ``os.name`` so the private-file path exercises its native

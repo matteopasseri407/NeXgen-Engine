@@ -10,18 +10,6 @@ of any engine release.
 
 ## [Unreleased]
 
-### Changed
-
-- **Windows platform status corrected to match reality.** README's "Platform
-  status" section and a stale follow-up in `03-INFRA/vault-write-architecture.md`
-  said physical Windows verification was still pending. It has since
-  happened twice: a full guided MULTI install (three CLIs plus a
-  Cloud-Server VPS deploy) and a separate realignment of an existing
-  install to 0.5.0, both exercising `agent-sync apply`'s locked transaction
-  for real, not just in CI. Docs now say exactly that — and name what's
-  still open: a cold install with no maintainer present to catch failures.
-  Deliberately not a jump to "released" or "Beta": that's the one gap left.
-
 ### Added
 
 - Community health files GitHub's Community Standards checklist was
@@ -33,6 +21,31 @@ of any engine release.
 
 ### Changed
 
+- **`agy` (Antigravity) blocked as a passive Council seat.** A live 3-stage
+  multi-vendor relay (opencode → codex → agy, 2026-07-15) found that
+  `agy --print` ignores both `--model` and the given prompt, running its
+  own "Context Initialization" that reads real files from the operator's
+  home instead of answering — persistent state in fixed paths under
+  `~/.gemini/`, resolved independent of `$HOME`, with no override flag or
+  env var found to isolate it (checked live, including the installed
+  binary's string table). Reproduced 5 independent ways. `run_seat` now
+  refuses any `cli == "agy"` seat at the single point immediately before a
+  process would be spawned — the authoritative check, not merely the
+  earlier fail-fast checkpoints (`_check_seat_allowed`, the relay
+  candidate loop), reviewed and confirmed necessary via
+  `council challenge --seat codex-sol`. Does not affect using `agy`
+  interactively as a *caller* of Council. Reactivation requires proving
+  isolation, functional conformance, and a verifiable model identity — see
+  `AGY_BLOCK_REASON` in `council.py` and `docs/council.md`.
+- **Windows platform status corrected to match reality.** README's "Platform
+  status" section and a stale follow-up in `03-INFRA/vault-write-architecture.md`
+  said physical Windows verification was still pending. It has since
+  happened twice: a full guided MULTI install (three CLIs plus a
+  Cloud-Server VPS deploy) and a separate realignment of an existing
+  install to 0.5.0, both exercising `agent-sync apply`'s locked transaction
+  for real, not just in CI. Docs now say exactly that — and name what's
+  still open: a cold install with no maintainer present to catch failures.
+  Deliberately not a jump to "released" or "Beta": that's the one gap left.
 - **Cloud-Server local-mirror rule made explicit at install time**: a
   real physical Windows install surfaced that the installer agent never
   wrote or operated on the local Vault as read-only in Cloud-Server

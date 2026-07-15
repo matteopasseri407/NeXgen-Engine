@@ -29,7 +29,10 @@ completely inert. Nothing about the rest of the engine depends on it.
    following the comments in the template. Each seat needs `vendor`, `cli`,
    `model`, and an explicit `zero_retention: true|false`. `cli` must be one
    of `opencode`, `agy`, `codex`, `claude`, or `ollama`. Those are the CLIs `council.py` knows
-   how to invoke today. Set `zero_retention: true` only if you've confirmed
+   how to invoke today — except `agy`, which is a recognized `cli` value but
+   currently refused as a seat outright (see "Current limitations" below);
+   declaring an `agy` seat here is harmless, it just cannot be selected.
+   Set `zero_retention: true` only if you've confirmed
    that with a primary source, not a summary. You can also set an optional
    positive `timeout_seconds` for a seat that is known to need more or less
    time.
@@ -251,21 +254,36 @@ council clean --all           # removes every kept session now
 
 ## Current limitations
 
-- `codex` seats are verified live: a `challenge` was sent live to a real
-  codex seat (2026-07-13), and reviewing that live run is how several bugs
-  fixed since then were found. `opencode` and `agy` seats are also verified
-  live on all three non-relay modes. What is not yet verified live is a
-  *full* multi-vendor `relay` end-to-end — CLIs from different vendors
-  handing off to each other within one staffage. That's the next step, in
-  progress.
+- `codex` and `opencode` seats are verified live: a `challenge` was sent
+  live to a real codex seat (2026-07-13), and reviewing that live run is
+  how several bugs fixed since then were found. A live 3-stage `relay`
+  spanning opencode → codex → agy (2026-07-15) additionally verified that
+  the multi-vendor relay mechanism itself — different CLI wrappers handing
+  off to each other within one staffage — works correctly across opencode
+  and codex. `claude` and `ollama` seats have not yet been verified live.
+- **`agy` (Antigravity) is blocked as a passive Council seat** (found by
+  that same 2026-07-15 live relay run, reproduced 5 independent ways):
+  `agy --print` ignores both `--model` and the given prompt, running its
+  own "Context Initialization" that reads real files from the operator's
+  home instead of answering. Persistent state lives in fixed paths under
+  `~/.gemini/`, resolved independent of `$HOME`; no override flag or env
+  var was found to isolate it. This does **not** affect using `agy`
+  interactively as a *caller* of Council — a human working in Antigravity
+  can shell out to `council` exactly like any other CLI, gated only by the
+  usual propose-before-auto-invoking policy (`AGENTS.md`). Full finding,
+  live evidence, and the three conditions required to re-enable it as a
+  seat: `AGY_BLOCK_REASON` in `council.py`.
 - Automated regression tests cover the control flow for all four modes,
-  session cleanup, relay fallback, and the Linux launcher. They use fake
-  seats, so they do not replace live checks of each vendor CLI.
+  session cleanup, relay fallback, the `agy` block itself, and the Linux
+  launcher. They use fake seats, so they do not replace live checks of
+  each vendor CLI.
 - The Windows launcher has a portable regression test, but still needs a
   physical Windows run before this Alpha feature can be called cross-platform.
-- Large prompts use stdin for Codex and Antigravity, and a protected temporary
-  attachment for OpenCode. Claude and Ollama use protected stdin. The automated
-  regression coverage is portable, but the current vendor adapters still need
-  live end-to-end verification.
+- Large prompts use stdin for Codex, and a protected temporary attachment
+  for OpenCode. Claude and Ollama use protected stdin. (Antigravity's
+  transport plumbing also uses stdin and remains covered by tests, but the
+  seat itself is currently blocked — see above.) The automated regression
+  coverage is portable, but the current vendor adapters still need live
+  end-to-end verification.
 - Seats via CLI are slow (minutes, not seconds): this is for brainstorming,
   challenging, and review, not a quick question mid-task.

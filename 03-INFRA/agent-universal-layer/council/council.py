@@ -29,6 +29,65 @@ from pathlib import Path
 VERDICT_RE = re.compile(r"(?i)verdict\s*:\s*(APPROVE|REVISE|REJECT)\b")
 SUPPORTED_CLIS = ("opencode", "agy", "codex", "claude", "ollama")
 
+# 2026-07-15: agy blocked from every Council mode as a PASSIVE seat, after a
+# live relay incident. Reproduced 5 independent ways (council relay live,
+# plus 4 direct reproductions: --sandbox on/off, prompt via stdin vs.
+# positional argv, with/without --new-project, HOME overridden to an empty
+# dir) -- every single one, 'agy --print' ignored BOTH --model (always
+# answered as its own default model) AND the given prompt, running its own
+# "Context Initialization" instead: reading real files from the operator's
+# home (~/.gemini/antigravity-cli/{history.jsonl,conversation_summaries.db,
+# knowledge/}), resolved independent of $HOME (an isolated HOME had zero
+# effect -- checked live, not inferred). No override flag or env var exists
+# for this (checked live in agy --help, agy models, and the installed
+# binary's string table). One live relay run redacted a "possible secret"
+# from agy's own output via the leak-scan guardrail. Every Council seat must
+# be a stateless text-in/text-out oracle; this is the opposite, and it does
+# not even execute the assigned task, so there's no privacy-vs-usefulness
+# trade to make here -- what's blocked doesn't work at all today, for any
+# task shape.
+#
+# This does NOT restrict agy as an ACTIVE caller of Council (a human working
+# interactively in Antigravity who has it shell out to `council` itself, the
+# same way any other CLI can) -- that's a structurally different code path
+# (Council has no notion of "who spawned me") gated only by the same
+# propose-before-auto-invoking policy that already applies to every CLI
+# (AGENTS.md).
+#
+# Independently reviewed twice via `council challenge --seat codex-sol`
+# (2026-07-15). Round 1 set the reactivation bar: re-enabling requires
+# proving ALL THREE, not just isolation -- an isolated-but-prompt-ignoring
+# seat is still useless as a Council oracle:
+#   1. process/container-level isolation, with an access-log audit proving
+#      no vault or persistent-state access;
+#   2. functional conformance: a battery of nonce-based prompts, run on
+#      fresh processes, answered correctly with zero "Context
+#      Initialization";
+#   3. a verifiable model identity, or drop the "Gemini 3.1 Pro (High)"
+#      declaration if --model does not actually select anything.
+# Round 2 confirmed the invoker/seat distinction above is sound, and pinned
+# the enforcement requirement this comment's own guard exists to satisfy:
+# the check must sit at the single point immediately preceding process
+# spawn (see run_seat below), not only at the earlier fail-fast checkpoints
+# -- those exist for a clean error message and relay fallback, not as the
+# actual guarantee.
+AGY_BLOCK_REASON = (
+    "seat 'agy' bloccato in ogni modalita' del Council: verificato dal vivo "
+    "(5 riproduzioni indipendenti) che 'agy --print' ignora sistematicamente "
+    "sia --model sia il prompt dato, eseguendo una propria inizializzazione "
+    "che legge file reali dall'ambiente dell'operatore invece di rispondere "
+    "al compito assegnato. Stato persistente in path fissi non isolabili "
+    "con HOME o variabili d'ambiente note (nessuna trovata). Non riguarda "
+    "l'uso di agy come CHIAMANTE interattivo di council (invariato). "
+    "Riabilitabile solo dopo aver dimostrato TUTTE e tre: (1) isolamento "
+    "verificato a livello processo/container con audit d'accesso che "
+    "escluda vault e stato persistente; (2) conformita' funzionale su una "
+    "batteria di prompt a nonce casuale, su processi nuovi, zero 'Context "
+    "Initialization'; (3) identita' del modello verificabile, o rimozione "
+    "della dichiarazione se --model non seleziona nulla davvero. Dettagli: "
+    "docs/council.md, sezione limitazioni correnti."
+)
+
 # Council may validate a data-root file directly. That read-only check must
 # not leave Python cache files next to the user's data on an error path.
 sys.dont_write_bytecode = True
@@ -420,6 +479,10 @@ def _warn_if_explicit_codex_seat_not_default(seat_name: str, seat: dict) -> None
 
 
 def _check_seat_allowed(seat_name: str, seat: dict, args: argparse.Namespace) -> None:
+    # Fail-fast UX layer only -- the authoritative check is in run_seat,
+    # immediately before process spawn. See AGY_BLOCK_REASON.
+    if seat.get("cli") == "agy":
+        sys.exit(f"[council] STOP: {AGY_BLOCK_REASON}")
     if not seat.get("zero_retention", False) and not args.allow_training_risk:
         sys.exit(
             f"[council] STOP: il seat '{seat_name}' NON ha garanzia zero-retention "
@@ -1289,6 +1352,16 @@ def run_seat(
     altre CLI supportate stampano testo semplice."""
     model = seat["model"]
     cli = seat["cli"]
+    # AUTHORITATIVE enforcement point (2026-07-15, see AGY_BLOCK_REASON above
+    # SUPPORTED_CLIS): the single spot immediately before a seat's process is
+    # ever built or spawned, independent of and not merely backed up by the
+    # earlier fail-fast checks in _check_seat_allowed / _run_relay_stage.
+    # Every call path (run_rounds, _run_relay_stage) funnels through here --
+    # `cli` is schema-validated to a canonical SUPPORTED_CLIS string with no
+    # aliasing (config_schema.py), so this equality check cannot be bypassed
+    # by an alternate spelling, wrapper, or path.
+    if cli == "agy":
+        raise SeatRunError(f"[council] {AGY_BLOCK_REASON}", "agy_blocked")
     try:
         resolved_timeout_seconds = _resolve_timeout_seconds(seat, timeout_seconds)
     except ValueError as exc:
@@ -1515,11 +1588,18 @@ def _run_relay_stage(
     attempted: set[str] = set()
     last_failed_pool: str | None = None
     skipped_training_risk = False
+    skipped_agy = False
 
     while True:
         chosen_name = None
         for candidate in ordered_candidates:
             if candidate in attempted:
+                continue
+            # Fail-fast UX layer only, same as _check_seat_allowed -- the
+            # authoritative check is in run_seat. Skipped like any other
+            # unavailable candidate so a declared fallback still runs.
+            if seats[candidate].get("cli") == "agy":
+                skipped_agy = True
                 continue
             if not seats[candidate].get("zero_retention", False) and not allow_training_risk:
                 skipped_training_risk = True
@@ -1540,10 +1620,11 @@ def _run_relay_stage(
                 " Seat senza zero-retention sono stati esclusi: usa --allow-training-risk solo per test tecnici."
                 if skipped_training_risk else ""
             )
+            agy_msg = f" {AGY_BLOCK_REASON}" if skipped_agy else ""
             sys.exit(
                 f"[council] relay fermo al ruolo '{stage.role}': nessun seat disponibile "
                 f"tra quelli dichiarati nella sequence ({', '.join(stage.candidates)})."
-                f"{reset_msg}{risk_msg} Non uso seat fuori sequence e non salto il ruolo."
+                f"{reset_msg}{risk_msg}{agy_msg} Non uso seat fuori sequence e non salto il ruolo."
             )
 
         seat = seats[chosen_name]
