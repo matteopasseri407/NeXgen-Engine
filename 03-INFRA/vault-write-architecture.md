@@ -40,4 +40,7 @@ itself uses:
 ## Known follow-ups
 
 - Move any plaintext tokens from CLI settings into env vars, so no config file holds a secret literally.
-- Exercise the transaction contract on a physical Windows host. Automated Windows coverage is necessary but does not satisfy the cross-machine definition of done by itself.
+
+## Resolved follow-ups
+
+- ~~Exercise the transaction contract on a physical Windows host.~~ Done (2026-07-14/15): `agent-sync apply`'s locked pull-then-propagate transaction ran for real on physical Windows, twice — a full guided MULTI install (three CLIs, plus a Cloud-Server VPS deploy) and a separate realignment of an existing install to the current release. Still open: a cold install with no maintainer present to walk through failures — see README's "Platform status" section.

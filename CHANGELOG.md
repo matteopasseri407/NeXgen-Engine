@@ -10,6 +10,18 @@ of any engine release.
 
 ## [Unreleased]
 
+### Changed
+
+- **Windows platform status corrected to match reality.** README's "Platform
+  status" section and a stale follow-up in `03-INFRA/vault-write-architecture.md`
+  said physical Windows verification was still pending. It has since
+  happened twice: a full guided MULTI install (three CLIs plus a
+  Cloud-Server VPS deploy) and a separate realignment of an existing
+  install to 0.5.0, both exercising `agent-sync apply`'s locked transaction
+  for real, not just in CI. Docs now say exactly that — and name what's
+  still open: a cold install with no maintainer present to catch failures.
+  Deliberately not a jump to "released" or "Beta": that's the one gap left.
+
 ### Added
 
 - Community health files GitHub's Community Standards checklist was
