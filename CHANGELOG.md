@@ -8,7 +8,17 @@ This file tracks the **engine** (this repo). Your own data — manifests,
 instructions, skills, secrets — lives in your KnowledgeVault and is not part
 of any engine release.
 
-## [Unreleased]
+## [0.5.1] - 2026-07-15
+
+A live-verification and correctness pass, one day after 0.5.0's first real
+client install. Running the engine's own AI Council against itself —
+prompted by a maintainer question about whether a multi-vendor relay
+actually works end-to-end — surfaced a real seat-contract violation in the
+Antigravity integration, now fixed. The same session live-verified all
+four Council modes on opencode/codex (not just `challenge`, as before),
+and corrected two doc claims that a real install had already outpaced:
+Windows physical-verification status and the Cloud-Server local-mirror
+write model.
 
 ### Added
 
@@ -19,26 +29,29 @@ of any engine release.
   contributor/maintainer-facing docs (as opposed to the bilingual
   installation-facing ones: `README.md`, `INIT.md`, `SUPPORT.md`).
 
-### Changed
+### Fixed
 
 - **`agy` (Antigravity) blocked as a passive Council seat.** A live 3-stage
-  multi-vendor relay (opencode → codex → agy, 2026-07-15) found that
-  `agy --print` ignores both `--model` and the given prompt, running its
-  own "Context Initialization" that reads real files from the operator's
-  home instead of answering — persistent state in fixed paths under
-  `~/.gemini/`, resolved independent of `$HOME`, with no override flag or
-  env var found to isolate it (checked live, including the installed
-  binary's string table). Reproduced 5 independent ways. `run_seat` now
-  refuses any `cli == "agy"` seat at the single point immediately before a
-  process would be spawned — the authoritative check, not merely the
-  earlier fail-fast checkpoints (`_check_seat_allowed`, the relay
-  candidate loop), reviewed and confirmed necessary via
-  `council challenge --seat codex-sol`. Does not affect using `agy`
-  interactively as a *caller* of Council. Reactivation requires proving
-  isolation, functional conformance, and a verifiable model identity — see
-  `AGY_BLOCK_REASON` in `council.py` and `docs/council.md`.
-- **`brainstorm` and `code-review` verified live (2026-07-15)**, alongside
-  the `agy` investigation above: `brainstorm` (opencode) produced a genuine
+  multi-vendor relay (opencode → codex → agy) found that `agy --print`
+  ignores both `--model` and the given prompt, running its own "Context
+  Initialization" that reads real files from the operator's home instead
+  of answering — persistent state in fixed paths under `~/.gemini/`,
+  resolved independent of `$HOME`, with no override flag or env var found
+  to isolate it (checked live, including the installed binary's string
+  table). Reproduced 5 independent ways. `run_seat` now refuses any
+  `cli == "agy"` seat at the single point immediately before a process
+  would be spawned — the authoritative check, not merely the earlier
+  fail-fast checkpoints (`_check_seat_allowed`, the relay candidate loop),
+  reviewed and confirmed necessary via `council challenge --seat
+  codex-sol`. Does not affect using `agy` interactively as a *caller* of
+  Council. Reactivation requires proving isolation, functional
+  conformance, and a verifiable model identity — see `AGY_BLOCK_REASON` in
+  `council.py` and `docs/council.md`.
+
+### Changed
+
+- **`brainstorm` and `code-review` verified live**, alongside the `agy`
+  investigation above: `brainstorm` (opencode) produced a genuine
   self-attacking second round rather than a restatement; `code-review`
   (opencode) was run against a diff with a real, planted concurrency bug
   and correctly found it, unprompted. `docs/council.md`'s "Current
