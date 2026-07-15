@@ -37,6 +37,14 @@ of any engine release.
   interactively as a *caller* of Council. Reactivation requires proving
   isolation, functional conformance, and a verifiable model identity — see
   `AGY_BLOCK_REASON` in `council.py` and `docs/council.md`.
+- **`brainstorm` and `code-review` verified live (2026-07-15)**, alongside
+  the `agy` investigation above: `brainstorm` (opencode) produced a genuine
+  self-attacking second round rather than a restatement; `code-review`
+  (opencode) was run against a diff with a real, planted concurrency bug
+  and correctly found it, unprompted. `docs/council.md`'s "Current
+  limitations" previously only cited a 2026-07-13 live `challenge` for
+  `codex`/`opencode` — it now cites live evidence for all four modes on
+  those two CLIs. `claude` and `ollama` remain unverified live.
 - **Windows platform status corrected to match reality.** README's "Platform
   status" section and a stale follow-up in `03-INFRA/vault-write-architecture.md`
   said physical Windows verification was still pending. It has since

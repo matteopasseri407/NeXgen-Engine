@@ -254,13 +254,20 @@ council clean --all           # removes every kept session now
 
 ## Current limitations
 
-- `codex` and `opencode` seats are verified live: a `challenge` was sent
-  live to a real codex seat (2026-07-13), and reviewing that live run is
-  how several bugs fixed since then were found. A live 3-stage `relay`
-  spanning opencode → codex → agy (2026-07-15) additionally verified that
-  the multi-vendor relay mechanism itself — different CLI wrappers handing
-  off to each other within one staffage — works correctly across opencode
-  and codex. `claude` and `ollama` seats have not yet been verified live.
+- `codex` and `opencode` seats are verified live, on all four modes:
+  `challenge` was sent live to a real codex seat (2026-07-13, then again
+  2026-07-15 via `codex-sol`), and reviewing those live runs is how
+  several bugs fixed since then were found — including the `agy` block
+  below. `brainstorm` (opencode, 2026-07-15) produced a genuine second
+  round that attacked its own first-round conclusion, not a restatement.
+  `code-review` (opencode, 2026-07-15) was run against a diff with a real,
+  planted concurrency bug (a non-atomic check-then-decrement on a token
+  bucket) and correctly found it, unprompted, as the dominant flaw. A live
+  3-stage `relay` spanning opencode → codex → agy (2026-07-15) additionally
+  verified that the multi-vendor relay mechanism itself — different CLI
+  wrappers handing off to each other within one staffage — works correctly
+  across opencode and codex. `claude` and `ollama` seats have not yet been
+  verified live.
 - **`agy` (Antigravity) is blocked as a passive Council seat** (found by
   that same 2026-07-15 live relay run, reproduced 5 independent ways):
   `agy --print` ignores both `--model` and the given prompt, running its
