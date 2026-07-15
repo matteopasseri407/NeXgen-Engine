@@ -8,6 +8,24 @@ This file tracks the **engine** (this repo). Your own data — manifests,
 instructions, skills, secrets — lives in your KnowledgeVault and is not part
 of any engine release.
 
+## [Unreleased]
+
+### Changed
+
+- **Cloud-Server local-mirror rule made explicit at install time**: a
+  real physical Windows install surfaced that the installer agent never
+  wrote or operated on the local Vault as read-only in Cloud-Server
+  mode — the "notes only via MCP" rule existed (`AGENTS.md`,
+  `03-INFRA/vault-write-architecture.md`), but only in files the
+  install-time persona (`INIT.md`) isn't instructed to read, and
+  `99-INDEX/USER-PROFILE.md`'s "If CLOUD-SERVER" section listed tunnel
+  connection details without ever stating the write model itself.
+  `INIT.md` (Step 4 and Step 7, both languages) now states the rule
+  where the user actually chooses Cloud-Server and where the stack gets
+  deployed, and instructs the installer to verify it is written
+  explicitly into `USER-PROFILE.md` — the file every future session
+  reads as its own deployment map — before closing the step.
+
 ## [0.5.0] - 2026-07-14
 
 The pre-beta hardening round (2026-07-13) plus the end-user fixes from the

@@ -84,6 +84,7 @@ itself required.
 
 ### If CLOUD-SERVER
 
+- **Write model — read this first**: the remote backend is the source of truth. The local clone of this Vault is a **read-only mirror**, not a working copy. Notes are written ONLY through the `vault-library` MCP (`create_note`/`append_note`/`update_note`) — never with a raw `git commit` on notes here, not even "just this once." If the remote is unreachable, that is an outage, not permission to write or operate on the local mirror: follow `03-INFRA/offline-emergency-mode.md` (queue work in the append-only outbox, never touch the local vault files directly). Full model: `03-INFRA/vault-write-architecture.md`.
 - **Remote backend (VPS)**:
   - SSH alias: `[FILL IN SSH ALIAS]`
   - Public IP: `[FILL IN IP]`
