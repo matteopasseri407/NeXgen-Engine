@@ -10,6 +10,15 @@ of any engine release.
 
 ## [Unreleased]
 
+### Added
+
+- Community health files GitHub's Community Standards checklist was
+  missing: `CODE_OF_CONDUCT.md` (Contributor Covenant 2.1), `CONTRIBUTING.md`,
+  issue templates (bug report / feature request), and a pull request
+  template. English-only, matching `SECURITY.md`'s existing convention for
+  contributor/maintainer-facing docs (as opposed to the bilingual
+  installation-facing ones: `README.md`, `INIT.md`, `SUPPORT.md`).
+
 ### Changed
 
 - **Cloud-Server local-mirror rule made explicit at install time**: a

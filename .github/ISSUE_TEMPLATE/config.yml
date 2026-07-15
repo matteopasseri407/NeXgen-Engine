@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/matteopasseri407/NeXgen-Engine/security/advisories/new
+    about: Do not open a public issue for anything that could expose a real credential or an active exploit path — see SECURITY.md.
