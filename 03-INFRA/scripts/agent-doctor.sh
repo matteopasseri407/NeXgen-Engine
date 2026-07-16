@@ -180,6 +180,58 @@ else
   fail "missing $OCJSON"
 fi
 
+sec "Canonical bootstrap hygiene (size budget, pointer integrity)"
+# Additive, read-only guardrails on the single AGENTS.md bootstrap and its
+# load-on-demand detail notes. WARN-only by design: they surface drift (a
+# bloated bootstrap, a pointer to a note renamed/removed out from under the
+# list) without ever flipping a green doctor red on a pre-existing condition.
+# Budgets are overridable via env for installs with different conventions.
+BOOTSTRAP_MAX_BYTES="${NEXGEN_BOOTSTRAP_MAX_BYTES:-40000}"
+NOTE_MAX_BYTES="${NEXGEN_NOTE_MAX_BYTES:-16000}"
+if [ -f "$CANON" ]; then
+  canon_bytes=$(wc -c < "$CANON" | tr -d ' ')
+  if [ "$canon_bytes" -gt "$BOOTSTRAP_MAX_BYTES" ]; then
+    warn "bootstrap AGENTS.md is ${canon_bytes} bytes, over the ${BOOTSTRAP_MAX_BYTES}-byte budget -- move task-specific content into a load-on-demand note (override: NEXGEN_BOOTSTRAP_MAX_BYTES)"
+  else
+    ok "bootstrap AGENTS.md within budget (${canon_bytes}/${BOOTSTRAP_MAX_BYTES} bytes)"
+  fi
+  NOTES_DIR="$VAULT_DATA/03-INFRA"
+  oversized=""
+  if [ -d "$NOTES_DIR" ]; then
+    for note in "$NOTES_DIR"/*.md; do
+      [ -f "$note" ] || continue
+      nb=$(wc -c < "$note" | tr -d ' ')
+      [ "$nb" -gt "$NOTE_MAX_BYTES" ] && oversized="${oversized}${oversized:+, }$(basename "$note") (${nb}b)"
+    done
+  fi
+  [ -z "$oversized" ] && ok "detail notes within the ${NOTE_MAX_BYTES}-byte budget" || warn "oversized detail note(s) over ${NOTE_MAX_BYTES} bytes, consider splitting: $oversized (override: NEXGEN_NOTE_MAX_BYTES)"
+  # Load-on-demand pointer integrity: every vault-relative note path in
+  # backticks must resolve under the vault. The literal placeholder
+  # 03-INFRA/<topic>.md in the editing-discipline prose is skipped (angle
+  # brackets); ~-rooted paths and URLs never match the vault-prefix set.
+  BT='`'
+  ptr_list="$(grep -oE "${BT}(03-INFRA|99-INDEX|04-NOW|02-PROJECTS|01-NOTES|00-START-HERE)[^${BT}]*${BT}" "$CANON" 2>/dev/null | tr -d "$BT" | grep -E '\.md$' | sort -u)"
+  missing_ptr=""
+  checked_ptr=0
+  while IFS= read -r ref; do
+    [ -n "$ref" ] || continue
+    case "$ref" in *"<"*|*">"*) continue ;; esac
+    checked_ptr=$((checked_ptr + 1))
+    [ -f "$VAULT_DATA/$ref" ] || missing_ptr="${missing_ptr}${missing_ptr:+, }$ref"
+  done <<EOF
+$ptr_list
+EOF
+  if [ "$checked_ptr" = 0 ]; then
+    ok "no vault-relative bootstrap pointers to verify"
+  elif [ -z "$missing_ptr" ]; then
+    ok "all $checked_ptr bootstrap load-on-demand pointers resolve"
+  else
+    warn "bootstrap load-on-demand pointer(s) not found under the vault: $missing_ptr -- a renamed/removed note leaves a dead pointer"
+  fi
+else
+  warn "canonical AGENTS.md not found, skipping bootstrap hygiene checks"
+fi
+
 sec "Deterministic agent utilities"
 if command -v agent-now >/dev/null 2>&1; then
   now_payload="$(agent-now --json 2>/dev/null || true)"

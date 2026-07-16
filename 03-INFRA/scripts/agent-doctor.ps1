@@ -175,6 +175,45 @@ if (Test-Path -LiteralPath $OcJson) {
   if (Select-String -Quiet -LiteralPath $OcJson -Pattern "instructions/AGENTS.md") { ok "OpenCode instructions -> AGENTS.md" } else { bad "OpenCode instructions do NOT point to AGENTS.md" }
 } else { bad "missing $OcJson" }
 
+sec "Canonical bootstrap hygiene (size budget, pointer integrity)"
+# Additive, read-only guardrails on the single AGENTS.md bootstrap and its
+# load-on-demand detail notes. WARN-only by design: they surface drift (a
+# bloated bootstrap, a pointer to a note renamed/removed out from under the
+# list) without ever flipping a green doctor red on a pre-existing condition.
+# Budgets are overridable via env for installs with different conventions.
+$BootstrapMaxBytes = if ($env:NEXGEN_BOOTSTRAP_MAX_BYTES) { [int]$env:NEXGEN_BOOTSTRAP_MAX_BYTES } else { 40000 }
+$NoteMaxBytes = if ($env:NEXGEN_NOTE_MAX_BYTES) { [int]$env:NEXGEN_NOTE_MAX_BYTES } else { 16000 }
+if (Test-Path -LiteralPath $Canon) {
+  $canonBytes = (Get-Item -LiteralPath $Canon).Length
+  if ($canonBytes -gt $BootstrapMaxBytes) {
+    warn "bootstrap AGENTS.md is $canonBytes bytes, over the $BootstrapMaxBytes-byte budget - move task-specific content into a load-on-demand note (override: NEXGEN_BOOTSTRAP_MAX_BYTES)"
+  } else {
+    ok "bootstrap AGENTS.md within budget ($canonBytes/$BootstrapMaxBytes bytes)"
+  }
+  $notesDir = Join-Path $Vault "03-INFRA"
+  $oversized = @()
+  if (Test-Path -LiteralPath $notesDir) {
+    foreach ($note in @(Get-ChildItem -LiteralPath $notesDir -Filter '*.md' -File -ErrorAction SilentlyContinue)) {
+      if ($note.Length -gt $NoteMaxBytes) { $oversized += "$($note.Name) ($($note.Length)b)" }
+    }
+  }
+  if ($oversized.Count -eq 0) { ok "detail notes within the $NoteMaxBytes-byte budget" }
+  else { warn "oversized detail note(s) over $NoteMaxBytes bytes, consider splitting: $($oversized -join ', ') (override: NEXGEN_NOTE_MAX_BYTES)" }
+  # Load-on-demand pointer integrity: every vault-relative note path in
+  # backticks must resolve under the vault. The literal placeholder
+  # 03-INFRA/<topic>.md in the editing-discipline prose is skipped (angle
+  # brackets); ~-rooted paths and URLs never match the vault-prefix set.
+  $canonText = Get-Content -Raw -LiteralPath $Canon
+  $ptrMatches = [regex]::Matches($canonText, '`((?:03-INFRA|99-INDEX|04-NOW|02-PROJECTS|01-NOTES|00-START-HERE)[^`]*)`')
+  $refs = @($ptrMatches | ForEach-Object { $_.Groups[1].Value } | Where-Object { $_ -match '\.md$' -and $_ -notmatch '[<>]' } | Select-Object -Unique)
+  $missingPtr = @($refs | Where-Object { -not (Test-Path -LiteralPath (Join-Path $Vault $_)) })
+  if ($refs.Count -eq 0) { ok "no vault-relative bootstrap pointers to verify" }
+  elseif ($missingPtr.Count -eq 0) { ok "all $($refs.Count) bootstrap load-on-demand pointers resolve" }
+  else { warn "bootstrap load-on-demand pointer(s) not found under the vault: $($missingPtr -join ', ') - a renamed/removed note leaves a dead pointer" }
+} else {
+  warn "canonical AGENTS.md not found, skipping bootstrap hygiene checks"
+}
+
 sec "Deterministic agent utilities"
 $agentNow = Get-Command agent-now -ErrorAction SilentlyContinue
 if (-not $agentNow) {

@@ -638,3 +638,76 @@ def test_single_clone_update_alert_parity_with_the_ps1_twin():
     # both twins.
     assert 'fail "new engine version' not in bash
     assert 'bad "new engine version' not in powershell
+
+
+# ── Canonical bootstrap hygiene: size budget + load-on-demand pointer
+# integrity (competitor-borrow Tier 1, 2026-07-17) ────────────────────────
+# Two additive, read-only, WARN-only doctor checks. They must catch a bloated
+# bootstrap and a dangling load-on-demand pointer, must skip the literal
+# 03-INFRA/<topic>.md placeholder in the editing-discipline prose, and must
+# NEVER turn a green doctor red (informational only). Mirrored in both twins.
+
+def _write_canon(sandbox, text: str) -> Path:
+    canon = sandbox.ul / "instructions" / "AGENTS.md"
+    canon.parent.mkdir(parents=True, exist_ok=True)
+    canon.write_text(text, encoding="utf-8")
+    return canon
+
+
+def test_bootstrap_size_budget_warns_over_and_never_fails(sandbox):
+    _write_canon(sandbox, "# bootstrap\n" + ("x" * 200))
+    result = _run_doctor(sandbox, env_overrides={"NEXGEN_BOOTSTRAP_MAX_BYTES": "10"})
+    assert _lines_with(result.stdout, "⚠", "over the 10-byte budget"), result.stdout
+    # informational-only: an oversized bootstrap must never be a FAIL.
+    assert not _lines_with(result.stdout, "✗", "bootstrap AGENTS.md"), result.stdout
+
+
+def test_bootstrap_size_budget_ok_when_under(sandbox):
+    _write_canon(sandbox, "# small bootstrap\n")
+    result = _run_doctor(sandbox)
+    assert _lines_with(result.stdout, "✓", "bootstrap AGENTS.md within budget"), result.stdout
+
+
+def test_load_on_demand_pointer_dangling_warns_not_fails(sandbox):
+    _write_canon(
+        sandbox,
+        "Load details:\n\n- Ghost note: `03-INFRA/ghost-note-nonexistent.md`\n",
+    )
+    result = _run_doctor(sandbox)
+    assert _lines_with(result.stdout, "⚠", "03-INFRA/ghost-note-nonexistent.md"), result.stdout
+    assert not _lines_with(result.stdout, "✗", "ghost-note-nonexistent"), result.stdout
+
+
+def test_load_on_demand_pointer_resolves_ok(sandbox):
+    note = sandbox.vault / "03-INFRA" / "real-note.md"
+    note.parent.mkdir(parents=True, exist_ok=True)
+    note.write_text("real\n", encoding="utf-8")
+    _write_canon(sandbox, "Load details:\n\n- Real note: `03-INFRA/real-note.md`\n")
+    result = _run_doctor(sandbox)
+    assert _lines_with(result.stdout, "✓", "load-on-demand pointers resolve"), result.stdout
+
+
+def test_pointer_integrity_skips_the_topic_placeholder(sandbox):
+    # The literal 03-INFRA/<topic>.md in the editing-discipline prose must be
+    # skipped (angle brackets), never reported as a dangling pointer.
+    _write_canon(sandbox, "create `03-INFRA/<topic>.md` and add a pointer.\n")
+    result = _run_doctor(sandbox)
+    assert not _lines_with(result.stdout, "⚠", "<topic>"), result.stdout
+    assert _lines_with(result.stdout, "✓", "no vault-relative bootstrap pointers to verify"), result.stdout
+
+
+def test_bootstrap_hygiene_present_and_warn_only_in_both_twins():
+    repo = Path(__file__).resolve().parents[3]
+    bash = (repo / "03-INFRA/scripts/agent-doctor.sh").read_text(encoding="utf-8")
+    powershell = (repo / "03-INFRA/scripts/agent-doctor.ps1").read_text(encoding="utf-8")
+    for content in (bash, powershell):
+        assert "Canonical bootstrap hygiene" in content
+        assert "NEXGEN_BOOTSTRAP_MAX_BYTES" in content
+        assert "NEXGEN_NOTE_MAX_BYTES" in content
+    # informational-only contract: never a fail/bad on these three checks.
+    assert 'fail "bootstrap AGENTS.md' not in bash
+    assert 'fail "oversized detail note' not in bash
+    assert 'fail "bootstrap load-on-demand' not in bash
+    assert 'bad "bootstrap AGENTS.md' not in powershell
+    assert 'bad "oversized detail note' not in powershell
+    assert 'bad "bootstrap load-on-demand' not in powershell
