@@ -803,7 +803,16 @@ def test_redact_masks_secrets_and_env_refs(sandbox):
 def test_cmd_diff_detects_path_drift_without_printing_live_values(sandbox, monkeypatch, capsys):
     mod = load_render_module(sandbox)
     manifest = mod.load_manifest(quiet=True)
-    codex = mod.CLI["codex"]
+    codex = dict(mod.CLI["codex"])
+    base_render = codex["render"]
+
+    def render_with_expected_path(name, spec):
+        rendered = base_render(name, spec)
+        if name == "fake-codex-only":
+            rendered.setdefault("env", {})["PATH"] = "fixture-bounded-path"
+        return rendered
+
+    codex["render"] = render_with_expected_path
     current = {
         codex["name"](name): codex["render"](name, spec)
         for name, spec in manifest.items()

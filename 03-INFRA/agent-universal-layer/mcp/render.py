@@ -466,9 +466,11 @@ def cmd_diff():
         retired = _retired_keys(man, cli)
         for k in sorted(set(current) - seen):
             if k in retired:
-                print(f"  [RETIRED] '{k}' remains in the live file (removed by --write)"); bad += 1
+                print(f"  [RETIRED] '{k}' remains in the live file (removed by --write)")
+                bad += 1
             else:
-                print(f"  [EXTRA]  '{k}' in the live file but not in the manifest (kept by --write: register it to propagate it)"); extra += 1
+                print(f"  [EXTRA]  '{k}' in the live file but not in the manifest (kept by --write: register it to propagate it)")
+                extra += 1
     summary = f"\n---- summary: {ok} servers match, {bad} with differences, {extra} outside the manifest"
     if stopped:
         summary += f", {stopped} CLI(s) STOPPED (corrupted live config, see above)"
@@ -880,7 +882,8 @@ def write_codex(path=None):
             print(f">>> STOP: env of {cname} does not match."); return 2
     for cname in retired:
         if cname in np_.get("mcp_servers", {}):
-            print(f">>> STOP: retired server '{cname}' would remain in Codex."); return 2
+            print(f">>> STOP: retired server '{cname}' would remain in Codex.")
+            return 2
     for cname in live_srv:                          # no other MCP server touched
         if cname not in targets and cname not in retired and np_["mcp_servers"][cname] != live_srv[cname]:
             print(f">>> STOP: the non-manifest server '{cname}' would end up modified."); return 2
