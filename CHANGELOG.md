@@ -8,6 +8,19 @@ This file tracks the **engine** (this repo). Your own data — manifests,
 instructions, skills, secrets — lives in your KnowledgeVault and is not part
 of any engine release.
 
+## [0.5.6] - 2026-07-16
+
+Windows command-launcher follow-up. This release remains Alpha.
+
+### Fixed
+
+- Windows commands under `~/.local/bin` are real PowerShell shims that invoke the engine script by absolute path. They no longer use file symlinks that change `$PSScriptRoot` and make launchers search for sibling files in the commands directory.
+- `agent-sync.ps1` and `agent-doctor.ps1` select a Python 3 runtime only after it successfully imports PyYAML, following the installer preference order before falling back to the Windows `py -3` launcher.
+- The doctor reuses that validated runtime for remote policy, MCP rendering, strict consumer checks, and skill coverage, instead of letting different checks silently select different Python installations.
+
+Release gate: real Windows launcher and strict-doctor probes, full pytest
+suite, public leak scan, GitHub Actions, signed commits and signed tag.
+
 ## [0.5.5] - 2026-07-16
 
 Windows convergence follow-up. This release remains Alpha.

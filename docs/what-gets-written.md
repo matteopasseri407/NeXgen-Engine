@@ -44,6 +44,11 @@ On Windows, every `agent-sync apply`/`guard` run (`install_scheduler` in
 `agent_sync.py`) self-heals the same recurring trigger that systemd provides
 on Linux, using only your own user account (no admin elevation, no service):
 
+- `~/.local/bin/<command>.ps1`: a real, generated shim that invokes the
+  engine-owned PowerShell script by absolute path. A file symlink is not used,
+  because PowerShell would resolve `$PSScriptRoot` to the link directory.
+- `~/.local/bin/<command>.cmd`: the bare-command wrapper that invokes that
+  local PowerShell shim.
 - A hidden VBS wrapper, `start-agent-sync-hidden.vbs`, is written under the
   user's runtime state (`~/.local/state/`). It preserves the resolved engine,
   vault-data, vault, and branch values, then shells out to

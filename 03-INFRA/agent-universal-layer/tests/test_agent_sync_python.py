@@ -674,9 +674,42 @@ def test_windows_utils_installs_agent_sync_and_agent_doctor_command_wrappers(san
     for name in ("agent-sync", "agent-doctor"):
         launcher = sandbox.home / ".local" / "bin" / f"{name}.ps1"
         wrapper = sandbox.home / ".local" / "bin" / f"{name}.cmd"
-        assert launcher.exists(), f"{name}.ps1 not linked"
-        assert launcher.resolve() == (sandbox.scripts_dir / f"{name}.ps1").resolve()
+        assert launcher.exists(), f"{name}.ps1 launcher missing"
+        assert not launcher.is_symlink()
+        launcher_text = launcher.read_text(encoding="utf-8")
+        assert str(sandbox.scripts_dir / f"{name}.ps1") in launcher_text
+        assert "& $Target @args" in launcher_text
         assert f"{name}.ps1" in wrapper.read_text(encoding="utf-8")
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows launcher execution requires PowerShell.")
+def test_windows_agent_sync_launcher_executes_the_engine_script_not_the_bin_directory(sandbox, monkeypatch):
+    """A file symlink makes $PSScriptRoot resolve to ~/.local/bin instead of
+    the engine scripts directory, so agent-sync cannot find agent_sync.py.
+    The generated shim must invoke the real target and preserve its sibling
+    lookup in a physical Windows PowerShell process."""
+    mod = load_agent_sync_module(sandbox)
+    monkeypatch.setattr(mod, "IS_WINDOWS", True)
+    monkeypatch.setenv("HOME", str(sandbox.home))
+    monkeypatch.setenv("USERPROFILE", str(sandbox.home))
+    monkeypatch.setenv("KNOWLEDGE_VAULT_PATH", str(sandbox.vault))
+
+    env = mod.Env()
+    assert mod.utils(env)
+    launcher = sandbox.home / ".local" / "bin" / "agent-sync.ps1"
+    result = subprocess.run(
+        [
+            "powershell.exe", "-NoProfile", "-NonInteractive",
+            "-ExecutionPolicy", "Bypass", "-File", str(launcher), "--help",
+        ],
+        env=sandbox.env(),
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "agent_sync modes:" in result.stdout
 
 
 @pytest.mark.skipif(os.name == "nt", reason="systemd is a Linux-only recurring trigger; Windows uses schtasks.exe instead.")
@@ -793,7 +826,8 @@ def test_windows_utils_installs_council_command_wrapper(sandbox, monkeypatch):
     launcher = sandbox.home / ".local" / "bin" / "council.ps1"
     wrapper = sandbox.home / ".local" / "bin" / "council.cmd"
     assert launcher.exists()
-    assert launcher.resolve() == (sandbox.scripts_dir / "council.ps1").resolve()
+    assert not launcher.is_symlink()
+    assert str(sandbox.scripts_dir / "council.ps1") in launcher.read_text(encoding="utf-8")
     assert 'council.ps1' in wrapper.read_text(encoding="utf-8")
     skill_wrapper = sandbox.home / ".local" / "bin" / "agent-skill.cmd"
     assert skill_wrapper.exists()
@@ -816,7 +850,8 @@ def test_windows_utils_installs_vault_groom_command_wrapper(sandbox, monkeypatch
     launcher = sandbox.home / ".local" / "bin" / "vault-groom.ps1"
     wrapper = sandbox.home / ".local" / "bin" / "vault-groom.cmd"
     assert launcher.exists()
-    assert launcher.resolve() == (sandbox.scripts_dir / "vault-groom.ps1").resolve()
+    assert not launcher.is_symlink()
+    assert str(sandbox.scripts_dir / "vault-groom.ps1") in launcher.read_text(encoding="utf-8")
     assert "vault-groom.ps1" in wrapper.read_text(encoding="utf-8")
 
 
@@ -833,7 +868,8 @@ def test_windows_utils_installs_firecrawl_command_wrapper(sandbox, monkeypatch):
     launcher = sandbox.home / ".local" / "bin" / "firecrawl-local.ps1"
     wrapper = sandbox.home / ".local" / "bin" / "firecrawl-local.cmd"
     assert launcher.exists()
-    assert launcher.resolve() == (sandbox.scripts_dir / "firecrawl-local.ps1").resolve()
+    assert not launcher.is_symlink()
+    assert str(sandbox.scripts_dir / "firecrawl-local.ps1") in launcher.read_text(encoding="utf-8")
     assert "firecrawl-local.ps1" in wrapper.read_text(encoding="utf-8")
 
 
@@ -1299,7 +1335,8 @@ def test_windows_utils_installs_vault_push_command_wrapper(sandbox, monkeypatch)
     launcher = sandbox.home / ".local" / "bin" / "vault-push.ps1"
     wrapper = sandbox.home / ".local" / "bin" / "vault-push.cmd"
     assert launcher.exists()
-    assert launcher.resolve() == (sandbox.scripts_dir / "vault-push.ps1").resolve()
+    assert not launcher.is_symlink()
+    assert str(sandbox.scripts_dir / "vault-push.ps1") in launcher.read_text(encoding="utf-8")
     assert "vault-push.ps1" in wrapper.read_text(encoding="utf-8")
 
 

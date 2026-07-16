@@ -4,7 +4,7 @@
 [![Latest version](https://img.shields.io/github/v/release/matteopasseri407/NeXgen-Engine?display_name=tag&label=latest%20version)](https://github.com/matteopasseri407/NeXgen-Engine/releases/latest)
 [![License: PolyForm Noncommercial 1.0.0](https://img.shields.io/badge/license-PolyForm%20Noncommercial%201.0.0-blue)](LICENSE)
 
-NeXgen Engine is a Git-based framework for managing shared instructions, tool configuration, and version-controlled working memory across AI tools such as Claude Code. It supports software projects as well as notes, research, and professional documents. The project is currently in Alpha, with `v0.5.5` as the latest release.
+NeXgen Engine is a Git-based framework for managing shared instructions, tool configuration, and version-controlled working memory across AI tools such as Claude Code. It supports software projects as well as notes, research, and professional documents. The project is currently in Alpha, with `v0.5.6` as the latest release.
 
 Instructions, generated tool configuration, configuration checks, secrets guidance, and shared memory are stored as plain files in a Git repository rather than in a hosted service.
 
@@ -147,7 +147,7 @@ If you prefer fewer setup questions, use `AI-INSTALLER.md` instead of `INIT.md`.
 **Linux: released.** Linux is the most extensively tested platform in this version. The provisioner, doctor, grooming, council, and synchronization tools have been exercised end to end on Fedora and pass CI. macOS uses the same POSIX code paths but has seen less real-world use.
 
 **Why is this still Alpha?** Cross-platform support and the core orchestrators are still settling:
-- **Windows: physically verified twice, not yet a cold install.** The provisioner (`agent_sync.py`), the MCP configuration generator (`render.py`), and the PowerShell launchers include Windows support. CI runs the full pytest suite, including the PowerShell grooming tests, on `windows-latest` for every push. Beyond CI, the engine has now run end to end on real Windows hardware: a full guided MULTI install (three CLIs — Claude Code, Codex, Antigravity — plus a Cloud-Server VPS deploy) on a clean machine, and a separate realignment of an existing install to the current release. `agent-sync apply`'s locked pull-then-propagate transaction ran for real on Windows in both cases, not only in CI. The first guided install surfaced two real gaps (`vault-mcp` not bundled, Firecrawl not installable) — both fixed and covered by the `vault-mcp-smoke` CI job as of 0.5.0. What's still missing: an install run cold, without the maintainer present to walk through failures — the closer analog to how an unfamiliar user would actually experience it. Some runtime paths, including the Antigravity instructions file, are still inferred from the Linux implementation. Until a cold install happens, MINIMAL remains the more cautious starting point on Windows.
+- **Windows: physically verified, not yet a cold install.** The provisioner (`agent_sync.py`), MCP renderer (`render.py`), PowerShell command shims, doctor, and Antigravity consumer path have run on real Windows hardware, in addition to the full `windows-latest` CI suite. The first guided install surfaced two real gaps (`vault-mcp` not bundled, Firecrawl not installable), both fixed and covered by `vault-mcp-smoke` since 0.5.0. Existing-install realignment has also been exercised repeatedly. What's still missing is an unassisted cold install, without the maintainer present to diagnose failures, which is the closer analog to a stranger's first experience. Until that happens, MINIMAL remains the more cautious starting point on Windows.
 - **AI Council:** The deterministic orchestrator (`council.py`) supports `opencode`, `codex`, `claude`, and `ollama` seats; `agy` (Antigravity) is a recognized `cli` value but is currently refused as a passive seat — a live relay run (2026-07-15) found it ignores both the model selection and the given prompt, reading real local files instead of answering. Using `agy` interactively to call into Council itself is unaffected. See `docs/council.md`'s "Current limitations" for the finding and the conditions to re-enable it. Its optional routing adapter proposes exact locally verified models and efforts, with declared fallbacks, without letting an external workflow rewrite private cross-machine data or auto-invoke a seat. A human explicitly chooses the seat count and models.
 
 ## License
@@ -160,10 +160,10 @@ This project is free to use. Some optional links (like the OpenCode one above) a
 
 ---
 
-# NeXgen Engine, versione italiana, Alpha, v0.5.5
+# NeXgen Engine, versione italiana, Alpha, v0.5.6
 
 NeXgen Engine è un framework basato su Git per gestire istruzioni condivise, configurazione dei tool e memoria di lavoro versionata tra più strumenti AI, come Claude Code.
-Il progetto è ancora in fase Alpha, con `v0.5.5` come release più recente.
+Il progetto è ancora in fase Alpha, con `v0.5.6` come release più recente.
 Può essere usato per progetti software, note, ricerca e documenti professionali.
 
 Le istruzioni, la configurazione generata dei tool, i controlli sulle differenze, le regole per i segreti e la memoria condivisa sono file di testo dentro un repository Git, non dati conservati in un servizio ospitato.
@@ -358,7 +358,7 @@ macOS segue gli stessi percorsi POSIX, ma ha ricevuto meno verifiche nell'uso re
   La transazione bloccata di `agent-sync apply` (pull più propagazione) è girata per davvero su Windows in entrambi i casi, non solo in CI.
   La prima installazione guidata ha fatto emergere due lacune reali (`vault-mcp` non incluso nel bundle, Firecrawl non installabile) — entrambe corrette e coperte dal job CI `vault-mcp-smoke` a partire dalla 0.5.0.
   Quello che manca ancora: un'installazione lasciata correre senza che il manutentore intervenga sugli errori — il test più vicino a come la vivrebbe davvero un utente nuovo.
-  Alcuni percorsi runtime, come il file di istruzioni di Antigravity, restano ancora dedotti per analogia con Linux.
+  I percorsi del provisioner, degli shim PowerShell, del doctor e del consumer Antigravity sono stati verificati direttamente su Windows; manca ancora il collaudo a freddo senza assistenza del manutentore.
   Finché non arriva un'installazione a freddo, MINIMAL resta il punto di partenza più prudente su Windows.
 - **Consiglio AI.** L'orchestratore deterministico `council.py` supporta i seat `opencode`, `codex`, `claude` e `ollama`; `agy` (Antigravity) è un valore `cli` riconosciuto ma oggi rifiutato come seat passivo — una relay dal vivo (2026-07-15) ha trovato che ignora sia la selezione del modello sia il prompt dato, leggendo file locali reali invece di rispondere. Usare `agy` in modo interattivo per invocare il Council non è toccato da questo. Dettagli e condizioni per riabilitarlo in `docs/council.md`, sezione "Current limitations".
   Il routing opzionale propone modelli ed effort verificati localmente, con fallback espliciti.

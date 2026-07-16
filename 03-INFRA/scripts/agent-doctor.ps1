@@ -27,32 +27,44 @@ $OcJson = if ((Test-Path -LiteralPath $LegacyOcJson) -and -not (Test-Path -Liter
   $AppDataOcJson
 }
 
+function Resolve-NexgenPython {
+  $candidates = @()
+  foreach ($name in @("python3", "python")) {
+    $found = Get-Command $name -ErrorAction SilentlyContinue
+    if ($found) { $candidates += [pscustomobject]@{ Command = $found.Source; Prefix = @() } }
+  }
+  $py = Get-Command py -ErrorAction SilentlyContinue
+  if ($py) { $candidates += [pscustomobject]@{ Command = $py.Source; Prefix = @("-3") } }
+  foreach ($candidate in $candidates) {
+    $prefix = @($candidate.Prefix)
+    $candidateCommand = $candidate.Command
+    & $candidateCommand @prefix -c "import sys, yaml; raise SystemExit(0 if sys.version_info >= (3, 10) else 1)" 2>$null | Out-Null
+    if ($LASTEXITCODE -eq 0) { return $candidate }
+  }
+  return $null
+}
+
+$NexgenPython = Resolve-NexgenPython
+$NexgenPythonCommand = if ($NexgenPython) { $NexgenPython.Command } else { $null }
+$NexgenPythonPrefix = if ($NexgenPython) { @($NexgenPython.Prefix) } else { @() }
+
 $RemoteConfigError = $false
 if ($env:KNOWLEDGE_VAULT_REMOTE) {
   $Remote = $env:KNOWLEDGE_VAULT_REMOTE
   $Mirrors = if ($env:KNOWLEDGE_VAULT_MIRRORS) { @($env:KNOWLEDGE_VAULT_MIRRORS -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ }) } else { @() }
 } else {
   $AgentSyncPy = Join-Path $PSScriptRoot "agent_sync.py"
-  $Py = Get-Command py -ErrorAction SilentlyContinue
-  if ($Py) {
-    $Remote = (& $Py.Source -3 $AgentSyncPy config authoritative_remote 2>$null)
+  if ($NexgenPython) {
+    $Remote = (& $NexgenPythonCommand @NexgenPythonPrefix $AgentSyncPy config authoritative_remote 2>$null)
     $RemoteExit = $LASTEXITCODE
-    $Mirrors = @(& $Py.Source -3 $AgentSyncPy config mirrors 2>$null | Where-Object { $_ })
+    $Mirrors = @(& $NexgenPythonCommand @NexgenPythonPrefix $AgentSyncPy config mirrors 2>$null | Where-Object { $_ })
     $MirrorsExit = $LASTEXITCODE
   } else {
-    $Python = Get-Command python -ErrorAction SilentlyContinue
-    if ($Python) {
-      $Remote = (& $Python.Source $AgentSyncPy config authoritative_remote 2>$null)
-      $RemoteExit = $LASTEXITCODE
-      $Mirrors = @(& $Python.Source $AgentSyncPy config mirrors 2>$null | Where-Object { $_ })
-      $MirrorsExit = $LASTEXITCODE
-    } else {
-      $RemoteConfigError = $true
-      $Remote = "origin"
-      $Mirrors = @()
-      $RemoteExit = 1
-      $MirrorsExit = 1
-    }
+    $RemoteConfigError = $true
+    $Remote = "origin"
+    $Mirrors = @()
+    $RemoteExit = 1
+    $MirrorsExit = 1
   }
   if (-not $Remote -or $RemoteExit -ne 0 -or $MirrorsExit -ne 0) {
     $RemoteConfigError = $true
@@ -303,8 +315,8 @@ foreach ($v in @("VAULT_LIBRARY_TOKEN","VAULT_LIBRARY_URL")) {
 if ($env:DEEPSEEK_API_KEY) { ok "DEEPSEEK_API_KEY present" } else { warn "DEEPSEEK_API_KEY missing (OpenCode's default DeepSeek won't start)" }
 
 sec "MCP configured in the runtimes (Vault 2.0 drift detection)"
-if ((Get-Command "python" -ErrorAction SilentlyContinue) -and (Test-Path -LiteralPath $RenderPy)) {
-  $renderOut = python $RenderPy 2>&1
+if ($NexgenPython -and (Test-Path -LiteralPath $RenderPy)) {
+  $renderOut = & $NexgenPythonCommand @NexgenPythonPrefix $RenderPy 2>&1
   if ($LASTEXITCODE -ne 0) {
     # A crash here (missing PyYAML, a broken manifest, a permission error...)
     # must never read as "no drift found": empty/error output would otherwise
@@ -382,19 +394,13 @@ if ($Strict) {
   # explicitly (never silently pass on an empty expected set, never fail).
   $expectedAg = @()
   $expectedOc = @()
-  # python3 first, then bare python (mirrors install.ps1's Get-PyBin order):
-  # a python3-only install (WSL/Chocolatey/py-launcher shims) used to make
-  # every --strict check below skip silently instead of finding it.
-  $StrictPyBin = $null
-  if (Get-Command python3 -ErrorAction SilentlyContinue) { $StrictPyBin = "python3" }
-  elseif (Get-Command "python" -ErrorAction SilentlyContinue) { $StrictPyBin = "python" }
-  if (-not $StrictPyBin) {
-    warn "python3/python not found -- cannot derive the expected MCP server set, skipping its strict checks"
+  if (-not $NexgenPython) {
+    warn "Python 3 with PyYAML not found -- cannot derive the expected MCP server set, skipping its strict checks"
   } elseif (-not (Test-Path -LiteralPath $RenderPy)) {
     warn "render.py not found ($RenderPy) -- cannot derive the expected MCP server set, skipping its strict checks"
   } else {
-    $expectedAg = @(& $StrictPyBin $RenderPy --expected-servers antigravity 2>$null | Where-Object { $_ })
-    $expectedOc = @(& $StrictPyBin $RenderPy --expected-servers opencode 2>$null | Where-Object { $_ })
+    $expectedAg = @(& $NexgenPythonCommand @NexgenPythonPrefix $RenderPy --expected-servers antigravity 2>$null | Where-Object { $_ })
+    $expectedOc = @(& $NexgenPythonCommand @NexgenPythonPrefix $RenderPy --expected-servers opencode 2>$null | Where-Object { $_ })
   }
 
   $AgSrc = Join-Path $HomeDir ".gemini\antigravity\mcp_config.json"
@@ -498,8 +504,8 @@ ok "$core skill folder(s) present in the shared discovery root; manifest reconci
 # Manifest -> library coverage: without this assert, a skill registered in the
 # manifest can go missing on a host for weeks (the humanizer bug).
 $skillsSyncScript = Join-Path $PSScriptRoot "skills-sync.py"
-if ((Get-Command "python" -ErrorAction SilentlyContinue) -and (Test-Path -LiteralPath $skillsSyncScript)) {
-  $ssOut = & python $skillsSyncScript 2>$null
+if ($NexgenPython -and (Test-Path -LiteralPath $skillsSyncScript)) {
+  $ssOut = & $NexgenPythonCommand @NexgenPythonPrefix $skillsSyncScript 2>$null
   $ssExit = $LASTEXITCODE
   $esc = [char]27
   $clean = @($ssOut | ForEach-Object { "$_" -replace "$esc\[[0-9;]*m", "" })
@@ -510,7 +516,7 @@ if ((Get-Command "python" -ErrorAction SilentlyContinue) -and (Test-Path -Litera
   elseif ($manualFolders -gt 0) { warn "$manualFolders manual skill folder(s) remain in discovery roots; preview the explicit quarantine with: skills-sync.py --migrate-legacy" }
   else { ok "skills aligned with the manifest (clean diff)" }
 
-  $legacyOut = & python $skillsSyncScript --migrate-legacy 2>$null
+  $legacyOut = & $NexgenPythonCommand @NexgenPythonPrefix $skillsSyncScript --migrate-legacy 2>$null
   $legacyExit = $LASTEXITCODE
   $legacyClean = @($legacyOut | ForEach-Object { "$_" -replace "$esc\[[0-9;]*m", "" })
   $legacyPending = @($legacyClean | Where-Object { $_ -match '^\s*\+ legacy/' }).Count

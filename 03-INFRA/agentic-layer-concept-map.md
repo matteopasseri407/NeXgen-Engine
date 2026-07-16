@@ -67,7 +67,10 @@ sandboxed integrations set `NEXGEN_DISABLE_HOST_MUTATIONS=1`, which makes
 registry and Task Scheduler adapters no-op before any external call. Real
 scheduled-task wrappers are generated under per-user runtime state and carry
 the resolved engine/data topology into the hidden process; machine-specific
-paths never belong in the public checkout.
+paths never belong in the public checkout. Windows command launchers are real
+local shims, rather than file symlinks, so PowerShell resolves `$PSScriptRoot`
+inside the engine checkout. The PowerShell control plane probes `import yaml`
+once and reuses that validated Python runtime across sync and doctor operations.
 
 The authoritative remote and publication mirrors are declared once in the
 private data vault at `03-INFRA/agent-universal-layer/sync/remotes.yaml`. Doctor and

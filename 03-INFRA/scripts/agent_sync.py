@@ -953,8 +953,8 @@ def antigravity_mcp(env: Env) -> bool:
 
 # ── 2.7 utils ────────────────────────────────────────────────────────────
 # LINKED_COMMANDS is the single source for every bare command utils() puts
-# on PATH -- both the POSIX (symlink onto a *.sh twin) and Windows (relink a
-# *.ps1 twin + write a *.cmd wrapper) branches below consume the SAME dict
+# on PATH -- both the POSIX (symlink onto a *.sh twin) and Windows (real
+# *.ps1 target shim + *.cmd wrapper) branches below consume the SAME dict
 # instead of each carrying their own hardcoded list. Real bug history this
 # closes (2026-07-13 review, four separate commits over the same root
 # cause): agent-sync, agent-doctor, vault-groom and firecrawl-local were all
@@ -1059,13 +1059,23 @@ def utils(env: Env) -> bool:
             healthy = False
             continue
         dst = env.local_bin / f"{name}.ps1"
-        try:
-            same = dst.is_symlink() and dst.resolve() == src.resolve()
-        except OSError:
-            same = False
-        if not same:
-            make_link(src, dst, is_dir=False)
-            env.log(f"utils: relinked {name}.ps1")
+        # PowerShell resolves $PSScriptRoot to the symlink's directory when a
+        # script is launched through a Windows file link. Engine launchers use
+        # sibling files (agent_sync.py, render.py, and so on), so a symlink in
+        # ~/.local/bin silently points those lookups at the wrong directory.
+        # A tiny real shim preserves the target script's own $PSScriptRoot and
+        # works identically on hosts with or without symlink privilege.
+        if dst.is_symlink():
+            _remove_path(dst)
+        quoted_src = str(src).replace("'", "''")
+        launcher = (
+            "$ErrorActionPreference = 'Stop'\r\n"
+            f"$Target = '{quoted_src}'\r\n"
+            "& $Target @args\r\n"
+            "exit $LASTEXITCODE\r\n"
+        )
+        if _write_if_different(dst, launcher):
+            env.log(f"utils: installed {name}.ps1 launcher")
         wrapper = (
             "@echo off\r\n"
             f"powershell.exe -NoProfile -ExecutionPolicy Bypass -File \"%~dp0{name}.ps1\" %*\r\n"
