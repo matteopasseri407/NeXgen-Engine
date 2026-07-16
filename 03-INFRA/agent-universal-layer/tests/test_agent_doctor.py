@@ -420,7 +420,7 @@ def test_strict_block_skips_explicitly_when_the_expected_set_cant_be_derived():
     powershell = (repo / "03-INFRA/scripts/agent-doctor.ps1").read_text(encoding="utf-8")
 
     assert "python3 not found -- cannot derive the expected MCP server set" in bash
-    assert "python not found -- cannot derive the expected MCP server set" in powershell
+    assert "No compatible Python runtime with PyYAML found" in powershell
     assert "render.py not found" in bash
     assert "render.py not found" in powershell
     for text in (bash, powershell):
@@ -540,17 +540,21 @@ def test_doctor_sh_quotes_the_expected_server_argv_passing():
 
 
 def test_doctor_ps1_strict_python_resolution_probes_python3_too():
-    """Task 4 follow-up: agent-doctor.ps1's --strict block only ever probed
-    bare 'python', unlike install.ps1's Get-PyBin (python3 first, then
-    python) -- a python3-only Windows install (WSL/Chocolatey/py-launcher
-    shims) silently skipped every --strict check instead of finding it."""
+    """The common resolver must retain the python3-first strict-runtime path.
+
+    The resolver is deliberately outside the --strict section so every doctor
+    operation shares one validated Python with PyYAML, rather than each block
+    probing an inconsistent runtime independently.
+    """
     repo = Path(__file__).resolve().parents[3]
     powershell = (repo / "03-INFRA/scripts/agent-doctor.ps1").read_text(encoding="utf-8")
 
-    start = powershell.index("CLI consumer conformance (--strict)")
-    end = powershell.index("Antigravity global MCP path", start)
-    strict_prelude = powershell[start:end]
-    assert "python3" in strict_prelude, strict_prelude
+    resolver_start = powershell.index("function Resolve-NexgenPython")
+    resolver_end = powershell.index("$NexgenPython = Resolve-NexgenPython", resolver_start)
+    resolver = powershell[resolver_start:resolver_end]
+    assert 'foreach ($name in @(\"python3\", \"python\"))' in resolver, resolver
+    assert 'import sys, yaml' in resolver, resolver
+    assert 'sys.version_info >= (3, 10)' in resolver, resolver
 
 
 # --- New-version alert on the DEFAULT single-clone install (2026-07-14) -----
