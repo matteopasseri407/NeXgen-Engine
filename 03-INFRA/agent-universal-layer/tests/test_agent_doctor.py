@@ -62,7 +62,8 @@ def test_doctor_smoke_detects_injected_broken_symlink(sandbox):
     assert "fake-skill-a" in drifted.stdout or "ROTTE" in drifted.stdout, drifted.stdout
 
 
-def test_doctor_warns_when_opencode_loads_canonical_instructions_twice(sandbox):
+def test_doctor_warns_when_opencode_loads_canonical_instructions_twice(sandbox_with_live_configs):
+    sandbox = sandbox_with_live_configs
     config_path = sandbox.live_config_path("opencode")
     config = json.loads(config_path.read_text(encoding="utf-8"))
     canonical = "~/KnowledgeVault/03-INFRA/agent-universal-layer/instructions/AGENTS.md"
