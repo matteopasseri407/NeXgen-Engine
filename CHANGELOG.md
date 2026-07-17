@@ -8,7 +8,9 @@ This file tracks the **engine** (this repo). Your own data — manifests,
 instructions, skills, secrets — lives in your KnowledgeVault and is not part
 of any engine release.
 
-## Unreleased
+## [0.7.0] - 2026-07-17
+
+New engine tooling on top of the 0.6.0 Beta: per-CLI config `--revert` and `--adopt`, bootstrap-hygiene checks, and a required-invariant-rules drift guard. Maturity stays **Beta** (stability is not yet guaranteed).
 
 ### Added
 
