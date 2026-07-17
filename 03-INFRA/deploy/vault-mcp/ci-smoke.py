@@ -35,6 +35,7 @@ REQUIRED_TOOLS = {
     "append_note",
     "update_note",
     "update_section",
+    "map_overview",
 }
 
 
@@ -154,6 +155,26 @@ async def main() -> None:
             assert stale.isError or "expected_hash" in stale_body, (
                 f"stale section hash was not refused: isError={stale.isError} body={stale_body!r}"
             )
+
+            # Write-time advisory: a dead wikilink is reported, never blocked.
+            advisory = _payload(
+                await session.call_tool(
+                    "create_note",
+                    {
+                        "note_path": "01-NOTES/ci-smoke-advisory.md",
+                        "content": "# Advisory\n\nvedi [[ci-ghost-target]]\n",
+                        "message": "ci: smoke advisory",
+                    },
+                )
+            )
+            assert advisory.get("committed") is True, advisory
+            unresolved = [e.get("target") for e in advisory.get("unresolved_links", [])]
+            assert unresolved == ["ci-ghost-target"], advisory
+
+            # Orientation tool: token-bounded structural overview.
+            overview = _payload(await session.call_tool("map_overview", {}))
+            assert "notes" in overview and "hubs" in overview, overview
+            assert "broken_count" in overview and "orphans_count" in overview, overview
 
             # Guardrail: the write-exclusion for 99-SECRETS must hold.
             refused = await session.call_tool(

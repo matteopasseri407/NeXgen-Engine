@@ -143,7 +143,10 @@ def create_server(settings: Settings) -> tuple[FastMCP, VaultService]:
         "Write tools are enabled for trusted clients only. "
         "Use create_note for new notes, append_note for additive updates, update_note with expected_hash "
         "for replacing whole notes, and update_section with a per-section hash (from read_note's `sections`) "
-        "for surgical single-section edits. Every write is committed to Git."
+        "for surgical single-section edits. Every write is committed to Git and returns an advisory "
+        "`unresolved_links` list (wikilinks in what you just wrote that resolve to nothing — fix typos "
+        "immediately; a deliberate forward link is fine). map_overview gives a token-bounded structural "
+        "map (broken links, orphans, hubs) to orient on broad tasks."
         if settings.write_enabled
         else (
             "Read-only MCP server for Markdown vaults. "
@@ -183,6 +186,12 @@ def create_server(settings: Settings) -> tuple[FastMCP, VaultService]:
         """List outgoing links, backlinks, and tag-based related notes."""
 
         return vault.list_related(note_ref=note_ref, limit=limit)
+
+    @mcp.tool()
+    def map_overview() -> dict[str, Any]:
+        """Token-bounded structural overview of the vault: note/link counts, top hub notes, first broken wikilinks (with relocation hints) and first orphan notes. Use it to orient before broad tasks — the computed map complements get_start_here's curated door. Read-only."""
+
+        return vault.map_overview()
 
     @mcp.tool()
     def recent_activity(limit: int = 15) -> dict[str, Any]:

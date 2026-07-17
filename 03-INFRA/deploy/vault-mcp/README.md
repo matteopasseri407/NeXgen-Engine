@@ -10,12 +10,16 @@ A small Python package (`src/vault_mcp_server/`, MCP `streamable-http`
 transport) that mounts the vault worktree plus its bare repo and exposes:
 
 - read tools: `get_start_here`, `read_note`, `search_notes`, `list_related`,
-  `recent_activity`
+  `recent_activity`, `map_overview` (token-bounded structural map: broken
+  wikilinks with relocation hints, orphan notes, hubs — the probe-first
+  compass)
 - write tools (only when `VAULT_WRITE_ENABLED=true`): `create_note`,
   `append_note`, `update_note` (guarded by `expected_hash`), and
   `update_section` (surgical single-section edits guarded by a
   per-section hash from `read_note`'s `sections` — concurrent edits to
-  other sections of the same note stay valid)
+  other sections of the same note stay valid). Every write result carries
+  an advisory `unresolved_links` list (dead wikilinks in what was just
+  written, never blocking: a deliberate forward link is legitimate)
 
 Every write is serialized with a process lock, restricted to Markdown paths
 (`99-SECRETS` and `.git` are always refused), and committed to the bare repo
