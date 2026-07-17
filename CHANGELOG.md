@@ -10,6 +10,10 @@ of any engine release.
 
 ## Unreleased
 
+### Added
+
+- `agent-doctor` gains two read-only, warning-only bootstrap-hygiene checks (both the `.sh` and `.ps1` twins): a size budget for the canonical `AGENTS.md` bootstrap and for each `03-INFRA/*.md` detail note (overridable via `NEXGEN_BOOTSTRAP_MAX_BYTES` and `NEXGEN_NOTE_MAX_BYTES`), and a load-on-demand pointer-integrity check that flags a backtick-referenced vault note path that no longer resolves. Both only ever WARN, so they never turn a passing doctor red; the literal `03-INFRA/<topic>.md` placeholder in the editing-discipline prose is skipped.
+
 ### Security
 
 - Removed the private maintainer publication wrapper from product code.
