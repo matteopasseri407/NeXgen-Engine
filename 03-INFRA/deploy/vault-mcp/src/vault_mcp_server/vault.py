@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import Counter
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -21,6 +22,7 @@ TAG_RE = re.compile(r"(?<!\w)#([A-Za-z0-9/_-]+)")
 HEADING_RE = re.compile(r"^\s*#\s+(.+?)\s*$", re.MULTILINE)
 FRONTMATTER_RE = re.compile(r"\A---\s*\n(.*?)\n---\s*\n?", re.DOTALL)
 NON_WORD_RE = re.compile(r"[^a-z0-9]+")
+FENCED_BLOCK_RE = re.compile(r"^ {0,3}(`{3,}|~{3,}).*?^ {0,3}\1`*\s*$", re.DOTALL | re.MULTILINE)
 ATX_HEADING_LINE_RE = re.compile(r"^ {0,3}(#{1,6})[ \t]+(.*?)[ \t]*$")
 ATX_CLOSING_HASHES_RE = re.compile(r"[ \t]+#+$")
 FENCE_LINE_RE = re.compile(r"^ {0,3}(`{3,}|~{3,})(.*)$")
@@ -40,6 +42,19 @@ class NoteRecord:
     truncated: bool
     tags: tuple[str, ...]
     raw_links: tuple[str, ...]
+
+
+# Structural-map semantics, kept deliberately identical to vault-map.py:
+# generated indexes link everything (never rescue orphans, never inflate
+# hubs), infrastructure/export markdown is not a knowledge note, archived
+# notes are deliberately parked, and fenced code is quotation.
+MAP_NON_NOTE_PREFIXES = ("01-ME/cv-artifacts/", "03-INFRA/agent-universal-layer/")
+MAP_GENERATED_SOURCES = {"99-INDEX/note-index.md"}
+MAP_ORPHAN_EXEMPT = {"00-START-HERE.md"} | MAP_GENERATED_SOURCES
+
+
+def _links_outside_fences(text: str) -> tuple[str, ...]:
+    return _extract_links(FENCED_BLOCK_RE.sub("", text))
 
 
 @dataclass(frozen=True, slots=True)
@@ -466,7 +481,9 @@ class VaultService:
             if target_path.exists():
                 raise FileExistsError(f"Note already exists: {rel_path}")
             self._write_note_file(target_path, content)
-            return self._commit_note(rel_path, message or f"vault: create {rel_path}", action="created")
+            result = self._commit_note(rel_path, message or f"vault: create {rel_path}", action="created")
+            result["unresolved_links"] = self._link_advisory(content, rel_path)
+            return result
 
     def append_note(self, note_path: str, content: str, message: str = "") -> dict[str, Any]:
         """Append Markdown content to an existing note, or create it if missing, then commit."""
@@ -487,6 +504,7 @@ class VaultService:
             self._write_note_file(target_path, new_content, already_validated=True)
             result = self._commit_note(rel_path, message or f"vault: append {rel_path}", action="appended")
             result["old_content_hash"] = old_hash
+            result["unresolved_links"] = self._link_advisory(clean_append, rel_path)
             return result
 
     def update_note(
@@ -516,6 +534,7 @@ class VaultService:
             self._write_note_file(target_path, content)
             result = self._commit_note(rel_path, message or f"vault: update {rel_path}", action="updated")
             result["old_content_hash"] = current_hash
+            result["unresolved_links"] = self._link_advisory(content, rel_path)
             return result
 
     def update_section(
@@ -568,6 +587,7 @@ class VaultService:
             result["section"] = section.heading
             result["old_section_hash"] = span_hash
             result["new_section_hash"] = _hash_text(new_span)
+            result["unresolved_links"] = self._link_advisory(new_span, rel_path)
             return result
 
     def _validate_section_replacement(self, content: str, section: NoteSection) -> str:
@@ -591,6 +611,120 @@ class VaultService:
                     "section. Use update_note for structural changes."
                 )
         return normalized
+
+    def _map_resolve(self, target: str, base: NoteRecord | None, index: VaultIndex) -> tuple[str, str | None]:
+        """Classify a link target: ("note", rel) | ("excluded", None) | ("broken", None).
+
+        Same order as _resolve_note_ref, but total (never raises): an
+        ambiguous stem still proves the target exists.
+        """
+        cleaned = target.replace("\\", "/").split("#", 1)[0].split("?", 1)[0].strip()
+        if not cleaned:
+            return "excluded", None
+        record = self._resolve_path_like_ref(cleaned, index, base_note=base)
+        if record:
+            return "note", record.rel_path
+        matches = sorted(index.by_lookup.get(_normalize_lookup(cleaned), ()), key=lambda r: r.rel_path)
+        if matches:
+            return "note", matches[0].rel_path
+        candidates = [cleaned.lstrip("/")]
+        if base is not None:
+            candidates.append((Path(base.rel_path).parent / cleaned).as_posix())
+        for candidate in candidates:
+            probe = (self.root / candidate).resolve()
+            try:
+                probe.relative_to(self.root)
+            except ValueError:
+                continue
+            if probe.exists() or probe.with_suffix(".md").exists():
+                return "excluded", None
+        return "broken", None
+
+    def _moved_hint(self, target: str, index: VaultIndex) -> str | None:
+        stem = _normalize_lookup(Path(target.replace("\\", "/")).stem)
+        matches = sorted({record.rel_path for record in index.by_lookup.get(stem, ())})
+        return matches[0] if len(matches) == 1 else None
+
+    def _link_advisory(self, written_chunk: str, rel_path: str) -> list[dict[str, str]]:
+        """Advisory-only: unresolved wikilink targets in the chunk that was
+        JUST written. Never blocks anything — a forward link to a note the
+        author will create next is a legitimate pattern."""
+
+        index = self._get_index()
+        base = index.by_relative_lower.get(rel_path.lower())
+        unresolved: list[dict[str, str]] = []
+        seen: set[str] = set()
+        for target in _links_outside_fences(written_chunk):
+            if target.lower() in seen:
+                continue
+            seen.add(target.lower())
+            status, _ = self._map_resolve(target, base, index)
+            if status != "broken":
+                continue
+            entry = {"target": target}
+            hint = self._moved_hint(target, index)
+            if hint:
+                entry["hint"] = hint
+            unresolved.append(entry)
+        return unresolved
+
+    def map_overview(self) -> dict[str, Any]:
+        """Token-bounded structural overview: counts, top hubs, first broken
+        links (with relocation hints) and first orphans."""
+
+        index = self._get_index()
+        inbound: Counter[str] = Counter()
+        broken: list[dict[str, str]] = []
+        archived_broken = 0
+        outbound_count: dict[str, int] = {}
+        total_links = 0
+        for record in index.records:
+            links = _links_outside_fences(record.body)
+            outbound_count[record.rel_path] = len(links)
+            total_links += len(links)
+            generated = record.rel_path in MAP_GENERATED_SOURCES
+            archived_source = "archive" in Path(record.rel_path).parts
+            for target in links:
+                status, resolved = self._map_resolve(target, record, index)
+                if status == "note" and resolved and resolved != record.rel_path:
+                    if not generated:
+                        inbound[resolved] += 1
+                elif status == "broken":
+                    if archived_source:
+                        archived_broken += 1
+                        continue
+                    entry = {"source": record.rel_path, "target": target}
+                    hint = self._moved_hint(target, index)
+                    if hint:
+                        entry["hint"] = hint
+                    broken.append(entry)
+
+        orphans = sorted(
+            record.rel_path
+            for record in index.records
+            if record.rel_path not in MAP_ORPHAN_EXEMPT
+            and not record.rel_path.startswith(MAP_NON_NOTE_PREFIXES)
+            and "archive" not in Path(record.rel_path).parts
+            and outbound_count.get(record.rel_path, 0) == 0
+            and inbound[record.rel_path] == 0
+        )
+        broken.sort(key=lambda entry: (entry["source"], entry["target"]))
+        hubs = [
+            {"path": rel, "inbound": count}
+            for rel, count in sorted(inbound.items(), key=lambda item: (-item[1], item[0]))[:10]
+        ]
+        return {
+            "notes": len(index.records),
+            "links": total_links,
+            "broken_count": len(broken),
+            "archived_broken_count": archived_broken,
+            "orphans_count": len(orphans),
+            "broken": broken[:15],
+            "broken_truncated": len(broken) > 15,
+            "orphans": orphans[:15],
+            "orphans_truncated": len(orphans) > 15,
+            "hubs": hubs,
+        }
 
     def recent_activity(self, limit: int | None = None) -> dict[str, Any]:
         search_limit = self._normalize_limit(limit)
