@@ -725,6 +725,31 @@ for s in "$SKILL_ACTIVE"/*; do
   [ -f "$s/SKILL.md" ] && core=$((core+1))
 done
 ok "$core core skills exposed to eager runtimes"
+# Onboarding coherence: skills materialized in the library but absent from the
+# manifest are strays the onboarding flow should adopt (canonize) or drop. A
+# gentle WARN, never a FAIL -- a stray skill still works, it just isn't tracked.
+SKILL_MANIFEST="$VAULT_DATA/03-INFRA/agent-universal-layer/skills/skills.manifest.yaml"
+oom_skills="$(python3 - "$SKILL_LIBRARY" "$SKILL_MANIFEST" <<'PY' 2>/dev/null
+import sys, pathlib
+lib, man = pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2])
+mat = {p.name for p in lib.iterdir() if p.is_dir()} if lib.is_dir() else set()
+names = set()
+if man.is_file():
+    try:
+        import yaml
+        d = yaml.safe_load(man.read_text(encoding='utf-8')) or {}
+        s = d.get('skills') if isinstance(d, dict) else None
+        names = set(s) if isinstance(s, dict) else set()
+    except Exception:
+        names = set()
+print(len(mat - names))
+PY
+)"
+if [ "${oom_skills:-0}" -gt 0 ] 2>/dev/null; then
+  warn "$oom_skills skill(s) materialized but not in the manifest; adopt or drop them via onboarding (agent-sync inventory)"
+else
+  ok "no out-of-manifest skills to reconcile"
+fi
 
 # Third-party CLI compatibility: a short, pruneable list of known-broken
 # releases. NOT a general version pin -- only versions confirmed broken here

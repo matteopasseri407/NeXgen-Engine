@@ -39,3 +39,13 @@ def test_config_ownership_guards_are_present_in_both_twins():
         assert "OpenCode model/provider profile is host-local" in content
         assert "legacy shared OpenCode model/provider profile" in content
         assert "OpenCode loads the canonical AGENTS.md" in content
+
+
+def test_onboarding_out_of_manifest_skill_nudge_in_both_twins():
+    repo = Path(__file__).resolve().parents[3]
+    bash = (repo / "03-INFRA/scripts/agent-doctor.sh").read_text(encoding="utf-8")
+    powershell = (repo / "03-INFRA/scripts/agent-doctor.ps1").read_text(encoding="utf-8")
+    # gentle onboarding nudge for stray (out-of-manifest) skills, both twins
+    for content in (bash, powershell):
+        assert "materialized but not in the manifest" in content
+        assert "agent-sync inventory" in content

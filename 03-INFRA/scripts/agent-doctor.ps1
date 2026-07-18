@@ -602,6 +602,33 @@ if ($NexgenPython -and (Test-Path -LiteralPath $skillsSyncScript)) {
   elseif ($legacyPending -gt 0) { warn "$legacyPending legacy eager skill view(s) await explicit quarantine: skills-sync.py --apply --migrate-legacy" }
   else { ok "no legacy eager skill views awaiting quarantine" }
 } else { warn "python or skills-sync.py not available, skipping skill coverage" }
+# Onboarding coherence: skills materialized in the library but absent from the
+# manifest are strays the onboarding flow should adopt (canonize) or drop. A
+# gentle WARN, never a FAIL -- a stray skill still works, it just isn't tracked.
+$skManifest = Join-Path $Layer "skills\skills.manifest.yaml"
+if ($NexgenPython) {
+  $oomCode = @'
+import sys, pathlib
+lib, man = pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2])
+mat = {p.name for p in lib.iterdir() if p.is_dir()} if lib.is_dir() else set()
+names = set()
+if man.is_file():
+    try:
+        import yaml
+        d = yaml.safe_load(man.read_text(encoding='utf-8')) or {}
+        s = d.get('skills') if isinstance(d, dict) else None
+        names = set(s) if isinstance(s, dict) else set()
+    except Exception:
+        names = set()
+print(len(mat - names))
+'@
+  $oomSkills = (& $NexgenPythonCommand @NexgenPythonPrefix -c $oomCode $skLibrary $skManifest 2>$null | Select-Object -First 1)
+  if ($oomSkills -match '^\d+$' -and [int]$oomSkills -gt 0) {
+    warn "$oomSkills skill(s) materialized but not in the manifest; adopt or drop them via onboarding (agent-sync inventory)"
+  } else {
+    ok "no out-of-manifest skills to reconcile"
+  }
+}
 
 # Third-party CLI compatibility: a short, pruneable list of known-broken
 # releases. NOT a general version pin -- only versions confirmed broken here
