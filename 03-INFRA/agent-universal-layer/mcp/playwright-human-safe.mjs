@@ -11,6 +11,13 @@
  * CDP. That setting is global for Chrome's default profile, so its temporary
  * artifact directory would steal a human download and make it disappear when
  * the MCP session exits. Shared Chrome keeps its native download behavior.
+ *
+ * Upstream's TabsContext.newTab() never calls Page.bringToFront(), unlike
+ * selectTab(). On a real (non-headless) shared Chrome attached over CDP,
+ * Chromium throttles rendering for a tab that isn't frontmost, so every
+ * pointer-based action (click, hover, drag, drop — including file-drop
+ * uploads) on a freshly created tab hangs until the action timeout. This
+ * patch makes newTab() bring the tab to front too, matching selectTab().
  */
 import { spawn, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
@@ -20,6 +27,7 @@ import path from 'node:path';
 const VERSION = '0.0.78';
 const MARKER = 'agent-human-file-chooser-patch-v1';
 const DOWNLOAD_MARKER = 'agent-preserve-shared-downloads-patch-v1';
+const NEW_TAB_FOCUS_MARKER = 'agent-focus-new-tab-patch-v1';
 const BACKUP_SUFFIX = `.${MARKER}.original`;
 
 const fileChooserListener = `          eventsHelper.addEventListener(p, "filechooser", (chooser) => {
@@ -91,6 +99,21 @@ const upstreamDownloadBehavior = `        if (this._browser.options.name !== "cl
         }`;
 
 const nativeDownloadBehavior = `        /* ${DOWNLOAD_MARKER}: a CDP-attached shared Chrome keeps its native Downloads directory. */`;
+
+const upstreamNewTab = `      async newTab() {
+        const browserContext = await this.ensureBrowserContext();
+        const page = await browserContext.newPage();
+        this._currentTab = this._tabs.find((t) => t.page === page);
+        return this._currentTab;
+      }`;
+
+const focusedNewTab = `      async newTab() {
+        const browserContext = await this.ensureBrowserContext();
+        const page = await browserContext.newPage();
+        await page.bringToFront(); // ${NEW_TAB_FOCUS_MARKER}: keep pointer actions unblocked on a shared Chrome.
+        this._currentTab = this._tabs.find((t) => t.page === page);
+        return this._currentTab;
+      }`;
 
 function withNodeOnPath() {
   const env = { ...process.env };
@@ -220,12 +243,24 @@ function patchedSource(source, bundle) {
     throw new Error(`Unsupported Playwright download bundle at ${bundle}. Refusing an unsafe partial patch.`);
   }
 
-  const patched = hasDownloadPatch ? fileChooserPatched : fileChooserPatched
+  const downloadPatched = hasDownloadPatch ? fileChooserPatched : fileChooserPatched
     .replace(upstreamDownloadBehavior, nativeDownloadBehavior);
+
+  const hasNewTabFocusPatch = downloadPatched.includes(NEW_TAB_FOCUS_MARKER);
+  if (hasNewTabFocusPatch) {
+    if (downloadPatched.includes(upstreamNewTab))
+      throw new Error(`Invalid existing new-tab-focus patch at ${bundle}.`);
+  } else if (occurrences(downloadPatched, upstreamNewTab) !== 1) {
+    throw new Error(`Unsupported Playwright tabs bundle at ${bundle}. Refusing an unsafe partial patch.`);
+  }
+
+  const patched = hasNewTabFocusPatch ? downloadPatched : downloadPatched
+    .replace(upstreamNewTab, focusedNewTab);
   if (!patched.includes(MARKER) || !patched.includes(directUploadTool)
       || !patched.includes(DOWNLOAD_MARKER)
+      || !patched.includes(NEW_TAB_FOCUS_MARKER) || !patched.includes(focusedNewTab)
       || patched.includes(fileChooserListener) || patched.includes(upstreamUploadTool)
-      || patched.includes(upstreamDownloadBehavior))
+      || patched.includes(upstreamDownloadBehavior) || patched.includes(upstreamNewTab))
     throw new Error(`Human-safe patch validation failed in memory for ${bundle}.`);
   return patched;
 }

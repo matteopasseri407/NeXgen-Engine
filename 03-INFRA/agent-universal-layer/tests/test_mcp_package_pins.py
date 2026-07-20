@@ -118,6 +118,15 @@ def test_playwright_wrapper_preserves_shared_chrome_downloads():
     assert ".replace(upstreamDownloadBehavior, nativeDownloadBehavior)" in wrapper
 
 
+def test_playwright_wrapper_focuses_newly_created_tabs():
+    wrapper = PLAYWRIGHT_WRAPPER.read_text(encoding="utf-8")
+
+    assert "const NEW_TAB_FOCUS_MARKER = 'agent-focus-new-tab-patch-v1';" in wrapper
+    assert "await page.bringToFront();" in wrapper
+    assert "occurrences(downloadPatched, upstreamNewTab) !== 1" in wrapper
+    assert ".replace(upstreamNewTab, focusedNewTab)" in wrapper
+
+
 def test_playwright_wrapper_can_resolve_npm_without_spawning_a_cmd_shim():
     node = shutil.which("node")
     if not node:
