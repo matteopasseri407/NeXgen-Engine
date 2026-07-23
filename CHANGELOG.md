@@ -10,6 +10,8 @@ of any engine release.
 
 ## [Unreleased]
 
+## [0.92.2] - 2026-07-23
+
 ### Added
 
 - The Cloud-Server Firecrawl deployment now has an optional, pinned SearXNG overlay backed exclusively by the Brave Search API. `bootstrap-vps.sh` enables it when a Brave key is configured and generates the separate SearXNG secret without printing it.
