@@ -10,6 +10,21 @@ of any engine release.
 
 ## [Unreleased]
 
+### Changed
+
+- Both bundled MCP servers now implement the `2026-07-28` protocol revision
+  while continuing to serve every earlier one, so clients that still open with
+  the retired `initialize` handshake keep working unchanged.
+  - `vault-library` moved to MCP Python SDK 2.x (`MCPServer`, transport
+    configuration passed where the ASGI app is built) and its CORS allowlist
+    now accepts the `Mcp-Method`, `Mcp-Name`, and `MCP-Protocol-Version`
+    headers the revision requires.
+  - `vault-ocr`, which speaks JSON-RPC directly, gained `server/discover`, the
+    required `resultType` on every result, `ttlMs`/`cacheScope` on cacheable
+    results, `serverInfo` in each result's `_meta`, and refuses an unsupported
+    protocol version with `-32022` instead of serving it. No method is gated on
+    a prior handshake.
+
 ## [0.92.3] - 2026-07-23
 
 ### Fixed

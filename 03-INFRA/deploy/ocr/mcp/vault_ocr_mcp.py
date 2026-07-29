@@ -1,4 +1,20 @@
 #!/usr/bin/env python3
+"""stdio MCP server exposing the remote RapidOCR API as three tools.
+
+Hand-rolled JSON-RPC (no SDK) that answers two protocol eras from one
+dispatcher:
+
+  - 2026-07-28 and later: no handshake at all. A client may POST straight to
+    `tools/list`, negotiates the version per request via
+    `params._meta["io.modelcontextprotocol/protocolVersion"]`, and gets
+    `server/discover` for capabilities. Every result carries the required
+    `resultType`, plus `ttlMs`/`cacheScope` on the cacheable ones.
+  - 2025-11-25 and earlier: the `initialize` / `notifications/initialized`
+    handshake still works, because every CLI in the council still speaks it.
+
+There is no handshake state either way: no method is gated on `initialize`
+having arrived first, which is exactly what the newer revision requires.
+"""
 from __future__ import annotations
 
 import hashlib
@@ -21,9 +37,34 @@ MAX_LOCAL_BYTES = int(os.environ.get("VAULT_OCR_MAX_LOCAL_BYTES", "15728640"))
 # then instead of breaking every existing deploy.
 API_TOKEN = os.environ.get("VAULT_OCR_TOKEN", "").strip()
 SERVER_NAME = "vault-ocr"
-SERVER_VERSION = "1.0.0"
+SERVER_VERSION = "1.1.0"
 LOG_PATH = os.environ.get("VAULT_OCR_MCP_LOG")
 FRAMING = "headers"
+
+PROTOCOL_VERSION = "2026-07-28"
+# Every revision this server answers on, newest first: `server/discover`
+# advertises the list, and an unknown version in a request's `_meta` is
+# refused with UNSUPPORTED_PROTOCOL_VERSION instead of being served blindly.
+SUPPORTED_PROTOCOL_VERSIONS = (
+    "2026-07-28",
+    "2025-11-25",
+    "2025-06-18",
+    "2025-03-26",
+    "2024-11-05",
+)
+SERVER_CAPABILITIES: dict[str, Any] = {"tools": {"listChanged": False}}
+INSTRUCTIONS = (
+    "OCR for local images through the RapidOCR API on the local tunnel. "
+    "Never writes to the vault: persist extracted text through vault-library."
+)
+# The tool list is a module constant: identical for every caller and unable to
+# change without restarting the process. So it is safe to let clients cache it,
+# and safe to share that cache across authorization contexts ("public").
+LIST_TTL_MS = 300_000
+LIST_CACHE_SCOPE = "public"
+
+METHOD_NOT_FOUND = -32601
+UNSUPPORTED_PROTOCOL_VERSION = -32022
 
 
 def auth_headers() -> dict[str, str]:
@@ -85,12 +126,40 @@ def write_message(payload: dict[str, Any]) -> None:
     debug("send", id=payload.get("id"), has_result="result" in payload, has_error="error" in payload)
 
 
-def result(req_id: Any, value: Any) -> None:
-    write_message({"jsonrpc": "2.0", "id": req_id, "result": value})
+def result(
+    req_id: Any,
+    value: dict[str, Any],
+    *,
+    ttl_ms: int | None = None,
+    cache_scope: str | None = None,
+) -> None:
+    """Wrap a result in the 2026-07-28 envelope.
+
+    `resultType` is required on every result by that revision. Older clients
+    pass unknown result fields through, so the same envelope serves both eras
+    and there is nothing to branch on. `ttlMs`/`cacheScope` are added only for
+    the results the spec models as cacheable (`tools/list`, `server/discover`);
+    a `tools/call` result is not one of them.
+    """
+    payload = dict(value)
+    payload.setdefault("resultType", "complete")
+    meta = dict(payload.get("_meta") or {})
+    meta.setdefault(
+        "io.modelcontextprotocol/serverInfo",
+        {"name": SERVER_NAME, "version": SERVER_VERSION},
+    )
+    payload["_meta"] = meta
+    if ttl_ms is not None:
+        payload.setdefault("ttlMs", ttl_ms)
+        payload.setdefault("cacheScope", cache_scope or "private")
+    write_message({"jsonrpc": "2.0", "id": req_id, "result": payload})
 
 
-def error(req_id: Any, code: int, message: str) -> None:
-    write_message({"jsonrpc": "2.0", "id": req_id, "error": {"code": code, "message": message}})
+def error(req_id: Any, code: int, message: str, data: Any = None) -> None:
+    err: dict[str, Any] = {"code": code, "message": message}
+    if data is not None:
+        err["data"] = data
+    write_message({"jsonrpc": "2.0", "id": req_id, "error": err})
 
 
 def text_content(text: str) -> dict[str, Any]:
@@ -261,24 +330,72 @@ TOOLS = [
 ]
 
 
+def requested_protocol_version(req: dict[str, Any]) -> str | None:
+    """The version a 2026-07-28-era client negotiated on THIS request.
+
+    None means the request carries no version, i.e. a client on an older
+    revision that negotiates through `initialize` instead.
+    """
+    meta = (req.get("params") or {}).get("_meta") or {}
+    value = meta.get("io.modelcontextprotocol/protocolVersion")
+    return value if isinstance(value, str) and value else None
+
+
 def handle(req: dict[str, Any]) -> None:
     method = req.get("method")
     req_id = req.get("id")
+
+    requested = requested_protocol_version(req)
+    if requested is not None and requested not in SUPPORTED_PROTOCOL_VERSIONS:
+        debug("unsupported_protocol_version", requested=requested, method=method)
+        if req_id is not None:
+            error(
+                req_id,
+                UNSUPPORTED_PROTOCOL_VERSION,
+                f"unsupported protocol version: {requested}",
+                {"supported": list(SUPPORTED_PROTOCOL_VERSIONS), "requested": requested},
+            )
+        return
+
+    if method == "server/discover":
+        # Required of every server by 2026-07-28, and the replacement for what
+        # `initialize` used to answer. Servers advertise, clients pick.
+        result(
+            req_id,
+            {
+                "supportedVersions": list(SUPPORTED_PROTOCOL_VERSIONS),
+                "capabilities": SERVER_CAPABILITIES,
+                "instructions": INSTRUCTIONS,
+            },
+            ttl_ms=LIST_TTL_MS,
+            cache_scope=LIST_CACHE_SCOPE,
+        )
+        return
     if method == "initialize":
-        protocol = (req.get("params") or {}).get("protocolVersion") or "2024-11-05"
+        # Retired by 2026-07-28, kept because every CLI in the council still
+        # opens with it. Answer a version we actually support rather than
+        # echoing whatever was asked for.
+        protocol = (req.get("params") or {}).get("protocolVersion")
+        if protocol not in SUPPORTED_PROTOCOL_VERSIONS:
+            protocol = PROTOCOL_VERSION
         result(
             req_id,
             {
                 "protocolVersion": protocol,
-                "capabilities": {"tools": {"listChanged": False}},
+                "capabilities": SERVER_CAPABILITIES,
                 "serverInfo": {"name": SERVER_NAME, "version": SERVER_VERSION},
             },
         )
         return
     if method == "notifications/initialized":
         return
+    if method == "ping":
+        # Also retired by 2026-07-28; still answered so an older client that
+        # health-checks this way does not conclude the server is dead.
+        result(req_id, {})
+        return
     if method == "tools/list":
-        result(req_id, {"tools": TOOLS})
+        result(req_id, {"tools": TOOLS}, ttl_ms=LIST_TTL_MS, cache_scope=LIST_CACHE_SCOPE)
         return
     if method == "tools/call":
         params = req.get("params") or {}
@@ -298,7 +415,7 @@ def handle(req: dict[str, Any]) -> None:
             result(req_id, {"content": [text_content(f"OCR tool error: {exc}")], "isError": True})
         return
     if req_id is not None:
-        error(req_id, -32601, f"method not found: {method}")
+        error(req_id, METHOD_NOT_FOUND, f"method not found: {method}")
 
 
 def main() -> int:

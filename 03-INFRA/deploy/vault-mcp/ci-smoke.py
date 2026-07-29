@@ -10,7 +10,7 @@ bare repo. Exercises the real write path over streamable-http MCP:
 plus one negative check (a write into 99-SECRETS must be refused). The
 surrounding job verifies the produced Git commits afterwards.
 
-Needs: pip install "mcp>=1.0,<2". Env: SMOKE_URL, SMOKE_TOKEN.
+Needs: pip install "mcp>=2.0,<3". Env: SMOKE_URL, SMOKE_TOKEN.
 """
 from __future__ import annotations
 
@@ -19,8 +19,9 @@ import json
 import os
 import sys
 
+import httpx2
 from mcp import ClientSession
-from mcp.client.streamable_http import streamablehttp_client
+from mcp.client.streamable_http import streamable_http_client
 
 URL = os.environ.get("SMOKE_URL", "http://127.0.0.1:8081/mcp")
 TOKEN = os.environ["SMOKE_TOKEN"]
@@ -40,19 +41,48 @@ REQUIRED_TOOLS = {
 
 
 def _payload(result) -> dict:
-    """FastMCP tool results carry the dict as structuredContent and/or a
-    JSON string in the first text block — accept either."""
-    structured = getattr(result, "structuredContent", None)
+    """MCPServer tool results carry the dict as structured_content and/or a
+    JSON string in the first text block — accept either. The field is
+    snake_case since SDK 2.x; keep the camelCase read as a fallback so this
+    script also runs against a v1-era server during a staged rollout."""
+    structured = getattr(result, "structured_content", None)
+    if structured is None:
+        structured = getattr(result, "structuredContent", None)
     if isinstance(structured, dict) and structured:
-        # FastMCP wraps plain-dict returns as {"result": ...} only for
+        # MCPServer wraps plain-dict returns as {"result": ...} only for
         # non-object outputs; a dict comes through as-is.
         return structured.get("result", structured)
     return json.loads(result.content[0].text)
 
 
+def _is_error(result) -> bool:
+    """`isError` -> `is_error` in SDK 2.x; accept both."""
+    flag = getattr(result, "is_error", None)
+    if flag is None:
+        flag = getattr(result, "isError", None)
+    return bool(flag)
+
+
 async def main() -> None:
-    headers = {"Authorization": f"Bearer {TOKEN}"}
-    async with streamablehttp_client(URL, headers=headers) as (read, write, _):
+    # SDK 2.x: headers/timeouts live on the httpx2 client instead of being
+    # keywords on the transport helper. A bare AsyncClient would fall back to
+    # httpx2's flat 5s timeout, too short for the long-lived GET stream.
+    http_client = httpx2.AsyncClient(
+        headers={"Authorization": f"Bearer {TOKEN}"},
+        timeout=httpx2.Timeout(30, read=300),
+        follow_redirects=True,
+    )
+    try:
+        await _smoke(http_client)
+    finally:
+        await http_client.aclose()
+
+
+async def _smoke(http_client) -> None:
+    # streamable_http_client yields a 2-tuple since SDK 2.x: the
+    # get_session_id callback went away with the session concept that the
+    # 2026-07-28 revision retired.
+    async with streamable_http_client(URL, http_client=http_client) as (read, write):
         async with ClientSession(read, write) as session:
             await session.initialize()
 
@@ -152,8 +182,8 @@ async def main() -> None:
             stale_body = ""
             if stale.content:
                 stale_body = getattr(stale.content[0], "text", "") or ""
-            assert stale.isError or "expected_hash" in stale_body, (
-                f"stale section hash was not refused: isError={stale.isError} body={stale_body!r}"
+            assert _is_error(stale) or "expected_hash" in stale_body, (
+                f"stale section hash was not refused: is_error={_is_error(stale)} body={stale_body!r}"
             )
 
             # Write-time advisory: a dead wikilink is reported, never blocked.
@@ -188,8 +218,8 @@ async def main() -> None:
             body = ""
             if refused.content:
                 body = getattr(refused.content[0], "text", "") or ""
-            assert refused.isError or "error" in body.lower() or "refus" in body.lower(), (
-                f"write into 99-SECRETS was not refused: isError={refused.isError} body={body!r}"
+            assert _is_error(refused) or "error" in body.lower() or "refus" in body.lower(), (
+                f"write into 99-SECRETS was not refused: is_error={_is_error(refused)} body={body!r}"
             )
 
     print("vault-mcp smoke: OK")
