@@ -33,6 +33,25 @@ of any engine release.
   rebuild overwrote the one tag, so no previous image was ever left to return
   to. A test pins the tag to `__version__`, and the sibling OCR stack's tag to
   its API version, since nothing breaks visibly when they part company.
+- `.gitignore` now covers a bare `.bak` suffix, not only `.bak-<timestamp>`. A
+  browser-profile backup left in `03-INFRA/` — session cookies, the saved
+  password database, its encryption keys — was not ignored, one `git add -A`
+  from a permanent history. The known-sensitive profile filenames are covered
+  explicitly too, since the layout invites infrastructure runbooks there.
+- `agent-sync inventory` reports whether each CLI's bootstrap is actually
+  aligned with the canonical one, instead of printing `present` for any file
+  that exists. On a host without symlink privilege the per-CLI bootstrap is a
+  real copy, and a stale copy was indistinguishable from a fresh one — the CLI
+  reading it looks confused rather than out of date. A diverged copy now says
+  so and carries the recovery command; an identical copy is reported as a copy
+  that re-aligns only when agent-sync runs. Claude's pointer file, which is
+  meant to differ from the canonical bootstrap, is judged by reference rather
+  than by content. The copy fallback also stops being silent: the sync log now
+  states that the file is a copy and that a canonical edit stays invisible to
+  that CLI until the next run.
+- `INIT.md` no longer lists `agent-healthcheck` among the commands not
+  installed in MINIMAL, which implied it exists in FULL. There is no such
+  command — the healthcheck is a step inside `agent-sync`.
 
 ## [0.92.3] - 2026-07-23
 
