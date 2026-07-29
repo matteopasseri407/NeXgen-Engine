@@ -20,7 +20,17 @@
 
 # Backups, logs, and sandbox residue from local runs (render.py backups,
 # test sandboxes, leftover scratch dirs) — S0 anti-leak hardening, 2026-07-08
+# `*.bak-*` alone missed a plain `.bak`: a Chrome profile backup (Cookies.bak,
+# Login Data.bak, Local State.bak) landed in 03-INFRA/ on 2026-07-26 and was
+# NOT ignored. Caught before any commit, but the history here is permanent, so
+# the bare suffix and the known-sensitive browser-profile names are covered
+# explicitly rather than left to whoever runs `git add -A` next.
+*.bak
 *.bak-*
+Cookies*
+Login Data*
+Local State*
+Secure Preferences*
 *.log
 *.sandbox
 tmp-sandbox-*/
