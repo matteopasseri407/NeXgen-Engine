@@ -1,7 +1,6 @@
 """Source-level invariants for the vendored starter command skills.
 
-The engine ships three cross-CLI command skills (vault-doctor, vault-close,
-vault-save). They must stay portable across every runtime that consumes the
+The engine ships a set of cross-CLI command skills. They must stay portable across every runtime that consumes the
 agentskills.io shape (Claude Code, Codex, OpenCode, Antigravity), which the
 dialect verification of 2026-07-17 reduced to: lowercase-hyphen name equal to
 the folder name, a description in the frontmatter, and an argument-free body
@@ -18,7 +17,7 @@ from conftest import REAL_VAULT
 
 STARTERS = (
     "vault-doctor", "vault-close", "vault-save",
-    "vault-council", "vault-groom", "vault-update",
+    "vault-council", "vault-groom", "nexgen-update", "vault-update",
     "vault-map",
 )
 SKILLS_ROOT = REAL_VAULT / "03-INFRA" / "agent-universal-layer" / "skills"
@@ -66,8 +65,12 @@ def test_every_starter_ships_a_valid_portable_skill():
 def test_starter_names_avoid_cli_builtin_collisions():
     for name in STARTERS:
         assert name not in RESERVED_BUILTIN_NAMES
-        assert name.startswith("vault-"), (
-            f"{name}: starters keep the vault- prefix so they can never "
+        # The invariant is that a starter is NAMESPACED, so it can never
+        # shadow a CLI built-in or bundled skill. It used to say `vault-`
+        # specifically, which forced the engine-update command to be called
+        # `vault-update` — a name that described the wrong thing.
+        assert name.startswith(("vault-", "nexgen-")), (
+            f"{name}: starters must carry a product prefix so they can never "
             "shadow a CLI built-in or bundled skill"
         )
 
@@ -97,3 +100,50 @@ def test_example_manifest_registers_starters_as_core_commands():
             f"{name}: command skills target every runtime that needs a native "
             "view or a discoverability check"
         )
+
+
+# --- the engine-update command and its previous name -------------------------
+
+
+def test_the_engine_update_command_is_not_named_after_the_vault():
+    """It upgrades the ENGINE. Named `vault-update`, it read as the opposite,
+    and a user looking for it typed `/nexgen ...` and concluded no such command
+    existed. The name is the whole feature here."""
+    front, _ = _frontmatter_and_body("nexgen-update")
+    assert front["name"] == "nexgen-update"
+    description = front["description"].lower()
+    assert "engine" in description, "the description must say what it updates"
+
+
+def test_the_previous_name_still_resolves_and_says_where_it_went():
+    """Renaming a shipped command silently breaks every manifest that already
+    lists it, so the old entry stays as a stub."""
+    front, body = _frontmatter_and_body("vault-update")
+    assert front["name"] == "vault-update"
+    assert "deprecated" in front["description"].lower()
+    # Mentioning the new name in prose is not enough: the stub has to send the
+    # agent to it, or a user invoking the old command gets an explanation and
+    # no upgrade.
+    assert re.search(r"(?:load|follow)[^.\n]*`nexgen-update`", body, re.I), (
+        "the stub must instruct loading the nexgen-update skill, not just mention it"
+    )
+
+
+def test_the_upgrade_runbook_exists_in_exactly_one_of_the_two():
+    """Two copies of the same runbook is how the alias and the real command
+    drift apart. The stub must defer, not duplicate: the guarded steps (merge
+    never a bare checkout, confirm before touching anything) live in one file.
+    """
+    _, canonical = _frontmatter_and_body("nexgen-update")
+    _, stub = _frontmatter_and_body("vault-update")
+    assert "git merge" in canonical, "the canonical skill lost its runbook"
+    assert "git merge" not in stub, "the stub duplicated the runbook instead of deferring"
+    assert len(stub) < len(canonical), "the stub should be a pointer, not a copy"
+
+
+def test_both_names_are_registered_in_the_example_manifest():
+    """An unregistered skill never materializes, so a rename that forgets the
+    manifest ships a command nobody can invoke."""
+    declared = yaml.safe_load(EXAMPLE_MANIFEST.read_text(encoding="utf-8"))["skills"]
+    assert "nexgen-update" in declared
+    assert "vault-update" in declared

@@ -25,6 +25,18 @@ of any engine release.
     protocol version with `-32022` instead of serving it. No method is gated on
     a prior handshake.
 
+### Changed
+
+- The engine-update command is now `nexgen-update`. It upgrades the **engine**,
+  and the old `vault-update` name said the opposite clearly enough that a user
+  looked for it, did not find it, and concluded the command did not exist. The
+  previous name stays registered as a stub that defers to the new one, so an
+  existing `skills.manifest.yaml` keeps resolving; the upgrade runbook lives in
+  exactly one of the two, so they cannot drift apart. Starter skills now only
+  have to be namespaced rather than specifically `vault-`-prefixed — the point
+  of the prefix was never to claim the Vault, it was to avoid shadowing a CLI
+  built-in.
+
 ### Fixed
 
 - The `vault-mcp` compose file's default image tag now tracks the package

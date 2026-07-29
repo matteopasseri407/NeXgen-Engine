@@ -90,7 +90,7 @@ Vault, publish, verify), `vault-save` (save one durable fact with the
 hygiene decision rule), `vault-council` (convene the AI Council on a
 question, confirming before it spends the seats' quota), `vault-groom` (one
 grooming pass, preview-first; apply keeps all of its own guardrails), and
-`vault-update` (check for a newer engine release, upgrade only on explicit
+`nexgen-update` (check for a newer engine release, upgrade only on explicit
 confirmation, verify with the doctor), and `vault-map` (the deterministic
 structural map of the vault — broken wikilinks, orphan notes, hubs —
 explained in plain language, fixes proposed but never applied without

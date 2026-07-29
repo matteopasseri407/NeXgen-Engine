@@ -81,6 +81,14 @@ skills:
     targets: [claude, antigravity, opencode]
     exposure: core
 
+  # Updates the ENGINE, not the Vault -- hence the nexgen- prefix. The
+  # vault-update entry below is the previous name, kept so an existing
+  # manifest keeps resolving; it is a stub that defers to this one.
+  nexgen-update:
+    origin: vault
+    targets: [claude, antigravity, opencode]
+    exposure: core
+
   vault-update:
     origin: vault
     targets: [claude, antigravity, opencode]
