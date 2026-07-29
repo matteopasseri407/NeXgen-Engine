@@ -330,7 +330,7 @@ jobs:
       - name: MCP write-path smoke
         run: |
           set -euo pipefail
-          pip install "mcp>=1.0,<2"
+          pip install "mcp>=2.0,<3"
           SMOKE_TOKEN=ci-smoke-token python3 03-INFRA/deploy/vault-mcp/ci-smoke.py || {
             docker logs vault-mcp; exit 1;
           }

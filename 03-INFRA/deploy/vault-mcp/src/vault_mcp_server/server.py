@@ -7,7 +7,7 @@ import json
 import urllib.request
 from urllib.parse import urlparse, urlencode
 
-from mcp.server.fastmcp import FastMCP
+from mcp.server.mcpserver import MCPServer
 from mcp.server.transport_security import TransportSecuritySettings
 from starlette.applications import Starlette
 from starlette.datastructures import Headers
@@ -134,7 +134,7 @@ def _call_semantic(settings: Settings, query: str, limit: int) -> dict[str, Any]
         return json.loads(resp.read().decode("utf-8"))
 
 
-def create_server(settings: Settings) -> tuple[FastMCP, VaultService]:
+def create_server(settings: Settings) -> tuple[MCPServer, VaultService]:
     vault = VaultService(settings)
     server_name = "markdown-vault-git-backed" if settings.write_enabled else "markdown-vault-readonly"
     instructions = (
@@ -154,14 +154,15 @@ def create_server(settings: Settings) -> tuple[FastMCP, VaultService]:
             "Never assume write access."
         )
     )
-    mcp = FastMCP(
+    # SDK 2.x: the constructor keeps identity only. Transport configuration
+    # (path, stateless/json mode, DNS-rebinding allowlist) moved onto
+    # streamable_http_app() — see build_streamable_http_app() below. Assigning
+    # mcp.settings.streamable_http_path here would now raise ValueError.
+    mcp = MCPServer(
         name=server_name,
         instructions=instructions,
-        stateless_http=settings.stateless_http,
-        json_response=settings.json_response,
-        transport_security=_build_transport_security(settings),
+        version=__version__,
     )
-    mcp.settings.streamable_http_path = settings.mcp_path
 
     @mcp.tool()
     def get_start_here() -> dict[str, Any]:
@@ -299,7 +300,18 @@ def create_app() -> Any:
         async with mcp.session_manager.run():
             yield
 
-    routes = [Route("/", endpoint=homepage), Route(settings.health_path, endpoint=health), Mount("/", app=mcp.streamable_http_app())]
+    # SDK 2.x: transport keywords are passed where the ASGI app is built, not
+    # to the constructor. They must be supplied here or the mount silently
+    # falls back to the SDK defaults (path /mcp, stateful, SSE responses, and
+    # an auto DNS-rebinding allowlist that rejects our real hostname).
+    mcp_app = mcp.streamable_http_app(
+        streamable_http_path=settings.mcp_path,
+        stateless_http=settings.stateless_http,
+        json_response=settings.json_response,
+        transport_security=_build_transport_security(settings),
+    )
+
+    routes = [Route("/", endpoint=homepage), Route(settings.health_path, endpoint=health), Mount("/", app=mcp_app)]
     app: Any = Starlette(routes=routes, lifespan=lifespan)
     app = McpSecurityMiddleware(app, settings)
 
@@ -308,7 +320,21 @@ def create_app() -> Any:
             app,
             allow_origins=list(settings.allowed_origins),
             allow_methods=["GET", "POST", "DELETE", "OPTIONS"],
-            allow_headers=["Authorization", "Content-Type", "Accept", "X-Vault-Token", "Mcp-Session-Id"],
+            # 2026-07-28 requires Mcp-Method and Mcp-Name on every Streamable
+            # HTTP POST, and MCP-Protocol-Version must match the body's _meta.
+            # Mcp-Session-Id stays allowed: it is retired by the new revision
+            # but still sent by clients on the revisions this server keeps
+            # serving, and dropping it would break them from a browser origin.
+            allow_headers=[
+                "Authorization",
+                "Content-Type",
+                "Accept",
+                "X-Vault-Token",
+                "MCP-Protocol-Version",
+                "Mcp-Method",
+                "Mcp-Name",
+                "Mcp-Session-Id",
+            ],
             expose_headers=["Mcp-Session-Id"],
         )
 
