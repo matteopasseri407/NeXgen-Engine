@@ -26,6 +26,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
+import hashlib
 import json
 import os
 import platform
@@ -873,8 +874,24 @@ def instructions(env: Env) -> bool:
             same = False
         if same:
             continue
-        make_link(canon, target, is_dir=False)
-        env.log(f"instructions: relinked {target}")
+        if make_link(canon, target, is_dir=False):
+            env.log(f"instructions: relinked {target}")
+        if not _is_link_like(target):
+            # No symlink privilege on this host — Windows with developer mode
+            # off is the ordinary case — so make_link() fell back to a real
+            # copy. The copy is re-aligned on every run, so it is correct as of
+            # now; what it is NOT is self-maintaining. Edit the canonical
+            # bootstrap and this file stays behind until the next run, with the
+            # other CLIs reading yesterday's rules in the meantime. That
+            # happened for a full afternoon on 2026-07-26. The fallback stays
+            # (it is the only thing that works without the privilege), but it
+            # stops being silent.
+            env.log(
+                f"instructions: NOTE {target} is a real copy, not a link "
+                "(no symlink privilege on this host) — it re-aligns only when "
+                "agent-sync runs, so a canonical edit is invisible to that CLI "
+                "until the next run"
+            )
 
     antigravity_md = env.home / "ANTIGRAVITY.md"
     try:
@@ -2127,6 +2144,56 @@ def _skill_manifest_names(path: Path) -> "set[str] | None":
     return set(skills.keys())
 
 
+def _file_digest(path: Path) -> str | None:
+    """SHA-256 of a file, or None when it cannot be read."""
+    try:
+        return hashlib.sha256(path.read_bytes()).hexdigest()
+    except OSError:
+        return None
+
+
+def _bootstrap_alignment(kind: str, path: Path, canon: Path, canon_digest: str | None) -> str:
+    """Describe whether a CLI's bootstrap actually carries the canonical
+    content, not merely that some file exists at that path.
+
+    Reporting `present` alone was misleading (found 2026-07-26): on a host
+    without symlink privilege the per-CLI bootstrap is a real copy, and a copy
+    from three weeks ago is exactly as `present` as one written a second ago.
+    The CLI reading it looks confused rather than out of date, which is a hard
+    failure to diagnose from the outside.
+
+    The three kinds are deliberately different, because the mechanism is:
+      pointer -- Claude reads a short file that REFERENCES the canonical one,
+                 so identical content would be the bug, not the goal.
+      mirror  -- Codex/Antigravity read the file itself: a symlink where the
+                 host allows one, a real copy otherwise.
+      config  -- OpenCode carries the canonical path as an entry in its own
+                 config, verified by the doctor rather than by content.
+    """
+    if not path.exists():
+        return "not configured on this machine"
+    if kind == "pointer":
+        try:
+            text = path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            return "present but unreadable"
+        if str(canon) in text:
+            return "pointer -> canonical bootstrap"
+        return "present but does NOT reference the canonical bootstrap -- run: agent-sync apply"
+    if kind == "config":
+        return "present (the canonical path is an entry in this CLI's own config)"
+    try:
+        if path.is_symlink() and path.resolve() == canon.resolve():
+            return "link -> canonical bootstrap"
+    except OSError:
+        pass
+    if canon_digest is None:
+        return "present, but the canonical bootstrap is unreadable so alignment is unknown"
+    if _file_digest(path) == canon_digest:
+        return "real copy, identical right now (re-aligns only when agent-sync runs)"
+    return "real copy, DIVERGED from the canonical bootstrap -- run: agent-sync apply"
+
+
 def _skill_inventory(manifest_names, materialized):
     """Split materialized skills into canonical (in the manifest), out-of-manifest
     extras, and manifest entries not yet materialized. Pure and testable."""
@@ -2195,14 +2262,16 @@ def _inventory_cli(argv: list[str]) -> int:
 
     print("")
     print(">>> Onboarding inventory -- bootstrap per CLI (read-only):")
+    canon = env.instance_ul / "instructions" / "AGENTS.md"
+    canon_digest = _file_digest(canon)
     bootstraps = [
-        ("claude", env.home / "CLAUDE.md"),
-        ("codex", env.home / ".codex" / "AGENTS.md"),
-        ("antigravity", env.home / ".gemini" / "config" / "AGENTS.md"),
-        ("opencode", _opencode_config_path(env.home)),
+        ("claude", env.home / "CLAUDE.md", "pointer"),
+        ("codex", env.home / ".codex" / "AGENTS.md", "mirror"),
+        ("antigravity", env.home / ".gemini" / "config" / "AGENTS.md", "mirror"),
+        ("opencode", _opencode_config_path(env.home), "config"),
     ]
-    for label, path in bootstraps:
-        print(f"  {label}: {'present' if path.exists() else 'not configured on this machine'}")
+    for label, path, kind in bootstraps:
+        print(f"  {label}: {_bootstrap_alignment(kind, path, canon, canon_digest)}")
 
     print("")
     print(">>> Onboarding inventory -- native memory (read-only):")
