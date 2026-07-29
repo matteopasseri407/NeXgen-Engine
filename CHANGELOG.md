@@ -25,6 +25,15 @@ of any engine release.
     protocol version with `-32022` instead of serving it. No method is gated on
     a prior handshake.
 
+### Fixed
+
+- The `vault-mcp` compose file's default image tag now tracks the package
+  version again. It had drifted to `0.1.0` while the package moved on, which
+  silently voided the rollback recipe documented in the same file: every
+  rebuild overwrote the one tag, so no previous image was ever left to return
+  to. A test pins the tag to `__version__`, and the sibling OCR stack's tag to
+  its API version, since nothing breaks visibly when they part company.
+
 ## [0.92.3] - 2026-07-23
 
 ### Fixed

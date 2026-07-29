@@ -171,3 +171,46 @@ def test_bootstrap_vault_mcp_stack_is_skippable_for_local_only():
         "a Local-Only-oriented VPS (e.g. n8n only) must be able to skip the "
         "vault-mcp stack explicitly"
     )
+
+
+# --- image tag / package version ---------------------------------------------
+
+
+def test_compose_default_image_tag_tracks_the_package_version():
+    """The compose file documents its own tag as "matching __version__", and the
+    rollback recipe in its header depends on that being true: keep the previous
+    build tagged, then point VAULT_MCP_IMAGE at it.
+
+    It had drifted to 0.1.0 while the package was on 0.3.0, which quietly voided
+    the recipe — every rebuild overwrote the same tag, so there was never a
+    previous image to roll back to. Only a test keeps the two together, since
+    nothing breaks visibly when they part company.
+    """
+    version = re.search(
+        r'^__version__\s*=\s*"([^"]+)"', (SRC / "__init__.py").read_text(encoding="utf-8"), re.M
+    )
+    assert version, "cannot read __version__ from the package"
+    tag = re.search(r"image:\s*\$\{VAULT_MCP_IMAGE:-vault-mcp:([^}]+)\}",
+                    COMPOSE.read_text(encoding="utf-8"))
+    assert tag, "compose no longer declares a default vault-mcp image tag"
+    assert tag.group(1) == version.group(1), (
+        f"compose default tag vault-mcp:{tag.group(1)} does not match "
+        f"__version__ {version.group(1)} — bump both, or the documented rollback "
+        f"has no previous image to return to"
+    )
+
+
+def test_ocr_compose_default_image_tag_tracks_its_api_version():
+    """Same invariant for the sibling stack the vault-mcp header cites as its
+    precedent ("same rationale as ocr/docker-compose.yml"). Pinning only one of
+    the two is how the pair drifts apart again.
+    """
+    ocr_compose = (DEPLOY / "ocr" / "docker-compose.yml").read_text(encoding="utf-8")
+    ocr_app = (DEPLOY / "ocr" / "api" / "app.py").read_text(encoding="utf-8")
+    tag = re.search(r"image:\s*\$\{OCR_IMAGE:-vault-ocr-api:([^}]+)\}", ocr_compose)
+    version = re.search(r'version\s*=\s*"([^"]+)"', ocr_app)
+    assert tag and version, "cannot read the OCR image tag or API version"
+    assert tag.group(1) == version.group(1), (
+        f"OCR compose default tag vault-ocr-api:{tag.group(1)} does not match the "
+        f"API version {version.group(1)}"
+    )

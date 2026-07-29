@@ -3,7 +3,11 @@
 # Tagged with an explicit version (matching src/vault_mcp_server/__init__.py
 # __version__) instead of "latest", same rationale as ocr/docker-compose.yml.
 # Rollback: keep the previous build tagged, then
-#   VAULT_MCP_IMAGE=vault-mcp:0.1.0-prev docker compose -f vault-mcp/docker-compose.yml up -d --no-build
+#   VAULT_MCP_IMAGE=vault-mcp:0.3.0 docker compose -f vault-mcp/docker-compose.yml up -d --no-build
+# That rollback only works if the tag below actually tracks __version__: it had
+# drifted to 0.1.0 across two releases, so every build overwrote the same tag
+# and there was no previous image left to roll back to. A test now pins the two
+# together (tests/test_deploy_vault_mcp.py).
 #
 # The vault data itself lives OUTSIDE docker (host bind mounts, created by
 # ./provision-vault-repo.sh) — there is no named volume to back up here; the
@@ -18,7 +22,7 @@
 services:
   vault-mcp:
     build: .
-    image: ${VAULT_MCP_IMAGE:-vault-mcp:0.1.0}
+    image: ${VAULT_MCP_IMAGE:-vault-mcp:0.4.0}
     container_name: vault-mcp
     restart: unless-stopped
     read_only: true
