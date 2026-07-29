@@ -27,7 +27,7 @@ Determina il profilo dalle risposte:
 - 1 CLI e 1 macchina → `profile: MINIMAL`, `sync_method: manual`.
 - 2+ CLI o 2+ macchine → `profile: MULTI`, `sync_method: agent-sync`.
 
-In MINIMAL non saranno installati `agent-sync`, `agent-doctor`, `agent-healthcheck`, né il timer di sync: sono no-op perché c'è una sola fonte di verità su una sola CLI. La maggior parte delle regole "single source / cross-platform" del bootstrap resta valida come principio ma è pratica no-op.
+In MINIMAL non saranno installati `agent-sync`, `agent-doctor`, né il timer di sync: sono no-op perché c'è una sola fonte di verità su una sola CLI. (Non esiste un comando `agent-healthcheck`: l'healthcheck è un passo interno di `agent-sync`, quindi non è installato separatamente in nessun profilo.) La maggior parte delle regole "single source / cross-platform" del bootstrap resta valida come principio ma è pratica no-op.
 
 ### Step 1.5: Presa in carico di un setup esistente
 
@@ -183,7 +183,7 @@ Determine the profile from the answers:
 - 1 CLI and 1 machine → `profile: MINIMAL`, `sync_method: manual`.
 - 2+ CLIs or 2+ machines → `profile: MULTI`, `sync_method: agent-sync`.
 
-In MINIMAL, `agent-sync`, `agent-doctor`, `agent-healthcheck`, and the sync timer are not installed: they are no-ops because there is a single source of truth on a single CLI. The "propagate to all" rule does not fire. Most "single source / cross-platform" rules in the bootstrap remain valid as a principle but are no-op in practice.
+In MINIMAL, `agent-sync`, `agent-doctor`, and the sync timer are not installed: they are no-ops because there is a single source of truth on a single CLI. (There is no `agent-healthcheck` command: the healthcheck is a step inside `agent-sync`, so it is never installed separately, in any profile.) The "propagate to all" rule does not fire. Most "single source / cross-platform" rules in the bootstrap remain valid as a principle but are no-op in practice.
 
 ### Step 1.5: Take over an existing setup
 
