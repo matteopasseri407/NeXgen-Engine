@@ -12,6 +12,18 @@ of any engine release.
 
 ## [0.93.0] - 2026-07-30
 
+### Added
+
+- Releases now publish themselves. A workflow tags and creates the GitHub
+  release whenever `VERSION` changes on `main`, so bumping `VERSION` is the
+  whole act of releasing. It is not a gate: it never fails a pull request, a
+  `VERSION` touch that introduces no new version exits quietly, and a missing
+  changelog section warns and still publishes. This release is the first one it
+  publishes. Before it, work merged to `main` and stopped there — the update
+  path compares the newest release tag with the installed `VERSION`, so
+  unreleased commits reached no machine at all and the doctor still reported
+  every host "at the latest released version".
+
 ### Changed
 
 - Both bundled MCP servers now implement the `2026-07-28` protocol revision
@@ -29,6 +41,12 @@ of any engine release.
 
 ### Changed
 
+- `agent-doctor`'s update notice leads with what it is and carries the command
+  to run: "NeXgen Engine update available: v0.93.0 (this machine runs v0.92.1)
+  -- run: nexgen-update". It used to end with "update is always deliberate",
+  which reads as "no rush" — two machines sat two releases behind while the
+  doctor said so every day. Still a warn, never a failure: being one release
+  behind is not a broken machine. Both the bash and PowerShell twins changed.
 - The engine-update command is now `nexgen-update`. It upgrades the **engine**,
   and the old `vault-update` name said the opposite clearly enough that a user
   looked for it, did not find it, and concluded the command did not exist. The
