@@ -22,9 +22,15 @@ Layout:
   - ~/.agents/skill-library: complete managed library, intentionally not a
     discovery root for eager runtimes.
   - ~/.agents/skills: tiny active view, containing only `exposure: core`
-    skills plus INDEX.md. It is the safe discovery root for Codex-like CLIs.
-  - Claude may receive a native per-skill or whole-library view because it
-    loads skill bodies lazily. Other runtimes use `agent-skill find/show`.
+    skills plus INDEX.md. OpenCode is the only CLI that reads it (and
+    ~/.claude/skills) on its own; an earlier version of this docstring called
+    it "the safe discovery root for Codex-like CLIs", which was never true and
+    is what left `targets: [codex]` discoverable nowhere.
+  - Claude, Codex and Antigravity each get a native per-skill view under their
+    own root, because none of them reads a shared one. Bodies stay lazy: all
+    three load name+description and open SKILL.md only when the skill is used.
+  - Anything kept out of every view is still reachable through the universal
+    `agent-skill find|show` command.
 
 NOT authoritative for deletion: it never removes a skill absent from the manifest.
 """
@@ -77,7 +83,10 @@ ACTIVE = HOME / ".agents" / "skills"
 LEGACY = LIBRARY / "legacy"
 RUNTIME = {
     "claude": HOME / ".claude" / "skills",
-    "codex": HOME / ".codex" / "skills",
+    # $CODEX_HOME is Codex's own relocation knob (the same one its bundled
+    # skills use). Hardcoding ~/.codex would silently write the view into a
+    # directory Codex does not read on any machine that sets it.
+    "codex": Path(os.environ.get("CODEX_HOME") or (HOME / ".codex")) / "skills",
     # Antigravity's global skill root: skills placed here surface as /name
     # slash commands in the agy TUI. Antigravity does NOT read the shared
     # ~/.agents/skills root, so it needs a native per-skill view. The same
