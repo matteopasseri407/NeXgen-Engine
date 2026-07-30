@@ -10,6 +10,8 @@ of any engine release.
 
 ## [Unreleased]
 
+## [0.93.0] - 2026-07-30
+
 ### Changed
 
 - Both bundled MCP servers now implement the `2026-07-28` protocol revision
