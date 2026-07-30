@@ -32,7 +32,8 @@ agent-sync config mirrors
 | Command | Contract |
 |---|---|
 | `agent-sync guard` | Recurring pull, apply and healthcheck. Never pushes. A busy lock is a safe skip. |
-| `agent-sync apply` | Manual name for the same pull and apply transaction. Never pushes. |
+| `agent-sync apply` | Manual pull and apply transaction. Never pushes. Installs the available base, then classifies strict readiness as `READY` or `PARTIAL`. |
+| `agent-sync apply --require-ready` | Same manual transaction, but returns non-zero unless the strict doctor reports `FAIL=0`. |
 | `agent-sync pull` | Pull and healthcheck only. Never regenerates CLI files. |
 | `agent-sync publish` | Publishes existing commits to the authoritative remote, then configured mirrors. It never pulls or applies. |
 | `agent-sync preflight` | Validates the local configuration contract without pulling or generating runtime files. |
@@ -86,6 +87,17 @@ code `75`; recurring `guard` contention exits successfully because the active
 run already owns the work. Every declared phase reports success or failure.
 Failures are aggregated, later independent checks still run, and the final exit
 code is non-zero if any required phase failed.
+
+Manual apply has a separate readiness result after all required phases succeed:
+
+- `BASE` means the provisioner installed every component it could install from the current inputs.
+- `PARTIAL` means the base install succeeded but the strict doctor still reports one or more failures, or could not produce a readable result.
+- `READY` means `agent-doctor --strict` completed with `FAIL=0`.
+
+Plain `agent-sync apply` returns zero for `PARTIAL`, because progressive setup is valid when credentials, remote services, or a CLI's first launch will happen later.
+It prints and logs `PARTIAL` explicitly.
+Automation that requires a fully operational machine must use `agent-sync apply --require-ready`; that form returns non-zero for `PARTIAL`.
+Required provisioning phase failures remain `failed`, never `PARTIAL`.
 
 `vault-push`'s own commit/rebase/publish logic is the `vault-push` subcommand
 of this same `agent_sync.py` — not a separate implementation. It locks the

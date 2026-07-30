@@ -10,6 +10,27 @@ of any engine release.
 
 ## [Unreleased]
 
+### Added
+
+- MULTI installs now report three explicit states. `BASE` means the available
+  components were installed, `PARTIAL` means strict checks still fail, and
+  `READY` requires `agent-doctor --strict` with `FAIL=0`. Plain apply keeps a
+  progressive `PARTIAL` install usable; `agent-sync apply --require-ready`
+  makes that state fail in automation.
+- The MULTI provisioner now installs the cross-platform `agent-chrome`
+  launcher that its browser policy already required. It starts one visible
+  Chrome profile with CDP bound to localhost and refuses to create a second
+  daily profile when the standard profile has not been migrated.
+
+### Fixed
+
+- OpenCode 1.18 creates `opencode.jsonc`, but sync, renderer, and doctor looked
+  only for `opencode.json`. Existing OpenCode authentication survived while
+  its instructions and MCP servers were silently skipped. All three consumers
+  now follow OpenCode's config precedence, preserve JSONC comments and
+  host-local choices, and find the standard per-user OpenCode binary from the
+  systemd timer.
+
 ## [0.93.0] - 2026-07-30
 
 ### Added

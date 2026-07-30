@@ -75,6 +75,74 @@ def test_doctor_warns_when_opencode_loads_canonical_instructions_twice(sandbox_w
     assert "OpenCode loads the canonical AGENTS.md 2 times" in result.stdout
 
 
+def test_doctor_reads_current_opencode_jsonc_and_preserves_runtime_visibility(sandbox):
+    config_path = sandbox.home / ".config" / "opencode" / "opencode.jsonc"
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    config_path.write_text(
+        '{\n'
+        '  // Current OpenCode creates JSONC by default.\n'
+        '  "instructions": [\n'
+        '    "~/KnowledgeVault/03-INFRA/agent-universal-layer/instructions/AGENTS.md",\n'
+        '  ],\n'
+        '}\n',
+        encoding="utf-8",
+    )
+
+    result = run_agent_doctor(sandbox)
+
+    assert "OpenCode instructions" in result.stdout
+    assert "one canonical AGENTS.md" in result.stdout
+    assert "opencode.jsonc: valid JSONC" in result.stdout
+    assert f"missing {config_path}" not in result.stdout
+
+
+def test_doctor_strict_finds_opencode_in_its_standard_user_install_path(sandbox):
+    config_path = sandbox.home / ".config" / "opencode" / "opencode.jsonc"
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    config_path.write_text(
+        '{\n'
+        '  "instructions": [\n'
+        '    "~/KnowledgeVault/03-INFRA/agent-universal-layer/instructions/AGENTS.md"\n'
+        '  ]\n'
+        '}\n',
+        encoding="utf-8",
+    )
+    opencode = sandbox.home / ".opencode" / "bin" / "opencode"
+    opencode.parent.mkdir(parents=True, exist_ok=True)
+    opencode.write_text(
+        "#!/bin/sh\n"
+        "printf '%s\\n' "
+        "'fake-stdio-tool connected' "
+        "'fake-http-api connected' "
+        "'fake-cross-os-tool connected'\n",
+        encoding="utf-8",
+    )
+    opencode.chmod(0o755)
+    agy = sandbox.bin_stubs / "agy"
+    agy.write_text(
+        "#!/bin/sh\nprintf '%s\\n' 'fake-stdio-tool' 'fake-http-api' 'fake-cross-os-tool'\n",
+        encoding="utf-8",
+    )
+    agy.chmod(0o755)
+    env = sandbox.env()
+    env["AGENT_ENGINE_ROOT"] = str(sandbox.vault / "03-INFRA")
+    env["PATH"] = os.pathsep.join(
+        entry for entry in env["PATH"].split(os.pathsep)
+        if entry != str(sandbox.home / ".opencode" / "bin")
+    )
+
+    result = subprocess.run(
+        ["bash", str(sandbox.scripts_dir / "agent-doctor.sh"), "--strict"],
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+
+    assert "OpenCode mcp list" in result.stdout
+    assert "opencode not found in PATH or ~/.opencode/bin" not in result.stdout
+
+
 def test_doctor_does_not_judge_host_local_claude_permissions(sandbox):
     # Permission posture is a host-local choice the engine must not grade:
     # bypassPermissions, a suppressed dangerous-mode prompt, and persistent
@@ -139,6 +207,32 @@ def test_antigravity_quota_is_a_warning_not_a_false_mcp_failure(sandbox):
 
     assert "Antigravity behavioral probe skipped: the selected model quota is unavailable" in result.stdout
     assert "Antigravity behavioral probe does not confirm" not in result.stdout
+
+
+def test_doctor_sandbox_gate_skips_live_consumer_processes(sandbox):
+    agy_marker = sandbox.home / "agy-was-run"
+    opencode_marker = sandbox.home / "opencode-was-run"
+    for name, marker in (("agy", agy_marker), ("opencode", opencode_marker)):
+        stub = sandbox.bin_stubs / name
+        stub.write_text(
+            f"#!/bin/sh\n: > {marker}\nexit 0\n",
+            encoding="utf-8",
+        )
+        stub.chmod(0o755)
+
+    env = sandbox.env(NEXGEN_SKIP_LIVE_CONSUMER_PROBES="1")
+    result = subprocess.run(
+        ["bash", str(sandbox.scripts_dir / "agent-doctor.sh"), "--strict"],
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+
+    assert "Antigravity behavioral probe skipped by the sandbox safety gate" in result.stdout
+    assert "OpenCode consumer test skipped by the sandbox safety gate" in result.stdout
+    assert not agy_marker.exists()
+    assert not opencode_marker.exists()
 
 
 # ── Local-Only vault-remote sentinel ("local"/"none") ────────────────────

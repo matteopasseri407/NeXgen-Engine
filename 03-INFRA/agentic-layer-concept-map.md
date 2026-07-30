@@ -62,6 +62,17 @@ override exists as `agent-sync apply --allow-offline`; the recurring guard can
 never use it. Each phase returns an explicit result and any required failure
 propagates to the process exit code.
 
+Manual apply separates installation from readiness.
+`BASE` means the available components were installed.
+`PARTIAL` keeps that usable base but states that strict consumer or connection checks still fail.
+`READY` is emitted only after `agent-doctor --strict` reports `FAIL=0`.
+This lets a progressive install continue without credentials while preventing an installer agent from describing an unverified machine as complete.
+`agent-sync apply --require-ready` turns `PARTIAL` into a non-zero automation gate.
+
+OpenCode config resolution follows the runtime's current precedence within its active config root: `opencode.jsonc`, then `opencode.json`, then `config.json`.
+JSONC comments and host-local model choices survive instruction and MCP reconciliation.
+The Linux systemd unit carries both `~/.local/bin` and `~/.opencode/bin` in its PATH, so the recurring doctor sees the same installed OpenCode consumer as the interactive user.
+
 Windows host mutations are a separate transaction boundary. Tests and
 sandboxed integrations set `NEXGEN_DISABLE_HOST_MUTATIONS=1`, which makes
 registry and Task Scheduler adapters no-op before any external call. Real

@@ -1069,8 +1069,41 @@ def test_written_file_never_contains_expanded_token(sandbox_with_live_configs, c
 def test_windows_opencode_config_uses_current_xdg_layout(sandbox, monkeypatch):
     mod = load_render_module(sandbox)
     monkeypatch.setattr(mod, "IS_WINDOWS", True)
-    expected = sandbox.home / ".config" / "opencode" / "opencode.json"
+    expected = sandbox.home / ".config" / "opencode" / "opencode.jsonc"
     assert mod._opencode_config_path() == expected
+
+
+def test_opencode_config_prefers_jsonc_created_by_current_runtime(sandbox):
+    mod = load_render_module(sandbox)
+    config_dir = sandbox.home / ".config" / "opencode"
+    config_dir.mkdir(parents=True, exist_ok=True)
+    json_path = config_dir / "opencode.json"
+    jsonc_path = config_dir / "opencode.jsonc"
+    json_path.write_text("{}\n", encoding="utf-8")
+    jsonc_path.write_text("{\n  // current runtime config\n}\n", encoding="utf-8")
+
+    assert mod._opencode_config_path() == jsonc_path
+
+
+def test_write_opencode_updates_jsonc_without_erasing_unrelated_comments(sandbox):
+    mod = load_render_module(sandbox)
+    oc_path = sandbox.home / ".config" / "opencode" / "opencode.jsonc"
+    oc_path.parent.mkdir(parents=True, exist_ok=True)
+    oc_path.write_text(
+        '{\n'
+        '  // Host-local model choice, braces in comments are harmless: }.\n'
+        '  "model": "fake-provider/fake-model",\n'
+        '}\n',
+        encoding="utf-8",
+    )
+
+    assert mod.write_opencode() == 0
+
+    updated = oc_path.read_text(encoding="utf-8")
+    assert "// Host-local model choice, braces in comments are harmless: }." in updated
+    assert '"model": "fake-provider/fake-model"' in updated
+    assert '"mcp": {' in updated
+    assert "fake-stdio-tool" in updated
 
 
 def test_windows_opencode_config_keeps_existing_appdata_only_install(sandbox, monkeypatch):

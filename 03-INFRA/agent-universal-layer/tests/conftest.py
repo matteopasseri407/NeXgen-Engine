@@ -87,6 +87,10 @@ class Sandbox:
         e["HOME"] = str(self.home)
         e["USERPROFILE"] = str(self.home)
         e["KNOWLEDGE_VAULT_PATH"] = str(self.vault)
+        # A maintainer shell may point at a separate consumer-engine clone.
+        # Tests must never inherit that real host path into their sandbox.
+        e.pop("AGENT_ENGINE_ROOT", None)
+        e.pop("AGENT_VAULT_DATA", None)
         if os.name == "nt":
             e["APPDATA"] = str(self.home / "AppData" / "Roaming")
             e["LOCALAPPDATA"] = str(self.home / "AppData" / "Local")
@@ -98,6 +102,10 @@ class Sandbox:
         # Full guard/apply subprocess tests must never mutate the host that is
         # running pytest, especially a maintainer's physical Windows machine.
         e["NEXGEN_DISABLE_HOST_MUTATIONS"] = "1"
+        # Manual apply now performs a strict readiness classification. Keep
+        # sandbox smoke tests deterministic and prevent a real host CLI from
+        # being invoked through an inherited PATH.
+        e["AGENT_READY_TIMEOUT_SECONDS"] = "2"
         e["PATH"] = f"{self.bin_stubs}{os.pathsep}{e.get('PATH', '')}"
         for key in (
             "TELEGRAM_BOT_TOKEN",
@@ -153,6 +161,7 @@ def _copy_engine_scripts(sandbox: Sandbox) -> None:
         "agent-sync.sh", "agent-sync.ps1", "agent_sync.py", "agent-skill.py", "skills-sync.py", "config_schema.py",
         "check_required_rules.py",
         "agent-doctor.sh", "agent-doctor.ps1",
+        "agent-chrome.sh", "agent-chrome.ps1",
         "council.sh", "council.ps1", "vault-push.sh", "vault-push.ps1", "vault-groom.sh", "vault-groom.ps1",
         "vault_groom_audit.py", "agent-now.sh", "agent-now.ps1", "agent-open-folder.sh", "agent-open-folder.ps1",
         "firecrawl-local.sh", "firecrawl-local.ps1", "firecrawl-search-health.py",
@@ -202,6 +211,8 @@ def sandbox(tmp_path, monkeypatch) -> Sandbox:
         monkeypatch.setenv("LOCALAPPDATA", str(home / "AppData" / "Local"))
     monkeypatch.setenv("KNOWLEDGE_VAULT_PATH", str(sb.vault))
     monkeypatch.setenv("NEXGEN_DISABLE_HOST_MUTATIONS", "1")
+    monkeypatch.delenv("AGENT_ENGINE_ROOT", raising=False)
+    monkeypatch.delenv("AGENT_VAULT_DATA", raising=False)
     return sb
 
 

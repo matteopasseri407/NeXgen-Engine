@@ -41,6 +41,23 @@ def test_windows_doctor_surfaces_path_limit_and_legacy_skill_migration():
     assert "legacy eager skill view(s) await explicit quarantine" in source
 
 
+def test_windows_doctor_supports_current_opencode_jsonc_and_user_install_path():
+    source = DOCTOR.read_text(encoding="utf-8")
+
+    assert "opencode.jsonc" in source
+    assert "Test-NexgenJsonc" in source
+    assert "Get-NexgenJsoncInstructions" in source
+    assert '".opencode\\bin\\opencode.exe"' in source
+
+
+def test_windows_doctor_honors_live_consumer_sandbox_gate():
+    source = DOCTOR.read_text(encoding="utf-8")
+
+    assert "NEXGEN_SKIP_LIVE_CONSUMER_PROBES" in source
+    assert "Antigravity behavioral probe skipped by the sandbox safety gate" in source
+    assert "OpenCode consumer test skipped by the sandbox safety gate" in source
+
+
 def test_windows_sync_launcher_uses_only_a_runtime_with_pyyaml():
     source = SYNC_LAUNCHER.read_text(encoding="utf-8")
 
