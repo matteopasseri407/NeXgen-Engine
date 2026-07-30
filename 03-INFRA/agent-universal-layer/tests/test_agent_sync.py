@@ -61,9 +61,12 @@ def test_eager_root_regression_keeps_library_bytes_and_repairs_codex_view(sandbo
     assert claude.is_symlink() and claude.resolve() == sb.skill_library.resolve()
     assert (claude / "fake-skill-a" / "SKILL.md").read_bytes() == original_bytes
 
+    # La root Codex resta una directory reale, mai un link all'intera
+    # libreria: la fan-out la popola skill per skill, cosi' `targets` continua
+    # a decidere cosa Codex cataloga.
     codex = sb.home / ".codex" / "skills"
     assert codex.is_dir() and not codex.is_symlink()
-    assert not (codex / "fake-skill-a").exists()
+    assert (codex / "fake-skill-a" / "SKILL.md").read_bytes() == original_bytes
 
 
 def test_old_claude_link_to_active_view_is_normalized_before_skill_sync(sandbox):
@@ -118,7 +121,7 @@ def test_self_healing_symlink_restored_after_deletion(sandbox):
 
 # ---- test 11: manual exposure ----------------------------------------------
 
-def test_manual_skills_are_available_to_claude_but_not_eager_runtime_views(sandbox):
+def test_manual_skills_are_available_to_native_targets_but_not_eager_shared_root(sandbox):
     sb = sandbox
     _make_real_runtime_dirs(sb)
 
@@ -128,10 +131,13 @@ def test_manual_skills_are_available_to_claude_but_not_eager_runtime_views(sandb
     # Claude riceve la vista native-lazy dichiarata dal manifest.
     assert (sb.home / ".claude" / "skills" / "fake-skill-excluded").exists()
     assert (sb.home / ".claude" / "skills" / "fake-skill-a").exists()
-    # Codex non riceve corpi manuali nella vista eager.
-    assert not (sb.home / ".codex" / "skills" / "fake-skill-excluded").exists()
-    assert not (sb.home / ".codex" / "skills" / "fake-skill-a").exists()
-    # Le due restano nel library cache, non nella discovery root.
+    # Anche Codex: e' l'unica root che legge (verificato 2026-07-30 sul
+    # binario 0.146.0), e come Claude differisce il corpo finche' la skill
+    # non viene scelta, quindi la vista resta lazy.
+    assert (sb.home / ".codex" / "skills" / "fake-skill-excluded").exists()
+    assert (sb.home / ".codex" / "skills" / "fake-skill-a").exists()
+    # Cio' che resta escluso e' la vetrina EAGER condivisa: le manual stanno
+    # nel library cache, non in ~/.agents/skills.
     assert (sb.skill_library / "fake-skill-excluded" / "SKILL.md").is_file()
     assert not (sb.active_skills / "fake-skill-excluded").exists()
 
@@ -147,7 +153,16 @@ def test_apply_is_idempotent(sandbox):
     proc0 = run_agent_sync(sb, "apply")
     assert proc0.returncode == 0, proc0.stdout + proc0.stderr
 
-    exclude = frozenset({"agent-sync.log"})
+    # The run log is expected to grow. So is the Firecrawl search-health cache:
+    # it carries a TTL, so a run happening after it expires re-probes and
+    # writes the file -- sometimes creating its parent directories only on the
+    # second run. That made this test fail on nothing but wall-clock timing.
+    # All three entries are excluded because exclude_names skips an entry
+    # without pruning the walk, so naming the file alone would still leave the
+    # two fresh directories showing up as additions. A cache is not managed
+    # state and is not part of the idempotency contract: what must not drift is
+    # the config and the views agent-sync generates.
+    exclude = frozenset({"agent-sync.log", "firecrawl-search-health.json", "nexgen", ".cache"})
     snap_before = sb.tree_snapshot(exclude_names=exclude)
 
     proc1 = run_agent_sync(sb, "apply")

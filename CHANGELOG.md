@@ -10,7 +10,40 @@ of any engine release.
 
 ## [Unreleased]
 
+## [0.94.0] - 2026-07-30
+
 ### Added
+
+- Codex now receives a native per-skill view under `$CODEX_HOME/skills`. It was
+  previously assumed to discover skills through the shared `~/.agents/skills`
+  root, which it has never read: verified against the shipped binary, its only
+  skill root is its own. A declared `targets: [codex]` therefore produced zero
+  discoverable skills. Bodies stay lazy — Codex loads name and description and
+  opens `SKILL.md` only when the skill is used. The shipped example manifest
+  now declares the target on its starter entries, so a fresh install gets the
+  commands it advertises.
+- New `claude_permissions` provisioning phase: it carries a permission posture
+  and its guardrail hooks from your private vault into Claude's settings, on
+  every machine. The engine ships only the mechanism. Without a
+  `permissions/manifest.yaml` in your own vault the phase writes nothing at
+  all, so no installation inherits anyone else's posture. A `PreToolUse` hook
+  rather than a deny list, because under `bypassPermissions` the permission
+  engine is skipped entirely and deny rules may never be consulted, while the
+  hook still runs. Any anomaly refuses the whole phase: a machine is never left
+  with prompts disabled and its guardrail unregistered.
+
+### Fixed
+
+- `agent-sync` no longer hides that it shadows your distribution's Chrome
+  launcher. The hidden `google-chrome.desktop` it writes is load-bearing — a
+  plain Chrome started from the dock wins the first-process race with no CDP
+  port and the shared-browser lane stops working — but it was undeclared, and
+  the function's own docstring described the opposite. It is now documented in
+  `docs/what-gets-written.md` and removed by `docs/uninstall.md`, which also
+  documents the two distinct backup naming conventions in use.
+- `test_apply_is_idempotent` no longer fails on wall-clock timing alone. The
+  Firecrawl search-health cache carries a TTL, so a run after it expires wrote
+  the file and sometimes created its parents only on the second pass.
 
 - MULTI installs now report three explicit states. `BASE` means the available
   components were installed, `PARTIAL` means strict checks still fail, and

@@ -23,10 +23,11 @@
 #   origin: github  -> third-party, NOT vendored: inventoried here only. Every
 #                      entry needs the FULL commit SHA, so the exact bytes always
 #                      reinstall from the same upstream revision (restorable).
-#   targets:  the runtimes that surface the skill natively: claude and
-#             antigravity get per-skill views; codex reads core skills from
-#             the shared ~/.agents/skills root; opencode reads the shared
-#             roots too (its target only verifies discoverability). Skills
+#   targets:  the runtimes that surface the skill natively. claude, codex and
+#             antigravity each get a per-skill view: none of the three reads
+#             the shared ~/.agents/skills root, so a skill without its target
+#             here is discoverable nowhere in that CLI. Only opencode reads
+#             the shared roots (its target just verifies discoverability). Skills
 #             kept out of every eager view are still reachable through the
 #             universal `agent-skill find|show` command.
 #   exposure: manual (default — invisible to eager runtimes, loaded lazily) or
@@ -46,6 +47,8 @@ skills:
   #                              ("$name" mention) and OpenCode ("/name")
   #                              read natively.
   #   targets: [claude]       -> native lazy view for Claude Code ("/name").
+  #   targets: [codex]        -> native view in $CODEX_HOME/skills ("$name"
+  #                              in Codex); it is Codex's ONLY skill root.
   #   targets: [antigravity]  -> native view in ~/.gemini/antigravity-cli/skills
   #                              ("/name" in the Antigravity TUI).
   #   targets: [opencode]     -> writes nothing (OpenCode reads the shared
@@ -58,27 +61,27 @@ skills:
   # work identically on all four.
   vault-doctor:
     origin: vault
-    targets: [claude, antigravity, opencode]
+    targets: [claude, codex, antigravity, opencode]
     exposure: core
 
   vault-close:
     origin: vault
-    targets: [claude, antigravity, opencode]
+    targets: [claude, codex, antigravity, opencode]
     exposure: core
 
   vault-save:
     origin: vault
-    targets: [claude, antigravity, opencode]
+    targets: [claude, codex, antigravity, opencode]
     exposure: core
 
   vault-council:
     origin: vault
-    targets: [claude, antigravity, opencode]
+    targets: [claude, codex, antigravity, opencode]
     exposure: core
 
   vault-groom:
     origin: vault
-    targets: [claude, antigravity, opencode]
+    targets: [claude, codex, antigravity, opencode]
     exposure: core
 
   # Updates the ENGINE, not the Vault -- hence the nexgen- prefix. The
@@ -86,17 +89,17 @@ skills:
   # manifest keeps resolving; it is a stub that defers to this one.
   nexgen-update:
     origin: vault
-    targets: [claude, antigravity, opencode]
+    targets: [claude, codex, antigravity, opencode]
     exposure: core
 
   vault-update:
     origin: vault
-    targets: [claude, antigravity, opencode]
+    targets: [claude, codex, antigravity, opencode]
     exposure: core
 
   vault-map:
     origin: vault
-    targets: [claude, antigravity, opencode]
+    targets: [claude, codex, antigravity, opencode]
     exposure: core
 
   # --- example: a third-party skill, inventoried by pinned commit ------------
