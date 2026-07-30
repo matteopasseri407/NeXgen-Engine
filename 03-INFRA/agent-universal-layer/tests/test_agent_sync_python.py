@@ -37,6 +37,11 @@ def _patch_apply_phases(monkeypatch, mod, called: list[str]) -> None:
     ):
         monkeypatch.setattr(mod, name, lambda _env, phase=name: called.append(phase))
     monkeypatch.setattr(mod, "creds_health", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        mod,
+        "_doctor_summary",
+        lambda _env, timeout, strict=False: "agent-doctor [test] PASS=1 WARN=0 FAIL=0",
+    )
 
 
 def _git(repo: Path, *args: str, capture_output: bool = True) -> subprocess.CompletedProcess:
@@ -564,8 +569,35 @@ def test_windows_opencode_path_prefers_current_xdg_location(sandbox, monkeypatch
     monkeypatch.setenv("APPDATA", str(sandbox.home / "AppData" / "Roaming"))
 
     assert mod._opencode_config_path(sandbox.home) == (
-        sandbox.home / ".config" / "opencode" / "opencode.json"
+        sandbox.home / ".config" / "opencode" / "opencode.jsonc"
     )
+
+
+def test_opencode_path_prefers_jsonc_created_by_current_runtime(sandbox, monkeypatch):
+    mod = load_agent_sync_module(sandbox)
+    config_dir = sandbox.home / ".config" / "opencode"
+    config_dir.mkdir(parents=True, exist_ok=True)
+    json_path = config_dir / "opencode.json"
+    jsonc_path = config_dir / "opencode.jsonc"
+    json_path.write_text("{}\n", encoding="utf-8")
+    jsonc_path.write_text("{\n  // current runtime config\n}\n", encoding="utf-8")
+
+    assert mod._opencode_config_path(sandbox.home) == jsonc_path
+
+
+def test_windows_opencode_path_prefers_xdg_jsonc_over_appdata_json(sandbox, monkeypatch):
+    mod = load_agent_sync_module(sandbox)
+    monkeypatch.setattr(mod, "IS_WINDOWS", True)
+    appdata_root = sandbox.home / "AppData" / "Roaming"
+    monkeypatch.setenv("APPDATA", str(appdata_root))
+    appdata = appdata_root / "opencode" / "opencode.json"
+    appdata.parent.mkdir(parents=True, exist_ok=True)
+    appdata.write_text("{}\n", encoding="utf-8")
+    jsonc_path = sandbox.home / ".config" / "opencode" / "opencode.jsonc"
+    jsonc_path.parent.mkdir(parents=True, exist_ok=True)
+    jsonc_path.write_text("{\n  // current runtime config\n}\n", encoding="utf-8")
+
+    assert mod._opencode_config_path(sandbox.home) == jsonc_path
 
 
 def test_windows_opencode_path_keeps_appdata_only_compatibility(sandbox, monkeypatch):
@@ -580,6 +612,31 @@ def test_windows_opencode_path_keeps_appdata_only_compatibility(sandbox, monkeyp
     appdata.write_text("{}\n", encoding="utf-8")
 
     assert mod._opencode_config_path(sandbox.home) == appdata
+
+
+def test_instructions_updates_jsonc_without_erasing_unrelated_comments(sandbox, monkeypatch):
+    mod = load_agent_sync_module(sandbox)
+    monkeypatch.setenv("HOME", str(sandbox.home))
+    monkeypatch.setenv("KNOWLEDGE_VAULT_PATH", str(sandbox.vault))
+    oc_path = sandbox.home / ".config" / "opencode" / "opencode.jsonc"
+    oc_path.parent.mkdir(parents=True, exist_ok=True)
+    oc_path.write_text(
+        '{\n'
+        '  // This host-local choice must survive engine sync.\n'
+        '  "model": "fake-provider/fake-model",\n'
+        '}\n',
+        encoding="utf-8",
+    )
+    env = mod.Env()
+
+    assert mod.instructions(env) is True
+
+    updated = oc_path.read_text(encoding="utf-8")
+    assert "// This host-local choice must survive engine sync." in updated
+    assert '"model": "fake-provider/fake-model"' in updated
+    assert "agent-universal-layer/instructions/AGENTS.md" in updated
+    assert len(list(oc_path.parent.glob("opencode.jsonc.pre-instructions-*.bak"))) == 1
+
 
 def test_instructions_adds_opencode_pointer_to_existing_config(sandbox_with_live_configs, monkeypatch):
     sandbox = sandbox_with_live_configs
@@ -734,6 +791,53 @@ def test_windows_utils_installs_core_agent_command_wrappers(sandbox, monkeypatch
         assert str(sandbox.scripts_dir / f"{name}.ps1") in launcher_text
         assert "& $Target @args" in launcher_text
         assert f"{name}.ps1" in wrapper.read_text(encoding="utf-8")
+
+
+def test_utils_installs_shared_chrome_launcher_on_both_platforms(sandbox, monkeypatch):
+    mod = load_agent_sync_module(sandbox)
+    monkeypatch.setenv("HOME", str(sandbox.home))
+    monkeypatch.setenv("USERPROFILE", str(sandbox.home))
+    monkeypatch.setenv("KNOWLEDGE_VAULT_PATH", str(sandbox.vault))
+
+    monkeypatch.setattr(mod, "IS_WINDOWS", False)
+    posix_env = mod.Env()
+    assert mod.utils(posix_env) is True
+    posix_launcher = sandbox.home / ".local" / "bin" / "agent-chrome"
+    assert posix_launcher.is_symlink()
+    assert posix_launcher.resolve() == (sandbox.scripts_dir / "agent-chrome.sh").resolve()
+    desktop = sandbox.home / ".local" / "share" / "applications" / "agent-chrome.desktop"
+    assert desktop.is_file()
+    desktop_text = desktop.read_text(encoding="utf-8")
+    assert f"Exec={posix_launcher} %U" in desktop_text
+    assert "x-scheme-handler/https" in desktop_text
+    compatibility = sandbox.home / ".local" / "share" / "applications" / "google-chrome.desktop"
+    assert compatibility.is_file()
+    compatibility_text = compatibility.read_text(encoding="utf-8")
+    assert f"Exec={posix_launcher} %U" in compatibility_text
+    assert "NoDisplay=true" in compatibility_text
+
+    monkeypatch.setattr(mod, "IS_WINDOWS", True)
+    monkeypatch.setattr(mod.platform, "system", lambda: "Windows")
+    windows_env = mod.Env()
+    assert mod.utils(windows_env) is True
+    ps_launcher = sandbox.home / ".local" / "bin" / "agent-chrome.ps1"
+    cmd_launcher = sandbox.home / ".local" / "bin" / "agent-chrome.cmd"
+    assert str(sandbox.scripts_dir / "agent-chrome.ps1") in ps_launcher.read_text(encoding="utf-8")
+    assert "agent-chrome.ps1" in cmd_launcher.read_text(encoding="utf-8")
+
+
+def test_agent_chrome_launchers_pin_visible_local_cdp_profile():
+    bash = (REAL_SCRIPTS / "agent-chrome.sh").read_text(encoding="utf-8")
+    powershell = (REAL_SCRIPTS / "agent-chrome.ps1").read_text(encoding="utf-8")
+
+    for source in (bash, powershell):
+        assert "remote-debugging-address=127.0.0.1" in source
+        assert "remote-debugging-port=9222" in source
+        assert "chrome-agent-debug" in source
+        assert "headless" not in source.lower()
+    assert '[ ! -L "$standard_profile" ]' in bash
+    assert "--class=Google-chrome" in bash
+    assert "FileAttributes]::ReparsePoint" in powershell
 
 
 @pytest.mark.skipif(os.name != "nt", reason="Windows launcher execution requires PowerShell.")
@@ -1340,6 +1444,7 @@ def test_systemd_service_content_emits_quoted_environment_lines(sandbox, monkeyp
     vault_data_with_space = sandbox.home / "vault data"
     vault_data_with_space.mkdir()
     env = SimpleNamespace(
+        home=sandbox.home,
         vault=sandbox.vault,
         engine_root=engine_root_with_space,
         vault_data=vault_data_with_space,
@@ -1356,6 +1461,90 @@ def test_systemd_service_content_emits_quoted_environment_lines(sandbox, monkeyp
     # No unquoted Environment= line should slip through for these two keys.
     assert "Environment=AGENT_ENGINE_ROOT=" not in content
     assert "Environment=AGENT_VAULT_DATA=" not in content
+
+
+def test_systemd_service_path_includes_opencode_and_local_bin(sandbox):
+    mod = load_agent_sync_module(sandbox)
+    env = SimpleNamespace(
+        home=sandbox.home,
+        vault=sandbox.vault,
+        engine_root=sandbox.vault / "03-INFRA",
+        vault_data=sandbox.vault,
+    )
+
+    content = mod._systemd_service_content(env)
+
+    expected_prefix = f"{sandbox.home / '.local' / 'bin'}:{sandbox.home / '.opencode' / 'bin'}:"
+    assert mod._systemd_env_line("PATH", expected_prefix + os.environ.get("PATH", os.defpath)) in content
+
+
+def test_apply_reports_partial_but_succeeds_without_ready_gate(sandbox, monkeypatch, capsys):
+    mod = load_agent_sync_module(sandbox)
+    monkeypatch.setenv("HOME", str(sandbox.home))
+    monkeypatch.setenv("KNOWLEDGE_VAULT_PATH", str(sandbox.vault))
+    monkeypatch.setenv("KNOWLEDGE_VAULT_REMOTE", "local")
+    called: list[str] = []
+    _patch_apply_phases(monkeypatch, mod, called)
+    monkeypatch.setattr(
+        mod,
+        "_doctor_summary",
+        lambda _env, timeout, strict=False: "agent-doctor [test] PASS=8 WARN=1 FAIL=2",
+    )
+
+    assert mod.main(["apply"]) == 0
+
+    assert "PARTIAL" in capsys.readouterr().out
+    log = (sandbox.home / ".local" / "state" / "agent-sync.log").read_text(encoding="utf-8")
+    assert "completed mode=apply status=partial" in log
+
+
+def test_apply_require_ready_fails_when_strict_doctor_has_failures(sandbox, monkeypatch, capsys):
+    mod = load_agent_sync_module(sandbox)
+    monkeypatch.setenv("HOME", str(sandbox.home))
+    monkeypatch.setenv("KNOWLEDGE_VAULT_PATH", str(sandbox.vault))
+    monkeypatch.setenv("KNOWLEDGE_VAULT_REMOTE", "local")
+    called: list[str] = []
+    _patch_apply_phases(monkeypatch, mod, called)
+    monkeypatch.setattr(
+        mod,
+        "_doctor_summary",
+        lambda _env, timeout, strict=False: "agent-doctor [test] PASS=8 WARN=1 FAIL=1",
+    )
+
+    assert mod.main(["apply", "--require-ready"]) == 1
+
+    assert "PARTIAL" in capsys.readouterr().out
+
+
+def test_apply_require_ready_succeeds_only_on_strict_zero_fail(sandbox, monkeypatch, capsys):
+    mod = load_agent_sync_module(sandbox)
+    monkeypatch.setenv("HOME", str(sandbox.home))
+    monkeypatch.setenv("KNOWLEDGE_VAULT_PATH", str(sandbox.vault))
+    monkeypatch.setenv("KNOWLEDGE_VAULT_REMOTE", "local")
+    called: list[str] = []
+    _patch_apply_phases(monkeypatch, mod, called)
+
+    assert mod.main(["apply", "--require-ready"]) == 0
+
+    assert "READY" in capsys.readouterr().out
+    log = (sandbox.home / ".local" / "state" / "agent-sync.log").read_text(encoding="utf-8")
+    assert "completed mode=apply status=ready" in log
+
+
+def test_require_ready_is_rejected_outside_manual_apply(sandbox):
+    before = sandbox.tree_snapshot()
+
+    proc = subprocess.run(
+        [sys.executable, str(sandbox.scripts_dir / "agent_sync.py"), "guard", "--require-ready"],
+        env=sandbox.env(),
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+
+    assert proc.returncode == 2
+    assert "--require-ready is accepted only with manual apply" in proc.stderr
+    assert sandbox.tree_snapshot() == before
 
 
 # ── creds_health() resilience to a malformed alert conf (beta-readiness

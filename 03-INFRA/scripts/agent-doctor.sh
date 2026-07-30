@@ -22,7 +22,17 @@ ENGINE_UL="$ENGINE_ROOT/agent-universal-layer"
 UL="$VAULT_DATA/03-INFRA/agent-universal-layer"
 CANON="$UL/instructions/AGENTS.md"
 BRANCH="${KNOWLEDGE_VAULT_BRANCH:-main}"
-OCJSON="$HOME/.config/opencode/opencode.json"
+OCJSON=""
+for candidate in \
+  "$HOME/.config/opencode/opencode.jsonc" \
+  "$HOME/.config/opencode/opencode.json" \
+  "$HOME/.config/opencode/config.json"; do
+  if [ -f "$candidate" ]; then
+    OCJSON="$candidate"
+    break
+  fi
+done
+[ -n "$OCJSON" ] || OCJSON="$HOME/.config/opencode/opencode.jsonc"
 PASS=0; WARN=0; FAILN=0; FAILS=""
 
 REMOTE_CONFIG_ERROR=""
@@ -177,10 +187,12 @@ for pair in "Codex:$HOME/.codex/AGENTS.md" "Antigravity:$HOME/.gemini/config/AGE
   fi
 done
 if [ -f "$OCJSON" ]; then
-  oc_canon_count="$(python3 - "$OCJSON" <<'PY' 2>/dev/null
-import json, sys
-with open(sys.argv[1], encoding="utf-8") as handle:
-    entries = json.load(handle).get("instructions", [])
+  oc_canon_count="$(python3 - "$SELF_DIR" "$OCJSON" <<'PY' 2>/dev/null
+import sys
+sys.path.insert(0, sys.argv[1])
+from config_schema import parse_jsonc
+with open(sys.argv[2], encoding="utf-8") as handle:
+    entries = parse_jsonc(handle.read()).get("instructions", [])
 suffix = "/agent-universal-layer/instructions/agents.md"
 print(sum(isinstance(item, str) and item.replace("\\", "/").rstrip("/").lower().endswith(suffix) for item in entries))
 PY
@@ -188,7 +200,7 @@ PY
   case "$oc_canon_count" in
     1) ok "OpenCode instructions → one canonical AGENTS.md" ;;
     0) fail "OpenCode instructions do NOT point to AGENTS.md" ;;
-    ''|*[!0-9]*) fail "OpenCode instructions cannot be inspected because opencode.json is invalid" ;;
+    ''|*[!0-9]*) fail "OpenCode instructions cannot be inspected because $(basename "$OCJSON") is invalid" ;;
     *) warn "OpenCode loads the canonical AGENTS.md $oc_canon_count times; run agent-sync apply to deduplicate slash variants" ;;
   esac
 else
@@ -556,6 +568,8 @@ PY
   # by design, not a bug.
   if [ -z "$expected_ag" ]; then
     warn "no expected Antigravity MCP servers derived from the manifest -- skipping the Antigravity behavioral probe"
+  elif [ "${NEXGEN_SKIP_LIVE_CONSUMER_PROBES:-0}" = "1" ]; then
+    warn "Antigravity behavioral probe skipped by the sandbox safety gate"
   elif command -v agy >/dev/null 2>&1; then
     ag_probe_best_out=""
     ag_probe_best_missing="${expected_ag//$'\n'/, }"
@@ -647,13 +661,23 @@ PY
 
   if [ -z "$expected_oc" ]; then
     warn "no expected OpenCode MCP servers derived from the manifest -- skipping the OpenCode consumer test"
-  elif command -v opencode >/dev/null 2>&1; then
+  else
+    opencode_cmd="$(command -v opencode 2>/dev/null || true)"
+    if [ -z "$opencode_cmd" ] && [ -x "$HOME/.opencode/bin/opencode" ]; then
+      opencode_cmd="$HOME/.opencode/bin/opencode"
+    fi
+  fi
+  if [ -z "$expected_oc" ]; then
+    :
+  elif [ "${NEXGEN_SKIP_LIVE_CONSUMER_PROBES:-0}" = "1" ]; then
+    warn "OpenCode consumer test skipped by the sandbox safety gate"
+  elif [ -n "${opencode_cmd:-}" ]; then
     oc_tmp="$(mktemp)"
     if command -v setsid >/dev/null 2>&1; then
-      setsid timeout -k 5s 25s opencode mcp list >"$oc_tmp" 2>&1
+      setsid timeout -k 5s 25s "$opencode_cmd" mcp list >"$oc_tmp" 2>&1
       oc_rc=$?
     else
-      timeout -k 5s 25s opencode mcp list >"$oc_tmp" 2>&1
+      timeout -k 5s 25s "$opencode_cmd" mcp list >"$oc_tmp" 2>&1
       oc_rc=$?
     fi
     oc_out="$(cat "$oc_tmp" 2>/dev/null)"
@@ -671,7 +695,7 @@ PY
       fail "OpenCode mcp list does not confirm: $oc_missing"
     fi
   else
-    warn "opencode not in PATH, skipping OpenCode consumer test"
+    warn "opencode not found in PATH or ~/.opencode/bin, skipping OpenCode consumer test"
   fi
 
   OCR_MCP="$ENGINE_ROOT/deploy/ocr/mcp/vault_ocr_mcp.py"
@@ -802,12 +826,22 @@ if command -v codex >/dev/null 2>&1; then
 fi
 
 sec "OpenCode config"
-if command -v node >/dev/null 2>&1 && [ -f "$OCJSON" ]; then
-  if node -e "JSON.parse(require('fs').readFileSync('$OCJSON','utf8'))" 2>/dev/null; then
-    ok "opencode.json: valid JSON"
+if command -v python3 >/dev/null 2>&1 && [ -f "$OCJSON" ]; then
+  if python3 - "$SELF_DIR" "$OCJSON" <<'PY' >/dev/null 2>&1
+import sys
+sys.path.insert(0, sys.argv[1])
+from config_schema import parse_jsonc
+with open(sys.argv[2], encoding="utf-8") as handle:
+    parse_jsonc(handle.read())
+PY
+  then
+    case "$OCJSON" in
+      *.jsonc) ok "$(basename "$OCJSON"): valid JSONC" ;;
+      *) ok "$(basename "$OCJSON"): valid JSON" ;;
+    esac
     ok "OpenCode model/provider profile is host-local; engine sync owns only instructions and MCP"
   else
-    fail "opencode.json: invalid JSON"
+    fail "$(basename "$OCJSON"): invalid JSON/JSONC"
   fi
 fi
 [ -f "$UL/opencode/opencode.json" ] && warn "legacy shared OpenCode model/provider profile is still present at $UL/opencode/opencode.json; engine sync owns only instructions and MCP, host-local models must stay in the runtime config"

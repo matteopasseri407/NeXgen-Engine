@@ -10,7 +10,7 @@ One single place decides whether something is broken, one single place tells the
 
 - **A brain, `agent-doctor`.** Full diagnosis: git vs the configured authoritative remote and publication mirrors, MCP reachability, MCP drift via `render.py`, canonical instructions (plus a read-only, warning-only bootstrap size budget, load-on-demand pointer-integrity check, and a required-invariant-rules drift guard that WARNs if the canonical AGENTS.md has lost a non-negotiable rule), tokens in env, skills, resolved local worker, Claude hooks, strict-check of real consumers. On Windows it also fails on a user, combined, or current-process `PATH` beyond `cmd.exe`'s 8,191-character inherited-variable limit and reports legacy skill views awaiting explicit quarantine. Each connector probe follows the protocol it is checking, so the Streamable HTTP Vault Library probe sends its MCP `Accept` header instead of treating a protocol rejection as an outage. It is the only judge and the only command meant to be run by hand: `agent-doctor` (or `--summary` for the one-line `PASS/WARN/FAIL`).
 - **A megaphone, the `_send_healthcheck` step inside `agent_sync.py`.** The ONLY thing authorized to notify. It queries the doctor and alerts only on FAIL, with debounce (immediately if the problem is new, once a day if it persists), plain-language message with `[technical: ...]` appended. Transport order: messaging bot, webhook, desktop `notify-send`, log. It used to be a standalone `agent-healthcheck.sh` (+ a mirrored PS function); both were unified into one cross-platform step of `agent_sync.py` and the standalone script was removed.
-- **A clock, `agent-sync.timer`** (Linux every 30 min, a scheduled task on Windows). The only recurring scheduler. It runs `agent-sync guard` = acquire the host lock + prove authoritative freshness + apply derived config + healthcheck, all inside the one `agent_sync.py` process. The Windows task points to a generated wrapper in per-user runtime state, which preserves the resolved engine and data roots without dirtying the public checkout. Windows bare commands use real per-user PowerShell shims that invoke the engine script by absolute path, preserving the target's `$PSScriptRoot`. It never publishes.
+- **A clock, `agent-sync.timer`** (Linux every 30 min, a scheduled task on Windows). The only recurring scheduler. It runs `agent-sync guard` = acquire the host lock + prove authoritative freshness + apply derived config + healthcheck, all inside the one `agent_sync.py` process. The Linux unit carries the standard per-user command roots, including `~/.opencode/bin`, rather than relying on an interactive shell profile. The Windows task points to a generated wrapper in per-user runtime state, which preserves the resolved engine and data roots without dirtying the public checkout. Windows bare commands use real per-user PowerShell shims that invoke the engine script by absolute path, preserving the target's `$PSScriptRoot`. It never publishes.
 
 ## Consolidation pass (single megaphone)
 
@@ -25,6 +25,11 @@ One single place decides whether something is broken, one single place tells the
 3. only for a fresh or local-only state, render MCP config, propagate the rendered Antigravity source, then reconcile skills. MCP is additive except for exact, user-authorized `retired_servers` tombstones
 4. aggregate required phase failures into the exit code
 5. `_send_healthcheck` queries `agent-doctor` and notifies ONLY on FAIL
+
+A manual `agent-sync apply` performs one additional strict readiness classification after the base transaction.
+It reports `PARTIAL` without discarding the installed base when credentials or consumers are not ready.
+It reports `READY` only for strict `FAIL=0`.
+The optional `--require-ready` flag makes `PARTIAL` fail for automation.
 
 ## Inventory
 

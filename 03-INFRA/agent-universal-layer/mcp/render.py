@@ -50,7 +50,13 @@ HERE = Path(__file__).parent
 SCRIPTS_DIR = HERE.parent.parent / "scripts"
 if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
-from config_schema import ConfigValidationError, load_mcp_manifest_document  # noqa: E402
+from config_schema import (  # noqa: E402
+    ConfigValidationError,
+    jsonc_top_level_value_span,
+    load_mcp_manifest_document,
+    parse_jsonc,
+    set_jsonc_top_level_value,
+)
 
 # The manifest is DATA (the user's real server list, concrete values), never
 # something the engine repo should serve — read it from vault_data, not from
@@ -74,14 +80,22 @@ LOCAL_PATH_PLACEHOLDERS = {
 
 def _opencode_config_path() -> Path:
     """Return OpenCode's native config path for the current platform."""
+    xdg_dir = HOME / ".config" / "opencode"
+    xdg_candidates = [xdg_dir / name for name in ("opencode.jsonc", "opencode.json", "config.json")]
+    for candidate in xdg_candidates:
+        if candidate.is_file():
+            return candidate
     if not IS_WINDOWS:
-        return HOME / ".config" / "opencode" / "opencode.json"
-    appdata_path = Path(os.environ.get("APPDATA") or (HOME / "AppData" / "Roaming")) / "opencode" / "opencode.json"
-    xdg_path = HOME / ".config" / "opencode" / "opencode.json"
+        return xdg_candidates[0]
+    appdata_dir = Path(os.environ.get("APPDATA") or (HOME / "AppData" / "Roaming")) / "opencode"
+    appdata_candidates = [appdata_dir / name for name in ("opencode.jsonc", "opencode.json", "config.json")]
     # OpenCode 1.18 reports this XDG-style directory as its native Windows
     # config root. Keep APPDATA as a compatibility fallback only when it is
     # the sole existing config.
-    return xdg_path if xdg_path.exists() or not appdata_path.exists() else appdata_path
+    for candidate in appdata_candidates:
+        if candidate.is_file():
+            return candidate
+    return xdg_candidates[0]
 
 # Antigravity reaches HTTP MCP servers through this local bridge.  It is
 # intentionally exact: an implicit npx update would run new code as the user.
@@ -661,44 +675,66 @@ def write_json_section(path, key, new_section, live_section, serialize, indent_e
         print(f">>> {path.name} not present: CLI never launched yet (no default config file), skipping."); return 3
     raw = path.read_text("utf-8")
     try:
-        live = json.loads(raw)
-    except json.JSONDecodeError as e:
-        print(f">>> STOP: {path.name} is not valid JSON ({e}). Fix it or restore a .bak-* backup before rerunning."); return 2
+        live = parse_jsonc(raw) if path.suffix == ".jsonc" else json.loads(raw)
+    except (json.JSONDecodeError, ValueError) as e:
+        print(f">>> STOP: {path.name} is not valid JSON/JSONC ({e}). Fix it or restore a .bak-* backup before rerunning."); return 2
     if not isinstance(live, dict):
         print(f">>> STOP: {path.name} JSON root is not an object; refusing to patch it."); return 2
-    # indent_exact: if given, only match the key at that exact indentation
-    # (for .claude.json, where "mcpServers" also appears nested in projects).
-    ind_pat = re.escape(indent_exact) if indent_exact is not None else r'[ \t]*'
-    m = re.search(rf'(?m)^({ind_pat}){re.escape(json.dumps(key))}[ \t]*:[ \t]*', raw)
-    if not m or raw[m.end():m.end() + 1] != "{":
-        if key in live:
-            print(f">>> STOP: can't find the {json.dumps(key)} section at the expected indent."); return 2
-        # Fresh install: the key is entirely absent, not just at an
-        # unexpected indent. Insert an empty placeholder and let the normal
-        # surgical-replace logic below fill it in.
+    if path.suffix == ".jsonc":
         try:
-            raw = _insert_new_top_level_key(raw, key, indent_exact)
-            live = json.loads(raw)
-        except (ValueError, json.JSONDecodeError) as e:
-            print(f">>> STOP: cannot insert the {json.dumps(key)} placeholder ({e})."); return 2
+            span = jsonc_top_level_value_span(raw, key)
+            if span is None:
+                raw = set_jsonc_top_level_value(raw, key, {})
+                live = parse_jsonc(raw)
+                span = jsonc_top_level_value_span(raw, key)
+                print(f">>> {json.dumps(key)} section was missing entirely (fresh install): inserted an empty placeholder.")
+            if span is None:
+                raise ValueError("inserted property is still absent")
+            value_start, value_end = span
+        except ValueError as e:
+            print(f">>> STOP: cannot locate or insert the {json.dumps(key)} section ({e}).")
+            return 2
+        line_start = raw.rfind("\n", 0, value_start) + 1
+        indent_match = re.match(r"[ \t]*", raw[line_start:value_start])
+        indent = indent_match.group(0) if indent_match else ""
+        inner = serialize(new_section)
+        lines = inner.split("\n")
+        block_val = lines[0] + "\n" + "\n".join(indent + line for line in lines[1:])
+        new_text = raw[:value_start] + block_val + raw[value_end:]
+    else:
+        # indent_exact: if given, only match the key at that exact indentation
+        # (for .claude.json, where "mcpServers" also appears nested in projects).
+        ind_pat = re.escape(indent_exact) if indent_exact is not None else r'[ \t]*'
         m = re.search(rf'(?m)^({ind_pat}){re.escape(json.dumps(key))}[ \t]*:[ \t]*', raw)
         if not m or raw[m.end():m.end() + 1] != "{":
-            print(f">>> STOP: inserted the {json.dumps(key)} placeholder but can't find it again (unexpected file shape)."); return 2
-        print(f">>> {json.dumps(key)} section was missing entirely (fresh install): inserted an empty placeholder.")
-    indent = m.group(1)
-    end = _value_span(raw, m.end())
-    inner = serialize(new_section)
-    lines = inner.split("\n")
-    block_val = lines[0] + "\n" + "\n".join(indent + l for l in lines[1:])
-    block = f'{indent}{json.dumps(key)}: ' + block_val
-    new_text = raw[:m.start()] + block + raw[end:]
+            if key in live:
+                print(f">>> STOP: can't find the {json.dumps(key)} section at the expected indent."); return 2
+            # Fresh install: the key is entirely absent, not just at an
+            # unexpected indent. Insert an empty placeholder and let the normal
+            # surgical-replace logic below fill it in.
+            try:
+                raw = _insert_new_top_level_key(raw, key, indent_exact)
+                live = json.loads(raw)
+            except (ValueError, json.JSONDecodeError) as e:
+                print(f">>> STOP: cannot insert the {json.dumps(key)} placeholder ({e})."); return 2
+            m = re.search(rf'(?m)^({ind_pat}){re.escape(json.dumps(key))}[ \t]*:[ \t]*', raw)
+            if not m or raw[m.end():m.end() + 1] != "{":
+                print(f">>> STOP: inserted the {json.dumps(key)} placeholder but can't find it again (unexpected file shape)."); return 2
+            print(f">>> {json.dumps(key)} section was missing entirely (fresh install): inserted an empty placeholder.")
+        indent = m.group(1)
+        end = _value_span(raw, m.end())
+        inner = serialize(new_section)
+        lines = inner.split("\n")
+        block_val = lines[0] + "\n" + "\n".join(indent + line for line in lines[1:])
+        block = f'{indent}{json.dumps(key)}: ' + block_val
+        new_text = raw[:m.start()] + block + raw[end:]
 
-    if new_text[:m.start()] != raw[:m.start()] or not new_text.endswith(raw[end:]):
-        print(">>> STOP: the replacement touches text outside the section."); return 2
+        if new_text[:m.start()] != raw[:m.start()] or not new_text.endswith(raw[end:]):
+            print(">>> STOP: the replacement touches text outside the section."); return 2
     try:
-        new_parsed = json.loads(new_text)
-    except json.JSONDecodeError as e:
-        print(f">>> STOP: result is not valid JSON ({e})."); return 2
+        new_parsed = parse_jsonc(new_text) if path.suffix == ".jsonc" else json.loads(new_text)
+    except (json.JSONDecodeError, ValueError) as e:
+        print(f">>> STOP: result is not valid JSON/JSONC ({e})."); return 2
     for k in live:
         if k != key and new_parsed.get(k) != live[k]:
             print(f">>> STOP: the non-MCP section '{k}' would end up modified."); return 2
@@ -720,18 +756,20 @@ def write_json_section(path, key, new_section, live_section, serialize, indent_e
     bak = _secure_backup(path, raw, "utf-8")
     _prune_backups(path)
     _atomic_write_text(path, new_text, "utf-8")
-    json.loads(path.read_text("utf-8"))
-    print(f"\n>>> WRITTEN and validated (JSON ok). Backup: {bak}")
+    written = path.read_text("utf-8")
+    parse_jsonc(written) if path.suffix == ".jsonc" else json.loads(written)
+    print(f"\n>>> WRITTEN and validated ({'JSONC' if path.suffix == '.jsonc' else 'JSON'} ok). Backup: {bak}")
     return 0
 
 def write_opencode():
     path = _opencode_config_path()
     if not path.exists():
-        print(">>> opencode.json not present: OpenCode never launched yet (no default config file), skipping."); return 3
+        print(f">>> {path.name} not present: OpenCode never launched yet (no default config file), skipping."); return 3
     try:
-        live = json.loads(path.read_text("utf-8"))
-    except json.JSONDecodeError as e:
-        print(f">>> STOP: {path.name} is not valid JSON ({e}). Fix it or restore a .bak-* backup before rerunning."); return 2
+        raw = path.read_text("utf-8")
+        live = parse_jsonc(raw) if path.suffix == ".jsonc" else json.loads(raw)
+    except (json.JSONDecodeError, ValueError) as e:
+        print(f">>> STOP: {path.name} is not valid JSON/JSONC ({e}). Fix it or restore a .bak-* backup before rerunning."); return 2
     if not isinstance(live, dict):
         print(f">>> STOP: {path.name} JSON root is not an object; refusing to patch it."); return 2
     man = _load_manifest_or_stop()

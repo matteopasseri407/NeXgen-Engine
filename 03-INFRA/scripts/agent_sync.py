@@ -13,7 +13,8 @@ B1 test suite see no difference.
 Modes:
   pull     Pull the KnowledgeVault from the remote and run healthcheck. Does not rewrite CLI runtime files.
   guard    Recurring safe propagation: pull, regenerate CLI runtime files, run healthcheck. Does not push.
-  apply    Same as guard, explicit manual name for provisioning.
+  apply    Manual provisioning. Installs the available base and classifies
+           strict readiness as READY or PARTIAL.
   publish  Push already-committed local vault changes to the authoritative remote, then configured mirrors.
   preflight  Validate every configuration input used by apply. Does not regenerate runtime files.
   doctor   Run healthcheck/alerts only.
@@ -55,6 +56,8 @@ from config_schema import (  # noqa: E402
     ConfigValidationError,
     load_council_config,
     load_mcp_manifest,
+    parse_jsonc,
+    set_jsonc_top_level_value,
     validate_claude_settings,
 )
 
@@ -79,20 +82,31 @@ def _host_mutations_disabled(env: "Env", operation: str) -> bool:
 
 def _opencode_config_path(home: Path) -> Path:
     """Return the config path used by the installed OpenCode generation."""
+    xdg_dir = home / ".config" / "opencode"
+    xdg_candidates = [xdg_dir / name for name in ("opencode.jsonc", "opencode.json", "config.json")]
+    for candidate in xdg_candidates:
+        if candidate.is_file():
+            return candidate
     if not IS_WINDOWS:
-        return home / ".config" / "opencode" / "opencode.json"
-    appdata_path = Path(os.environ.get("APPDATA") or (home / "AppData" / "Roaming")) / "opencode" / "opencode.json"
-    xdg_path = home / ".config" / "opencode" / "opencode.json"
+        return xdg_candidates[0]
+    appdata_dir = Path(os.environ.get("APPDATA") or (home / "AppData" / "Roaming")) / "opencode"
+    appdata_candidates = [appdata_dir / name for name in ("opencode.jsonc", "opencode.json", "config.json")]
     # Current native OpenCode reports ~/.config/opencode via `opencode debug
     # paths` on Windows too. APPDATA remains a compatibility fallback only
     # for an existing older install; preferring it when both files existed
     # made NeXgen patch a config the CLI no longer read.
-    return xdg_path if xdg_path.exists() or not appdata_path.exists() else appdata_path
+    for candidate in appdata_candidates:
+        if candidate.is_file():
+            return candidate
+    return xdg_candidates[0]
 
 HELP_TEXT = """agent_sync modes:
   pull     Pull the KnowledgeVault from the remote and run healthcheck. Does not rewrite CLI runtime files.
   guard    Recurring safe propagation: pull, regenerate CLI runtime files, run healthcheck. Does not push.
-  apply    Same as guard, explicit manual name for provisioning.
+  apply    Manual provisioning: pull, apply, then classify strict readiness.
+           A successful base install may finish PARTIAL while credentials or
+           consumers are still missing. Add --require-ready to require a
+           strict doctor result with FAIL=0.
   publish  Push already-committed local vault changes to the authoritative remote, then configured mirrors.
   preflight  Validate every configuration input used by apply. Does not regenerate runtime files.
   doctor   Run healthcheck/alerts only.
@@ -913,7 +927,7 @@ def instructions(env: Env) -> bool:
 
 def _sync_opencode_instructions(env: Env, canon: Path) -> None:
     # OpenCode has no separate pointer/symlink mechanism like Claude/Gemini/
-    # Codex above: the canonical bootstrap path is an entry in opencode.json's
+    # Codex above: the canonical bootstrap path is an entry in OpenCode's
     # own top-level "instructions" array (confirmed against a real working
     # config, not guessed). Was previously never written by this provisioner
     # at all -- a fresh install left OpenCode with no bootstrap pointer, and
@@ -921,15 +935,16 @@ def _sync_opencode_instructions(env: Env, canon: Path) -> None:
     # permanently with no code path that could ever fix it.
     oc_path = _opencode_config_path(env.home)
     if not oc_path.is_file():
-        env.log("instructions: opencode.json not present (OpenCode never launched yet) -- skipping")
+        env.log(f"instructions: {oc_path.name} not present (OpenCode never launched yet) -- skipping")
         return
+    raw = oc_path.read_text(encoding="utf-8")
     try:
-        config = json.loads(oc_path.read_text(encoding="utf-8"))
-    except json.JSONDecodeError:
-        env.log("instructions: opencode.json not valid JSON; skipping instructions merge")
+        config = parse_jsonc(raw) if oc_path.suffix == ".jsonc" else json.loads(raw)
+    except (json.JSONDecodeError, ValueError):
+        env.log(f"instructions: {oc_path.name} not valid JSON/JSONC; skipping instructions merge")
         return
     if not isinstance(config, dict):
-        env.log("instructions: opencode.json root is not an object; skipping instructions merge")
+        env.log(f"instructions: {oc_path.name} root is not an object; skipping instructions merge")
         return
     try:
         # JSON paths stay slash-stable on every host.  Windows Path.__str__
@@ -941,7 +956,7 @@ def _sync_opencode_instructions(env: Env, canon: Path) -> None:
         canon_entry = canon.as_posix()
     entries = config.setdefault("instructions", [])
     if not isinstance(entries, list):
-        env.log("instructions: opencode.json 'instructions' is not a list; skipping instructions merge")
+        env.log(f"instructions: {oc_path.name} 'instructions' is not a list; skipping instructions merge")
         return
 
     def instruction_identity(value: object) -> str | None:
@@ -973,11 +988,15 @@ def _sync_opencode_instructions(env: Env, canon: Path) -> None:
         reconciled.append(canon_entry)
     if reconciled == entries:
         return
-    config["instructions"] = reconciled
     stamp = time.strftime("%Y%m%d-%H%M%S")
-    shutil.copy2(oc_path, oc_path.with_name(f"opencode.json.pre-instructions-{stamp}.bak"))
-    _atomic_write_text(oc_path, json.dumps(config, indent=2) + "\n")
-    env.log(f"instructions: reconciled one canonical AGENTS.md entry in opencode.json ({oc_path})")
+    shutil.copy2(oc_path, oc_path.with_name(f"{oc_path.name}.pre-instructions-{stamp}.bak"))
+    if oc_path.suffix == ".jsonc":
+        updated = set_jsonc_top_level_value(raw, "instructions", reconciled)
+    else:
+        config["instructions"] = reconciled
+        updated = json.dumps(config, indent=2) + "\n"
+    _atomic_write_text(oc_path, updated)
+    env.log(f"instructions: reconciled one canonical AGENTS.md entry in {oc_path.name} ({oc_path})")
 
 
 # ── 2.5 antigravity_mcp ──────────────────────────────────────────────────
@@ -1031,6 +1050,7 @@ def antigravity_mcp(env: Env) -> bool:
 LINKED_COMMANDS: dict[str, dict[str, object]] = {
     "agent-sync":      {"source": "engine", "posix": True,  "windows": True},
     "agent-doctor":    {"source": "engine", "posix": True,  "windows": True},
+    "agent-chrome":    {"source": "engine", "posix": True,  "windows": True},
     "agent-now":       {"source": "engine", "posix": True,  "windows": True},
     "agent-open-folder": {"source": "engine", "posix": True, "windows": True},
     "council":         {"source": "engine", "posix": True,  "windows": True},
@@ -1074,6 +1094,51 @@ def _link_util(src: Path, dst: Path, env: Env, label: str, *, optional: bool = F
     return True
 
 
+def _install_linux_browser_desktop_entry(env: Env) -> None:
+    """Expose the canonical visible Chrome launcher to Linux URL handlers.
+
+    The provisioner creates the per-user desktop entry but deliberately does
+    not take over the user's default browser. The doctor reports whether the
+    host has completed that reversible, host-specific choice.
+    """
+    if platform.system() != "Linux":
+        return
+    applications = env.home / ".local" / "share" / "applications"
+    applications.mkdir(parents=True, exist_ok=True)
+    launcher = env.local_bin / "agent-chrome"
+    desktop = (
+        "[Desktop Entry]\n"
+        "Version=1.0\n"
+        "Type=Application\n"
+        "Name=Google Chrome (NeXgen shared)\n"
+        "Comment=Visible shared Chrome with local CDP enabled\n"
+        f"Exec={launcher} %U\n"
+        "Icon=google-chrome\n"
+        "Terminal=false\n"
+        "StartupNotify=true\n"
+        "Categories=Network;WebBrowser;\n"
+        "MimeType=text/html;x-scheme-handler/http;x-scheme-handler/https;\n"
+        "StartupWMClass=Google-chrome\n"
+    )
+    target = applications / "agent-chrome.desktop"
+    if _write_if_different(target, desktop):
+        env.log(f"utils: installed Linux desktop launcher {target}")
+    target.chmod(0o644)
+    # Shadow the distribution-owned launcher ID in the user's XDG layer.
+    # Existing dock entries and direct `google-chrome.desktop` activations
+    # then reach the same wrapper instead of winning the first-process race
+    # without CDP. Keep the compatibility entry hidden so the application
+    # menu shows one Chrome, not two.
+    compatibility = desktop.replace(
+        "Name=Google Chrome (NeXgen shared)\n",
+        "Name=Google Chrome\nNoDisplay=true\n",
+    )
+    compatibility_target = applications / "google-chrome.desktop"
+    if _write_if_different(compatibility_target, compatibility):
+        env.log(f"utils: installed Linux Chrome compatibility redirect {compatibility_target}")
+    compatibility_target.chmod(0o644)
+
+
 def utils(env: Env) -> bool:
     env.local_bin.mkdir(parents=True, exist_ok=True)
     skill_source = env.engine_scripts / "agent-skill.py"
@@ -1105,6 +1170,7 @@ def utils(env: Env) -> bool:
         else:
             env.log(f"utils: missing source {skill_source}")
             healthy = False
+        _install_linux_browser_desktop_entry(env)
         return healthy
     healthy = True
     for name, cfg in LINKED_COMMANDS.items():
@@ -1329,6 +1395,12 @@ def _systemd_service_content(env: "Env") -> str:
     # AGENT_ENGINE_ROOT-less run used to silently revert engine_root above.
     if env.vault_data.resolve() != env.vault.resolve():
         lines.append(_systemd_env_line("AGENT_VAULT_DATA", str(env.vault_data)))
+    scheduler_path = os.pathsep.join([
+        str(env.home / ".local" / "bin"),
+        str(env.home / ".opencode" / "bin"),
+        os.environ.get("PATH", os.defpath),
+    ])
+    lines.append(_systemd_env_line("PATH", scheduler_path))
     lines.append("ExecStart=%h/.local/bin/agent-sync guard")
     return "\n".join(lines) + "\n"
 
@@ -1792,19 +1864,37 @@ def _ensure_alert_creds(env: Env) -> None:
     env.log("alert-creds: Telegram provisioning from n8n completed")
 
 
-def _doctor_summary(env: Env, timeout: int) -> str | None:
+def _doctor_summary(env: Env, timeout: int, *, strict: bool = False) -> str | None:
     if not IS_WINDOWS:
         doctor = env.engine_scripts / "agent-doctor.sh"
         if not doctor.is_file():
             return None
         cmd = ["bash", str(doctor), "--summary"]
+        if strict:
+            cmd.append("--strict")
     else:
         doctor = env.engine_scripts / "agent-doctor.ps1"
         if not doctor.is_file():
             return None
         cmd = ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(doctor), "-Summary"]
+        if strict:
+            cmd.append("-Strict")
+    doctor_env = os.environ.copy()
+    if doctor_env.get("NEXGEN_DISABLE_HOST_MUTATIONS") == "1":
+        # Provisioning tests redirect HOME but can still inherit real CLI
+        # binaries through PATH. Antigravity and OpenCode both create runtime
+        # state even for their nominally read-only consumer probes, so a
+        # sandboxed apply must keep the structural strict checks while
+        # explicitly suppressing those live processes.
+        doctor_env["NEXGEN_SKIP_LIVE_CONSUMER_PROBES"] = "1"
     try:
-        r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+        r = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            env=doctor_env,
+        )
     except subprocess.TimeoutExpired:
         env.log(f"healthcheck: skipped (agent-doctor timeout after {timeout}s)")
         return None
@@ -1914,16 +2004,17 @@ def creds_health(env: Env, *, do_creds: bool, do_health: bool) -> None:
             env.log(f"healthcheck: non-fatal error ({exc})")
 
 
-def _parse_cli(argv: list[str]) -> tuple[str, bool, bool, list[str]]:
+def _parse_cli(argv: list[str]) -> tuple[str, bool, bool, bool, list[str]]:
     skip_mcp = False
     allow_offline = False
+    require_ready = False
     cleaned: list[str] = []
     i = 0
     while i < len(argv):
         arg = argv[i]
         if arg in ("-Mode", "--mode"):
             if i + 1 >= len(argv):
-                return arg, skip_mcp, allow_offline, []
+                return arg, skip_mcp, allow_offline, require_ready, []
             cleaned.append(argv[i + 1])
             i += 2
             continue
@@ -1940,9 +2031,13 @@ def _parse_cli(argv: list[str]) -> tuple[str, bool, bool, list[str]]:
             allow_offline = True
             i += 1
             continue
+        if arg == "--require-ready":
+            require_ready = True
+            i += 1
+            continue
         cleaned.append(arg)
         i += 1
-    return (cleaned[0] if cleaned else "help"), skip_mcp, allow_offline, cleaned[1:]
+    return (cleaned[0] if cleaned else "help"), skip_mcp, allow_offline, require_ready, cleaned[1:]
 
 
 # ── vault-push (cross-platform port of vault-push.sh's exact behavior) ─────
@@ -2308,7 +2403,7 @@ def main(argv: list[str] | None = None) -> int:
     if argv[0] == "inventory":
         return _inventory_cli(argv[1:])
 
-    mode, skip_mcp, allow_offline, extras = _parse_cli(argv)
+    mode, skip_mcp, allow_offline, require_ready, extras = _parse_cli(argv)
     if mode not in MODES:
         print(f"agent_sync: unknown mode: {mode}\nUse: agent_sync --help", file=sys.stderr)
         return 2
@@ -2317,6 +2412,9 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     if allow_offline and mode != "apply":
         print("agent_sync: --allow-offline is accepted only with manual apply", file=sys.stderr)
+        return 2
+    if require_ready and mode != "apply":
+        print("agent_sync: --require-ready is accepted only with manual apply", file=sys.stderr)
         return 2
     try:
         env = Env()
@@ -2404,6 +2502,21 @@ def main(argv: list[str] | None = None) -> int:
         if errors:
             env.log(f"agent-sync: completed mode={mode} status=failed errors={','.join(errors)}")
             return 1
+        if mode == "apply":
+            try:
+                readiness_timeout = int(os.environ.get("AGENT_READY_TIMEOUT_SECONDS") or "90")
+            except ValueError:
+                readiness_timeout = 90
+            readiness = _doctor_summary(env, timeout=readiness_timeout, strict=True)
+            match = re.search(r"FAIL=(\d+)", readiness or "")
+            ready = bool(match and int(match.group(1)) == 0)
+            state = "READY" if ready else "PARTIAL"
+            detail = readiness or "strict doctor did not return a readable summary"
+            print(f"agent-sync: BASE installed; readiness={state}. {detail}")
+            env.log(f"agent-sync: completed mode=apply status={state.lower()} summary={detail}")
+            if require_ready and not ready:
+                return 1
+            return 0
         env.log(f"agent-sync: completed mode={mode} status=ok")
         return 0
 

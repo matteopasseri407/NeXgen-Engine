@@ -20,13 +20,25 @@ $EngineInfra = Split-Path -Parent $PSScriptRoot
 $RenderPy = Join-Path $EngineInfra "agent-universal-layer\mcp\render.py"
 $Canon   = Join-Path $Layer "instructions\AGENTS.md"
 $AppDataRoot = if ($env:APPDATA) { $env:APPDATA } else { Join-Path $HomeDir "AppData\Roaming" }
-$AppDataOcJson = Join-Path $AppDataRoot "opencode\opencode.json"
-$XdgOcJson  = Join-Path $HomeDir ".config\opencode\opencode.json"
-$OcJson = if ((Test-Path -LiteralPath $XdgOcJson) -or -not (Test-Path -LiteralPath $AppDataOcJson)) {
-  $XdgOcJson
-} else {
-  $AppDataOcJson
+$XdgOcDir = Join-Path $HomeDir ".config\opencode"
+$AppDataOcDir = Join-Path $AppDataRoot "opencode"
+$XdgOcJson = Join-Path $XdgOcDir "opencode.json"
+$AppDataOcJson = Join-Path $AppDataOcDir "opencode.json"
+$OcJson = $null
+foreach ($candidate in @(
+  (Join-Path $XdgOcDir "opencode.jsonc"),
+  $XdgOcJson,
+  (Join-Path $XdgOcDir "config.json"),
+  (Join-Path $AppDataOcDir "opencode.jsonc"),
+  $AppDataOcJson,
+  (Join-Path $AppDataOcDir "config.json")
+)) {
+  if (Test-Path -LiteralPath $candidate) {
+    $OcJson = $candidate
+    break
+  }
 }
+if (-not $OcJson) { $OcJson = Join-Path $XdgOcDir "opencode.jsonc" }
 
 function Resolve-NexgenPython {
   $candidates = @()
@@ -48,6 +60,21 @@ function Resolve-NexgenPython {
 $NexgenPython = Resolve-NexgenPython
 $NexgenPythonCommand = if ($NexgenPython) { $NexgenPython.Command } else { $null }
 $NexgenPythonPrefix = if ($NexgenPython) { @($NexgenPython.Prefix) } else { @() }
+
+function Test-NexgenJsonc([string]$Path) {
+  if (-not $NexgenPython) { return $false }
+  $code = 'import sys; sys.path.insert(0, sys.argv[1]); from config_schema import parse_jsonc; parse_jsonc(open(sys.argv[2], encoding="utf-8").read())'
+  & $NexgenPythonCommand @NexgenPythonPrefix -c $code $PSScriptRoot $Path 2>$null
+  return ($LASTEXITCODE -eq 0)
+}
+
+function Get-NexgenJsoncInstructions([string]$Path) {
+  if (-not $NexgenPython) { throw "Python with PyYAML is unavailable" }
+  $code = 'import json,sys; sys.path.insert(0, sys.argv[1]); from config_schema import parse_jsonc; print(json.dumps(parse_jsonc(open(sys.argv[2], encoding="utf-8").read()).get("instructions", [])))'
+  $value = (& $NexgenPythonCommand @NexgenPythonPrefix -c $code $PSScriptRoot $Path 2>$null) -join "`n"
+  if ($LASTEXITCODE -ne 0) { throw "invalid JSON/JSONC" }
+  return $value
+}
 
 $RemoteConfigError = $false
 if ($env:KNOWLEDGE_VAULT_REMOTE) {
@@ -174,14 +201,14 @@ foreach ($pair in @(@("Codex", (Join-Path $HomeDir ".codex\AGENTS.md")), @("Anti
 }
 if (Test-Path -LiteralPath $OcJson) {
   try {
-    $ocInstructions = @((Get-Content -Raw -LiteralPath $OcJson | ConvertFrom-Json).instructions)
+    $ocInstructions = @((Get-NexgenJsoncInstructions $OcJson | ConvertFrom-Json))
     $ocCanonEntries = @($ocInstructions | Where-Object {
       $_ -is [string] -and $_.Replace('\','/').TrimEnd('/').EndsWith('/agent-universal-layer/instructions/AGENTS.md', [System.StringComparison]::OrdinalIgnoreCase)
     })
     if ($ocCanonEntries.Count -eq 1) { ok "OpenCode instructions -> one canonical AGENTS.md" }
     elseif ($ocCanonEntries.Count -gt 1) { warn "OpenCode loads the canonical AGENTS.md $($ocCanonEntries.Count) times; run agent-sync apply to deduplicate slash variants" }
     else { bad "OpenCode instructions do NOT point to AGENTS.md" }
-  } catch { bad "OpenCode instructions cannot be inspected because opencode.json is invalid" }
+  } catch { bad "OpenCode instructions cannot be inspected because $(Split-Path -Leaf $OcJson) is invalid" }
 } else { bad "missing $OcJson" }
 
 sec "Canonical bootstrap hygiene (size budget, pointer integrity)"
@@ -543,6 +570,8 @@ if ($Strict) {
   # like opencode, so the only real check is asking the model itself.
   if ($expectedAg.Count -eq 0) {
     warn "no expected Antigravity MCP servers derived from the manifest -- skipping the Antigravity behavioral probe"
+  } elseif ($env:NEXGEN_SKIP_LIVE_CONSUMER_PROBES -eq "1") {
+    warn "Antigravity behavioral probe skipped by the sandbox safety gate"
   } elseif (Get-Command agy -ErrorAction SilentlyContinue) {
     $agPrompt = "Elenca SOLO i nomi dei server MCP disponibili in questa sessione, una riga per server, NESSUN dettaglio sui singoli tool e NESSUNA invocazione."
     $agJob = Start-Job -ScriptBlock { param($p) & agy --print $p --model "Gemini 3.5 Flash (Medium)" --sandbox 2>&1 } -ArgumentList $agPrompt
@@ -566,8 +595,27 @@ if ($Strict) {
   }
   if ($expectedOc.Count -eq 0) {
     warn "no expected OpenCode MCP servers derived from the manifest -- skipping the OpenCode consumer test"
-  } elseif (Get-Command opencode -ErrorAction SilentlyContinue) {
-    $ocJob = Start-Job -ScriptBlock { & opencode mcp list 2>&1 }
+  } else {
+    $OpenCodeCommand = (Get-Command opencode -ErrorAction SilentlyContinue).Source
+    if (-not $OpenCodeCommand) {
+      foreach ($candidate in @(
+        (Join-Path $HomeDir ".opencode\bin\opencode.exe"),
+        (Join-Path $HomeDir ".opencode\bin\opencode.cmd"),
+        (Join-Path $HomeDir ".opencode\bin\opencode")
+      )) {
+        if (Test-Path -LiteralPath $candidate) {
+          $OpenCodeCommand = $candidate
+          break
+        }
+      }
+    }
+  }
+  if ($expectedOc.Count -eq 0) {
+    # The explicit skip message was emitted above.
+  } elseif ($env:NEXGEN_SKIP_LIVE_CONSUMER_PROBES -eq "1") {
+    warn "OpenCode consumer test skipped by the sandbox safety gate"
+  } elseif ($OpenCodeCommand) {
+    $ocJob = Start-Job -ArgumentList $OpenCodeCommand -ScriptBlock { param($Command) & $Command mcp list 2>&1 }
     if (Wait-Job $ocJob -Timeout 25) {
       $ocOut = (Receive-Job $ocJob | Out-String)
       Remove-Job $ocJob -Force
@@ -579,7 +627,7 @@ if ($Strict) {
       bad "OpenCode mcp list timed out during strict check"
     }
   } else {
-    warn "opencode not in PATH, skipping OpenCode consumer test"
+    warn "opencode not found in PATH or ~\.opencode\bin, skipping OpenCode consumer test"
   }
   warn "OCR JSONL/Content-Length framing check not ported to Windows yet (see agentic-layer-concept-map.md backlog)"
 }
@@ -682,14 +730,15 @@ if (Get-Command codex -ErrorAction SilentlyContinue) {
 }
 
 sec "OpenCode config"
-if ((Test-Path -LiteralPath $XdgOcJson) -and (Test-Path -LiteralPath $AppDataOcJson)) {
+if ((Test-Path -LiteralPath $XdgOcDir) -and (Test-Path -LiteralPath $AppDataOcDir)) {
   warn "two OpenCode configs exist; current XDG config wins and the older APPDATA copy should be reviewed or archived: $AppDataOcJson"
 }
 if (Test-Path -LiteralPath $OcJson) {
-  try { Get-Content -Raw -LiteralPath $OcJson | ConvertFrom-Json | Out-Null
-    ok "opencode.json: valid JSON"
+  if (Test-NexgenJsonc $OcJson) {
+    if ([IO.Path]::GetExtension($OcJson) -eq ".jsonc") { ok "$(Split-Path -Leaf $OcJson): valid JSONC" }
+    else { ok "$(Split-Path -Leaf $OcJson): valid JSON" }
     ok "OpenCode model/provider profile is host-local; engine sync owns only instructions and MCP"
-  } catch { bad "opencode.json: invalid JSON" }
+  } else { bad "$(Split-Path -Leaf $OcJson): invalid JSON/JSONC" }
 }
 $LegacySharedOcProfile = Join-Path $Layer "opencode\opencode.json"
 if (Test-Path -LiteralPath $LegacySharedOcProfile) {

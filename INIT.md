@@ -111,7 +111,7 @@ Usa il comando appropriato al profilo:
 File di destinazione per ogni CLI (corrispondono a quelli che il sync MULTI scriverebbe):
 - **Claude Code**: bootstrap in `~/CLAUDE.md` con un puntatore a questo `AGENTS.md`; server MCP nel campo `mcpServers` di `~/.claude.json`; può ricevere una vista native-lazy in `~/.claude/skills/`.
 - **Codex**: bootstrap in `~/.codex/AGENTS.md`; server MCP nel file di configurazione di Codex; riceve solo eventuali skill `exposure: core` in `~/.codex/skills/`.
-- **OpenCode**: bootstrap nel campo `instructions` di `opencode.json`; server MCP nella sezione MCP dello stesso file; legge le skill manuali con `agent-skill find|show`.
+- **OpenCode**: bootstrap nel campo `instructions` della configurazione attiva, che può essere `opencode.jsonc`, `opencode.json` o `config.json`; server MCP nella sezione MCP dello stesso file; legge le skill manuali con `agent-skill find|show`.
 - **Antigravity**: bootstrap in `~/.gemini/config/AGENTS.md`; server MCP in `~/.gemini/antigravity/mcp_config.json`; legge le skill manuali con `agent-skill find|show`.
 
 Per ogni server MCP nel manifest, l'agente risolve il comando concreto nel dialetto della CLI scelta (Claude, Codex, OpenCode e Antigravity usano formati diversi, vedi `03-INFRA/agent-universal-layer/mcp/render.py` come riferimento per i dialetti).
@@ -126,7 +126,12 @@ Genera poi `~/.agents/skills/INDEX.md`. Monta nei runtime eager soltanto le skil
 
 In tutti i casi, solo la CLI scelta riceve la config. Niente script ricorrenti.
 
-**Se MULTI**: prima di lanciare il provisioning, verifica che l'utente abbia già aperto ALMENO UNA VOLTA ogni CLI scelta (Claude Code, Codex, OpenCode, Antigravity), così il suo file di configurazione di default esiste. Il generatore MCP patcha chirurgicamente un file esistente, non lo crea da zero: su una CLI mai aperta il passo si limita a segnalarlo e passare oltre, senza errori vistosi, e sembrerebbe tutto a posto anche se quella CLI resta senza server MCP montati. Crea inoltre `03-INFRA/agent-universal-layer/sync/remotes.yaml` dal relativo `.example`: usa come `authoritative_remote` il remote Git che rappresenta la verità condivisa, normalmente `origin`, e inserisci in `mirrors` solo copie di pubblicazione secondarie. Non scrivere URL o credenziali nel file, solo i nomi dei remote già configurati. Poi istruisci l'utente a lanciare nel terminale il comando di provisioning:
+**Se MULTI**: prima di lanciare il provisioning, verifica se l'utente ha già aperto almeno una volta ogni CLI scelta (Claude Code, Codex, OpenCode, Antigravity), così il suo file di configurazione di default esiste.
+Non bloccare l'intera installazione se una CLI o una credenziale non è ancora pronta.
+Il generatore deve installare ciò che può e lasciare il resto visibilmente incompleto.
+Crea inoltre `03-INFRA/agent-universal-layer/sync/remotes.yaml` dal relativo `.example`: usa come `authoritative_remote` il remote Git che rappresenta la verità condivisa, normalmente `origin`, e inserisci in `mirrors` solo copie di pubblicazione secondarie.
+Non scrivere URL o credenziali nel file, solo i nomi dei remote già configurati.
+Poi istruisci l'utente a lanciare nel terminale il comando di provisioning:
 - Su Linux/Mac: `bash 03-INFRA/scripts/agent-sync.sh apply`
 - Su Windows: `.\03-INFRA\scripts\agent-sync.ps1 apply`
 
@@ -135,7 +140,14 @@ Su Windows, il primo `apply` aggiunge `~/.local/bin` al PATH utente: apri un NUO
 Questo script reconcile la configurazione dei CLI con le fonti canoniche del vault, installa i server MCP e propaga le skill su tutti i runtime.
 Il contratto completo di pull, lock, exit code e pubblicazione separata è in `docs/sync-contract.md`.
 
-Attendi la conferma dell'utente che il comando sia andato a buon fine. Se ci sono errori, suggerisci di lanciare `agent-doctor` (in MULTI) per la diagnostica. In MINIMAL la diagnostica è visiva: verifica che la CLI scelta carichi AGENTS.md, monti i server MCP, e veda le skill.
+Leggi e riporta lo stato finale stampato dal comando.
+`BASE` significa che i componenti installabili sono stati posati.
+`PARTIAL` significa che l'installazione di base è riuscita, ma mancano ancora connessioni, credenziali o consumer verificati.
+`READY` è consentito soltanto quando `agent-doctor --strict` termina con `FAIL=0`.
+Non dire mai "fatto", "completato" o equivalenti quando lo stato è `PARTIAL`.
+Elenca invece ciò che funziona già, ciò che manca e il comando preciso da eseguire dopo.
+Se il requisito è una macchina pronta senza eccezioni, usa `agent-sync apply --require-ready`, che restituisce un errore anche per `PARTIAL`.
+In MINIMAL la diagnostica è visiva: verifica che la CLI scelta carichi AGENTS.md, monti i server MCP e veda le skill.
 
 Menziona il Consiglio AI come espansione opzionale, a prescindere dal profilo: se l'utente usa già più di una CLI agentica, `council.py` può convocarle come consulenti per brainstorming, sfidare un piano, o code review incrociata. È inerte senza configurazione — rimanda a `docs/council.md` solo se l'utente è interessato, non configurarlo di tua iniziativa.
 
@@ -267,7 +279,7 @@ Use the command appropriate to the profile:
 Destination file for each CLI (these match what the MULTI sync would write):
 - **Claude Code**: bootstrap in `~/CLAUDE.md` with a pointer to this `AGENTS.md`; MCP servers in the `mcpServers` field of `~/.claude.json`; it may receive a native-lazy view in `~/.claude/skills/`.
 - **Codex**: bootstrap in `~/.codex/AGENTS.md`; MCP servers in Codex's config file; it receives only explicit `exposure: core` skills in `~/.codex/skills/`.
-- **OpenCode**: bootstrap in the `instructions` field of `opencode.json`; MCP servers in the MCP section of the same file; it opens manual skills through `agent-skill find|show`.
+- **OpenCode**: bootstrap in the `instructions` field of the active config, which may be `opencode.jsonc`, `opencode.json`, or `config.json`; MCP servers in the MCP section of the same file; it opens manual skills through `agent-skill find|show`.
 - **Antigravity**: bootstrap in `~/.gemini/config/AGENTS.md`; MCP servers in `~/.gemini/antigravity/mcp_config.json`; it opens manual skills through `agent-skill find|show`.
 
 For each MCP server in the manifest, the agent resolves the concrete command in the chosen CLI's dialect (Claude, Codex, OpenCode, and Antigravity use different formats, see `03-INFRA/agent-universal-layer/mcp/render.py` as a reference for the dialects).
@@ -282,7 +294,12 @@ Generate `~/.agents/skills/INDEX.md`. Mount only `exposure: core` skills in eage
 
 In every case, only the chosen CLI receives the config. No recurring scripts.
 
-**If MULTI**: before running the provisioner, check that the user has already opened EACH chosen CLI (Claude Code, Codex, OpenCode, Antigravity) at least once, so its default config file exists. The MCP generator surgically patches an existing file, it does not create one from scratch: on a CLI that has never been launched, that step just flags it and moves on with no loud error, so it can look like everything is fine even though that CLI ends up with no MCP servers mounted. Also create `03-INFRA/agent-universal-layer/sync/remotes.yaml` from its `.example`: set `authoritative_remote` to the Git remote that represents shared truth, normally `origin`, and list only downstream publication copies under `mirrors`. Store remote names only, never URLs or credentials. Then instruct the user to run the provisioning command in their terminal:
+**If MULTI**: before running the provisioner, check whether the user has opened each chosen CLI at least once (Claude Code, Codex, OpenCode, Antigravity), so its default config file exists.
+Do not block the whole installation because one CLI or credential is not ready yet.
+Install what is available and leave the rest visibly incomplete.
+Also create `03-INFRA/agent-universal-layer/sync/remotes.yaml` from its `.example`: set `authoritative_remote` to the Git remote that represents shared truth, normally `origin`, and list only downstream publication copies under `mirrors`.
+Store remote names only, never URLs or credentials.
+Then instruct the user to run the provisioning command in their terminal:
 - On Linux/Mac: `bash 03-INFRA/scripts/agent-sync.sh apply`
 - On Windows: `.\03-INFRA\scripts\agent-sync.ps1 apply`
 
@@ -291,7 +308,14 @@ On Windows, the first `apply` adds `~/.local/bin` to the user PATH — open a NE
 This script reconciles the CLI configuration with the vault's canonical sources, installs MCP servers, and propagates skills to every runtime.
 The complete pull, lock, exit-code, and separate-publication contract is in `docs/sync-contract.md`.
 
-Wait for the user's confirmation that the command succeeded. If there are errors, suggest running `agent-doctor` (in MULTI) for diagnostics. In MINIMAL, diagnostics are visual: verify that the chosen CLI loads AGENTS.md, mounts the MCP servers, and sees the skills.
+Read and report the final state printed by the command.
+`BASE` means the installable components are in place.
+`PARTIAL` means the base installation succeeded, but some connections, credentials, or consumers are not verified yet.
+`READY` is allowed only when `agent-doctor --strict` finishes with `FAIL=0`.
+Never say "done", "complete", or an equivalent when the state is `PARTIAL`.
+State what works, what is missing, and the exact next command.
+When the machine must be ready without exceptions, use `agent-sync apply --require-ready`, which returns a failure for `PARTIAL`.
+In MINIMAL, diagnostics are visual: verify that the chosen CLI loads AGENTS.md, mounts the MCP servers, and sees the skills.
 
 Mention the AI Council as an optional expansion, regardless of profile: if the user runs more than one agentic CLI already, `council.py` can convene them as advisors for brainstorming, challenging a plan, or cross-vendor code review. It is inert with no setup — point to `docs/council.md` only if the user is interested, don't set it up unprompted.
 

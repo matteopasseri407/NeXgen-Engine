@@ -55,6 +55,7 @@ Back up the canonical profile directory before any rebuild. Do not copy from the
 ## Linux/Mac notes
 
 - The launcher (e.g. `agent-chrome '<URL>'`) is the only visible Chrome entry point, the dock entry, and the default handler for HTTP/HTTPS/HTML. Plain Chrome launchers are hidden and redirected to the same wrapper.
+- The MULTI provisioner installs the cross-platform `agent-chrome` command from `03-INFRA/scripts/agent-chrome.sh` or `.ps1`. On Linux it also installs the visible `agent-chrome.desktop` entry and a hidden per-user `google-chrome.desktop` compatibility redirect, so an old dock or system launcher cannot win the first-process race without CDP. The launcher refuses to invent a second daily profile when it finds an unmigrated standard Chrome profile. Selecting `agent-chrome.desktop` as the host's default browser remains an explicit, reversible per-host step and is verified by `agent-doctor`.
 - No login autostart by design (laptop battery). The user or any agent starts the same browser on demand.
 - Pass `--class=Google-chrome` (or the equivalent for the DE) to the Chrome binary to prevent the dock from splitting the pinned icon when a custom user-data-dir changes the WM_CLASS.
 
