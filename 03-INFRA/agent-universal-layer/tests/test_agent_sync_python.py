@@ -799,22 +799,27 @@ def test_utils_installs_shared_chrome_launcher_on_both_platforms(sandbox, monkey
     monkeypatch.setenv("USERPROFILE", str(sandbox.home))
     monkeypatch.setenv("KNOWLEDGE_VAULT_PATH", str(sandbox.vault))
 
-    monkeypatch.setattr(mod, "IS_WINDOWS", False)
-    posix_env = mod.Env()
-    assert mod.utils(posix_env) is True
-    posix_launcher = sandbox.home / ".local" / "bin" / "agent-chrome"
-    assert posix_launcher.is_symlink()
-    assert posix_launcher.resolve() == (sandbox.scripts_dir / "agent-chrome.sh").resolve()
-    desktop = sandbox.home / ".local" / "share" / "applications" / "agent-chrome.desktop"
-    assert desktop.is_file()
-    desktop_text = desktop.read_text(encoding="utf-8")
-    assert f"Exec={posix_launcher} %U" in desktop_text
-    assert "x-scheme-handler/https" in desktop_text
-    compatibility = sandbox.home / ".local" / "share" / "applications" / "google-chrome.desktop"
-    assert compatibility.is_file()
-    compatibility_text = compatibility.read_text(encoding="utf-8")
-    assert f"Exec={posix_launcher} %U" in compatibility_text
-    assert "NoDisplay=true" in compatibility_text
+    # A Windows runner cannot reliably create POSIX symlinks without an
+    # elevated developer-mode grant. Exercise the POSIX half only on a
+    # platform that implements its actual launcher primitive; Windows still
+    # exercises the native .ps1/.cmd half below.
+    if os.name != "nt":
+        monkeypatch.setattr(mod, "IS_WINDOWS", False)
+        posix_env = mod.Env()
+        assert mod.utils(posix_env) is True
+        posix_launcher = sandbox.home / ".local" / "bin" / "agent-chrome"
+        assert posix_launcher.is_symlink()
+        assert posix_launcher.resolve() == (sandbox.scripts_dir / "agent-chrome.sh").resolve()
+        desktop = sandbox.home / ".local" / "share" / "applications" / "agent-chrome.desktop"
+        assert desktop.is_file()
+        desktop_text = desktop.read_text(encoding="utf-8")
+        assert f"Exec={posix_launcher} %U" in desktop_text
+        assert "x-scheme-handler/https" in desktop_text
+        compatibility = sandbox.home / ".local" / "share" / "applications" / "google-chrome.desktop"
+        assert compatibility.is_file()
+        compatibility_text = compatibility.read_text(encoding="utf-8")
+        assert f"Exec={posix_launcher} %U" in compatibility_text
+        assert "NoDisplay=true" in compatibility_text
 
     monkeypatch.setattr(mod, "IS_WINDOWS", True)
     monkeypatch.setattr(mod.platform, "system", lambda: "Windows")
@@ -1474,7 +1479,9 @@ def test_systemd_service_path_includes_opencode_and_local_bin(sandbox):
 
     content = mod._systemd_service_content(env)
 
-    expected_prefix = f"{sandbox.home / '.local' / 'bin'}:{sandbox.home / '.opencode' / 'bin'}:"
+    expected_prefix = os.pathsep.join(
+        [str(sandbox.home / ".local" / "bin"), str(sandbox.home / ".opencode" / "bin"), ""]
+    )
     assert mod._systemd_env_line("PATH", expected_prefix + os.environ.get("PATH", os.defpath)) in content
 
 
