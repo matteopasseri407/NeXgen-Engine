@@ -153,7 +153,16 @@ def test_apply_is_idempotent(sandbox):
     proc0 = run_agent_sync(sb, "apply")
     assert proc0.returncode == 0, proc0.stdout + proc0.stderr
 
-    exclude = frozenset({"agent-sync.log"})
+    # The run log is expected to grow. So is the Firecrawl search-health cache:
+    # it carries a TTL, so a run happening after it expires re-probes and
+    # writes the file -- sometimes creating its parent directories only on the
+    # second run. That made this test fail on nothing but wall-clock timing.
+    # All three entries are excluded because exclude_names skips an entry
+    # without pruning the walk, so naming the file alone would still leave the
+    # two fresh directories showing up as additions. A cache is not managed
+    # state and is not part of the idempotency contract: what must not drift is
+    # the config and the views agent-sync generates.
+    exclude = frozenset({"agent-sync.log", "firecrawl-search-health.json", "nexgen", ".cache"})
     snap_before = sb.tree_snapshot(exclude_names=exclude)
 
     proc1 = run_agent_sync(sb, "apply")

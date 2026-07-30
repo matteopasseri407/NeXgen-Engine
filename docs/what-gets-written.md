@@ -37,6 +37,16 @@ These are patches to files that must already exist (each CLI creates its own def
 - `~/.local/state/agent-sync.log`: a plain-text run log.
 - `~/.local/state/agent-sync.lock`: the stable one-byte host-wide transaction lock.
 - `~/ANTIGRAVITY.md`: removed if present as a dead symlink (Antigravity doesn't read that path).
+- `~/.claude/settings.json`: Claude's own settings file, patched additively. `agent-sync` merges its `SessionStart`/`PreCompact` checkpoint hook here, and copies the hook body next to it as `~/.claude/claude-vault-checkpoint.mjs`. If — and only if — your private vault declares `agent-universal-layer/permissions/manifest.yaml`, the `claude_permissions` phase also writes `permissions.defaultMode`, any guardrail hook bodies it declares, and (for the `bypass` posture) `skipDangerousModePermissionPrompt`. With no such manifest, which is the default for every installation, that phase writes nothing at all.
+
+### Linux only: two desktop entries, one of which shadows your Chrome launcher
+
+On Linux, `agent-sync` writes both of these under `~/.local/share/applications`:
+
+- `agent-chrome.desktop`: a new launcher for the visible shared Chrome. Adding it does **not** make it your default browser; that stays your own choice.
+- `google-chrome.desktop`: a hidden entry that **shadows your distribution's Chrome launcher** in your user XDG layer. After this, existing dock icons and anything activating `google-chrome.desktop` start the wrapper instead of plain Chrome.
+
+The second one is deliberate: a plain Chrome started from the dock wins the first-process race with no CDP port open, and the shared-browser lane silently stops working. It is per-user, reversible, and removed by the uninstall steps; nothing outside your home directory is touched.
 
 ### Windows equivalent: scheduled task and hidden wrapper
 

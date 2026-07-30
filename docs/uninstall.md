@@ -18,12 +18,25 @@ If you're on Windows, remove the equivalent Task Scheduler entry you created whe
 
 ## 2. Restore per-CLI config from the backups, or edit by hand
 
-Before `agent-sync` overwrites a file it manages, it saves the previous version next to it as `<file>.pre-<reason>-<timestamp>.bak`. Look for those next to:
+Before `agent-sync` overwrites a file it manages, it saves the previous version next to it. Two naming conventions are in use, so look for both: `render.py` writes `<file>.bak-<timestamp>` for the four MCP configs, while `agent_sync.py` writes `<file>.pre-<reason>-<timestamp>.bak` for the files it rewrites itself. Look for those next to:
 
-- `~/.claude.json` (the `mcpServers` entries this project added)
-- `~/.codex/` config
-- `opencode.json` (the `instructions` field and its MCP section)
-- `~/.gemini/antigravity/mcp_config.json`
+- `~/.claude.json` (the `mcpServers` entries this project added) — `.bak-<timestamp>`
+- `~/.codex/` config — `.bak-<timestamp>`
+- `opencode.json` (the `instructions` field and its MCP section) — `.bak-<timestamp>`
+- `~/.gemini/antigravity/mcp_config.json` — `.bak-<timestamp>`
+- `~/.claude/settings.json` (checkpoint hook, and the permission posture if your vault declared one) — `.pre-hooks-<timestamp>.bak` / `.pre-permissions-<timestamp>.bak`
+
+Only the three most recent MCP backups are kept, so the one from before this project first ran may already have been pruned.
+
+### Linux: restore your own Chrome launcher
+
+`agent-sync` shadows your distribution's Chrome launcher with a hidden entry in your user XDG layer, so dock icons reach the shared-CDP wrapper. Removing both files gives your original launcher back on the next desktop refresh:
+
+```bash
+rm -f ~/.local/share/applications/agent-chrome.desktop \
+      ~/.local/share/applications/google-chrome.desktop
+update-desktop-database ~/.local/share/applications 2>/dev/null || true
+```
 
 If a `.bak` file exists from before this project touched the config, restore it. If not, remove only the MCP entries and the `instructions`/bootstrap pointer this project added; the table in `docs/what-gets-written.md` tells you exactly which field to look at per CLI.
 
