@@ -79,10 +79,11 @@ RUNTIME = {
     "claude": HOME / ".claude" / "skills",
     "codex": HOME / ".codex" / "skills",
     # Antigravity's global skill root: skills placed here surface as /name
-    # slash commands in the agy TUI. Unlike Codex and OpenCode (verified
-    # 2026-07-17 on the official docs + local installs) Antigravity does NOT
-    # read the shared ~/.agents/skills root, so it is the one runtime that
-    # still needs a native per-skill view.
+    # slash commands in the agy TUI. Antigravity does NOT read the shared
+    # ~/.agents/skills root, so it needs a native per-skill view. The same
+    # turned out to be true of Codex (re-verified 2026-07-30 against the
+    # shipped binary, correcting the 2026-07-17 note that grouped it with
+    # OpenCode): only OpenCode actually reads the shared roots.
     "antigravity": HOME / ".gemini" / "antigravity-cli" / "skills",
 }
 IS_WINDOWS = platform.system() == "Windows"
@@ -560,6 +561,10 @@ def migrate_legacy_views(apply: bool, skills: dict[str, dict]) -> None:
             expected = (
                 (scope == "shared" and exposure == "core")
                 or (scope == "claude" and "claude" in targets)
+                # Codex views became managed on 2026-07-30. Without this arm a
+                # --migrate-legacy run would treat every freshly created Codex
+                # view as stale and remove it, undoing the sync it just did.
+                or (scope == "codex" and "codex" in targets)
             )
             managed_link = resolves_to(entry, managed)
             managed_copy = (
@@ -822,13 +827,20 @@ def main() -> int:
         else:
             ensure_absent_link(ACTIVE / name, apply, f"active/{name}")
 
-        # 3) Claude may see all declared native-lazy views. Codex discovers
-        # core skills through the official shared root above; do not mirror
-        # them into the legacy ~/.codex/skills root or Codex will catalog the
-        # same skill twice. OpenCode reads both shared roots (~/.agents/skills
-        # and ~/.claude/skills), so its target never writes anything: it only
+        # 3) Claude may see all declared native-lazy views. Codex needs a
+        # native per-skill view too: verified 2026-07-30 against the shipped
+        # 0.146.0 binary, its ONLY skill root is $CODEX_HOME/skills, and the
+        # image contains no reference to ~/.agents/skills or ~/.claude/skills
+        # (it knows ~/.agents/plugins, a different mechanism). The previous
+        # comment here claimed Codex discovered core skills "through the
+        # official shared root"; that was never true, so `targets: [codex]`
+        # silently produced zero discoverable skills and the manifest's own
+        # promise of `$vault-*` commands on Codex went unmet. Codex reads
+        # name+description and defers the body, so the view stays lazy.
+        # OpenCode reads both shared roots (~/.agents/skills and
+        # ~/.claude/skills), so its target never writes anything: it only
         # verifies the skill is actually discoverable there. Antigravity reads
-        # neither shared root and gets a native per-skill view in its global
+        # no shared root and gets a native per-skill view in its global
         # skills dir, where the skill surfaces as a /name slash command.
         for t in targets:
             if t == "claude":
@@ -837,7 +849,7 @@ def main() -> int:
                 else:
                     ensure_link(LIBRARY / name, RUNTIME["claude"] / name, apply, f"claude/{name}")
             elif t == "codex":
-                ensure_absent_link(RUNTIME["codex"] / name, apply, f"codex-legacy/{name}")
+                ensure_link(LIBRARY / name, RUNTIME["codex"] / name, apply, f"codex/{name}")
             elif t == "antigravity":
                 if not AGENT_SKILL_NAME_RE.fullmatch(name):
                     warn(

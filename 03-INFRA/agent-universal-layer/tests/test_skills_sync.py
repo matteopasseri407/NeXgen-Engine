@@ -55,7 +55,7 @@ def test_index_is_idempotent_when_content_unchanged(sandbox):
     assert first == second
 
 
-def test_manual_skill_stays_out_of_eager_views_but_claude_gets_native_lazy_access(sandbox, monkeypatch):
+def test_manual_skill_stays_out_of_eager_views_but_native_targets_get_lazy_access(sandbox, monkeypatch):
     mod = load_skills_sync_module(sandbox)
     monkeypatch.setattr(mod.sys, "argv", ["skills-sync.py", "--apply"])
 
@@ -64,10 +64,15 @@ def test_manual_skill_stays_out_of_eager_views_but_claude_gets_native_lazy_acces
     assert (library / "SKILL.md").is_file()
     assert not (sandbox.active_skills / "fake-skill-a").exists()
     assert (sandbox.home / ".claude" / "skills" / "fake-skill-a").resolve() == library.resolve()
-    assert not (sandbox.home / ".codex" / "skills" / "fake-skill-a").exists()
+    # Codex reads only $CODEX_HOME/skills, so a declared codex target must
+    # produce a real view here too, exactly like Claude's.
+    assert (sandbox.home / ".codex" / "skills" / "fake-skill-a").resolve() == library.resolve()
 
 
-def test_core_skill_uses_only_the_official_shared_codex_root(sandbox, monkeypatch):
+def test_codex_target_gets_a_native_per_skill_view(sandbox, monkeypatch):
+    """Codex does not read ~/.agents/skills (verified against the shipped
+    binary): a declared codex target is only honored by a native view under
+    $CODEX_HOME/skills, otherwise the skill is discoverable nowhere."""
     (sandbox.skills_dir / "skills.manifest.yaml").write_text(
         "skills:\n"
         "  fake-skill-a:\n"
@@ -82,6 +87,23 @@ def test_core_skill_uses_only_the_official_shared_codex_root(sandbox, monkeypatc
     assert mod.main() == 0
     library = sandbox.skill_library / "fake-skill-a"
     assert (sandbox.active_skills / "fake-skill-a").resolve() == library.resolve()
+    assert (sandbox.home / ".codex" / "skills" / "fake-skill-a").resolve() == library.resolve()
+
+
+def test_codex_view_is_not_created_without_the_target(sandbox, monkeypatch):
+    """The fan-out stays opt-in per skill: no codex target, no codex view."""
+    (sandbox.skills_dir / "skills.manifest.yaml").write_text(
+        "skills:\n"
+        "  fake-skill-a:\n"
+        "    origin: vault\n"
+        "    targets: [claude]\n"
+        "    exposure: core\n",
+        encoding="utf-8",
+    )
+    mod = load_skills_sync_module(sandbox)
+    monkeypatch.setattr(mod.sys, "argv", ["skills-sync.py", "--apply"])
+
+    assert mod.main() == 0
     assert not (sandbox.home / ".codex" / "skills" / "fake-skill-a").exists()
 
 
@@ -108,7 +130,9 @@ def test_codex_core_body_size_is_not_reported_as_eager_startup_cost(sandbox, mon
     out = capsys.readouterr().out
     assert "no native lazy loading" not in out
     assert (sandbox.active_skills / "fake-skill-a" / "SKILL.md").is_file()
-    assert not (sandbox.home / ".codex" / "skills" / "fake-skill-a").exists()
+    # The body is large on purpose: Codex still gets its native view, because
+    # it defers the body until the skill is selected.
+    assert (sandbox.home / ".codex" / "skills" / "fake-skill-a" / "SKILL.md").is_file()
 
 
 def _write_user_profile_with_team_members(sandbox) -> None:
@@ -262,11 +286,15 @@ def test_legacy_migration_keeps_managed_windows_copy_fallbacks(sandbox, monkeypa
     library = sandbox.skill_library / "fake-skill-a"
     shared_view = sandbox.active_skills / "fake-skill-a"
     claude_view = sandbox.home / ".claude" / "skills" / "fake-skill-a"
+    codex_view = sandbox.home / ".codex" / "skills" / "fake-skill-a"
     assert mod.same_tree_content(library, shared_view)
     assert mod.same_tree_content(library, claude_view)
-    assert not (sandbox.home / ".codex" / "skills" / "fake-skill-a").exists()
+    assert mod.same_tree_content(library, codex_view)
     assert not (sandbox.skill_library / "legacy" / "shared" / "fake-skill-a").exists()
     assert not (sandbox.skill_library / "legacy" / "claude" / "fake-skill-a").exists()
+    # A managed Codex view must survive --migrate-legacy in the copy
+    # representation too, or Windows would quarantine what it just synced.
+    assert not (sandbox.skill_library / "legacy" / "codex" / "fake-skill-a").exists()
 
 
 def test_diff_does_not_create_lazy_views(sandbox, monkeypatch):
@@ -577,7 +605,7 @@ def test_valid_skill_names_with_dots_and_dashes_still_sync_normally(sandbox, mon
     assert (library / "SKILL.md").is_file()
     assert (sandbox.active_skills / "fake-skill-a").resolve() == library.resolve()
     assert (sandbox.home / ".claude" / "skills" / "fake-skill-a").resolve() == library.resolve()
-    assert not (sandbox.home / ".codex" / "skills" / "fake-skill-a").exists()
+    assert (sandbox.home / ".codex" / "skills" / "fake-skill-a").resolve() == library.resolve()
 
 
 def test_install_github_rejects_a_path_traversal_name_called_directly(sandbox):
