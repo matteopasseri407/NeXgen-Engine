@@ -890,12 +890,12 @@ if [ -d "$CONSUMER_ENGINE_REPO/.git" ]; then
     current_version=$(git -C "$CONSUMER_ENGINE_REPO" show "$live_sha:VERSION" 2>/dev/null | tr -d '[:space:]')
     if [ -n "$current_version" ]; then
       if [ "v$current_version" != "$latest_tag" ]; then
-        warn "new engine version available: $latest_tag (pinned: v$current_version) -- see docs/upgrade.md, update is always deliberate"
+        warn "NeXgen Engine update available: $latest_tag (this machine runs v$current_version) -- run: nexgen-update"
       else
         ok "consumer engine at the latest released version ($latest_tag)"
       fi
     else
-      warn "new engine version available: $latest_tag (pinned commit predates the VERSION file) -- see docs/upgrade.md"
+      warn "NeXgen Engine update available: $latest_tag (this machine predates the VERSION file) -- run: nexgen-update"
     fi
   fi
 fi
@@ -923,7 +923,7 @@ if [ ! -d "$CONSUMER_ENGINE_REPO/.git" ] && [ -d "$VAULT_DATA/.git" ] && [ -f "$
       if [ "$newest" = "v$current_version" ]; then
         ok "engine at (or ahead of) the latest released version ($latest_tag, running v$current_version)"
       else
-        warn "new engine version available: $latest_tag (running: v$current_version) -- see docs/upgrade.md, update is always deliberate"
+        warn "NeXgen Engine update available: $latest_tag (this machine runs v$current_version) -- run: nexgen-update"
       fi
     fi
   else
