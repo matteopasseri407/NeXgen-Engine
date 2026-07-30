@@ -202,7 +202,13 @@ def _make_consumer_engine_clone(sandbox, pinned_tag: str):
 def test_doctor_warns_new_engine_version_available(sandbox):
     _make_consumer_engine_clone(sandbox, "v0.1.0")
     result = run_agent_doctor(sandbox)
-    assert "new engine version available: v0.2.0 (pinned: v0.1.0)" in result.stdout, result.stdout + result.stderr
+    assert "NeXgen Engine update available: v0.2.0 (this machine runs v0.1.0)" in result.stdout, (
+        result.stdout + result.stderr
+    )
+    # The notice is the product's only nudge to upgrade, so it has to carry the
+    # command. It used to end with "update is always deliberate", which reads as
+    # "no rush" -- two machines sat two releases behind while it said so daily.
+    assert "run: nexgen-update" in result.stdout
 
 
 def test_doctor_ok_when_pinned_at_latest_version(sandbox):
