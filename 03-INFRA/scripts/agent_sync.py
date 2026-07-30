@@ -53,12 +53,14 @@ if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
 from config_schema import (  # noqa: E402
+    PERMISSION_POSTURES,
     ConfigValidationError,
     load_council_config,
     load_mcp_manifest,
     parse_jsonc,
     set_jsonc_top_level_value,
     validate_claude_settings,
+    validate_permissions_manifest,
 )
 
 IS_WINDOWS = platform.system() == "Windows"
@@ -1735,6 +1737,125 @@ def claude_hooks(env: Env) -> bool:
     return True
 
 
+# ── 4.6 claude_permissions ───────────────────────────────────────────────
+# The engine ships the MECHANISM only. The policy -- which posture, which
+# guardrail -- is instance data in the private vault, so no end user ever
+# inherits somebody else's permission choices: with no permissions manifest
+# this phase is a complete no-op.
+#
+# Why a hook and not a `permissions.deny` list: under bypassPermissions the
+# permission engine is skipped entirely, so deny rules may never be consulted.
+# A PreToolUse hook still runs, which makes it the only guardrail that holds
+# in the very posture that needs one.
+
+def _permissions_hook_command(hook_dst: Path) -> str:
+    """Same shape claude_hooks() uses, so both phases produce byte-identical
+    command strings and neither re-adds an entry the other already wrote."""
+    return f'node "{hook_dst}"'
+
+
+def claude_permissions(env: Env) -> bool:
+    manifest_path = env.instance_ul / "permissions" / "manifest.yaml"
+    claude_dir = env.home / ".claude"
+    if not manifest_path.is_file() or not claude_dir.is_dir():
+        return True
+    try:
+        manifest = validate_permissions_manifest(
+            yaml.safe_load(manifest_path.read_text(encoding="utf-8")), manifest_path
+        )
+        validate_claude_settings(claude_dir / "settings.json")
+    except ConfigValidationError as exc:
+        env.log(f"claude-permissions: refused ({exc})")
+        return False
+    except (OSError, yaml.YAMLError) as exc:
+        env.log(f"claude-permissions: cannot read manifest ({exc})")
+        return False
+
+    # 1) Deploy every hook body targeting Claude, BEFORE touching settings.
+    # Registering a hook whose file is missing would leave Claude invoking a
+    # nonexistent script on every Bash call.
+    deployed: list[tuple[dict, Path]] = []
+    for spec in manifest.get("hooks", []) or []:
+        if "claude" not in spec.get("targets", []):
+            continue
+        src = (manifest_path.parent / spec["file"]).resolve()
+        # The validator already refused '..' and absolute paths; re-check the
+        # resolved result in case a symlink inside the vault points outward.
+        if not str(src).startswith(str(manifest_path.parent.resolve())):
+            env.log(f"claude-permissions: {spec['name']} resolves outside permissions/, skipped")
+            return False
+        if not src.is_file():
+            env.log(f"claude-permissions: missing hook body {src}")
+            return False
+        dst = claude_dir / src.name
+        body = src.read_bytes()
+        if not dst.exists() or dst.read_bytes() != body:
+            dst.write_bytes(body)
+            env.log(f"claude-permissions: deployed {dst}")
+        deployed.append((spec, dst))
+
+    settings_path = claude_dir / "settings.json"
+    if not settings_path.is_file():
+        return True
+    try:
+        settings = json.loads(settings_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        env.log("claude-permissions: settings.json not valid JSON; skipping merge")
+        return False
+    if not isinstance(settings, dict):
+        env.log("claude-permissions: settings.json root is not an object; skipping merge")
+        return False
+
+    before = json.dumps(settings, sort_keys=True)
+
+    # 2) Posture. Only the one key is written: everything else in
+    # `permissions` (a user's own allow/deny lists) is left untouched.
+    posture = (manifest.get("posture") or {}).get("claude")
+    if posture:
+        settings.setdefault("permissions", {})
+        if not isinstance(settings["permissions"], dict):
+            env.log("claude-permissions: settings.permissions is not an object; skipping posture")
+        else:
+            settings["permissions"]["defaultMode"] = PERMISSION_POSTURES[posture]
+            if posture == "bypass":
+                # Without this Claude blocks on an interactive confirmation
+                # dialog at startup, which a background guard run cannot answer.
+                settings["skipDangerousModePermissionPrompt"] = True
+
+    # 3) Hook registration, matched on the command string so re-running is a
+    # no-op (agent-sync asserts full idempotency).
+    hooks = settings.setdefault("hooks", {})
+    if not isinstance(hooks, dict):
+        env.log("claude-permissions: settings.hooks is not an object; skipping hook merge")
+    else:
+        for spec, dst in deployed:
+            command = _permissions_hook_command(dst)
+            entries = hooks.setdefault(spec["event"], [])
+            if not isinstance(entries, list):
+                env.log(f"claude-permissions: settings.hooks.{spec['event']} is not a list; skipped")
+                continue
+            if any(h.get("command") == command for m in entries if isinstance(m, dict) for h in m.get("hooks", [])):
+                continue
+            entry: dict[str, object] = {
+                "hooks": [{
+                    "type": "command",
+                    "command": command,
+                    "timeout": spec.get("timeout", 5),
+                }],
+            }
+            if spec.get("matcher"):
+                entry["matcher"] = spec["matcher"]
+            entries.append(entry)
+
+    if json.dumps(settings, sort_keys=True) == before:
+        return True
+    stamp = time.strftime("%Y%m%d-%H%M%S")
+    shutil.copy2(settings_path, settings_path.with_name(f"settings.json.pre-permissions-{stamp}.bak"))
+    _atomic_write_text(settings_path, json.dumps(settings, indent=2) + "\n")
+    env.log(f"claude-permissions: applied posture/hooks into {settings_path}")
+    return True
+
+
 # ── 5. publish ───────────────────────────────────────────────────────────
 
 def publish(env: Env) -> bool:
@@ -2482,6 +2603,10 @@ def main(argv: list[str] | None = None) -> int:
                 ("runtimes", runtimes),
                 ("skills_index", skills_index),
                 ("claude_hooks", claude_hooks),
+                # After claude_hooks: both write settings.json, and running the
+                # engine-owned checkpoint hook first keeps the instance policy
+                # as the last word on posture.
+                ("claude_permissions", claude_permissions),
             ])
             for name, fn in phases:
                 if not _run_phase(env, name, fn):

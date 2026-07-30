@@ -18,6 +18,7 @@ import yaml
 
 MCP_SCHEMA_VERSION = 1
 COUNCIL_SCHEMA_VERSION = 1
+PERMISSIONS_SCHEMA_VERSION = 1
 MCP_TARGETS = frozenset({"claude", "codex", "antigravity", "opencode"})
 COUNCIL_CLIS = frozenset({"opencode", "agy", "codex", "claude", "ollama"})
 COUNCIL_REASONING_EFFORTS = frozenset({"none", "low", "medium", "high", "xhigh", "max"})
@@ -702,3 +703,82 @@ def validate_claude_settings(path: Path) -> None:
                         path,
                         f"Claude settings hooks.{event}[{matcher_index}].hooks[{hook_index}] must be an object",
                     )
+
+
+# Neutral posture vocabulary -> the value each CLI actually understands. Kept
+# here, not in the manifest, so the private policy file stays free of any one
+# vendor's spelling and a dialect change is an engine fix, not a user edit.
+PERMISSION_POSTURES = {
+    "bypass": "bypassPermissions",
+    "accept-edits": "acceptEdits",
+    "ask": "default",
+}
+# Only dialects verified on a real install belong here. Guessing a CLI's
+# permission vocabulary would silently produce a config that looks applied and
+# protects nothing.
+PERMISSION_TARGETS = {"claude"}
+PERMISSION_HOOK_EVENTS = {
+    "PreToolUse",
+    "PostToolUse",
+    "SessionStart",
+    "SessionEnd",
+    "PreCompact",
+    "PostCompact",
+    "UserPromptSubmit",
+    "Stop",
+}
+
+
+def validate_permissions_manifest(data: Any, source: str | Path) -> dict[str, Any]:
+    """Validate the private permissions manifest before anything is applied.
+
+    A half-applied permission posture is worse than none: it can leave a
+    runtime with prompts disabled and its guardrail hook missing. So this
+    refuses the whole file rather than skipping a bad entry.
+    """
+    config = _mapping(data, source, "permissions manifest")
+    _reject_unknown_keys(config, {"schema_version", "posture", "hooks"}, source, "permissions manifest")
+    if type(config.get("schema_version")) is not int or config["schema_version"] != PERMISSIONS_SCHEMA_VERSION:
+        _error(source, f"permissions manifest schema_version must be {PERMISSIONS_SCHEMA_VERSION}")
+
+    posture = _mapping(config.get("posture", {}) or {}, source, "permissions manifest.posture")
+    for cli, value in posture.items():
+        if cli not in PERMISSION_TARGETS:
+            _error(source, f"permissions manifest.posture has unsupported CLI '{cli}' (verified: {', '.join(sorted(PERMISSION_TARGETS))})")
+        if value not in PERMISSION_POSTURES:
+            _error(source, f"permissions manifest.posture.{cli} must be one of: {', '.join(sorted(PERMISSION_POSTURES))}")
+
+    hooks = config.get("hooks", []) or []
+    if not isinstance(hooks, list):
+        _error(source, "permissions manifest.hooks must be a list")
+    for index, entry in enumerate(hooks):
+        spec = _mapping(entry, source, f"permissions manifest.hooks[{index}]")
+        _reject_unknown_keys(
+            spec,
+            {"name", "file", "runtime", "targets", "event", "matcher", "timeout", "description"},
+            source,
+            f"permissions manifest.hooks[{index}]",
+        )
+        name = spec.get("name")
+        if not isinstance(name, str) or not ENTRY_NAME_RE.fullmatch(name):
+            _error(source, f"permissions manifest.hooks[{index}].name must use letters, digits, '.', '_' or '-'")
+        rel = spec.get("file")
+        # Defense in depth: this path is joined onto the vault and the result
+        # is copied into the user's runtime dir, so a traversal payload here
+        # would write outside both. Refuse absolute paths and any '..'.
+        if not isinstance(rel, str) or not rel or rel.startswith(("/", "\\")) or ".." in Path(rel).parts or Path(rel).is_absolute():
+            _error(source, f"permissions manifest.hooks[{index}].file must be a relative path inside permissions/, without '..'")
+        if spec.get("runtime", "node") != "node":
+            _error(source, f"permissions manifest.hooks[{index}].runtime supports only 'node'")
+        targets = spec.get("targets", [])
+        if not isinstance(targets, list) or not targets or not all(t in PERMISSION_TARGETS for t in targets):
+            _error(source, f"permissions manifest.hooks[{index}].targets must be a non-empty list drawn from: {', '.join(sorted(PERMISSION_TARGETS))}")
+        if spec.get("event") not in PERMISSION_HOOK_EVENTS:
+            _error(source, f"permissions manifest.hooks[{index}].event must be one of: {', '.join(sorted(PERMISSION_HOOK_EVENTS))}")
+        matcher = spec.get("matcher")
+        if matcher is not None and not isinstance(matcher, str):
+            _error(source, f"permissions manifest.hooks[{index}].matcher must be a string")
+        timeout = spec.get("timeout", 5)
+        if type(timeout) is not int or timeout <= 0:
+            _error(source, f"permissions manifest.hooks[{index}].timeout must be a positive integer")
+    return config
