@@ -685,7 +685,10 @@ def validate_claude_settings(path: Path) -> None:
         return
     if not isinstance(hooks, dict):
         _error(path, "Claude settings hooks must be an object")
-    for event in ("SessionStart", "PreCompact"):
+    # Every event NeXgen may merge into, not just the two the checkpoint hook
+    # uses. claude_permissions writes PreToolUse, so leaving it out made the
+    # preflight pass on exactly the shape that phase then had to handle.
+    for event in sorted({"SessionStart", "PreCompact"} | PERMISSION_HOOK_EVENTS):
         if event not in hooks:
             continue
         matchers = hooks[event]

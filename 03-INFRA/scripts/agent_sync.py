@@ -1099,9 +1099,25 @@ def _link_util(src: Path, dst: Path, env: Env, label: str, *, optional: bool = F
 def _install_linux_browser_desktop_entry(env: Env) -> None:
     """Expose the canonical visible Chrome launcher to Linux URL handlers.
 
-    The provisioner creates the per-user desktop entry but deliberately does
-    not take over the user's default browser. The doctor reports whether the
-    host has completed that reversible, host-specific choice.
+    Writes TWO files under ~/.local/share/applications, and the second one is
+    the part that must not be understated:
+
+      agent-chrome.desktop    a new launcher entry. Adding it does NOT make it
+                              the default browser: that stays the user's own
+                              reversible choice, and the doctor only reports
+                              whether it has been made.
+      google-chrome.desktop   a hidden entry that SHADOWS the distribution's
+                              Chrome launcher in the user's XDG layer. Existing
+                              dock icons and direct google-chrome.desktop
+                              activations then reach this wrapper.
+
+    The shadowing is deliberate and load-bearing: without it a plain Chrome
+    started from the dock wins the first-process race with no CDP port, and the
+    whole shared-browser lane silently stops working. But it does change what
+    an already-installed icon launches, so it is declared in docs/what-gets-
+    written.md and removed by docs/uninstall.md. An earlier version of this
+    docstring described only the restraint and not the shadowing, which read as
+    if the provisioner left the user's Chrome untouched.
     """
     if platform.system() != "Linux":
         return
@@ -1808,44 +1824,50 @@ def claude_permissions(env: Env) -> bool:
 
     before = json.dumps(settings, sort_keys=True)
 
-    # 2) Posture. Only the one key is written: everything else in
-    # `permissions` (a user's own allow/deny lists) is left untouched.
-    posture = (manifest.get("posture") or {}).get("claude")
-    if posture:
-        settings.setdefault("permissions", {})
-        if not isinstance(settings["permissions"], dict):
-            env.log("claude-permissions: settings.permissions is not an object; skipping posture")
-        else:
-            settings["permissions"]["defaultMode"] = PERMISSION_POSTURES[posture]
-            if posture == "bypass":
-                # Without this Claude blocks on an interactive confirmation
-                # dialog at startup, which a background guard run cannot answer.
-                settings["skipDangerousModePermissionPrompt"] = True
-
-    # 3) Hook registration, matched on the command string so re-running is a
-    # no-op (agent-sync asserts full idempotency).
+    # 2) Hooks FIRST, posture second, and any anomaly refuses the whole phase.
+    # Order matters and is the point: the posture is what turns the prompts
+    # off, so it must never reach disk unless every declared guardrail is
+    # registered. An earlier version logged and continued here, which could
+    # write `bypassPermissions` while the guardrail stayed unregistered --
+    # exactly the state this phase exists to prevent. Nothing is written until
+    # both steps succeed, so returning early leaves settings.json untouched.
     hooks = settings.setdefault("hooks", {})
     if not isinstance(hooks, dict):
-        env.log("claude-permissions: settings.hooks is not an object; skipping hook merge")
-    else:
-        for spec, dst in deployed:
-            command = _permissions_hook_command(dst)
-            entries = hooks.setdefault(spec["event"], [])
-            if not isinstance(entries, list):
-                env.log(f"claude-permissions: settings.hooks.{spec['event']} is not a list; skipped")
-                continue
-            if any(h.get("command") == command for m in entries if isinstance(m, dict) for h in m.get("hooks", [])):
-                continue
-            entry: dict[str, object] = {
-                "hooks": [{
-                    "type": "command",
-                    "command": command,
-                    "timeout": spec.get("timeout", 5),
-                }],
-            }
-            if spec.get("matcher"):
-                entry["matcher"] = spec["matcher"]
-            entries.append(entry)
+        env.log("claude-permissions: refused, settings.hooks is not an object")
+        return False
+    for spec, dst in deployed:
+        command = _permissions_hook_command(dst)
+        entries = hooks.setdefault(spec["event"], [])
+        if not isinstance(entries, list):
+            env.log(f"claude-permissions: refused, settings.hooks.{spec['event']} is not a list")
+            return False
+        if any(h.get("command") == command for m in entries if isinstance(m, dict) for h in m.get("hooks", [])):
+            continue
+        entry: dict[str, object] = {
+            "hooks": [{
+                "type": "command",
+                "command": command,
+                "timeout": spec.get("timeout", 5),
+            }],
+        }
+        if spec.get("matcher"):
+            entry["matcher"] = spec["matcher"]
+        entries.append(entry)
+
+    # 3) Posture, only now that every declared guardrail is in place. Only the
+    # one key is written: everything else in `permissions` (a user's own
+    # allow/deny lists) is left untouched.
+    posture = (manifest.get("posture") or {}).get("claude")
+    if posture:
+        perms = settings.setdefault("permissions", {})
+        if not isinstance(perms, dict):
+            env.log("claude-permissions: refused, settings.permissions is not an object")
+            return False
+        perms["defaultMode"] = PERMISSION_POSTURES[posture]
+        if posture == "bypass":
+            # Without this Claude blocks on an interactive confirmation
+            # dialog at startup, which a background guard run cannot answer.
+            settings["skipDangerousModePermissionPrompt"] = True
 
     if json.dumps(settings, sort_keys=True) == before:
         return True

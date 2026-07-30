@@ -197,6 +197,47 @@ def test_hook_file_escaping_the_permissions_dir_is_refused(sandbox, agent_sync, 
     assert not (sandbox.home / ".claude" / "evil.mjs").exists()
 
 
+def test_malformed_hooks_block_refuses_without_writing_the_posture(sandbox, agent_sync, env):
+    """The regression this phase exists to prevent. An earlier version logged
+    'skipping hook merge' and carried on, writing bypassPermissions while the
+    guardrail stayed unregistered: prompts off, nothing watching."""
+    _write_manifest(sandbox, VALID_MANIFEST)
+    _write_settings(sandbox, {**BASE_SETTINGS, "hooks": "not-an-object"})
+    before = (sandbox.home / ".claude" / "settings.json").read_text(encoding="utf-8")
+
+    assert agent_sync.claude_permissions(env) is False
+
+    assert (sandbox.home / ".claude" / "settings.json").read_text(encoding="utf-8") == before
+    assert "defaultMode" not in _settings(sandbox).get("permissions", {})
+    assert "skipDangerousModePermissionPrompt" not in _settings(sandbox)
+
+
+def test_malformed_event_list_refuses_without_writing_the_posture(sandbox, agent_sync, env):
+    """Same rule one level down: the event exists but is not a list."""
+    _write_manifest(sandbox, VALID_MANIFEST)
+    _write_settings(sandbox, {**BASE_SETTINGS, "hooks": {"PreToolUse": "nope"}})
+    before = (sandbox.home / ".claude" / "settings.json").read_text(encoding="utf-8")
+
+    assert agent_sync.claude_permissions(env) is False
+
+    assert (sandbox.home / ".claude" / "settings.json").read_text(encoding="utf-8") == before
+    assert "defaultMode" not in _settings(sandbox).get("permissions", {})
+
+
+def test_malformed_permissions_block_refuses_and_leaves_no_hook_behind(sandbox, agent_sync, env):
+    """The mirror case: hooks are fine but `permissions` is not an object.
+    Refusing must also discard the hook registration, so the file never lands
+    in a state neither the user nor the manifest asked for."""
+    _write_manifest(sandbox, VALID_MANIFEST)
+    _write_settings(sandbox, {**BASE_SETTINGS, "permissions": "not-an-object"})
+    before = (sandbox.home / ".claude" / "settings.json").read_text(encoding="utf-8")
+
+    assert agent_sync.claude_permissions(env) is False
+
+    assert (sandbox.home / ".claude" / "settings.json").read_text(encoding="utf-8") == before
+    assert "PreToolUse" not in _settings(sandbox).get("hooks", {})
+
+
 def test_malformed_settings_json_is_refused(sandbox, agent_sync, env):
     _write_manifest(sandbox, VALID_MANIFEST)
     (sandbox.home / ".claude" / "settings.json").write_text("{not json", encoding="utf-8")
