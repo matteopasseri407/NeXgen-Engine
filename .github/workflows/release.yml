@@ -1,0 +1,89 @@
+# Tag and publish a release the moment VERSION changes on main.
+#
+# Why this exists: releases used to be a manual step after the merge, and the
+# step that gets skipped is the one nobody's tooling depends on. On 2026-07-30
+# main had five merged commits past the newest tag, which meant they reached no
+# machine at all — the update path compares the newest TAG with the installed
+# VERSION, so unreleased work is invisible even to the doctor, which happily
+# reported both hosts "at the latest released version".
+#
+# Deliberately NOT a gate: this never fails a pull request and never blocks a
+# merge. Bumping VERSION is the whole act of releasing; everything after it is
+# mechanical, so it is automated instead of documented.
+name: release
+
+on:
+  push:
+    branches: [main]
+    paths: ["VERSION"]
+
+permissions:
+  contents: write
+
+jobs:
+  tag-and-release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 0
+
+      - name: Read VERSION and decide whether there is anything to do
+        id: check
+        run: |
+          set -euo pipefail
+          version="$(tr -d '[:space:]' < VERSION)"
+          case "$version" in
+            [0-9]*.[0-9]*.[0-9]*) ;;
+            *) echo "VERSION is not a semver-looking value: '$version'" >&2; exit 1 ;;
+          esac
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          if git rev-parse -q --verify "refs/tags/v$version" >/dev/null; then
+            # A VERSION touch that does not introduce a new version (a typo fix,
+            # a revert) is normal and must not fail the run.
+            echo "already released, nothing to do: v$version"
+            echo "release=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "release=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Extract this version's changelog section
+        if: steps.check.outputs.release == 'true'
+        run: |
+          python3 - "${{ steps.check.outputs.version }}" <<'PY'
+          import pathlib, re, sys
+          version = sys.argv[1]
+          text = pathlib.Path("CHANGELOG.md").read_text(encoding="utf-8")
+          # Everything from this version's heading up to the next one.
+          match = re.search(
+              rf"^## \[{re.escape(version)}\][^\n]*\n(.*?)(?=^## \[|\Z)",
+              text, re.M | re.S,
+          )
+          body = (match.group(1).strip() if match else "")
+          if not body:
+              # Not fatal: a release with no notes is worse than a release that
+              # is late, but silently shipping an empty body is worse than both.
+              body = (
+                  f"No changelog section found for {version}. "
+                  "See the commit history for this tag."
+              )
+              print(f"::warning::CHANGELOG.md has no populated section for {version}")
+          pathlib.Path("RELEASE_NOTES.md").write_text(body + "\n", encoding="utf-8")
+          print(body[:400])
+          PY
+
+      - name: Tag and publish
+        if: steps.check.outputs.release == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.check.outputs.version }}
+        run: |
+          set -euo pipefail
+          git -c user.name="github-actions[bot]" \
+              -c user.email="github-actions[bot]@users.noreply.github.com" \
+              tag -a "v$VERSION" -m "Release v$VERSION"
+          git push origin "v$VERSION"
+          gh release create "v$VERSION" \
+            --title "NeXgen Engine v$VERSION Beta" \
+            --notes-file RELEASE_NOTES.md \
+            --verify-tag

@@ -653,7 +653,8 @@ def test_single_clone_update_alert_warns_when_a_newer_tag_exists(sandbox):
     _make_engine_tracking_vault(sb, "0.4.0", [("0.4.0", "v0.4.0"), ("0.5.0", "v0.5.0")])
     result = run_agent_doctor(sb)
     assert "Engine version (single-clone install)" in result.stdout
-    assert "new engine version available: v0.5.0 (running: v0.4.0)" in result.stdout
+    assert "NeXgen Engine update available: v0.5.0 (this machine runs v0.4.0)" in result.stdout
+    assert "run: nexgen-update" in result.stdout
 
 
 def test_single_clone_update_alert_ok_at_latest(sandbox):
@@ -661,7 +662,7 @@ def test_single_clone_update_alert_ok_at_latest(sandbox):
     _make_engine_tracking_vault(sb, "0.5.0", [("0.5.0", "v0.5.0")])
     result = run_agent_doctor(sb)
     assert "engine at (or ahead of) the latest released version (v0.5.0" in result.stdout
-    assert "new engine version available" not in result.stdout
+    assert "NeXgen Engine update available" not in result.stdout
 
 
 def test_single_clone_update_alert_skips_a_pure_data_vault(sandbox):
@@ -676,11 +677,13 @@ def test_single_clone_update_alert_parity_with_the_ps1_twin():
     powershell = (repo / "03-INFRA/scripts/agent-doctor.ps1").read_text(encoding="utf-8")
     for content in (bash, powershell):
         assert "Engine version (single-clone install)" in content
-        assert "update is always deliberate" in content
+        # Contract, not prose: the notice names the command to run, in both twins.
+        assert "NeXgen Engine update available" in content
+        assert "run: nexgen-update" in content
     # Informational-only contract: the alert is a warn, never a fail, in
     # both twins.
-    assert 'fail "new engine version' not in bash
-    assert 'bad "new engine version' not in powershell
+    assert 'fail "NeXgen Engine update available' not in bash
+    assert 'bad "NeXgen Engine update available' not in powershell
 
 
 # ── Canonical bootstrap hygiene: size budget + load-on-demand pointer

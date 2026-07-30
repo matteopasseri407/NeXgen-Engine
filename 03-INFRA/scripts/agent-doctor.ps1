@@ -784,9 +784,9 @@ if (Test-Path -LiteralPath (Join-Path $ConsumerEngineRepo ".git")) {
     $currentVersion = (& git -C $ConsumerEngineRepo show "${liveSha}:VERSION" 2>$null)
     if ($currentVersion) { $currentVersion = $currentVersion.Trim() }
     if ($currentVersion) {
-      if ("v$currentVersion" -ne $latestTag) { warn "new engine version available: $latestTag (pinned: v$currentVersion) - see docs/upgrade.md, update is always deliberate" }
+      if ("v$currentVersion" -ne $latestTag) { warn "NeXgen Engine update available: $latestTag (this machine runs v$currentVersion) - run: nexgen-update" }
       else { ok "consumer engine at the latest released version ($latestTag)" }
-    } else { warn "new engine version available: $latestTag (pinned commit predates the VERSION file) - see docs/upgrade.md" }
+    } else { warn "NeXgen Engine update available: $latestTag (this machine predates the VERSION file) - run: nexgen-update" }
   }
 }
 
@@ -813,10 +813,10 @@ if (-not (Test-Path -LiteralPath (Join-Path $ConsumerEngineRepo ".git")) -and
       $curOk = [System.Version]::TryParse($currentVersion, [ref]$cur)
       $latOk = [System.Version]::TryParse(($latestTag -replace '^v', ''), [ref]$lat)
       if ($curOk -and $latOk) {
-        if ($lat -gt $cur) { warn "new engine version available: $latestTag (running: v$currentVersion) - see docs/upgrade.md, update is always deliberate" }
+        if ($lat -gt $cur) { warn "NeXgen Engine update available: $latestTag (this machine runs v$currentVersion) - run: nexgen-update" }
         else { ok "engine at (or ahead of) the latest released version ($latestTag, running v$currentVersion)" }
       } elseif ("v$currentVersion" -ne $latestTag) {
-        warn "new engine version available: $latestTag (running: v$currentVersion) - see docs/upgrade.md, update is always deliberate"
+        warn "NeXgen Engine update available: $latestTag (this machine runs v$currentVersion) - run: nexgen-update"
       } else {
         ok "engine at the latest released version ($latestTag)"
       }
