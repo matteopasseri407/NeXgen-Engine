@@ -429,7 +429,13 @@ PY
         if [ "$guard_state" = "GUARDED" ]; then
           ok "$cli runs in bypass posture (no confirmation prompts) WITH a declared PreToolUse guardrail hook"
         else
-          fail "$cli runs in bypass posture (no confirmation prompts) WITHOUT a declared PreToolUse guardrail hook -- catastrophic commands are NOT intercepted"
+          # warn, never fail: nobody lands here by accident. This state exists
+          # only because the instance manifest deliberately declares a bypass
+          # posture for a CLI and no guardrail hook targeting it, so it is a
+          # standing choice, not a fault. A FAIL that can never be cleared
+          # keeps the doctor permanently red and every alert channel firing,
+          # which is how a real FAIL stops being read.
+          warn "$cli runs in bypass posture (no confirmation prompts) WITHOUT a declared PreToolUse guardrail hook -- catastrophic commands are NOT intercepted"
         fi
       done <<EOF
 $bypass_report

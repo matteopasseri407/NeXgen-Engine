@@ -1240,9 +1240,14 @@ def test_require_env_skip_visibility_present_in_both_twins():
 
 
 # ── GUARDRAIL: a CLI running in "bypass" permission posture (no confirmation
-# prompts) must have a declared PreToolUse guardrail hook, or the doctor must
-# say so visibly. A missing instance permissions manifest (the public-engine
-# default) is a complete, silent no-op.
+# prompts) without a declared PreToolUse guardrail hook must be reported
+# visibly -- as a WARN, never a FAIL. Nobody reaches that state by accident:
+# it exists only because the instance manifest deliberately declares the
+# posture and no hook targeting that CLI, so it is a standing choice rather
+# than a fault, and a FAIL nobody can ever clear leaves the doctor permanently
+# red and every alert channel firing until the reader stops reading them.
+# A missing instance permissions manifest (the public-engine default) is a
+# complete, silent no-op.
 
 def _write_permissions_manifest(sandbox, *, posture: dict, hooks: list) -> Path:
     perms_dir = sandbox.ul / "permissions"
@@ -1288,7 +1293,7 @@ def test_guardrail_check_ok_when_bypass_cli_has_a_pretooluse_hook(sandbox):
     assert not _lines_with(result.stdout, "✗", "claude runs in bypass posture"), result.stdout
 
 
-def test_guardrail_check_fails_visibly_when_bypass_cli_has_no_guardrail_hook(sandbox):
+def test_guardrail_check_warns_visibly_when_bypass_cli_has_no_guardrail_hook(sandbox):
     """Also exercises forward-compatibility: 'codex' is not yet a valid
     permissions-manifest target in config_schema.py's strict validator, but
     this check must keep working as that set grows (another agent is
@@ -1298,8 +1303,11 @@ def test_guardrail_check_fails_visibly_when_bypass_cli_has_no_guardrail_hook(san
 
     result = run_agent_doctor(sandbox)
 
-    assert _lines_with(result.stdout, "✗", "codex runs in bypass posture"), result.stdout
+    assert _lines_with(result.stdout, "⚠", "codex runs in bypass posture"), result.stdout
     assert "WITHOUT a declared PreToolUse guardrail hook" in result.stdout, result.stdout
+    assert not _lines_with(result.stdout, "✗", "codex runs in bypass posture"), (
+        "a deliberately declared posture must not raise a FAIL nobody can clear"
+    )
 
 
 def test_guardrail_check_ignores_a_hook_declared_for_a_different_event(sandbox):
@@ -1311,7 +1319,7 @@ def test_guardrail_check_ignores_a_hook_declared_for_a_different_event(sandbox):
 
     result = run_agent_doctor(sandbox)
 
-    assert _lines_with(result.stdout, "✗", "claude runs in bypass posture"), result.stdout
+    assert _lines_with(result.stdout, "⚠", "claude runs in bypass posture"), result.stdout
 
 
 def test_guardrail_check_present_in_both_twins():
