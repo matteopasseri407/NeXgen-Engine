@@ -90,7 +90,12 @@ placeholder syntaxes like `$ARGUMENTS` diverge per CLI while plain
 instructions behave identically on all four.
 
 The engine ships seven starter command skills, registered in
-`skills.manifest.yaml.example`: `vault-doctor` (run the alignment doctor and
+`skills.manifest.yaml.example`. On a machine that has no
+`skills.manifest.yaml` yet, `agent-sync apply` creates one from that example
+so the commands exist on a fresh install instead of only in this document —
+it is the only skills file the engine seeds, it happens only when the file is
+absent, and an existing manifest is never rewritten (so `skills: {}` is a
+permanent opt-out). The seven: `vault-doctor` (run the alignment doctor and
 explain it in plain language), `vault-close` (distill the session into the
 Vault, publish, verify), `vault-save` (save one durable fact with the
 hygiene decision rule), `vault-council` (convene the AI Council on a

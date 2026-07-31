@@ -32,3 +32,12 @@ without the explicit confirmation in step 3.
 6. On a multi-machine install, remind the user the other machines are
    now behind until they run the same update, and their doctors will say
    so.
+7. On a Cloud-Server install, say plainly that the VPS is a second
+   install and did NOT just get upgraded: this release may have moved
+   `03-INFRA/deploy/`, and the server keeps running the containers it
+   was last deployed with. `agent-doctor` reports the skew for
+   `vault-mcp` specifically ("vault-mcp on the server is X but this
+   engine ships Y"); the redeploy runbook is
+   `03-INFRA/deploy/README.md` → "Upgrading the server side". Do not run
+   it for the user: it is on their machine only by SSH, and restarting
+   those containers interrupts every agent using the vault.

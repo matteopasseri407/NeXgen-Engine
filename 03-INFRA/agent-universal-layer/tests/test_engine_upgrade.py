@@ -236,3 +236,51 @@ def test_doctor_ok_on_other_codex_version(sandbox):
     _stub_codex_version(sandbox, "codex-cli 0.142.0")
     result = run_agent_doctor(sandbox)
     assert "Codex CLI 0.142.0 (not in the known-bad list)" in result.stdout, result.stdout + result.stderr
+
+
+# ── the server half of a Cloud-Server upgrade ────────────────────────────
+# A Cloud-Server install is two installs. `docs/upgrade.md` used to describe
+# only the workstation clone, so an owner who upgraded the engine kept a VPS
+# running whatever containers it was last deployed with, with no signal
+# anywhere -- the maintainer redeployed by hand every time and an end user
+# had no way to know it was even a step. Reported 2026-07-31.
+
+def test_upgrade_doc_sends_cloud_server_installs_to_the_deploy_runbook():
+    upgrade = (REAL_VAULT / "docs" / "upgrade.md").read_text(encoding="utf-8")
+    assert "second install" in upgrade, "upgrade.md no longer says the VPS is a separate install"
+    assert "03-INFRA/deploy/README.md" in upgrade, "upgrade.md must point at the redeploy runbook"
+    assert "Upgrading the server side" in upgrade, "the runbook section it points at was renamed"
+    # Local-Only owners must be told this whole section is not theirs.
+    assert "Local-Only" in upgrade
+
+
+def test_the_deploy_runbook_actually_has_that_section():
+    """The pointer above is only as good as its target existing."""
+    deploy = (REAL_VAULT / "03-INFRA" / "deploy" / "README.md").read_text(encoding="utf-8")
+    assert "## Upgrading the server side" in deploy
+    assert "bootstrap-vps.sh" in deploy.split("## Upgrading the server side", 1)[1]
+
+
+def test_the_engine_update_command_names_the_server_half():
+    """`/nexgen-update` is the only upgrade surface most users ever touch, so
+    the reminder has to be in the command, not only in a doc they never open."""
+    skill = (REAL_VAULT / "03-INFRA" / "agent-universal-layer" / "skills"
+             / "nexgen-update" / "SKILL.md").read_text(encoding="utf-8")
+    assert "Cloud-Server" in skill
+    assert "03-INFRA/deploy/README.md" in skill
+    # It must NOT offer to do it: the VPS is reachable only over the user's
+    # own SSH, and restarting those containers interrupts live agents.
+    assert "Do not run it for the user" in " ".join(skill.split())
+
+
+def test_the_shipped_vault_mcp_version_is_the_one_the_compose_file_pins():
+    """The doctor compares the server's reported version against this file, so
+    a source bump that forgets the compose tag would build a new image over
+    the old tag and make the comparison lie."""
+    root = REAL_VAULT / "03-INFRA" / "deploy" / "vault-mcp"
+    source = (root / "src" / "vault_mcp_server" / "__init__.py").read_text(encoding="utf-8")
+    version = re.search(r'__version__\s*=\s*"([^"]+)"', source).group(1)
+    compose = (root / "docker-compose.yml").read_text(encoding="utf-8")
+    assert f"vault-mcp:{version}" in compose, (
+        f"vault-mcp source is {version} but docker-compose.yml does not pin vault-mcp:{version}"
+    )

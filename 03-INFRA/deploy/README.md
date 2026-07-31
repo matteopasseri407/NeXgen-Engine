@@ -71,6 +71,55 @@ automatically. Leave the key empty for a scrape-only deployment. Set the
 Brave dashboard usage limit to **Free credits only** so the provider rejects
 requests before they can become paid overage.
 
+## Upgrading the server side
+
+**The VPS is a second install.** Upgrading the engine on your workstation
+(`docs/upgrade.md`) moves that clone only. This directory is engine code
+too, and the VPS keeps running the containers it was last deployed with
+until you come here and say so — a release that changes `vault-mcp`,
+the OCR API, or a compose file changes nothing on the server by itself.
+
+`agent-doctor` on the workstation reports the one skew it can measure:
+
+```text
+⚠ vault-mcp on the server is 0.3.0 but this engine ships 0.4.0 —
+  the server half of the upgrade was never deployed
+```
+
+It reads the version the running server reports on its own root route and
+compares it with `vault-mcp/src/vault_mcp_server/__init__.py` in your
+clone. The other three stacks have no equivalent probe: if a release
+touched them, `CHANGELOG.md` is the signal.
+
+The upgrade is the deploy, re-run:
+
+```bash
+# on the VPS
+cd NeXgen-Engine
+git fetch --tags origin
+git merge <the same tag you moved the workstation to>
+cd 03-INFRA/deploy
+bash bootstrap-vps.sh
+```
+
+`bootstrap-vps.sh` is idempotent — it ends in `docker compose up -d
+--build` per stack, so it rebuilds what changed, leaves the rest running,
+and never rotates a secret already present in `.env`. Keep the VPS on the
+same tag as your workstations rather than on `main`: this is the same
+"your `VERSION` moves only when you choose" rule, applied to the half of
+the install that no timer ever touches.
+
+Two things to know before you run it:
+
+- **Restarting `vault-mcp` interrupts every agent currently writing to
+  the vault.** Notes are Git-committed per write, so nothing in flight is
+  lost, but an in-progress tool call fails. Deploy when you are not mid-session.
+- **Roll back with the image pin, not with git.** Each `vault-mcp` build
+  is tagged with its own version, so the previous image is still on the
+  VPS: `VAULT_MCP_IMAGE=vault-mcp:0.3.0 docker compose -f
+  vault-mcp/docker-compose.yml --env-file .env up -d --no-build`. See
+  "Backup, restore, rollback" below for volumes.
+
 ## Image pins
 
 Every service image in the four `docker-compose.yml` files is pinned to an

@@ -1734,6 +1734,63 @@ def mcp_render(env: Env) -> bool:
 
 # ── 3. vault_skills ──────────────────────────────────────────────────────
 
+def seed_starter_skills(env: Env) -> None:
+    """Create skills.manifest.yaml from the shipped example on a fresh install.
+
+    README advertises seven starter commands that "ship with the engine", and
+    every one of them was vendored and tested -- but nothing ever created the
+    manifest that turns them into runtime views. skills-sync printed "manifest
+    not found ... skipping" to stderr and exited 0, INIT.md told the installing
+    agent there were no base skills and to skip the step, and the doctor's only
+    signal was a WARN worded as normal for a fresh install. The result: five
+    cold installs where /vault-doctor and /nexgen-update simply did not exist,
+    including for the user who most needed a one-word upgrade command.
+
+    Deliberately narrow, so this stays a fresh-install courtesy and never an
+    engine that overwrites user data:
+      - only when the manifest is absent -- an existing one is never touched,
+        so emptying it (`skills: {}`) is a permanent opt-out;
+      - only when the bodies it declares actually resolve under THIS data root,
+        so a split engine/data topology gets nothing rather than a manifest
+        pointing at skills that live in the other clone.
+    """
+    target = env.instance_ul / "skills" / "skills.manifest.yaml"
+    if target.exists():
+        return
+    example = env.ul / "skills" / "skills.manifest.yaml.example"
+    if not example.is_file():
+        return
+    try:
+        declared = (yaml.safe_load(example.read_text(encoding="utf-8")) or {}).get("skills") or {}
+    except (OSError, yaml.YAMLError) as exc:
+        env.log(f"skills: cannot read the shipped starter manifest ({exc}) — not seeding")
+        return
+    bodies = env.instance_ul / "skills"
+    absent = sorted(
+        name
+        for name, spec in declared.items()
+        if isinstance(spec, dict)
+        and spec.get("origin") == "vault"
+        and not (bodies / str(name) / "SKILL.md").is_file()
+    )
+    if absent:
+        env.log(
+            "skills: the engine's starter commands are not vendored in this data root "
+            f"({', '.join(absent)}) — not seeding a manifest that would point at nothing"
+        )
+        return
+    try:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(example, target)
+    except OSError as exc:
+        env.log(f"skills: could not seed {target} ({exc})")
+        return
+    env.log(
+        f"skills: seeded {target.name} with the {len(declared)} starter commands shipped by the "
+        "engine (first install only — an existing manifest is never overwritten)"
+    )
+
+
 def vault_skills(env: Env) -> bool:
     """Reserve the two local views; skills-sync materializes their contents.
 
@@ -1741,6 +1798,7 @@ def vault_skills(env: Env) -> bool:
     discovery bug: Codex enumerated the entire library before any task began.
     The dedicated synchronizer now owns library materialization and exposure.
     """
+    seed_starter_skills(env)
     healthy = True
     for label, root in (("active skill view", env.active_skills), ("skill library", env.skill_library)):
         # A whole-root link was the original eager-discovery failure. Unlinking

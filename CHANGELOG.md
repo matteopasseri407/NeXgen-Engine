@@ -10,6 +10,57 @@ of any engine release.
 
 ## [Unreleased]
 
+## [0.97.0] - 2026-07-31
+
+Three reports from people running the engine rather than building it.
+
+### Fixed
+
+- **The seven starter commands never existed on any fresh install.** `README.md`
+  says they ship with the engine, each one is vendored and tested — and nothing
+  ever created the `skills.manifest.yaml` that turns them into runtime views.
+  `skills-sync.py` printed "manifest not found ... skipping" to stderr and
+  exited 0, `INIT.md` told the installing agent there were no base skills and to
+  skip the step outright, and the doctor's only signal was "no managed skill
+  (fresh install)" — worded as normal. Five cold installs shipped without
+  `/vault-doctor` or `/nexgen-update`, the second being the only upgrade path a
+  non-technical user has.
+  `agent-sync` now seeds the manifest from the shipped
+  `skills.manifest.yaml.example`, and only ever when the file is absent
+  entirely: an existing manifest is never rewritten, so emptying it
+  (`skills: {}`) is a permanent opt-out, and a split engine/data topology whose
+  skill bodies live in the other clone is left alone rather than handed seven
+  entries that resolve to nothing. `INIT.md` no longer contradicts the README.
+- **`agent-chrome` on Windows never reused the shared browser.** The POSIX
+  launcher probes `127.0.0.1:9222` and exits cleanly when the shared Chrome is
+  already up — that is the whole reuse rule in `03-INFRA/agent-browser-cdp.md`.
+  The PowerShell twin, added in #46, never had the probe: a bare `agent-chrome`
+  started a second Chrome process every time and blocked its caller until the
+  user closed the window. Both launchers also pass `--no-first-run` now, so
+  Chrome's first-run flow on the freshly created CDP profile cannot steal focus
+  from an agent that was told to start the browser without asking.
+  (Reported against 0.96.0 as a regression; it is not one — the file never had
+  the branch. `--profile-directory=Default` was in the same report and is
+  deliberately not added: it names the directory Chrome already uses.)
+
+### Added
+
+- **The doctor says when the VPS is behind.** A Cloud-Server install is two
+  installs: upgrading a workstation clone also moves `03-INFRA/deploy/`, but the
+  server keeps running the containers it was last deployed with, and nothing
+  said so — the maintainer redeployed by hand every release and an end user had
+  no way to know it was a step at all. `agent-doctor` (both twins) now reads the
+  version `vault-mcp` reports on its own unauthenticated root route and compares
+  it with the source in this clone: `vault-mcp on the server is X but this
+  engine ships Y`. A WARN, never a FAIL — when to restart services that live
+  agents are writing through is the owner's call. `docs/upgrade.md` gained the
+  Cloud-Server half it never had, `03-INFRA/deploy/README.md` gained the
+  redeploy runbook it points at, and `/nexgen-update` now names the server half
+  without offering to do it.
+- **The doctor says when the starter commands are missing**, by name and with
+  the command that installs them, instead of leaving it to a WARN about managed
+  skills that reads as a normal fresh install.
+
 ## [0.96.0] - 2026-07-31
 
 ### Fixed

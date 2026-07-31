@@ -90,3 +90,30 @@ def test_consumer_engine_dirty_working_tree_check_in_either_twin():
     for content in (bash, powershell):
         assert "consumer engine working tree clean" in content
         assert "tracked file(s) modified in the consumer engine clone" in content
+
+
+def test_starter_command_visibility_in_both_twins():
+    repo = Path(__file__).resolve().parents[3]
+    bash = (repo / "03-INFRA/scripts/agent-doctor.sh").read_text(encoding="utf-8")
+    powershell = (repo / "03-INFRA/scripts/agent-doctor.ps1").read_text(encoding="utf-8")
+    # A machine with no skills manifest has none of the seven commands README
+    # promises, and the only signal used to be the "no managed skill (fresh
+    # install)" WARN -- which reads as normal. Both twins now name the state.
+    for content in (bash, powershell):
+        assert "no skills manifest yet, so none of the starter commands" in content
+        assert "starter commands not installed" in content
+        assert "all 7 starter commands installed" in content
+        # WARN, never FAIL: an emptied manifest is a deliberate opt-out.
+        assert 'warn "starter commands not installed' in content
+
+
+def test_remote_backend_version_skew_is_reported_in_both_twins():
+    repo = Path(__file__).resolve().parents[3]
+    bash = (repo / "03-INFRA/scripts/agent-doctor.sh").read_text(encoding="utf-8")
+    powershell = (repo / "03-INFRA/scripts/agent-doctor.ps1").read_text(encoding="utf-8")
+    # Upgrading the workstation clone changes 03-INFRA/deploy, but the VPS
+    # keeps running the containers it was last deployed with, and nothing
+    # said so. Both twins now compare the two.
+    for content in (bash, powershell):
+        assert "vault-mcp on the server is" in content
+        assert "03-INFRA/deploy/README.md" in content
