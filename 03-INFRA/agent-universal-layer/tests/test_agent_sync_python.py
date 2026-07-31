@@ -2265,3 +2265,20 @@ def test_main_dispatches_vault_push_before_mode_validation(sandbox, monkeypatch)
 
     assert rc == 0
     assert called == [["-m", "msg", "file.txt"]]
+
+
+def test_lock_acquire_timeout_default_outlasts_a_normal_run(sandbox):
+    """A 2-second default made the lock report "busy" for ordinary overlap.
+
+    A guard cycle takes several seconds and an apply longer, so the 30-minute
+    timer meeting an interactive run, or vault-push meeting either, gave up
+    almost at once and failed for a reason the user could neither see nor
+    reproduce on demand. All three implementations must agree on the default,
+    or the shell twins reintroduce it on their own."""
+    mod = load_agent_sync_module(sandbox)
+    assert float(mod.LOCK_TIMEOUT_DEFAULT) >= 30
+
+    sh = (REAL_SCRIPTS / "vault-push.sh").read_text(encoding="utf-8")
+    ps1 = (REAL_SCRIPTS / "vault-push.ps1").read_text(encoding="utf-8")
+    assert "AGENT_SYNC_LOCK_TIMEOUT_SECONDS:-30}" in sh, "vault-push.sh drifted from the Python default"
+    assert "AGENT_SYNC_LOCK_TIMEOUT_SECONDS } else { 30.0 }" in ps1, "vault-push.ps1 drifted from the Python default"

@@ -620,10 +620,21 @@ def _run_external(args: list[str], *, timeout: int, **kw) -> subprocess.Complete
         return subprocess.CompletedProcess(args, 1, stdout, f"timed out after {timeout}s")
 
 
+# How long to wait for the host-wide lock before giving up. The default used
+# to be 2 seconds, which is shorter than a normal run: a guard cycle takes
+# several seconds and an apply can take much longer, so anything starting
+# while one was in flight -- the 30-minute timer meeting an interactive run,
+# or vault-push meeting either -- gave up almost immediately and reported the
+# machine busy. Waiting is the correct behaviour for a lock this coarse: the
+# holder finishes and the waiter proceeds, instead of failing for a reason
+# the user cannot see and cannot reproduce on demand.
+LOCK_TIMEOUT_DEFAULT = "30"
+
+
 class SyncRunLock:
     """Small standard-library cross-platform lock for the whole sync run."""
 
-    def __init__(self, path: Path, *, timeout: float = 2.0) -> None:
+    def __init__(self, path: Path, *, timeout: float = float(LOCK_TIMEOUT_DEFAULT)) -> None:
         self.path = path
         self.timeout = max(0.0, timeout)
         self.acquired = False
@@ -2937,7 +2948,7 @@ def _vault_push_cli(argv: list[str]) -> int:
     # interleave a commit with a mid-apply working tree.
     lock_file = Path(os.environ.get("AGENT_SYNC_LOCK_FILE") or str(env.log_dir / "agent-sync.lock"))
     try:
-        lock_timeout = float(os.environ.get("AGENT_SYNC_LOCK_TIMEOUT_SECONDS") or "2")
+        lock_timeout = float(os.environ.get("AGENT_SYNC_LOCK_TIMEOUT_SECONDS") or LOCK_TIMEOUT_DEFAULT)
     except ValueError:
         print("vault-push: AGENT_SYNC_LOCK_TIMEOUT_SECONDS must be numeric", file=sys.stderr)
         return 2
@@ -3185,7 +3196,7 @@ def main(argv: list[str] | None = None) -> int:
 
     flags = MODES[mode]
     try:
-        lock_timeout = float(os.environ.get("AGENT_SYNC_LOCK_TIMEOUT_SECONDS") or "2")
+        lock_timeout = float(os.environ.get("AGENT_SYNC_LOCK_TIMEOUT_SECONDS") or LOCK_TIMEOUT_DEFAULT)
     except ValueError:
         print("agent_sync: AGENT_SYNC_LOCK_TIMEOUT_SECONDS must be numeric", file=sys.stderr)
         return 2

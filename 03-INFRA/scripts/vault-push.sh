@@ -148,7 +148,7 @@ degraded_lane() {
   # blocking the emergency lane entirely.
   LOCK_FILE="${AGENT_SYNC_LOCK_FILE:-$HOME/.local/state/agent-sync.lock}"
   mkdir -p "$(dirname "$LOCK_FILE")" 2>/dev/null || true
-  LOCK_TIMEOUT="${AGENT_SYNC_LOCK_TIMEOUT_SECONDS:-2}"
+  LOCK_TIMEOUT="${AGENT_SYNC_LOCK_TIMEOUT_SECONDS:-30}"
   if command -v flock >/dev/null 2>&1; then
     exec 9>"$LOCK_FILE"
     if ! flock -w "$LOCK_TIMEOUT" 9; then

@@ -82,9 +82,13 @@ run log.
 
 ## Lock and result
 
-One host-wide lock covers the complete operation. Manual contention exits with
-code `75`; recurring `guard` contention exits successfully because the active
-run already owns the work. Every declared phase reports success or failure.
+One host-wide lock covers the complete operation. A run waits up to 30 seconds
+to acquire it — long enough to outlast a normal cycle, so the recurring timer
+meeting an interactive run waits for it instead of reporting the machine busy.
+Override with `AGENT_SYNC_LOCK_TIMEOUT_SECONDS`. Manual contention past that
+window exits with code `75`; recurring `guard` contention exits successfully
+because the active run already owns the work. Every declared phase reports
+success or failure.
 Failures are aggregated, later independent checks still run, and the final exit
 code is non-zero if any required phase failed.
 

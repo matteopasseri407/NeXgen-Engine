@@ -10,6 +10,8 @@ of any engine release.
 
 ## [Unreleased]
 
+## [0.95.0] - 2026-07-31
+
 A pass over what a stranger meets in the first five minutes, plus the
 provisioning failure that let a whole CLI stay unconfigured forever.
 
