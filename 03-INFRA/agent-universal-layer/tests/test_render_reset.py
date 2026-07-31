@@ -62,15 +62,24 @@ def test_revert_restores_a_reset_config(sandbox_with_live_configs, cli):
 
 
 @pytest.mark.parametrize("cli", ["antigravity", "opencode"])
-def test_reset_then_write_recreates_a_clean_config(sandbox_with_live_configs, cli):
+def test_reset_then_write_recreates_a_clean_config(sandbox_with_live_configs, monkeypatch, cli):
     """The actual guarantee behind allowing --reset for these two: after
     BUG-A, the CLI's own --write path can recreate the file from scratch, so
     the onboarding cycle (reset -> re-provision) genuinely works instead of
     stranding the user with a missing config forever. Re-resolves the path
     AFTER writing (not before): OpenCode's default filename on a truly fresh
     provision is opencode.jsonc regardless of what the old, now-deleted file
-    was named."""
+    was named.
+
+    The presence probe is faked deliberately. Once --reset removes the config,
+    recreating it depends on the CLI reading as installed, and both probes
+    look at the real machine (the binary on PATH). Left alone, this test
+    passed on a developer box that happens to have `agy` and `opencode`, and
+    failed in CI, which has neither -- the host deciding the verdict instead
+    of the code."""
     mod = load_render_module(sandbox_with_live_configs)
+    binary = {"antigravity": "agy", "opencode": "opencode"}[cli]
+    monkeypatch.setattr(mod.shutil, "which", lambda cmd: f"/usr/bin/{binary}" if cmd == binary else None)
     path_before = mod._cli_config_path(cli)
 
     assert mod.cmd_reset(cli) == 0
