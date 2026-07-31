@@ -2394,10 +2394,12 @@ def test_render_json_report_agrees_with_the_human_summary(sandbox_with_live_conf
     mistake this suite has now made twice."""
     sb = sandbox_with_live_configs
     render_py = sb.mcp_dir / "render.py"
-    run = lambda *extra: subprocess.run(
-        [sys.executable, str(render_py), *extra],
-        capture_output=True, text=True, timeout=120, env=sb.env(),
-    )
+    def run(*extra):
+        return subprocess.run(
+            [sys.executable, str(render_py), *extra],
+            capture_output=True, text=True, timeout=120, env=sb.env(),
+        )
+
     human, machine = run(), run("--json")
     assert human.returncode == machine.returncode, human.stderr + machine.stderr
 
