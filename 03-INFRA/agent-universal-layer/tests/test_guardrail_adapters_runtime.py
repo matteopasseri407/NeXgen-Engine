@@ -46,6 +46,12 @@ process.stdout.write(JSON.stringify({
 
 CRASHING_BODY = "process.exit(9);\n"
 
+# The convention a real Claude PreToolUse guardrail follows: it writes nothing
+# and exits 0 to permit, and only speaks up to deny. This is the common path --
+# every ordinary command takes it -- so an adapter that reads silence as
+# "unparseable" cancels the very posture it is there to make safe.
+SILENT_ALLOW_BODY = "process.exit(0);\n"
+
 
 def _install(tmp_path: Path, adapter: str, sidecar: object | None) -> Path:
     """Copy the real adapter into a scratch dir, next to an optional sidecar."""
@@ -180,3 +186,17 @@ def test_opencode_plugin_asks_when_the_guardrail_body_crashes(tmp_path):
     _install(tmp_path, "opencode-guardrail-plugin.mjs",
              {"hooks": [{"file": _body(tmp_path, CRASHING_BODY), "timeout": 5}]})
     assert _run_opencode(tmp_path, "ls -la")["status"] == "ask"
+
+
+# ── the silent-allow convention, on both adapters ───────────────────────
+
+def test_antigravity_adapter_allows_when_the_body_stays_silent(tmp_path):
+    adapter = _install(tmp_path, "antigravity-guardrail-adapter.mjs",
+                       {"hooks": [{"file": _body(tmp_path, SILENT_ALLOW_BODY), "timeout": 5}]})
+    assert _run_antigravity(adapter, "ls -la")["decision"] == "allow"
+
+
+def test_opencode_plugin_allows_when_the_body_stays_silent(tmp_path):
+    _install(tmp_path, "opencode-guardrail-plugin.mjs",
+             {"hooks": [{"file": _body(tmp_path, SILENT_ALLOW_BODY), "timeout": 5}]})
+    assert _run_opencode(tmp_path, "ls -la")["status"] == "UNSET"

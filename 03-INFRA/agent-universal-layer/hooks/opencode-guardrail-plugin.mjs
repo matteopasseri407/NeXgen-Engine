@@ -73,6 +73,14 @@ function consultGuardrailBody(hook, payload) {
       const detail = result.error ? result.error.message : `exit status ${result.status}`;
       return { decision: "ask", reason: `nexgen-guardrail: guardrail body exited abnormally (${detail})` };
     }
+    // Silence IS the answer, and it is the common one. A Claude PreToolUse
+    // hook that permits the tool exits 0 and writes nothing -- it only speaks
+    // up to deny or to ask. Treating an empty stdout as unparseable made
+    // every ordinary command fall back to "ask", which quietly cancelled the
+    // very posture this adapter exists to make safe.
+    if (result.stdout.trim() === "") {
+      return { decision: "allow", reason: "" };
+    }
     const parsed = JSON.parse(result.stdout);
     const decision = parsed && parsed.hookSpecificOutput && parsed.hookSpecificOutput.permissionDecision;
     if (decision === "allow" || decision === "deny" || decision === "ask") {

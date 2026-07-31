@@ -10,6 +10,19 @@ of any engine release.
 
 ## [Unreleased]
 
+## [0.95.1] - 2026-07-31
+
+### Fixed
+
+- **The guardrail adapters made every ordinary command ask for confirmation.**
+  A Claude PreToolUse hook permits a tool by exiting 0 and writing nothing; it
+  only speaks up to deny. Both new adapters read that silence as unparseable
+  output and fell back to asking, so on OpenCode and Antigravity a posture
+  that removes confirmation prompts quietly reinstated them for everything
+  except the commands the guardrail actually blocks. Found by running the
+  installed adapter against a real guardrail body rather than a test double,
+  which is now what the suite does for the allow path too.
+
 ## [0.95.0] - 2026-07-31
 
 A pass over what a stranger meets in the first five minutes, plus the
