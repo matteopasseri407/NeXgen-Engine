@@ -10,6 +10,19 @@ of any engine release.
 
 ## [Unreleased]
 
+## [0.95.2] - 2026-07-31
+
+### Changed
+
+- **A bypass posture without a guardrail is a WARN, not a FAIL.** Nobody reaches
+  that state by accident: it exists only because the instance manifest
+  deliberately declares the posture for a CLI and no guardrail hook targeting
+  it. That is a standing choice, not a fault. As a FAIL it could never be
+  cleared, so the doctor stayed permanently red, `agent-sync apply` could never
+  report `READY`, and the alert channel fired on every run — which is precisely
+  how a real FAIL stops being read. It is still reported on every run, by name,
+  per CLI.
+
 ## [0.95.1] - 2026-07-31
 
 ### Fixed

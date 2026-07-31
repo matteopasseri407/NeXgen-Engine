@@ -501,7 +501,10 @@ for cli, value in posture.items():
         if ($guardState -eq "GUARDED") {
           ok "$cli runs in bypass posture (no confirmation prompts) WITH a declared PreToolUse guardrail hook"
         } else {
-          bad "$cli runs in bypass posture (no confirmation prompts) WITHOUT a declared PreToolUse guardrail hook -- catastrophic commands are NOT intercepted"
+          # warn, never bad: see the twin in agent-doctor.sh. This state is a
+          # standing choice declared in the instance manifest, not a fault, and
+          # an unclearable FAIL just trains the reader to ignore FAILs.
+          warn "$cli runs in bypass posture (no confirmation prompts) WITHOUT a declared PreToolUse guardrail hook -- catastrophic commands are NOT intercepted"
         }
       }
     } else {
