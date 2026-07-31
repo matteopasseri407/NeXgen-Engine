@@ -137,6 +137,22 @@ class Sandbox:
         return out
 
 
+def rmtree_force(path: Path) -> None:
+    """Delete a tree that may contain read-only files.
+
+    Git marks everything under a repository's `objects/` read-only, and on
+    Windows a read-only file cannot be unlinked: a plain shutil.rmtree over a
+    repository raises PermissionError there while succeeding on Linux. Any
+    test that deletes a git directory to simulate a vanished remote hits this,
+    and hits it only in CI. Clear the bit on the way down, then delete."""
+    for child in path.rglob("*"):
+        try:
+            child.chmod(child.stat().st_mode | stat.S_IWRITE)
+        except OSError:
+            pass
+    shutil.rmtree(path)
+
+
 def _make_bin_stubs(sandbox: Sandbox) -> None:
     """Neutralizes systemctl and notify-send for the tests:
     - systemctl: to avoid daemon-reload hitting the REAL systemd

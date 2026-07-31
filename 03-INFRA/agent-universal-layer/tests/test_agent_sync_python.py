@@ -17,7 +17,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from conftest import REAL_SCRIPTS, load_agent_sync_module, run_agent_sync_python
+from conftest import REAL_SCRIPTS, load_agent_sync_module, rmtree_force, run_agent_sync_python
 
 
 def _patch_apply_phases(monkeypatch, mod, called: list[str]) -> None:
@@ -403,7 +403,7 @@ def test_pull_fetch_failed_carries_git_stderr_not_just_a_generic_label(sandbox, 
     label -- reaches both places."""
     mod = load_agent_sync_module(sandbox)
     remotes = _init_git_vault(sandbox, "oracle")
-    shutil.rmtree(remotes["oracle"])
+    rmtree_force(remotes["oracle"])   # git objects are read-only; plain rmtree fails on Windows
     env = _env_for(sandbox, monkeypatch, mod, KNOWLEDGE_VAULT_REMOTE="oracle")
 
     outcome = mod.pull(env)
