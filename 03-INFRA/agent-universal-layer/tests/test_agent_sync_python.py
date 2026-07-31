@@ -2383,17 +2383,27 @@ def test_mcp_render_refuses_an_unreadable_drift_report(sandbox, monkeypatch):
     assert "could not read the drift report" in log
 
 
-def test_render_json_report_agrees_with_the_human_summary():
+def test_render_json_report_agrees_with_the_human_summary(sandbox_with_live_configs):
     """One scan, two shapes: the machine totals must equal what the human
     summary line says, or the two consumers would disagree about the same
-    machine."""
-    render_py = REAL_SCRIPTS.parent / "agent-universal-layer" / "mcp" / "render.py"
-    human = subprocess.run([sys.executable, str(render_py)], capture_output=True, text=True, timeout=120)
-    machine = subprocess.run([sys.executable, str(render_py), "--json"], capture_output=True, text=True, timeout=120)
-    assert human.returncode == machine.returncode
+    machine.
 
-    summary = [ln for ln in human.stdout.splitlines() if "---- summary:" in ln][-1]
-    match = re.search(r"summary: (\d+) servers match, (\d+) with differences, (\d+) outside", summary)
-    assert match, summary
+    Runs inside the sandbox, never against the real host: the first version of
+    this test invoked the installed render.py directly, passed here, and blew
+    up in CI, which has no manifest for it to read. The same host-dependency
+    mistake this suite has now made twice."""
+    sb = sandbox_with_live_configs
+    render_py = sb.mcp_dir / "render.py"
+    run = lambda *extra: subprocess.run(
+        [sys.executable, str(render_py), *extra],
+        capture_output=True, text=True, timeout=120, env=sb.env(),
+    )
+    human, machine = run(), run("--json")
+    assert human.returncode == machine.returncode, human.stderr + machine.stderr
+
+    summary = [ln for ln in human.stdout.splitlines() if "---- summary:" in ln]
+    assert summary, human.stdout
+    match = re.search(r"summary: (\d+) servers match, (\d+) with differences, (\d+) outside", summary[-1])
+    assert match, summary[-1]
     totals = json.loads(machine.stdout)["totals"]
     assert (totals["ok"], totals["diff"], totals["extra"]) == tuple(int(g) for g in match.groups())
