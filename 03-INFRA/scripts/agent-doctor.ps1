@@ -562,7 +562,36 @@ if ($VaultLibraryUrl) {
   # Streamable HTTP MCP rejects a generic GET without its protocol Accept
   # header. OPTIONS is a bounded, authenticated route probe.
   $c = httpcode $VaultLibraryUrl @{ Authorization = "Bearer $($env:VAULT_LIBRARY_TOKEN)"; Accept = "application/json, text/event-stream" } "Options"
-  if ($c -eq 200 -or $c -eq 405) { ok "vault-library: $c (up)" } else { bad "vault-library: $c" }
+  if ($c -eq 200 -or $c -eq 405) {
+    ok "vault-library: $c (up)"
+    # A Cloud-Server install is TWO installs. Upgrading this clone also moves
+    # 03-INFRA/deploy, but the VPS keeps running the containers it was last
+    # deployed with, and nothing ever said so. The server's root route reports
+    # its running version and is unauthenticated by design (the MCP security
+    # middleware guards only the MCP path), so no token is sent here. WARN,
+    # never FAIL: when to deploy is the user's own call.
+    $vmShipped = $null
+    $vmInit = Join-Path $EngineInfra "deploy\vault-mcp\src\vault_mcp_server\__init__.py"
+    if (Test-Path -LiteralPath $vmInit) {
+      $m = [regex]::Match([IO.File]::ReadAllText($vmInit), '__version__\s*=\s*"([^"]+)"')
+      if ($m.Success) { $vmShipped = $m.Groups[1].Value }
+    }
+    $vmRunning = $null
+    try {
+      $vmOrigin = ([Uri]$VaultLibraryUrl).GetLeftPart([UriPartial]::Authority)
+      $root = Invoke-RestMethod -Uri "$vmOrigin/" -TimeoutSec 6 -ErrorAction Stop
+      if ($root.version) { $vmRunning = "$($root.version)" }
+    } catch {
+      $vmRunning = $null
+    }
+    if (-not $vmShipped -or -not $vmRunning) {
+      ok "vault-mcp version not compared (server or local source reported none)"
+    } elseif ($vmShipped -eq $vmRunning) {
+      ok "vault-mcp on the server is $vmRunning, matching this engine"
+    } else {
+      warn "vault-mcp on the server is $vmRunning but this engine ships $vmShipped - the server half of the upgrade was never deployed; redeploy per 03-INFRA/deploy/README.md"
+    }
+  } else { bad "vault-library: $c" }
 } elseif (Test-ConnectorExpected "VAULT_LIBRARY_URL") {
   # Same Mode gating as the "Tokens in env" check below for this exact
   # variable -- an unconditional warn here used to contradict that check's
@@ -875,6 +904,27 @@ print(len(mat - names))
     warn "$oomSkills skill(s) materialized but not in the manifest; adopt or drop them via onboarding (agent-sync inventory)"
   } else {
     ok "no out-of-manifest skills to reconcile"
+  }
+}
+
+# The starter commands README promises actually being there. This used to be
+# invisible: with no manifest at all, skills-sync printed "skipping" to stderr
+# and exited 0, and the only doctor line was the "no managed skill (fresh
+# install)" WARN above -- which reads as normal. Five cold installs shipped
+# without /vault-doctor or /nexgen-update before anyone noticed. WARN, never
+# FAIL: an emptied manifest is a legitimate deliberate choice.
+$Starters = @("vault-doctor", "vault-close", "vault-save", "vault-council",
+              "vault-groom", "nexgen-update", "vault-map")
+if (-not (Test-Path -LiteralPath $skManifest)) {
+  warn "no skills manifest yet, so none of the starter commands (/vault-doctor, /nexgen-update, ...) exist — create it: Copy-Item `"$skManifest.example`" `"$skManifest`"; then run agent-sync apply"
+} else {
+  $missingStarters = @($Starters | Where-Object {
+    -not (Test-Path -LiteralPath (Join-Path $skLibrary "$_\SKILL.md"))
+  })
+  if ($missingStarters.Count -gt 0) {
+    warn "starter commands not installed: $(($missingStarters | ForEach-Object { "/$_" }) -join ' ') — if you want them, add them to $skManifest and run: agent-sync apply"
+  } else {
+    ok "all 7 starter commands installed (/vault-doctor, /vault-close, /vault-save, /vault-council, /vault-groom, /nexgen-update, /vault-map)"
   }
 }
 

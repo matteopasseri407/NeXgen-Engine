@@ -118,9 +118,11 @@ File di destinazione per ogni CLI (corrispondono a quelli che il sync MULTI scri
 
 Per ogni server MCP nel manifest, l'agente risolve il comando concreto nel dialetto della CLI scelta (Claude, Codex, OpenCode e Antigravity usano formati diversi, vedi `03-INFRA/agent-universal-layer/mcp/render.py` come riferimento per i dialetti).
 
-Le skill sono dati personali dell'utente, non del motore: se le vuole, le sceglie chi installa, listandole nel proprio `skills.manifest.yaml` dentro il Vault (`03-INFRA/agent-universal-layer/skills/skills.manifest.yaml`). Su un'installazione nuova questo file potrebbe non esistere ancora o essere vuoto — è uno stato normale, non un errore: salta questo passo finché l'utente non decide di aggiungere skill.
+Le skill le sceglie l'utente, listandole nel proprio `skills.manifest.yaml` dentro il Vault (`03-INFRA/agent-universal-layer/skills/skills.manifest.yaml`) — con una sola eccezione: i **comandi starter** che il motore stesso spedisce (`vault-doctor`, `vault-close`, `vault-save`, `vault-council`, `vault-groom`, `nexgen-update`, `vault-map`). Quelli non sono una scelta da fare, sono il prodotto: `/nexgen-update` è il comando con cui l'utente aggiornerà il motore, e senza di lui non ha modo di farlo.
 
-Se il manifest esiste, leggilo e installa ogni voce elencata secondo il suo `origin`, SENZA assumere nomi specifici (i nomi sono scelte dell'utente, non skill "di base" del framework):
+Se `skills.manifest.yaml` non esiste ancora, **crealo copiando `skills.manifest.yaml.example` che sta nella stessa cartella** — in MULTI lo fa già `agent-sync apply` da solo, in MINIMAL lo fai tu. È l'unico file di skill che il motore semina, e solo quando manca del tutto: un manifest già esistente non si tocca mai. Se l'utente non vuole nessun comando starter, si svuota (`skills: {}`) e resta vuoto per sempre.
+
+Poi leggi il manifest e installa ogni voce elencata secondo il suo `origin`. Oltre agli starter qui sopra, non assumere nessun altro nome: il resto sono scelte dell'utente, non skill "di base" del framework.
 - **`origin: vault`** (vendorizzata, i byte vivono nel Vault stesso): materializza la cartella da `03-INFRA/agent-universal-layer/skills/<name>/` in `~/.agents/skill-library/<name>/`.
 - **`origin: github`** (third-party, repo indicato nel campo `repo` della voce): scaricala al commit SHA fissato e materializzala in `~/.agents/skill-library/<name>/`.
 
@@ -290,9 +292,11 @@ Destination file for each CLI (these match what the MULTI sync would write):
 
 For each MCP server in the manifest, the agent resolves the concrete command in the chosen CLI's dialect (Claude, Codex, OpenCode, and Antigravity use different formats, see `03-INFRA/agent-universal-layer/mcp/render.py` as a reference for the dialects).
 
-Skills are the user's own data, not the engine's: if they want any, they choose them, listed in their own `skills.manifest.yaml` inside the Vault (`03-INFRA/agent-universal-layer/skills/skills.manifest.yaml`). On a fresh install this file may not exist yet or may be empty -- that's a normal state, not an error: skip this step until the user decides to add skills.
+Skills are the user's own choice, listed in their own `skills.manifest.yaml` inside the Vault (`03-INFRA/agent-universal-layer/skills/skills.manifest.yaml`) -- with one exception: the **starter commands** the engine itself ships (`vault-doctor`, `vault-close`, `vault-save`, `vault-council`, `vault-groom`, `nexgen-update`, `vault-map`). Those are not a choice to make, they are the product: `/nexgen-update` is how the user will upgrade the engine, and without it they have no way to.
 
-If the manifest exists, read it and install every entry per its `origin`, WITHOUT assuming specific names (names are the user's own choices, not "base" skills of the framework):
+If `skills.manifest.yaml` does not exist yet, **create it by copying `skills.manifest.yaml.example` from the same folder** -- on MULTI `agent-sync apply` already does this for you, on MINIMAL you do it. It is the only skills file the engine ever seeds, and only when it is missing entirely: an existing manifest is never touched. A user who wants none of the starter commands empties it (`skills: {}`) and it stays empty forever.
+
+Then read the manifest and install every entry per its `origin`. Beyond the starters above, assume no other name: the rest are the user's own choices, not "base" skills of the framework.
 - **`origin: vault`** (vendored, the bytes live in the Vault itself): materialize the folder from `03-INFRA/agent-universal-layer/skills/<name>/` into `~/.agents/skill-library/<name>/`.
 - **`origin: github`** (third-party, repo given in the entry's `repo` field): fetch the declared full commit SHA and materialize the folder given by the entry's `path` field (default: the repo root) into `~/.agents/skill-library/<name>/`.
 

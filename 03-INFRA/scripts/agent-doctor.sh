@@ -508,7 +508,30 @@ if [ -n "$vault_library_url" ]; then
   # curl's own argv -- see bearer_cfg()'s comment for why.
   bearer_cfg "${VAULT_LIBRARY_TOKEN:-}"
   c=$(code -X OPTIONS -K "$_LAST_BEARER_CFG" -H "Accept: application/json, text/event-stream" "$vault_library_url")
-  { [ "$c" = 200 ] || [ "$c" = 405 ]; } && ok "vault-library: $c (up)" || fail "vault-library: $c"
+  if [ "$c" = 200 ] || [ "$c" = 405 ]; then
+    ok "vault-library: $c (up)"
+    # A Cloud-Server install is TWO installs. Upgrading this clone also moves
+    # 03-INFRA/deploy/, but the VPS keeps running the containers it was last
+    # deployed with, and nothing ever said so: the maintainer redeployed by
+    # hand and an end user simply would not have known to. The server's root
+    # route reports its running version and is unauthenticated by design
+    # (McpSecurityMiddleware guards only the MCP path), so no token is sent
+    # here. WARN, never FAIL: when to deploy is the user's own call.
+    vm_shipped=$(sed -n 's/^__version__ *= *"\([^"]*\)".*/\1/p' \
+      "$ENGINE_ROOT/deploy/vault-mcp/src/vault_mcp_server/__init__.py" 2>/dev/null | head -1)
+    vm_origin=$(printf '%s' "$vault_library_url" | sed -E 's#^([A-Za-z][A-Za-z0-9+.-]*://[^/]+).*#\1#')
+    vm_running=$(curl -fsS -m 6 "$vm_origin/" 2>/dev/null \
+      | sed -n 's/.*"version": *"\([^"]*\)".*/\1/p' | head -1)
+    if [ -z "$vm_shipped" ] || [ -z "$vm_running" ]; then
+      ok "vault-mcp version not compared (server or local source reported none)"
+    elif [ "$vm_shipped" = "$vm_running" ]; then
+      ok "vault-mcp on the server is $vm_running, matching this engine"
+    else
+      warn "vault-mcp on the server is $vm_running but this engine ships $vm_shipped — the server half of the upgrade was never deployed; redeploy per 03-INFRA/deploy/README.md"
+    fi
+  else
+    fail "vault-library: $c"
+  fi
 elif connector_expected VAULT_LIBRARY_URL; then
   # Same Mode gating as the "Tokens in env" check below for this exact
   # variable -- an unconditional warn here used to contradict that check's
@@ -959,6 +982,28 @@ if [ "${oom_skills:-0}" -gt 0 ] 2>/dev/null; then
   warn "$oom_skills skill(s) materialized but not in the manifest; adopt or drop them via onboarding (agent-sync inventory)"
 else
   ok "no out-of-manifest skills to reconcile"
+fi
+# The starter commands README promises actually being there. This used to be
+# invisible: with no manifest at all, skills-sync printed "skipping" to stderr
+# and exited 0, and the only doctor line was the "no managed skill (fresh
+# install)" WARN above -- which reads as normal. Five cold installs shipped
+# without /vault-doctor or /nexgen-update before anyone noticed. WARN, never
+# FAIL: an emptied manifest is a legitimate deliberate choice.
+missing_starters="$(python3 - "$SKILL_LIBRARY" "$SKILL_MANIFEST" <<'PY' 2>/dev/null
+import pathlib, sys
+STARTERS = ("vault-doctor", "vault-close", "vault-save", "vault-council",
+            "vault-groom", "nexgen-update", "vault-map")
+lib, man = pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2])
+print("NOMANIFEST" if not man.is_file() else
+      " ".join("/" + n for n in STARTERS if not (lib / n / "SKILL.md").is_file()))
+PY
+)"
+if [ "$missing_starters" = "NOMANIFEST" ]; then
+  warn "no skills manifest yet, so none of the starter commands (/vault-doctor, /nexgen-update, ...) exist — create it: cp $SKILL_MANIFEST.example $SKILL_MANIFEST && agent-sync apply"
+elif [ -n "$missing_starters" ]; then
+  warn "starter commands not installed: $missing_starters — if you want them, add them to $SKILL_MANIFEST and run: agent-sync apply"
+else
+  ok "all 7 starter commands installed (/vault-doctor, /vault-close, /vault-save, /vault-council, /vault-groom, /nexgen-update, /vault-map)"
 fi
 
 # Third-party CLI compatibility: a short, pruneable list of known-broken
