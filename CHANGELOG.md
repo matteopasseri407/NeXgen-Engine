@@ -10,6 +10,22 @@ of any engine release.
 
 ## [Unreleased]
 
+## [0.97.1] - 2026-07-31
+
+### Fixed
+
+- **The shipped grooming playbook created four broken wikilinks in every
+  install.** It illustrated the syntax in prose — a bare double-bracket
+  example inside backticks, four times, in sentences about repairing links —
+  and `vault-map.py` deliberately does not strip inline code spans, because
+  backtick-wrapped wikilinks are a legitimate way to link in a real vault. So
+  an *example* was indistinguishable from a live edge: four phantom broken
+  links that no note could ever satisfy, reported by `agent-doctor` on every
+  run since the check shipped. A WARN nobody can clear is how people learn to
+  ignore WARNs — the same lesson as 0.95.2, one layer up. The prose now says
+  "wikilink" as a word, and a new test scans this repo's own shipped docs with
+  the very tool it ships and fails the build on the next one.
+
 ## [0.97.0] - 2026-07-31
 
 Three reports from people running the engine rather than building it.

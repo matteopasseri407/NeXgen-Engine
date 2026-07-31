@@ -172,3 +172,29 @@ def test_groom_twins_feed_the_map_to_the_propose_pass():
             f"{twin.name}: the groom preview must include the structural map "
             "(orphans and broken links are first-class tranche candidates)"
         )
+
+
+def test_the_engines_own_shipped_docs_have_no_broken_wikilinks():
+    """The docs this repo ships are scanned by the very tool it ships.
+
+    Four of them were phantom links for months: `vault-grooming-playbook.md`
+    illustrated the syntax in prose ("orphaned or broken [[links]]", "leave a
+    [[link]] from any surviving pointer"), and vault-map deliberately does NOT
+    strip inline code spans -- backtick-wrapped wikilinks are a legitimate way
+    to link in a real vault, so an EXAMPLE is indistinguishable from a live
+    edge. Every install inherited four broken links it could never fix, and a
+    doctor WARN nobody could clear teaches people to ignore doctor WARNs.
+
+    The rule this pins: when you describe a wikilink in prose, write the word.
+    """
+    out = subprocess.run(
+        [sys.executable, str(SCRIPT), "--vault", str(REPO), "--json"],
+        capture_output=True, text=True, check=True,
+    )
+    broken = json.loads(out.stdout)["broken"]
+
+    assert broken == [], (
+        "shipped docs contain wikilinks that resolve to nothing. If it is a real "
+        "link, fix the target; if it is an example of the syntax, write "
+        f"'wikilink' as a word instead: {broken}"
+    )
