@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
+import re
 import shlex
 import shutil
 import subprocess
@@ -2282,3 +2283,129 @@ def test_lock_acquire_timeout_default_outlasts_a_normal_run(sandbox):
     ps1 = (REAL_SCRIPTS / "vault-push.ps1").read_text(encoding="utf-8")
     assert "AGENT_SYNC_LOCK_TIMEOUT_SECONDS:-30}" in sh, "vault-push.sh drifted from the Python default"
     assert "AGENT_SYNC_LOCK_TIMEOUT_SECONDS } else { 30.0 }" in ps1, "vault-push.ps1 drifted from the Python default"
+
+
+# ── mcp_render's verdict: what it skipped on purpose must not fail the run ──
+# The old code read one global drift counter off render.py's human summary
+# line. agent-sync deliberately does not rewrite .claude.json while Claude is
+# running, but that CLI's drift still landed in the same total, so `apply`
+# failed for as long as Claude stayed open -- which is most of the time. The
+# renderer now reports per CLI, and the verdict excludes exactly what this run
+# chose to skip, and nothing else.
+
+_DIFF_REPORT = {
+    "schema": 1,
+    "clis": {
+        "claude": {"present": True, "stopped": False, "ok": 3, "diff": 2, "extra": 0},
+        "codex": {"present": True, "stopped": False, "ok": 5, "diff": 0, "extra": 1},
+        "antigravity": {"present": True, "stopped": False, "ok": 5, "diff": 0, "extra": 0},
+        "opencode": {"present": True, "stopped": False, "ok": 5, "diff": 0, "extra": 0},
+    },
+    "totals": {"ok": 18, "diff": 2, "extra": 1, "stopped": 0},
+}
+
+
+def _mcp_render_with(mod, monkeypatch, *, claude_running: bool, report: dict):
+    """Run mcp_render against a scripted renderer, and return (verdict, argv log)."""
+    (mod_ul := mod.Env().ul / "mcp").mkdir(parents=True, exist_ok=True)
+    (mod_ul / "render.py").write_text("# scripted in the test\n", encoding="utf-8")
+    seen = []
+
+    def fake_script(argv, **_kwargs):
+        seen.append(argv)
+        # The human summary too, not just the JSON: it is what the OLD code
+        # parsed, so leaving it out would let these tests pass against the
+        # very bug they exist to pin.
+        t = report["totals"]
+        payload = json.dumps(report) if "--json" in argv else (
+            f"---- summary: {t['ok']} servers match, {t['diff']} with differences, "
+            f"{t['extra']} outside the manifest ----"
+        )
+        return subprocess.CompletedProcess(argv, 0, payload, "")
+
+    monkeypatch.setattr(mod, "_run_python_script", fake_script)
+    monkeypatch.setattr(mod, "_process_running", lambda name: claude_running and name == "claude")
+    return mod.mcp_render(mod.Env()), seen
+
+
+def test_mcp_render_does_not_fail_on_drift_it_deliberately_left_alone(sandbox, monkeypatch):
+    mod = load_agent_sync_module(sandbox)
+    verdict, seen = _mcp_render_with(mod, monkeypatch, claude_running=True, report=_DIFF_REPORT)
+
+    assert verdict is True, "drift in a config this run refused to touch must not fail the phase"
+    assert not any("--write" in argv and "claude" in argv for argv in seen), (
+        "a running Claude must still not be written"
+    )
+    log = (sandbox.home / ".local" / "state" / "agent-sync.log").read_text(encoding="utf-8")
+    assert "left alone on purpose" in log, "the deferral has to be visible, not silent"
+    assert "SENTINEL" not in log
+
+
+def test_mcp_render_still_fails_on_the_same_drift_when_claude_is_closed(sandbox, monkeypatch):
+    """The non-regression that matters: the fix must not become a way to stop
+    seeing drift. Same report, Claude not running -> the phase still fails."""
+    mod = load_agent_sync_module(sandbox)
+    verdict, _ = _mcp_render_with(mod, monkeypatch, claude_running=False, report=_DIFF_REPORT)
+
+    assert verdict is False
+    log = (sandbox.home / ".local" / "state" / "agent-sync.log").read_text(encoding="utf-8")
+    assert "SENTINEL — 2 servers diverge" in log
+
+
+def test_mcp_render_excludes_only_the_cli_it_skipped(sandbox, monkeypatch):
+    """Drift on another CLI still fails even while Claude is running: the
+    exclusion is scoped to what this run actually skipped."""
+    report = json.loads(json.dumps(_DIFF_REPORT))
+    report["clis"]["codex"]["diff"] = 1
+    report["totals"]["diff"] = 3          # keep the fixture internally consistent
+    mod = load_agent_sync_module(sandbox)
+    verdict, _ = _mcp_render_with(mod, monkeypatch, claude_running=True, report=report)
+
+    assert verdict is False
+    log = (sandbox.home / ".local" / "state" / "agent-sync.log").read_text(encoding="utf-8")
+    assert "SENTINEL — 1 servers diverge" in log
+
+
+def test_mcp_render_refuses_an_unreadable_drift_report(sandbox, monkeypatch):
+    """A renderer that answers with something this cannot parse is a failure,
+    never a silent pass: the verdict would otherwise be built from nothing."""
+    mod = load_agent_sync_module(sandbox)
+    (mod.Env().ul / "mcp").mkdir(parents=True, exist_ok=True)
+    (mod.Env().ul / "mcp" / "render.py").write_text("# scripted\n", encoding="utf-8")
+    monkeypatch.setattr(mod, "_process_running", lambda _name: False)
+    monkeypatch.setattr(
+        mod, "_run_python_script",
+        lambda argv, **_k: subprocess.CompletedProcess(argv, 0, "not json at all", ""),
+    )
+
+    assert mod.mcp_render(mod.Env()) is False
+    log = (sandbox.home / ".local" / "state" / "agent-sync.log").read_text(encoding="utf-8")
+    assert "could not read the drift report" in log
+
+
+def test_render_json_report_agrees_with_the_human_summary(sandbox_with_live_configs):
+    """One scan, two shapes: the machine totals must equal what the human
+    summary line says, or the two consumers would disagree about the same
+    machine.
+
+    Runs inside the sandbox, never against the real host: the first version of
+    this test invoked the installed render.py directly, passed here, and blew
+    up in CI, which has no manifest for it to read. The same host-dependency
+    mistake this suite has now made twice."""
+    sb = sandbox_with_live_configs
+    render_py = sb.mcp_dir / "render.py"
+    def run(*extra):
+        return subprocess.run(
+            [sys.executable, str(render_py), *extra],
+            capture_output=True, text=True, timeout=120, env=sb.env(),
+        )
+
+    human, machine = run(), run("--json")
+    assert human.returncode == machine.returncode, human.stderr + machine.stderr
+
+    summary = [ln for ln in human.stdout.splitlines() if "---- summary:" in ln]
+    assert summary, human.stdout
+    match = re.search(r"summary: (\d+) servers match, (\d+) with differences, (\d+) outside", summary[-1])
+    assert match, summary[-1]
+    totals = json.loads(machine.stdout)["totals"]
+    assert (totals["ok"], totals["diff"], totals["extra"]) == tuple(int(g) for g in match.groups())

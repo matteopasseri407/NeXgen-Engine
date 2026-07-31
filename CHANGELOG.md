@@ -10,6 +10,29 @@ of any engine release.
 
 ## [Unreleased]
 
+## [0.96.0] - 2026-07-31
+
+### Fixed
+
+- **`agent-sync apply` failed for as long as Claude Code stayed open.** The
+  provisioner deliberately does not rewrite `.claude.json` under a running
+  Claude, but the drift that leaves behind was still counted against the run
+  that chose to leave it: one global counter, read off the renderer's
+  human-readable summary line, could not express "this CLI was skipped on
+  purpose". With Claude open and any pre-existing drift in its config, every
+  apply reported failure and re-running never helped.
+  `render.py` gained `--json`: the same scan, the same exit codes, reported per
+  CLI instead of as one total. The human report is produced by the same
+  function and is unchanged. `agent-sync` now excludes exactly what it skipped
+  and nothing else — drift on any other CLI still fails, and so does Claude's
+  own drift once Claude is closed — and says out loud what it deferred.
+
+### Added
+
+- `render.py --json`, with the default diff: a machine-readable per-CLI drift
+  report. Written because the alternative was parsing a report meant for
+  people on the code path that decides whether a sync passed.
+
 ## [0.95.2] - 2026-07-31
 
 ### Changed

@@ -34,7 +34,7 @@ dialect.
     entry for each (secrets redacted to <AUTH>, env-var names kept). Writes
     nothing; exit 0."""
 from __future__ import annotations
-import argparse, difflib, json, os, platform, re, shutil, sys, time
+import argparse, contextlib, difflib, io, json, os, platform, re, shutil, sys, time
 from pathlib import Path
 try:
     import tomllib
@@ -512,13 +512,43 @@ def _codex_alias_collisions(names):
         grouped.setdefault(name.replace("-", "_").casefold(), []).append(name)
     return [sorted(group) for group in grouped.values() if len(group) > 1]
 
-def cmd_diff():
+def cmd_diff(as_json=False):
+    """Compare every CLI's live MCP config against the manifest.
+
+    Two output shapes over ONE scan. The human report is the default and is
+    printed by _diff_scan() exactly as it always was; `as_json` runs the same
+    function with stdout captured and emits a machine-readable document
+    instead. Deliberately not two code paths: a second implementation of the
+    comparison would be free to disagree with the one people read.
+
+    The machine shape exists because a global pass/fail counter cannot express
+    "this CLI was skipped on purpose". agent-sync does not write Claude's
+    config while Claude is running, but the old summary line still folded
+    Claude's drift into one total, so every apply failed for as long as Claude
+    stayed open. Per-CLI counts let the caller exclude exactly what it chose
+    to skip, and nothing else."""
+    if not as_json:
+        return _diff_scan()[0]
+    with contextlib.redirect_stdout(io.StringIO()):
+        rc, report = _diff_scan()
+    print(json.dumps(report, indent=2))
+    return rc
+
+
+def _diff_scan():
+    """Returns (exit_code, report). Prints the human report as a side effect."""
     man = _load_manifest_or_stop()
     if man is None:
-        return 2
+        return 2, {"schema": 1, "clis": {}, "totals": {"ok": 0, "diff": 0, "extra": 0, "stopped": 0}}
     ok = bad = extra = stopped = 0
+    per_cli = {}
+
+    def record(name, **counts):
+        per_cli[name] = {"present": False, "stopped": False, "ok": 0, "diff": 0, "extra": 0, **counts}
+
     for cli, spec in CLI.items():
         print(f"\n========== {cli.upper()} ==========")
+        cli_ok = cli_bad = cli_extra = 0
         try:
             current = load_current(cli)
         except SystemExit:
@@ -529,6 +559,7 @@ def cmd_diff():
             # broken file) -- isolate it here, keep scanning the rest, and
             # let the overall exit code reflect that something stopped.
             stopped += 1
+            record(cli, present=True, stopped=True)
             continue
         except OSError as exc:
             # A locked/unreadable config file (chmod 000, held open
@@ -540,9 +571,12 @@ def cmd_diff():
             # STOP this CLI's section, keep scanning the rest.
             print(f">>> STOP: {cli} config unreadable ({exc}).")
             stopped += 1
+            record(cli, present=True, stopped=True)
             continue
         if current is None:
-            print("  (config not present: CLI not installed here, or installed but never launched yet, skipped)"); continue
+            print("  (config not present: CLI not installed here, or installed but never launched yet, skipped)")
+            record(cli, present=False)
+            continue
         if cli == "codex":
             for aliases in _codex_alias_collisions(current):
                 print(
@@ -551,6 +585,7 @@ def cmd_diff():
                     + ". Kept unchanged; reconcile explicitly after backup."
                 )
                 bad += 1
+                cli_bad += 1
         wanted = {n: s for n, s in man.items() if cli in s["targets"]}
         seen = set()
         for name, s in wanted.items():
@@ -559,27 +594,39 @@ def cmd_diff():
             if isinstance(current.get(key), dict) and isinstance(exp, dict):
                 exp = preserve_server_fields({key: exp}, {key: current[key]})[key]
             if key not in current:
-                print(f"  [MISSING]  {name} -> the live file has no '{key}'"); bad += 1; continue
+                print(f"  [MISSING]  {name} -> the live file has no '{key}'"); bad += 1
+                cli_bad += 1
+                continue
             out = []
             diff_struct("", current[key], exp, out)
             if out:
                 print(f"  [DIFF]   {name}"); print("\n".join(out)); bad += 1
+                cli_bad += 1
             else:
                 print(f"  [OK]     {name}"); ok += 1
+                cli_ok += 1
         retired = _retired_keys(man, cli)
         for k in sorted(set(current) - seen):
             if k in retired:
                 print(f"  [RETIRED] '{k}' remains in the live file (removed by --write)")
                 bad += 1
+                cli_bad += 1
             else:
                 print(f"  [EXTRA]  '{k}' in the live file but not in the manifest (kept by --write: register it to propagate it)")
                 extra += 1
+                cli_extra += 1
+        record(cli, present=True, ok=cli_ok, diff=cli_bad, extra=cli_extra)
     summary = f"\n---- summary: {ok} servers match, {bad} with differences, {extra} outside the manifest"
     if stopped:
         summary += f", {stopped} CLI(s) STOPPED (corrupted live config, see above)"
     summary += " ----"
     print(summary)
-    return 2 if stopped else 0
+    report = {
+        "schema": 1,
+        "clis": per_cli,
+        "totals": {"ok": ok, "diff": bad, "extra": extra, "stopped": stopped},
+    }
+    return (2 if stopped else 0), report
 
 # ---- per-style serializers ------------------------------------------------
 
@@ -1530,6 +1577,8 @@ def main():
                      help="onboarding: back up and remove a CLI's whole native config so a fresh provision recreates it clean (reversible via --revert). Refused for a CLI whose writer cannot recreate an absent config (currently claude, codex).")
     ap.add_argument("--inventory", action="store_true",
                      help="read-only onboarding scan across all CLIs: MCP servers per CLI, canonical vs out-of-manifest (foundation of the adopt/reset flow).")
+    ap.add_argument("--json", action="store_true",
+                     help="with the default diff: emit a machine-readable per-CLI report instead of the human one (same scan, same exit codes).")
     ap.add_argument("--apply", action="store_true",
                      help="with --adopt: append the drafted entries into the vault manifest (backed up + re-validated first) instead of only printing them.")
     args = ap.parse_args()
@@ -1547,7 +1596,7 @@ def main():
         return cmd_reset(args.reset)
     if args.write:
         return cmd_write(args.write)
-    return cmd_diff()
+    return cmd_diff(as_json=args.json)
 
 if __name__ == "__main__":
     sys.exit(main())

@@ -1661,8 +1661,6 @@ def install_scheduler(env: Env) -> bool:
 # invoked as a subprocess with sys.executable (the SAME interpreter running
 # agent_sync.py), so there is no python3-vs-python-vs-py resolution needed.
 
-_SUMMARY_RE_MATCH = re.compile(r"match, (\d+) with differences")
-_SUMMARY_RE_EXTRA = re.compile(r"differences, (\d+) outside the manifest")
 
 
 def mcp_render(env: Env) -> bool:
@@ -1682,7 +1680,12 @@ def mcp_render(env: Env) -> bool:
             env.log(f"mcp-gen: {cli} NOT aligned (best-effort, continuing)")
             healthy = False
 
+    skipped: set[str] = set()
     if _process_running("claude"):
+        # Deliberate: rewriting .claude.json under a running Claude can lose
+        # whatever it flushes next. Recorded, because the drift this leaves
+        # behind must not count against the run that chose to leave it.
+        skipped.add("claude")
         env.log("mcp-gen: claude ACTIVE -> not touching .claude.json live (sentinel only)")
     else:
         r = _run_python_script([sys.executable, str(render_path), "--write", "claude"])
@@ -1695,17 +1698,31 @@ def mcp_render(env: Env) -> bool:
             env.log("mcp-gen: claude not aligned (best-effort)")
             healthy = False
 
-    diag = _run_python_script([sys.executable, str(render_path)])
+    # --json, not the human report: the verdict has to be able to say "this
+    # CLI was skipped on purpose". The old code read one global counter off
+    # the summary line, so drift belonging to a Claude this run deliberately
+    # did not write still failed the phase -- and kept failing for as long as
+    # Claude stayed open, which is most of the time.
+    diag = _run_python_script([sys.executable, str(render_path), "--json"])
     if diag.returncode != 0:
         _append_log(env, diag.stdout, diag.stderr)
         env.log("mcp-gen: final drift diagnostic failed")
         return False
-    lines = [ln for ln in diag.stdout.strip().splitlines() if ln.strip()]
-    last = lines[-1] if lines else ""
-    m_drift = _SUMMARY_RE_MATCH.search(last)
-    m_extra = _SUMMARY_RE_EXTRA.search(last)
-    drift = int(m_drift.group(1)) if m_drift else 0
-    extra = int(m_extra.group(1)) if m_extra else 0
+    try:
+        report = json.loads(diag.stdout)
+        per_cli = report["clis"]
+    except (json.JSONDecodeError, KeyError, TypeError) as exc:
+        _append_log(env, diag.stdout, diag.stderr)
+        env.log(f"mcp-gen: could not read the drift report ({exc})")
+        return False
+    drift = sum(c.get("diff", 0) for name, c in per_cli.items() if name not in skipped)
+    extra = sum(c.get("extra", 0) for c in per_cli.values())
+    deferred = sum(per_cli[n].get("diff", 0) for n in skipped if n in per_cli)
+    if deferred > 0:
+        env.log(
+            f"mcp-gen: {deferred} server(s) differ in the config of {', '.join(sorted(skipped))}, "
+            "which this run left alone on purpose -- close it and the next run writes them"
+        )
     if drift > 0:
         env.log(f"mcp-gen: SENTINEL — {drift} servers diverge from the manifest")
     if extra > 0:
