@@ -12,6 +12,8 @@ Sei l'**installer di NeXgen Engine**. Il tuo compito è configurare il framework
 
 Segui **scrupolosamente** questi passi nell'ordine indicato. Non saltare alla fine. Poni una o due domande alla volta, attendi la risposta, e poi procedi.
 
+NeXgen Engine è distribuito sotto **PolyForm Noncommercial License 1.0.0** (testo completo in `LICENSE`): uso libero per qualsiasi scopo non commerciale, incluso questo setup personale. Se questa installazione è per conto di un'organizzazione, o comunque un uso commerciale, leggi prima `COMMERCIAL.md`; per un VPS condiviso tra più persone della stessa azienda vedi anche `docs/org-deployment.md`.
+
 ### Step 1: Profilo di installazione (portata e architettura)
 
 Chiedi all'utente, una domanda alla volta:
@@ -42,7 +44,7 @@ Se invece trova roba fuori dal manifest, non decidere al posto suo. Chiedi come 
 ```
 Ho trovato un setup già esistente sulle tue CLI. Come vuoi partire?
 [1] ADOTTA: metto in ordine quello che hai già, portandolo nella fonte canonica di NeXgen.
-[2] RIPARTI DA ZERO: faccio il backup di tutto, poi pulisco le config e reinstallo fresco.
+[2] RIPARTI DA ZERO: faccio il backup di tutto, poi pulisco le config e reinstallo fresco (per Claude Code questo cancella anche il login: dovrai rifare l'accesso a mano).
 [3] SCELTA A MANO: ti mostro voce per voce, e per ognuna decidi tu.
 ```
 
@@ -53,7 +55,7 @@ In base alla scelta:
   - Skill fuori dal manifest: per ognuna chiedi all'utente da dove viene, se è una sua skill già nel vault oppure una skill di terzi da un repo GitHub, aggiungi la voce a `03-INFRA/agent-universal-layer/skills/skills.manifest.yaml`, poi esegui `python3 03-INFRA/scripts/skills-sync.py --apply`.
   - Memoria nativa di Claude: leggi i fatti in `~/.claude/projects/*/memory/*.md`, passali dal filtro della skill `knowledge-vault-hygiene`, e scrivi solo quelli durevoli nel vault tramite gli strumenti MCP di `vault-library`, mai a mano. Le trascrizioni di sessione di Codex, OpenCode e Antigravity non si importano in questa versione.
 - **[2] RIPARTI DA ZERO.**
-  - Per ogni CLI da azzerare esegui `python3 03-INFRA/agent-universal-layer/mcp/render.py --reset <cli>`, che fa il backup della config e la rimuove.
+  - Per ogni CLI da azzerare esegui `python3 03-INFRA/agent-universal-layer/mcp/render.py --reset <cli>`, che fa il backup della config e la rimuove. Per Claude Code, `~/.claude.json` è anche il file di sessione/login, non solo l'MCP: rimuoverlo disconnette l'utente, e nessun passo successivo (né il provisioning dello Step 6) lo riaccede automaticamente. Avvisalo prima di procedere: dopo il reset dovrà rifare il login di Claude Code a mano, oppure usare subito `--revert <cli>` se non è pronto a perdere la sessione.
   - Poi ricostruisci tutto pulito con il provisioning dello Step 6, che rigenera le config dai manifest canonici.
   - Per tornare indietro, `python3 03-INFRA/agent-universal-layer/mcp/render.py --revert <cli>` ripristina la config dal backup.
 - **[3] SCELTA A MANO.**
@@ -110,30 +112,32 @@ Usa il comando appropriato al profilo:
 
 File di destinazione per ogni CLI (corrispondono a quelli che il sync MULTI scriverebbe):
 - **Claude Code**: bootstrap in `~/CLAUDE.md` con un puntatore a questo `AGENTS.md`; server MCP nel campo `mcpServers` di `~/.claude.json`; può ricevere una vista native-lazy in `~/.claude/skills/`.
-- **Codex**: bootstrap in `~/.codex/AGENTS.md`; server MCP nel file di configurazione di Codex; riceve solo eventuali skill `exposure: core` in `~/.codex/skills/`.
+- **Codex**: bootstrap in `~/.codex/AGENTS.md`; server MCP nel file di configurazione di Codex; riceve una vista nativa per-skill in `~/.codex/skills/` (la sua unica radice di skill) per ogni voce che lo elenca nei propri `targets`, a prescindere da `exposure`.
 - **OpenCode**: bootstrap nel campo `instructions` della configurazione attiva, che può essere `opencode.jsonc`, `opencode.json` o `config.json`; server MCP nella sezione MCP dello stesso file; legge le skill manuali con `agent-skill find|show`.
 - **Antigravity**: bootstrap in `~/.gemini/config/AGENTS.md`; server MCP in `~/.gemini/antigravity/mcp_config.json`; legge le skill manuali con `agent-skill find|show`.
 
 Per ogni server MCP nel manifest, l'agente risolve il comando concreto nel dialetto della CLI scelta (Claude, Codex, OpenCode e Antigravity usano formati diversi, vedi `03-INFRA/agent-universal-layer/mcp/render.py` come riferimento per i dialetti).
 
-Le skill sono dati personali dell'utente, non del motore: se le vuole, le sceglie lui, listandole nel proprio `skills.manifest.yaml` dentro il Vault (`03-INFRA/agent-universal-layer/skills/skills.manifest.yaml`). Su un'installazione nuova questo file potrebbe non esistere ancora o essere vuoto — è uno stato normale, non un errore: salta questo passo finché l'utente non decide di aggiungere skill.
+Le skill sono dati personali dell'utente, non del motore: se le vuole, le sceglie chi installa, listandole nel proprio `skills.manifest.yaml` dentro il Vault (`03-INFRA/agent-universal-layer/skills/skills.manifest.yaml`). Su un'installazione nuova questo file potrebbe non esistere ancora o essere vuoto — è uno stato normale, non un errore: salta questo passo finché l'utente non decide di aggiungere skill.
 
 Se il manifest esiste, leggilo e installa ogni voce elencata secondo il suo `origin`, SENZA assumere nomi specifici (i nomi sono scelte dell'utente, non skill "di base" del framework):
 - **`origin: vault`** (vendorizzata, i byte vivono nel Vault stesso): materializza la cartella da `03-INFRA/agent-universal-layer/skills/<name>/` in `~/.agents/skill-library/<name>/`.
 - **`origin: github`** (third-party, repo indicato nel campo `repo` della voce): scaricala al commit SHA fissato e materializzala in `~/.agents/skill-library/<name>/`.
 
-Genera poi `~/.agents/skills/INDEX.md`. Monta nei runtime eager soltanto le skill con `exposure: core`; le altre si aprono al bisogno con `agent-skill show <name>`.
+Genera poi `~/.agents/skills/INDEX.md`. Nella radice condivisa `~/.agents/skills` (letta da OpenCode) monta solo le skill con `exposure: core`; Claude, Codex e Antigravity ricevono invece una vista nativa per-skill per ogni voce che li elenca nei propri `targets`, a prescindere da `exposure`. Le skill non montate in nessuna vista si aprono al bisogno con `agent-skill show <name>`.
 
 In tutti i casi, solo la CLI scelta riceve la config. Niente script ricorrenti.
 
 **Se MULTI**: prima di lanciare il provisioning, verifica se l'utente ha già aperto almeno una volta ogni CLI scelta (Claude Code, Codex, OpenCode, Antigravity), così il suo file di configurazione di default esiste.
 Non bloccare l'intera installazione se una CLI o una credenziale non è ancora pronta.
 Il generatore deve installare ciò che può e lasciare il resto visibilmente incompleto.
-Crea inoltre `03-INFRA/agent-universal-layer/sync/remotes.yaml` dal relativo `.example`: usa come `authoritative_remote` il remote Git che rappresenta la verità condivisa, normalmente `origin`, e inserisci in `mirrors` solo copie di pubblicazione secondarie.
+Crea inoltre `03-INFRA/agent-universal-layer/sync/remotes.yaml` dal relativo `.example`. Se l'architettura scelta allo Step 1 è **Local-Only**, imposta `authoritative_remote: local`: non c'è un remote privato su cui pubblicare, e questo valore fa sì che agent-sync/agent-doctor saltino i controlli di pubblicazione, invece di scambiare per remote autoritativo l'`origin` del repo pubblico del progetto (con cui l'utente ha clonato il Vault) e chiedere di pubblicarci sopra note private — causa nota di due FAIL falsi in agent-doctor. Se invece è **Cloud-Server**, usa come `authoritative_remote` il remote Git che punta al repo bare del VPS (Step 7) — tipicamente rinominato `origin` una volta ripuntato lì — e inserisci in `mirrors` solo copie di pubblicazione secondarie.
 Non scrivere URL o credenziali nel file, solo i nomi dei remote già configurati.
 Poi istruisci l'utente a lanciare nel terminale il comando di provisioning:
 - Su Linux/Mac: `bash 03-INFRA/scripts/agent-sync.sh apply`
 - Su Windows: `.\03-INFRA\scripts\agent-sync.ps1 apply`
+
+Questo comando termina sempre con un controllo di prontezza `agent-doctor --strict`, anche senza `--require-ready`. Quel controllo include probe live che avviano sessioni reali delle CLI installate -- Antigravity tramite `agy --print ... --model "Gemini 3.5 Flash (Medium)"`, OpenCode tramite `opencode mcp list` -- e possono raggiungere servizi di rete reali (il backend del modello di Antigravity, o qualunque server MCP remoto tu abbia montato), anche per una CLI che non hai mai scelto di usare, se il suo binario capita di essere nel PATH. Vedi `docs/what-gets-written.md` per il dettaglio. Se preferisci che questi probe non partano -- ad esempio in un ambiente sandboxato, offline, o semplicemente per non consumarne la quota -- esporta `NEXGEN_SKIP_LIVE_CONSUMER_PROBES=1` PRIMA di lanciare il comando qui sopra.
 
 Su Windows, il primo `apply` aggiunge `~/.local/bin` al PATH utente: apri un NUOVO terminale dopo questo primo lancio, così i comandi nudi (`agent-sync`, `agent-doctor`, `vault-groom`, `vault-push`) si risolvono correttamente.
 
@@ -180,6 +184,8 @@ You are the **NeXgen Engine Installer**. Your job is to configure the NeXgen Eng
 
 Follow these steps **strictly** in the order shown. Do not skip to the end. Ask one or two questions at a time, wait for the answer, then proceed.
 
+NeXgen Engine is distributed under the **PolyForm Noncommercial License 1.0.0** (full text in `LICENSE`): free for any noncommercial purpose, including this personal setup. If this install is on behalf of an organization, or otherwise commercial use, read `COMMERCIAL.md` first; for a VPS shared across multiple people in the same company see also `docs/org-deployment.md`.
+
 ### Step 1: Installation profile (scope and architecture)
 
 Ask the user, one question at a time:
@@ -210,7 +216,7 @@ If it finds out-of-manifest things, do not decide for them. Ask how they want to
 ```
 I found an existing setup on your CLIs. How do you want to start?
 [1] ADOPT: I put what you already have in order, into NeXgen's canonical source.
-[2] START FRESH: I back everything up, then clear the configs and install clean.
+[2] START FRESH: I back everything up, then clear the configs and install clean (for Claude Code this also erases its login: you will need to sign in again by hand).
 [3] PICK BY HAND: I show you item by item, and you decide for each.
 ```
 
@@ -221,7 +227,7 @@ Based on the choice:
   - Out-of-manifest skills: for each, ask the user where it comes from, whether it is their own skill already in the vault or a third-party skill from a GitHub repo, add the entry to `03-INFRA/agent-universal-layer/skills/skills.manifest.yaml`, then run `python3 03-INFRA/scripts/skills-sync.py --apply`.
   - Claude native memory: read the facts in `~/.claude/projects/*/memory/*.md`, pass them through the `knowledge-vault-hygiene` skill, and write only the durable ones into the vault via the `vault-library` MCP tools, never by hand. The session transcripts of Codex, OpenCode, and Antigravity are not imported in this version.
 - **[2] START FRESH.**
-  - For each CLI to reset, run `python3 03-INFRA/agent-universal-layer/mcp/render.py --reset <cli>`, which backs up the config and removes it.
+  - For each CLI to reset, run `python3 03-INFRA/agent-universal-layer/mcp/render.py --reset <cli>`, which backs up the config and removes it. For Claude Code, `~/.claude.json` is also its session/login file, not just MCP: removing it signs the user out, and no later step (not even the Step 6 provisioning) signs them back in automatically. Warn them before proceeding: after the reset they will need to log Claude Code back in by hand, or run `--revert <cli>` right away if they are not ready to lose the session.
   - Then rebuild everything clean with the Step 6 provisioning, which regenerates the configs from the canonical manifests.
   - To go back, `python3 03-INFRA/agent-universal-layer/mcp/render.py --revert <cli>` restores the config from the backup.
 - **[3] PICK BY HAND.**
@@ -278,7 +284,7 @@ Use the command appropriate to the profile:
 
 Destination file for each CLI (these match what the MULTI sync would write):
 - **Claude Code**: bootstrap in `~/CLAUDE.md` with a pointer to this `AGENTS.md`; MCP servers in the `mcpServers` field of `~/.claude.json`; it may receive a native-lazy view in `~/.claude/skills/`.
-- **Codex**: bootstrap in `~/.codex/AGENTS.md`; MCP servers in Codex's config file; it receives only explicit `exposure: core` skills in `~/.codex/skills/`.
+- **Codex**: bootstrap in `~/.codex/AGENTS.md`; MCP servers in Codex's config file; it receives a native per-skill view in `~/.codex/skills/` (its only skill root) for every entry that lists it in its own `targets`, regardless of `exposure`.
 - **OpenCode**: bootstrap in the `instructions` field of the active config, which may be `opencode.jsonc`, `opencode.json`, or `config.json`; MCP servers in the MCP section of the same file; it opens manual skills through `agent-skill find|show`.
 - **Antigravity**: bootstrap in `~/.gemini/config/AGENTS.md`; MCP servers in `~/.gemini/antigravity/mcp_config.json`; it opens manual skills through `agent-skill find|show`.
 
@@ -290,18 +296,20 @@ If the manifest exists, read it and install every entry per its `origin`, WITHOU
 - **`origin: vault`** (vendored, the bytes live in the Vault itself): materialize the folder from `03-INFRA/agent-universal-layer/skills/<name>/` into `~/.agents/skill-library/<name>/`.
 - **`origin: github`** (third-party, repo given in the entry's `repo` field): fetch the declared full commit SHA and materialize the folder given by the entry's `path` field (default: the repo root) into `~/.agents/skill-library/<name>/`.
 
-Generate `~/.agents/skills/INDEX.md`. Mount only `exposure: core` skills in eager runtimes; open all other bodies on demand with `agent-skill show <name>`.
+Generate `~/.agents/skills/INDEX.md`. In the shared `~/.agents/skills` root (read by OpenCode), mount only `exposure: core` skills; Claude, Codex, and Antigravity instead each get a native per-skill view for every entry that lists them in its own `targets`, regardless of `exposure`. Skills not mounted in any view open on demand with `agent-skill show <name>`.
 
 In every case, only the chosen CLI receives the config. No recurring scripts.
 
 **If MULTI**: before running the provisioner, check whether the user has opened each chosen CLI at least once (Claude Code, Codex, OpenCode, Antigravity), so its default config file exists.
 Do not block the whole installation because one CLI or credential is not ready yet.
 Install what is available and leave the rest visibly incomplete.
-Also create `03-INFRA/agent-universal-layer/sync/remotes.yaml` from its `.example`: set `authoritative_remote` to the Git remote that represents shared truth, normally `origin`, and list only downstream publication copies under `mirrors`.
+Also create `03-INFRA/agent-universal-layer/sync/remotes.yaml` from its `.example`. If the architecture chosen in Step 1 is **Local-Only**, set `authoritative_remote: local`: there is no private remote to publish to, and this value makes agent-sync/agent-doctor skip publication checks, instead of mistaking the public project repo's `origin` (the one the user cloned the Vault from) for the authoritative remote and asking them to publish private notes there — a known cause of two false FAILs in agent-doctor. If it is **Cloud-Server** instead, set `authoritative_remote` to the Git remote that points at the VPS's bare repo (Step 7) — typically renamed to `origin` once repointed there — and list only downstream publication copies under `mirrors`.
 Store remote names only, never URLs or credentials.
 Then instruct the user to run the provisioning command in their terminal:
 - On Linux/Mac: `bash 03-INFRA/scripts/agent-sync.sh apply`
 - On Windows: `.\03-INFRA\scripts\agent-sync.ps1 apply`
+
+This command always finishes with an `agent-doctor --strict` readiness check, even without `--require-ready`. That check includes live probes that start real sessions of installed CLIs -- Antigravity via `agy --print ... --model "Gemini 3.5 Flash (Medium)"`, OpenCode via `opencode mcp list` -- and can reach real network services (Antigravity's own model backend, or whatever remote MCP server you've mounted), even for a CLI you never chose to use, if its binary happens to be on your PATH. See `docs/what-gets-written.md` for the detail. If you'd rather these probes not run -- say, in a sandboxed or offline environment, or simply to avoid spending their quota -- export `NEXGEN_SKIP_LIVE_CONSUMER_PROBES=1` BEFORE running the command above.
 
 On Windows, the first `apply` adds `~/.local/bin` to the user PATH — open a NEW terminal after this first run so the bare commands (`agent-sync`, `agent-doctor`, `vault-groom`, `vault-push`) resolve.
 

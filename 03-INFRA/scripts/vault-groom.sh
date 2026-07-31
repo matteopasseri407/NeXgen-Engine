@@ -150,7 +150,16 @@ case "$MODE" in
 esac
 
 case "$RUNNER" in
-  claude|codex|agy) ;;
+  claude|codex|agy)
+    # Fails loudly here, before any propose/write pass ever runs, instead of
+    # a raw "command not found" (exit 127) once invoke_readonly gets to it --
+    # same courtesy the opencode branch below already gives for its own
+    # unsupported case.
+    command -v "$RUNNER" >/dev/null 2>&1 || {
+      echo "vault-groom: GROOM_RUNNER=$RUNNER but '$RUNNER' was not found on PATH. Install it, or set GROOM_RUNNER=claude|codex|agy to one you already have." >&2
+      exit 2
+    }
+    ;;
   opencode)
     echo "vault-groom: GROOM_RUNNER=opencode is not supported today." >&2
     echo "  opencode has no per-invocation permission-scoping flag (its permission" >&2
@@ -186,7 +195,7 @@ WRITE_TOOLS=(Read Edit Write Grep Glob \
   mcp__vault-library__update_note mcp__vault-library__create_note \
   mcp__vault-library__append_note)
 
-PROPOSE_PROMPT="Read $PLAYBOOK and execute ONLY steps 1-3 (orient, run the audit heat-map, find candidates with semantic_search). ALSO run the structural map, python3 $SCRIPT_DIR/vault-map.py --vault $VAULT --check, and treat orphan notes and broken wikilinks it reports as first-class tranche candidates (orphan -> link-or-archive, broken link -> fix at the source). Then OUTPUT a proposed grooming tranche as a markdown table with EXACTLY these columns: | Nota | Azione | Perché | -- one row per note, action is compress / merge / archive / fix-frontmatter / fix-link / nessuna azione, last column is one line of why. DO NOT edit, write, move, or commit anything -- this is a read-only planning pass."
+PROPOSE_PROMPT="Read $PLAYBOOK and execute ONLY steps 1-3 (orient, run the audit heat-map, find candidates with semantic_search). ALSO run the structural map, python3 $SCRIPT_DIR/vault-map.py --vault $VAULT --check, and treat orphan notes and broken wikilinks it reports as first-class tranche candidates (orphan -> link-or-archive, broken link -> fix at the source). Then OUTPUT a proposed grooming tranche as a markdown table with EXACTLY these columns: | Note | Action | Why | -- one row per note, action is compress / merge / archive / fix-frontmatter / fix-link / no action, last column is one line of why. DO NOT edit, write, move, or commit anything -- this is a read-only planning pass."
 
 invoke_readonly() {
   local prompt="$1" logfile="$2"
@@ -277,17 +286,17 @@ TRANCHE_HASH="$(sha256sum "$PLAN_RECORD" | cut -d' ' -f1)"
 
 echo
 echo "======================================================================"
-echo " Tranche proposta (sha256 ${TRANCHE_HASH:0:12}...) -- leggila prima di confermare"
+echo " Proposed tranche (sha256 ${TRANCHE_HASH:0:12}...) -- read it before confirming"
 echo "======================================================================"
 printf '%s\n' "$TRANCHE"
 echo "======================================================================"
-echo "Digita esattamente 'yes' per eseguire QUESTA tranche cosi' com'e'."
-echo "Qualunque altra risposta annulla: nessuna modifica al vault."
-printf 'Procedere? > '
+echo "Type exactly 'yes' to execute THIS tranche as-is."
+echo "Any other answer cancels: no changes to the vault."
+printf 'Proceed? > '
 read -r ANSWER || ANSWER=""
 
 if [ "$ANSWER" != "yes" ]; then
-  echo "vault-groom: annullato, nessuna modifica al vault." >&2
+  echo "vault-groom: cancelled, no changes to the vault." >&2
   exit 0
 fi
 
@@ -335,7 +344,7 @@ WRITE_PROMPT="Read $PLAYBOOK. The user already reviewed and approved EXACTLY the
 ${TRANCHE}
 ---END APPROVED TRANCHE---
 
-Execute precisely this tranche, nothing more and nothing less -- do not re-derive or expand it. Commit atomically per action with clear messages. Do NOT push -- pushing is decided separately after this run by mechanically checking what the commits actually touched, never by you. Before finishing, re-read the approved tranche row by row and end your response with an explicit checklist, one line per note that has a real action (skip rows marked \"nessuna azione\"): DONE (with the commit it landed in) or NOT DONE (with the concrete reason). Every actioned row must appear on that list -- do not let anything go unmentioned."
+Execute precisely this tranche, nothing more and nothing less -- do not re-derive or expand it. Commit atomically per action with clear messages. Do NOT push -- pushing is decided separately after this run by mechanically checking what the commits actually touched, never by you. Before finishing, re-read the approved tranche row by row and end your response with an explicit checklist, one line per note that has a real action (skip rows marked \"no action\"): DONE (with the commit it landed in) or NOT DONE (with the concrete reason). Every actioned row must appear on that list -- do not let anything go unmentioned."
 
 WRITE_LOG="$(mk_log .execute)"
 # WRITE_EXIT is captured via `||`, not left to `set -e`: a non-zero write

@@ -8,6 +8,12 @@ chosen in the manifest. One single script for Fedora and Windows.
   - default (--diff): READ-ONLY. Shows what it would do, touches nothing.
   - --apply:          runs the actions (creates/repairs links, flags missing
                       installs). Idempotent: does nothing if already aligned.
+  - --index:          NOT part of the diff/apply toggle above -- always
+                      writes. Regenerates ONLY ~/.agents/skills/INDEX.md
+                      (creating the library/active directories if needed)
+                      and exits, regardless of whether --apply was passed.
+                      This is what callers use for a quick catalog refresh
+                      without a full sync (see docs/uninstall.md).
 
 Byte model (per the manifest):
   - origin vault  -> the library points (symlink, or a copy on Windows) to the
@@ -68,10 +74,14 @@ if str(HERE) not in sys.path:
     sys.path.insert(0, str(HERE))
 from config_schema import ENTRY_NAME_RE  # noqa: E402
 
-# NOT HERE.parent.parent: when this script runs from a separate engine
-# checkout (AGENT_ENGINE_ROOT), the manifest still needs
-# to come from the user's actual data, same resolution as agent_sync.py's
-# Env.vault_data.
+# NOT HERE.parent.parent: this script itself never reads AGENT_ENGINE_ROOT
+# (verified: grep the file, the only env vars read below are
+# KNOWLEDGE_VAULT_PATH and AGENT_VAULT_DATA). But a caller (agent_sync.py
+# resolves its engine_scripts from AGENT_ENGINE_ROOT before invoking this
+# file) can run it from a separate engine checkout, so __file__'s location
+# is not a reliable anchor for the user's data either way. The manifest and
+# vault therefore always come from KNOWLEDGE_VAULT_PATH/AGENT_VAULT_DATA
+# directly, same resolution as agent_sync.py's Env.vault_data.
 _vault = Path(os.environ.get("KNOWLEDGE_VAULT_PATH") or str(HOME / "KnowledgeVault"))
 VAULT = Path(os.environ.get("AGENT_VAULT_DATA") or str(_vault))
 UL = VAULT / "03-INFRA" / "agent-universal-layer"

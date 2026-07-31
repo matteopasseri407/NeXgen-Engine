@@ -111,7 +111,25 @@ ok "detected: $HOST ($(hostname), $(uname -s))"
 sec "Vault (memory) — authoritative remote and mirrors"
 [ -z "$REMOTE_CONFIG_ERROR" ] && ok "sync remote config resolved ($REMOTE)" || fail "invalid sync remote config — run: agent-sync config authoritative_remote"
 if git -C "$VAULT" rev-parse >/dev/null 2>&1; then
-  if [ "$REMOTE" = "local" ] || [ "$REMOTE" = "none" ]; then
+  # Mid-rebase/merge guard (checked before the Local-Only vs remote-configured
+  # split below, so it covers both): a conflicted `git pull --rebase` -- the
+  # exact recovery agent_sync.py's own vault-push publish path tells the user
+  # to run by hand on a conflicting divergence -- left main/HEAD in a state
+  # the ahead/behind/dirty checks below cannot tell apart from ordinary
+  # unpushed commits or an ordinary dirty tree: `git status --porcelain`
+  # reports a conflicted file (e.g. "UU file.txt") as just one more line, and
+  # rev-list --count on branch refs is unaffected by a detached HEAD mid-
+  # rebase. Left alone, this doctor would print "commits behind" / "not
+  # committed" -- wording that invites a naive `git add -A && git commit`
+  # that bakes conflict markers straight into the vault instead of resolving
+  # them. Detected via the same on-disk state `git status` itself reads, not
+  # a subprocess parse of its text.
+  VAULT_GIT_DIR="$(git -C "$VAULT" rev-parse --absolute-git-dir 2>/dev/null)"
+  if [ -n "$VAULT_GIT_DIR" ] && { [ -d "$VAULT_GIT_DIR/rebase-merge" ] || [ -d "$VAULT_GIT_DIR/rebase-apply" ]; }; then
+    fail "vault is mid-rebase with a conflict to resolve — run: git -C \"$VAULT\" rebase --abort (or resolve and rebase --continue), THEN re-run this check"
+  elif [ -n "$VAULT_GIT_DIR" ] && [ -f "$VAULT_GIT_DIR/MERGE_HEAD" ]; then
+    fail "vault is mid-merge with a conflict to resolve — run: git -C \"$VAULT\" merge --abort (or resolve and commit), THEN re-run this check"
+  elif [ "$REMOTE" = "local" ] || [ "$REMOTE" = "none" ]; then
     # Local-Only sentinel (matches agent_sync.py's pull()/publish(): env.remote
     # in ("local", "none")): there is no authoritative remote to compare
     # against, so a fetch/ahead/behind/mirror check would otherwise try
@@ -121,11 +139,26 @@ if git -C "$VAULT" rev-parse >/dev/null 2>&1; then
     d=$(git -C "$VAULT" status --porcelain --untracked-files=no 2>/dev/null | wc -l | tr -d ' ')
     [ "$d" = 0 ] && ok "working tree clean (tracked files)" || warn "$d tracked files not committed"
   else
-    git -C "$VAULT" fetch --prune "$REMOTE" "$BRANCH" >/dev/null 2>&1 || warn "fetch $REMOTE failed (offline?)"
+    # Capture the real stderr instead of discarding it: a bare `|| warn
+    # "...(offline?)"` used to guess "offline" even for e.g. a permissions
+    # error on the remote, and rev-list's own '?' fallback (below) used to
+    # leak straight into "fail" as a literal, unexplained question mark.
+    fetch_err="$(git -C "$VAULT" fetch --prune "$REMOTE" "$BRANCH" 2>&1 >/dev/null)"
+    fetch_rc=$?
+    if [ "$fetch_rc" -ne 0 ]; then
+      fetch_detail="$(printf '%s' "$fetch_err" | tr '\n' ' ' | sed -E 's/ +/ /g; s/ $//')"
+      warn "fetch $REMOTE failed: ${fetch_detail:-no error output from git} (offline, or the remote is unreachable)"
+    fi
     b=$(git -C "$VAULT" rev-list --count "$BRANCH..$REMOTE/$BRANCH" 2>/dev/null || echo '?')
     a=$(git -C "$VAULT" rev-list --count "$REMOTE/$BRANCH..$BRANCH" 2>/dev/null || echo '?')
     d=$(git -C "$VAULT" status --porcelain --untracked-files=no 2>/dev/null | wc -l | tr -d ' ')
-    [ "$b" = 0 ] && ok "aligned with $REMOTE/$BRANCH (0 behind)" || fail "$b commits behind the cloud"
+    if [ "$b" = "?" ]; then
+      fail "cannot tell how many commits behind the cloud: rev-list failed (see the fetch warning above)"
+    elif [ "$b" = 0 ]; then
+      ok "aligned with $REMOTE/$BRANCH (0 behind)"
+    else
+      fail "$b commits behind the cloud"
+    fi
     if [ "$a" = 0 ] || [ "$a" = "?" ]; then
       ok "no unpublished local commits"
     else
@@ -173,11 +206,14 @@ else
   fail "Claude.md must be a lightweight pointer, not a copy/symlink of the canonical file ($CLAUDE_FILE)"
 fi
 # NOTE (found 2026-07-01): Antigravity actually reads ~/.gemini/config/AGENTS.md,
-# NOT ~/ANTIGRAVITY.md — that symlink exists (a pattern copied from Codex) but was
-# never read by the app, and this check gave a false "ok" for days. Verified only
-# with a real behavioral probe (agy -p), not with the symlink's mere existence:
-# this loop only proves the WIRING, not that the CLI honors the file.
-# If a phantom "aligned" ever shows up again, this is suspect number one.
+# NOT ~/ANTIGRAVITY.md — that symlink was a dead pattern copied from Codex,
+# never read by the app, and this check gave a false "ok" for days while it
+# still existed. agent_sync.py's instructions() now actively removes ~/ANTIGRAVITY.md
+# as dead wiring on every run, so it should no longer be present at all.
+# Verified only with a real behavioral probe (agy -p), not with the symlink's
+# mere existence: this loop only proves the WIRING, not that the CLI honors
+# the file. If a phantom "aligned" ever shows up again, this is suspect
+# number one.
 for pair in "Codex:$HOME/.codex/AGENTS.md" "Antigravity:$HOME/.gemini/config/AGENTS.md"; do
   name="${pair%%:*}"; f="${pair#*:}"
   if [ "$(readlink -f "$f" 2>/dev/null)" = "$(readlink -f "$CANON" 2>/dev/null)" ]; then
@@ -203,8 +239,17 @@ PY
     ''|*[!0-9]*) fail "OpenCode instructions cannot be inspected because $(basename "$OCJSON") is invalid" ;;
     *) warn "OpenCode loads the canonical AGENTS.md $oc_canon_count times; run agent-sync apply to deduplicate slash variants" ;;
   esac
-else
+elif command -v opencode >/dev/null 2>&1 || [ -x "$HOME/.opencode/bin/opencode" ]; then
   fail "missing $OCJSON"
+else
+  # OpenCode genuinely not installed here: unlike a missing config on an
+  # installed CLI (a real problem render.py already bootstraps on its own),
+  # there is no code path that will ever create this file for a CLI that was
+  # never installed. Codex/Antigravity absent is a silent no-op elsewhere in
+  # this script (see the Codex/Antigravity loop above); OpenCode used to be
+  # the only one of the four CLIs that turned "genuinely never installed"
+  # into a permanent, unfixable FAIL.
+  warn "OpenCode not installed here? (missing $OCJSON)"
 fi
 
 sec "Canonical bootstrap hygiene (size budget, pointer integrity)"
@@ -334,6 +379,69 @@ connector_expected() {
   [ -n "${!1:-}" ]
 }
 
+# GUARDRAIL: the engine can apply a "bypass" permission posture (no
+# confirmation prompts) to a CLI, but the anti-catastrophic-command guardrail
+# that is supposed to accompany it only exists as a PreToolUse hook -- see
+# claude_permissions()'s own comment in agent_sync.py for why a hook, not a
+# permissions.deny list, is the only thing that still runs under bypass. This
+# reads the PRIVATE instance permissions manifest directly (never the strict
+# schema validator, which today still only recognizes "claude" as a target --
+# this check must keep working as that set grows) and calls out, visibly, any
+# CLI running in bypass posture with no declared PreToolUse hook for it. A
+# missing manifest (the public-engine default: no policy shipped) is a
+# complete, silent no-op.
+PERM_MANIFEST="$UL/permissions/manifest.yaml"
+if [ -f "$PERM_MANIFEST" ]; then
+  sec "Permission posture guardrail (instance manifest)"
+  if command -v python3 >/dev/null 2>&1; then
+    bypass_report="$(python3 - "$PERM_MANIFEST" <<'PY' 2>/dev/null
+import sys
+from pathlib import Path
+import yaml
+path = Path(sys.argv[1])
+try:
+    data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+except Exception:
+    sys.exit(0)
+if not isinstance(data, dict):
+    sys.exit(0)
+posture = data.get("posture")
+if not isinstance(posture, dict):
+    sys.exit(0)
+hooks = data.get("hooks")
+if not isinstance(hooks, list):
+    hooks = []
+guarded = set()
+for h in hooks:
+    if not isinstance(h, dict) or h.get("event") != "PreToolUse":
+        continue
+    for t in (h.get("targets") or []):
+        if isinstance(t, str):
+            guarded.add(t)
+for cli, value in posture.items():
+    if value == "bypass":
+        print(f"{cli} {'GUARDED' if cli in guarded else 'UNGUARDED'}")
+PY
+)"
+    if [ -n "$bypass_report" ]; then
+      while IFS=' ' read -r cli guard_state; do
+        [ -n "$cli" ] || continue
+        if [ "$guard_state" = "GUARDED" ]; then
+          ok "$cli runs in bypass posture (no confirmation prompts) WITH a declared PreToolUse guardrail hook"
+        else
+          fail "$cli runs in bypass posture (no confirmation prompts) WITHOUT a declared PreToolUse guardrail hook -- catastrophic commands are NOT intercepted"
+        fi
+      done <<EOF
+$bypass_report
+EOF
+    else
+      ok "no CLI declared in bypass posture in the instance permissions manifest"
+    fi
+  else
+    warn "python3 not found -- cannot inspect the instance permissions manifest for bypass posture"
+  fi
+fi
+
 sec "MCP connectors — reachability"
 c=$(code http://127.0.0.1:5678/healthz)
 if [ "$c" = 200 ]; then
@@ -395,8 +503,15 @@ if [ -n "$vault_library_url" ]; then
   bearer_cfg "${VAULT_LIBRARY_TOKEN:-}"
   c=$(code -X OPTIONS -K "$_LAST_BEARER_CFG" -H "Accept: application/json, text/event-stream" "$vault_library_url")
   { [ "$c" = 200 ] || [ "$c" = 405 ]; } && ok "vault-library: $c (up)" || fail "vault-library: $c"
+elif connector_expected VAULT_LIBRARY_URL; then
+  # Same Mode gating as the "Tokens in env" check below for this exact
+  # variable -- an unconditional warn here used to contradict that check's
+  # "ok, not expected in current Mode" a few lines later in the SAME run
+  # (G1-contraddizione: one half of the report said "problem", the other half
+  # said "fine, expected" for the identical unset variable).
+  fail "vault-library: no endpoint resolved (VAULT_LIBRARY_URL not set, manifest render found none)"
 else
-  warn "VAULT_LIBRARY_URL not in env"
+  ok "vault-library: not configured -- not expected in current Mode (Local-Only / VAULT_LIBRARY_URL not set)"
 fi
 # Semantic RAG (optional, not part of the bundled deploy/ stack): checked through
 # the MCP container's own network (same lane the agents use), so it also catches
@@ -496,6 +611,42 @@ if command -v python3 >/dev/null 2>&1 && [ -f "$ENGINE_UL/mcp/render.py" ]; then
   fi
 else
   warn "python3 or render.py not found, skipping MCP drift check"
+fi
+
+# BUG-B (incident 2026-07-30): a manifest server whose require_env var is
+# missing is silently dropped by render.py's own ">>> skip [...]: require_env
+# not satisfied (Local-Only?)" line above, which never names the variable --
+# a real incident where N8N_MCP_TOKEN was simply unset, render.py dropped
+# n8n-mcp from all 4 CLIs, and this doctor gave no clue why for hours. Read
+# the manifest directly here (not render.py's terse skip line, which carries
+# no variable name) to name exactly which require_env var is unsatisfied for
+# which server, and only escalate to a WARNING when connector_expected() says
+# the current Mode should actually have it -- a legitimate Local-Only skip
+# stays the silent no-op it already is everywhere else in this script.
+if command -v python3 >/dev/null 2>&1 && [ -f "$UL/mcp/manifest.yaml" ]; then
+  skipped_servers="$(python3 - "$SELF_DIR" "$UL/mcp/manifest.yaml" <<'PY' 2>/dev/null
+import os, sys
+sys.path.insert(0, sys.argv[1])
+from pathlib import Path
+from config_schema import ConfigValidationError, load_mcp_manifest_document
+try:
+    servers, _retired = load_mcp_manifest_document(Path(sys.argv[2]))
+except ConfigValidationError:
+    sys.exit(0)
+for name, spec in servers.items():
+    req = spec.get("require_env")
+    if req and not os.environ.get(req, "").strip():
+        print(f"{name} {req}")
+PY
+)"
+  while IFS=' ' read -r srv var; do
+    [ -n "$srv" ] || continue
+    if connector_expected "$var"; then
+      warn "$var missing: manifest server '$srv' is not mounted on any CLI (require_env not satisfied)"
+    fi
+  done <<EOF
+$skipped_servers
+EOF
 fi
 
 if [ "$STRICT" = 1 ]; then
@@ -849,7 +1000,7 @@ fi
 sec "Local model (host-aware)"
 if [ "$HOST" = linux ]; then
   if ss -ltn 2>/dev/null | grep -q ':11434'; then
-    ok "Ollama running on the laptop (emergency local fallback, not the routing worker)"
+    ok "Ollama running (emergency local fallback, not the routing worker)"
   else
     ok "Ollama not listening (fine: on-demand emergency fallback)"
   fi
@@ -905,15 +1056,28 @@ if [ -d "$CONSUMER_ENGINE_REPO/.git" ]; then
   live_sha=$(git -C "$CONSUMER_ENGINE_REPO" rev-parse HEAD 2>/dev/null || echo "")
   if [ -z "$live_sha" ]; then
     fail "cannot read the consumer engine clone's HEAD ($CONSUMER_ENGINE_REPO)"
-  elif [ -f "$PIN_FILE" ]; then
-    pin_sha=$(head -1 "$PIN_FILE" | tr -d '[:space:]')
-    if [ "$pin_sha" = "$live_sha" ]; then
-      ok "consumer engine at the pinned version (${live_sha:0:7})"
-    else
-      fail "consumer engine at ${live_sha:0:7}, pin expects ${pin_sha:0:7} — silent drift: pull was skipped, or the pin wasn't updated after a deliberate upgrade"
-    fi
   else
-    warn "no engine pin set ($PIN_FILE missing) — consumer engine version isn't tracked yet, run: git -C $CONSUMER_ENGINE_REPO rev-parse HEAD > $PIN_FILE"
+    if [ -f "$PIN_FILE" ]; then
+      pin_sha=$(head -1 "$PIN_FILE" | tr -d '[:space:]')
+      if [ "$pin_sha" = "$live_sha" ]; then
+        ok "consumer engine at the pinned version (${live_sha:0:7})"
+      else
+        fail "consumer engine at ${live_sha:0:7}, pin expects ${pin_sha:0:7} — silent drift: pull was skipped, or the pin wasn't updated after a deliberate upgrade"
+      fi
+    else
+      warn "no engine pin set ($PIN_FILE missing) — consumer engine version isn't tracked yet, run: git -C $CONSUMER_ENGINE_REPO rev-parse HEAD > $PIN_FILE"
+    fi
+    # A sha match only proves HEAD == pin; it says nothing about the working
+    # tree itself. A hand-edited tracked file at an otherwise correctly
+    # pinned HEAD used to report "OK" with no signal that the checkout no
+    # longer matches the release byte-for-byte. Independent of the sha
+    # outcome above, same porcelain check already used for $VAULT.
+    consumer_dirty=$(git -C "$CONSUMER_ENGINE_REPO" status --porcelain --untracked-files=no 2>/dev/null | wc -l | tr -d ' ')
+    if [ "$consumer_dirty" = 0 ]; then
+      ok "consumer engine working tree clean (tracked files)"
+    else
+      warn "$consumer_dirty tracked file(s) modified in the consumer engine clone — a pinned clone should match the release exactly, not be hand-edited"
+    fi
   fi
   # New-version-available check (B3, informational only, never auto-updates).
   # Fetch is read-only (only moves remote-tracking refs/tags), safe to run

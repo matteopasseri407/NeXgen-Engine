@@ -147,3 +147,37 @@ def test_both_names_are_registered_in_the_example_manifest():
     declared = yaml.safe_load(EXAMPLE_MANIFEST.read_text(encoding="utf-8"))["skills"]
     assert "nexgen-update" in declared
     assert "vault-update" in declared
+
+
+# --- vault-save / vault-close must not hard-require a server ------------------
+
+
+def test_vault_save_and_vault_close_document_the_local_only_branch():
+    """A 2026-07-30 review found these two of the seven starters required the
+    `vault-library` MCP with no alternative, and `vault-close` even instructed
+    the agent to STOP if the vault was unreachable -- but a Local-Only install
+    (no remote, no MCP) has no server to be unreachable: the vault is just a
+    writable local folder, and `03-INFRA/vault-write-architecture.md` already
+    carries the correct branch (direct-edit + plain `git`). Pin that both
+    starters inherited it, so it cannot silently drop out again."""
+    for name in ("vault-save", "vault-close"):
+        _, body = _frontmatter_and_body(name)
+        assert "Local-Only" in body, (
+            f"{name}: lost the Local-Only (no remote, no MCP) branch for the "
+            "vault write mechanism"
+        )
+        assert "vault-write-architecture.md" in body, (
+            f"{name}: Local-Only branch no longer points at the canonical "
+            "write-architecture doc it was copied from"
+        )
+
+
+def test_vault_close_does_not_stop_unconditionally_when_vault_is_unreachable():
+    """The old wording told the agent to stop for ANY 'Vault unreachable',
+    which is a category error in Local-Only mode (no server exists to be
+    unreachable there). The halt must be scoped to Cloud-Server mode."""
+    _, body = _frontmatter_and_body("vault-close")
+    assert "Cloud-Server mode" in body, (
+        "vault-close: the 'stop if unreachable' instruction must be scoped to "
+        "Cloud-Server mode, not phrased as an unconditional Vault-unreachable rule"
+    )

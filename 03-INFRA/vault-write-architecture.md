@@ -37,10 +37,7 @@ itself uses:
 3. Volatile data (e.g. a calendar agenda) is never versioned: read it live from the MCP connectors instead. The n8n workflow that used to sync it into the vault was archived for this reason.
 4. Every new stable note must be made **discoverable from the hub**: right after `create_note`, add the INBOUND pointer in `00-START-HERE.md` — under `Current high-value topics` (permanent/high-value) or the `Retrieval rule` (conditional/task-scoped), with a one-line description and the note path. An outbound note→hub link is not enough: a note the hub does not list is orphaned and unfindable by other agents without semantic search.
 
-## Known follow-ups
+## Known limitations
 
-- Move any plaintext tokens from CLI settings into env vars, so no config file holds a secret literally.
-
-## Resolved follow-ups
-
-- ~~Exercise the transaction contract on a physical Windows host.~~ Done (2026-07-14/15): `agent-sync apply`'s locked pull-then-propagate transaction ran for real on physical Windows, twice — a full guided MULTI install (three CLIs, plus a Cloud-Server VPS deploy) and a separate realignment of an existing install to the current release. Still open: a cold install with no maintainer present to walk through failures — see README's "Platform status" section.
+- Some CLI settings files can still hold a token in plaintext rather than reading it from an environment variable; moving every such config over to env-var-only storage is not yet complete.
+- The guarded pull-then-propagate transaction (`agent-sync apply`) has been exercised end-to-end on physical Windows, including a full guided MULTI install and a realignment of an existing install to the current release. A fully unattended cold install, with no experienced operator walking through failures as they come up, is not yet independently validated — see the README's "Platform status" section for current platform coverage.

@@ -41,8 +41,12 @@ CLI and 1 machine → `MINIMAL`; 2+ of either → `MULTI`.
 
 ## 3. Execute
 
-Follow `INIT.md`'s Steps 2 through 7 (English section) exactly, but as
-direct action instead of a guided conversation: write
+Follow `INIT.md`'s Steps 1.5 through 7 (English section) exactly, but as
+direct action instead of a guided conversation: run Step 1.5's read-only
+`agent_sync.py inventory` scan first, and if it finds anything
+out-of-manifest, put its ADOPT / START FRESH / PICK BY HAND menu to the
+user and act on their choice — this is a real fork in behavior, not just
+pacing, so do not skip it or decide for them. Then write
 `99-INDEX/USER-PROFILE.md`, ingest any documents given, install MCP
 servers/skills per the chosen profile (skills are the user's own data —
 never assume specific skill names), run `agent-sync.sh apply` /

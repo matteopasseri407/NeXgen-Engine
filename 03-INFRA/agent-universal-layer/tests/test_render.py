@@ -71,12 +71,12 @@ def test_runtime_endpoint_placeholders_materialize_for_node_clients(sandbox, mon
     endpoint = "http://127.0.0.1:8081/mcp"
     view = mod.os_view(server)
     assert view["url"] == endpoint
-    assert mod.r_claude("vault-library", view)["url"] == endpoint
-    assert mod.r_codex("vault-library", view)["url"] == endpoint
-    assert mod.r_antigravity("vault-library", view)["args"][1] == endpoint
+    assert mod.r_claude(view)["url"] == endpoint
+    assert mod.r_codex(view)["url"] == endpoint
+    assert mod.r_antigravity(view)["args"][1] == endpoint
     # OpenCode owns a native environment-reference syntax, so keep its token
     # and endpoint out of generated JSON just as before.
-    assert mod.r_opencode("vault-library", view)["url"] == "{env:VAULT_LIBRARY_URL}"
+    assert mod.r_opencode(view)["url"] == "{env:VAULT_LIBRARY_URL}"
 
     stdio = mod.os_view({
         "transport": "stdio",
@@ -162,7 +162,7 @@ def test_write_produces_expected_output(sandbox_with_live_configs, cli):
                 assert after.get(k) == before[k], f"codex: sezione non-MCP '{k}' modificata"
         for name, spec in wanted.items():
             cname = name.replace("-", "_")
-            expected_full = dict(mod.r_codex(name, mod.os_view(spec)))
+            expected_full = dict(mod.r_codex(mod.os_view(spec)))
             env = expected_full.pop("env", None)
             got = after["mcp_servers"][cname]
             for k, v in expected_full.items():
@@ -183,7 +183,7 @@ def test_write_produces_expected_output(sandbox_with_live_configs, cli):
         render_fn = {"claude": mod.r_claude, "opencode": mod.r_opencode, "antigravity": mod.r_antigravity}[cli]
         name_fn = {"claude": lambda n: n, "opencode": lambda n: n, "antigravity": lambda n: n}[cli]
         for name, spec in wanted.items():
-            expected = render_fn(name, mod.os_view(spec))
+            expected = render_fn(mod.os_view(spec))
             got = after[key][name_fn(name)]
             assert got == expected, f"{cli}/{name}: reso {got!r}, atteso {expected!r}"
         # server extra fuori manifest preservato + segnalato
@@ -449,7 +449,7 @@ def test_codex_renders_an_active_name_containing_a_dot_as_one_quoted_key(sandbox
     assert mod.write_codex() == 0
     raw = sb.live_config_path("codex").read_text(encoding="utf-8")
     assert '[mcp_servers."active.tool"]' in raw
-    expected = mod.r_codex("active.tool", mod.os_view(manifest["servers"]["active.tool"]))
+    expected = mod.r_codex(mod.os_view(manifest["servers"]["active.tool"]))
     assert tomllib.loads(raw)["mcp_servers"]["active.tool"]["command"] == expected["command"]
 
 
@@ -726,7 +726,7 @@ def test_os_view_windows_normalizes_common_mcp_wrappers(sandbox, monkeypatch):
     assert mod.os_view({**base, "command": "node"})["command"] == "node.exe"
     assert mod.os_view({**base, "command": "python3"})["command"] == "python"
     http = {"transport": "http", "url": "http://127.0.0.1:1", "auth": {"env": "TOKEN"}}
-    rendered_http = mod.r_antigravity("http", http)
+    rendered_http = mod.r_antigravity(http)
     assert rendered_http["command"] == "node.exe"
     assert rendered_http["args"][-2:] == ["TOKEN", mod.MCP_REMOTE_PACKAGE]
     assert rendered_http["args"][0].endswith("mcp-http-bridge.mjs")
@@ -859,15 +859,15 @@ def test_cmd_diff_detects_path_drift_without_printing_live_values(sandbox, monke
     codex = dict(mod.CLI["codex"])
     base_render = codex["render"]
 
-    def render_with_expected_path(name, spec):
-        rendered = base_render(name, spec)
-        if name == "fake-codex-only":
+    def render_with_expected_path(spec):
+        rendered = base_render(spec)
+        if any("fake-codex-only-mcp" in str(a) for a in spec.get("args") or []):
             rendered.setdefault("env", {})["PATH"] = "fixture-bounded-path"
         return rendered
 
     codex["render"] = render_with_expected_path
     current = {
-        codex["name"](name): codex["render"](name, spec)
+        codex["name"](name): codex["render"](spec)
         for name, spec in manifest.items()
         if "codex" in spec["targets"]
     }
@@ -1044,6 +1044,154 @@ def test_expected_servers_rejects_unknown_cli_via_argparse(sandbox, monkeypatch,
 
     assert exc.value.code == 2
     assert "invalid choice" in capsys.readouterr().err
+
+
+def test_expected_servers_skip_message_names_the_missing_env_var(sandbox, monkeypatch, capsys):
+    """BUG-B: '>>> skip [...]' used to say only 'require_env not satisfied',
+    never which variable was missing (2026-07-30 incident: n8n-mcp vanished
+    from every CLI with no clue why). load_manifest(quiet=False) must name
+    it."""
+    _write_gated_manifest(sandbox)
+    monkeypatch.delenv("FAKE_GATE_VAR", raising=False)
+    mod = load_render_module(sandbox)
+
+    mod.load_manifest()
+    out = capsys.readouterr().out
+
+    assert "fake-gated-tool" in out
+    assert "FAKE_GATE_VAR" in out, f"the missing env var name must be named in the skip line: {out!r}"
+
+
+# ---- BUG-A: auto-init of an absent/empty MCP config (2026-07-30 incident) --
+# A freshly-installed Antigravity/OpenCode that is never launched has no
+# config file for anything to patch; write_antigravity()/write_opencode()
+# used to just skip forever (exit 3), so the machine NEVER got MCP servers
+# even after running agent-sync apply repeatedly. They now bootstrap a
+# minimal config when the CLI itself is installed (never when it plainly
+# isn't -- that stays a real skip). claude/codex deliberately keep the old
+# behavior (see write_claude's docstring and the G2-reset tests).
+
+def test_write_antigravity_bootstraps_when_installed_but_never_launched(sandbox, monkeypatch, capsys):
+    mod = load_render_module(sandbox)
+    monkeypatch.setattr(mod.shutil, "which", lambda cmd: "/usr/bin/agy" if cmd == "agy" else None)
+    path = mod.HOME / ".gemini" / "antigravity" / "mcp_config.json"
+    assert not path.exists()
+
+    rc = mod.write_antigravity()
+    out = capsys.readouterr().out
+
+    assert rc == 0, out
+    assert path.exists()
+    assert "initialized an empty config" in out
+    data = json.loads(path.read_text(encoding="utf-8"))
+    assert "fake-stdio-tool" in data["mcpServers"]
+
+
+def test_write_antigravity_skips_without_bootstrapping_when_not_installed(sandbox, monkeypatch, capsys):
+    mod = load_render_module(sandbox)
+    monkeypatch.setattr(mod.shutil, "which", lambda _cmd: None)
+    assert not (mod.HOME / ".gemini").exists()
+
+    rc = mod.write_antigravity()
+    out = capsys.readouterr().out
+
+    assert rc == 3
+    assert "not installed" in out
+    assert not (mod.HOME / ".gemini").exists(), "nothing should be fabricated for an absent CLI"
+
+
+def test_antigravity_install_probe_ignores_the_directories_agent_sync_creates(sandbox, monkeypatch):
+    """~/.gemini alone must never read as 'installed'.
+
+    agent-sync creates ~/.gemini itself (the AGENTS.md link, the mcp_config
+    symlinks), so a probe based on that directory made the provisioner react
+    to its own footprint and bootstrap only on the SECOND apply -- the
+    non-idempotency test_apply_is_idempotent caught on 2026-07-31."""
+    mod = load_render_module(sandbox)
+    monkeypatch.setattr(mod.shutil, "which", lambda _cmd: None)
+    (mod.HOME / ".gemini" / "antigravity-cli").mkdir(parents=True)
+    (mod.HOME / ".gemini" / "config").mkdir(parents=True)
+
+    assert mod._antigravity_present() is False
+
+    # The settings file Antigravity itself writes on first launch does count.
+    (mod.HOME / ".gemini" / "antigravity-cli" / "settings.json").write_text("{}\n", encoding="utf-8")
+    assert mod._antigravity_present() is True
+
+
+def test_write_antigravity_initializes_an_existing_empty_file(sandbox, capsys):
+    mod = load_render_module(sandbox)
+    path = mod.HOME / ".gemini" / "antigravity" / "mcp_config.json"
+    path.parent.mkdir(parents=True)
+    path.write_text("", encoding="utf-8")   # 0 bytes, e.g. an interrupted first launch
+
+    rc = mod.write_antigravity()
+    out = capsys.readouterr().out
+
+    assert rc == 0, out
+    assert "was present but empty" in out
+    data = json.loads(path.read_text(encoding="utf-8"))
+    assert "fake-stdio-tool" in data["mcpServers"]
+
+
+def test_write_opencode_bootstraps_when_installed_but_never_launched(sandbox, monkeypatch, capsys):
+    mod = load_render_module(sandbox)
+    monkeypatch.setattr(mod.shutil, "which", lambda cmd: "/usr/bin/opencode" if cmd == "opencode" else None)
+    path = mod._opencode_config_path()
+    assert not path.exists()
+
+    rc = mod.write_opencode()
+    out = capsys.readouterr().out
+
+    assert rc == 0, out
+    assert path.exists()
+    assert "initialized an empty config" in out
+    data = mod.parse_jsonc(path.read_text(encoding="utf-8"))
+    assert "fake-stdio-tool" in data["mcp"]
+
+
+def test_write_opencode_skips_without_bootstrapping_when_not_installed(sandbox, monkeypatch, capsys):
+    mod = load_render_module(sandbox)
+    monkeypatch.setattr(mod.shutil, "which", lambda _cmd: None)
+    path = mod._opencode_config_path()
+    assert not path.exists()
+
+    rc = mod.write_opencode()
+    out = capsys.readouterr().out
+
+    assert rc == 3
+    assert "not installed" in out
+    assert not path.exists(), "nothing should be fabricated for an absent CLI"
+
+
+def test_write_claude_still_skips_when_absent_no_bootstrap(sandbox, capsys):
+    """Unlike antigravity/opencode, write_claude() must never fabricate an
+    absent .claude.json: it also carries account/trust-list state no script
+    can regenerate (2026-07-30 incident)."""
+    mod = load_render_module(sandbox)
+    path = mod.HOME / ".claude.json"
+    assert not path.exists()
+
+    rc = mod.write_claude()
+    out = capsys.readouterr().out
+
+    assert rc == 3
+    assert "never launched" in out
+    assert not path.exists()
+
+
+def test_write_claude_initializes_an_existing_empty_file(sandbox, capsys):
+    mod = load_render_module(sandbox)
+    path = mod.HOME / ".claude.json"
+    path.write_text("", encoding="utf-8")
+
+    rc = mod.write_claude()
+    out = capsys.readouterr().out
+
+    assert rc == 0, out
+    assert "was present but empty" in out
+    data = json.loads(path.read_text(encoding="utf-8"))
+    assert "fake-stdio-tool" in data["mcpServers"]
 
 
 @pytest.mark.parametrize("cli", DIALECTS)

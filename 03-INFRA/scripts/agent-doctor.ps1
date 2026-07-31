@@ -15,7 +15,21 @@ $ErrorActionPreference = "Continue"
 $HomeDir = [Environment]::GetFolderPath("UserProfile")
 $Vault   = if ($env:KNOWLEDGE_VAULT_PATH) { $env:KNOWLEDGE_VAULT_PATH } else { Join-Path $HomeDir "KnowledgeVault" }
 $Branch  = if ($env:KNOWLEDGE_VAULT_BRANCH) { $env:KNOWLEDGE_VAULT_BRANCH } else { "main" }
-$Layer   = Join-Path $Vault "03-INFRA\agent-universal-layer"
+# Same split-topology fallback as vault-push.ps1 (AGENT_VAULT_DATA, then
+# KNOWLEDGE_VAULT_PATH, then the default). $Layer (and everything derived
+# from it: the canonical AGENTS.md, the permissions/manifest.yaml guardrail
+# check, the mcp/manifest.yaml BUG-B check, the skills manifest, the legacy
+# OpenCode profile check) must resolve against where the DATA actually lives,
+# not against $Vault, which stays anchored to KNOWLEDGE_VAULT_PATH alone for
+# the S1 git-repo-health checks above (they operate on the vault's own git
+# working tree, a different concern from where its 03-INFRA content lives).
+# Without this, a Windows install using the split topology (engine root and
+# vault data in two different places, already supported per docs/upgrade.md
+# and mirrored by agent-doctor.sh's own VAULT_DATA) resolves $Layer to a path
+# that doesn't exist, and the two checks that depend on it become silent
+# no-ops instead of failing loudly.
+$VaultData = if ($env:AGENT_VAULT_DATA) { $env:AGENT_VAULT_DATA } elseif ($env:KNOWLEDGE_VAULT_PATH) { $env:KNOWLEDGE_VAULT_PATH } else { Join-Path $HomeDir "KnowledgeVault" }
+$Layer   = Join-Path $VaultData "03-INFRA\agent-universal-layer"
 $EngineInfra = Split-Path -Parent $PSScriptRoot
 $RenderPy = Join-Path $EngineInfra "agent-universal-layer\mcp\render.py"
 $Canon   = Join-Path $Layer "instructions\AGENTS.md"
@@ -136,7 +150,25 @@ try {
 sec "Vault (memory) - authoritative remote and mirrors"
 if ($RemoteConfigError) { bad "invalid sync remote config - run: agent-sync config authoritative_remote" } else { ok "sync remote config resolved ($Remote)" }
 if (Test-Path -LiteralPath (Join-Path $Vault ".git")) {
-  if ($Remote -eq "local" -or $Remote -eq "none") {
+  # Mid-rebase/merge guard (checked before the Local-Only vs remote-configured
+  # split below, so it covers both): a conflicted `git pull --rebase` -- the
+  # exact recovery agent_sync.py's own vault-push publish path tells the user
+  # to run by hand on a conflicting divergence -- left main/HEAD in a state
+  # the ahead/behind/dirty checks below cannot tell apart from ordinary
+  # unpushed commits or an ordinary dirty tree: `git status --porcelain`
+  # reports a conflicted file (e.g. "UU file.txt") as just one more line, and
+  # rev-list --count on branch refs is unaffected by a detached HEAD mid-
+  # rebase. Left alone, this doctor would print "commits behind" / "not
+  # committed" -- wording that invites a naive `git add -A; git commit` that
+  # bakes conflict markers straight into the vault instead of resolving them.
+  # Detected via the same on-disk state `git status` itself reads, not a
+  # subprocess parse of its text.
+  $vaultGitDir = (gitc @("rev-parse", "--absolute-git-dir"))
+  if ($vaultGitDir -and ((Test-Path -LiteralPath (Join-Path $vaultGitDir "rebase-merge")) -or (Test-Path -LiteralPath (Join-Path $vaultGitDir "rebase-apply")))) {
+    bad "vault is mid-rebase with a conflict to resolve - run: git -C `"$Vault`" rebase --abort (or resolve and rebase --continue), THEN re-run this check"
+  } elseif ($vaultGitDir -and (Test-Path -LiteralPath (Join-Path $vaultGitDir "MERGE_HEAD"))) {
+    bad "vault is mid-merge with a conflict to resolve - run: git -C `"$Vault`" merge --abort (or resolve and commit), THEN re-run this check"
+  } elseif ($Remote -eq "local" -or $Remote -eq "none") {
     # Local-Only sentinel (matches agent_sync.py's pull()/publish(): env.remote
     # in ("local", "none")): there is no authoritative remote to compare
     # against, so a fetch/ahead/behind/mirror check would otherwise try
@@ -146,11 +178,28 @@ if (Test-Path -LiteralPath (Join-Path $Vault ".git")) {
     $d = @(gitc @("status","--porcelain","--untracked-files=no")).Where({ $_ }).Count
     if ($d -eq 0) { ok "working tree clean (tracked files)" } else { warn "$d tracked files not committed" }
   } else {
-    gitc @("fetch","--prune",$Remote,$Branch) | Out-Null
+    # gitc() itself discards stderr (2>$null); capture it here specifically
+    # for the fetch so a real failure (permissions, DNS, an unconfigured
+    # remote name) surfaces its actual reason instead of a guessed
+    # "(offline?)", and so rev-list's own '?' fallback below never leaks into
+    # a "bad" line as an unexplained literal question mark.
+    $fetchOutput = (& git -C $Vault fetch --prune $Remote $Branch 2>&1)
+    $fetchRc = $LASTEXITCODE
+    if ($fetchRc -ne 0) {
+      $fetchDetail = (($fetchOutput | Out-String).Trim() -replace '\s+', ' ')
+      if (-not $fetchDetail) { $fetchDetail = "no error output from git" }
+      warn "fetch $Remote failed: $fetchDetail (offline, or the remote is unreachable)"
+    }
     $b = (gitc @("rev-list","--count","$Branch..$Remote/$Branch")); if (-not $b) { $b = "?" }
     $a = (gitc @("rev-list","--count","$Remote/$Branch..$Branch")); if (-not $a) { $a = "?" }
     $d = @(gitc @("status","--porcelain","--untracked-files=no")).Where({ $_ }).Count
-    if ("$b" -eq "0") { ok "aligned with $Remote/$Branch (0 behind)" } else { bad "$b commits behind the cloud" }
+    if ("$b" -eq "?") {
+      bad "cannot tell how many commits behind the cloud: rev-list failed (see the fetch warning above)"
+    } elseif ("$b" -eq "0") {
+      ok "aligned with $Remote/$Branch (0 behind)"
+    } else {
+      bad "$b commits behind the cloud"
+    }
     if ("$a" -eq "0" -or "$a" -eq "?") {
       ok "no unpublished local commits"
     } else {
@@ -209,7 +258,23 @@ if (Test-Path -LiteralPath $OcJson) {
     elseif ($ocCanonEntries.Count -gt 1) { warn "OpenCode loads the canonical AGENTS.md $($ocCanonEntries.Count) times; run agent-sync apply to deduplicate slash variants" }
     else { bad "OpenCode instructions do NOT point to AGENTS.md" }
   } catch { bad "OpenCode instructions cannot be inspected because $(Split-Path -Leaf $OcJson) is invalid" }
-} else { bad "missing $OcJson" }
+} else {
+  # Same asymmetry fix as agent-doctor.sh's twin: OpenCode genuinely not
+  # installed here has no code path that will ever create this file, so it
+  # used to be a permanent, unfixable FAIL while Codex/Antigravity absent
+  # stayed a silent no-op elsewhere in this script.
+  $OcInstalled = [bool](Get-Command opencode -ErrorAction SilentlyContinue)
+  if (-not $OcInstalled) {
+    foreach ($candidate in @(
+      (Join-Path $HomeDir ".opencode\bin\opencode.exe"),
+      (Join-Path $HomeDir ".opencode\bin\opencode.cmd"),
+      (Join-Path $HomeDir ".opencode\bin\opencode")
+    )) {
+      if (Test-Path -LiteralPath $candidate) { $OcInstalled = $true; break }
+    }
+  }
+  if ($OcInstalled) { bad "missing $OcJson" } else { warn "OpenCode not installed here? (missing $OcJson)" }
+}
 
 sec "Canonical bootstrap hygiene (size budget, pointer integrity)"
 # Additive, read-only guardrails on the single AGENTS.md bootstrap and its
@@ -388,6 +453,65 @@ function Test-ConnectorExpected([string]$VarName) {
   return [bool][Environment]::GetEnvironmentVariable($VarName)
 }
 
+# GUARDRAIL: see agent-doctor.sh's twin for the full rationale -- a "bypass"
+# permission posture (no confirmation prompts) only has its anti-catastrophic
+# guardrail if a PreToolUse hook is actually declared for that CLI in the
+# private instance permissions manifest. Reads the manifest directly with
+# plain YAML, never through config_schema.py's strict validator (which today
+# still only recognizes "claude" as a target), so this keeps working as that
+# set grows. A missing manifest (the public-engine default) is a complete,
+# silent no-op.
+$PermManifest = Join-Path $Layer "permissions\manifest.yaml"
+if (Test-Path -LiteralPath $PermManifest) {
+  sec "Permission posture guardrail (instance manifest)"
+  if ($NexgenPython) {
+    $bypassCode = @'
+import sys
+from pathlib import Path
+import yaml
+path = Path(sys.argv[1])
+try:
+    data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+except Exception:
+    sys.exit(0)
+if not isinstance(data, dict):
+    sys.exit(0)
+posture = data.get("posture")
+if not isinstance(posture, dict):
+    sys.exit(0)
+hooks = data.get("hooks")
+if not isinstance(hooks, list):
+    hooks = []
+guarded = set()
+for h in hooks:
+    if not isinstance(h, dict) or h.get("event") != "PreToolUse":
+        continue
+    for t in (h.get("targets") or []):
+        if isinstance(t, str):
+            guarded.add(t)
+for cli, value in posture.items():
+    if value == "bypass":
+        print(f"{cli} {'GUARDED' if cli in guarded else 'UNGUARDED'}")
+'@
+    $bypassReport = @(& $NexgenPythonCommand @NexgenPythonPrefix -c $bypassCode $PermManifest 2>$null | Where-Object { $_ })
+    if ($bypassReport.Count -gt 0) {
+      foreach ($line in $bypassReport) {
+        $parts = $line -split '\s+'
+        $cli = $parts[0]; $guardState = $parts[1]
+        if ($guardState -eq "GUARDED") {
+          ok "$cli runs in bypass posture (no confirmation prompts) WITH a declared PreToolUse guardrail hook"
+        } else {
+          bad "$cli runs in bypass posture (no confirmation prompts) WITHOUT a declared PreToolUse guardrail hook -- catastrophic commands are NOT intercepted"
+        }
+      }
+    } else {
+      ok "no CLI declared in bypass posture in the instance permissions manifest"
+    }
+  } else {
+    warn "Python 3 with PyYAML not found -- cannot inspect the instance permissions manifest for bypass posture"
+  }
+}
+
 sec "MCP connectors - reachability"
 $c = httpcode "http://127.0.0.1:5678/healthz" $null
 if ($c -eq 200) { ok "n8n-mcp (5678): $c" }
@@ -436,7 +560,15 @@ if ($VaultLibraryUrl) {
   # header. OPTIONS is a bounded, authenticated route probe.
   $c = httpcode $VaultLibraryUrl @{ Authorization = "Bearer $($env:VAULT_LIBRARY_TOKEN)"; Accept = "application/json, text/event-stream" } "Options"
   if ($c -eq 200 -or $c -eq 405) { ok "vault-library: $c (up)" } else { bad "vault-library: $c" }
-} else { warn "VAULT_LIBRARY_URL not in env" }
+} elseif (Test-ConnectorExpected "VAULT_LIBRARY_URL") {
+  # Same Mode gating as the "Tokens in env" check below for this exact
+  # variable -- an unconditional warn here used to contradict that check's
+  # "ok, not expected in current Mode" a few lines later in the SAME run
+  # (G1-contraddizione).
+  bad "vault-library: no endpoint resolved (VAULT_LIBRARY_URL not set, manifest render found none)"
+} else {
+  ok "vault-library: not configured - not expected in current Mode (Local-Only / VAULT_LIBRARY_URL not set)"
+}
 if (Get-Command npx -ErrorAction SilentlyContinue) { ok "playwright: npx available" } else { warn "npx not in PATH (playwright MCP)" }
 
 sec "Tokens in env"
@@ -506,6 +638,40 @@ if ($NexgenPython -and (Test-Path -LiteralPath $RenderPy)) {
   }
 } else {
   warn "python or render.py not found, skipping MCP drift check"
+}
+
+# BUG-B: see agent-doctor.sh's twin for the full incident rationale -- a
+# manifest server whose require_env var is missing is silently dropped by
+# render.py's own ">>> skip [...]: require_env not satisfied (Local-Only?)"
+# line above, which never names the variable. Read the manifest directly
+# here to name exactly which require_env var is unsatisfied for which
+# server, and only escalate to a WARNING when Test-ConnectorExpected says the
+# current Mode should actually have it -- a legitimate Local-Only skip stays
+# the silent no-op it already is everywhere else in this script.
+$ManifestYaml = Join-Path $Layer "mcp\manifest.yaml"
+if ($NexgenPython -and (Test-Path -LiteralPath $ManifestYaml)) {
+  $skipCode = @'
+import os, sys
+sys.path.insert(0, sys.argv[1])
+from pathlib import Path
+from config_schema import ConfigValidationError, load_mcp_manifest_document
+try:
+    servers, _retired = load_mcp_manifest_document(Path(sys.argv[2]))
+except ConfigValidationError:
+    sys.exit(0)
+for name, spec in servers.items():
+    req = spec.get("require_env")
+    if req and not os.environ.get(req, "").strip():
+        print(f"{name} {req}")
+'@
+  $skippedServers = @(& $NexgenPythonCommand @NexgenPythonPrefix -c $skipCode $PSScriptRoot $ManifestYaml 2>$null | Where-Object { $_ })
+  foreach ($line in $skippedServers) {
+    $parts = $line -split '\s+'
+    $srv = $parts[0]; $var = $parts[1]
+    if (Test-ConnectorExpected $var) {
+      warn "$var missing: manifest server '$srv' is not mounted on any CLI (require_env not satisfied)"
+    }
+  }
 }
 
 if ($Strict) {
@@ -817,13 +983,21 @@ if (Test-Path -LiteralPath (Join-Path $ConsumerEngineRepo ".git")) {
   $pinFile = Join-Path $Vault "99-INDEX\ENGINE-PIN.txt"
   $liveSha = (& git -C $ConsumerEngineRepo rev-parse HEAD 2>$null)
   if (-not $liveSha) { bad "cannot read the consumer engine clone's HEAD ($ConsumerEngineRepo)" }
-  elseif (Test-Path -LiteralPath $pinFile) {
-    $pinSha = (Get-Content -LiteralPath $pinFile -TotalCount 1).Trim()
-    $liveShort = if ($liveSha.Length -ge 7) { $liveSha.Substring(0,7) } else { $liveSha }
-    $pinShort = if ($pinSha.Length -ge 7) { $pinSha.Substring(0,7) } else { $pinSha }
-    if ($pinSha -eq $liveSha) { ok "consumer engine at the pinned version ($liveShort)" }
-    else { bad "consumer engine at $liveShort, pin expects $pinShort - silent drift: pull was skipped, or the pin wasn't updated after a deliberate upgrade" }
-  } else { warn "no engine pin set ($pinFile missing) - consumer engine version isn't tracked yet" }
+  else {
+    if (Test-Path -LiteralPath $pinFile) {
+      $pinSha = (Get-Content -LiteralPath $pinFile -TotalCount 1).Trim()
+      $liveShort = if ($liveSha.Length -ge 7) { $liveSha.Substring(0,7) } else { $liveSha }
+      $pinShort = if ($pinSha.Length -ge 7) { $pinSha.Substring(0,7) } else { $pinSha }
+      if ($pinSha -eq $liveSha) { ok "consumer engine at the pinned version ($liveShort)" }
+      else { bad "consumer engine at $liveShort, pin expects $pinShort - silent drift: pull was skipped, or the pin wasn't updated after a deliberate upgrade" }
+    } else { warn "no engine pin set ($pinFile missing) - consumer engine version isn't tracked yet" }
+    # A sha match only proves HEAD == pin; it says nothing about the working
+    # tree itself. Independent of the sha outcome above, same porcelain
+    # check already used for $Vault.
+    $consumerDirty = @(& git -C $ConsumerEngineRepo status --porcelain --untracked-files=no 2>$null).Where({ $_ }).Count
+    if ($consumerDirty -eq 0) { ok "consumer engine working tree clean (tracked files)" }
+    else { warn "$consumerDirty tracked file(s) modified in the consumer engine clone - a pinned clone should match the release exactly, not be hand-edited" }
+  }
   # New-version-available check (B3, informational only, never auto-updates).
   # Fetch is read-only (only moves remote-tracking refs/tags), safe even
   # though this machine never auto-upgrades the pinned commit.

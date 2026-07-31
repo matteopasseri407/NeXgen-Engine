@@ -57,6 +57,36 @@ def _scan_line(leak_scan, patterns, allow, text: str):
     return leak_scan.scan_units([unit], patterns, allow, [])
 
 
+# --- tree-mode noise filtering (audit finding G4-leakscan, 2026-07-31) -----
+#
+# `--tree PATH` used to skip only `.git`, `__pycache__`, and `node_modules`.
+# A maintainer running the documented full-checkout scan with a `.venv`
+# sitting inside the scanned tree got 1643 findings, 1638 of them installed
+# third-party package internals, drowning the five real (soft, non-blocking)
+# hits. Fixed by excluding environment/cache directories from the walk.
+
+def test_units_from_tree_skips_environment_and_cache_dirs(leak_scan, tmp_path):
+    root = tmp_path / "repo"
+    noisy_dirs = [
+        ".venv", "venv", "node_modules", ".ruff_cache", ".pytest_cache",
+        ".mypy_cache", "dist", "build", "__pycache__", ".git",
+    ]
+    for d in noisy_dirs:
+        nested = root / d / "nested"
+        nested.mkdir(parents=True)
+        (nested / "noise.txt").write_text("hello from installed noise\n")
+
+    real_dir = root / "src"
+    real_dir.mkdir(parents=True)
+    (real_dir / "app.py").write_text("hello from real source\n")
+
+    units = leak_scan.units_from_tree([str(root)])
+
+    assert len(units) == 1, f"only the real source file should be scanned, got: {units}"
+    assert "app.py" in units[0].label
+    assert not any(d in units[0].label for d in noisy_dirs)
+
+
 # --- the false negative this fix closes ------------------------------------
 
 def test_value_merely_containing_an_allowlisted_email_is_still_flagged(leak_scan, real_patterns):

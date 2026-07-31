@@ -5,6 +5,13 @@ couple of colleagues, or a small company. Read this before you adopt it as
 shared infrastructure: the security and identity model is mono-user by
 design today, and that has concrete consequences for a team.
 
+This is independent of, not instead of, the license question: NeXgen Engine
+is PolyForm Noncommercial 1.0.0. Evaluating it internally is fine, but
+running it inside a company as part of paid or revenue-generating work is a
+commercial use the default license does not cover — see `COMMERCIAL.md`
+before you adopt it that way, whatever you conclude about the mono-user
+constraints below.
+
 ## What "mono-user" means, concretely
 
 - **One profile, not one per person.** `99-INDEX/USER-PROFILE.md` holds a

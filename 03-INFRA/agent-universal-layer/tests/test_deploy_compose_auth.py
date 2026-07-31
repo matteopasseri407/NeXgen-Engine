@@ -193,7 +193,7 @@ def test_env_example_documents_firecrawl_redis_password():
 
 
 def test_bootstrap_vps_auto_generates_the_redis_password():
-    """Rule: never a secret Matteo has to invent or remember by hand --
+    """Rule: never a secret an operator has to invent or remember by hand --
     bootstrap-vps.sh must generate it programmatically the first time."""
     content = BOOTSTRAP.read_text(encoding="utf-8")
     assert "openssl rand" in content

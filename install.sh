@@ -4,10 +4,11 @@
 # Deterministic first-run helper. It does NOT replace the AI-guided installer
 # (INIT.md): it does the mechanical part — check prerequisites, verify the
 # vault scaffold, detect your CLIs, compute your install profile — and then
-# hands you the exact next step. Safe to re-run; it writes nothing by default.
+# hands you the exact next step. Safe to re-run; it writes nothing in --check
+# mode, and only creates missing scaffold directories otherwise.
 #
 #   bash install.sh            # preflight + guided profile + next steps
-#   bash install.sh --check    # preflight only (no questions)
+#   bash install.sh --check    # preflight only (no questions, no writes)
 # ---------------------------------------------------------------------------
 set -u
 
@@ -26,6 +27,11 @@ warn(){ printf '  %s○%s %s\n' "$YEL" "$R" "$1"; }
 hdr(){  printf '\n%s%s%s\n' "$B$CYN" "$1" "$R"; }
 
 MODE="${1:-guided}"
+if [ "$MODE" != "guided" ] && [ "$MODE" != "--check" ]; then
+  printf 'Unknown argument: %s\n' "$MODE" >&2
+  printf 'Usage: bash install.sh [--check]\n' >&2
+  exit 1
+fi
 MISS_REQ=0
 
 banner(){
@@ -71,7 +77,19 @@ check_prereqs(){
   hdr "1 · Prerequisites"
   if have git; then ok "git — $(git --version 2>/dev/null | head -1)"; else bad "git MISSING (required) → $HINT_PKG git"; MISS_REQ=1; fi
   PY="$(pybin)"
-  if [ -n "$PY" ]; then ok "python3 — $($PY --version 2>&1) (as '$PY')"; else bad "python3 MISSING (required) → $HINT_PKG python3"; MISS_REQ=1; fi
+  if [ -n "$PY" ]; then
+    if $PY -c 'import sys; sys.exit(0 if sys.version_info >= (3, 11) else 1)' 2>/dev/null; then
+      ok "python3 — $($PY --version 2>&1) (as '$PY')"
+    elif $PY -c 'import tomli' 2>/dev/null; then
+      ok "python3 — $($PY --version 2>&1) (as '$PY', <3.11 + tomli — the documented fallback)"
+    else
+      bad "python3 — $($PY --version 2>&1) is too old (required: 3.11+, or 3.10 with 'pip install tomli') → $HINT_PKG python3.11"
+      MISS_REQ=1
+    fi
+  else
+    bad "python3 MISSING (required, 3.11+) → $HINT_PKG python3"
+    MISS_REQ=1
+  fi
   if [ -n "$PY" ] && $PY -c 'import yaml' 2>/dev/null; then
     ok "PyYAML (python module 'yaml')"
   else

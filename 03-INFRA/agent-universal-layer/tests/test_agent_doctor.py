@@ -17,11 +17,15 @@ import json
 import os
 import re
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
 
 from conftest import run_agent_doctor, run_agent_sync
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from test_engine_upgrade import _make_consumer_engine_clone  # noqa: E402  (shared fixture helper, see that module)
 
 pytestmark = pytest.mark.skipif(
     os.name == "nt",
@@ -141,6 +145,58 @@ def test_doctor_strict_finds_opencode_in_its_standard_user_install_path(sandbox)
 
     assert "OpenCode mcp list" in result.stdout
     assert "opencode not found in PATH or ~/.opencode/bin" not in result.stdout
+
+
+# ── A genuinely-absent OpenCode used to be a permanent, unfixable FAIL
+# (missing $OCJSON, unconditionally) while Codex/Antigravity absent stayed a
+# silent no-op elsewhere in the same script -- pure inconsistency that hits
+# exactly the "third-party user with only one CLI installed" case. Confirmed
+# bug: no code path anywhere ever creates opencode.jsonc for a CLI that was
+# never installed, so the FAIL could never be cleared.
+
+def test_opencode_genuinely_absent_is_a_warning_not_a_permanent_fail(sandbox):
+    env = sandbox.env()
+    # This suite may itself run on a machine with a real OpenCode install
+    # (its bin dir would otherwise leak in via the real PATH sandbox.env()
+    # appends after the stub dir) -- strip it so "genuinely absent" is
+    # actually genuine, not accidentally masked by the host running pytest.
+    env["PATH"] = os.pathsep.join(
+        entry for entry in env["PATH"].split(os.pathsep)
+        if "opencode" not in entry.lower()
+    )
+
+    result = subprocess.run(
+        ["bash", str(sandbox.scripts_dir / "agent-doctor.sh")],
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+
+    assert _lines_with(result.stdout, "⚠", "OpenCode not installed here?"), result.stdout
+    assert not _lines_with(result.stdout, "✗", "missing"), result.stdout
+
+
+def test_opencode_installed_but_missing_config_still_fails(sandbox):
+    """Guard against over-fixing: OpenCode IS on PATH but its config is
+    missing is a real, fixable problem (render.py already bootstraps it),
+    so it must stay a FAIL, not soften into a WARN."""
+    opencode = sandbox.bin_stubs / "opencode"
+    opencode.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    opencode.chmod(0o755)
+
+    result = run_agent_doctor(sandbox)
+
+    assert _lines_with(result.stdout, "✗", "missing"), result.stdout
+    assert "OpenCode not installed here?" not in result.stdout, result.stdout
+
+
+def test_opencode_absence_asymmetry_fix_present_in_both_twins():
+    repo = Path(__file__).resolve().parents[3]
+    bash = (repo / "03-INFRA/scripts/agent-doctor.sh").read_text(encoding="utf-8")
+    powershell = (repo / "03-INFRA/scripts/agent-doctor.ps1").read_text(encoding="utf-8")
+    assert "OpenCode not installed here?" in bash
+    assert "OpenCode not installed here?" in powershell
 
 
 def test_doctor_does_not_judge_host_local_claude_permissions(sandbox):
@@ -313,6 +369,123 @@ def test_non_local_remote_still_runs_the_real_fetch_ahead_behind_checks(sandbox)
 
     assert "Local-Only mode" not in result.stdout, result.stdout
     assert "commits behind the cloud" in result.stdout, result.stdout
+
+
+# ── A failed fetch used to discard git's real stderr ("(offline?)" is a
+# guess, not a diagnosis) and let rev-list's own '?' fallback leak into the
+# FAIL line as a literal, unexplained question mark ("✗ ? commits behind the
+# cloud"). Confirmed bug: neither symptom tells the reader what actually
+# happened or what to do about it.
+
+def test_fetch_failure_surfaces_gits_real_stderr_not_a_guess(sandbox):
+    _init_vault_git_repo(sandbox)
+
+    result = _run_doctor(sandbox, env_overrides={"KNOWLEDGE_VAULT_REMOTE": "oracle"})
+
+    assert "fetch oracle failed (offline?)" not in result.stdout, result.stdout
+    assert "fetch oracle failed:" in result.stdout, result.stdout
+    # git's real reason ("does not appear to be a git repository", or the
+    # locale-equivalent) must show up verbatim, not be swallowed by 2>&1.
+    assert "oracle" in result.stdout and "repository" in result.stdout, result.stdout
+
+
+def test_fetch_failure_never_prints_a_literal_question_mark_as_a_commit_count(sandbox):
+    _init_vault_git_repo(sandbox)
+
+    result = _run_doctor(sandbox, env_overrides={"KNOWLEDGE_VAULT_REMOTE": "oracle"})
+
+    assert "✗ ? commits behind the cloud" not in result.stdout, result.stdout
+    assert "cannot tell how many commits behind the cloud" in result.stdout, result.stdout
+
+
+def test_fetch_failure_message_also_present_in_summary_mode(sandbox):
+    """The '?' placeholder used to leak into --summary output too (the text
+    consumed by digests/alerts), not just the colored interactive view."""
+    _init_vault_git_repo(sandbox)
+
+    result = _run_doctor(sandbox, "--summary", env_overrides={"KNOWLEDGE_VAULT_REMOTE": "oracle"})
+
+    assert "FAIL: ? commits behind the cloud" not in result.stdout, result.stdout
+    assert "cannot tell how many commits behind the cloud" in result.stdout, result.stdout
+
+
+def test_fetch_stderr_capture_present_in_both_twins():
+    repo = Path(__file__).resolve().parents[3]
+    bash = (repo / "03-INFRA/scripts/agent-doctor.sh").read_text(encoding="utf-8")
+    powershell = (repo / "03-INFRA/scripts/agent-doctor.ps1").read_text(encoding="utf-8")
+    assert "fetch $REMOTE failed (offline?)" not in bash
+    assert "fetch $Remote failed (offline?)" not in powershell
+    for content in (bash, powershell):
+        assert "cannot tell how many commits behind the cloud" in content
+
+
+# ── Mid-rebase/merge conflict must be named, not mislabeled as ordinary
+# "commits behind" / "not committed" drift. Confirmed bug: a `git pull
+# --rebase` that hits a conflict (the exact recovery agent_sync.py's own
+# vault-push publish path tells the user to run by hand on a conflicting
+# divergence) left main/HEAD mid-rebase; the old ahead/behind/dirty checks
+# below could not tell that apart from ordinary unpushed commits or a
+# routine dirty tree, and printed generic wording that invites a naive
+# `git add -A && git commit` baking conflict markers straight into the vault.
+
+def test_vault_mid_rebase_conflict_gets_a_dedicated_fail_not_generic_warnings(sandbox):
+    _init_vault_git_repo(sandbox)
+    rebase_merge = sandbox.vault / ".git" / "rebase-merge"
+    rebase_merge.mkdir()
+    (rebase_merge / "head-name").write_text("refs/heads/main\n", encoding="utf-8")
+
+    result = _run_doctor(sandbox, env_overrides={"KNOWLEDGE_VAULT_REMOTE": "oracle"})
+
+    assert "mid-rebase" in result.stdout, result.stdout
+    assert "rebase --abort" in result.stdout, result.stdout
+    assert "commits behind the cloud" not in result.stdout, result.stdout
+    assert "unpublished local commits" not in result.stdout, result.stdout
+    assert "tracked files not committed" not in result.stdout, result.stdout
+
+
+@pytest.mark.parametrize("sentinel", ["local", "none"])
+def test_vault_mid_rebase_conflict_detected_in_local_only_mode_too(sandbox, sentinel):
+    """The guard sits before the Local-Only/remote-configured split, so a
+    Local-Only install caught mid-rebase (e.g. from a manual `git rebase`
+    against a mirror) must also get the dedicated fail, not the Local-Only
+    branch's own generic "tracked files not committed" warning."""
+    _init_vault_git_repo(sandbox)
+    (sandbox.vault / ".git" / "rebase-apply").mkdir()
+
+    result = _run_doctor(sandbox, env_overrides={"KNOWLEDGE_VAULT_REMOTE": sentinel})
+
+    assert "mid-rebase" in result.stdout, result.stdout
+    assert "tracked files not committed" not in result.stdout, result.stdout
+    assert f"Local-Only mode ({sentinel})" not in result.stdout, result.stdout
+
+
+def test_vault_mid_merge_conflict_gets_a_dedicated_fail(sandbox):
+    _init_vault_git_repo(sandbox)
+    (sandbox.vault / ".git" / "MERGE_HEAD").write_text(
+        "0000000000000000000000000000000000000000\n", encoding="utf-8"
+    )
+
+    result = _run_doctor(sandbox, env_overrides={"KNOWLEDGE_VAULT_REMOTE": "oracle"})
+
+    assert "mid-merge" in result.stdout, result.stdout
+    assert "merge --abort" in result.stdout, result.stdout
+    assert "commits behind the cloud" not in result.stdout, result.stdout
+
+
+def test_vault_mid_rebase_guard_present_in_both_twins():
+    repo = Path(__file__).resolve().parents[3]
+    bash = (repo / "03-INFRA/scripts/agent-doctor.sh").read_text(encoding="utf-8")
+    powershell = (repo / "03-INFRA/scripts/agent-doctor.ps1").read_text(encoding="utf-8")
+    for content in (bash, powershell):
+        assert "rebase-merge" in content
+        assert "rebase-apply" in content
+        assert "MERGE_HEAD" in content
+        assert "mid-rebase" in content
+        assert "mid-merge" in content
+    assert 'fail "vault is mid-rebase' in bash
+    assert 'fail "vault is mid-merge' in bash
+    assert 'bad "vault is mid-rebase' in powershell
+    assert 'bad "vault is mid-merge' in powershell
 
 
 # ── Mode-based gating of MCP connector checks ─────────────────────────────
@@ -780,6 +953,61 @@ def test_single_clone_update_alert_parity_with_the_ps1_twin():
     assert 'bad "NeXgen Engine update available' not in powershell
 
 
+# ── S2's pin-freshness check verified only HEAD sha, never whether the
+# consumer engine clone's working tree is dirty -- a hand-edited tracked file
+# at an otherwise correctly-pinned HEAD used to report a clean "OK" with no
+# signal that the checkout no longer matches the release byte-for-byte.
+
+def test_s2_pin_check_ok_on_a_genuinely_clean_pinned_clone(sandbox):
+    consumer = _make_consumer_engine_clone(sandbox, "v0.2.0")
+    result = run_agent_doctor(sandbox)
+
+    assert "consumer engine at the pinned version" in result.stdout, result.stdout
+    assert "consumer engine working tree clean (tracked files)" in result.stdout, result.stdout
+    assert "tracked file(s) modified in the consumer engine clone" not in result.stdout, result.stdout
+    assert consumer.exists()  # sanity: fixture actually created the clone
+
+
+def test_s2_pin_check_warns_when_a_correctly_pinned_clone_is_dirty(sandbox):
+    """The bug: HEAD sha still matches the pin, but a tracked file was
+    hand-edited without committing -- this must no longer read as a clean
+    OK."""
+    consumer = _make_consumer_engine_clone(sandbox, "v0.2.0")
+    (consumer / "VERSION").write_text("0.2.0-hand-edited\n", encoding="utf-8")
+
+    result = run_agent_doctor(sandbox)
+
+    assert "consumer engine at the pinned version" in result.stdout, result.stdout
+    assert "1 tracked file(s) modified in the consumer engine clone" in result.stdout, result.stdout
+    assert "consumer engine working tree clean" not in result.stdout, result.stdout
+
+
+def test_s2_dirty_tree_check_independent_of_a_sha_mismatch(sandbox):
+    """The dirty-tree warning must fire on top of a sha-mismatch FAIL too,
+    not only on an otherwise-clean pin match -- they are separate signals."""
+    consumer = _make_consumer_engine_clone(sandbox, "v0.1.0")
+    (consumer / "VERSION").write_text("0.1.0-hand-edited\n", encoding="utf-8")
+    # Force a genuine sha mismatch too (editing a tracked file without
+    # committing never changes HEAD): point the pin at a sha this clone
+    # never checked out.
+    pin_file = sandbox.vault / "99-INDEX" / "ENGINE-PIN.txt"
+    pin_file.write_text(("0" * 40) + "\n", encoding="utf-8")
+
+    result = run_agent_doctor(sandbox)
+
+    assert "silent drift" in result.stdout, result.stdout
+    assert "1 tracked file(s) modified in the consumer engine clone" in result.stdout, result.stdout
+
+
+def test_s2_dirty_tree_check_present_in_both_twins():
+    repo = Path(__file__).resolve().parents[3]
+    bash = (repo / "03-INFRA/scripts/agent-doctor.sh").read_text(encoding="utf-8")
+    powershell = (repo / "03-INFRA/scripts/agent-doctor.ps1").read_text(encoding="utf-8")
+    for content in (bash, powershell):
+        assert "consumer engine working tree clean" in content
+        assert "tracked file(s) modified in the consumer engine clone" in content
+
+
 # ── Canonical bootstrap hygiene: size budget + load-on-demand pointer
 # integrity (competitor-borrow Tier 1, 2026-07-17) ────────────────────────
 # Two additive, read-only, WARN-only doctor checks. They must catch a bloated
@@ -888,3 +1116,209 @@ def test_required_rules_guard_present_and_warn_only_in_both_twins():
         assert "required invariant rule" in content
     assert 'fail "canonical AGENTS.md is missing required invariant' not in bash
     assert 'bad "canonical AGENTS.md is missing required invariant' not in powershell
+
+
+# ── G1-contraddizione: vault-library reachability must agree with the later
+# "Tokens in env" check for the SAME variable in the SAME run, not contradict
+# it (review 2026-07-30). Before the fix, an unconditional warn here fired
+# even under Local-Only/unknown Mode while "Tokens in env" said "ok, not
+# expected" a few lines later for the identical unset VAULT_LIBRARY_URL.
+
+def test_local_only_vault_library_reachability_agrees_with_tokens_section(sandbox):
+    _stub_curl_always_unreachable(sandbox)
+    _write_user_profile_mode(sandbox, "LOCAL-ONLY")
+
+    result = _run_doctor(sandbox)
+
+    assert "USER-PROFILE.md declares Mode: LOCAL-ONLY" in result.stdout, result.stdout
+    assert "VAULT_LIBRARY_URL not in env" not in result.stdout, result.stdout
+    assert _lines_with(result.stdout, "✓", "vault-library: not configured"), result.stdout
+
+
+def test_cloud_server_vault_library_reachability_really_fails(sandbox):
+    """Guard against over-fixing: Cloud-Server with no derivable vault-library
+    endpoint at all must now FAIL in the reachability section too (it used to
+    only warn there while the Tokens section correctly FAILed)."""
+    _stub_curl_always_unreachable(sandbox)
+    _write_user_profile_mode(sandbox, "CLOUD-SERVER")
+
+    result = _run_doctor(sandbox)
+
+    assert "USER-PROFILE.md declares Mode: CLOUD-SERVER" in result.stdout, result.stdout
+    assert _lines_with(result.stdout, "✗", "vault-library: no endpoint resolved"), result.stdout
+
+
+def test_vault_library_contradiction_fix_present_in_both_twins():
+    repo = Path(__file__).resolve().parents[3]
+    bash = (repo / "03-INFRA/scripts/agent-doctor.sh").read_text(encoding="utf-8")
+    powershell = (repo / "03-INFRA/scripts/agent-doctor.ps1").read_text(encoding="utf-8")
+    assert 'warn "VAULT_LIBRARY_URL not in env"' not in bash
+    assert 'warn "VAULT_LIBRARY_URL not in env"' not in powershell
+    assert "vault-library: not configured -- not expected in current Mode" in bash
+    assert "vault-library: not configured - not expected in current Mode" in powershell
+    for content in (bash, powershell):
+        assert "vault-library: no endpoint resolved" in content
+
+
+# ── G5-ollama: the check runs on any Linux host (server or laptop), so the
+# message must not assume hardware it cannot know about.
+
+def test_ollama_message_is_hardware_neutral():
+    repo = Path(__file__).resolve().parents[3]
+    bash = (repo / "03-INFRA/scripts/agent-doctor.sh").read_text(encoding="utf-8")
+    assert "on the laptop" not in bash
+    assert 'ok "Ollama running (emergency local fallback, not the routing worker)"' in bash
+
+
+# ── G6-symlink: the ~/ANTIGRAVITY.md comment must describe what agent_sync.py
+# actually does today (actively removes the dead symlink), not claim it
+# "exists" in the present tense.
+
+def test_antigravity_symlink_comment_reflects_current_removal_behavior():
+    repo = Path(__file__).resolve().parents[3]
+    bash = (repo / "03-INFRA/scripts/agent-doctor.sh").read_text(encoding="utf-8")
+    assert "that symlink exists" not in bash
+    assert "actively removes ~/ANTIGRAVITY.md" in bash
+
+
+# ── BUG-B: a manifest server dropped by require_env must name the missing
+# variable and its consequence, gated by the same Mode logic as every other
+# connector check (incident 2026-07-30: N8N_MCP_TOKEN silently dropped
+# n8n-mcp from all 4 CLIs and the doctor never named the variable).
+
+def _add_require_env_server(sandbox, server_name: str, var_name: str, targets=("claude",)) -> None:
+    """Appends one more server entry (require_env-gated) to the sandbox's
+    already-copied synthetic fixture manifest, instead of replacing it, so
+    the existing fake-* entries other checks may rely on stay intact."""
+    manifest_path = sandbox.mcp_dir / "manifest.yaml"
+    existing = manifest_path.read_text(encoding="utf-8")
+    addition = (
+        f"\n  {server_name}:\n"
+        "    transport: stdio\n"
+        "    command: fake-cmd\n"
+        f"    require_env: {var_name}\n"
+        f"    targets: [{', '.join(targets)}]\n"
+    )
+    manifest_path.write_text(existing + addition, encoding="utf-8")
+
+
+def test_bugb_require_env_skip_is_silent_when_not_expected_in_current_mode(sandbox):
+    _add_require_env_server(sandbox, "fake-conditional-tool", "FAKE_CONDITIONAL_VAR")
+
+    result = _run_doctor(sandbox)
+
+    assert "FAKE_CONDITIONAL_VAR" not in result.stdout, result.stdout
+
+
+def test_bugb_require_env_skip_warns_naming_the_variable_when_expected(sandbox):
+    _add_require_env_server(sandbox, "fake-conditional-tool", "FAKE_CONDITIONAL_VAR")
+    _write_user_profile_mode(sandbox, "CLOUD-SERVER")
+
+    result = _run_doctor(sandbox)
+
+    assert _lines_with(result.stdout, "⚠", "FAKE_CONDITIONAL_VAR missing"), result.stdout
+    assert "fake-conditional-tool" in result.stdout, result.stdout
+    assert "not mounted on any CLI" in result.stdout, result.stdout
+
+
+def test_bugb_require_env_skip_is_silent_once_the_variable_is_set(sandbox):
+    _add_require_env_server(sandbox, "fake-conditional-tool", "FAKE_CONDITIONAL_VAR")
+    _write_user_profile_mode(sandbox, "CLOUD-SERVER")
+
+    result = _run_doctor(sandbox, env_overrides={"FAKE_CONDITIONAL_VAR": "set"})
+
+    assert "FAKE_CONDITIONAL_VAR" not in result.stdout, result.stdout
+
+
+def test_require_env_skip_visibility_present_in_both_twins():
+    repo = Path(__file__).resolve().parents[3]
+    bash = (repo / "03-INFRA/scripts/agent-doctor.sh").read_text(encoding="utf-8")
+    powershell = (repo / "03-INFRA/scripts/agent-doctor.ps1").read_text(encoding="utf-8")
+    for content in (bash, powershell):
+        assert "load_mcp_manifest_document" in content
+        assert "is not mounted on any CLI" in content
+
+
+# ── GUARDRAIL: a CLI running in "bypass" permission posture (no confirmation
+# prompts) must have a declared PreToolUse guardrail hook, or the doctor must
+# say so visibly. A missing instance permissions manifest (the public-engine
+# default) is a complete, silent no-op.
+
+def _write_permissions_manifest(sandbox, *, posture: dict, hooks: list) -> Path:
+    perms_dir = sandbox.ul / "permissions"
+    perms_dir.mkdir(parents=True, exist_ok=True)
+    lines = ["schema_version: 1", "posture:"]
+    for cli, value in posture.items():
+        lines.append(f"  {cli}: {value}")
+    lines.append("hooks:")
+    for h in hooks:
+        lines.append(f"  - name: {h['name']}")
+        lines.append(f"    file: {h['file']}")
+        lines.append(f"    targets: [{', '.join(h['targets'])}]")
+        lines.append(f"    event: {h['event']}")
+    path = perms_dir / "manifest.yaml"
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return path
+
+
+def test_guardrail_check_is_a_silent_noop_without_a_permissions_manifest(sandbox):
+    result = run_agent_doctor(sandbox)
+    assert "Permission posture guardrail" not in result.stdout, result.stdout
+
+
+def test_guardrail_check_ignores_non_bypass_postures(sandbox):
+    _write_permissions_manifest(sandbox, posture={"claude": "accept-edits"}, hooks=[])
+
+    result = run_agent_doctor(sandbox)
+
+    assert "Permission posture guardrail" in result.stdout, result.stdout
+    assert _lines_with(result.stdout, "✓", "no CLI declared in bypass posture"), result.stdout
+
+
+def test_guardrail_check_ok_when_bypass_cli_has_a_pretooluse_hook(sandbox):
+    _write_permissions_manifest(
+        sandbox,
+        posture={"claude": "bypass"},
+        hooks=[{"name": "guardrail", "file": "hooks/guardrail.mjs", "targets": ["claude"], "event": "PreToolUse"}],
+    )
+
+    result = run_agent_doctor(sandbox)
+
+    assert _lines_with(result.stdout, "✓", "claude runs in bypass posture"), result.stdout
+    assert not _lines_with(result.stdout, "✗", "claude runs in bypass posture"), result.stdout
+
+
+def test_guardrail_check_fails_visibly_when_bypass_cli_has_no_guardrail_hook(sandbox):
+    """Also exercises forward-compatibility: 'codex' is not yet a valid
+    permissions-manifest target in config_schema.py's strict validator, but
+    this check must keep working as that set grows (another agent is
+    extending bypass support to non-Claude CLIs concurrently) -- it must
+    never depend on that strict schema."""
+    _write_permissions_manifest(sandbox, posture={"codex": "bypass"}, hooks=[])
+
+    result = run_agent_doctor(sandbox)
+
+    assert _lines_with(result.stdout, "✗", "codex runs in bypass posture"), result.stdout
+    assert "WITHOUT a declared PreToolUse guardrail hook" in result.stdout, result.stdout
+
+
+def test_guardrail_check_ignores_a_hook_declared_for_a_different_event(sandbox):
+    _write_permissions_manifest(
+        sandbox,
+        posture={"claude": "bypass"},
+        hooks=[{"name": "session-hook", "file": "hooks/x.mjs", "targets": ["claude"], "event": "SessionStart"}],
+    )
+
+    result = run_agent_doctor(sandbox)
+
+    assert _lines_with(result.stdout, "✗", "claude runs in bypass posture"), result.stdout
+
+
+def test_guardrail_check_present_in_both_twins():
+    repo = Path(__file__).resolve().parents[3]
+    bash = (repo / "03-INFRA/scripts/agent-doctor.sh").read_text(encoding="utf-8")
+    powershell = (repo / "03-INFRA/scripts/agent-doctor.ps1").read_text(encoding="utf-8")
+    for content in (bash, powershell):
+        assert "Permission posture guardrail" in content
+        assert "PreToolUse" in content
+        assert "WITHOUT a declared PreToolUse guardrail hook" in content

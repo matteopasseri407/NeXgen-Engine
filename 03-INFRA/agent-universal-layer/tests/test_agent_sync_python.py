@@ -17,7 +17,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from conftest import REAL_SCRIPTS, load_agent_sync_module, run_agent_sync_python
+from conftest import REAL_SCRIPTS, load_agent_sync_module, rmtree_force, run_agent_sync_python
 
 
 def _patch_apply_phases(monkeypatch, mod, called: list[str]) -> None:
@@ -253,7 +253,7 @@ def test_apply_renders_antigravity_source_before_propagating_it(sandbox, monkeyp
     assert called.index("mcp_render") < called.index("antigravity_mcp")
 
 
-def test_apply_returns_nonzero_when_a_declared_phase_fails(sandbox, monkeypatch):
+def test_apply_returns_nonzero_when_a_declared_phase_fails(sandbox, monkeypatch, capsys):
     mod = load_agent_sync_module(sandbox)
     monkeypatch.setenv("HOME", str(sandbox.home))
     monkeypatch.setenv("KNOWLEDGE_VAULT_PATH", str(sandbox.vault))
@@ -268,6 +268,13 @@ def test_apply_returns_nonzero_when_a_declared_phase_fails(sandbox, monkeypatch)
     assert "skills_index" in called
     log = (sandbox.home / ".local" / "state" / "agent-sync.log").read_text(encoding="utf-8")
     assert "phase mcp_render: ERROR" in log
+    # A failed guard/apply run must also say so on stderr, not only in
+    # agent-sync.log: the recurring guard is normally launched by systemd
+    # (or Task Scheduler), and neither surfaces the log file's content --
+    # journalctl only shows the bare exit code otherwise.
+    err = capsys.readouterr().err
+    assert "mcp_render" in err
+    assert str(sandbox.home / ".local" / "state" / "agent-sync.log") in err
 
 
 def test_real_dirty_git_tree_blocks_guard_before_runtime_mutation(sandbox):
@@ -385,6 +392,31 @@ def test_pull_reports_remote_missing_when_configured_remote_was_never_added(sand
     assert not outcome.allows_apply
 
 
+def test_pull_fetch_failed_carries_git_stderr_not_just_a_generic_label(sandbox, monkeypatch):
+    """Regression: pull() used to discard `git fetch`'s own stderr and reduce
+    every failure reason (bad DNS, expired creds, wrong URL...) to the same
+    static "fetch of {remote}/{branch} failed" text, both in the returned
+    outcome and in the log line the CLI tells operators to check for detail.
+    Delete the remote (leaving it configured, so `remote get-url` still
+    succeeds and the fetch step itself is what fails) to get a real,
+    identifiable git error and confirm that reason -- not merely a generic
+    label -- reaches both places."""
+    mod = load_agent_sync_module(sandbox)
+    remotes = _init_git_vault(sandbox, "oracle")
+    rmtree_force(remotes["oracle"])   # git objects are read-only; plain rmtree fails on Windows
+    env = _env_for(sandbox, monkeypatch, mod, KNOWLEDGE_VAULT_REMOTE="oracle")
+
+    outcome = mod.pull(env)
+
+    assert outcome.state == mod.PullState.FETCH_FAILED
+    assert not outcome.allows_apply
+    # The deleted remote's own path is git's real diagnostic, not something
+    # the old static "fetch of oracle/main failed" text could ever contain.
+    assert str(remotes["oracle"]) in outcome.message
+    log = (sandbox.home / ".local" / "state" / "agent-sync.log").read_text(encoding="utf-8")
+    assert str(remotes["oracle"]) in log
+
+
 def test_pull_reports_error_on_unrelated_histories(sandbox, monkeypatch):
     """Local `main` and `oracle/main` both exist and both fetch/rev-parse
     fine (so neither FETCH_FAILED nor a rev-parse failure fires first) --
@@ -417,6 +449,89 @@ def test_pull_reports_error_on_unrelated_histories(sandbox, monkeypatch):
 
     assert outcome.state == mod.PullState.ERROR
     assert not outcome.allows_apply
+
+
+def test_pull_reports_conflicted_not_wrong_branch_during_a_real_interrupted_rebase(sandbox, monkeypatch):
+    """A conflicted rebase also leaves HEAD detached (symbolic-ref fails
+    just like a plain checkout of a commit), so before this fix pull() sent
+    it through the same WRONG_BRANCH path as an ordinary detached HEAD --
+    same message, no mention of the conflict, no named remedy. The operator
+    reading the log had to work out on their own that 'git rebase --abort'
+    (not a branch switch) is what actually applies here. Confirmed finding,
+    2026-07-31."""
+    mod = load_agent_sync_module(sandbox)
+    _init_git_vault(sandbox, "oracle")
+    conflict_file = sandbox.vault / "rebase-conflict.txt"
+    conflict_file.write_text("base\n", encoding="utf-8")
+    _git(sandbox.vault, "add", "rebase-conflict.txt")
+    _git(sandbox.vault, "commit", "-m", "base commit for conflict setup")
+
+    _git(sandbox.vault, "switch", "-c", "feature")
+    conflict_file.write_text("feature change\n", encoding="utf-8")
+    _git(sandbox.vault, "add", "rebase-conflict.txt")
+    _git(sandbox.vault, "commit", "-m", "feature change")
+
+    _git(sandbox.vault, "switch", "main")
+    conflict_file.write_text("main change\n", encoding="utf-8")
+    _git(sandbox.vault, "add", "rebase-conflict.txt")
+    _git(sandbox.vault, "commit", "-m", "main change")
+
+    _git(sandbox.vault, "switch", "feature")
+    rebase = subprocess.run(
+        ["git", "-C", str(sandbox.vault), "rebase", "main"],
+        capture_output=True, text=True,
+    )
+    assert rebase.returncode != 0, "the rebase was expected to conflict"
+    assert (sandbox.vault / ".git" / "rebase-merge").exists() or (sandbox.vault / ".git" / "rebase-apply").exists()
+
+    env = _env_for(sandbox, monkeypatch, mod, KNOWLEDGE_VAULT_REMOTE="oracle")
+
+    outcome = mod.pull(env)
+
+    assert outcome.state == mod.PullState.CONFLICTED
+    assert not outcome.allows_apply
+    assert "git rebase --abort" in outcome.message
+    log = (sandbox.home / ".local" / "state" / "agent-sync.log").read_text(encoding="utf-8")
+    assert "git rebase --abort" in log
+
+
+def test_pull_reports_conflicted_during_a_real_interrupted_merge(sandbox, monkeypatch):
+    """Same defect, the other real trigger: agent-sync itself never runs a
+    plain `git merge` (only `merge --ff-only`), but a user or another tool
+    can still leave one conflicted in the vault outside this tool -- and
+    that must also be named and pointed at 'git merge --abort', not folded
+    into the rebase message or the generic detached-HEAD one."""
+    mod = load_agent_sync_module(sandbox)
+    _init_git_vault(sandbox, "oracle")
+    conflict_file = sandbox.vault / "merge-conflict.txt"
+    conflict_file.write_text("base\n", encoding="utf-8")
+    _git(sandbox.vault, "add", "merge-conflict.txt")
+    _git(sandbox.vault, "commit", "-m", "base commit for conflict setup")
+
+    _git(sandbox.vault, "switch", "-c", "feature")
+    conflict_file.write_text("feature change\n", encoding="utf-8")
+    _git(sandbox.vault, "add", "merge-conflict.txt")
+    _git(sandbox.vault, "commit", "-m", "feature change")
+
+    _git(sandbox.vault, "switch", "main")
+    conflict_file.write_text("main change\n", encoding="utf-8")
+    _git(sandbox.vault, "add", "merge-conflict.txt")
+    _git(sandbox.vault, "commit", "-m", "main change")
+
+    merge = subprocess.run(
+        ["git", "-C", str(sandbox.vault), "merge", "feature"],
+        capture_output=True, text=True,
+    )
+    assert merge.returncode != 0, "the merge was expected to conflict"
+    assert (sandbox.vault / ".git" / "MERGE_HEAD").exists()
+
+    env = _env_for(sandbox, monkeypatch, mod, KNOWLEDGE_VAULT_REMOTE="oracle")
+
+    outcome = mod.pull(env)
+
+    assert outcome.state == mod.PullState.CONFLICTED
+    assert not outcome.allows_apply
+    assert "git merge --abort" in outcome.message
 
 
 def test_publish_blocks_when_local_branch_is_behind_authoritative_remote(sandbox):
@@ -732,6 +847,46 @@ def test_instructions_opencode_malformed_json_does_not_crash(sandbox_with_live_c
     assert oc_path.read_text(encoding="utf-8") == "{not valid json"
 
 
+def test_instructions_backs_up_existing_claude_md_before_overwriting(sandbox, monkeypatch):
+    """~/CLAUDE.md is written directly via _write_if_different(), never
+    through make_link() -- so make_link()'s own .local-edit.bak safety net
+    (which only ever fires for its Windows real-copy fallback) never covered
+    it. A hand edit to this file used to be destroyed the instant its
+    content stopped matching the canonical pointer text, on every platform.
+    Confirm the rewrite now backs up the previous content first, same
+    `.pre-<reason>-<timestamp>.bak` convention used elsewhere in this file."""
+    mod = load_agent_sync_module(sandbox)
+    monkeypatch.setenv("HOME", str(sandbox.home))
+    monkeypatch.setenv("KNOWLEDGE_VAULT_PATH", str(sandbox.vault))
+
+    claude_md = sandbox.home / "CLAUDE.md"
+    old_content = "# my own hand-edited notes\nplease do not eat this\n"
+    claude_md.write_text(old_content, encoding="utf-8")
+
+    env = mod.Env()
+    assert mod.instructions(env) is True
+
+    assert claude_md.read_text(encoding="utf-8") != old_content
+    backups = list(sandbox.home.glob("CLAUDE.md.pre-instructions-*.bak"))
+    assert len(backups) == 1, backups
+    assert backups[0].read_text(encoding="utf-8") == old_content
+    assert "backed up" in env.log_path.read_text(encoding="utf-8")
+
+
+def test_instructions_does_not_back_up_claude_md_when_content_already_matches(sandbox, monkeypatch):
+    """No spurious .bak file on every idempotent run -- only an actual
+    content change should ever produce one."""
+    mod = load_agent_sync_module(sandbox)
+    monkeypatch.setenv("HOME", str(sandbox.home))
+    monkeypatch.setenv("KNOWLEDGE_VAULT_PATH", str(sandbox.vault))
+
+    env = mod.Env()
+    assert mod.instructions(env) is True   # first run: creates CLAUDE.md fresh
+    assert mod.instructions(env) is True   # second run: content already matches
+
+    assert list(sandbox.home.glob("CLAUDE.md.pre-instructions-*.bak")) == []
+
+
 def test_host_wide_lock_rejects_second_manual_run(sandbox, monkeypatch):
     mod = load_agent_sync_module(sandbox)
     monkeypatch.setenv("HOME", str(sandbox.home))
@@ -876,22 +1031,38 @@ def test_windows_agent_sync_launcher_executes_the_engine_script_not_the_bin_dire
 
 
 @pytest.mark.skipif(os.name == "nt", reason="systemd is a Linux-only recurring trigger; Windows uses schtasks.exe instead.")
-def test_systemd_install_warns_loudly_if_agent_sync_link_is_somehow_missing(sandbox, monkeypatch):
+def test_systemd_install_skips_instead_of_arming_timer_when_agent_sync_link_is_missing(sandbox, monkeypatch, capsys):
     # utils() always runs before install_scheduler() in the same apply/guard
     # pass, so this should never fire in practice -- but the phase loop does
     # not abort on an unrelated phase failure, so this is the fallback that
-    # keeps a missing link from failing completely silently.
+    # keeps a missing link from failing completely silently. Before this
+    # fix, a missing shim only got a warning and the unit files still got
+    # written and the timer still got enabled anyway: a recurring 30-minute
+    # trigger armed forever against a command that does not exist, failing
+    # every single cycle instead of self-healing. Confirm it now skips the
+    # whole install/enable instead of arming a broken timer.
     mod = load_agent_sync_module(sandbox)
     monkeypatch.setattr(mod, "IS_WINDOWS", False)
     monkeypatch.setenv("HOME", str(sandbox.home))
     monkeypatch.setenv("KNOWLEDGE_VAULT_PATH", str(sandbox.vault))
-    monkeypatch.setattr(mod, "resolve_cmd", lambda name: None)  # no real systemctl in the sandbox
+    monkeypatch.setattr(
+        mod,
+        "_run_external",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("systemctl must not run when the shim is missing")),
+    )
 
     env = mod.Env()
     # Deliberately skip utils() -- agent-sync was never linked this pass.
-    mod._install_systemd_units(env)
+    result = mod._install_systemd_units(env)
 
-    assert "agent-sync does not exist yet" in env.log_path.read_text(encoding="utf-8")
+    assert result is False
+    log = env.log_path.read_text(encoding="utf-8")
+    assert "agent-sync does not exist yet" in log
+    # Also stderr: systemd/journalctl would otherwise show nothing about why.
+    assert "agent-sync does not exist yet" in capsys.readouterr().err
+    unit_dir = sandbox.home / ".config" / "systemd" / "user"
+    assert not (unit_dir / "agent-sync.timer").exists()
+    assert not (unit_dir / "agent-sync.service").exists()
 
 
 @pytest.mark.skipif(os.name == "nt", reason="systemd is a Linux-only recurring trigger; Windows uses schtasks.exe instead.")
@@ -1381,6 +1552,90 @@ def test_claude_hooks_skips_non_dict_settings_root(sandbox, monkeypatch):
     mod.claude_hooks(env)  # must not raise
 
     assert settings_path.read_text(encoding="utf-8") == "[]"
+
+
+def test_claude_hooks_does_not_populate_claude_dir_created_only_by_runtimes(sandbox, monkeypatch):
+    """runtimes() unconditionally creates ~/.claude/skills (hence ~/.claude
+    itself) to normalize runtime skill directories, regardless of whether
+    Claude Code is installed on this host. claude_hooks() must not treat
+    that self-created directory as an 'installed' signal: a machine that
+    only ever chose Codex/OpenCode must not end up with a Claude Code
+    footprint (the checkpoint hook script) after a single apply, purely
+    because a different phase created the directory moments earlier in the
+    same run -- the same class of "provisioner reacts to its own footprint"
+    bug already fixed for Antigravity in mcp/render.py's
+    _antigravity_present(). Confirmed finding, 2026-07-31."""
+    mod = load_agent_sync_module(sandbox)
+    monkeypatch.setenv("HOME", str(sandbox.home))
+    monkeypatch.setenv("KNOWLEDGE_VAULT_PATH", str(sandbox.vault))
+    # No real `claude` binary anywhere on PATH -- only the sandbox's own
+    # (empty) bin dir, regardless of what is installed on the host running
+    # this test suite.
+    monkeypatch.setenv("PATH", str(sandbox.bin_stubs))
+
+    hooks_dir = sandbox.ul / "hooks"
+    hooks_dir.mkdir(parents=True, exist_ok=True)
+    (hooks_dir / "claude-vault-checkpoint.mjs").write_text("// hook\n", encoding="utf-8")
+
+    env = mod.Env()
+    assert mod.runtimes(env) is True
+    claude_dir = sandbox.home / ".claude"
+    # This IS the footprint the bug reacted to: runtimes() created it with
+    # no regard for whether Claude Code is installed.
+    assert (claude_dir / "skills").is_dir()
+
+    assert mod.claude_hooks(env) is True
+
+    assert not (claude_dir / "claude-vault-checkpoint.mjs").exists()
+    assert not (claude_dir / "settings.json").exists()
+
+
+@pytest.mark.skipif(
+    os.name == "nt",
+    reason="Symlink privilege is needed to build the escape fixture; the resolved-path defense itself is OS-agnostic Python.",
+)
+def test_claude_permissions_aborts_whole_phase_when_hook_symlink_escapes_permissions_dir(sandbox, monkeypatch):
+    """A hook `file` entry that is a relative, '..'-free string passes the
+    static manifest validator, but a symlink INSIDE permissions/ can still
+    resolve OUTSIDE it once followed -- _apply_claude_permissions re-checks
+    the resolved path for exactly that case. It must refuse the ENTIRE
+    hooks/settings merge for Claude, not just this one entry: the log used
+    to say "skipped", which reads as "this hook was skipped, the rest
+    proceeded" when the function actually returns False right there,
+    deploying nothing else and never touching settings.json either."""
+    mod = load_agent_sync_module(sandbox)
+    monkeypatch.setenv("HOME", str(sandbox.home))
+    monkeypatch.setenv("KNOWLEDGE_VAULT_PATH", str(sandbox.vault))
+
+    permissions_dir = sandbox.ul / "permissions"
+    permissions_dir.mkdir(parents=True, exist_ok=True)
+    escape_target = sandbox.ul / "escape-target.js"
+    escape_target.write_text("// outside permissions/\n", encoding="utf-8")
+    (permissions_dir / "hook.js").symlink_to(escape_target)
+    (permissions_dir / "manifest.yaml").write_text(
+        "schema_version: 1\n"
+        "hooks:\n"
+        "  - name: escape-hook\n"
+        "    file: hook.js\n"
+        "    targets: [\"claude\"]\n"
+        "    event: PreToolUse\n",
+        encoding="utf-8",
+    )
+    claude_dir = sandbox.home / ".claude"
+    claude_dir.mkdir(parents=True, exist_ok=True)
+    # Claude Code "is installed" per _claude_present() regardless of PATH on
+    # the machine running this test: settings.json is the marker Claude
+    # itself writes on first launch, not something this dir's mere
+    # existence (which any phase could create) is allowed to stand in for.
+    (claude_dir / "settings.json").write_text("{}", encoding="utf-8")
+
+    env = mod.Env()
+    assert mod.claude_permissions(env) is False
+
+    log = env.log_path.read_text(encoding="utf-8")
+    assert "resolves outside permissions/" in log
+    assert "whole hooks/settings phase" in log
+    assert not (claude_dir / "escape-target.js").exists()
 
 
 def test_alert_creds_credential_id_is_not_interpolated_into_remote_script(sandbox, monkeypatch):
@@ -1926,6 +2181,32 @@ def test_windows_scheduler_wrapper_lives_in_runtime_state_and_reenters_split_top
     assert calls and all(str(wrapper) in " ".join(call) for call in calls)
 
 
+def test_windows_scheduled_task_skips_instead_of_arming_timer_when_engine_script_is_missing(sandbox, monkeypatch, capsys):
+    # Mirrors the Linux systemd fix above: the VBS wrapper shells out to
+    # agent-sync.ps1 directly (no ~/.local/bin shim involved on this path),
+    # so scheduling schtasks.exe to keep invoking it while that file does
+    # not exist would arm the same "fires every 30 minutes forever, fails
+    # every time" trap against a missing engine script.
+    _enable_host_mutations(monkeypatch)
+    mod = load_agent_sync_module(sandbox)
+    monkeypatch.setattr(mod, "IS_WINDOWS", True)
+    monkeypatch.setattr(
+        mod,
+        "_run_external",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("schtasks.exe must not run when the engine script is missing")),
+    )
+    env = mod.Env()
+    (env.engine_scripts / "agent-sync.ps1").unlink()
+
+    result = mod._install_scheduled_task(env)
+
+    assert result is False
+    log = env.log_path.read_text(encoding="utf-8")
+    assert "does not exist yet" in log
+    assert "does not exist yet" in capsys.readouterr().err
+    assert not (env.log_dir / "start-agent-sync-hidden.vbs").exists()
+
+
 @pytest.mark.skipif(os.name != "nt", reason="Real HKCU invariant is Windows-only.")
 def test_windows_guard_sandbox_leaves_real_user_path_unchanged(sandbox):
     import winreg
@@ -1984,3 +2265,20 @@ def test_main_dispatches_vault_push_before_mode_validation(sandbox, monkeypatch)
 
     assert rc == 0
     assert called == [["-m", "msg", "file.txt"]]
+
+
+def test_lock_acquire_timeout_default_outlasts_a_normal_run(sandbox):
+    """A 2-second default made the lock report "busy" for ordinary overlap.
+
+    A guard cycle takes several seconds and an apply longer, so the 30-minute
+    timer meeting an interactive run, or vault-push meeting either, gave up
+    almost at once and failed for a reason the user could neither see nor
+    reproduce on demand. All three implementations must agree on the default,
+    or the shell twins reintroduce it on their own."""
+    mod = load_agent_sync_module(sandbox)
+    assert float(mod.LOCK_TIMEOUT_DEFAULT) >= 30
+
+    sh = (REAL_SCRIPTS / "vault-push.sh").read_text(encoding="utf-8")
+    ps1 = (REAL_SCRIPTS / "vault-push.ps1").read_text(encoding="utf-8")
+    assert "AGENT_SYNC_LOCK_TIMEOUT_SECONDS:-30}" in sh, "vault-push.sh drifted from the Python default"
+    assert "AGENT_SYNC_LOCK_TIMEOUT_SECONDS } else { 30.0 }" in ps1, "vault-push.ps1 drifted from the Python default"

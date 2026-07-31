@@ -21,15 +21,11 @@ None of that is covered by the default license. If you want to do any of it, you
 
 ## Pricing
 
-<!-- TODO(maintainer): fill in the real pricing structure — flat fee, per-seat,
-     revenue-based, case-by-case quote, whatever it ends up being — before
-     treating this file as a finished commercial offer. Until this TODO is
-     resolved, every commercial request below is answered with a quote, not
-     a published number. -->
-
-There is no published price yet. This is a business decision only the
-licensor can make, so it is not invented here. Every request is answered
-individually until a price list exists.
+There is no published price yet: flat fee, per-seat, revenue-based, or
+case-by-case quote is still an open business decision, not invented here.
+This section will be updated with the real structure once that decision is
+made; until then, every commercial request below is answered with a quote,
+not a published number.
 
 ## How to request a commercial license
 

@@ -164,7 +164,7 @@ def test_finalize_session_retries_a_transient_windows_file_lock(monkeypatch, tmp
     council._finalize_session(session_dir, keep_session=False)
 
     assert len(calls) == 2
-    assert "cleanup della sessione fallito" not in capsys.readouterr().out
+    assert "session cleanup failed" not in capsys.readouterr().out
 
 
 def test_cleanup_preserves_kept_session_dir(monkeypatch, tmp_path):

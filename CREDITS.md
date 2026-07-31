@@ -9,7 +9,7 @@ license; this file gives credit and points to the source.
 | Component | Upstream | License | Purpose |
 |---|---|---|---|
 | **n8n** | https://github.com/n8n-io/n8n | Sustainable Use License | Workflow automation engine |
-| **Firecrawl** | https://github.com/mendableai/firecrawl | AGPL-3.0 | Self-hosted web scraping/search |
+| **Firecrawl** | https://github.com/firecrawl/firecrawl | AGPL-3.0 | Self-hosted web scraping/search |
 | **RapidOCR** | https://github.com/RapidAI/RapidOCR | Apache-2.0 | OCR engine (used in Vault OCR) |
 | **Playwright MCP** | https://github.com/microsoft/playwright-mcp | Apache-2.0 | Browser automation over CDP |
 | **FastAPI** | https://github.com/tiangolo/fastapi | MIT | Vault OCR API framework |
@@ -20,18 +20,30 @@ license; this file gives credit and points to the source.
 
 | Server | Upstream | License |
 |---|---|---|
-| **firecrawl-mcp** | https://github.com/mendableai/firecrawl-mcp | MIT |
+| **firecrawl-mcp** | https://github.com/firecrawl/firecrawl-mcp | MIT |
 | **@playwright/mcp** | https://github.com/microsoft/playwright-mcp | Apache-2.0 |
 | **@modelcontextprotocol/server-filesystem** | https://github.com/modelcontextprotocol/servers | MIT |
 | **@modelcontextprotocol/server-memory** | https://github.com/modelcontextprotocol/servers | MIT |
 
-## Skills (skills/skills.manifest.yaml)
+## Skills (skills/, see skills.manifest.yaml.example)
+
+The eight starter skills the engine actually ships are all first-party,
+vendored in this repo under `03-INFRA/agent-universal-layer/skills/`:
 
 | Skill | Author | Upstream | License |
 |---|---|---|---|
-| **humanizer** | blader | https://github.com/blader/humanizer | MIT |
-| **frontend-design** | Anthropic (Claude Code official skill) | Claude Code plugin | See upstream |
-| **knowledge-vault-hygiene** | Matteo Passeri (this repo) | — | This repo's LICENSE |
+| **nexgen-update** | Matteo Passeri (this repo) | — | This repo's LICENSE |
+| **vault-close** | Matteo Passeri (this repo) | — | This repo's LICENSE |
+| **vault-council** | Matteo Passeri (this repo) | — | This repo's LICENSE |
+| **vault-doctor** | Matteo Passeri (this repo) | — | This repo's LICENSE |
+| **vault-groom** | Matteo Passeri (this repo) | — | This repo's LICENSE |
+| **vault-map** | Matteo Passeri (this repo) | — | This repo's LICENSE |
+| **vault-save** | Matteo Passeri (this repo) | — | This repo's LICENSE |
+| **vault-update** | Matteo Passeri (this repo) | — | This repo's LICENSE (deprecated alias for `nexgen-update`, kept so an existing manifest keeps resolving) |
+
+Third-party skills are not vendored: the manifest example only inventories
+them by pinned commit (`origin: github`), so none ship inside this repo
+today. Add a row here the day one actually does.
 
 ## Python libraries (scripts/ and ocr/)
 

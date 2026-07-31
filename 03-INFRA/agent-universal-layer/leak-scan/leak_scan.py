@@ -149,7 +149,16 @@ def scan_units(units: Iterable[Unit], patterns: list[tuple[str, str, bool]], all
 
 def units_from_tree(paths: list[str]) -> list[Unit]:
     units: list[Unit] = []
-    skip_dirs = {".git", "__pycache__", "node_modules"}
+    # Environments and caches, not source: a maintainer running `--tree .`
+    # against a real checkout used to walk straight into `.venv`'s installed
+    # packages (thousands of unrelated matches burying the handful of real
+    # findings) whenever the venv sat inside the scanned tree, because only
+    # VCS/build noise was excluded here.
+    skip_dirs = {
+        ".git", "__pycache__", "node_modules",
+        ".venv", "venv", ".ruff_cache", ".pytest_cache", ".mypy_cache",
+        "dist", "build",
+    }
     files: list[Path] = []
     for p in paths:
         pp = Path(p)

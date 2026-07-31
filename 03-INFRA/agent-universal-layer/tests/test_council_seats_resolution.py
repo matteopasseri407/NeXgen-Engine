@@ -9,6 +9,7 @@ import sys
 from pathlib import Path
 
 COUNCIL_PATH = Path(__file__).resolve().parents[1] / "council" / "council.py"
+SEATS_EXAMPLE_PATH = Path(__file__).resolve().parents[1] / "council" / "seats.yaml.example"
 
 
 def load_council(monkeypatch, tmp_path, **env):
@@ -96,3 +97,18 @@ def test_agent_team_member_seats_file_is_actually_loaded_not_the_shared_one(monk
     seats = council.load_seats()
     assert "marco-seat" in seats
     assert "shared-seat" not in seats
+
+
+def test_seats_yaml_example_validates_against_the_runtime_schema(monkeypatch, tmp_path):
+    """G6-seats: nulla, prima d'ora, caricava seats.yaml.example con lo
+    stesso schema che council.py usa a runtime (config_schema.load_council_config,
+    importato in council.py come council.load_council_config). Il file puo'
+    quindi divergere in silenzio e spedire un esempio rotto a chi lo copia
+    seguendo docs/council.md ("cp seats.yaml.example ... seats.yaml"). Usa
+    l'esatta funzione che council.py stesso chiama, non una copia riscritta
+    qui, cosi' un futuro cambio di schema che rompe l'esempio fa fallire
+    questo test invece di arrivare silenzioso a un'installazione nuova."""
+    council = load_council(monkeypatch, tmp_path)
+    config = council.load_council_config(SEATS_EXAMPLE_PATH)
+    assert "esempio-seat" in config["seats"]
+    assert config["seats"]["esempio-seat"]["cli"] in {"opencode", "agy", "codex", "claude", "ollama"}

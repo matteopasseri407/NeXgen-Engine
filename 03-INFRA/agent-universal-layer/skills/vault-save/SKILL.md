@@ -18,7 +18,10 @@ The text after the command is the fact to save.
    with its per-section hash when the fact belongs to one existing section;
    `update_note` with `expected_hash` for whole-note rewrites). Only
    `create_note` for a genuinely new stable topic, and then add an inbound
-   pointer in `00-START-HERE.md`.
+   pointer in `00-START-HERE.md`. In Local-Only mode (no remote, no MCP)
+   there is no `vault-library` to write through: edit the Markdown note
+   directly and commit it with plain `git` instead — that is the correct
+   and only path there, not a fallback (`03-INFRA/vault-write-architecture.md`).
 4. Confirm the write landed and report exactly where the fact now lives
    (note path plus the line or section).
 

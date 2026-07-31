@@ -15,6 +15,19 @@ from typing import Any
 
 import yaml
 
+# TOML read-only, for the Codex posture renderer's before/after verification
+# (never for writing -- surgical text edits below do that). Same fallback
+# chain as mcp/render.py: stdlib on 3.11+, the README-documented `tomli`
+# backport on a supported 3.10 host, otherwise the renderer degrades to
+# "unavailable" instead of crashing this whole module's import.
+try:
+    import tomllib
+except ModuleNotFoundError:  # Python < 3.11
+    try:
+        import tomli as tomllib  # type: ignore[no-redef]
+    except ImportError:
+        tomllib = None
+
 
 MCP_SCHEMA_VERSION = 1
 COUNCIL_SCHEMA_VERSION = 1
@@ -274,6 +287,72 @@ def set_jsonc_top_level_value(text: str, key: str, value: Any) -> str:
     reparsed = parse_jsonc(result)
     if not isinstance(reparsed, dict) or reparsed.get(key) != value:
         raise ValueError(f"failed to set top-level JSONC property {key!r}")
+    return result
+
+
+def toml_reader_available() -> bool:
+    """False on a Python 3.10 host with no `tomli` installed (README's
+    documented minimum). The Codex posture renderer treats that as an
+    environment capability gap -- warn and leave codex unapplied, same as an
+    unrenderable CLI -- never a hard failure of the whole permissions phase."""
+    return tomllib is not None
+
+
+def parse_toml(text: str) -> dict[str, Any]:
+    """tomllib.loads with the module-level tomli fallback resolved, and a
+    genuine parse error turned into the caller-friendly exception type.
+    Callers must check toml_reader_available() first -- this raises
+    ConfigValidationError if there is no reader at all, which a caller that
+    skipped that check would otherwise mistake for "the file is malformed".
+    Read-only -- the Codex posture renderer uses this only to check the
+    current value and to verify the surgical edit below afterwards."""
+    if tomllib is None:
+        raise ConfigValidationError(
+            "no TOML reader available (Python 3.11+, or Python 3.10 with 'tomli' installed)"
+        )
+    try:
+        return tomllib.loads(text)
+    except tomllib.TOMLDecodeError as exc:
+        raise ConfigValidationError(f"invalid TOML: {exc}") from exc
+
+
+def _toml_root_table_end(lines: list[str]) -> int:
+    """Index of the first `[table]` (or `[[array-of-tables]]`) header line --
+    i.e. where the root table's own bare `key = value` lines stop. Every
+    line before it (including blank lines and comments) is still root-table
+    territory and safe to insert into."""
+    for i, line in enumerate(lines):
+        if re.match(r"^[ \t]*\[", line):
+            return i
+    return len(lines)
+
+
+def set_toml_root_string(text: str, key: str, value: str) -> str:
+    """Surgically set one ROOT-TABLE string key (e.g. Codex's
+    approval_policy/sandbox_mode) in place: touches only that one line (or
+    inserts one new line ahead of the first [table] header) and leaves every
+    comment, blank line, and [table]/[[array]] section untouched -- the
+    'modifica chirurgica, non riscrittura' contract for Codex's config.toml.
+    Mirrors set_jsonc_top_level_value's contract: the result is re-parsed and
+    the new value verified before it is ever returned, so a bug here fails
+    loudly instead of silently corrupting a user's config.toml.
+    """
+    if not re.fullmatch(r"[A-Za-z0-9_-]+", key):
+        raise ValueError(f"unsupported TOML root key spelling: {key!r}")
+    lines = text.split("\n")
+    root_end = _toml_root_table_end(lines)
+    pattern = re.compile(rf"^[ \t]*{re.escape(key)}[ \t]*=.*$")
+    rendered = f"{key} = {json.dumps(value)}"
+    for i in range(root_end):
+        if pattern.match(lines[i]):
+            lines[i] = rendered
+            break
+    else:
+        lines.insert(root_end, rendered)
+    result = "\n".join(lines)
+    reparsed = parse_toml(result)
+    if reparsed.get(key) != value:
+        raise ValueError(f"failed to set TOML root key {key!r}")
     return result
 
 
@@ -716,10 +795,71 @@ PERMISSION_POSTURES = {
     "accept-edits": "acceptEdits",
     "ask": "default",
 }
-# Only dialects verified on a real install belong here. Guessing a CLI's
-# permission vocabulary would silently produce a config that looks applied and
-# protects nothing.
-PERMISSION_TARGETS = {"claude"}
+
+# Per-CLI posture VALUES this engine has a verified renderer for -- confirmed
+# against a real installed CLI (config live on a real machine + literal
+# strings read out of the installed binary itself), not inferred from a
+# schema or guessed. A CLI missing from this dict, or present but missing one
+# of these values, has NO verified renderer here: agent_sync.py's dispatcher
+# must warn and leave that CLI's posture unapplied rather than emit a config
+# that looks applied and protects nothing (see the 2026-07-30 CLI permissions
+# recon; guessing a dialect is banned by project policy). This is deliberately
+# NOT enforced inside validate_permissions_manifest(): a (cli, posture) pair
+# the engine cannot yet render is real user policy for a future dialect, not
+# malformed data -- rejecting the whole manifest for it took Claude's own
+# posture down with it (the 2026-07-30 'unsupported CLI codex' incident).
+PERMISSION_RENDERERS: dict[str, frozenset[str]] = {
+    "claude": frozenset({"bypass", "accept-edits", "ask"}),
+    "codex": frozenset({"bypass"}),
+    "opencode": frozenset({"bypass", "accept-edits"}),
+    "antigravity": frozenset({"bypass"}),
+}
+
+# Codex: approval_policy/sandbox_mode, root-level TOML keys. Only 'bypass' is
+# verified (matches the installed binary's own one-shot
+# --dangerously-bypass-approvals-and-sandbox flag); accept-edits/ask have no
+# confirmed default out-of-the-box, so they are absent here on purpose.
+CODEX_POSTURE_RENDER: dict[str, dict[str, str]] = {
+    "bypass": {"approval_policy": "never", "sandbox_mode": "danger-full-access"},
+}
+# OpenCode: permission.edit / permission.bash, read from the installed
+# @opencode-ai/sdk type definitions. Only edit/bash are touched -- the other
+# permission.* dimensions (webfetch, doom_loop, external_directory) are
+# outside this engine's neutral bypass/accept-edits/ask vocabulary.
+OPENCODE_POSTURE_RENDER: dict[str, dict[str, str]] = {
+    "bypass": {"edit": "allow", "bash": "allow"},
+    "accept-edits": {"edit": "allow", "bash": "ask"},
+}
+# Antigravity: toolPermission governs shell commands, artifactReviewPolicy
+# governs file edits -- there is no clean accept-edits split (toolPermission
+# has no file-edit equivalent), so only bypass -- writing BOTH keys, or a
+# shell-only "bypass" would leave file edits still gated -- is verified.
+ANTIGRAVITY_POSTURE_RENDER: dict[str, dict[str, str]] = {
+    "bypass": {"toolPermission": "always-proceed", "artifactReviewPolicy": "always-proceed"},
+}
+
+# Verified guardrail-HOOK wiring targets -- separate from PERMISSION_RENDERERS
+# above: a CLI can have a verified posture renderer (e.g. Codex bypass) while
+# still having no wired PreToolUse-style guardrail hook at all. Declaring a
+# hook for any CLI NOT in this set is still a hard manifest error, not a
+# warn-and-skip, because porting the guardrail itself for that CLI is
+# unstarted work, not something this engine should silently pretend to
+# support (see the CLI permissions recon).
+#
+# Codex is deliberately absent. Its I/O contract (deny/allow/ask,
+# permissionDecisionReason) is verified from the installed binary's own
+# embedded schema -- as solid as Claude's -- but Codex gates every hook
+# behind a persisted, per-hash TRUST prompt a human must accept once
+# interactively, or an explicit `--dangerously-bypass-hook-trust` flag a
+# provisioner would have to pass itself. A hook this engine writes would
+# therefore not run at all until one of those happens, which is a silent,
+# structural gap wearing the appearance of a working guardrail -- worse than
+# having none. Declaring codex here requires the owner to first decide,
+# explicitly, which of the two trust paths to take; guessing is not an
+# option. OpenCode and Antigravity have no such gate (see the recon): a
+# hook/plugin placed in their own config runs unconditionally on the next
+# launch, which is exactly what makes them safely implementable today.
+PERMISSION_HOOK_TARGETS = {"claude", "opencode", "antigravity"}
 PERMISSION_HOOK_EVENTS = {
     "PreToolUse",
     "PostToolUse",
@@ -730,6 +870,35 @@ PERMISSION_HOOK_EVENTS = {
     "UserPromptSubmit",
     "Stop",
 }
+
+# Per-CLI hook EVENTS this engine has a verified adapter for -- a second,
+# finer axis than PERMISSION_HOOK_TARGETS (which only says "some wiring
+# exists"). Claude's own dedicated wiring (_apply_claude_permissions in
+# agent_sync.py) accepts every event in PERMISSION_HOOK_EVENTS already.
+# OpenCode and Antigravity's adapters exist ONLY for the PreToolUse-shaped,
+# shell-command guardrail this whole feature is about: OpenCode has no
+# decision-bearing hook for any other lifecycle point at all (see the recon
+# -- `tool.execute.before` cannot deny), and Antigravity's
+# PreInvocation/PostInvocation/Stop hooks were never exercised against this
+# engine. A manifest hook naming an event outside this set for one of these
+# two targets is refused for THAT target alone (agent_sync._guardrail_specs_for),
+# never guessed at, exactly like an unverified posture value above.
+VERIFIED_HOOK_EVENTS: dict[str, frozenset[str]] = {
+    "claude": frozenset(PERMISSION_HOOK_EVENTS),
+    "opencode": frozenset({"PreToolUse"}),
+    "antigravity": frozenset({"PreToolUse"}),
+}
+
+# The only Claude-vocabulary tool matcher the OpenCode/Antigravity adapters
+# can translate. A manifest hook's `matcher` field names a CLAUDE tool (e.g.
+# "Bash") -- it has no meaning to another CLI's own tool vocabulary, so the
+# adapters below hardcode the one mapping that IS verified: OpenCode's
+# `permission.ask` fires on `input.type === "bash"`; Antigravity's own
+# `PreToolUse` grouping matches its shell tool by the literal string
+# "run_command". A manifest matcher naming any other Claude tool has nothing
+# for either adapter to translate to and is refused for that target, same as
+# an unsupported event above.
+GUARDRAIL_SHELL_MATCHER = "Bash"
 
 
 def validate_permissions_manifest(data: Any, source: str | Path) -> dict[str, Any]:
@@ -746,10 +915,16 @@ def validate_permissions_manifest(data: Any, source: str | Path) -> dict[str, An
 
     posture = _mapping(config.get("posture", {}) or {}, source, "permissions manifest.posture")
     for cli, value in posture.items():
-        if cli not in PERMISSION_TARGETS:
-            _error(source, f"permissions manifest.posture has unsupported CLI '{cli}' (verified: {', '.join(sorted(PERMISSION_TARGETS))})")
+        if not isinstance(cli, str) or not cli.strip():
+            _error(source, "permissions manifest.posture has a CLI key that is not a non-empty string")
         if value not in PERMISSION_POSTURES:
             _error(source, f"permissions manifest.posture.{cli} must be one of: {', '.join(sorted(PERMISSION_POSTURES))}")
+        # Deliberately NOT checked here: whether `cli` has a verified renderer
+        # for `value` (PERMISSION_RENDERERS). An unrenderable (cli, value)
+        # pair is real instance policy for a dialect this engine cannot yet
+        # translate, not malformed data -- the per-CLI dispatcher in
+        # agent_sync.py decides, CLI by CLI: apply what it can, WARN and skip
+        # what it can't, and still return success for the whole phase.
 
     hooks = config.get("hooks", []) or []
     if not isinstance(hooks, list):
@@ -774,8 +949,8 @@ def validate_permissions_manifest(data: Any, source: str | Path) -> dict[str, An
         if spec.get("runtime", "node") != "node":
             _error(source, f"permissions manifest.hooks[{index}].runtime supports only 'node'")
         targets = spec.get("targets", [])
-        if not isinstance(targets, list) or not targets or not all(t in PERMISSION_TARGETS for t in targets):
-            _error(source, f"permissions manifest.hooks[{index}].targets must be a non-empty list drawn from: {', '.join(sorted(PERMISSION_TARGETS))}")
+        if not isinstance(targets, list) or not targets or not all(t in PERMISSION_HOOK_TARGETS for t in targets):
+            _error(source, f"permissions manifest.hooks[{index}].targets must be a non-empty list drawn from: {', '.join(sorted(PERMISSION_HOOK_TARGETS))}")
         if spec.get("event") not in PERMISSION_HOOK_EVENTS:
             _error(source, f"permissions manifest.hooks[{index}].event must be one of: {', '.join(sorted(PERMISSION_HOOK_EVENTS))}")
         matcher = spec.get("matcher")

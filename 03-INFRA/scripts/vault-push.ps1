@@ -174,7 +174,7 @@ function Invoke-DegradedVaultPush {
   # the Python engine is not usable, so it degrades to unlocked rather than
   # blocking the emergency lane on a lock primitive that itself misbehaves.
   $lockFile = if ($env:AGENT_SYNC_LOCK_FILE) { $env:AGENT_SYNC_LOCK_FILE } else { Join-Path $HomeDir ".local\state\agent-sync.lock" }
-  $lockTimeout = if ($env:AGENT_SYNC_LOCK_TIMEOUT_SECONDS) { [double]$env:AGENT_SYNC_LOCK_TIMEOUT_SECONDS } else { 2.0 }
+  $lockTimeout = if ($env:AGENT_SYNC_LOCK_TIMEOUT_SECONDS) { [double]$env:AGENT_SYNC_LOCK_TIMEOUT_SECONDS } else { 30.0 }
   $lockHandle = Get-DegradedLock -LockPath $lockFile -TimeoutSeconds $lockTimeout
   if (-not $lockHandle) {
     [Console]::Error.WriteLine("vault-push: sync lock busy (another agent-sync/vault-push is running) -- aborting")

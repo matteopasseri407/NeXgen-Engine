@@ -24,6 +24,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import shutil
 import stat
 import subprocess
 import threading
@@ -45,14 +46,14 @@ REAL_UL = TESTS_DIR.parent
 REAL_VAULT = REAL_UL.parent.parent
 GROOM_SH = REAL_VAULT / "03-INFRA" / "scripts" / "vault-groom.sh"
 
-# A proper markdown table -- PROPOSE_PROMPT requires "| Nota | Azione |
-# Perché |" as the tranche's contract (this is what makes coverage checking
+# A proper markdown table -- PROPOSE_PROMPT requires "| Note | Action |
+# Why |" as the tranche's contract (this is what makes coverage checking
 # possible at all). The target here (`stub-groomed.md`) matches exactly
 # what the write-pass stub below actually commits, so the default apply
 # flow in most of these tests has CLEAN coverage end to end -- a dedicated
 # mismatched tranche is used separately for the dirty-coverage test.
 FIXED_TRANCHE = (
-    "| Nota | Azione | Perch\u00e9 |\n"
+    "| Note | Action | Why |\n"
     "|---|---|---|\n"
     "| `stub-groomed.md` | **archive** | superseded by new-note.md |\n"
 )
@@ -60,7 +61,7 @@ FIXED_TRANCHE = (
 # Names a file the write-pass stub never touches -- guarantees dirty
 # coverage (unaddressed target + the stub's real commit becomes unplanned).
 DIRTY_TRANCHE = (
-    "| Nota | Azione | Perch\u00e9 |\n"
+    "| Note | Action | Why |\n"
     "|---|---|---|\n"
     "| `never-touched.md` | **archive** | ok |\n"
 )
@@ -384,7 +385,7 @@ def test_apply_declined_does_not_execute_or_commit(groom_env):
     assert proc.returncode == 0, proc.stdout + proc.stderr
     recs = _records(groom_env)
     assert len(recs) == 1, "declining must never reach the write pass"
-    assert "annullato" in (proc.stdout + proc.stderr)
+    assert "cancelled" in (proc.stdout + proc.stderr)
     head_after = _git(groom_env["vault"], "rev-parse", "HEAD").stdout.strip()
     assert head_after == head_before
     assert _clone_dirs(groom_env) == [], "declining must never create a temp-clone"
@@ -540,7 +541,7 @@ def test_apply_toctou_guard_aborts_if_plan_record_changes_before_write_pass(groo
 
     def read_stdout():
         # Character-by-character, NOT `for line in proc.stdout`: the
-        # confirmation prompt itself (`printf 'Procedere? > '`) has no
+        # confirmation prompt itself (`printf 'Proceed? > '`) has no
         # trailing newline -- a readline-based iterator blocks forever
         # waiting for one that never comes before the human answers,
         # deadlocking this exact banner-detection wait.
@@ -559,7 +560,7 @@ def test_apply_toctou_guard_aborts_if_plan_record_changes_before_write_pass(groo
         while time.monotonic() < deadline:
             with stdout_lock:
                 seen = "".join(stdout_chunks)
-            if "Procedere?" in seen:
+            if "Proceed?" in seen:
                 break
             time.sleep(0.02)
         else:
@@ -698,6 +699,41 @@ def test_unknown_runner_rejected(groom_env):
     proc = _run(groom_env, "preview", extra_env={"GROOM_RUNNER": "some-other-cli"}, stdin_input="")
     assert proc.returncode == 2
     assert "unknown GROOM_RUNNER" in proc.stderr
+
+
+def test_default_runner_missing_from_path_fails_loud_before_any_invocation(groom_env, tmp_path):
+    # Before this fix, `claude|codex|agy)` was a bare no-op in the RUNNER
+    # validation case -- only GROOM_RUNNER=opencode got an explanatory
+    # error. A bare invocation (default RUNNER=claude) on a machine that
+    # never installed the claude CLI crashed with a raw shell
+    # "command not found" (exit 127) instead of the same courtesy. Build a
+    # PATH with just enough coreutils for the wrapper to reach its own
+    # RUNNER validation (readlink, dirname, date -- all used before that
+    # point) but with none of groom_env's stub claude/codex/agy on it, so
+    # "claude" genuinely does not resolve.
+    minimal_bin = tmp_path / "minimal-bin"
+    minimal_bin.mkdir()
+    for tool in ("readlink", "dirname", "date"):
+        real = shutil.which(tool)
+        assert real, f"{tool} must be on the test host's PATH for this test to run"
+        (minimal_bin / tool).symlink_to(real)
+    assert shutil.which("claude", path=str(minimal_bin)) is None
+
+    bash = shutil.which("bash")
+    assert bash, "bash must be on the test host's PATH for this test to run"
+    env = dict(groom_env["env"])
+    env["PATH"] = str(minimal_bin)
+    proc = subprocess.run(
+        [bash, str(GROOM_SH), "preview"],
+        env=env,
+        input="",
+        capture_output=True,
+        text=True,
+    )
+    assert proc.returncode == 2, proc.stdout + proc.stderr
+    assert "not found on PATH" in proc.stderr
+    assert "command not found" not in proc.stderr
+    assert not groom_env["record"].exists()
 
 
 # --- The audit gate: out-of-scope edits, non-linear history, staleness,

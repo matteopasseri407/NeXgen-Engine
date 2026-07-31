@@ -100,7 +100,8 @@ class Sandbox:
         e["KNOWLEDGE_VAULT_REMOTE"] = "local"
         # HOME/USERPROFILE redirects files but not HKCU or Task Scheduler.
         # Full guard/apply subprocess tests must never mutate the host that is
-        # running pytest, especially a maintainer's physical Windows machine.
+        # running pytest, especially when the test runs on real Windows
+        # rather than a simulated environment.
         e["NEXGEN_DISABLE_HOST_MUTATIONS"] = "1"
         # Manual apply now performs a strict readiness classification. Keep
         # sandbox smoke tests deterministic and prevent a real host CLI from
@@ -134,6 +135,22 @@ class Sandbox:
             elif p.is_dir():
                 out[rel] = ("dir", None)
         return out
+
+
+def rmtree_force(path: Path) -> None:
+    """Delete a tree that may contain read-only files.
+
+    Git marks everything under a repository's `objects/` read-only, and on
+    Windows a read-only file cannot be unlinked: a plain shutil.rmtree over a
+    repository raises PermissionError there while succeeding on Linux. Any
+    test that deletes a git directory to simulate a vanished remote hits this,
+    and hits it only in CI. Clear the bit on the way down, then delete."""
+    for child in path.rglob("*"):
+        try:
+            child.chmod(child.stat().st_mode | stat.S_IWRITE)
+        except OSError:
+            pass
+    shutil.rmtree(path)
 
 
 def _make_bin_stubs(sandbox: Sandbox) -> None:
@@ -173,6 +190,10 @@ def _copy_engine_scripts(sandbox: Sandbox) -> None:
     shutil.copy2(FIXTURES / "manifest.yaml", sandbox.mcp_dir / "manifest.yaml")
     shutil.copy2(FIXTURES / "AGENTS.md", sandbox.ul / "instructions" / "AGENTS.md")
     shutil.copy2(FIXTURES / "claude-vault-checkpoint.mjs", sandbox.ul / "hooks" / "claude-vault-checkpoint.mjs")
+    shutil.copy2(FIXTURES / "opencode-guardrail-plugin.mjs", sandbox.ul / "hooks" / "opencode-guardrail-plugin.mjs")
+    shutil.copy2(
+        FIXTURES / "antigravity-guardrail-adapter.mjs", sandbox.ul / "hooks" / "antigravity-guardrail-adapter.mjs"
+    )
     shutil.copy2(FIXTURES / "skills.manifest.yaml", sandbox.skills_dir / "skills.manifest.yaml")
     for skill_dir in (FIXTURES / "skills").iterdir():
         if skill_dir.is_dir():
