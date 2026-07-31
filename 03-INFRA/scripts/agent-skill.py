@@ -15,9 +15,19 @@ from pathlib import Path
 
 
 HOME = Path.home()
-ACTIVE = HOME / ".agents" / "skills"
 LIBRARY = HOME / ".agents" / "skill-library"
-NAME = re.compile(r"[a-z0-9][a-z0-9-]*\Z")
+# Must accept every name skills-sync.py can actually place in the library,
+# or a synced skill becomes unreachable through this command (G3-nomiskill,
+# found live: a manifest name with an underscore landed in the index via
+# skills-sync.py's ENTRY_NAME_RE check, but `agent-skill show` rejected it
+# because this pattern was narrower). Kept identical in shape to
+# config_schema.ENTRY_NAME_RE (letters, digits, '.', '_', '-', no leading
+# dot, no path separators) -- not imported directly, since that module pulls
+# in PyYAML and this command must stay dependency-free at every on-demand
+# invocation (see _description() below). Requiring an alnum first character
+# and excluding '/' means a name can never become "." or ".." or contain a
+# path separator, so widening this charset does not reopen path traversal.
+NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*\Z")
 
 
 def _force_utf8_streams() -> None:
@@ -68,7 +78,7 @@ def _skills() -> list[tuple[str, Path, str]]:
 
 def _valid_name(name: str) -> str:
     if not NAME.fullmatch(name):
-        raise ValueError("skill name must contain only lowercase letters, digits, and hyphens")
+        raise ValueError("skill name must start with a letter or digit and contain only letters, digits, '.', '_' or '-'")
     return name
 
 

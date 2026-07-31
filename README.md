@@ -54,7 +54,7 @@ It does not intercept tool calls at runtime.
 
 ## Core concepts
 
-- **Configuration as code for AI tools.** Manifest files define tools, permissions, and behavior. The Python script `agent_sync.py` generates the configuration required by each supported CLI, with `--revert` (undo a CLI's config from its own backup) and `--adopt` (read-only draft manifest entries for servers it finds outside the manifest).
+- **Configuration as code for AI tools.** Manifest files define tools, permissions, and behavior. The Python script `agent_sync.py` generates the configuration required by each supported CLI by calling the renderer `render.py`, which also provides `--revert` (undo a CLI's config from its own backup) and `--adopt` (read-only draft manifest entries for servers it finds outside the manifest).
 - **Version-controlled memory.** The agents read and write Markdown files. Every change is stored in Git, can be reviewed with a diff, and can be reverted. Writes are compare-and-swap: whole-note, or per-section (`update_section`), so two agents editing different sections of the same note both land instead of colliding.
 - **Link hygiene as discipline.** A deterministic, stdlib-only structural map of the vault (`vault-map`: broken wikilinks with relocation hints, orphan notes, hubs) is wired into the flows rather than left as a periodic check: every memory write returns an advisory list of unresolved wikilinks it just introduced (never blocking — deliberate forward links are legitimate), the grooming pass treats orphans and broken links as first-class cleanup candidates, `agent-doctor` keeps a warn-only backstop, and a read-only `map_overview` tool gives agents a token-bounded compass before broad tasks.
 - **Cross-CLI command skills.** Declare a skill once and it surfaces as an explicitly invocable command on every supported runtime (`/name`, `$name` on Codex). Seven starter commands ship with the engine: `vault-doctor`, `vault-close`, `vault-save`, `vault-council`, `vault-groom`, `nexgen-update`, and `vault-map`.
@@ -125,6 +125,8 @@ The setup in `INIT.md` selects the mode that fits your environment.
 
 The framework fits two shapes of usage. The installer (`INIT.md`) asks and picks the right one.
 
+MINIMAL vs. MULTI is a descriptive label for what the guided installer sets up once, at install time — it decides whether the provisioner, doctor, and sync timer get installed at all. No script reads a stored "profile" value back afterward to change its behavior; the one field read at runtime from `99-INDEX/USER-PROFILE.md` is `Mode` (LOCAL-ONLY or CLOUD-SERVER), which `agent-doctor` checks.
+
 - **MINIMAL.** One CLI on one machine, such as Claude Code on a laptop or [OpenCode](https://opencode.ai) in a DeepSeek-based setup. You get the knowledge vault, bootstrap rules, optional skills, and a defined path for writing memory. There is no provisioner, scheduled doctor, or cross-machine synchronization. Add the MCP servers and skills you want directly to the CLI. This profile is intended for one user and one machine.
 - **MULTI.** Two or more CLIs and/or two or more machines. The unified Python provisioner (`agent_sync.py`), the doctor, and the healthcheck come online and keep every CLI and machine aligned to the canonical source in the vault. Best for a workstation + laptop setup, or for running multiple CLIs side by side.
 
@@ -144,7 +146,7 @@ You don't need to fill out configuration files manually.
    git clone https://github.com/matteopasseri407/NeXgen-Engine.git ~/KnowledgeVault
    cd ~/KnowledgeVault
    ```
-   > Optional preflight: `bash install.sh` checks prerequisites, verifies the scaffold, detects your CLIs, and prints the next step. It writes nothing and is safe to re-run.
+   > Optional preflight: `bash install.sh` checks prerequisites, verifies the scaffold, detects your CLIs, and prints the next step. Safe to re-run; it writes nothing in `--check` mode, and only creates missing scaffold directories otherwise.
 2. Open `INIT.md`.
 3. Paste its contents into a **filesystem-capable agent CLI** (Claude Code, Codex, OpenCode, Antigravity) opened in this folder, not a plain web chat (claude.ai / gemini), which cannot write files.
 4. The agent will ask how many CLIs and machines you have, your hardware, and your deployment mode, then configure the vault automatically.
@@ -173,7 +175,7 @@ PolyForm Noncommercial License 1.0.0. Free for any noncommercial use, including 
 
 ## Support
 
-This project is free to use. Some optional links (like the OpenCode one above) are referral links that fund maintenance at no extra cost to you: see `SUPPORT.md` for the one place they're declared.
+This project is free for any noncommercial use (see License above). Some optional links (like the OpenCode one above) are referral links that fund maintenance at no extra cost to you: see `SUPPORT.md` for the one place they're declared.
 
 ---
 
@@ -234,7 +236,7 @@ I controlli a runtime spettano all'harness della CLI, con i suoi permessi e le r
 ## Concetti base
 
 - **Infrastruttura come codice per gli agenti.** I manifest descrivono tool, permessi e regole di comportamento.
-  Lo script Python unificato `agent_sync.py` genera poi il file di configurazione corretto per ogni CLI, con `--revert` (ripristino della config di una CLI dal suo backup) e `--adopt` (bozze read-only di voci manifest per i server trovati fuori dal manifest).
+  Lo script Python unificato `agent_sync.py` genera poi il file di configurazione corretto per ogni CLI richiamando il renderer `render.py`, che offre anche `--revert` (ripristino della config di una CLI dal suo backup) e `--adopt` (bozze read-only di voci manifest per i server trovati fuori dal manifest).
 - **Memoria versionata in Git.** Gli agenti leggono e scrivono file Markdown.
   Ogni modifica entra nella storia del repository, si può controllare con un diff e si può annullare.
   Le scritture sono compare-and-swap: a nota intera oppure per singola sezione (`update_section`), così due agenti che modificano sezioni diverse della stessa nota atterrano entrambi invece di scontrarsi.
@@ -331,6 +333,8 @@ La procedura in `INIT.md` seleziona la modalità più adatta al tuo ambiente.
 
 Il setup guidato da `INIT.md` ti chiede quale dei due profili descrive meglio il tuo caso.
 
+MINIMAL e MULTI sono un'etichetta descrittiva di ciò che il setup guidato installa una volta per tutte, al momento dell'installazione: decide se il provisioner, il doctor e il timer di sync vengono installati oppure no. Nessuno script rilegge poi un valore "profilo" salvato per cambiare comportamento a runtime; l'unico campo letto a runtime da `99-INDEX/USER-PROFILE.md` e `Mode` (LOCAL-ONLY o CLOUD-SERVER), controllato da `agent-doctor`.
+
 - **MINIMAL.** Una sola CLI su una sola macchina, per esempio Claude Code sul portatile oppure [OpenCode](https://opencode.ai) in un setup basato su DeepSeek.
   Ottieni il vault versionato, le regole di bootstrap, le skill caricate quando servono e un percorso definito per la scrittura della memoria.
   Non devi avviare un provisioner, programmare un doctor o sincronizzare più macchine.
@@ -358,7 +362,7 @@ Non devi preparare a mano i file di configurazione.
    cd ~/KnowledgeVault
    ```
    > Preflight facoltativo: `bash install.sh` controlla i prerequisiti, verifica la struttura del vault, rileva le CLI installate e mostra il passo successivo.
-   > Non scrive nulla ed è sicuro da eseguire più volte.
+   > Sicuro da eseguire più volte: non scrive nulla in modalità `--check`, altrimenti crea solo le cartelle di scaffold mancanti.
 2. Apri `INIT.md`.
 3. Incolla il contenuto in una **CLI capace di modificare file**, come Claude Code, Codex, OpenCode o Antigravity, aperta nella cartella del repository.
    Non usare una chat web come claude.ai o gemini, perché non può scrivere i file del progetto.
@@ -407,6 +411,6 @@ Qualsiasi uso commerciale del software originale o di un suo derivato richiede u
 
 ## Supporto
 
-Il progetto è gratuito.
+Il progetto è gratuito per qualsiasi uso non commerciale (vedi Licenza sopra).
 Alcuni link opzionali, incluso quello di OpenCode, sono referral link che aiutano a finanziare la manutenzione senza costi aggiuntivi per te.
 Sono dichiarati tutti in `SUPPORT.md`.

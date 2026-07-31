@@ -888,3 +888,209 @@ def test_required_rules_guard_present_and_warn_only_in_both_twins():
         assert "required invariant rule" in content
     assert 'fail "canonical AGENTS.md is missing required invariant' not in bash
     assert 'bad "canonical AGENTS.md is missing required invariant' not in powershell
+
+
+# ── G1-contraddizione: vault-library reachability must agree with the later
+# "Tokens in env" check for the SAME variable in the SAME run, not contradict
+# it (review 2026-07-30). Before the fix, an unconditional warn here fired
+# even under Local-Only/unknown Mode while "Tokens in env" said "ok, not
+# expected" a few lines later for the identical unset VAULT_LIBRARY_URL.
+
+def test_local_only_vault_library_reachability_agrees_with_tokens_section(sandbox):
+    _stub_curl_always_unreachable(sandbox)
+    _write_user_profile_mode(sandbox, "LOCAL-ONLY")
+
+    result = _run_doctor(sandbox)
+
+    assert "USER-PROFILE.md declares Mode: LOCAL-ONLY" in result.stdout, result.stdout
+    assert "VAULT_LIBRARY_URL not in env" not in result.stdout, result.stdout
+    assert _lines_with(result.stdout, "✓", "vault-library: not configured"), result.stdout
+
+
+def test_cloud_server_vault_library_reachability_really_fails(sandbox):
+    """Guard against over-fixing: Cloud-Server with no derivable vault-library
+    endpoint at all must now FAIL in the reachability section too (it used to
+    only warn there while the Tokens section correctly FAILed)."""
+    _stub_curl_always_unreachable(sandbox)
+    _write_user_profile_mode(sandbox, "CLOUD-SERVER")
+
+    result = _run_doctor(sandbox)
+
+    assert "USER-PROFILE.md declares Mode: CLOUD-SERVER" in result.stdout, result.stdout
+    assert _lines_with(result.stdout, "✗", "vault-library: no endpoint resolved"), result.stdout
+
+
+def test_vault_library_contradiction_fix_present_in_both_twins():
+    repo = Path(__file__).resolve().parents[3]
+    bash = (repo / "03-INFRA/scripts/agent-doctor.sh").read_text(encoding="utf-8")
+    powershell = (repo / "03-INFRA/scripts/agent-doctor.ps1").read_text(encoding="utf-8")
+    assert 'warn "VAULT_LIBRARY_URL not in env"' not in bash
+    assert 'warn "VAULT_LIBRARY_URL not in env"' not in powershell
+    assert "vault-library: not configured -- not expected in current Mode" in bash
+    assert "vault-library: not configured - not expected in current Mode" in powershell
+    for content in (bash, powershell):
+        assert "vault-library: no endpoint resolved" in content
+
+
+# ── G5-ollama: the check runs on any Linux host (server or laptop), so the
+# message must not assume hardware it cannot know about.
+
+def test_ollama_message_is_hardware_neutral():
+    repo = Path(__file__).resolve().parents[3]
+    bash = (repo / "03-INFRA/scripts/agent-doctor.sh").read_text(encoding="utf-8")
+    assert "on the laptop" not in bash
+    assert 'ok "Ollama running (emergency local fallback, not the routing worker)"' in bash
+
+
+# ── G6-symlink: the ~/ANTIGRAVITY.md comment must describe what agent_sync.py
+# actually does today (actively removes the dead symlink), not claim it
+# "exists" in the present tense.
+
+def test_antigravity_symlink_comment_reflects_current_removal_behavior():
+    repo = Path(__file__).resolve().parents[3]
+    bash = (repo / "03-INFRA/scripts/agent-doctor.sh").read_text(encoding="utf-8")
+    assert "that symlink exists" not in bash
+    assert "actively removes ~/ANTIGRAVITY.md" in bash
+
+
+# ── BUG-B: a manifest server dropped by require_env must name the missing
+# variable and its consequence, gated by the same Mode logic as every other
+# connector check (incident 2026-07-30: N8N_MCP_TOKEN silently dropped
+# n8n-mcp from all 4 CLIs and the doctor never named the variable).
+
+def _add_require_env_server(sandbox, server_name: str, var_name: str, targets=("claude",)) -> None:
+    """Appends one more server entry (require_env-gated) to the sandbox's
+    already-copied synthetic fixture manifest, instead of replacing it, so
+    the existing fake-* entries other checks may rely on stay intact."""
+    manifest_path = sandbox.mcp_dir / "manifest.yaml"
+    existing = manifest_path.read_text(encoding="utf-8")
+    addition = (
+        f"\n  {server_name}:\n"
+        "    transport: stdio\n"
+        "    command: fake-cmd\n"
+        f"    require_env: {var_name}\n"
+        f"    targets: [{', '.join(targets)}]\n"
+    )
+    manifest_path.write_text(existing + addition, encoding="utf-8")
+
+
+def test_bugb_require_env_skip_is_silent_when_not_expected_in_current_mode(sandbox):
+    _add_require_env_server(sandbox, "fake-conditional-tool", "FAKE_CONDITIONAL_VAR")
+
+    result = _run_doctor(sandbox)
+
+    assert "FAKE_CONDITIONAL_VAR" not in result.stdout, result.stdout
+
+
+def test_bugb_require_env_skip_warns_naming_the_variable_when_expected(sandbox):
+    _add_require_env_server(sandbox, "fake-conditional-tool", "FAKE_CONDITIONAL_VAR")
+    _write_user_profile_mode(sandbox, "CLOUD-SERVER")
+
+    result = _run_doctor(sandbox)
+
+    assert _lines_with(result.stdout, "⚠", "FAKE_CONDITIONAL_VAR missing"), result.stdout
+    assert "fake-conditional-tool" in result.stdout, result.stdout
+    assert "not mounted on any CLI" in result.stdout, result.stdout
+
+
+def test_bugb_require_env_skip_is_silent_once_the_variable_is_set(sandbox):
+    _add_require_env_server(sandbox, "fake-conditional-tool", "FAKE_CONDITIONAL_VAR")
+    _write_user_profile_mode(sandbox, "CLOUD-SERVER")
+
+    result = _run_doctor(sandbox, env_overrides={"FAKE_CONDITIONAL_VAR": "set"})
+
+    assert "FAKE_CONDITIONAL_VAR" not in result.stdout, result.stdout
+
+
+def test_require_env_skip_visibility_present_in_both_twins():
+    repo = Path(__file__).resolve().parents[3]
+    bash = (repo / "03-INFRA/scripts/agent-doctor.sh").read_text(encoding="utf-8")
+    powershell = (repo / "03-INFRA/scripts/agent-doctor.ps1").read_text(encoding="utf-8")
+    for content in (bash, powershell):
+        assert "load_mcp_manifest_document" in content
+        assert "is not mounted on any CLI" in content
+
+
+# ── GUARDRAIL: a CLI running in "bypass" permission posture (no confirmation
+# prompts) must have a declared PreToolUse guardrail hook, or the doctor must
+# say so visibly. A missing instance permissions manifest (the public-engine
+# default) is a complete, silent no-op.
+
+def _write_permissions_manifest(sandbox, *, posture: dict, hooks: list) -> Path:
+    perms_dir = sandbox.ul / "permissions"
+    perms_dir.mkdir(parents=True, exist_ok=True)
+    lines = ["schema_version: 1", "posture:"]
+    for cli, value in posture.items():
+        lines.append(f"  {cli}: {value}")
+    lines.append("hooks:")
+    for h in hooks:
+        lines.append(f"  - name: {h['name']}")
+        lines.append(f"    file: {h['file']}")
+        lines.append(f"    targets: [{', '.join(h['targets'])}]")
+        lines.append(f"    event: {h['event']}")
+    path = perms_dir / "manifest.yaml"
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return path
+
+
+def test_guardrail_check_is_a_silent_noop_without_a_permissions_manifest(sandbox):
+    result = run_agent_doctor(sandbox)
+    assert "Permission posture guardrail" not in result.stdout, result.stdout
+
+
+def test_guardrail_check_ignores_non_bypass_postures(sandbox):
+    _write_permissions_manifest(sandbox, posture={"claude": "accept-edits"}, hooks=[])
+
+    result = run_agent_doctor(sandbox)
+
+    assert "Permission posture guardrail" in result.stdout, result.stdout
+    assert _lines_with(result.stdout, "✓", "no CLI declared in bypass posture"), result.stdout
+
+
+def test_guardrail_check_ok_when_bypass_cli_has_a_pretooluse_hook(sandbox):
+    _write_permissions_manifest(
+        sandbox,
+        posture={"claude": "bypass"},
+        hooks=[{"name": "guardrail", "file": "hooks/guardrail.mjs", "targets": ["claude"], "event": "PreToolUse"}],
+    )
+
+    result = run_agent_doctor(sandbox)
+
+    assert _lines_with(result.stdout, "✓", "claude runs in bypass posture"), result.stdout
+    assert not _lines_with(result.stdout, "✗", "claude runs in bypass posture"), result.stdout
+
+
+def test_guardrail_check_fails_visibly_when_bypass_cli_has_no_guardrail_hook(sandbox):
+    """Also exercises forward-compatibility: 'codex' is not yet a valid
+    permissions-manifest target in config_schema.py's strict validator, but
+    this check must keep working as that set grows (another agent is
+    extending bypass support to non-Claude CLIs concurrently) -- it must
+    never depend on that strict schema."""
+    _write_permissions_manifest(sandbox, posture={"codex": "bypass"}, hooks=[])
+
+    result = run_agent_doctor(sandbox)
+
+    assert _lines_with(result.stdout, "✗", "codex runs in bypass posture"), result.stdout
+    assert "WITHOUT a declared PreToolUse guardrail hook" in result.stdout, result.stdout
+
+
+def test_guardrail_check_ignores_a_hook_declared_for_a_different_event(sandbox):
+    _write_permissions_manifest(
+        sandbox,
+        posture={"claude": "bypass"},
+        hooks=[{"name": "session-hook", "file": "hooks/x.mjs", "targets": ["claude"], "event": "SessionStart"}],
+    )
+
+    result = run_agent_doctor(sandbox)
+
+    assert _lines_with(result.stdout, "✗", "claude runs in bypass posture"), result.stdout
+
+
+def test_guardrail_check_present_in_both_twins():
+    repo = Path(__file__).resolve().parents[3]
+    bash = (repo / "03-INFRA/scripts/agent-doctor.sh").read_text(encoding="utf-8")
+    powershell = (repo / "03-INFRA/scripts/agent-doctor.ps1").read_text(encoding="utf-8")
+    for content in (bash, powershell):
+        assert "Permission posture guardrail" in content
+        assert "PreToolUse" in content
+        assert "WITHOUT a declared PreToolUse guardrail hook" in content

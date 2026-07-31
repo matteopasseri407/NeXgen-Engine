@@ -73,6 +73,34 @@ def test_list_and_find_use_multiline_frontmatter_description(sandbox):
     assert "multiline-skill" in found.stdout
 
 
+def test_show_and_path_accept_names_skills_sync_can_actually_install(sandbox):
+    """G3-nomiskill: skills-sync.py accepts any manifest name matching
+    config_schema.ENTRY_NAME_RE (letters, digits, '.', '_', '-'), so a name
+    with an underscore or a dot can legitimately land in the library and the
+    generated INDEX.md. Before the fix, agent-skill's own NAME pattern was
+    narrower (lowercase letters/digits/hyphens only) and rejected such a
+    name as invalid, making an installed skill unreachable through
+    `agent-skill show`/`path` even though `list`/`find` already showed it."""
+    skill = sandbox.skill_library / "some_skill.v1"
+    skill.mkdir(parents=True)
+    (skill / "SKILL.md").write_text(
+        "---\ndescription: Underscore and dot in the name.\n---\nCorpo della skill.\n",
+        encoding="utf-8",
+    )
+
+    listed = _run(sandbox, "list")
+    assert listed.returncode == 0
+    assert "some_skill.v1" in listed.stdout
+
+    shown = _run(sandbox, "show", "some_skill.v1")
+    assert shown.returncode == 0
+    assert "Corpo della skill." in shown.stdout
+
+    path = _run(sandbox, "path", "some_skill.v1")
+    assert path.returncode == 0
+    assert "some_skill.v1" in path.stdout
+
+
 def test_show_forces_utf8_even_when_windows_code_page_is_not_utf8(sandbox):
     skill = sandbox.skill_library / "unicode-skill"
     skill.mkdir(parents=True)

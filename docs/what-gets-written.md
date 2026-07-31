@@ -17,10 +17,10 @@ Plain `bash install.sh` (the default, guided mode) is almost as quiet: the only 
 
 | CLI | Bootstrap file | MCP config | Skills folder |
 |---|---|---|---|
-| Claude Code | `~/CLAUDE.md` (pointer to this repo's `AGENTS.md`) | `mcpServers` field in `~/.claude.json` | declared native-lazy view in `~/.claude/skills/` |
-| Codex | `~/.codex/AGENTS.md` | Codex's own config file | only `exposure: core` views in `~/.codex/skills/` |
+| Claude Code | `~/CLAUDE.md` (pointer to this repo's `AGENTS.md`) | `mcpServers` field in `~/.claude.json` | declared native-lazy view in `~/.claude/skills/`, per skill with `claude` in `targets` |
+| Codex | `~/.codex/AGENTS.md` | Codex's own config file | declared native-lazy view in `~/.codex/skills/` (or `$CODEX_HOME/skills`, its only skill root), per skill with `codex` in `targets` — independent of `exposure` |
 | OpenCode | `instructions` field in `opencode.json` | MCP section of the same `opencode.json` | `agent-skill find|show`, backed by `~/.agents/skill-library/` |
-| Antigravity | `~/.gemini/config/AGENTS.md` | `~/.gemini/antigravity/mcp_config.json` | `agent-skill find|show`, backed by `~/.agents/skill-library/` |
+| Antigravity | `~/.gemini/config/AGENTS.md` | `~/.gemini/antigravity/mcp_config.json` | declared native view in `~/.gemini/antigravity-cli/skills/`, per skill with `antigravity` in `targets` |
 
 MCP sections are additive by default. A server is removed from generated CLI
 configs only when its exact old name is deliberately added to the canonical
@@ -33,7 +33,7 @@ These are patches to files that must already exist (each CLI creates its own def
 ## MULTI profile only, additional writes by `agent-sync`
 
 - `~/.config/systemd/user/agent-sync.service` and `agent-sync.timer`: a recurring user-level timer that runs `agent-sync guard` (pull + regenerate CLI runtime files + healthcheck, no push). Only on Linux/systemd.
-- Before overwriting a file it manages, `agent-sync` copies the previous version alongside it with a `.pre-<reason>-<timestamp>.bak` suffix in the same folder.
+- Before overwriting the content of a file it merges into — Claude's `settings.json` (hook/permission merges), the systemd unit files above, and OpenCode's `instructions` field — `agent-sync` copies the previous version alongside it with a `.pre-<reason>-<timestamp>.bak` suffix in the same folder. These are **not** rotated: one file is kept per change, and nothing deletes the older ones, so they accumulate over time and are yours to clean up. (Rotation — newest three kept — applies to the differently-named `<file>.bak-<timestamp>` copies that `render.py` writes for MCP config changes, not to these.) A second, separately-named backup convention (`<file>.local-edit.bak-<timestamp>`) belongs to the shared symlink/junction helper that fans out desktop entries, PATH shims, and generated config copies: it fires only when that helper finds an existing real (non-symlink) copy whose content has diverged from the canonical source, which as of this writing only happens on Windows, where a missing symlink/junction privilege can leave such a copy behind in the first place. Verify `make_link()` in `agent_sync.py` before relying on that second case, since cross-platform coverage for it may since have changed.
 - `~/.local/state/agent-sync.log`: a plain-text run log.
 - `~/.local/state/agent-sync.lock`: the stable one-byte host-wide transaction lock.
 - `~/ANTIGRAVITY.md`: removed if present as a dead symlink (Antigravity doesn't read that path).

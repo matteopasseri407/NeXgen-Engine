@@ -100,7 +100,8 @@ class Sandbox:
         e["KNOWLEDGE_VAULT_REMOTE"] = "local"
         # HOME/USERPROFILE redirects files but not HKCU or Task Scheduler.
         # Full guard/apply subprocess tests must never mutate the host that is
-        # running pytest, especially a maintainer's physical Windows machine.
+        # running pytest, especially when the test runs on real Windows
+        # rather than a simulated environment.
         e["NEXGEN_DISABLE_HOST_MUTATIONS"] = "1"
         # Manual apply now performs a strict readiness classification. Keep
         # sandbox smoke tests deterministic and prevent a real host CLI from

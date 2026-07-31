@@ -253,7 +253,7 @@ def test_apply_renders_antigravity_source_before_propagating_it(sandbox, monkeyp
     assert called.index("mcp_render") < called.index("antigravity_mcp")
 
 
-def test_apply_returns_nonzero_when_a_declared_phase_fails(sandbox, monkeypatch):
+def test_apply_returns_nonzero_when_a_declared_phase_fails(sandbox, monkeypatch, capsys):
     mod = load_agent_sync_module(sandbox)
     monkeypatch.setenv("HOME", str(sandbox.home))
     monkeypatch.setenv("KNOWLEDGE_VAULT_PATH", str(sandbox.vault))
@@ -268,6 +268,13 @@ def test_apply_returns_nonzero_when_a_declared_phase_fails(sandbox, monkeypatch)
     assert "skills_index" in called
     log = (sandbox.home / ".local" / "state" / "agent-sync.log").read_text(encoding="utf-8")
     assert "phase mcp_render: ERROR" in log
+    # A failed guard/apply run must also say so on stderr, not only in
+    # agent-sync.log: the recurring guard is normally launched by systemd
+    # (or Task Scheduler), and neither surfaces the log file's content --
+    # journalctl only shows the bare exit code otherwise.
+    err = capsys.readouterr().err
+    assert "mcp_render" in err
+    assert str(sandbox.home / ".local" / "state" / "agent-sync.log") in err
 
 
 def test_real_dirty_git_tree_blocks_guard_before_runtime_mutation(sandbox):
@@ -732,6 +739,46 @@ def test_instructions_opencode_malformed_json_does_not_crash(sandbox_with_live_c
     assert oc_path.read_text(encoding="utf-8") == "{not valid json"
 
 
+def test_instructions_backs_up_existing_claude_md_before_overwriting(sandbox, monkeypatch):
+    """~/CLAUDE.md is written directly via _write_if_different(), never
+    through make_link() -- so make_link()'s own .local-edit.bak safety net
+    (which only ever fires for its Windows real-copy fallback) never covered
+    it. A hand edit to this file used to be destroyed the instant its
+    content stopped matching the canonical pointer text, on every platform.
+    Confirm the rewrite now backs up the previous content first, same
+    `.pre-<reason>-<timestamp>.bak` convention used elsewhere in this file."""
+    mod = load_agent_sync_module(sandbox)
+    monkeypatch.setenv("HOME", str(sandbox.home))
+    monkeypatch.setenv("KNOWLEDGE_VAULT_PATH", str(sandbox.vault))
+
+    claude_md = sandbox.home / "CLAUDE.md"
+    old_content = "# my own hand-edited notes\nplease do not eat this\n"
+    claude_md.write_text(old_content, encoding="utf-8")
+
+    env = mod.Env()
+    assert mod.instructions(env) is True
+
+    assert claude_md.read_text(encoding="utf-8") != old_content
+    backups = list(sandbox.home.glob("CLAUDE.md.pre-instructions-*.bak"))
+    assert len(backups) == 1, backups
+    assert backups[0].read_text(encoding="utf-8") == old_content
+    assert "backed up" in env.log_path.read_text(encoding="utf-8")
+
+
+def test_instructions_does_not_back_up_claude_md_when_content_already_matches(sandbox, monkeypatch):
+    """No spurious .bak file on every idempotent run -- only an actual
+    content change should ever produce one."""
+    mod = load_agent_sync_module(sandbox)
+    monkeypatch.setenv("HOME", str(sandbox.home))
+    monkeypatch.setenv("KNOWLEDGE_VAULT_PATH", str(sandbox.vault))
+
+    env = mod.Env()
+    assert mod.instructions(env) is True   # first run: creates CLAUDE.md fresh
+    assert mod.instructions(env) is True   # second run: content already matches
+
+    assert list(sandbox.home.glob("CLAUDE.md.pre-instructions-*.bak")) == []
+
+
 def test_host_wide_lock_rejects_second_manual_run(sandbox, monkeypatch):
     mod = load_agent_sync_module(sandbox)
     monkeypatch.setenv("HOME", str(sandbox.home))
@@ -876,22 +923,38 @@ def test_windows_agent_sync_launcher_executes_the_engine_script_not_the_bin_dire
 
 
 @pytest.mark.skipif(os.name == "nt", reason="systemd is a Linux-only recurring trigger; Windows uses schtasks.exe instead.")
-def test_systemd_install_warns_loudly_if_agent_sync_link_is_somehow_missing(sandbox, monkeypatch):
+def test_systemd_install_skips_instead_of_arming_timer_when_agent_sync_link_is_missing(sandbox, monkeypatch, capsys):
     # utils() always runs before install_scheduler() in the same apply/guard
     # pass, so this should never fire in practice -- but the phase loop does
     # not abort on an unrelated phase failure, so this is the fallback that
-    # keeps a missing link from failing completely silently.
+    # keeps a missing link from failing completely silently. Before this
+    # fix, a missing shim only got a warning and the unit files still got
+    # written and the timer still got enabled anyway: a recurring 30-minute
+    # trigger armed forever against a command that does not exist, failing
+    # every single cycle instead of self-healing. Confirm it now skips the
+    # whole install/enable instead of arming a broken timer.
     mod = load_agent_sync_module(sandbox)
     monkeypatch.setattr(mod, "IS_WINDOWS", False)
     monkeypatch.setenv("HOME", str(sandbox.home))
     monkeypatch.setenv("KNOWLEDGE_VAULT_PATH", str(sandbox.vault))
-    monkeypatch.setattr(mod, "resolve_cmd", lambda name: None)  # no real systemctl in the sandbox
+    monkeypatch.setattr(
+        mod,
+        "_run_external",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("systemctl must not run when the shim is missing")),
+    )
 
     env = mod.Env()
     # Deliberately skip utils() -- agent-sync was never linked this pass.
-    mod._install_systemd_units(env)
+    result = mod._install_systemd_units(env)
 
-    assert "agent-sync does not exist yet" in env.log_path.read_text(encoding="utf-8")
+    assert result is False
+    log = env.log_path.read_text(encoding="utf-8")
+    assert "agent-sync does not exist yet" in log
+    # Also stderr: systemd/journalctl would otherwise show nothing about why.
+    assert "agent-sync does not exist yet" in capsys.readouterr().err
+    unit_dir = sandbox.home / ".config" / "systemd" / "user"
+    assert not (unit_dir / "agent-sync.timer").exists()
+    assert not (unit_dir / "agent-sync.service").exists()
 
 
 @pytest.mark.skipif(os.name == "nt", reason="systemd is a Linux-only recurring trigger; Windows uses schtasks.exe instead.")
@@ -1381,6 +1444,49 @@ def test_claude_hooks_skips_non_dict_settings_root(sandbox, monkeypatch):
     mod.claude_hooks(env)  # must not raise
 
     assert settings_path.read_text(encoding="utf-8") == "[]"
+
+
+@pytest.mark.skipif(
+    os.name == "nt",
+    reason="Symlink privilege is needed to build the escape fixture; the resolved-path defense itself is OS-agnostic Python.",
+)
+def test_claude_permissions_aborts_whole_phase_when_hook_symlink_escapes_permissions_dir(sandbox, monkeypatch):
+    """A hook `file` entry that is a relative, '..'-free string passes the
+    static manifest validator, but a symlink INSIDE permissions/ can still
+    resolve OUTSIDE it once followed -- _apply_claude_permissions re-checks
+    the resolved path for exactly that case. It must refuse the ENTIRE
+    hooks/settings merge for Claude, not just this one entry: the log used
+    to say "skipped", which reads as "this hook was skipped, the rest
+    proceeded" when the function actually returns False right there,
+    deploying nothing else and never touching settings.json either."""
+    mod = load_agent_sync_module(sandbox)
+    monkeypatch.setenv("HOME", str(sandbox.home))
+    monkeypatch.setenv("KNOWLEDGE_VAULT_PATH", str(sandbox.vault))
+
+    permissions_dir = sandbox.ul / "permissions"
+    permissions_dir.mkdir(parents=True, exist_ok=True)
+    escape_target = sandbox.ul / "escape-target.js"
+    escape_target.write_text("// outside permissions/\n", encoding="utf-8")
+    (permissions_dir / "hook.js").symlink_to(escape_target)
+    (permissions_dir / "manifest.yaml").write_text(
+        "schema_version: 1\n"
+        "hooks:\n"
+        "  - name: escape-hook\n"
+        "    file: hook.js\n"
+        "    targets: [\"claude\"]\n"
+        "    event: PreToolUse\n",
+        encoding="utf-8",
+    )
+    claude_dir = sandbox.home / ".claude"
+    claude_dir.mkdir(parents=True, exist_ok=True)
+
+    env = mod.Env()
+    assert mod.claude_permissions(env) is False
+
+    log = env.log_path.read_text(encoding="utf-8")
+    assert "resolves outside permissions/" in log
+    assert "whole hooks/settings phase" in log
+    assert not (claude_dir / "escape-target.js").exists()
 
 
 def test_alert_creds_credential_id_is_not_interpolated_into_remote_script(sandbox, monkeypatch):
@@ -1924,6 +2030,32 @@ def test_windows_scheduler_wrapper_lives_in_runtime_state_and_reenters_split_top
     assert str(env.vault) in content
     assert env.branch in content
     assert calls and all(str(wrapper) in " ".join(call) for call in calls)
+
+
+def test_windows_scheduled_task_skips_instead_of_arming_timer_when_engine_script_is_missing(sandbox, monkeypatch, capsys):
+    # Mirrors the Linux systemd fix above: the VBS wrapper shells out to
+    # agent-sync.ps1 directly (no ~/.local/bin shim involved on this path),
+    # so scheduling schtasks.exe to keep invoking it while that file does
+    # not exist would arm the same "fires every 30 minutes forever, fails
+    # every time" trap against a missing engine script.
+    _enable_host_mutations(monkeypatch)
+    mod = load_agent_sync_module(sandbox)
+    monkeypatch.setattr(mod, "IS_WINDOWS", True)
+    monkeypatch.setattr(
+        mod,
+        "_run_external",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("schtasks.exe must not run when the engine script is missing")),
+    )
+    env = mod.Env()
+    (env.engine_scripts / "agent-sync.ps1").unlink()
+
+    result = mod._install_scheduled_task(env)
+
+    assert result is False
+    log = env.log_path.read_text(encoding="utf-8")
+    assert "does not exist yet" in log
+    assert "does not exist yet" in capsys.readouterr().err
+    assert not (env.log_dir / "start-agent-sync-hidden.vbs").exists()
 
 
 @pytest.mark.skipif(os.name != "nt", reason="Real HKCU invariant is Windows-only.")

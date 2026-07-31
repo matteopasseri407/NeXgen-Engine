@@ -247,7 +247,20 @@ council clean --all           # removes every kept session now
   separate, always-on end-user protection, not the repository CI leak-scan
   that guards publishing to GitHub. See `SECURITY.md`.
 - **Zero-retention**: a seat without `zero_retention: true` in your
-  `seats.yaml` refuses to run unless you pass `--allow-training-risk`.
+  `seats.yaml` refuses to run unless you pass `--allow-training-risk` for
+  that one call, or this host has persistently opted in with
+  `council allow-training on` (below). Nothing else lifts this gate.
+- **`council allow-training on|off|status`**: an undocumented-until-now,
+  host-local persistent switch that removes the need to repeat
+  `--allow-training-risk` on every call. `on` writes a marker file under
+  this host's state directory (`~/.local/state/council/allow-training.enabled`,
+  or `%LOCALAPPDATA%\council\allow-training.enabled` on Windows); its mere
+  presence is the whole toggle — no content, timestamp, or expiry is
+  checked. `off` deletes that file, restoring the default protection.
+  `status` (or no argument) reports which state is active and prints the
+  exact file path. The effect is blanket and host-wide: once ON, *every*
+  seat lacking `zero_retention: true` runs without the flag on this
+  machine, for every mode, until you run `council allow-training off`.
 - **Quota**: `--max-rounds` (brainstorm) and `--max-seats` (relay) cap how
   much a session can spend even if you ask for more.
 

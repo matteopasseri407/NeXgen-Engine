@@ -43,3 +43,22 @@ def test_claude_memory_stats_counts_facts_per_project(sandbox, tmp_path):
     assert "projC" not in stats
     # absent projects dir -> empty, never crashes
     assert mod._claude_memory_stats(tmp_path / "absent") == []
+
+
+def test_inventory_defers_transcript_distillation_without_naming_a_stale_version(sandbox, monkeypatch, capsys):
+    """Regression: this line used to read 'deferred to v0.93, not imported'
+    while the engine was already released well past v0.93 (see VERSION),
+    which reads as a broken promise instead of an honest status. Match the
+    CHANGELOG's own version-agnostic phrasing ("deferred to a later
+    release") so a future release bump can never make this stale again."""
+    mod = load_agent_sync_module(sandbox)
+    monkeypatch.setenv("HOME", str(sandbox.home))
+    monkeypatch.setenv("KNOWLEDGE_VAULT_PATH", str(sandbox.vault))
+    (sandbox.home / ".codex" / "sessions").mkdir(parents=True, exist_ok=True)
+
+    rc = mod._inventory_cli([])
+
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "codex: session transcripts present -- distillation deferred to a later release, not imported" in out
+    assert "v0.9" not in out

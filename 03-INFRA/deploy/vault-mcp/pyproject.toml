@@ -7,6 +7,12 @@ name = "vault-mcp-server"
 version = "0.1.0"
 description = "Read-only remote MCP server for Markdown vaults"
 readme = "README.md"
+# Not an SPDX/OSI identifier (PolyForm Noncommercial 1.0.0 isn't in that
+# list), so declared by file rather than by name. The project's license
+# requires the notice to travel with every copy -- see the `LICENSE`
+# COPY in this directory's Dockerfile for why a copy of the file lives
+# here too, next to this pyproject.toml, instead of only at the repo root.
+license = {file = "LICENSE"}
 requires-python = ">=3.11"
 dependencies = [
   # MCP SDK 2.x implements the 2026-07-28 protocol revision and keeps serving

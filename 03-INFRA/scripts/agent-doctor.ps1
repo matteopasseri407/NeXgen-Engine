@@ -388,6 +388,65 @@ function Test-ConnectorExpected([string]$VarName) {
   return [bool][Environment]::GetEnvironmentVariable($VarName)
 }
 
+# GUARDRAIL: see agent-doctor.sh's twin for the full rationale -- a "bypass"
+# permission posture (no confirmation prompts) only has its anti-catastrophic
+# guardrail if a PreToolUse hook is actually declared for that CLI in the
+# private instance permissions manifest. Reads the manifest directly with
+# plain YAML, never through config_schema.py's strict validator (which today
+# still only recognizes "claude" as a target), so this keeps working as that
+# set grows. A missing manifest (the public-engine default) is a complete,
+# silent no-op.
+$PermManifest = Join-Path $Layer "permissions\manifest.yaml"
+if (Test-Path -LiteralPath $PermManifest) {
+  sec "Permission posture guardrail (instance manifest)"
+  if ($NexgenPython) {
+    $bypassCode = @'
+import sys
+from pathlib import Path
+import yaml
+path = Path(sys.argv[1])
+try:
+    data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+except Exception:
+    sys.exit(0)
+if not isinstance(data, dict):
+    sys.exit(0)
+posture = data.get("posture")
+if not isinstance(posture, dict):
+    sys.exit(0)
+hooks = data.get("hooks")
+if not isinstance(hooks, list):
+    hooks = []
+guarded = set()
+for h in hooks:
+    if not isinstance(h, dict) or h.get("event") != "PreToolUse":
+        continue
+    for t in (h.get("targets") or []):
+        if isinstance(t, str):
+            guarded.add(t)
+for cli, value in posture.items():
+    if value == "bypass":
+        print(f"{cli} {'GUARDED' if cli in guarded else 'UNGUARDED'}")
+'@
+    $bypassReport = @(& $NexgenPythonCommand @NexgenPythonPrefix -c $bypassCode $PermManifest 2>$null | Where-Object { $_ })
+    if ($bypassReport.Count -gt 0) {
+      foreach ($line in $bypassReport) {
+        $parts = $line -split '\s+'
+        $cli = $parts[0]; $guardState = $parts[1]
+        if ($guardState -eq "GUARDED") {
+          ok "$cli runs in bypass posture (no confirmation prompts) WITH a declared PreToolUse guardrail hook"
+        } else {
+          bad "$cli runs in bypass posture (no confirmation prompts) WITHOUT a declared PreToolUse guardrail hook -- catastrophic commands are NOT intercepted"
+        }
+      }
+    } else {
+      ok "no CLI declared in bypass posture in the instance permissions manifest"
+    }
+  } else {
+    warn "Python 3 with PyYAML not found -- cannot inspect the instance permissions manifest for bypass posture"
+  }
+}
+
 sec "MCP connectors - reachability"
 $c = httpcode "http://127.0.0.1:5678/healthz" $null
 if ($c -eq 200) { ok "n8n-mcp (5678): $c" }
@@ -436,7 +495,15 @@ if ($VaultLibraryUrl) {
   # header. OPTIONS is a bounded, authenticated route probe.
   $c = httpcode $VaultLibraryUrl @{ Authorization = "Bearer $($env:VAULT_LIBRARY_TOKEN)"; Accept = "application/json, text/event-stream" } "Options"
   if ($c -eq 200 -or $c -eq 405) { ok "vault-library: $c (up)" } else { bad "vault-library: $c" }
-} else { warn "VAULT_LIBRARY_URL not in env" }
+} elseif (Test-ConnectorExpected "VAULT_LIBRARY_URL") {
+  # Same Mode gating as the "Tokens in env" check below for this exact
+  # variable -- an unconditional warn here used to contradict that check's
+  # "ok, not expected in current Mode" a few lines later in the SAME run
+  # (G1-contraddizione).
+  bad "vault-library: no endpoint resolved (VAULT_LIBRARY_URL not set, manifest render found none)"
+} else {
+  ok "vault-library: not configured - not expected in current Mode (Local-Only / VAULT_LIBRARY_URL not set)"
+}
 if (Get-Command npx -ErrorAction SilentlyContinue) { ok "playwright: npx available" } else { warn "npx not in PATH (playwright MCP)" }
 
 sec "Tokens in env"
@@ -506,6 +573,40 @@ if ($NexgenPython -and (Test-Path -LiteralPath $RenderPy)) {
   }
 } else {
   warn "python or render.py not found, skipping MCP drift check"
+}
+
+# BUG-B: see agent-doctor.sh's twin for the full incident rationale -- a
+# manifest server whose require_env var is missing is silently dropped by
+# render.py's own ">>> skip [...]: require_env not satisfied (Local-Only?)"
+# line above, which never names the variable. Read the manifest directly
+# here to name exactly which require_env var is unsatisfied for which
+# server, and only escalate to a WARNING when Test-ConnectorExpected says the
+# current Mode should actually have it -- a legitimate Local-Only skip stays
+# the silent no-op it already is everywhere else in this script.
+$ManifestYaml = Join-Path $Layer "mcp\manifest.yaml"
+if ($NexgenPython -and (Test-Path -LiteralPath $ManifestYaml)) {
+  $skipCode = @'
+import os, sys
+sys.path.insert(0, sys.argv[1])
+from pathlib import Path
+from config_schema import ConfigValidationError, load_mcp_manifest_document
+try:
+    servers, _retired = load_mcp_manifest_document(Path(sys.argv[2]))
+except ConfigValidationError:
+    sys.exit(0)
+for name, spec in servers.items():
+    req = spec.get("require_env")
+    if req and not os.environ.get(req, "").strip():
+        print(f"{name} {req}")
+'@
+  $skippedServers = @(& $NexgenPythonCommand @NexgenPythonPrefix -c $skipCode $PSScriptRoot $ManifestYaml 2>$null | Where-Object { $_ })
+  foreach ($line in $skippedServers) {
+    $parts = $line -split '\s+'
+    $srv = $parts[0]; $var = $parts[1]
+    if (Test-ConnectorExpected $var) {
+      warn "$var missing: manifest server '$srv' is not mounted on any CLI (require_env not satisfied)"
+    }
+  }
 }
 
 if ($Strict) {

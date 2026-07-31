@@ -58,9 +58,20 @@ function Test-Prereqs {
   $py = Get-PyBin
   if ($py) {
     $pyVer = (& $py --version 2>&1)
-    ok "python3 - $pyVer (as '$py')"
+    & $py -c "import sys; sys.exit(0 if sys.version_info >= (3, 11) else 1)" 2>$null | Out-Null
+    if ($LASTEXITCODE -eq 0) {
+      ok "python3 - $pyVer (as '$py')"
+    } else {
+      & $py -c "import tomli" 2>$null | Out-Null
+      if ($LASTEXITCODE -eq 0) {
+        ok "python3 - $pyVer (as '$py', <3.11 + tomli - the documented fallback)"
+      } else {
+        bad "python3 - $pyVer is too old (required: 3.11+, or 3.10 with 'pip install tomli') -> winget install Python.Python.3.11"
+        $script:MissReq = 1
+      }
+    }
   } else {
-    bad "python3 MISSING (required) -> winget install Python.Python.3"
+    bad "python3 MISSING (required, 3.11+) -> winget install Python.Python.3.11"
     $script:MissReq = 1
   }
 

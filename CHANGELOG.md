@@ -10,6 +10,103 @@ of any engine release.
 
 ## [Unreleased]
 
+A pass over what a stranger meets in the first five minutes, plus the
+provisioning failure that let a whole CLI stay unconfigured forever.
+
+### Added
+
+- Permission posture renderers for Codex, OpenCode and Antigravity. The phase
+  used to translate a posture for Claude only, so a manifest that named
+  another CLI was policy the engine could read and never apply. Each dialect
+  was verified against the installed binary rather than inferred; a CLI whose
+  dialect is not verified is skipped with a warning, never guessed at.
+- `agent-doctor` now lists which CLIs run under a `bypass` posture and which of
+  those have no guardrail hook behind them. A posture that removes every
+  confirmation prompt should be visible on every health check, not something
+  you have to remember you once chose.
+- `vault-save` and `vault-close` work without a server. Both required the
+  `vault-library` MCP with no alternative, and `vault-close` told the agent to
+  stop outright if the vault was unreachable — on a server-less install the
+  vault is an ordinary writable folder, so two of the seven advertised
+  commands were dead for no reason.
+- The `vault-mcp` package declares its license and the image carries `LICENSE`,
+  as the license itself requires of every distributed copy.
+- `council/seats.yaml.example` is validated against the runtime schema by a
+  test, so the shipped example cannot drift into something that fails to load.
+
+### Fixed
+
+- **A CLI that was installed but never launched stayed unconfigured forever.**
+  `render.py` skipped provisioning when the config file did not exist, and
+  nothing else ever created it, so on a fresh machine Antigravity received no
+  MCP server at all — indefinitely, with the inventory reporting "not
+  configured" as if that were a steady state. Antigravity and OpenCode now
+  bootstrap the directory and a minimal valid config, then provision normally.
+  A CLI that is genuinely absent is still skipped, and an empty or truncated
+  config file is initialized instead of aborting the run.
+- **A missing environment variable removed MCP servers silently.** A server
+  gated by `require_env` was dropped from every CLI with a message that never
+  named the variable. `render.py` now names it, and `agent-doctor` raises an
+  explicit warning saying which variable is missing and which server is
+  therefore mounted nowhere — while staying quiet on a Local-Only install,
+  where those servers are absent by choice.
+- **`agent-sync apply` was not idempotent.** The `instructions` phase ran
+  before `mcp_render`, so a config file bootstrapped during a run received its
+  `AGENTS.md` pointer only on the *next* run — self-healing where a timer
+  exists, permanent on MINIMAL, which has none. Compounding it, Antigravity's
+  "is it installed" probe keyed on `~/.gemini`, a directory `agent-sync`
+  creates itself, so the provisioner was reacting to its own footprint. The
+  probe now looks for the product's own files, and the phases are ordered so
+  one apply converges.
+- **One unsupported entry could fail the entire permissions phase.** A posture
+  naming a CLI the engine had no renderer for was refused wholesale, taking
+  down everything the engine *could* apply and failing every scheduled run
+  with it. Unknown CLIs are now warned about and skipped. The hard refusals
+  that matter are untouched: a malformed manifest, an unknown posture value,
+  and a declared guardrail hook whose body is missing or resolves outside the
+  permissions directory still stop the phase before anything reaches disk.
+- Two false FAILs on a server-less install. `agent-doctor` reported commits
+  behind "the cloud" and told the user to publish private notes, because their
+  `origin` is this public repo. `INIT.md` now sets `authoritative_remote:
+  local` for that install shape, and the two checks respect it.
+- `agent-doctor` contradicting itself within one run, warning about an absent
+  `VAULT_LIBRARY_URL` and then reporting twenty lines later that it is not
+  expected in this mode.
+- `--reset` deleted a CLI's config with nothing able to recreate it, which for
+  Claude meant being logged out; it now refuses for those CLIs. `--revert`
+  after a reset also failed to find its own backup for OpenCode, whose config
+  path is resolved from whichever filename exists — once the file was gone,
+  the resolution no longer matched the backup's name.
+- `~/CLAUDE.md` was overwritten without a backup on every platform except
+  Windows, contradicting the documented promise.
+- The recurring timer was armed even when the command it must run was missing,
+  leaving a task firing every thirty minutes at nothing.
+- The installer's preflight accepted any Python 3.x while the engine requires
+  3.11+, so 3.9 and 3.10 passed the check and failed mid-install. It also
+  accepted unknown arguments silently: `-check`, with one dash, ran the
+  writing path.
+- `leak_scan.py` scanned virtualenvs, so the documented maintainer command
+  returned over a thousand results and buried the handful that were real.
+- `.gitignore` did not cover `.venv`, `venv`, `node_modules`, `dist`, `build`
+  or the tool caches. A virtualenv created inside the checkout escaped only
+  through the ignore file the venv writes for itself.
+
+### Changed
+
+- Documentation now matches the code where it had drifted: how skills reach
+  Codex, the Antigravity skills path, the attribution of `--revert`/`--adopt`,
+  the `council allow-training` subcommand that existed but was documented
+  nowhere, and the backup files that are kept rather than rotated. `README`
+  states that `profile:` is an installer convention no code reads, instead of
+  describing behavior that does not exist.
+- `CREDITS.md` credits the skills the repo actually ships and no longer credits
+  three it does not.
+- Prose written for the maintainer is written for the reader instead: a
+  specific machine fleet, personal subscriptions presented as the product's
+  cost model, a personal TODO list inside an architecture document, an
+  unreachable reference to a past incident, and a generic user who was
+  systematically male.
+
 ## [0.94.0] - 2026-07-30
 
 ### Added
@@ -98,9 +195,10 @@ of any engine release.
 - `agent-doctor`'s update notice leads with what it is and carries the command
   to run: "NeXgen Engine update available: v0.93.0 (this machine runs v0.92.1)
   -- run: nexgen-update". It used to end with "update is always deliberate",
-  which reads as "no rush" — two machines sat two releases behind while the
-  doctor said so every day. Still a warn, never a failure: being one release
-  behind is not a broken machine. Both the bash and PowerShell twins changed.
+  which reads as "no rush" and let a host drift several releases behind
+  before anyone acted on the daily notice. Still a warn, never a failure:
+  being one release behind is not a broken machine. Both the bash and
+  PowerShell twins changed.
 - The engine-update command is now `nexgen-update`. It upgrades the **engine**,
   and the old `vault-update` name said the opposite clearly enough that a user
   looked for it, did not find it, and concluded the command did not exist. The

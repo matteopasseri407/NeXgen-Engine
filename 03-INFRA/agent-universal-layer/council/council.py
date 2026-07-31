@@ -574,7 +574,17 @@ def _check_seat_allowed(seat_name: str, seat: dict, args: argparse.Namespace) ->
         )
 
 
-def _validate_relay_seat(seat_name: str, seats: dict, args: argparse.Namespace) -> dict:
+def _validate_relay_seat(seat_name: str, seats: dict) -> dict:
+    """Structural sanity only (seat known, cli schema-supported) -- NOT the
+    zero-retention/agy policy gate. That gate is deliberately not enforced
+    here: it is re-checked per candidate, dynamically, in _run_relay_stage,
+    which *skips* a disallowed candidate so a declared fallback still runs.
+    A hard sys.exit at this load-time validation step (once per whole
+    sequence) would instead abort the entire relay the moment any single
+    candidate lacked zero-retention, even when a compliant fallback was
+    declared right next to it. (Previously took an unused `args` parameter
+    that made this look like it also re-ran the policy gate -- G6-councilargs;
+    it never did, and it must not, for the reason above.)"""
     if seat_name not in seats:
         sys.exit(f"[council] seat sconosciuto nella sequence relay: {seat_name}. Disponibili: {', '.join(seats)}")
     seat = seats[seat_name]
@@ -678,7 +688,7 @@ def _load_relay_sequence(args: argparse.Namespace, config: dict, seats: dict) ->
         )
     for stage in stages:
         for seat_name in stage.candidates:
-            _validate_relay_seat(seat_name, seats, args)
+            _validate_relay_seat(seat_name, seats)
     return stages
 
 
@@ -1324,8 +1334,9 @@ def _build_seat_command(seat: dict, prompt: str, session_dir: Path) -> SeatInvoc
       failure surface for an unverified gain. Prompt-only, like codex.
     - ``ollama``: ``ollama run <model>`` has no tool-calling/agent-loop
       surface at all unless the (undocumented-by-default) ``--experimental``
-      flag is passed — confirmed via ``ollama run --help`` on this machine.
-      This seat never passes it, so there is nothing for an MCP server to be
+      flag is passed — confirmed via ``ollama run --help`` against the
+      installed Ollama build (re-verify after an Ollama upgrade). This seat
+      never passes it, so there is nothing for an MCP server to be
       reachable through: verified safe by construction, not just by prompt.
 
     See the "Council CLI-level enforcement is asymmetric" note in

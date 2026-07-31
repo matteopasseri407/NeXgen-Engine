@@ -13,7 +13,7 @@ when the task actually matches it.
 | `~/.agents/skill-library/` | Complete managed bodies. Never an eager discovery root. |
 | `~/.agents/skills/INDEX.md` | Tiny generated catalog. No optional `SKILL.md` bodies live beside it. |
 | `~/.claude/skills/` | Declared native-lazy Claude views, when Claude is a target. |
-| `~/.codex/skills/` | Legacy root. NeXgen does not mirror skills here, because Codex already discovers the shared root. |
+| `~/.codex/skills/` (or `$CODEX_HOME/skills`) | Native per-skill views, when Codex is a target. This is Codex's *only* skill root — it does not read `~/.agents/skills` or any other shared catalog. |
 | `~/.gemini/antigravity-cli/skills/` | Native Antigravity views, when `antigravity` is a target. Skills here surface as `/name` slash commands in the agy TUI. |
 
 Every manifest entry has an `origin`, optional native `targets`, and an
@@ -39,12 +39,14 @@ environment variable matches the skill's `owner`; everywhere else it is
 skipped, with a clear line saying so. `scope: team` (or no `scope` at
 all) still propagates to every machine, same as today.
 
-Claude can keep all declared manual views because it loads them lazily. Codex
-also progressive-discloses discovered skill bodies, but NeXgen intentionally
-keeps manual entries outside its discovery roots to minimize the initial
-metadata catalog and preserve one routing contract across every CLI. Codex,
-OpenCode, Antigravity, and local workers therefore use the same explicit
-command for manual skills:
+Claude can keep a native view for every skill that declares it in
+`targets` because it loads them lazily. Codex also progressive-discloses
+discovered skill bodies and, like Claude, keeps a native view for every
+skill that declares it in `targets` — nothing needs to be held back to
+protect a shared catalog, because Codex has no shared catalog: its only
+skill root is `$CODEX_HOME/skills`, not `~/.agents/skills`. Codex,
+OpenCode, Antigravity, and local workers use the same explicit command for
+any skill that declares no native target:
 
 ```bash
 agent-skill list
@@ -63,14 +65,18 @@ invocable everywhere. The recipe is plain manifest fields, no new schema:
 ```yaml
 my-command:
   origin: vault
-  targets: [claude, antigravity, opencode]
+  targets: [claude, codex, antigravity, opencode]
   exposure: core
 ```
 
-- `exposure: core` puts it in `~/.agents/skills`, which **Codex** (typed as
-  a `$my-command` mention) and **OpenCode** (`/my-command`) read natively.
+- `exposure: core` puts it in `~/.agents/skills`, which only **OpenCode**
+  reads natively (`/my-command`). Codex does not read this shared catalog
+  at all — see the `codex` target below.
 - The `claude` target links the native view for **Claude Code**
   (`/my-command`).
+- The `codex` target links the native view into `$CODEX_HOME/skills`
+  (default `~/.codex/skills`) — Codex's *only* skill root — where it
+  surfaces as a `$my-command` mention.
 - The `antigravity` target links the native view into
   `~/.gemini/antigravity-cli/skills/` (`/my-command` in the agy TUI).
 - The `opencode` target writes nothing — OpenCode reads the shared roots —

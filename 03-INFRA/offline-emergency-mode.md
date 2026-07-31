@@ -38,5 +38,5 @@ When the remote backend is unreachable, these fall together: note writes (MCP `v
 
 ## Remote recovery (if the VPS itself is down)
 
-- Known precedent: OOM from a container with no memory cap, a past incident. Never launch containers without `--memory`.
+- Known precedent: a container once ran with no memory cap, grew until the kernel OOM-killed it, and took the service down without warning until someone noticed and restarted it manually. Lesson: always launch containers with an explicit `--memory` limit, so a runaway process gets killed early and predictably instead of taking the host down with it.
 - Restart from the cloud provider's web console, then `ssh <remote-alias> "sudo docker ps"` and health-check the containers (`vault-mcp`, `vault-semantic`, `n8n`, the Firecrawl stack, `vault-ocr-api`).

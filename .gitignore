@@ -59,6 +59,20 @@ id_ed25519
 __pycache__/
 *.pyc
 .pytest_cache/
+.ruff_cache/
+
+# Local virtualenvs and JS dependency/build output. Without the rules below,
+# an environment created inside the checkout (`python -m venv venv`, `npm
+# install`) would be caught by `git add -A` and land in the public repo
+# wholesale. Until 2026-07-31 a `.venv` here escaped only because the venv
+# generates its own `.venv/.gitignore` that ignores itself from the inside —
+# a rule this repo neither owns nor can rely on, and one `python -m venv venv`
+# (no dot) did not get at all.
+.venv/
+venv/
+node_modules/
+dist/
+build/
 
 # OS/editor noise
 .DS_Store

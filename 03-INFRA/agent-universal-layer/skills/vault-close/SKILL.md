@@ -18,12 +18,19 @@ the session.
    whole-note rewrites, or `append_note` for additive updates). Create a
    new note only for a
    genuinely new stable topic, and then add an inbound pointer to it in
-   `00-START-HERE.md` so it stays discoverable.
+   `00-START-HERE.md` so it stays discoverable. In Local-Only mode (no
+   remote, no MCP) there is no `vault-library` to write through: edit the
+   Markdown note directly and commit it with plain `git` instead — that is
+   the correct and only path there, not a fallback
+   (`03-INFRA/vault-write-architecture.md`).
 3. If the session touched infra files (scripts, manifests, instructions),
    publish them with `vault-push`; notes written through `vault-library` are
    already committed.
 4. Verify the writes landed (read the note back or check
    `recent_activity`), then report what was saved as one short list.
 
-If the Vault is unreachable, say so and stop: durable facts must not be
-persisted anywhere else in the meantime.
+In Cloud-Server mode, if the `vault-library` MCP is genuinely unreachable,
+say so and stop: durable facts must not be persisted anywhere else in the
+meantime (report the outage, do not fall back to raw git). In Local-Only
+mode there is no server to be unreachable — the vault is a local folder;
+write and commit it directly as in step 2.

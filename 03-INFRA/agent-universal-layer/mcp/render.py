@@ -13,9 +13,13 @@ dialect.
     default (additive rule). An exact name listed under `retired_servers` is
     the deliberate exception: every generated CLI removes that stale entry.
   - Exit codes for --write: 0 = written or already compliant, 2 = blocked by
-    a safety guard (see the STOP message), 3 = the CLI's default config file
-    does not exist yet (it has never been launched once) — nothing to patch
-    until it has been opened at least once.
+    a safety guard (see the STOP message), 3 = nothing to patch. For
+    antigravity/opencode, 3 means the CLI itself isn't installed on this
+    machine at all (an installed-but-never-launched antigravity/opencode
+    gets its config file bootstrapped instead of skipped, so a fresh install
+    never stays unconfigured forever). For claude/codex, 3 still means the
+    CLI's own default config file does not exist yet -- unlike the other two,
+    their writers never fabricate one from scratch.
   - --expected-servers CLI: prints (one name per line, nothing else) the
     manifest server names that target CLI and pass require_env filtering.
     Machine-consumable, meant for other scripts (agent-doctor.sh/.ps1's
@@ -97,8 +101,45 @@ def _opencode_config_path() -> Path:
             return candidate
     return xdg_candidates[0]
 
+
+def _opencode_binary_present():
+    """Best-effort 'OpenCode is installed on this machine' probe, mirroring
+    agent-doctor.sh/.ps1's own convention (PATH lookup, falling back to the
+    known ~/.opencode/bin install location) so a config directory only gets
+    bootstrapped for a CLI that is actually here to use it."""
+    if shutil.which("opencode"):
+        return True
+    bin_dir = HOME / ".opencode" / "bin"
+    names = ("opencode.exe", "opencode.cmd", "opencode") if IS_WINDOWS else ("opencode",)
+    return any((bin_dir / name).is_file() for name in names)
+
+
+def _antigravity_present():
+    """Best-effort 'Antigravity is installed on this machine' probe.
+
+    Deliberately NOT "~/.gemini exists".  agent-sync creates ~/.gemini itself
+    -- the AGENTS.md link under antigravity-cli/, the mcp_config.json symlinks
+    under config/ and antigravity-ide/ -- so treating that directory as the
+    install marker made the provisioner react to its OWN footprint: the first
+    apply saw nothing and skipped, a later phase created ~/.gemini, and the
+    NEXT apply bootstrapped the config.  A run that only converges the second
+    time is invisible where a 30-minute timer exists and permanent where it
+    does not, which is precisely what test_apply_is_idempotent catches.
+
+    Probe the product's own footprint instead, the way the OpenCode probe
+    above already does: the CLI binary, its known install location, and the
+    settings file Antigravity writes on first launch and this provisioner
+    never touches."""
+    if shutil.which("agy"):
+        return True
+    names = ("agy.exe", "agy.cmd", "agy") if IS_WINDOWS else ("agy",)
+    if any((HOME / ".local" / "bin" / name).is_file() for name in names):
+        return True
+    return (HOME / ".gemini" / "antigravity-cli" / "settings.json").is_file()
+
 # Antigravity reaches HTTP MCP servers through this local bridge.  It is
-# intentionally exact: an implicit npx update would run new code as the user.
+# intentionally exact: an implicit update via npm exec (what the bridge
+# actually launches mcp-remote through) would run new code as the user.
 MCP_REMOTE_PACKAGE = "mcp-remote@0.1.38"
 
 SECRET_KEY = re.compile(r"(token|secret|password|authorization|bearer|api[_-]?key|cookie)", re.I)
@@ -252,7 +293,7 @@ def redact_for_log(obj):
 
 # ---- per-dialect rendering (REAL values: env-ref where needed) ------------------
 
-def r_claude(name, s):
+def r_claude(s):
     if s["transport"] == "stdio":
         return {"type": "stdio", "command": s["command"], "args": s.get("args", []), "env": s.get("env", {})}
     # header via env-ref: Claude Code expands ${VAR} in headers at startup,
@@ -260,7 +301,7 @@ def r_claude(name, s):
     return {"type": "http", "url": s["url"],
             "headers": {"Authorization": f"Bearer ${{{s['auth']['env']}}}"}}
 
-def r_codex(name, s):
+def r_codex(s):
     if s["transport"] == "stdio":
         d = {"command": s["command"], "args": s.get("args", [])}
         if s.get("env"):
@@ -271,7 +312,7 @@ def r_codex(name, s):
             "startup_timeout_sec": float(t.get("startup", 120)),
             "tool_timeout_sec": float(t.get("tool", 120))}
 
-def r_antigravity(name, s):
+def r_antigravity(s):
     if s["transport"] == "stdio":
         return {"command": s["command"], "args": s.get("args", []), "env": s.get("env", {})}
     # Antigravity's Windows launcher mangles spaces inside stdio args before
@@ -285,7 +326,7 @@ def r_antigravity(name, s):
                      s["url"], s["auth"]["env"], MCP_REMOTE_PACKAGE],
             "env": env}
 
-def r_opencode(name, s):
+def r_opencode(s):
     if s["transport"] == "stdio":
         d = {"type": "local", "command": [s["command"], *s.get("args", [])], "enabled": True}
         if s.get("timeouts", {}).get("tool"):
@@ -362,7 +403,7 @@ def load_manifest(quiet=False):
         s = os_view(s)
         if not _required_ok(s):
             if not quiet:
-                print(f">>> skip [{n}]: require_env not satisfied (Local-Only?)")
+                print(f">>> skip [{n}]: require_env {s.get('require_env')!r} not set or empty (Local-Only?)")
             continue
         out[n] = s
     return out
@@ -514,7 +555,7 @@ def cmd_diff():
         seen = set()
         for name, s in wanted.items():
             key = spec["name"](name); seen.add(key)
-            exp = spec["render"](name, s)
+            exp = spec["render"](s)
             if isinstance(current.get(key), dict) and isinstance(exp, dict):
                 exp = preserve_server_fields({key: exp}, {key: current[key]})[key]
             if key not in current:
@@ -670,10 +711,32 @@ def _atomic_write_text(path, text, encoding="utf-8"):
             time.sleep(delay)
             delay *= 2
 
+def _read_live_json(path):
+    """Read a live JSON/JSONC config for merge purposes. An existing-but-
+    empty file (0 bytes, or whitespace only -- e.g. left behind by an
+    interrupted first launch, 2026-07-30 incident) holds no data to lose:
+    treat it as a fresh empty object instead of a parse failure. Anything
+    else that fails to parse is real corruption and still raises, so callers
+    keep STOPping and pointing at a .bak-* backup exactly as before."""
+    raw = path.read_text("utf-8")
+    if raw.strip() == "":
+        return {}
+    return parse_jsonc(raw) if path.suffix == ".jsonc" else json.loads(raw)
+
+
 def write_json_section(path, key, new_section, live_section, serialize, indent_exact=None):
     if not path.exists():
         print(f">>> {path.name} not present: CLI never launched yet (no default config file), skipping."); return 3
     raw = path.read_text("utf-8")
+    if raw.strip() == "":
+        # An existing-but-empty file (0 bytes/whitespace only -- e.g. left
+        # behind by an interrupted first launch, 2026-07-30 incident) holds
+        # no data worth preserving: initialize it as an empty JSON object so
+        # the normal "section missing, insert a placeholder" path below can
+        # do its job, instead of STOPping forever on formatting that was
+        # never real content to begin with.
+        raw = "{}\n"
+        print(f">>> {path.name} was present but empty: initialized as an empty JSON object.")
     try:
         live = parse_jsonc(raw) if path.suffix == ".jsonc" else json.loads(raw)
     except (json.JSONDecodeError, ValueError) as e:
@@ -764,10 +827,21 @@ def write_json_section(path, key, new_section, live_section, serialize, indent_e
 def write_opencode():
     path = _opencode_config_path()
     if not path.exists():
-        print(f">>> {path.name} not present: OpenCode never launched yet (no default config file), skipping."); return 3
+        if not _opencode_binary_present():
+            # No OpenCode binary anywhere this machine looks for one: it is
+            # not installed here, so fabricating a config tree for it would
+            # just leave a phantom footprint on disk for nothing.
+            print(f">>> {path.name} not present: OpenCode is not installed on this machine, skipping."); return 3
+        # OpenCode IS installed but has never been launched once, so nothing
+        # has ever created its config directory -- left unattended, it stays
+        # unconfigured forever (2026-07-30 incident, same root cause as
+        # Antigravity below). Bootstrap the directory and a minimal valid
+        # config, then fall through to the normal provisioning path.
+        path.parent.mkdir(parents=True, exist_ok=True)
+        _secure_create_text(path, "{}\n")
+        print(f">>> {path.name} did not exist yet (OpenCode installed but never launched): initialized an empty config.")
     try:
-        raw = path.read_text("utf-8")
-        live = parse_jsonc(raw) if path.suffix == ".jsonc" else json.loads(raw)
+        live = _read_live_json(path)
     except (json.JSONDecodeError, ValueError) as e:
         print(f">>> STOP: {path.name} is not valid JSON/JSONC ({e}). Fix it or restore a .bak-* backup before rerunning."); return 2
     if not isinstance(live, dict):
@@ -775,7 +849,7 @@ def write_opencode():
     man = _load_manifest_or_stop()
     if man is None:
         return 2
-    gen = {n: r_opencode(n, s) for n, s in man.items() if "opencode" in s["targets"]}
+    gen = {n: r_opencode(s) for n, s in man.items() if "opencode" in s["targets"]}
     gen = preserve_server_fields(gen, live.get("mcp", {}))
     gen = keep_extras(gen, live.get("mcp", {}), "opencode", _retired_keys(man, "opencode"))
     new_mcp = reorder(gen, live.get("mcp", {}))
@@ -784,9 +858,22 @@ def write_opencode():
 def write_antigravity():
     path = HOME / ".gemini/antigravity/mcp_config.json"
     if not path.exists():
-        print(">>> mcp_config.json not present: Antigravity never launched yet (no default config file), skipping."); return 3
+        if not _antigravity_present():
+            # Antigravity is not installed here: fabricating a config tree for
+            # a CLI that isn't even on the machine would just leave a phantom
+            # footprint on disk for nothing.
+            print(">>> mcp_config.json not present: Antigravity is not installed on this machine, skipping."); return 3
+        # Antigravity IS installed but this MCP config
+        # was never created -- nothing writes it until Antigravity is opened
+        # at least once, so a machine that never launches it stays
+        # unconfigured forever (2026-07-30 incident). Bootstrap the
+        # directory and a minimal valid config, then fall through to the
+        # normal provisioning path below.
+        path.parent.mkdir(parents=True, exist_ok=True)
+        _secure_create_text(path, "{}\n")
+        print(">>> mcp_config.json did not exist yet (Antigravity installed but never launched): initialized an empty config.")
     try:
-        live = json.loads(path.read_text("utf-8"))
+        live = _read_live_json(path)
     except json.JSONDecodeError as e:
         print(f">>> STOP: {path.name} is not valid JSON ({e}). Fix it or restore a .bak-* backup before rerunning."); return 2
     if not isinstance(live, dict):
@@ -799,7 +886,7 @@ def write_antigravity():
     for n, s in man.items():
         if "antigravity" not in s["targets"]:
             continue
-        d = r_antigravity(n, s)
+        d = r_antigravity(s)
         for k, v in live_servers.get(n, {}).items():   # preserve internal extras (e.g. $typeName)
             d.setdefault(k, v)
         gen[n] = d
@@ -904,7 +991,7 @@ def write_codex(path=None):
     for n, s in man.items():
         if "codex" not in s["targets"]:
             continue
-        full = dict(r_codex(n, s))
+        full = dict(r_codex(s))
         env = full.pop("env", None)
         targets[n.replace("-", "_")] = (full, env)
 
@@ -997,12 +1084,17 @@ def write_claude(path=None):
     doesn't contain them) and ignores the mcpServers nested inside projects.
     Fail-safe: write_json_section's guards block it if anything else would be
     touched. Meant to run while Claude is CLOSED (Claude rewrites .claude.json
-    live)."""
+    live).
+    Deliberately does NOT bootstrap an absent file the way write_antigravity/
+    write_opencode now do: .claude.json also carries account/trust-list state
+    that no script can regenerate, so a missing file must stay a real "never
+    launched" signal here, never a fabricated fresh object (2026-07-30
+    incident; see cmd_reset, which refuses --reset for this exact reason)."""
     path = path or HOME / ".claude.json"
     if not path.exists():
         print(">>> .claude.json not present: Claude never launched yet (no default config file), skipping."); return 3
     try:
-        live = json.loads(path.read_text("utf-8"))
+        live = _read_live_json(path)
     except json.JSONDecodeError as e:
         print(f">>> STOP: {path.name} is not valid JSON ({e}). Fix it or restore a .bak-* backup before rerunning."); return 2
     if not isinstance(live, dict):
@@ -1015,7 +1107,7 @@ def write_claude(path=None):
     for n, s in man.items():
         if "claude" not in s["targets"]:
             continue
-        d = r_claude(n, s)   # http header already as ${VAR}: no literal token in .claude.json
+        d = r_claude(s)   # http header already as ${VAR}: no literal token in .claude.json
         gen[n] = d
     gen = preserve_server_fields(gen, live_mcp)
     gen = keep_extras(gen, live_mcp, "claude", _retired_keys(man, "claude"))
@@ -1062,6 +1154,21 @@ def _cli_config_path(cli):
         "opencode": _opencode_config_path(),
     }[cli]
 
+
+def _cli_config_candidates(cli):
+    """Every filename this CLI's config is known to use, in every directory we
+    look in. For three of the four CLIs that is exactly one path; OpenCode
+    accepts three names, and _opencode_config_path() collapses to the default
+    one as soon as no file exists. Anything that has to find the backups of a
+    REMOVED file (--revert after --reset) must search all of them."""
+    if cli != "opencode":
+        return [_cli_config_path(cli)]
+    names = ("opencode.jsonc", "opencode.json", "config.json")
+    dirs = [HOME / ".config" / "opencode"]
+    if IS_WINDOWS:
+        dirs.append(Path(os.environ.get("APPDATA") or (HOME / "AppData" / "Roaming")) / "opencode")
+    return [d / n for d in dirs for n in names]
+
 def cmd_revert(cli):
     """Restore a CLI's native config from the most recent render.py backup
     (`<file>.bak-YYYYMMDD-HHMMSS`, written on every --write that changed the
@@ -1073,6 +1180,18 @@ def cmd_revert(cli):
     itself does not parse, 3 config not present."""
     path = _cli_config_path(cli)
     backups = sorted(path.parent.glob(path.name + ".bak-*"))
+    if not backups and not path.exists():
+        # --reset removed the live file, so a path resolver that picks the
+        # first EXISTING filename (OpenCode supports three) now collapses to
+        # the default name -- while the backup --reset just wrote still sits
+        # under the name the file actually had. Without this, the undo command
+        # --reset itself prints reports "nothing to revert" with the backup
+        # lying right next to it, and the user's config is unreachable.
+        orphans = [b for c in _cli_config_candidates(cli) for b in c.parent.glob(c.name + ".bak-*")]
+        if orphans:
+            latest_orphan = max(orphans, key=lambda p: p.name)
+            path = latest_orphan.parent / latest_orphan.name.rsplit(".bak-", 1)[0]
+            backups = [latest_orphan]
     if not backups:
         if not path.exists():
             print(f">>> {path.name} not present: nothing to revert for {cli}.")
@@ -1103,19 +1222,48 @@ def cmd_revert(cli):
     return 0
 
 
+# CLIs whose --write path can recreate an absent config file from scratch
+# (BUG-A: write_antigravity/write_opencode now bootstrap a missing file when
+# the CLI itself is installed). --reset is only safe for these: for the
+# other two, removing the file would strand the user with no re-provision
+# path, only --revert.
+_RESET_RECREATABLE = {"antigravity", "opencode"}
+
+
 def cmd_reset(cli):
     """Onboarding reset: back up this CLI's whole native config, then remove it
-    so a fresh provision (agent-sync apply) recreates it clean. The inverse of
-    --revert, and reversible by it: `render.py --revert CLI` restores the file
-    from the backup written here.
-    Exit: 0 reset (or already absent)."""
+    so a fresh provision (agent-sync apply / render.py --write) recreates it
+    clean. The inverse of --revert, and reversible by it: `render.py --revert
+    CLI` restores the file from the backup written here.
+
+    Only allowed for a CLI in _RESET_RECREATABLE. claude and codex still
+    refuse: write_claude()/write_codex() never fabricate an absent config
+    file (for Claude, ~/.claude.json also carries account/trust-list state
+    no script can regenerate), so 'agent-sync apply' cannot actually
+    re-provision it after a reset -- the 2026-07-30 incident this closes was
+    exactly that: a user reset by following INIT.md, ended up logged out of
+    Claude, with the tool's own advice powerless to fix it.
+    Exit: 0 reset (or already absent), 2 refused (no re-creation path for
+    this CLI yet)."""
     path = _cli_config_path(cli)
     if not path.exists():
         print(f">>> {cli}: {path.name} not present -- already clean, nothing to reset.")
         return 0
+    if cli not in _RESET_RECREATABLE:
+        note = (
+            " it also carries your account/trust-list state, which no script can regenerate;"
+            if cli == "claude" else ""
+        )
+        print(
+            f">>> REFUSED: {cli}'s writer cannot recreate {path.name} from scratch if it's "
+            f"removed;{note} resetting it now would strand you with no way back except "
+            f"render.py --revert {cli}. Not removing anything -- open {cli} yourself for a "
+            "genuinely clean slate."
+        )
+        return 2
     bak = _secure_backup(path, path.read_text("utf-8"), "utf-8")
     path.unlink()
-    print(f">>> RESET {cli}: removed {path.name} (backup {bak.name}). Undo with: render.py --revert {cli}. Re-provision clean with: agent-sync apply.")
+    print(f">>> RESET {cli}: removed {path.name} (backup {bak.name}). Undo with: render.py --revert {cli}. Re-provision clean with: agent-sync apply (or render.py --write {cli}).")
     return 0
 
 def _bearer_var(auth_value):
@@ -1379,7 +1527,7 @@ def main():
     ap.add_argument("--adopt", metavar="CLI", choices=list(CLI),
                      help="read-only: print DRAFT manifest.yaml entries for servers in a CLI's live config that aren't in the manifest yet.")
     ap.add_argument("--reset", metavar="CLI", choices=list(CLI),
-                     help="onboarding: back up and remove a CLI's whole native config so a fresh provision recreates it clean (reversible via --revert).")
+                     help="onboarding: back up and remove a CLI's whole native config so a fresh provision recreates it clean (reversible via --revert). Refused for a CLI whose writer cannot recreate an absent config (currently claude, codex).")
     ap.add_argument("--inventory", action="store_true",
                      help="read-only onboarding scan across all CLIs: MCP servers per CLI, canonical vs out-of-manifest (foundation of the adopt/reset flow).")
     ap.add_argument("--apply", action="store_true",
