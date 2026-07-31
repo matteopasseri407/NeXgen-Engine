@@ -9,6 +9,7 @@ when an agent explicitly asks for one.
 from __future__ import annotations
 
 import argparse
+import os
 import re
 import sys
 from pathlib import Path
@@ -16,6 +17,15 @@ from pathlib import Path
 
 HOME = Path.home()
 LIBRARY = HOME / ".agents" / "skill-library"
+# Same resolution order as skills-sync.py's own VAULT/MANIFEST (KNOWLEDGE_
+# VAULT_PATH, then AGENT_VAULT_DATA as an override), kept independent here
+# rather than imported: this command must stay dependency-free at every
+# on-demand invocation (see _description() above), and importing
+# skills-sync.py would pull in argparse-time side effects it doesn't need.
+# Only Path.exists() is used below -- no YAML parsing.
+_vault = Path(os.environ.get("KNOWLEDGE_VAULT_PATH") or str(HOME / "KnowledgeVault"))
+VAULT = Path(os.environ.get("AGENT_VAULT_DATA") or str(_vault))
+MANIFEST = VAULT / "03-INFRA" / "agent-universal-layer" / "skills" / "skills.manifest.yaml"
 # Must accept every name skills-sync.py can actually place in the library,
 # or a synced skill becomes unreachable through this command (G3-nomiskill,
 # found live: a manifest name with an underscore landed in the index via
@@ -76,6 +86,23 @@ def _skills() -> list[tuple[str, Path, str]]:
     return rows
 
 
+def _guard_hint(when_manifest_present: str) -> str:
+    """The advice "run agent-sync guard" is a proven no-op on a manifest-less
+    fresh install: guard never creates skills.manifest.yaml (skills-sync.py just
+    warns and proceeds with an empty skill set when it's missing), so
+    pointing there sends the user in a loop. Distinguish the two real
+    causes: no manifest on disk at all (the fix is copying the .example),
+    vs. a manifest that exists but hasn't been synced into the library yet
+    (the existing "run agent-sync guard" advice is correct there)."""
+    if MANIFEST.is_file():
+        return when_manifest_present
+    return (
+        "No skills.manifest.yaml found -- copy skills.manifest.yaml.example "
+        "to skills.manifest.yaml (the starter commands are already listed "
+        "there), then run agent-sync guard."
+    )
+
+
 def _valid_name(name: str) -> str:
     if not NAME.fullmatch(name):
         raise ValueError("skill name must start with a letter or digit and contain only letters, digits, '.', '_' or '-'")
@@ -93,7 +120,10 @@ def _find(name: str) -> Path:
 def cmd_list(_args: argparse.Namespace) -> int:
     rows = _skills()
     if not rows:
-        print("No managed skills are installed. Run agent-sync guard first.", file=sys.stderr)
+        print(
+            f"No managed skills are installed. {_guard_hint('Run agent-sync guard first.')}",
+            file=sys.stderr,
+        )
         return 1
     for name, _path, description in rows:
         print(f"{name}\t{description or '(no description)'}")
@@ -126,9 +156,9 @@ def cmd_show(args: argparse.Namespace) -> int:
         print(f"Invalid skill name: {exc}", file=sys.stderr)
         return 2
     except FileNotFoundError:
+        hint = _guard_hint("Run agent-sync guard, or use agent-skill find to choose one.")
         print(
-            f"Managed skill '{args.name}' is not installed. "
-            "Run agent-sync guard, or use agent-skill find to choose one.",
+            f"Managed skill '{args.name}' is not installed. {hint}",
             file=sys.stderr,
         )
         return 1

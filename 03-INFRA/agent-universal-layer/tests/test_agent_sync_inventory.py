@@ -6,6 +6,24 @@ from __future__ import annotations
 from conftest import load_agent_sync_module
 
 
+def test_inventory_cli_exits_2_when_mcp_manifest_is_broken(sandbox, monkeypatch, capsys):
+    """Regression: _inventory_cli always `return 0`, ignoring render.py
+    --inventory's own returncode -- contradicting its own docstring ("Exit 0
+    (report) or 2 on an env/config error"). A missing/invalid MCP manifest
+    makes render.py print '>>> STOP: invalid MCP manifest' and exit 2; the
+    wrapper must propagate that, not silently report success."""
+    mod = load_agent_sync_module(sandbox)
+    monkeypatch.setenv("HOME", str(sandbox.home))
+    monkeypatch.setenv("KNOWLEDGE_VAULT_PATH", str(sandbox.vault))
+    (sandbox.mcp_dir / "manifest.yaml").unlink()
+
+    rc = mod._inventory_cli([])
+
+    assert rc == 2
+    err = capsys.readouterr().err
+    assert "STOP" in err
+
+
 def test_skill_inventory_split(sandbox):
     mod = load_agent_sync_module(sandbox)
     canonical, extras, missing = mod._skill_inventory({"a", "b"}, ["a", "c"])

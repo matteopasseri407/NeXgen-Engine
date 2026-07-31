@@ -392,6 +392,31 @@ def test_pull_reports_remote_missing_when_configured_remote_was_never_added(sand
     assert not outcome.allows_apply
 
 
+def test_pull_fetch_failed_carries_git_stderr_not_just_a_generic_label(sandbox, monkeypatch):
+    """Regression: pull() used to discard `git fetch`'s own stderr and reduce
+    every failure reason (bad DNS, expired creds, wrong URL...) to the same
+    static "fetch of {remote}/{branch} failed" text, both in the returned
+    outcome and in the log line the CLI tells operators to check for detail.
+    Delete the remote (leaving it configured, so `remote get-url` still
+    succeeds and the fetch step itself is what fails) to get a real,
+    identifiable git error and confirm that reason -- not merely a generic
+    label -- reaches both places."""
+    mod = load_agent_sync_module(sandbox)
+    remotes = _init_git_vault(sandbox, "oracle")
+    shutil.rmtree(remotes["oracle"])
+    env = _env_for(sandbox, monkeypatch, mod, KNOWLEDGE_VAULT_REMOTE="oracle")
+
+    outcome = mod.pull(env)
+
+    assert outcome.state == mod.PullState.FETCH_FAILED
+    assert not outcome.allows_apply
+    # The deleted remote's own path is git's real diagnostic, not something
+    # the old static "fetch of oracle/main failed" text could ever contain.
+    assert str(remotes["oracle"]) in outcome.message
+    log = (sandbox.home / ".local" / "state" / "agent-sync.log").read_text(encoding="utf-8")
+    assert str(remotes["oracle"]) in log
+
+
 def test_pull_reports_error_on_unrelated_histories(sandbox, monkeypatch):
     """Local `main` and `oracle/main` both exist and both fetch/rev-parse
     fine (so neither FETCH_FAILED nor a rev-parse failure fires first) --

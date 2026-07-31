@@ -840,12 +840,26 @@ ANTIGRAVITY_POSTURE_RENDER: dict[str, dict[str, str]] = {
 
 # Verified guardrail-HOOK wiring targets -- separate from PERMISSION_RENDERERS
 # above: a CLI can have a verified posture renderer (e.g. Codex bypass) while
-# still having no wired PreToolUse-style guardrail hook at all. Today that is
-# every CLI except Claude; declaring a hook for any other CLI here is still a
-# hard manifest error, not a warn-and-skip, because porting the guardrail
-# itself is separate future work (see the CLI permissions recon), not
-# something this engine should silently pretend to support.
-PERMISSION_HOOK_TARGETS = {"claude"}
+# still having no wired PreToolUse-style guardrail hook at all. Declaring a
+# hook for any CLI NOT in this set is still a hard manifest error, not a
+# warn-and-skip, because porting the guardrail itself for that CLI is
+# unstarted work, not something this engine should silently pretend to
+# support (see the CLI permissions recon).
+#
+# Codex is deliberately absent. Its I/O contract (deny/allow/ask,
+# permissionDecisionReason) is verified from the installed binary's own
+# embedded schema -- as solid as Claude's -- but Codex gates every hook
+# behind a persisted, per-hash TRUST prompt a human must accept once
+# interactively, or an explicit `--dangerously-bypass-hook-trust` flag a
+# provisioner would have to pass itself. A hook this engine writes would
+# therefore not run at all until one of those happens, which is a silent,
+# structural gap wearing the appearance of a working guardrail -- worse than
+# having none. Declaring codex here requires the owner to first decide,
+# explicitly, which of the two trust paths to take; guessing is not an
+# option. OpenCode and Antigravity have no such gate (see the recon): a
+# hook/plugin placed in their own config runs unconditionally on the next
+# launch, which is exactly what makes them safely implementable today.
+PERMISSION_HOOK_TARGETS = {"claude", "opencode", "antigravity"}
 PERMISSION_HOOK_EVENTS = {
     "PreToolUse",
     "PostToolUse",
@@ -856,6 +870,35 @@ PERMISSION_HOOK_EVENTS = {
     "UserPromptSubmit",
     "Stop",
 }
+
+# Per-CLI hook EVENTS this engine has a verified adapter for -- a second,
+# finer axis than PERMISSION_HOOK_TARGETS (which only says "some wiring
+# exists"). Claude's own dedicated wiring (_apply_claude_permissions in
+# agent_sync.py) accepts every event in PERMISSION_HOOK_EVENTS already.
+# OpenCode and Antigravity's adapters exist ONLY for the PreToolUse-shaped,
+# shell-command guardrail this whole feature is about: OpenCode has no
+# decision-bearing hook for any other lifecycle point at all (see the recon
+# -- `tool.execute.before` cannot deny), and Antigravity's
+# PreInvocation/PostInvocation/Stop hooks were never exercised against this
+# engine. A manifest hook naming an event outside this set for one of these
+# two targets is refused for THAT target alone (agent_sync._guardrail_specs_for),
+# never guessed at, exactly like an unverified posture value above.
+VERIFIED_HOOK_EVENTS: dict[str, frozenset[str]] = {
+    "claude": frozenset(PERMISSION_HOOK_EVENTS),
+    "opencode": frozenset({"PreToolUse"}),
+    "antigravity": frozenset({"PreToolUse"}),
+}
+
+# The only Claude-vocabulary tool matcher the OpenCode/Antigravity adapters
+# can translate. A manifest hook's `matcher` field names a CLAUDE tool (e.g.
+# "Bash") -- it has no meaning to another CLI's own tool vocabulary, so the
+# adapters below hardcode the one mapping that IS verified: OpenCode's
+# `permission.ask` fires on `input.type === "bash"`; Antigravity's own
+# `PreToolUse` grouping matches its shell tool by the literal string
+# "run_command". A manifest matcher naming any other Claude tool has nothing
+# for either adapter to translate to and is refused for that target, same as
+# an unsupported event above.
+GUARDRAIL_SHELL_MATCHER = "Bash"
 
 
 def validate_permissions_manifest(data: Any, source: str | Path) -> dict[str, Any]:

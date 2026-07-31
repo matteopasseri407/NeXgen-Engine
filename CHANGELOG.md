@@ -15,6 +15,27 @@ provisioning failure that let a whole CLI stay unconfigured forever.
 
 ### Added
 
+- **The guardrail reaches OpenCode and Antigravity.** Until now a posture that
+  removed every confirmation prompt was only ever backed by a brake on Claude,
+  because Claude was the only CLI whose pre-execution hook this engine knew how
+  to speak. A manifest guardrail hook can now target `opencode` and
+  `antigravity` too: a thin engine-owned adapter per CLI translates their
+  native hook contract to and from the same stdin/stdout shape a Claude
+  guardrail body already speaks, so one guardrail body serves every CLI and
+  the dangerous-command logic is never duplicated. The ordering that matters
+  is unchanged and now applies to all three: if a declared guardrail cannot be
+  installed, the no-prompt posture for that CLI never reaches disk.
+  Codex is deliberately excluded. Its hook mechanism gates every hook behind a
+  per-hash trust prompt that a provisioner cannot satisfy on its own, and the
+  alternative — passing its bypass-trust flag — would install a brake that only
+  looks like one. Declaring a Codex guardrail is a hard manifest error rather
+  than a half-working install.
+  The adapters fail closed: a sidecar that exists but cannot be parsed falls
+  back to asking for confirmation, never to allowing, and a guardrail body that
+  crashes or answers nothing usable does the same. The OpenCode plugin
+  registers its handler whether or not any guardrail is configured yet, so a
+  session already running when the guardrail is installed is covered from its
+  next command rather than never.
 - Permission posture renderers for Codex, OpenCode and Antigravity. The phase
   used to translate a posture for Claude only, so a manifest that named
   another CLI was policy the engine could read and never apply. Each dialect

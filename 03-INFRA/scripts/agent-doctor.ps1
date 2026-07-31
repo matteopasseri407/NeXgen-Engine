@@ -136,7 +136,25 @@ try {
 sec "Vault (memory) - authoritative remote and mirrors"
 if ($RemoteConfigError) { bad "invalid sync remote config - run: agent-sync config authoritative_remote" } else { ok "sync remote config resolved ($Remote)" }
 if (Test-Path -LiteralPath (Join-Path $Vault ".git")) {
-  if ($Remote -eq "local" -or $Remote -eq "none") {
+  # Mid-rebase/merge guard (checked before the Local-Only vs remote-configured
+  # split below, so it covers both): a conflicted `git pull --rebase` -- the
+  # exact recovery agent_sync.py's own vault-push publish path tells the user
+  # to run by hand on a conflicting divergence -- left main/HEAD in a state
+  # the ahead/behind/dirty checks below cannot tell apart from ordinary
+  # unpushed commits or an ordinary dirty tree: `git status --porcelain`
+  # reports a conflicted file (e.g. "UU file.txt") as just one more line, and
+  # rev-list --count on branch refs is unaffected by a detached HEAD mid-
+  # rebase. Left alone, this doctor would print "commits behind" / "not
+  # committed" -- wording that invites a naive `git add -A; git commit` that
+  # bakes conflict markers straight into the vault instead of resolving them.
+  # Detected via the same on-disk state `git status` itself reads, not a
+  # subprocess parse of its text.
+  $vaultGitDir = (gitc @("rev-parse", "--absolute-git-dir"))
+  if ($vaultGitDir -and ((Test-Path -LiteralPath (Join-Path $vaultGitDir "rebase-merge")) -or (Test-Path -LiteralPath (Join-Path $vaultGitDir "rebase-apply")))) {
+    bad "vault is mid-rebase with a conflict to resolve - run: git -C `"$Vault`" rebase --abort (or resolve and rebase --continue), THEN re-run this check"
+  } elseif ($vaultGitDir -and (Test-Path -LiteralPath (Join-Path $vaultGitDir "MERGE_HEAD"))) {
+    bad "vault is mid-merge with a conflict to resolve - run: git -C `"$Vault`" merge --abort (or resolve and commit), THEN re-run this check"
+  } elseif ($Remote -eq "local" -or $Remote -eq "none") {
     # Local-Only sentinel (matches agent_sync.py's pull()/publish(): env.remote
     # in ("local", "none")): there is no authoritative remote to compare
     # against, so a fetch/ahead/behind/mirror check would otherwise try

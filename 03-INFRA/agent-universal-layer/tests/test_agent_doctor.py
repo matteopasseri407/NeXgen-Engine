@@ -315,6 +315,75 @@ def test_non_local_remote_still_runs_the_real_fetch_ahead_behind_checks(sandbox)
     assert "commits behind the cloud" in result.stdout, result.stdout
 
 
+# ── Mid-rebase/merge conflict must be named, not mislabeled as ordinary
+# "commits behind" / "not committed" drift. Confirmed bug: a `git pull
+# --rebase` that hits a conflict (the exact recovery agent_sync.py's own
+# vault-push publish path tells the user to run by hand on a conflicting
+# divergence) left main/HEAD mid-rebase; the old ahead/behind/dirty checks
+# below could not tell that apart from ordinary unpushed commits or a
+# routine dirty tree, and printed generic wording that invites a naive
+# `git add -A && git commit` baking conflict markers straight into the vault.
+
+def test_vault_mid_rebase_conflict_gets_a_dedicated_fail_not_generic_warnings(sandbox):
+    _init_vault_git_repo(sandbox)
+    rebase_merge = sandbox.vault / ".git" / "rebase-merge"
+    rebase_merge.mkdir()
+    (rebase_merge / "head-name").write_text("refs/heads/main\n", encoding="utf-8")
+
+    result = _run_doctor(sandbox, env_overrides={"KNOWLEDGE_VAULT_REMOTE": "oracle"})
+
+    assert "mid-rebase" in result.stdout, result.stdout
+    assert "rebase --abort" in result.stdout, result.stdout
+    assert "commits behind the cloud" not in result.stdout, result.stdout
+    assert "unpublished local commits" not in result.stdout, result.stdout
+    assert "tracked files not committed" not in result.stdout, result.stdout
+
+
+@pytest.mark.parametrize("sentinel", ["local", "none"])
+def test_vault_mid_rebase_conflict_detected_in_local_only_mode_too(sandbox, sentinel):
+    """The guard sits before the Local-Only/remote-configured split, so a
+    Local-Only install caught mid-rebase (e.g. from a manual `git rebase`
+    against a mirror) must also get the dedicated fail, not the Local-Only
+    branch's own generic "tracked files not committed" warning."""
+    _init_vault_git_repo(sandbox)
+    (sandbox.vault / ".git" / "rebase-apply").mkdir()
+
+    result = _run_doctor(sandbox, env_overrides={"KNOWLEDGE_VAULT_REMOTE": sentinel})
+
+    assert "mid-rebase" in result.stdout, result.stdout
+    assert "tracked files not committed" not in result.stdout, result.stdout
+    assert f"Local-Only mode ({sentinel})" not in result.stdout, result.stdout
+
+
+def test_vault_mid_merge_conflict_gets_a_dedicated_fail(sandbox):
+    _init_vault_git_repo(sandbox)
+    (sandbox.vault / ".git" / "MERGE_HEAD").write_text(
+        "0000000000000000000000000000000000000000\n", encoding="utf-8"
+    )
+
+    result = _run_doctor(sandbox, env_overrides={"KNOWLEDGE_VAULT_REMOTE": "oracle"})
+
+    assert "mid-merge" in result.stdout, result.stdout
+    assert "merge --abort" in result.stdout, result.stdout
+    assert "commits behind the cloud" not in result.stdout, result.stdout
+
+
+def test_vault_mid_rebase_guard_present_in_both_twins():
+    repo = Path(__file__).resolve().parents[3]
+    bash = (repo / "03-INFRA/scripts/agent-doctor.sh").read_text(encoding="utf-8")
+    powershell = (repo / "03-INFRA/scripts/agent-doctor.ps1").read_text(encoding="utf-8")
+    for content in (bash, powershell):
+        assert "rebase-merge" in content
+        assert "rebase-apply" in content
+        assert "MERGE_HEAD" in content
+        assert "mid-rebase" in content
+        assert "mid-merge" in content
+    assert 'fail "vault is mid-rebase' in bash
+    assert 'fail "vault is mid-merge' in bash
+    assert 'bad "vault is mid-rebase' in powershell
+    assert 'bad "vault is mid-merge' in powershell
+
+
 # ── Mode-based gating of MCP connector checks ─────────────────────────────
 # Architectural-review finding: the "MCP connectors — reachability" and
 # "Tokens in env" sections hard-FAILed unconditionally on n8n/firecrawl/

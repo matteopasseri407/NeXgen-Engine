@@ -24,6 +24,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import shutil
 import stat
 import subprocess
 import threading
@@ -698,6 +699,41 @@ def test_unknown_runner_rejected(groom_env):
     proc = _run(groom_env, "preview", extra_env={"GROOM_RUNNER": "some-other-cli"}, stdin_input="")
     assert proc.returncode == 2
     assert "unknown GROOM_RUNNER" in proc.stderr
+
+
+def test_default_runner_missing_from_path_fails_loud_before_any_invocation(groom_env, tmp_path):
+    # Before this fix, `claude|codex|agy)` was a bare no-op in the RUNNER
+    # validation case -- only GROOM_RUNNER=opencode got an explanatory
+    # error. A bare invocation (default RUNNER=claude) on a machine that
+    # never installed the claude CLI crashed with a raw shell
+    # "command not found" (exit 127) instead of the same courtesy. Build a
+    # PATH with just enough coreutils for the wrapper to reach its own
+    # RUNNER validation (readlink, dirname, date -- all used before that
+    # point) but with none of groom_env's stub claude/codex/agy on it, so
+    # "claude" genuinely does not resolve.
+    minimal_bin = tmp_path / "minimal-bin"
+    minimal_bin.mkdir()
+    for tool in ("readlink", "dirname", "date"):
+        real = shutil.which(tool)
+        assert real, f"{tool} must be on the test host's PATH for this test to run"
+        (minimal_bin / tool).symlink_to(real)
+    assert shutil.which("claude", path=str(minimal_bin)) is None
+
+    bash = shutil.which("bash")
+    assert bash, "bash must be on the test host's PATH for this test to run"
+    env = dict(groom_env["env"])
+    env["PATH"] = str(minimal_bin)
+    proc = subprocess.run(
+        [bash, str(GROOM_SH), "preview"],
+        env=env,
+        input="",
+        capture_output=True,
+        text=True,
+    )
+    assert proc.returncode == 2, proc.stdout + proc.stderr
+    assert "not found on PATH" in proc.stderr
+    assert "command not found" not in proc.stderr
+    assert not groom_env["record"].exists()
 
 
 # --- The audit gate: out-of-scope edits, non-linear history, staleness,

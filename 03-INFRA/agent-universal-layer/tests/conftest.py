@@ -174,6 +174,10 @@ def _copy_engine_scripts(sandbox: Sandbox) -> None:
     shutil.copy2(FIXTURES / "manifest.yaml", sandbox.mcp_dir / "manifest.yaml")
     shutil.copy2(FIXTURES / "AGENTS.md", sandbox.ul / "instructions" / "AGENTS.md")
     shutil.copy2(FIXTURES / "claude-vault-checkpoint.mjs", sandbox.ul / "hooks" / "claude-vault-checkpoint.mjs")
+    shutil.copy2(FIXTURES / "opencode-guardrail-plugin.mjs", sandbox.ul / "hooks" / "opencode-guardrail-plugin.mjs")
+    shutil.copy2(
+        FIXTURES / "antigravity-guardrail-adapter.mjs", sandbox.ul / "hooks" / "antigravity-guardrail-adapter.mjs"
+    )
     shutil.copy2(FIXTURES / "skills.manifest.yaml", sandbox.skills_dir / "skills.manifest.yaml")
     for skill_dir in (FIXTURES / "skills").iterdir():
         if skill_dir.is_dir():

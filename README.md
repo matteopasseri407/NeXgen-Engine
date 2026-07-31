@@ -27,7 +27,12 @@ The security model and reporting instructions are in [`SECURITY.md`](SECURITY.md
 
 ## Demo path
 
-1. Clone the repository and run the preflight: `bash install.sh --check` on Linux/Mac, or `.\install.ps1 -Check` from PowerShell on Windows. It checks prerequisites, verifies the vault scaffold, and lists which supported AI tools it finds on your machine. It writes nothing.
+1. Clone the repository into `~/KnowledgeVault`, then run the preflight:
+   ```bash
+   git clone https://github.com/matteopasseri407/NeXgen-Engine.git ~/KnowledgeVault
+   cd ~/KnowledgeVault
+   ```
+   `bash install.sh --check` on Linux/Mac, or `.\install.ps1 -Check` from PowerShell on Windows. It checks prerequisites, verifies the vault scaffold, and lists which supported AI tools it finds on your machine. It writes nothing.
 2. Open `INIT.md` and paste it into a filesystem-capable CLI such as Claude Code, Codex, OpenCode, or Antigravity. A web chat cannot write files. The setup asks how many tools and machines you plan to use, whether you want Local-Only or Cloud-Server mode, and then writes `99-INDEX/USER-PROFILE.md`. If you already run CLIs configured with their own MCP servers, skills, or configs, Step 1.5 takes over that existing setup: it inventories what is there and lets you adopt it into the canonical source or start fresh.
 3. The agent mounts the MCP servers and skills for your chosen CLI(s), following the manifests in `03-INFRA/`.
 4. If you are using the MULTI profile, run `agent-sync apply` to propagate the canonical configuration.

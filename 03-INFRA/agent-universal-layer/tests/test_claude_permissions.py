@@ -110,6 +110,56 @@ def _write_antigravity_config(sandbox, data=None):
     return path
 
 
+def _write_antigravity_hooks_json(sandbox, data):
+    path = sandbox.home / ".gemini" / "config" / "hooks.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    return path
+
+
+def _guardrail_manifest_for(cli: str, *, posture: str = "bypass") -> str:
+    """A manifest whose guardrail hook targets Claude AND `cli`, sharing the
+    same body file `_write_manifest` deploys under hooks/guardrail.mjs."""
+    return (
+        "schema_version: 1\n"
+        "posture:\n"
+        "  claude: bypass\n"
+        f"  {cli}: {posture}\n"
+        "hooks:\n"
+        "  - name: guardrail\n"
+        "    file: hooks/guardrail.mjs\n"
+        f"    targets: [claude, {cli}]\n"
+        "    event: PreToolUse\n"
+        "    matcher: Bash\n"
+        "    timeout: 5\n"
+    )
+
+
+def _two_hook_manifest(cli: str, *, posture: str = "bypass") -> str:
+    """Claude's own guardrail (body present) is entirely separate from
+    `cli`'s own (body deliberately never written) -- so a failure installing
+    `cli`'s guardrail can be asserted independently of Claude's own success."""
+    return (
+        "schema_version: 1\n"
+        "posture:\n"
+        "  claude: bypass\n"
+        f"  {cli}: {posture}\n"
+        "hooks:\n"
+        "  - name: guardrail\n"
+        "    file: hooks/guardrail.mjs\n"
+        "    targets: [claude]\n"
+        "    event: PreToolUse\n"
+        "    matcher: Bash\n"
+        "    timeout: 5\n"
+        f"  - name: {cli}-guardrail\n"
+        "    file: hooks/missing.mjs\n"
+        f"    targets: [{cli}]\n"
+        "    event: PreToolUse\n"
+        "    matcher: Bash\n"
+        "    timeout: 5\n"
+    )
+
+
 # ---- the safety net: no policy, no change ---------------------------------
 
 def test_absent_manifest_is_a_complete_no_op(sandbox, agent_sync, env):
@@ -499,3 +549,276 @@ def test_antigravity_config_absent_is_a_no_op(sandbox, agent_sync, env):
     assert agent_sync.claude_permissions(env) is True
 
     assert not (sandbox.home / ".gemini" / "antigravity-cli").exists()
+
+
+# ---- OpenCode guardrail hook: plugin + sidecar config ----------------------
+
+def test_opencode_guardrail_hook_is_installed_and_registered(sandbox, agent_sync, env):
+    _write_manifest(sandbox, _guardrail_manifest_for("opencode"))
+    _write_settings(sandbox)
+    path = _write_opencode_config(sandbox, {
+        "model": "fake-provider/fake-model",
+        "plugin": ["some-other-plugin"],
+    })
+
+    assert agent_sync.claude_permissions(env) is True
+
+    config = json.loads(path.read_text(encoding="utf-8"))
+    plugin_dst = path.parent / "nexgen-guardrail-plugin.mjs"
+    # Registration is additive: the user's own plugin survives, ours is appended.
+    assert config["plugin"] == ["some-other-plugin", f"file://{plugin_dst}"]
+    assert config["permission"] == {"edit": "allow", "bash": "allow"}
+
+    assert plugin_dst.read_bytes() == (sandbox.ul / "hooks" / "opencode-guardrail-plugin.mjs").read_bytes()
+    body_dst = path.parent / "nexgen-guardrail-hooks" / "guardrail.mjs"
+    assert body_dst.read_text(encoding="utf-8") == GUARDRAIL_BODY
+    sidecar = json.loads((path.parent / "nexgen-guardrail.config.json").read_text(encoding="utf-8"))
+    assert sidecar == {"hooks": [{"file": str(body_dst), "timeout": 5}]}
+
+    # The guardrail is actually in place, so bypass must not carry the
+    # "running without a net" warning.
+    log = env.log_path.read_text(encoding="utf-8")
+    assert not any("opencode" in line and "WITHOUT A NET" in line for line in log.splitlines())
+
+
+def test_opencode_guardrail_hook_is_idempotent(sandbox, agent_sync, env):
+    _write_manifest(sandbox, _guardrail_manifest_for("opencode"))
+    _write_settings(sandbox)
+    path = _write_opencode_config(sandbox)
+
+    assert agent_sync.claude_permissions(env) is True
+    after_first = path.read_text(encoding="utf-8")
+    plugin_dst = path.parent / "nexgen-guardrail-plugin.mjs"
+    sidecar_path = path.parent / "nexgen-guardrail.config.json"
+    sidecar_after_first = sidecar_path.read_text(encoding="utf-8")
+    backups = list(path.parent.glob(f"{path.name}.pre-permissions-*.bak"))
+    assert len(backups) == 1
+
+    assert agent_sync.claude_permissions(env) is True
+
+    assert path.read_text(encoding="utf-8") == after_first
+    assert sidecar_path.read_text(encoding="utf-8") == sidecar_after_first
+    backups = list(path.parent.glob(f"{path.name}.pre-permissions-*.bak"))
+    assert len(backups) == 1  # unchanged: nothing was rewritten the 2nd time
+    config = json.loads(path.read_text(encoding="utf-8"))
+    assert config["plugin"].count(f"file://{plugin_dst}") == 1  # no duplicate registration
+
+
+def test_opencode_guardrail_body_missing_refuses_opencode_posture_and_the_phase(sandbox, agent_sync, env):
+    """A body renderable in principle (PreToolUse/Bash) but missing on disk is
+    a hard_fail: unlike an unverified dialect, this must fail the whole phase,
+    same as Claude's own missing-hook-body precedent."""
+    _write_manifest(sandbox, _two_hook_manifest("opencode"))
+    _write_settings(sandbox)
+    path = _write_opencode_config(sandbox)
+    before = path.read_text(encoding="utf-8")
+
+    assert agent_sync.claude_permissions(env) is False
+
+    assert path.read_text(encoding="utf-8") == before
+    assert not (path.parent / "nexgen-guardrail-plugin.mjs").exists()
+    # Claude's own guardrail+posture, entirely separate, still lands.
+    assert _settings(sandbox)["permissions"]["defaultMode"] == "bypassPermissions"
+
+
+def test_opencode_guardrail_hard_fail_without_declared_posture_still_fails_the_phase(sandbox, agent_sync, env):
+    """A broken guardrail install is a real error independent of whether
+    bypass was ever requested for that CLI -- the phase must still fail
+    even with no `posture.opencode` entry at all."""
+    manifest = (
+        "schema_version: 1\n"
+        "posture:\n"
+        "  claude: bypass\n"
+        "hooks:\n"
+        "  - name: guardrail\n"
+        "    file: hooks/guardrail.mjs\n"
+        "    targets: [claude]\n"
+        "    event: PreToolUse\n"
+        "    matcher: Bash\n"
+        "    timeout: 5\n"
+        "  - name: opencode-guardrail\n"
+        "    file: hooks/missing.mjs\n"
+        "    targets: [opencode]\n"
+        "    event: PreToolUse\n"
+        "    matcher: Bash\n"
+        "    timeout: 5\n"
+    )
+    _write_manifest(sandbox, manifest)
+    _write_settings(sandbox)
+    _write_opencode_config(sandbox)
+
+    assert agent_sync.claude_permissions(env) is False
+
+    assert _settings(sandbox)["permissions"]["defaultMode"] == "bypassPermissions"
+
+
+def test_opencode_guardrail_unrenderable_event_blocks_only_opencode_posture(sandbox, agent_sync, env):
+    """SessionStart has no OpenCode adapter (see VERIFIED_HOOK_EVENTS): warn
+    and leave it uninstalled, block ONLY opencode's posture, and -- unlike a
+    hard_fail -- do not fail the whole phase."""
+    manifest = _guardrail_manifest_for("opencode").replace("event: PreToolUse", "event: SessionStart")
+    _write_manifest(sandbox, manifest)
+    _write_settings(sandbox)
+    path = _write_opencode_config(sandbox)
+    before = path.read_text(encoding="utf-8")
+
+    assert agent_sync.claude_permissions(env) is True
+
+    assert path.read_text(encoding="utf-8") == before
+    assert not (path.parent / "nexgen-guardrail-plugin.mjs").exists()
+    assert _settings(sandbox)["permissions"]["defaultMode"] == "bypassPermissions"
+    log = env.log_path.read_text(encoding="utf-8")
+    assert "opencode guardrail hook declared" in log
+    assert "UNINSTALLED" in log
+    assert "opencode posture stays UNAPPLIED" in log
+
+
+def test_opencode_guardrail_unrenderable_matcher_blocks_only_opencode_posture(sandbox, agent_sync, env):
+    """A matcher naming a Claude tool other than Bash has nothing to
+    translate to on the OpenCode side (see GUARDRAIL_SHELL_MATCHER)."""
+    manifest = _guardrail_manifest_for("opencode").replace("matcher: Bash", "matcher: Edit")
+    _write_manifest(sandbox, manifest)
+    _write_settings(sandbox)
+    path = _write_opencode_config(sandbox)
+
+    assert agent_sync.claude_permissions(env) is True
+
+    assert "permission" not in json.loads(path.read_text(encoding="utf-8"))
+    log = env.log_path.read_text(encoding="utf-8")
+    assert "opencode posture stays UNAPPLIED" in log
+
+
+def test_opencode_guardrail_absent_config_leaves_bypass_without_a_net_warning(sandbox, agent_sync, env):
+    """No guardrail declared at all for opencode: bypass still applies (the
+    manifest owner's explicit will), but must warn loudly it runs with no
+    net -- unchanged behavior, now exercised for opencode specifically."""
+    manifest = VALID_MANIFEST.replace("  claude: bypass\n", "  claude: bypass\n  opencode: bypass\n")
+    _write_manifest(sandbox, manifest)
+    _write_settings(sandbox)
+    _write_opencode_config(sandbox)
+
+    assert agent_sync.claude_permissions(env) is True
+
+    log = env.log_path.read_text(encoding="utf-8")
+    assert any("opencode" in line and "WITHOUT A NET" in line for line in log.splitlines())
+
+
+# ---- Antigravity guardrail hook: hooks.json + adapter ----------------------
+
+def test_antigravity_guardrail_hook_is_installed_and_registered(sandbox, agent_sync, env):
+    _write_manifest(sandbox, _guardrail_manifest_for("antigravity"))
+    _write_settings(sandbox)
+    _write_antigravity_config(sandbox)
+    other_key = {"enabled": True, "PreToolUse": [{"matcher": "write_file", "hooks": [{"type": "command", "command": "echo hi", "timeout": 5}]}]}
+    hooks_path = _write_antigravity_hooks_json(sandbox, {"some-other-hook": other_key})
+
+    assert agent_sync.claude_permissions(env) is True
+
+    data = json.loads(hooks_path.read_text(encoding="utf-8"))
+    # A hook name that isn't ours, and that we never wrote, survives untouched.
+    assert data["some-other-hook"] == other_key
+
+    adapter_dst = hooks_path.parent / "nexgen-guardrail-adapter.mjs"
+    entry = data["nexgen-guardrail"]
+    assert entry["enabled"] is True
+    assert entry["PreToolUse"][0]["matcher"] == "run_command"
+    assert entry["PreToolUse"][0]["hooks"][0]["command"] == f'node "{adapter_dst}"'
+
+    assert adapter_dst.read_bytes() == (sandbox.ul / "hooks" / "antigravity-guardrail-adapter.mjs").read_bytes()
+    body_dst = hooks_path.parent / "nexgen-guardrail-hooks" / "guardrail.mjs"
+    assert body_dst.read_text(encoding="utf-8") == GUARDRAIL_BODY
+    sidecar = json.loads((hooks_path.parent / "nexgen-guardrail.config.json").read_text(encoding="utf-8"))
+    assert sidecar == {"hooks": [{"file": str(body_dst), "timeout": 5}]}
+
+    settings = json.loads((sandbox.home / ".gemini" / "antigravity-cli" / "settings.json").read_text(encoding="utf-8"))
+    assert settings["toolPermission"] == "always-proceed"
+    log = env.log_path.read_text(encoding="utf-8")
+    assert not any("antigravity" in line and "WITHOUT A NET" in line for line in log.splitlines())
+
+
+def test_antigravity_guardrail_hook_is_idempotent(sandbox, agent_sync, env):
+    _write_manifest(sandbox, _guardrail_manifest_for("antigravity"))
+    _write_settings(sandbox)
+    _write_antigravity_config(sandbox)
+
+    assert agent_sync.claude_permissions(env) is True
+    hooks_path = sandbox.home / ".gemini" / "config" / "hooks.json"
+    after_first = hooks_path.read_text(encoding="utf-8")
+    backups = list(hooks_path.parent.glob("hooks.json.pre-permissions-*.bak"))
+    assert len(backups) == 0  # file did not exist before this run -- nothing to back up
+
+    assert agent_sync.claude_permissions(env) is True
+
+    assert hooks_path.read_text(encoding="utf-8") == after_first
+    backups = list(hooks_path.parent.glob("hooks.json.pre-permissions-*.bak"))
+    assert len(backups) == 0  # still nothing rewritten
+
+
+def test_antigravity_guardrail_hook_backs_up_before_overwriting_existing_file(sandbox, agent_sync, env):
+    _write_manifest(sandbox, _guardrail_manifest_for("antigravity"))
+    _write_settings(sandbox)
+    _write_antigravity_config(sandbox)
+    _write_antigravity_hooks_json(sandbox, {"pre-existing": {"enabled": True}})
+
+    assert agent_sync.claude_permissions(env) is True
+
+    hooks_path = sandbox.home / ".gemini" / "config" / "hooks.json"
+    backups = list(hooks_path.parent.glob("hooks.json.pre-permissions-*.bak"))
+    assert len(backups) == 1
+    assert json.loads(backups[0].read_text(encoding="utf-8")) == {"pre-existing": {"enabled": True}}
+
+
+def test_antigravity_guardrail_body_missing_refuses_antigravity_posture_and_the_phase(sandbox, agent_sync, env):
+    _write_manifest(sandbox, _two_hook_manifest("antigravity"))
+    _write_settings(sandbox)
+    _write_antigravity_config(sandbox)
+
+    assert agent_sync.claude_permissions(env) is False
+
+    assert not (sandbox.home / ".gemini" / "config" / "hooks.json").exists()
+    assert _settings(sandbox)["permissions"]["defaultMode"] == "bypassPermissions"
+
+
+def test_antigravity_guardrail_unrenderable_matcher_blocks_only_antigravity_posture(sandbox, agent_sync, env):
+    manifest = _guardrail_manifest_for("antigravity").replace("matcher: Bash", "matcher: Edit")
+    _write_manifest(sandbox, manifest)
+    _write_settings(sandbox)
+    path = _write_antigravity_config(sandbox)
+    before = path.read_text(encoding="utf-8")
+
+    assert agent_sync.claude_permissions(env) is True
+
+    assert path.read_text(encoding="utf-8") == before
+    assert not (sandbox.home / ".gemini" / "config" / "hooks.json").exists()
+    log = env.log_path.read_text(encoding="utf-8")
+    assert "antigravity guardrail hook declared" in log
+    assert "antigravity posture stays UNAPPLIED" in log
+
+
+def test_antigravity_guardrail_absent_when_cli_never_launched(sandbox, agent_sync, env):
+    """Same 'never launched yet' contract as the posture renderer: no
+    settings.json means no guardrail install attempt, and nothing to refuse."""
+    _write_manifest(sandbox, _guardrail_manifest_for("antigravity"))
+    _write_settings(sandbox)
+
+    assert agent_sync.claude_permissions(env) is True
+
+    assert not (sandbox.home / ".gemini" / "config" / "hooks.json").exists()
+    assert not (sandbox.home / ".gemini" / "antigravity-cli").exists()
+
+
+# ---- Declaring a guardrail hook for Codex remains a hard manifest error ----
+
+def test_codex_guardrail_hook_target_is_still_rejected_by_the_schema(sandbox, agent_sync, env):
+    """Codex's own hook-trust gate (see config_schema.PERMISSION_HOOK_TARGETS)
+    is not implementable without an explicit owner decision -- unlike an
+    unrenderable OpenCode/Antigravity combination, this must still be refused
+    at validation time, not warned-and-skipped."""
+    manifest = VALID_MANIFEST.replace("targets: [claude]", "targets: [claude, codex]")
+    _write_manifest(sandbox, manifest)
+    _write_settings(sandbox)
+    before = (sandbox.home / ".claude" / "settings.json").read_text(encoding="utf-8")
+
+    assert agent_sync.claude_permissions(env) is False
+
+    assert (sandbox.home / ".claude" / "settings.json").read_text(encoding="utf-8") == before

@@ -40,6 +40,45 @@ def test_list_find_and_show_load_only_the_requested_skill(sandbox):
     assert "fake-skill-excluded" not in shown.stdout
 
 
+def test_list_and_show_point_at_the_missing_manifest_on_a_fresh_install(sandbox):
+    """A fresh install has no skills.manifest.yaml on disk at all -- only
+    the .example ships. "Run agent-sync guard first" was a proven no-op
+    there: skills-sync.py just warns and proceeds with an empty skill set
+    when the manifest is missing, it never creates it, so that advice sent
+    the user in a loop. The library is empty (never populated) and the
+    fixture's seeded manifest is removed here to reproduce that exact
+    state; agent-skill must name the real fix instead."""
+    (sandbox.skills_dir / "skills.manifest.yaml").unlink()
+
+    listed = _run(sandbox, "list")
+    assert listed.returncode == 1
+    assert "skills.manifest.yaml.example" in listed.stderr
+    assert "Run agent-sync guard first." not in listed.stderr
+
+    shown = _run(sandbox, "show", "whatever")
+    assert shown.returncode == 1
+    assert "skills.manifest.yaml.example" in shown.stderr
+    assert "use agent-skill find" not in shown.stderr
+
+
+def test_list_and_show_keep_the_guard_hint_when_manifest_exists_but_unsynced(sandbox):
+    """Same empty-library symptom, but the manifest IS present on disk
+    (fixture default) -- here "run agent-sync guard" is the correct next
+    step (a sync just hasn't happened yet), so the original message must
+    survive unchanged."""
+    assert (sandbox.skills_dir / "skills.manifest.yaml").is_file()
+
+    listed = _run(sandbox, "list")
+    assert listed.returncode == 1
+    assert "Run agent-sync guard first." in listed.stderr
+    assert "skills.manifest.yaml.example" not in listed.stderr
+
+    shown = _run(sandbox, "show", "whatever")
+    assert shown.returncode == 1
+    assert "Run agent-sync guard, or use agent-skill find to choose one." in shown.stderr
+    assert "skills.manifest.yaml.example" not in shown.stderr
+
+
 def test_show_rejects_path_traversal_and_unknown_skills(sandbox):
     _populate_library(sandbox)
 

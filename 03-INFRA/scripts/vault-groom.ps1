@@ -140,7 +140,18 @@ switch ($Mode) {
 }
 
 switch ($Runner) {
-  { $_ -in @('claude', 'codex', 'agy') } { }
+  { $_ -in @('claude', 'codex', 'agy') } {
+    # Fails loudly here, before any propose/write pass ever runs, instead of
+    # PowerShell's own CommandNotFoundException once Invoke-Readonly gets to
+    # it -- same courtesy the opencode branch below already gives for its
+    # own unsupported case. Get-Command, not Resolve-CliInvoker (defined
+    # further down): this only needs an existence check, not the .ps1/.exe
+    # preference that function adds.
+    if (-not (Get-Command $Runner -ErrorAction SilentlyContinue)) {
+      [Console]::Error.WriteLine("vault-groom: GROOM_RUNNER=$Runner but '$Runner' was not found on PATH. Install it, or set GROOM_RUNNER=claude|codex|agy to one you already have.")
+      exit 2
+    }
+  }
   'opencode' {
     # [Console]::Error.WriteLine, not Write-Error: same reasoning as the
     # decline branch further down -- under $ErrorActionPreference = 'Stop',

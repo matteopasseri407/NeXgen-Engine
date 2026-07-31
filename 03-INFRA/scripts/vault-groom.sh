@@ -150,7 +150,16 @@ case "$MODE" in
 esac
 
 case "$RUNNER" in
-  claude|codex|agy) ;;
+  claude|codex|agy)
+    # Fails loudly here, before any propose/write pass ever runs, instead of
+    # a raw "command not found" (exit 127) once invoke_readonly gets to it --
+    # same courtesy the opencode branch below already gives for its own
+    # unsupported case.
+    command -v "$RUNNER" >/dev/null 2>&1 || {
+      echo "vault-groom: GROOM_RUNNER=$RUNNER but '$RUNNER' was not found on PATH. Install it, or set GROOM_RUNNER=claude|codex|agy to one you already have." >&2
+      exit 2
+    }
+    ;;
   opencode)
     echo "vault-groom: GROOM_RUNNER=opencode is not supported today." >&2
     echo "  opencode has no per-invocation permission-scoping flag (its permission" >&2

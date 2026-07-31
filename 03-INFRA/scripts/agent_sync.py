@@ -55,9 +55,11 @@ if str(SCRIPTS_DIR) not in sys.path:
 from config_schema import (  # noqa: E402
     ANTIGRAVITY_POSTURE_RENDER,
     CODEX_POSTURE_RENDER,
+    GUARDRAIL_SHELL_MATCHER,
     OPENCODE_POSTURE_RENDER,
     PERMISSION_POSTURES,
     PERMISSION_RENDERERS,
+    VERIFIED_HOOK_EVENTS,
     ConfigValidationError,
     load_council_config,
     load_mcp_manifest,
@@ -833,8 +835,10 @@ def pull(env: Env) -> PullOutcome:
         message = "the vault has uncommitted tracked changes"
         env.log(f"pull: blocked ({message}; untracked files do not block)")
         return PullOutcome(PullState.DIRTY, message)
-    if _git(env, "fetch", "--prune", env.remote, env.branch).returncode != 0:
-        message = f"fetch of {env.remote}/{env.branch} failed"
+    r = _git(env, "fetch", "--prune", env.remote, env.branch)
+    if r.returncode != 0:
+        detail = (r.stderr or r.stdout).strip()
+        message = f"fetch of {env.remote}/{env.branch} failed" + (f": {detail}" if detail else "")
         env.log(f"pull: blocked ({message})")
         return PullOutcome(PullState.FETCH_FAILED, message)
     lh = _git(env, "rev-parse", env.branch)
@@ -1949,6 +1953,302 @@ def _apply_claude_permissions(env: Env, manifest: dict, manifest_path: Path, cla
     return True
 
 
+# ── Guardrail-hook adapters: OpenCode and Antigravity ───────────────────────
+# Neither CLI's own hook contract matches Claude's (see the 2026-07-31 CLI
+# permissions recon): OpenCode's `permission.ask` is a JS callback loaded
+# in-process, not a spawned command; Antigravity's `hooks.json` command IS
+# spawned, but with its own JSON shapes. Duplicating dangerous-command
+# recognition per CLI was rejected by design. Instead each gets a THIN
+# adapter -- this engine's own, public, mechanism-only code under
+# agent-universal-layer/hooks/ -- that translates that CLI's native contract
+# to/from the SAME stdin/stdout JSON shape a Claude PreToolUse guardrail body
+# already speaks. The guardrail BODY itself -- the actual policy -- stays
+# private vault data referenced by manifest.hooks[].file, exactly as it is
+# for Claude; only the plumbing around it is new.
+#
+# Scope, deliberately narrow: only the PreToolUse-shaped, shell-command
+# guardrail this feature exists for (see VERIFIED_HOOK_EVENTS and
+# GUARDRAIL_SHELL_MATCHER in config_schema.py). A hook spec naming an
+# unsupported event or a Claude tool matcher other than "Bash" for one of
+# these two targets is refused for THAT target alone, never guessed at.
+#
+# Ordering mirrors Claude's own precedent, non-negotiable: install/register
+# the guardrail FIRST, and only ever write that CLI's own bypass posture
+# once the guardrail it was declared with is confirmed in place. See
+# claude_permissions() below for how the three-way status returned here
+# (see _GuardrailStatus) gates that CLI's posture render.
+
+# "absent"       -- nothing declared for this CLI, or the CLI itself has
+#                   never been launched: no guardrail to install, posture
+#                   dispatch proceeds exactly as if this feature did not
+#                   exist (matches every existing CLI-absent test).
+# "unrenderable" -- a guardrail WAS declared, but with an event/matcher this
+#                   engine has no verified adapter for. Warn and leave it
+#                   uninstalled -- same "never guess a dialect" rule as an
+#                   unverified posture value -- but the manifest asked for a
+#                   guardrail here, so that CLI's OWN posture must not reach
+#                   disk either. Does not fail the phase as a whole.
+# "hard_fail"    -- the event/matcher WAS renderable, but something the
+#                   engine cannot safely proceed past happened while
+#                   installing it (missing hook body, a path escaping
+#                   permissions/, a malformed CLI config). Refuses that
+#                   CLI's posture AND fails the whole phase, matching
+#                   Claude's own hard-refusal precedent for the same
+#                   failure modes.
+# "ok"           -- installed (or already up to date, unchanged, idempotent).
+
+
+def _guardrail_specs_for(manifest: dict, cli: str) -> tuple[list[dict] | None, bool]:
+    """Hook specs declared for `cli`, filtered through what this engine has a
+    verified adapter for. Returns (specs, declared): declared is True iff at
+    least one manifest hook names `cli` in targets; specs is None (with
+    declared True) if any of those entries names an event or matcher outside
+    VERIFIED_HOOK_EVENTS/GUARDRAIL_SHELL_MATCHER for this CLI -- refused as a
+    whole for this target, never partially guessed at."""
+    specs = [s for s in manifest.get("hooks", []) or [] if cli in s.get("targets", [])]
+    if not specs:
+        return [], False
+    allowed_events = VERIFIED_HOOK_EVENTS.get(cli, frozenset())
+    for spec in specs:
+        if spec.get("event") not in allowed_events:
+            return None, True
+        matcher = spec.get("matcher")
+        if matcher is not None and matcher != GUARDRAIL_SHELL_MATCHER:
+            return None, True
+    return specs, True
+
+
+def _log_matcher_scope_gap(specs: list[dict], cli: str, env: Env) -> None:
+    """Say out loud that an unscoped guardrail covers less here than on Claude.
+
+    An absent matcher means "every tool" in Claude's own hook contract, and a
+    manifest author who writes one hook for three targets reasonably reads it
+    that way. But these adapters can only see shell commands: that is the one
+    decision-bearing hook each of these CLIs exposes. Same declaration, two
+    different coverages -- which is fine, since the shell is the surface that
+    matters, but it must never be silent."""
+    unscoped = [s.get("name", "?") for s in specs if s.get("matcher") is None]
+    if unscoped:
+        env.log(
+            f"claude-permissions: NOTE {cli} guardrail hook(s) {', '.join(unscoped)} declare no "
+            f"matcher, which on Claude covers every tool; the {cli} adapter can only see shell "
+            "commands, so coverage here is shell-only"
+        )
+
+
+def _deploy_guardrail_bodies(
+    specs: list[dict], manifest_path: Path, dest_dir: Path, env: Env, *, label: str
+) -> list[dict] | None:
+    """Copy each declared guardrail body into dest_dir, mirroring Claude's own
+    hook-body deployment in _apply_claude_permissions (same traversal check,
+    same "only rewrite if bytes differ" idempotence). Returns the sidecar
+    hook list [{file, timeout}, ...] an adapter reads at call time, or None
+    (refusing the whole install for this CLI) if a body is missing or
+    resolves outside the permissions directory."""
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    out: list[dict] = []
+    for spec in specs:
+        src = (manifest_path.parent / spec["file"]).resolve()
+        if not str(src).startswith(str(manifest_path.parent.resolve())):
+            env.log(f"claude-permissions: {label} {spec['name']} resolves outside permissions/ -- refusing")
+            return None
+        if not src.is_file():
+            env.log(f"claude-permissions: {label} missing hook body {src}")
+            return None
+        dst = dest_dir / src.name
+        body = src.read_bytes()
+        if not dst.exists() or dst.read_bytes() != body:
+            dst.write_bytes(body)
+            env.log(f"claude-permissions: {label} deployed {dst}")
+        out.append({"file": str(dst), "timeout": spec.get("timeout", 5)})
+    return out
+
+
+def _deploy_static_adapter(src: Path, dst: Path, env: Env, *, label: str) -> bool:
+    """Copy an engine-owned adapter script verbatim (byte-identical across
+    installs -- see the .mjs files themselves), only rewriting if changed."""
+    if not src.is_file():
+        env.log(f"claude-permissions: {label} missing engine adapter {src}")
+        return False
+    body = src.read_bytes()
+    if not dst.exists() or dst.read_bytes() != body:
+        dst.write_bytes(body)
+        env.log(f"claude-permissions: {label} deployed {dst}")
+    return True
+
+
+def _write_guardrail_sidecar(path: Path, hooks_list: list[dict]) -> bool:
+    """The per-hook config an adapter reads fresh on every call. Returns
+    True iff the file's content changed (for logging only, callers decide
+    what to log with the label they own)."""
+    content = json.dumps({"hooks": hooks_list}, indent=2) + "\n"
+    if path.is_file() and path.read_text(encoding="utf-8") == content:
+        return False
+    _atomic_write_text(path, content)
+    return True
+
+
+def _register_opencode_plugin(env: Env, config_path: Path, adapter_dst: Path) -> bool:
+    """Add the guardrail plugin to OpenCode's own `"plugin"` array -- append
+    only, dedup by value, every other entry (the user's own plugins)
+    untouched. `file://` is the documented local-plugin form (see the recon)."""
+    raw = config_path.read_text(encoding="utf-8")
+    try:
+        config = parse_jsonc(raw) if config_path.suffix == ".jsonc" else json.loads(raw)
+    except (json.JSONDecodeError, ValueError) as exc:
+        env.log(f"claude-permissions: opencode-guardrail: refused ({config_path.name} is not valid JSON/JSONC: {exc})")
+        return False
+    if not isinstance(config, dict):
+        env.log(f"claude-permissions: opencode-guardrail: refused ({config_path.name} root is not an object)")
+        return False
+    plugins = config.get("plugin", [])
+    if not isinstance(plugins, list):
+        env.log(f"claude-permissions: opencode-guardrail: refused ({config_path.name} 'plugin' is not a list)")
+        return False
+    entry = f"file://{adapter_dst}"
+    if entry in plugins:
+        return True
+    updated_plugins = [*plugins, entry]
+    _permissions_backup(config_path)
+    if config_path.suffix == ".jsonc":
+        updated = set_jsonc_top_level_value(raw, "plugin", updated_plugins)
+    else:
+        config["plugin"] = updated_plugins
+        updated = json.dumps(config, indent=2) + "\n"
+    _atomic_write_text(config_path, updated)
+    env.log(f"claude-permissions: opencode-guardrail: registered plugin in {config_path}")
+    return True
+
+
+def _install_opencode_guardrail(env: Env, manifest: dict, manifest_path: Path) -> str:
+    """Install the OpenCode guardrail plugin + its sidecar config. Returns one
+    of "absent" / "unrenderable" / "hard_fail" / "ok" (see the block comment
+    above) -- claude_permissions() uses this to gate opencode's own posture."""
+    specs, declared = _guardrail_specs_for(manifest, "opencode")
+    if not declared:
+        return "absent"
+    if specs is None:
+        known = ", ".join(sorted(VERIFIED_HOOK_EVENTS.get("opencode", frozenset())))
+        env.log(
+            "claude-permissions: WARNING opencode guardrail hook declared with an event/matcher "
+            f"this engine cannot render (verified event(s): {known}; matcher must be unset or "
+            f"'{GUARDRAIL_SHELL_MATCHER}') -- opencode guardrail stays UNINSTALLED, guessing a "
+            "translation is not safe"
+        )
+        return "unrenderable"
+    _log_matcher_scope_gap(specs, "opencode", env)
+
+    config_path = _opencode_config_path(env.home)
+    if not config_path.is_file():
+        env.log(f"claude-permissions: {config_path} not present (OpenCode never launched yet) -- opencode guardrail left uninstalled")
+        return "absent"
+
+    plugin_dir = config_path.parent
+    hooks_list = _deploy_guardrail_bodies(
+        specs, manifest_path, plugin_dir / "nexgen-guardrail-hooks", env, label="opencode-guardrail:"
+    )
+    if hooks_list is None:
+        return "hard_fail"
+
+    adapter_src = env.ul / "hooks" / "opencode-guardrail-plugin.mjs"
+    adapter_dst = plugin_dir / "nexgen-guardrail-plugin.mjs"
+    if not _deploy_static_adapter(adapter_src, adapter_dst, env, label="opencode-guardrail:"):
+        return "hard_fail"
+
+    if _write_guardrail_sidecar(plugin_dir / "nexgen-guardrail.config.json", hooks_list):
+        env.log(f"claude-permissions: opencode-guardrail: wrote {plugin_dir / 'nexgen-guardrail.config.json'}")
+
+    if not _register_opencode_plugin(env, config_path, adapter_dst):
+        return "hard_fail"
+    return "ok"
+
+
+def _install_antigravity_guardrail(env: Env, manifest: dict, manifest_path: Path) -> str:
+    """Install the Antigravity guardrail adapter + register it in the CLI's
+    own global `~/.gemini/config/hooks.json`. Returns one of "absent" /
+    "unrenderable" / "hard_fail" / "ok" (see the block comment above)."""
+    specs, declared = _guardrail_specs_for(manifest, "antigravity")
+    if not declared:
+        return "absent"
+    if specs is None:
+        known = ", ".join(sorted(VERIFIED_HOOK_EVENTS.get("antigravity", frozenset())))
+        env.log(
+            "claude-permissions: WARNING antigravity guardrail hook declared with an event/matcher "
+            f"this engine cannot render (verified event(s): {known}; matcher must be unset or "
+            f"'{GUARDRAIL_SHELL_MATCHER}') -- antigravity guardrail stays UNINSTALLED, guessing a "
+            "translation is not safe"
+        )
+        return "unrenderable"
+    _log_matcher_scope_gap(specs, "antigravity", env)
+
+    # Same presence signal _apply_antigravity_posture already uses: the
+    # CLI's own settings.json existing is this engine's one confirmed proxy
+    # for "Antigravity has actually been launched here" (see the recon on
+    # why ~/.gemini alone is not a safe proxy).
+    settings_path = env.home / ".gemini" / "antigravity-cli" / "settings.json"
+    if not settings_path.is_file():
+        env.log(f"claude-permissions: {settings_path} not present (Antigravity never launched yet) -- antigravity guardrail left uninstalled")
+        return "absent"
+
+    hooks_path = env.home / ".gemini" / "config" / "hooks.json"
+    adapter_dir = hooks_path.parent
+    hooks_list = _deploy_guardrail_bodies(
+        specs, manifest_path, adapter_dir / "nexgen-guardrail-hooks", env, label="antigravity-guardrail:"
+    )
+    if hooks_list is None:
+        return "hard_fail"
+
+    adapter_src = env.ul / "hooks" / "antigravity-guardrail-adapter.mjs"
+    adapter_dst = adapter_dir / "nexgen-guardrail-adapter.mjs"
+    if not _deploy_static_adapter(adapter_src, adapter_dst, env, label="antigravity-guardrail:"):
+        return "hard_fail"
+
+    if _write_guardrail_sidecar(adapter_dir / "nexgen-guardrail.config.json", hooks_list):
+        env.log(f"claude-permissions: antigravity-guardrail: wrote {adapter_dir / 'nexgen-guardrail.config.json'}")
+
+    # Antigravity's own hook-level timeout kills the WHOLE command; the
+    # adapter separately enforces each body's own timeout via its own
+    # subprocess call. Sum + a fixed buffer keeps the outer kill from firing
+    # before the adapter's own per-body timeouts get a chance to.
+    outer_timeout = sum(h["timeout"] for h in hooks_list) + 5
+    desired_entry = {
+        "enabled": True,
+        "PreToolUse": [{
+            "matcher": "run_command",
+            "hooks": [{
+                "type": "command",
+                "command": f'node "{adapter_dst}"',
+                "timeout": outer_timeout,
+            }],
+        }],
+    }
+
+    current: dict = {}
+    if hooks_path.is_file():
+        raw = hooks_path.read_text(encoding="utf-8")
+        try:
+            current = json.loads(raw)
+        except json.JSONDecodeError as exc:
+            env.log(f"claude-permissions: antigravity-guardrail: refused ({hooks_path.name} is not valid JSON: {exc})")
+            return "hard_fail"
+        if not isinstance(current, dict):
+            env.log(f"claude-permissions: antigravity-guardrail: refused ({hooks_path.name} root is not an object)")
+            return "hard_fail"
+
+    # Own key only: every OTHER top-level hook name in this file -- whether
+    # the user's or another tool's -- is preserved exactly, never removed.
+    if current.get("nexgen-guardrail") == desired_entry:
+        return "ok"
+    if hooks_path.is_file():
+        _permissions_backup(hooks_path)
+    else:
+        hooks_path.parent.mkdir(parents=True, exist_ok=True)
+    updated = {**current, "nexgen-guardrail": desired_entry}
+    _atomic_write_text(hooks_path, json.dumps(updated, indent=2) + "\n")
+    env.log(f"claude-permissions: antigravity-guardrail: registered PreToolUse guardrail in {hooks_path}")
+    return "ok"
+
+
 def _apply_codex_posture(env: Env, value: str) -> bool:
     """Codex's own bypass dialect: approval_policy/sandbox_mode, root-level
     TOML keys (verified live + against the installed binary's one-shot
@@ -2107,8 +2407,36 @@ def claude_permissions(env: Env) -> bool:
     # else: no Claude runtime on this host -- nothing to apply for it, but
     # every other CLI below is independent of ~/.claude existing.
 
+    # Guardrail hooks FIRST, exactly like Claude's own hooks-then-posture
+    # order above -- and for the same reason: a posture that removes prompts
+    # must never reach disk without the guardrail it was declared with. See
+    # the block comment above _install_opencode_guardrail for what each of
+    # the four status strings means and why only "hard_fail" fails this
+    # whole phase while "unrenderable" only blocks that one CLI's posture.
+    guard_status = {
+        "opencode": _install_opencode_guardrail(env, manifest, manifest_path),
+        "antigravity": _install_antigravity_guardrail(env, manifest, manifest_path),
+    }
+    if guard_status["opencode"] == "hard_fail" or guard_status["antigravity"] == "hard_fail":
+        ok = False
+
     for cli, value in posture.items():
         if cli == "claude":
+            continue
+        status = guard_status.get(cli)
+        if status == "hard_fail":
+            env.log(
+                f"claude-permissions: refused {cli} posture -- its declared guardrail hook failed "
+                "to install (see the error above); a posture that removes prompts must never reach "
+                "disk without the guardrail it was declared with"
+            )
+            ok = False
+            continue
+        if status == "unrenderable":
+            env.log(
+                f"claude-permissions: {cli} posture stays UNAPPLIED -- its declared guardrail hook "
+                "has no verified renderer for this engine (see the warning above)"
+            )
             continue
         renderer = _CLI_POSTURE_RENDERERS.get(cli)
         verified_values = PERMISSION_RENDERERS.get(cli, frozenset())
@@ -2724,9 +3052,11 @@ def _inventory_cli(argv: list[str]) -> int:
         print(f"agent_sync: {exc}", file=sys.stderr)
         return 2
 
+    mcp_rc = 0
     render_path = env.ul / "mcp" / "render.py"
     if render_path.is_file():
         r = _run_python_script([sys.executable, str(render_path), "--inventory"])
+        mcp_rc = r.returncode
         sys.stdout.write(r.stdout)
         if r.stderr.strip():
             sys.stderr.write(r.stderr)
@@ -2783,7 +3113,7 @@ def _inventory_cli(argv: list[str]) -> int:
 
     print("")
     print(">>> Read-only. Adopt (canonize) or reset what's out-of-manifest via the onboarding flow.")
-    return 0
+    return 2 if mcp_rc != 0 else 0
 
 
 def main(argv: list[str] | None = None) -> int:
