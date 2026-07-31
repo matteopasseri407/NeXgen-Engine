@@ -174,6 +174,29 @@ def test_absent_manifest_is_a_complete_no_op(sandbox, agent_sync, env):
     assert "defaultMode" not in _settings(sandbox)["permissions"]
 
 
+def test_claude_never_installed_gets_no_footprint_even_though_claude_dir_exists(sandbox, agent_sync, env, monkeypatch):
+    """~/.claude can exist purely because runtimes() (a different phase, not
+    exercised here -- the `env` fixture above mimics its side effect)
+    unconditionally creates ~/.claude/skills to normalize runtime skill
+    directories, regardless of whether Claude Code is installed. That
+    directory's mere existence must not be read as "Claude Code is
+    installed": a manifest declaring a Claude bypass posture + guardrail
+    must deploy nothing into ~/.claude on a host where Claude Code was
+    never launched -- the same class of "provisioner reacts to its own
+    footprint" bug already fixed for Antigravity in mcp/render.py's
+    _antigravity_present(). Confirmed finding, 2026-07-31."""
+    monkeypatch.setenv("PATH", str(sandbox.bin_stubs))
+    _write_manifest(sandbox, VALID_MANIFEST)
+    # Deliberately NOT calling _write_settings(sandbox): Claude Code itself
+    # never launched here, so settings.json was never written by it.
+
+    assert agent_sync.claude_permissions(env) is True
+
+    claude_dir = sandbox.home / ".claude"
+    assert not (claude_dir / "guardrail.mjs").exists()
+    assert not (claude_dir / "settings.json").exists()
+
+
 # ---- the happy path -------------------------------------------------------
 
 def test_bypass_posture_is_applied_with_its_guardrail(sandbox, agent_sync, env):

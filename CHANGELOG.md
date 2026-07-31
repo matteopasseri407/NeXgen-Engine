@@ -127,6 +127,16 @@ provisioning failure that let a whole CLI stay unconfigured forever.
   cost model, a personal TODO list inside an architecture document, an
   unreachable reference to a past incident, and a generic user who was
   systematically male.
+- `README` points to its own Italian section from the top instead of leaving
+  it discoverable only by scrolling past the English half, the way `INIT.md`
+  already does. The Italian "Percorso demo" now carries the same explicit
+  `git clone` command and target directory as the English "Demo path" it
+  mirrors, and both language pairs of "Demo path"/"Installation" now
+  cross-reference each other's complementary step (the clone command, the
+  `agent-doctor` drift check). "Platform status"'s Windows and AI Council
+  paragraphs are trimmed from an engineering log to the practical limitation
+  and current workaround, in both languages; the forensic detail they used to
+  carry stays in this changelog instead.
 
 ## [0.94.0] - 2026-07-30
 

@@ -718,3 +718,31 @@ def test_runner_non_zero_exit_still_writes_audit_record_and_quarantines(tmp_path
     vault_head_after = _git(vault, "rev-parse", "HEAD").stdout.strip()
     assert vault_head_after == base
     assert (clone / ".GROOM_QUARANTINE.json").is_file()
+
+
+def test_coverage_parses_the_english_table_the_prompt_now_asks_for(tmp_path):
+    """The wrapper prompt asks for "| Note | Action | Why |" since the
+    user-facing strings were translated. Parsing is by column position, so
+    both spellings work -- this pins that, and the Italian cases above pin
+    that a plan recorded before the translation still checks out."""
+    vault = _init_vault(tmp_path)
+    base = _git(vault, "rev-parse", "HEAD").stdout.strip()
+    clone = _clone(vault, tmp_path)
+    state_dir = tmp_path / "state"
+    plan = _write_plan(
+        state_dir, "test-run-en01",
+        "| Note | Action | Why |\n"
+        "|---|---|---|\n"
+        "| `touched.md` | **fix-frontmatter** | ok |\n"
+        "| `flagged.md` | no action | flagged only |\n",
+    )
+    (clone / "touched.md").write_text("x\n", encoding="utf-8")
+    _git(clone, "add", "touched.md")
+    _git(clone, "commit", "-q", "-m", "fix-frontmatter: touched.md")
+
+    proc = _run_audit(vault, clone, base, state_dir, plan_record=str(plan))
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+
+    record = _record(state_dir)
+    assert record["coverage_status"] != "unparseable"
+    assert record["unaddressed_targets"] == []

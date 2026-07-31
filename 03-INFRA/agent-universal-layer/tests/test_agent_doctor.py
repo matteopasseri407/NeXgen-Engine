@@ -17,11 +17,15 @@ import json
 import os
 import re
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
 
 from conftest import run_agent_doctor, run_agent_sync
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from test_engine_upgrade import _make_consumer_engine_clone  # noqa: E402  (shared fixture helper, see that module)
 
 pytestmark = pytest.mark.skipif(
     os.name == "nt",
@@ -141,6 +145,58 @@ def test_doctor_strict_finds_opencode_in_its_standard_user_install_path(sandbox)
 
     assert "OpenCode mcp list" in result.stdout
     assert "opencode not found in PATH or ~/.opencode/bin" not in result.stdout
+
+
+# ── A genuinely-absent OpenCode used to be a permanent, unfixable FAIL
+# (missing $OCJSON, unconditionally) while Codex/Antigravity absent stayed a
+# silent no-op elsewhere in the same script -- pure inconsistency that hits
+# exactly the "third-party user with only one CLI installed" case. Confirmed
+# bug: no code path anywhere ever creates opencode.jsonc for a CLI that was
+# never installed, so the FAIL could never be cleared.
+
+def test_opencode_genuinely_absent_is_a_warning_not_a_permanent_fail(sandbox):
+    env = sandbox.env()
+    # This suite may itself run on a machine with a real OpenCode install
+    # (its bin dir would otherwise leak in via the real PATH sandbox.env()
+    # appends after the stub dir) -- strip it so "genuinely absent" is
+    # actually genuine, not accidentally masked by the host running pytest.
+    env["PATH"] = os.pathsep.join(
+        entry for entry in env["PATH"].split(os.pathsep)
+        if "opencode" not in entry.lower()
+    )
+
+    result = subprocess.run(
+        ["bash", str(sandbox.scripts_dir / "agent-doctor.sh")],
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+
+    assert _lines_with(result.stdout, "⚠", "OpenCode not installed here?"), result.stdout
+    assert not _lines_with(result.stdout, "✗", "missing"), result.stdout
+
+
+def test_opencode_installed_but_missing_config_still_fails(sandbox):
+    """Guard against over-fixing: OpenCode IS on PATH but its config is
+    missing is a real, fixable problem (render.py already bootstraps it),
+    so it must stay a FAIL, not soften into a WARN."""
+    opencode = sandbox.bin_stubs / "opencode"
+    opencode.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    opencode.chmod(0o755)
+
+    result = run_agent_doctor(sandbox)
+
+    assert _lines_with(result.stdout, "✗", "missing"), result.stdout
+    assert "OpenCode not installed here?" not in result.stdout, result.stdout
+
+
+def test_opencode_absence_asymmetry_fix_present_in_both_twins():
+    repo = Path(__file__).resolve().parents[3]
+    bash = (repo / "03-INFRA/scripts/agent-doctor.sh").read_text(encoding="utf-8")
+    powershell = (repo / "03-INFRA/scripts/agent-doctor.ps1").read_text(encoding="utf-8")
+    assert "OpenCode not installed here?" in bash
+    assert "OpenCode not installed here?" in powershell
 
 
 def test_doctor_does_not_judge_host_local_claude_permissions(sandbox):
@@ -313,6 +369,54 @@ def test_non_local_remote_still_runs_the_real_fetch_ahead_behind_checks(sandbox)
 
     assert "Local-Only mode" not in result.stdout, result.stdout
     assert "commits behind the cloud" in result.stdout, result.stdout
+
+
+# ── A failed fetch used to discard git's real stderr ("(offline?)" is a
+# guess, not a diagnosis) and let rev-list's own '?' fallback leak into the
+# FAIL line as a literal, unexplained question mark ("✗ ? commits behind the
+# cloud"). Confirmed bug: neither symptom tells the reader what actually
+# happened or what to do about it.
+
+def test_fetch_failure_surfaces_gits_real_stderr_not_a_guess(sandbox):
+    _init_vault_git_repo(sandbox)
+
+    result = _run_doctor(sandbox, env_overrides={"KNOWLEDGE_VAULT_REMOTE": "oracle"})
+
+    assert "fetch oracle failed (offline?)" not in result.stdout, result.stdout
+    assert "fetch oracle failed:" in result.stdout, result.stdout
+    # git's real reason ("does not appear to be a git repository", or the
+    # locale-equivalent) must show up verbatim, not be swallowed by 2>&1.
+    assert "oracle" in result.stdout and "repository" in result.stdout, result.stdout
+
+
+def test_fetch_failure_never_prints_a_literal_question_mark_as_a_commit_count(sandbox):
+    _init_vault_git_repo(sandbox)
+
+    result = _run_doctor(sandbox, env_overrides={"KNOWLEDGE_VAULT_REMOTE": "oracle"})
+
+    assert "✗ ? commits behind the cloud" not in result.stdout, result.stdout
+    assert "cannot tell how many commits behind the cloud" in result.stdout, result.stdout
+
+
+def test_fetch_failure_message_also_present_in_summary_mode(sandbox):
+    """The '?' placeholder used to leak into --summary output too (the text
+    consumed by digests/alerts), not just the colored interactive view."""
+    _init_vault_git_repo(sandbox)
+
+    result = _run_doctor(sandbox, "--summary", env_overrides={"KNOWLEDGE_VAULT_REMOTE": "oracle"})
+
+    assert "FAIL: ? commits behind the cloud" not in result.stdout, result.stdout
+    assert "cannot tell how many commits behind the cloud" in result.stdout, result.stdout
+
+
+def test_fetch_stderr_capture_present_in_both_twins():
+    repo = Path(__file__).resolve().parents[3]
+    bash = (repo / "03-INFRA/scripts/agent-doctor.sh").read_text(encoding="utf-8")
+    powershell = (repo / "03-INFRA/scripts/agent-doctor.ps1").read_text(encoding="utf-8")
+    assert "fetch $REMOTE failed (offline?)" not in bash
+    assert "fetch $Remote failed (offline?)" not in powershell
+    for content in (bash, powershell):
+        assert "cannot tell how many commits behind the cloud" in content
 
 
 # ── Mid-rebase/merge conflict must be named, not mislabeled as ordinary
@@ -847,6 +951,61 @@ def test_single_clone_update_alert_parity_with_the_ps1_twin():
     # both twins.
     assert 'fail "NeXgen Engine update available' not in bash
     assert 'bad "NeXgen Engine update available' not in powershell
+
+
+# ── S2's pin-freshness check verified only HEAD sha, never whether the
+# consumer engine clone's working tree is dirty -- a hand-edited tracked file
+# at an otherwise correctly-pinned HEAD used to report a clean "OK" with no
+# signal that the checkout no longer matches the release byte-for-byte.
+
+def test_s2_pin_check_ok_on_a_genuinely_clean_pinned_clone(sandbox):
+    consumer = _make_consumer_engine_clone(sandbox, "v0.2.0")
+    result = run_agent_doctor(sandbox)
+
+    assert "consumer engine at the pinned version" in result.stdout, result.stdout
+    assert "consumer engine working tree clean (tracked files)" in result.stdout, result.stdout
+    assert "tracked file(s) modified in the consumer engine clone" not in result.stdout, result.stdout
+    assert consumer.exists()  # sanity: fixture actually created the clone
+
+
+def test_s2_pin_check_warns_when_a_correctly_pinned_clone_is_dirty(sandbox):
+    """The bug: HEAD sha still matches the pin, but a tracked file was
+    hand-edited without committing -- this must no longer read as a clean
+    OK."""
+    consumer = _make_consumer_engine_clone(sandbox, "v0.2.0")
+    (consumer / "VERSION").write_text("0.2.0-hand-edited\n", encoding="utf-8")
+
+    result = run_agent_doctor(sandbox)
+
+    assert "consumer engine at the pinned version" in result.stdout, result.stdout
+    assert "1 tracked file(s) modified in the consumer engine clone" in result.stdout, result.stdout
+    assert "consumer engine working tree clean" not in result.stdout, result.stdout
+
+
+def test_s2_dirty_tree_check_independent_of_a_sha_mismatch(sandbox):
+    """The dirty-tree warning must fire on top of a sha-mismatch FAIL too,
+    not only on an otherwise-clean pin match -- they are separate signals."""
+    consumer = _make_consumer_engine_clone(sandbox, "v0.1.0")
+    (consumer / "VERSION").write_text("0.1.0-hand-edited\n", encoding="utf-8")
+    # Force a genuine sha mismatch too (editing a tracked file without
+    # committing never changes HEAD): point the pin at a sha this clone
+    # never checked out.
+    pin_file = sandbox.vault / "99-INDEX" / "ENGINE-PIN.txt"
+    pin_file.write_text(("0" * 40) + "\n", encoding="utf-8")
+
+    result = run_agent_doctor(sandbox)
+
+    assert "silent drift" in result.stdout, result.stdout
+    assert "1 tracked file(s) modified in the consumer engine clone" in result.stdout, result.stdout
+
+
+def test_s2_dirty_tree_check_present_in_both_twins():
+    repo = Path(__file__).resolve().parents[3]
+    bash = (repo / "03-INFRA/scripts/agent-doctor.sh").read_text(encoding="utf-8")
+    powershell = (repo / "03-INFRA/scripts/agent-doctor.ps1").read_text(encoding="utf-8")
+    for content in (bash, powershell):
+        assert "consumer engine working tree clean" in content
+        assert "tracked file(s) modified in the consumer engine clone" in content
 
 
 # ── Canonical bootstrap hygiene: size budget + load-on-demand pointer

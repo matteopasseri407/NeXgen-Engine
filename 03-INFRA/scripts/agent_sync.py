@@ -689,6 +689,7 @@ class PullState(Enum):
     FRESH = "fresh"
     LOCAL_ONLY = "local_only"
     WRONG_BRANCH = "wrong_branch"
+    CONFLICTED = "conflicted"
     DIRTY = "dirty"
     REMOTE_MISSING = "remote_missing"
     FETCH_FAILED = "fetch_failed"
@@ -820,6 +821,24 @@ def pull(env: Env) -> PullOutcome:
         message = f"no authoritative remote '{env.remote}' configured"
         env.log(f"pull: blocked ({message})")
         return PullOutcome(PullState.REMOTE_MISSING, message)
+    # A rebase/merge left in conflict also leaves HEAD detached (or the tree
+    # dirty), so this must be checked BEFORE the symbolic-ref probe and the
+    # DIRTY check below -- otherwise it is misreported as a plain
+    # WRONG_BRANCH/"detached HEAD" or a generic "uncommitted tracked
+    # changes", with no mention of the conflict and no named remedy.
+    git_dir_r = _git(env, "rev-parse", "--git-dir")
+    if git_dir_r.returncode == 0:
+        git_dir = Path(git_dir_r.stdout.strip())
+        if not git_dir.is_absolute():
+            git_dir = env.vault_data / git_dir
+        if (git_dir / "rebase-merge").exists() or (git_dir / "rebase-apply").exists():
+            message = "a git rebase is in progress in the vault -- run 'git rebase --abort' inside the vault, then re-run agent-sync"
+            env.log(f"pull: blocked ({message})")
+            return PullOutcome(PullState.CONFLICTED, message)
+        if (git_dir / "MERGE_HEAD").exists():
+            message = "a git merge is in progress in the vault -- run 'git merge --abort' inside the vault, then re-run agent-sync"
+            env.log(f"pull: blocked ({message})")
+            return PullOutcome(PullState.CONFLICTED, message)
     current = _git(env, "symbolic-ref", "--quiet", "--short", "HEAD")
     if current.returncode != 0 or current.stdout.strip() != env.branch:
         found = current.stdout.strip() or "detached HEAD"
@@ -1759,10 +1778,27 @@ def runtimes(env: Env) -> bool:
 # dependency agent-sync.sh silently no-ops without): same behavior, one
 # fewer thing that has to be installed on either OS.
 
+def _claude_present(env: "Env") -> bool:
+    """Best-effort 'Claude Code is installed on this host' probe, mirroring
+    render.py's _antigravity_present(): runtimes() (above) unconditionally
+    creates ~/.claude/skills -- hence ~/.claude itself -- regardless of
+    whether Claude Code is installed, so that directory's mere existence is
+    not a valid signal that Claude Code is here to use it. Left unfixed,
+    this phase and claude_permissions() below would react to their OWN
+    footprint: the exact "provisioner reacts to its own footprint" bug
+    already corrected for Antigravity in mcp/render.py. Probe the product's
+    own footprint instead: the CLI binary (agent-doctor.sh's own
+    `command -v claude` convention) or the settings file Claude Code itself
+    writes on first launch and this provisioner never creates."""
+    if shutil.which("claude"):
+        return True
+    return (env.home / ".claude" / "settings.json").is_file()
+
+
 def claude_hooks(env: Env) -> bool:
     hook_src = env.ul / "hooks" / "claude-vault-checkpoint.mjs"
     claude_dir = env.home / ".claude"
-    if not hook_src.is_file() or not claude_dir.is_dir():
+    if not hook_src.is_file() or not _claude_present(env):
         return True
     settings_path = claude_dir / "settings.json"
     try:
@@ -2399,13 +2435,13 @@ def claude_permissions(env: Env) -> bool:
 
     ok = True
     claude_dir = env.home / ".claude"
-    if claude_dir.is_dir():
+    if _claude_present(env):
         if _apply_claude_permissions(env, manifest, manifest_path, claude_dir):
             warn_if_bare_bypass("claude")
         else:
             ok = False
-    # else: no Claude runtime on this host -- nothing to apply for it, but
-    # every other CLI below is independent of ~/.claude existing.
+    # else: Claude Code isn't installed on this host -- nothing to apply for
+    # it, but every other CLI below is independent of ~/.claude existing.
 
     # Guardrail hooks FIRST, exactly like Claude's own hooks-then-posture
     # order above -- and for the same reason: a posture that removes prompts

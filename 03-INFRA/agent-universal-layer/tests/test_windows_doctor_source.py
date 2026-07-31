@@ -33,6 +33,35 @@ def test_windows_doctor_resolves_engine_owned_helpers_from_its_own_checkout():
     assert '(Get-Item -LiteralPath $AgGlobal).Length' not in source
 
 
+def test_windows_doctor_derives_layer_from_split_topology_vault_data():
+    """Regression: $Layer used to be derived straight from $Vault (only
+    KNOWLEDGE_VAULT_PATH), so in a split topology (AGENT_VAULT_DATA pointing
+    somewhere else, exactly what agent-doctor.sh's own VAULT_DATA fallback
+    already supports) it silently resolved to a path that doesn't exist --
+    turning the permissions-manifest guardrail check and the BUG-B
+    require_env check into silent no-ops instead of failing loudly."""
+    source = DOCTOR.read_text(encoding="utf-8")
+
+    assert (
+        '$VaultData = if ($env:AGENT_VAULT_DATA) { $env:AGENT_VAULT_DATA } '
+        'elseif ($env:KNOWLEDGE_VAULT_PATH) { $env:KNOWLEDGE_VAULT_PATH } '
+        'else { Join-Path $HomeDir "KnowledgeVault" }'
+    ) in source
+    assert '$Layer   = Join-Path $VaultData "03-INFRA\\agent-universal-layer"' in source
+    assert '$Layer   = Join-Path $Vault "03-INFRA\\agent-universal-layer"' not in source
+    # $Vault itself stays anchored to KNOWLEDGE_VAULT_PATH alone: the S1
+    # git-repo-health checks operate on the vault's own git working tree, a
+    # different concern from where its 03-INFRA content lives.
+    assert '$Vault   = if ($env:KNOWLEDGE_VAULT_PATH) { $env:KNOWLEDGE_VAULT_PATH } else { Join-Path $HomeDir "KnowledgeVault" }' in source
+    # Every $Layer-derived check must keep resolving through the fixed
+    # variable, not bypass it.
+    for needle in (
+        '$PermManifest = Join-Path $Layer "permissions\\manifest.yaml"',
+        '$ManifestYaml = Join-Path $Layer "mcp\\manifest.yaml"',
+    ):
+        assert needle in source
+
+
 def test_windows_doctor_surfaces_path_limit_and_legacy_skill_migration():
     source = DOCTOR.read_text(encoding="utf-8")
 

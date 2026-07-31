@@ -91,10 +91,45 @@ a MULTI vault it may be declared at
 `03-INFRA/agent-universal-layer/sync/remotes.yaml`, starting from the public
 `remotes.yaml.example`. See `docs/sync-contract.md`.
 
+## `agent-doctor --strict`: real live CLI sessions, real network calls
+
+`agent-sync apply` (MULTI profile, Step 6 of `INIT.md`) always ends with a
+strict readiness check, `agent-doctor --strict`, whether or not you passed
+`--require-ready`. Most of that check only reads local config files, but two
+of its probes are live: they start a real session of an installed consumer
+CLI and let it talk to whatever backend it is configured to reach, instead
+of just checking that a config file looks right.
+
+- **Antigravity (`agy`)**: if `agy` is anywhere on your `PATH` -- whether or
+  not you actually chose Antigravity as one of your CLIs -- and the manifest
+  expects any MCP servers mounted on it, the doctor runs
+  `agy --print "..." --model "Gemini 3.5 Flash (Medium)" --sandbox` (up to
+  twice, plus one further targeted prompt per still-unconfirmed server).
+  This is a real Antigravity session against its configured model backend:
+  it spends your own quota for that model, it is not a local check.
+- **OpenCode**: if `opencode` is on your `PATH` (or at
+  `~/.opencode/bin/opencode`) and the manifest expects any MCP servers
+  mounted on it, the doctor runs `opencode mcp list` for real. If any of the
+  MCP servers you have mounted are reached over the network (a Cloud-Server
+  `vault-library`, `firecrawl`, `n8n-mcp`, or similar), this call reaches
+  them too.
+
+Both probes fire because the binary is present on your `PATH`, not because
+you told this profile you wanted that CLI -- so a CLI you installed for some
+unrelated reason can still get a live session started on its behalf during
+your first `apply`.
+
+Set `NEXGEN_SKIP_LIVE_CONSUMER_PROBES=1` in the environment before running
+`agent-sync apply` (or `agent-doctor --strict` directly) to skip both. A
+skip is reported as a `warn` naming exactly which probe was skipped and why
+-- it is never folded into a silent pass, and it does not block `BASE` or
+`PARTIAL` readiness; it only means those two consumers were not live-verified
+this run.
+
 ## `99-SECRETS/`
 
 Local only. `agent-sync`/agents may write to `99-SECRETS/archive/master-secrets.md.gpg` (GPG-encrypted, git-ignored) and `99-SECRETS/secrets-registry.md` (names and env vars only, never values, tracked in git). See `99-SECRETS/README.md` for the workflow.
 
 ## What this never does
 
-No sudo, no changes outside your home directory, no telemetry, no network call you didn't configure (Cloud-Server mode only reaches the VPS you point it at over the SSH tunnel you set up), and no push to a git remote unless you or an agent explicitly runs a publish step.
+No sudo, no changes outside your home directory, no telemetry, and no push to a git remote unless you or an agent explicitly runs a publish step. Every network call this engine makes reaches a service you already set up yourself: Cloud-Server mode only reaches the VPS you point it at over the SSH tunnel you configured, and the one other case -- the live `agent-doctor --strict` probes described above, which can reach Antigravity's model backend or a remote MCP server -- is documented in the section right above this one, together with the `NEXGEN_SKIP_LIVE_CONSUMER_PROBES=1` opt-out.

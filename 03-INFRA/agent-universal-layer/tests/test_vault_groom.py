@@ -46,14 +46,14 @@ REAL_UL = TESTS_DIR.parent
 REAL_VAULT = REAL_UL.parent.parent
 GROOM_SH = REAL_VAULT / "03-INFRA" / "scripts" / "vault-groom.sh"
 
-# A proper markdown table -- PROPOSE_PROMPT requires "| Nota | Azione |
-# Perché |" as the tranche's contract (this is what makes coverage checking
+# A proper markdown table -- PROPOSE_PROMPT requires "| Note | Action |
+# Why |" as the tranche's contract (this is what makes coverage checking
 # possible at all). The target here (`stub-groomed.md`) matches exactly
 # what the write-pass stub below actually commits, so the default apply
 # flow in most of these tests has CLEAN coverage end to end -- a dedicated
 # mismatched tranche is used separately for the dirty-coverage test.
 FIXED_TRANCHE = (
-    "| Nota | Azione | Perch\u00e9 |\n"
+    "| Note | Action | Why |\n"
     "|---|---|---|\n"
     "| `stub-groomed.md` | **archive** | superseded by new-note.md |\n"
 )
@@ -61,7 +61,7 @@ FIXED_TRANCHE = (
 # Names a file the write-pass stub never touches -- guarantees dirty
 # coverage (unaddressed target + the stub's real commit becomes unplanned).
 DIRTY_TRANCHE = (
-    "| Nota | Azione | Perch\u00e9 |\n"
+    "| Note | Action | Why |\n"
     "|---|---|---|\n"
     "| `never-touched.md` | **archive** | ok |\n"
 )
@@ -385,7 +385,7 @@ def test_apply_declined_does_not_execute_or_commit(groom_env):
     assert proc.returncode == 0, proc.stdout + proc.stderr
     recs = _records(groom_env)
     assert len(recs) == 1, "declining must never reach the write pass"
-    assert "annullato" in (proc.stdout + proc.stderr)
+    assert "cancelled" in (proc.stdout + proc.stderr)
     head_after = _git(groom_env["vault"], "rev-parse", "HEAD").stdout.strip()
     assert head_after == head_before
     assert _clone_dirs(groom_env) == [], "declining must never create a temp-clone"
@@ -541,7 +541,7 @@ def test_apply_toctou_guard_aborts_if_plan_record_changes_before_write_pass(groo
 
     def read_stdout():
         # Character-by-character, NOT `for line in proc.stdout`: the
-        # confirmation prompt itself (`printf 'Procedere? > '`) has no
+        # confirmation prompt itself (`printf 'Proceed? > '`) has no
         # trailing newline -- a readline-based iterator blocks forever
         # waiting for one that never comes before the human answers,
         # deadlocking this exact banner-detection wait.
@@ -560,7 +560,7 @@ def test_apply_toctou_guard_aborts_if_plan_record_changes_before_write_pass(groo
         while time.monotonic() < deadline:
             with stdout_lock:
                 seen = "".join(stdout_chunks)
-            if "Procedere?" in seen:
+            if "Proceed?" in seen:
                 break
             time.sleep(0.02)
         else:

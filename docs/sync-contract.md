@@ -92,7 +92,13 @@ Manual apply has a separate readiness result after all required phases succeed:
 
 - `BASE` means the provisioner installed every component it could install from the current inputs.
 - `PARTIAL` means the base install succeeded but the strict doctor still reports one or more failures, or could not produce a readable result.
-- `READY` means `agent-doctor --strict` completed with `FAIL=0`.
+- `READY` means `agent-doctor --strict` completed with `FAIL=0`. That strict
+  check runs unconditionally at the end of `apply` (with or without
+  `--require-ready`) and includes live probes that start real sessions of
+  installed consumer CLIs and can reach real network services -- see
+  "`agent-doctor --strict`: real live CLI sessions, real network calls" in
+  `docs/what-gets-written.md` for exactly what runs and how to opt out with
+  `NEXGEN_SKIP_LIVE_CONSUMER_PROBES=1`.
 
 Plain `agent-sync apply` returns zero for `PARTIAL`, because progressive setup is valid when credentials, remote services, or a CLI's first launch will happen later.
 It prints and logs `PARTIAL` explicitly.

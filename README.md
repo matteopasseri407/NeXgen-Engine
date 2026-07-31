@@ -4,6 +4,8 @@
 [![Latest version](https://img.shields.io/github/v/release/matteopasseri407/NeXgen-Engine?display_name=tag&label=latest%20version)](https://github.com/matteopasseri407/NeXgen-Engine/releases/latest)
 [![License: PolyForm Noncommercial 1.0.0](https://img.shields.io/badge/license-PolyForm%20Noncommercial%201.0.0-blue)](LICENSE)
 
+[Leggi in italiano ↓](#nexgen-engine-versione-italiana-beta)
+
 **Configure Claude Code, Codex, OpenCode, and Antigravity from one Git repo you can diff and revert.**
 
 NeXgen Engine is a Git-based framework for managing shared instructions, tool configuration, and version-controlled working memory across AI tools such as Claude Code. It supports software projects as well as notes, research, and professional documents. The project is currently in Beta; the version badge above always points at the latest release.
@@ -39,6 +41,7 @@ The security model and reporting instructions are in [`SECURITY.md`](SECURITY.md
    The command reports `READY` only when the strict doctor finishes with `FAIL=0`.
    If the files were installed but a CLI, credential, tunnel, or remote service is still missing, it reports `PARTIAL` and names the failed checks without undoing the usable base install.
    Use `agent-sync apply --require-ready` in automation when `PARTIAL` must return a non-zero exit code.
+   That readiness check starts real sessions of the CLIs it finds on your PATH, which can reach their own network services and spend their quota — including a CLI you never chose to use. Export `NEXGEN_SKIP_LIVE_CONSUMER_PROBES=1` before the command to skip them; [`docs/what-gets-written.md`](docs/what-gets-written.md) lists exactly what runs.
    On Windows, the first `apply` also adds the commands directory to the user PATH.
    Open a new terminal afterwards so `agent-sync`, `agent-doctor`, `vault-groom`, and `vault-push` resolve as commands.
 5. Make a manual change, such as an extra MCP entry or an edited configuration file, and run `agent-doctor` again to see the difference reported.
@@ -156,6 +159,8 @@ You don't need to fill out configuration files manually.
 3. Paste its contents into a **filesystem-capable agent CLI** (Claude Code, Codex, OpenCode, Antigravity) opened in this folder, not a plain web chat (claude.ai / gemini), which cannot write files.
 4. The agent will ask how many CLIs and machines you have, your hardware, and your deployment mode, then configure the vault automatically.
 
+To see the setup verify itself, edit a generated file by hand afterward and run `agent-doctor`; see "Demo path" step 5 for what it reports.
+
 If you prefer fewer setup questions, use `AI-INSTALLER.md` instead of `INIT.md`. It follows the same process with only the required inputs.
 
 ## Prerequisites
@@ -171,8 +176,8 @@ If you prefer fewer setup questions, use `AI-INSTALLER.md` instead of `INIT.md`.
 **Linux: released.** Linux is the most extensively tested platform in this version. The provisioner, doctor, grooming, council, and synchronization tools have been exercised end to end on Fedora and pass CI. macOS uses the same POSIX code paths but has seen less real-world use.
 
 **Known limitations.** Cross-platform support and the core orchestrators are still settling:
-- **Windows: physically verified, not yet a cold install.** The provisioner (`agent_sync.py`), MCP renderer (`render.py`), PowerShell command shims, doctor, and Antigravity consumer path have run on real Windows hardware, in addition to the full `windows-latest` CI suite. The first guided install surfaced two real gaps (`vault-mcp` not bundled, Firecrawl not installable), both fixed and covered by `vault-mcp-smoke` since 0.5.0. Existing-install realignment has also been exercised repeatedly. What's still missing is an unassisted cold install, without the maintainer present to diagnose failures, which is the closer analog to a stranger's first experience. This unassisted cold install is a GA/1.0 onboarding gate, not a blocker for Beta: it exercises first-install UX, a General Availability concern rather than a maturity signal for existing installs. Until that happens, MINIMAL remains the more cautious starting point on Windows.
-- **AI Council:** The deterministic orchestrator (`council.py`) supports `opencode`, `codex`, `claude`, and `ollama` seats; `agy` (Antigravity) is a recognized `cli` value but is currently refused as a passive seat: a live relay run (2026-07-15) found it ignores both the model selection and the given prompt, reading real local files instead of answering. Using `agy` interactively to call into Council itself is unaffected. See `docs/council.md`'s "Current limitations" for the finding and the conditions to re-enable it. Its optional routing adapter proposes exact locally verified models and efforts, with declared fallbacks, without letting an external workflow rewrite private cross-machine data or auto-invoke a seat. A human explicitly chooses the seat count and models.
+- **Windows: physically verified, not yet a cold install.** Physically verified on real hardware and in CI, but an unassisted first-time install hasn't been tested yet — MINIMAL is the safer starting point on Windows until then. What was verified, and what the remaining gap is, is spelled out in the `0.5.1` entry of `CHANGELOG.md`.
+- **AI Council:** `agy` (Antigravity) is blocked as a passive Council seat because it was found to ignore its instructions in testing; using it interactively to call Council is unaffected — see `docs/council.md`'s "Current limitations" for details.
 
 ## License
 
@@ -211,9 +216,12 @@ La postura di sicurezza e le istruzioni per segnalare problemi sono in [`SECURIT
 
 ## Percorso demo
 
-1. Clona il repository ed esegui il preflight: `bash install.sh --check` su Linux o macOS, oppure `.\install.ps1 -Check` da PowerShell su Windows.
-   Il comando controlla i prerequisiti, verifica la struttura del vault e mostra quali strumenti AI supportati trova.
-   Non modifica nulla.
+1. Clona il repository in `~/KnowledgeVault`, poi esegui il preflight:
+   ```bash
+   git clone https://github.com/matteopasseri407/NeXgen-Engine.git ~/KnowledgeVault
+   cd ~/KnowledgeVault
+   ```
+   `bash install.sh --check` su Linux o macOS, oppure `.\install.ps1 -Check` da PowerShell su Windows. Il comando controlla i prerequisiti, verifica la struttura del vault e mostra quali strumenti AI supportati trova. Non modifica nulla.
 2. Apri `INIT.md` e incollalo in una CLI capace di modificare file, come Claude Code, Codex, OpenCode o Antigravity.
    Una chat web non può modificare il repository.
    La procedura chiede quanti strumenti e quante macchine vuoi usare, oltre alla modalità Local-Only o Cloud-Server, poi compila `99-INDEX/USER-PROFILE.md`.
@@ -223,6 +231,7 @@ La postura di sicurezza e le istruzioni per segnalare problemi sono in [`SECURIT
    Il comando dichiara `READY` soltanto quando il doctor rigoroso termina con `FAIL=0`.
    Se i file sono installati ma manca ancora una CLI, una credenziale, un tunnel o un servizio remoto, dichiara `PARTIAL` e mostra i controlli falliti, senza annullare l'installazione di base già utilizzabile.
    Nelle automazioni usa `agent-sync apply --require-ready` quando anche `PARTIAL` deve restituire un codice di errore.
+   Quel controllo di prontezza avvia sessioni vere delle CLI che trova nel PATH, che possono raggiungere i loro servizi di rete e consumarne la quota, anche di una CLI che non hai mai scelto di usare. Esporta `NEXGEN_SKIP_LIVE_CONSUMER_PROBES=1` prima del comando per non farle partire, il dettaglio di cosa viene lanciato è in [`docs/what-gets-written.md`](docs/what-gets-written.md).
    Su Windows, il primo `apply` aggiunge anche la cartella dei comandi al PATH dell'utente, quindi dopo devi aprire un nuovo terminale per usare direttamente `agent-sync`, `agent-doctor`, `vault-groom` e `vault-push`.
 5. Modifica qualcosa fuori dal vault, per esempio una voce MCP o un file di configurazione, poi esegui di nuovo `agent-doctor`.
    Vedrai il controllo delle differenze in azione.
@@ -374,6 +383,8 @@ Non devi preparare a mano i file di configurazione.
 4. L'agente ti chiederà quante CLI e quante macchine vuoi usare, quali sono le caratteristiche del tuo computer e quale modalità di deployment preferisci.
    Poi configurerà il vault in automatico.
 
+Per vedere il setup verificarsi da solo, modifica a mano un file generato e lancia di nuovo `agent-doctor`. Vedi lo step 5 di "Percorso demo" per cosa segnala.
+
 Se vuoi ridurre al minimo le domande, usa `AI-INSTALLER.md` al posto di `INIT.md`.
 La procedura segue gli stessi passaggi e chiede solo le informazioni indispensabili.
 
@@ -393,19 +404,8 @@ In questa versione, provisioner, doctor, grooming, council e sync sono stati ver
 macOS segue gli stessi percorsi POSIX, ma ha ricevuto meno verifiche nell'uso reale.
 
 **Limiti noti.** Il supporto multipiattaforma e gli orchestratori principali non sono ancora considerati definitivi.
-- **Windows: verificato due volte su hardware fisico, manca ancora un'installazione "a freddo".** `agent_sync.py`, il generatore della configurazione MCP `render.py`, tramite un blocco di override `windows:` per ogni server nel manifest, e i launcher PowerShell includono un dialetto Windows.
-  La CI esegue l'intera suite pytest su `windows-latest`, compresi i test PowerShell del grooming, nel job `engine-tests-windows` a ogni push.
-  Oltre alla CI, il motore ha ormai girato per intero su hardware Windows reale: un'installazione guidata completa (profilo MULTI, tre CLI: Claude Code, Codex e Antigravity, più il deploy dello stack Cloud-Server su una VPS) su una macchina pulita, e il riallineamento di un'installazione esistente all'ultima release.
-  La transazione bloccata di `agent-sync apply` (pull più propagazione) è girata per davvero su Windows in entrambi i casi, non solo in CI.
-  La prima installazione guidata ha fatto emergere due lacune reali (`vault-mcp` non incluso nel bundle, Firecrawl non installabile), entrambe corrette e coperte dal job CI `vault-mcp-smoke` a partire dalla 0.5.0.
-  Quello che manca ancora: un'installazione lasciata correre senza che il manutentore intervenga sugli errori, il test più vicino a come la vivrebbe davvero un utente nuovo.
-  I percorsi del provisioner, degli shim PowerShell, del doctor e del consumer Antigravity sono stati verificati direttamente su Windows; manca ancora il collaudo a freddo senza assistenza del manutentore. Questa installazione a freddo non assistita è un gate di onboarding per la GA/1.0, non un blocco per la Beta: verifica la UX di prima installazione, una questione da General Availability più che un segnale di maturità per le installazioni esistenti.
-  Finché non arriva un'installazione a freddo, MINIMAL resta il punto di partenza più prudente su Windows.
-- **Consiglio AI.** L'orchestratore deterministico `council.py` supporta i seat `opencode`, `codex`, `claude` e `ollama`; `agy` (Antigravity) è un valore `cli` riconosciuto ma oggi rifiutato come seat passivo: una relay dal vivo (2026-07-15) ha trovato che ignora sia la selezione del modello sia il prompt dato, leggendo file locali reali invece di rispondere. Usare `agy` in modo interattivo per invocare il Council non è toccato da questo. Dettagli e condizioni per riabilitarlo in `docs/council.md`, sezione "Current limitations".
-  Il routing opzionale propone modelli ed effort verificati localmente, con fallback espliciti.
-  Non permette a un workflow esterno di riscrivere dati privati tra più macchine o di avviare automaticamente un seat.
-  La scelta del numero di seat e dei modelli resta sempre esplicita e umana.
-  I test automatici coprono il flusso dei quattro mode.
+- **Windows, verificato fisicamente, manca ancora un'installazione a freddo.** È stato verificato su hardware Windows reale e in CI, ma un'installazione senza assistenza del manutentore non è stata ancora testata, quindi per ora MINIMAL resta il punto di partenza più prudente su Windows. Cosa è stato verificato, e cosa manca ancora, è scritto nella voce `0.5.1` del `CHANGELOG.md`.
+- **Consiglio AI.** `agy` (Antigravity) è escluso come seat passivo del Council perché nei test ignora le istruzioni ricevute, anche se usarlo in modo interattivo per richiamare il Council funziona normalmente. Vedi la sezione "Current limitations" di `docs/council.md` per i dettagli.
 
 ## Licenza
 

@@ -217,8 +217,8 @@ def test_effort_label_reflects_exactly_what_build_seat_command_does(monkeypatch,
 
     if seat["cli"] == "ollama":
         assert "--think" in invocation.argv and invocation.argv[invocation.argv.index("--think") + 1] == "high"
-        assert label == ", effort xhigh (mappato a high per ollama)"
+        assert label == ", effort xhigh (mapped to high for ollama)"
     else:
         assert "--effort" not in invocation.argv
         assert not any("reasoning_effort" in part for part in invocation.argv)
-        assert label == ", effort high (non applicato da questa CLI)"
+        assert label == ", effort high (not applied by this CLI)"

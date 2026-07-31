@@ -139,11 +139,26 @@ if git -C "$VAULT" rev-parse >/dev/null 2>&1; then
     d=$(git -C "$VAULT" status --porcelain --untracked-files=no 2>/dev/null | wc -l | tr -d ' ')
     [ "$d" = 0 ] && ok "working tree clean (tracked files)" || warn "$d tracked files not committed"
   else
-    git -C "$VAULT" fetch --prune "$REMOTE" "$BRANCH" >/dev/null 2>&1 || warn "fetch $REMOTE failed (offline?)"
+    # Capture the real stderr instead of discarding it: a bare `|| warn
+    # "...(offline?)"` used to guess "offline" even for e.g. a permissions
+    # error on the remote, and rev-list's own '?' fallback (below) used to
+    # leak straight into "fail" as a literal, unexplained question mark.
+    fetch_err="$(git -C "$VAULT" fetch --prune "$REMOTE" "$BRANCH" 2>&1 >/dev/null)"
+    fetch_rc=$?
+    if [ "$fetch_rc" -ne 0 ]; then
+      fetch_detail="$(printf '%s' "$fetch_err" | tr '\n' ' ' | sed -E 's/ +/ /g; s/ $//')"
+      warn "fetch $REMOTE failed: ${fetch_detail:-no error output from git} (offline, or the remote is unreachable)"
+    fi
     b=$(git -C "$VAULT" rev-list --count "$BRANCH..$REMOTE/$BRANCH" 2>/dev/null || echo '?')
     a=$(git -C "$VAULT" rev-list --count "$REMOTE/$BRANCH..$BRANCH" 2>/dev/null || echo '?')
     d=$(git -C "$VAULT" status --porcelain --untracked-files=no 2>/dev/null | wc -l | tr -d ' ')
-    [ "$b" = 0 ] && ok "aligned with $REMOTE/$BRANCH (0 behind)" || fail "$b commits behind the cloud"
+    if [ "$b" = "?" ]; then
+      fail "cannot tell how many commits behind the cloud: rev-list failed (see the fetch warning above)"
+    elif [ "$b" = 0 ]; then
+      ok "aligned with $REMOTE/$BRANCH (0 behind)"
+    else
+      fail "$b commits behind the cloud"
+    fi
     if [ "$a" = 0 ] || [ "$a" = "?" ]; then
       ok "no unpublished local commits"
     else
@@ -224,8 +239,17 @@ PY
     ''|*[!0-9]*) fail "OpenCode instructions cannot be inspected because $(basename "$OCJSON") is invalid" ;;
     *) warn "OpenCode loads the canonical AGENTS.md $oc_canon_count times; run agent-sync apply to deduplicate slash variants" ;;
   esac
-else
+elif command -v opencode >/dev/null 2>&1 || [ -x "$HOME/.opencode/bin/opencode" ]; then
   fail "missing $OCJSON"
+else
+  # OpenCode genuinely not installed here: unlike a missing config on an
+  # installed CLI (a real problem render.py already bootstraps on its own),
+  # there is no code path that will ever create this file for a CLI that was
+  # never installed. Codex/Antigravity absent is a silent no-op elsewhere in
+  # this script (see the Codex/Antigravity loop above); OpenCode used to be
+  # the only one of the four CLIs that turned "genuinely never installed"
+  # into a permanent, unfixable FAIL.
+  warn "OpenCode not installed here? (missing $OCJSON)"
 fi
 
 sec "Canonical bootstrap hygiene (size budget, pointer integrity)"
@@ -1032,15 +1056,28 @@ if [ -d "$CONSUMER_ENGINE_REPO/.git" ]; then
   live_sha=$(git -C "$CONSUMER_ENGINE_REPO" rev-parse HEAD 2>/dev/null || echo "")
   if [ -z "$live_sha" ]; then
     fail "cannot read the consumer engine clone's HEAD ($CONSUMER_ENGINE_REPO)"
-  elif [ -f "$PIN_FILE" ]; then
-    pin_sha=$(head -1 "$PIN_FILE" | tr -d '[:space:]')
-    if [ "$pin_sha" = "$live_sha" ]; then
-      ok "consumer engine at the pinned version (${live_sha:0:7})"
-    else
-      fail "consumer engine at ${live_sha:0:7}, pin expects ${pin_sha:0:7} — silent drift: pull was skipped, or the pin wasn't updated after a deliberate upgrade"
-    fi
   else
-    warn "no engine pin set ($PIN_FILE missing) — consumer engine version isn't tracked yet, run: git -C $CONSUMER_ENGINE_REPO rev-parse HEAD > $PIN_FILE"
+    if [ -f "$PIN_FILE" ]; then
+      pin_sha=$(head -1 "$PIN_FILE" | tr -d '[:space:]')
+      if [ "$pin_sha" = "$live_sha" ]; then
+        ok "consumer engine at the pinned version (${live_sha:0:7})"
+      else
+        fail "consumer engine at ${live_sha:0:7}, pin expects ${pin_sha:0:7} — silent drift: pull was skipped, or the pin wasn't updated after a deliberate upgrade"
+      fi
+    else
+      warn "no engine pin set ($PIN_FILE missing) — consumer engine version isn't tracked yet, run: git -C $CONSUMER_ENGINE_REPO rev-parse HEAD > $PIN_FILE"
+    fi
+    # A sha match only proves HEAD == pin; it says nothing about the working
+    # tree itself. A hand-edited tracked file at an otherwise correctly
+    # pinned HEAD used to report "OK" with no signal that the checkout no
+    # longer matches the release byte-for-byte. Independent of the sha
+    # outcome above, same porcelain check already used for $VAULT.
+    consumer_dirty=$(git -C "$CONSUMER_ENGINE_REPO" status --porcelain --untracked-files=no 2>/dev/null | wc -l | tr -d ' ')
+    if [ "$consumer_dirty" = 0 ]; then
+      ok "consumer engine working tree clean (tracked files)"
+    else
+      warn "$consumer_dirty tracked file(s) modified in the consumer engine clone — a pinned clone should match the release exactly, not be hand-edited"
+    fi
   fi
   # New-version-available check (B3, informational only, never auto-updates).
   # Fetch is read-only (only moves remote-tracking refs/tags), safe to run

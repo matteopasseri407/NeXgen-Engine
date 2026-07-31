@@ -451,6 +451,89 @@ def test_pull_reports_error_on_unrelated_histories(sandbox, monkeypatch):
     assert not outcome.allows_apply
 
 
+def test_pull_reports_conflicted_not_wrong_branch_during_a_real_interrupted_rebase(sandbox, monkeypatch):
+    """A conflicted rebase also leaves HEAD detached (symbolic-ref fails
+    just like a plain checkout of a commit), so before this fix pull() sent
+    it through the same WRONG_BRANCH path as an ordinary detached HEAD --
+    same message, no mention of the conflict, no named remedy. The operator
+    reading the log had to work out on their own that 'git rebase --abort'
+    (not a branch switch) is what actually applies here. Confirmed finding,
+    2026-07-31."""
+    mod = load_agent_sync_module(sandbox)
+    _init_git_vault(sandbox, "oracle")
+    conflict_file = sandbox.vault / "rebase-conflict.txt"
+    conflict_file.write_text("base\n", encoding="utf-8")
+    _git(sandbox.vault, "add", "rebase-conflict.txt")
+    _git(sandbox.vault, "commit", "-m", "base commit for conflict setup")
+
+    _git(sandbox.vault, "switch", "-c", "feature")
+    conflict_file.write_text("feature change\n", encoding="utf-8")
+    _git(sandbox.vault, "add", "rebase-conflict.txt")
+    _git(sandbox.vault, "commit", "-m", "feature change")
+
+    _git(sandbox.vault, "switch", "main")
+    conflict_file.write_text("main change\n", encoding="utf-8")
+    _git(sandbox.vault, "add", "rebase-conflict.txt")
+    _git(sandbox.vault, "commit", "-m", "main change")
+
+    _git(sandbox.vault, "switch", "feature")
+    rebase = subprocess.run(
+        ["git", "-C", str(sandbox.vault), "rebase", "main"],
+        capture_output=True, text=True,
+    )
+    assert rebase.returncode != 0, "the rebase was expected to conflict"
+    assert (sandbox.vault / ".git" / "rebase-merge").exists() or (sandbox.vault / ".git" / "rebase-apply").exists()
+
+    env = _env_for(sandbox, monkeypatch, mod, KNOWLEDGE_VAULT_REMOTE="oracle")
+
+    outcome = mod.pull(env)
+
+    assert outcome.state == mod.PullState.CONFLICTED
+    assert not outcome.allows_apply
+    assert "git rebase --abort" in outcome.message
+    log = (sandbox.home / ".local" / "state" / "agent-sync.log").read_text(encoding="utf-8")
+    assert "git rebase --abort" in log
+
+
+def test_pull_reports_conflicted_during_a_real_interrupted_merge(sandbox, monkeypatch):
+    """Same defect, the other real trigger: agent-sync itself never runs a
+    plain `git merge` (only `merge --ff-only`), but a user or another tool
+    can still leave one conflicted in the vault outside this tool -- and
+    that must also be named and pointed at 'git merge --abort', not folded
+    into the rebase message or the generic detached-HEAD one."""
+    mod = load_agent_sync_module(sandbox)
+    _init_git_vault(sandbox, "oracle")
+    conflict_file = sandbox.vault / "merge-conflict.txt"
+    conflict_file.write_text("base\n", encoding="utf-8")
+    _git(sandbox.vault, "add", "merge-conflict.txt")
+    _git(sandbox.vault, "commit", "-m", "base commit for conflict setup")
+
+    _git(sandbox.vault, "switch", "-c", "feature")
+    conflict_file.write_text("feature change\n", encoding="utf-8")
+    _git(sandbox.vault, "add", "merge-conflict.txt")
+    _git(sandbox.vault, "commit", "-m", "feature change")
+
+    _git(sandbox.vault, "switch", "main")
+    conflict_file.write_text("main change\n", encoding="utf-8")
+    _git(sandbox.vault, "add", "merge-conflict.txt")
+    _git(sandbox.vault, "commit", "-m", "main change")
+
+    merge = subprocess.run(
+        ["git", "-C", str(sandbox.vault), "merge", "feature"],
+        capture_output=True, text=True,
+    )
+    assert merge.returncode != 0, "the merge was expected to conflict"
+    assert (sandbox.vault / ".git" / "MERGE_HEAD").exists()
+
+    env = _env_for(sandbox, monkeypatch, mod, KNOWLEDGE_VAULT_REMOTE="oracle")
+
+    outcome = mod.pull(env)
+
+    assert outcome.state == mod.PullState.CONFLICTED
+    assert not outcome.allows_apply
+    assert "git merge --abort" in outcome.message
+
+
 def test_publish_blocks_when_local_branch_is_behind_authoritative_remote(sandbox):
     remotes = _init_git_vault(sandbox, "oracle")
     writer = sandbox.home / "other-writer"
@@ -1471,6 +1554,42 @@ def test_claude_hooks_skips_non_dict_settings_root(sandbox, monkeypatch):
     assert settings_path.read_text(encoding="utf-8") == "[]"
 
 
+def test_claude_hooks_does_not_populate_claude_dir_created_only_by_runtimes(sandbox, monkeypatch):
+    """runtimes() unconditionally creates ~/.claude/skills (hence ~/.claude
+    itself) to normalize runtime skill directories, regardless of whether
+    Claude Code is installed on this host. claude_hooks() must not treat
+    that self-created directory as an 'installed' signal: a machine that
+    only ever chose Codex/OpenCode must not end up with a Claude Code
+    footprint (the checkpoint hook script) after a single apply, purely
+    because a different phase created the directory moments earlier in the
+    same run -- the same class of "provisioner reacts to its own footprint"
+    bug already fixed for Antigravity in mcp/render.py's
+    _antigravity_present(). Confirmed finding, 2026-07-31."""
+    mod = load_agent_sync_module(sandbox)
+    monkeypatch.setenv("HOME", str(sandbox.home))
+    monkeypatch.setenv("KNOWLEDGE_VAULT_PATH", str(sandbox.vault))
+    # No real `claude` binary anywhere on PATH -- only the sandbox's own
+    # (empty) bin dir, regardless of what is installed on the host running
+    # this test suite.
+    monkeypatch.setenv("PATH", str(sandbox.bin_stubs))
+
+    hooks_dir = sandbox.ul / "hooks"
+    hooks_dir.mkdir(parents=True, exist_ok=True)
+    (hooks_dir / "claude-vault-checkpoint.mjs").write_text("// hook\n", encoding="utf-8")
+
+    env = mod.Env()
+    assert mod.runtimes(env) is True
+    claude_dir = sandbox.home / ".claude"
+    # This IS the footprint the bug reacted to: runtimes() created it with
+    # no regard for whether Claude Code is installed.
+    assert (claude_dir / "skills").is_dir()
+
+    assert mod.claude_hooks(env) is True
+
+    assert not (claude_dir / "claude-vault-checkpoint.mjs").exists()
+    assert not (claude_dir / "settings.json").exists()
+
+
 @pytest.mark.skipif(
     os.name == "nt",
     reason="Symlink privilege is needed to build the escape fixture; the resolved-path defense itself is OS-agnostic Python.",
@@ -1504,6 +1623,11 @@ def test_claude_permissions_aborts_whole_phase_when_hook_symlink_escapes_permiss
     )
     claude_dir = sandbox.home / ".claude"
     claude_dir.mkdir(parents=True, exist_ok=True)
+    # Claude Code "is installed" per _claude_present() regardless of PATH on
+    # the machine running this test: settings.json is the marker Claude
+    # itself writes on first launch, not something this dir's mere
+    # existence (which any phase could create) is allowed to stand in for.
+    (claude_dir / "settings.json").write_text("{}", encoding="utf-8")
 
     env = mod.Env()
     assert mod.claude_permissions(env) is False

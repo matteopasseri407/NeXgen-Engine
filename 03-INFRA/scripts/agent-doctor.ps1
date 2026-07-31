@@ -15,7 +15,21 @@ $ErrorActionPreference = "Continue"
 $HomeDir = [Environment]::GetFolderPath("UserProfile")
 $Vault   = if ($env:KNOWLEDGE_VAULT_PATH) { $env:KNOWLEDGE_VAULT_PATH } else { Join-Path $HomeDir "KnowledgeVault" }
 $Branch  = if ($env:KNOWLEDGE_VAULT_BRANCH) { $env:KNOWLEDGE_VAULT_BRANCH } else { "main" }
-$Layer   = Join-Path $Vault "03-INFRA\agent-universal-layer"
+# Same split-topology fallback as vault-push.ps1 (AGENT_VAULT_DATA, then
+# KNOWLEDGE_VAULT_PATH, then the default). $Layer (and everything derived
+# from it: the canonical AGENTS.md, the permissions/manifest.yaml guardrail
+# check, the mcp/manifest.yaml BUG-B check, the skills manifest, the legacy
+# OpenCode profile check) must resolve against where the DATA actually lives,
+# not against $Vault, which stays anchored to KNOWLEDGE_VAULT_PATH alone for
+# the S1 git-repo-health checks above (they operate on the vault's own git
+# working tree, a different concern from where its 03-INFRA content lives).
+# Without this, a Windows install using the split topology (engine root and
+# vault data in two different places, already supported per docs/upgrade.md
+# and mirrored by agent-doctor.sh's own VAULT_DATA) resolves $Layer to a path
+# that doesn't exist, and the two checks that depend on it become silent
+# no-ops instead of failing loudly.
+$VaultData = if ($env:AGENT_VAULT_DATA) { $env:AGENT_VAULT_DATA } elseif ($env:KNOWLEDGE_VAULT_PATH) { $env:KNOWLEDGE_VAULT_PATH } else { Join-Path $HomeDir "KnowledgeVault" }
+$Layer   = Join-Path $VaultData "03-INFRA\agent-universal-layer"
 $EngineInfra = Split-Path -Parent $PSScriptRoot
 $RenderPy = Join-Path $EngineInfra "agent-universal-layer\mcp\render.py"
 $Canon   = Join-Path $Layer "instructions\AGENTS.md"
@@ -164,11 +178,28 @@ if (Test-Path -LiteralPath (Join-Path $Vault ".git")) {
     $d = @(gitc @("status","--porcelain","--untracked-files=no")).Where({ $_ }).Count
     if ($d -eq 0) { ok "working tree clean (tracked files)" } else { warn "$d tracked files not committed" }
   } else {
-    gitc @("fetch","--prune",$Remote,$Branch) | Out-Null
+    # gitc() itself discards stderr (2>$null); capture it here specifically
+    # for the fetch so a real failure (permissions, DNS, an unconfigured
+    # remote name) surfaces its actual reason instead of a guessed
+    # "(offline?)", and so rev-list's own '?' fallback below never leaks into
+    # a "bad" line as an unexplained literal question mark.
+    $fetchOutput = (& git -C $Vault fetch --prune $Remote $Branch 2>&1)
+    $fetchRc = $LASTEXITCODE
+    if ($fetchRc -ne 0) {
+      $fetchDetail = (($fetchOutput | Out-String).Trim() -replace '\s+', ' ')
+      if (-not $fetchDetail) { $fetchDetail = "no error output from git" }
+      warn "fetch $Remote failed: $fetchDetail (offline, or the remote is unreachable)"
+    }
     $b = (gitc @("rev-list","--count","$Branch..$Remote/$Branch")); if (-not $b) { $b = "?" }
     $a = (gitc @("rev-list","--count","$Remote/$Branch..$Branch")); if (-not $a) { $a = "?" }
     $d = @(gitc @("status","--porcelain","--untracked-files=no")).Where({ $_ }).Count
-    if ("$b" -eq "0") { ok "aligned with $Remote/$Branch (0 behind)" } else { bad "$b commits behind the cloud" }
+    if ("$b" -eq "?") {
+      bad "cannot tell how many commits behind the cloud: rev-list failed (see the fetch warning above)"
+    } elseif ("$b" -eq "0") {
+      ok "aligned with $Remote/$Branch (0 behind)"
+    } else {
+      bad "$b commits behind the cloud"
+    }
     if ("$a" -eq "0" -or "$a" -eq "?") {
       ok "no unpublished local commits"
     } else {
@@ -227,7 +258,23 @@ if (Test-Path -LiteralPath $OcJson) {
     elseif ($ocCanonEntries.Count -gt 1) { warn "OpenCode loads the canonical AGENTS.md $($ocCanonEntries.Count) times; run agent-sync apply to deduplicate slash variants" }
     else { bad "OpenCode instructions do NOT point to AGENTS.md" }
   } catch { bad "OpenCode instructions cannot be inspected because $(Split-Path -Leaf $OcJson) is invalid" }
-} else { bad "missing $OcJson" }
+} else {
+  # Same asymmetry fix as agent-doctor.sh's twin: OpenCode genuinely not
+  # installed here has no code path that will ever create this file, so it
+  # used to be a permanent, unfixable FAIL while Codex/Antigravity absent
+  # stayed a silent no-op elsewhere in this script.
+  $OcInstalled = [bool](Get-Command opencode -ErrorAction SilentlyContinue)
+  if (-not $OcInstalled) {
+    foreach ($candidate in @(
+      (Join-Path $HomeDir ".opencode\bin\opencode.exe"),
+      (Join-Path $HomeDir ".opencode\bin\opencode.cmd"),
+      (Join-Path $HomeDir ".opencode\bin\opencode")
+    )) {
+      if (Test-Path -LiteralPath $candidate) { $OcInstalled = $true; break }
+    }
+  }
+  if ($OcInstalled) { bad "missing $OcJson" } else { warn "OpenCode not installed here? (missing $OcJson)" }
+}
 
 sec "Canonical bootstrap hygiene (size budget, pointer integrity)"
 # Additive, read-only guardrails on the single AGENTS.md bootstrap and its
@@ -936,13 +983,21 @@ if (Test-Path -LiteralPath (Join-Path $ConsumerEngineRepo ".git")) {
   $pinFile = Join-Path $Vault "99-INDEX\ENGINE-PIN.txt"
   $liveSha = (& git -C $ConsumerEngineRepo rev-parse HEAD 2>$null)
   if (-not $liveSha) { bad "cannot read the consumer engine clone's HEAD ($ConsumerEngineRepo)" }
-  elseif (Test-Path -LiteralPath $pinFile) {
-    $pinSha = (Get-Content -LiteralPath $pinFile -TotalCount 1).Trim()
-    $liveShort = if ($liveSha.Length -ge 7) { $liveSha.Substring(0,7) } else { $liveSha }
-    $pinShort = if ($pinSha.Length -ge 7) { $pinSha.Substring(0,7) } else { $pinSha }
-    if ($pinSha -eq $liveSha) { ok "consumer engine at the pinned version ($liveShort)" }
-    else { bad "consumer engine at $liveShort, pin expects $pinShort - silent drift: pull was skipped, or the pin wasn't updated after a deliberate upgrade" }
-  } else { warn "no engine pin set ($pinFile missing) - consumer engine version isn't tracked yet" }
+  else {
+    if (Test-Path -LiteralPath $pinFile) {
+      $pinSha = (Get-Content -LiteralPath $pinFile -TotalCount 1).Trim()
+      $liveShort = if ($liveSha.Length -ge 7) { $liveSha.Substring(0,7) } else { $liveSha }
+      $pinShort = if ($pinSha.Length -ge 7) { $pinSha.Substring(0,7) } else { $pinSha }
+      if ($pinSha -eq $liveSha) { ok "consumer engine at the pinned version ($liveShort)" }
+      else { bad "consumer engine at $liveShort, pin expects $pinShort - silent drift: pull was skipped, or the pin wasn't updated after a deliberate upgrade" }
+    } else { warn "no engine pin set ($pinFile missing) - consumer engine version isn't tracked yet" }
+    # A sha match only proves HEAD == pin; it says nothing about the working
+    # tree itself. Independent of the sha outcome above, same porcelain
+    # check already used for $Vault.
+    $consumerDirty = @(& git -C $ConsumerEngineRepo status --porcelain --untracked-files=no 2>$null).Where({ $_ }).Count
+    if ($consumerDirty -eq 0) { ok "consumer engine working tree clean (tracked files)" }
+    else { warn "$consumerDirty tracked file(s) modified in the consumer engine clone - a pinned clone should match the release exactly, not be hand-edited" }
+  }
   # New-version-available check (B3, informational only, never auto-updates).
   # Fetch is read-only (only moves remote-tracking refs/tags), safe even
   # though this machine never auto-upgrades the pinned commit.

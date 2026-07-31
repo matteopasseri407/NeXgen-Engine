@@ -231,13 +231,13 @@ def test_routing_proposal_requires_an_explicit_human_selected_seat(monkeypatch, 
 
     args = argparse.Namespace(seat=None, routing_role=None, allow_training_risk=False, mode="challenge")
 
-    with pytest.raises(SystemExit, match="scelta umana richiesta"):
+    with pytest.raises(SystemExit, match="human choice required"):
         council.resolve_seat(args, default_routing_role="L-Arch")
 
     output = capsys.readouterr().out
-    assert "Nessuna chiamata a modelli è stata effettuata" in output
+    assert "No model was called" in output
     assert "deepseek: opencode-go/deepseek-v4-pro via opencode" in output
-    assert "rischio training consentito" not in output
+    assert "training risk accepted" not in output
 
 
 def test_relay_without_sequence_requires_human_selection(monkeypatch, tmp_path, capsys):
@@ -284,15 +284,15 @@ def test_relay_without_sequence_requires_human_selection(monkeypatch, tmp_path, 
         no_stats_precheck=True,
     )
     config = council.load_config()
-    with pytest.raises(SystemExit, match="scelta umana richiesta"):
+    with pytest.raises(SystemExit, match="human choice required"):
         council._load_relay_sequence(args, config, config["seats"])
 
     output = capsys.readouterr().out
-    assert "proposta per relay" in output
+    assert "proposal for relay" in output
     # agy has no reasoning-effort CLI flag (verified via `agy --help`,
     # 2026-07-13): the label must say so, not show effort as if honored
     # identically to a claude/codex/ollama/opencode seat.
-    assert "gemini: Gemini 3.1 Pro (High) via agy, effort high (non applicato da questa CLI)" in output
+    assert "gemini: Gemini 3.1 Pro (High) via agy, effort high (not applied by this CLI)" in output
     assert "deepseek: opencode-go/deepseek-v4-pro via opencode" in output
 
 
@@ -332,8 +332,8 @@ def test_propose_lists_candidates_but_never_runs_a_seat(monkeypatch, tmp_path, c
 
     assert invoked == []
     output = capsys.readouterr().out
-    assert "Nessuna chiamata a modelli è stata effettuata" in output
-    assert "scegli tu un candidato" in output
+    assert "No model was called" in output
+    assert "you choose a candidate" in output
 
 
 def test_opencode_usage_hint_never_reorders_other_cli_positions(monkeypatch, tmp_path):
@@ -457,7 +457,7 @@ def test_probe_codex_seat_reports_unreadable_or_invalid_config(monkeypatch, tmp_
     capability = routing._probe_codex_seat({"model": "gpt-5.6-luna"})
 
     assert capability.available is False
-    assert "non leggibile" in capability.reason
+    assert "not readable" in capability.reason
 
 
 # --- seat_capabilities: claude is excluded with a fixed, non-probed reason -
@@ -471,7 +471,7 @@ def test_seat_capabilities_excludes_claude_with_fixed_reason(monkeypatch):
 
     assert capabilities["claude-seat"].available is False
     assert capabilities["claude-seat"].reason == (
-        "Claude non espone una lista locale del modello esatto, quindi non entra nella proposta automatizzata"
+        "Claude does not expose a local list of the exact model, so it is not included in the automated proposal"
     )
 
 
@@ -482,7 +482,7 @@ def test_check_seat_allowed_stops_without_zero_retention_or_override(monkeypatch
     council = load_council(monkeypatch, tmp_path)
     args = argparse.Namespace(allow_training_risk=False)
 
-    with pytest.raises(SystemExit, match="NON ha garanzia zero-retention"):
+    with pytest.raises(SystemExit, match="does NOT have a zero-retention guarantee"):
         council._check_seat_allowed("risky-seat", {"zero_retention": False}, args)
 
 
@@ -516,7 +516,7 @@ def test_resolve_seat_explicit_codex_mismatch_still_resolves_and_warns(monkeypat
     assert seat["model"] == "gpt-5.6-terra"
     output = capsys.readouterr().out
     assert "codex-seat" in output
-    assert "non è il default corrente della CLI codex" in output
+    assert "is not the current default of the codex CLI" in output
     assert "gpt-5.6-luna" in output
     assert "gpt-5.6-terra" in output
 
@@ -536,7 +536,7 @@ def test_resolve_seat_unknown_explicit_seat_exits_with_message(monkeypatch, tmp_
     )
     args = argparse.Namespace(seat="ghost-seat", allow_training_risk=False)
 
-    with pytest.raises(SystemExit, match="seat sconosciuto: ghost-seat"):
+    with pytest.raises(SystemExit, match="unknown seat: ghost-seat"):
         council.resolve_seat(args)
 
 
@@ -555,7 +555,7 @@ def test_resolve_seat_explicit_seat_same_vendor_as_author_stops_cross_review(mon
     )
     args = argparse.Namespace(seat="claude-seat", allow_training_risk=False, author_vendor="Anthropic")
 
-    with pytest.raises(SystemExit, match="STOP: il seat 'claude-seat' è dello stesso vendor"):
+    with pytest.raises(SystemExit, match="STOP: seat 'claude-seat' is from the same vendor"):
         council.resolve_seat(args)
 
 
@@ -591,8 +591,8 @@ def test_cmd_routing_status_prints_blocked_role_with_diagnostics(monkeypatch, tm
     council.cmd_routing_status(argparse.Namespace(allow_training_risk=False))
 
     output = capsys.readouterr().out
-    assert "L-Arch: BLOCCATO" in output
-    assert "escluso dalla policy zero-retention" in output
+    assert "L-Arch: BLOCKED" in output
+    assert "excluded by zero-retention policy" in output
 
 
 def test_windows_probe_wraps_npm_cmd_shim(monkeypatch):
@@ -629,26 +629,26 @@ INCOMPLETE_ROW_TABLE = """### Ranking per ruoli reali
 
 def test_legacy_table_missing_heading_raises():
     routing = load_routing()
-    with pytest.raises(routing.RoutingContractError, match="non trovata"):
+    with pytest.raises(routing.RoutingContractError, match="not found"):
         routing.parse_routing_plan("# Routing decision\n\nNiente qui.\n")
 
 
 def test_legacy_table_bad_header_columns_raises():
     routing = load_routing()
-    with pytest.raises(routing.RoutingContractError, match="colonne della tabella"):
+    with pytest.raises(routing.RoutingContractError, match="table columns"):
         routing.parse_routing_plan(BAD_HEADER_TABLE)
 
 
 def test_legacy_table_incomplete_row_raises():
     routing = load_routing()
-    with pytest.raises(routing.RoutingContractError, match="riga della tabella"):
+    with pytest.raises(routing.RoutingContractError, match="table row"):
         routing.parse_routing_plan(INCOMPLETE_ROW_TABLE)
 
 
 def test_json_contract_incomplete_marker_raises():
     routing = load_routing()
     doc = "<!-- council-routing-contract:start -->\n{}\n"
-    with pytest.raises(routing.RoutingContractError, match="marker del contratto"):
+    with pytest.raises(routing.RoutingContractError, match="contract marker"):
         routing.parse_routing_plan(doc)
 
 
@@ -659,7 +659,7 @@ def test_json_contract_invalid_json_raises():
         "{not json}\n"
         "<!-- council-routing-contract:end -->\n"
     )
-    with pytest.raises(routing.RoutingContractError, match="JSON del contratto Council non valido"):
+    with pytest.raises(routing.RoutingContractError, match="invalid Council contract JSON"):
         routing.parse_routing_plan(doc)
 
 
@@ -681,7 +681,7 @@ def test_json_contract_missing_roles_raises():
         '{"schema_version":1}\n'
         "<!-- council-routing-contract:end -->\n"
     )
-    with pytest.raises(routing.RoutingContractError, match="non contiene ruoli"):
+    with pytest.raises(routing.RoutingContractError, match="contains no roles"):
         routing.parse_routing_plan(doc)
 
 
@@ -692,7 +692,7 @@ def test_json_contract_empty_roles_raises():
         '{"schema_version":1,"roles":[]}\n'
         "<!-- council-routing-contract:end -->\n"
     )
-    with pytest.raises(routing.RoutingContractError, match="non contiene ruoli"):
+    with pytest.raises(routing.RoutingContractError, match="contains no roles"):
         routing.parse_routing_plan(doc)
 
 
@@ -703,5 +703,5 @@ def test_json_contract_role_without_candidates_raises():
         '{"schema_version":1,"roles":[{"role":"L-Code","assignment":{},"ranked":[]}]}\n'
         "<!-- council-routing-contract:end -->\n"
     )
-    with pytest.raises(routing.RoutingContractError, match="non ha candidati"):
+    with pytest.raises(routing.RoutingContractError, match="has no candidates"):
         routing.parse_routing_plan(doc)

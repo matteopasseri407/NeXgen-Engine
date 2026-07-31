@@ -199,7 +199,7 @@ $WriteTools = @(
   'mcp__vault-library__append_note'
 )
 
-$ProposePrompt = "Read $Playbook and execute ONLY steps 1-3 (orient, run the audit heat-map, find candidates with semantic_search). ALSO run the structural map, python $(Join-Path $PSScriptRoot 'vault-map.py') --vault $Vault --check, and treat orphan notes and broken wikilinks it reports as first-class tranche candidates (orphan -> link-or-archive, broken link -> fix at the source). Then OUTPUT a proposed grooming tranche as a markdown table with EXACTLY these columns: | Nota | Azione | Perché | - one row per note, action is compress / merge / archive / fix-frontmatter / fix-link / nessuna azione, last column is one line of why. DO NOT edit, write, move, or commit anything - this is a read-only planning pass."
+$ProposePrompt = "Read $Playbook and execute ONLY steps 1-3 (orient, run the audit heat-map, find candidates with semantic_search). ALSO run the structural map, python $(Join-Path $PSScriptRoot 'vault-map.py') --vault $Vault --check, and treat orphan notes and broken wikilinks it reports as first-class tranche candidates (orphan -> link-or-archive, broken link -> fix at the source). Then OUTPUT a proposed grooming tranche as a markdown table with EXACTLY these columns: | Note | Action | Why | - one row per note, action is compress / merge / archive / fix-frontmatter / fix-link / no action, last column is one line of why. DO NOT edit, write, move, or commit anything - this is a read-only planning pass."
 
 function Resolve-CliInvoker([string]$Name) {
   # Prefer whichever of Get-Command's matches is NOT a cmd.exe indirection:
@@ -315,13 +315,13 @@ $TrancheHash = (Get-FileHash -Path $PlanRecord -Algorithm SHA256).Hash.ToLower()
 
 Write-Host ""
 Write-Host "======================================================================"
-Write-Host " Tranche proposta (sha256 $($TrancheHash.Substring(0,12))...) -- leggila prima di confermare"
+Write-Host " Proposed tranche (sha256 $($TrancheHash.Substring(0,12))...) -- read it before confirming"
 Write-Host "======================================================================"
 Write-Host $Tranche
 Write-Host "======================================================================"
-Write-Host "Digita esattamente 'yes' per eseguire QUESTA tranche cosi' com'e'."
-Write-Host "Qualunque altra risposta annulla: nessuna modifica al vault."
-$Answer = Read-Host "Procedere?"
+Write-Host "Type exactly 'yes' to execute THIS tranche as-is."
+Write-Host "Any other answer cancels: no changes to the vault."
+$Answer = Read-Host "Proceed?"
 
 # -cne, NOT -ne: PowerShell's -ne is case-INSENSITIVE for strings by
 # default, which would silently accept "Yes"/"YES" -- the banner above
@@ -333,7 +333,7 @@ if ($Answer -cne 'yes') {
   # TERMINATING error by $ErrorActionPreference = 'Stop' above, which stops
   # the script with a non-zero code before the `exit 0` below ever runs --
   # exactly wrong for "the user chose not to proceed, nothing went wrong".
-  [Console]::Error.WriteLine("vault-groom: annullato, nessuna modifica al vault.")
+  [Console]::Error.WriteLine("vault-groom: cancelled, no changes to the vault.")
   exit 0
 }
 
@@ -393,7 +393,7 @@ Read $Playbook. The user already reviewed and approved EXACTLY the grooming tran
 $Tranche
 ---END APPROVED TRANCHE---
 
-Execute precisely this tranche, nothing more and nothing less -- do not re-derive or expand it. Commit atomically per action with clear messages. Do NOT push -- pushing is decided separately after this run by mechanically checking what the commits actually touched, never by you. Before finishing, re-read the approved tranche row by row and end your response with an explicit checklist, one line per note that has a real action (skip rows marked "nessuna azione"): DONE (with the commit it landed in) or NOT DONE (with the concrete reason). Every actioned row must appear on that list -- do not let anything go unmentioned.
+Execute precisely this tranche, nothing more and nothing less -- do not re-derive or expand it. Commit atomically per action with clear messages. Do NOT push -- pushing is decided separately after this run by mechanically checking what the commits actually touched, never by you. Before finishing, re-read the approved tranche row by row and end your response with an explicit checklist, one line per note that has a real action (skip rows marked "no action"): DONE (with the commit it landed in) or NOT DONE (with the concrete reason). Every actioned row must appear on that list -- do not let anything go unmentioned.
 "@
 
 $WriteLog = New-GroomLog 'execute'

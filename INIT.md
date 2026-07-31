@@ -137,6 +137,8 @@ Poi istruisci l'utente a lanciare nel terminale il comando di provisioning:
 - Su Linux/Mac: `bash 03-INFRA/scripts/agent-sync.sh apply`
 - Su Windows: `.\03-INFRA\scripts\agent-sync.ps1 apply`
 
+Questo comando termina sempre con un controllo di prontezza `agent-doctor --strict`, anche senza `--require-ready`. Quel controllo include probe live che avviano sessioni reali delle CLI installate -- Antigravity tramite `agy --print ... --model "Gemini 3.5 Flash (Medium)"`, OpenCode tramite `opencode mcp list` -- e possono raggiungere servizi di rete reali (il backend del modello di Antigravity, o qualunque server MCP remoto tu abbia montato), anche per una CLI che non hai mai scelto di usare, se il suo binario capita di essere nel PATH. Vedi `docs/what-gets-written.md` per il dettaglio. Se preferisci che questi probe non partano -- ad esempio in un ambiente sandboxato, offline, o semplicemente per non consumarne la quota -- esporta `NEXGEN_SKIP_LIVE_CONSUMER_PROBES=1` PRIMA di lanciare il comando qui sopra.
+
 Su Windows, il primo `apply` aggiunge `~/.local/bin` al PATH utente: apri un NUOVO terminale dopo questo primo lancio, così i comandi nudi (`agent-sync`, `agent-doctor`, `vault-groom`, `vault-push`) si risolvono correttamente.
 
 Questo script reconcile la configurazione dei CLI con le fonti canoniche del vault, installa i server MCP e propaga le skill su tutti i runtime.
@@ -306,6 +308,8 @@ Store remote names only, never URLs or credentials.
 Then instruct the user to run the provisioning command in their terminal:
 - On Linux/Mac: `bash 03-INFRA/scripts/agent-sync.sh apply`
 - On Windows: `.\03-INFRA\scripts\agent-sync.ps1 apply`
+
+This command always finishes with an `agent-doctor --strict` readiness check, even without `--require-ready`. That check includes live probes that start real sessions of installed CLIs -- Antigravity via `agy --print ... --model "Gemini 3.5 Flash (Medium)"`, OpenCode via `opencode mcp list` -- and can reach real network services (Antigravity's own model backend, or whatever remote MCP server you've mounted), even for a CLI you never chose to use, if its binary happens to be on your PATH. See `docs/what-gets-written.md` for the detail. If you'd rather these probes not run -- say, in a sandboxed or offline environment, or simply to avoid spending their quota -- export `NEXGEN_SKIP_LIVE_CONSUMER_PROBES=1` BEFORE running the command above.
 
 On Windows, the first `apply` adds `~/.local/bin` to the user PATH — open a NEW terminal after this first run so the bare commands (`agent-sync`, `agent-doctor`, `vault-groom`, `vault-push`) resolve.
 

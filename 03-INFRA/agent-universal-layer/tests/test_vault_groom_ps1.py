@@ -258,7 +258,7 @@ def test_apply_declined_does_not_execute_or_commit(groom_env):
     assert proc.returncode == 0, proc.stdout + proc.stderr
     recs = _records(groom_env)
     assert len(recs) == 1, "declining must never reach the write pass"
-    assert "annullato" in (proc.stdout + proc.stderr)
+    assert "cancelled" in (proc.stdout + proc.stderr)
     head_after = _git(groom_env["vault"], "rev-parse", "HEAD").stdout.strip()
     assert head_after == head_before
     assert _clone_dirs(groom_env) == []
@@ -414,7 +414,7 @@ def test_apply_toctou_guard_aborts_if_plan_record_changes_before_write_pass(groo
 
     def tamper_then_confirm():
         # Trigger on the Write-Host banner's last line, NOT the Read-Host
-        # "Procedere?" prompt: on Windows PowerShell delivers a Read-Host
+        # "Proceed?" prompt: on Windows PowerShell delivers a Read-Host
         # prompt to the console host, not the redirected stdout pipe, so it
         # never appears in what this thread drains and the feeder would time
         # out (the process then blocks on Read-Host forever). The banner is
@@ -426,7 +426,7 @@ def test_apply_toctou_guard_aborts_if_plan_record_changes_before_write_pass(groo
         while time.monotonic() < deadline:
             with stdout_lock:
                 seen = "".join(stdout_chunks)
-            if "Qualunque altra risposta annulla" in seen:
+            if "Any other answer cancels" in seen:
                 break
             time.sleep(0.02)
         else:
@@ -582,7 +582,7 @@ def test_apply_runner_non_zero_exit_still_writes_audit_record_and_quarantines(gr
 @pytest.mark.parametrize("target_runner", ["claude", "agy"])
 def test_prompt_special_characters_survive_the_ps1_shim_byte_intact(groom_env, target_runner):
     tricky_tranche = (
-        "| Nota | Azione | Perch\u00e9 |\n"
+        "| Note | Action | Why |\n"
         "|---|---|---|\n"
         "| `stub-groomed.md` | **archive** | a < b, superato |\n"
     )

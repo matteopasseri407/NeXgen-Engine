@@ -83,12 +83,14 @@ def extract_action_targets(tranche_text: str) -> tuple[set[str], set[str], bool]
     """Best-effort extraction of the files the approved tranche commits to touching.
 
     Parses the markdown table PROPOSE_PROMPT requires from both wrapper
-    twins: "| Nota | Azione | Perché |". Rows whose action column says
-    "nessuna azione" (flag-only, no work planned) don't contribute a target
+    twins: "| Note | Action | Why |". Rows whose action column says
+    "no action" (flag-only, no work planned) don't contribute a target
     -- those are legitimately never expected to show up in files_touched --
     but DO still count as a real, successfully-parsed row (see the third
-    return value), so an all-"nessuna azione" tranche is not confused with
-    one that failed to parse as a table at all.
+    return value), so an all-"no action" tranche is not confused with
+    one that failed to parse as a table at all. Parsing is by column
+    position and NO_ACTION_RE still accepts the older Italian wording, so a
+    plan recorded before the prompt was translated keeps checking out.
 
     Returns (targets, archive_targets, found_any_row). archive_targets is a
     subset of targets whose row's action column reads as an archive-type
@@ -433,7 +435,7 @@ def main() -> int:
     if coverage["coverage_status"] == "unparseable":
         print(
             "WARNING: the approved tranche was non-empty but no rows parsed as "
-            "a '| Nota | Azione | Perché |' table -- coverage cannot be checked: "
+            "a '| Note | Action | Why |' table -- coverage cannot be checked: "
             + args.plan_record,
             file=sys.stderr,
         )
