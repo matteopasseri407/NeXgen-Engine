@@ -17,6 +17,8 @@ gate intact.
 3. Stop and ask before touching anything.
    State the exact target tag and that the command will merge it, run
    provisioning and compare the doctor before and after.
+   In a split install, mention that an existing private engine pin is committed
+   through `vault-push`; no other data file is staged.
 4. On explicit confirmation, run `nexgen-update --yes`.
    Do not stash, commit, reset or clean user work to make its preflight pass.
 5. If the bare command is absent because this machine predates the release

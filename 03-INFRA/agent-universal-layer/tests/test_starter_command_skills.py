@@ -142,7 +142,8 @@ def test_the_upgrade_runbook_has_one_executable_source_of_truth():
     ).read_text(encoding="utf-8")
     assert "nexgen-update --check" in canonical
     assert "nexgen-update --yes" in canonical
-    assert '"merge", "--ff-only", target' in implementation
+    assert '"--ff-only" if split_topology else "--no-edit"' in implementation
+    assert '_git(engine_repo, "merge", merge_mode, target)' in implementation
     assert "git merge" not in canonical, "the skill duplicated executable release logic"
     assert "git merge" not in stub, "the stub duplicated the runbook instead of deferring"
     assert len(stub) < len(canonical), "the stub should be a pointer, not a copy"

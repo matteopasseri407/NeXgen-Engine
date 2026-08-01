@@ -10,6 +10,24 @@ of any engine release.
 
 ## [Unreleased]
 
+## [0.97.4] - 2026-08-01
+
+### Fixed
+
+- **The updater now respects both supported Git topologies.** A split
+  consumer engine remains fast-forward-only, while the default single clone
+  may create a normal merge commit to preserve legitimate private data commits
+  that do not overlap the released engine files.
+- **A split consumer's private engine pin advances with the release.** When
+  `99-INDEX/ENGINE-PIN.txt` already exists, `nexgen-update` requires
+  `vault-push`, shows the pin update in its confirmation plan, and commits only
+  that mechanical file before provisioning. A missing publisher or failed pin
+  publication stops visibly instead of leaving doctor with a permanent version
+  mismatch.
+- **Single-clone merges validate Git identity before confirmation.** An install
+  that needs a merge commit now reports the missing `user.name` or `user.email`
+  before moving anything.
+
 ## [0.97.3] - 2026-08-01
 
 ### Added

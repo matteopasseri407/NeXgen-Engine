@@ -2,9 +2,10 @@
 """Deliberate, cross-platform NeXgen Engine release updater.
 
 The command updates only to a released semantic-version tag. It never stashes
-or commits user data, never checks out a detached HEAD, and never rolls back
-automatically. A dirty engine or data repository stops the update before the
-engine ref moves.
+or commits user-authored data, never checks out a detached HEAD, and never
+rolls back automatically. In a split install it may commit the mechanical
+engine pin, and only that exact file, through ``vault-push``. A dirty engine or
+data repository stops the update before the engine ref moves.
 """
 from __future__ import annotations
 
@@ -168,7 +169,7 @@ def _assert_attached_branch(engine_repo: Path) -> None:
         raise UpdateError("engine checkout is detached; attach it to its normal branch before updating")
 
 
-def _assert_fast_forward(engine_repo: Path, target: str) -> None:
+def _is_ancestor(engine_repo: Path, target: str) -> bool:
     relation = _git(
         engine_repo,
         "merge-base",
@@ -177,10 +178,23 @@ def _assert_fast_forward(engine_repo: Path, target: str) -> None:
         target,
         check=False,
     )
-    if relation.returncode != 0:
+    return relation.returncode == 0
+
+
+def _assert_fast_forward(engine_repo: Path, target: str) -> None:
+    if not _is_ancestor(engine_repo, target):
         raise UpdateError(
             f"{target} is not a fast-forward from the current engine branch; "
             "resolve local branch history manually"
+        )
+
+
+def _assert_merge_identity(engine_repo: Path) -> None:
+    identity = _git(engine_repo, "var", "GIT_COMMITTER_IDENT", check=False)
+    if identity.returncode != 0:
+        raise UpdateError(
+            "the single-clone update needs a Git user.name and user.email to "
+            "preserve local data commits in a merge"
         )
 
 
@@ -193,6 +207,42 @@ def _assert_target_version(engine_repo: Path, target: str) -> str:
             f"release {target} contains VERSION={release_version!r}; expected {expected!r}"
         )
     return release_version
+
+
+def _commit_split_pin(
+    *,
+    pin_file: Path,
+    target_head: str,
+    target: str,
+    data_repo: Path,
+    vault_push: str,
+) -> None:
+    try:
+        pin_file.write_text(f"{target_head}\n", encoding="utf-8")
+    except OSError as exc:
+        raise UpdateError(f"cannot update engine pin {pin_file}: {exc}") from exc
+    relative_pin = pin_file.relative_to(data_repo).as_posix()
+    result = _run(
+        [
+            vault_push,
+            "-m",
+            f"Pin NeXgen Engine to {target}",
+            "--",
+            relative_pin,
+        ],
+        cwd=data_repo,
+        check=False,
+        capture=False,
+    )
+    if result.returncode != 0:
+        raise UpdateError("vault-push could not commit and publish the updated engine pin")
+    try:
+        published_pin = pin_file.read_text(encoding="utf-8").strip()
+    except OSError as exc:
+        raise UpdateError(f"cannot verify engine pin {pin_file}: {exc}") from exc
+    if published_pin != target_head:
+        raise UpdateError("engine pin does not match the installed release after vault-push")
+    _assert_clean(data_repo, label="data")
 
 
 def _signature_state(engine_repo: Path, target: str) -> str:
@@ -249,11 +299,14 @@ def main(
     env = dict(os.environ if environ is None else environ)
     previous_head = ""
     engine_repo: Path | None = None
+    pin_file: Path | None = None
     try:
         engine_repo, data_repo = resolve_repositories(env)
+        split_topology = data_repo != engine_repo
         current = _current_version(engine_repo)
         target = _target_tag(engine_repo, args.target)
         target_version = _assert_target_version(engine_repo, target)
+        target_head = _git(engine_repo, "rev-parse", f"{target}^{{commit}}").stdout.strip()
         print(f"Engine: {engine_repo}")
         print(f"Data:   {data_repo}")
         print(f"Current: v{current}")
@@ -285,27 +338,43 @@ def main(
 
         _assert_attached_branch(engine_repo)
         _assert_clean(engine_repo, label="engine")
-        if data_repo != engine_repo:
+        if split_topology:
             _assert_clean(data_repo, label="data")
-        _assert_fast_forward(engine_repo, target)
+            _assert_fast_forward(engine_repo, target)
+        elif not _is_ancestor(engine_repo, target):
+            _assert_merge_identity(engine_repo)
 
         sync = which("agent-sync")
         doctor = which("agent-doctor")
-        if data_repo != engine_repo and not sync:
+        vault_push = which("vault-push")
+        pin_candidate = data_repo / "99-INDEX" / "ENGINE-PIN.txt"
+        pin_file = pin_candidate if split_topology and pin_candidate.is_file() else None
+        if split_topology and not sync:
             raise UpdateError(
                 "split engine/data topology requires agent-sync; use the one-time "
                 "manual bootstrap in docs/upgrade.md"
             )
+        if pin_file and not vault_push:
+            raise UpdateError(
+                "the split engine pin requires vault-push; run the one-time "
+                "manual bootstrap in docs/upgrade.md"
+            )
         print("\nPlan:")
-        print(f"  1. git merge --ff-only {target}")
+        merge_mode = "--ff-only" if split_topology else "--no-edit"
+        print(f"  1. git merge {merge_mode} {target}")
+        step = 2
+        if pin_file:
+            print(f"  {step}. update 99-INDEX/ENGINE-PIN.txt through vault-push")
+            step += 1
         if sync:
-            print("  2. agent-sync apply")
+            print(f"  {step}. agent-sync apply")
         else:
-            print("  2. MINIMAL install, no provisioner detected")
+            print(f"  {step}. MINIMAL install, no provisioner detected")
+        step += 1
         if doctor:
-            print("  3. agent-doctor --strict --summary")
+            print(f"  {step}. agent-doctor --strict --summary")
         else:
-            print("  3. visual MINIMAL verification")
+            print(f"  {step}. visual MINIMAL verification")
 
         if not args.yes and not _confirm(input_fn, current=current, target=target):
             print("Update cancelled. No installed files or branch were changed.")
@@ -317,9 +386,25 @@ def main(
         if doctor and pre_doctor_rc != 0 and pre_fail == 0:
             raise UpdateError("pre-upgrade doctor returned an inconsistent result")
         previous_head = _git(engine_repo, "rev-parse", "HEAD").stdout.strip()
-        merge = _git(engine_repo, "merge", "--ff-only", target)
+        merge = _git(engine_repo, "merge", merge_mode, target)
         if merge.stdout:
             print(merge.stdout.rstrip())
+
+        if pin_file and vault_push:
+            try:
+                _commit_split_pin(
+                    pin_file=pin_file,
+                    target_head=target_head,
+                    target=target,
+                    data_repo=data_repo,
+                    vault_push=vault_push,
+                )
+            except UpdateError as exc:
+                raise PostMergeError(
+                    f"engine tag merged, but the private engine pin was not published: {exc}",
+                    previous_head=previous_head,
+                    engine_repo=engine_repo,
+                ) from exc
 
         if sync:
             provision = _run([sync, "apply"], cwd=data_repo, check=False, capture=False)
@@ -380,6 +465,12 @@ def main(
             f"  git -C {exc.engine_repo} reset --hard {exc.previous_head}",
             file=sys.stderr,
         )
+        if pin_file:
+            print(
+                "If 99-INDEX/ENGINE-PIN.txt moved, realign it to the same commit "
+                "through vault-push before running agent-sync again.",
+                file=sys.stderr,
+            )
         return 1
     except UpdateError as exc:
         print(f"nexgen-update: ERROR: {exc}", file=sys.stderr)
