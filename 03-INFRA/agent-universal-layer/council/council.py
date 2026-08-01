@@ -1402,6 +1402,7 @@ def _build_seat_command(seat: dict, prompt: str, session_dir: Path) -> SeatInvoc
         argv = [
             "claude", "--print", "--model", model,
             "--permission-mode", "plan", "--tools", "", "--no-session-persistence",
+            "--output-format", "json",
         ]
         # See _effort_forwarding: single source shared with _effort_label.
         extra_argv, _label = _effort_forwarding(seat)
@@ -1456,6 +1457,57 @@ def _build_seat_command(seat: dict, prompt: str, session_dir: Path) -> SeatInvoc
     )
 
 
+def _parse_claude_result(raw: str, expected_model: str) -> tuple[str, dict]:
+    """Extract Claude's answer and prove the explicitly requested model ran.
+
+    Claude has no free-standing model inventory command, but non-interactive
+    JSON results expose the actual canonical model in ``modelUsage``. Council
+    already passes ``--model``; checking the result closes the remaining gap
+    without making a proposal itself spend subscription quota.
+    """
+    try:
+        payload = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise SeatRunError(
+            "[council] Claude returned unreadable JSON; the selected model cannot be verified.",
+            "claude_json",
+        ) from exc
+    if not isinstance(payload, dict) or payload.get("is_error"):
+        raise SeatRunError("[council] Claude returned an error result.", "seat_error")
+
+    model_usage = payload.get("modelUsage")
+    if not isinstance(model_usage, dict) or not model_usage:
+        raise SeatRunError(
+            "[council] Claude returned no modelUsage; the selected model cannot be verified.",
+            "model_unverified",
+        )
+    reported: set[str] = set()
+    for key, details in model_usage.items():
+        if isinstance(key, str) and key.strip():
+            reported.add(key.strip().casefold())
+        if isinstance(details, dict):
+            canonical = details.get("canonicalModel")
+            if isinstance(canonical, str) and canonical.strip():
+                reported.add(canonical.strip().casefold())
+    expected = expected_model.strip().casefold()
+    if reported != {expected}:
+        shown = ", ".join(sorted(reported)) or "(none)"
+        raise SeatRunError(
+            f"[council] Claude ran {shown}, not the declared model {expected_model}.",
+            "model_mismatch",
+        )
+
+    result = payload.get("result")
+    if not isinstance(result, str) or not result.strip():
+        raise SeatRunError(
+            "[council] Claude responded but returned no usable result text.",
+            "empty_response",
+        )
+    usage = payload.get("usage") if isinstance(payload.get("usage"), dict) else {}
+    usage = {**usage, "cost": payload.get("total_cost_usd"), "model": expected_model}
+    return result, usage
+
+
 def run_seat(
     seat: dict,
     prompt: str,
@@ -1467,8 +1519,9 @@ def run_seat(
     meta' risposta (es. quota abbonamento esaurita o blocco lato provider senza
     errore visibile lato client, verificato dal vivo su un seat a quota esaurita:
     TimeoutExpired non porta output parziale, va letto mentre arriva). Il parsing
-    dell'output varia per CLI: opencode emette eventi JSON (`--format json`), le
-    altre CLI supportate stampano testo semplice."""
+    dell'output varia per CLI: opencode emette eventi JSONL (`--format json`),
+    Claude restituisce un singolo oggetto JSON verificabile, le altre CLI
+    supportate stampano testo semplice."""
     model = seat["model"]
     cli = seat["cli"]
     # AUTHORITATIVE enforcement point (2026-07-15, see AGY_BLOCK_REASON above
@@ -1571,9 +1624,9 @@ def run_seat(
                 if event.get("type") == "step_finish":
                     usage = {"tokens": part.get("tokens"), "cost": part.get("cost")}
             else:
-                # agy/codex: nessun evento strutturato, ogni riga e' testo grezzo.
-                # Per codex la risposta autorevole arriva dopo da output_file;
-                # qui serve solo per la diagnosi di liveness (got_any_line).
+                # Claude emits one JSON object; agy/codex/ollama emit plain
+                # text. For codex the authoritative answer arrives later from
+                # output_file; stdout is used only for liveness diagnostics.
                 text_chunks.append(line)
 
         stdout_reader.join(timeout=5)
@@ -1590,6 +1643,8 @@ def run_seat(
 
         if not text_chunks:
             raise SeatRunError("[council] the seat responded but with no usable text (empty output).", "empty_response")
+        if cli == "claude":
+            return _parse_claude_result("".join(text_chunks), model)
         return "".join(text_chunks), usage
     finally:
         _set_active_proc(None)

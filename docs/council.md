@@ -163,16 +163,13 @@ sides and the file it read:
 - `l'effort non coincide con la configurazione Codex (configurato: '<value in
   config.toml>', seat: '<value in seats.yaml>', file: <path to config.toml>)`
 
-`claude` seats are excluded from the automated proposal by design, not by a
-gap: the Claude CLI does not expose a local, machine-readable list of the
-exact model it is currently configured for, the way `opencode models` and
-`ollama list` do, so Council has nothing to verify a
-candidate against before showing it. The diagnostic reads `Claude non espone
-una lista locale del modello esatto, quindi non entra nella proposta
-automatizzata`. This only blocks the *proposal*: a `claude` seat remains
-fully usable with an explicit `--seat` (or inside a `--sequence`) exactly
-like any other seat — routing is a convenience layer on top of execution,
-never a gate on it.
+For a `claude` seat, Council first checks that the installed CLI supports
+explicit `--model` selection. It also requires `--effort` when the seat
+declares a `reasoning_effort`. This is enough to include the seat in a proposal
+without spending quota on a probe. When the user invokes that seat, Council
+requests JSON output and checks `modelUsage` against the exact model declared
+in `seats.yaml`. A missing value or a silent fallback to another model stops
+the run instead of accepting an unverified response.
 
 A `<candidate>: nessun seat locale associato` line under `routing-status` or
 `propose` means no seat in your `seats.yaml` declares that candidate's
@@ -293,8 +290,10 @@ council clean --all           # removes every kept session now
   3-stage `relay` spanning opencode → codex → agy (2026-07-15) additionally
   verified that the multi-vendor relay mechanism itself — different CLI
   wrappers handing off to each other within one staffage — works correctly
-  across opencode and codex. `claude` and `ollama` seats have not yet been
-  verified live.
+  across opencode and codex. Claude Opus 5 was verified live on 2026-08-01:
+  the CLI accepted the exact `--model` selection and returned the same
+  canonical model through `modelUsage`, with tools disabled and session
+  persistence off. `ollama` seats have not yet been verified live.
 - **`agy` (Antigravity) is blocked as a passive Council seat** (found by
   that same 2026-07-15 live relay run, reproduced 5 independent ways):
   `agy --print` ignores both `--model` and the given prompt, running its

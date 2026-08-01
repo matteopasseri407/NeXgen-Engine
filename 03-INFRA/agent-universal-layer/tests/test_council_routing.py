@@ -460,6 +460,63 @@ def test_propose_lists_candidates_but_never_runs_a_seat(monkeypatch, tmp_path, c
     assert "you choose a candidate" in output
 
 
+def test_governor_proposal_includes_claude_with_explicit_model_support(monkeypatch, tmp_path, capsys):
+    council = load_council(monkeypatch, tmp_path)
+    write_seats(
+        council,
+        """
+        routing:
+          enabled: true
+          decision_file: routing.md
+          mode_defaults:
+            challenge: L-Arch
+        seats:
+          claude-opus-5:
+            vendor: anthropic
+            cli: claude
+            model: claude-opus-5
+            routing_label: Claude Opus 5
+            zero_retention: false
+        """,
+    )
+    routing_path = council._vault_data_root() / "routing.md"
+    routing_path.parent.mkdir(parents=True, exist_ok=True)
+    routing_path.write_text(
+        """<!-- model-routing-governor:start -->
+### Proposta di routing per ruolo
+
+#### L-Arch - quality-first
+
+| Slot | Modello | CLI | $ | Motivo |
+|---|---|---|---:|---|
+| primario | Claude Opus 5 | claude | $1 | best fit |
+| fallback 1 | GPT-5.6 Sol | codex | $1 | fallback |
+| fallback 2 | DeepSeek V4 Pro | opencode | $1 | fallback |
+<!-- model-routing-governor:end -->
+""",
+        encoding="utf-8",
+    )
+    routing_module = sys.modules[council.seat_capabilities.__module__]
+    monkeypatch.setattr(routing_module.shutil, "which", lambda _cli: "/usr/bin/claude")
+    monkeypatch.setattr(
+        routing_module,
+        "_run_probe",
+        lambda _argv: (True, "  --model <model>  Select model\n"),
+    )
+    invoked = []
+    monkeypatch.setattr(council, "run_seat", lambda *_args, **_kwargs: invoked.append(True))
+
+    council.cmd_propose(
+        argparse.Namespace(proposal_mode="challenge", routing_role=None, allow_training_risk=False)
+    )
+
+    assert invoked == []
+    output = capsys.readouterr().out
+    assert "1. claude-opus-5: claude-opus-5 via claude" in output
+    assert "WARNING: no verified zero-retention" in output
+    assert "you choose a candidate" in output
+
+
 def test_propose_without_governor_uses_declared_seats_and_never_runs(monkeypatch, tmp_path, capsys):
     council = load_council(monkeypatch, tmp_path)
     write_seats(
@@ -639,19 +696,50 @@ def test_probe_codex_seat_reports_unreadable_or_invalid_config(monkeypatch, tmp_
     assert "not readable" in capability.reason
 
 
-# --- seat_capabilities: claude is excluded with a fixed, non-probed reason -
+# --- seat_capabilities: Claude is proposed when explicit selection exists --
 
 
-def test_seat_capabilities_excludes_claude_with_fixed_reason(monkeypatch):
+def test_seat_capabilities_accepts_claude_with_explicit_model_and_effort(monkeypatch):
     routing = load_routing()
     monkeypatch.setattr(routing.shutil, "which", lambda _cli: "/usr/bin/claude")
+    monkeypatch.setattr(
+        routing,
+        "_run_probe",
+        lambda argv: (True, "  --model <model>  Select model\n  --effort <level>  Select effort\n"),
+    )
 
-    capabilities = routing.seat_capabilities({"claude-seat": {"cli": "claude", "model": "opus"}})
+    capabilities = routing.seat_capabilities(
+        {"claude-seat": {"cli": "claude", "model": "claude-opus-5", "reasoning_effort": "high"}}
+    )
+
+    assert capabilities["claude-seat"].available is True
+    assert "verifies modelUsage after invocation" in capabilities["claude-seat"].reason
+
+
+def test_seat_capabilities_rejects_claude_without_required_effort_flag(monkeypatch):
+    routing = load_routing()
+    monkeypatch.setattr(routing.shutil, "which", lambda _cli: "/usr/bin/claude")
+    monkeypatch.setattr(routing, "_run_probe", lambda _argv: (True, "  --model <model>  Select model\n"))
+
+    capabilities = routing.seat_capabilities(
+        {"claude-seat": {"cli": "claude", "model": "claude-opus-5", "reasoning_effort": "high"}}
+    )
 
     assert capabilities["claude-seat"].available is False
-    assert capabilities["claude-seat"].reason == (
-        "Claude does not expose a local list of the exact model, so it is not included in the automated proposal"
+    assert "does not expose explicit --effort" in capabilities["claude-seat"].reason
+
+
+def test_seat_capabilities_reports_claude_probe_failure(monkeypatch):
+    routing = load_routing()
+    monkeypatch.setattr(routing.shutil, "which", lambda _cli: "/usr/bin/claude")
+    monkeypatch.setattr(routing, "_run_probe", lambda _argv: (False, "simulated help failure"))
+
+    capabilities = routing.seat_capabilities(
+        {"claude-seat": {"cli": "claude", "model": "claude-opus-5"}}
     )
+
+    assert capabilities["claude-seat"].available is False
+    assert capabilities["claude-seat"].reason == "Claude probe failed: simulated help failure"
 
 
 def test_seat_capabilities_excludes_agy_because_passive_invocation_is_disabled(monkeypatch):

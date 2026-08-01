@@ -10,6 +10,16 @@ of any engine release.
 
 ## [Unreleased]
 
+## [0.97.6] - 2026-08-01
+
+### Fixed
+
+- **Claude seats now enter Governor proposals when the CLI can select their
+  declared model.** Council checks the installed Claude CLI for explicit
+  `--model` support, plus `--effort` when a seat requests it. The actual
+  invocation uses JSON output and verifies `modelUsage`, so a missing model
+  identity or a silent provider fallback stops the run.
+
 ## [0.97.5] - 2026-08-01
 
 ### Fixed

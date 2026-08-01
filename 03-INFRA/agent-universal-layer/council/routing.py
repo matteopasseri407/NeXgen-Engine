@@ -371,9 +371,32 @@ def seat_capabilities(seats: dict[str, dict[str, Any]]) -> dict[str, SeatCapabil
             capabilities[name] = _probe_codex_seat(seat)
             continue
         if cli == "claude":
+            if cli not in cli_probe_cache:
+                cli_probe_cache[cli] = _run_probe(["claude", "--help"])
+            successful, output = cli_probe_cache[cli]
+            if not successful:
+                capabilities[name] = SeatCapability(False, f"Claude probe failed: {output}")
+                continue
+            if not re.search(r"(?m)^\s*--model\b", output):
+                capabilities[name] = SeatCapability(
+                    False,
+                    "the installed Claude CLI does not expose explicit --model selection",
+                )
+                continue
+            requested_effort = seat.get("reasoning_effort")
+            if (
+                requested_effort
+                and requested_effort != "none"
+                and not re.search(r"(?m)^\s*--effort\b", output)
+            ):
+                capabilities[name] = SeatCapability(
+                    False,
+                    "the installed Claude CLI does not expose explicit --effort selection",
+                )
+                continue
             capabilities[name] = SeatCapability(
-                False,
-                "Claude does not expose a local list of the exact model, so it is not included in the automated proposal",
+                True,
+                "Claude accepts explicit model and effort selection; Council verifies modelUsage after invocation",
             )
             continue
 
