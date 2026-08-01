@@ -23,6 +23,9 @@ CONTRACT_START = "<!-- council-routing-contract:start -->"
 CONTRACT_END = "<!-- council-routing-contract:end -->"
 LEGACY_HEADING = "### Ranking per ruoli reali"
 LEGACY_END_HEADING = "### Motivazioni concise"
+GOVERNOR_HEADING = "### Proposta di routing per ruolo"
+GOVERNOR_END_MARKER = "<!-- model-routing-governor:end -->"
+GOVERNOR_ROLE_RE = re.compile(r"^####\s+([A-Za-z][A-Za-z0-9_-]*)\s+-\s+\S.*$")
 PROBE_TIMEOUT_SECONDS = 10
 
 
@@ -44,10 +47,11 @@ class RoutingContractError(ValueError):
 
 @dataclass(frozen=True)
 class RoutingCandidate:
-    """One decision-approved candidate, keyed by canonical id or document label."""
+    """One decision-approved model identity and its optional execution CLI."""
 
     key: str
     value: str
+    cli: str | None = None
 
 
 @dataclass(frozen=True)
@@ -69,10 +73,14 @@ def _nonempty_string(value: object, where: str) -> str:
 
 
 def _dedupe(candidates: list[RoutingCandidate]) -> tuple[RoutingCandidate, ...]:
-    seen: set[tuple[str, str]] = set()
+    seen: set[tuple[str, str, str | None]] = set()
     unique: list[RoutingCandidate] = []
     for candidate in candidates:
-        token = (candidate.key, candidate.value.casefold())
+        token = (
+            candidate.key,
+            candidate.value.casefold(),
+            candidate.cli.casefold() if candidate.cli else None,
+        )
         if token in seen:
             continue
         seen.add(token)
@@ -133,6 +141,82 @@ def _strip_display_suffix(value: str) -> str:
     return re.sub(r"\s*\([^()]*\)\s*$", "", value).strip()
 
 
+def _markdown_cells(line: str) -> list[str]:
+    return [cell.strip() for cell in line.strip().strip("|").split("|")]
+
+
+def _is_separator_row(cells: list[str]) -> bool:
+    return bool(cells) and all(re.fullmatch(r":?-{3,}:?", cell) for cell in cells)
+
+
+def _parse_governor_role_tables(markdown: str) -> RoutingPlan | None:
+    """Read Governor v3's per-role tables without making Governor mandatory.
+
+    Presence of the heading opts the document into this strict shape. A broken
+    table therefore fails closed instead of falling through to the legacy
+    parser and silently proposing the wrong execution lane.
+    """
+    start = markdown.find(GOVERNOR_HEADING)
+    if start < 0:
+        return None
+    end = markdown.find(GOVERNOR_END_MARKER, start + len(GOVERNOR_HEADING))
+    if end < 0:
+        raise RoutingContractError("incomplete Governor routing section: end marker not found")
+
+    lines = markdown[start + len(GOVERNOR_HEADING):end].splitlines()
+    role_starts: list[tuple[int, str]] = []
+    for index, raw_line in enumerate(lines):
+        line = raw_line.strip()
+        if not line.startswith("####"):
+            continue
+        match = GOVERNOR_ROLE_RE.fullmatch(line)
+        if not match:
+            raise RoutingContractError(f"invalid Governor role heading: {line}")
+        role_starts.append((index, match.group(1)))
+    if not role_starts:
+        raise RoutingContractError("the Governor routing section contains no roles")
+
+    roles: dict[str, tuple[RoutingCandidate, ...]] = {}
+    expected_slots = ("primario", "fallback 1", "fallback 2")
+    for role_index, (line_index, role) in enumerate(role_starts):
+        if role in roles:
+            raise RoutingContractError(f"duplicate Governor routing role: {role}")
+        next_index = role_starts[role_index + 1][0] if role_index + 1 < len(role_starts) else len(lines)
+        block = [line.strip() for line in lines[line_index + 1:next_index] if line.strip()]
+        unassigned = any(line.casefold().startswith("> **non assegnato.**") for line in block)
+        table_lines = [line for line in block if line.startswith("|")]
+        if unassigned:
+            if table_lines:
+                raise RoutingContractError(f"Governor role {role} is both assigned and unassigned")
+            roles[role] = ()
+            continue
+        if len(table_lines) != 5:
+            raise RoutingContractError(f"Governor role {role} must contain one header and three candidates")
+
+        header = [cell.casefold() for cell in _markdown_cells(table_lines[0])]
+        if header != ["slot", "modello", "cli", "$", "motivo"]:
+            raise RoutingContractError(f"Governor role {role} has incompatible table columns")
+        separator = _markdown_cells(table_lines[1])
+        if len(separator) != len(header) or not _is_separator_row(separator):
+            raise RoutingContractError(f"Governor role {role} has an invalid table separator")
+
+        ordered: list[RoutingCandidate] = []
+        slots: list[str] = []
+        for row in table_lines[2:]:
+            cells = _markdown_cells(row)
+            if len(cells) != len(header):
+                raise RoutingContractError(f"Governor role {role} has an incomplete candidate row")
+            slot = _nonempty_string(cells[0], f"{role} slot").casefold()
+            model = _nonempty_string(cells[1], f"{role} model")
+            cli = _nonempty_string(cells[2], f"{role} CLI").casefold()
+            slots.append(slot)
+            ordered.append(RoutingCandidate("label", model, cli))
+        if tuple(slots) != expected_slots:
+            raise RoutingContractError(f"Governor role {role} candidates are not in primary/fallback order")
+        roles[role] = _dedupe(ordered)
+    return RoutingPlan(source="governor-role-tables", roles=roles)
+
+
 def _parse_legacy_table(markdown: str) -> RoutingPlan:
     """Strict compatibility reader for the current generated routing table.
 
@@ -170,7 +254,11 @@ def _parse_legacy_table(markdown: str) -> RoutingPlan:
 
 
 def parse_routing_plan(markdown: str) -> RoutingPlan:
-    return _parse_json_contract(markdown) or _parse_legacy_table(markdown)
+    return (
+        _parse_json_contract(markdown)
+        or _parse_governor_role_tables(markdown)
+        or _parse_legacy_table(markdown)
+    )
 
 
 def load_routing_plan(path: Path) -> RoutingPlan:
@@ -246,6 +334,12 @@ def seat_capabilities(seats: dict[str, dict[str, Any]]) -> dict[str, SeatCapabil
 
     for name, seat in seats.items():
         cli = str(seat["cli"])
+        if cli == "agy":
+            capabilities[name] = SeatCapability(
+                False,
+                "agy is disabled as a passive Council seat because it does not honor the stateless invocation contract",
+            )
+            continue
         if not shutil.which(cli):
             capabilities[name] = SeatCapability(False, f"CLI '{cli}' not present on this host")
             continue
@@ -280,10 +374,27 @@ def seat_capabilities(seats: dict[str, dict[str, Any]]) -> dict[str, SeatCapabil
     return capabilities
 
 
+def _routing_id_variants(value: str) -> set[str]:
+    """Derive conservative stable-id candidates from a Governor display label."""
+    slug = re.sub(r"[^a-z0-9]+", "-", _strip_display_suffix(value).casefold()).strip("-")
+    variants = {slug}
+    without_build = re.sub(r"-\d{4}$", "", slug)
+    if without_build:
+        variants.add(without_build)
+    return variants
+
+
 def _matches(seat: dict[str, Any], candidate: RoutingCandidate) -> bool:
+    if candidate.cli and str(seat.get("cli", "")).casefold() != candidate.cli.casefold():
+        return False
     field = "routing_id" if candidate.key == "id" else "routing_label"
     configured = seat.get(field)
-    return isinstance(configured, str) and configured.strip().casefold() == candidate.value.casefold()
+    if isinstance(configured, str) and configured.strip().casefold() == candidate.value.casefold():
+        return True
+    if candidate.key != "label":
+        return False
+    routing_id = seat.get("routing_id")
+    return isinstance(routing_id, str) and routing_id.strip().casefold() in _routing_id_variants(candidate.value)
 
 
 def resolve_role_candidates(
@@ -294,16 +405,31 @@ def resolve_role_candidates(
     *,
     allow_training_risk: bool,
 ) -> tuple[list[str], list[str]]:
-    """Return usable seat names in decision-document order plus exclusion facts."""
+    """Return usable seat names in decision-document order plus exclusion facts.
+
+    ``allow_training_risk`` is retained as an API compatibility no-op. Missing
+    zero-retention is presentation metadata, never an eligibility gate.
+    """
+    del allow_training_risk
     if role not in plan.roles:
         raise RoutingContractError(f"the routing document does not define role '{role}'")
+    if not plan.roles[role]:
+        return [], [f"{role}: explicitly unassigned by the routing document"]
 
     selected: list[str] = []
     diagnostics: list[str] = []
     for candidate in plan.roles[role]:
         matched = [name for name, seat in seats.items() if _matches(seat, candidate)]
         if not matched:
-            diagnostics.append(f"{candidate.value}: no local seat associated")
+            lane = f" via {candidate.cli}" if candidate.cli else ""
+            diagnostics.append(f"{candidate.value}{lane}: no local seat associated")
+            continue
+        matched_clis = {str(seats[name].get("cli", "")).casefold() for name in matched}
+        if candidate.cli is None and len(matched_clis) > 1:
+            diagnostics.append(
+                f"{candidate.value}: ambiguous across CLIs ({', '.join(sorted(matched_clis))}); "
+                "the routing document must declare the CLI"
+            )
             continue
         for name in matched:
             if name in selected:
@@ -311,9 +437,6 @@ def resolve_role_candidates(
             capability = capabilities.get(name, SeatCapability(False, "capability not computed"))
             if not capability.available:
                 diagnostics.append(f"{candidate.value}: {capability.reason}")
-                continue
-            if not allow_training_risk and not seats[name].get("zero_retention", False):
-                diagnostics.append(f"{candidate.value}: excluded by zero-retention policy")
                 continue
             selected.append(name)
     return selected, diagnostics

@@ -58,6 +58,31 @@ LEGACY_ROUTING_TABLE = """# Routing decision
 """
 
 
+GOVERNOR_ROLE_TABLES = """# Dynamic routing decision
+
+<!-- model-routing-governor:start -->
+### Proposta di routing per ruolo
+
+#### L-Code - ratio
+
+Patch quotidiane, shell, debug medio.
+
+| Slot | Modello | CLI | $ | Motivo |
+|---|---|---|---:|---|
+| primario | DeepSeek V4 Flash 0731 | opencode | $0.175 | migliore rapporto qualita-prezzo |
+| fallback 1 | GPT-5.6 Luna | codex | $0.45 | pool distinto |
+| fallback 2 | Gemini 3.6 Flash | agy | $3 | fallback cross-vendor |
+
+#### Privacy - quality-first
+
+NDA, dati personali, lavoro che non deve uscire dalla macchina.
+
+> **Non assegnato.** nessun modello locale disponibile
+
+<!-- model-routing-governor:end -->
+"""
+
+
 def test_legacy_routing_table_is_parsed_strictly():
     routing = load_routing()
 
@@ -91,7 +116,99 @@ def test_machine_contract_takes_precedence_and_keeps_ranked_fallbacks():
     ]
 
 
-def test_resolver_keeps_document_order_and_skips_unavailable_or_unsafe_seats():
+def test_governor_role_tables_preserve_cli_identity_and_unassigned_roles():
+    routing = load_routing()
+
+    plan = routing.parse_routing_plan(GOVERNOR_ROLE_TABLES)
+
+    assert plan.source == "governor-role-tables"
+    assert [(candidate.value, candidate.cli) for candidate in plan.roles["L-Code"]] == [
+        ("DeepSeek V4 Flash 0731", "opencode"),
+        ("GPT-5.6 Luna", "codex"),
+        ("Gemini 3.6 Flash", "agy"),
+    ]
+    assert plan.roles["Privacy"] == ()
+
+
+def test_governor_cli_identity_keeps_same_model_on_distinct_quota_lanes():
+    routing = load_routing()
+    plan = routing.parse_routing_plan(GOVERNOR_ROLE_TABLES)
+    seats = {
+        "deepseek-flash": {
+            "routing_id": "deepseek-v4-flash",
+            "routing_label": "DeepSeek V4 Flash",
+            "zero_retention": True,
+            "cli": "opencode",
+            "model": "opencode-go/deepseek-v4-flash",
+        },
+        "codex-luna": {
+            "routing_id": "gpt-5-6-luna",
+            "routing_label": "GPT-5.6 Luna",
+            "zero_retention": False,
+            "cli": "codex",
+            "model": "gpt-5.6-luna",
+        },
+        "opencode-luna": {
+            "routing_id": "gpt-5-6-luna",
+            "routing_label": "GPT-5.6 Luna",
+            "zero_retention": True,
+            "cli": "opencode",
+            "model": "opencode-go/gpt-5.6-luna",
+        },
+        "gemini-flash": {
+            "routing_id": "gemini-3-6-flash",
+            "routing_label": "Gemini 3.6 Flash",
+            "zero_retention": False,
+            "cli": "agy",
+            "model": "gemini-3.6-flash-high",
+        },
+    }
+    capabilities = {
+        name: routing.SeatCapability(True, "detected") for name in seats
+    }
+
+    candidates, diagnostics = routing.resolve_role_candidates(
+        plan, seats, capabilities, "L-Code", allow_training_risk=False,
+    )
+
+    assert candidates == ["deepseek-flash", "codex-luna", "gemini-flash"]
+    assert "opencode-luna" not in candidates
+    assert not any("zero-retention" in item for item in diagnostics)
+
+
+def test_legacy_candidate_without_cli_fails_closed_when_multiple_clis_match():
+    routing = load_routing()
+    plan = routing.RoutingPlan(
+        source="legacy-routing-table",
+        roles={"L-Code": (routing.RoutingCandidate("label", "GPT-5.6 Luna"),)},
+    )
+    seats = {
+        "codex-luna": {
+            "routing_label": "GPT-5.6 Luna",
+            "zero_retention": False,
+            "cli": "codex",
+            "model": "gpt-5.6-luna",
+        },
+        "opencode-luna": {
+            "routing_label": "GPT-5.6 Luna",
+            "zero_retention": True,
+            "cli": "opencode",
+            "model": "opencode-go/gpt-5.6-luna",
+        },
+    }
+    capabilities = {
+        name: routing.SeatCapability(True, "detected") for name in seats
+    }
+
+    candidates, diagnostics = routing.resolve_role_candidates(
+        plan, seats, capabilities, "L-Code", allow_training_risk=False,
+    )
+
+    assert candidates == []
+    assert any("ambiguous across CLIs" in item for item in diagnostics)
+
+
+def test_resolver_keeps_document_order_warns_on_retention_and_skips_unavailable_seats():
     routing = load_routing()
     plan = routing.parse_routing_plan(LEGACY_ROUTING_TABLE)
     seats = {
@@ -124,8 +241,8 @@ def test_resolver_keeps_document_order_and_skips_unavailable_or_unsafe_seats():
         plan, seats, capabilities, "L-Code", allow_training_risk=False,
     )
 
-    assert candidates == ["deepseek"]
-    assert any("zero-retention" in item for item in diagnostics)
+    assert candidates == ["deepseek", "terra"]
+    assert not any("zero-retention" in item for item in diagnostics)
     assert any("non verificabile" in item for item in diagnostics)
 
 
@@ -336,6 +453,34 @@ def test_propose_lists_candidates_but_never_runs_a_seat(monkeypatch, tmp_path, c
     assert "you choose a candidate" in output
 
 
+def test_propose_without_governor_uses_declared_seats_and_never_runs(monkeypatch, tmp_path, capsys):
+    council = load_council(monkeypatch, tmp_path)
+    write_seats(
+        council,
+        """
+        seats:
+          manual-seat:
+            vendor: vendor
+            cli: opencode
+            model: vendor/manual-model
+            zero_retention: false
+        """,
+    )
+    invoked = []
+    monkeypatch.setattr(council, "run_seat", lambda *_args, **_kwargs: invoked.append(True))
+
+    council.cmd_propose(
+        argparse.Namespace(proposal_mode=None, routing_role=None, allow_training_risk=False)
+    )
+
+    assert invoked == []
+    output = capsys.readouterr().out
+    assert "no private routing configured" in output
+    assert "manual-seat: vendor/manual-model via opencode" in output
+    assert "WARNING: no verified zero-retention" in output
+    assert "you choose how many seats" in output
+
+
 def test_opencode_usage_hint_never_reorders_other_cli_positions(monkeypatch, tmp_path):
     council = load_council(monkeypatch, tmp_path)
     seats = {
@@ -475,15 +620,38 @@ def test_seat_capabilities_excludes_claude_with_fixed_reason(monkeypatch):
     )
 
 
+def test_seat_capabilities_excludes_agy_because_passive_invocation_is_disabled(monkeypatch):
+    routing = load_routing()
+    monkeypatch.setattr(routing.shutil, "which", lambda _cli: "/usr/bin/agy")
+    monkeypatch.setattr(
+        routing,
+        "_run_probe",
+        lambda _argv: (_ for _ in ()).throw(
+            AssertionError("agy inventory must not make a blocked seat eligible")
+        ),
+    )
+
+    capabilities = routing.seat_capabilities(
+        {"agy-seat": {"cli": "agy", "model": "gemini-3.6-flash-high"}}
+    )
+
+    assert capabilities["agy-seat"].available is False
+    assert "disabled as a passive Council seat" in capabilities["agy-seat"].reason
+
+
 # --- council._check_seat_allowed: the STOP path an explicit --seat can hit -
 
 
-def test_check_seat_allowed_stops_without_zero_retention_or_override(monkeypatch, tmp_path):
+def test_check_seat_allowed_warns_without_zero_retention_but_does_not_stop(monkeypatch, tmp_path, capsys):
     council = load_council(monkeypatch, tmp_path)
     args = argparse.Namespace(allow_training_risk=False)
 
-    with pytest.raises(SystemExit, match="does NOT have a zero-retention guarantee"):
-        council._check_seat_allowed("risky-seat", {"zero_retention": False}, args)
+    council._check_seat_allowed("risky-seat", {"cli": "opencode", "zero_retention": False}, args)
+
+    warning = capsys.readouterr().err
+    assert "WARNING" in warning
+    assert "risky-seat" in warning
+    assert "zero-retention" in warning
 
 
 # --- resolve_seat with an explicit --seat (bypasses the routing probe) -----
@@ -562,7 +730,7 @@ def test_resolve_seat_explicit_seat_same_vendor_as_author_stops_cross_review(mon
 # --- cmd_routing_status: a role with zero eligible candidates -------------
 
 
-def test_cmd_routing_status_prints_blocked_role_with_diagnostics(monkeypatch, tmp_path, capsys):
+def test_cmd_routing_status_keeps_non_retention_seat_and_marks_warning(monkeypatch, tmp_path, capsys):
     council = load_council(monkeypatch, tmp_path)
     write_seats(
         council,
@@ -591,8 +759,8 @@ def test_cmd_routing_status_prints_blocked_role_with_diagnostics(monkeypatch, tm
     council.cmd_routing_status(argparse.Namespace(allow_training_risk=False))
 
     output = capsys.readouterr().out
-    assert "L-Arch: BLOCKED" in output
-    assert "excluded by zero-retention policy" in output
+    assert "L-Arch: terra" in output
+    assert "WARNING: no verified zero-retention" in output
 
 
 def test_windows_probe_wraps_npm_cmd_shim(monkeypatch):
@@ -631,6 +799,18 @@ def test_legacy_table_missing_heading_raises():
     routing = load_routing()
     with pytest.raises(routing.RoutingContractError, match="not found"):
         routing.parse_routing_plan("# Routing decision\n\nNiente qui.\n")
+
+
+def test_governor_heading_with_changed_columns_fails_closed():
+    routing = load_routing()
+    malformed = GOVERNOR_ROLE_TABLES.replace(
+        "| Slot | Modello | CLI | $ | Motivo |",
+        "| Slot | Modello | Provider | $ | Motivo |",
+        1,
+    )
+
+    with pytest.raises(routing.RoutingContractError, match="incompatible table columns"):
+        routing.parse_routing_plan(malformed)
 
 
 def test_legacy_table_bad_header_columns_raises():

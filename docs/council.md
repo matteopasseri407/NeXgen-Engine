@@ -112,23 +112,34 @@ council relay \
   --sequence "architect=glm,builder=qwen,reviewer=deepseek-free"
 ```
 
-Every mode accepts `--context FILE` for extra background and
-`--allow-training-risk` to use a seat that lacks a confirmed zero-retention
-guarantee. Use it only for non-sensitive technical checks, never for a real brief.
+Every mode accepts `--context FILE` for extra background. A seat without a
+confirmed zero-retention guarantee remains usable, but Council prints a warning
+to stderr before sending the brief. The old `--allow-training-risk` flag is
+accepted as a compatibility no-op, so existing scripts do not break.
 
 ## Human-approved routing proposals
 
-An optional `routing:` section in the private `seats.yaml` turns a declared
-private routing document into a locally verified proposal. Set `decision_file`
-to a relative path inside the private data root. Council reads the governed
-routing table, maps only declared `routing_id`/`routing_label` values to an
-exact local `model` plus optional `reasoning_effort`, and checks the local CLI
-before it displays a candidate.
+Council works without a Governor. With only `seats.yaml`, `council propose`
+shows the seats the user declared and waits for an explicit choice.
 
-This is deliberately an in-memory adapter. It never lets an external workflow
-rewrite the cross-machine seat configuration. A missing CLI, a different model,
-a different Codex effort, or a zero-retention restriction removes that candidate
-from the proposal with the reason instead of guessing a substitute.
+An optional `routing:` section turns a routing document into a locally verified
+proposal. Set `decision_file` to a relative path inside the private data root.
+Council understands its versioned JSON contract, the per-role tables emitted by
+the public [LLM Model Routing Governor](https://github.com/matteopasseri407/llm-model-routing-governor),
+and the older flat table for backward compatibility.
+
+The Governor table carries both the model label and the CLI. Council keeps that
+pair together when it resolves `routing_id` or `routing_label` against local
+seats. This matters when the same model is available through two CLIs with
+different quota pools. An older document without a CLI still works when the
+model maps to one CLI only. If it maps to several CLIs, Council reports the
+ambiguity and does not guess.
+
+This is an in-memory adapter. Neither Council nor an external workflow rewrites
+`seats.yaml`. That file remains the local execution allowlist, while the routing
+document supplies the current ordering. A missing CLI, a different model, or a
+different Codex effort removes a candidate from the proposal with an explanation.
+Missing zero-retention does not remove it; the proposal marks it with a warning.
 
 For a `codex` seat the check is concrete: Council reads
 `$CODEX_HOME/config.toml` (default `~/.codex/config.toml`) and compares it
@@ -143,8 +154,8 @@ sides and the file it read:
 
 `claude` seats are excluded from the automated proposal by design, not by a
 gap: the Claude CLI does not expose a local, machine-readable list of the
-exact model it is currently configured for, the way `opencode models`,
-`agy models`, and `ollama list` do, so Council has nothing to verify a
+exact model it is currently configured for, the way `opencode models` and
+`ollama list` do, so Council has nothing to verify a
 candidate against before showing it. The diagnostic reads `Claude non espone
 una lista locale del modello esatto, quindi non entra nella proposta
 automatizzata`. This only blocks the *proposal*: a `claude` seat remains
@@ -246,21 +257,14 @@ council clean --all           # removes every kept session now
 - Both checks reuse the engine's shared `leak_scan.py` module, but this is a
   separate, always-on end-user protection, not the repository CI leak-scan
   that guards publishing to GitHub. See `SECURITY.md`.
-- **Zero-retention**: a seat without `zero_retention: true` in your
-  `seats.yaml` refuses to run unless you pass `--allow-training-risk` for
-  that one call, or this host has persistently opted in with
-  `council allow-training on` (below). Nothing else lifts this gate.
-- **`council allow-training on|off|status`**: an undocumented-until-now,
-  host-local persistent switch that removes the need to repeat
-  `--allow-training-risk` on every call. `on` writes a marker file under
-  this host's state directory (`~/.local/state/council/allow-training.enabled`,
-  or `%LOCALAPPDATA%\council\allow-training.enabled` on Windows); its mere
-  presence is the whole toggle — no content, timestamp, or expiry is
-  checked. `off` deletes that file, restoring the default protection.
-  `status` (or no argument) reports which state is active and prints the
-  exact file path. The effect is blanket and host-wide: once ON, *every*
-  seat lacking `zero_retention: true` runs without the flag on this
-  machine, for every mode, until you run `council allow-training off`.
+- **Zero-retention**: every seat must declare `zero_retention: true|false`.
+  A false value prints a clear warning in menus and immediately before the
+  model starts. It is metadata, not an execution gate. Secret scanning remains
+  blocking and is a separate control.
+- **Legacy retention controls**: `--allow-training-risk` and
+  `council allow-training` remain accepted for command compatibility but no
+  longer change behavior. `council allow-training off` also removes an old
+  marker file left by a previous release.
 - **Quota**: `--max-rounds` (brainstorm) and `--max-seats` (relay) cap how
   much a session can spend even if you ask for more.
 

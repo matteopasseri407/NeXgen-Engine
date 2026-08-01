@@ -10,6 +10,32 @@ of any engine release.
 
 ## [Unreleased]
 
+## [0.97.2] - 2026-08-01
+
+### Fixed
+
+- **Council now reads the current Governor output.** The public Governor emits
+  one `Slot | Modello | CLI | $ | Motivo` table per role, while Council still
+  expected the retired flat table and stopped at `routing-status`. The resolver
+  now parses the per-role format, preserves its fallback order, and represents
+  an explicitly unassigned role without borrowing candidates from another role.
+- **The same model on two CLIs no longer collapses into one route.** Governor
+  candidates carry both model identity and CLI into the local resolver. A legacy
+  document without CLI metadata still works when the mapping is unique, but
+  fails closed with a diagnostic when several CLIs match.
+
+### Changed
+
+- **Missing zero-retention is warning-only.** Seats with
+  `zero_retention: false` remain visible and runnable. Council marks them in
+  proposals and status output, then warns on stderr immediately before the
+  provider call. The old flag and preference command remain accepted as no-op
+  compatibility shims.
+- **Optional reference projects are linked from the main documentation.**
+  Council still works from `seats.yaml` alone. Users who want dynamic routing can
+  add the public LLM Model Routing Governor. The semantic-search section now
+  links the public Hybrid RAG implementation as well as the in-repo recipe.
+
 ## [0.97.1] - 2026-07-31
 
 ### Fixed

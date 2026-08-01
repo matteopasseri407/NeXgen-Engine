@@ -417,6 +417,8 @@ def _proposal_lines_for_role(
     plan, seats: dict, capabilities: dict, role: str, *, allow_training_risk: bool,
 ) -> tuple[list[str], bool]:
     """Render locally verified candidates without selecting or invoking one."""
+    if role in plan.roles and not plan.roles[role]:
+        return [f"  {role}:", "    Explicitly unassigned by the routing document."], False
     try:
         candidates, diagnostics = resolve_role_candidates(
             plan, seats, capabilities, role, allow_training_risk=allow_training_risk,
@@ -429,7 +431,11 @@ def _proposal_lines_for_role(
         for index, name in enumerate(candidates, 1):
             seat = seats[name]
             effort_label = _effort_label(seat)
-            retention = "zero-retention verified" if seat.get("zero_retention", False) else "training risk accepted"
+            retention = (
+                "zero-retention verified"
+                if seat.get("zero_retention", False)
+                else "WARNING: no verified zero-retention"
+            )
             lines.append(
                 f"    {index}. {name}: {seat['model']} via {seat['cli']}{effort_label}, {retention}."
             )
@@ -463,7 +469,12 @@ def _print_static_seat_menu(seats: dict) -> None:
     print("[council] no private routing configured. Declared seats, you choose:")
     for name, seat in seats.items():
         effort_label = _effort_label(seat)
-        print(f"  {name}: {seat['model']} via {seat['cli']}{effort_label}.")
+        retention = (
+            ""
+            if seat.get("zero_retention", False)
+            else ", WARNING: no verified zero-retention"
+        )
+        print(f"  {name}: {seat['model']} via {seat['cli']}{effort_label}{retention}.")
 
 
 def _require_human_single_selection(
@@ -541,19 +552,23 @@ def _warn_if_explicit_codex_seat_not_default(seat_name: str, seat: dict) -> None
 
 
 def _persistent_allow_training() -> bool:
-    """Host-local opt-in: when the marker file exists, seats without a verified
-    zero-retention guarantee are permitted without repeating --allow-training-risk
-    on every call. Toggled by `council allow-training on|off`; default (no file)
-    keeps the protection on."""
-    return ALLOW_TRAINING_PREF_FILE.is_file()
+    """Deprecated compatibility hook: retention metadata no longer gates seats."""
+    return False
 
 
 def _fold_persistent_allow_training(args: argparse.Namespace) -> None:
-    """Fold the host-local persistent preference into the per-call flag, so the
-    zero-retention gate (which reads args.allow_training_risk) honours the toggle
-    without the flag. The allow-training command itself must not be affected."""
-    if getattr(args, "func", None) is not cmd_allow_training and _persistent_allow_training():
-        args.allow_training_risk = True
+    """Deprecated compatibility no-op for callers that still invoke this hook."""
+    del args
+
+
+def _warn_no_zero_retention(seat_name: str, seat: dict) -> None:
+    if seat.get("zero_retention", False):
+        return
+    print(
+        f"[council] WARNING: seat '{seat_name}' has no verified zero-retention guarantee; "
+        "data sent may be retained or used for model training.",
+        file=sys.stderr,
+    )
 
 
 def _check_seat_allowed(seat_name: str, seat: dict, args: argparse.Namespace) -> None:
@@ -561,26 +576,17 @@ def _check_seat_allowed(seat_name: str, seat: dict, args: argparse.Namespace) ->
     # immediately before process spawn. See AGY_BLOCK_REASON.
     if seat.get("cli") == "agy":
         sys.exit(f"[council] STOP: {AGY_BLOCK_REASON}")
-    if not seat.get("zero_retention", False) and not args.allow_training_risk:
-        sys.exit(
-            f"[council] STOP: seat '{seat_name}' does NOT have a zero-retention guarantee "
-            "(data sent may end up in the model's training).\n"
-            "  For a single call: add --allow-training-risk (non-sensitive content only).\n"
-            "  If you're fine using these models on this machine: council allow-training on"
-        )
+    del args
+    _warn_no_zero_retention(seat_name, seat)
 
 
 def _validate_relay_seat(seat_name: str, seats: dict) -> dict:
-    """Structural sanity only (seat known, cli schema-supported) -- NOT the
-    zero-retention/agy policy gate. That gate is deliberately not enforced
-    here: it is re-checked per candidate, dynamically, in _run_relay_stage,
-    which *skips* a disallowed candidate so a declared fallback still runs.
-    A hard sys.exit at this load-time validation step (once per whole
-    sequence) would instead abort the entire relay the moment any single
-    candidate lacked zero-retention, even when a compliant fallback was
-    declared right next to it. (Previously took an unused `args` parameter
-    that made this look like it also re-ran the policy gate -- G6-councilargs;
-    it never did, and it must not, for the reason above.)"""
+    """Structural sanity only: the seat must exist and use a supported CLI.
+
+    The agy execution block is checked per candidate in _run_relay_stage, so
+    a declared fallback can still run. Retention metadata never removes a
+    candidate; the selected seat receives a warning immediately before egress.
+    """
     if seat_name not in seats:
         sys.exit(f"[council] unknown seat in the relay sequence: {seat_name}. Available: {', '.join(seats)}")
     seat = seats[seat_name]
@@ -1692,10 +1698,10 @@ def _run_relay_stage(
     records: list[RelayRecord], model_costs: dict[str, float], quarantine: RelayQuarantine,
     allow_training_risk: bool, invocation_timeout: float | None,
 ) -> RelayRecord:
+    del allow_training_risk  # Deprecated compatibility input: retention is warning-only.
     ordered_candidates = _sort_candidates_by_usage(stage.candidates, seats, model_costs)
     attempted: set[str] = set()
     last_failed_pool: str | None = None
-    skipped_training_risk = False
     skipped_agy = False
 
     while True:
@@ -1709,9 +1715,6 @@ def _run_relay_stage(
             if seats[candidate].get("cli") == "agy":
                 skipped_agy = True
                 continue
-            if not seats[candidate].get("zero_retention", False) and not allow_training_risk:
-                skipped_training_risk = True
-                continue
             pool = _seat_quota_pool(seats[candidate])
             if last_failed_pool and pool == last_failed_pool:
                 continue
@@ -1724,22 +1727,19 @@ def _run_relay_stage(
             pools = [_seat_quota_pool(seats[name]) for name in stage.candidates]
             reset = quarantine.next_reset_iso(pools)
             reset_msg = f" Nearest reset: {reset}." if reset else ""
-            risk_msg = (
-                " Seats without zero-retention excluded: --allow-training-risk for a single relay, "
-                "or 'council allow-training on' to allow them on this host."
-                if skipped_training_risk else ""
-            )
             agy_msg = f" {AGY_BLOCK_REASON}" if skipped_agy else ""
             sys.exit(
                 f"[council] relay stopped at role '{stage.role}': no seat available "
                 f"among those declared in the sequence ({', '.join(stage.candidates)})."
-                f"{reset_msg}{risk_msg}{agy_msg} I do not use seats outside the sequence and do not skip the role."
+                f"{reset_msg}{agy_msg} I do not use seats outside the sequence and do not skip the role."
             )
 
         seat = seats[chosen_name]
         pool = _seat_quota_pool(seat)
         prompt = build_relay_prompt(stage.role, brief, records)
         timeout_seconds = _resolve_timeout_seconds(seat, invocation_timeout)
+
+        _warn_no_zero_retention(chosen_name, seat)
 
         print(
             f"[council] relay {idx:02d} — role: {stage.role} — "
@@ -1910,6 +1910,9 @@ def cmd_routing_status(args: argparse.Namespace) -> None:
     capabilities = seat_capabilities(seats)
     print(f"[council] routing document: {plan.source}")
     for role in plan.roles:
+        if not plan.roles[role]:
+            print(f"  {role}: UNASSIGNED, explicitly unassigned by the routing document")
+            continue
         candidates, diagnostics = resolve_role_candidates(
             plan,
             seats,
@@ -1922,7 +1925,12 @@ def cmd_routing_status(args: argparse.Namespace) -> None:
             for name in candidates:
                 seat = seats[name]
                 effort_label = _effort_label(seat)
-                rendered.append(f"{name} ({seat['model']}{effort_label})")
+                retention = (
+                    ""
+                    if seat.get("zero_retention", False)
+                    else ", WARNING: no verified zero-retention"
+                )
+                rendered.append(f"{name} ({seat['model']}{effort_label}{retention})")
             print(f"  {role}: " + " -> ".join(rendered))
         else:
             detail = "; ".join(diagnostics[:4]) or "no compatible seat"
@@ -1983,7 +1991,7 @@ def _add_common_args(parser: argparse.ArgumentParser, *, include_seat: bool = Tr
         )
     parser.add_argument(
         "--allow-training-risk", action="store_true",
-        help="allow using a seat without a zero-retention guarantee (technical tests only)",
+        help=argparse.SUPPRESS,
     )
     parser.add_argument(
         "--keep-session", action="store_true",
@@ -1999,34 +2007,13 @@ def _add_common_args(parser: argparse.ArgumentParser, *, include_seat: bool = Tr
 
 
 def cmd_allow_training(args: argparse.Namespace) -> None:
+    """Compatibility command for releases that used retention as a hard gate."""
     action = getattr(args, "state", "status")
-    if action == "status":
-        on = _persistent_allow_training()
-        state = (
-            "ON — seats without zero-retention start without the flag"
-            if on else "OFF — zero-retention protection active"
-        )
-        print(f"[council] allow-training: {state}")
-        print(f"  host-local preference: {ALLOW_TRAINING_PREF_FILE}")
-        return
-    if action == "on":
-        COUNCIL_STATE_DIR.mkdir(parents=True, exist_ok=True)
-        ALLOW_TRAINING_PREF_FILE.write_text(
-            "Council: training risk accepted on this host.\n"
-            "Remove this file (or run: council allow-training off) to restore protection.\n",
-            encoding="utf-8",
-        )
-        print(
-            "[council] allow-training ON on this host: seats without a zero-retention guarantee "
-            "now start without --allow-training-risk.\n"
-            "  Applies only to this machine. Restore with: council allow-training off"
-        )
-        return
-    # off
-    ALLOW_TRAINING_PREF_FILE.unlink(missing_ok=True)
+    if action == "off":
+        ALLOW_TRAINING_PREF_FILE.unlink(missing_ok=True)
     print(
-        "[council] allow-training OFF: zero-retention protection restored on this host. "
-        "For a single call use --allow-training-risk."
+        "[council] allow-training is deprecated: zero-retention is warning-only, "
+        "so no preference or override is required."
     )
 
 
@@ -2082,7 +2069,7 @@ def main() -> int:
     routing_status = sub.add_parser("routing-status", help="shows the candidates proposed and verified on this host")
     routing_status.add_argument(
         "--allow-training-risk", action="store_true",
-        help="also show seats without a zero-retention guarantee, technical tests only",
+        help=argparse.SUPPRESS,
     )
     routing_status.set_defaults(func=cmd_routing_status)
 
@@ -2094,17 +2081,17 @@ def main() -> int:
     propose.add_argument("--routing-role", metavar="ROLE", help="show the proposal for a specific role")
     propose.add_argument(
         "--allow-training-risk", action="store_true",
-        help="also show seats without a zero-retention guarantee, technical tests only",
+        help=argparse.SUPPRESS,
     )
     propose.set_defaults(func=cmd_propose)
 
     allow_training = sub.add_parser(
         "allow-training",
-        help="persistently allow/block seats without zero-retention on this host",
+        help="deprecated compatibility command; zero-retention is warning-only",
     )
     allow_training.add_argument(
         "state", nargs="?", choices=("on", "off", "status"), default="status",
-        help="on = allow non-zero-retention seats without the flag; off = restore protection; status = current state",
+        help="deprecated and ignored; 'off' also removes the legacy marker file",
     )
     allow_training.set_defaults(func=cmd_allow_training)
 

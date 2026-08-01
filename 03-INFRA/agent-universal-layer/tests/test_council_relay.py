@@ -174,6 +174,38 @@ def test_relay_runs_declared_sequence_and_writes_stage_files(monkeypatch, tmp_pa
     assert "> Risposta da opencode/test-one" in seat_prompts[1]
 
 
+def test_relay_warns_but_runs_seat_without_zero_retention(monkeypatch, tmp_path, capsys):
+    council = load_council(monkeypatch, tmp_path)
+    write_seats(
+        council,
+        """
+        seats:
+          one:
+            vendor: vendor-a
+            cli: opencode
+            model: opencode/test-one
+            quota_pool: pool-a
+            zero_retention: false
+        """,
+    )
+    monkeypatch.setattr(council, "egress_gate", lambda text: None)
+    calls = []
+
+    def fake_run_seat(seat, prompt, session_dir, timeout_seconds=None):
+        calls.append(seat["model"])
+        return "Risposta finale\nVERDICT: APPROVE\n", {}
+
+    monkeypatch.setattr(council, "run_seat", fake_run_seat)
+
+    council.cmd_relay(relay_args(sequence="reviewer=one", allow_training_risk=False))
+
+    assert calls == ["opencode/test-one"]
+    warning = capsys.readouterr().err
+    assert "WARNING" in warning
+    assert "one" in warning
+    assert "zero-retention" in warning
+
+
 def test_relay_fallback_moves_to_different_quota_pool(monkeypatch, tmp_path, capsys):
     council = load_council(monkeypatch, tmp_path)
     write_seats(
