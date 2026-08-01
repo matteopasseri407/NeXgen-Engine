@@ -111,10 +111,15 @@ def _parse_json_contract(markdown: str) -> RoutingPlan | None:
         raise RoutingContractError("the Council contract contains no roles")
 
     roles: dict[str, tuple[RoutingCandidate, ...]] = {}
+    seen_roles: set[str] = set()
     for index, raw_role in enumerate(raw_roles):
         if not isinstance(raw_role, dict):
             raise RoutingContractError(f"roles[{index}] is not an object")
         role = _nonempty_string(raw_role.get("role"), f"roles[{index}].role")
+        role_key = role.casefold()
+        if role_key in seen_roles:
+            raise RoutingContractError(f"duplicate Council contract role: {role}")
+        seen_roles.add(role_key)
         ordered: list[RoutingCandidate] = []
         assignment = raw_role.get("assignment") or {}
         if not isinstance(assignment, dict):
@@ -156,14 +161,21 @@ def _parse_governor_role_tables(markdown: str) -> RoutingPlan | None:
     table therefore fails closed instead of falling through to the legacy
     parser and silently proposing the wrong execution lane.
     """
-    start = markdown.find(GOVERNOR_HEADING)
-    if start < 0:
+    exact_headings = list(re.finditer(
+        rf"(?m)^{re.escape(GOVERNOR_HEADING)}[ \t]*\r?$", markdown,
+    ))
+    if not exact_headings:
+        if re.search(rf"(?m)^{re.escape(GOVERNOR_HEADING)}.+$", markdown):
+            raise RoutingContractError("incompatible Governor routing heading")
         return None
-    end = markdown.find(GOVERNOR_END_MARKER, start + len(GOVERNOR_HEADING))
+    if len(exact_headings) != 1:
+        raise RoutingContractError("duplicate Governor routing heading")
+    start = exact_headings[0].end()
+    end = markdown.find(GOVERNOR_END_MARKER, start)
     if end < 0:
         raise RoutingContractError("incomplete Governor routing section: end marker not found")
 
-    lines = markdown[start + len(GOVERNOR_HEADING):end].splitlines()
+    lines = markdown[start:end].splitlines()
     role_starts: list[tuple[int, str]] = []
     for index, raw_line in enumerate(lines):
         line = raw_line.strip()
@@ -177,10 +189,13 @@ def _parse_governor_role_tables(markdown: str) -> RoutingPlan | None:
         raise RoutingContractError("the Governor routing section contains no roles")
 
     roles: dict[str, tuple[RoutingCandidate, ...]] = {}
+    seen_roles: set[str] = set()
     expected_slots = ("primario", "fallback 1", "fallback 2")
     for role_index, (line_index, role) in enumerate(role_starts):
-        if role in roles:
+        role_key = role.casefold()
+        if role_key in seen_roles:
             raise RoutingContractError(f"duplicate Governor routing role: {role}")
+        seen_roles.add(role_key)
         next_index = role_starts[role_index + 1][0] if role_index + 1 < len(role_starts) else len(lines)
         block = [line.strip() for line in lines[line_index + 1:next_index] if line.strip()]
         unassigned = any(line.casefold().startswith("> **non assegnato.**") for line in block)
@@ -213,7 +228,10 @@ def _parse_governor_role_tables(markdown: str) -> RoutingPlan | None:
             ordered.append(RoutingCandidate("label", model, cli))
         if tuple(slots) != expected_slots:
             raise RoutingContractError(f"Governor role {role} candidates are not in primary/fallback order")
-        roles[role] = _dedupe(ordered)
+        deduped = _dedupe(ordered)
+        if len(deduped) != len(ordered):
+            raise RoutingContractError(f"Governor role {role} contains duplicate candidates")
+        roles[role] = deduped
     return RoutingPlan(source="governor-role-tables", roles=roles)
 
 
@@ -238,11 +256,16 @@ def _parse_legacy_table(markdown: str) -> RoutingPlan:
         raise RoutingContractError("table columns not compatible with the Council resolver")
 
     roles: dict[str, tuple[RoutingCandidate, ...]] = {}
+    seen_roles: set[str] = set()
     for line in table_lines[2:]:
         cells = [cell.strip() for cell in line.strip("|").split("|")]
         if len(cells) < 4:
             raise RoutingContractError("incomplete routing table row")
         role = _nonempty_string(cells[0], "routing role")
+        role_key = role.casefold()
+        if role_key in seen_roles:
+            raise RoutingContractError(f"duplicate legacy routing role: {role}")
+        seen_roles.add(role_key)
         candidates = [
             RoutingCandidate("label", _strip_display_suffix(_nonempty_string(cell, f"{role} candidate")))
             for cell in cells[1:4]
@@ -378,7 +401,12 @@ def _routing_id_variants(value: str) -> set[str]:
     """Derive conservative stable-id candidates from a Governor display label."""
     slug = re.sub(r"[^a-z0-9]+", "-", _strip_display_suffix(value).casefold()).strip("-")
     variants = {slug}
-    without_build = re.sub(r"-\d{4}$", "", slug)
+    # Governor display labels may append a compact MMDD build date (for
+    # example 0731). Do not strip an arbitrary four-digit model version such
+    # as 2026, which could otherwise match a different stable routing id.
+    without_build = re.sub(
+        r"-(?:0[1-9]|1[0-2])(?:0[1-9]|[12][0-9]|3[01])$", "", slug,
+    )
     if without_build:
         variants.add(without_build)
     return variants

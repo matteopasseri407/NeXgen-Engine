@@ -23,6 +23,11 @@ of any engine release.
   candidates carry both model identity and CLI into the local resolver. A legacy
   document without CLI metadata still works when the mapping is unique, but
   fails closed with a diagnostic when several CLIs match.
+- **Malformed routing documents fail closed more consistently.** Exact Governor
+  headings are required, duplicate roles and candidates are rejected, and only
+  a date-shaped build suffix can map to a stable routing ID. Without a Governor,
+  declared `agy` seats are shown as disabled instead of being presented as an
+  invocable choice.
 
 ### Changed
 

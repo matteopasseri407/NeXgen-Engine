@@ -176,6 +176,13 @@ def test_governor_cli_identity_keeps_same_model_on_distinct_quota_lanes():
     assert not any("zero-retention" in item for item in diagnostics)
 
 
+def test_governor_build_suffix_mapping_only_strips_a_valid_mmdd_date():
+    routing = load_routing()
+
+    assert "deepseek-v4-flash" in routing._routing_id_variants("DeepSeek V4 Flash 0731")
+    assert "model" not in routing._routing_id_variants("Model 2026")
+
+
 def test_legacy_candidate_without_cli_fails_closed_when_multiple_clis_match():
     routing = load_routing()
     plan = routing.RoutingPlan(
@@ -479,6 +486,33 @@ def test_propose_without_governor_uses_declared_seats_and_never_runs(monkeypatch
     assert "manual-seat: vendor/manual-model via opencode" in output
     assert "WARNING: no verified zero-retention" in output
     assert "you choose how many seats" in output
+
+
+def test_propose_without_governor_marks_an_agy_only_config_as_non_invocable(monkeypatch, tmp_path, capsys):
+    council = load_council(monkeypatch, tmp_path)
+    write_seats(
+        council,
+        """
+        seats:
+          agy-seat:
+            vendor: google
+            cli: agy
+            model: Gemini 3.1 Pro (High)
+            zero_retention: false
+        """,
+    )
+    invoked = []
+    monkeypatch.setattr(council, "run_seat", lambda *_args, **_kwargs: invoked.append(True))
+
+    council.cmd_propose(
+        argparse.Namespace(proposal_mode=None, routing_role=None, allow_training_risk=False)
+    )
+
+    assert invoked == []
+    output = capsys.readouterr().out
+    assert "agy-seat: DISABLED as a passive Council seat" in output
+    assert "no invocable passive seat" in output
+    assert "you choose how many seats" not in output
 
 
 def test_opencode_usage_hint_never_reorders_other_cli_positions(monkeypatch, tmp_path):
@@ -811,6 +845,117 @@ def test_governor_heading_with_changed_columns_fails_closed():
 
     with pytest.raises(routing.RoutingContractError, match="incompatible table columns"):
         routing.parse_routing_plan(malformed)
+
+
+def test_governor_heading_suffix_fails_closed_instead_of_matching_a_prefix():
+    routing = load_routing()
+    malformed = GOVERNOR_ROLE_TABLES.replace(
+        "### Proposta di routing per ruolo",
+        "### Proposta di routing per ruolo obsoleta",
+        1,
+    )
+
+    with pytest.raises(routing.RoutingContractError, match="incompatible Governor routing heading"):
+        routing.parse_routing_plan(malformed)
+
+
+@pytest.mark.parametrize(
+    ("malformed", "message"),
+    [
+        (
+            GOVERNOR_ROLE_TABLES.replace("<!-- model-routing-governor:end -->", "", 1),
+            "end marker",
+        ),
+        (
+            GOVERNOR_ROLE_TABLES.replace("#### L-Code - ratio", "#### L Code", 1),
+            "invalid Governor role heading",
+        ),
+        (
+            GOVERNOR_ROLE_TABLES.replace(
+                "Patch quotidiane, shell, debug medio.",
+                "Patch quotidiane, shell, debug medio.\n\n> **Non assegnato.** contraddizione intenzionale",
+                1,
+            ),
+            "both assigned and unassigned",
+        ),
+        (
+            GOVERNOR_ROLE_TABLES.replace(
+                "| fallback 2 | Gemini 3.6 Flash | agy | $3 | fallback cross-vendor |\n",
+                "",
+                1,
+            ),
+            "one header and three candidates",
+        ),
+        (
+            GOVERNOR_ROLE_TABLES.replace(
+                "|---|---|---|---:|---|",
+                "|--|---|---|---:|---|",
+                1,
+            ),
+            "invalid table separator",
+        ),
+        (
+            GOVERNOR_ROLE_TABLES.replace("| fallback 1 |", "| fallback 2 |", 1),
+            "primary/fallback order",
+        ),
+    ],
+)
+def test_governor_mutations_fail_closed(malformed, message):
+    routing = load_routing()
+
+    with pytest.raises(routing.RoutingContractError, match=message):
+        routing.parse_routing_plan(malformed)
+
+
+def test_governor_duplicate_role_is_rejected_case_insensitively():
+    routing = load_routing()
+    duplicate = GOVERNOR_ROLE_TABLES.replace(
+        "<!-- model-routing-governor:end -->",
+        "#### l-code - duplicate\n\n> **Non assegnato.** duplicate role\n\n"
+        "<!-- model-routing-governor:end -->",
+        1,
+    )
+
+    with pytest.raises(routing.RoutingContractError, match="duplicate Governor routing role"):
+        routing.parse_routing_plan(duplicate)
+
+
+def test_governor_duplicate_candidate_in_two_slots_is_rejected():
+    routing = load_routing()
+    duplicate = GOVERNOR_ROLE_TABLES.replace(
+        "GPT-5.6 Luna | codex",
+        "DeepSeek V4 Flash 0731 | opencode",
+        1,
+    )
+
+    with pytest.raises(routing.RoutingContractError, match="duplicate candidates"):
+        routing.parse_routing_plan(duplicate)
+
+
+def test_json_contract_duplicate_role_is_rejected_case_insensitively():
+    routing = load_routing()
+    doc = (
+        "<!-- council-routing-contract:start -->\n"
+        '{"schema_version":1,"roles":['
+        '{"role":"L-Code","assignment":{"primary":"one"}},'
+        '{"role":"l-code","assignment":{"primary":"two"}}]}\n'
+        "<!-- council-routing-contract:end -->\n"
+    )
+
+    with pytest.raises(routing.RoutingContractError, match="duplicate Council contract role"):
+        routing.parse_routing_plan(doc)
+
+
+def test_legacy_table_duplicate_role_is_rejected_case_insensitively():
+    routing = load_routing()
+    duplicate = LEGACY_ROUTING_TABLE.replace(
+        "### Motivazioni concise",
+        "| l-code | Duplicate | Duplicate 1 | Duplicate 2 |\n\n### Motivazioni concise",
+        1,
+    )
+
+    with pytest.raises(routing.RoutingContractError, match="duplicate legacy routing role"):
+        routing.parse_routing_plan(duplicate)
 
 
 def test_legacy_table_bad_header_columns_raises():

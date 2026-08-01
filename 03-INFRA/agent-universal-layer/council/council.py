@@ -465,9 +465,17 @@ def _print_routing_proposal(
     return has_candidates
 
 
-def _print_static_seat_menu(seats: dict) -> None:
+def _print_static_seat_menu(seats: dict) -> bool:
     print("[council] no private routing configured. Declared seats, you choose:")
+    has_invocable_seat = False
     for name, seat in seats.items():
+        if seat.get("cli") == "agy":
+            print(
+                f"  {name}: DISABLED as a passive Council seat; "
+                "agy does not honor the stateless invocation contract."
+            )
+            continue
+        has_invocable_seat = True
         effort_label = _effort_label(seat)
         retention = (
             ""
@@ -475,6 +483,7 @@ def _print_static_seat_menu(seats: dict) -> None:
             else ", WARNING: no verified zero-retention"
         )
         print(f"  {name}: {seat['model']} via {seat['cli']}{effort_label}{retention}.")
+    return has_invocable_seat
 
 
 def _require_human_single_selection(
@@ -489,8 +498,7 @@ def _require_human_single_selection(
         else:
             has_candidates = _print_routing_proposal(args, config, seats, [], title=getattr(args, "mode", "Council"))
     else:
-        _print_static_seat_menu(seats)
-        has_candidates = bool(seats)
+        has_candidates = _print_static_seat_menu(seats)
     if has_candidates:
         sys.exit(
             "[council] human choice required: rerun with --seat NAME. "
@@ -1944,8 +1952,10 @@ def cmd_propose(args: argparse.Namespace) -> None:
     if not seats:
         sys.exit(f"[council] {SEATS_PATH} is empty: inert expansion, nothing to do.")
     if not _routing_enabled(config):
-        _print_static_seat_menu(seats)
-        print("[council] you choose how many seats to call and rerun with --seat or --sequence.")
+        if _print_static_seat_menu(seats):
+            print("[council] you choose how many seats to call and rerun with --seat or --sequence.")
+        else:
+            print("[council] no invocable passive seat is declared on this host.")
         return
 
     plan = _routing_context_or_exit(config)
