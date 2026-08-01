@@ -1121,6 +1121,7 @@ LINKED_COMMANDS: dict[str, dict[str, object]] = {
     "agent-open-folder": {"source": "engine", "posix": True, "windows": True},
     "council":         {"source": "engine", "posix": True,  "windows": True},
     "firecrawl-local": {"source": "engine", "posix": True,  "windows": True},
+    "nexgen-update":   {"source": "engine", "posix": True,  "windows": True},
     "vault-push":      {"source": "engine", "posix": True,  "windows": True},
     "vault-groom":     {"source": "engine", "posix": True,  "windows": True},
     "vault-ocr-local": {"source": "vault",  "posix": True,  "windows": False, "optional": True},

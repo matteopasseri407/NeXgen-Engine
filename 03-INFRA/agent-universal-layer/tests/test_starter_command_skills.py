@@ -129,14 +129,21 @@ def test_the_previous_name_still_resolves_and_says_where_it_went():
     )
 
 
-def test_the_upgrade_runbook_exists_in_exactly_one_of_the_two():
-    """Two copies of the same runbook is how the alias and the real command
-    drift apart. The stub must defer, not duplicate: the guarded steps (merge
-    never a bare checkout, confirm before touching anything) live in one file.
+def test_the_upgrade_runbook_has_one_executable_source_of_truth():
+    """The skills route intent; the executable owns the guarded transaction.
+
+    Keeping merge logic in a skill as well as in the cross-platform command
+    would let the chat and terminal entry points drift apart.
     """
     _, canonical = _frontmatter_and_body("nexgen-update")
     _, stub = _frontmatter_and_body("vault-update")
-    assert "git merge" in canonical, "the canonical skill lost its runbook"
+    implementation = (
+        REAL_VAULT / "03-INFRA" / "scripts" / "nexgen_update.py"
+    ).read_text(encoding="utf-8")
+    assert "nexgen-update --check" in canonical
+    assert "nexgen-update --yes" in canonical
+    assert '"merge", "--ff-only", target' in implementation
+    assert "git merge" not in canonical, "the skill duplicated executable release logic"
     assert "git merge" not in stub, "the stub duplicated the runbook instead of deferring"
     assert len(stub) < len(canonical), "the stub should be a pointer, not a copy"
 

@@ -35,6 +35,7 @@ The optional `--require-ready` flag makes `PARTIAL` fail for automation.
 
 | Guardian | Role | What it does |
 |---|---|---|
+| `nexgen-update` | release gate | manual, explicitly confirmed transaction that accepts only released tags on `origin/main`; checks engine and data repositories before moving the branch, then invokes sync and doctor. It is neither recurring nor a notifier. |
 | `agent-sync` (+ `.timer`) | clock | locked recurring run: prove authoritative freshness, apply config and skills, call the healthcheck. Never publishes. |
 | `agent-doctor` | brain | full alignment diagnosis; the only judge |
 | `agent_sync.py`'s `_send_healthcheck` | megaphone | notifies only on FAIL, with debounce and human-readable format; the only alert |
@@ -49,3 +50,8 @@ The optional `--require-ready` flag makes `PARTIAL` fail for automation.
 ## Extension principle
 
 A new check goes INSIDE `agent-doctor`, not into a new script that notifies on its own. Anything new that needs to reach the user goes through the `_send_healthcheck` step in `agent_sync.py`. Never add `notify-send` anywhere else: it would break the single-megaphone rule and bring back the scattered noise this consolidation removed.
+
+`nexgen-update` is deliberately outside the recurring guardian loop. It changes
+the installed engine only after a human confirms the displayed release plan,
+then reuses the existing `agent-sync` and `agent-doctor` authorities instead of
+inventing a second provisioner or a second health verdict.
