@@ -67,7 +67,7 @@ It does not intercept tool calls at runtime.
 - **Link hygiene as discipline.** A deterministic, stdlib-only structural map of the vault (`vault-map`: broken wikilinks with relocation hints, orphan notes, hubs) is wired into the flows rather than left as a periodic check: every memory write returns an advisory list of unresolved wikilinks it just introduced (never blocking — deliberate forward links are legitimate), the grooming pass treats orphans and broken links as first-class cleanup candidates, `agent-doctor` keeps a warn-only backstop, and a read-only `map_overview` tool gives agents a token-bounded compass before broad tasks.
 - **Cross-CLI command skills.** Declare a skill once and it surfaces as an explicitly invocable command on every supported runtime (`/name`, `$name` on Codex). Seven starter commands ship with the engine and are installed for you on the first provisioning pass: `vault-doctor`, `vault-close`, `vault-save`, `vault-council`, `vault-groom`, `nexgen-update`, and `vault-map`. Want none of them? Empty your `skills.manifest.yaml` (`skills: {}`) and it stays empty — the engine only ever creates that file, never rewrites it.
 - **Vault grooming, optional and manual.** `vault-groom.sh` and `vault-groom.ps1` use an LLM and a grooming playbook to flag stale, duplicate, or disconnected notes. A normal run and `preview` are read-only. `apply` shows the proposed changes and requires an explicit `yes` before writing in a disposable clone with no remote. An audit compares the result with the approved changes before promotion. If the audit fails, the original vault is left untouched. An optional n8n workflow sends a reminder every 14 days, but it never runs grooming unattended.
-- **AI Council, Beta.** The local orchestrator `council.py` coordinates multiple models for brainstorming and relay tasks. The routing logic is implemented in Python, with explicit human selection of seats and models.
+- **AI Council, Beta.** The local orchestrator `council.py` coordinates multiple models for brainstorming and relay tasks. It works from a local `seats.yaml` by itself. If you add the public [LLM Model Routing Governor](https://github.com/matteopasseri407/llm-model-routing-governor), Council reads its per-role proposals while keeping model and CLI identity separate. Every invocation still requires an explicit human choice. See [`docs/council.md`](docs/council.md).
 - **Configuration checks.** In MULTI profile, `agent-doctor` runs more than 30 read-only checks against the live configuration, vault wiring, skills, and secrets handling. It reports `pass`, `warn`, or `fail` for each check and returns a non-zero exit code when it finds an error. In MINIMAL, a single tool on a single machine is checked directly and no doctor is installed.
 - **Cross-platform synchronization, optional.** In MULTI profile, the provisioner keeps generated files aligned across different machines, such as a Windows workstation and a Linux laptop. In MINIMAL, the provisioner is not installed.
 
@@ -93,7 +93,7 @@ The tools reach them through the Model Context Protocol (MCP).
 
 > **Note:** These services are examples, not fixed dependencies. They were selected because they can run on an **Oracle Cloud Always Free VPS** with 4 ARM Ampere cores, 24 GB of RAM, and 200 GB of SSD storage. You can replace them with other services.
 
-- **Semantic search, configured separately.** The `vault-library` MCP contract exposes `semantic_search`, and the repository includes the manifest and retrieval rules for using it. The search backend and its deployment code are not included in this repository, but [`03-INFRA/deploy/semantic-search-recipe.md`](03-INFRA/deploy/semantic-search-recipe.md) is a complete build specification (embedding model, hybrid ranking algorithm, weights, reranker, resource footprint) precise enough for an AI coding agent to build a compatible backend from scratch. Without a compatible backend, tools fall back to lexical search.
+- **Semantic search, configured separately.** The `vault-library` MCP contract exposes `semantic_search`, and the repository includes the manifest and retrieval rules for using it. [`hybrid-rag-search`](https://github.com/matteopasseri407/hybrid-rag-search) is the public reference implementation. [`03-INFRA/deploy/semantic-search-recipe.md`](03-INFRA/deploy/semantic-search-recipe.md) documents the compatible contract, models, weights, reranker, and resource footprint. Without a compatible backend, tools fall back to lexical search.
 - **Web scraping.** You can deploy a Firecrawl instance using the files in `03-INFRA/deploy/firecrawl/`. It is the default read-only path for web content.
 - **Local OCR.** You can deploy an OCR service using the files in `03-INFRA/deploy/ocr/` to extract text from screenshots, logs, and scanned documents locally.
 - **Visible browser.** For forms, logins, and other interactive tasks, tools attach to a real Chrome window through the DevTools protocol. They must not use a headless browser for interactive work.
@@ -266,6 +266,10 @@ I controlli a runtime spettano all'harness della CLI, con i suoi permessi e le r
   Un workflow n8n opzionale ti ricorda ogni 14 giorni di eseguire il grooming, ma non avvia mai il lavoro al posto tuo.
 - **Consiglio AI deterministico, in Beta.** `council.py` è un orchestratore locale per coordinare più modelli in attività di brainstorming o relay.
   Le regole di passaggio sono scritte in Python, non affidate a un altro LLM.
+  Funziona da solo con un `seats.yaml` locale.
+  Se aggiungi il [LLM Model Routing Governor](https://github.com/matteopasseri407/llm-model-routing-governor), il Council legge le sue proposte per ruolo senza confondere lo stesso modello esposto da CLI diverse.
+  Ogni invocazione richiede comunque una scelta umana esplicita.
+  I dettagli sono in [`docs/council.md`](docs/council.md).
 - **Controllo delle differenze.** Nel profilo MULTI, `agent-doctor` esegue oltre 30 verifiche in sola lettura sulla configurazione delle CLI, sul collegamento al vault, sulle skill e sulla gestione dei segreti.
   Per ogni voce mostra `pass`, `warn` o `fail` e restituisce un exit code diverso da zero se trova errori.
   Rileva configurazioni fuori posto, ma non blocca l'esecuzione degli agenti.
@@ -299,9 +303,9 @@ Gli agenti li raggiungono tramite il Model Context Protocol, MCP.
 > Puoi sostituirli con altri servizi.
 
 - **Ricerca semantica, da configurare a parte.** Il contratto MCP `vault-library` espone già `semantic_search`, il manifest `manifest.yaml` lo dichiara e la governance di retrieval in `AGENTS.md` sa come usarlo.
-  Il repository, però, non contiene il backend di ricerca né il suo codice di deploy: in `03-INFRA/deploy/` non c'è una cartella `semantic-search/` con un compose funzionante.
-  C'è però [`03-INFRA/deploy/semantic-search-recipe.md`](03-INFRA/deploy/semantic-search-recipe.md): una ricetta di build completa (modello di embedding, algoritmo di ranking ibrido, pesi, reranker, ingombro di risorse) precisa abbastanza perché un agente AI possa costruire da zero un backend compatibile.
-  Se vuoi usare questa funzione, devi costruire e gestire un servizio compatibile con quel contratto.
+  [`hybrid-rag-search`](https://github.com/matteopasseri407/hybrid-rag-search) è l'implementazione pubblica di riferimento.
+  [`03-INFRA/deploy/semantic-search-recipe.md`](03-INFRA/deploy/semantic-search-recipe.md) documenta il contratto compatibile, i modelli, i pesi, il reranker e l'ingombro di risorse.
+  Il servizio resta opzionale e va gestito dall'utente.
   In sua assenza, gli agenti ricadono sulla ricerca lessicale prevista dalla governance.
 - **Web scraping.** Puoi installare un'istanza di Firecrawl usando i file di deploy in `03-INFRA/deploy/firecrawl/`.
   È la corsia predefinita per le letture web in sola lettura.

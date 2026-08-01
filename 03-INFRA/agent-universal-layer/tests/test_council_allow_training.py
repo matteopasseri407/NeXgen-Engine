@@ -21,39 +21,38 @@ def load_council():
     return mod
 
 
-def test_allow_training_toggle_roundtrip(tmp_path):
+def test_allow_training_command_is_a_compatible_noop(tmp_path, capsys):
     council = load_council()
     pref = tmp_path / "council" / "allow-training.enabled"
     council.COUNCIL_STATE_DIR = pref.parent
     council.ALLOW_TRAINING_PREF_FILE = pref
 
-    # default (no file) = protection on
     assert council._persistent_allow_training() is False
     council.cmd_allow_training(argparse.Namespace(state="on"))
-    assert pref.is_file()
-    assert council._persistent_allow_training() is True
+    assert not pref.exists()
+    assert "deprecated" in capsys.readouterr().out
+
+    pref.parent.mkdir(parents=True)
+    pref.write_text("legacy marker", encoding="utf-8")
     council.cmd_allow_training(argparse.Namespace(state="off"))
     assert not pref.exists()
     assert council._persistent_allow_training() is False
 
 
-def test_persistent_toggle_folds_into_flag(tmp_path):
+def test_legacy_marker_never_changes_retention_behavior(tmp_path):
     council = load_council()
     pref = tmp_path / "on"
     council.ALLOW_TRAINING_PREF_FILE = pref
 
-    # toggle OFF: the per-call flag is left untouched (protection stays on)
     ns = argparse.Namespace(func=council.cmd_brainstorm, allow_training_risk=False)
     council._fold_persistent_allow_training(ns)
     assert ns.allow_training_risk is False
 
-    # toggle ON: it folds into the flag the zero-retention gate reads
     pref.write_text("x", encoding="utf-8")
     ns2 = argparse.Namespace(func=council.cmd_brainstorm, allow_training_risk=False)
     council._fold_persistent_allow_training(ns2)
-    assert ns2.allow_training_risk is True
+    assert ns2.allow_training_risk is False
 
-    # the allow-training command itself is never affected by the toggle
     ns3 = argparse.Namespace(func=council.cmd_allow_training, allow_training_risk=False)
     council._fold_persistent_allow_training(ns3)
     assert ns3.allow_training_risk is False

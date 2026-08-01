@@ -32,8 +32,7 @@
 #   - il vendor di un seat consultato deve essere diverso dal vendor che ha
 #     prodotto il materiale in esame (niente auto-review dello stesso vendor);
 #   - preferisci seat con garanzia zero-retention per materiale reale;
-#     seat senza quella garanzia (es. tier gratuiti che riusano i dati per
-#     training) vanno bene solo per test tecnici con contenuto non sensibile;
+#     Council mostra un WARNING per i seat senza garanzia, ma non li blocca;
 #   - verifica la policy dati del canale con una fonte primaria (pagina
 #     privacy/ToS del provider), non fidarti di riassunti di terzi.
 #
@@ -47,8 +46,8 @@
 #     reasoning_effort: low|medium|high|xhigh|max|none           # opzionale
 #     quota_pool: <pool reale condiviso, es. opencode-go>  # opzionale ma consigliato
 #     timeout_seconds: 300  # opzionale, default conservativo: 300 secondi
-#     zero_retention: true|false   # garanzia contrattuale di non-training,
-#                                  # da verificare con fonte primaria
+#     zero_retention: true|false   # metadato verificato con fonte primaria;
+#                                  # false produce un WARNING, non un blocco
 #
 # Schema sequence per il mode `relay`:
 # - i ruoli NON vivono dentro i seat;
@@ -69,14 +68,22 @@
 #       seat: seat-d
 #
 # Proposta di routing da un documento privato di decisione:
+# - Council funziona anche senza Governor: usa i seat dichiarati e lascia
+#   sempre la scelta all'umano;
+# - integrazione opzionale pronta per il Governor pubblico:
+#   https://github.com/matteopasseri407/llm-model-routing-governor
 # - se attivo, Council legge soltanto il documento dichiarato nel Vault e propone
 #   il modello concreto qui dichiarato; non esegue mai un seat senza --seat o
 #   una relay senza --sequence scelti esplicitamente dall'umano;
 # - ogni seat proponibile deve avere routing_id e/o routing_label, oltre a model
 #   ed effort esatti per la sua CLI;
+# - le tabelle per ruolo del Governor portano Modello + CLI. Questa coppia
+#   distingue lo stesso modello esposto da pool diversi. Un vecchio documento
+#   senza CLI viene rifiutato solo quando il mapping sarebbe ambiguo;
 # - la CLI viene interrogata in sola lettura quando espone un inventario locale.
-#   Un modello non verificabile, assente o non autorizzato da zero_retention è
-#   mostrato come escluso, non viene sostituito o invocato automaticamente.
+#   Un modello non verificabile o assente viene mostrato come escluso, non viene
+#   sostituito o invocato automaticamente. zero_retention=false resta proponibile
+#   con un WARNING visibile.
 #
 # routing:
 #   enabled: true
