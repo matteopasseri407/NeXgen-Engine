@@ -52,6 +52,26 @@ available.
 
 ## Upgrading
 
+The normal path is now the real cross-platform command installed by the
+MULTI provisioner:
+
+```bash
+nexgen-update --check
+nexgen-update
+```
+
+The first command fetches released tags and prints the exact changelog without
+moving the branch or changing installed files. The second repeats the checks,
+verifies that both the engine clone and the separate data clone are clean,
+shows the merge/provision/doctor plan, and asks for confirmation. In
+automation, `nexgen-update --yes` is the explicit-confirmation form. It
+requires a fast-forward, merges a release tag without detaching `HEAD`, runs
+`agent-sync apply`, compares the doctor before and after, and never stashes,
+commits, resets, or rolls back user work on its own.
+
+The manual sequence below remains the recovery path for MINIMAL installs and
+for the one bootstrap upgrade from a version that predates the command.
+
 1. Read `CHANGELOG.md` for the version(s) between your current `VERSION`
    and the one you're moving to. Pay attention to the `### Changed` and
    `### Removed` sections — `### Added` is always safe.

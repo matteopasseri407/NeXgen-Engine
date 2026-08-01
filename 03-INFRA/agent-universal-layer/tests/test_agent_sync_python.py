@@ -920,12 +920,15 @@ def test_posix_utils_links_core_agent_launchers(sandbox, monkeypatch):
     agent_sync_link = sandbox.home / ".local" / "bin" / "agent-sync"
     agent_doctor_link = sandbox.home / ".local" / "bin" / "agent-doctor"
     open_folder_link = sandbox.home / ".local" / "bin" / "agent-open-folder"
+    update_link = sandbox.home / ".local" / "bin" / "nexgen-update"
     assert agent_sync_link.is_symlink()
     assert agent_sync_link.resolve() == (sandbox.scripts_dir / "agent-sync.sh").resolve()
     assert agent_doctor_link.is_symlink()
     assert agent_doctor_link.resolve() == (sandbox.scripts_dir / "agent-doctor.sh").resolve()
     assert open_folder_link.is_symlink()
     assert open_folder_link.resolve() == (sandbox.scripts_dir / "agent-open-folder.sh").resolve()
+    assert update_link.is_symlink()
+    assert update_link.resolve() == (sandbox.scripts_dir / "nexgen-update.sh").resolve()
 
 
 def test_windows_utils_installs_core_agent_command_wrappers(sandbox, monkeypatch):
@@ -938,7 +941,7 @@ def test_windows_utils_installs_core_agent_command_wrappers(sandbox, monkeypatch
     env = mod.Env()
     mod.utils(env)
 
-    for name in ("agent-sync", "agent-doctor", "agent-open-folder"):
+    for name in ("agent-sync", "agent-doctor", "agent-open-folder", "nexgen-update"):
         launcher = sandbox.home / ".local" / "bin" / f"{name}.ps1"
         wrapper = sandbox.home / ".local" / "bin" / f"{name}.cmd"
         assert launcher.exists(), f"{name}.ps1 launcher missing"

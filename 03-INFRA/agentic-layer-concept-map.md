@@ -62,6 +62,16 @@ override exists as `agent-sync apply --allow-offline`; the recurring guard can
 never use it. Each phase returns an explicit result and any required failure
 propagates to the process exit code.
 
+`nexgen-update` is the deliberate release transaction that precedes that sync.
+It fetches public tags, accepts only semantic-version tags already merged into
+`origin/main`, shows the matching changelog, and requires explicit confirmation.
+Before moving the engine branch it proves that both the engine clone and the
+separate data repository are clean, so an update cannot leave the code advanced
+while canonical data prevents provisioning. It also requires a fast-forward,
+then merges the release tag without manufacturing local release history,
+runs `agent-sync apply`, and compares the doctor result before and after. It
+never stashes, commits, detaches the checkout, or rolls back automatically.
+
 Manual apply separates installation from readiness.
 `BASE` means the available components were installed.
 `PARTIAL` keeps that usable base but states that strict consumer or connection checks still fail.
@@ -105,6 +115,7 @@ As of 2026-07-15, `agy` (Antigravity) is refused as a seat outright, at the same
 ## Guardians
 
 - **`agent-sync`** — locks, proves authoritative data freshness, then reconciles live configs with the canonical sources on each machine.
+- **`nexgen-update`** — performs an explicitly confirmed, released-tag-only engine upgrade, then delegates provisioning and verification to sync and doctor.
 - **`agent-doctor`** — the single diagnostic: git state, MCP reachability at the manifest-rendered endpoint, instruction drift, env tokens, skills, local worker. The only command to run by hand when something seems off.
 - **`agent-open-folder`** — generated cross-platform desktop action for revealing a validated absolute local folder after an agent download, without driving the browser UI.
 - **healthcheck step (inside `agent-sync`)** — grouped health summary; sends an alert only on FAIL. Was a standalone `agent-healthcheck.sh`, folded into `agent_sync.py`.

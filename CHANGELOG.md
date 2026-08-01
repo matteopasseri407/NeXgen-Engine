@@ -10,6 +10,27 @@ of any engine release.
 
 ## [Unreleased]
 
+## [0.97.3] - 2026-08-01
+
+### Added
+
+- **`nexgen-update` is now a real cross-platform terminal command.** The
+  provisioner installs a POSIX launcher plus native PowerShell and CMD
+  launchers, all backed by one Python updater. `--check` does not move the
+  branch or installed files, while a real update shows the exact tag and
+  changelog, requires confirmation, merges only as a fast-forward without
+  detaching `HEAD`, provisions the generated layer and compares the doctor
+  before and after.
+
+### Fixed
+
+- **A dirty split data clone now blocks before the engine ref moves.** The
+  updater checks both the consumer engine clone and `AGENT_VAULT_DATA`, so a
+  personal note or untracked file cannot leave the machine half-upgraded.
+- **Doctor's `run: nexgen-update` advice now names an executable that exists.**
+  The chat skill remains available as `/nexgen-update`, but the bare command is
+  no longer an undocumented manual procedure disguised as a launcher.
+
 ## [0.97.2] - 2026-08-01
 
 ### Fixed

@@ -108,6 +108,11 @@ explained in plain language, fixes proposed but never applied without
 confirmation). Each body encodes the documented runbook of the tool it
 wraps — the guarded flows stay guarded.
 
+`/nexgen-update` is the chat-facing skill. Its guarded work is performed by the
+real cross-platform terminal command `nexgen-update`, installed by
+`agent-sync apply`; the two entry points therefore share one updater rather
+than maintaining separate release logic.
+
 ## Synchronization and migration
 
 Change the manifest and its source body in the Vault, then commit and push

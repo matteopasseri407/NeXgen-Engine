@@ -5,39 +5,28 @@ description: Update NeXgen Engine itself. Check whether a newer engine release e
 
 # Update the engine
 
-Follow `docs/upgrade.md`; this is its canned form. Never move anything
-without the explicit confirmation in step 3.
+Use the real cross-platform `nexgen-update` command and keep its confirmation
+gate intact.
 
-1. Check, read-only: `git fetch --tags origin` in the engine clone (the
-   single documented install is the vault clone itself; a split install
-   keeps a separate consumer engine clone -- respect `AGENT_ENGINE_ROOT`
-   if set). Compare the newest released tag with the `VERSION` file and
-   report both.
-2. If an upgrade exists, read `CHANGELOG.md` for every version in
-   between and summarize it in plain language. `### Added` is safe by
-   design; call out anything under `### Changed` or `### Removed`
-   explicitly.
-3. Stop and ask before touching anything: state the exact target tag and
-   what will run. Also check the working tree is clean first (`git
-   status`); uncommitted data must be committed or stashed by the user,
-   not by you.
-4. On confirmation: `git merge <tag>` (a merge, never a bare checkout --
-   a detached HEAD strands the user's own commits), then a provisioning
-   pass: `agent-sync apply` and `agent-doctor --strict --summary` where
-   installed (MULTI profile); on a MINIMAL install verify visually that
-   the CLI still loads AGENTS.md, tools, and skills.
-5. Compare the doctor result with the pre-upgrade state: any NEW FAIL
-   means the release does not fit this setup -- offer the rollback
-   (`git reset --hard <previous-tag>`) and report what broke.
-6. On a multi-machine install, remind the user the other machines are
-   now behind until they run the same update, and their doctors will say
-   so.
-7. On a Cloud-Server install, say plainly that the VPS is a second
-   install and did NOT just get upgraded: this release may have moved
-   `03-INFRA/deploy/`, and the server keeps running the containers it
-   was last deployed with. `agent-doctor` reports the skew for
-   `vault-mcp` specifically ("vault-mcp on the server is X but this
-   engine ships Y"); the redeploy runbook is
-   `03-INFRA/deploy/README.md` → "Upgrading the server side". Do not run
-   it for the user: it is on their machine only by SSH, and restarting
-   those containers interrupts every agent using the vault.
+1. Run `nexgen-update --check`.
+   This check-only mode fetches release metadata and prints the installed
+   version, newest released tag and exact changelog entries without moving the
+   branch or changing installed files.
+2. Summarize the release in plain language.
+   Call out every `### Changed` or `### Removed` entry explicitly.
+3. Stop and ask before touching anything.
+   State the exact target tag and that the command will merge it, run
+   provisioning and compare the doctor before and after.
+4. On explicit confirmation, run `nexgen-update --yes`.
+   Do not stash, commit, reset or clean user work to make its preflight pass.
+5. If the bare command is absent because this machine predates the release
+   that introduced it, follow the manual bootstrap in `docs/upgrade.md` once.
+   The provisioning pass then installs the command for future releases.
+6. Report the result and remind the user that every other machine must run the
+   same update.
+7. On Cloud-Server, say plainly that the VPS is a second install and was not
+   upgraded by the workstation command.
+   The redeploy runbook is `03-INFRA/deploy/README.md`, section "Upgrading the
+   server side".
+   Do not run it for the user because restarting those containers interrupts
+   every agent using the vault.
