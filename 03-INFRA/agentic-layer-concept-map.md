@@ -65,6 +65,9 @@ propagates to the process exit code.
 `nexgen-update` is the deliberate release transaction that precedes that sync.
 It fetches public tags, accepts only semantic-version tags already merged into
 `origin/main`, shows the matching changelog, and requires explicit confirmation.
+It resolves the data plane from `AGENT_VAULT_DATA`,
+`KNOWLEDGE_VAULT_PATH`, or the normal `~/KnowledgeVault` checkout, so a bare
+command from a new terminal preserves the installed topology.
 Before moving the engine branch it proves that both the engine clone and the
 separate data repository are clean, so an update cannot leave the code advanced
 while canonical data prevents provisioning. A split consumer must fast-forward.
