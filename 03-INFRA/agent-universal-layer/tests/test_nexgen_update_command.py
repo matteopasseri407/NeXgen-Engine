@@ -256,20 +256,64 @@ def test_release_tag_with_mismatched_version_is_rejected_before_merge(tmp_path, 
     assert "contains VERSION='0.3.1'; expected '0.3.0'" in capsys.readouterr().err
 
 
-def test_diverged_engine_branch_is_rejected_before_merge(tmp_path, capsys):
+def test_single_clone_preserves_local_data_commit_with_a_merge(tmp_path, capsys):
     updater = _load_updater()
     _origin, engine = _upgrade_fixture(tmp_path)
     local = engine / "local-commit.txt"
     local.write_text("keep this history\n", encoding="utf-8")
     _git(engine, "add", "local-commit.txt")
     _git(engine, "commit", "-m", "local engine history")
-    before = _git(engine, "rev-parse", "HEAD").stdout.strip()
+    _git(engine, "config", "user.name", "nexgen merge test")
+    _git(engine, "config", "user.email", "nexgen-merge-test@localhost")
+    local_commit = _git(engine, "rev-parse", "HEAD").stdout.strip()
 
     result = updater.main(["--yes"], environ=_env(engine), which=lambda _name: None)
+
+    assert result == 0
+    assert local.read_text(encoding="utf-8") == "keep this history\n"
+    assert (engine / "VERSION").read_text(encoding="utf-8").strip() == "0.2.0"
+    parents = _git(engine, "rev-list", "--parents", "-n", "1", "HEAD").stdout.split()
+    assert len(parents) == 3
+    assert local_commit in parents[1:]
+    assert "git merge --no-edit v0.2.0" in capsys.readouterr().out
+
+
+def test_split_engine_history_must_fast_forward(tmp_path, capsys):
+    updater = _load_updater()
+    _origin, engine = _upgrade_fixture(tmp_path)
+    local = engine / "local-engine-change.txt"
+    local.write_text("keep this engine history\n", encoding="utf-8")
+    _git(engine, "add", "local-engine-change.txt")
+    _git(engine, "commit", "-m", "local engine history")
+    before = _git(engine, "rev-parse", "HEAD").stdout.strip()
+    data = tmp_path / "data"
+    data.mkdir()
+    _git(data, "init", "-b", "main")
+    (data / "note.md").write_text("clean\n", encoding="utf-8")
+    _git(data, "add", "note.md")
+    _git(data, "commit", "-m", "seed data")
+
+    result = updater.main(
+        ["--yes"],
+        environ=_env(engine, data),
+        which=lambda name: "fake-sync" if name == "agent-sync" else None,
+    )
 
     assert result == 1
     assert _git(engine, "rev-parse", "HEAD").stdout.strip() == before
     assert "is not a fast-forward" in capsys.readouterr().err
+
+
+def test_missing_single_clone_merge_identity_has_actionable_error(tmp_path, monkeypatch):
+    updater = _load_updater()
+
+    def missing_identity(_repo, *args, **_kwargs):
+        assert args == ("var", "GIT_COMMITTER_IDENT")
+        return subprocess.CompletedProcess(args, 128, "", "identity missing")
+
+    monkeypatch.setattr(updater, "_git", missing_identity)
+    with pytest.raises(updater.UpdateError, match="Git user.name and user.email"):
+        updater._assert_merge_identity(tmp_path)
 
 
 def test_explicit_downgrade_is_refused(tmp_path, capsys):
@@ -306,6 +350,123 @@ def test_split_topology_without_provisioner_is_refused_before_merge(tmp_path, ca
     assert result == 1
     assert _git(engine, "rev-parse", "HEAD").stdout.strip() == before
     assert "split engine/data topology requires agent-sync" in capsys.readouterr().err
+
+
+def test_existing_split_pin_requires_vault_push_before_merge(tmp_path, capsys):
+    updater = _load_updater()
+    _origin, engine = _upgrade_fixture(tmp_path)
+    before = _git(engine, "rev-parse", "HEAD").stdout.strip()
+    data = tmp_path / "data"
+    pin = data / "99-INDEX" / "ENGINE-PIN.txt"
+    pin.parent.mkdir(parents=True)
+    _git(data, "init", "-b", "main")
+    pin.write_text(f"{before}\n", encoding="utf-8")
+    _git(data, "add", "99-INDEX/ENGINE-PIN.txt")
+    _git(data, "commit", "-m", "seed engine pin")
+
+    result = updater.main(
+        ["--yes"],
+        environ=_env(engine, data),
+        which=lambda name: "fake-sync" if name == "agent-sync" else None,
+    )
+
+    assert result == 1
+    assert _git(engine, "rev-parse", "HEAD").stdout.strip() == before
+    assert "split engine pin requires vault-push" in capsys.readouterr().err
+
+
+def test_split_pin_is_committed_before_provisioning(tmp_path, capsys, monkeypatch):
+    updater = _load_updater()
+    origin, engine = _upgrade_fixture(tmp_path)
+    current_head = _git(engine, "rev-parse", "HEAD").stdout.strip()
+    target_head = _git(origin, "rev-parse", "v0.2.0^{commit}").stdout.strip()
+    data = tmp_path / "data"
+    pin = data / "99-INDEX" / "ENGINE-PIN.txt"
+    pin.parent.mkdir(parents=True)
+    _git(data, "init", "-b", "main")
+    pin.write_text(f"{current_head}\n", encoding="utf-8")
+    _git(data, "add", "99-INDEX/ENGINE-PIN.txt")
+    _git(data, "commit", "-m", "seed engine pin")
+    events = []
+    real_run = updater._run
+
+    def fake_commands(args, **kwargs):
+        if args[0] == "fake-vault-push":
+            assert pin.read_text(encoding="utf-8").strip() == target_head
+            assert args[-2:] == ["--", "99-INDEX/ENGINE-PIN.txt"]
+            _git(data, "add", "--", args[-1])
+            _git(data, "commit", "-m", "publish engine pin")
+            events.append("pin")
+            return subprocess.CompletedProcess(args, 0, "", "")
+        if args[0] == "fake-sync":
+            assert pin.read_text(encoding="utf-8").strip() == target_head
+            events.append("sync")
+            return subprocess.CompletedProcess(args, 0, "", "")
+        return real_run(args, **kwargs)
+
+    monkeypatch.setattr(updater, "_run", fake_commands)
+    monkeypatch.setattr(updater, "_doctor", lambda *_args, **_kwargs: (0, 0))
+    commands = {
+        "agent-sync": "fake-sync",
+        "agent-doctor": "fake-doctor",
+        "vault-push": "fake-vault-push",
+    }
+
+    result = updater.main(
+        ["--yes"],
+        environ=_env(engine, data),
+        which=commands.get,
+    )
+
+    assert result == 0
+    assert events == ["pin", "sync"]
+    assert pin.read_text(encoding="utf-8").strip() == target_head
+    assert _git(data, "status", "--porcelain").stdout == ""
+    output = capsys.readouterr().out
+    assert "update 99-INDEX/ENGINE-PIN.txt through vault-push" in output
+    assert "installed and verified" in output
+
+
+def test_failed_split_pin_publish_stops_before_provisioning(tmp_path, capsys, monkeypatch):
+    updater = _load_updater()
+    _origin, engine = _upgrade_fixture(tmp_path)
+    current_head = _git(engine, "rev-parse", "HEAD").stdout.strip()
+    data = tmp_path / "data"
+    pin = data / "99-INDEX" / "ENGINE-PIN.txt"
+    pin.parent.mkdir(parents=True)
+    _git(data, "init", "-b", "main")
+    pin.write_text(f"{current_head}\n", encoding="utf-8")
+    _git(data, "add", "99-INDEX/ENGINE-PIN.txt")
+    _git(data, "commit", "-m", "seed engine pin")
+    sync_called = False
+    real_run = updater._run
+
+    def fail_pin_publish(args, **kwargs):
+        nonlocal sync_called
+        if args[0] == "fake-vault-push":
+            return subprocess.CompletedProcess(args, 1, "", "simulated push failure")
+        if args[0] == "fake-sync":
+            sync_called = True
+            return subprocess.CompletedProcess(args, 0, "", "")
+        return real_run(args, **kwargs)
+
+    monkeypatch.setattr(updater, "_run", fail_pin_publish)
+    result = updater.main(
+        ["--yes"],
+        environ=_env(engine, data),
+        which=lambda name: {
+            "agent-sync": "fake-sync",
+            "vault-push": "fake-vault-push",
+        }.get(name),
+    )
+
+    assert result == 1
+    assert sync_called is False
+    assert (engine / "VERSION").read_text(encoding="utf-8").strip() == "0.2.0"
+    assert _git(data, "status", "--porcelain").stdout.strip()
+    error = capsys.readouterr().err
+    assert "private engine pin was not published" in error
+    assert "If 99-INDEX/ENGINE-PIN.txt moved" in error
 
 
 def test_unreadable_pre_upgrade_doctor_blocks_before_merge(tmp_path, capsys, monkeypatch):

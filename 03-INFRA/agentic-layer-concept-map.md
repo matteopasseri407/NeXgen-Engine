@@ -67,10 +67,13 @@ It fetches public tags, accepts only semantic-version tags already merged into
 `origin/main`, shows the matching changelog, and requires explicit confirmation.
 Before moving the engine branch it proves that both the engine clone and the
 separate data repository are clean, so an update cannot leave the code advanced
-while canonical data prevents provisioning. It also requires a fast-forward,
-then merges the release tag without manufacturing local release history,
-runs `agent-sync apply`, and compares the doctor result before and after. It
-never stashes, commits, detaches the checkout, or rolls back automatically.
+while canonical data prevents provisioning. A split consumer must fast-forward.
+The default single clone may create a merge commit, because private data commits
+legitimately share that branch. In a split install with an existing private
+engine pin, the transaction commits only `99-INDEX/ENGINE-PIN.txt` through
+`vault-push` before it runs `agent-sync apply`. It then compares the doctor
+result before and after. It never stashes, detaches the checkout, or rolls back
+automatically.
 
 Manual apply separates installation from readiness.
 `BASE` means the available components were installed.
