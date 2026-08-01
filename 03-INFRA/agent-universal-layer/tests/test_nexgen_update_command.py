@@ -70,6 +70,46 @@ def _env(engine: Path, data: Path | None = None) -> dict[str, str]:
     }
 
 
+def _bare_env(engine: Path, home: Path) -> dict[str, str]:
+    env = {
+        key: value
+        for key, value in os.environ.items()
+        if key not in {"AGENT_VAULT_DATA", "KNOWLEDGE_VAULT_PATH", "USERPROFILE"}
+    }
+    env.update({"AGENT_ENGINE_ROOT": str(engine / "03-INFRA"), "HOME": str(home)})
+    return env
+
+
+def test_bare_command_discovers_default_split_vault(tmp_path, capsys):
+    updater = _load_updater()
+    _origin, engine = _upgrade_fixture(tmp_path)
+    home = tmp_path / "home"
+    data = home / "KnowledgeVault"
+    data.mkdir(parents=True)
+    _git(data, "init", "-b", "main")
+    (data / "note.md").write_text("private data\n", encoding="utf-8")
+    _git(data, "add", "note.md")
+    _git(data, "commit", "-m", "seed data")
+
+    result = updater.main(
+        ["--check"], environ=_bare_env(engine, home), which=lambda _name: None
+    )
+
+    assert result == 0
+    assert f"Data:   {data.resolve()}" in capsys.readouterr().out
+
+
+def test_bare_command_without_default_vault_keeps_single_clone(tmp_path):
+    updater = _load_updater()
+    _origin, engine = _upgrade_fixture(tmp_path)
+    home = tmp_path / "empty-home"
+
+    engine_repo, data_repo = updater.resolve_repositories(_bare_env(engine, home))
+
+    assert engine_repo == engine.resolve()
+    assert data_repo == engine.resolve()
+
+
 def test_check_reports_release_without_moving_head(tmp_path, capsys):
     updater = _load_updater()
     _origin, engine = _upgrade_fixture(tmp_path)

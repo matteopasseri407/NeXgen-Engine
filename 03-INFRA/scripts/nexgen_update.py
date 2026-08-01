@@ -87,8 +87,17 @@ def resolve_repositories(environ: Mapping[str, str]) -> tuple[Path, Path]:
     if not (engine_repo / "VERSION").is_file() or not (engine_repo / "03-INFRA").is_dir():
         raise UpdateError(f"not a complete NeXgen Engine clone: {engine_repo}")
 
-    data_hint = environ.get("AGENT_VAULT_DATA")
-    data_repo = _git_root(Path(data_hint), label="AGENT_VAULT_DATA") if data_hint else engine_repo
+    data_hint = environ.get("AGENT_VAULT_DATA") or environ.get("KNOWLEDGE_VAULT_PATH")
+    if data_hint:
+        data_repo = _git_root(Path(data_hint), label="vault data path")
+    else:
+        home_hint = environ.get("HOME") or environ.get("USERPROFILE")
+        default_home = Path(home_hint).expanduser() if home_hint else Path.home()
+        default_data = default_home / "KnowledgeVault"
+        if default_data.resolve() == engine_repo or (default_data / ".git").exists():
+            data_repo = _git_root(default_data, label="default KnowledgeVault")
+        else:
+            data_repo = engine_repo
     return engine_repo, data_repo
 
 

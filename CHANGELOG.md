@@ -10,6 +10,17 @@ of any engine release.
 
 ## [Unreleased]
 
+## [0.97.5] - 2026-08-01
+
+### Fixed
+
+- **The bare updater now discovers the normal Vault data root.** Without
+  exported variables, `nexgen-update` now follows the same path priority as
+  the rest of the engine: `AGENT_VAULT_DATA`, `KNOWLEDGE_VAULT_PATH`, then
+  `~/KnowledgeVault` when it is a Git checkout. A split installation can no
+  longer be mistaken for a single clone merely because the command was opened
+  from a fresh terminal.
+
 ## [0.97.4] - 2026-08-01
 
 ### Fixed

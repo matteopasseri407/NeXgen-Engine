@@ -65,6 +65,9 @@ moving the branch or changing installed files. The second repeats the checks,
 verifies that both the engine clone and the separate data clone are clean,
 shows the merge/provision/doctor plan, and asks for confirmation. In
 automation, `nexgen-update --yes` is the explicit-confirmation form. It
+discovers the data root in this order: `AGENT_VAULT_DATA`,
+`KNOWLEDGE_VAULT_PATH`, then `~/KnowledgeVault` when that default is a Git
+checkout. If none exists, it keeps the engine checkout as the data root. It
 uses a fast-forward for a separate consumer engine. In the default single
 clone it permits a normal merge commit, so private data commits remain on the
 attached branch. When a split data clone already has
