@@ -516,7 +516,14 @@ def test_large_prompt_uses_private_non_argv_transport_for_every_cli(monkeypatch,
         if cli == "codex":
             output_file = Path(argv[argv.index("-o") + 1])
             output_file.write_text("Risposta\nVERDICT: APPROVE\n", encoding="utf-8")
-        process = FakeProcess("Risposta\nVERDICT: APPROVE\n")
+        if cli == "claude":
+            stdout_text = (
+                '{"is_error":false,"result":"Risposta\\nVERDICT: APPROVE\\n",'
+                '"modelUsage":{"vendor/test":{"canonicalModel":"vendor/test"}}}\n'
+            )
+        else:
+            stdout_text = "Risposta\nVERDICT: APPROVE\n"
+        process = FakeProcess(stdout_text)
         captured["process"] = process
         return process
 

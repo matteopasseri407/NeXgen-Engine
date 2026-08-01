@@ -227,7 +227,10 @@ def test_run_seat_leaves_claude_env_as_none_meaning_full_inherit(monkeypatch, tm
         def __init__(self):
             import io
             self.stdin = FakeStdin()
-            self.stdout = io.StringIO("Risposta\nVERDICT: APPROVE\n")
+            self.stdout = io.StringIO(
+                '{"is_error":false,"result":"Risposta\\nVERDICT: APPROVE\\n",'
+                '"modelUsage":{"vendor/test":{"canonicalModel":"vendor/test"}}}\n'
+            )
             self.stderr = io.StringIO()
 
         def kill(self):

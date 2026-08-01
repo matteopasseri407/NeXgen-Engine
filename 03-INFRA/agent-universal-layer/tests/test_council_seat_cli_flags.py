@@ -29,6 +29,7 @@ least breaking a test that says so.
 from __future__ import annotations
 
 import importlib.util
+import json
 import sys
 from pathlib import Path
 
@@ -58,7 +59,59 @@ def test_claude_seat_keeps_the_comprehensive_tool_block(monkeypatch, tmp_path):
     assert "--permission-mode" in argv and argv[argv.index("--permission-mode") + 1] == "plan"
     assert "--tools" in argv and argv[argv.index("--tools") + 1] == ""
     assert "--no-session-persistence" in argv
+    assert "--output-format" in argv and argv[argv.index("--output-format") + 1] == "json"
+    assert "--model" in argv and argv[argv.index("--model") + 1] == "vendor/test"
     assert "--dangerously-skip-permissions" not in argv
+
+
+def test_claude_json_result_proves_the_declared_canonical_model(monkeypatch, tmp_path):
+    council = load_council(monkeypatch, tmp_path)
+    raw = json.dumps(
+        {
+            "is_error": False,
+            "result": "Risposta\nVERDICT: APPROVE\n",
+            "total_cost_usd": 0.01,
+            "usage": {"input_tokens": 2, "output_tokens": 8},
+            "modelUsage": {
+                "claude-opus-5": {"canonicalModel": "claude-opus-5"},
+            },
+        }
+    )
+
+    response, usage = council._parse_claude_result(raw, "claude-opus-5")
+
+    assert response.endswith("VERDICT: APPROVE\n")
+    assert usage["model"] == "claude-opus-5"
+    assert usage["cost"] == 0.01
+
+
+def test_claude_json_result_rejects_a_silent_model_fallback(monkeypatch, tmp_path):
+    council = load_council(monkeypatch, tmp_path)
+    raw = json.dumps(
+        {
+            "is_error": False,
+            "result": "wrong model",
+            "modelUsage": {
+                "claude-sonnet-5": {"canonicalModel": "claude-sonnet-5"},
+            },
+        }
+    )
+
+    with pytest.raises(council.SeatRunError) as exc:
+        council._parse_claude_result(raw, "claude-opus-5")
+
+    assert exc.value.kind == "model_mismatch"
+    assert "claude-sonnet-5" in str(exc.value)
+
+
+def test_claude_json_result_requires_model_usage(monkeypatch, tmp_path):
+    council = load_council(monkeypatch, tmp_path)
+    raw = json.dumps({"is_error": False, "result": "unverified"})
+
+    with pytest.raises(council.SeatRunError) as exc:
+        council._parse_claude_result(raw, "claude-opus-5")
+
+    assert exc.value.kind == "model_unverified"
 
 
 def test_codex_seat_keeps_the_read_only_sandbox(monkeypatch, tmp_path):
