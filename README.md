@@ -179,6 +179,24 @@ If you prefer fewer setup questions, use `AI-INSTALLER.md` instead of `INIT.md`.
 - **Windows: physically verified, not yet a cold install.** Physically verified on real hardware and in CI, but an unassisted first-time install hasn't been tested yet — MINIMAL is the safer starting point on Windows until then. What was verified, and what the remaining gap is, is spelled out in the `0.5.1` entry of `CHANGELOG.md`.
 - **AI Council:** `agy` (Antigravity) is blocked as a passive Council seat because it was found to ignore its instructions in testing; using it interactively to call Council is unaffected — see `docs/council.md`'s "Current limitations" for details.
 
+### Antigravity orchestration boundary
+
+Antigravity can orchestrate work, but that is different from being a passive Council seat.
+Version 1.1.8 added structured `json` and `stream-json` output, which makes `agy` easier to drive from scripts.
+The [official changelog](https://github.com/google-antigravity/antigravity-cli/blob/main/CHANGELOG.md) also says that version 1.1.9 waits for MCP servers during headless runs so the turn sees the full toolset.
+That behavior conflicts with Council's passive-seat contract, which requires one exact prompt, one selected model, no inherited tools, and no persistent personal context.
+
+Public integrations confirm the distinction:
+
+- [agy-headless-bridge](https://github.com/rhishi99/agy-headless-bridge) fixes non-TTY output with a pseudo-terminal, but does not isolate credentials, MCP servers, or persistent state.
+- [antigravity-for-claude-code](https://github.com/VKirill/antigravity-for-claude-code) successfully orchestrates AGY as an operational worker. Its isolated launcher deliberately shares OAuth credentials, settings, and selected MCP servers so the worker can edit files and run tests.
+- [agy-mcp](https://github.com/Boulea7/agy-mcp/blob/main/docs/security.md) adds environment filtering, worktrees, and the CLI's `--sandbox` flag. Its own security model states that the bridge is not a sandbox for AGY.
+- [antigravity-acp](https://github.com/shubzkothekar/antigravity-acp) exposes AGY through ACP and replays its persistent conversation databases. The project also warns that third-party control of an Antigravity OAuth session may breach Google's terms.
+
+For this reason NeXgen allows Antigravity to act as the active caller that convenes Council, but keeps `agy` non-invocable as a passive seat.
+MCP protocol upgrades do not change that decision because they do not remove AGY's tools or persistent state.
+Reactivation would require operating-system-enforced isolation, separate credentials, restricted network access, a pinned binary, and equivalent adversarial verification on Linux and Windows.
+
 ## License
 
 PolyForm Noncommercial License 1.0.0. Free for any noncommercial use, including reading, running, forking, and modifying it. See `LICENSE` for the full text. Any commercial use, of the original software or a derivative, needs a separate license from the author: see `COMMERCIAL.md`.
@@ -410,6 +428,27 @@ macOS segue gli stessi percorsi POSIX, ma ha ricevuto meno verifiche nell'uso re
 **Limiti noti.** Il supporto multipiattaforma e gli orchestratori principali non sono ancora considerati definitivi.
 - **Windows, verificato fisicamente, manca ancora un'installazione a freddo.** È stato verificato su hardware Windows reale e in CI, ma un'installazione senza assistenza del manutentore non è stata ancora testata, quindi per ora MINIMAL resta il punto di partenza più prudente su Windows. Cosa è stato verificato, e cosa manca ancora, è scritto nella voce `0.5.1` del `CHANGELOG.md`.
 - **Consiglio AI.** `agy` (Antigravity) è escluso come seat passivo del Council perché nei test ignora le istruzioni ricevute, anche se usarlo in modo interattivo per richiamare il Council funziona normalmente. Vedi la sezione "Current limitations" di `docs/council.md` per i dettagli.
+
+### Confine di orchestrazione di Antigravity
+
+Antigravity può orchestrare il lavoro, ma questo non significa che possa essere un seat passivo del Council.
+La versione 1.1.8 ha aggiunto l'output strutturato `json` e `stream-json`, rendendo `agy` più facile da pilotare tramite script.
+Il [changelog ufficiale](https://github.com/google-antigravity/antigravity-cli/blob/main/CHANGELOG.md) dichiara anche che la versione 1.1.9 attende l'avvio dei server MCP nei run headless, affinché il turno veda l'intero set di tool.
+Questo comportamento è incompatibile con il contratto del seat passivo del Council, che richiede un prompt esatto, un modello scelto, nessun tool ereditato e nessun contesto personale persistente.
+
+Le integrazioni pubbliche confermano la differenza.
+
+- [agy-headless-bridge](https://github.com/rhishi99/agy-headless-bridge) risolve l'output non interattivo tramite una pseudo-TTY, ma non isola credenziali, server MCP o stato persistente.
+- [antigravity-for-claude-code](https://github.com/VKirill/antigravity-for-claude-code) orchestra AGY come lavoratore operativo.
+  Il suo launcher isolato condivide intenzionalmente credenziali OAuth, impostazioni e alcuni server MCP, perché il lavoratore deve modificare file e lanciare test.
+- [agy-mcp](https://github.com/Boulea7/agy-mcp/blob/main/docs/security.md) aggiunge il filtro delle variabili, i worktree e il flag `--sandbox` della CLI.
+  Il suo modello di sicurezza dichiara esplicitamente che il bridge non è una sandbox per AGY.
+- [antigravity-acp](https://github.com/shubzkothekar/antigravity-acp) espone AGY tramite ACP e rilegge i database persistenti delle conversazioni.
+  Il progetto avverte inoltre che il controllo di una sessione Antigravity OAuth tramite software terzo può violare i termini di Google.
+
+Per questo NeXgen consente ad Antigravity di essere il chiamante attivo che convoca il Council, ma mantiene `agy` non invocabile come seat passivo.
+Gli aggiornamenti del protocollo MCP non cambiano la decisione, perché non rimuovono i tool o lo stato persistente di AGY.
+Una futura riattivazione richiede isolamento imposto dal sistema operativo, credenziali separate, rete limitata, binario fissato e verifiche avversarie equivalenti su Linux e Windows.
 
 ## Licenza
 
