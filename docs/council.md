@@ -49,10 +49,21 @@ are a few lines that resolve their own path and exec the same
 `agent-universal-layer/council/council.py`. All control flow, modes, and
 guardrails below live in that one file.
 
+Council does not wrap provider CLIs behind an MCP server. It starts each
+declared CLI as a local subprocess and transports the brief through stdin or a
+protected temporary file. An MCP protocol upgrade therefore does not change
+Council's prompt transport or make a vendor CLI stateless. If that CLI can load
+mounted MCP servers, tools, or persistent state, Council must disable or isolate
+those capabilities separately.
+
 ## The four modes
 
-Every seat is called "without hands": it receives text and returns text,
-never filesystem or shell access, regardless of which CLI is behind it.
+Every seat is expected to obey the "without hands" contract: receive text,
+return text, and use no filesystem, shell, or MCP tools. Council removes
+application secrets from isolated seat environments and applies vendor CLI
+controls where they exist. Enforcement is not identical across vendors, so the
+"Current limitations" section is authoritative. A CLI that cannot be shown to
+honor this contract is refused as a seat, as `agy` is today.
 
 **Brainstorm.** One seat, 1+ rounds. Each round after the first must attack
 its own previous conclusion instead of just restating it:
