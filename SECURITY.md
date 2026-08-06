@@ -36,10 +36,12 @@ unrelated gates — don't conflate them:
   pull request and protects the public history from likely secrets and
   personal paths. Normal users never publish engine code; this has nothing to
   do with their private vault data or their Council sessions.
-  GitHub branch protection is the enforcement boundary: `main` should require
-  an approved pull request, passing CI, verified signatures, and no force
-  pushes or branch deletion. Local developer conveniences are not security
-  controls and do not ship with the product.
+  GitHub branch protection is the enforcement boundary. `main` requires
+  passing CI, signed commits, and no force pushes or branch deletion. It does
+  not require an approving review, because a single maintainer cannot approve
+  their own pull request and a rule nobody can satisfy is a rule that gets
+  turned off. Local developer conveniences are not security controls and do
+  not ship with the product.
 
 ## Supported versions
 
@@ -47,9 +49,29 @@ This project does not yet follow a formal LTS/patch schedule. Security fixes lan
 
 ## Release signing
 
-Every commit on `main` from `8fcd351` (2026-07-08) onward, and every tag from
-`v0.3.1` onward, carries a verifiable GPG signature (`git verify-commit` /
-`git verify-tag`). Tags `v0.1.0`–`v0.3.0` predate that discipline and are
-unsigned; treat them as historical, not as a verification baseline. Every
-future release tag must be signed — an unsigned tag past `v0.3.0` is a
-process bug, not a style choice.
+Every commit on `main` from `8fcd351` (2026-07-08) onward carries a verifiable
+signature (`git verify-commit`). Release tags are signed with `git tag -s` on a
+maintainer machine and verified with `git verify-tag`; both OpenPGP and SSH
+signature formats are accepted.
+
+From `v0.98.0` onward the rule is enforced rather than stated: `release.yml`
+refuses to publish a tag that is not an annotated object carrying a signature
+block, so an unsigned release cannot reach the Releases page. It checks for the
+signature's presence and not its cryptographic validity, because the public key
+is deliberately not present on the CI runner; verification belongs where the key
+is, on a maintainer or auditor machine.
+
+Earlier tags are not a uniform baseline, and this section previously claimed
+they were. Verify before you trust one:
+
+- `v0.1.0`–`v0.3.0` predate the signing discipline and are unsigned.
+- `v0.5.0`, `v0.5.1` are unsigned and `v0.5.2` is a lightweight tag, not a tag
+  object.
+- `v0.93.0`–`v0.97.6` are unsigned. From `v0.93.0` the release workflow created
+  the tag on a CI runner, which holds no signing key, and `--verify-tag` only
+  confirms that a tag exists. Twelve releases shipped that way before the gap
+  was found on 2026-08-06.
+- Everything else from `v0.3.1` onward is signed.
+
+An unsigned tag past `v0.3.0` is a process bug, not a style choice. Twelve of
+them were, and the check that now blocks them is the fix.

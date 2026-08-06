@@ -392,3 +392,39 @@ jobs:
       - name: Engine regression suite and agent_sync.py smoke
         working-directory: 03-INFRA/agent-universal-layer/tests
         run: python -m pytest -v
+
+  release-pending:
+    # Warn-only, and deliberately so: it never fails a pull request and never
+    # blocks a merge.
+    #
+    # Bumping VERSION is the act of releasing, but the tag is now cut by hand
+    # on the maintainer's machine so it can be signed (release.yml explains
+    # why). A hand step is the step that gets skipped: on 2026-07-30 main sat
+    # five merged commits past the newest tag, which reached no machine at all,
+    # because the update path compares the newest TAG with the installed
+    # VERSION. This job makes that gap visible on main the moment it opens,
+    # which is the guarantee the old auto-tagging bought at the cost of
+    # shipping twelve unsigned releases.
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 0
+
+      - name: Compare VERSION with the newest release tag
+        run: |
+          set -euo pipefail
+          version="$(tr -d '[:space:]' < VERSION)"
+          newest="$(git tag -l 'v*' | sort -V | tail -1)"
+          if [ "v$version" = "$newest" ]; then
+            echo "VERSION $version matches the newest tag $newest: nothing pending."
+            exit 0
+          fi
+          if git rev-parse -q --verify "refs/tags/v$version" >/dev/null; then
+            # VERSION points at an already-tagged release while a newer tag
+            # exists: a revert or a typo fix, not an unreleased bump.
+            echo "::warning::VERSION is $version, already tagged, but $newest is newer. Check the ordering."
+            exit 0
+          fi
+          echo "::warning::v$version is not released yet (newest tag: ${newest:-none}). Cut it with: git tag -s v$version -m \"Release v$version\" && git push origin v$version"
