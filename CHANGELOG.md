@@ -10,6 +10,52 @@ of any engine release.
 
 ## [Unreleased]
 
+## [0.98.0] - 2026-08-06
+
+### Fixed
+
+- **`render.py --revert` can restore an OpenCode config again.** The backup was
+  validated as strict JSON or TOML with no `.jsonc` branch, so the commented
+  backup `render.py` had just written was rejected as corrupt by the command
+  whose job is to restore it. Because that check runs before the "file is
+  absent" branch, `--reset opencode` followed by `--revert opencode`, the
+  documented undo pair, left the config unreachable rather than un-reverted.
+- **leak-scan now catches PKCS#8 private keys.** The PEM pattern listed only
+  the `RSA`, `OPENSSH`, and `EC` headers, so a key with no algorithm word,
+  which is what `openssl genpkey` emits by default and what a GCP
+  service-account JSON carries, passed the gate.
+- **leak-scan now reads files Git classifies as binary.** Both automatic lanes,
+  the pre-commit hook and the CI `--commit-range` gate, omitted `--text`, so
+  Git printed "Binary files differ" with no added lines and the scan exited
+  clean on a blob that carried a secret. The manual `--tree` mode was
+  unaffected.
+- **`vault-push` commits only the files it was given.** `git add` was scoped to
+  the named paths but the emptiness probe and the commit were not, so anything
+  already staged by the caller was swept into a commit whose message named a
+  single file. The engine-pin write goes through this path and is documented as
+  carrying only that file. Other staged entries now stay staged.
+- **A failed `nexgen-update` no longer leaves a half-merged tree.** A conflicted
+  merge raised past every cleanup path, parking conflict markers inside
+  `AGENTS.md` and the generated CLI configs, which are the files the CLIs read
+  as instructions. The merge is now rolled back before the failure is reported.
+
+### Changed
+
+- **Release tags are cut by the maintainer, and CI refuses unsigned ones.**
+  `release.yml` no longer creates the tag on a runner. It triggers on a pushed
+  tag and rejects anything that is not an annotated object carrying a signature
+  block, so an unsigned release cannot reach the Releases page. Cutting a
+  release is now `git tag -s vX.Y.Z -m "Release vX.Y.Z" && git push origin
+  vX.Y.Z`. A warn-only `release-pending` job on `main` reports when `VERSION`
+  runs ahead of the newest tag, which is the risk the previous auto-tagging
+  covered.
+- **`SECURITY.md` now describes the repository as it is.** It claimed every tag
+  from `v0.3.1` onward was signed; fourteen were not, including the twelve
+  consecutive releases from `v0.93.0` to `v0.97.6` that a CI runner tagged
+  without a key. It also presented branch protection on `main` as active when
+  the branch was unprotected. Protection is now configured, and the signing
+  section lists the real gaps instead of asserting a clean history.
+
 ## [0.97.6] - 2026-08-01
 
 ### Fixed

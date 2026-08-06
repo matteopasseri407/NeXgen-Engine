@@ -1,54 +1,84 @@
-# Tag and publish a release the moment VERSION changes on main.
+# Publish a GitHub release when a signed tag lands.
 #
-# Why this exists: releases used to be a manual step after the merge, and the
-# step that gets skipped is the one nobody's tooling depends on. On 2026-07-30
-# main had five merged commits past the newest tag, which meant they reached no
-# machine at all — the update path compares the newest TAG with the installed
-# VERSION, so unreleased work is invisible even to the doctor, which happily
-# reported both hosts "at the latest released version".
+# Why this shape: this workflow used to create the tag itself, on the runner,
+# as github-actions[bot]. A runner has no signing key, so every release from
+# v0.93.0 to v0.97.6 -- twelve consecutively -- shipped an unsigned tag while
+# SECURITY.md promised every tag past v0.3.0 carries a verifiable signature and
+# called an unsigned one "a process bug, not a style choice". Nothing caught it
+# because `gh release create --verify-tag` checks that the tag exists, not that
+# it is signed.
 #
-# Deliberately NOT a gate: this never fails a pull request and never blocks a
-# merge. Bumping VERSION is the whole act of releasing; everything after it is
-# mechanical, so it is automated instead of documented.
+# The tag is now cut on the maintainer's machine, where the signing key lives
+# and never leaves it. This workflow only publishes, and it refuses a tag that
+# carries no signature, so the claim in SECURITY.md is enforced rather than
+# asserted.
+#
+# The automation being replaced existed for a real reason: a manual release
+# step is the step that gets skipped, and on 2026-07-30 main sat five merged
+# commits past the newest tag, which meant they reached no machine at all. The
+# update path compares the newest TAG with the installed VERSION, so unreleased
+# work is invisible even to the doctor. That risk moves to the release-pending
+# job in ci.yml, which surfaces the gap on main as soon as it opens instead of
+# closing it silently and unsigned.
+#
+# Cutting a release is now one command:
+#   git tag -s vX.Y.Z -m "Release vX.Y.Z" && git push origin vX.Y.Z
 name: release
 
 on:
   push:
-    branches: [main]
-    paths: ["VERSION"]
+    tags: ["v*"]
 
 permissions:
   contents: write
 
 jobs:
-  tag-and-release:
+  publish:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           fetch-depth: 0
 
-      - name: Read VERSION and decide whether there is anything to do
+      - name: Refuse a tag that is not annotated and signed
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          kind="$(git cat-file -t "$TAG")"
+          if [ "$kind" != "tag" ]; then
+            echo "::error::$TAG is a $kind, not an annotated tag object. Release tags are created with 'git tag -s'." >&2
+            exit 1
+          fi
+          # Presence is checked, not cryptographic validity: the public key is
+          # deliberately absent from the runner. Presence is what closes the
+          # regression this workflow shipped for twelve releases, and real
+          # verification stays where the key is, in `git verify-tag` on a
+          # maintainer or auditor machine.
+          if ! git cat-file tag "$TAG" | grep -q -e "BEGIN PGP SIGNATURE" -e "BEGIN SSH SIGNATURE"; then
+            echo "::error::$TAG carries no signature. SECURITY.md requires every release tag past v0.3.0 to be signed." >&2
+            exit 1
+          fi
+          echo "$TAG is an annotated, signed tag."
+
+      - name: Check VERSION agrees with the tag
         id: check
+        env:
+          TAG: ${{ github.ref_name }}
         run: |
           set -euo pipefail
           version="$(tr -d '[:space:]' < VERSION)"
           case "$version" in
             [0-9]*.[0-9]*.[0-9]*) ;;
-            *) echo "VERSION is not a semver-looking value: '$version'" >&2; exit 1 ;;
+            *) echo "::error::VERSION is not a semver-looking value: '$version'" >&2; exit 1 ;;
           esac
-          echo "version=$version" >> "$GITHUB_OUTPUT"
-          if git rev-parse -q --verify "refs/tags/v$version" >/dev/null; then
-            # A VERSION touch that does not introduce a new version (a typo fix,
-            # a revert) is normal and must not fail the run.
-            echo "already released, nothing to do: v$version"
-            echo "release=false" >> "$GITHUB_OUTPUT"
-          else
-            echo "release=true" >> "$GITHUB_OUTPUT"
+          if [ "v$version" != "$TAG" ]; then
+            echo "::error::the tree at $TAG carries VERSION $version; a release tag must name the version it contains." >&2
+            exit 1
           fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
 
       - name: Extract this version's changelog section
-        if: steps.check.outputs.release == 'true'
         run: |
           python3 - "${{ steps.check.outputs.version }}" <<'PY'
           import pathlib, re, sys
@@ -72,18 +102,14 @@ jobs:
           print(body[:400])
           PY
 
-      - name: Tag and publish
-        if: steps.check.outputs.release == 'true'
+      - name: Publish
         env:
           GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
           VERSION: ${{ steps.check.outputs.version }}
         run: |
           set -euo pipefail
-          git -c user.name="github-actions[bot]" \
-              -c user.email="github-actions[bot]@users.noreply.github.com" \
-              tag -a "v$VERSION" -m "Release v$VERSION"
-          git push origin "v$VERSION"
-          gh release create "v$VERSION" \
+          gh release create "$TAG" \
             --title "NeXgen Engine v$VERSION Beta" \
             --notes-file RELEASE_NOTES.md \
             --verify-tag

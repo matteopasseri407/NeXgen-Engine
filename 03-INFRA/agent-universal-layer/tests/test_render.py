@@ -1470,3 +1470,74 @@ def test_adopt_wired_in_argparse(sandbox_with_live_configs, monkeypatch, capsys)
     out = capsys.readouterr().out
     assert rc == 0
     assert "legacy_extra_tool" in out
+
+
+# ---- --revert on OpenCode's JSONC config (regression, 2026-08-06) ----------
+#
+# cmd_revert validated the backup with `toml_loads if .toml else json.loads`.
+# Every other parse site in render.py dispatches on `.jsonc` first, because
+# OpenCode's native config is opencode.jsonc and write_json_section
+# deliberately preserves its // comments. So the one backup render.py had
+# just written with comments in it was rejected as corrupt by the command
+# whose entire job is to restore it. The check runs BEFORE the
+# `if not path.exists()` branch, so --reset opencode followed by
+# --revert opencode -- the documented undo pair, OpenCode being one of the two
+# _RESET_RECREATABLE CLIs, and the undo INIT.md points a new user at -- left
+# the config unreachable rather than merely un-reverted.
+
+_JSONC_WITH_COMMENTS = (
+    "{\n"
+    '  // provisioned by render.py, do not hand-edit\n'
+    '  "mcp": {\n'
+    '    "kept-server": { "type": "local", "command": ["x"] }\n'
+    "  }\n"
+    "}\n"
+)
+
+
+def _opencode_jsonc(sandbox) -> Path:
+    path = sandbox.home / ".config" / "opencode" / "opencode.jsonc"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def test_revert_restores_a_commented_jsonc_backup(sandbox):
+    mod = load_render_module(sandbox)
+    path = _opencode_jsonc(sandbox)
+    path.write_text('{ "mcp": {} }\n', encoding="utf-8")
+    _make_backup(path, _JSONC_WITH_COMMENTS)
+
+    rc = mod.cmd_revert("opencode")
+
+    assert rc == 0, "a valid JSONC backup was refused as unparseable"
+    assert path.read_text(encoding="utf-8") == _JSONC_WITH_COMMENTS
+
+
+def test_revert_after_reset_restores_the_commented_opencode_config(sandbox):
+    """The full documented undo pair, end to end: --reset removes the file,
+    --revert must bring it back. This is the path that was irrecoverable."""
+    mod = load_render_module(sandbox)
+    path = _opencode_jsonc(sandbox)
+    path.write_text(_JSONC_WITH_COMMENTS, encoding="utf-8")
+
+    assert mod.cmd_reset("opencode") == 0
+    assert not path.exists(), "reset should have removed the live config"
+
+    rc = mod.cmd_revert("opencode")
+
+    assert rc == 0, "--revert could not undo its own --reset on a JSONC config"
+    assert path.exists(), "the config was left unreachable after reset+revert"
+    assert "// provisioned by render.py" in path.read_text(encoding="utf-8"), (
+        "the comments the writer preserves must survive the round trip"
+    )
+
+
+def test_revert_still_refuses_a_genuinely_broken_jsonc_backup(sandbox):
+    """Accepting JSONC must not degrade into accepting anything: a backup that
+    is not valid JSONC is still real corruption and must exit 2."""
+    mod = load_render_module(sandbox)
+    path = _opencode_jsonc(sandbox)
+    path.write_text('{ "mcp": {} }\n', encoding="utf-8")
+    _make_backup(path, '{ "mcp": { // truncated\n')
+
+    assert mod.cmd_revert("opencode") == 2

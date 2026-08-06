@@ -143,7 +143,13 @@ def test_the_upgrade_runbook_has_one_executable_source_of_truth():
     assert "nexgen-update --check" in canonical
     assert "nexgen-update --yes" in canonical
     assert '"--ff-only" if split_topology else "--no-edit"' in implementation
-    assert '_git(engine_repo, "merge", merge_mode, target)' in implementation
+    # Matched by shape, not by an exact call string: the point is that the
+    # executable owns the merge invocation, which stays true when the call
+    # grows arguments (it gained check=False so a conflicted merge can be
+    # rolled back instead of raising past the abort).
+    assert re.search(
+        r'_git\(\s*engine_repo,\s*"merge",\s*merge_mode,\s*target\b', implementation
+    ), "the executable must own the merge invocation"
     assert "git merge" not in canonical, "the skill duplicated executable release logic"
     assert "git merge" not in stub, "the stub duplicated the runbook instead of deferring"
     assert len(stub) < len(canonical), "the stub should be a pointer, not a copy"

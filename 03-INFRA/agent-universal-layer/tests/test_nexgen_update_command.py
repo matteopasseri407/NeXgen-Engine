@@ -614,3 +614,35 @@ def test_powershell_launcher_executes_the_real_updater_help():
     )
     assert result.returncode == 0, result.stdout + result.stderr
     assert "usage: nexgen-update" in result.stdout
+
+
+def test_conflicted_merge_is_rolled_back_instead_of_leaving_markers(tmp_path, capsys):
+    """The merge ran with _git's default check=True, so a conflict raised
+    straight out of the call and no cleanup ever executed. The updater printed
+    an error and returned 1 while leaving the repository mid-merge, with
+    <<<<<<< markers inside AGENTS.md and the generated CLI configs -- the files
+    the CLIs read as instructions, and in the single-clone topology that tree
+    IS the user's live install. A failed update has to leave nothing behind.
+    """
+    updater = _load_updater()
+    _origin, engine = _upgrade_fixture(tmp_path)
+    _git(engine, "config", "user.name", "nexgen merge test")
+    _git(engine, "config", "user.email", "nexgen-merge-test@localhost")
+    changelog = engine / "CHANGELOG.md"
+    changelog.write_text(
+        "## [0.1.0] - 2026-07-30\n\n### Changed\n\n- Local divergent edit.\n",
+        encoding="utf-8",
+    )
+    _git(engine, "add", "CHANGELOG.md")
+    _git(engine, "commit", "-m", "local changelog edit")
+    head_before = _git(engine, "rev-parse", "HEAD").stdout.strip()
+
+    result = updater.main(["--yes"], environ=_env(engine), which=lambda _name: None)
+
+    assert result == 1
+    assert _git(engine, "rev-parse", "HEAD").stdout.strip() == head_before
+    assert "<<<<<<<" not in changelog.read_text(encoding="utf-8"), "conflict markers left in the live tree"
+    assert not (engine / ".git" / "MERGE_HEAD").exists(), "repository left mid-merge"
+    status = _git(engine, "status", "--porcelain").stdout.strip()
+    assert status == "", f"working tree not clean after rollback: {status!r}"
+    assert (engine / "VERSION").read_text(encoding="utf-8").strip() == "0.1.0"

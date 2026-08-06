@@ -1248,7 +1248,19 @@ def cmd_revert(cli):
     latest = backups[-1]
     restored = latest.read_text("utf-8")
     try:
-        (toml_loads if path.suffix == ".toml" else json.loads)(restored)
+        # OpenCode's config is opencode.jsonc and the writer deliberately
+        # preserves its // comments (see write_json_section). Parsing the
+        # backup with plain json.loads rejected every commented OpenCode
+        # backup as "corrupt", and because this check runs BEFORE the
+        # `if not path.exists()` branch below, `--reset opencode` followed by
+        # `--revert opencode` -- the documented undo pair, OpenCode being one
+        # of the two _RESET_RECREATABLE CLIs -- left the config unreachable.
+        if path.suffix == ".toml":
+            toml_loads(restored)
+        elif path.suffix == ".jsonc":
+            parse_jsonc(restored)
+        else:
+            json.loads(restored)
     except (json.JSONDecodeError, TOMLDecodeError, ValueError) as e:
         print(f">>> STOP: the backup {latest.name} does not parse ({e}); refusing to restore a broken file.")
         return 2

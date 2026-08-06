@@ -2980,14 +2980,27 @@ def _vault_push_locked(env: Env, msg: str, files: list[str]) -> int:
         print(f"vault-push: authoritative remote '{env.remote}' is not configured")
         return 1
 
-    if files and _git(env, "add", "--", *files).returncode != 0:
-        print("vault-push: git add failed")
-        return 1
-    if _git(env, "diff", "--cached", "--quiet").returncode == 0:
+    if files:
+        if _git(env, "add", "--", *files).returncode != 0:
+            print("vault-push: git add failed")
+            return 1
+        # Carry the same pathspec through the emptiness probe and the commit.
+        # `add` was already scoped, but the probe and the commit were not, so
+        # anything the caller happened to have in the index rode along into a
+        # commit whose message named one file. That is load-bearing for the
+        # engine-pin write, which nexgen_update.py documents as containing
+        # only that exact file. A partial commit leaves the caller's other
+        # staged entries staged; it does not discard them.
+        probe = _git(env, "diff", "--cached", "--quiet", "--", *files)
+        commit_args = ["commit", "-q", "-m", msg, "--", *files]
+    else:
+        probe = _git(env, "diff", "--cached", "--quiet")
+        commit_args = ["commit", "-q", "-m", msg]
+    if probe.returncode == 0:
         print("vault-push: nothing staged, nothing to commit")
         return 0
 
-    if _git(env, "commit", "-q", "-m", msg).returncode != 0:
+    if _git(env, *commit_args).returncode != 0:
         print("vault-push: commit failed")
         return 1
     short = _git(env, "rev-parse", "--short", "HEAD").stdout.strip()

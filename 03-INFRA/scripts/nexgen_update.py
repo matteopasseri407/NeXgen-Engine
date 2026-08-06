@@ -395,7 +395,21 @@ def main(
         if doctor and pre_doctor_rc != 0 and pre_fail == 0:
             raise UpdateError("pre-upgrade doctor returned an inconsistent result")
         previous_head = _git(engine_repo, "rev-parse", "HEAD").stdout.strip()
-        merge = _git(engine_repo, "merge", merge_mode, target)
+        merge = _git(engine_repo, "merge", merge_mode, target, check=False)
+        if merge.returncode != 0:
+            # Never leave a half-merged tree behind. A conflicted merge parks
+            # <<<<<<< markers inside AGENTS.md and the generated CLI configs,
+            # which are the files the CLIs read as instructions, and in the
+            # single-clone topology that tree IS the user's live install.
+            # check=False on the abort: --ff-only refuses without starting a
+            # merge, so there is nothing to abort and a non-zero here is
+            # expected and harmless.
+            _git(engine_repo, "merge", "--abort", check=False)
+            detail = (merge.stderr or merge.stdout or "merge failed").strip()
+            raise UpdateError(
+                f"merge {merge_mode} {target}: {detail}\n"
+                f"The merge was rolled back; {engine_repo} is still at {previous_head[:9]}."
+            )
         if merge.stdout:
             print(merge.stdout.rstrip())
 

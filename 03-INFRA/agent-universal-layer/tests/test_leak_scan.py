@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import importlib.util
 import re
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -326,3 +327,108 @@ def test_synthetic_aws_key_id_is_still_blocked(leak_scan, real_patterns):
     findings = _scan_line(leak_scan, patterns, allow, f"credentials: {synthetic_secret}")
 
     assert any(f.blocking and f.kind.startswith("pattern:h") for f in findings)
+
+
+# --- PEM private keys: the pattern only knew the legacy algorithm-tagged
+# headers, so bare PKCS#8 walked through the gate (2026-08-06) --------------
+
+def _pem_private_key_header(algorithm: str = "") -> str:
+    """Built by concatenation for the same reason as the synthetic AWS key
+    above: this file's own diff goes through the leak-scan gate it tests, so
+    the header must not appear as one contiguous token in the source."""
+    tag = f"{algorithm} " if algorithm else ""
+    return "-----BEGIN " + tag + "PRIVATE" + " KEY-----"
+
+
+@pytest.mark.parametrize(
+    "algorithm",
+    ["", "RSA", "OPENSSH", "EC", "DSA", "ENCRYPTED"],
+    ids=["pkcs8-bare", "rsa", "openssh", "ec", "dsa", "encrypted"],
+)
+def test_every_pem_private_key_header_is_flagged(leak_scan, real_patterns, algorithm):
+    """The empty-algorithm case is the regression: the PEM header carrying no
+    algorithm word is PKCS#8, which is what `openssl genpkey` emits by default
+    and what a GCP service-account JSON carries, and the pattern only listed
+    RSA/OPENSSH/EC. The most common modern private key format scanned clean.
+
+    The header itself is assembled by _pem_private_key_header rather than
+    written out here, for the reason in the module docstring."""
+    patterns, allow = real_patterns
+
+    findings = _scan_line(leak_scan, patterns, allow, _pem_private_key_header(algorithm))
+
+    assert any(f.blocking for f in findings), (
+        f"PEM header for {algorithm or 'bare PKCS#8'} was not flagged"
+    )
+
+
+def test_pem_pattern_does_not_flag_a_public_key_header(leak_scan, real_patterns):
+    """Making the algorithm word optional must not widen the pattern onto
+    PUBLIC key headers, which are not secrets and appear in legitimate docs."""
+    patterns, allow = real_patterns
+    public_header = "-----BEGIN " + "PUBLIC" + " KEY-----"
+
+    findings = _scan_line(leak_scan, patterns, allow, public_header)
+
+    assert not [f for f in findings if "PRIVATE" in f.kind or f.blocking], (
+        "a public key header must not be treated as a leak"
+    )
+
+
+# --- the automatic lanes were blind to anything git calls binary ------------
+
+def _init_scan_repo(path: Path) -> None:
+    path.mkdir(parents=True, exist_ok=True)
+    for args in (
+        ("init", "-b", "main"),
+        ("config", "user.email", "nexgen-tests.invalid"),
+        ("config", "user.name", "NeXgen tests"),
+    ):
+        subprocess.run(["git", "-C", str(path), *args], check=True, capture_output=True)
+
+
+def test_staged_binary_classified_blob_is_still_scanned(leak_scan, tmp_path):
+    """`git diff --cached` prints "Binary files ... differ" and NO "+" lines for
+    anything git classifies as binary (a NUL byte in the first 8000, or a
+    .gitattributes rule). units_from_staged() omitted --text, so this lane --
+    the pre-commit hook -- produced zero units for such a file and exited 0 in
+    silence with a live secret staged."""
+    repo = tmp_path / "staged"
+    _init_scan_repo(repo)
+    synthetic_secret = "AKIA" + "12345" + "67890" + "ABCDEF"
+    (repo / "blob.bin").write_bytes(
+        b"\x00" + b"binary classifier marker\n" + f"aws_key_id = {synthetic_secret}\n".encode()
+    )
+    subprocess.run(["git", "-C", str(repo), "add", "blob.bin"], check=True, capture_output=True)
+
+    units = leak_scan.units_from_staged(str(repo))
+
+    assert any(synthetic_secret in u.text for u in units), (
+        "a binary-classified blob was never handed to the scanner"
+    )
+
+
+def test_commit_range_scan_reads_binary_classified_blobs(leak_scan, tmp_path):
+    """Same omission in units_from_commit_range(), which is the lane CI runs
+    to gate publication. A secret committed inside such a blob passed."""
+    repo = tmp_path / "range"
+    _init_scan_repo(repo)
+    (repo / "seed.txt").write_text("seed\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(repo), "add", "seed.txt"], check=True, capture_output=True)
+    subprocess.run(["git", "-C", str(repo), "commit", "-m", "seed"], check=True, capture_output=True)
+    base = subprocess.run(
+        ["git", "-C", str(repo), "rev-parse", "HEAD"],
+        check=True, capture_output=True, text=True,
+    ).stdout.strip()
+    synthetic_secret = "AKIA" + "98765" + "43210" + "FEDCBA"
+    (repo / "blob.bin").write_bytes(
+        b"\x00" + b"binary classifier marker\n" + f"aws_key_id = {synthetic_secret}\n".encode()
+    )
+    subprocess.run(["git", "-C", str(repo), "add", "blob.bin"], check=True, capture_output=True)
+    subprocess.run(["git", "-C", str(repo), "commit", "-m", "add blob"], check=True, capture_output=True)
+
+    units = leak_scan.units_from_commit_range(str(repo), f"{base}..HEAD")
+
+    assert any(synthetic_secret in u.text for u in units), (
+        "the publication gate never read the binary-classified blob"
+    )
