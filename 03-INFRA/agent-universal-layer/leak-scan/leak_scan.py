@@ -213,7 +213,11 @@ def run_git(repo: str, *args: str) -> str:
 
 
 def units_from_staged(repo: str) -> list[Unit]:
-    diff = run_git(repo, "diff", "--cached", "--no-color", "--unified=0")
+    # --text: without it git prints "Binary files ... differ" and NO "+" lines
+    # for anything it classifies as binary (a NUL byte in the first 8000, or a
+    # .gitattributes rule). This lane is the pre-commit hook, so a secret in
+    # such a file scanned clean and exited 0 in silence.
+    diff = run_git(repo, "diff", "--cached", "--no-color", "--text", "--unified=0")
     return parse_added_lines(diff, "")
 
 
@@ -227,7 +231,10 @@ def units_from_commit_range(repo: str, range_spec: str) -> list[Unit]:
     units: list[Unit] = []
     for sha in shas:
         short = sha[:9]
-        diff = run_git(repo, "show", "--no-color", "--unified=0", "-m", "--format=", sha)
+        # --text for the same reason as units_from_staged: this is the lane CI
+        # runs (--commit-range), so without it a binary-classified blob carrying
+        # a secret passed the publication gate.
+        diff = run_git(repo, "show", "--no-color", "--text", "--unified=0", "-m", "--format=", sha)
         units.extend(parse_added_lines(diff, f"commit {short}: "))
         msg = run_git(repo, "log", "-1", "--format=%B", sha)
         units.extend(

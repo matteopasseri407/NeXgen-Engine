@@ -43,7 +43,13 @@ leak_hard:
   # snake/kebab env names or identifiers).
   - '(?:(?<=[A-Za-z0-9_]=)|(?<=[A-Za-z0-9_]= )|(?<=Bearer )|(?<=: ))(?=[A-Za-z0-9]{16,}\b)(?=[A-Za-z0-9]*[a-z])(?=[A-Za-z0-9]*[A-Z])(?=[A-Za-z0-9]*\d)[A-Za-z0-9]{16,}'
   - 'AKIA[0-9A-Z]{16}'                                   # AWS access key id
-  - '-----BEGIN (RSA|OPENSSH|EC) PRIVATE KEY-----'       # private key
+  # Any PEM private key header. The optional algorithm word covers the
+  # legacy PKCS#1/SEC1/OpenSSH forms; leaving it optional is what catches
+  # bare PKCS#8, the header with no algorithm word at all, which is what
+  # `openssl genpkey` emits by default and what GCP service-account JSON
+  # carries -- neither matched before. The bare header is not spelled out
+  # here on purpose: this file is scanned by the rules it defines.
+  - '-----BEGIN (?:(?:RSA|DSA|EC|OPENSSH|PGP|ENCRYPTED) )?PRIVATE KEY-----'  # private key (incl. PKCS#8)
   - 'gh[po]_[A-Za-z0-9]{36}'                              # GitHub token (ghp_/gho_)
   - 'sk-[A-Za-z0-9]{20,}'                                 # OpenAI/Anthropic-style API key
   - '(sk|pk)_(live|test)_[A-Za-z0-9]{16,}'                # Stripe-style secret/publishable key

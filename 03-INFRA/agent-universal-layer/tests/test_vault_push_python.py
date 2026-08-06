@@ -425,3 +425,55 @@ def test_vault_push_python_two_concurrent_real_processes_never_lose_a_commit(tmp
     log = _git(check, "log", "--format=%s").stdout
     assert "race from A" in log
     assert "race from B" in log
+
+
+def test_vault_push_python_commit_excludes_paths_the_caller_already_staged(sandbox):
+    """`git add` was scoped to the named files, but the emptiness probe and the
+    commit were not. Anything the caller happened to have in the index rode
+    along into a commit whose message named a single file. nexgen_update.py
+    routes the engine-pin write through here and documents that commit as
+    carrying only that exact file, so the scope had to be real, not implied.
+
+    The caller's own staged work must survive the partial commit rather than
+    be discarded: that is the difference between scoping and dropping.
+    """
+    _init_repo(sandbox)
+    (sandbox.vault / "pin.txt").write_text("engine pin\n", encoding="utf-8")
+    (sandbox.vault / "unrelated.txt").write_text("caller work in progress\n", encoding="utf-8")
+    _git(sandbox.vault, "add", "unrelated.txt")
+    env = sandbox.env()
+    env["KNOWLEDGE_VAULT_REMOTE"] = "local"
+
+    proc = _run_vault_push(sandbox, "-m", "update engine pin", "pin.txt", env=env)
+
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    committed = _git(sandbox.vault, "show", "--name-only", "--format=", "HEAD").stdout.split()
+    assert committed == ["pin.txt"], f"the commit swept in unnamed paths: {committed}"
+    still_staged = _git(sandbox.vault, "diff", "--cached", "--name-only").stdout.split()
+    assert still_staged == ["unrelated.txt"], (
+        f"the caller's staged work must stay staged, got: {still_staged}"
+    )
+
+
+def test_vault_push_python_reports_noop_when_only_unnamed_paths_are_staged(sandbox):
+    """Scoping the probe means "nothing to commit" is now judged against the
+    named files alone. A caller who names an unchanged file while unrelated
+    work sits in the index must get the clean no-op, not a commit."""
+    _init_repo(sandbox)
+    (sandbox.vault / "pin.txt").write_text("engine pin\n", encoding="utf-8")
+    _git(sandbox.vault, "add", "pin.txt")
+    _git(sandbox.vault, "commit", "-m", "pin already committed")
+    # Staged only AFTER the commit above, otherwise that unscoped commit takes
+    # it too and the index is clean when vault-push runs, which is not the
+    # situation under test.
+    (sandbox.vault / "unrelated.txt").write_text("caller work in progress\n", encoding="utf-8")
+    _git(sandbox.vault, "add", "unrelated.txt")
+    before = _git(sandbox.vault, "rev-parse", "HEAD").stdout.strip()
+    env = sandbox.env()
+    env["KNOWLEDGE_VAULT_REMOTE"] = "local"
+
+    proc = _run_vault_push(sandbox, "-m", "update engine pin", "pin.txt", env=env)
+
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert "nothing staged" in proc.stdout
+    assert _git(sandbox.vault, "rev-parse", "HEAD").stdout.strip() == before
