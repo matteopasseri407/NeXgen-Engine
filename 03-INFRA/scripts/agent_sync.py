@@ -1220,6 +1220,81 @@ def _install_linux_browser_desktop_entry(env: Env) -> None:
     if _write_if_different(compatibility_target, compatibility):
         env.log(f"utils: installed Linux Chrome compatibility redirect {compatibility_target}")
     compatibility_target.chmod(0o644)
+    _route_linux_chrome_app_launchers(env, applications, launcher)
+
+
+# Chrome binary names that may appear as argv[0] of a generated Exec= line.
+_CHROME_BINARIES = frozenset(
+    {
+        "google-chrome",
+        "google-chrome-stable",
+        "google-chrome-beta",
+        "google-chrome-unstable",
+        "chrome",
+        "chromium",
+        "chromium-browser",
+    }
+)
+
+
+def _route_exec_line(value: str, launcher: Path) -> str | None:
+    """Rewrite one Exec= value so it starts the shared browser, or None.
+
+    Returns None when the line is already routed or is not a Chrome launch, so
+    the caller can leave the file untouched instead of rewriting it every run.
+    """
+    try:
+        argv = shlex.split(value)
+    except ValueError:
+        return None  # Unparseable quoting: leave the entry exactly as it is.
+    if not argv or Path(argv[0]).name not in _CHROME_BINARIES:
+        return None
+    # The launcher owns the profile choice. A generated entry that hardcodes
+    # --user-data-dir would keep working, but it would silently pin the app to
+    # whatever path Chrome recorded when the shortcut was created.
+    rest = [arg for arg in argv[1:] if not arg.startswith("--user-data-dir=")]
+    return " ".join(shlex.quote(part) for part in [str(launcher), *rest])
+
+
+def _route_linux_chrome_app_launchers(env: Env, applications: Path, launcher: Path) -> None:
+    """Route Chrome's generated PWA entries through the shared-browser launcher.
+
+    Shadowing google-chrome.desktop (above) only covers the browser icon. Chrome
+    also writes one chrome-<app-id>-<profile>.desktop per installed web app, and
+    those call the Chrome binary directly. That is not a cosmetic gap: the FIRST
+    Chrome process to open the shared profile fixes whether :9222 exists for the
+    whole session, and a PWA started from the dock starts it with no debugging
+    port. Every later launch, agent-chrome included, is then only an IPC handoff
+    to that portless browser, so the entire shared-browser lane stays dead until
+    Chrome is restarted -- with no error anywhere, because opening the app
+    worked fine.
+
+    Chrome rewrites these files whenever a web app is installed or updated, so
+    this repair is deliberately idempotent and re-run by the recurring
+    `agent-sync guard` timer rather than done once at install time.
+    """
+    for entry in sorted(applications.glob("chrome-*.desktop")):
+        try:
+            original = entry.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        lines = original.splitlines(keepends=True)
+        changed = False
+        for index, line in enumerate(lines):
+            stripped = line.rstrip("\n")
+            if not stripped.startswith("Exec="):
+                continue
+            routed = _route_exec_line(stripped[len("Exec=") :], launcher)
+            if routed is None:
+                continue
+            lines[index] = f"Exec={routed}\n" if line.endswith("\n") else f"Exec={routed}"
+            changed = True
+        if not changed:
+            continue
+        mode = entry.stat().st_mode & 0o777
+        if _write_if_different(entry, "".join(lines)):
+            env.log(f"utils: routed Chrome web-app launcher {entry.name} through {launcher.name}")
+        entry.chmod(mode)
 
 
 def utils(env: Env) -> bool:
