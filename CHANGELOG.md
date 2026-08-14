@@ -10,6 +10,8 @@ of any engine release.
 
 ## [Unreleased]
 
+## [0.98.1] - 2026-08-14
+
 ### Fixed
 
 - **A web app started from the dock no longer kills the shared browser's CDP
