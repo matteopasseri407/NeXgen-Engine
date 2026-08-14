@@ -98,7 +98,9 @@ if owner="$(profile_owner_pid)"; then
       kill -0 "$owner" 2>/dev/null || break
       sleep 1
     done
-    kill -0 "$owner" 2>/dev/null && kill -9 "$owner" 2>/dev/null || true
+    if kill -0 "$owner" 2>/dev/null; then
+      kill -9 "$owner" 2>/dev/null || true
+    fi
   else
     # Handing off to a Chrome without CDP still gives the human their window,
     # so this is a warning and not a refusal -- but it must never be silent.

@@ -1237,6 +1237,22 @@ _CHROME_BINARIES = frozenset(
 )
 
 
+# Desktop Entry Specification, "Exec": an argument containing a reserved
+# character must be quoted, and quoting is done with DOUBLE quotes. shlex.quote
+# would emit POSIX single quotes, which the spec does not accept -- fine on a
+# path without spaces, silently wrong on one with them.
+_DESKTOP_RESERVED = frozenset(' \t\n"\'\\><~|&;$*?#()`')
+
+
+def _desktop_exec_quote(value: str) -> str:
+    if value and not any(char in _DESKTOP_RESERVED for char in value):
+        return value
+    escaped = value
+    for char in ("\\", '"', "`", "$"):
+        escaped = escaped.replace(char, f"\\{char}")
+    return f'"{escaped}"'
+
+
 def _route_exec_line(value: str, launcher: Path) -> str | None:
     """Rewrite one Exec= value so it starts the shared browser, or None.
 
@@ -1253,7 +1269,7 @@ def _route_exec_line(value: str, launcher: Path) -> str | None:
     # --user-data-dir would keep working, but it would silently pin the app to
     # whatever path Chrome recorded when the shortcut was created.
     rest = [arg for arg in argv[1:] if not arg.startswith("--user-data-dir=")]
-    return " ".join(shlex.quote(part) for part in [str(launcher), *rest])
+    return " ".join(_desktop_exec_quote(part) for part in [str(launcher), *rest])
 
 
 def _route_linux_chrome_app_launchers(env: Env, applications: Path, launcher: Path) -> None:

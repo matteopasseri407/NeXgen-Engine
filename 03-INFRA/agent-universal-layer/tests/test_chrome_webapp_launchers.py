@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import importlib.util
 import sys
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 import pytest
 
@@ -45,7 +45,11 @@ def agent_sync():
     return module
 
 
-LAUNCHER = Path("/home/user/.local/bin/agent-chrome")
+# The repair is Linux-only (its caller returns early elsewhere), so the input
+# is a POSIX path on every runner. A plain Path() would become a backslash path
+# under the Windows job and assert against a different string than the code
+# under test ever sees.
+LAUNCHER = PurePosixPath("/home/user/.local/bin/agent-chrome")
 
 
 def test_a_web_app_exec_line_is_routed_through_the_shared_launcher(agent_sync):
@@ -75,6 +79,29 @@ def test_routing_preserves_desktop_field_codes(agent_sync):
         "/opt/google/chrome/google-chrome --app-id=abc %U", LAUNCHER
     )
     assert routed.endswith("--app-id=abc %U")
+
+
+def test_a_path_needing_quotes_uses_desktop_entry_quoting_not_posix(agent_sync):
+    """The Desktop Entry Specification quotes with DOUBLE quotes and escapes
+    `"`, backtick, `$` and `\\` inside them. shlex.quote emits POSIX single
+    quotes instead, which the spec does not accept -- invisible on a path
+    without reserved characters, silently broken on a home directory with a
+    space in it."""
+    launcher = PurePosixPath("/opt/agent tools/bin/agent-chrome")
+    routed = agent_sync._route_exec_line(
+        "/opt/google/chrome/google-chrome --app-id=abc", launcher
+    )
+    assert routed == f'"{launcher}" --app-id=abc'
+    assert "'" not in routed
+
+
+def test_field_codes_are_never_quoted(agent_sync):
+    """%U is a desktop field code, not an argument: quoting it would stop the
+    desktop from substituting the URL it was asked to open."""
+    routed = agent_sync._route_exec_line(
+        "/opt/google/chrome/google-chrome --app-id=abc %U", LAUNCHER
+    )
+    assert routed.endswith(" %U")
 
 
 def test_routing_is_idempotent(agent_sync):
