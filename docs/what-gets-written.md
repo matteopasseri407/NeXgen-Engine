@@ -53,14 +53,16 @@ These are patches to files that must already exist (each CLI creates its own def
   - Antigravity: the adapter is copied to `~/.gemini/config/nexgen-guardrail-adapter.mjs` and registered as a `PreToolUse` entry (key `nexgen-guardrail`) in `~/.gemini/config/hooks.json` — every other top-level hook name already in that file, yours or another tool's, is left untouched. Each declared guardrail body is copied to `~/.gemini/config/nexgen-guardrail-hooks/`, with the same kind of sidecar `nexgen-guardrail.config.json` alongside the adapter.
   - Codex is not included: its own hook mechanism gates every hook behind a persisted, per-hash trust prompt (or an explicit `--dangerously-bypass-hook-trust` flag) that this engine cannot satisfy on its own, so declaring a Codex guardrail hook remains a hard manifest error rather than a half-working install.
 
-### Linux only: two desktop entries, one of which shadows your Chrome launcher
+### Linux only: desktop entries, two of which change what your existing icons launch
 
 On Linux, `agent-sync` writes both of these under `~/.local/share/applications`:
 
 - `agent-chrome.desktop`: a new launcher for the visible shared Chrome. Adding it does **not** make it your default browser; that stays your own choice.
 - `google-chrome.desktop`: a hidden entry that **shadows your distribution's Chrome launcher** in your user XDG layer. After this, existing dock icons and anything activating `google-chrome.desktop` start the wrapper instead of plain Chrome.
 
-The second one is deliberate: a plain Chrome started from the dock wins the first-process race with no CDP port open, and the shared-browser lane silently stops working. It is per-user, reversible, and removed by the uninstall steps; nothing outside your home directory is touched.
+It also **rewrites the `Exec=` lines of Chrome's own web-app launchers**, the `chrome-<app-id>-<profile>.desktop` files Chrome generates when you install a web app, so they start the same wrapper. Only those lines change; the name, icon and window class of each app are left alone, and each app keeps its own dock icon.
+
+All of this is deliberate: whichever Chrome process opens the shared profile *first* decides whether the CDP port exists for the rest of the session. A plain Chrome — or a web app — started from the dock wins that race with no port open, and because opening the app itself works perfectly, the shared-browser lane silently stops working with no error anywhere. Chrome rewrites those web-app files whenever an app is installed or updated, so the repair is re-applied by the recurring `agent-sync guard` run rather than done once. It is per-user, reversible, and removed by the uninstall steps; nothing outside your home directory is touched.
 
 ### Windows equivalent: scheduled task and hidden wrapper
 

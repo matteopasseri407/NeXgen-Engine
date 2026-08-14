@@ -52,10 +52,57 @@ The shared profile is the user's synced personal profile, not an agent clone. If
 
 Back up the canonical profile directory before any rebuild. Do not copy from the default Chrome data directory if it has been junctioned/symlinked to the canonical profile — it is the same directory.
 
+## The first-process race, which decides everything else
+
+Whichever Chrome process opens the shared profile **first** decides whether the
+CDP port exists for the rest of that session. A launcher that starts Chrome
+without `--remote-debugging-port` wins that race, and every later launch — the
+wrapper included — is reduced to Chrome's single-instance IPC handoff, which
+cannot add a port to a browser that is already running.
+
+The failure is silent by construction: the browser opens, the page works, and
+only the agents are locked out. So *every* entry point that can start Chrome
+must route through the launcher, and `agent-doctor` reports any that does not.
+
+## Two callers, two contracts
+
+The launcher serves two different intents and must not conflate them:
+
+| Call | Meaning | Behaviour |
+| --- | --- | --- |
+| `agent-chrome [args]` | someone wants a **window** | always hands off to Chrome, so a window always appears |
+| `agent-chrome --ensure` | an agent wants the browser to **exist** | exits 0 when CDP already answers, opening nothing |
+| `agent-chrome --heal` | the race was lost | restarts Chrome to restore the CDP port |
+
+A bare call used to mean `--ensure`. That is why clicking the Chrome icon could
+do nothing at all: with a windowless Chrome still holding the port, the launcher
+exited 0 and the desktop treated the launch as successful.
+
+## Installed web apps are not spare tabs
+
+A shared Chrome exposes every installed web app (WhatsApp, n8n, ChatGPT…) over
+CDP as an ordinary `page` target, indistinguishable from a tab. Two consequences,
+both handled:
+
+- Chrome's generated `chrome-<app-id>-<profile>.desktop` launchers call the
+  Chrome binary directly, so starting a web app first loses the race above.
+  `agent-sync` rewrites their `Exec=` lines to the wrapper, and re-applies that
+  on every `guard` run because Chrome regenerates them on install/update.
+- Upstream `@playwright/mcp` adopts whichever target it enumerates first as the
+  current tab, so an agent would drive — and navigate away — the human's
+  application window. Hiding those windows would be the wrong fix: an open
+  WhatsApp window *is* the right place to send a WhatsApp message. The line is
+  between **using** an app window for its own app and **adopting** it as a
+  general browser. The `playwright-human-safe.mjs` wrapper classifies pages by
+  `display-mode` and enforces exactly that: an app window stays listed and can
+  be selected deliberately, it is never adopted implicitly as the current tab,
+  and it cannot be navigated off its own origin.
+
 ## Linux/Mac notes
 
 - The launcher (e.g. `agent-chrome '<URL>'`) is the only visible Chrome entry point, the dock entry, and the default handler for HTTP/HTTPS/HTML. Plain Chrome launchers are hidden and redirected to the same wrapper.
-- The MULTI provisioner installs the cross-platform `agent-chrome` command from `03-INFRA/scripts/agent-chrome.sh` or `.ps1`. On Linux it also installs the visible `agent-chrome.desktop` entry and a hidden per-user `google-chrome.desktop` compatibility redirect, so an old dock or system launcher cannot win the first-process race without CDP. The launcher refuses to invent a second daily profile when it finds an unmigrated standard Chrome profile. Selecting `agent-chrome.desktop` as the host's default browser remains an explicit, reversible per-host step and is verified by `agent-doctor`.
+- The MULTI provisioner installs the cross-platform `agent-chrome` command from `03-INFRA/scripts/agent-chrome.sh` or `.ps1`. On Linux it also installs the visible `agent-chrome.desktop` entry, a hidden per-user `google-chrome.desktop` compatibility redirect, and the web-app launcher rewrite above, so no old dock, system or web-app launcher can win the first-process race without CDP. The launcher refuses to invent a second daily profile when it finds an unmigrated standard Chrome profile. Selecting `agent-chrome.desktop` as the host's default browser remains an explicit, reversible per-host step and is verified by `agent-doctor`.
+- The launcher passes `--class=Google-chrome` only for real browser windows. A web-app launch keeps Chrome's own `crx_<app-id>` window class, so each installed app keeps its own dock icon.
 - No login autostart by design (laptop battery). The user or any agent starts the same browser on demand.
 - Pass `--class=Google-chrome` (or the equivalent for the DE) to the Chrome binary to prevent the dock from splitting the pinned icon when a custom user-data-dir changes the WM_CLASS.
 

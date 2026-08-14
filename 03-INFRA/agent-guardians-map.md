@@ -51,6 +51,14 @@ The optional `--require-ready` flag makes `PARTIAL` fail for automation.
 
 A new check goes INSIDE `agent-doctor`, not into a new script that notifies on its own. Anything new that needs to reach the user goes through the `_send_healthcheck` step in `agent_sync.py`. Never add `notify-send` anywhere else: it would break the single-megaphone rule and bring back the scattered noise this consolidation removed.
 
+Worked example, the shared browser. `agent-chrome` can detect that another
+Chrome holds the shared profile with no CDP port — the state that silently
+locks every agent out of the browser — and a desktop-launched process has no
+console anyone reads, so a direct notification is tempting. It writes to stderr
+only. The reporting lives in `agent-doctor`, which checks both the live state
+and its structural cause (Chrome regenerating a web-app launcher that calls the
+browser binary directly), and reaches the user through the one megaphone.
+
 `nexgen-update` is deliberately outside the recurring guardian loop. It changes
 the installed engine only after a human confirms the displayed release plan,
 then reuses the existing `agent-sync` and `agent-doctor` authorities instead of

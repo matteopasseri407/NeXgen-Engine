@@ -38,6 +38,16 @@ rm -f ~/.local/share/applications/agent-chrome.desktop \
 update-desktop-database ~/.local/share/applications 2>/dev/null || true
 ```
 
+`agent-sync` also rewrote the `Exec=` line of each Chrome web-app launcher to start that same wrapper. Point them back at the Chrome binary — adjust the path if Chrome is not in `/opt/google/chrome`:
+
+```bash
+sed -i "s|^Exec=$HOME/.local/bin/agent-chrome |Exec=/opt/google/chrome/google-chrome |" \
+  ~/.local/share/applications/chrome-*.desktop
+update-desktop-database ~/.local/share/applications 2>/dev/null || true
+```
+
+Reinstalling any of those web apps from Chrome also regenerates its launcher from scratch.
+
 If a `.bak` file exists from before this project touched the config, restore it. If not, remove only the MCP entries and the `instructions`/bootstrap pointer this project added; the table in `docs/what-gets-written.md` tells you exactly which field to look at per CLI.
 
 ## 3. Remove the bootstrap pointer files

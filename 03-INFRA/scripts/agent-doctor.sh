@@ -932,6 +932,40 @@ if [ "$HOST" = linux ] && command -v xdg-settings >/dev/null 2>&1; then
   db=$(xdg-settings get default-web-browser 2>/dev/null)
   [ "$db" = "agent-chrome.desktop" ] && ok "system default browser → agent-chrome" || warn "system default browser = ${db:-?} (expected agent-chrome.desktop)"
 fi
+# Chrome rewrites its generated web-app launchers whenever an app is installed
+# or updated, which silently restores a direct call to the Chrome binary. Such
+# a launcher can win the first-process race and start the shared profile with
+# no CDP port, and nothing else reports it: opening the web app still works,
+# only the agents stop being able to attach. `agent-sync guard` repairs these
+# every 30 minutes, so a finding here means the repair is not running.
+if [ "$HOST" = linux ]; then
+  apps="$HOME/.local/share/applications"
+  unrouted=0
+  for entry in "$apps"/chrome-*.desktop; do
+    [ -f "$entry" ] || continue
+    if grep -q '^Exec=[^ ]*/\(google-chrome[^ /]*\|chrome\|chromium\|chromium-browser\) ' "$entry"; then
+      unrouted=$((unrouted + 1))
+    fi
+  done
+  if [ "$unrouted" -gt 0 ]; then
+    warn "$unrouted Chrome web-app launcher(s) call Chrome directly and can start the shared profile without CDP — run 'agent-sync apply'"
+  else
+    ok "Chrome web-app launchers route through agent-chrome"
+  fi
+  # The live consequence of a lost race. The launcher only writes it to stderr,
+  # which nobody reads when Chrome was started from a desktop icon, so the
+  # judge is the surface that reports it.
+  chrome_profile="${AGENT_CHROME_PROFILE:-$HOME/.config/chrome-agent-debug}"
+  owner_link=$(readlink "$chrome_profile/SingletonLock" 2>/dev/null || true)
+  owner_pid=${owner_link##*-}
+  if [ -n "$owner_link" ] && [ -n "$owner_pid" ] && kill -0 "$owner_pid" 2>/dev/null; then
+    if curl -fsS --max-time 2 http://127.0.0.1:9222/json/version >/dev/null 2>&1; then
+      ok "shared Chrome is up with CDP on 127.0.0.1:9222"
+    else
+      warn "Chrome (PID $owner_pid) holds the shared profile without CDP — agents cannot attach, run 'agent-chrome --heal'"
+    fi
+  fi
+fi
 
 sec "Skills"
 # The active root is deliberately small. Bodies live in the non-discovered

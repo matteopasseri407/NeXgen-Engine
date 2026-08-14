@@ -23,6 +23,18 @@
  * Chromium. That is correct for an MCP-owned browser, but fatal for the
  * user's persistent Chrome attached with --cdp-endpoint. In that case this
  * wrapper must detach only, leaving the visible browser and its context alive.
+ *
+ * A shared Chrome also exposes every installed web app (WhatsApp, n8n,
+ * ChatGPT, Gmail...) over CDP as an ordinary `page` target, indistinguishable
+ * from a tab. Upstream therefore treats the human's application windows as
+ * spare browser tabs: the first one enumerated becomes the current tab, and a
+ * navigation replaces whatever the human had open.
+ *
+ * The fix is not to hide them -- an open WhatsApp window IS the right place to
+ * send a WhatsApp message. It is to stop them being used as a general browser.
+ * An app window stays listed and can be selected deliberately, it is never
+ * ADOPTED implicitly as the current tab, and it cannot be navigated off its
+ * own origin.
  */
 import { spawn, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
@@ -34,6 +46,7 @@ const MARKER = 'agent-human-file-chooser-patch-v1';
 const DOWNLOAD_MARKER = 'agent-preserve-shared-downloads-patch-v1';
 const NEW_TAB_FOCUS_MARKER = 'agent-focus-new-tab-patch-v1';
 const CDP_DISPOSAL_MARKER = 'agent-preserve-shared-cdp-context-patch-v1';
+const APP_WINDOW_MARKER = 'agent-webapp-window-guard-patch-v1';
 const BACKUP_SUFFIX = `.${MARKER}.original`;
 
 const fileChooserListener = `          eventsHelper.addEventListener(p, "filechooser", (chooser) => {
@@ -134,6 +147,141 @@ const guardedCdpDisposal = `${cdpDisposalReset}
         });
         await browserContext.browser()?.close().catch(() => {
         });`;
+
+const appWindowHelpers = `      /* ${APP_WINDOW_MARKER}: an installed web app is the human's application
+         window, not a spare browser tab. Chromium exposes both as plain "page"
+         targets, so without this the agent adopts a PWA window as its current
+         tab and navigates it away from what the human was using. */
+      __agentWindowState() {
+        if (!this.__agentWindows)
+          this.__agentWindows = { app: /* @__PURE__ */ new WeakMap(), explicit: /* @__PURE__ */ new WeakSet() };
+        return this.__agentWindows;
+      }
+      async __agentIsAppWindow(page) {
+        const state = this.__agentWindowState();
+        if (state.app.has(page))
+          return state.app.get(page);
+        let isApp;
+        try {
+          /* The platform's own answer to "tab or installed app window", so no
+             per-application URL list has to be maintained anywhere. */
+          isApp = !await page.evaluate(() => matchMedia("(display-mode: browser)").matches);
+        } catch {
+          return false; /* Unreachable page: never quarantine it, never cache. */
+        }
+        state.app.set(page, isApp);
+        return isApp;
+      }
+      async __agentProtectAppWindows() {
+        /* An app window stays listed and usable -- asking for a WhatsApp
+           message should use the WhatsApp window. What it must never be is
+           ADOPTED: picked up implicitly as "the current tab" just because it
+           was enumerated first, and then used as a general browser. So only an
+           accidental current tab is dropped, and a deliberate selection is
+           remembered and left alone. */
+        const state = this.__agentWindowState();
+        const current = this._currentTab;
+        if (!current || state.explicit.has(current))
+          return;
+        if (!await this.__agentIsAppWindow(current.page))
+          return;
+        this._currentTab = void 0;
+        for (const tab2 of this._tabs) {
+          if (state.explicit.has(tab2) || await this.__agentIsAppWindow(tab2.page))
+            continue;
+          this._currentTab = tab2;
+          break;
+        }
+        /* Still nothing? ensureTab() opens a real tab, which is the point. */
+      }
+      async __agentCheckAppWindowNavigation(page, url3) {
+        if (!await this.__agentIsAppWindow(page))
+          return;
+        let target;
+        let current;
+        try {
+          target = new URL(url3).origin;
+          current = new URL(page.url()).origin;
+        } catch {
+          return;
+        }
+        if (target === current)
+          return;
+        throw new Error(
+          \`Refusing to navigate the \${current} web-app window to \${target}. This is the \` +
+          \`human's installed app window: use it for that app, and open a real tab with \` +
+          \`browser_tabs "new" for anything else.\`
+        );
+      }
+`;
+
+const upstreamEnsureTab = `      async ensureTab() {
+        await this.ensureBrowserContext();
+        const crashed = this._currentTab?.crashed;
+`;
+
+const guardedEnsureTab = `      async ensureTab() {
+        await this.ensureBrowserContext();
+        await this.__agentProtectAppWindows(); // ${APP_WINDOW_MARKER}
+        const crashed = this._currentTab?.crashed;
+`;
+
+const upstreamSelectTab = `      async selectTab(index) {
+        const tab2 = this._tabs[index];
+        if (!tab2)
+          throw new Error(\`Tab \${index} not found\`);
+        await tab2.page.bringToFront();
+        this._currentTab = tab2;
+        return tab2;
+      }
+`;
+
+const guardedSelectTab = `      async selectTab(index) {
+        const tab2 = this._tabs[index];
+        if (!tab2)
+          throw new Error(\`Tab \${index} not found\`);
+        await tab2.page.bringToFront();
+        this._currentTab = tab2;
+        this.__agentWindowState().explicit.add(tab2); // ${APP_WINDOW_MARKER}
+        return tab2;
+      }
+`;
+
+const upstreamPageCreated = `      _onPageCreated(page) {
+`;
+
+const upstreamNavigateCheck = `        this.context.checkUrlAllowed(url3);
+        await this.navigate(url3);
+`;
+
+const guardedNavigateCheck = `        this.context.checkUrlAllowed(url3);
+        await this.context.__agentCheckAppWindowNavigation(this.page, url3); // ${APP_WINDOW_MARKER}
+        await this.navigate(url3);
+`;
+
+function patchAppWindows(source, bundle) {
+  if (source.includes(APP_WINDOW_MARKER)) {
+    if (source.includes(upstreamEnsureTab) || source.includes(upstreamSelectTab)
+        || source.includes(upstreamNavigateCheck)
+        || !source.includes('__agentProtectAppWindows'))
+      throw new Error(`Invalid existing web-app window patch at ${bundle}.`);
+    return source;
+  }
+  for (const [label, anchor] of [
+    ['tab helpers', upstreamPageCreated],
+    ['ensureTab', upstreamEnsureTab],
+    ['selectTab', upstreamSelectTab],
+    ['navigation', upstreamNavigateCheck],
+  ]) {
+    if (occurrences(source, anchor) !== 1)
+      throw new Error(`Unsupported Playwright ${label} block at ${bundle}. Refusing an unsafe partial patch.`);
+  }
+  return source
+    .replace(upstreamPageCreated, `${appWindowHelpers}${upstreamPageCreated}`)
+    .replace(upstreamEnsureTab, guardedEnsureTab)
+    .replace(upstreamSelectTab, guardedSelectTab)
+    .replace(upstreamNavigateCheck, guardedNavigateCheck);
+}
 
 function withNodeOnPath() {
   const env = { ...process.env };
@@ -303,14 +451,19 @@ function patchedSource(source, bundle) {
     throw new Error(`Unsupported Playwright tabs bundle at ${bundle}. Refusing an unsafe partial patch.`);
   }
 
-  const patched = hasNewTabFocusPatch ? cdpDisposalPatched : cdpDisposalPatched
+  const newTabPatched = hasNewTabFocusPatch ? cdpDisposalPatched : cdpDisposalPatched
     .replace(upstreamNewTab, focusedNewTab);
+
+  const patched = patchAppWindows(newTabPatched, bundle);
   if (!patched.includes(MARKER) || !patched.includes(directUploadTool)
       || !patched.includes(DOWNLOAD_MARKER)
       || !patched.includes(NEW_TAB_FOCUS_MARKER) || !patched.includes(focusedNewTab)
       || !patched.includes(CDP_DISPOSAL_MARKER) || !patched.includes('if (config.browser.cdpEndpoint)')
+      || !patched.includes(APP_WINDOW_MARKER) || !patched.includes(guardedEnsureTab)
+      || !patched.includes(guardedSelectTab) || !patched.includes(guardedNavigateCheck)
       || patched.includes(fileChooserListener) || patched.includes(upstreamUploadTool)
-      || patched.includes(upstreamDownloadBehavior) || patched.includes(upstreamNewTab))
+      || patched.includes(upstreamDownloadBehavior) || patched.includes(upstreamNewTab)
+      || patched.includes(upstreamEnsureTab) || patched.includes(upstreamSelectTab))
     throw new Error(`Human-safe patch validation failed in memory for ${bundle}.`);
   return patched;
 }
