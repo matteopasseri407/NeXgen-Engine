@@ -20,6 +20,7 @@ changed nothing.
 from __future__ import annotations
 
 import importlib.util
+import os
 import sys
 from pathlib import Path, PurePosixPath
 
@@ -152,7 +153,10 @@ def test_the_whole_entry_is_rewritten_including_desktop_actions(agent_sync, tmp_
     # Everything that is not an Exec= line survives untouched.
     assert "StartupWMClass=crx_abc" in rewritten
     assert "[Desktop Action Nuovo-messaggio]" in rewritten
-    assert entry.stat().st_mode & 0o777 == 0o600
+    if os.name == "posix":
+        # Chrome writes these entries 0600. The repair must not widen them, and
+        # Windows has no equivalent bits to assert on.
+        assert entry.stat().st_mode & 0o777 == 0o600
     assert len(logged) == 1
 
     logged.clear()
