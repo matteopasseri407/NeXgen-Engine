@@ -10,6 +10,58 @@ of any engine release.
 
 ## [Unreleased]
 
+### Fixed
+
+- **A web app started from the dock no longer kills the shared browser's CDP
+  port.** The first Chrome process to open the shared profile decides whether
+  `:9222` exists for the rest of the session, and Chrome's generated
+  `chrome-<app-id>-<profile>.desktop` launchers called the Chrome binary
+  directly, with no debugging port. Starting WhatsApp or n8n before the browser
+  therefore won that race, and every later launch — `agent-chrome` included —
+  degraded to a single-instance IPC handoff, which cannot add a port to a
+  running browser. The whole shared-browser lane then stayed dead until Chrome
+  was restarted, silently: the web app opened perfectly, only the agents were
+  locked out. `agent-sync` now rewrites those `Exec=` lines to the launcher,
+  and re-applies the repair on every `guard` run because Chrome regenerates the
+  files on each web-app install or update.
+- **Clicking the Chrome icon opens a window again.** A bare `agent-chrome` meant
+  "make sure the browser exists" and exited 0 when CDP answered, so with a
+  windowless Chrome holding the port the click did nothing at all and the
+  desktop recorded a successful launch.
+- **An installed web app is no longer driven as a general browser.** A shared
+  Chrome exposes web apps over CDP as ordinary page targets, so Playwright MCP
+  adopted whichever it enumerated first as the current tab and would navigate
+  the user's application window away from what they had open.
+- **A web-app launcher path containing a space produced an unparseable `Exec`
+  line.** Quoting used POSIX single quotes; the Desktop Entry Specification
+  requires double quotes with `"`, backtick, `$` and `\` escaped.
+
+### Added
+
+- **`agent-chrome --ensure` and `--heal`.** `--ensure` is the idempotent "make
+  sure the shared browser is up" call that opens no window, which is what a
+  bare call used to do. `--heal` restarts a Chrome that already lost the CDP
+  race, the one state a handoff cannot repair. Both dialects.
+- **`agent-doctor` reports the shared-browser race.** It flags both the live
+  state — a Chrome holding the profile without CDP — and its structural cause,
+  a web-app launcher that calls the browser binary directly.
+
+### Changed
+
+- **A bare `agent-chrome` now always hands off to Chrome**, so a desktop
+  activation always produces a window. Callers that wanted the old no-window
+  behaviour should use `--ensure`.
+- **`agent-sync` rewrites the `Exec=` lines of Chrome's generated web-app
+  launchers** on Linux, and `--class=Google-chrome` is no longer forced on an
+  `--app-id` launch so each web app keeps its own window class and dock icon.
+  Declared in `docs/what-gets-written.md` and reverted by `docs/uninstall.md`.
+- **The Playwright wrapper separates using a web-app window from adopting it.**
+  Pages are classified by `display-mode`, so no per-application URL list is
+  maintained. An app window stays listed and can be selected deliberately — an
+  open WhatsApp window is the right place to send a WhatsApp message — but it is
+  never adopted implicitly as the current tab and cannot be navigated off its
+  own origin.
+
 ## [0.98.0] - 2026-08-06
 
 ### Fixed
