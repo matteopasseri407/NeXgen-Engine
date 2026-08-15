@@ -74,14 +74,26 @@ function main() {
   const commandArgs = npmCli ? [npmCli, ...args] : args;
   const child = spawn(command, commandArgs, { stdio: 'inherit', env });
 
+  const forward = (signal) => child.kill(signal);
   for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP'])
-    process.on(signal, () => child.kill(signal));
+    process.on(signal, forward);
   child.on('error', (error) => fail(`unable to launch ${packagePin}: ${error.message}`));
   child.on('exit', (code, signal) => {
-    if (signal)
+    if (signal) {
+      // Set a truthful exit code BEFORE re-signaling self: if the signal
+      // has a default "ignore" disposition in this wrapper (SIGPIPE is
+      // SIG_IGN in Node), the re-signal is a no-op and the process then
+      // exits via an emptied event loop -- exitCode is what makes that
+      // death report the child's fate instead of a fake 0.
+      process.exitCode = 128 + (process.constants.signals[signal] ?? 0);
+      // The forwarding handler above would swallow a re-signal to self.
+      // Detach it first so the signal reaches the default handler and
+      // actually terminates the wrapper (previously: orphaned wrapper).
+      process.removeListener(signal, forward);
       process.kill(process.pid, signal);
-    else
+    } else {
       process.exitCode = code ?? 1;
+    }
   });
 }
 

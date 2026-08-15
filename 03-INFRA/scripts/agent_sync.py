@@ -353,6 +353,33 @@ def _is_link_like(path: Path) -> bool:
         return False
 
 
+def _is_broken_whole_root_link(path: Path) -> bool:
+    """True only for a whole-root link in the state vault_skills() exists
+    to repair: a real symlink, or a Windows junction whose target is gone.
+
+    Not a blanket _is_link_like() call (2026-08-15 council, Opus 5): the
+    generic reparse-point bit is shared by IO_REPARSE_TAG_MOUNT_POINT
+    (junctions, but also volume mount points) and IO_REPARSE_TAG_CLOUD
+    (OneDrive placeholder folders), so _is_link_like() is True for a skills
+    root that is merely a cloud placeholder -- classifying it here would
+    destroy a real directory via _remove_path(). The two questions that
+    settle it:
+    1. A BROKEN junction: is_junction() still answers True (the reparse
+       tag is read via lstat, which never follows the target), and
+       path.is_dir() is False (the target does not exist). Repairable.
+    2. A working junction or a cloud placeholder: is_dir() is True (the
+       target or the local folder exists). Not repairable, not ours to
+       remove -- leave it alone, mkdir(exist_ok=True) is a no-op on it."""
+    if path.is_symlink():
+        return True
+    if not IS_WINDOWS:
+        return False
+    try:
+        return _is_link_like(path) and not path.is_dir()
+    except OSError:
+        return False
+
+
 def _points_to(path: Path, target: Path) -> bool:
     try:
         return _is_link_like(path) and path.resolve() == target.resolve()
@@ -498,6 +525,21 @@ def _process_running(name: str) -> bool:
     try:
         if not IS_WINDOWS:
             r = _run_external(["pgrep", "-x", name], timeout=15, capture_output=True)
+            if r.returncode == 0:
+                return True
+            # npm-installed CLIs (Claude Code et al.) run under node, so
+            # `pgrep -x claude` misses them entirely -- and mcp_render's
+            # "is Claude open?" guard then rewrites .claude.json while
+            # Claude is live, the exact config-loss this guard exists to
+            # prevent (same npm-wrapper hole the Windows branch below
+            # already probes for via node.exe command lines). re.escape
+            # keeps a caller-supplied name with regex metacharacters from
+            # over-matching the ERE (2026-08-15 council, Opus 5); the
+            # [n]ode bracket is unnecessary here (pgrep never reports
+            # itself, and this spawn passes a list, not a shell) but is
+            # kept because it costs nothing and defeats accidental
+            # self-matching in any future shell-wrapped invocation.
+            r = _run_external(["pgrep", "-f", f"[n]ode.*{re.escape(name)}"], timeout=15, capture_output=True)
             return r.returncode == 0
         powershell_query = (
             "(Get-CimInstance Win32_Process -Filter \"Name = 'node.exe'\").CommandLine"
@@ -1896,7 +1938,15 @@ def vault_skills(env: Env) -> bool:
         # A whole-root link was the original eager-discovery failure. Unlinking
         # the view is safe: it never removes the destination or any old bodies,
         # which the explicit legacy migration can quarantine afterwards.
-        if root.is_symlink():
+        # _is_broken_whole_root_link() (not is_symlink(), not _is_link_like()):
+        # is_symlink() misses Windows junctions entirely, and the generic
+        # reparse-point test would also classify a OneDrive cloud placeholder
+        # as "link-like" and remove a real directory. The broken-junction-only
+        # predicate (is_dir() False) matches exactly the recoverable state this
+        # phase exists to normalize: on a broken junction the mkdir below would
+        # otherwise FileExistsError on the occupied reparse point and brick
+        # every apply, the opposite of the documented intent.
+        if _is_broken_whole_root_link(root):
             _remove_path(root)
             root.mkdir(parents=True, exist_ok=True)
             env.log(f"skills: converted {label} from a whole-root link to a real directory")
@@ -3385,6 +3435,13 @@ def main(argv: list[str] | None = None) -> int:
         if not lock.acquired:
             env.log(f"agent-sync: lock busy, skipped mode={mode}")
             if mode == "guard":
+                # Exit 0 on purpose (a colliding manual apply is a normal,
+                # legitimate contender for the host-wide lock), but the skip
+                # must still be observable: without this line a guard cycle
+                # that did nothing looks identical to a successful one in
+                # journalctl, so a sync that never completes -- e.g. a slow
+                # apply meeting every timer run -- stays invisible forever.
+                print("agent_sync: guard skipped: another sync run holds the lock", file=sys.stderr)
                 return 0
             print("agent_sync: another sync run is active", file=sys.stderr)
             return 75

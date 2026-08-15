@@ -246,6 +246,19 @@ if (Test-Path -LiteralPath $ClaudeFile) {
 foreach ($pair in @(@("Codex", (Join-Path $HomeDir ".codex\AGENTS.md")), @("Antigravity", (Join-Path $HomeDir ".gemini\config\AGENTS.md")))) {
   $f = $pair[1]
   if ((hashOf $f) -and (hashOf $f) -eq $ch) { ok "$($pair[0]) = canonical AGENTS.md (identical content)" }
+  elseif ((Test-Path -LiteralPath $f) -eq $false) {
+    $cli = if ($pair[0] -eq "Codex") { "codex" } else { "agy" }
+    if (-not (Get-Command $cli -ErrorAction SilentlyContinue)) {
+      # Same asymmetry fix as OpenCode's branch below: a CLI that was never
+      # installed has no code path that will ever create this file, so a hard
+      # bad here is permanent and unfixable on a fresh consumer install.
+      # The Test-Path guard keeps the CLI-absent leniency from masking a
+      # PRESENT-but-divergent file: when the file exists and does not match,
+      # that is a real drift worth a bad regardless of PATH (2026-08-15
+      # council, Opus 5).
+      warn "$($pair[0]) not installed here? (missing $f)"
+    } else { bad "$($pair[0]) NOT aligned with the canonical file ($f)" }
+  }
   else { bad "$($pair[0]) NOT aligned with the canonical file ($f)" }
 }
 if (Test-Path -LiteralPath $OcJson) {
