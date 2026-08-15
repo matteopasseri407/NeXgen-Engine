@@ -499,7 +499,7 @@ def test_large_prompt_uses_private_non_argv_transport_for_every_cli(monkeypatch,
         def kill(self):
             return None
 
-        def wait(self):
+        def wait(self, timeout=None):
             return 0
 
     def fake_popen(argv, **kwargs):
@@ -576,7 +576,7 @@ def test_per_seat_timeout_drives_the_watchdog(monkeypatch, tmp_path):
         def kill(self):
             return None
 
-        def wait(self):
+        def wait(self, timeout=None):
             return 0
 
     monkeypatch.setattr(council.subprocess, "Popen", lambda *_args, **_kwargs: FakeProcess())

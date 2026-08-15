@@ -62,7 +62,44 @@
 # that explanation instead of guessing.
 set -euo pipefail
 
-VAULT="${AGENT_VAULT_DATA:-${VAULT:-$HOME/KnowledgeVault}}"
+# Capture the raw env vars BEFORE the resolution chain overwrites $VAULT:
+# the conflict check below must compare the caller's actual values, not the
+# already-resolved result (2026-08-15 council-4, Opus 5).
+_RAW_AGENT_VAULT_DATA="${AGENT_VAULT_DATA:-}"
+_RAW_KNOWLEDGE_VAULT_PATH="${KNOWLEDGE_VAULT_PATH:-}"
+_RAW_VAULT="${VAULT:-}"
+VAULT="${_RAW_AGENT_VAULT_DATA:-${_RAW_KNOWLEDGE_VAULT_PATH:-${_RAW_VAULT:-$HOME/KnowledgeVault}}}"
+if [ -n "$_RAW_AGENT_VAULT_DATA" ]; then VAULT_SOURCE="AGENT_VAULT_DATA"
+elif [ -n "$_RAW_KNOWLEDGE_VAULT_PATH" ]; then VAULT_SOURCE="KNOWLEDGE_VAULT_PATH"
+elif [ -n "$_RAW_VAULT" ]; then VAULT_SOURCE="VAULT"
+else VAULT_SOURCE="default"; fi
+# Same symmetry as the ps1 twin (2026-08-15 council-2, Opus 5): a stale
+# data-root variable silently redirects this destructive script to the
+# wrong tree -- say which variable won and where it points, and refuse to
+# run on a missing target before any rename/move/delete.
+echo "vault-groom: vault = $VAULT ($VAULT_SOURCE)" >&2
+# A conflicting set of env vars is worth a WARNING, not a hard refusal: the
+# resolution chain above IS the authoritative precedence (agent_sync.py's
+# Env applies the same chain and never refuses), and a mid-migration user
+# legitimately has both a data-root var and a legacy $VAULT. A stale extra
+# var pointing elsewhere is still dangerous on a script that renames/deletes
+# notes, so say it loudly -- but proceed on the chain's winner (2026-08-15
+# council-7, Opus 5).
+_conflict=""
+for _other in "$_RAW_AGENT_VAULT_DATA" "$_RAW_KNOWLEDGE_VAULT_PATH" "$_RAW_VAULT"; do
+  [ -z "$_other" ] && continue
+  if [ "$(cd "$_other" 2>/dev/null && pwd -P)" != "$(cd "$VAULT" 2>/dev/null && pwd -P)" ]; then
+    _conflict="$_other"
+    break
+  fi
+done
+if [ -n "$_conflict" ]; then
+  echo "vault-groom: ATTENZIONE variabili di vault in conflitto ($VAULT vs $_conflict): uso $VAULT_SOURCE, rimuovi la variabile stantia" >&2
+fi
+if [ ! -d "$VAULT" ]; then
+  echo "vault-groom: il vault non esiste o non e' una cartella: $VAULT" >&2
+  exit 3
+fi
 PLAYBOOK="03-INFRA/vault-grooming-playbook.md"
 
 # Resolves a symlink chain to its final real path, one path component at a

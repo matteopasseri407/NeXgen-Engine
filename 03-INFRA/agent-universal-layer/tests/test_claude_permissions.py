@@ -588,8 +588,18 @@ def test_opencode_guardrail_hook_is_installed_and_registered(sandbox, agent_sync
 
     config = json.loads(path.read_text(encoding="utf-8"))
     plugin_dst = path.parent / "nexgen-guardrail-plugin.mjs"
-    # Registration is additive: the user's own plugin survives, ours is appended.
-    assert config["plugin"] == ["some-other-plugin", f"file://{plugin_dst}"]
+    # Registration is additive: the user's own plugin survives, ours is
+    # appended. The entry is the canonical file URI (Path.as_uri(), three
+    # slashes, forward slashes on every platform -- the pre-fix bare
+    # `file://` + backslash spelling was invalid on Windows). The form
+    # assertion (file:/// prefix, no backslashes) is what the whole fix is
+    # about, independent of as_uri()'s own output (2026-08-15 council-7,
+    # Opus 5).
+    registered = config["plugin"]
+    assert registered == ["some-other-plugin", plugin_dst.resolve().as_uri()]
+    entry = registered[-1]
+    assert entry.startswith("file:///"), f"canonical file URI needs the third slash: {entry!r}"
+    assert "\\" not in entry, f"file URI must use forward slashes: {entry!r}"
     assert config["permission"] == {"edit": "allow", "bash": "allow"}
 
     assert plugin_dst.read_bytes() == (sandbox.ul / "hooks" / "opencode-guardrail-plugin.mjs").read_bytes()
@@ -624,7 +634,28 @@ def test_opencode_guardrail_hook_is_idempotent(sandbox, agent_sync, env):
     backups = list(path.parent.glob(f"{path.name}.pre-permissions-*.bak"))
     assert len(backups) == 1  # unchanged: nothing was rewritten the 2nd time
     config = json.loads(path.read_text(encoding="utf-8"))
-    assert config["plugin"].count(f"file://{plugin_dst}") == 1  # no duplicate registration
+    assert config["plugin"].count(plugin_dst.resolve().as_uri()) == 1  # no duplicate registration
+
+
+def test_opencode_guardrail_hook_dedups_repeated_entries(sandbox, agent_sync, env):
+    """A config dirtied by earlier buggy runs with the canonical entry
+    repeated must converge to exactly one entry on the next run (2026-08-15
+    council-7, Opus 5)."""
+    _write_manifest(sandbox, _guardrail_manifest_for("opencode"))
+    _write_settings(sandbox)
+    path = _write_opencode_config(sandbox)
+
+    assert agent_sync.claude_permissions(env) is True
+    config = json.loads(path.read_text(encoding="utf-8"))
+    canonical = config["plugin"][-1]
+
+    config["plugin"] = [canonical, canonical, canonical]
+    path.write_text(json.dumps(config, indent=2), encoding="utf-8")
+
+    assert agent_sync.claude_permissions(env) is True
+
+    config = json.loads(path.read_text(encoding="utf-8"))
+    assert config["plugin"].count(canonical) == 1
 
 
 def test_opencode_guardrail_body_missing_refuses_opencode_posture_and_the_phase(sandbox, agent_sync, env):

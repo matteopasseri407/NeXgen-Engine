@@ -8,6 +8,60 @@ This file tracks the **engine** (this repo). Your own data — manifests,
 instructions, skills, secrets — lives in your KnowledgeVault and is not part
 of any engine release.
 
+## [0.98.3] - 2026-08-15
+
+### Fixed
+
+- **`agent-sync` no longer destroys a hand-written file at a link target
+  (POSIX).** `make_link()` backed up a real file before replacing it with a
+  symlink on Windows only; on POSIX the file was unlinked with no backup, so
+  a hand-edited `~/.codex/AGENTS.md` or a manually configured
+  `mcp_config.json` was silently lost. The backup now runs on every
+  platform, is deduplicated (an identical `.bak` is not re-created), is
+  bounded (the three newest backups are kept), includes the PID in the name
+  so concurrent sync runs cannot collide, and a failed backup now reports
+  itself through a callback instead of looking like "nothing to do".
+- **The Council no longer hangs forever when a seat closes its output and
+  lingers.** `run_seat`'s `proc.wait()` after stdout EOF had no timeout, so
+  a seat that flushed its answer and stalled in teardown blocked the round
+  indefinitely. The wait is now bounded by the seat's remaining budget
+  (with a 10s grace), the process is killed on expiry, and a complete
+  verdict that already arrived is still returned instead of being thrown
+  away. A truncated or missing output file degrades to a clean
+  `partial_timeout` diagnostic, never an unclassified crash.
+- **`agent-now` on Windows reports NTP state without parsing localized
+  text.** `w32tm` labels and values are translated ("Sorgente:",
+  "Orologio CMOS locale", ...), so the old `Source:` regex left the report
+  on "unknown" (or worse, a false "yes" on non-English Windows). The check
+  now reads the W32Time registry `Type` (untranslated enum) and the
+  Time-Service event log (numeric event IDs): last known state decides
+  between synchronized / desynchronized, transient "cannot reach" events
+  are ignored, and the service's start type (not its transient Running
+  state) drives `ntpEnabled`.
+- **`agent-open-folder` on Windows opens folders with spaces and drive
+  roots.** PS 5.1 does not quote `-ArgumentList` items, so explorer.exe
+  split paths containing spaces, and hand-rolled quoting broke on trailing
+  backslashes. The folder is now opened via `Invoke-Item -LiteralPath`
+  (ShellExecute, no command-line parsing at all).
+- **`vault-groom` resolves the vault target the same way on both
+  platforms, and refuses to groom a missing tree.** The PowerShell twin
+  ignored `AGENT_VAULT_DATA`/`KNOWLEDGE_VAULT_PATH` and could groom the
+  wrong (or nonexistent) tree on split-topology installs; the bash twin
+  ignored `KNOWLEDGE_VAULT_PATH`. Both now use the same resolution chain
+  as `agent_sync.py`, print which variable won and where it points, warn
+  loudly on conflicting variables, and exit 3 before any
+  rename/move/delete when the resolved target does not exist. Path
+  validation is wrapped so an illegal path value produces the friendly
+  message, not a raw .NET traceback.
+- **The OpenCode guardrail plugin registers with a valid file URI on
+  Windows.** The old `file://` + backslash spelling (`file://C:\...`)
+  parsed with host `C:` and backslash path characters, so the plugin
+  could not load while the permissive posture was still applied. The
+  entry is now `Path.as_uri()` (three slashes, forward slashes), existing
+  legacy spellings are migrated in place, repeated entries are
+  deduplicated, and non-path entries are never resolved against the
+  process working directory.
+
 ## [0.98.2] - 2026-08-15
 
 ### Fixed

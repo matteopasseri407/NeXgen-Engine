@@ -84,7 +84,68 @@ try { [Console]::OutputEncoding = $Utf8NoBom } catch { }
 try { [Console]::InputEncoding = $Utf8NoBom } catch { }
 $OutputEncoding = $Utf8NoBom
 
-$Vault    = if ($env:VAULT) { $env:VAULT } else { Join-Path $env:USERPROFILE 'KnowledgeVault' }
+# Same resolution order as the bash twin and agent_sync.py's Env (the
+# canonical source, see its `vault_data` chain): the data-root env vars
+# win, then the legacy $VAULT session variable, then the home default.
+# Without AGENT_VAULT_DATA a split-topology install groomed
+# %USERPROFILE%\KnowledgeVault even when the real vault lived elsewhere
+# (2026-08-15 review).
+$Vault    = if ($env:AGENT_VAULT_DATA) { $env:AGENT_VAULT_DATA }
+           elseif ($env:KNOWLEDGE_VAULT_PATH) { $env:KNOWLEDGE_VAULT_PATH }
+           elseif ($env:VAULT) { $env:VAULT }
+           else { Join-Path $env:USERPROFILE 'KnowledgeVault' }
+$VaultSource = if ($env:AGENT_VAULT_DATA) { 'AGENT_VAULT_DATA' }
+               elseif ($env:KNOWLEDGE_VAULT_PATH) { 'KNOWLEDGE_VAULT_PATH' }
+               elseif ($env:VAULT) { 'VAULT' }
+               else { 'default' }
+# A stale data-root variable from an old install silently redirects this
+# destructive script to the wrong tree: say which variable won and where it
+# points before doing anything (2026-08-15 council-2, Opus 5).
+[Console]::Error.WriteLine("vault-groom: vault = $Vault ($VaultSource)")
+
+# A conflicting set of env vars is worth a WARNING, not a hard refusal: the
+# resolution chain above IS the authoritative precedence (agent_sync.py's
+# Env applies the same chain and never refuses), and a mid-migration user
+# legitimately has both a data-root var and a legacy $VAULT. A stale extra
+# var pointing elsewhere is still dangerous on a script that renames/deletes
+# notes, so say it loudly -- but proceed on the chain's winner (2026-08-15
+# council-7, Opus 5). GetFullPath is wrapped on the WINNER too: a var with
+# illegal path characters (|, ", <, >) would otherwise raise a raw .NET
+# ArgumentException -- .NET method exceptions are NOT gated by
+# $ErrorActionPreference, only try/catch stops them (2026-08-15 council-8,
+# Opus 5).
+try {
+  $VaultFull = [System.IO.Path]::GetFullPath($Vault)
+} catch {
+  [Console]::Error.WriteLine("vault-groom: il vault risolto non e' un percorso valido: $Vault ($($_.Exception.Message))")
+  exit 3
+}
+$Conflicts = @()
+foreach ($v in @($env:AGENT_VAULT_DATA, $env:KNOWLEDGE_VAULT_PATH, $env:VAULT)) {
+  if (-not $v) { continue }
+  try {
+    $other = [System.IO.Path]::GetFullPath($v)
+  } catch {
+    [Console]::Error.WriteLine("vault-groom: variabile $v non valida come percorso, ignorata ($($_.Exception.Message))")
+    continue
+  }
+  if ($other -ne $VaultFull) { $Conflicts += $other }
+}
+if ($Conflicts.Count -gt 0) {
+  $UniqueConflicts = @($Conflicts | Select-Object -Unique)
+  [Console]::Error.WriteLine("vault-groom: ATTENZIONE variabili di vault in conflitto ($Vault vs $($UniqueConflicts -join ', ')): uso $VaultSource, rimuovi la variabile stantia")
+}
+
+# Validate the resolved target before doing anything: a grooming script
+# renames/moves/deletes notes, so operating on a stale or nonexistent path
+# would silently groom the wrong tree (2026-08-15 council, Opus 5).
+# [Console]::Error.WriteLine, not Write-Error: under $ErrorActionPreference
+# = 'Stop' Write-Error is terminating and the exit 3 below would never run
+# (same pattern as the rest of this file).
+if (-not (Test-Path -LiteralPath $Vault -PathType Container)) {
+  [Console]::Error.WriteLine("vault-groom: il vault non esiste o non e' una cartella: $Vault")
+  exit 3
+}
 $Playbook = '03-INFRA/vault-grooming-playbook.md'
 # Resolved via $PSScriptRoot (this script's own real directory), not $Vault:
 # vault_groom_audit.py is pure engine tooling shipped in the same commit as

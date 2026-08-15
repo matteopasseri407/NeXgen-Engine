@@ -32,22 +32,97 @@ catch {
 $ntpSynchronized = "unknown"
 $ntpEnabled = "unknown"
 try {
-    $status = (& w32tm /query /status 2>$null) -join "`n"
-    if ($LASTEXITCODE -eq 0 -and $status) {
-        $ntpEnabled = "yes"
-        if ($status -match "(?im)^\s*Source:\s+(.+)$") {
-            $source = $Matches[1].Trim()
-            if ($source -and $source -notmatch "Local CMOS Clock") {
-                $ntpSynchronized = "yes"
+    # Both checks must be language-independent (2026-08-15 review, council
+    # of Opus 5): w32tm output labels AND values are localized (Italian
+    # "Sorgente:" / "Orologio CMOS locale", German "Quelle:", ...), so a
+    # regex on either is wrong on every non-English Windows. The registry
+    # is the non-textual source: HKLM\...\W32Time\Parameters\Type holds
+    # untranslated enum values (NoSync / NTP / NT5DS / AllSync), and
+    # checking StartType != Disabled (not the transient "Running" state)
+    # avoids false "no" on trigger-started W32Time clients that synced
+    # earlier and stopped.
+    $ntpType = $null
+    try {
+        $ntpType = (Get-ItemProperty -Path 'HKLM:\SYSTEM\CurrentControlSet\Services\W32Time\Parameters' -Name 'Type' -ErrorAction Stop).Type
+    }
+    catch {
+        $ntpType = $null
+    }
+    if (-not $ntpType) {
+        $ntpEnabled = "unknown"
+        $ntpSynchronized = "unknown"
+    }
+    elseif ($ntpType -eq "NoSync") {
+        $ntpEnabled = "no"
+        $ntpSynchronized = "no"
+    }
+    else {
+        $w32time = Get-Service w32time -ErrorAction SilentlyContinue
+        # ServiceController.StartType is missing on .NET < 4.6.1 (PS 5.1 on
+        # Win7/8.1): guard before reading it, and stay honest with
+        # "unknown" instead of asserting "no" for a service we cannot
+        # inspect (2026-08-15 council-2, Opus 5).
+        if ($w32time -and $w32time.PSObject.Properties['StartType']) {
+            $ntpEnabled = if ($w32time.StartType -ne "Disabled") { "yes" } else { "no" }
+        }
+        else {
+            $ntpEnabled = "unknown"
+        }
+        # Synchronization proof must not rely on localized text (w32tm
+        # source values like "Local CMOS Clock" / "Orologio CMOS locale"
+        # are translated). Use the Windows Time Service event log instead:
+        # event IDs are numbers, never localized (2026-08-15 council-2,
+        # Opus 5).
+        #   35 = "now synchronized with the time source"
+        #   37 = "receiving valid time data"
+        #   36 = "unable to synchronize ... because the local clock is not
+        #        synchronized"  (a real desync)
+        #   47 = "unable to establish a working time sample"  (a real
+        #        desync)
+        # Event 38 ("cannot reach ... invalid time data") is TRANSIENT --
+        # a laptop offline for a night logs it and re-syncs later without
+        # a fresh 35 -- so it must not be read as proof of desync, or a
+        # healthy machine reports "no" forever (2026-08-15 council-8,
+        # Opus 5). The LAST known state decides: most recent sync event
+        # vs. most recent real desync event. No window arithmetic: a fixed
+        # recency window made "unknown" permanent on healthy machines
+        # whose log rotated or whose service started long ago, and
+        # SpecialPollInterval is only meaningful for Type=NTP, not
+        # NT5DS/AllSync domain clients (2026-08-15 council-8, Opus 5).
+        $syncEvent = $null
+        $desyncEvent = $null
+        try {
+            $syncEvent = Get-WinEvent -FilterHashtable @{ LogName = 'System'; ProviderName = 'Microsoft-Windows-Time-Service'; Id = 35, 37 } -MaxEvents 1 -ErrorAction Stop
+        }
+        catch {
+            $syncEvent = $null
+        }
+        try {
+            $desyncEvent = Get-WinEvent -FilterHashtable @{ LogName = 'System'; ProviderName = 'Microsoft-Windows-Time-Service'; Id = 36, 47 } -MaxEvents 1 -ErrorAction Stop
+        }
+        catch {
+            $desyncEvent = $null
+        }
+        $syncTime = if ($syncEvent) { $syncEvent[0].TimeCreated } else { [datetime]::MinValue }
+        $desyncTime = if ($desyncEvent) { $desyncEvent[0].TimeCreated } else { [datetime]::MinValue }
+        if ($syncTime -ge $desyncTime) {
+            if ($syncTime -eq [datetime]::MinValue) {
+                $ntpSynchronized = "unknown"  # no evidence at all
             }
             else {
-                $ntpSynchronized = "no"
+                $ntpSynchronized = "yes"  # last known state: synchronized
             }
+        }
+        else {
+            $ntpSynchronized = "no"  # last known state: desynchronized
         }
     }
 }
 catch {
-    $ntpSynchronized = "unknown"
+    # Both variables already default to "unknown" before the try; do NOT
+    # re-assign here, or a partially computed $ntpEnabled (e.g. registry
+    # read OK, event query failed) would be clobbered (2026-08-15
+    # council-4, Opus 5).
 }
 
 $data = [ordered]@{

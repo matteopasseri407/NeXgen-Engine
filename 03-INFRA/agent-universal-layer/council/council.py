@@ -1631,7 +1631,92 @@ def run_seat(
 
         stdout_reader.join(timeout=5)
         stderr_reader.join(timeout=5)
-        returncode = proc.wait()
+        # The streaming loop above is bounded by the seat timeout, but
+        # proc.wait() here is not: a seat that closed its stdout (EOF) while
+        # still running -- explicit fd close, or a child that inherited the
+        # pipe and lingers -- used to block this call forever, with no
+        # deadline and no kill. Give the wait the same remaining budget and
+        # the same kill fallback as the streaming phase (2026-08-15
+        # review, council of Opus 5).
+        #
+        # hung is raised BEFORE the kill and drives the classification:
+        # deducing the timeout from the exit code would misfire in the
+        # normal case (the post-kill wait returns -9/-15, a real POSIX
+        # signal exit, while the cause was our own timeout) and -2 would
+        # collide with SIGINT (2026-08-15 council-2, Opus 5).
+        hung = False
+        # EOF does not mean the verdict is lost: the seat may have flushed
+        # stdout and still be writing its output file (codex) or finishing
+        # up, so the post-EOF wait keeps the seat's own remaining deadline
+        # -- NOT a short fixed grace, which would kill a healthy slow seat
+        # mid-write (2026-08-15 council-4, Opus 5) -- with a realistic
+        # minimum so an already-expired deadline still gives the process a
+        # moment to finish instead of killing it instantly. A 1s floor was
+        # too tight: codex that streams until the last 0.5s and then needs
+        # ~3s to write its output file got killed mid-write, leaving a
+        # truncated file on disk (2026-08-15 council-7, Opus 5).
+        remaining = deadline - time.monotonic()
+        _POST_EOF_GRACE = 10.0
+        try:
+            returncode = proc.wait(timeout=max(remaining, _POST_EOF_GRACE))
+        except subprocess.TimeoutExpired:
+            hung = True
+            _force_stop_process_tree(proc)
+            # Re-join after the kill: the fd is now at EOF, so the readers
+            # finish -- joining before building the diagnostic avoids reading
+            # stderr_lines while a live thread may still be appending to it
+            # (2026-08-15 council, Opus 5).
+            stdout_reader.join(timeout=5)
+            stderr_reader.join(timeout=5)
+            try:
+                returncode = proc.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                returncode = None  # unkillable; sentinel outside the int space
+        if hung:
+            # The seat was killed, but its complete stdout answer may have
+            # arrived before it hung (it closed stdout and lingered in
+            # teardown): throw a usable verdict away only when there is
+            # none (2026-08-15 council-7, Opus 5). read_text is guarded:
+            # the kill can leave a file truncated mid-multibyte-sequence or
+            # removed, which must degrade to the diagnostic, not explode as
+            # an unclassified UnicodeDecodeError (2026-08-15 council-8,
+            # Opus 5).
+            if invocation.output_file is not None and invocation.output_file.is_file():
+                try:
+                    output_text = invocation.output_file.read_text(encoding="utf-8")
+                except (OSError, UnicodeDecodeError):
+                    output_text = ""
+                if output_text.strip():
+                    return output_text, usage
+            if text_chunks and invocation.output_file is None:
+                # stdout IS the answer only for CLIs without an output file
+                # (opencode/agy/ollama). codex writes the answer to
+                # output_file; its stdout is liveness noise ("codex
+                # started"), so returning it as a verdict would hand the
+                # round a fake response instead of the diagnostic
+                # (2026-08-15 council-8, Opus 5).
+                if cli == "claude":
+                    try:
+                        return _parse_claude_result("".join(text_chunks), model)
+                    except SeatRunError:
+                        # Output that does not parse as a claude verdict is
+                        # not a usable answer from a hung seat: fall through
+                        # to the partial_timeout diagnostic (2026-08-15
+                        # council-7, Opus 5).
+                        pass
+                else:
+                    return "".join(text_chunks), usage
+            if returncode is None:
+                raise SeatRunError(
+                    f"[council] seat '{model}' hung after closing its output and could not be "
+                    f"terminated within {timeout_label}s: no verdict for this round.",
+                    "partial_timeout",
+                )
+            raise SeatRunError(
+                f"[council] seat '{model}' hung after closing its output and was killed after "
+                f"{timeout_label}s with no usable verdict: no response for this round.",
+                "partial_timeout",
+            )
         if returncode != 0:
             raise SeatRunError(f"[council] the seat did not respond (exit {returncode}):\n{''.join(stderr_lines)}", "process_error")
 
