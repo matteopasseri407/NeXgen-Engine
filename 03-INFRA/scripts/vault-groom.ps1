@@ -1,14 +1,14 @@
 #!/usr/bin/env pwsh
-# vault-groom.ps1 — Windows twin of vault-groom.sh (the gardener's hand).
+# vault-groom.ps1 - Windows twin of vault-groom.sh (the gardener's hand).
 #
 # Same contract as the .sh: feed the canonical playbook
 # (03-INFRA/vault-grooming-playbook.md) to an LLM runner for ONE grooming pass.
-# On-demand only — never scheduled to self-start (see the playbook: two machines
+# On-demand only - never scheduled to self-start (see the playbook: two machines
 # grooming the shared vault would collide on git).
 #
 # Modes:
 #   (default)  preview: read-only, runs the propose pass, prints the
-#              tranche, exits. NEVER prompts, NEVER writes — a bare
+#              tranche, exits. NEVER prompts, NEVER writes - a bare
 #              invocation can never modify the vault.
 #   preview    explicit alias of the default above.
 #   apply      the guarded flow: propose a tranche (read-only), show it to
@@ -16,7 +16,7 @@
 #              tranche inside a throwaway clone and (only if the audit
 #              below is clean) promote it into the real vault. Nothing is
 #              written to the real vault without that confirmation AND a
-#              clean audit — see "the temp-clone gate" below.
+#              clean audit - see "the temp-clone gate" below.
 #
 # The write pass never re-derives its own tranche: it is handed the exact
 # text you approved (with its sha256, taken from the PLAN_RECORD file's raw
@@ -25,7 +25,7 @@
 # the confirmation.
 #
 # The temp-clone gate (2026-07-13 architect review, mirrors vault-groom.sh's
-# own comment — see that file for the full rationale). After "yes" is
+# own comment - see that file for the full rationale). After "yes" is
 # confirmed, this script clones the vault into a fresh dir and IMMEDIATELY
 # removes that clone's `origin` remote, making `git push` mechanically
 # impossible for the write pass to reach anywhere real. claude's
@@ -37,7 +37,7 @@
 # failure leaves the real vault untouched and quarantines the clone.
 #
 # Env: VAULT, GROOM_MODEL, GROOM_RUNNER (claude|codex|agy, default claude),
-#      GROOM_NOPUSH=1 (skip the auto-publish step after a clean promotion —
+#      GROOM_NOPUSH=1 (skip the auto-publish step after a clean promotion -
 #      the promoted commits stay local for review),
 #      GROOM_LOG (override the preview/propose-pass log path),
 #      GROOM_STATE_DIR (override where structured audit records AND the
@@ -60,7 +60,7 @@
 # is on PATH; codex is unaffected (it already delivers its prompt via
 # stdin, not an argument, see Invoke-Readonly/-Write below).
 #
-# TODO(windows-verify): confirm on Windows — `claude`/`codex`/`agy` resolve on
+# TODO(windows-verify): confirm on Windows - `claude`/`codex`/`agy` resolve on
 # PATH in pwsh, array splat to --allowedTools works, Get-FileHash on the
 # plan-record file matches sha256sum's output on Linux, and Read-Host
 # correctly blocks for the confirmation. Unverified on a physical Windows

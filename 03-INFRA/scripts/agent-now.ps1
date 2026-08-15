@@ -1,6 +1,6 @@
 #requires -Version 5.1
 <#
-  agent-now — deterministic current date/time source for agents.
+  agent-now - deterministic current date/time source for agents.
   Training data lies about "what year is it"; this doesn't. Read this before
   any recency-sensitive judgment call, search query, or deadline check
   (see AGENTS.md > Operating Style, and firecrawl.md).

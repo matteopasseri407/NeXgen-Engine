@@ -20,7 +20,7 @@ if (-not [System.IO.Path]::IsPathRooted($Path)) {
 try {
   $Folder = [System.IO.Path]::GetFullPath($Path)
 } catch {
-  Write-Error 'Errore: il percorso della cartella non è valido.'
+  Write-Error 'Errore: il percorso della cartella non e'' valido.'
   exit 2
 }
 

@@ -132,6 +132,11 @@ def test_windows_sync_launcher_rejects_a_failed_first_python_candidate(tmp_path)
 @pytest.mark.skipif(os.name != "nt", reason="PowerShell parser check is Windows-only.")
 @pytest.mark.parametrize("script", [DOCTOR, SYNC_LAUNCHER])
 def test_windows_control_scripts_parse_in_windows_powershell(script):
+    # ReadAllText WITHOUT an explicit encoding: on .NET Framework this means
+    # "UTF-8, but honour the BOM if present" -- the same rule the script
+    # runtime itself applies to the file on disk. An explicit utf-8 read
+    # would NOT reproduce what PowerShell 5.1 does to a BOM-less file
+    # (which it decodes as ANSI/cp1252), so never add an encoding argument.
     command = (
         "[void][scriptblock]::Create([IO.File]::ReadAllText("
         + repr(str(script))
@@ -144,3 +149,35 @@ def test_windows_control_scripts_parse_in_windows_powershell(script):
         timeout=20,
     )
     assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_every_repo_ps1_is_ascii_pure_or_utf8_bom():
+    """Regression (v0.98.0-v0.98.3): agent-doctor.ps1 was UTF-8 without BOM.
+    Windows PowerShell 5.1 decodes a BOM-less .ps1 as ANSI/cp1252, where the
+    bytes of an em-dash (E2 80 94) spell a smart closing quote that the
+    parser treats as a string delimiter -- the file then failed to parse
+    ('Token '}' unexpected') and nexgen-update's pre-upgrade doctor step
+    died on every Windows machine. The Linux pwsh-7 lint job never saw it.
+    Any .ps1 must therefore be pure ASCII or carry a UTF-8 BOM, so the
+    cp1252 decoding can never derail the parser. Cross-platform byte check:
+    it must fail on the broken files even on a runner without PowerShell."""
+    repo = Path(__file__).resolve().parents[3]
+    ps1_files = sorted(
+        path
+        for path in repo.rglob("*.ps1")
+        if not any(part in (".git", ".venv", "node_modules") for part in path.parts)
+    )
+    assert ps1_files, "no .ps1 files found -- the sweep silently shrank to nothing"
+
+    offenders = []
+    for path in ps1_files:
+        raw = path.read_bytes()
+        has_bom = raw.startswith(b"\xef\xbb\xbf")
+        payload = raw[3:] if has_bom else raw
+        if any(byte > 0x7F for byte in payload):
+            offenders.append(path.relative_to(repo).as_posix())
+    assert not offenders, (
+        "these .ps1 files are neither pure ASCII nor UTF-8-with-BOM, so "
+        "Windows PowerShell 5.1 (ANSI/cp1252 decode of BOM-less files) can "
+        "misparse them:\n" + "\n".join(f"  - {name}" for name in offenders)
+    )

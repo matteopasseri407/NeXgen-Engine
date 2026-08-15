@@ -860,8 +860,8 @@ $managed = @(
   }
 )
 if ($managed.Count -gt 0) { ok "$($managed.Count) managed skills in ~/.agents/skill-library" } else { warn "no managed skill in ~/.agents/skill-library (fresh install, or none configured in the manifest yet)" }
-if ($brokenLibrary.Count -gt 0) { bad "broken skill-library entries: $($brokenLibrary.Name -join ', ') — run: agent-sync guard" }
-if (Test-Path -LiteralPath (Join-Path $skActive "INDEX.md") -PathType Leaf) { ok "lazy skill catalog present in ~/.agents/skills/INDEX.md" } else { warn "lazy skill catalog missing — run: agent-sync guard" }
+if ($brokenLibrary.Count -gt 0) { bad "broken skill-library entries: $($brokenLibrary.Name -join ', ') - run: agent-sync guard" }
+if (Test-Path -LiteralPath (Join-Path $skActive "INDEX.md") -PathType Leaf) { ok "lazy skill catalog present in ~/.agents/skills/INDEX.md" } else { warn "lazy skill catalog missing - run: agent-sync guard" }
 $core = if (Test-Path -LiteralPath $skActive) {
   @(
     Get-ChildItem -LiteralPath $skActive -Directory |
@@ -929,13 +929,13 @@ print(len(mat - names))
 $Starters = @("vault-doctor", "vault-close", "vault-save", "vault-council",
               "vault-groom", "nexgen-update", "vault-map")
 if (-not (Test-Path -LiteralPath $skManifest)) {
-  warn "no skills manifest yet, so none of the starter commands (/vault-doctor, /nexgen-update, ...) exist — create it: Copy-Item `"$skManifest.example`" `"$skManifest`"; then run agent-sync apply"
+  warn "no skills manifest yet, so none of the starter commands (/vault-doctor, /nexgen-update, ...) exist - create it: Copy-Item `"$skManifest.example`" `"$skManifest`"; then run agent-sync apply"
 } else {
   $missingStarters = @($Starters | Where-Object {
     -not (Test-Path -LiteralPath (Join-Path $skLibrary "$_\SKILL.md"))
   })
   if ($missingStarters.Count -gt 0) {
-    warn "starter commands not installed: $(($missingStarters | ForEach-Object { "/$_" }) -join ' ') — if you want them, add them to $skManifest and run: agent-sync apply"
+    warn "starter commands not installed: $(($missingStarters | ForEach-Object { "/$_" }) -join ' ') - if you want them, add them to $skManifest and run: agent-sync apply"
   } else {
     ok "all 7 starter commands installed (/vault-doctor, /vault-close, /vault-save, /vault-council, /vault-groom, /nexgen-update, /vault-map)"
   }
