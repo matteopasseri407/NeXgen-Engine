@@ -1,4 +1,4 @@
-# vault-push.ps1 — Windows twin of vault-push.sh.
+# vault-push.ps1 - Windows twin of vault-push.sh.
 #
 # Thin wrapper only: the actual logic lives in agent_sync.py's `vault-push`
 # subcommand (single cross-platform implementation, shared with
