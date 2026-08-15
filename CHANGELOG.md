@@ -8,7 +8,7 @@ This file tracks the **engine** (this repo). Your own data — manifests,
 instructions, skills, secrets — lives in your KnowledgeVault and is not part
 of any engine release.
 
-## [Unreleased]
+## [0.98.4] - 2026-08-15
 
 ### Changed
 
@@ -19,6 +19,19 @@ of any engine release.
   INIT, docs/team and docs/org-deployment now say "not licensed" instead of
   "ask for a license". An eventual company-specific product would be
   written from scratch, outside this repository.
+
+### Fixed
+
+- **Every `.ps1` is ASCII-pure (or UTF-8-with-BOM), so Windows PowerShell
+  5.1 can never misparse one again.** `agent-doctor.ps1` (and four other
+  `.ps1` twins) were UTF-8 without BOM, and PS 5.1 decodes a BOM-less
+  `.ps1` as ANSI/cp1252: the bytes of an em-dash (E2 80 94) spell a smart
+  closing quote that the parser treats as a string delimiter, making the
+  whole file fail to parse with "Token '}' unexpected". `nexgen-update`
+  then died in its pre-upgrade doctor step on every Windows machine from
+  v0.98.0 to v0.98.3, and the Linux pwsh-7 lint job could never see it. A
+  cross-platform byte check (`test_every_repo_ps1_is_ascii_pure_or_utf8_bom`)
+  now locks the invariant in on every runner.
 
 ## [0.98.3] - 2026-08-15
 
