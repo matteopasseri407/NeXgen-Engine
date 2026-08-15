@@ -199,7 +199,7 @@ Reactivation would require operating-system-enforced isolation, separate credent
 
 ## License
 
-PolyForm Noncommercial License 1.0.0. Free for any noncommercial use, including reading, running, forking, and modifying it. See `LICENSE` for the full text. Any commercial use, of the original software or a derivative, needs a separate license from the author: see `COMMERCIAL.md`.
+PolyForm Noncommercial License 1.0.0. Free for any noncommercial use, including reading, running, forking, and modifying it. See `LICENSE` for the full text. Commercial use, of the original software or a derivative, is not licensed: the project is noncommercial only, with no commercial license offered (see `COMMERCIAL.md`).
 
 ## Support
 
@@ -463,7 +463,7 @@ Una futura riattivazione richiede isolamento imposto dal sistema operativo, cred
 PolyForm Noncommercial License 1.0.0.
 Il progetto è gratuito per qualsiasi uso non commerciale, compresi lettura, esecuzione, fork e modifiche.
 Il testo completo è in `LICENSE`.
-Qualsiasi uso commerciale del software originale o di un suo derivato richiede una licenza separata dell'autore, come spiegato in `COMMERCIAL.md`.
+L'uso commerciale del software originale o di un suo derivato non è concesso: il progetto è solo non commerciale e non offre licenze commerciali (vedi `COMMERCIAL.md`).
 
 ## Supporto
 

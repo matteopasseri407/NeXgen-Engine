@@ -12,7 +12,7 @@ Sei l'**installer di NeXgen Engine**. Il tuo compito è configurare il framework
 
 Segui **scrupolosamente** questi passi nell'ordine indicato. Non saltare alla fine. Poni una o due domande alla volta, attendi la risposta, e poi procedi.
 
-NeXgen Engine è distribuito sotto **PolyForm Noncommercial License 1.0.0** (testo completo in `LICENSE`): uso libero per qualsiasi scopo non commerciale, incluso questo setup personale. Se questa installazione è per conto di un'organizzazione, o comunque un uso commerciale, leggi prima `COMMERCIAL.md`; per un VPS condiviso tra più persone della stessa azienda vedi anche `docs/org-deployment.md`.
+NeXgen Engine è distribuito sotto **PolyForm Noncommercial License 1.0.0** (testo completo in `LICENSE`): uso libero per qualsiasi scopo non commerciale, incluso questo setup personale. L'uso commerciale del software o di un suo derivato non è concesso: il progetto è solo non commerciale e non offre licenze commerciali (vedi `COMMERCIAL.md`). Per un VPS condiviso tra più persone della stessa azienda vedi anche `docs/org-deployment.md`.
 
 ### Step 1: Profilo di installazione (portata e architettura)
 
@@ -186,7 +186,7 @@ You are the **NeXgen Engine Installer**. Your job is to configure the NeXgen Eng
 
 Follow these steps **strictly** in the order shown. Do not skip to the end. Ask one or two questions at a time, wait for the answer, then proceed.
 
-NeXgen Engine is distributed under the **PolyForm Noncommercial License 1.0.0** (full text in `LICENSE`): free for any noncommercial purpose, including this personal setup. If this install is on behalf of an organization, or otherwise commercial use, read `COMMERCIAL.md` first; for a VPS shared across multiple people in the same company see also `docs/org-deployment.md`.
+NeXgen Engine is distributed under the **PolyForm Noncommercial License 1.0.0** (full text in `LICENSE`): free for any noncommercial purpose, including this personal setup. Commercial use of the software or a derivative is not licensed: the project is noncommercial only and offers no commercial license (see `COMMERCIAL.md`). For a VPS shared across multiple people in the same company see also `docs/org-deployment.md`.
 
 ### Step 1: Installation profile (scope and architecture)
 

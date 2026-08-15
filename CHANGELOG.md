@@ -8,6 +8,18 @@ This file tracks the **engine** (this repo). Your own data — manifests,
 instructions, skills, secrets — lives in your KnowledgeVault and is not part
 of any engine release.
 
+## [Unreleased]
+
+### Changed
+
+- **No commercial license is offered anymore.** `COMMERCIAL.md` no longer
+  describes how to request a paid commercial license: the project is
+  noncommercial only, and the noncommercial condition carries into
+  derivatives (already true under PolyForm Noncommercial 1.0.0). README,
+  INIT, docs/team and docs/org-deployment now say "not licensed" instead of
+  "ask for a license". An eventual company-specific product would be
+  written from scratch, outside this repository.
+
 ## [0.98.3] - 2026-08-15
 
 ### Fixed
