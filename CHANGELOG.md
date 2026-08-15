@@ -50,7 +50,7 @@ of any engine release.
   `mcp-gen` rewrote `.claude.json` while Claude was live. The check now falls
   back to matching `node` processes by name, mirroring the Windows branch.
 
-
+## [0.98.1] - 2026-08-14
 
 ### Fixed
 
