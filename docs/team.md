@@ -8,9 +8,9 @@ design today, and that has concrete consequences for a team.
 This is independent of, not instead of, the license question: NeXgen Engine
 is PolyForm Noncommercial 1.0.0. Evaluating it internally is fine, but
 running it inside a company as part of paid or revenue-generating work is a
-commercial use the default license does not cover — see `COMMERCIAL.md`
-before you adopt it that way, whatever you conclude about the mono-user
-constraints below.
+commercial use the default license does not cover, and no commercial
+license is offered (see `COMMERCIAL.md`) — so such use is simply not
+licensed, whatever you conclude about the mono-user constraints below.
 
 ## What "mono-user" means, concretely
 

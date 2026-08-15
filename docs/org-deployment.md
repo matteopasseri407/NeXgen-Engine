@@ -35,9 +35,10 @@ reachable from there, another employee's secrets too.
 This is not a missing setting to flip; it is the current architecture.
 Treat a Cloud-Server backend shared across people as full mutual trust among
 everyone whose CLI can reach it — comparable to giving them all the same
-root password. Doing this today is entirely at your own risk, and it is a
-commercial use of the software (see `COMMERCIAL.md`) once it is part of
-paid or revenue-generating work inside a company.
+root password. Doing this today is entirely at your own risk, and once it is
+part of paid or revenue-generating work inside a company it is a commercial
+use that the license does not cover and for which no commercial license is
+offered (see `COMMERCIAL.md`).
 
 ## A starting sketch for an IT rollout
 
