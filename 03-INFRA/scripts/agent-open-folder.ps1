@@ -29,5 +29,14 @@ if (-not (Test-Path -LiteralPath $Folder -PathType Container)) {
   exit 2
 }
 
-Start-Process -FilePath 'explorer.exe' -ArgumentList @($Folder)
+# Use Invoke-Item -LiteralPath instead of quoting for explorer.exe: PS 5.1
+# does not quote -ArgumentList items itself and explorer splits on spaces,
+# and any hand-rolled command-line quoting is a minefield with trailing
+# backslashes ("C:\" needs doubling, "C:\foo\\" needs every trailing bar
+# doubled again -- CommandLine parsing treats a lone backslash before the
+# closing quote as an escaped quote). Invoke-Item opens the folder via
+# ShellExecute with NO command-line parsing at all, so paths with spaces,
+# drive roots and trailing backslashes all just work (2026-08-15 review,
+# councils of Opus 5).
+Invoke-Item -LiteralPath $Folder
 Write-Output "Cartella aperta: $Folder"

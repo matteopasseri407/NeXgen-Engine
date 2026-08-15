@@ -27,6 +27,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
+import glob
 import hashlib
 import json
 import os
@@ -447,38 +448,92 @@ def _cmd_escape(value: Path | str) -> str:
     return re.sub(r"([&|<>^])", lambda match: "^" + match.group(1), text)
 
 
-def make_link(src: Path, dst: Path, *, is_dir: bool) -> bool:
+def make_link(src: Path, dst: Path, *, is_dir: bool, on_backup_failure: Callable[[Path], None] | None = None) -> bool:
     """Ensures dst points at src. POSIX: symlink. Windows: SymbolicLink for
     files, Junction for directories (no elevated privilege needed), falling
     back to a copy if the privilege is missing. Returns True if it changed
-    anything on disk."""
+    anything on disk.
+
+    A False return is ambiguous ("nothing to do" vs "backup failed, link
+    NOT installed") -- callers that can distinguish (env.log) should pass
+    on_backup_failure to make the failure mode audible instead of silently
+    running on stale content forever (2026-08-15 council-4, Opus 5)."""
     if _points_to(dst, src):
         return False
-    if IS_WINDOWS and dst.exists() and not _is_link_like(dst):
+    # Content check + backup before removal apply on BOTH platforms (2026-
+    # 08-15 council-2 review): the Windows-only guard meant a hand-written
+    # real file at dst (e.g. ~/.codex/AGENTS.md, a manually configured
+    # mcp_config.json) was silently destroyed on POSIX, where _remove_path
+    # below just unlinks it. Identical content is backed off only on
+    # Windows (where the link may be impossible, so the identical copy is
+    # kept); on POSIX an identical real file still falls through to the
+    # symlink -- nothing is lost, and the link is the invariant this
+    # function promises. Diverging content is backed up before the link
+    # replaces it, on every platform.
+    if dst.exists() and not _is_link_like(dst):
         if is_dir and _same_tree_content(src, dst):
-            return False
-        if not is_dir and _same_file_content(src, dst):
-            return False
-        # Content differs and this isn't a link: on Windows this branch is
-        # reached when a previous run fell back to a real copy (no
-        # symlink/junction privilege) and the content has since diverged --
-        # possibly a local edit, not necessarily just staleness. Back it up
-        # before removing instead of destroying it silently (found in a
-        # cross-vendor audit, 2026-07-09; not verified live on Windows, see
-        # agentic-layer-concept-map.md backlog).
-        bak = dst.with_name(dst.name + ".local-edit.bak-" + time.strftime("%Y%m%d-%H%M%S"))
-        try:
-            if dst.is_dir():
-                shutil.copytree(dst, bak)
-            else:
-                shutil.copy2(dst, bak)
-        except OSError:
-            # Backup failed (locked file, permission denied, ...): do not
-            # fall through to _remove_path below without a confirmed backup,
-            # that would silently destroy a local edit with nothing to
-            # restore it from. Bail out and retry on the next run. Found in
-            # a full-codebase audit, Gemini via agy, 2026-07-09.
-            return False
+            if IS_WINDOWS:
+                return False
+        elif not is_dir and _same_file_content(src, dst):
+            if IS_WINDOWS:
+                return False
+        else:
+            # Content differs and this isn't a link: reached when a previous
+            # run fell back to a real copy (no symlink/junction privilege, or
+            # POSIX before this fix) and the content has since diverged --
+            # possibly a local edit, not necessarily just staleness. Back it
+            # up before removing instead of destroying it silently (found in
+            # a cross-vendor audit, 2026-07-09). Dedup (2026-08-15 council,
+            # Opus 5): a tool that rewrites dst every run (atomic
+            # write-replace that breaks the symlink, a renomalizing editor)
+            # must not pile up one .bak per sync run -- skip if an existing
+            # backup already carries the identical bytes. glob.escape():
+            # dst.name with glob metacharacters ([, ], ?, *) must not be
+            # read as a pattern (2026-08-15 council-2, Opus 5). any(), not
+            # sorted(): only the truth value is needed, and only matching
+            # types are compared (2026-08-15 council-4, Opus 5).
+            ts = time.strftime("%Y%m%d-%H%M%S")
+            bak_base = dst.name + ".local-edit.bak-"
+            existing = any(
+                p for p in dst.parent.glob(glob.escape(bak_base) + "*")
+                if (dst.is_dir() and p.is_dir() and _same_tree_content(dst, p))
+                or (not dst.is_dir() and p.is_file() and _same_file_content(dst, p))
+            )
+            if not existing:
+                # pid in the name: two concurrent sync runs in the same
+                # second would collide on the same .bak name and fail the
+                # backup (2026-08-15 council-4, Opus 5).
+                bak = dst.with_name(f"{bak_base}{ts}-{os.getpid()}")
+                try:
+                    if dst.is_dir():
+                        shutil.copytree(dst, bak)
+                    else:
+                        shutil.copy2(dst, bak)
+                except OSError:
+                    # Backup failed (locked file, permission denied, ...): do
+                    # not fall through to _remove_path below without a
+                    # confirmed backup, that would silently destroy a local
+                    # edit with nothing to restore it from. Bail out and
+                    # retry on the next run. Found in a full-codebase audit,
+                    # Gemini via agy, 2026-07-09.
+                    if on_backup_failure is not None:
+                        on_backup_failure(dst)
+                    return False
+                # Retention (2026-08-15 council-8, Opus 5): the dedup above
+                # only skips IDENTICAL content -- a dst rewritten with
+                # different bytes on every run (config with a session id,
+                # an editor that renormalizes) would otherwise pile one
+                # .bak per sync forever. Keep the 3 newest, same convention
+                # as _backup_before_migration.
+                backups = sorted(dst.parent.glob(glob.escape(bak_base) + "*"), key=lambda p: p.name)
+                for stale in backups[:-3]:
+                    try:
+                        if stale.is_dir() and not stale.is_symlink():
+                            shutil.rmtree(stale)
+                        else:
+                            stale.unlink()
+                    except OSError:
+                        pass
     _remove_path(dst)
     dst.parent.mkdir(parents=True, exist_ok=True)
     if not IS_WINDOWS:
@@ -996,7 +1051,10 @@ def instructions(env: Env) -> bool:
             same = False
         if same:
             continue
-        if make_link(canon, target, is_dir=False):
+        if make_link(canon, target, is_dir=False, on_backup_failure=lambda dst: env.log(
+            f"instructions: WARNING could not back up {dst} (locked or read-only?) -- "
+            "left in place, CLI keeps reading divergent content until the next run"
+        )):
             env.log(f"instructions: relinked {target}")
         if not _is_link_like(target):
             # No symlink privilege on this host — Windows with developer mode
@@ -1127,7 +1185,10 @@ def antigravity_mcp(env: Env) -> bool:
             same = False
         if same:
             continue
-        make_link(src, target, is_dir=False)
+        make_link(src, target, is_dir=False, on_backup_failure=lambda dst: env.log(
+            f"mcp: WARNING could not back up {dst} (locked or read-only?) -- "
+            "left in place, Antigravity keeps reading the divergent copy"
+        ))
         env.log(f"mcp: relinked {target}")
     return True
 
@@ -2369,10 +2430,76 @@ def _register_opencode_plugin(env: Env, config_path: Path, adapter_dst: Path) ->
     if not isinstance(plugins, list):
         env.log(f"claude-permissions: opencode-guardrail: refused ({config_path.name} 'plugin' is not a list)")
         return False
-    entry = f"file://{adapter_dst}"
-    if entry in plugins:
-        return True
-    updated_plugins = [*plugins, entry]
+    # `file://` is the documented local-plugin form (see the recon), but the
+    # canonical spelling on Windows needs the third slash and forward slashes:
+    # `file:///C:/Users/<name>/...` -- `file://C:\...` parses with host "C:" and
+    # backslash path characters, so the plugin would not load while the
+    # bypass posture was still applied, unguarded with no failure signal
+    # (2026-08-15 review). Path.as_uri() emits the canonical form on every
+    # platform; a relative path can never be a valid file URI. resolve() is
+    # wrapped so a network share going away degrades to the function's
+    # usual log-and-False instead of crashing the whole phase (2026-08-15
+    # council-7, Opus 5).
+    try:
+        entry = adapter_dst.resolve().as_uri()
+    except (OSError, ValueError) as exc:
+        env.log(f"claude-permissions: opencode-guardrail: cannot resolve {adapter_dst} ({exc}) -- plugin left unregistered")
+        return False
+
+    def _normalize_plugin(value: object) -> str | None:
+        # Dedup and legacy migration (2026-08-15 council, Opus 5): an
+        # existing install may carry the OLD spelling of this very entry
+        # (pre-fix `file://` + backslash path on Windows), so a plain string
+        # equality against `entry` would append a duplicate every run.
+        # Compare by resolved path instead: strip a file:// prefix, then
+        # resolve() both sides. Only file:// entries and absolute paths are
+        # compared: a bare npm package name or a URL must not be resolved
+        # against the current working directory of the agent-sync process
+        # (2026-08-15 council-7, Opus 5). On Windows the canonical file URI
+        # has a third slash before the drive letter (`file:///C:/...`):
+        # after the prefix strip that reads `/C:/...`, which pathlib would
+        # resolve against the CURRENT drive -- strip that leading slash for
+        # drive paths so the canonical form dedups against itself
+        # (2026-08-15 council-2, Opus 5).
+        if not isinstance(value, str):
+            return None
+        text = value.strip()
+        if text.startswith("file://"):
+            text = text[len("file://"):]
+        elif not text.startswith(("/", "\\\\")):
+            if not (IS_WINDOWS and len(text) > 1 and text[1] == ":"):
+                return None  # not a file URI, an absolute path, or a drive path
+        if IS_WINDOWS and text.startswith("/") and len(text) > 2 and text[2] == ":":
+            text = text[1:]
+        try:
+            return Path(text).resolve().as_uri()
+        except (OSError, ValueError):
+            return None
+
+    normalized = []
+    canonical_count = 0
+    removed_legacy = 0
+    for item in plugins:
+        if isinstance(item, str) and item.strip() == entry:
+            # Deduplicate repeated canonical entries too: a config dirtied
+            # by earlier buggy runs must converge to a single entry, not
+            # keep N identical copies (2026-08-15 council-7, Opus 5).
+            canonical_count += 1
+            continue
+        ident = _normalize_plugin(item)
+        if ident is not None and ident == entry:
+            # Legacy spelling of this very entry (pre-fix `file://` +
+            # backslash path on Windows): must be MIGRATED to the canonical
+            # form, not treated as "already present" -- a Windows install
+            # that only carries the old spelling would otherwise keep a
+            # plugin entry opencode cannot load, forever (2026-08-15
+            # council-4, Opus 5).
+            removed_legacy += 1
+            continue
+        normalized.append(item)
+    if canonical_count == 1 and removed_legacy == 0:
+        return True  # exactly one canonical entry, nothing stale to migrate
+    updated_plugins = [*normalized, entry]
     _permissions_backup(config_path)
     if config_path.suffix == ".jsonc":
         updated = set_jsonc_top_level_value(raw, "plugin", updated_plugins)

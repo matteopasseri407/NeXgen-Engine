@@ -190,7 +190,7 @@ def test_run_seat_passes_the_isolated_env_through_to_popen(monkeypatch, tmp_path
         def kill(self):
             return None
 
-        def wait(self):
+        def wait(self, timeout=None):
             return 0
 
     def fake_popen(argv, **kwargs):
@@ -236,7 +236,7 @@ def test_run_seat_leaves_claude_env_as_none_meaning_full_inherit(monkeypatch, tm
         def kill(self):
             return None
 
-        def wait(self):
+        def wait(self, timeout=None):
             return 0
 
     def fake_popen(argv, **kwargs):
@@ -302,3 +302,289 @@ def test_run_seat_forces_utf8_text_pipes_for_non_ascii_codex_prompt(monkeypatch,
     assert response == "Risposta valida\n"
     assert captured["stdin"].text == "Perché è importante?"
     assert captured["popen_kwargs"]["encoding"] == "utf-8"
+
+
+def test_run_seat_kills_a_seat_that_hangs_after_closing_stdout(monkeypatch, tmp_path):
+    """Regression test for the proc.wait() hang (2026-08-15 review, council
+    of Opus 5): a seat that closes its stdout (EOF) while still running must
+    be killed after the remaining budget instead of blocking forever.
+    """
+    import io
+    import subprocess as sp
+
+    council = load_council(monkeypatch, tmp_path)
+    captured = {}
+
+    class FakeStdin:
+        def write(self, t):
+            pass
+
+        def flush(self):
+            pass
+
+        def close(self):
+            pass
+
+    class FakeProcess:
+        def __init__(self, argv):
+            captured["proc"] = self
+            self.stdin = FakeStdin()
+            # stdout yields one line then EOF, while the process "lives on":
+            # exactly the post-EOF hang proc.wait() used to block on.
+            self.stdout = io.StringIO("test line\n")
+            self.stderr = io.StringIO()
+            self.killed = False
+
+        def kill(self):
+            self.killed = True
+
+        def wait(self, timeout=None):
+            captured["wait_timeouts"] = captured.get("wait_timeouts", []) + [timeout]
+            raise sp.TimeoutExpired(cmd="fake", timeout=timeout)
+
+    monkeypatch.setattr(council.subprocess, "Popen", lambda argv, **kw: FakeProcess(argv))
+
+    with pytest.raises(council.SeatRunError) as exc:
+        council.run_seat({"cli": "claude", "model": "vendor/test"}, "brief", tmp_path)
+    assert exc.value.kind == "partial_timeout"
+    assert captured["proc"].killed, "_force_stop_process_tree must have killed the hanging seat"
+    # At least: the bounded wait, then the post-kill reap. Do NOT pin the
+    # exact count -- the internal reaps of _force_stop_process_tree (5s, 3s)
+    # are an implementation detail (2026-08-15 council-7, Opus 5).
+    assert len(captured["wait_timeouts"]) >= 2, captured["wait_timeouts"]
+
+
+def test_run_seat_returns_a_complete_verdict_after_post_eof_hang(monkeypatch, tmp_path):
+    """A seat that delivers its full answer and THEN hangs in teardown (closes
+    stdout, lingers past the budget, gets killed) must still return the
+    verdict it produced: the text is already in hand, killing it is just
+    cleanup -- throwing the answer away would lose a valid round
+    (2026-08-15 council-7, Opus 5).
+    """
+    import io
+    import subprocess as sp
+
+    council = load_council(monkeypatch, tmp_path)
+    captured = {}
+
+    class FakeStdin:
+        def write(self, t):
+            pass
+
+        def flush(self):
+            pass
+
+        def close(self):
+            pass
+
+    class FakeProcess:
+        def __init__(self, argv):
+            captured["proc"] = self
+            self.stdin = FakeStdin()
+            self.stdout = io.StringIO('{"type":"text","part":{"text":"Risposta\\nVERDICT: APPROVE\\n"}}\n')
+            self.stderr = io.StringIO()
+            self.killed = False
+            self.wait_calls = 0
+
+        def kill(self):
+            self.killed = True
+
+        def wait(self, timeout=None):
+            self.wait_calls += 1
+            if self.wait_calls == 1:
+                raise sp.TimeoutExpired(cmd="fake", timeout=timeout)
+            return -9  # killed by SIGKILL after the timeout
+
+    monkeypatch.setattr(council.subprocess, "Popen", lambda argv, **kw: FakeProcess(argv))
+
+    text, _usage = council.run_seat({"cli": "opencode", "model": "vendor/test"}, "brief", tmp_path)
+    assert "VERDICT: APPROVE" in text
+    assert captured["proc"].killed
+
+
+def test_run_seat_recovers_a_complete_verdict_from_output_file_after_hang(monkeypatch, tmp_path):
+    """codex path: the answer lives in the output file, stdout only carries
+    liveness lines. If the seat is killed post-EOF, the file it already
+    wrote must still be returned (2026-08-15 council-7, Opus 5)."""
+    import io
+    import subprocess as sp
+
+    council = load_council(monkeypatch, tmp_path)
+    captured = {}
+
+    class FakeStdin:
+        def write(self, t):
+            pass
+
+        def flush(self):
+            pass
+
+        def close(self):
+            pass
+
+    class FakeProcess:
+        def __init__(self, argv):
+            captured["proc"] = self
+            self.stdin = FakeStdin()
+            self.stdout = io.StringIO("codex started\n")
+            self.stderr = io.StringIO()
+            self.killed = False
+            self.wait_calls = 0
+            output_path = Path(argv[argv.index("-o") + 1])
+            output_path.write_text("Risposta completa\n", encoding="utf-8")
+
+        def kill(self):
+            self.killed = True
+
+        def wait(self, timeout=None):
+            self.wait_calls += 1
+            if self.wait_calls == 1:
+                raise sp.TimeoutExpired(cmd="fake", timeout=timeout)
+            return -9
+
+    monkeypatch.setattr(council.subprocess, "Popen", lambda argv, **kw: FakeProcess(argv))
+
+    text, _usage = council.run_seat({"cli": "codex", "model": "vendor/test"}, "brief", tmp_path)
+    assert "Risposta completa" in text
+    assert captured["proc"].killed
+
+
+def test_run_seat_classifies_a_killed_after_timeout_seat_as_partial_timeout(monkeypatch, tmp_path):
+    """The normal hang path (2026-08-15 council-2, Opus 5): wait times out,
+    _force_stop_process_tree kills the seat, and the post-kill wait returns a
+    real signal exit (-9). The classification must still be partial_timeout
+    -- the timeout is the cause, not the exit code -- not process_error.
+    """
+    import io
+    import subprocess as sp
+
+    council = load_council(monkeypatch, tmp_path)
+    captured = {}
+
+    class FakeStdin:
+        def write(self, t):
+            pass
+
+        def flush(self):
+            pass
+
+        def close(self):
+            pass
+
+    class FakeProcess:
+        def __init__(self, argv):
+            captured["proc"] = self
+            self.stdin = FakeStdin()
+            self.stdout = io.StringIO("test line\n")
+            self.stderr = io.StringIO()
+            self.killed = False
+            self.wait_calls = 0
+
+        def kill(self):
+            self.killed = True
+
+        def wait(self, timeout=None):
+            self.wait_calls += 1
+            if self.wait_calls == 1:
+                raise sp.TimeoutExpired(cmd="fake", timeout=timeout)
+            return -9  # killed by SIGKILL: the real post-kill outcome
+
+    monkeypatch.setattr(council.subprocess, "Popen", lambda argv, **kw: FakeProcess(argv))
+
+    with pytest.raises(council.SeatRunError) as exc:
+        council.run_seat({"cli": "claude", "model": "vendor/test"}, "brief", tmp_path)
+
+    assert exc.value.kind == "partial_timeout"
+    assert captured["proc"].killed
+
+
+def test_run_seat_codex_hang_without_output_file_is_not_a_fake_verdict(monkeypatch, tmp_path):
+    """codex stdout is liveness noise, not the answer: if the seat hangs and
+    never writes its output file, the round must get partial_timeout, NOT a
+    fake verdict built from "codex started" lines (2026-08-15 council-8,
+    Opus 5).
+    """
+    import io
+    import subprocess as sp
+
+    council = load_council(monkeypatch, tmp_path)
+
+    class FakeStdin:
+        def write(self, t):
+            pass
+
+        def flush(self):
+            pass
+
+        def close(self):
+            pass
+
+    class FakeProcess:
+        def __init__(self, argv):
+            self.stdin = FakeStdin()
+            self.stdout = io.StringIO("codex started\n")
+            self.stderr = io.StringIO()
+            self.killed = False
+            self.wait_calls = 0
+
+        def kill(self):
+            self.killed = True
+
+        def wait(self, timeout=None):
+            self.wait_calls += 1
+            if self.wait_calls == 1:
+                raise sp.TimeoutExpired(cmd="fake", timeout=timeout)
+            return -9
+
+    monkeypatch.setattr(council.subprocess, "Popen", lambda argv, **kw: FakeProcess(argv))
+
+    with pytest.raises(council.SeatRunError) as exc:
+        council.run_seat({"cli": "codex", "model": "vendor/test"}, "brief", tmp_path)
+    assert exc.value.kind == "partial_timeout"
+
+
+def test_run_seat_truncated_output_file_degrades_to_partial_timeout(monkeypatch, tmp_path):
+    """A kill mid-write can leave the output file truncated in the middle of
+    a multibyte UTF-8 sequence: read_text must degrade to the diagnostic,
+    not raise an unclassified UnicodeDecodeError (2026-08-15 council-8,
+    Opus 5).
+    """
+    import io
+    import subprocess as sp
+
+    council = load_council(monkeypatch, tmp_path)
+
+    class FakeStdin:
+        def write(self, t):
+            pass
+
+        def flush(self):
+            pass
+
+        def close(self):
+            pass
+
+    class FakeProcess:
+        def __init__(self, argv):
+            self.stdin = FakeStdin()
+            self.stdout = io.StringIO("codex started\n")
+            self.stderr = io.StringIO()
+            self.killed = False
+            self.wait_calls = 0
+            output_path = Path(argv[argv.index("-o") + 1])
+            output_path.write_bytes("perch\xc3".encode("latin-1"))  # truncated multibyte
+
+        def kill(self):
+            self.killed = True
+
+        def wait(self, timeout=None):
+            self.wait_calls += 1
+            if self.wait_calls == 1:
+                raise sp.TimeoutExpired(cmd="fake", timeout=timeout)
+            return -9
+
+    monkeypatch.setattr(council.subprocess, "Popen", lambda argv, **kw: FakeProcess(argv))
+
+    with pytest.raises(council.SeatRunError) as exc:
+        council.run_seat({"cli": "codex", "model": "vendor/test"}, "brief", tmp_path)
+    assert exc.value.kind == "partial_timeout"
