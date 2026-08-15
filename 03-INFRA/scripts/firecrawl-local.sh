@@ -82,10 +82,18 @@ shift || true
 
 case "$cmd" in
   status)
-    code="$(curl -sS -o /tmp/firecrawl-local-status.out -w '%{http_code}' "$API_URL/" || true)"
+    # -o /dev/null, not a fixed /tmp path: the status body is never read
+    # (only %{http_code} is), and a predictable world-writable target is a
+    # classic symlink-attack surface on multi-user hosts (2026-08-15
+    # council, Opus 5).
+    code="$(curl -sS -o /dev/null -w '%{http_code}' "$API_URL/" || true)"
     echo "firecrawl-local"
     echo "  url: $API_URL"
-    echo "  auth: ${FIRECRAWL_API_KEY:+env FIRECRAWL_API_KEY}${FIRECRAWL_API_KEY:-dummy local-self-hosted}"
+    if [ -n "${FIRECRAWL_API_KEY:-}" ]; then
+      echo "  auth: env FIRECRAWL_API_KEY (set)"
+    else
+      echo "  auth: dummy local-self-hosted"
+    fi
     echo "  root_http: $code"
     if [[ "$code" == "200" || "$code" == "302" ]]; then
       echo "  status: ok"

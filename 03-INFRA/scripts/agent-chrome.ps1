@@ -34,8 +34,8 @@ $StandardProfile = Join-Path $env:LOCALAPPDATA "Google\Chrome\User Data"
 $Mode = "window"
 if ($ChromeArgs -and $ChromeArgs.Count -gt 0) {
   switch ($ChromeArgs[0]) {
-    "--ensure" { $Mode = "ensure"; $ChromeArgs = $ChromeArgs[1..($ChromeArgs.Count - 1)] }
-    "--heal"   { $Mode = "heal";   $ChromeArgs = $ChromeArgs[1..($ChromeArgs.Count - 1)] }
+    "--ensure" { $Mode = "ensure"; $ChromeArgs = @($ChromeArgs | Select-Object -Skip 1) }
+    "--heal"   { $Mode = "heal";   $ChromeArgs = @($ChromeArgs | Select-Object -Skip 1) }
   }
 }
 

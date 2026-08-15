@@ -218,6 +218,15 @@ for pair in "Codex:$HOME/.codex/AGENTS.md" "Antigravity:$HOME/.gemini/config/AGE
   name="${pair%%:*}"; f="${pair#*:}"
   if [ "$(readlink -f "$f" 2>/dev/null)" = "$(readlink -f "$CANON" 2>/dev/null)" ]; then
     ok "$name → canonical AGENTS.md"
+  elif [ ! -e "$f" ] && ! command -v "$( [ "$name" = "Codex" ] && printf codex || printf agy )" >/dev/null 2>&1; then
+    # Same asymmetry fix as OpenCode's branch below: a CLI that was never
+    # installed has no code path that will ever create this file, so a hard
+    # FAIL here is permanent and unfixable on a fresh consumer install.
+    # The `[ ! -e ]` guard keeps the CLI-absent leniency from masking a
+    # PRESENT-but-divergent file: when the file exists and does not match,
+    # that is a real drift worth a FAIL regardless of PATH (2026-08-15
+    # council, Opus 5).
+    warn "$name not installed here? (missing $f)"
   else
     fail "$name does NOT point to the canonical file ($f)"
   fi

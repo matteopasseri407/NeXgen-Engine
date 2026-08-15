@@ -10,6 +10,46 @@ of any engine release.
 
 ## [Unreleased]
 
+### Fixed
+
+- **`firecrawl-local status` no longer prints the API key.** When
+  `FIRECRAWL_API_KEY` was set, the shell expansion `${VAR:-default}` echoed
+  the actual key value after the `env FIRECRAWL_API_KEY` label, landing the
+  real key in stdout and any log that captured it. The auth line now prints
+  only the label; the twin `firecrawl-local.ps1` already behaved correctly.
+- **MCP wrapper processes no longer linger after their child dies by
+  signal.** `mcp-http-bridge.mjs` and `playwright-human-safe.mjs` re-sent the
+  child's termination signal to themselves from the `exit` handler, but the
+  forwarding handler registered for the same signal consumed it and returned,
+  leaving the wrapper alive forever. The listener is now detached before the
+  re-signal, and a truthful `128+signal` exit code is set first so a signal
+  with an "ignore" default disposition (SIGPIPE) still reports the child's
+  fate instead of a fake 0.
+- **`agent-chrome --ensure` with no further arguments no longer opens a
+  phantom tab.** The PowerShell argument slice `[1..(Count-1)]` on a single
+  argument produced the descending range `1..0`, keeping `--ensure` in the
+  list, which was then passed to Chrome as a stray positional. Replaced with
+  `Select-Object -Skip 1`.
+- **`agent-sync` no longer mistakes Windows junctions for unlinkable
+  state.** `vault_skills()` used `Path.is_symlink()`, which is `False` for
+  directory junctions, so a broken whole-root junction made the apply crash
+  instead of being repaired. The new broken-junction-only predicate repairs
+  exactly the recoverable state and leaves working junctions and cloud
+  placeholder folders untouched.
+- **`agent-doctor` no longer reports a permanent FAIL for Codex and
+  Antigravity on a machine where they were never installed.** Both twins
+  now emit a WARN for a genuinely missing instructions file on an absent
+  CLI, matching the existing OpenCode treatment. A present-but-divergent
+  file still fails hard regardless of PATH.
+- **`agent-sync guard` skips are now visible in the journal.** When the
+  host-wide lock was held past the wait window, guard exited 0 having done
+  nothing and looked identical to a successful run in `journalctl`. The skip
+  now prints to stderr.
+- **`_process_running()` detects npm-installed CLIs on Linux.** Claude Code
+  installed via npm runs as `node`, so `pgrep -x claude` missed it and
+  `mcp-gen` rewrote `.claude.json` while Claude was live. The check now falls
+  back to matching `node` processes by name, mirroring the Windows branch.
+
 ## [0.98.1] - 2026-08-14
 
 ### Fixed
