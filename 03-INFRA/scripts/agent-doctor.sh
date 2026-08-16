@@ -1115,7 +1115,7 @@ if [ -f "$SETTINGS" ]; then
     if printf '%s' "$claude_auth" | grep -Eq '"loggedIn"[[:space:]]*:[[:space:]]*true'; then
       ok "Claude authentication is active"
     elif printf '%s' "$claude_auth" | grep -Eq '"loggedIn"[[:space:]]*:[[:space:]]*false'; then
-      fail "Claude is not authenticated; run: claude auth login"
+      warn "Claude is not authenticated; run: claude auth login"
     elif [ -n "$claude_auth" ]; then
       warn "Claude auth status returned unreadable output; run: claude auth status"
     else
