@@ -8,6 +8,20 @@ This file tracks the **engine** (this repo). Your own data — manifests,
 instructions, skills, secrets — lives in your KnowledgeVault and is not part
 of any engine release.
 
+## [0.98.6] - 2026-08-16
+
+### Fixed
+
+- **The failed Logon scheduled task is no longer retried every cycle.**
+  The Logon trigger of the sync task fails with `ERROR_ACCESS_DENIED`
+  on some Windows builds (quoted `/TR` handling in `schtasks.exe`), and
+  the guard retried that `/Create` every 30 minutes forever, keeping the
+  Defender `Trojan:Win32/Commando.A!ml` signal alive even after the
+  idempotence fix for the main task. The failure is now remembered per
+  wrapper-hash: first run attempts once, later runs with an unchanged
+  wrapper skip the `/Create` entirely (the Startup-folder VBS copy still
+  covers logon), a changed wrapper retries.
+
 ## [0.98.5] - 2026-08-16
 
 ### Fixed
