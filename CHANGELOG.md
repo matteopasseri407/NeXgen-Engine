@@ -8,6 +8,25 @@ This file tracks the **engine** (this repo). Your own data — manifests,
 instructions, skills, secrets — lives in your KnowledgeVault and is not part
 of any engine release.
 
+## [0.98.5] - 2026-08-16
+
+### Fixed
+
+- **The Windows scheduled-task guard no longer re-creates an unchanged
+  task every cycle.** `agent_sync.py` re-ran `schtasks.exe /Create /F` for
+  the "KnowledgeVault Agent Sync" tasks on every guard run (every 30
+  minutes), rewriting identical definitions. Windows Defender's behavioural
+  engine flags that exact persistence pattern (recurring schtasks + hidden
+  VBS wrapper + PowerShell `-ExecutionPolicy Bypass`) as
+  `Trojan:Win32/Commando.A!ml` -- a false positive on the engine, but a
+  legitimate-looking signal: a routine that rewrites its own scheduled
+  task on every cycle is how real trojans persist. The task is now queried
+  with `schtasks /Query /XML` (locale-independent) and rewritten only when
+  the wrapper path differs or the task is absent; a content-only wrapper
+  update needs no rewrite because the scheduler executes the file at the
+  recorded path. Regression test proves an unchanged task triggers zero
+  `/Create` runs.
+
 ## [0.98.4] - 2026-08-15
 
 ### Changed
