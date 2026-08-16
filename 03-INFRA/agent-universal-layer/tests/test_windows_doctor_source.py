@@ -155,11 +155,21 @@ def test_windows_doctor_parses_a_real_opencode_json_and_derives_vault_url(sandbo
     JSON/JSONC" on a perfectly valid file. (2) The render.py call was piped
     into Select-Object -First 1; PS 5.1 closes the pipe as soon as the first
     line arrives, which kills the child before it reports its exit code
-    ($LASTEXITCODE = -1), so the real vault-library URL was flagged as
-    "cannot be derived from the rendered manifest" (19/20 runs reproduced it
-    live). A valid opencode.json and a derivable endpoint must now read as
-    OK, not FAIL."""
+    ($LASTEXITCODE = -1, reproduced 19/20 runs live), so the real
+    vault-library URL was flagged as "cannot be derived from the rendered
+    manifest". A valid opencode.json and a derivable endpoint must now read
+    as OK, not FAIL.
+
+    The runner never installs opencode, so the doctor's presence probe must
+    be stubbed (the sandbox already prepends bin_stubs to PATH) for the
+    OpenCode sections to be exercised at all; and VAULT_LIBRARY_URL must be
+    set via the environment the doctor actually receives (run_agent_doctor
+    rebuilds sandbox.env() itself, a local `env` variable would be lost)."""
     from conftest import run_agent_doctor
+
+    opencode_stub = sandbox.bin_stubs / "opencode"
+    opencode_stub.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    opencode_stub.chmod(0o755)
 
     config = sandbox.home / ".config" / "opencode" / "opencode.json"
     config.parent.mkdir(parents=True, exist_ok=True)
@@ -171,8 +181,8 @@ def test_windows_doctor_parses_a_real_opencode_json_and_derives_vault_url(sandbo
         '}\n',
         encoding="utf-8",
     )
-    env = sandbox.env()
-    env["VAULT_LIBRARY_URL"] = "http://127.0.0.1:55555/mcp"
+    monkeypatch.setenv("VAULT_LIBRARY_URL", "http://127.0.0.1:55555/mcp")
+    monkeypatch.setenv("VAULT_LIBRARY_TOKEN", "fake-token")
     result = run_agent_doctor(sandbox)
 
     # The sandbox deliberately has other real FAILs (no vault git repo,
@@ -181,7 +191,9 @@ def test_windows_doctor_parses_a_real_opencode_json_and_derives_vault_url(sandbo
     assert "opencode.json: invalid JSON/JSONC" not in result.stdout
     assert "cannot be inspected because" not in result.stdout
     assert "vault-library endpoint cannot be derived" not in result.stdout
-    assert "one canonical AGENTS.md" in result.stdout
+    assert "opencode.json: valid JSON" in result.stdout, (
+        "the OpenCode config section must actually run and read the file:\n" + result.stdout
+    )
     assert "vault-library: " in result.stdout
 
 
