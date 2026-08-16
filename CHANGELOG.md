@@ -8,6 +8,35 @@ This file tracks the **engine** (this repo). Your own data — manifests,
 instructions, skills, secrets — lives in your KnowledgeVault and is not part
 of any engine release.
 
+## [0.98.7] - 2026-08-16
+
+### Fixed
+
+- **The Windows doctor no longer FAILs healthy hosts for three
+  PowerShell-5.1-only bugs.** (1) Inline `python -c` code used double
+  quotes, which PS 5.1 strips when passing arguments to a native exe:
+  a valid `opencode.json` was reported as invalid JSON/JSONC. The code
+  now uses single quotes. (2) The vault-library URL derivation piped the
+  native call into `Select-Object -First 1`, which closes the pipe after
+  the first line and kills the child before it reports its exit code
+  (`$LASTEXITCODE = -1`): the endpoint was flagged "cannot be derived"
+  even when real. Output is now captured in full first, then trimmed,
+  and the same capture-first shape applies to the vault-map backstop and
+  the out-of-manifest skills count. (3) `$HomeDir` now honors an
+  explicit `$env:USERPROFILE` before falling back to the OS profile,
+  matching the bash twin's `$HOME` semantics: a redirected home (test
+  sandbox, session profile) is inspected instead of the real user's
+  `~/.config`, `~/.claude`, `~/.codex` and `~/.gemini`.
+
+### Changed
+
+- **"Claude is not authenticated" is now a WARN, not a FAIL**, in both
+  twins, matching the existing OpenCode/Codex/Antigravity treatment of
+  absent CLIs: a logged-out Claude is a host-local state, and it was the
+  one FAIL a machine could not clear without an interactive login.
+  `agent-sync --require-ready` and `nexgen-update` compare FAIL counts,
+  which only go down.
+
 ## [0.98.6] - 2026-08-16
 
 ### Fixed
