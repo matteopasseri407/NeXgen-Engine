@@ -62,6 +62,37 @@ def test_windows_doctor_derives_layer_from_split_topology_vault_data():
         assert needle in source
 
 
+def test_windows_doctor_content_checks_resolve_against_vault_data():
+    """Regression (2026-08-16): five content checks were left on $Vault during
+    the split-topology fix -- detail-notes budget, load-on-demand pointer
+    integrity, vault-map backstop, Mode gate and engine-pin read. On a split
+    install the Windows doctor scanned the wrong tree (false WARNs, Mode
+    ignored, pin never seen) while the bash twin already used $VAULT_DATA.
+    These are content checks (they read vault DATA files), so they must all
+    anchor to $VaultData, never to the $Vault git-repo root."""
+    source = DOCTOR.read_text(encoding="utf-8")
+
+    for needle in (
+        '$notesDir = Join-Path $VaultData "03-INFRA"',
+        '(Join-Path $VaultData $_)',
+        '$mapScript --vault $VaultData --check',
+        '$UserProfileMd = Join-Path $VaultData "99-INDEX\\USER-PROFILE.md"',
+        '$pinFile = Join-Path $VaultData "99-INDEX\\ENGINE-PIN.txt"',
+    ):
+        assert needle in source
+    for needle in (
+        '$notesDir = Join-Path $Vault "03-INFRA"',
+        '(Join-Path $Vault $_)',
+        '$mapScript --vault $Vault --check',
+        '$UserProfileMd = Join-Path $Vault "99-INDEX\\USER-PROFILE.md"',
+        '$pinFile = Join-Path $Vault "99-INDEX\\ENGINE-PIN.txt"',
+    ):
+        assert needle not in source
+    # The S1 git-repo-health uses of $Vault must survive untouched.
+    assert '(& git -C $Vault @GitArgs 2>$null)' in source
+    assert '(Test-Path -LiteralPath (Join-Path $Vault ".git"))' in source
+
+
 def test_windows_doctor_surfaces_path_limit_and_legacy_skill_migration():
     source = DOCTOR.read_text(encoding="utf-8")
 
@@ -290,3 +321,50 @@ def test_no_powershell_51_native_call_antipatterns_in_engine_ps1_files():
             f"agent-doctor.ps1:{i} uses Select-Object -First 1 in an "
             f"unclassified pipeline -- review and classify: {stripped}"
         )
+
+
+def test_pwsh73_wrappers_disable_native_error_action_preference():
+    """Regression (2026-08-16): four wrappers set $ErrorActionPreference =
+    'Stop' without the $PSNativeCommandUseErrorActionPreference = $false
+    guard. Under pwsh 7.3+ (where that preference defaults to $true) a
+    native command's non-zero exit became a TERMINATING error, so
+    `exit $LASTEXITCODE` was never reached and the wrapper always exited 1
+    with extra error text -- agent-sync, nexgen-update, council and
+    agent-chrome all suffered. Every wrapper that reads $LASTEXITCODE after
+    a native call must carry the guard."""
+    repo = Path(__file__).resolve().parents[3]
+    scripts = repo / "03-INFRA" / "scripts"
+    for name in ("agent-sync.ps1", "nexgen-update.ps1", "council.ps1", "agent-chrome.ps1"):
+        source = (scripts / name).read_text(encoding="utf-8")
+        assert '$ErrorActionPreference = "Stop"' in source
+        assert "$PSNativeCommandUseErrorActionPreference = $false" in source, (
+            f"{name} sets EAP=Stop without the pwsh 7.3+ native-exit guard"
+        )
+
+
+def test_vault_ocr_windows_uses_py_launcher_instead_of_bare_python():
+    """Regression (2026-08-16): the manifest's Windows override for vault-ocr
+    used `command: python`, which on a machine whose only python is the
+    disabled Microsoft Store alias resolves to nothing -- the OCR MCP server
+    silently failed to start. The launcher `py -3` is the standard, PATH-
+    independent Windows entry point and matches what the tests use."""
+    repo = Path(__file__).resolve().parents[3]
+    manifest = repo / "03-INFRA" / "agent-universal-layer" / "mcp" / "manifest.yaml"
+    text = manifest.read_text(encoding="utf-8")
+    ocr_block = text.split("vault-ocr:")[1].split("# ----")[0]
+    assert "command: py" in ocr_block
+    assert '"3"' in ocr_block or '"-3"' in ocr_block
+    assert "command: python\n" not in ocr_block.replace("python3", "")
+
+
+def test_render_codex_config_respects_codex_home():
+    """Regression (2026-08-16): three render.py codex paths were hardcoded
+    to HOME/.codex/config.toml while council/routing resolved CODEX_HOME;
+    with the variable set, --write reported WRITTEN to a file Codex never
+    mounts. The shared helper must be used by load_current, write_codex and
+    the CLI-config-path map."""
+    repo = Path(__file__).resolve().parents[3]
+    render = (repo / "03-INFRA" / "agent-universal-layer" / "mcp" / "render.py").read_text(encoding="utf-8")
+    assert "def _codex_config_path() -> Path:" in render
+    assert 'os.environ.get("CODEX_HOME")' in render
+    assert 'HOME / ".codex/config.toml"' not in render

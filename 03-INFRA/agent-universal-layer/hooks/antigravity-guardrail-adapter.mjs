@@ -68,7 +68,7 @@ const RANK = { allow: 0, ask: 1, deny: 2 };
 
 function consultGuardrailBody(hook, payload) {
   try {
-    const result = spawnSync("node", [hook.file], {
+    const result = spawnSync(process.execPath, [hook.file], {
       input: payload,
       encoding: "utf8",
       timeout: Math.max(1, Number(hook.timeout) || 5) * 1000,

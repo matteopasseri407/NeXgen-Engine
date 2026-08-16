@@ -234,7 +234,10 @@ $ClaudeFile = Join-Path $HomeDir "CLAUDE.md"
 if (Test-Path -LiteralPath $ClaudeFile) {
   $ci = Get-Item -LiteralPath $ClaudeFile -Force
   $ct = Get-Content -Raw -LiteralPath $ClaudeFile -ErrorAction SilentlyContinue
-  if (-not $ci.LinkType -and $ct.Contains($Canon) -and $ct.Contains("compatibility pointer")) { ok "Claude pointer -> canonical AGENTS.md" }
+  # Path comparison must be case-insensitive (Windows paths are): a pointer
+  # written with a different case is still a valid pointer, not a copy.
+  $isPointer = ($ct.IndexOf($Canon, [StringComparison]::OrdinalIgnoreCase) -ge 0) -and $ct.Contains("compatibility pointer")
+  if (-not $ci.LinkType -and $isPointer) { ok "Claude pointer -> canonical AGENTS.md" }
   else { bad "Claude.md must be a lightweight pointer, not a copy/symlink of the canonical file ($ClaudeFile)" }
 } else { bad "missing Claude pointer ($ClaudeFile)" }
 # NOTE (found on Fedora, NOT YET VERIFIED on Windows): on Fedora, Antigravity
@@ -304,7 +307,7 @@ if (Test-Path -LiteralPath $Canon) {
   } else {
     ok "bootstrap AGENTS.md within budget ($canonBytes/$BootstrapMaxBytes bytes)"
   }
-  $notesDir = Join-Path $Vault "03-INFRA"
+  $notesDir = Join-Path $VaultData "03-INFRA"
   $oversized = @()
   if (Test-Path -LiteralPath $notesDir) {
     foreach ($note in @(Get-ChildItem -LiteralPath $notesDir -Filter '*.md' -File -ErrorAction SilentlyContinue)) {
@@ -320,7 +323,7 @@ if (Test-Path -LiteralPath $Canon) {
   $canonText = Get-Content -Raw -LiteralPath $Canon
   $ptrMatches = [regex]::Matches($canonText, '`((?:03-INFRA|99-INDEX|04-NOW|02-PROJECTS|01-NOTES|00-START-HERE)[^`]*)`')
   $refs = @($ptrMatches | ForEach-Object { $_.Groups[1].Value } | Where-Object { $_ -match '\.md$' -and $_ -notmatch '[<>]' } | Select-Object -Unique)
-  $missingPtr = @($refs | Where-Object { -not (Test-Path -LiteralPath (Join-Path $Vault $_)) })
+  $missingPtr = @($refs | Where-Object { -not (Test-Path -LiteralPath (Join-Path $VaultData $_)) })
   if ($refs.Count -eq 0) { ok "no vault-relative bootstrap pointers to verify" }
   elseif ($missingPtr.Count -eq 0) { ok "all $($refs.Count) bootstrap load-on-demand pointers resolve" }
   else { warn "bootstrap load-on-demand pointer(s) not found under the vault: $($missingPtr -join ', ') - a renamed/removed note leaves a dead pointer" }
@@ -349,7 +352,7 @@ if (Test-Path -LiteralPath $Canon) {
 # silently when python or the script is unavailable.
 $mapScript = Join-Path $PSScriptRoot "vault-map.py"
 if ($NexgenPython -and (Test-Path -LiteralPath $mapScript)) {
-  $mapLines = @(& $NexgenPythonCommand @NexgenPythonPrefix $mapScript --vault $Vault --check 2>$null)
+  $mapLines = @(& $NexgenPythonCommand @NexgenPythonPrefix $mapScript --vault $VaultData --check 2>$null)
   $mapLine = $mapLines | Select-Object -First 1
   if (-not $mapLine) {
     warn "vault-map backstop could not analyze the vault"
@@ -440,7 +443,7 @@ sec "Architecture Mode (99-INDEX/USER-PROFILE.md)"
 # while staying Local-Only for the rest, is recognized automatically and
 # never punished for going beyond what Mode declares. A missing/unparseable
 # Mode is treated as unknown (same gating as Local-Only, never a crash).
-$UserProfileMd = Join-Path $Vault "99-INDEX\USER-PROFILE.md"
+$UserProfileMd = Join-Path $VaultData "99-INDEX\USER-PROFILE.md"
 $DeclaredMode = "unknown"
 if (Test-Path -LiteralPath $UserProfileMd) {
   $modeLine = Select-String -LiteralPath $UserProfileMd -Pattern '\*\*Mode\*\*' | Select-Object -First 1
@@ -793,7 +796,8 @@ if ($Strict) {
     warn "Antigravity behavioral probe skipped by the sandbox safety gate"
   } elseif (Get-Command agy -ErrorAction SilentlyContinue) {
     $agPrompt = "Elenca SOLO i nomi dei server MCP disponibili in questa sessione, una riga per server, NESSUN dettaglio sui singoli tool e NESSUNA invocazione."
-    $agJob = Start-Job -ScriptBlock { param($p) & agy --print $p --model "Gemini 3.5 Flash (Medium)" --sandbox 2>&1 } -ArgumentList $agPrompt
+    $agModel = if ($env:NEXGEN_AGY_MODEL) { $env:NEXGEN_AGY_MODEL } else { "Gemini 3.5 Flash (Medium)" }
+    $agJob = Start-Job -ScriptBlock { param($p, $m) & agy --print $p --model $m --sandbox 2>&1 } -ArgumentList $agPrompt, $agModel
     if (Wait-Job $agJob -Timeout 45) {
       $agProbeOut = (Receive-Job $agJob | Out-String)
       Remove-Job $agJob -Force
@@ -1055,7 +1059,7 @@ $ConsumerEngineRoot = if ($env:AGENT_ENGINE_ROOT) { $env:AGENT_ENGINE_ROOT } els
 $ConsumerEngineRepo = Split-Path -Parent $ConsumerEngineRoot
 if (Test-Path -LiteralPath (Join-Path $ConsumerEngineRepo ".git")) {
   sec "Consumer engine clone - version pin (S2)"
-  $pinFile = Join-Path $Vault "99-INDEX\ENGINE-PIN.txt"
+  $pinFile = Join-Path $VaultData "99-INDEX\ENGINE-PIN.txt"
   $liveSha = (& git -C $ConsumerEngineRepo rev-parse HEAD 2>$null)
   if (-not $liveSha) { bad "cannot read the consumer engine clone's HEAD ($ConsumerEngineRepo)" }
   else {

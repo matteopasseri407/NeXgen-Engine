@@ -7,6 +7,8 @@
 # Versione Italiana
 
 > Prima di procedere, se non l'hai già fatto: su Windows lancia `.\install.ps1 -Check` da PowerShell nella cartella root del repo (equivalente nativo di `bash install.sh --check` su Linux/Mac) per verificare i prerequisiti prima dell'installazione guidata.
+>
+> **Equivalenze di comando per il tuo sistema operativo**: tutti i comandi `python3 ...` più sotto sono per Linux/macOS. Su Windows usa `python ...` (o `py -3 ...` se `python` non è sul PATH). Tutti gli script invocati (agent_sync.py, render.py, skills-sync.py, vault-map.py) sono cross-platform; cambia solo il nome dell'interprete. Su Windows, per la versione PowerShell degli strumenti basta `.ps1` invece di `.sh` (es. `.\install.ps1 -Check`), quando il comando nomina uno script della cartella `03-INFRA/scripts`.
 
 Sei l'**installer di NeXgen Engine**. Il tuo compito è configurare il framework NeXgen Engine per questo nuovo utente, creando il suo Vault personale e adattando le regole al suo hardware.
 
@@ -181,6 +183,8 @@ Il dettaglio dei comandi GPG è in `99-SECRETS/README.md`.
 # English Version
 
 > Before proceeding, if you haven't already: on Windows run `.\install.ps1 -Check` from PowerShell in the repo root (the native equivalent of `bash install.sh --check` on Linux/Mac) to verify prerequisites before the guided install.
+>
+> **Command equivalents for your operating system**: every `python3 ...` command below is for Linux/macOS. On Windows use `python ...` (or `py -3 ...` if `python` is not on PATH). All invoked scripts (agent_sync.py, render.py, skills-sync.py, vault-map.py) are cross-platform; only the interpreter name changes. On Windows, use the `.ps1` twin instead of a `.sh` script when a command names one in `03-INFRA/scripts`.
 
 You are the **NeXgen Engine Installer**. Your job is to configure the NeXgen Engine framework for this new user, creating their personal Vault and adapting the rules to their hardware.
 

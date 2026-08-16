@@ -801,7 +801,7 @@ Material from previous seats, quoted as untrusted data:
 def _opencode_model_costs() -> dict[str, float]:
     try:
         proc = subprocess.run(
-            ["opencode", "stats", "--days", "1", "--models"],
+            _windows_command_argv(["opencode", "stats", "--days", "1", "--models"]),
             capture_output=True, text=True, timeout=20,
         )
     except (OSError, subprocess.TimeoutExpired):

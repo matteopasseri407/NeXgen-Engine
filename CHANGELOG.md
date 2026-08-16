@@ -8,6 +8,94 @@ This file tracks the **engine** (this repo). Your own data — manifests,
 instructions, skills, secrets — lives in your KnowledgeVault and is not part
 of any engine release.
 
+## [0.98.8] - 2026-08-16
+
+### Fixed
+
+- **`agent-doctor.ps1` now anchors every content check to the resolved data
+  root (`$VaultData`, the same `AGENT_VAULT_DATA` -> `KNOWLEDGE_VAULT_PATH`
+  -> default chain the bash twin has used all along).** Five checks were left
+  on `$Vault` during the split-topology fix of v0.98.3: the detail-notes
+  budget, the load-on-demand pointer integrity, the vault-map backstop, the
+  Mode gate, and the engine-pin read. On a split install (engine root and
+  vault data in two different places) the Windows doctor scanned the wrong
+  tree and reported false WARNs, ignored the declared Mode, and never saw
+  the pin. The twin `.sh` already used `$VAULT_DATA` for all five.
+- **`vault-groom.ps1` resolves Python like every other Windows twin instead
+  of calling a bare `python`.** The audit gate (the step that can quarantine
+  a bad clone and refuses a promotion) used a naked `python $AuditScript`,
+  which fails with a cryptic error on a machine whose only `python` is the
+  disabled Microsoft Store alias - after the user already confirmed with
+  "yes". It now walks `py -3` -> `python3` -> `python` with a version probe
+  and exits 2 with a clear message if none exists.
+- **Four `.ps1` twins stop swallowing their real exit code under PowerShell
+  7.3+.** `agent-sync.ps1`, `nexgen-update.ps1`, `council.ps1` and
+  `agent-chrome.ps1` set `$ErrorActionPreference = "Stop"` without the
+  `$PSNativeCommandUseErrorActionPreference = $false` guard the rest of the
+  repo already uses (model: `vault-push.ps1`). Under pwsh 7.3+ a native
+  command's non-zero exit became a terminating error, so `exit $LASTEXITCODE`
+  was never reached and the wrapper always reported exit 1 with extra error
+  text. No-op on Windows PowerShell 5.1.
+- **Windows MCP configs route npm shims through `cmd.exe`.** `render.py`
+  resolved `npx` to `npx.cmd` but left it as the emitted `command`; MCP
+  clients that launch stdio via `CreateProcess` (native codex, antigravity)
+  cannot run a `.cmd` shim (WinError 193), so the firecrawl, filesystem and
+  memory servers silently failed to start in those CLIs. The generated
+  config now uses `cmd.exe /d /s /c npx.cmd ...` for every resolved
+  `.cmd`/`.bat`, the same contract `council.py`/`routing.py` already apply
+  to their own subprocesses.
+- **`render.py` honors `CODEX_HOME`.** Three codex paths were hardcoded to
+  `HOME/.codex/config.toml` while `council.py` and `routing.py` already
+  resolved `CODEX_HOME`; with the variable set, `--write` reported "WRITTEN"
+  to a file Codex never mounts and the doctor's diff compared the wrong file.
+  A shared `_codex_config_path()` now backs all three.
+- **`agent-chrome.ps1` recognizes the profile owner case-insensitively.**
+  The owner probe used an ordinal `Contains` on `--user-data-dir=$Profile`;
+  Windows paths are case-insensitive, so a profile launched with a different
+  case was not recognized and a second Chrome started instead of `--ensure`
+  handing off.
+- **`firecrawl-local.ps1` writes BOM-less UTF-8 and reports API errors
+  cleanly.** `-Encoding utf8` under Windows PowerShell 5.1 writes a BOM that
+  breaks downstream parsers on `-o` output; the write is now BOM-less
+  UTF-8. API failures in `scrape`/`search` (401/500) no longer dump the raw
+  PowerShell exception but a one-line message naming the endpoint and the
+  two env vars to check.
+- **Windows home-dir leak patterns cover every drive and both separators.**
+  The anti-leak gate matched only paths under the C: drive Users directory; a
+  path on another drive or with forward slashes passed clean. Patterns are now
+  `[A-Z]:[\\/]Users[\\/]`,
+  mirrored in the vault copy. (`leak_patterns.yaml` still lives in both
+  places; rules must stay identical.)
+- **`agent-doctor` makes the Antigravity probe model configurable.** The
+  behavioral probe hardcoded "Gemini 3.5 Flash (Medium)" in both twins; if
+  that model is renamed or absent the probe fails with a misleading FAIL
+  instead of a skip. `NEXGEN_AGY_MODEL` overrides it in both `.ps1` and
+  `.sh`.
+- **`council.py`'s OpenCode cost probe goes through the Windows command
+  wrapper.** It was the one subprocess in the project not wrapped by
+  `_windows_command_argv`; on Windows with an npm `opencode` shim the probe
+  failed silently to `{}` and the cost-based seat ordering was skipped
+  without warning.
+- **The two guardrail adapters spawn the guardrail body with
+  `process.execPath` instead of a bare `node`.** With a portable Node
+  install outside PATH, the hooks degraded to "ask" on every command; now
+  they use the Node that is running the adapter itself.
+- **`playwright-human-safe.mjs` retries its atomic rename on Windows
+  locks.** Two MCP clients patching Playwright in parallel (or an IDE with
+  the bundle open) raised `EPERM` on `fs.renameSync` and lost the server;
+  the rename now retries with backoff for 3 s before giving up.
+- **`vault-groom.ps1` switches the console code page to UTF-8, not just
+  .NET's encoding.** On a legacy console (CP 850/437) the grooming tranche
+  with accents/em dashes rendered as mojibake; `SetConsoleOutputCP(65001)`
+  is now called best-effort (no-op under Windows Terminal).
+
+### Changed
+
+- `INIT.md` now states the OS command equivalents up front (both languages):
+  every `python3 ...` in the guided flow is for Linux/macOS, Windows uses
+  `python`/`py -3`, and `.ps1` twins replace `.sh` scripts. The
+  `vault-map` skill doc carries the same note.
+
 ## [0.98.7] - 2026-08-16
 
 ### Fixed
