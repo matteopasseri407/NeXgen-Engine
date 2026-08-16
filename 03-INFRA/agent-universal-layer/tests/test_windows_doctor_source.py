@@ -132,11 +132,6 @@ def test_windows_sync_launcher_rejects_a_failed_first_python_candidate(tmp_path)
 @pytest.mark.skipif(os.name != "nt", reason="PowerShell parser check is Windows-only.")
 @pytest.mark.parametrize("script", [DOCTOR, SYNC_LAUNCHER])
 def test_windows_control_scripts_parse_in_windows_powershell(script):
-    # ReadAllText WITHOUT an explicit encoding: on .NET Framework this means
-    # "UTF-8, but honour the BOM if present" -- the same rule the script
-    # runtime itself applies to the file on disk. An explicit utf-8 read
-    # would NOT reproduce what PowerShell 5.1 does to a BOM-less file
-    # (which it decodes as ANSI/cp1252), so never add an encoding argument.
     command = (
         "[void][scriptblock]::Create([IO.File]::ReadAllText("
         + repr(str(script))
@@ -149,6 +144,57 @@ def test_windows_control_scripts_parse_in_windows_powershell(script):
         timeout=20,
     )
     assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_windows_doctor_parses_a_real_opencode_json_and_derives_vault_url(sandbox, monkeypatch):
+    """Regression (2026-08-16): agent-doctor.ps1 FAILed on a HEALTHY Windows
+    host for two PowerShell-5.1-only reasons. (1) The inline python -c code
+    used double quotes for encoding="utf-8"/"instructions"; PS 5.1 strips
+    double quotes when it passes an argument to a native exe, so Python
+    received encoding=utf-8 and the doctor reported "opencode.json: invalid
+    JSON/JSONC" on a perfectly valid file. (2) The render.py call was piped
+    into Select-Object -First 1; PS 5.1 closes the pipe as soon as the first
+    line arrives, which kills the child before it reports its exit code
+    ($LASTEXITCODE = -1, reproduced 19/20 runs live), so the real
+    vault-library URL was flagged as "cannot be derived from the rendered
+    manifest". A valid opencode.json and a derivable endpoint must now read
+    as OK, not FAIL.
+
+    The runner never installs opencode, so the doctor's presence probe must
+    be stubbed (the sandbox already prepends bin_stubs to PATH) for the
+    OpenCode sections to be exercised at all; and VAULT_LIBRARY_URL must be
+    set via the environment the doctor actually receives (run_agent_doctor
+    rebuilds sandbox.env() itself, a local `env` variable would be lost)."""
+    from conftest import run_agent_doctor
+
+    opencode_stub = sandbox.bin_stubs / "opencode"
+    opencode_stub.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    opencode_stub.chmod(0o755)
+
+    config = sandbox.home / ".config" / "opencode" / "opencode.json"
+    config.parent.mkdir(parents=True, exist_ok=True)
+    config.write_text(
+        '{\n'
+        '  "instructions": [\n'
+        '    "~/KnowledgeVault/03-INFRA/agent-universal-layer/instructions/AGENTS.md"\n'
+        '  ]\n'
+        '}\n',
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("VAULT_LIBRARY_URL", "http://127.0.0.1:55555/mcp")
+    monkeypatch.setenv("VAULT_LIBRARY_TOKEN", "fake-token")
+    result = run_agent_doctor(sandbox)
+
+    # The sandbox deliberately has other real FAILs (no vault git repo,
+    # Claude/Codex/Antigravity not configured): what this regression locks
+    # in is that the two PS-5.1 bugs no longer produce their FAIL lines.
+    assert "opencode.json: invalid JSON/JSONC" not in result.stdout
+    assert "cannot be inspected because" not in result.stdout
+    assert "vault-library endpoint cannot be derived" not in result.stdout
+    assert "opencode.json: valid JSON" in result.stdout, (
+        "the OpenCode config section must actually run and read the file:\n" + result.stdout
+    )
+    assert "vault-library: " in result.stdout
 
 
 def test_every_repo_ps1_is_ascii_pure_or_utf8_bom():
@@ -181,3 +227,66 @@ def test_every_repo_ps1_is_ascii_pure_or_utf8_bom():
         "Windows PowerShell 5.1 (ANSI/cp1252 decode of BOM-less files) can "
         "misparse them:\n" + "\n".join(f"  - {name}" for name in offenders)
     )
+
+
+def test_no_powershell_51_native_call_antipatterns_in_engine_ps1_files():
+    """Lint for the CLASS behind the two 2026-08-16 doctor bugs, so the
+    instance fix never silently regresses into a sibling occurrence:
+
+    1. Inline python `-c` code passed through PowerShell 5.1 must never use
+       double quotes: PS 5.1 strips them when handing the argument to a
+       native exe, so the python source mutates (encoding="utf-8" becomes
+       encoding=utf-8 -> NameError) and a VALID opencode.json was reported
+       as invalid JSON. Inline python is single-quoted at the PS layer, so
+       a literal double quote inside it is exactly the bug pattern.
+    2. A native call piped straight into `Select-Object -First 1` loses the
+       child's exit code: PS 5.1 closes the pipe after the first line and
+       kills the child before it reports ($LASTEXITCODE = -1). render.py's
+       vault-library URL derivation then FAILed on a healthy host (19/20
+       runs reproduced it). The safe form captures the full output into a
+       variable first and only then takes the first line.
+
+    Select-Object -First 1 over PS-native cmdlets (Select-String output) or
+    over an ALREADY-captured variable is fine -- the lint only rejects a
+    native call (`& ` or a bare executable token) piped directly into it.
+    git's exit code is read from the preceding `fetch ... | Out-Null` line,
+    which is not truncated, so those tag-list lines are explicitly allowed.
+    """
+    repo = Path(__file__).resolve().parents[3]
+    doctor = repo / "03-INFRA/scripts/agent-doctor.ps1"
+    source = doctor.read_text(encoding="utf-8")
+    lines = source.splitlines()
+
+    # 1. inline python -c with a double quote inside the single-quoted code
+    for i, line in enumerate(lines, 1):
+        if " -c " in line and "'" in line and '"' in line:
+            raise AssertionError(
+                f"agent-doctor.ps1:{i} passes inline python -c containing a "
+                "double quote -- PS 5.1 strips it when calling the native exe "
+                f"(2026-08-16 bug 1): {line.strip()}"
+            )
+
+    # 2. native call piped directly into Select-Object -First 1
+    for i, line in enumerate(lines, 1):
+        stripped = line.strip()
+        if "| Select-Object -First 1" not in stripped:
+            continue
+        if stripped.startswith("("):
+            stripped = stripped[1:].lstrip()
+        if stripped.startswith("& ") or stripped.startswith("$latestTag = (& git"):
+            if "$latestTag" in stripped and "git -C" in stripped:
+                continue  # allowed: exit code comes from the fetch line above
+            raise AssertionError(
+                f"agent-doctor.ps1:{i} pipes a native call directly into "
+                "Select-Object -First 1 -- PS 5.1 kills the child before it "
+                "reports its exit code ($LASTEXITCODE = -1). Capture the full "
+                f"output into a variable first (2026-08-16 bug 2): {stripped}"
+            )
+        if "$renderedVaultLines" in stripped or "$codexVerRaw" in stripped or "$modeLine" in stripped or "$oldest_ts" in stripped:
+            continue  # variable already captured, or PS-native Select-String output
+        if stripped.startswith("$") and "Lines | Select-Object -First 1" in stripped:
+            continue  # the safe form: native output captured fully, THEN trimmed
+        raise AssertionError(
+            f"agent-doctor.ps1:{i} uses Select-Object -First 1 in an "
+            f"unclassified pipeline -- review and classify: {stripped}"
+        )

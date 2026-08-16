@@ -12,7 +12,7 @@
 param([switch]$Summary, [switch]$Strict)
 
 $ErrorActionPreference = "Continue"
-$HomeDir = [Environment]::GetFolderPath("UserProfile")
+$HomeDir = if ($env:USERPROFILE) { $env:USERPROFILE } else { [Environment]::GetFolderPath("UserProfile") }
 $Vault   = if ($env:KNOWLEDGE_VAULT_PATH) { $env:KNOWLEDGE_VAULT_PATH } else { Join-Path $HomeDir "KnowledgeVault" }
 $Branch  = if ($env:KNOWLEDGE_VAULT_BRANCH) { $env:KNOWLEDGE_VAULT_BRANCH } else { "main" }
 # Same split-topology fallback as vault-push.ps1 (AGENT_VAULT_DATA, then
@@ -77,14 +77,14 @@ $NexgenPythonPrefix = if ($NexgenPython) { @($NexgenPython.Prefix) } else { @() 
 
 function Test-NexgenJsonc([string]$Path) {
   if (-not $NexgenPython) { return $false }
-  $code = 'import sys; sys.path.insert(0, sys.argv[1]); from config_schema import parse_jsonc; parse_jsonc(open(sys.argv[2], encoding="utf-8").read())'
+  $code = 'import sys; sys.path.insert(0, sys.argv[1]); from config_schema import parse_jsonc; parse_jsonc(open(sys.argv[2], encoding=''utf-8'').read())'
   & $NexgenPythonCommand @NexgenPythonPrefix -c $code $PSScriptRoot $Path 2>$null
   return ($LASTEXITCODE -eq 0)
 }
 
 function Get-NexgenJsoncInstructions([string]$Path) {
   if (-not $NexgenPython) { throw "Python with PyYAML is unavailable" }
-  $code = 'import json,sys; sys.path.insert(0, sys.argv[1]); from config_schema import parse_jsonc; print(json.dumps(parse_jsonc(open(sys.argv[2], encoding="utf-8").read()).get("instructions", [])))'
+  $code = 'import json,sys; sys.path.insert(0, sys.argv[1]); from config_schema import parse_jsonc; print(json.dumps(parse_jsonc(open(sys.argv[2], encoding=''utf-8'').read()).get(''instructions'', [])))'
   $value = (& $NexgenPythonCommand @NexgenPythonPrefix -c $code $PSScriptRoot $Path 2>$null) -join "`n"
   if ($LASTEXITCODE -ne 0) { throw "invalid JSON/JSONC" }
   return $value
@@ -349,7 +349,8 @@ if (Test-Path -LiteralPath $Canon) {
 # silently when python or the script is unavailable.
 $mapScript = Join-Path $PSScriptRoot "vault-map.py"
 if ($NexgenPython -and (Test-Path -LiteralPath $mapScript)) {
-  $mapLine = (& $NexgenPythonCommand @NexgenPythonPrefix $mapScript --vault $Vault --check 2>$null | Select-Object -First 1)
+  $mapLines = @(& $NexgenPythonCommand @NexgenPythonPrefix $mapScript --vault $Vault --check 2>$null)
+  $mapLine = $mapLines | Select-Object -First 1
   if (-not $mapLine) {
     warn "vault-map backstop could not analyze the vault"
   } elseif (" $mapLine " -match ' broken=0 ') {
@@ -564,7 +565,14 @@ elseif (Test-ConnectorExpected "OCR_TUNNEL_PORT") { bad "vault-ocr (33003): $c" 
 else { ok "vault-ocr (33003): not reachable ($c) - not expected in current Mode (Local-Only / OCR_TUNNEL_PORT not set)" }
 $VaultLibraryUrl = $env:VAULT_LIBRARY_URL
 if ($NexgenPython -and (Test-Path -LiteralPath $RenderPy)) {
-  $renderedVaultUrl = (& $NexgenPythonCommand @NexgenPythonPrefix $RenderPy --server-url vault-library 2>$null | Select-Object -First 1)
+  # Capture the FULL output first, THEN take the first line: piping the
+  # native call straight into Select-Object -First 1 makes PowerShell 5.1
+  # close the pipe as soon as the first line arrives, which terminates the
+  # child before it can report its exit code ($LASTEXITCODE becomes -1) and
+  # the rendered endpoint is real but the derivation is flagged as failed.
+  # Verified live 2026-08-16: 19/20 runs of the piped form gave rc=-1.
+  $renderedVaultLines = @(& $NexgenPythonCommand @NexgenPythonPrefix $RenderPy --server-url vault-library 2>$null)
+  $renderedVaultUrl = $renderedVaultLines | Select-Object -First 1
   if ($LASTEXITCODE -eq 0 -and $renderedVaultUrl) {
     $VaultLibraryUrl = "$renderedVaultUrl"
   } elseif ($LASTEXITCODE -ne 3) {
@@ -912,7 +920,8 @@ if man.is_file():
         names = set()
 print(len(mat - names))
 '@
-  $oomSkills = (& $NexgenPythonCommand @NexgenPythonPrefix -c $oomCode $skLibrary $skManifest 2>$null | Select-Object -First 1)
+  $oomLines = @(& $NexgenPythonCommand @NexgenPythonPrefix -c $oomCode $skLibrary $skManifest 2>$null)
+  $oomSkills = $oomLines | Select-Object -First 1
   if ($oomSkills -match '^\d+$' -and [int]$oomSkills -gt 0) {
     warn "$oomSkills skill(s) materialized but not in the manifest; adopt or drop them via onboarding (agent-sync inventory)"
   } else {
@@ -1012,7 +1021,7 @@ if (Test-Path -LiteralPath $settingsPath) {
       try {
         $claudeAuth = $claudeAuthRaw | ConvertFrom-Json
         if ($claudeAuth.loggedIn -eq $true) { ok "Claude authentication is active" }
-        else { bad "Claude is not authenticated; run: claude auth login" }
+        else { warn "Claude is not authenticated; run: claude auth login" }
       }
       catch { warn "Claude auth status returned unreadable output; run: claude auth status" }
     }

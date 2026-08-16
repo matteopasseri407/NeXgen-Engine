@@ -13,10 +13,14 @@ def test_claude_authentication_guard_present_in_both_twins():
         assert "claude auth login" in content
         # Gated on real use of Claude on this host (layer-managed
         # settings.json), so a non-Claude user never sees a logged-out FAIL
-        # they cannot act on.
+        # they cannot act on. A logged-out Claude is a host-local state, not
+        # a product defect: WARN in both twins since 2026-08-16, matching the
+        # OpenCode/Codex/Antigravity treatment of genuinely-absent CLIs.
         assert "Claude is configured on this host but" in content
-    assert 'fail "Claude is not authenticated' in bash
-    assert 'bad "Claude is not authenticated' in powershell
+    assert 'warn "Claude is not authenticated' in bash
+    assert 'warn "Claude is not authenticated' in powershell
+    assert 'fail "Claude is not authenticated' not in bash
+    assert 'bad "Claude is not authenticated' not in powershell
 
 
 def test_doctor_does_not_judge_claude_permission_posture_in_either_twin():
