@@ -2167,6 +2167,8 @@ def test_windows_scheduler_wrapper_lives_in_runtime_state_and_reenters_split_top
 
     def fake_run(command, **_kwargs):
         calls.append(command)
+        # No /Query result matches the wrapper: both tasks are treated as
+        # absent, so both /Create runs fire.
         return subprocess.CompletedProcess(command, 0, "", "")
 
     monkeypatch.setattr(mod, "_run_external", fake_run)
@@ -2182,7 +2184,74 @@ def test_windows_scheduler_wrapper_lives_in_runtime_state_and_reenters_split_top
     assert str(env.vault_data) in content
     assert str(env.vault) in content
     assert env.branch in content
-    assert calls and all(str(wrapper) in " ".join(call) for call in calls)
+    create_calls = [c for c in calls if c and c[1] == "/Create"]
+    assert create_calls and all(str(wrapper) in " ".join(c) for c in create_calls)
+    assert len(create_calls) == 2, create_calls
+
+
+def test_windows_scheduler_does_not_rewrite_an_unchanged_task(sandbox, monkeypatch):
+    """Regression (2026-08-16): every guard cycle re-ran `schtasks /Create
+    /F` for both tasks, recreating the identical definitions every 30
+    minutes. Windows Defender's behavioural engine flags that exact
+    persistence pattern (schtasks + hidden VBS + ExecutionPolicy Bypass)
+    as Trojan:Win32/Commando.A!ml -- a false positive on the product, but
+    the repeated /Create was the trigger, and an idempotent install is
+    correct regardless. When the task already exists AND invokes the
+    current wrapper, no /Create may run at all."""
+    _enable_host_mutations(monkeypatch)
+    mod = load_agent_sync_module(sandbox)
+    monkeypatch.setattr(mod, "IS_WINDOWS", True)
+    calls = []
+
+    def fake_run(command, **_kwargs):
+        calls.append(command)
+        if command and command[1] == "/Query" and command[3] == "KnowledgeVault Agent Sync":
+            wrapper = (mod.Env().log_dir / "start-agent-sync-hidden.vbs")
+            return subprocess.CompletedProcess(command, 0, f"<Task><Exec><Command>wscript.exe</Command><Arguments>{wrapper}</Arguments></Exec></Task>", "")
+        if command and command[1] == "/Query" and command[3] == "KnowledgeVault Agent Sync Logon":
+            wrapper = (mod.Env().log_dir / "start-agent-sync-hidden.vbs")
+            return subprocess.CompletedProcess(command, 0, f"<Task><Exec><Command>wscript.exe</Command><Arguments>{wrapper}</Arguments></Exec></Task>", "")
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    monkeypatch.setattr(mod, "_run_external", fake_run)
+    env = mod.Env()
+
+    assert mod._install_scheduled_task(env) is True
+
+    create_calls = [c for c in calls if c and c[1] == "/Create"]
+    assert create_calls == [], f"an unchanged task must not be rewritten: {create_calls}"
+    log = env.log_path.read_text(encoding="utf-8")
+    assert "already invokes" in log
+    assert "no rewrite" in log
+
+
+def test_windows_scheduler_rewrites_when_wrapper_path_changed(sandbox, monkeypatch):
+    """A task that exists but invokes an OLD wrapper path (engine moved,
+    split topology changed) must still be rewritten: the idempotence check
+    compares the wrapper path, not just task existence."""
+    _enable_host_mutations(monkeypatch)
+    mod = load_agent_sync_module(sandbox)
+    monkeypatch.setattr(mod, "IS_WINDOWS", True)
+    calls = []
+
+    def fake_run(command, **_kwargs):
+        calls.append(command)
+        if command and command[1] == "/Query":
+            # Stale wrapper: points at the OLD location, not env.log_dir.
+            return subprocess.CompletedProcess(
+                command, 0,
+                "<Task><Exec><Command>wscript.exe</Command><Arguments>C:\\old\\state\\start-agent-sync-hidden.vbs</Arguments></Exec></Task>",
+                "",
+            )
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    monkeypatch.setattr(mod, "_run_external", fake_run)
+    env = mod.Env()
+
+    assert mod._install_scheduled_task(env) is True
+
+    create_calls = [c for c in calls if c and c[1] == "/Create"]
+    assert len(create_calls) == 2, f"a stale wrapper must be rewritten: {create_calls}"
 
 
 def test_windows_scheduled_task_skips_instead_of_arming_timer_when_engine_script_is_missing(sandbox, monkeypatch, capsys):

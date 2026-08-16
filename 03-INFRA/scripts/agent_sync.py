@@ -1783,6 +1783,27 @@ _VBS_TEMPLATE = (
 )
 
 
+def _scheduled_task_invokes_wrapper(task_name: str, wrapper_path: Path) -> bool:
+    """True when the named scheduled task already exists and runs the exact
+    wrapper file at wrapper_path.
+
+    The query uses /XML (Task Scheduler's own, locale-independent format)
+    rather than /FO LIST /V, whose field labels are localized -- matching on
+    a localized "Task To Run" label would silently always-"match" on a
+    non-English Windows (and always-"mismatch" on an English one). The
+    wrapper path is the only discriminant that matters: Task Scheduler
+    executes whatever file sits at that path, so a content-only update of
+    the .vbs needs no task rewrite. A task that exists but invokes an
+    older/other wrapper path fails the match and gets rewritten."""
+    r = _run_external(
+        ["schtasks.exe", "/Query", "/TN", task_name, "/XML"],
+        timeout=30, capture_output=True, text=True,
+    )
+    if r.returncode != 0:
+        return False
+    return str(wrapper_path) in r.stdout
+
+
 def _install_scheduled_task(env: Env) -> bool:
     if _host_mutations_disabled(env, "Task Scheduler update"):
         return True
@@ -1823,14 +1844,20 @@ def _install_scheduled_task(env: Env) -> bool:
     run_cmd = f'wscript.exe "{wrapper_path}"'
     every30 = ["schtasks.exe", "/Create", "/TN", task_name, "/SC", "MINUTE", "/MO", "30", "/TR", run_cmd, "/F"]
     logon = ["schtasks.exe", "/Create", "/TN", f"{task_name} Logon", "/SC", "ONLOGON", "/TR", run_cmd, "/F"]
-    r = _run_external(every30, timeout=60, capture_output=True, text=True)
-    if r.returncode != 0:
-        env.log(f"scheduled-task: schtasks.exe failed for '{task_name}': {r.stdout}{r.stderr}")
-        # The every-30-minutes task IS the recurring guard; without it there
-        # is no self-healing trigger at all, unlike the logon trigger below
-        # (a redundant nicety the every-30 task already covers within 30min).
-        return False
-    env.log(f"scheduled-task: installed/updated '{task_name}' via schtasks.exe")
+    if _scheduled_task_invokes_wrapper(task_name, wrapper_path):
+        env.log(f"scheduled-task: '{task_name}' already invokes {wrapper_path.name}; no rewrite")
+    else:
+        r = _run_external(every30, timeout=60, capture_output=True, text=True)
+        if r.returncode != 0:
+            env.log(f"scheduled-task: schtasks.exe failed for '{task_name}': {r.stdout}{r.stderr}")
+            # The every-30-minutes task IS the recurring guard; without it there
+            # is no self-healing trigger at all, unlike the logon trigger below
+            # (a redundant nicety the every-30 task already covers within 30min).
+            return False
+        env.log(f"scheduled-task: installed/updated '{task_name}' via schtasks.exe")
+    if _scheduled_task_invokes_wrapper(f"{task_name} Logon", wrapper_path):
+        env.log(f"scheduled-task: '{task_name} Logon' already invokes {wrapper_path.name}; no rewrite")
+        return True
     r = _run_external(logon, timeout=60, capture_output=True, text=True)
     if r.returncode == 0:
         env.log(f"scheduled-task: installed/updated '{task_name} Logon' via schtasks.exe")
