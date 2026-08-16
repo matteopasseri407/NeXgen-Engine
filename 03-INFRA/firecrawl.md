@@ -37,7 +37,7 @@ The current self-hosted search adapter has two important constraints. Do not use
 
 ## How agents reach it
 
-- **MCP `firecrawl`** (the only path for agents): the generated config runs the exact `firecrawl-mcp@3.22.3` pin from `agent-universal-layer/mcp/manifest.yaml`, with `FIRECRAWL_API_URL=http://127.0.0.1:<firecrawl-tunnel-port>`. Tools: `firecrawl_scrape`, `firecrawl_search`, `firecrawl_map`, `firecrawl_crawl`, `firecrawl_extract`.
+- **MCP `firecrawl`** (the only path for agents): the generated config runs the exact `firecrawl-mcp@3.24.0` pin from `agent-universal-layer/mcp/manifest.yaml`, with `FIRECRAWL_API_URL=http://127.0.0.1:<firecrawl-tunnel-port>`. Tools: `firecrawl_scrape`, `firecrawl_search`, `firecrawl_map`, `firecrawl_crawl`, `firecrawl_extract`, `firecrawl_developer_search`, and the `firecrawl_research_*` paper/GitHub tools.
 - **Wrapper `firecrawl-local`** (only for L0/deterministic scripts, no MCP): calls `/v2/scrape` and `/v2/search` defaulting to the tunnel URL. Its search default is 20 results. Source: `03-INFRA/scripts/firecrawl-local.sh` on Linux/macOS and `03-INFRA/scripts/firecrawl-local.ps1` on Windows.
 
 ## Zero-cost search backend
