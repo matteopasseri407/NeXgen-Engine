@@ -123,7 +123,7 @@ def test_npx_with_exact_pin_passes():
         {
             "transport": "stdio",
             "command": "npx",
-            "args": ["-y", "firecrawl-mcp@3.22.3"],
+            "args": ["-y", "firecrawl-mcp@3.24.0"],
             "targets": ["claude"],
         }
     )
@@ -231,7 +231,7 @@ def test_valid_pinned_npx_server_with_env_reference_passes():
         {
             "transport": "stdio",
             "command": "npx",
-            "args": ["-y", "firecrawl-mcp@3.22.3"],
+            "args": ["-y", "firecrawl-mcp@3.24.0"],
             "env": {"FIRECRAWL_API_URL": "http://127.0.0.1:${FIRECRAWL_TUNNEL_PORT:-33002}"},
             "require_env": "FIRECRAWL_TUNNEL_PORT",
             "targets": ["claude", "codex"],

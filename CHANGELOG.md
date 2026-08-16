@@ -8,6 +8,29 @@ This file tracks the **engine** (this repo). Your own data — manifests,
 instructions, skills, secrets — lives in your KnowledgeVault and is not part
 of any engine release.
 
+## [0.98.9] - 2026-08-16
+
+### Changed
+
+- **Firecrawl MCP bumped to `firecrawl-mcp@3.24.0`.** The reviewed upstream
+  pin in `manifest.yaml` moves from 3.22.3: tool names are unchanged
+  (`scrape`, `search`, `map`, `crawl`, `extract`), `firecrawl_developer_search`
+  is new, and the `firecrawl_research_*` tools keep their names. `extract` is
+  deprecated upstream (warnings only, still served) -- the engine's own
+  docs/skills use `scrape`/`search`/`map`/`crawl`, so no public recipe
+  changes. The pin is mirrored in `03-INFRA/firecrawl.md` and the manifest
+  validation fixtures.
+
+### Notes
+
+- **Playwright stays at `@playwright/mcp@0.0.78`.** The 0.0.79 bump was
+  attempted and rolled back: upstream refactored the shared-browser lifecycle
+  (no more `backend.browserContext`), so the wrapper's CDP-disposal safety
+  patch (the one that keeps an attached personal Chrome from being closed on
+  client disconnect) fails its own unsafe-partial-patch guard. Bumping safely
+  requires re-engineering that patch against the new bundle shape -- tracked
+  as a dedicated task, not a pin edit.
+
 ## [0.98.8] - 2026-08-16
 
 ### Fixed
