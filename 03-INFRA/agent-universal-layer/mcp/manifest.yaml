@@ -83,8 +83,8 @@ servers:
     timeouts: { startup: 30, tool: 120 }           # tool 120s: RapidOCR on a 1.5-CPU VPS can exceed the 30s default
     targets: [claude, codex, antigravity, opencode]
     windows:
-      command: python
-      args: ["${AGENT_ENGINE_ROOT}\\deploy\\ocr\\mcp\\vault_ocr_mcp.py"]
+      command: py
+      args: ["-3", "${AGENT_ENGINE_ROOT}\\deploy\\ocr\\mcp\\vault_ocr_mcp.py"]
       env:
 
         VAULT_OCR_API_URL: "http://127.0.0.1:${OCR_TUNNEL_PORT:-33003}"

@@ -28,7 +28,13 @@ function Get-Headers {
 
 function Invoke-FirecrawlJson([string]$Endpoint, [hashtable]$Payload) {
   $body = $Payload | ConvertTo-Json -Depth 20 -Compress
-  return Invoke-RestMethod -Uri ($ApiUrl + $Endpoint) -Method Post -Headers (Get-Headers) -ContentType 'application/json' -Body $body
+  try {
+    return Invoke-RestMethod -Uri ($ApiUrl + $Endpoint) -Method Post -Headers (Get-Headers) -ContentType 'application/json' -Body $body
+  } catch {
+    $status = if ($_.Exception.Response) { [int]$_.Exception.Response.StatusCode } else { 0 }
+    Write-Error "firecrawl-local: API call to $Endpoint failed (HTTP $status). Check FIRECRAWL_API_URL and FIRECRAWL_API_KEY."
+    exit 1
+  }
 }
 
 function Write-Result($Value, [string]$OutputPath, [switch]$AsJson) {
@@ -38,7 +44,10 @@ function Write-Result($Value, [string]$OutputPath, [switch]$AsJson) {
     $text = [string]$Value
   }
   if ($OutputPath) {
-    Set-Content -LiteralPath $OutputPath -Value $text -Encoding utf8
+    # PS 5.1 -Encoding utf8 writes a BOM that breaks downstream parsers;
+    # write BOM-less UTF-8 like the .sh twin does.
+    $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+    [System.IO.File]::WriteAllText($OutputPath, $text, $utf8NoBom)
   } else {
     Write-Output $text
   }

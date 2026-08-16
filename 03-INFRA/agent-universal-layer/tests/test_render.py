@@ -722,7 +722,9 @@ def test_os_view_windows_normalizes_common_mcp_wrappers(sandbox, monkeypatch):
     monkeypatch.setattr(mod.shutil, "which", lambda _command: None)
     base = {"transport": "stdio", "args": ["server.js"], "targets": ["codex"]}
 
-    assert mod.os_view({**base, "command": "npx"})["command"] == "npx.cmd"
+    npx_view = mod.os_view({**base, "command": "npx"})
+    assert npx_view["command"] == mod._comspec()
+    assert npx_view["args"][:4] == ["/d", "/s", "/c", "npx.cmd"]
     assert mod.os_view({**base, "command": "node"})["command"] == "node.exe"
     assert mod.os_view({**base, "command": "python3"})["command"] == "python"
     http = {"transport": "http", "url": "http://127.0.0.1:1", "auth": {"env": "TOKEN"}}
@@ -733,7 +735,9 @@ def test_os_view_windows_normalizes_common_mcp_wrappers(sandbox, monkeypatch):
     # An explicit Windows override wins first, then receives the same safe
     # normalization as a portable manifest entry.
     overridden = {**base, "command": "python3", "windows": {"command": "npx"}}
-    assert mod.os_view(overridden)["command"] == "npx.cmd"
+    overridden_view = mod.os_view(overridden)
+    assert overridden_view["command"] == mod._comspec()
+    assert overridden_view["args"][:4] == ["/d", "/s", "/c", "npx.cmd"]
 
 
 def test_os_view_windows_resolves_npx_absolutely_and_bounds_child_path(sandbox, monkeypatch, tmp_path):
@@ -756,7 +760,9 @@ def test_os_view_windows_resolves_npx_absolutely_and_bounds_child_path(sandbox, 
 
     rendered = mod.os_view({"transport": "stdio", "command": "npx", "args": ["pkg"], "targets": ["codex"]})
 
-    assert rendered["command"] == str(npx)
+    assert rendered["command"] == mod._comspec()
+    assert rendered["args"][:4] == ["/d", "/s", "/c", str(npx)]
+    assert rendered["args"][-1] == "pkg"
     assert str(npx_dir) in rendered["env"]["PATH"]
     assert str(node_dir) in rendered["env"]["PATH"]
     assert len(rendered["env"]["PATH"]) <= mod.WINDOWS_CMD_ENV_LIMIT

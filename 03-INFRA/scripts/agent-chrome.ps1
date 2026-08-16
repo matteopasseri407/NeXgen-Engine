@@ -24,6 +24,11 @@ param(
 # restarts the browser to recover it.
 
 $ErrorActionPreference = "Stop"
+# PowerShell 7.3+ opt-in (defaults to $true there): chrome.exe's non-zero exit
+# is checked via $LASTEXITCODE below, so a native failure must not become a
+# terminating error that skips `exit $LASTEXITCODE`. Harmless no-op on Windows
+# PowerShell 5.1.
+$PSNativeCommandUseErrorActionPreference = $false
 $Profile = if ($env:AGENT_CHROME_PROFILE) {
   $env:AGENT_CHROME_PROFILE
 } else {
@@ -70,7 +75,11 @@ function Get-ProfileOwnerProcessId {
   }
   foreach ($Process in $Processes) {
     if (-not $Process.CommandLine) { continue }
-    if (-not $Process.CommandLine.Contains("--user-data-dir=$Profile")) { continue }
+    # Windows paths are case-insensitive: a profile path written with a
+    # different case must still match or the owner goes unrecognized and a
+    # second Chrome starts instead of --ensure/--heal handing off.
+    $profileArg = "--user-data-dir=$Profile"
+    if ($Process.CommandLine.IndexOf($profileArg, [StringComparison]::OrdinalIgnoreCase) -lt 0) { continue }
     if ($Process.CommandLine.Contains("--type=")) { continue }
     return $Process.ProcessId
   }

@@ -10,7 +10,7 @@
 leak_hard:
   - '\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b'            # IPv4
   - '/home/[A-Za-z0-9._-]+'                              # Linux home dir
-  - '(?i)C:\\Users\\[A-Za-z0-9._-]+'                    # Windows home dir
+  - '(?i)[A-Z]:[\\/]Users[\\/][A-Za-z0-9._-]+'           # Windows home dir (any drive, both separators)
   - '[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}'     # email
   # long hex token/hash, EXCLUDING a full-commit-SHA/digest pin in a known-safe
   # syntactic context: right after '@' (GitHub Actions `uses: owner/repo@<sha>`)
@@ -72,7 +72,7 @@ leak_allow:
   # Generic container image home for the official n8n image, not a maintainer
   # workstation path (found by full-tree audit, 2026-07-09).
   - '/home/node\b'
-  - 'C:\\Users\\user\b'
+  - '(?i)[A-Z]:[\\/]Users[\\/]user\b'
   # Generic 15 MiB upload/body limit used in OCR examples, not an ID or phone.
   - '^15728640$'
   # Git's null SHA (40 zeros, used to detect a new/deleted branch in a

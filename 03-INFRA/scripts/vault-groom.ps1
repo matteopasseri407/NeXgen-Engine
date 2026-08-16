@@ -83,6 +83,20 @@ $Utf8NoBom = [System.Text.UTF8Encoding]::new($false)
 try { [Console]::OutputEncoding = $Utf8NoBom } catch { }
 try { [Console]::InputEncoding = $Utf8NoBom } catch { }
 $OutputEncoding = $Utf8NoBom
+# On a legacy console (CP 850/437) setting [Console]::OutputEncoding alone
+# leaves the console's own code page untouched: UTF-8 bytes get rendered as
+# mojibake. SetConsoleOutputCP(65001) is the native call that actually
+# switches the console; Windows Terminal ignores it harmlessly. Best-effort.
+try {
+  Add-Type -TypeDefinition @'
+using System.Runtime.InteropServices;
+public static class NexgenConsole {
+  [DllImport("kernel32.dll", SetLastError = true)]
+  public static extern bool SetConsoleOutputCP(uint cp);
+}
+'@ -ErrorAction Stop | Out-Null
+  [NexgenConsole]::SetConsoleOutputCP(65001) | Out-Null
+} catch { }
 
 # Same resolution order as the bash twin and agent_sync.py's Env (the
 # canonical source, see its `vault_data` chain): the data-root env vars
@@ -173,6 +187,34 @@ function Resolve-EngineScripts {
   return $PSScriptRoot
 }
 $EngineScripts = Resolve-EngineScripts
+
+# Python 3 resolver, same contract as agent-doctor.ps1's Resolve-NexgenPython
+# (and install.ps1's Get-PyBin): try the launcher 'py -3' first (Store
+# installs), then 'python3' (WSL/Chocolatey), then 'python' -- and probe the
+# version so a Store alias stub that opens the store instead of running never
+# counts as present. A bare `python` invocation (the pre-2026-08-16 code) fails
+# with a cryptic error on a machine where the only python is the disabled
+# Store alias, after the user already confirmed the grooming with "yes".
+function Resolve-GroomPython {
+  $candidates = @()
+  $py = Get-Command py -ErrorAction SilentlyContinue
+  if ($py) { $candidates += [pscustomobject]@{ Command = $py.Source; Prefix = @('-3') } }
+  foreach ($name in @('python3', 'python')) {
+    $found = Get-Command $name -ErrorAction SilentlyContinue
+    if ($found) { $candidates += [pscustomobject]@{ Command = $found.Source; Prefix = @() } }
+  }
+  foreach ($candidate in $candidates) {
+    & $candidate.Command @($candidate.Prefix) -c "import sys; raise SystemExit(0 if sys.version_info >= (3, 10) else 1)" 2>$null | Out-Null
+    if ($LASTEXITCODE -eq 0) { return $candidate }
+  }
+  return $null
+}
+
+$GroomPython = Resolve-GroomPython
+if (-not $GroomPython) {
+  [Console]::Error.WriteLine("vault-groom: no usable Python 3 on PATH (tried 'py -3', 'python3', 'python') - the audit gate cannot run.")
+  exit 2
+}
 
 function New-GroomLog([string]$Suffix) {
   # $env:TEMP is Windows-only and unset on POSIX pwsh (this repo's own CI
@@ -501,5 +543,5 @@ if ($env:GROOM_NOPUSH -ne '1') {
 }
 
 Write-Host ""
-python $AuditScript @AuditArgs
+& $GroomPython.Command @($GroomPython.Prefix) $AuditScript @AuditArgs
 exit $LASTEXITCODE

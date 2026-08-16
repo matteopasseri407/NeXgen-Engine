@@ -168,4 +168,4 @@ def test_memory_opt_in_reaches_codex_dialect(sandbox, monkeypatch):
     mod2 = load_render_module(sandbox)
     assert mod2.write_codex() == 0
     written2 = tomllib.loads(codex_config.read_text(encoding="utf-8"))
-    assert written2["mcp_servers"]["memory"]["args"] == ["-y", "@modelcontextprotocol/server-memory@2026.7.4"]
+    assert written2["mcp_servers"]["memory"]["args"][-2:] == ["-y", "@modelcontextprotocol/server-memory@2026.7.4"]

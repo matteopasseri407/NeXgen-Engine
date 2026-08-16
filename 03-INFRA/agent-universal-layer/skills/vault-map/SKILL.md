@@ -13,9 +13,9 @@ the structure).
    If it is not obvious from the environment, ask instead of guessing.
 2. Run the analyzer, read-only:
    `python3 03-INFRA/scripts/vault-map.py --vault <root>`
-   (resolve the script inside the engine clone if the relative path does
-   not exist; `--json` for programmatic use, `--check` for the one-line
-   summary).
+   (on Windows use `python` or `py -3` instead of `python3`; resolve the
+   script inside the engine clone if the relative path does not exist;
+   `--json` for programmatic use, `--check` for the one-line summary).
 3. Explain the result in plain language, not raw output:
    - **broken links**: what points where, and the likely cause (usually a
      renamed note); these are real defects worth fixing at the source.

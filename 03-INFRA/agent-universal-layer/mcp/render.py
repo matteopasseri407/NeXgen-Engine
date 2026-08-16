@@ -102,6 +102,15 @@ def _opencode_config_path() -> Path:
     return xdg_candidates[0]
 
 
+def _codex_config_path() -> Path:
+    """Codex config root: honor CODEX_HOME when set, else ~/.codex. Mirrors
+    council/routing.py's own resolution so render reads and writes the same
+    file the runtime actually uses -- a CODEX_HOME redirect previously made
+    --write report "WRITTEN" to a file Codex never mounted."""
+    root = Path(os.environ.get("CODEX_HOME") or str(Path.home() / ".codex"))
+    return root / "config.toml"
+
+
 def _opencode_binary_present():
     """Best-effort 'OpenCode is installed on this machine' probe, mirroring
     agent-doctor.sh/.ps1's own convention (PATH lookup, falling back to the
@@ -154,6 +163,16 @@ def _resolve_windows_command(command):
         "python3": "python",
     }.get(command, command)
     return shutil.which(normalized) or normalized
+
+
+def _comspec():
+    """Path of cmd.exe, the only interpreter that can run a .cmd/.bat shim.
+
+    MCP clients launch stdio commands directly (CreateProcess) and do not
+    consistently resolve .cmd shims; routing a shim through cmd.exe /d /s /c
+    is the same contract council.py/routing.py already apply to their own
+    subprocesses (their `_windows_command_argv`)."""
+    return os.environ.get("ComSpec") or "cmd.exe"
 
 
 def _windows_node_path(command_path):
@@ -360,12 +379,25 @@ def os_view(s):
         merged = _expand_local_path_placeholders(merged)
         if merged.get("transport") == "stdio":
             command = merged.get("command")
-            merged["command"] = _resolve_windows_command(command)
+            resolved = _resolve_windows_command(command)
             if command in {"npx", "npx.cmd"}:
                 merged["env"] = {
                     **(merged.get("env") or {}),
-                    "PATH": _windows_node_path(merged["command"]),
+                    "PATH": _windows_node_path(resolved),
                 }
+            if str(resolved).lower().endswith((".cmd", ".bat")):
+                # A resolved shim (npx.cmd and friends) is not directly
+                # executable by MCP clients that launch stdio via
+                # CreateProcess (native codex, antigravity) -- WinError 193.
+                # Route it through cmd.exe exactly like council.py/routing.py
+                # do for their own subprocess spawns (their
+                # `_windows_command_argv`), so the generated config reaches
+                # every client, not only the Node ones that happen to resolve
+                # shims themselves.
+                merged["command"] = _comspec()
+                merged["args"] = ["/d", "/s", "/c", resolved, *(merged.get("args") or [])]
+            else:
+                merged["command"] = resolved
         return _expand_runtime_env_placeholders(merged)
     return _expand_runtime_env_placeholders(
         _expand_local_path_placeholders({k: v for k, v in s.items() if k != "windows"})
@@ -465,7 +497,7 @@ def load_current(cli):
             path = HOME / ".claude.json"
             return json.loads(path.read_text("utf-8")).get("mcpServers", {})
         if cli == "codex":
-            path = HOME / ".codex/config.toml"
+            path = _codex_config_path()
             d = toml_loads(path.read_text("utf-8"))
             return {k: {kk: vv for kk, vv in v.items() if kk != "tools"} for k, v in d.get("mcp_servers", {}).items()}
         if cli == "antigravity":
@@ -1018,7 +1050,7 @@ def _content_range(lines, header_idx):
     return s, e
 
 def write_codex(path=None):
-    path = path or HOME / ".codex/config.toml"
+    path = path or _codex_config_path()
     if not path.exists():
         print(f">>> {path.name} not present: Codex never launched yet (no default config file), skipping."); return 3
     raw = path.read_text("utf-8")
@@ -1196,7 +1228,7 @@ def _cli_config_path(cli):
     Mirrors load_current()'s per-CLI paths so --revert and --write agree."""
     return {
         "claude": HOME / ".claude.json",
-        "codex": HOME / ".codex/config.toml",
+        "codex": _codex_config_path(),
         "antigravity": HOME / ".gemini/antigravity/mcp_config.json",
         "opencode": _opencode_config_path(),
     }[cli]

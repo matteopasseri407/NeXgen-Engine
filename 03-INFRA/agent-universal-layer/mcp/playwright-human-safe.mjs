@@ -41,6 +41,10 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
+function sleepSync(ms) {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
 const VERSION = '0.0.78';
 const MARKER = 'agent-human-file-chooser-patch-v1';
 const DOWNLOAD_MARKER = 'agent-preserve-shared-downloads-patch-v1';
@@ -383,7 +387,22 @@ function writeAtomically(file, content) {
   const stat = fs.statSync(file);
   const temporary = `${file}.${process.pid}.${Date.now()}.tmp`;
   fs.writeFileSync(temporary, content, { encoding: 'utf8', mode: stat.mode });
-  fs.renameSync(temporary, file);
+  // Windows NTFS holds a sharing lock on an open bundle: two MCP clients
+  // patching playwright in parallel (or an IDE with the file open) raise
+  // EPERM on the rename. Retry with backoff, like render.py's atomic write.
+  const deadline = Date.now() + 3000;
+  for (;;) {
+    try {
+      fs.renameSync(temporary, file);
+      return;
+    } catch (err) {
+      if (Date.now() >= deadline || !['EPERM', 'EBUSY', 'EACCES'].includes(err.code)) {
+        try { fs.unlinkSync(temporary); } catch { /* best effort */ }
+        throw err;
+      }
+      sleepSync(50);
+    }
+  }
 }
 
 function occurrences(source, needle) {

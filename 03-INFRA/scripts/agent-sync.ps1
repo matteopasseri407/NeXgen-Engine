@@ -1,4 +1,8 @@
 $ErrorActionPreference = "Stop"
+# PowerShell 7.3+ opt-in (defaults to $true there): agent_sync.py's non-zero
+# exit codes are checked via $LASTEXITCODE below, so a native failure must not
+# become a terminating error. Harmless no-op on Windows PowerShell 5.1.
+$PSNativeCommandUseErrorActionPreference = $false
 $script = Join-Path $PSScriptRoot "agent_sync.py"
 $candidates = @()
 foreach ($name in @("python3", "python")) {
