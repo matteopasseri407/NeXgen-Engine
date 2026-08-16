@@ -27,8 +27,9 @@
 # seats.yaml singolo non nota alcuna differenza.
 #
 # Criteri generali per scegliere i seat (non i modelli specifici):
-#   - usa CLI già pagate ad abbonamento flat che hai comunque, mai una nuova
-#     API a consumo aperta solo per questo;
+#   - preferisci CLI gia' coperte da un abbonamento flat esistente, mai una
+#     nuova API a consumo aperta solo per questo; ogni seat consultato spende
+#     la quota del proprio canale;
 #   - il vendor di un seat consultato deve essere diverso dal vendor che ha
 #     prodotto il materiale in esame (niente auto-review dello stesso vendor);
 #   - preferisci seat con garanzia zero-retention per materiale reale;

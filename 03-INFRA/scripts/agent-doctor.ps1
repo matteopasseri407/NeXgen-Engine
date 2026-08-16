@@ -363,6 +363,24 @@ if ($NexgenPython -and (Test-Path -LiteralPath $mapScript)) {
   }
 }
 
+# MCP orphan backstop (WARN-only, like every hygiene check): a server mounted
+# in a CLI's live config with no source left in the manifest is a leftover
+# from a retired server or a hand edit. render.py reports counts per CLI;
+# the doctor warns, never removes (removal is an explicit user action via
+# the adopt/reset onboarding flow).
+$OrphanRender = Join-Path $EngineInfra "agent-universal-layer\mcp\render.py"
+if ($NexgenPython -and (Test-Path -LiteralPath $OrphanRender)) {
+  $orphanLines = @(& $NexgenPythonCommand @NexgenPythonPrefix $OrphanRender --orphan-check 2>$null)
+  $orphanTotal = (($orphanLines | Where-Object { $_ -match '^orphans=\d+$' }) -join '') -replace '^orphans=', ''
+  if (-not $orphanTotal) {
+    warn "MCP orphan check could not run (render.py --orphan-check failed)"
+  } elseif ($orphanTotal -eq "0") {
+    ok "every mounted MCP server still has a manifest source"
+  } else {
+    warn "$orphanTotal out-of-manifest MCP server(s) in live CLI configs ($($orphanLines -join ' ')) - leftovers from a retired server or a hand edit; adopt or drop them via render.py --adopt/--reset"
+  }
+}
+
 sec "Deterministic agent utilities"
 $agentNow = Get-Command agent-now -ErrorAction SilentlyContinue
 if (-not $agentNow) {

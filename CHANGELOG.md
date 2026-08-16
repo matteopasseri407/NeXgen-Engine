@@ -8,6 +8,50 @@ This file tracks the **engine** (this repo). Your own data — manifests,
 instructions, skills, secrets — lives in your KnowledgeVault and is not part
 of any engine release.
 
+## [0.99.0] - 2026-08-16
+
+### Added
+
+- **`render.py --dump-config`** (read-only): replays the full configuration
+  pipeline, one view per CLI, with every value annotated by the layer that
+  produced it (`manifest`, `manifest + live-additive (...)`,
+  `live-extra (not in manifest)`). Never writes, never touches the
+  merge/write functions -- a pure replay of the same path the writers use
+  (`os_view` -> `r_<cli>` -> preserve per-server -> keep-extras). For
+  debugging ("why is my config different from expected?"), onboarding, and
+  support tickets: attach the output and each value carries its source.
+- **Doctor check "MCP orphan backstop"** (WARN-only, both twins): reports
+  MCP servers mounted in a CLI's live config that have no source left in the
+  manifest (leftovers from a retired server or a hand edit). Never removes
+  anything: removal stays an explicit user action via the adopt/reset
+  onboarding flow. First real catch on this machine: a leftover `node_repl`
+  server in the Codex config.
+
+### Changed
+
+- **Configuration layer order is now documented and pinned**
+  (`docs/sync-contract.md` -> "Configuration layer order" + regression
+  tests): canonical manifest -> per-OS `windows:` override -> path
+  placeholder expansion -> shim normalization -> runtime env expansion ->
+  live additive preservation. Two behaviors are now explicit and verified:
+  `env` is treated as one manifest-declared unit (a client-side env overlay
+  is applied by the client at runtime, never merged into the generated
+  config), and secret-named placeholders (`*TOKEN*`, `*KEY*`, ...) are never
+  materialized even when the env var is set.
+- **`seats.yaml.example` reads as a neutral product template.** The council
+  seat-picking guidance no longer references the maintainer's own
+  subscriptions; it now states the general criteria (prefer existing
+  flat-subscription CLIs, cross-vendor review, zero-retention preference).
+
+### Notes
+
+- Playwright bump to 0.0.79 remains tracked as a dedicated task (see the
+  maintainer's private plan note "nexgen-playwright-0.0.79-bump-plan"): the
+  0.0.79 bundle refactored the shared-browser lifecycle and the
+  CDP-disposal safety patch needs a re-engineered guard plus
+  process-identity acceptance tests before it can land. Not urgent: the MCP
+  protocol is unchanged, 0.0.78 works, and the doctor is green.
+
 ## [0.98.9] - 2026-08-16
 
 ### Changed

@@ -126,6 +126,44 @@ tests cover both path dialects and Windows lock code, but an architecture
 change is not operationally complete until it has also been exercised on a
 physical Windows installation.
 
+## Configuration layer order
+
+The MCP configuration each CLI receives is the result of a fixed, ordered
+pipeline inside `render.py`. The order below is the contract: it is what the
+generated configs are compared against, and a regression test pins it. The
+later a layer runs, the more it wins; a field a later layer does not set is
+simply left as the earlier layer produced it.
+
+1. **Canonical manifest** (`mcp/manifest.yaml` in the vault data root): the
+   only authoritative source of servers. A server not declared here has no
+   portable source and is reported by the doctor as out-of-manifest
+   (WARN-only).
+2. **Per-OS override** (a `windows:` block inside a server's manifest entry):
+   applied on Windows only, then discarded from the merged view. This is how
+   one manifest serves both OSes without guessing.
+3. **Path placeholder expansion** (`${AGENT_ENGINE_ROOT}`,
+   `${AGENT_VAULT_DATA}`, `${KNOWLEDGE_VAULT_PATH}`): resolved against the
+   host's actual engine/data roots.
+4. **Windows shim normalization**: common interpreter wrapper names
+   (`npx` -> `npx.cmd`, `node` -> `node.exe`, `python3` -> `python`) resolved
+   to real paths, and `.cmd`/`.bat` shims routed through `cmd.exe` so every
+   client can launch them.
+5. **Runtime env placeholder expansion** (`${VAR}` / `${VAR:-default}`):
+   expanded from the host's environment; a server gated by `require_env` is
+   omitted entirely when its env var is absent.
+6. **Live-config additive preservation**: fields that a CLI's own config
+   carries on a managed server but the manifest does not declare (runtime
+   metadata, client-side overlays) are preserved additively through the
+   surgical writers. The merge is shallow on purpose: `env` is treated as
+   one manifest-declared unit, so the manifest's env block wins as a whole
+   and a client-side env addition is not carried into the generated config
+   (the client applies its own env overlay at runtime).
+
+Invariant: the canonical manifest is never written by the render path except
+through the explicit `--adopt` flow (with backup + re-validation), and the
+last layer to win is the additive live preservation, never the other way
+around.
+
 ## Known limitation
 
 This whole contract is built for one person keeping several machines of

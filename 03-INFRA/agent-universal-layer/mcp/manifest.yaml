@@ -86,7 +86,6 @@ servers:
       command: py
       args: ["-3", "${AGENT_ENGINE_ROOT}\\deploy\\ocr\\mcp\\vault_ocr_mcp.py"]
       env:
-
         VAULT_OCR_API_URL: "http://127.0.0.1:${OCR_TUNNEL_PORT:-33003}"
 
   # ---- extra per-CLI (opzionali, non bloccanti) ----------------------------
