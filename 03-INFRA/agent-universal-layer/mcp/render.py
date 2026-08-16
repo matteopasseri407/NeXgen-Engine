@@ -477,6 +477,10 @@ def preserve_server_fields(gen, live):
     that is intentionally absent from the portable manifest. The manifest
     remains authoritative for fields it declares, while undeclared live
     fields stay additive and are carried through the surgical writers.
+    Merge is shallow on purpose: `env` is treated as one manifest-declared
+    unit, so the manifest's env block wins as a whole and a client-side env
+    addition is not carried into the generated config (the client applies
+    its own env overlay at runtime).
     """
     out = {}
     for name, spec in gen.items():
@@ -1606,6 +1610,105 @@ def cmd_inventory():
         print(">>> Every mounted MCP server is already canonical.")
     return 0
 
+def cmd_orphan_check():
+    """Read-only orphan check for the doctor: report MCP servers mounted in a
+    CLI's live config that have no source in the manifest anymore (leftovers
+    from a retired server or a hand edit). Machine-consumable, one line per
+    CLI plus a total, never writes, never exits non-zero for findings (the
+    doctor turns findings into a WARN; a removed orphan is an explicit user
+    action, not something this check does)."""
+    try:
+        raw, _retired = load_mcp_manifest_document(MANIFEST)
+    except ConfigValidationError as exc:
+        print(f"orphans=ERROR invalid manifest ({exc})", file=sys.stderr)
+        return 2
+    total = 0
+    per_cli = []
+    for cli in CLI:
+        manifest_keys = {CLI[cli]["name"](name) for name in raw}
+        try:
+            live = load_current(cli)
+        except SystemExit:
+            per_cli.append(f"{cli}=unreadable")
+            continue
+        if live is None:
+            per_cli.append(f"{cli}=not-configured")
+            continue
+        extras = sorted(k for k in live if k not in manifest_keys)
+        total += len(extras)
+        per_cli.append(f"{cli}={len(extras)}")
+    print(" ".join(per_cli))
+    print(f"orphans={total}")
+    return 0
+
+def cmd_dump_config():
+    """Read-only replay of the full configuration pipeline, one view per CLI,
+    with every value annotated by the layer that produced it. Never writes,
+    never touches the merge/write functions: it re-runs the same per-CLI
+    render path (os_view -> r_<cli> -> preserve -> keep_extras) and reports
+    what each server's effective config is, so debugging ("why is my config
+    different from expected?"), onboarding, and support tickets can attach
+    the exact source of each value. Exit: 0 always, 2 manifest error."""
+    try:
+        raw, retired = load_mcp_manifest_document(MANIFEST)
+    except ConfigValidationError as exc:
+        print(f">>> STOP: invalid MCP manifest ({exc}). Fix the data source before retrying.", file=sys.stderr)
+        return 2
+    man = raw
+    retired_set = set(retired)
+    for cli in CLI:
+        print(f"=== {cli} ===")
+        try:
+            live = load_current(cli)
+        except SystemExit:
+            print("  (live config unreadable -- see STOP above)")
+            continue
+        if live is None:
+            print("  (not configured on this machine)")
+            continue
+        render_fn = CLI[cli]["render"]
+        name_fn = CLI[cli]["name"]
+        # Replay of the writer pipeline, read-only: manifest servers first.
+        # The writers go through load_manifest(), which applies os_view() to
+        # every spec (per-OS override + shim normalization) before the CLI
+        # renderer; the dump must replay the same path to show exactly what
+        # a write would emit.
+        effective = {}
+        for name, spec in man.items():
+            if cli not in spec["targets"]:
+                continue
+            view = os_view(spec)
+            effective[name_fn(name)] = render_fn(view)
+        # preserve_server_fields per-server: same shape the writers use
+        # (preserve({key: exp}, {key: current[key]})) so live-additive fields
+        # of a managed server appear in the dump exactly as they survive a write.
+        preserved = {}
+        for key, exp in effective.items():
+            current = live.get(key)
+            if isinstance(current, dict) and isinstance(exp, dict):
+                preserved[key] = preserve_server_fields({key: exp}, {key: current})[key]
+            else:
+                preserved[key] = exp
+        # keep_extras: out-of-manifest servers kept as-is (same as writers).
+        kept = dict(preserved)
+        for k in live:
+            if k not in kept and k not in retired_set:
+                kept[k] = live[k]
+        for key, value in sorted(kept.items()):
+            source = "manifest"
+            if key not in effective:
+                source = "live-extra (not in manifest)"
+            elif key in live and isinstance(live[key], dict):
+                live_keys = set(live[key].keys())
+                gen_keys = set(effective[key].keys())
+                additive = sorted(live_keys - gen_keys)
+                if additive:
+                    source = f"manifest + live-additive ({', '.join(additive)})"
+            print(f"  [{source}] {key} = {json.dumps(value, ensure_ascii=False, sort_keys=True, default=str)}")
+    print("")
+    print(">>> Read-only replay: nothing written, no backups, exit 0.")
+    return 0
+
 def main():
     ap = argparse.ArgumentParser(description="MCP generator from a single manifest (Vault 2.0 Phase 1).")
     ap.add_argument("--write", metavar="CLI", choices=list(CLI), help="regenerate a CLI's MCP config (default: diff only).")
@@ -1621,6 +1724,10 @@ def main():
                      help="onboarding: back up and remove a CLI's whole native config so a fresh provision recreates it clean (reversible via --revert). Refused for a CLI whose writer cannot recreate an absent config (currently claude, codex).")
     ap.add_argument("--inventory", action="store_true",
                      help="read-only onboarding scan across all CLIs: MCP servers per CLI, canonical vs out-of-manifest (foundation of the adopt/reset flow).")
+    ap.add_argument("--dump-config", action="store_true",
+                     help="read-only replay of the full config pipeline, one view per CLI, every value annotated with its source layer; never writes.")
+    ap.add_argument("--orphan-check", action="store_true",
+                     help="read-only doctor hook: machine-consumable count of MCP servers mounted in live configs with no manifest source (leftovers); never writes, findings are WARN-only upstream.")
     ap.add_argument("--json", action="store_true",
                      help="with the default diff: emit a machine-readable per-CLI report instead of the human one (same scan, same exit codes).")
     ap.add_argument("--apply", action="store_true",
@@ -1628,6 +1735,10 @@ def main():
     args = ap.parse_args()
     if args.inventory:
         return cmd_inventory()
+    if args.dump_config:
+        return cmd_dump_config()
+    if args.orphan_check:
+        return cmd_orphan_check()
     if args.server_url:
         return cmd_server_url(args.server_url)
     if args.expected_servers:

@@ -1547,3 +1547,85 @@ def test_revert_still_refuses_a_genuinely_broken_jsonc_backup(sandbox):
     _make_backup(path, '{ "mcp": { // truncated\n')
 
     assert mod.cmd_revert("opencode") == 2
+
+
+def test_configuration_layer_order_is_pinned(sandbox, monkeypatch):
+    """Pin the documented configuration layer order (docs/sync-contract.md,
+    "Configuration layer order"): canonical manifest -> per-OS windows
+    override -> path placeholders -> shim normalization -> runtime env ->
+    live additive preservation. Each later layer wins for the fields it sets;
+    a field no later layer sets keeps its earlier value. This test asserts
+    the ORDER, not a specific dialect: a regression that reorders layers
+    must fail here even if every dialect test still passes."""
+    mod = load_render_module(sandbox)
+    mod.IS_WINDOWS = True
+    monkeypatch.setattr(mod.shutil, "which", lambda command: None)
+    monkeypatch.setenv("MY_ENDPOINT", "live-value")
+
+    spec = {
+        "transport": "stdio",
+        "command": "python3",
+        "args": ["${AGENT_VAULT_DATA}/tool.py"],
+        "env": {"ENDPOINT": "${MY_ENDPOINT:-fallback}"},
+        "windows": {"command": "python3", "args": ["${AGENT_VAULT_DATA}/tool.py"]},
+        "targets": ["codex"],
+    }
+
+    view = mod.os_view(spec)
+
+    assert view["command"] == "python"                          # layer 4: python3 -> python
+    assert view["args"][0].replace("\\", "/").endswith("tool.py")  # layer 3: placeholder expanded to the data root
+    assert str(mod.VAULT_DATA).replace("\\", "/") in view["args"][0].replace("\\", "/")  # ... and resolved against the real data root
+    assert view["env"]["ENDPOINT"] == "live-value"              # layer 5: runtime env wins over the manifest default
+    assert "windows" not in view                                # layer 2: windows block consumed, not leaked
+
+
+def test_live_additive_fields_never_override_manifest(sandbox, monkeypatch):
+    """Layer 6 (live additive preservation) is additive only, top-level:
+    a live field never overwrites a manifest-declared value, and `env` is
+    treated as one manifest unit (the client applies its own env overlay at
+    runtime, so the renderer never merges env halves)."""
+    mod = load_render_module(sandbox)
+    generated = {"playwright": {"command": "node.exe", "args": ["server.js"], "env": {"A": "1"}}}
+    live = {"playwright": {"command": "other", "env": {"A": "overwrite", "B": "kept"}}}
+
+    merged = mod.preserve_server_fields(generated, live)
+
+    assert merged["playwright"]["command"] == "node.exe"          # manifest wins
+    assert merged["playwright"]["env"] == {"A": "1"}              # env is one manifest unit, live overlay not merged in
+
+
+@pytest.mark.parametrize("cli", DIALECTS)
+def test_dump_config_equals_written_output(sandbox_with_live_configs, cli, capsys):
+    """Council acceptance for --dump-config (replay puro): the dump must
+    replay the same pipeline the writers use and never lie about the source
+    of a server. Pinned here: exit 0, nothing written (no .bak created), every
+    manifest server appears under [manifest], and no manifest server is ever
+    reported as live-extra. The per-field identity of the values is already
+    pinned by test_write_produces_expected_output; this test pins the SOURCE
+    annotation contract that makes the dump useful for debugging."""
+    sb = sandbox_with_live_configs
+    mod = load_render_module(sb)
+
+    before_glob = set(sb.home.rglob("*.bak-*")) if sb.home.exists() else set()
+    capsys.readouterr()
+    rc_dump = mod.cmd_dump_config()
+    captured = capsys.readouterr().out
+    assert rc_dump == 0, f"{cli}: dump_config ha restituito {rc_dump}, atteso 0"
+    after_glob = set(sb.home.rglob("*.bak-*")) if sb.home.exists() else set()
+    assert after_glob == before_glob, f"{cli}: --dump-config ha scritto qualcosa (backup creati)"
+
+    servers = _manifest_servers(sb)
+    wanted = {n: s for n, s in servers.items() if cli in s["targets"]}
+    assert wanted, f"{cli}: nessun server target nel manifest di fixture"
+
+    name_fn = mod.CLI[cli]["name"]
+    for name in wanted:
+        key = name_fn(name)
+        assert any(
+            line.startswith("  [manifest] " + key + " =") for line in captured.splitlines()
+        ), f"{cli}: {key} del manifest assente dal dump"
+        assert not any(
+            line.startswith("  [live-extra") and line.split("] ", 1)[1].startswith(key + " =")
+            for line in captured.splitlines()
+        ), f"{cli}: {key} del manifest compare come live-extra nel dump"

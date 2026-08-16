@@ -344,6 +344,24 @@ if [ -f "$MAP_SCRIPT" ] && command -v python3 >/dev/null 2>&1; then
   fi
 fi
 
+# MCP orphan backstop (WARN-only, like every hygiene check): a server mounted
+# in a CLI's live config with no source left in the manifest is a leftover
+# from a retired server or a hand edit. render.py reports counts per CLI;
+# the doctor warns, never removes (removal is an explicit user action via
+# the adopt/reset onboarding flow).
+RENDER_PY="$ENGINE_UL/mcp/render.py"
+if [ -f "$RENDER_PY" ] && command -v python3 >/dev/null 2>&1; then
+  orphan_out="$(python3 "$RENDER_PY" --orphan-check 2>/dev/null)"
+  orphan_total="$(printf '%s\n' "$orphan_out" | sed -n 's/^orphans=\([0-9][0-9]*\)$/\1/p' | head -n 1)"
+  if [ -z "$orphan_total" ]; then
+    warn "MCP orphan check could not run (render.py --orphan-check failed)"
+  elif [ "$orphan_total" = "0" ]; then
+    ok "every mounted MCP server still has a manifest source"
+  else
+    warn "$orphan_total out-of-manifest MCP server(s) in live CLI configs ($(printf '%s\n' "$orphan_out" | tr '\n' ' ')) -- leftovers from a retired server or a hand edit; adopt or drop them via render.py --adopt/--reset"
+  fi
+fi
+
 sec "Deterministic agent utilities"
 if command -v agent-now >/dev/null 2>&1; then
   now_payload="$(agent-now --json 2>/dev/null || true)"
