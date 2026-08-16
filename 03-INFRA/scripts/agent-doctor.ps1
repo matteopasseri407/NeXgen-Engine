@@ -12,7 +12,7 @@
 param([switch]$Summary, [switch]$Strict)
 
 $ErrorActionPreference = "Continue"
-$HomeDir = [Environment]::GetFolderPath("UserProfile")
+$HomeDir = if ($env:USERPROFILE) { $env:USERPROFILE } else { [Environment]::GetFolderPath("UserProfile") }
 $Vault   = if ($env:KNOWLEDGE_VAULT_PATH) { $env:KNOWLEDGE_VAULT_PATH } else { Join-Path $HomeDir "KnowledgeVault" }
 $Branch  = if ($env:KNOWLEDGE_VAULT_BRANCH) { $env:KNOWLEDGE_VAULT_BRANCH } else { "main" }
 # Same split-topology fallback as vault-push.ps1 (AGENT_VAULT_DATA, then
