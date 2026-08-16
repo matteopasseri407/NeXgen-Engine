@@ -1844,6 +1844,17 @@ def _install_scheduled_task(env: Env) -> bool:
     run_cmd = f'wscript.exe "{wrapper_path}"'
     every30 = ["schtasks.exe", "/Create", "/TN", task_name, "/SC", "MINUTE", "/MO", "30", "/TR", run_cmd, "/F"]
     logon = ["schtasks.exe", "/Create", "/TN", f"{task_name} Logon", "/SC", "ONLOGON", "/TR", run_cmd, "/F"]
+    # The every-30-minutes task is the recurring guard and MUST exist, so it
+    # is always (re)created when absent. The Logon trigger is a redundant
+    # nicety and, on several Windows builds, `schtasks /Create /TR "wscript
+    # \"...\""` fails with ERROR_ACCESS_DENIED no matter the quoting: retrying
+    # it every 30 minutes is what made the whole scheduler read as a malware
+    # persistence pattern. Its creation is therefore attempted only on the
+    # first run (no marker) or when the wrapper content changed (hash
+    # mismatch); otherwise the Startup-folder VBS copy below covers logon.
+    logon_attempt_marker = env.log_dir / "scheduled-task-logon-attempt"
+    _content_hash = hashlib.sha256(content.encode("utf-8")).hexdigest()
+    _previous_hash = logon_attempt_marker.read_text(encoding="utf-8").strip() if logon_attempt_marker.exists() else ""
     if _scheduled_task_invokes_wrapper(task_name, wrapper_path):
         env.log(f"scheduled-task: '{task_name}' already invokes {wrapper_path.name}; no rewrite")
     else:
@@ -1857,12 +1868,17 @@ def _install_scheduled_task(env: Env) -> bool:
         env.log(f"scheduled-task: installed/updated '{task_name}' via schtasks.exe")
     if _scheduled_task_invokes_wrapper(f"{task_name} Logon", wrapper_path):
         env.log(f"scheduled-task: '{task_name} Logon' already invokes {wrapper_path.name}; no rewrite")
+        logon_attempt_marker.write_text(_content_hash, encoding="utf-8")
         return True
-    r = _run_external(logon, timeout=60, capture_output=True, text=True)
-    if r.returncode == 0:
-        env.log(f"scheduled-task: installed/updated '{task_name} Logon' via schtasks.exe")
-        return True
-    env.log(f"scheduled-task: logon trigger failed via schtasks.exe ({r.stdout}{r.stderr})")
+    if _previous_hash != _content_hash:
+        r = _run_external(logon, timeout=60, capture_output=True, text=True)
+        logon_attempt_marker.write_text(_content_hash, encoding="utf-8")
+        if r.returncode == 0:
+            env.log(f"scheduled-task: installed/updated '{task_name} Logon' via schtasks.exe")
+            return True
+        env.log(f"scheduled-task: logon trigger failed via schtasks.exe ({r.stdout}{r.stderr}); falling back to Startup folder")
+    else:
+        env.log(f"scheduled-task: '{task_name} Logon' creation previously failed; not retrying (wrapper unchanged)")
     startup_dir = os.environ.get("APPDATA")
     if startup_dir:
         startup_vbs = Path(startup_dir) / "Microsoft" / "Windows" / "Start Menu" / "Programs" / "Startup" / "KnowledgeVault Agent Sync.vbs"
