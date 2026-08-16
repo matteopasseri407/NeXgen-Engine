@@ -2254,6 +2254,49 @@ def test_windows_scheduler_rewrites_when_wrapper_path_changed(sandbox, monkeypat
     assert len(create_calls) == 2, f"a stale wrapper must be rewritten: {create_calls}"
 
 
+def test_windows_scheduler_logon_failure_is_remembered_and_not_retried_every_cycle(sandbox, monkeypatch):
+    """Regression (2026-08-16): the Logon task create failed with
+    ERROR_ACCESS_DENIED on this Windows build (quoted /TR handling), and
+    _install_scheduled_task retried it every 30 minutes. Combined with the
+    every-30 /Create for the main task, Defender's behavioural engine
+    flagged the whole pattern as Trojan:Win32/Commando.A!ml. The failure
+    must be remembered per wrapper-hash: first run attempts, later runs
+    with the same wrapper skip the Logon /Create entirely (the Startup
+    VBS copy still covers logon), and a changed wrapper retries."""
+    _enable_host_mutations(monkeypatch)
+    mod = load_agent_sync_module(sandbox)
+    monkeypatch.setattr(mod, "IS_WINDOWS", True)
+    calls = []
+    logon_failure_count = {"n": 0}
+
+    def fake_run(command, **_kwargs):
+        calls.append(command)
+        if command and command[1] == "/Query":
+            return subprocess.CompletedProcess(command, 1, "", "")  # no task exists
+        if command and command[1] == "/Create" and command[3].endswith("Logon"):
+            logon_failure_count["n"] += 1
+            return subprocess.CompletedProcess(command, 1, "ERROR: Access denied", "")
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    monkeypatch.setattr(mod, "_run_external", fake_run)
+    env = mod.Env()
+
+    assert mod._install_scheduled_task(env) is True
+    assert logon_failure_count["n"] == 1, "first run must attempt the Logon task once"
+    log = env.log_path.read_text(encoding="utf-8")
+    assert "logon trigger failed" in log
+    assert "falling back to Startup folder" in log
+    assert (env.log_dir / "scheduled-task-logon-attempt").exists()
+
+    calls.clear()
+    assert mod._install_scheduled_task(env) is True
+    assert logon_failure_count["n"] == 1, "same wrapper must NOT retry the failed Logon task"
+    log = env.log_path.read_text(encoding="utf-8")
+    assert "previously failed; not retrying" in log
+    logon_creates = [c for c in calls if c and c[1] == "/Create" and c[3].endswith("Logon")]
+    assert logon_creates == [], f"no Logon /Create may run on the second cycle: {logon_creates}"
+
+
 def test_windows_scheduled_task_skips_instead_of_arming_timer_when_engine_script_is_missing(sandbox, monkeypatch, capsys):
     # Mirrors the Linux systemd fix above: the VBS wrapper shells out to
     # agent-sync.ps1 directly (no ~/.local/bin shim involved on this path),
