@@ -45,12 +45,12 @@ of any engine release.
 
 ### Notes
 
-- Playwright bump to 0.0.79 remains tracked as a dedicated task
-  ([[02-PROJECTS/nexgen-playwright-0.0.79-bump-plan]]): the 0.0.79 bundle
-  refactored the shared-browser lifecycle and the CDP-disposal safety patch
-  needs a re-engineered guard plus process-identity acceptance tests before
-  it can land. Not urgent: the MCP protocol is unchanged, 0.0.78 works, and
-  the doctor is green.
+- Playwright bump to 0.0.79 remains tracked as a dedicated task (see the
+  maintainer's private plan note "nexgen-playwright-0.0.79-bump-plan"): the
+  0.0.79 bundle refactored the shared-browser lifecycle and the
+  CDP-disposal safety patch needs a re-engineered guard plus
+  process-identity acceptance tests before it can land. Not urgent: the MCP
+  protocol is unchanged, 0.0.78 works, and the doctor is green.
 
 ## [0.98.9] - 2026-08-16
 
