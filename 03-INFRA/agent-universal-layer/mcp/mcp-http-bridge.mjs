@@ -195,9 +195,32 @@ function launch(url, shim, packagePin, env) {
   });
 }
 
+function invokedAsProgram() {
+  if (!process.argv[1])
+    return false;
+  // Compare what the two sides really resolve to. Windows filesystems are
+  // case-insensitive while string comparison is not, and the launcher's path
+  // need not match the module's letter for letter (C:\Users vs c:\users, an 8.3
+  // short path, a symlinked engine root). Getting this wrong fails silently:
+  // the bridge would exit without starting, and the MCP server would look dead
+  // for reasons nothing reports.
+  const settle = (target) => {
+    try {
+      return fs.realpathSync(target);
+    } catch {
+      return path.resolve(target);
+    }
+  };
+  const launched = settle(process.argv[1]);
+  const self = settle(fileURLToPath(import.meta.url));
+  return process.platform === 'win32'
+    ? launched.toLowerCase() === self.toLowerCase()
+    : launched === self;
+}
+
 // Only run when launched as a program. Imported (by a test asking what headers
 // a body derives), the module must expose its logic without spawning anything.
-if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+if (invokedAsProgram()) {
   try {
     main();
   } catch (error) {

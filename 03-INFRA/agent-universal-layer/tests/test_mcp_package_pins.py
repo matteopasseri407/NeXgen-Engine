@@ -121,7 +121,14 @@ def test_http_bridge_survives_a_signalled_child_without_crashing(tmp_path):
     )
 
     assert "TypeError" not in result.stderr
-    assert result.returncode in (-15, 143), result.stdout + result.stderr
+    if os.name == "nt":
+        # Windows has no POSIX signals: Node terminates the child and reports an
+        # ordinary exit code, so the wrapper propagates that code instead of
+        # re-signalling itself. What must still hold on both platforms is that a
+        # child's violent death is never reported as success.
+        assert result.returncode != 0, result.stdout + result.stderr
+    else:
+        assert result.returncode in (-15, 143), result.stdout + result.stderr
 
 
 def test_http_bridge_adds_the_headers_the_revision_requires(tmp_path):
@@ -166,6 +173,32 @@ def test_http_bridge_adds_the_headers_the_revision_requires(tmp_path):
     assert listing == {"mcp-method": "tools/list"}
     # A body we cannot read is one we must not describe.
     assert junk == {}
+
+
+def test_http_bridge_runs_when_its_path_is_not_spelled_identically(tmp_path):
+    """The bridge only runs main() when launched as a program, so that a test
+    can import it without spawning anything. That guard must compare what the
+    paths resolve to, not their spelling: on Windows the filesystem is
+    case-insensitive while string comparison is not, and the launcher's path
+    need not match the module's letter for letter. A guard that got this wrong
+    would fail silently -- the bridge exits without starting and the MCP server
+    looks dead for reasons nothing reports. A symlink reproduces the same
+    mismatch portably."""
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("node is not installed on this test host")
+    link = tmp_path / "bridge-via-another-name.mjs"
+    try:
+        link.symlink_to(HTTP_BRIDGE)
+    except (OSError, NotImplementedError):
+        pytest.skip("this host cannot create symlinks without extra privileges")
+
+    result = subprocess.run(
+        [node, str(link), "--self-test", "mcp-remote@0.1.38"],
+        capture_output=True, text=True, timeout=30,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
 
 
 def test_http_bridge_shim_listens_only_on_loopback():
