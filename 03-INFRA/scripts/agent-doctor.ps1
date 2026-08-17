@@ -815,10 +815,17 @@ if ($Strict) {
   } elseif (Get-Command agy -ErrorAction SilentlyContinue) {
     $agPrompt = "Elenca SOLO i nomi dei server MCP disponibili in questa sessione, una riga per server, NESSUN dettaglio sui singoli tool e NESSUNA invocazione."
     $agModel = if ($env:NEXGEN_AGY_MODEL) { $env:NEXGEN_AGY_MODEL } else { "Gemini 3.5 Flash (Medium)" }
-    $agJob = Start-Job -ScriptBlock { param($p, $m) & agy --print $p --model $m --sandbox 2>&1 } -ArgumentList $agPrompt, $agModel
+    # agy's own log names the servers it is still waiting on ("MCP: N server(s)
+    # still connecting after 30s: <names>"). Without it a timeout is an
+    # undiagnostic FAIL: it says the probe hung, never which server hung it --
+    # which is the one thing needed to fix it. Only the names after the final
+    # colon are read out; the log itself is never echoed.
+    $agProbeLog = Join-Path ([System.IO.Path]::GetTempPath()) ("nexgen-agy-probe-" + [guid]::NewGuid().ToString() + ".log")
+    $agJob = Start-Job -ScriptBlock { param($p, $m, $l) & agy --print $p --model $m --sandbox --log-file $l 2>&1 } -ArgumentList $agPrompt, $agModel, $agProbeLog
     if (Wait-Job $agJob -Timeout 45) {
       $agProbeOut = (Receive-Job $agJob | Out-String)
       Remove-Job $agJob -Force
+      Remove-Item $agProbeLog -Force -ErrorAction SilentlyContinue
       if ($agProbeOut -match '(?i)individual\s+quota|quota\s+(reached|exhausted|exceeded)|rate\s+limit|too many requests|\b429\b') {
         warn "Antigravity behavioral probe skipped: the selected model quota is unavailable"
       }
@@ -829,7 +836,17 @@ if ($Strict) {
       }
     } else {
       Stop-Job $agJob; Remove-Job $agJob -Force
-      bad "Antigravity behavioral probe (agy --print) timed out"
+      $agStuck = ""
+      if (Test-Path $agProbeLog) {
+        $agStuckLine = Select-String -Path $agProbeLog -Pattern 'still connecting after [^:]*: (.*)$' -ErrorAction SilentlyContinue | Select-Object -Last 1
+        if ($agStuckLine) { $agStuck = $agStuckLine.Matches[0].Groups[1].Value.Trim() }
+        Remove-Item $agProbeLog -Force -ErrorAction SilentlyContinue
+      }
+      if ($agStuck) {
+        bad "Antigravity behavioral probe (agy --print) timed out; MCP server(s) still connecting: $agStuck"
+      } else {
+        bad "Antigravity behavioral probe (agy --print) timed out"
+      }
     }
   } else {
     warn "agy not in PATH, skipping Antigravity behavioral probe"

@@ -124,6 +124,58 @@ def test_http_bridge_survives_a_signalled_child_without_crashing(tmp_path):
     assert result.returncode in (-15, 143), result.stdout + result.stderr
 
 
+def test_http_bridge_adds_the_headers_the_revision_requires(tmp_path):
+    """MCP revision 2026-07-28 requires Mcp-Method on every Streamable HTTP POST
+    and Mcp-Name whenever the body names a target. mcp-remote predates it and
+    0.1.38 is its last published version, so a server that enforces the revision
+    (n8n does) answers 400 to every request and the client waits forever for a
+    tool list -- which reads as a hang rather than the protocol error it is.
+    The bridge derives the headers from the body it is already forwarding.
+
+    Importing the module here also pins the entry-point guard: a bridge that ran
+    main() on import would try to spawn mcp-remote during the test run.
+    """
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("node is not installed on this test host")
+    payloads = [
+        {"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+         "params": {"name": "search_workflows",
+                    "_meta": {"io.modelcontextprotocol/protocolVersion": "2026-07-28"}}},
+        {"jsonrpc": "2.0", "id": 2, "method": "tools/list"},
+    ]
+    script = tmp_path / "derive.mjs"
+    script.write_text(
+        "import { deriveRevisionHeaders } from %s;\n"
+        "const bodies = %s;\n"
+        "const out = bodies.map((body) => deriveRevisionHeaders(body));\n"
+        "out.push(deriveRevisionHeaders('not json at all'));\n"
+        "process.stdout.write(JSON.stringify(out));\n"
+        % (json.dumps(HTTP_BRIDGE.as_uri()), json.dumps([json.dumps(p) for p in payloads])),
+        encoding="utf-8",
+    )
+
+    result = subprocess.run([node, str(script)], capture_output=True, text=True, timeout=30)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    call, listing, junk = json.loads(result.stdout)
+    assert call["mcp-method"] == "tools/call"
+    assert call["mcp-name"] == "search_workflows"
+    assert call["mcp-protocol-version"] == "2026-07-28"
+    # No name in the body means no Mcp-Name: headers and body must never disagree.
+    assert listing == {"mcp-method": "tools/list"}
+    # A body we cannot read is one we must not describe.
+    assert junk == {}
+
+
+def test_http_bridge_shim_listens_only_on_loopback():
+    """The shim carries the bearer mcp-remote sets. Bound to anything but
+    loopback it would offer an authenticated path to the MCP server to the
+    whole network."""
+    bridge = HTTP_BRIDGE.read_text(encoding="utf-8")
+    assert "server.listen(0, '127.0.0.1'" in bridge
+
+
 def test_playwright_wrapper_and_manifest_share_an_exact_pin():
     wrapper = PLAYWRIGHT_WRAPPER.read_text(encoding="utf-8")
     match = re.search(r"const VERSION = '([^']+)';", wrapper)
