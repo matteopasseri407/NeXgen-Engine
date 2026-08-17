@@ -8,6 +8,37 @@ This file tracks the **engine** (this repo). Your own data — manifests,
 instructions, skills, secrets — lives in your KnowledgeVault and is not part
 of any engine release.
 
+## [0.99.1] - 2026-08-17
+
+### Fixed
+
+- **Antigravity could not reach an MCP server that enforces protocol revision
+  `2026-07-28`.** The bundled `mcp-remote` bridge predates the revision and
+  never sends `Mcp-Method`, nor `Mcp-Name` when the body names a target, so a
+  server enforcing it answers HTTP 400 to every request -- discovery included.
+  The CLI then waits for a tool list that never arrives, which reads as a hang
+  rather than the protocol error it is: `agy --print` timed out and the doctor
+  reported a bare "behavioral probe timed out". `mcp-remote@0.1.38` is its last
+  published version, so there is no upstream fix to wait for. The bridge now
+  runs a loopback shim in front of it that derives the missing headers from the
+  body it is already forwarding; everything else mcp-remote does (SSE, sessions,
+  retries, OAuth discovery) is left alone. The shim binds `127.0.0.1` on an
+  ephemeral port, and the bearer stays where it already was -- in the header
+  mcp-remote sets, never in an argument and never in a config file.
+- **The bridge crashed instead of reporting a child killed by a signal.**
+  `process.constants` does not exist in Node, so the exit handler threw
+  `TypeError: Cannot read properties of undefined (reading 'signals')` every
+  time the child died from a signal. The table comes from `node:os` now.
+
+### Changed
+
+- **The doctor names the MCP server that hung the Antigravity probe**, in both
+  twins, instead of only reporting that the probe timed out. A bare timeout says
+  the CLI hung but never which server hung it, which is the one fact needed to
+  fix it. agy's own log lists the servers it is still waiting on: the probe
+  passes `--log-file` and reads only those names out of it. Nothing else from
+  the log is echoed.
+
 ## [0.99.0] - 2026-08-16
 
 ### Added

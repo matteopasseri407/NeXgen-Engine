@@ -121,3 +121,18 @@ def test_remote_backend_version_skew_is_reported_in_both_twins():
     for content in (bash, powershell):
         assert "vault-mcp on the server is" in content
         assert "03-INFRA/deploy/README.md" in content
+
+
+def test_probe_timeout_names_the_stuck_mcp_server_in_both_twins():
+    """A bare "the probe timed out" says the CLI hung, never which server hung
+    it -- the one fact needed to fix it. agy's own log names them ("still
+    connecting after 30s: <names>"), so both twins pass --log-file and read the
+    names out of it. Signal, not phrasing: the log flag, the marker they grep
+    for, and the enriched failure line."""
+    repo = Path(__file__).resolve().parents[3]
+    bash = (repo / "03-INFRA/scripts/agent-doctor.sh").read_text(encoding="utf-8")
+    powershell = (repo / "03-INFRA/scripts/agent-doctor.ps1").read_text(encoding="utf-8")
+    for content in (bash, powershell):
+        assert "--log-file" in content
+        assert "still connecting after" in content
+        assert "MCP server(s) still connecting:" in content

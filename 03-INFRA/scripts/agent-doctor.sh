@@ -784,17 +784,27 @@ PY
     ag_probe_had_non_timeout=0
     ag_probe_timed_out=0
     ag_probe_quota=0
+    ag_probe_stuck=""
     for _attempt in 1 2; do
       ag_probe_tmp="$(mktemp)"
+      # agy's own log names the servers it is still waiting on ("MCP: N
+      # server(s) still connecting after 30s: <names>"). Without it a timeout
+      # is an undiagnostic FAIL: it says the probe hung, never which server
+      # hung it -- which is the one thing needed to fix it. Only the names
+      # after the final colon are read out; the log itself is never echoed.
+      ag_probe_log="$(mktemp)"
       AGY_MODEL="${NEXGEN_AGY_MODEL:-Gemini 3.5 Flash (Medium)}"
-      timeout -k 5s 45s agy --print "Elenca SOLO i nomi dei server MCP disponibili in questa sessione, una riga per server, NESSUN dettaglio sui singoli tool e NESSUNA invocazione." --model "$AGY_MODEL" --sandbox >"$ag_probe_tmp" 2>&1
+      timeout -k 5s 45s agy --print "Elenca SOLO i nomi dei server MCP disponibili in questa sessione, una riga per server, NESSUN dettaglio sui singoli tool e NESSUNA invocazione." --model "$AGY_MODEL" --sandbox --log-file "$ag_probe_log" >"$ag_probe_tmp" 2>&1
       ag_probe_rc=$?
       ag_probe_out="$(cat "$ag_probe_tmp" 2>/dev/null)"
       rm -f "$ag_probe_tmp"
       if [ "$ag_probe_rc" = 124 ] || [ "$ag_probe_rc" = 137 ]; then
         ag_probe_timed_out=1
+        ag_probe_stuck="$(grep -oE 'still connecting after [^:]*: .*' "$ag_probe_log" 2>/dev/null | tail -1 | sed 's/.*: //')"
+        rm -f "$ag_probe_log"
         continue
       fi
+      rm -f "$ag_probe_log"
       if printf '%s\n' "$ag_probe_out" | grep -Eqi 'individual[[:space:]]+quota|quota[[:space:]]+(reached|exhausted|exceeded)|rate[[:space:]]+limit|too many requests|(^|[^0-9])429([^0-9]|$)'; then
         ag_probe_quota=1
         continue
@@ -820,7 +830,11 @@ PY
     if [ "$ag_probe_had_non_timeout" = 0 ] && [ "$ag_probe_quota" = 1 ]; then
       warn "Antigravity behavioral probe skipped: the selected model quota is unavailable"
     elif [ "$ag_probe_had_non_timeout" = 0 ] && [ "$ag_probe_timed_out" = 1 ]; then
-      fail "Antigravity behavioral probe (agy --print) timed out"
+      if [ -n "$ag_probe_stuck" ]; then
+        fail "Antigravity behavioral probe (agy --print) timed out; MCP server(s) still connecting: $ag_probe_stuck"
+      else
+        fail "Antigravity behavioral probe (agy --print) timed out"
+      fi
     else
       ag_n8n_ok=0
       case ", $ag_probe_best_missing, " in
