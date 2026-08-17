@@ -96,6 +96,34 @@ def test_antigravity_http_bridge_keeps_the_token_out_of_child_arguments(tmp_path
     assert "Authorization:${NEXGEN_MCP_AUTH_HEADER}" in launched["argv"]
 
 
+def test_http_bridge_survives_a_signalled_child_without_crashing(tmp_path):
+    """A child killed by a signal must not make the wrapper throw; it re-signals itself instead."""
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("node is not installed on this test host")
+    fake_npm = tmp_path / "fake-npm.js"
+    fake_npm.write_text("process.kill(process.pid, 'SIGTERM');\n", encoding="utf-8")
+    env = os.environ.copy()
+    env.update({
+        "npm_execpath": str(fake_npm),
+        "PROBE_TOKEN": "probe-value",
+    })
+
+    result = subprocess.run(
+        [
+            node, str(HTTP_BRIDGE), "http://127.0.0.1:9/mcp",
+            "PROBE_TOKEN", "mcp-remote@0.1.38",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=20,
+        env=env,
+    )
+
+    assert "TypeError" not in result.stderr
+    assert result.returncode in (-15, 143), result.stdout + result.stderr
+
+
 def test_playwright_wrapper_and_manifest_share_an_exact_pin():
     wrapper = PLAYWRIGHT_WRAPPER.read_text(encoding="utf-8")
     match = re.search(r"const VERSION = '([^']+)';", wrapper)

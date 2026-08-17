@@ -9,6 +9,7 @@
  */
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 
 const EXACT_PACKAGE = /^mcp-remote@\d+\.\d+\.\d+$/;
@@ -85,7 +86,7 @@ function main() {
       // SIG_IGN in Node), the re-signal is a no-op and the process then
       // exits via an emptied event loop -- exitCode is what makes that
       // death report the child's fate instead of a fake 0.
-      process.exitCode = 128 + (process.constants.signals[signal] ?? 0);
+      process.exitCode = 128 + (os.constants.signals[signal] ?? 0);
       // The forwarding handler above would swallow a re-signal to self.
       // Detach it first so the signal reaches the default handler and
       // actually terminates the wrapper (previously: orphaned wrapper).
