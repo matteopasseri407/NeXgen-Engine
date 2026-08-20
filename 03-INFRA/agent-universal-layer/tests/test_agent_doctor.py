@@ -1330,3 +1330,40 @@ def test_guardrail_check_present_in_both_twins():
         assert "Permission posture guardrail" in content
         assert "PreToolUse" in content
         assert "WITHOUT a declared PreToolUse guardrail hook" in content
+
+
+def test_doctor_reports_an_engine_owned_skill_this_engine_no_longer_ships(sandbox):
+    """A release that renames or drops a command leaves any manifest still
+    listing the old name pointing at nothing, and the command disappears from
+    every CLI without a word. The user did not choose that, the release changed
+    under them, so the doctor has to name the entry out loud."""
+    (sandbox.skills_dir / "skills.manifest.yaml").write_text(
+        "skills:\n  ghost-command:\n    origin: engine\n"
+        "    targets: [claude]\n    exposure: core\n",
+        encoding="utf-8",
+    )
+
+    result = _run_doctor(sandbox)
+
+    assert "ghost-command" in result.stdout, result.stdout
+
+
+def test_doctor_stays_quiet_when_every_engine_owned_skill_resolves(sandbox):
+    """The common case after an upgrade is that nothing moved, or that a rename
+    shipped a deprecated stub. Either way it resolves, and a guardian that
+    congratulates itself on every run teaches people to skim past it."""
+    body = sandbox.skills_dir / "still-here"
+    body.mkdir(parents=True, exist_ok=True)
+    (body / "SKILL.md").write_text(
+        "---\nname: still-here\ndescription: ships with the engine.\n---\n\nbody\n",
+        encoding="utf-8",
+    )
+    (sandbox.skills_dir / "skills.manifest.yaml").write_text(
+        "skills:\n  still-here:\n    origin: engine\n"
+        "    targets: [claude]\n    exposure: core\n",
+        encoding="utf-8",
+    )
+
+    result = _run_doctor(sandbox)
+
+    assert "no longer ships" not in result.stdout, result.stdout

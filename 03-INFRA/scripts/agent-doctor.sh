@@ -1059,6 +1059,35 @@ if [ "${oom_skills:-0}" -gt 0 ] 2>/dev/null; then
 else
   ok "no out-of-manifest skills to reconcile"
 fi
+# Reconciliation after an engine upgrade. `origin: engine` entries name a
+# command the ENGINE ships, so a release that renames or drops one leaves the
+# manifest pointing at a body that no longer exists — and the command simply
+# stops existing on every CLI without a word. The user did not choose that, the
+# release changed under them, so it is a FAIL and not a WARN. A rename that
+# ships a deprecated stub resolves normally and is silent here, by design.
+dangling_engine="$(python3 - "$SKILL_MANIFEST" "$ENGINE_ROOT/agent-universal-layer/skills" <<'PY' 2>/dev/null
+import sys, pathlib
+man, root = pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2])
+missing = []
+if man.is_file():
+    try:
+        import yaml
+        d = yaml.safe_load(man.read_text(encoding='utf-8')) or {}
+        s = d.get('skills') if isinstance(d, dict) else None
+        for name, spec in (s or {}).items():
+            if isinstance(spec, dict) and spec.get('origin') == 'engine':
+                if not (root / str(name) / 'SKILL.md').is_file():
+                    missing.append(str(name))
+    except Exception:
+        pass
+print(' '.join(sorted(missing)))
+PY
+)"
+if [ -n "${dangling_engine:-}" ]; then
+  fail "this engine no longer ships:$dangling_engine — the manifest still lists them, so those commands are gone from every CLI. Check the CHANGELOG for a rename, then update or remove the entries"
+else
+  ok "every engine-owned skill in the manifest resolves in this engine"
+fi
 # The starter commands README promises actually being there. This used to be
 # invisible: with no manifest at all, skills-sync printed "skipping" to stderr
 # and exited 0, and the only doctor line was the "no managed skill (fresh
