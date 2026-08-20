@@ -38,7 +38,7 @@ agent-sync config mirrors
 | `agent-sync publish` | Publishes existing commits to the authoritative remote, then configured mirrors. It never pulls or applies. |
 | `agent-sync preflight` | Validates the local configuration contract without pulling or generating runtime files. |
 | `agent-sync doctor` | Runs diagnostics and alerts only. |
-| `agent-sync bootstrap-alerts` | Provisions optional alert credentials, then runs diagnostics. |
+| `agent-sync bootstrap-alerts` | Runs diagnostics and alerts only on FAIL (the v1 n8n credential-provisioning step is gone: alert credentials are env-based in v2, sourced from the private vault's `environment.d`). |
 
 Running `agent-sync` without a mode prints help and changes nothing. The old
 implicit `full` path was removed so a typo or forgotten argument cannot combine

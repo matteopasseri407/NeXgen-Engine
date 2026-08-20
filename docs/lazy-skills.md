@@ -49,7 +49,7 @@ OpenCode, Antigravity, and local workers use the same explicit command for
 any skill that declares no native target:
 
 ```bash
-agent-skill list
+agent-skill find            # elenca tutto (query vuota)
 agent-skill find debugging
 agent-skill show systematic-debugging
 ```

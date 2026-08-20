@@ -1,6 +1,8 @@
 """Controlli di configurazione e disponibilità server MCP."""
 from __future__ import annotations
 
+import json
+
 from pathlib import Path
 
 from nexgen_core.config import load_mcp_manifest

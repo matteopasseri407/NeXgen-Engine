@@ -71,8 +71,8 @@ def _run_cli(argv: list[str]) -> int:
     # inventory (scan onboarding read-only)
     sub_inv = subparsers.add_parser("inventory", help="Scan read-only dell'installazione (MCP, skill, bootstrap)")
 
-    # bootstrap-alerts (provision credenziali alert opzionali + healthcheck)
-    sub_ba = subparsers.add_parser("bootstrap-alerts", help="Provision delle credenziali alert opzionali, poi diagnostica")
+    # bootstrap-alerts (healthcheck + alert su FAIL; creds alert sono env-based)
+    sub_ba = subparsers.add_parser("bootstrap-alerts", help="Esegue la diagnostica e allerta solo su FAIL")
 
     # council
     sub_council = subparsers.add_parser("council", help="Avvia una sessione del Council multi-modello")
@@ -222,12 +222,11 @@ def _inventory_cli() -> int:
 
 
 def _bootstrap_alerts_cli() -> int:
-    """Provision credenziali alert opzionali, poi diagnostica."""
+    """Healthcheck: diagnostica e allerta solo su FAIL (creds alert sono env-based in v2)."""
     from nexgen_core.megaphone import Megaphone
     from nexgen_core.doctor import Doctor
 
     meg = Megaphone()
-    # Healthcheck: esegue la diagnostica e allerta solo su FAIL
     doc = Doctor()
     report = doc.run_diagnostics(apply_remedies=False)
     if report.has_failures:

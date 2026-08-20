@@ -279,7 +279,7 @@ def main(argv: list[str] | None = None) -> int:
     mat = SkillMaterializer()
 
     if not argv or argv[0] in ("-h", "--help"):
-        print("Uso: agent-skill [list|find|show] <argomenti>  oppure  skills-sync [apply|index] [--migrate-legacy]")
+        print("Uso: agent-skill [find|show] <argomenti>  oppure  skills-sync [apply|index] [--migrate-legacy]")
         return 0
 
     # Normalizza i flag stile release (--apply, --index, --migrate-legacy)
@@ -310,19 +310,6 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Indice generato in {idx}")
         return 0
 
-    elif cmd == "list":
-        skills = mat.load_manifest()
-        rows = []
-        for name in sorted(skills.keys()):
-            s = skills[name]
-            rows.append(f"{name}\t{s.description or '(no description)'}")
-        if not rows:
-            print("Nessuna skill gestita installata.", file=sys.stderr)
-            return 1
-        for row in rows:
-            print(row)
-        return 0
-
     elif cmd == "find":
         query = positional[1].lower() if len(positional) > 1 else ""
         skills = mat.load_manifest()
@@ -347,7 +334,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Skill '{name}' non trovata nella libreria locale ({mat.library_dir})", file=sys.stderr)
         return 1
 
-    print(f"Comando non riconosciuto: {cmd}\nUso: agent-skill [list|find|show] o skills-sync [apply|index] [--migrate-legacy]", file=sys.stderr)
+    print(f"Comando non riconosciuto: {cmd}\nUso: agent-skill [find|show] o skills-sync [apply|index] [--migrate-legacy]", file=sys.stderr)
     return 1
 
 
