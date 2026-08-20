@@ -1663,6 +1663,9 @@ def _systemd_service_content(env: "Env") -> str:
     cutover here either."""
     lines = ["[Unit]",
              "Description=KnowledgeVault agent sync guard (pull + apply + healthcheck, no publish)",
+             # A guard that dies has to say so itself: waiting for the next run
+             # to notice is waiting for the thing that just failed.
+             "OnFailure=agent-alert@%n.service",
              "", "[Service]", "Type=oneshot"]
     default_engine_root = (env.vault / "03-INFRA").resolve()
     if env.engine_root.resolve() != default_engine_root:
@@ -1688,6 +1691,35 @@ Description=agent-sync guard every 30 minutes and shortly after login
 [Timer]
 OnStartupSec=3min
 OnUnitActiveSec=30min
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+"""
+
+
+_SYSTEMD_ALERT_TEMPLATE = """[Unit]
+Description=Tell the user that %i could not run
+
+[Service]
+Type=oneshot
+ExecStart=%h/.local/bin/agent-sync notify-failure %i
+"""
+
+_SYSTEMD_HEARTBEAT = """[Unit]
+Description=Say something when the agent sync has not completed in far too long
+
+[Service]
+Type=oneshot
+ExecStart=%h/.local/bin/agent-sync notify-stale
+"""
+
+_SYSTEMD_HEARTBEAT_TIMER = """[Unit]
+Description=Hourly check that the agent sync is still completing
+
+[Timer]
+OnStartupSec=5min
+OnUnitActiveSec=1h
 Persistent=true
 
 [Install]
@@ -1730,6 +1762,9 @@ def _install_systemd_units(env: Env) -> bool:
     for path, content, label in (
         (unit_dir / "agent-sync.service", _systemd_service_content(env), "agent-sync.service set to pull mode"),
         (unit_dir / "agent-sync.timer", _SYSTEMD_TIMER, "agent-sync.timer updated"),
+        (unit_dir / "agent-alert@.service", _SYSTEMD_ALERT_TEMPLATE, "agent-alert@.service installed"),
+        (unit_dir / "agent-heartbeat.service", _SYSTEMD_HEARTBEAT, "agent-heartbeat.service installed"),
+        (unit_dir / "agent-heartbeat.timer", _SYSTEMD_HEARTBEAT_TIMER, "agent-heartbeat.timer installed"),
     ):
         if path.exists():
             try:
@@ -1757,7 +1792,8 @@ def _install_systemd_units(env: Env) -> bool:
     # 2026-07-13): a fresh install wrote inert unit files that never ran
     # unless a human happened to `systemctl --user enable` them by hand.
     # --now also starts it immediately rather than waiting for next login.
-    r = _run_external(["systemctl", "--user", "enable", "--now", "agent-sync.timer"],
+    r = _run_external(["systemctl", "--user", "enable", "--now",
+                       "agent-sync.timer", "agent-heartbeat.timer"],
                        timeout=30, capture_output=True, text=True)
     if r.returncode != 0:
         env.log(
@@ -3120,25 +3156,86 @@ def _send_healthcheck(env: Env) -> None:
     if not send:
         return
 
+    if _deliver_alert(env, summary):
+        env.log(f"healthcheck: sent ({sig})")
+    else:
+        env.log(f"healthcheck: {summary} (no transport configured)")
+    _atomic_write_text(state_file, f"{now}\n{sig}\n")
+
+
+def _deliver_alert(env: Env, summary: str) -> bool:
+    """The layer's single alert transport. Every trigger goes through here, so
+    the golden rule stays intact: one megaphone, whatever wakes it up."""
     hostn = platform.node()
     msg = f"[AGENT ALERT] [{hostn}] {time.strftime('%Y-%m-%d %H:%M')}\n{summary}"
     msg = _localize_alert(env, msg)
-    sent = False
     token, chat = os.environ.get("TELEGRAM_BOT_TOKEN"), os.environ.get("TELEGRAM_CHAT_ID")
     webhook = os.environ.get("VAULT_ALERT_WEBHOOK")
+    sent = False
     if token and chat:
         sent = _post_form(f"https://api.telegram.org/bot{token}/sendMessage", {"chat_id": chat, "text": msg})
     elif webhook:
         sent = _post_form(webhook, {"host": hostn, "text": msg})
     if not sent and not IS_WINDOWS and resolve_cmd("notify-send"):
         r = _run_external(["notify-send", "-u", "critical", "-a", "agent-healthcheck",
-                            "Agents: something is wrong", msg], timeout=5, capture_output=True)
+                           "Agents: something is wrong", msg], timeout=5, capture_output=True)
         sent = r.returncode == 0
-    if sent:
-        env.log(f"healthcheck: sent ({sig})")
-    else:
-        env.log(f"healthcheck: {summary} (no transport configured)")
-    _atomic_write_text(state_file, f"{now}\n{sig}\n")
+    return sent
+
+
+STALE_GUARD_SECONDS_DEFAULT = 6 * 3600
+
+
+def _last_guard_success(env: Env) -> int:
+    """Epoch of the last completed healthcheck, i.e. of the last guard run that
+    got all the way to the end. 0 when it has never run on this machine."""
+    state_file = env.log_dir / "agent-healthcheck.state"
+    if not state_file.is_file():
+        return 0
+    head = state_file.read_text(encoding="utf-8").splitlines()
+    return int(head[0]) if head and head[0].isdigit() else 0
+
+
+def _notify_failure_cli(argv: list[str]) -> int:
+    """Trigger for `OnFailure=`: a guardian unit went into a failed state.
+
+    Deliberately not a second notifier: it composes a line and hands it to the
+    one transport. Systemd passes the failed unit's name, which is the whole
+    value of this path over waiting for the next guard to notice."""
+    unit = argv[0] if argv else "a guardian unit"
+    env = Env()
+    summary = (f"FAIL {unit} could not run. The layer stops syncing until it does. "
+               f"Check it with: systemctl --user status {unit}")
+    if not _deliver_alert(env, summary):
+        env.log(f"notify-failure: {summary} (no transport configured)")
+    return 0
+
+
+def _notify_stale_cli(argv: list[str]) -> int:
+    """Trigger for the independent heartbeat: the guard has not completed in far
+    too long.
+
+    This exists because `OnFailure=` is not enough on its own. A job cancelled
+    because a dependency failed does not put its unit into a failed state, so
+    nothing fires -- which is exactly how a guard stayed dead for six days while
+    every single run logged `Dependency failed` and told no one. Elapsed time
+    since the last completed run catches that, and every other cause too,
+    without needing to know what broke."""
+    del argv
+    env = Env()
+    try:
+        limit = int(os.environ.get("AGENT_STALE_GUARD_SECONDS") or STALE_GUARD_SECONDS_DEFAULT)
+    except ValueError:
+        limit = STALE_GUARD_SECONDS_DEFAULT
+    last = _last_guard_success(env)
+    if last and (int(time.time()) - last) < limit:
+        return 0
+    hours = "never" if not last else f"{(int(time.time()) - last) // 3600}h ago"
+    summary = (f"FAIL the agent sync has not completed since {hours}. Machines and skills "
+               "are drifting apart in silence. Run: agent-sync guard")
+    if not _deliver_alert(env, summary):
+        env.log(f"notify-stale: {summary} (no transport configured)")
+    return 0
 
 
 def creds_health(env: Env, *, do_creds: bool, do_health: bool) -> None:
@@ -3575,6 +3672,10 @@ def main(argv: list[str] | None = None) -> int:
         return _vault_push_cli(argv[1:])
     if argv[0] == "inventory":
         return _inventory_cli(argv[1:])
+    if argv[0] == "notify-failure":
+        return _notify_failure_cli(argv[1:])
+    if argv[0] == "notify-stale":
+        return _notify_stale_cli(argv[1:])
 
     mode, skip_mcp, allow_offline, require_ready, extras = _parse_cli(argv)
     if mode not in MODES:

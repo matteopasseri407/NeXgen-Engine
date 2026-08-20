@@ -6,6 +6,7 @@ prove the shared implementation runs in a sandboxed USERPROFILE.
 """
 from __future__ import annotations
 
+import time
 import json
 import os
 from pathlib import Path
@@ -2524,3 +2525,61 @@ def test_render_json_report_agrees_with_the_human_summary(sandbox_with_live_conf
     assert match, summary[-1]
     totals = json.loads(machine.stdout)["totals"]
     assert (totals["ok"], totals["diff"], totals["extra"]) == tuple(int(g) for g in match.groups())
+
+
+# --- the alarm has to survive the death of the thing it watches --------------
+# A guard that stayed dead for six days logged `Dependency failed` every thirty
+# minutes and told nobody, because the only notifier lived inside the process
+# that was never starting. These cover the two triggers that fix that, both
+# routed through the single transport so the one-megaphone rule holds.
+
+def _alert_env(sandbox, monkeypatch):
+    mod = load_agent_sync_module(sandbox)
+    monkeypatch.setenv("HOME", str(sandbox.home))
+    monkeypatch.setenv("KNOWLEDGE_VAULT_PATH", str(sandbox.vault))
+    return mod
+
+
+def test_heartbeat_speaks_when_the_guard_has_not_completed_in_too_long(sandbox, monkeypatch):
+    mod = _alert_env(sandbox, monkeypatch)
+    sent: list[str] = []
+    monkeypatch.setattr(mod, "_deliver_alert", lambda env, summary: (sent.append(summary), True)[1])
+    env = mod.Env()
+    env.log_dir.mkdir(parents=True, exist_ok=True)
+    stale = int(time.time()) - (48 * 3600)
+    (env.log_dir / "agent-healthcheck.state").write_text(f"{stale}\nok\n", encoding="utf-8")
+
+    assert mod._notify_stale_cli([]) == 0
+    assert sent, "48 hours without a completed guard has to be said out loud"
+    assert "agent-sync guard" in sent[0], "an alert must carry the one action to take"
+
+
+def test_heartbeat_stays_quiet_when_the_guard_completed_recently(sandbox, monkeypatch):
+    """An alarm that goes off while everything works is an alarm people mute,
+    and a muted alarm is worse than none: it looks like coverage."""
+    mod = _alert_env(sandbox, monkeypatch)
+    sent: list[str] = []
+    monkeypatch.setattr(mod, "_deliver_alert", lambda env, summary: (sent.append(summary), True)[1])
+    env = mod.Env()
+    env.log_dir.mkdir(parents=True, exist_ok=True)
+    (env.log_dir / "agent-healthcheck.state").write_text(f"{int(time.time())}\nok\n", encoding="utf-8")
+
+    assert mod._notify_stale_cli([]) == 0
+    assert not sent
+
+
+def test_failure_trigger_names_the_unit_that_died(sandbox, monkeypatch):
+    """systemd hands the failed unit's name to the template. Passing it through
+    is the whole advantage over waiting for something else to notice."""
+    mod = _alert_env(sandbox, monkeypatch)
+    sent: list[str] = []
+    monkeypatch.setattr(mod, "_deliver_alert", lambda env, summary: (sent.append(summary), True)[1])
+
+    assert mod._notify_failure_cli(["agent-identity-surface.service"]) == 0
+    assert "agent-identity-surface.service" in sent[0]
+
+
+def test_the_guard_unit_carries_its_own_failure_trigger(sandbox, monkeypatch):
+    mod = _alert_env(sandbox, monkeypatch)
+    content = mod._systemd_service_content(mod.Env())
+    assert "OnFailure=agent-alert@%n.service" in content
