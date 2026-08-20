@@ -8,6 +8,94 @@ This file tracks the **engine** (this repo). Your own data — manifests,
 instructions, skills, secrets — lives in your KnowledgeVault and is not part
 of any engine release.
 
+## [Unreleased]
+
+## [0.99.2] - 2026-08-20
+
+### Added
+
+- **`origin: engine` for skills.** The commands the engine ships existed in two
+  places at once: vendored in the user's data AND shipped in the engine, with
+  nothing keeping the two equal. On a real install seven of the eight had
+  drifted, the data copy always the older one, and the worst case was
+  `nexgen-update` itself still describing a manual `git merge <tag>` procedure
+  that a real command had replaced weeks earlier: the command for upgrading the
+  engine was the one command the engine had failed to upgrade. This origin
+  removes the second copy instead of trying to sync it. The body is read from
+  the installed engine, so an upgrade upgrades the command and no stale copy
+  remains to fall behind. It also makes a split engine/data topology the
+  supported arrangement rather than a reason to skip seeding.
+- **`origin: installer` for skills.** Some skills can only be materialized by
+  their own installer, because they publish a template their installer renders
+  differently per provider. They used to stay outside the manifest entirely,
+  which meant every machine installed them by hand and the versions drifted.
+  The manifest now pins the version and any machine whose copy does not match
+  runs the installer itself. The installer's copy is moved out of the eager
+  discovery root automatically, which was previously a comment asking a human
+  to remember.
+- **An alert trigger that outlives the thing it watches.** The single alert
+  surface lives inside `agent_sync.py`, which means that when the guard does not
+  start, the thing that would have told you does not start either. On a live
+  machine a failed dependency cancelled the guard every thirty minutes for six
+  days and nobody was told. Two triggers now wake the same transport: one from
+  `OnFailure=` naming the unit systemd just failed, and one on an independent
+  hourly beat that measures elapsed time since the last completed run. The
+  second is not redundancy: a job cancelled by a failed dependency never enters
+  a failed state, so `OnFailure=` alone would not have fired in that outage.
+- **A watch on third-party pins.** Nothing was checking them: a skill fetched at
+  a commit or a package fixed at a version simply stayed there until somebody
+  tripped over it. The beat now looks upstream once a day for every pin the
+  layer declares and writes a list. It checks and stops: applying an upstream
+  change alters behaviour nobody chose. It never notifies, and the doctor
+  surfaces it as one line. Being offline writes nothing and reports nothing.
+- **Automatic uptake of released upgrades.** Updating itself is the job, not
+  news, so the beat takes a released upgrade and says nothing about it, speaking
+  only when it cannot. `AGENT_AUTO_UPGRADE` sets the ceiling and defaults to
+  `patch`, because a machine that upgrades its own minor versions overnight is a
+  machine whose behaviour changed without anyone choosing it.
+- **The doctor names engine-owned skills a release stopped shipping.** A release
+  that renames or removes a command leaves any manifest still listing the old
+  name pointing at nothing, and the command disappears from every CLI in
+  silence. The user did not choose that, so it fails rather than warns. A rename
+  that ships a deprecated stub resolves normally and stays quiet.
+- **`tier: core` for connectors.** The five the engine treats as fundamental are
+  marked; everything else is optional, which is also what an unmarked entry
+  means, so nothing promotes itself into the always-on set.
+
+### Changed
+
+- **Two commands are renamed, with the old names kept as deprecated stubs.**
+  `vault-doctor` becomes `nexgen-doctor` and `vault-council` becomes
+  `nexgen-council`: both act on the engine and its tooling, not on the Vault,
+  and the `vault-` prefix said the opposite. Memory commands keep their names,
+  because the memory is the Vault. Existing manifests and muscle memory keep
+  working through the stubs, which are `manual` so an alias never takes a seat
+  in the eager showcase next to the command it defers to.
+- **The default report shows what needs attention, not what already works.** It
+  used to list every passing check, with the one that mattered somewhere inside;
+  on a live machine that was 52 lines where 12 were useful. Counts still prove
+  the run completed, and `--verbose` (`-Verbose` on Windows) brings back the
+  full list. `--summary` is untouched.
+- **An optional connector that is not enabled is no longer a warning.** It was
+  reporting a decision the user had deliberately made, on every run, which is
+  how people learn to ignore warnings. It is listed with the variable that
+  enables it, and a core connector missing stays a warning.
+- **The skills manifest tolerates an origin this engine does not know.** Data
+  reaches every machine in minutes; the code that understands it arrives with a
+  release, so a manifest will sometimes name something an older engine has never
+  heard of. That used to reject the whole document and stop the sync of every
+  skill on every machine over one entry. It now skips that entry loudly.
+
+### Fixed
+
+- **The Windows twin of the doctor was missing two checks** that exist on Linux,
+  so a release that renamed a command went back to being silent there, in the
+  very check that exists to prevent that. A parity test now fails if either twin
+  loses one.
+- **The seeder refused to seed in a split topology** because it resolved every
+  skill body under the data root. It resolves each entry under the root its
+  origin names.
+
 ## [0.99.1] - 2026-08-17
 
 ### Fixed
