@@ -1189,10 +1189,15 @@ def test_antigravity_symlink_comment_reflects_current_removal_behavior():
 # connector check (incident 2026-07-30: N8N_MCP_TOKEN silently dropped
 # n8n-mcp from all 4 CLIs and the doctor never named the variable).
 
-def _add_require_env_server(sandbox, server_name: str, var_name: str, targets=("claude",)) -> None:
+def _add_require_env_server(sandbox, server_name: str, var_name: str, targets=("claude",),
+                            tier: str = "core") -> None:
     """Appends one more server entry (require_env-gated) to the sandbox's
     already-copied synthetic fixture manifest, instead of replacing it, so
-    the existing fake-* entries other checks may rely on stay intact."""
+    the existing fake-* entries other checks may rely on stay intact.
+
+    Defaults to `tier: core` because these cases are about a connector the
+    install is expected to have and does not. An optional one left off is a
+    choice and is deliberately quiet, which is a different test."""
     manifest_path = sandbox.mcp_dir / "manifest.yaml"
     existing = manifest_path.read_text(encoding="utf-8")
     addition = (
@@ -1200,6 +1205,7 @@ def _add_require_env_server(sandbox, server_name: str, var_name: str, targets=("
         "    transport: stdio\n"
         "    command: fake-cmd\n"
         f"    require_env: {var_name}\n"
+        f"    tier: {tier}\n"
         f"    targets: [{', '.join(targets)}]\n"
     )
     manifest_path.write_text(existing + addition, encoding="utf-8")
@@ -1386,3 +1392,62 @@ def test_verbose_still_lists_every_check_that_passed(sandbox):
     result = _run_doctor(sandbox, "--verbose")
 
     assert "✓" in result.stdout, result.stdout
+
+
+def _write_mcp_manifest(sandbox, body: str) -> None:
+    path = sandbox.ul / "mcp" / "manifest.yaml"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(body, encoding="utf-8")
+
+
+_OPTIONAL_ONLY = """schema_version: 1
+retired_servers: []
+servers:
+  spare-parts:
+    transport: stdio
+    command: node
+    args: ["spare.js"]
+    require_env: SPARE_PARTS_OPT_IN
+    targets: [claude]
+"""
+
+_CORE_ONLY = """schema_version: 1
+retired_servers: []
+servers:
+  load-bearing:
+    transport: stdio
+    command: node
+    args: ["load.js"]
+    require_env: LOAD_BEARING_URL
+    tier: core
+    targets: [claude]
+"""
+
+
+def test_an_optional_connector_left_off_is_listed_not_warned_about(sandbox, monkeypatch):
+    """Choosing not to enable an optional connector is a decision, and warning
+    about a decision on every run is how people learn to ignore warnings. It
+    still has to stay discoverable: you know it exists, you turn it on when you
+    want it."""
+    _write_mcp_manifest(sandbox, _OPTIONAL_ONLY)
+    monkeypatch.delenv("SPARE_PARTS_OPT_IN", raising=False)
+
+    quiet = _run_doctor(sandbox, verbose=False)
+    listed = _run_doctor(sandbox)
+
+    assert "spare-parts" not in quiet.stdout, quiet.stdout
+    assert "spare-parts" in listed.stdout, listed.stdout
+
+
+def test_a_core_connector_is_never_given_the_optional_treatment(sandbox, monkeypatch):
+    """Whether a missing core connector warrants a warning depends on the
+    install mode, and that gate predates this change. What must never happen is
+    a core connector being filed away as an available extra: that is the path
+    that stays quiet, and something the engine calls fundamental does not
+    belong on it."""
+    _write_mcp_manifest(sandbox, _CORE_ONLY)
+    monkeypatch.delenv("LOAD_BEARING_URL", raising=False)
+
+    result = _run_doctor(sandbox)
+
+    assert "optional connector 'load-bearing'" not in result.stdout, result.stdout

@@ -699,13 +699,20 @@ except ConfigValidationError:
 for name, spec in servers.items():
     req = spec.get("require_env")
     if req and not os.environ.get(req, "").strip():
-        print(f"{name} {req}")
+        print(f"{name} {req} {spec.get('tier') or 'optional'}")
 PY
 )"
-  while IFS=' ' read -r srv var; do
+  while IFS=' ' read -r srv var tier; do
     [ -n "$srv" ] || continue
-    if connector_expected "$var"; then
-      warn "$var missing: manifest server '$srv' is not mounted on any CLI (require_env not satisfied)"
+    # An optional connector that is not enabled is a CHOICE, not a fault, and
+    # warning about a choice on every run is how people learn to ignore
+    # warnings. It is listed instead, so it stays discoverable: you know it
+    # exists and you turn it on when you actually want it. A CORE connector
+    # missing is different -- nobody chose that -- and stays a warning.
+    if [ "${tier:-optional}" != "core" ]; then
+      ok "optional connector '$srv' available, not mounted (enable with $var)"
+    elif connector_expected "$var"; then
+      warn "$var missing: core connector '$srv' is not mounted on any CLI (require_env not satisfied)"
     fi
   done <<EOF
 $skipped_servers

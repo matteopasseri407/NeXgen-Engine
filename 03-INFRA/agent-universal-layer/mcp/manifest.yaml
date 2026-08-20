@@ -20,6 +20,12 @@
 #    is not satisfied.
 # ============================================================================
 
+# tier: `core` are the connectors the engine treats as fundamental and ships
+# mounted. Everything else is `optional` (the default when the key is absent):
+# it is known to exist and only mounted when someone asks for it, the same
+# lazy contract the skills follow. An optional connector that is not enabled
+# is a choice, so nothing reports it as a problem.
+
 schema_version: 1
 
 # Add an exact old server name here only after a deliberate retirement. Live
@@ -36,6 +42,7 @@ servers:
 
   playwright:
     transport: stdio
+    tier: core
     command: node
     args: ["${AGENT_ENGINE_ROOT}/agent-universal-layer/mcp/playwright-human-safe.mjs", "--cdp-endpoint", "http://localhost:9222"]
     targets: [claude, codex, antigravity, opencode]
@@ -49,6 +56,7 @@ servers:
 
   firecrawl:
     transport: stdio
+    tier: core
     command: npx
     args: ["-y", "firecrawl-mcp@3.24.0"]
     env:
@@ -58,6 +66,7 @@ servers:
 
   n8n-mcp:
     transport: http
+    tier: core
     url: "http://127.0.0.1:${N8N_TUNNEL_PORT:-5678}/mcp-server/http"
     auth: { type: bearer, env: N8N_MCP_TOKEN }
     require_env: N8N_MCP_TOKEN
@@ -66,6 +75,7 @@ servers:
 
   vault-library:
     transport: http
+    tier: core
     url: "${VAULT_LIBRARY_URL}"
     url_env: VAULT_LIBRARY_URL                      # OpenCode parameterizes the url via env
     auth: { type: bearer, env: VAULT_LIBRARY_TOKEN }
@@ -75,6 +85,7 @@ servers:
 
   vault-ocr:
     transport: stdio
+    tier: core
     command: python3
     args: ["${AGENT_ENGINE_ROOT}/deploy/ocr/mcp/vault_ocr_mcp.py"]
     env:
