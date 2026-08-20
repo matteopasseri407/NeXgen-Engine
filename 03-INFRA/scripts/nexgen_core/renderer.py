@@ -5,7 +5,9 @@ Ordini e regole del contratto:
 1. Manifest canonico (mcp/manifest.yaml) come single source of truth.
 2. Risoluzione comandi stdio (command + args espansi) e server HTTP con token env-ref.
 3. Supporto nativo per le 4 CLI: Claude, Codex (TOML), OpenCode, Antigravity (bridge).
-4. Preservazione additiva dei server live non presenti nel manifest.
+4. Preservazione additiva dei server live non presenti nel manifest, tranne
+   quelli elencati in `retired_servers`: quello è il meccanismo di rimozione
+   esplicito e cross-CLI, e vince sempre sulla preservazione additiva.
 5. Scrittura atomica con backup di sicurezza e gestione errori rigorosa.
 """
 from __future__ import annotations
@@ -172,6 +174,8 @@ class McpRenderer:
                 raise ValueError(f"Impossibile analizzare {cfg_file}: JSON non valido ({exc})")
 
         mcp_servers = existing.get("mcpServers", {})
+        for retired in self.retired_server_names():
+            mcp_servers.pop(retired, None)
         for name, srv in servers.items():
             if srv.get("transport") == "http" or srv.get("url"):
                 auth_env = srv.get("auth", {}).get("env") if isinstance(srv.get("auth"), dict) else None
@@ -206,6 +210,8 @@ class McpRenderer:
                 raise ValueError(f"Impossibile analizzare {cfg_file}: JSON non valido ({exc})")
 
         mcp_servers = existing.get("mcpServers", {})
+        for retired in self.retired_server_names():
+            mcp_servers.pop(retired, None)
         bridge_script = self.engine_root / "agent-universal-layer" / "mcp" / "mcp-http-bridge.mjs"
 
         for name, srv in servers.items():
@@ -243,6 +249,8 @@ class McpRenderer:
                 raise ValueError(f"Impossibile analizzare {cfg_file}: JSON/JSONC non valido ({exc})")
 
         mcp_servers = existing.get("mcp", {})
+        for retired in self.retired_server_names():
+            mcp_servers.pop(retired, None)
         for name, srv in servers.items():
             if srv.get("transport") == "http" or srv.get("url"):
                 url_env = srv.get("url_env")

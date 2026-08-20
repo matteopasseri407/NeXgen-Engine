@@ -6,6 +6,18 @@ or commits user-authored data, never checks out a detached HEAD, and never
 rolls back automatically. In a split install it may commit the mechanical
 engine pin, and only that exact file, through ``vault-push``. A dirty engine or
 data repository stops the update before the engine ref moves.
+
+``--unattended`` is the one behaviour change from that interactive contract:
+it skips the confirmation prompt the way ``--yes`` does, but caps how large a
+jump it will take without a human reading the release notes first. The
+ceiling defaults to the smallest possible jump -- a patch release, same major
+and minor -- because a machine that changes its own behaviour overnight
+changed it without anyone choosing that. A minor or major release is refused
+with the interactive command to run by hand; the interactive path itself is
+unchanged and still has no ceiling. Truth in advertising: the bad-signature
+check below is real rejection (a provably invalid signature stops the update),
+but an *unverifiable* signature only prints a warning and continues -- that is
+not enforcement, and nothing here or in `--help` claims otherwise.
 """
 from __future__ import annotations
 
@@ -16,7 +28,7 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
-from typing import Callable, Mapping, Sequence
+from typing import Any, Callable, Mapping, Sequence
 
 SCRIPTS_DIR = Path(__file__).resolve().parents[1]
 if str(SCRIPTS_DIR) not in sys.path:
@@ -277,6 +289,26 @@ def _doctor(which: Callable[[str], str | None], *, data_repo: Path) -> tuple[int
     return (int(match.group(1)) if match else None), result.returncode
 
 
+def _assert_within_unattended_ceiling(current: str, target: str) -> None:
+    """Refuses an unattended jump larger than a patch release.
+
+    The ceiling defaults to the smallest possible jump: same major, same
+    minor. A minor or major release changes behaviour a human has not read
+    about yet, so unattended mode declines it. The message names the
+    recovery -- running the interactive command by hand -- not the check
+    that failed, per the self-upgrader's contract.
+    """
+    current_major, current_minor, _ = _version_tuple(current)
+    target_major, target_minor, _ = _version_tuple(target)
+    if (target_major, target_minor) != (current_major, current_minor):
+        raise UpdateError(
+            f"unattended update refuses the jump from v{current} to {target} "
+            "(minor or major version change); recover by running "
+            f"'nexgen-update --target {target.removeprefix('v')}' interactively "
+            "to review the release notes and confirm it by hand"
+        )
+
+
 def _confirm(input_fn: Callable[[str], str], *, current: str, target: str) -> bool:
     try:
         answer = input_fn(f"Upgrade NeXgen Engine from v{current} to {target}? [y/N] ")
@@ -296,6 +328,15 @@ def build_parser() -> argparse.ArgumentParser:
         help="check and show release notes without moving the installed branch",
     )
     parser.add_argument("--yes", action="store_true", help="confirm the displayed update plan non-interactively")
+    parser.add_argument(
+        "--unattended",
+        action="store_true",
+        help=(
+            "apply a released update without a confirmation prompt, but only a "
+            "patch-level jump (same major.minor); refuses a minor or major "
+            "release instead of asking"
+        ),
+    )
     parser.add_argument("--target", metavar="vX.Y.Z", help="install this released tag instead of the newest one")
     return parser
 
@@ -331,6 +372,9 @@ def main(
         if _version_tuple(target_version) == _version_tuple(current):
             print("NeXgen Engine is already at the requested released version.")
             return 0
+
+        if args.unattended:
+            _assert_within_unattended_ceiling(current, target)
 
         print("\nRelease notes:\n")
         print(_changelog_between(engine_repo, current, target))
@@ -388,7 +432,7 @@ def main(
         else:
             print(f"  {step}. visual MINIMAL verification")
 
-        if not args.yes and not _confirm(input_fn, current=current, target=target):
+        if not (args.yes or args.unattended) and not _confirm(input_fn, current=current, target=target):
             print("Update cancelled. No installed files or branch were changed.")
             return 0
 
@@ -500,8 +544,8 @@ class EngineUpdater:
     """Classe di supporto per invocazione programmatico dell'updater."""
 
     @staticmethod
-    def main(argv: Sequence[str] | None = None) -> int:
-        return main(argv)
+    def main(argv: Sequence[str] | None = None, **kwargs: Any) -> int:
+        return main(argv, **kwargs)
 
     @staticmethod
     def check_updates() -> tuple[bool, str, str]:
