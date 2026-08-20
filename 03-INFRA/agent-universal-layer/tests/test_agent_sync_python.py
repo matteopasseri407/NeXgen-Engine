@@ -2783,3 +2783,52 @@ def test_the_scan_does_not_hit_the_network_on_every_heartbeat(sandbox, monkeypat
     mod._scan_third_party_upgrades(env)
 
     assert len(hits) == first, "a fresh report must not be rebuilt"
+
+
+# --- fixes from the independent review, 2026-08-20 ---------------------------
+
+def test_liveness_is_not_frozen_by_a_problem_that_is_already_known(sandbox, monkeypatch):
+    """The debounce state and liveness answer different questions. Sharing one
+    file froze the timestamp while a known problem was being suppressed, and the
+    heartbeat then announced a sync that had never stopped running: a false
+    alarm, hourly, on the single alert surface."""
+    mod = _alert_env(sandbox, monkeypatch)
+    env = mod.Env()
+    env.log_dir.mkdir(parents=True, exist_ok=True)
+    old = int(time.time()) - (48 * 3600)
+    (env.log_dir / "agent-healthcheck.state").write_text(f"{old}\nsomeknownproblem\n", encoding="utf-8")
+    (env.log_dir / "agent-guard-liveness").write_text(f"{int(time.time())}\n", encoding="utf-8")
+
+    sent: list[str] = []
+    monkeypatch.setattr(mod, "_deliver_alert", lambda e, s: (sent.append(s), True)[1])
+    mod._notify_stale_cli([])
+
+    assert not sent, "the guard is completing; a known problem is a different message"
+
+
+def test_the_heartbeat_unit_carries_the_path_the_updater_needs(sandbox, monkeypatch):
+    """Inside the systemd user manager PATH has no ~/.local/bin, so the updater
+    could not see agent-sync, agent-doctor or vault-push, decided it was a
+    MINIMAL install and skipped the post-merge apply, the pin and the
+    before/after doctor -- bypassing the verification it exists to do."""
+    mod = _alert_env(sandbox, monkeypatch)
+    content = mod._systemd_heartbeat_content(mod.Env())
+
+    assert "Environment=\"PATH=" in content
+    assert str(sandbox.home / ".local" / "bin") in content
+
+
+def test_the_updater_is_found_by_name_not_by_an_extensionless_path(sandbox, monkeypatch):
+    """On Windows the installed launcher is nexgen-update.cmd, so testing for an
+    extensionless file made the whole feature silently absent on that platform."""
+    mod = _alert_env(sandbox, monkeypatch)
+    calls: list[list[str]] = []
+    monkeypatch.setattr(mod, "resolve_cmd", lambda name: "C:\\bin\\nexgen-update.cmd")
+    monkeypatch.setattr(mod.Path, "exists", lambda self: True)
+    monkeypatch.setattr(mod, "_run_external",
+                        lambda cmd, **k: calls.append(list(cmd)) or SimpleNamespace(
+                            returncode=0, stdout="Current: v1.0.0\nLatest released target: v1.0.0\n", stderr=""))
+
+    mod._auto_upgrade(mod.Env())
+
+    assert calls and calls[0][0] == "C:\\bin\\nexgen-update.cmd"

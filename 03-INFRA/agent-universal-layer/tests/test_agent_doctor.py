@@ -1451,3 +1451,16 @@ def test_a_core_connector_is_never_given_the_optional_treatment(sandbox, monkeyp
     result = _run_doctor(sandbox)
 
     assert "optional connector 'load-bearing'" not in result.stdout, result.stdout
+
+
+def test_the_new_signals_exist_in_both_twins():
+    """An independent review found both of these present in bash and missing in
+    PowerShell: a release that renamed a command went back to being silent on
+    Windows, in the very check that exists to prevent that. Source-level parity
+    is the only thing that catches an omission from here."""
+    repo = Path(__file__).resolve().parents[3]
+    bash = (repo / "03-INFRA/scripts/agent-doctor.sh").read_text(encoding="utf-8")
+    ps1 = (repo / "03-INFRA/scripts/agent-doctor.ps1").read_text(encoding="utf-8")
+    for marker in ("no longer ships", "optional connector", "third-party pin"):
+        assert marker in bash, f"bash lost: {marker}"
+        assert marker in ps1, f"the Windows twin never got: {marker}"

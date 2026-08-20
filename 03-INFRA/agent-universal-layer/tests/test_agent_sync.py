@@ -162,7 +162,11 @@ def test_apply_is_idempotent(sandbox):
     # two fresh directories showing up as additions. A cache is not managed
     # state and is not part of the idempotency contract: what must not drift is
     # the config and the views agent-sync generates.
-    exclude = frozenset({"agent-sync.log", "firecrawl-search-health.json", "nexgen", ".cache"})
+    # agent-guard-liveness is a timestamp whose whole job is to change on every
+    # completed run: that is how the heartbeat knows the guard is still
+    # finishing. Unchanged would be the bug.
+    exclude = frozenset({"agent-sync.log", "firecrawl-search-health.json", "nexgen",
+                         ".cache", "agent-guard-liveness"})
     snap_before = sb.tree_snapshot(exclude_names=exclude)
 
     proc1 = run_agent_sync(sb, "apply")

@@ -757,15 +757,53 @@ except ConfigValidationError:
 for name, spec in servers.items():
     req = spec.get("require_env")
     if req and not os.environ.get(req, "").strip():
-        print(f"{name} {req}")
+        print(f"{name} {req} {spec.get('tier') or 'optional'}")
 '@
   $skippedServers = @(& $NexgenPythonCommand @NexgenPythonPrefix -c $skipCode $PSScriptRoot $ManifestYaml 2>$null | Where-Object { $_ })
   foreach ($line in $skippedServers) {
     $parts = $line -split '\s+'
     $srv = $parts[0]; $var = $parts[1]
-    if (Test-ConnectorExpected $var) {
-      warn "$var missing: manifest server '$srv' is not mounted on any CLI (require_env not satisfied)"
+    $tier = if ($parts.Count -ge 3) { $parts[2] } else { 'optional' }
+    # Twin of the bash rule: an optional connector left off is a CHOICE, and
+    # warning about a choice on every run is how people learn to ignore
+    # warnings. A core one missing is different, nobody chose that.
+    if ($tier -ne 'core') {
+      ok "optional connector '$srv' available, not mounted (enable with $var)"
+    } elseif (Test-ConnectorExpected $var) {
+      warn "$var missing: core connector '$srv' is not mounted on any CLI (require_env not satisfied)"
     }
+  }
+}
+
+# Reconciliation after an engine upgrade, twin of agent-doctor.sh. `origin:
+# engine` entries name a command the ENGINE ships, so a release that renames or
+# drops one leaves the manifest pointing at a body that no longer exists, and
+# the command stops existing on every CLI without a word. The user did not
+# choose that, the release changed under them, so it fails rather than warns.
+$SkillsManifest = Join-Path $Layer "skills\skills.manifest.yaml"
+$EngineSkills = Join-Path $EngineInfra "agent-universal-layer\skills"
+if ($NexgenPython -and (Test-Path -LiteralPath $SkillsManifest)) {
+  $danglingCode = @'
+import sys, pathlib
+try:
+    import yaml
+except ImportError:
+    sys.exit(0)
+man, root = pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2])
+try:
+    data = yaml.safe_load(man.read_text(encoding="utf-8")) or {}
+except Exception:
+    sys.exit(0)
+for name, spec in ((data.get("skills") or {}) if isinstance(data, dict) else {}).items():
+    if isinstance(spec, dict) and spec.get("origin") == "engine":
+        if not (root / str(name) / "SKILL.md").is_file():
+            print(name)
+'@
+  $dangling = @(& $NexgenPythonCommand @NexgenPythonPrefix -c $danglingCode $SkillsManifest $EngineSkills 2>$null | Where-Object { $_ })
+  if ($dangling.Count -gt 0) {
+    fail "this engine no longer ships: $($dangling -join ', ') - the manifest still lists them, so those commands are gone from every CLI. Check the CHANGELOG for a rename, then update or remove the entries"
+  } else {
+    ok "every engine-owned skill in the manifest resolves in this engine"
   }
 }
 

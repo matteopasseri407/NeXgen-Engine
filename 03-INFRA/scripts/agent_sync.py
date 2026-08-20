@@ -1706,13 +1706,29 @@ Type=oneshot
 ExecStart=%h/.local/bin/agent-sync notify-failure %i
 """
 
-_SYSTEMD_HEARTBEAT = """[Unit]
-Description=Say something when the agent sync has not completed in far too long
-
-[Service]
-Type=oneshot
-ExecStart=%h/.local/bin/agent-sync heartbeat
-"""
+def _systemd_heartbeat_content(env: "Env") -> str:
+    """Same PATH as the guard unit, and for a concrete reason: the heartbeat
+    runs the updater, and inside the systemd user manager PATH does not contain
+    ~/.local/bin. Without it the updater cannot see agent-sync, agent-doctor or
+    vault-push, decides it is a MINIMAL install with no provisioner, and skips
+    the post-merge apply, the pin and the before/after doctor -- silently
+    bypassing the very verification it exists to perform."""
+    scheduler_path = os.pathsep.join([
+        str(env.home / ".local" / "bin"),
+        str(env.home / ".opencode" / "bin"),
+        os.environ.get("PATH", os.defpath),
+    ])
+    lines = ["[Unit]",
+             "Description=Liveness beat, third-party pin scan and released-upgrade uptake",
+             "", "[Service]", "Type=oneshot"]
+    default_engine_root = (env.vault / "03-INFRA").resolve()
+    if env.engine_root.resolve() != default_engine_root:
+        lines.append(_systemd_env_line("AGENT_ENGINE_ROOT", str(env.engine_root)))
+    if env.vault_data.resolve() != env.vault.resolve():
+        lines.append(_systemd_env_line("AGENT_VAULT_DATA", str(env.vault_data)))
+    lines.append(_systemd_env_line("PATH", scheduler_path))
+    lines.append("ExecStart=%h/.local/bin/agent-sync heartbeat")
+    return "\n".join(lines) + "\n"
 
 _SYSTEMD_HEARTBEAT_TIMER = """[Unit]
 Description=Hourly check that the agent sync is still completing
@@ -1763,7 +1779,7 @@ def _install_systemd_units(env: Env) -> bool:
         (unit_dir / "agent-sync.service", _systemd_service_content(env), "agent-sync.service set to pull mode"),
         (unit_dir / "agent-sync.timer", _SYSTEMD_TIMER, "agent-sync.timer updated"),
         (unit_dir / "agent-alert@.service", _SYSTEMD_ALERT_TEMPLATE, "agent-alert@.service installed"),
-        (unit_dir / "agent-heartbeat.service", _SYSTEMD_HEARTBEAT, "agent-heartbeat.service installed"),
+        (unit_dir / "agent-heartbeat.service", _systemd_heartbeat_content(env), "agent-heartbeat.service installed"),
         (unit_dir / "agent-heartbeat.timer", _SYSTEMD_HEARTBEAT_TIMER, "agent-heartbeat.timer installed"),
     ):
         if path.exists():
@@ -3171,6 +3187,13 @@ def _send_healthcheck(env: Env) -> None:
         if len(lines) >= 2:
             last_sig = lines[1]
 
+    # Liveness is written on EVERY completed healthcheck, separately from the
+    # debounce state. They answer different questions: the state file says
+    # "have we already reported this exact problem", liveness says "did the
+    # guard get to the end at all". Reusing one for both froze the timestamp
+    # whenever a known problem was being debounced, and the heartbeat then
+    # announced a sync that had never stopped running.
+    _atomic_write_text(env.log_dir / "agent-guard-liveness", f"{now}\n")
     if not problem:
         _atomic_write_text(state_file, f"{now}\nok\n")
         return
@@ -3211,10 +3234,13 @@ def _auto_upgrade(env: Env) -> None:
     maintenance is how people learn to dismiss notifications. It speaks only
     when it CANNOT do the work.
 
-    The three brakes are the updater's own and are not reimplemented here: it
-    verifies the release commit signature, refuses to run against a dirty
-    engine or data repository, and only ever offers a released tag -- which
-    exists only after the full CI matrix went green on the merge. This adds one
+    The brakes are the updater's own and are not reimplemented here: it refuses
+    to run against a dirty engine or data repository, and only ever offers a
+    released tag -- which exists only after the full CI matrix went green on
+    the merge. Be precise about the signature one: the updater REFUSES a bad
+    signature, but on an unverifiable one (no trusted key imported, the normal
+    state for an end user) it warns and continues. So signing is enforced by
+    the release process, not by this client. This adds one
     more: how far a jump may be taken unattended, `patch` by default, because a
     machine that upgrades its own minor versions overnight is a machine whose
     behaviour changed without anyone choosing it.
@@ -3226,10 +3252,14 @@ def _auto_upgrade(env: Env) -> None:
     level = (os.environ.get("AGENT_AUTO_UPGRADE") or AUTO_UPGRADE_DEFAULT).strip().lower()
     if level in {"off", "no", "0", "false"}:
         return
-    updater = env.home / ".local" / "bin" / "nexgen-update"
-    if not updater.exists():
+    # resolve_cmd, not a bare path: on Windows the launcher installed is
+    # nexgen-update.cmd, so testing for an extensionless file meant the check
+    # was always False there and the whole feature silently did not exist.
+    updater = resolve_cmd("nexgen-update") or str(env.home / ".local" / "bin" / "nexgen-update")
+    if not Path(updater).exists():
+        env.log("auto-upgrade: nexgen-update is not installed on this machine")
         return
-    check = _run_external([str(updater), "--check"], timeout=180, capture_output=True, text=True)
+    check = _run_external([updater, "--check"], timeout=180, capture_output=True, text=True)
     if check.returncode != 0:
         _deliver_alert(env, "FAIL could not check for an engine update. "
                             "Run: nexgen-update --check")
@@ -3240,7 +3270,14 @@ def _auto_upgrade(env: Env) -> None:
             current = line.split(":", 1)[1].strip()
         elif line.startswith("Latest released target:"):
             target = line.split(":", 1)[1].strip()
-    if not current or not target or current.lstrip("v") == target.lstrip("v"):
+    if not current or not target:
+        # The updater answered but not in a shape we understand, which means we
+        # cannot tell whether an upgrade is due. Not knowing is exactly the case
+        # worth saying out loud.
+        _deliver_alert(env, "FAIL could not read the engine update check output. "
+                            "Run: nexgen-update --check")
+        return
+    if current.lstrip("v") == target.lstrip("v"):
         return
     step = _upgrade_step(current, target)
     allowed = {"patch": {"patch"}, "minor": {"patch", "minor"},
@@ -3249,7 +3286,7 @@ def _auto_upgrade(env: Env) -> None:
         env.log(f"auto-upgrade: {current} -> {target} is a {step} step, above AGENT_AUTO_UPGRADE={level}")
         return
     env.log(f"auto-upgrade: taking {current} -> {target} ({step})")
-    run = _run_external([str(updater), "--yes"], timeout=1800, capture_output=True, text=True)
+    run = _run_external([updater, "--yes"], timeout=1800, capture_output=True, text=True)
     if run.returncode == 0:
         env.log(f"auto-upgrade: now on {target}")
         return
@@ -3379,7 +3416,10 @@ def _heartbeat_cli(argv: list[str]) -> int:
     """The independent maintenance beat: check the sync is still alive, then
     take any released upgrade. Both silent unless they cannot be done."""
     del argv
-    _notify_stale_cli([])
+    try:
+        _notify_stale_cli([])
+    except Exception as exc:  # noqa: BLE001 - nothing watches the beat itself
+        Env().log(f"notify-stale: aborted ({exc})")
     try:
         _scan_third_party_upgrades(Env())
     except Exception as exc:  # noqa: BLE001 - the beat must survive any scan bug
@@ -3416,12 +3456,17 @@ STALE_GUARD_SECONDS_DEFAULT = 6 * 3600
 
 def _last_guard_success(env: Env) -> int:
     """Epoch of the last completed healthcheck, i.e. of the last guard run that
-    got all the way to the end. 0 when it has never run on this machine."""
-    state_file = env.log_dir / "agent-healthcheck.state"
-    if not state_file.is_file():
-        return 0
-    head = state_file.read_text(encoding="utf-8").splitlines()
-    return int(head[0]) if head and head[0].isdigit() else 0
+    got all the way to the end. 0 when it has never run on this machine.
+
+    Reads the dedicated liveness marker, falling back to the debounce state file
+    for a machine whose engine predates the marker."""
+    for candidate in (env.log_dir / "agent-guard-liveness",
+                      env.log_dir / "agent-healthcheck.state"):
+        if candidate.is_file():
+            head = candidate.read_text(encoding="utf-8").splitlines()
+            if head and head[0].isdigit():
+                return int(head[0])
+    return 0
 
 
 def _notify_failure_cli(argv: list[str]) -> int:
@@ -3432,6 +3477,13 @@ def _notify_failure_cli(argv: list[str]) -> int:
     value of this path over waiting for the next guard to notice."""
     unit = argv[0] if argv else "a guardian unit"
     env = Env()
+    # Alert credentials live in environment.d, which only the guard path used
+    # to load. Without this the trigger reaches _deliver_alert and finds no
+    # transport: an alarm that cannot speak is not an alarm.
+    try:
+        _load_env_conf(env)
+    except OSError as exc:
+        env.log(f"notify-failure: could not load alert credentials ({exc})")
     summary = (f"FAIL {unit} could not run. The layer stops syncing until it does. "
                f"Check it with: systemctl --user status {unit}")
     if not _deliver_alert(env, summary):
@@ -3451,6 +3503,10 @@ def _notify_stale_cli(argv: list[str]) -> int:
     without needing to know what broke."""
     del argv
     env = Env()
+    try:
+        _load_env_conf(env)
+    except OSError as exc:
+        env.log(f"notify-stale: could not load alert credentials ({exc})")
     try:
         limit = int(os.environ.get("AGENT_STALE_GUARD_SECONDS") or STALE_GUARD_SECONDS_DEFAULT)
     except ValueError:
