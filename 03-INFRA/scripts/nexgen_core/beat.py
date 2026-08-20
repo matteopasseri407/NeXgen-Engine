@@ -7,13 +7,12 @@ Compiti del battito (orario, indipendente dal Guard):
 """
 from __future__ import annotations
 
-import json
-import os
 import time
 from pathlib import Path
 from typing import Any
 
 from nexgen_core.megaphone import Megaphone
+from nexgen_core.paths import resolve_engine_root, resolve_state_dir, resolve_vault_data
 
 LIVENESS_FILE_NAME = "agent-guard-liveness"
 MAX_LIVENESS_AGE_HOURS = 2.5
@@ -28,9 +27,9 @@ class Heartbeat:
         vault_data: Path | None = None,
         engine_root: Path | None = None,
     ) -> None:
-        self.state_dir = state_dir or Path(os.environ.get("AGENT_STATE_DIR", Path.home() / ".nexgen-engine"))
-        self.vault_data = vault_data or Path(os.environ.get("AGENT_VAULT_DATA") or os.environ.get("KNOWLEDGE_VAULT_PATH") or str(Path.home() / "KnowledgeVault"))
-        self.engine_root = engine_root or Path(os.environ.get("AGENT_ENGINE_ROOT") or str(Path.home() / ".nexgen-engine" / "03-INFRA"))
+        self.state_dir = resolve_state_dir(override=state_dir)
+        self.vault_data = resolve_vault_data(override=vault_data)
+        self.engine_root = resolve_engine_root(override=engine_root)
         self.megaphone = Megaphone(state_dir=self.state_dir)
         self.liveness_file = self.state_dir / LIVENESS_FILE_NAME
 

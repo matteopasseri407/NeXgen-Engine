@@ -1,7 +1,6 @@
 """Controlli di ambiente, percorsi e directory di stato."""
 from __future__ import annotations
 
-import os
 from pathlib import Path
 
 from nexgen_core.report import CheckOutcome, Severity

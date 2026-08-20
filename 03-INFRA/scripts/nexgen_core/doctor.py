@@ -9,7 +9,6 @@ Unica implementazione condivisa per Linux e Windows:
 from __future__ import annotations
 
 import argparse
-import os
 import sys
 from pathlib import Path
 
@@ -27,6 +26,7 @@ from nexgen_core.checks.skill_checks import (
     check_skills_manifest,
 )
 from nexgen_core.report import Report
+from nexgen_core.paths import resolve_state_dir, resolve_vault_data
 
 
 class Doctor:
@@ -39,9 +39,9 @@ class Doctor:
         home: Path | None = None,
     ) -> None:
         self.home = home or Path.home()
-        _v = vault_data or Path(os.environ.get("AGENT_VAULT_DATA") or os.environ.get("KNOWLEDGE_VAULT_PATH") or str(self.home / "KnowledgeVault"))
+        _v = resolve_vault_data(self.home, vault_data)
         self.vault_data = _v
-        self.state_dir = state_dir or Path(os.environ.get("AGENT_STATE_DIR", self.home / ".nexgen-engine"))
+        self.state_dir = resolve_state_dir(self.home, state_dir)
 
     def run_diagnostics(self, apply_remedies: bool = False) -> Report:
         """Esegue tutti i controlli registrati (in sola lettura di default)."""

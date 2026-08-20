@@ -12,7 +12,10 @@ Fasi del ciclo di guardia (guard / apply):
 """
 from __future__ import annotations
 
-import os
+import time
+
+import contextlib
+
 import shutil
 import sys
 from dataclasses import dataclass, field
@@ -32,6 +35,7 @@ from nexgen_core.lock import HostLock, LockTimeoutError
 from nexgen_core.renderer import McpRenderer
 from nexgen_core.scheduler import install_scheduler
 from nexgen_core.skills import SkillMaterializer
+from nexgen_core.paths import resolve_engine_root, resolve_vault_data
 
 
 class GuardMode(str, Enum):
@@ -60,9 +64,9 @@ class GuardRunner:
         home: Path | None = None,
     ) -> None:
         self.home = home or Path.home()
-        _v = vault_data or Path(os.environ.get("AGENT_VAULT_DATA") or os.environ.get("KNOWLEDGE_VAULT_PATH") or str(self.home / "KnowledgeVault"))
+        _v = resolve_vault_data(self.home, vault_data)
         self.vault_data = _v
-        self.engine_root = engine_root or Path(os.environ.get("AGENT_ENGINE_ROOT") or str(self.home / ".nexgen-engine" / "03-INFRA"))
+        self.engine_root = resolve_engine_root(self.home, engine_root)
         self.heartbeat = Heartbeat(vault_data=self.vault_data, engine_root=self.engine_root)
 
     def preflight(self) -> tuple[bool, str]:
@@ -96,6 +100,14 @@ class GuardRunner:
         )
 
         if not claude_md.is_file() or claude_md.read_text(encoding="utf-8") != content:
+            # Il file può contenere righe scritte a mano. Rigenerarlo è giusto,
+            # farlo sparire senza copia non lo è.
+            if claude_md.is_file():
+                backup = claude_md.with_name(
+                    f"{claude_md.name}.pre-instructions-{time.strftime('%Y%m%d-%H%M%S')}.bak"
+                )
+                with contextlib.suppress(OSError):
+                    shutil.copy2(claude_md, backup)
             claude_md.write_text(content, encoding="utf-8")
             actions.append(f"Aggiornato puntatore istruzioni {claude_md}")
 

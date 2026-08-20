@@ -58,7 +58,10 @@ def test_a3_a7_skills_no_traceback_and_safe_usage(tmp_path: Path, capsys):
     res_show = skills_main(["show", "non-existent-skill-xyz"])
     assert res_show == 1
     err = capsys.readouterr().err
-    assert "non trovata nella libreria" in err
+    # L'invariante è: un errore leggibile, nessun traceback, e il nome citato.
+    # Il testo esatto non è contratto e non va fissato qui.
+    assert "non-existent-skill-xyz" in err
+    assert "Traceback" not in err
 
 
 def test_a4_upgrades_command(capsys):

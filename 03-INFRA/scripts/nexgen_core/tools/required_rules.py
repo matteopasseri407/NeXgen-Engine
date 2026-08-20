@@ -16,8 +16,10 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-HERE = Path(__file__).resolve().parent
-DEFAULT_RULES = HERE.parent / "agent-universal-layer" / "instructions" / "required-rules.txt"
+# Il file vive in nexgen_core/tools/, quindi la radice `03-INFRA` sta tre
+# livelli sopra. Prima di questo il default puntava a una cartella inesistente.
+ENGINE_ROOT = Path(__file__).resolve().parents[3]
+DEFAULT_RULES = ENGINE_ROOT / "agent-universal-layer" / "instructions" / "required-rules.txt"
 
 
 def load_signatures(path: Path) -> list[str]:

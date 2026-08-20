@@ -26,6 +26,7 @@ if str(SCRIPTS_DIR) not in sys.path:
 
 from nexgen_core.config import expand_placeholders, load_mcp_manifest
 from nexgen_core.jsonc import parse_jsonc, set_jsonc_top_level_value
+from nexgen_core.paths import resolve_engine_root, resolve_vault_data
 
 IS_WINDOWS = platform.system() == "Windows"
 MCP_REMOTE_PACKAGE = "mcp-remote@0.1.38"
@@ -41,9 +42,9 @@ class McpRenderer:
         home: Path | None = None,
     ) -> None:
         self.home = home or Path.home()
-        _v = vault_data or Path(os.environ.get("AGENT_VAULT_DATA") or os.environ.get("KNOWLEDGE_VAULT_PATH") or str(self.home / "KnowledgeVault"))
+        _v = resolve_vault_data(self.home, vault_data)
         self.vault_data = _v
-        self.engine_root = engine_root or Path(os.environ.get("AGENT_ENGINE_ROOT") or str(self.home / ".nexgen-engine" / "03-INFRA"))
+        self.engine_root = resolve_engine_root(self.home, engine_root)
 
         self.manifest_path = self.vault_data / "03-INFRA" / "agent-universal-layer" / "mcp" / "manifest.yaml"
         self.path_placeholders = {

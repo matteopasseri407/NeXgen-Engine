@@ -24,13 +24,14 @@ from nexgen_core.git_ops import (
     resolve_remotes,
 )
 from nexgen_core.lock import HostLock
+from nexgen_core.paths import resolve_vault_data
 
 
 class Publisher:
     """Gestore della pubblicazione per vault-push."""
 
     def __init__(self, vault_data: Path | None = None) -> None:
-        _v = vault_data or Path(os.environ.get("AGENT_VAULT_DATA") or os.environ.get("KNOWLEDGE_VAULT_PATH") or str(Path.home() / "KnowledgeVault"))
+        _v = resolve_vault_data(override=vault_data)
         self.vault_data = _v
 
     def publish(
@@ -42,7 +43,13 @@ class Publisher:
         """Esegue il flusso completo di pubblicazione sotto lock."""
         with HostLock(timeout=timeout, command_name="vault-push"):
             auth_remote, mirrors = resolve_remotes(self.vault_data)
-            branch = get_current_branch(self.vault_data) or "main"
+            # Stessa precedenza dei controlli: chi forza il branch con la
+            # variabile d'ambiente lo forza anche per la pubblicazione.
+            branch = (
+                os.environ.get("KNOWLEDGE_VAULT_BRANCH")
+                or get_current_branch(self.vault_data)
+                or "main"
+            )
 
             success, msg = publish_changes(
                 repo_dir=self.vault_data,

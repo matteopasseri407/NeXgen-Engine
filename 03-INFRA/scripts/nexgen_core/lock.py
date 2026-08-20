@@ -14,6 +14,7 @@ import sys
 import time
 from pathlib import Path
 from typing import Any, Iterator
+from nexgen_core.paths import resolve_state_dir
 
 EXIT_BUSY_MANUAL = 75
 EXIT_BUSY_GUARD = 0
@@ -44,7 +45,7 @@ class HostLock:
             if env_path:
                 self.lock_path = Path(env_path)
             else:
-                state_dir = Path(os.environ.get("AGENT_STATE_DIR", Path.home() / ".nexgen-engine"))
+                state_dir = resolve_state_dir()
                 self.lock_path = state_dir / "agent-sync.lock"
         else:
             self.lock_path = Path(lock_path)

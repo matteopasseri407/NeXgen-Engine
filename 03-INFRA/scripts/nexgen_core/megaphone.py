@@ -15,6 +15,7 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 from typing import Any
+from nexgen_core.paths import resolve_state_dir
 
 STATE_FILE_NAME = "agent-healthcheck.state"
 DEFAULT_DEBOUNCE_HOURS = 4.0
@@ -24,7 +25,7 @@ class Megaphone:
     """Gestore unificato delle notifiche umane e degli allarmi."""
 
     def __init__(self, state_dir: Path | None = None) -> None:
-        self.state_dir = state_dir or Path(os.environ.get("AGENT_STATE_DIR", Path.home() / ".nexgen-engine"))
+        self.state_dir = resolve_state_dir(override=state_dir)
         self.state_file = self.state_dir / STATE_FILE_NAME
 
     def _load_state(self) -> dict[str, Any]:

@@ -17,7 +17,12 @@ import yaml
 
 logger = logging.getLogger("nexgen.config")
 
-MCP_TARGETS = frozenset({"claude", "codex", "antigravity", "opencode"})
+#: I quattro runtime che il layer sa configurare. Vale sia per i connettori
+#: MCP sia per le viste delle skill: è la stessa lista, e tenerla in due
+#: costanti diverse è il modo in cui le due liste divergono.
+RUNTIME_TARGETS = frozenset({"claude", "codex", "antigravity", "opencode"})
+MCP_TARGETS = RUNTIME_TARGETS
+SKILL_TARGETS = RUNTIME_TARGETS
 SKILL_ORIGINS = frozenset({"vault", "engine", "github", "installer"})
 SKILL_EXPOSURES = frozenset({"lazy", "eager", "manual", "core"})
 SKILL_SCOPES = frozenset({"shared", "personal"})
