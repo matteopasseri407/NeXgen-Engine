@@ -1663,6 +1663,9 @@ def _systemd_service_content(env: "Env") -> str:
     cutover here either."""
     lines = ["[Unit]",
              "Description=KnowledgeVault agent sync guard (pull + apply + healthcheck, no publish)",
+             # A guard that dies has to say so itself: waiting for the next run
+             # to notice is waiting for the thing that just failed.
+             "OnFailure=agent-alert@%n.service",
              "", "[Service]", "Type=oneshot"]
     default_engine_root = (env.vault / "03-INFRA").resolve()
     if env.engine_root.resolve() != default_engine_root:
@@ -1688,6 +1691,51 @@ Description=agent-sync guard every 30 minutes and shortly after login
 [Timer]
 OnStartupSec=3min
 OnUnitActiveSec=30min
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+"""
+
+
+_SYSTEMD_ALERT_TEMPLATE = """[Unit]
+Description=Tell the user that %i could not run
+
+[Service]
+Type=oneshot
+ExecStart=%h/.local/bin/agent-sync notify-failure %i
+"""
+
+def _systemd_heartbeat_content(env: "Env") -> str:
+    """Same PATH as the guard unit, and for a concrete reason: the heartbeat
+    runs the updater, and inside the systemd user manager PATH does not contain
+    ~/.local/bin. Without it the updater cannot see agent-sync, agent-doctor or
+    vault-push, decides it is a MINIMAL install with no provisioner, and skips
+    the post-merge apply, the pin and the before/after doctor -- silently
+    bypassing the very verification it exists to perform."""
+    scheduler_path = os.pathsep.join([
+        str(env.home / ".local" / "bin"),
+        str(env.home / ".opencode" / "bin"),
+        os.environ.get("PATH", os.defpath),
+    ])
+    lines = ["[Unit]",
+             "Description=Liveness beat, third-party pin scan and released-upgrade uptake",
+             "", "[Service]", "Type=oneshot"]
+    default_engine_root = (env.vault / "03-INFRA").resolve()
+    if env.engine_root.resolve() != default_engine_root:
+        lines.append(_systemd_env_line("AGENT_ENGINE_ROOT", str(env.engine_root)))
+    if env.vault_data.resolve() != env.vault.resolve():
+        lines.append(_systemd_env_line("AGENT_VAULT_DATA", str(env.vault_data)))
+    lines.append(_systemd_env_line("PATH", scheduler_path))
+    lines.append("ExecStart=%h/.local/bin/agent-sync heartbeat")
+    return "\n".join(lines) + "\n"
+
+_SYSTEMD_HEARTBEAT_TIMER = """[Unit]
+Description=Hourly check that the agent sync is still completing
+
+[Timer]
+OnStartupSec=5min
+OnUnitActiveSec=1h
 Persistent=true
 
 [Install]
@@ -1730,6 +1778,9 @@ def _install_systemd_units(env: Env) -> bool:
     for path, content, label in (
         (unit_dir / "agent-sync.service", _systemd_service_content(env), "agent-sync.service set to pull mode"),
         (unit_dir / "agent-sync.timer", _SYSTEMD_TIMER, "agent-sync.timer updated"),
+        (unit_dir / "agent-alert@.service", _SYSTEMD_ALERT_TEMPLATE, "agent-alert@.service installed"),
+        (unit_dir / "agent-heartbeat.service", _systemd_heartbeat_content(env), "agent-heartbeat.service installed"),
+        (unit_dir / "agent-heartbeat.timer", _SYSTEMD_HEARTBEAT_TIMER, "agent-heartbeat.timer installed"),
     ):
         if path.exists():
             try:
@@ -1757,7 +1808,8 @@ def _install_systemd_units(env: Env) -> bool:
     # 2026-07-13): a fresh install wrote inert unit files that never ran
     # unless a human happened to `systemctl --user enable` them by hand.
     # --now also starts it immediately rather than waiting for next login.
-    r = _run_external(["systemctl", "--user", "enable", "--now", "agent-sync.timer"],
+    r = _run_external(["systemctl", "--user", "enable", "--now",
+                       "agent-sync.timer", "agent-heartbeat.timer"],
                        timeout=30, capture_output=True, text=True)
     if r.returncode != 0:
         env.log(
@@ -1779,7 +1831,7 @@ _VBS_TEMPLATE = (
     'processEnv("KNOWLEDGE_VAULT_BRANCH") = "{branch}"\r\n'
     'script = "{script}"\r\n'
     'shell.Run "powershell.exe -NoProfile -ExecutionPolicy Bypass -File " & Chr(34) & script & Chr(34) '
-    '& " guard", 0, True\r\n'
+    '& " {mode}", 0, True\r\n'
 )
 
 
@@ -1832,15 +1884,38 @@ def _install_scheduled_task(env: Env) -> bool:
     def vbs_string(value: Path | str) -> str:
         return str(value).replace('"', '""')
 
-    content = _VBS_TEMPLATE.format(
-        script=vbs_string(script_path),
-        engine_root=vbs_string(env.engine_root),
-        vault_data=vbs_string(env.vault_data),
-        vault=vbs_string(env.vault),
-        branch=vbs_string(env.branch),
-    )
+    def wrapper_for(mode: str) -> str:
+        return _VBS_TEMPLATE.format(
+            script=vbs_string(script_path),
+            engine_root=vbs_string(env.engine_root),
+            vault_data=vbs_string(env.vault_data),
+            vault=vbs_string(env.vault),
+            branch=vbs_string(env.branch),
+            mode=mode,
+        )
+
+    content = wrapper_for("guard")
     if _write_if_different(wrapper_path, content):
         env.log("scheduled-task: hidden wrapper updated")
+    # Windows twin of agent-heartbeat.timer. Task Scheduler has no usable
+    # equivalent of systemd's OnFailure=, but the heartbeat never needed one:
+    # it measures elapsed time since the last completed guard, so it catches a
+    # guard that failed, one that was cancelled, and one that was never
+    # scheduled at all -- the same three cases, without knowing which.
+    beat_path = env.log_dir / "start-agent-heartbeat-hidden.vbs"
+    if _write_if_different(beat_path, wrapper_for("heartbeat")):
+        env.log("scheduled-task: heartbeat wrapper updated")
+    beat_task = "KnowledgeVault Agent Heartbeat"
+    if not _scheduled_task_invokes_wrapper(beat_task, beat_path):
+        r = _run_external(
+            ["schtasks.exe", "/Create", "/TN", beat_task, "/SC", "HOURLY",
+             "/TR", f'wscript.exe "{beat_path}"', "/F"],
+            timeout=30, capture_output=True, text=True)
+        if r.returncode == 0:
+            env.log(f"scheduled-task: installed/updated '{beat_task}' via schtasks.exe")
+        else:
+            env.log(f"scheduled-task: heartbeat task failed ({r.stdout}{r.stderr})")
+
     run_cmd = f'wscript.exe "{wrapper_path}"'
     every30 = ["schtasks.exe", "/Create", "/TN", task_name, "/SC", "MINUTE", "/MO", "30", "/TR", run_cmd, "/F"]
     logon = ["schtasks.exe", "/Create", "/TN", f"{task_name} Logon", "/SC", "ONLOGON", "/TR", run_cmd, "/F"]
@@ -1988,9 +2063,10 @@ def seed_starter_skills(env: Env) -> None:
     engine that overwrites user data:
       - only when the manifest is absent -- an existing one is never touched,
         so emptying it (`skills: {}`) is a permanent opt-out;
-      - only when the bodies it declares actually resolve under THIS data root,
-        so a split engine/data topology gets nothing rather than a manifest
-        pointing at skills that live in the other clone.
+      - only when the bodies it declares actually resolve, each under the root
+        its origin names: `origin: engine` resolves in the engine clone (that
+        is the point of that origin, and it makes a split topology work instead
+        of being a reason to skip), `origin: vault` under THIS data root.
     """
     target = env.instance_ul / "skills" / "skills.manifest.yaml"
     if target.exists():
@@ -2003,17 +2079,17 @@ def seed_starter_skills(env: Env) -> None:
     except (OSError, yaml.YAMLError) as exc:
         env.log(f"skills: cannot read the shipped starter manifest ({exc}) — not seeding")
         return
-    bodies = env.instance_ul / "skills"
+    roots = {"vault": env.instance_ul / "skills", "engine": env.ul / "skills"}
     absent = sorted(
         name
         for name, spec in declared.items()
         if isinstance(spec, dict)
-        and spec.get("origin") == "vault"
-        and not (bodies / str(name) / "SKILL.md").is_file()
+        and spec.get("origin") in roots
+        and not (roots[spec["origin"]] / str(name) / "SKILL.md").is_file()
     )
     if absent:
         env.log(
-            "skills: the engine's starter commands are not vendored in this data root "
+            "skills: the engine's starter commands do not resolve where their origin says "
             f"({', '.join(absent)}) — not seeding a manifest that would point at nothing"
         )
         return
@@ -3111,6 +3187,13 @@ def _send_healthcheck(env: Env) -> None:
         if len(lines) >= 2:
             last_sig = lines[1]
 
+    # Liveness is written on EVERY completed healthcheck, separately from the
+    # debounce state. They answer different questions: the state file says
+    # "have we already reported this exact problem", liveness says "did the
+    # guard get to the end at all". Reusing one for both froze the timestamp
+    # whenever a known problem was being debounced, and the heartbeat then
+    # announced a sync that had never stopped running.
+    _atomic_write_text(env.log_dir / "agent-guard-liveness", f"{now}\n")
     if not problem:
         _atomic_write_text(state_file, f"{now}\nok\n")
         return
@@ -3119,25 +3202,324 @@ def _send_healthcheck(env: Env) -> None:
     if not send:
         return
 
+    if _deliver_alert(env, summary):
+        env.log(f"healthcheck: sent ({sig})")
+    else:
+        env.log(f"healthcheck: {summary} (no transport configured)")
+    _atomic_write_text(state_file, f"{now}\n{sig}\n")
+
+
+AUTO_UPGRADE_DEFAULT = "patch"
+
+
+def _upgrade_step(current: str, target: str) -> str:
+    """'patch', 'minor' or 'major' for the jump between two vX.Y.Z strings."""
+    def parts(v: str) -> tuple[int, int, int]:
+        nums = [int(n) for n in re.findall(r"\d+", v)[:3]]
+        while len(nums) < 3:
+            nums.append(0)
+        return tuple(nums)  # type: ignore[return-value]
+    a, b = parts(current), parts(target)
+    if b[0] != a[0]:
+        return "major"
+    if b[1] != a[1]:
+        return "minor"
+    return "patch"
+
+
+def _auto_upgrade(env: Env) -> None:
+    """Take a released engine upgrade without asking, and say nothing about it.
+
+    Updating itself is the guardian's job, not news: a notification for routine
+    maintenance is how people learn to dismiss notifications. It speaks only
+    when it CANNOT do the work.
+
+    The brakes are the updater's own and are not reimplemented here: it refuses
+    to run against a dirty engine or data repository, and only ever offers a
+    released tag -- which exists only after the full CI matrix went green on
+    the merge. Be precise about the signature one: the updater REFUSES a bad
+    signature, but on an unverifiable one (no trusted key imported, the normal
+    state for an end user) it warns and continues. So signing is enforced by
+    the release process, not by this client. This adds one
+    more: how far a jump may be taken unattended, `patch` by default, because a
+    machine that upgrades its own minor versions overnight is a machine whose
+    behaviour changed without anyone choosing it.
+
+    Runs from the heartbeat, never from the guard: the updater's provisioning
+    pass calls `agent-sync apply`, and the guard is holding the host-wide lock
+    that pass would wait on.
+    """
+    level = (os.environ.get("AGENT_AUTO_UPGRADE") or AUTO_UPGRADE_DEFAULT).strip().lower()
+    if level in {"off", "no", "0", "false"}:
+        return
+    # resolve_cmd, not a bare path: on Windows the launcher installed is
+    # nexgen-update.cmd, so testing for an extensionless file meant the check
+    # was always False there and the whole feature silently did not exist.
+    updater = resolve_cmd("nexgen-update") or str(env.home / ".local" / "bin" / "nexgen-update")
+    if not Path(updater).exists():
+        env.log("auto-upgrade: nexgen-update is not installed on this machine")
+        return
+    check = _run_external([updater, "--check"], timeout=180, capture_output=True, text=True)
+    if check.returncode != 0:
+        _deliver_alert(env, "FAIL could not check for an engine update. "
+                            "Run: nexgen-update --check")
+        return
+    current = target = ""
+    for line in check.stdout.splitlines():
+        if line.startswith("Current:"):
+            current = line.split(":", 1)[1].strip()
+        elif line.startswith("Latest released target:"):
+            target = line.split(":", 1)[1].strip()
+    if not current or not target:
+        # The updater answered but not in a shape we understand, which means we
+        # cannot tell whether an upgrade is due. Not knowing is exactly the case
+        # worth saying out loud.
+        _deliver_alert(env, "FAIL could not read the engine update check output. "
+                            "Run: nexgen-update --check")
+        return
+    if current.lstrip("v") == target.lstrip("v"):
+        return
+    step = _upgrade_step(current, target)
+    allowed = {"patch": {"patch"}, "minor": {"patch", "minor"},
+               "all": {"patch", "minor", "major"}}.get(level, {"patch"})
+    if step not in allowed:
+        env.log(f"auto-upgrade: {current} -> {target} is a {step} step, above AGENT_AUTO_UPGRADE={level}")
+        return
+    env.log(f"auto-upgrade: taking {current} -> {target} ({step})")
+    run = _run_external([updater, "--yes"], timeout=1800, capture_output=True, text=True)
+    if run.returncode == 0:
+        env.log(f"auto-upgrade: now on {target}")
+        return
+    _deliver_alert(env, f"FAIL the engine could not update itself to {target}. "
+                        f"Run: nexgen-update --check")
+
+
+UPGRADE_SCAN_INTERVAL_SECONDS = 24 * 3600
+
+
+def _http_json(url: str, timeout: int = 15):
+    """GET returning parsed JSON, or None on any failure. Offline is a normal
+    state for a workstation, not an incident, so nothing is reported here."""
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": "nexgen-engine-upgrade-scan"})
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            return json.loads(resp.read().decode("utf-8"))
+    except (OSError, ValueError):
+        # URLError and socket timeouts are OSError; a malformed body is a
+        # ValueError. Both mean "no answer", which is not an incident.
+        return None
+
+
+def _npm_latest(package: str) -> str:
+    data = _http_json(f"https://registry.npmjs.org/{urllib.parse.quote(package, safe='@/')}/latest")
+    return str((data or {}).get("version") or "")
+
+
+def _github_head(repo: str) -> str:
+    data = _http_json(f"https://api.github.com/repos/{repo}/commits/HEAD")
+    return str((data or {}).get("sha") or "")
+
+
+def _pinned_third_parties(env: Env) -> list[dict]:
+    """Every third-party thing this layer pins: skills fetched from a commit,
+    skills installed at a version, and the npm packages the MCP manifest runs."""
+    out: list[dict] = []
+    skills_manifest = env.instance_ul / "skills" / "skills.manifest.yaml"
+    if skills_manifest.is_file():
+        try:
+            declared = (yaml.safe_load(skills_manifest.read_text(encoding="utf-8")) or {}).get("skills") or {}
+        except (OSError, yaml.YAMLError):
+            declared = {}
+        for name, spec in declared.items():
+            if not isinstance(spec, dict):
+                continue
+            if spec.get("origin") == "github" and spec.get("repo") and spec.get("commit"):
+                out.append({"name": str(name), "kind": "skill-github",
+                            "id": str(spec["repo"]), "pinned": str(spec["commit"])})
+            elif spec.get("origin") == "installer" and spec.get("version"):
+                pkg = ""
+                for token in spec.get("install") or []:
+                    if "@" in str(token)[1:]:
+                        pkg = str(token).rsplit("@", 1)[0]
+                        break
+                if pkg:
+                    out.append({"name": str(name), "kind": "skill-installer",
+                                "id": pkg, "pinned": str(spec["version"])})
+    mcp_manifest = env.instance_ul / "mcp" / "manifest.yaml"
+    if mcp_manifest.is_file():
+        for match in re.finditer(r'"(@?[a-z0-9][a-z0-9._/-]*)@([0-9][0-9a-zA-Z.-]*)"',
+                                 mcp_manifest.read_text(encoding="utf-8")):
+            out.append({"name": match.group(1), "kind": "mcp-npm",
+                        "id": match.group(1), "pinned": match.group(2)})
+    return out
+
+
+def _scan_third_party_upgrades(env: Env, *, force: bool = False) -> int:
+    """Look upstream for newer versions of everything we pin, and write a list.
+
+    Checking is cheap and safe, so it happens on its own. Applying is neither:
+    a new upstream commit changes behaviour nobody chose, which is exactly the
+    kind of decision that stays with a person. So this produces a list and
+    stops -- and it does NOT notify, because a routine list is not an alarm.
+    The doctor surfaces it as one line, and you read it when you want it.
+    """
+    report = env.log_dir / "third-party-upgrades.md"
+    if not force and report.is_file():
+        age = time.time() - report.stat().st_mtime
+        if age < UPGRADE_SCAN_INTERVAL_SECONDS:
+            return 0
+    behind: list[str] = []
+    checked = 0
+    for item in _pinned_third_parties(env):
+        if item["kind"] == "skill-github":
+            latest = _github_head(item["id"])
+            if not latest:
+                continue
+            checked += 1
+            if latest[:12] != item["pinned"][:12]:
+                behind.append(f"- **{item['name']}** ({item['id']}): pinned `{item['pinned'][:12]}`, "
+                              f"upstream `{latest[:12]}`")
+        else:
+            latest = _npm_latest(item["id"])
+            if not latest:
+                continue
+            checked += 1
+            if latest != item["pinned"]:
+                behind.append(f"- **{item['name']}** (`{item['id']}`): pinned `{item['pinned']}`, "
+                              f"latest `{latest}`")
+    if not checked:
+        return 0
+    lines = [f"# Third-party upgrades available ({time.strftime('%Y-%m-%d %H:%M')})", ""]
+    if behind:
+        lines += [f"{len(behind)} of {checked} pinned dependencies are behind upstream.", "",
+                  *behind, "",
+                  ("Raise the pin in the manifest to take one. Nothing here is applied "
+                   "automatically: an upstream change alters behaviour nobody chose.")]
+    else:
+        lines += [f"All {checked} pinned dependencies are current."]
+    env.log_dir.mkdir(parents=True, exist_ok=True)
+    _atomic_write_text(report, "\n".join(lines) + "\n")
+    env.log(f"upgrade-scan: {len(behind)} of {checked} pinned dependencies behind upstream")
+    return len(behind)
+
+
+def _upgrades_cli(argv: list[str]) -> int:
+    env = Env()
+    _scan_third_party_upgrades(env, force="--force" in argv)
+    report = env.log_dir / "third-party-upgrades.md"
+    if report.is_file():
+        print(report.read_text(encoding="utf-8"))
+    return 0
+
+
+def _heartbeat_cli(argv: list[str]) -> int:
+    """The independent maintenance beat: check the sync is still alive, then
+    take any released upgrade. Both silent unless they cannot be done."""
+    del argv
+    try:
+        _notify_stale_cli([])
+    except Exception as exc:  # noqa: BLE001 - nothing watches the beat itself
+        Env().log(f"notify-stale: aborted ({exc})")
+    try:
+        _scan_third_party_upgrades(Env())
+    except Exception as exc:  # noqa: BLE001 - the beat must survive any scan bug
+        Env().log(f"upgrade-scan: aborted ({exc})")
+    try:
+        _auto_upgrade(Env())
+    except Exception as exc:  # noqa: BLE001 - a broken upgrade must not kill the beat
+        Env().log(f"auto-upgrade: aborted ({exc})")
+    return 0
+
+
+def _deliver_alert(env: Env, summary: str) -> bool:
+    """The layer's single alert transport. Every trigger goes through here, so
+    the golden rule stays intact: one megaphone, whatever wakes it up."""
     hostn = platform.node()
     msg = f"[AGENT ALERT] [{hostn}] {time.strftime('%Y-%m-%d %H:%M')}\n{summary}"
     msg = _localize_alert(env, msg)
-    sent = False
     token, chat = os.environ.get("TELEGRAM_BOT_TOKEN"), os.environ.get("TELEGRAM_CHAT_ID")
     webhook = os.environ.get("VAULT_ALERT_WEBHOOK")
+    sent = False
     if token and chat:
         sent = _post_form(f"https://api.telegram.org/bot{token}/sendMessage", {"chat_id": chat, "text": msg})
     elif webhook:
         sent = _post_form(webhook, {"host": hostn, "text": msg})
     if not sent and not IS_WINDOWS and resolve_cmd("notify-send"):
         r = _run_external(["notify-send", "-u", "critical", "-a", "agent-healthcheck",
-                            "Agents: something is wrong", msg], timeout=5, capture_output=True)
+                           "Agents: something is wrong", msg], timeout=5, capture_output=True)
         sent = r.returncode == 0
-    if sent:
-        env.log(f"healthcheck: sent ({sig})")
-    else:
-        env.log(f"healthcheck: {summary} (no transport configured)")
-    _atomic_write_text(state_file, f"{now}\n{sig}\n")
+    return sent
+
+
+STALE_GUARD_SECONDS_DEFAULT = 6 * 3600
+
+
+def _last_guard_success(env: Env) -> int:
+    """Epoch of the last completed healthcheck, i.e. of the last guard run that
+    got all the way to the end. 0 when it has never run on this machine.
+
+    Reads the dedicated liveness marker, falling back to the debounce state file
+    for a machine whose engine predates the marker."""
+    for candidate in (env.log_dir / "agent-guard-liveness",
+                      env.log_dir / "agent-healthcheck.state"):
+        if candidate.is_file():
+            head = candidate.read_text(encoding="utf-8").splitlines()
+            if head and head[0].isdigit():
+                return int(head[0])
+    return 0
+
+
+def _notify_failure_cli(argv: list[str]) -> int:
+    """Trigger for `OnFailure=`: a guardian unit went into a failed state.
+
+    Deliberately not a second notifier: it composes a line and hands it to the
+    one transport. Systemd passes the failed unit's name, which is the whole
+    value of this path over waiting for the next guard to notice."""
+    unit = argv[0] if argv else "a guardian unit"
+    env = Env()
+    # Alert credentials live in environment.d, which only the guard path used
+    # to load. Without this the trigger reaches _deliver_alert and finds no
+    # transport: an alarm that cannot speak is not an alarm.
+    try:
+        _load_env_conf(env)
+    except OSError as exc:
+        env.log(f"notify-failure: could not load alert credentials ({exc})")
+    summary = (f"FAIL {unit} could not run. The layer stops syncing until it does. "
+               f"Check it with: systemctl --user status {unit}")
+    if not _deliver_alert(env, summary):
+        env.log(f"notify-failure: {summary} (no transport configured)")
+    return 0
+
+
+def _notify_stale_cli(argv: list[str]) -> int:
+    """Trigger for the independent heartbeat: the guard has not completed in far
+    too long.
+
+    This exists because `OnFailure=` is not enough on its own. A job cancelled
+    because a dependency failed does not put its unit into a failed state, so
+    nothing fires -- which is exactly how a guard stayed dead for six days while
+    every single run logged `Dependency failed` and told no one. Elapsed time
+    since the last completed run catches that, and every other cause too,
+    without needing to know what broke."""
+    del argv
+    env = Env()
+    try:
+        _load_env_conf(env)
+    except OSError as exc:
+        env.log(f"notify-stale: could not load alert credentials ({exc})")
+    try:
+        limit = int(os.environ.get("AGENT_STALE_GUARD_SECONDS") or STALE_GUARD_SECONDS_DEFAULT)
+    except ValueError:
+        limit = STALE_GUARD_SECONDS_DEFAULT
+    last = _last_guard_success(env)
+    if last and (int(time.time()) - last) < limit:
+        return 0
+    hours = "never" if not last else f"{(int(time.time()) - last) // 3600}h ago"
+    summary = (f"FAIL the agent sync has not completed since {hours}. Machines and skills "
+               "are drifting apart in silence. Run: agent-sync guard")
+    if not _deliver_alert(env, summary):
+        env.log(f"notify-stale: {summary} (no transport configured)")
+    return 0
 
 
 def creds_health(env: Env, *, do_creds: bool, do_health: bool) -> None:
@@ -3574,6 +3956,14 @@ def main(argv: list[str] | None = None) -> int:
         return _vault_push_cli(argv[1:])
     if argv[0] == "inventory":
         return _inventory_cli(argv[1:])
+    if argv[0] == "notify-failure":
+        return _notify_failure_cli(argv[1:])
+    if argv[0] == "notify-stale":
+        return _notify_stale_cli(argv[1:])
+    if argv[0] == "heartbeat":
+        return _heartbeat_cli(argv[1:])
+    if argv[0] == "upgrades":
+        return _upgrades_cli(argv[1:])
 
     mode, skip_mcp, allow_offline, require_ready, extras = _parse_cli(argv)
     if mode not in MODES:

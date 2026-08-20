@@ -5,11 +5,14 @@
   Firecrawl probe may refresh a small local success cache.
   Usage: .\agent-doctor.ps1            readable report
          .\agent-doctor.ps1 -Summary   one-line summary (for healthcheck)
+         .\agent-doctor.ps1 -Verbose   also list every check that passed
+         (default: only what needs attention, plus the summary -- a report you
+          have to skim to find the one bad line is a report people stop reading)
   NOTE: on Windows, Codex/Antigravity may be copies or symlinks of the canonical
   file. Claude only uses a lightweight pointer to the canonical file to avoid
   duplication with OpenCode when both files are loaded in the same context.
 #>
-param([switch]$Summary, [switch]$Strict)
+param([switch]$Summary, [switch]$Strict, [switch]$Verbose)
 
 $ErrorActionPreference = "Continue"
 $HomeDir = if ($env:USERPROFILE) { $env:USERPROFILE } else { [Environment]::GetFolderPath("UserProfile") }
@@ -116,10 +119,28 @@ if ($env:KNOWLEDGE_VAULT_REMOTE) {
 }
 
 $script:PASS = 0; $script:WARN = 0; $script:FAILN = 0; $script:FAILS = @()
-function ok($m)   { $script:PASS++;  if (-not $Summary) { Write-Host "  [OK]   $m" -ForegroundColor Green } }
+# Passing checks are counted always and printed only on request, matching the
+# bash twin: the default report is what needs attention.
+function ok($m)   { $script:PASS++;  if ((-not $Summary) -and $Verbose) { Write-Host "  [OK]   $m" -ForegroundColor Green } }
 function warn($m) { $script:WARN++;  if (-not $Summary) { Write-Host "  [WARN] $m" -ForegroundColor Yellow } }
 function bad($m)  { $script:FAILN++; $script:FAILS += $m; if (-not $Summary) { Write-Host "  [FAIL] $m" -ForegroundColor Red } }
-function sec($m)  { if (-not $Summary) { Write-Host "`n$m" -ForegroundColor White } }
+
+function Test-ThirdPartyPins {
+  # Twin of the bash check: the heartbeat writes the list, this surfaces ONE
+  # line. Nothing is applied automatically, so this is a pointer, not an alert.
+  $report = Join-Path $HOME ".local/state/third-party-upgrades.md"
+  if (-not (Test-Path $report)) { ok "third-party pin scan has not run yet (next heartbeat)"; return }
+  $line = Select-String -Path $report -Pattern "are behind upstream" -SimpleMatch |
+          Select-Object -First 1
+  if ($line) {
+    $count = ($line.Line -split " are behind")[0]
+    ok "third-party pins: $count behind upstream (see $report)"
+  } else {
+    ok "third-party pins are current"
+  }
+}
+
+function sec($m)  { if ((-not $Summary) -and $Verbose) { Write-Host "`n$m" -ForegroundColor White } }
 function gitc([string[]]$GitArgs) { (& git -C $Vault @GitArgs 2>$null) }
 function httpcode($url, $headers, [string]$method = "Get") {
   try { (Invoke-WebRequest -Uri $url -Method $method -TimeoutSec 6 -Headers $headers -UseBasicParsing -ErrorAction Stop).StatusCode }
@@ -736,15 +757,53 @@ except ConfigValidationError:
 for name, spec in servers.items():
     req = spec.get("require_env")
     if req and not os.environ.get(req, "").strip():
-        print(f"{name} {req}")
+        print(f"{name} {req} {spec.get('tier') or 'optional'}")
 '@
   $skippedServers = @(& $NexgenPythonCommand @NexgenPythonPrefix -c $skipCode $PSScriptRoot $ManifestYaml 2>$null | Where-Object { $_ })
   foreach ($line in $skippedServers) {
     $parts = $line -split '\s+'
     $srv = $parts[0]; $var = $parts[1]
-    if (Test-ConnectorExpected $var) {
-      warn "$var missing: manifest server '$srv' is not mounted on any CLI (require_env not satisfied)"
+    $tier = if ($parts.Count -ge 3) { $parts[2] } else { 'optional' }
+    # Twin of the bash rule: an optional connector left off is a CHOICE, and
+    # warning about a choice on every run is how people learn to ignore
+    # warnings. A core one missing is different, nobody chose that.
+    if ($tier -ne 'core') {
+      ok "optional connector '$srv' available, not mounted (enable with $var)"
+    } elseif (Test-ConnectorExpected $var) {
+      warn "$var missing: core connector '$srv' is not mounted on any CLI (require_env not satisfied)"
     }
+  }
+}
+
+# Reconciliation after an engine upgrade, twin of agent-doctor.sh. `origin:
+# engine` entries name a command the ENGINE ships, so a release that renames or
+# drops one leaves the manifest pointing at a body that no longer exists, and
+# the command stops existing on every CLI without a word. The user did not
+# choose that, the release changed under them, so it fails rather than warns.
+$SkillsManifest = Join-Path $Layer "skills\skills.manifest.yaml"
+$EngineSkills = Join-Path $EngineInfra "agent-universal-layer\skills"
+if ($NexgenPython -and (Test-Path -LiteralPath $SkillsManifest)) {
+  $danglingCode = @'
+import sys, pathlib
+try:
+    import yaml
+except ImportError:
+    sys.exit(0)
+man, root = pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2])
+try:
+    data = yaml.safe_load(man.read_text(encoding="utf-8")) or {}
+except Exception:
+    sys.exit(0)
+for name, spec in ((data.get("skills") or {}) if isinstance(data, dict) else {}).items():
+    if isinstance(spec, dict) and spec.get("origin") == "engine":
+        if not (root / str(name) / "SKILL.md").is_file():
+            print(name)
+'@
+  $dangling = @(& $NexgenPythonCommand @NexgenPythonPrefix -c $danglingCode $SkillsManifest $EngineSkills 2>$null | Where-Object { $_ })
+  if ($dangling.Count -gt 0) {
+    fail "this engine no longer ships: $($dangling -join ', ') - the manifest still lists them, so those commands are gone from every CLI. Check the CHANGELOG for a rename, then update or remove the entries"
+  } else {
+    ok "every engine-owned skill in the manifest resolves in this engine"
   }
 }
 
@@ -917,7 +976,7 @@ $core = if (Test-Path -LiteralPath $skActive) {
 } else { 0 }
 ok "$core skill folder(s) present in the shared discovery root; manifest reconciliation follows"
 # Manifest -> library coverage: without this assert, a skill registered in the
-# manifest can go missing on a host for weeks (the humanizer bug).
+# manifest can go missing on a host for weeks (seen in the field).
 $skillsSyncScript = Join-Path $PSScriptRoot "skills-sync.py"
 if ($NexgenPython -and (Test-Path -LiteralPath $skillsSyncScript)) {
   $ssOut = & $NexgenPythonCommand @NexgenPythonPrefix $skillsSyncScript 2>$null
@@ -1150,7 +1209,16 @@ if (-not (Test-Path -LiteralPath (Join-Path $ConsumerEngineRepo ".git")) -and
       $curOk = [System.Version]::TryParse($currentVersion, [ref]$cur)
       $latOk = [System.Version]::TryParse(($latestTag -replace '^v', ''), [ref]$lat)
       if ($curOk -and $latOk) {
-        if ($lat -gt $cur) { warn "NeXgen Engine update available: $latestTag (this machine runs v$currentVersion) - run: nexgen-update" }
+        if ($lat -gt $cur) {
+          # A patch is taken by the heartbeat on its own (AGENT_AUTO_UPGRADE
+          # defaults to patch), so announcing it is noise about work already
+          # scheduled. A bigger jump waits for a person and is worth a line.
+          if (($lat.Major -eq $cur.Major) -and ($lat.Minor -eq $cur.Minor)) {
+            ok "engine patch $latestTag available; the heartbeat takes it automatically (running v$currentVersion)"
+          } else {
+            warn "NeXgen Engine update available: $latestTag (this machine runs v$currentVersion) - run: nexgen-update"
+          }
+        }
         else { ok "engine at (or ahead of) the latest released version ($latestTag, running v$currentVersion)" }
       } elseif ("v$currentVersion" -ne $latestTag) {
         warn "NeXgen Engine update available: $latestTag (this machine runs v$currentVersion) - run: nexgen-update"
@@ -1161,12 +1229,14 @@ if (-not (Test-Path -LiteralPath (Join-Path $ConsumerEngineRepo ".git")) -and
   } else { warn "cannot fetch origin - engine version check skipped (offline, or origin unreachable)" }
 }
 
+Test-ThirdPartyPins
+
 if ($Summary) {
   $line = "agent-doctor [windows] PASS=$($script:PASS) WARN=$($script:WARN) FAIL=$($script:FAILN)"
   if ($script:FAILN -gt 0) { $line += " | FAIL: " + ($script:FAILS -join ', ') }
   Write-Output $line
 } else {
-  sec "Summary"
+  Write-Host "`nSummary" -ForegroundColor White
   Write-Host ("  PASS={0}  WARN={1}  FAIL={2}" -f $script:PASS, $script:WARN, $script:FAILN)
   if ($script:FAILN -eq 0) { Write-Host "  -> alignment VERIFIED" -ForegroundColor Green } else { Write-Host "  -> there are FAILs to fix" -ForegroundColor Red }
 }

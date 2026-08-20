@@ -88,6 +88,13 @@ UL = VAULT / "03-INFRA" / "agent-universal-layer"
 MANIFEST = UL / "skills" / "skills.manifest.yaml"
 USER_PROFILE = VAULT / "99-INDEX" / "USER-PROFILE.md"
 
+# `origin: engine` reads the product's own skills straight from the installed
+# engine, so this script now does resolve AGENT_ENGINE_ROOT (the note above
+# predates that origin). Falling back to the documented default keeps a plain
+# install working without the variable set.
+_engine = Path(os.environ.get("AGENT_ENGINE_ROOT") or str(HOME / ".nexgen-engine" / "03-INFRA"))
+ENGINE_SKILLS = _engine / "agent-universal-layer" / "skills"
+
 LIBRARY = HOME / ".agents" / "skill-library"
 ACTIVE = HOME / ".agents" / "skills"
 LEGACY = LIBRARY / "legacy"
@@ -362,6 +369,80 @@ def run_git(command: list[str], env: dict[str, str]) -> subprocess.CompletedProc
     except subprocess.TimeoutExpired:
         return None
     return result
+
+
+def _frontmatter_version(skill_md: Path) -> str:
+    """The `version:` line of a SKILL.md front matter, empty when absent."""
+    if not skill_md.is_file():
+        return ""
+    for line in skill_md.read_text(encoding="utf-8", errors="replace").splitlines()[:20]:
+        if line.startswith("version:"):
+            return line.split(":", 1)[1].strip()
+    return ""
+
+
+def install_via_installer(name: str, spec: dict, apply: bool) -> bool:
+    """Third-party skill that only its own installer can materialize.
+
+    Some skills cannot be carried by `origin: github`: they publish a TEMPLATE
+    with placeholders their installer renders differently for each provider, so
+    the installed copies are legitimately different files and cannot be fetched
+    from git or shared through one symlink. Vendoring them instead would mean
+    committing megabytes of third-party code, against the rule that third-party
+    stays restorable rather than copied in.
+
+    That used to leave them outside the manifest entirely, which meant every
+    machine installed them by hand and drifted to a different version. This
+    origin closes that: the manifest pins the version, and any machine whose
+    installed copy does not match runs the upstream installer itself.
+
+    It also does the tidying that was previously a note asking a human to
+    remember: installers drop their copy in the EAGER discovery root, where
+    every runtime pays for its description at startup. It is moved into the
+    lazy library and the linked views are pointed back at it.
+    """
+    if not safe_name(name, f"library/{name}"):
+        return False
+    pinned = str(spec.get("version") or "").strip()
+    command = spec.get("install")
+    if not pinned or not isinstance(command, list) or not command:
+        fail(f"library/{name}: installer skill needs both `version` and a non-empty `install` list")
+        return False
+
+    def _tidy() -> None:
+        """The installer's eager copy belongs in the lazy library, and the
+        views that are symlinks belong pointing at it."""
+        eager = ACTIVE / name
+        if eager.is_dir() and not _is_link_like(eager):
+            if (LIBRARY / name).exists():
+                _remove_path(LIBRARY / name)
+            shutil.move(str(eager), str(LIBRARY / name))
+        elif eager.exists():
+            _remove_path(eager)
+
+    installed = _frontmatter_version(LIBRARY / name / "SKILL.md")
+    if installed == pinned:
+        ok(f"library/{name}: installer skill at pinned {pinned}")
+        return True
+    if not apply:
+        state = f"at {installed}" if installed else "not installed"
+        act(f"library/{name}: {state}, would install {pinned} via {command[0]}")
+        return False
+    if not shutil.which(command[0]):
+        fail(f"library/{name}: cannot install {pinned}, `{command[0]}` is not on PATH")
+        return False
+    result = subprocess.run(command, capture_output=True, text=True, timeout=600, check=False)
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout or "").strip().splitlines()
+        fail(f"library/{name}: installer failed ({detail[-1] if detail else 'no output'})")
+        return False
+    _tidy()
+    now = _frontmatter_version(LIBRARY / name / "SKILL.md")
+    if now != pinned:
+        fail(f"library/{name}: installer ran but left version {now or 'unknown'}, expected {pinned}")
+        return False
+    ok(f"library/{name}: installed {pinned}")
+    return True
 
 
 def install_github(name: str, spec: dict, apply: bool) -> bool:
@@ -660,6 +741,7 @@ def load_skills_manifest() -> dict | None:
         fail("invalid skills manifest: 'skills' must be a mapping")
         return None
 
+    unsupported: list[str] = []
     for name, spec in skills.items():
         if not isinstance(name, str) or not name.strip():
             fail("invalid skills manifest: every skill name must be a non-empty string")
@@ -675,8 +757,22 @@ def load_skills_manifest() -> dict | None:
             fail(f"invalid skills manifest: skill '{name}' must be a mapping")
             return None
         origin = spec.get("origin")
-        if origin not in {"vault", "github"}:
-            fail(f"invalid skills manifest: skill '{name}' has unsupported origin {origin!r}")
+        if origin not in {"vault", "engine", "github", "installer"}:
+            # Forward compatibility, and it is not a nicety. The manifest lives
+            # in the user's data and reaches every machine in minutes; the code
+            # that understands it ships with an engine release. So a manifest
+            # WILL sometimes name an origin an older engine has never heard of.
+            # Rejecting the document for that stops the sync of everything --
+            # every skill, on every CLI, on every machine -- because of one
+            # entry the machine simply is not ready for yet. Skipping that one
+            # entry loudly costs the entry and nothing else.
+            warn(f"skill '{name}': origin {origin!r} is not supported by this engine "
+                 "version, skipping it (upgrade the engine, or fix the manifest)")
+            unsupported.append(name)
+            continue
+        if origin == "installer" and not (spec.get("version") and spec.get("install")):
+            fail(f"invalid skills manifest: skill '{name}' with origin 'installer' "
+                 "needs both `version` and `install`")
             return None
         targets = spec.get("targets", [])
         if not isinstance(targets, list) or not all(isinstance(target, str) for target in targets):
@@ -715,6 +811,8 @@ def load_skills_manifest() -> dict | None:
             fail(f"invalid skills manifest: skill '{name}' owner must be a string")
             return None
 
+    for name in unsupported:
+        skills.pop(name, None)
     return skills
 
 
@@ -727,9 +825,11 @@ def validate_manifest_sources(skills: dict) -> bool:
     """
     healthy = True
     for name, spec in skills.items():
-        if spec.get("origin") != "vault":
+        origin = spec.get("origin")
+        if origin not in {"vault", "engine"}:
             continue
-        source = UL / "skills" / name / "SKILL.md"
+        root = ENGINE_SKILLS if origin == "engine" else UL / "skills"
+        source = root / name / "SKILL.md"
         if source.is_file():
             continue
         fail(f"library/{name}: missing canonical Vault source {source}")
@@ -826,14 +926,19 @@ def main() -> int:
             continue
 
         # 1) materialize in the non-discovered library
-        if origin == "vault":
-            source = UL / "skills" / name
+        if origin in {"vault", "engine"}:
+            root = ENGINE_SKILLS if origin == "engine" else UL / "skills"
+            source = root / name
             if not (source / "SKILL.md").is_file():
-                fail(f"library/{name}: missing canonical Vault source {source / 'SKILL.md'}")
+                where = "engine" if origin == "engine" else "Vault"
+                fail(f"library/{name}: missing canonical {where} source {source / 'SKILL.md'}")
                 continue
             ensure_link(source, LIBRARY / name, apply, f"library/{name}")
         elif origin == "github":
             install_github(name, spec, apply)
+        elif origin == "installer":
+            if not install_via_installer(name, spec, apply):
+                continue
         else:
             fail(f"unknown origin '{origin}' for {name}")
             continue

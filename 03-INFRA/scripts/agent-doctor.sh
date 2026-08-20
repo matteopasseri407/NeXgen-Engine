@@ -47,16 +47,21 @@ fi
 
 QUIET=0
 STRICT=0
+VERBOSE=0
 for arg in "$@"; do
   case "$arg" in
     --summary) QUIET=1 ;;
     --strict) STRICT=1 ;;
+    --verbose) VERBOSE=1 ;;
     -h|--help)
       cat <<'EOF'
-agent-doctor.sh [--summary] [--strict]
+agent-doctor.sh [--summary] [--strict] [--verbose]
 
-Default: fast structural and service health checks.
+Default: fast structural and service health checks, reporting only what is
+         wrong plus the summary. A report you have to skim to find the one bad
+         line is a report people stop reading.
 --summary: one-line output for alerting.
+--verbose: also list every check that passed.
 --strict: add real CLI consumer checks, including OpenCode MCP list,
           Antigravity global MCP path, vault-ocr stdio framing, and one
           cached end-to-end Firecrawl search.
@@ -65,10 +70,12 @@ EOF
   esac
 done
 
-ok()   { PASS=$((PASS+1)); [ "$QUIET" = 1 ] || printf '  \033[32m✓\033[0m %s\n' "$*"; }
+# Passing checks are counted always and printed only on request: the default
+# report is what needs attention. Warnings and failures are never suppressed.
+ok()   { PASS=$((PASS+1)); if [ "$QUIET" != 1 ] && [ "$VERBOSE" = 1 ]; then printf '  \033[32m✓\033[0m %s\n' "$*"; fi; }
 warn() { WARN=$((WARN+1)); [ "$QUIET" = 1 ] || printf '  \033[33m⚠\033[0m %s\n' "$*"; }
 fail() { FAILN=$((FAILN+1)); FAILS="${FAILS}${FAILS:+, }$*"; [ "$QUIET" = 1 ] || printf '  \033[31m✗\033[0m %s\n' "$*"; }
-sec()  { [ "$QUIET" = 1 ] || printf '\n\033[1m%s\033[0m\n' "$*"; }
+sec()  { if [ "$QUIET" != 1 ] && [ "$VERBOSE" = 1 ]; then printf '\n\033[1m%s\033[0m\n' "$*"; fi; }
 code() { curl -s -o /dev/null -m 6 -w '%{http_code}' "$@" 2>/dev/null || echo 000; }
 
 # Temp files created by bearer_cfg() below; always cleaned up on exit so a
@@ -692,13 +699,20 @@ except ConfigValidationError:
 for name, spec in servers.items():
     req = spec.get("require_env")
     if req and not os.environ.get(req, "").strip():
-        print(f"{name} {req}")
+        print(f"{name} {req} {spec.get('tier') or 'optional'}")
 PY
 )"
-  while IFS=' ' read -r srv var; do
+  while IFS=' ' read -r srv var tier; do
     [ -n "$srv" ] || continue
-    if connector_expected "$var"; then
-      warn "$var missing: manifest server '$srv' is not mounted on any CLI (require_env not satisfied)"
+    # An optional connector that is not enabled is a CHOICE, not a fault, and
+    # warning about a choice on every run is how people learn to ignore
+    # warnings. It is listed instead, so it stays discoverable: you know it
+    # exists and you turn it on when you actually want it. A CORE connector
+    # missing is different -- nobody chose that -- and stays a warning.
+    if [ "${tier:-optional}" != "core" ]; then
+      ok "optional connector '$srv' available, not mounted (enable with $var)"
+    elif connector_expected "$var"; then
+      warn "$var missing: core connector '$srv' is not mounted on any CLI (require_env not satisfied)"
     fi
   done <<EOF
 $skipped_servers
@@ -1059,6 +1073,50 @@ if [ "${oom_skills:-0}" -gt 0 ] 2>/dev/null; then
 else
   ok "no out-of-manifest skills to reconcile"
 fi
+# Third-party pins, surfaced as ONE line. The scan runs on the heartbeat and
+# writes a list; nothing is applied automatically, because an upstream change
+# alters behaviour nobody chose. So this is neither a warning nor an alert: it
+# is a pointer to a list you read when you want it.
+UPGRADE_REPORT="$HOME/.local/state/third-party-upgrades.md"  # matches Env.log_dir
+if [ -f "$UPGRADE_REPORT" ]; then
+  behind_line="$(grep -m1 'are behind upstream' "$UPGRADE_REPORT" 2>/dev/null || true)"
+  if [ -n "$behind_line" ]; then
+    ok "third-party pins: ${behind_line%% are behind*} behind upstream (see $UPGRADE_REPORT)"
+  else
+    ok "third-party pins are current"
+  fi
+else
+  ok "third-party pin scan has not run yet (next heartbeat)"
+fi
+# Reconciliation after an engine upgrade. `origin: engine` entries name a
+# command the ENGINE ships, so a release that renames or drops one leaves the
+# manifest pointing at a body that no longer exists — and the command simply
+# stops existing on every CLI without a word. The user did not choose that, the
+# release changed under them, so it is a FAIL and not a WARN. A rename that
+# ships a deprecated stub resolves normally and is silent here, by design.
+dangling_engine="$(python3 - "$SKILL_MANIFEST" "$ENGINE_ROOT/agent-universal-layer/skills" <<'PY' 2>/dev/null
+import sys, pathlib
+man, root = pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2])
+missing = []
+if man.is_file():
+    try:
+        import yaml
+        d = yaml.safe_load(man.read_text(encoding='utf-8')) or {}
+        s = d.get('skills') if isinstance(d, dict) else None
+        for name, spec in (s or {}).items():
+            if isinstance(spec, dict) and spec.get('origin') == 'engine':
+                if not (root / str(name) / 'SKILL.md').is_file():
+                    missing.append(str(name))
+    except Exception:
+        pass
+print(' '.join(sorted(missing)))
+PY
+)"
+if [ -n "${dangling_engine:-}" ]; then
+  fail "this engine no longer ships:$dangling_engine — the manifest still lists them, so those commands are gone from every CLI. Check the CHANGELOG for a rename, then update or remove the entries"
+else
+  ok "every engine-owned skill in the manifest resolves in this engine"
+fi
 # The starter commands README promises actually being there. This used to be
 # invisible: with no manifest at all, skills-sync printed "skipping" to stderr
 # and exited 0, and the only doctor line was the "no managed skill (fresh
@@ -1261,7 +1319,7 @@ if [ "$QUIET" = 1 ]; then
   [ "$FAILN" -gt 0 ] && line="$line | FAIL: $FAILS"
   printf '%s\n' "$line"
 else
-  sec "Summary"
+  printf '\n\033[1m%s\033[0m\n' "Summary"
   printf "  \033[32mPASS=%s\033[0m  \033[33mWARN=%s\033[0m  \033[31mFAIL=%s\033[0m\n" "$PASS" "$WARN" "$FAILN"
   [ "$FAILN" -eq 0 ] && printf "  → \033[32malignment VERIFIED\033[0m\n" || printf "  → \033[31mthere are FAILs to fix\033[0m\n"
 fi

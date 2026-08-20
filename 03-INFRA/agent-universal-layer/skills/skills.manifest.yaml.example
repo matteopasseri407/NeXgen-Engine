@@ -17,7 +17,13 @@
 #       `agent-sync guard` run it for you)
 #
 # RULES (these mirror the MCP manifest, mcp/manifest.yaml):
-#   origin: vault   -> vendored inside this repo at
+#   origin: engine  -> shipped WITH the engine and read straight from the
+#                      installed engine (AGENT_ENGINE_ROOT). Never copied into
+#                      your own data, so an engine upgrade updates the skill and
+#                      the two can never drift apart. Use for the commands the
+#                      engine owns; do not edit them locally, they are replaced
+#                      on every upgrade.
+#   origin: vault   -> vendored inside YOUR data repo at
 #                      03-INFRA/agent-universal-layer/skills/<name>/ ; git
 #                      carries it to every machine. Use for skills you own/edit.
 #   origin: github  -> third-party, NOT vendored: inventoried here only. Every
@@ -53,64 +59,79 @@ skills:
   #                              ("/name" in the Antigravity TUI).
   #   targets: [opencode]     -> writes nothing (OpenCode reads the shared
   #                              roots); sync only verifies discoverability.
-  # Keep names lowercase-hyphen (agentskills.io shape) and avoid CLI built-in
-  # names: e.g. Claude Code ships a bundled /doctor that a skill named
-  # "doctor" would override -- hence the vault- prefix below.
+  # These are `origin: engine`: they live in the engine, not in your data, so
+  # upgrading the engine upgrades them and no copy can go stale behind you.
+  # Naming rule: a command that acts on YOUR MEMORY keeps the vault- prefix,
+  # because the memory is the Vault; a command that acts on the engine and its
+  # tooling takes the nexgen- prefix. The prefix also avoids overriding a CLI
+  # built-in, e.g. Claude Code ships a bundled /doctor.
   # Write bodies argument-free ("the text after the command is the request"):
   # placeholder syntaxes like $ARGUMENTS diverge per CLI, plain instructions
   # work identically on all four.
-  vault-doctor:
-    origin: vault
+  nexgen-doctor:
+    origin: engine
     targets: [claude, codex, antigravity, opencode]
     exposure: core
 
   vault-close:
-    origin: vault
+    origin: engine
     targets: [claude, codex, antigravity, opencode]
     exposure: core
 
   vault-save:
-    origin: vault
+    origin: engine
     targets: [claude, codex, antigravity, opencode]
     exposure: core
 
-  vault-council:
-    origin: vault
+  nexgen-council:
+    origin: engine
     targets: [claude, codex, antigravity, opencode]
     exposure: core
 
   vault-groom:
-    origin: vault
+    origin: engine
     targets: [claude, codex, antigravity, opencode]
     exposure: core
 
   # Updates the ENGINE, not the Vault -- hence the nexgen- prefix. The
-  # vault-update entry below is the previous name, kept so an existing
-  # manifest keeps resolving; it is a stub that defers to this one.
+  # deprecated entries below are the previous names, kept so an existing
+  # manifest and anyone's muscle memory keep resolving; each is a stub that
+  # defers to the renamed command and is manual, so it stays out of the
+  # eager showcase.
   nexgen-update:
-    origin: vault
+    origin: engine
     targets: [claude, codex, antigravity, opencode]
     exposure: core
+
+  vault-doctor:
+    origin: engine
+    targets: [claude, codex, antigravity, opencode]
+    exposure: manual
+
+  vault-council:
+    origin: engine
+    targets: [claude, codex, antigravity, opencode]
+    exposure: manual
 
   vault-update:
-    origin: vault
+    origin: engine
     targets: [claude, codex, antigravity, opencode]
-    exposure: core
+    exposure: manual
 
   vault-map:
-    origin: vault
+    origin: engine
     targets: [claude, codex, antigravity, opencode]
     exposure: core
 
   # --- example: a third-party skill, inventoried by pinned commit ------------
-  # humanizer:
+  # some-third-party-skill:
   #   origin: github
   #   repo: <owner>/<repo>
   #   commit: <full-40-character-commit-sha>   # required for origin: github
   #   targets: [claude]
   #   exposure: manual
 
-  # --- example: your own skill, vendored in this repo under skills/<name>/ ----
+  # --- example: your own skill, vendored in YOUR data under skills/<name>/ ----
   # my-custom-skill:
   #   origin: vault
   #   targets: [claude]

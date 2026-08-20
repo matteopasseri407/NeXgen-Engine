@@ -15,11 +15,18 @@ import yaml
 
 from conftest import REAL_VAULT
 
+# Naming contract: a command acting on the user's MEMORY keeps the vault-
+# prefix, because the memory is the Vault; a command acting on the engine and
+# its tooling takes the nexgen- prefix.
 STARTERS = (
-    "vault-doctor", "vault-close", "vault-save",
-    "vault-council", "vault-groom", "nexgen-update", "vault-update",
-    "vault-map",
+    "nexgen-doctor", "nexgen-council", "nexgen-update",
+    "vault-close", "vault-save", "vault-groom", "vault-map",
 )
+# Previous names, kept resolving as deprecated stubs. They ship real bodies, so
+# every body-level rule applies to them too, but they are manual: a stub must
+# not take a seat in the eager showcase next to the command it defers to.
+STUBS = ("vault-doctor", "vault-council", "vault-update")
+ALL_SHIPPED = STARTERS + STUBS
 SKILLS_ROOT = REAL_VAULT / "03-INFRA" / "agent-universal-layer" / "skills"
 EXAMPLE_MANIFEST = SKILLS_ROOT / "skills.manifest.yaml.example"
 
@@ -63,7 +70,7 @@ def test_every_starter_ships_a_valid_portable_skill():
 
 
 def test_starter_names_avoid_cli_builtin_collisions():
-    for name in STARTERS:
+    for name in ALL_SHIPPED:
         assert name not in RESERVED_BUILTIN_NAMES
         # The invariant is that a starter is NAMESPACED, so it can never
         # shadow a CLI built-in or bundled skill. It used to say `vault-`
@@ -76,12 +83,24 @@ def test_starter_names_avoid_cli_builtin_collisions():
 
 
 def test_starter_bodies_are_free_of_dialect_placeholders():
-    for name in STARTERS:
+    for name in ALL_SHIPPED:
         _, body = _frontmatter_and_body(name)
         hit = NON_PORTABLE_PLACEHOLDER_RE.search(body)
         assert hit is None, (
             f"{name}: body uses non-portable placeholder {hit.group(0)!r}; "
             "write it model-mediated (the text after the command is the request)"
+        )
+
+
+def test_deprecated_stubs_are_shipped_but_stay_out_of_the_eager_showcase():
+    """A stub exists so an old name keeps resolving, not so it can sit next to
+    the command it defers to and double the startup catalogue."""
+    data = yaml.safe_load(EXAMPLE_MANIFEST.read_text(encoding="utf-8"))
+    skills = (data or {}).get("skills") or {}
+    for name in STUBS:
+        assert name in skills, f"{name}: an old name must keep resolving"
+        assert skills[name].get("exposure") == "manual", (
+            f"{name}: a deprecated alias must not be eager"
         )
 
 
@@ -91,7 +110,10 @@ def test_example_manifest_registers_starters_as_core_commands():
     for name in STARTERS:
         assert name in skills, f"{name}: missing from skills.manifest.yaml.example"
         spec = skills[name]
-        assert spec.get("origin") == "vault"
+        assert spec.get("origin") == "engine", (
+            f"{name}: starters ship WITH the engine and are read from it, so no\n"
+            "second copy can go stale in the user's data"
+        )
         assert spec.get("exposure") == "core", (
             f"{name}: command skills need exposure core to reach the shared "
             "~/.agents/skills root (Codex + OpenCode discovery)"

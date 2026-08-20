@@ -2,8 +2,10 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import shutil
+import sys
 import subprocess
 from pathlib import Path
 from types import SimpleNamespace
@@ -745,3 +747,169 @@ def test_antigravity_target_warns_on_a_non_portable_skill_name(sandbox, monkeypa
     assert "not agent-skills portable" in out
     view = sandbox.home / ".gemini" / "antigravity-cli" / "skills" / "fake_skill_b"
     assert view.resolve() == (sandbox.skill_library / "fake_skill_b").resolve()
+
+
+def _write_manifest(sandbox, body: str) -> None:
+    (sandbox.skills_dir / "skills.manifest.yaml").write_text(body, encoding="utf-8")
+
+
+def _engine_skill(root: Path, name: str) -> None:
+    body = root / name
+    body.mkdir(parents=True)
+    (body / "SKILL.md").write_text(
+        f"---\nname: {name}\ndescription: shipped with the engine.\n---\n\nbody\n",
+        encoding="utf-8",
+    )
+
+
+def test_engine_origin_reads_the_installed_engine_and_keeps_no_copy_in_the_vault(
+    sandbox, monkeypatch, tmp_path
+):
+    """`origin: engine` is what makes drift impossible: the product's own skills
+    live in the engine and are never vendored into the user's data, so an engine
+    upgrade upgrades them and no stale second copy can exist to go behind."""
+    sb = sandbox
+    engine_skills = tmp_path / "engine" / "agent-universal-layer" / "skills"
+    _engine_skill(engine_skills, "engine-owned")
+    _write_manifest(
+        sb,
+        "skills:\n  engine-owned:\n    origin: engine\n"
+        "    targets: [claude]\n    exposure: manual\n",
+    )
+
+    mod = load_skills_sync_module(sb)
+    mod.ENGINE_SKILLS = engine_skills
+    monkeypatch.setattr(mod.sys, "argv", ["skills-sync.py", "--apply"])
+
+    assert mod.main() == 0
+    assert (sb.skill_library / "engine-owned" / "SKILL.md").is_file()
+    assert not (sb.skills_dir / "engine-owned").exists()
+
+
+def test_engine_origin_fails_loudly_when_the_engine_copy_is_absent(
+    sandbox, monkeypatch, tmp_path, capsys
+):
+    """A missing engine source must be a hard failure, not a silent skip: the
+    command would simply vanish from every CLI without anyone being told.
+
+    The message is asserted, not just the exit code: an engine that rejects
+    `origin: engine` outright also exits non-zero, so the code alone would pass
+    for the wrong reason and prove nothing about this behaviour."""
+    sb = sandbox
+    _write_manifest(
+        sb,
+        "skills:\n  engine-owned:\n    origin: engine\n"
+        "    targets: [claude]\n    exposure: manual\n",
+    )
+
+    mod = load_skills_sync_module(sb)
+    missing = tmp_path / "engine-without-skills"
+    mod.ENGINE_SKILLS = missing
+    monkeypatch.setattr(mod.sys, "argv", ["skills-sync.py", "--apply"])
+
+    assert mod.main() != 0
+    reported = capsys.readouterr().out
+    assert "missing canonical engine source" in reported
+    assert str(missing) in reported
+
+
+def _installer_skill(sandbox, monkeypatch, tmp_path, *, pinned: str, installed: str | None):
+    """A fake installer that writes a SKILL.md carrying `pinned` into the EAGER
+    root, which is exactly where real installers put their copy."""
+    if installed is not None:
+        body = sandbox.skill_library / "plugged-in"
+        body.mkdir(parents=True, exist_ok=True)
+        (body / "SKILL.md").write_text(
+            f"---\nname: plugged-in\ndescription: x\nversion: {installed}\n---\n\nbody\n",
+            encoding="utf-8",
+        )
+    # A Python script run through sys.executable, not a shell script: the same
+    # test has to mean something on Windows, where #!/bin/sh is not a program.
+    fake = tmp_path / "fake_installer.py"
+    fake.write_text(
+        "import pathlib, sys\n"
+        "root = pathlib.Path(sys.argv[1]) / 'plugged-in'\n"
+        "root.mkdir(parents=True, exist_ok=True)\n"
+        "(root / 'SKILL.md').write_text("
+        f"'---\\nname: plugged-in\\ndescription: x\\nversion: {pinned}\\n---\\n\\nbody\\n'"
+        ", encoding='utf-8')\n",
+        encoding="utf-8",
+    )
+    install = json.dumps([sys.executable, str(fake), str(sandbox.active_skills)])
+    _write_manifest(
+        sandbox,
+        "skills:\n  plugged-in:\n    origin: installer\n"
+        f"    version: '{pinned}'\n"
+        f"    install: {install}\n"
+        "    targets: [claude]\n    exposure: manual\n",
+    )
+    mod = load_skills_sync_module(sandbox)
+    monkeypatch.setattr(mod.sys, "argv", ["skills-sync.py", "--apply"])
+    return mod
+
+
+def test_a_pinned_plugin_installs_itself_on_a_machine_that_lacks_it(sandbox, monkeypatch, tmp_path):
+    """This is what makes a chosen plugin propagate. Before it, a skill only its
+    own installer could materialize stayed outside the manifest, every machine
+    installed it by hand, and the versions drifted apart."""
+    mod = _installer_skill(sandbox, monkeypatch, tmp_path, pinned="4.1.1", installed=None)
+
+    assert mod.main() == 0
+    assert mod._frontmatter_version(sandbox.skill_library / "plugged-in" / "SKILL.md") == "4.1.1"
+
+
+def test_a_plugin_behind_the_pinned_version_is_brought_up_to_it(sandbox, monkeypatch, tmp_path):
+    mod = _installer_skill(sandbox, monkeypatch, tmp_path, pinned="4.1.1", installed="4.0.2")
+
+    assert mod.main() == 0
+    assert mod._frontmatter_version(sandbox.skill_library / "plugged-in" / "SKILL.md") == "4.1.1"
+
+
+def test_the_installers_eager_copy_is_moved_into_the_lazy_library(sandbox, monkeypatch, tmp_path):
+    """Installers drop their copy in the discovery root, where every runtime
+    pays for its description at startup. Remembering to move it was a note
+    asking a human not to forget, which is not a mechanism."""
+    mod = _installer_skill(sandbox, monkeypatch, tmp_path, pinned="4.1.1", installed=None)
+
+    assert mod.main() == 0
+    assert not (sandbox.active_skills / "plugged-in").exists(), "must not sit in the eager root"
+    assert (sandbox.skill_library / "plugged-in" / "SKILL.md").is_file()
+
+
+def test_a_plugin_already_at_the_pinned_version_is_left_alone(sandbox, monkeypatch, tmp_path):
+    """Re-running an installer every sync cycle is network traffic, latency and
+    risk in exchange for nothing."""
+    mod = _installer_skill(sandbox, monkeypatch, tmp_path, pinned="4.1.1", installed="4.1.1")
+
+    assert mod.main() == 0
+    assert not (sandbox.active_skills / "plugged-in").exists()
+
+
+def test_an_origin_this_engine_does_not_know_costs_that_entry_and_nothing_else(
+    sandbox, monkeypatch, tmp_path
+):
+    """The manifest lives in the user's data and reaches every machine in
+    minutes; the code that understands it arrives with an engine release. So a
+    manifest will name an origin an older engine has never heard of, and that
+    is normal, not corruption.
+
+    Rejecting the document for it stopped the sync of EVERYTHING -- every skill,
+    every CLI, every machine -- over one entry the machine was not ready for.
+    Verified live on 2026-08-20 before this existed: adding one such entry took
+    the whole layer down with `unsupported origin`."""
+    engine_skills = tmp_path / "engine" / "agent-universal-layer" / "skills"
+    _engine_skill(engine_skills, "engine-owned")
+    _write_manifest(
+        sandbox,
+        "skills:\n"
+        "  from-the-future:\n    origin: teleport\n    targets: [claude]\n    exposure: manual\n"
+        "  engine-owned:\n    origin: engine\n    targets: [claude]\n    exposure: manual\n",
+    )
+
+    mod = load_skills_sync_module(sandbox)
+    mod.ENGINE_SKILLS = engine_skills
+    monkeypatch.setattr(mod.sys, "argv", ["skills-sync.py", "--apply"])
+
+    assert mod.main() == 0, "one unknown entry must not stop the other skills"
+    assert (sandbox.skill_library / "engine-owned" / "SKILL.md").is_file()
+    assert not (sandbox.skill_library / "from-the-future").exists()

@@ -135,8 +135,10 @@ def test_doctor_strict_finds_opencode_in_its_standard_user_install_path(sandbox)
         if entry != str(sandbox.home / ".opencode" / "bin")
     )
 
+    # --verbose because this asserts on a section heading, and the default
+    # report deliberately prints only what needs attention.
     result = subprocess.run(
-        ["bash", str(sandbox.scripts_dir / "agent-doctor.sh"), "--strict"],
+        ["bash", str(sandbox.scripts_dir / "agent-doctor.sh"), "--strict", "--verbose"],
         env=env,
         capture_output=True,
         text=True,
@@ -325,7 +327,8 @@ _CONNECTOR_ENV_VARS = ("N8N_MCP_TOKEN", "VAULT_LIBRARY_TOKEN", "VAULT_LIBRARY_UR
                        "FIRECRAWL_TUNNEL_PORT", "OCR_TUNNEL_PORT")
 
 
-def _run_doctor(sandbox, *args: str, env_overrides: dict | None = None, timeout: int = 60):
+def _run_doctor(sandbox, *args: str, env_overrides: dict | None = None, timeout: int = 60,
+                verbose: bool = True):
     """Like conftest.run_agent_doctor, but lets a test override env vars
     (KNOWLEDGE_VAULT_REMOTE, connector tokens, ...) -- run_agent_doctor()
     itself calls sandbox.env() with no extra kwargs, and sandbox.env()
@@ -338,6 +341,8 @@ def _run_doctor(sandbox, *args: str, env_overrides: dict | None = None, timeout:
     for var in _CONNECTOR_ENV_VARS:
         env.pop(var, None)
     env.update(env_overrides or {})
+    if verbose and "--verbose" not in args and "--summary" not in args:
+        args = ("--verbose", *args)
     return subprocess.run(
         ["bash", str(sandbox.scripts_dir / "agent-doctor.sh"), *args],
         env=env,
@@ -1186,10 +1191,15 @@ def test_antigravity_symlink_comment_reflects_current_removal_behavior():
 # connector check (incident 2026-07-30: N8N_MCP_TOKEN silently dropped
 # n8n-mcp from all 4 CLIs and the doctor never named the variable).
 
-def _add_require_env_server(sandbox, server_name: str, var_name: str, targets=("claude",)) -> None:
+def _add_require_env_server(sandbox, server_name: str, var_name: str, targets=("claude",),
+                            tier: str = "core") -> None:
     """Appends one more server entry (require_env-gated) to the sandbox's
     already-copied synthetic fixture manifest, instead of replacing it, so
-    the existing fake-* entries other checks may rely on stay intact."""
+    the existing fake-* entries other checks may rely on stay intact.
+
+    Defaults to `tier: core` because these cases are about a connector the
+    install is expected to have and does not. An optional one left off is a
+    choice and is deliberately quiet, which is a different test."""
     manifest_path = sandbox.mcp_dir / "manifest.yaml"
     existing = manifest_path.read_text(encoding="utf-8")
     addition = (
@@ -1197,6 +1207,7 @@ def _add_require_env_server(sandbox, server_name: str, var_name: str, targets=("
         "    transport: stdio\n"
         "    command: fake-cmd\n"
         f"    require_env: {var_name}\n"
+        f"    tier: {tier}\n"
         f"    targets: [{', '.join(targets)}]\n"
     )
     manifest_path.write_text(existing + addition, encoding="utf-8")
@@ -1330,3 +1341,128 @@ def test_guardrail_check_present_in_both_twins():
         assert "Permission posture guardrail" in content
         assert "PreToolUse" in content
         assert "WITHOUT a declared PreToolUse guardrail hook" in content
+
+
+def test_doctor_reports_an_engine_owned_skill_this_engine_no_longer_ships(sandbox):
+    """A release that renames or drops a command leaves any manifest still
+    listing the old name pointing at nothing, and the command disappears from
+    every CLI without a word. The user did not choose that, the release changed
+    under them, so the doctor has to name the entry out loud."""
+    (sandbox.skills_dir / "skills.manifest.yaml").write_text(
+        "skills:\n  ghost-command:\n    origin: engine\n"
+        "    targets: [claude]\n    exposure: core\n",
+        encoding="utf-8",
+    )
+
+    result = _run_doctor(sandbox)
+
+    assert "ghost-command" in result.stdout, result.stdout
+
+
+def test_doctor_stays_quiet_when_every_engine_owned_skill_resolves(sandbox):
+    """The common case after an upgrade is that nothing moved, or that a rename
+    shipped a deprecated stub. Either way it resolves, and a guardian that
+    congratulates itself on every run teaches people to skim past it."""
+    body = sandbox.skills_dir / "still-here"
+    body.mkdir(parents=True, exist_ok=True)
+    (body / "SKILL.md").write_text(
+        "---\nname: still-here\ndescription: ships with the engine.\n---\n\nbody\n",
+        encoding="utf-8",
+    )
+    (sandbox.skills_dir / "skills.manifest.yaml").write_text(
+        "skills:\n  still-here:\n    origin: engine\n"
+        "    targets: [claude]\n    exposure: core\n",
+        encoding="utf-8",
+    )
+
+    result = _run_doctor(sandbox)
+
+    assert "no longer ships" not in result.stdout, result.stdout
+
+
+def test_default_report_shows_what_is_wrong_and_hides_what_passed(sandbox):
+    """A report that lists forty passing checks trains people to skim past the
+    one line that mattered. The counts still prove the checks ran."""
+    result = _run_doctor(sandbox, verbose=False)
+
+    assert "PASS=" in result.stdout, "the summary must still prove the checks ran"
+    assert "✓" not in result.stdout, result.stdout
+
+
+def test_verbose_still_lists_every_check_that_passed(sandbox):
+    """Hiding them by default is a reading aid, not a loss of information."""
+    result = _run_doctor(sandbox, "--verbose")
+
+    assert "✓" in result.stdout, result.stdout
+
+
+def _write_mcp_manifest(sandbox, body: str) -> None:
+    path = sandbox.ul / "mcp" / "manifest.yaml"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(body, encoding="utf-8")
+
+
+_OPTIONAL_ONLY = """schema_version: 1
+retired_servers: []
+servers:
+  spare-parts:
+    transport: stdio
+    command: node
+    args: ["spare.js"]
+    require_env: SPARE_PARTS_OPT_IN
+    targets: [claude]
+"""
+
+_CORE_ONLY = """schema_version: 1
+retired_servers: []
+servers:
+  load-bearing:
+    transport: stdio
+    command: node
+    args: ["load.js"]
+    require_env: LOAD_BEARING_URL
+    tier: core
+    targets: [claude]
+"""
+
+
+def test_an_optional_connector_left_off_is_listed_not_warned_about(sandbox, monkeypatch):
+    """Choosing not to enable an optional connector is a decision, and warning
+    about a decision on every run is how people learn to ignore warnings. It
+    still has to stay discoverable: you know it exists, you turn it on when you
+    want it."""
+    _write_mcp_manifest(sandbox, _OPTIONAL_ONLY)
+    monkeypatch.delenv("SPARE_PARTS_OPT_IN", raising=False)
+
+    quiet = _run_doctor(sandbox, verbose=False)
+    listed = _run_doctor(sandbox)
+
+    assert "spare-parts" not in quiet.stdout, quiet.stdout
+    assert "spare-parts" in listed.stdout, listed.stdout
+
+
+def test_a_core_connector_is_never_given_the_optional_treatment(sandbox, monkeypatch):
+    """Whether a missing core connector warrants a warning depends on the
+    install mode, and that gate predates this change. What must never happen is
+    a core connector being filed away as an available extra: that is the path
+    that stays quiet, and something the engine calls fundamental does not
+    belong on it."""
+    _write_mcp_manifest(sandbox, _CORE_ONLY)
+    monkeypatch.delenv("LOAD_BEARING_URL", raising=False)
+
+    result = _run_doctor(sandbox)
+
+    assert "optional connector 'load-bearing'" not in result.stdout, result.stdout
+
+
+def test_the_new_signals_exist_in_both_twins():
+    """An independent review found both of these present in bash and missing in
+    PowerShell: a release that renamed a command went back to being silent on
+    Windows, in the very check that exists to prevent that. Source-level parity
+    is the only thing that catches an omission from here."""
+    repo = Path(__file__).resolve().parents[3]
+    bash = (repo / "03-INFRA/scripts/agent-doctor.sh").read_text(encoding="utf-8")
+    ps1 = (repo / "03-INFRA/scripts/agent-doctor.ps1").read_text(encoding="utf-8")
+    for marker in ("no longer ships", "optional connector", "third-party pin"):
+        assert marker in bash, f"bash lost: {marker}"
+        assert marker in ps1, f"the Windows twin never got: {marker}"

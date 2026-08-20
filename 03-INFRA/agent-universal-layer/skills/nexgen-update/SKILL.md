@@ -24,9 +24,17 @@ gate intact.
 5. If the bare command is absent because this machine predates the release
    that introduced it, follow the manual bootstrap in `docs/upgrade.md` once.
    The provisioning pass then installs the command for future releases.
-6. Report the result and remind the user that every other machine must run the
+6. Reconcile the skills the release brought with it.
+   The engine's own commands are `origin: engine`, so they travel with the
+   upgrade and need nothing: whatever the release changed in them is already
+   live. What needs a look is the manifest, when a release renamed or removed a
+   command. Run `agent-doctor` and read its line about engine-owned skills: a
+   rename that ships a deprecated stub resolves silently, a removal is reported
+   by name. Only then decide with the user whether to update or drop the entry.
+   Skills the user owns (`origin: vault`) are never touched by an upgrade.
+7. Report the result and remind the user that every other machine must run the
    same update.
-7. On Cloud-Server, say plainly that the VPS is a second install and was not
+8. On Cloud-Server, say plainly that the VPS is a second install and was not
    upgraded by the workstation command.
    The redeploy runbook is `03-INFRA/deploy/README.md`, section "Upgrading the
    server side".

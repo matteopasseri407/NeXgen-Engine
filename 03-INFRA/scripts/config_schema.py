@@ -519,6 +519,7 @@ def _validate_mcp_server(
         "env",
         "require_env",
         "targets",
+        "tier",
         "url",
         "url_env",
         "auth",
@@ -540,6 +541,12 @@ def _validate_mcp_server(
 
     if "require_env" in spec:
         _env_name(spec["require_env"], source, f"{where}.require_env")
+    # tier: `core` connectors are what the engine considers fundamental and
+    # ships mounted; everything else is `optional`, known to exist and fetched
+    # when someone actually wants it. Absent means optional, so an unmarked
+    # entry never quietly promotes itself into the always-on set.
+    if "tier" in spec and spec["tier"] not in {"core", "optional"}:
+        _error(source, f"{where}.tier must be 'core' or 'optional'")
     if "timeouts" in spec:
         _validate_timeouts(spec["timeouts"], source, f"{where}.timeouts")
 

@@ -6,6 +6,7 @@ prove the shared implementation runs in a sandboxed USERPROFILE.
 """
 from __future__ import annotations
 
+import time
 import json
 import os
 from pathlib import Path
@@ -2185,8 +2186,29 @@ def test_windows_scheduler_wrapper_lives_in_runtime_state_and_reenters_split_top
     assert str(env.vault) in content
     assert env.branch in content
     create_calls = [c for c in calls if c and c[1] == "/Create"]
-    assert create_calls and all(str(wrapper) in " ".join(c) for c in create_calls)
-    assert len(create_calls) == 2, create_calls
+    # Every scheduled task must run a wrapper from the runtime state directory,
+    # never one written into the engine checkout: that is what keeps generated,
+    # machine-specific state out of a repository that gets released. There are
+    # three tasks now -- the guard, its logon trigger, and the heartbeat that
+    # carries the alarm and the self-upgrade.
+    assert create_calls
+    assert all(str(env.log_dir) in " ".join(c) for c in create_calls), create_calls
+    assert sum(1 for c in create_calls if str(wrapper) in " ".join(c)) == 2, create_calls
+    assert len(create_calls) == 3, create_calls
+
+
+def _guard_creates(calls):
+    """Only the guard task and its logon twin. The heartbeat is a separate task
+    with its own lifecycle, and these cases are about the guard's rewrite
+    behaviour, not about how many tasks exist in total."""
+    out = []
+    for c in calls:
+        if not c or c[1] != "/Create":
+            continue
+        name = c[c.index("/TN") + 1] if "/TN" in c else ""
+        if name.startswith("KnowledgeVault Agent Sync"):
+            out.append(c)
+    return out
 
 
 def test_windows_scheduler_does_not_rewrite_an_unchanged_task(sandbox, monkeypatch):
@@ -2218,7 +2240,7 @@ def test_windows_scheduler_does_not_rewrite_an_unchanged_task(sandbox, monkeypat
 
     assert mod._install_scheduled_task(env) is True
 
-    create_calls = [c for c in calls if c and c[1] == "/Create"]
+    create_calls = _guard_creates(calls)
     assert create_calls == [], f"an unchanged task must not be rewritten: {create_calls}"
     log = env.log_path.read_text(encoding="utf-8")
     assert "already invokes" in log
@@ -2250,7 +2272,7 @@ def test_windows_scheduler_rewrites_when_wrapper_path_changed(sandbox, monkeypat
 
     assert mod._install_scheduled_task(env) is True
 
-    create_calls = [c for c in calls if c and c[1] == "/Create"]
+    create_calls = _guard_creates(calls)
     assert len(create_calls) == 2, f"a stale wrapper must be rewritten: {create_calls}"
 
 
@@ -2524,3 +2546,294 @@ def test_render_json_report_agrees_with_the_human_summary(sandbox_with_live_conf
     assert match, summary[-1]
     totals = json.loads(machine.stdout)["totals"]
     assert (totals["ok"], totals["diff"], totals["extra"]) == tuple(int(g) for g in match.groups())
+
+
+# --- the alarm has to survive the death of the thing it watches --------------
+# A guard that stayed dead for six days logged `Dependency failed` every thirty
+# minutes and told nobody, because the only notifier lived inside the process
+# that was never starting. These cover the two triggers that fix that, both
+# routed through the single transport so the one-megaphone rule holds.
+
+def _alert_env(sandbox, monkeypatch):
+    mod = load_agent_sync_module(sandbox)
+    monkeypatch.setenv("HOME", str(sandbox.home))
+    monkeypatch.setenv("KNOWLEDGE_VAULT_PATH", str(sandbox.vault))
+    return mod
+
+
+def test_heartbeat_speaks_when_the_guard_has_not_completed_in_too_long(sandbox, monkeypatch):
+    mod = _alert_env(sandbox, monkeypatch)
+    sent: list[str] = []
+    monkeypatch.setattr(mod, "_deliver_alert", lambda env, summary: (sent.append(summary), True)[1])
+    env = mod.Env()
+    env.log_dir.mkdir(parents=True, exist_ok=True)
+    stale = int(time.time()) - (48 * 3600)
+    (env.log_dir / "agent-healthcheck.state").write_text(f"{stale}\nok\n", encoding="utf-8")
+
+    assert mod._notify_stale_cli([]) == 0
+    assert sent, "48 hours without a completed guard has to be said out loud"
+    assert "agent-sync guard" in sent[0], "an alert must carry the one action to take"
+
+
+def test_heartbeat_stays_quiet_when_the_guard_completed_recently(sandbox, monkeypatch):
+    """An alarm that goes off while everything works is an alarm people mute,
+    and a muted alarm is worse than none: it looks like coverage."""
+    mod = _alert_env(sandbox, monkeypatch)
+    sent: list[str] = []
+    monkeypatch.setattr(mod, "_deliver_alert", lambda env, summary: (sent.append(summary), True)[1])
+    env = mod.Env()
+    env.log_dir.mkdir(parents=True, exist_ok=True)
+    (env.log_dir / "agent-healthcheck.state").write_text(f"{int(time.time())}\nok\n", encoding="utf-8")
+
+    assert mod._notify_stale_cli([]) == 0
+    assert not sent
+
+
+def test_failure_trigger_names_the_unit_that_died(sandbox, monkeypatch):
+    """systemd hands the failed unit's name to the template. Passing it through
+    is the whole advantage over waiting for something else to notice."""
+    mod = _alert_env(sandbox, monkeypatch)
+    sent: list[str] = []
+    monkeypatch.setattr(mod, "_deliver_alert", lambda env, summary: (sent.append(summary), True)[1])
+
+    assert mod._notify_failure_cli(["agent-identity-surface.service"]) == 0
+    assert "agent-identity-surface.service" in sent[0]
+
+
+def test_the_guard_unit_carries_its_own_failure_trigger(sandbox, monkeypatch):
+    mod = _alert_env(sandbox, monkeypatch)
+    content = mod._systemd_service_content(mod.Env())
+    assert "OnFailure=agent-alert@%n.service" in content
+
+
+def test_the_heartbeat_has_a_windows_twin_not_just_a_systemd_unit(sandbox):
+    """Source-level, because a Windows box cannot be driven from here: what it
+    proves is that the alarm ships on both platforms rather than being a Linux
+    feature announced as done. Task Scheduler has no usable OnFailure=, so the
+    Windows side gets the heartbeat, which measures elapsed time and therefore
+    covers a guard that failed, was cancelled, or was never scheduled."""
+    mod = load_agent_sync_module(sandbox)
+    source = (sandbox.scripts_dir / "agent_sync.py").read_text(encoding="utf-8")
+
+    assert "{mode}" in mod._VBS_TEMPLATE, "the wrapper must be able to run a mode other than guard"
+    assert "KnowledgeVault Agent Heartbeat" in source
+    assert "notify-stale" in source
+    assert '"/SC", "HOURLY"' in source
+
+
+# --- updating itself is the job, not news ------------------------------------
+
+def _fake_updater(sandbox, monkeypatch, mod, *, current: str, target: str, upgrade_rc: int = 0):
+    """Stands in for nexgen-update: --check reports the two versions it prints
+    for real, --yes reports success or failure."""
+    updater = sandbox.home / ".local" / "bin" / "nexgen-update"
+    updater.parent.mkdir(parents=True, exist_ok=True)
+    updater.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    calls: list[list[str]] = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append(list(cmd))
+        if "--check" in cmd:
+            return SimpleNamespace(
+                returncode=0,
+                stdout=f"Current: {current}\nLatest released target: {target}\n",
+                stderr="",
+            )
+        return SimpleNamespace(returncode=upgrade_rc, stdout="", stderr="")
+
+    monkeypatch.setattr(mod, "_run_external", fake_run)
+    return calls
+
+
+def test_a_patch_release_is_taken_without_asking_and_without_a_notification(sandbox, monkeypatch):
+    mod = _alert_env(sandbox, monkeypatch)
+    sent: list[str] = []
+    monkeypatch.setattr(mod, "_deliver_alert", lambda env, summary: (sent.append(summary), True)[1])
+    calls = _fake_updater(sandbox, monkeypatch, mod, current="v1.2.3", target="v1.2.4")
+
+    mod._auto_upgrade(mod.Env())
+
+    assert any("--yes" in c for c in calls), "a patch release is routine maintenance, take it"
+    assert not sent, "taking a routine upgrade is not news, and news people ignore is worse than none"
+
+
+def test_a_minor_release_waits_for_a_human_at_the_default_level(sandbox, monkeypatch):
+    """A machine that changes its own behaviour overnight changed it without
+    anyone choosing that. Patch is the default ceiling for exactly that reason."""
+    mod = _alert_env(sandbox, monkeypatch)
+    monkeypatch.delenv("AGENT_AUTO_UPGRADE", raising=False)
+    calls = _fake_updater(sandbox, monkeypatch, mod, current="v1.2.3", target="v1.3.0")
+
+    mod._auto_upgrade(mod.Env())
+
+    assert not any("--yes" in c for c in calls)
+
+
+def test_a_minor_release_is_taken_when_the_ceiling_is_raised(sandbox, monkeypatch):
+    mod = _alert_env(sandbox, monkeypatch)
+    monkeypatch.setenv("AGENT_AUTO_UPGRADE", "minor")
+    calls = _fake_updater(sandbox, monkeypatch, mod, current="v1.2.3", target="v1.3.0")
+
+    mod._auto_upgrade(mod.Env())
+
+    assert any("--yes" in c for c in calls)
+
+
+def test_an_upgrade_that_fails_is_the_one_thing_worth_saying(sandbox, monkeypatch):
+    mod = _alert_env(sandbox, monkeypatch)
+    sent: list[str] = []
+    monkeypatch.setattr(mod, "_deliver_alert", lambda env, summary: (sent.append(summary), True)[1])
+    _fake_updater(sandbox, monkeypatch, mod, current="v1.2.3", target="v1.2.4", upgrade_rc=1)
+
+    mod._auto_upgrade(mod.Env())
+
+    assert sent and "nexgen-update --check" in sent[0]
+
+
+def test_auto_upgrade_can_be_switched_off_entirely(sandbox, monkeypatch):
+    mod = _alert_env(sandbox, monkeypatch)
+    monkeypatch.setenv("AGENT_AUTO_UPGRADE", "off")
+    calls = _fake_updater(sandbox, monkeypatch, mod, current="v1.2.3", target="v1.2.4")
+
+    mod._auto_upgrade(mod.Env())
+
+    assert not calls
+
+
+# --- somebody has to watch the things we did not write -----------------------
+
+def _pinned_manifests(sandbox, *, commit: str = "a" * 40, version: str = "1.0.0"):
+    skills = sandbox.instance_ul / "skills" if hasattr(sandbox, "instance_ul") else sandbox.ul / "skills"
+    skills.mkdir(parents=True, exist_ok=True)
+    (skills / "skills.manifest.yaml").write_text(
+        "skills:\n"
+        "  borrowed:\n    origin: github\n    repo: someone/borrowed\n"
+        f"    commit: {commit}\n    targets: [claude]\n    exposure: manual\n"
+        "  plugged-in:\n    origin: installer\n"
+        f"    version: '{version}'\n"
+        "    install: ['npx', '--yes', 'plugged-in@1.0.0', 'install']\n"
+        "    targets: [claude]\n    exposure: manual\n",
+        encoding="utf-8",
+    )
+
+
+def test_a_dependency_we_did_not_write_is_noticed_when_it_moves(sandbox, monkeypatch):
+    """Nothing was watching the pins before this: a skill fetched at a commit
+    and a plugin fixed at a version simply stayed where they were until someone
+    tripped over it."""
+    mod = _alert_env(sandbox, monkeypatch)
+    _pinned_manifests(sandbox)
+    monkeypatch.setattr(mod, "_github_head", lambda repo: "b" * 40)
+    monkeypatch.setattr(mod, "_npm_latest", lambda pkg: "2.0.0")
+
+    env = mod.Env()
+    behind = mod._scan_third_party_upgrades(env, force=True)
+
+    report = (env.log_dir / "third-party-upgrades.md").read_text(encoding="utf-8")
+    # >= 2, not == 2: the sandbox's MCP manifest pins npm packages of its own,
+    # and those are third-party pins too. Both kinds must be caught.
+    assert behind >= 2
+    assert "borrowed" in report and "plugged-in" in report
+
+
+def test_finding_an_upgrade_is_a_list_and_never_a_notification(sandbox, monkeypatch):
+    """Applying an upstream change is a decision for a person, so this stops at
+    telling you. It must not page anyone: routine maintenance news is exactly
+    what teaches people to dismiss alerts."""
+    mod = _alert_env(sandbox, monkeypatch)
+    _pinned_manifests(sandbox)
+    sent: list[str] = []
+    monkeypatch.setattr(mod, "_deliver_alert", lambda env, summary: (sent.append(summary), True)[1])
+    monkeypatch.setattr(mod, "_github_head", lambda repo: "b" * 40)
+    monkeypatch.setattr(mod, "_npm_latest", lambda pkg: "2.0.0")
+
+    mod._scan_third_party_upgrades(mod.Env(), force=True)
+
+    assert not sent
+
+
+def test_being_offline_is_a_normal_state_not_an_incident(sandbox, monkeypatch):
+    """A workstation is offline all the time. Reporting that as a problem would
+    make the check the loudest thing in the layer."""
+    mod = _alert_env(sandbox, monkeypatch)
+    _pinned_manifests(sandbox)
+    sent: list[str] = []
+    monkeypatch.setattr(mod, "_deliver_alert", lambda env, summary: (sent.append(summary), True)[1])
+    monkeypatch.setattr(mod, "_github_head", lambda repo: "")
+    monkeypatch.setattr(mod, "_npm_latest", lambda pkg: "")
+
+    env = mod.Env()
+    assert mod._scan_third_party_upgrades(env, force=True) == 0
+    assert not sent
+    assert not (env.log_dir / "third-party-upgrades.md").exists()
+
+
+def test_the_scan_does_not_hit_the_network_on_every_heartbeat(sandbox, monkeypatch):
+    """The heartbeat runs hourly; upstream does not move hourly. Checking every
+    beat would be traffic and rate limits bought with nothing."""
+    mod = _alert_env(sandbox, monkeypatch)
+    _pinned_manifests(sandbox)
+    hits: list[str] = []
+    monkeypatch.setattr(mod, "_github_head", lambda repo: hits.append(repo) or ("b" * 40))
+    monkeypatch.setattr(mod, "_npm_latest", lambda pkg: hits.append(pkg) or "2.0.0")
+
+    env = mod.Env()
+    mod._scan_third_party_upgrades(env, force=True)
+    first = len(hits)
+    mod._scan_third_party_upgrades(env)
+
+    assert len(hits) == first, "a fresh report must not be rebuilt"
+
+
+# --- fixes from the independent review, 2026-08-20 ---------------------------
+
+def test_liveness_is_not_frozen_by_a_problem_that_is_already_known(sandbox, monkeypatch):
+    """The debounce state and liveness answer different questions. Sharing one
+    file froze the timestamp while a known problem was being suppressed, and the
+    heartbeat then announced a sync that had never stopped running: a false
+    alarm, hourly, on the single alert surface."""
+    mod = _alert_env(sandbox, monkeypatch)
+    env = mod.Env()
+    env.log_dir.mkdir(parents=True, exist_ok=True)
+    old = int(time.time()) - (48 * 3600)
+    (env.log_dir / "agent-healthcheck.state").write_text(f"{old}\nsomeknownproblem\n", encoding="utf-8")
+    (env.log_dir / "agent-guard-liveness").write_text(f"{int(time.time())}\n", encoding="utf-8")
+
+    sent: list[str] = []
+    monkeypatch.setattr(mod, "_deliver_alert", lambda e, s: (sent.append(s), True)[1])
+    mod._notify_stale_cli([])
+
+    assert not sent, "the guard is completing; a known problem is a different message"
+
+
+@pytest.mark.skipif(os.name == "nt", reason="systemd units are Linux-only; the Windows twin is the scheduled task")
+def test_the_heartbeat_unit_carries_the_path_the_updater_needs(sandbox, monkeypatch):
+    """Inside the systemd user manager PATH has no ~/.local/bin, so the updater
+    could not see agent-sync, agent-doctor or vault-push, decided it was a
+    MINIMAL install and skipped the post-merge apply, the pin and the
+    before/after doctor -- bypassing the verification it exists to do."""
+    mod = _alert_env(sandbox, monkeypatch)
+    content = mod._systemd_heartbeat_content(mod.Env())
+
+    assert "Environment=\"PATH=" in content
+    assert str(sandbox.home / ".local" / "bin") in content
+
+
+def test_the_updater_is_found_by_name_not_by_an_extensionless_path(sandbox, monkeypatch):
+    """On Windows the installed launcher is nexgen-update.cmd, so testing for an
+    extensionless file made the whole feature silently absent on that platform."""
+    mod = _alert_env(sandbox, monkeypatch)
+    calls: list[list[str]] = []
+    # A real file, not a blanket Path.exists patch: patching it globally also
+    # broke the environment resolution this function needs.
+    fake = sandbox.home / "bin" / "nexgen-update.cmd"
+    fake.parent.mkdir(parents=True, exist_ok=True)
+    fake.write_text("", encoding="utf-8")
+    monkeypatch.setattr(mod, "resolve_cmd", lambda name: str(fake))
+    monkeypatch.setattr(mod, "_run_external",
+                        lambda cmd, **k: calls.append(list(cmd)) or SimpleNamespace(
+                            returncode=0, stdout="Current: v1.0.0\nLatest released target: v1.0.0\n", stderr=""))
+
+    mod._auto_upgrade(mod.Env())
+
+    assert calls and calls[0][0] == str(fake)

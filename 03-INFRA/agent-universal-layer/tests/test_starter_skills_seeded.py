@@ -8,7 +8,7 @@ the shipped `.example`, `skills-sync.py` printed "manifest not found ...
 skipping" to stderr and exited 0, `INIT.md` instructed the installing agent
 that there were no base skills and to skip the step, and the doctor's only
 line was a WARN worded as normal for a fresh install. Five cold installs went
-out without `/vault-doctor` or `/nexgen-update` -- the latter being the one
+out without `/nexgen-doctor` or `/nexgen-update` -- the latter being the one
 command a non-technical user has for upgrading the engine at all.
 
 The seeding is deliberately the narrowest thing that closes that: create the
@@ -16,6 +16,7 @@ file when it is absent, never touch it otherwise.
 """
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 import sys
@@ -28,9 +29,10 @@ import pytest
 
 
 STARTERS = (
-    "vault-doctor", "vault-close", "vault-save", "vault-council",
-    "vault-groom", "nexgen-update", "vault-map",
+    "nexgen-doctor", "nexgen-council", "nexgen-update",
+    "vault-close", "vault-save", "vault-groom", "vault-map",
 )
+STUBS = ("vault-doctor", "vault-council", "vault-update")
 EXAMPLE = REAL_UL / "skills" / "skills.manifest.yaml.example"
 
 
@@ -40,7 +42,7 @@ def fresh_install(sandbox):
     and skill bodies are present, the user's own manifest is not."""
     (sandbox.skills_dir / "skills.manifest.yaml").unlink()
     shutil.copy2(EXAMPLE, sandbox.skills_dir / "skills.manifest.yaml.example")
-    for name in STARTERS + ("vault-update",):
+    for name in STARTERS + STUBS:
         body = sandbox.skills_dir / name
         body.mkdir(parents=True, exist_ok=True)
         (body / "SKILL.md").write_text(
@@ -83,12 +85,16 @@ def test_seeding_is_idempotent(fresh_install):
     assert first == second
 
 
-def test_nothing_is_seeded_when_the_bodies_live_in_another_clone(fresh_install):
-    """Split engine/data topology: `origin: vault` resolves bodies under the
-    DATA root, so seeding a manifest whose skills are only in the engine clone
-    would hand the user seven entries that resolve to nothing. Better to leave
-    the file absent and let the doctor say so."""
-    for name in STARTERS:
+def test_nothing_is_seeded_when_the_bodies_resolve_nowhere(fresh_install):
+    """Seeding a manifest whose commands resolve to nothing hands the user
+    entries that silently do not exist. Better to leave the file absent and let
+    the doctor say so.
+
+    Note this used to be about a split engine/data topology, which `origin:
+    engine` now handles by design: bodies living in the engine clone is the
+    correct place for them, not a reason to skip. What must still stop the
+    seeding is an engine whose bodies are missing outright."""
+    for name in STARTERS + STUBS:
         shutil.rmtree(fresh_install.skills_dir / name)
 
     manifest = _seed(fresh_install)
@@ -108,9 +114,13 @@ def test_the_seeded_manifest_passes_the_engines_own_validator(fresh_install):
     is exactly what preflight shells out to before any apply continues."""
     _seed(fresh_install)
 
+    # The sandbox IS the engine here, so point the engine root at it: with
+    # `origin: engine` the validator resolves the starter bodies there, not
+    # under the user's data root.
+    env = {**os.environ, "AGENT_ENGINE_ROOT": str(fresh_install.ul.parent)}
     result = subprocess.run(
         [sys.executable, str(fresh_install.scripts_dir / "skills-sync.py"), "--validate"],
-        capture_output=True, text=True,
+        capture_output=True, text=True, env=env,
     )
 
     assert result.returncode == 0, result.stdout + result.stderr
