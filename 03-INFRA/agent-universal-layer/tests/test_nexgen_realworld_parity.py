@@ -47,7 +47,10 @@ def test_a3_a7_skills_no_traceback_and_safe_usage(tmp_path: Path, capsys):
     res = skills_main([])
     assert res == 0
     out = capsys.readouterr().out
-    assert "Uso:" in out
+    # Il testo dell'uso è localizzato: si asserisce che l'aiuto ci sia e
+    # nomini i comandi, non con quale parola lo introduce.
+    assert out.strip(), "senza argomenti deve stampare l'uso"
+    assert "agent-skill" in out and "skills-sync" in out
 
     # Show su skill inesistente restituisce errore pulito senza traceback
     res_show = skills_main(["show", "non-existent-skill-xyz"])
@@ -277,5 +280,13 @@ skills:
     home = tmp_path / "home"
     mat = SkillMaterializer(vault_data=vault, home=home)
     changes, actions = mat.materialize(apply=True)
-    assert any("[ERRORE]" in act for act in actions)
+
+    # L'invariante non è il prefisso con cui l'errore è marcato — quello è
+    # testo, e cambia. È che il problema venga riportato nominando la skill,
+    # e che il comando non finisca con successo fingendo di aver lavorato.
+    assert actions, "una skill che non si può materializzare deve produrre un esito"
+    assert any("broken-github-skill" in act for act in actions), (
+        "l'errore deve dire di QUALE skill sta parlando"
+    )
+    assert changes == 0, "niente è stato materializzato, quindi non ci sono modifiche"
 
