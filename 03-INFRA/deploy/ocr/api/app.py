@@ -12,7 +12,6 @@ from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, UploadF
 from PIL import Image
 from rapidocr import RapidOCR
 
-
 MAX_BYTES = int(os.getenv("VAULT_OCR_MAX_BYTES", "15728640"))
 READ_CHUNK_BYTES = 65536
 ALLOWED_IMAGE_FORMATS = {"JPEG", "PNG", "WEBP"}

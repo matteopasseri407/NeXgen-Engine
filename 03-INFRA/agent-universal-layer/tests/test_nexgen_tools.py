@@ -1,7 +1,6 @@
 """Unit test per i tool unificati di nexgen_core/tools/: now, open_folder, chrome, firecrawl."""
 from __future__ import annotations
 
-import json
 import sys
 from pathlib import Path
 
@@ -9,7 +8,7 @@ SCRIPTS_DIR = Path(__file__).resolve().parents[2] / "scripts"
 if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
-from nexgen_core.tools.chrome import get_profile_dir, is_cdp_up
+from nexgen_core.tools.chrome import get_profile_dir
 from nexgen_core.tools.firecrawl import FirecrawlClient
 from nexgen_core.tools.now import format_human, format_shell, get_agent_now_data
 from nexgen_core.tools.open_folder import open_folder

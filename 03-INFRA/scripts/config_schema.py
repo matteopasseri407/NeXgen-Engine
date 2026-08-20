@@ -17,7 +17,7 @@ SCRIPTS_DIR = Path(__file__).resolve().parent
 if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
-from nexgen_core.config import (  # noqa: F401
+from nexgen_core.config import (
     ConfigError,
     load_council_config,
     load_mcp_manifest,

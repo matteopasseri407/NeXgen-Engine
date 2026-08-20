@@ -83,7 +83,7 @@ def get_ntp_status_windows() -> dict[str, str]:
 def get_agent_now_data() -> dict[str, Any]:
     """Genera il dizionario completo a 13 campi."""
     now_local = datetime.datetime.now().astimezone()
-    now_utc = now_local.astimezone(datetime.timezone.utc)
+    now_utc = now_local.astimezone(datetime.UTC)
 
     # Informazioni NTP e Timezone
     if sys.platform == "win32":

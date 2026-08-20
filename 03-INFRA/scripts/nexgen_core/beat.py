@@ -77,7 +77,7 @@ class Heartbeat:
         try:
             result = run_depwatch(vault_data=self.vault_data, state_dir=self.state_dir)
             return {"ok": True, "wrote": result.wrote, "stale": sum(f.stale for f in result.findings)}
-        except Exception as exc:  # noqa: BLE001 - manutenzione best-effort, non deve mai fermare il battito
+        except Exception as exc:
             return {"ok": False, "error": str(exc)}
 
     def run_self_upgrade(self) -> dict[str, Any]:
@@ -93,7 +93,7 @@ class Heartbeat:
             }
             exit_code = EngineUpdater.main(["--unattended"], environ=environ)
             return {"ok": exit_code == 0, "exit_code": exit_code}
-        except Exception as exc:  # noqa: BLE001 - manutenzione best-effort, non deve mai fermare il battito
+        except Exception as exc:
             return {"ok": False, "error": str(exc)}
 
     def run_beat(self) -> dict[str, Any]:

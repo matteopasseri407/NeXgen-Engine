@@ -15,6 +15,7 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 from typing import Any
+
 from nexgen_core.paths import resolve_state_dir
 
 STATE_FILE_NAME = "agent-healthcheck.state"

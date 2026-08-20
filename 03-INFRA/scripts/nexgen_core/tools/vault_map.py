@@ -29,13 +29,13 @@ extracted verbatim, including inside code fences and inline code spans.
 """
 from __future__ import annotations
 
-from collections import Counter
-from pathlib import Path
 import argparse
 import json
 import posixpath
 import re
 import sys
+from collections import Counter
+from pathlib import Path
 
 NOTE_EXTENSIONS = (".md", ".markdown", ".mdown", ".mdx")
 FENCED_BLOCK_RE = re.compile(r"^ {0,3}(`{3,}|~{3,}).*?^ {0,3}\1`*\s*$", re.DOTALL | re.MULTILINE)

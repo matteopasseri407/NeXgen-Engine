@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import sys
-import time
 from pathlib import Path
 
 SCRIPTS_DIR = Path(__file__).resolve().parents[2] / "scripts"
@@ -13,7 +12,6 @@ from nexgen_core.beat import Heartbeat
 from nexgen_core.git_ops import run_git
 from nexgen_core.guard import GuardMode, GuardRunner
 from nexgen_core.megaphone import Megaphone
-from nexgen_core.publisher import Publisher
 
 
 def test_megaphone_debounce(tmp_path: Path):

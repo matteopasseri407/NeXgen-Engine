@@ -7,7 +7,6 @@ import sys
 
 from conftest import REAL_VAULT
 
-
 SCRIPT = REAL_VAULT / "03-INFRA" / "scripts" / "vault-lifecycle-audit.py"
 
 

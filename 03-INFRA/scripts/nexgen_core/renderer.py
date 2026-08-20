@@ -317,9 +317,8 @@ class McpRenderer:
             # sovrascriverlo con JSON puro (che OpenCode non leggerebbe).
             if cfg_file.suffix == ".jsonc" and raw_existing.strip():
                 content = set_jsonc_top_level_value(raw_existing, "mcp", mcp_servers)
-            elif cfg_file.suffix == ".jsonc":
-                content = json.dumps(existing, indent=2) + "\n"
             else:
+                # File assente o vuoto: non ci sono commenti da preservare.
                 content = json.dumps(existing, indent=2) + "\n"
             self._backup_and_write(cfg_file, content)
         return True, "Configurazione OpenCode aggiornata"

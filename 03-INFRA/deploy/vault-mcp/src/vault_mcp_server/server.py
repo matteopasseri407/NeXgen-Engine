@@ -1,12 +1,13 @@
 from __future__ import annotations
 
+import json
+import urllib.request
 from contextlib import asynccontextmanager
 from hmac import compare_digest
 from typing import Any
-import json
-import urllib.request
-from urllib.parse import urlparse, urlencode
+from urllib.parse import urlencode, urlparse
 
+import uvicorn
 from mcp.server.mcpserver import MCPServer
 from mcp.server.transport_security import TransportSecuritySettings
 from starlette.applications import Starlette
@@ -15,7 +16,6 @@ from starlette.middleware.cors import CORSMiddleware
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 from starlette.routing import Mount, Route
-import uvicorn
 
 from . import __version__
 from .config import Settings

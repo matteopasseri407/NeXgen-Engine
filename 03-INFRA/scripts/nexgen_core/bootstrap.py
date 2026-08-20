@@ -151,7 +151,7 @@ def install_launchers(root: Path) -> str:
 
         installed = install_shims(scripts_dir=scripts_dir)
         return f"{len(installed)} comandi installati in ~/.local/bin"
-    except Exception as exc:  # noqa: BLE001 - un preflight non deve mai morire qui
+    except Exception as exc:
         return f"comandi non installati ({exc})"
 
 

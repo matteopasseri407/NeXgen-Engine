@@ -21,7 +21,8 @@ SCRIPTS_DIR = Path(__file__).resolve().parents[2] / "scripts"
 if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
-from nexgen_core.cli import build_parser, main as nexgen_main
+from nexgen_core.cli import build_parser
+from nexgen_core.cli import main as nexgen_main
 from nexgen_core.shims import LEGACY_ALIASES, PRIMARY
 
 #: Quanto si concede a un comando per stampare il proprio aiuto. Un comando
@@ -41,7 +42,7 @@ def _run(argv: list[str]) -> subprocess.CompletedProcess[str]:
 def _verbs() -> list[str]:
     """I verbi di primo livello, letti dal parser invece che elencati a mano."""
     parser = build_parser()
-    for action in parser._subparsers._group_actions:  # noqa: SLF001 - argparse non offre altro
+    for action in parser._subparsers._group_actions:
         return sorted(action.choices)
     return []
 

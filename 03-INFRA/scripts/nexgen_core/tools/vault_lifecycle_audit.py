@@ -18,7 +18,6 @@ from dataclasses import dataclass
 from datetime import date, datetime
 from pathlib import Path
 
-
 # Not derived from __file__: this script ships in the ENGINE tree, which is
 # a separate checkout from the vault DATA it's meant to audit. __file__-based
 # anchoring would silently audit the engine repo instead and report a

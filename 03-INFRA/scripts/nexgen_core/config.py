@@ -21,11 +21,9 @@ logger = logging.getLogger("nexgen.config")
 #: MCP sia per le viste delle skill: è la stessa lista, e tenerla in due
 #: costanti diverse è il modo in cui le due liste divergono.
 RUNTIME_TARGETS = frozenset({"claude", "codex", "antigravity", "opencode"})
-MCP_TARGETS = RUNTIME_TARGETS
 SKILL_TARGETS = RUNTIME_TARGETS
 SKILL_ORIGINS = frozenset({"vault", "engine", "github", "installer"})
 SKILL_EXPOSURES = frozenset({"lazy", "eager", "manual", "core"})
-SKILL_SCOPES = frozenset({"shared", "personal"})
 
 
 class ConfigError(ValueError):
@@ -145,22 +143,6 @@ def load_skills_manifest(path: Path) -> dict[str, Any]:
         "raw": raw,
     }
 
-
-def load_remotes_config(path: Path) -> dict[str, Any]:
-    """Carica e valida sync/remotes.yaml."""
-    if not path.is_file():
-        return {"authoritative_remote": "origin", "mirrors": []}
-
-    raw = _load_yaml(path, "Configurazione Remotes")
-    auth_remote = raw.get("authoritative_remote", "origin")
-    mirrors = raw.get("mirrors", [])
-    if not isinstance(mirrors, list):
-        mirrors = []
-
-    return {
-        "authoritative_remote": str(auth_remote),
-        "mirrors": [str(m) for m in mirrors if str(m).strip()],
-    }
 
 
 def load_council_config(path: Path) -> dict[str, Any]:

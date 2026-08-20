@@ -1,19 +1,18 @@
 from __future__ import annotations
 
+import hashlib
+import os
+import re
+import subprocess
+import time
 from collections import Counter
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
-import hashlib
-import os
-import re
-import subprocess
-import time
 
 from .config import Settings
-
 
 NOTE_EXTENSIONS = {".md", ".markdown", ".mdown", ".mdx"}
 WIKILINK_RE = re.compile(r"\[\[([^\]]+)\]\]")

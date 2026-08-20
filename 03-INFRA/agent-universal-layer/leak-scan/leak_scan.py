@@ -29,7 +29,11 @@ and exit 1. Callers own their own success/failure UX; this script only does
 detection.
 """
 from __future__ import annotations
-import argparse, re, subprocess, sys
+
+import argparse
+import re
+import subprocess
+import sys
 from pathlib import Path
 from typing import Iterable, NamedTuple
 

@@ -181,7 +181,7 @@ def _resolve_cmd(name: str) -> str | None:
     return None
 
 
-def _host_mutations_disabled(operation: str) -> bool:
+def _host_mutations_disabled() -> bool:
     value = os.environ.get(HOST_MUTATIONS_DISABLED_ENV, "").strip().lower()
     return value in {"1", "true", "yes", "on"}
 
@@ -256,7 +256,7 @@ def install_scheduled_task(
     log: Callable[[str], None] = print,
 ) -> bool:
     """Crea/aggiorna le scheduled task Windows (guardia ogni 30 min + heartbeat orario)."""
-    if _host_mutations_disabled("Task Scheduler update"):
+    if _host_mutations_disabled():
         return True
     task_name = "KnowledgeVault Agent Sync"
     script_path = engine_root / "scripts" / "agent-sync.ps1"

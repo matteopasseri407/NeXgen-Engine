@@ -7,9 +7,7 @@ import subprocess
 from pathlib import Path
 
 import pytest
-
 from conftest import REAL_VAULT, load_agent_sync_module
-
 
 SCRIPT = REAL_VAULT / "03-INFRA" / "scripts" / "nexgen_core" / "updater.py"
 POWERSHELL_LAUNCHER = REAL_VAULT / "03-INFRA" / "scripts" / "nexgen-update.ps1"

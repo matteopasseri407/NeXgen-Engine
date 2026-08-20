@@ -1,11 +1,7 @@
 """Unit test per Fase 1: lock.py, git_ops.py, config.py."""
 from __future__ import annotations
 
-import os
-import subprocess
 import sys
-import tempfile
-import time
 from pathlib import Path
 
 SCRIPTS_DIR = Path(__file__).resolve().parents[2] / "scripts"
@@ -13,11 +9,8 @@ if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
 from nexgen_core.config import (
-    ConfigError,
     expand_placeholders,
     load_mcp_manifest,
-    load_remotes_config,
-    load_skills_manifest,
 )
 from nexgen_core.git_ops import (
     GitState,
@@ -26,7 +19,7 @@ from nexgen_core.git_ops import (
     inspect_git_state,
     run_git,
 )
-from nexgen_core.lock import HostLock, LockTimeoutError, locked_operation
+from nexgen_core.lock import HostLock, LockTimeoutError
 
 
 def test_lock_acquire_and_release(tmp_path: Path):

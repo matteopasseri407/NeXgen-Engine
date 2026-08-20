@@ -49,7 +49,12 @@ def _script_dir() -> Path:
     entry = os.environ.get("NEXGEN_RUFF_ENTRY_DIR")
     if entry:
         return Path(entry).resolve()
-    return Path(__file__).resolve().parent          # .../03-INFRA/scripts
+    # Il modulo vive in nexgen_core/tools/, quindi la cartella degli script
+    # sta due livelli sopra. Prima si tornava la propria directory, e chi
+    # eseguiva il modulo direttamente si ritrovava a scansionare "nexgen_core"
+    # invece di "03-INFRA" — compreso chi seguiva il comando suggerito qui
+    # sotto, che quindi non funzionava.
+    return Path(__file__).resolve().parents[2]      # .../03-INFRA/scripts
 
 
 SCRIPT_DIR = _script_dir()                            # .../03-INFRA/scripts
@@ -177,8 +182,10 @@ def main(argv: list[str] | None = None) -> int:
             "Fix the new lint violations, or if they're deliberate/pre-existing debt "
             "you're knowingly accepting, regenerate the baseline with:"
         )
-        rel_script = Path(__file__).resolve().relative_to(REPO_ROOT)
+        # Il comando suggerito deve funzionare copiandolo così com'è.
+        print("  nexgen doctor --help   # oppure, per rigenerare:")
         interpreter = "python" if sys.platform == "win32" else "python3"
+        rel_script = (SCRIPT_DIR / "ruff_baseline_check.py").relative_to(REPO_ROOT)
         print(f"  {interpreter} {rel_script} --generate")
         print(f"and commit the updated {args.baseline.relative_to(REPO_ROOT)}.")
         return 1

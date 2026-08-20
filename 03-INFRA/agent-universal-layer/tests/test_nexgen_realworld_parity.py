@@ -14,14 +14,12 @@ if str(SCRIPTS_DIR) not in sys.path:
 
 from nexgen_core.cli import main as cli_main
 from nexgen_core.doctor import Doctor
-from nexgen_core.git_ops import GitState, GitStatusResult, publish_changes
+from nexgen_core.git_ops import GitState, GitStatusResult
 from nexgen_core.guard import GuardMode, GuardRunner
-from nexgen_core.publisher import Publisher
 from nexgen_core.renderer import McpRenderer
 from nexgen_core.shims import COMMANDS, install_shims
-from nexgen_core.skills import SkillMaterializer, main as skills_main
-from nexgen_core.tools.firecrawl import FirecrawlClient
-from nexgen_core.tools.now import get_agent_now_data
+from nexgen_core.skills import SkillMaterializer
+from nexgen_core.skills import main as skills_main
 from nexgen_core.updater import EngineUpdater
 
 

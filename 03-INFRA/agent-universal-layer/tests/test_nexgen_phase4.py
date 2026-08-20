@@ -8,11 +8,7 @@ SCRIPTS_DIR = Path(__file__).resolve().parents[2] / "scripts"
 if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
-from nexgen_core.checks.env_checks import check_state_dir, check_vault_path
-from nexgen_core.checks.mcp_checks import check_mcp_manifest
-from nexgen_core.checks.skill_checks import check_skills_manifest
 from nexgen_core.doctor import Doctor
-from nexgen_core.report import Severity
 
 
 def test_doctor_diagnostics_on_empty(tmp_path: Path):

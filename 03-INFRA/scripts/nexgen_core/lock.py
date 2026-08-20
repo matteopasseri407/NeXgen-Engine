@@ -13,7 +13,8 @@ import os
 import sys
 import time
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any
+
 from nexgen_core.paths import resolve_state_dir
 
 EXIT_BUSY_MANUAL = 75
@@ -144,18 +145,3 @@ class HostLock:
     def __exit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
         self.release()
 
-
-@contextlib.contextmanager
-def locked_operation(
-    lock_path: Path | str | None = None,
-    timeout: float | None = None,
-    is_guard: bool = False,
-    command_name: str = "agent-sync"
-) -> Iterator[HostLock]:
-    """Helper context manager per eseguire un blocco di codice sotto lock."""
-    lock = HostLock(lock_path=lock_path, timeout=timeout, is_guard=is_guard, command_name=command_name)
-    try:
-        lock.acquire()
-        yield lock
-    finally:
-        lock.release()

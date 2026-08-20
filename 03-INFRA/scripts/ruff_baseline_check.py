@@ -6,10 +6,10 @@ portata dentro il package; questo file resta per i riferimenti di CI).
 """
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 
-import os
 os.environ.setdefault("NEXGEN_RUFF_ENTRY_DIR", str(Path(__file__).resolve().parent))
 
 SCRIPTS_DIR = Path(__file__).resolve().parent

@@ -21,7 +21,6 @@ import sys
 from pathlib import Path
 
 import pytest
-
 from conftest import REAL_VAULT
 
 SCRIPT = REAL_VAULT / "03-INFRA" / "scripts" / "ruff_baseline_check.py"
