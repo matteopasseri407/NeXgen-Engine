@@ -1,4 +1,4 @@
-"""Controlli di configurazione e disponibilità server MCP."""
+"""Checks for MCP server configuration and availability."""
 from __future__ import annotations
 
 import json
@@ -14,13 +14,13 @@ from nexgen_core.report import CheckOutcome, Severity
 
 
 def check_mcp_manifest(manifest_path: Path) -> CheckOutcome:
-    """Verifica che mcp/manifest.yaml esista e sia valido."""
+    """Check that mcp/manifest.yaml exists and is valid."""
     if not manifest_path.is_file():
         return CheckOutcome(
             id="mcp.manifest_present",
             severity=Severity.BROKEN,
-            message=f"Il manifest MCP '{manifest_path}' non esiste.",
-            action="Crea o ripristina mcp/manifest.yaml dai template.",
+            message=f"The MCP manifest '{manifest_path}' does not exist.",
+            action="Create or restore mcp/manifest.yaml from the templates.",
         )
 
     try:
@@ -29,20 +29,20 @@ def check_mcp_manifest(manifest_path: Path) -> CheckOutcome:
         return CheckOutcome(
             id="mcp.manifest_valid",
             severity=Severity.OK,
-            message=f"Manifest MCP valido con {server_count} server dichiarati",
+            message=f"MCP manifest valid with {server_count} servers declared",
         )
     except Exception as exc:
         return CheckOutcome(
             id="mcp.manifest_valid",
             severity=Severity.BROKEN,
-            message=f"Il manifest MCP contiene errori: {exc}",
-            action="Correggi la sintassi di mcp/manifest.yaml.",
+            message=f"The MCP manifest contains errors: {exc}",
+            action="Fix the syntax of mcp/manifest.yaml.",
         )
 
 
 def _rendered_names_claude_style(path: Path) -> set[str]:
-    """Nomi server per Claude e Antigravity: entrambi scrivono `mcpServers`
-    in un JSON puro."""
+    """Server names for Claude and Antigravity: both write `mcpServers`
+    in plain JSON."""
     data = json.loads(path.read_text(encoding="utf-8"))
     servers = data.get("mcpServers", {})
     return set(servers.keys()) if isinstance(servers, dict) else set()
@@ -67,8 +67,8 @@ def _identity(name: str) -> str:
 
 
 def _codex_section_name(name: str) -> str:
-    """Codex normalizza i trattini in underscore nei nomi di sezione TOML
-    (vedi McpRenderer.render_codex)."""
+    """Codex normalizes hyphens to underscores in TOML section names
+    (see McpRenderer.render_codex)."""
     return name.replace("-", "_")
 
 
@@ -78,9 +78,9 @@ class _CliRenderSpec:
     normalize: Callable[[str], str]
 
 
-#: Per ogni CLI: come leggere i nomi dei server già resi dalla sua config
-#: nativa e come normalizzare un nome atteso prima del confronto (solo
-#: Codex rimappa i trattini).
+#: For each CLI: how to read the server names already rendered in its
+#: native config, and how to normalize an expected name before comparing
+#: (only Codex remaps hyphens).
 _CLI_RENDER_SPECS: dict[str, _CliRenderSpec] = {
     "claude": _CliRenderSpec(_rendered_names_claude_style, _identity),
     "antigravity": _CliRenderSpec(_rendered_names_claude_style, _identity),
@@ -90,16 +90,16 @@ _CLI_RENDER_SPECS: dict[str, _CliRenderSpec] = {
 
 
 def check_mcp_configs_rendered(vault_data: Path, home: Path) -> CheckOutcome:
-    """Confronta, per ciascuna CLI, l'insieme di server attesi dal manifest
-    con quello effettivamente reso nella sua config nativa.
+    """Compares, for each CLI, the set of servers expected by the manifest
+    with the set actually rendered in its native config.
 
-    Un server atteso ma mancante nella config resa è un drift che l'utente
-    non ha scelto: BROKEN. Un server presente nella config ma fuori dal
-    manifest non è per forza un problema (il render preserva additivamente
-    i server live dell'utente): viene solo annotato nel dettaglio, non fa
-    fallire il controllo. Una CLI mai lanciata (nessun file di config) non è
-    un guasto: è undetermined, perché quella CLI potrebbe semplicemente non
-    essere mai stata usata su questa macchina.
+    A server expected but missing from the rendered config is drift the
+    user didn't choose: BROKEN. A server present in the config but outside
+    the manifest isn't necessarily a problem (the render additively
+    preserves the user's live servers): it's only noted in the detail, it
+    doesn't fail the check. A CLI that was never launched (no config file)
+    is not a failure: it's undetermined, because that CLI might simply
+    never have been used on this machine.
     """
     renderer = McpRenderer(vault_data=vault_data, home=home)
 
@@ -121,17 +121,17 @@ def check_mcp_configs_rendered(vault_data: Path, home: Path) -> CheckOutcome:
     for cli, path in cli_paths.items():
         expected = set(renderer.load_resolved_servers(cli).keys())
         if not expected:
-            continue  # niente atteso per questa CLI su questo manifest
+            continue  # nothing expected for this CLI on this manifest
 
         if not path.is_file():
-            undetermined_parts.append(f"{cli} (mai lanciata: manca {path})")
+            undetermined_parts.append(f"{cli} (never launched: {path} is missing)")
             continue
 
         spec = _CLI_RENDER_SPECS[cli]
         try:
             rendered = spec.reader(path)
         except Exception as exc:
-            undetermined_parts.append(f"{cli} (config illeggibile: {exc})")
+            undetermined_parts.append(f"{cli} (unreadable config: {exc})")
             continue
 
         norm_expected = {spec.normalize(name): name for name in expected}
@@ -140,7 +140,7 @@ def check_mcp_configs_rendered(vault_data: Path, home: Path) -> CheckOutcome:
         extra = rendered - set(norm_expected)
 
         if missing:
-            broken_parts.append(f"{cli}: mancano {', '.join(sorted(missing))}")
+            broken_parts.append(f"{cli}: missing {', '.join(sorted(missing))}")
         if extra:
             extra_parts.append(f"{cli}: {', '.join(sorted(extra))}")
 
@@ -148,20 +148,20 @@ def check_mcp_configs_rendered(vault_data: Path, home: Path) -> CheckOutcome:
         return CheckOutcome(
             id="mcp.rendered_configs",
             severity=Severity.BROKEN,
-            message="Le config MCP di alcune CLI non hanno tutti i server attesi dal manifest: " + "; ".join(broken_parts),
-            action="Esegui 'agent-sync apply' per rigenerarle.",
+            message="Some CLIs' MCP configs are missing servers expected by the manifest: " + "; ".join(broken_parts),
+            action="Run 'agent-sync apply' to regenerate them.",
             remedy=remedy,
-            detail=("Server extra (non nel manifest, preservati additivamente): " + "; ".join(extra_parts)) if extra_parts else None,
+            detail=("Extra servers (not in the manifest, additively preserved): " + "; ".join(extra_parts)) if extra_parts else None,
         )
     if undetermined_parts:
         return CheckOutcome(
             id="mcp.rendered_configs",
             severity=Severity.UNDETERMINED,
-            message="Alcune CLI non risultano ancora avviate su questa macchina, impossibile verificarne la config MCP: " + "; ".join(undetermined_parts),
+            message="Some CLIs have not been started yet on this machine, so their MCP config could not be checked: " + "; ".join(undetermined_parts),
         )
 
     return CheckOutcome(
         id="mcp.rendered_configs",
         severity=Severity.OK,
-        message="File di configurazione MCP generati e allineati per tutte le CLI attive",
+        message="MCP configuration files generated and aligned for all active CLIs",
     )

@@ -1,10 +1,10 @@
-"""Controlli di raggiungibilità dei connettori MCP di livello 'core'.
+"""Reachability checks for 'core'-tier MCP connectors.
 
-Port della sezione "MCP connectors — reachability" del doctor bash della
-release, ma generico: invece di sondare porte cablate per nome di
-connettore, ricava l'endpoint da sondare direttamente dal manifest
-risolto. Usa solo stdlib (socket/urllib) con un timeout breve e per-server:
-un connettore lento non deve mai tenere fermo l'intero doctor.
+Ported from the "MCP connectors — reachability" section of the release's
+bash doctor, but made generic: instead of probing hardcoded ports by
+connector name, it derives the endpoint to probe directly from the resolved
+manifest. Uses only stdlib (socket/urllib) with a short, per-server timeout:
+one slow connector must never hold up the whole doctor.
 """
 from __future__ import annotations
 
@@ -16,22 +16,23 @@ from urllib.parse import urlparse
 from nexgen_core.renderer import McpRenderer
 from nexgen_core.report import CheckOutcome, Severity
 
-#: Timeout per-server per la prova di raggiungibilità (secondi). Deliberatamente
-#: breve: la prova è per-connettore, non cumulativa su tutto il manifest, ed
-#: è già successo che un connettore lento tenesse fermo l'intero doctor.
+#: Per-server timeout for the reachability probe (seconds). Deliberately
+#: short: the probe is per-connector, not cumulative across the whole
+#: manifest, and a slow connector has already held up the entire doctor
+#: before.
 PROBE_TIMEOUT_SECONDS = 2.5
 
 _URL_RE = re.compile(r"https?://[^\s\"']+")
 
 
 def _extract_probe_target(entry: dict) -> str | None:
-    """Ricava un URL da sondare da un connettore MCP risolto.
+    """Derive a URL to probe from a resolved MCP connector.
 
-    Un connettore http lo dichiara direttamente in `url`. Un connettore
-    stdio può comunque dipendere da un backend locale raggiungibile via
-    HTTP, dichiarato in `env` (es. FIRECRAWL_API_URL) o negli `args` (es. il
-    CDP endpoint di Playwright): lo cerchiamo lì invece di assumere quale
-    connettore lo espone in che modo.
+    An http connector declares it directly in `url`. A stdio connector can
+    still depend on a local backend reachable over HTTP, declared in `env`
+    (e.g. FIRECRAWL_API_URL) or in `args` (e.g. Playwright's CDP endpoint):
+    we look for it there instead of assuming which connector exposes it and
+    how.
     """
     if entry.get("url"):
         return str(entry["url"])
@@ -52,36 +53,36 @@ def _extract_probe_target(entry: dict) -> str | None:
 
 
 def _probe_tcp(url: str, timeout: float) -> tuple[Severity, str]:
-    """Prova solo la raggiungibilità TCP: nessuna assunzione sul protocollo
-    applicativo del connettore (percorso di health, verbo HTTP, corpo atteso).
+    """Probes TCP reachability only: no assumption about the connector's
+    application protocol (health path, HTTP verb, expected body).
     """
     parsed = urlparse(url)
     host = parsed.hostname
     if not host:
-        return Severity.UNDETERMINED, f"impossibile determinare l'host da verificare in '{url}'"
+        return Severity.UNDETERMINED, f"could not determine the host to check in '{url}'"
     port = parsed.port or (443 if parsed.scheme == "https" else 80)
 
     try:
         with socket.create_connection((host, port), timeout=timeout):
             pass
-        return Severity.OK, f"{host}:{port} risponde"
+        return Severity.OK, f"{host}:{port} responds"
     except ConnectionRefusedError:
-        return Severity.BROKEN, f"{host}:{port} rifiuta la connessione (nessun servizio in ascolto)"
+        return Severity.BROKEN, f"{host}:{port} refuses the connection (no service listening)"
     except TimeoutError:
-        return Severity.UNDETERMINED, f"{host}:{port} non ha risposto entro {timeout}s"
+        return Severity.UNDETERMINED, f"{host}:{port} did not respond within {timeout}s"
     except OSError as exc:
-        return Severity.UNDETERMINED, f"{host}:{port} non raggiungibile ({exc})"
+        return Severity.UNDETERMINED, f"{host}:{port} unreachable ({exc})"
 
 
 def check_mcp_reachability(
     vault_data: Path, home: Path, timeout: float = PROBE_TIMEOUT_SECONDS
 ) -> list[CheckOutcome]:
-    """Verifica che ogni connettore MCP `tier: core` con precondizione
-    soddisfatta risponda davvero.
+    """Check that every `tier: core` MCP connector whose precondition is
+    met actually responds.
 
-    Un connettore la cui `require_env` non è soddisfatta non viene mai
-    considerato: non è un guasto, è una configurazione che l'utente non ha
-    scelto di attivare su questa macchina.
+    A connector whose `require_env` is not satisfied is never considered:
+    it's not a failure, it's a configuration the user hasn't chosen to
+    enable on this machine.
     """
     manifest_path = vault_data / "03-INFRA" / "agent-universal-layer" / "mcp" / "manifest.yaml"
     if not manifest_path.is_file():
@@ -109,19 +110,19 @@ def check_mcp_reachability(
         if severity == Severity.OK:
             outcomes.append(CheckOutcome(
                 id=id_, severity=Severity.OK,
-                message=f"Connettore MCP '{name}' raggiungibile",
+                message=f"MCP connector '{name}' reachable",
             ))
         elif severity == Severity.BROKEN:
             outcomes.append(CheckOutcome(
                 id=id_,
                 severity=Severity.BROKEN,
-                message=f"Il connettore MCP '{name}' non risponde ({detail}).",
-                action=f"Verifica che il servizio dietro '{name}' sia avviato, poi riesegui il doctor.",
+                message=f"MCP connector '{name}' is not responding ({detail}).",
+                action=f"Check that the service behind '{name}' is running, then rerun the doctor.",
             ))
         else:
             outcomes.append(CheckOutcome(
                 id=id_,
                 severity=Severity.UNDETERMINED,
-                message=f"Non è stato possibile verificare la raggiungibilità di '{name}' ({detail}).",
+                message=f"Could not check the reachability of '{name}' ({detail}).",
             ))
     return outcomes

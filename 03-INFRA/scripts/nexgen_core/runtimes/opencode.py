@@ -1,12 +1,12 @@
-"""Adattatore OpenCode: postura in opencode.jsonc + plugin guardrail nativo.
+"""OpenCode adapter: posture in opencode.jsonc + native guardrail plugin.
 
-OpenCode non parla il JSON di Claude: il suo unico hook con potere di veto e'
-`permission.ask`, una callback JS caricata in-process, non un comando
-lanciato in un processo separato. L'adattatore statico in
-agent-universal-layer/hooks/opencode-guardrail-plugin.mjs (gia' pronto,
-mai toccato qui) traduce quella callback nello stesso stdin/stdout JSON che
-il corpo del guardrail gia' parla per Claude -- una policy, tre CLI, mai
-duplicata.
+OpenCode doesn't speak Claude's JSON: its only hook with veto power is
+`permission.ask`, a JS callback loaded in-process, not a command launched
+in a separate process. The static adapter at
+agent-universal-layer/hooks/opencode-guardrail-plugin.mjs (already
+prepared, never touched here) translates that callback into the same
+stdin/stdout JSON the guardrail body already speaks for Claude -- one
+policy, three CLIs, never duplicated.
 """
 from __future__ import annotations
 
@@ -22,10 +22,10 @@ from nexgen_core.runtimes.base import GuardrailError, Runtime
 
 _IS_WINDOWS = platform.system() == "Windows"
 
-#: Vocabolario neutro -> permission.{edit,bash} (verificato contro le type
-#: definition installate di @opencode-ai/sdk). Solo queste due dimensioni:
-#: le altre chiavi di permission.* (webfetch, doom_loop, ...) restano
-#: qualunque cosa l'utente le abbia impostate.
+#: Neutral vocabulary -> permission.{edit,bash} (verified against the
+#: installed type definitions of @opencode-ai/sdk). Only these two
+#: dimensions: the other permission.* keys (webfetch, doom_loop, ...) stay
+#: whatever the user set them to.
 _POSTURE_RENDER = {
     "bypass": {"edit": "allow", "bash": "allow"},
     "accept-edits": {"edit": "allow", "bash": "ask"},
@@ -43,18 +43,18 @@ class OpenCodeRuntime(Runtime):
     def is_installed(self, home: Path) -> bool:
         if shutil.which("opencode"):
             return True
-        # opencode.jsonc NON e' un segnale valido: il renderer MCP di questo
-        # layer lo crea da zero ad ogni ciclo anche se OpenCode non e' mai
-        # stato lanciato. La cartella ~/.opencode/bin appartiene solo al
-        # programma di installazione ufficiale.
+        # opencode.jsonc is NOT a valid signal: this layer's MCP renderer
+        # creates it from scratch on every cycle even if OpenCode was never
+        # launched. The ~/.opencode/bin folder belongs only to the official
+        # installer.
         bin_dir = home / ".opencode" / "bin"
         return any((bin_dir / name).is_file() for name in self._bin_names())
 
     def _config_path(self, home: Path) -> Path:
-        """Il file di config REALE, con la stessa precedenza jsonc > json >
-        config.json che OpenCode stesso usa per risolverlo -- una macchina
-        gia' configurata va aggiornata sul file che legge davvero, mai su
-        una copia nuova accanto."""
+        """The REAL config file, with the same jsonc > json > config.json
+        precedence OpenCode itself uses to resolve it -- an already
+        configured machine must be updated on the file it actually reads,
+        never on a fresh copy next to it."""
         candidates_dirs = [home / ".config" / "opencode"]
         if _IS_WINDOWS:
             appdata = Path(os.environ.get("APPDATA") or (home / "AppData" / "Roaming"))
@@ -73,9 +73,9 @@ class OpenCodeRuntime(Runtime):
         try:
             data = parse_jsonc(raw) if path.suffix == ".jsonc" else json.loads(raw)
         except (json.JSONDecodeError, ValueError) as exc:
-            raise GuardrailError(f"opencode: {path.name} non e' JSON/JSONC valido ({exc})") from exc
+            raise GuardrailError(f"opencode: {path.name} is not valid JSON/JSONC ({exc})") from exc
         if not isinstance(data, dict):
-            raise GuardrailError(f"opencode: la radice di {path.name} non e' un oggetto")
+            raise GuardrailError(f"opencode: the root of {path.name} is not an object")
         return data
 
     def read_posture(self, home: Path) -> str | None:
@@ -100,16 +100,16 @@ class OpenCodeRuntime(Runtime):
         path = self._config_path(home)
         data = self._load(path)
         if data is None:
-            return None  # OpenCode mai avviato qui: nessuna postura da applicare
+            return None  # OpenCode never launched here: no posture to apply
         current_permission = data.get("permission")
         if current_permission is not None and not isinstance(current_permission, dict):
-            raise GuardrailError(f"opencode: {path.name}: 'permission' non e' un oggetto")
+            raise GuardrailError(f"opencode: {path.name}: 'permission' is not an object")
         permission = dict(current_permission or {})
         if all(permission.get(k) == v for k, v in desired.items()):
             return None
         permission.update(desired)
         self._write_key(path, "permission", permission)
-        return f"opencode: postura '{posture}' applicata in {path}"
+        return f"opencode: posture '{posture}' applied in {path}"
 
     def _write_key(self, path: Path, key: str, value: Any) -> None:
         raw = path.read_text(encoding="utf-8") if path.is_file() else "{}\n"
@@ -125,37 +125,37 @@ class OpenCodeRuntime(Runtime):
     def install_guardrail(self, home: Path, hook_source: Path, engine_hooks_dir: Path) -> str | None:
         config_path = self._config_path(home)
         if not config_path.is_file():
-            return None  # OpenCode mai avviato qui: nessun guardrail da installare
+            return None  # OpenCode never launched here: no guardrail to install
         plugin_dir = config_path.parent
 
-        # 1) Corpo del guardrail (la policy, privata del Vault).
+        # 1) Guardrail body (the policy, private to the Vault).
         body_dst = plugin_dir / "nexgen-guardrail-hooks" / hook_source.name
         body_changed = self.deploy_bytes(body_dst, hook_source.read_bytes())
 
-        # 2) Adattatore statico dell'engine (traduce permission.ask -> stdin/stdout).
+        # 2) Engine's static adapter (translates permission.ask -> stdin/stdout).
         adapter_src = engine_hooks_dir / _ADAPTER_NAME
         if not adapter_src.is_file():
-            raise GuardrailError(f"opencode: adattatore engine mancante ({adapter_src})")
+            raise GuardrailError(f"opencode: missing engine adapter ({adapter_src})")
         adapter_dst = plugin_dir / _ADAPTER_NAME
         adapter_changed = self.deploy_bytes(adapter_dst, adapter_src.read_bytes())
 
-        # 3) Sidecar: quale corpo eseguire e con quale timeout, letto fresco
-        #    dall'adattatore ad ogni chiamata (nessun riavvio di OpenCode
-        #    serve per far vedere un manifest cambiato).
+        # 3) Sidecar: which body to run and with what timeout, read fresh
+        #    by the adapter on every call (no OpenCode restart needed to
+        #    pick up a changed manifest).
         sidecar_path = plugin_dir / "nexgen-guardrail.config.json"
         sidecar_content = json.dumps({"hooks": [{"file": str(body_dst), "timeout": 5}]}, indent=2) + "\n"
         sidecar_changed = not sidecar_path.is_file() or sidecar_path.read_text(encoding="utf-8") != sidecar_content
         if sidecar_changed:
             self.atomic_write(sidecar_path, sidecar_content)
 
-        # 4) Registrazione nel proprio array "plugin" -- append e dedup,
-        #    ogni altro plugin dell'utente resta esattamente com'era.
+        # 4) Registration in the "plugin" array -- append and dedup, every
+        #    other plugin the user has stays exactly as it was.
         plugin_registered = self._register_plugin(config_path, adapter_dst)
 
         if plugin_registered:
-            return f"opencode: guardrail registrato in {config_path}"
+            return f"opencode: guardrail registered in {config_path}"
         if body_changed or adapter_changed or sidecar_changed:
-            return f"opencode: corpo/adattatore guardrail aggiornato in {plugin_dir}"
+            return f"opencode: guardrail body/adapter updated in {plugin_dir}"
         return None
 
     def _register_plugin(self, config_path: Path, adapter_dst: Path) -> bool:
@@ -164,11 +164,11 @@ class OpenCodeRuntime(Runtime):
             return False
         plugins = config.get("plugin", [])
         if not isinstance(plugins, list):
-            raise GuardrailError(f"opencode: {config_path.name}: 'plugin' non e' una lista")
+            raise GuardrailError(f"opencode: {config_path.name}: 'plugin' is not a list")
         try:
             entry = adapter_dst.resolve().as_uri()
         except (OSError, ValueError) as exc:
-            raise GuardrailError(f"opencode: impossibile risolvere {adapter_dst} ({exc})") from exc
+            raise GuardrailError(f"opencode: could not resolve {adapter_dst} ({exc})") from exc
         if any(isinstance(p, str) and p.strip() == entry for p in plugins):
             return False
         self._write_key(config_path, "plugin", [*plugins, entry])

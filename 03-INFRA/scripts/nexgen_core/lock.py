@@ -1,10 +1,10 @@
-"""Gestione del lock esclusivo host-wide cross-platform (Linux & Windows).
+"""Cross-platform (Linux & Windows) host-wide exclusive lock management.
 
-Preserva il contratto operativo:
-- Una sola operazione di sincronizzazione / guardia / pubblicazione per host.
-- Timeout configurabile (default 30 secondi via AGENT_SYNC_LOCK_TIMEOUT_SECONDS).
-- Contesa su 'guard': uscita pulita con codice 0 (un'altra operazione è già in corso).
-- Contesa su operazioni manuali ('apply', 'publish', 'vault-push'): uscita con codice 75.
+Preserves the operational contract:
+- A single sync / guard / publish operation per host.
+- Configurable timeout (default 30 seconds via AGENT_SYNC_LOCK_TIMEOUT_SECONDS).
+- Contention on 'guard': clean exit with code 0 (another operation is already running).
+- Contention on manual operations ('apply', 'publish', 'vault-push'): exit with code 75.
 """
 from __future__ import annotations
 
@@ -23,7 +23,7 @@ DEFAULT_TIMEOUT_SECONDS = 30.0
 
 
 class LockTimeoutError(TimeoutError):
-    """Sollevata quando il lock non può essere acquisito entro il timeout."""
+    """Raised when the lock cannot be acquired within the timeout."""
     def __init__(self, message: str, lock_path: Path, is_guard: bool = False):
         super().__init__(message)
         self.lock_path = lock_path
@@ -32,7 +32,7 @@ class LockTimeoutError(TimeoutError):
 
 
 class HostLock:
-    """Lock esclusivo a livello di host."""
+    """Host-level exclusive lock."""
 
     def __init__(
         self,
@@ -62,16 +62,16 @@ class HostLock:
         self._fd: int | None = None
 
     def acquire(self) -> bool:
-        """Tenta di acquisire il lock entro il tempo di timeout."""
+        """Tries to acquire the lock within the timeout."""
         self.lock_path.parent.mkdir(parents=True, exist_ok=True)
         start_time = time.time()
 
         while True:
             try:
-                # Apertura in lettura/scrittura (creazione se non esiste)
+                # Open for read/write (create if missing)
                 self._fd = os.open(str(self.lock_path), os.O_RDWR | os.O_CREAT, 0o644)
                 if self._try_lock(self._fd):
-                    # Scrive i metadati del processo corrente
+                    # Write metadata about the current process
                     try:
                         os.ftruncate(self._fd, 0)
                         os.lseek(self._fd, 0, os.SEEK_SET)
@@ -91,13 +91,13 @@ class HostLock:
 
             elapsed = time.time() - start_time
             if elapsed >= self.timeout:
-                msg = f"Impossibile acquisire il lock '{self.lock_path}' dopo {self.timeout:.1f}s (processo attivo in corso)."
+                msg = f"Could not acquire lock '{self.lock_path}' after {self.timeout:.1f}s (another process is active)."
                 raise LockTimeoutError(msg, self.lock_path, self.is_guard)
 
             time.sleep(0.5)
 
     def release(self) -> None:
-        """Rilascia il lock e chiude il descrittore di file."""
+        """Releases the lock and closes the file descriptor."""
         if self._fd is not None:
             try:
                 self._unlock(self._fd)
@@ -107,7 +107,7 @@ class HostLock:
                 self._fd = None
 
     def _try_lock(self, fd: int) -> bool:
-        """Tentativo non bloccante di lock dipendente dal sistema operativo."""
+        """Non-blocking, OS-dependent lock attempt."""
         if sys.platform == "win32":
             import msvcrt
             try:
@@ -128,7 +128,7 @@ class HostLock:
                 return False
 
     def _unlock(self, fd: int) -> None:
-        """Sblocco dipendente dal sistema operativo."""
+        """OS-dependent unlock."""
         if sys.platform == "win32":
             import msvcrt
             with contextlib.suppress(OSError, PermissionError):

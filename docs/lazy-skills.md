@@ -33,7 +33,8 @@ Two more optional fields exist for a small team sharing this framework:
 
 `scope: personal` only has an effect when USER-PROFILE.md declares a Team
 members section at all (the mono-user default has none, so `scope` is
-inert there). When it does, `skills-sync.py` materializes a
+inert there). When it does, `nexgen skill sync` (historical name
+`skills-sync.py`) materializes a
 `scope: personal` skill only on the machine whose `AGENT_TEAM_MEMBER`
 environment variable matches the skill's `owner`; everywhere else it is
 skipped, with a clear line saying so. `scope: team` (or no `scope` at
@@ -49,10 +50,12 @@ OpenCode, Antigravity, and local workers use the same explicit command for
 any skill that declares no native target:
 
 ```bash
-agent-skill find            # elenca tutto (query vuota)
-agent-skill find debugging
-agent-skill show systematic-debugging
+nexgen skill list                    # elenca tutte le skill gestite
+nexgen skill find debugging          # richiede almeno un termine
+nexgen skill show systematic-debugging
 ```
+
+(The historical names `agent-skill list|find|show` still work as aliases.)
 
 ## Cross-CLI command skills
 
@@ -87,45 +90,45 @@ the folder name; never reuse a CLI built-in name (Claude Code ships a
 bundled `/doctor` that a same-named skill would override); write the body
 argument-free — "the text after the command is the request" — because
 placeholder syntaxes like `$ARGUMENTS` diverge per CLI while plain
-instructions behave identically on all four.
+instructions behave identically across every runtime.
 
-The engine ships seven starter command skills, registered in
-`skills.manifest.yaml.example`. On a machine that has no
-`skills.manifest.yaml` yet, `agent-sync apply` creates one from that example
-so the commands exist on a fresh install instead of only in this document —
-it is the only skills file the engine seeds, it happens only when the file is
-absent, and an existing manifest is never rewritten (so `skills: {}` is a
-permanent opt-out). The seven: `vault-doctor` (run the alignment doctor and
+The engine ships a set of starter command skills, registered in
+`skills.manifest.yaml.example`. Copy that file to `skills.manifest.yaml`
+(same folder) to get them on a fresh install; an existing manifest is never
+rewritten by the engine, so emptying it to `skills: {}` is a permanent
+opt-out. The starters: `nexgen-doctor` (run the alignment doctor and
 explain it in plain language), `vault-close` (distill the session into the
 Vault, publish, verify), `vault-save` (save one durable fact with the
-hygiene decision rule), `vault-council` (convene the AI Council on a
+hygiene decision rule), `nexgen-council` (convene the AI Council on a
 question, confirming before it spends the seats' quota), `vault-groom` (one
-grooming pass, preview-first; apply keeps all of its own guardrails), and
+grooming pass, preview-first; apply keeps all of its own guardrails),
 `nexgen-update` (check for a newer engine release, upgrade only on explicit
 confirmation, verify with the doctor), and `vault-map` (the deterministic
 structural map of the vault — broken wikilinks, orphan notes, hubs —
 explained in plain language, fixes proposed but never applied without
 confirmation). Each body encodes the documented runbook of the tool it
-wraps — the guarded flows stay guarded.
+wraps — the guarded flows stay guarded. Their earlier names (`vault-doctor`,
+`vault-council`, `vault-update`) still resolve, kept as deprecated aliases.
 
 `/nexgen-update` is the chat-facing skill. Its guarded work is performed by the
-real cross-platform terminal command `nexgen-update`, installed by
-`agent-sync apply`; the two entry points therefore share one updater rather
+real cross-platform terminal command `nexgen update` (historical name
+`nexgen-update`, still installed and still working), installed by
+`nexgen sync`; the two entry points therefore share one updater rather
 than maintaining separate release logic.
 
 ## Synchronization and migration
 
 Change the manifest and its source body in the Vault, then commit and push
-that canonical change. On each machine, `agent-sync guard` runs
-`skills-sync.py --apply` and reconciles only managed entries.
+that canonical change. On each machine, `nexgen guard` (historical name
+`agent-sync guard`) reconciles only managed entries.
 
 An existing installation may still have old folders in discovery roots. First
 run the normal provisioner so it repairs any old whole-root link, then move
 the old folders out with the one-time explicit migration:
 
 ```bash
-agent-sync guard
-python3 03-INFRA/scripts/skills-sync.py --apply --migrate-legacy
+nexgen guard
+nexgen skill sync --migrate-legacy
 ```
 
 It preserves unknown folders under `~/.agents/skill-library/legacy/`, outside
@@ -133,6 +136,6 @@ the catalog and runtime roots. Review those folders deliberately: promote a
 worthwhile one into the pinned manifest, or delete it later with explicit
 user approval. The recurring guard never performs that migration by itself.
 
-Run `agent-doctor --strict --summary` after the rollout. A cross-machine
-change is complete only after the same result is verified on every declared
-machine and CLI.
+Run `nexgen doctor --strict --summary` (historical name `agent-doctor
+--strict --summary`) after the rollout. A cross-machine change is complete
+only after the same result is verified on every declared machine and CLI.

@@ -129,12 +129,12 @@ def slugify(text: str) -> str:
 
 
 def new_session_dir(label: str) -> Path:
-    """mkdir SENZA exist_ok: due invocazioni con lo stesso label nello stesso
-    secondo (timestamp con risoluzione al secondo) non devono mai condividere
-    silenziosamente una cartella e sovrascriversi i file a vicenda -- su
-    collisione si riprova con un suffisso random finche' non se ne trova una
-    libera (verificato dal vivo: senza questo, due sessioni ravvicinate con lo
-    stesso label finiscono nella stessa directory)."""
+    """mkdir WITHOUT exist_ok: two invocations with the same label in the same
+    second (timestamp resolution is one second) must never silently share a
+    folder and overwrite each other's files -- on collision, retry with a
+    random suffix until a free one is found (verified live: without this,
+    two sessions launched close together with the same label end up in the
+    same directory)."""
     _cleanup_sessions(DEFAULT_TTL_DAYS)
     _private_mkdir(SESSIONS_DIR, parents=True, exist_ok=True)
     _set_private_mode(SESSIONS_DIR, 0o700)

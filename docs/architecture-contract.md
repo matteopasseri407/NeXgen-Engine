@@ -24,8 +24,8 @@ passes its tests.
    commands keep `vault-`. The engine and its tooling take `nexgen-`.
 4. **The engine distributes only its own commands.** Everything else stays in
    private data. A list of recommended extras is documentation, not files.
-5. **What is chosen propagates.** Four CLIs, three machines, two platforms.
-   Working on one machine is not done.
+5. **What is chosen propagates.** Every CLI in scope, every machine declared,
+   every platform targeted. Working on one machine is not done.
 6. **Repair in silence, speak only about what cannot be repaired.** Routine
    maintenance is the job, not news. Notifying about routine work is how people
    learn to dismiss notifications.

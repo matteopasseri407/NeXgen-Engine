@@ -1,10 +1,10 @@
-"""Adattatore Antigravity: postura in settings.json + hook PreToolUse in hooks.json.
+"""Antigravity adapter: posture in settings.json + PreToolUse hook in hooks.json.
 
-Antigravity ha un hook a riga di comando REALE (a differenza della callback
-in-process di OpenCode), ma con una propria forma JSON: l'adattatore statico
-in agent-universal-layer/hooks/antigravity-guardrail-adapter.mjs traduce
-{toolCall, workspacePaths, ...} nello stesso stdin/stdout che il corpo del
-guardrail gia' parla per Claude.
+Antigravity has a REAL command-line hook (unlike OpenCode's in-process
+callback), but with its own JSON shape: the static adapter at
+agent-universal-layer/hooks/antigravity-guardrail-adapter.mjs translates
+{toolCall, workspacePaths, ...} into the same stdin/stdout the guardrail
+body already speaks for Claude.
 """
 from __future__ import annotations
 
@@ -18,12 +18,12 @@ from nexgen_core.runtimes.base import GuardrailError, Runtime
 
 _IS_WINDOWS = platform.system() == "Windows"
 
-#: Vocabolario neutro -> chiavi Antigravity (verificato contro la
-#: documentazione di riferimento imbarcata nel binario installato). Solo
-#: 'bypass' e' verificato: non c'e' una separazione pulita accept-edits,
-#: perche' toolPermission (shell) non ha un equivalente per i file. Scrivere
-#: SOLO toolPermission lascerebbe le modifiche ai file ancora bloccate --
-#: un mezzo-bypass che sembra applicato e non lo e'.
+#: Neutral vocabulary -> Antigravity keys (verified against the reference
+#: documentation shipped inside the installed binary). Only 'bypass' is
+#: verified: there's no clean accept-edits split, because toolPermission
+#: (shell) has no equivalent for files. Writing ONLY toolPermission would
+#: leave file edits still blocked -- a half-bypass that looks applied and
+#: isn't.
 _POSTURE_RENDER = {"bypass": {"toolPermission": "always-proceed", "artifactReviewPolicy": "always-proceed"}}
 
 _ADAPTER_NAME = "antigravity-guardrail-adapter.mjs"
@@ -44,9 +44,9 @@ class AntigravityRuntime(Runtime):
         names = ("agy.exe", "agy.cmd", "agy") if _IS_WINDOWS else ("agy",)
         if any((home / ".local" / "bin" / name).is_file() for name in names):
             return True
-        # settings.json e' scritto solo da Antigravity stesso al primo
-        # avvio -- a differenza di mcp_config.json, che questo layer crea da
-        # zero ad ogni ciclo indipendentemente dall'installazione.
+        # settings.json is written only by Antigravity itself on first
+        # launch -- unlike mcp_config.json, which this layer creates from
+        # scratch on every cycle regardless of whether it's installed.
         return self._settings_path(home).is_file()
 
     def _load_json(self, path: Path, *, label: str) -> dict[str, Any] | None:
@@ -55,9 +55,9 @@ class AntigravityRuntime(Runtime):
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
         except json.JSONDecodeError as exc:
-            raise GuardrailError(f"antigravity: {label} non e' JSON valido ({exc})") from exc
+            raise GuardrailError(f"antigravity: {label} is not valid JSON ({exc})") from exc
         if not isinstance(data, dict):
-            raise GuardrailError(f"antigravity: la radice di {label} non e' un oggetto")
+            raise GuardrailError(f"antigravity: the root of {label} is not an object")
         return data
 
     def read_posture(self, home: Path) -> str | None:
@@ -79,17 +79,17 @@ class AntigravityRuntime(Runtime):
         path = self._settings_path(home)
         data = self._load_json(path, label="settings.json")
         if data is None:
-            return None  # Antigravity mai avviata qui: nessuna postura da applicare
+            return None  # Antigravity never launched here: no posture to apply
         if all(data.get(k) == v for k, v in desired.items()):
             return None
         data.update(desired)
         self.backup(path)
         self.atomic_write(path, json.dumps(data, indent=2) + "\n")
-        return f"antigravity: postura '{posture}' applicata in {path}"
+        return f"antigravity: posture '{posture}' applied in {path}"
 
     def install_guardrail(self, home: Path, hook_source: Path, engine_hooks_dir: Path) -> str | None:
         if not self._settings_path(home).is_file():
-            return None  # Antigravity mai avviata qui: nessun guardrail da installare
+            return None  # Antigravity never launched here: no guardrail to install
         hooks_path = self._hooks_path(home)
         adapter_dir = hooks_path.parent
 
@@ -98,15 +98,15 @@ class AntigravityRuntime(Runtime):
 
         adapter_src = engine_hooks_dir / _ADAPTER_NAME
         if not adapter_src.is_file():
-            raise GuardrailError(f"antigravity: adattatore engine mancante ({adapter_src})")
+            raise GuardrailError(f"antigravity: missing engine adapter ({adapter_src})")
         adapter_dst = adapter_dir / _ADAPTER_NAME
         adapter_changed = self.deploy_bytes(adapter_dst, adapter_src.read_bytes())
 
         sidecar_path = adapter_dir / "nexgen-guardrail.config.json"
-        # Il timeout esterno dell'hook di Antigravity uccide l'INTERO
-        # comando; l'adattatore applica gia' il proprio timeout per-corpo
-        # via subprocess, quindi il buffer qui evita che il kill esterno
-        # scatti prima che quello interno abbia la sua occasione.
+        # Antigravity's external hook timeout kills the WHOLE command; the
+        # adapter already applies its own per-body timeout via subprocess,
+        # so the buffer here keeps the external kill from firing before the
+        # internal one gets its chance.
         timeout = 5
         sidecar_content = json.dumps({"hooks": [{"file": str(body_dst), "timeout": timeout}]}, indent=2) + "\n"
         sidecar_changed = not sidecar_path.is_file() or sidecar_path.read_text(encoding="utf-8") != sidecar_content
@@ -121,8 +121,8 @@ class AntigravityRuntime(Runtime):
             }],
         }
         current = self._load_json(hooks_path, label="hooks.json") or {}
-        # Solo la propria chiave: qualunque altro hook -- dell'utente o di
-        # un altro tool -- in questo file resta esattamente com'era.
+        # Only its own key: any other hook -- the user's or another tool's
+        # -- in this file stays exactly as it was.
         if current.get("nexgen-guardrail") == desired_entry:
             registered = False
         else:
@@ -132,7 +132,7 @@ class AntigravityRuntime(Runtime):
             registered = True
 
         if registered:
-            return f"antigravity: guardrail registrato in {hooks_path}"
+            return f"antigravity: guardrail registered in {hooks_path}"
         if body_changed or adapter_changed or sidecar_changed:
-            return f"antigravity: corpo/adattatore guardrail aggiornato in {adapter_dir}"
+            return f"antigravity: guardrail body/adapter updated in {adapter_dir}"
         return None

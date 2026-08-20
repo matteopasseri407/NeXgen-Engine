@@ -1,7 +1,7 @@
-"""Lo stack dei connettori self-hosted, avviabile sulla macchina di chi lo usa.
+"""The self-hosted connector stack, runnable on the machine that uses it.
 
-Prima esisteva un solo percorso per averli: un server, con un installer che
-dichiarava di girare sul server e ne configurava il firewall. Chi voleva
-l'installazione completa senza un server non aveva niente da eseguire.
+There used to be only one path to getting them: a server, with an installer
+that declared it ran on the server and configured its firewall. Anyone who
+wanted the full installation without a server had nothing to run.
 """
 from __future__ import annotations

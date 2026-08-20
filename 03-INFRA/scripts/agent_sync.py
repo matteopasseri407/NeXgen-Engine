@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """agent_sync — NeXgen Engine v2 Entrypoint.
 
-Inoltra tutti i comandi CLI e le operazioni al package nexgen_core.
+Forwards all CLI commands and operations to the nexgen_core package.
 """
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ SCRIPTS_DIR = Path(__file__).resolve().parent
 if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
-# Tabella comandi gestiti dal layer
+# Table of commands managed by the layer
 LINKED_COMMANDS: dict[str, dict[str, object]] = {
     "agent-sync":        {"source": "engine", "posix": True,  "windows": True},
     "agent-doctor":      {"source": "engine", "posix": True,  "windows": True},

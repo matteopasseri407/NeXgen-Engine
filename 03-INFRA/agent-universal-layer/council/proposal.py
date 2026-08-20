@@ -31,9 +31,9 @@ from seat_process import AGY_BLOCK_REASON, _effort_label
 
 
 def _vault_data_root() -> Path:
-    """Stesso pattern AGENT_ENGINE_ROOT/AGENT_VAULT_DATA di agent_sync.py:
-    i dati utente (quali seat, quali modelli) vivono nel piano dati, mai nel
-    motore pubblico, a prescindere da dove il motore è installato."""
+    """Same AGENT_ENGINE_ROOT/AGENT_VAULT_DATA pattern as agent_sync.py:
+    user data (which seats, which models) lives in the data plane, never in
+    the public engine, regardless of where the engine is installed."""
     vault = Path(os.environ.get("KNOWLEDGE_VAULT_PATH") or str(Path.home() / "KnowledgeVault"))
     return Path(os.environ.get("AGENT_VAULT_DATA") or str(vault))
 

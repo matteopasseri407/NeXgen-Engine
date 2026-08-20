@@ -1,38 +1,40 @@
-"""Risoluzione dei percorsi del layer, in un posto solo.
+"""Path resolution for the layer, in one place.
 
-Questa cascata di variabili d'ambiente esisteva in quindici copie letterali
-sparse per il package, e due di quelle copie avevano già divergito: una
-leggeva `sync/remotes.yaml` in un modo, l'altra in un altro. Ogni componente
-che ha bisogno di sapere dove sono i dati, il motore o lo stato lo chiede qui.
+This environment-variable cascade used to exist as fifteen literal copies
+scattered across the package, and two of those copies had already drifted:
+one read `sync/remotes.yaml` one way, the other a different way. Any
+component that needs to know where the data, the engine, or the state live
+asks here.
 
-Le precedenze sono quelle storiche e non vanno cambiate senza una finestra di
-compatibilità: sono contratto per chi ha già una macchina configurata.
+The precedence order is the historical one and must not change without a
+compatibility window: it is a contract for anyone who already has a machine
+configured.
 """
 from __future__ import annotations
 
 import os
 from pathlib import Path
 
-#: Nome della cartella dati sotto la home, quando nessuna variabile la nomina.
+#: Name of the data folder under the home directory, when no variable names it.
 DEFAULT_VAULT_DIRNAME = "KnowledgeVault"
 
-#: Cartella di stato locale alla macchina. Non si sincronizza mai.
+#: Machine-local state folder. Never synced.
 STATE_DIRNAME = ".nexgen-engine"
 
-#: Sottocartella del clone del motore che contiene scripts/ e agent-universal-layer/.
+#: Subfolder of the engine clone that contains scripts/ and agent-universal-layer/.
 ENGINE_SUBDIR = "03-INFRA"
 
 
 def resolve_home(home: Path | None = None) -> Path:
-    """La home dell'utente, sovrascrivibile per i test."""
+    """The user's home directory, overridable for tests."""
     return Path(home) if home is not None else Path.home()
 
 
 def resolve_vault_data(home: Path | None = None, override: Path | None = None) -> Path:
-    """Dove vivono i dati privati (il Vault).
+    """Where the private data (the Vault) lives.
 
-    Precedenza: argomento esplicito, `AGENT_VAULT_DATA`, `KNOWLEDGE_VAULT_PATH`,
-    infine `~/KnowledgeVault`.
+    Precedence: explicit argument, `AGENT_VAULT_DATA`, `KNOWLEDGE_VAULT_PATH`,
+    finally `~/KnowledgeVault`.
     """
     if override is not None:
         return Path(override)
@@ -43,9 +45,9 @@ def resolve_vault_data(home: Path | None = None, override: Path | None = None) -
 
 
 def resolve_engine_root(home: Path | None = None, override: Path | None = None) -> Path:
-    """Dove vive il motore installato (la cartella `03-INFRA` del suo clone).
+    """Where the installed engine lives (the `03-INFRA` folder of its clone).
 
-    Precedenza: argomento esplicito, `AGENT_ENGINE_ROOT`, infine
+    Precedence: explicit argument, `AGENT_ENGINE_ROOT`, finally
     `~/.nexgen-engine/03-INFRA`.
     """
     if override is not None:
@@ -57,9 +59,9 @@ def resolve_engine_root(home: Path | None = None, override: Path | None = None) 
 
 
 def resolve_state_dir(home: Path | None = None, override: Path | None = None) -> Path:
-    """Dove vive lo stato locale alla macchina (lock, timbri, debounce).
+    """Where the machine-local state lives (locks, timestamps, debounce).
 
-    Precedenza: argomento esplicito, `AGENT_STATE_DIR`, infine `~/.nexgen-engine`.
+    Precedence: explicit argument, `AGENT_STATE_DIR`, finally `~/.nexgen-engine`.
     """
     if override is not None:
         return Path(override)
@@ -70,24 +72,24 @@ def resolve_state_dir(home: Path | None = None, override: Path | None = None) ->
 
 
 def canonical_instructions(vault_data: Path | None = None) -> Path:
-    """Il file di istruzioni canonico da cui ogni runtime deriva il proprio."""
+    """The canonical instructions file from which every runtime derives its own."""
     root = vault_data if vault_data is not None else resolve_vault_data()
     return Path(root) / ENGINE_SUBDIR / "agent-universal-layer" / "instructions" / "AGENTS.md"
 
 
 def mcp_manifest(vault_data: Path | None = None) -> Path:
-    """Il manifest dei connettori, unica fonte della configurazione MCP."""
+    """The connector manifest, the single source of the MCP configuration."""
     root = vault_data if vault_data is not None else resolve_vault_data()
     return Path(root) / ENGINE_SUBDIR / "agent-universal-layer" / "mcp" / "manifest.yaml"
 
 
 def skills_manifest(vault_data: Path | None = None) -> Path:
-    """Il manifest delle skill, unica fonte di cosa viene materializzato."""
+    """The skills manifest, the single source of what gets materialized."""
     root = vault_data if vault_data is not None else resolve_vault_data()
     return Path(root) / ENGINE_SUBDIR / "agent-universal-layer" / "skills" / "skills.manifest.yaml"
 
 
 def remotes_config(vault_data: Path | None = None) -> Path:
-    """La dichiarazione del remoto autoritativo e dei mirror."""
+    """The declaration of the authoritative remote and its mirrors."""
     root = vault_data if vault_data is not None else resolve_vault_data()
     return Path(root) / ENGINE_SUBDIR / "agent-universal-layer" / "sync" / "remotes.yaml"

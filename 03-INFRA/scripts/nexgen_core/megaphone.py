@@ -1,9 +1,9 @@
-"""Il megafono: unica superficie di notifica e allarme per NeXgen Engine v2.
+"""The megaphone: the single notification and alert surface for NeXgen Engine v2.
 
-Invariante 7 del contratto:
-Esiste esattamente una sola superficie di allarme con antirimbalzo (debounce),
-formattazione coerente e fallback di trasporto.
-Nessun componente notifica per conto proprio.
+Contract invariant 7:
+There exists exactly one alert surface, with debounce, consistent formatting,
+and transport fallback.
+No component notifies on its own.
 """
 from __future__ import annotations
 
@@ -23,7 +23,7 @@ DEFAULT_DEBOUNCE_HOURS = 4.0
 
 
 class Megaphone:
-    """Gestore unificato delle notifiche umane e degli allarmi."""
+    """Unified manager for human notifications and alerts."""
 
     def __init__(self, state_dir: Path | None = None) -> None:
         self.state_dir = resolve_state_dir(override=state_dir)
@@ -42,7 +42,7 @@ class Megaphone:
         self.state_file.write_text(json.dumps(state, indent=2), encoding="utf-8")
 
     def should_notify(self, alert_key: str, debounce_hours: float = DEFAULT_DEBOUNCE_HOURS) -> bool:
-        """Verifica se l'allarme deve essere inviato o è in periodo di antirimbalzo."""
+        """Checks whether the alert should be sent, or is within its debounce window."""
         state = self._load_state()
         last_sent = state.get(alert_key, 0.0)
         now = time.time()
@@ -51,13 +51,13 @@ class Megaphone:
         return True
 
     def mark_notified(self, alert_key: str) -> None:
-        """Registra l'invio dell'allarme per l'antirimbalzo."""
+        """Records that the alert was sent, for debounce purposes."""
         state = self._load_state()
         state[alert_key] = time.time()
         self._save_state(state)
 
     def send_alert(self, title: str, message: str, action: str | None = None, alert_key: str | None = None) -> bool:
-        """Invia un allarme attraverso i canali configurati (Telegram, Webhook o log)."""
+        """Sends an alert through the configured channels (Telegram, webhook, or log)."""
         key = alert_key or f"{title}:{message[:50]}"
         if not self.should_notify(key):
             return True
@@ -67,7 +67,7 @@ class Megaphone:
         text = f"🚨 <b>{safe_title}</b>\n\n{safe_msg}"
         if action:
             safe_act = html.escape(action)
-            text += f"\n\n👉 <b>Azione richiesta:</b>\n<code>{safe_act}</code>"
+            text += f"\n\n👉 <b>Action required:</b>\n<code>{safe_act}</code>"
 
         sent = False
         # 1. Telegram
@@ -76,7 +76,7 @@ class Megaphone:
         if bot_token and chat_id:
             sent = self._send_telegram(bot_token, chat_id, text)
 
-        # 2. Webhook generico
+        # 2. Generic webhook
         webhook_url = os.environ.get("AGENT_ALERT_WEBHOOK_URL")
         if webhook_url:
             sent = self._send_webhook(webhook_url, {"title": title, "message": message, "action": action}) or sent

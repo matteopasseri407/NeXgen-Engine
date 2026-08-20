@@ -1,21 +1,21 @@
 #!/usr/bin/env sh
 # NeXgen Engine — bootstrap.
 #
-# Questo file fa una cosa sola: trovare Python e passargli il testimone.
-# Tutto il resto — prerequisiti, struttura del vault, assistenti trovati,
-# profilo consigliato — vive in 03-INFRA/scripts/nexgen_core/bootstrap.py,
-# una volta sola, perché non si può verificare con Python che Python esista
-# ma tutto ciò che viene dopo sì.
+# This file does exactly one thing: find Python and hand off to it.
+# Everything else — prerequisites, vault structure, detected assistants,
+# recommended profile — lives in 03-INFRA/scripts/nexgen_core/bootstrap.py,
+# in one place only, because you can't use Python to check that Python
+# exists, but everything that follows can be checked once Python is found.
 #
-#   sh install.sh            preflight, domande e passo successivo
-#   sh install.sh --check    solo controlli, nessuna domanda e nessuna scrittura
+#   sh install.sh            preflight, questions, and next step
+#   sh install.sh --check    checks only, no questions and no writes
 set -u
 
 ROOT="$(cd "$(dirname "$0")" && pwd)"
 BOOTSTRAP="$ROOT/03-INFRA/scripts/nexgen_core/bootstrap.py"
 
 if [ ! -f "$BOOTSTRAP" ]; then
-    echo "NeXgen: questo clone è incompleto, manca $BOOTSTRAP" >&2
+    echo "NeXgen: this clone is incomplete, missing $BOOTSTRAP" >&2
     exit 1
 fi
 
@@ -28,6 +28,6 @@ for candidate in python3 python; do
     fi
 done
 
-echo "NeXgen: serve Python 3.11 o successivo.${FOUND:+ Trovato: $FOUND.}" >&2
-echo "Installalo dal gestore di pacchetti del tuo sistema e rilancia questo script." >&2
+echo "NeXgen: needs Python 3.11 or later.${FOUND:+ Found: $FOUND.}" >&2
+echo "Install it from your system's package manager and rerun this script." >&2
 exit 1

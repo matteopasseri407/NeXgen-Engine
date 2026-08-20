@@ -1,9 +1,9 @@
-"""Lettura e validazione configurazioni con tolleranza per il futuro (Forward Compatibility).
+"""Config loading and validation, tolerant of the future (Forward Compatibility).
 
-Invariante 8 del contratto:
-Codice e configurazione viaggiano su orologi diversi: una macchina che riceve
-configurazioni con campi nuovi non deve MAI bloccarsi né rifiutare il documento,
-ma ignorare con avviso i campi sconosciuti e applicare il resto.
+Contract invariant 8:
+Code and configuration travel on different clocks: a machine that receives
+configuration with new fields must NEVER stop or reject the document, but
+must ignore unknown fields with a warning and apply the rest.
 """
 from __future__ import annotations
 
@@ -17,9 +17,9 @@ import yaml
 
 logger = logging.getLogger("nexgen.config")
 
-#: I quattro runtime che il layer sa configurare. Vale sia per i connettori
-#: MCP sia per le viste delle skill: è la stessa lista, e tenerla in due
-#: costanti diverse è il modo in cui le due liste divergono.
+#: The four runtimes the layer knows how to configure. Applies to both the
+#: MCP connectors and the skill views: it's the same list, and keeping it in
+#: two separate constants is how the two lists end up drifting apart.
 RUNTIME_TARGETS = frozenset({"claude", "codex", "antigravity", "opencode"})
 SKILL_TARGETS = RUNTIME_TARGETS
 SKILL_ORIGINS = frozenset({"vault", "engine", "github", "installer"})
@@ -27,28 +27,28 @@ SKILL_EXPOSURES = frozenset({"lazy", "eager", "manual", "core"})
 
 
 class ConfigError(ValueError):
-    """Errore bloccante di configurazione (es. YAML malformato o campi obbligatori mancanti)."""
+    """Blocking configuration error (e.g. malformed YAML or missing required fields)."""
 
 
 def _load_yaml(path: Path, label: str) -> dict[str, Any]:
-    """Carica un file YAML verificando che la radice sia un dizionario."""
+    """Loads a YAML file, verifying the root is a mapping."""
     if not path.is_file():
-        raise ConfigError(f"{label} non trovato: {path}")
+        raise ConfigError(f"{label} not found: {path}")
     try:
         content = path.read_text(encoding="utf-8")
         data = yaml.safe_load(content)
     except OSError as exc:
-        raise ConfigError(f"Impossibile leggere {label} ({path}): {exc}") from exc
+        raise ConfigError(f"Could not read {label} ({path}): {exc}") from exc
     except yaml.YAMLError as exc:
-        raise ConfigError(f"Sintassi YAML non valida in {label} ({path}): {exc}") from exc
+        raise ConfigError(f"Invalid YAML syntax in {label} ({path}): {exc}") from exc
 
     if not isinstance(data, dict):
-        raise ConfigError(f"La radice di {label} ({path}) deve essere una mappa/dizionario")
+        raise ConfigError(f"The root of {label} ({path}) must be a map/dictionary")
     return data
 
 
 def expand_placeholders(text: str, context: dict[str, str] | None = None) -> str:
-    """Espande placeholder di percorso ed env var: ${VAR}, ${VAR:-default}."""
+    """Expands path and env-var placeholders: ${VAR}, ${VAR:-default}."""
     ctx = context or {}
 
     def _replace_match(match: re.Match) -> str:
@@ -66,43 +66,43 @@ def expand_placeholders(text: str, context: dict[str, str] | None = None) -> str
 
 
 def load_mcp_manifest(path: Path) -> dict[str, Any]:
-    """Carica e valida mcp/manifest.yaml in modo tollerante.
+    """Loads and validates mcp/manifest.yaml tolerantly.
 
-    ``retired_servers`` è il meccanismo di rimozione esplicito e cross-CLI: un
-    nome elencato lì sparisce dai connettori attivi restituiti, così ogni
-    consumatore (il renderer, la sorveglianza dipendenze) lo vede una volta
-    sola. Un nome presente sia fra i ritirati sia fra i server attivi è un
-    errore del manifest: la voce attiva viene saltata con un avviso, il
-    documento non viene mai rifiutato (invariante 8).
+    ``retired_servers`` is the explicit, cross-CLI removal mechanism: a name
+    listed there disappears from the returned active connectors, so every
+    consumer (the renderer, dependency watch) sees it exactly once. A name
+    present both among the retired and among the active servers is a manifest
+    error: the active entry is skipped with a warning, and the document is
+    never rejected (invariant 8).
     """
-    raw = _load_yaml(path, "Manifest MCP")
+    raw = _load_yaml(path, "MCP manifest")
     servers = raw.get("servers", {})
     if not isinstance(servers, dict):
-        raise ConfigError(f"{path}: 'servers' deve essere una mappa di connettori")
+        raise ConfigError(f"{path}: 'servers' must be a map of connectors")
 
     retired_raw = raw.get("retired_servers", [])
     if not isinstance(retired_raw, list):
-        logger.warning("'retired_servers' in %s deve essere una lista, ignorato", path)
+        logger.warning("'retired_servers' in %s must be a list, ignored", path)
         retired_raw = []
     retired_servers = {str(name) for name in retired_raw if str(name).strip()}
 
     validated_servers: dict[str, dict[str, Any]] = {}
     for name, srv in servers.items():
         if not isinstance(srv, dict):
-            logger.warning("Connettore '%s' in %s non è valido, voce saltata", name, path)
+            logger.warning("Connector '%s' in %s is invalid, entry skipped", name, path)
             continue
 
-        # Verifica campi essenziali
+        # Check for essential fields
         cmd = srv.get("command") or srv.get("cmd")
         url = srv.get("url")
         if not cmd and not url:
-            logger.warning("Connettore '%s' non specifica né 'command' né 'url', voce saltata", name)
+            logger.warning("Connector '%s' specifies neither 'command' nor 'url', entry skipped", name)
             continue
 
         if str(name) in retired_servers:
             logger.warning(
-                "Connettore '%s' in %s è sia attivo che ritirato: manifest inconsistente, "
-                "salto la voce attiva (resta ritirato)", name, path,
+                "Connector '%s' in %s is both active and retired: inconsistent manifest, "
+                "skipping the active entry (stays retired)", name, path,
             )
             continue
 
@@ -118,22 +118,22 @@ def load_mcp_manifest(path: Path) -> dict[str, Any]:
 
 
 def load_skills_manifest(path: Path) -> dict[str, Any]:
-    """Carica e valida skills.manifest.yaml in modo tollerante."""
-    raw = _load_yaml(path, "Manifest Skill")
+    """Loads and validates skills.manifest.yaml tolerantly."""
+    raw = _load_yaml(path, "Skills manifest")
     skills = raw.get("skills", {})
     if not isinstance(skills, dict):
-        raise ConfigError(f"{path}: 'skills' deve essere una mappa di skill")
+        raise ConfigError(f"{path}: 'skills' must be a map of skills")
 
     validated_skills: dict[str, dict[str, Any]] = {}
     for name, skill in skills.items():
         if not isinstance(skill, dict):
-            logger.warning("Skill '%s' in %s non è valida, voce saltata", name, path)
+            logger.warning("Skill '%s' in %s is invalid, entry skipped", name, path)
             continue
 
-        # Origine predefinita 'vault' se assente
+        # Default origin is 'vault' when absent
         origin = skill.get("origin", "vault")
         if origin not in SKILL_ORIGINS:
-            logger.warning("Skill '%s' ha origine sconosciuta '%s', trattata con cautela", name, origin)
+            logger.warning("Skill '%s' has unknown origin '%s', handled with caution", name, origin)
 
         validated_skills[str(name)] = skill
 
@@ -146,8 +146,8 @@ def load_skills_manifest(path: Path) -> dict[str, Any]:
 
 
 def load_council_config(path: Path) -> dict[str, Any]:
-    """Carica council/seats.yaml in modo tollerante."""
-    raw = _load_yaml(path, "Configurazione Council")
+    """Loads council/seats.yaml tolerantly."""
+    raw = _load_yaml(path, "Council configuration")
     return {
         "schema_version": raw.get("schema_version", 1),
         "seats": raw.get("seats", {}),

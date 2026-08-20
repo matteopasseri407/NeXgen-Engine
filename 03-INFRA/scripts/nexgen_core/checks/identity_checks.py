@@ -1,19 +1,21 @@
-"""Il confine fra la presentazione dei runtime e l'identità privata.
+"""The boundary between runtime presentation and private identity.
 
-Due cose diverse, e confonderle è già costato sei giorni di silenzio:
+Two different things, and confusing them has already cost six days of
+silence:
 
-- una **violazione di confine** è una memoria strutturata che vive accanto al
-  Vault. Il Vault è la memoria; una seconda memoria significa due verità che
-  divergono, e va segnalata come guasto.
-- un **difetto di forma** è un metadato mancante o malformato nello spazio
-  personale. Va detto, ma non può valere quanto il primo: il 14 agosto una
-  riga di frontmatter assente ha fatto uscire con errore la guardia
-  dell'identità, systemd ha cancellato il sync a valle, e per sei giorni
-  nessuno se n'è accorto perché il megafono viveva dentro il servizio morto.
+- a **boundary violation** is a structured memory living alongside the
+  Vault. The Vault is the memory; a second memory means two truths that
+  diverge, and it must be reported as a failure.
+- a **shape defect** is a missing or malformed metadata field in the
+  personal space. It must be reported, but it cannot carry the same weight
+  as the first: on August 14th a missing frontmatter line made the identity
+  guard exit with an error, systemd tore down the downstream sync, and for
+  six days nobody noticed because the megaphone lived inside the dead
+  service.
 
-Lo strumento che *ripara* questo confine vive nei dati privati ed è fuori dal
-perimetro del motore pubblico. Qui c'è solo il giudizio, che è il mestiere del
-dottore.
+The tool that *repairs* this boundary lives in the private data and is
+outside the public engine's perimeter. Here there is only judgment, which is
+the doctor's job.
 """
 from __future__ import annotations
 
@@ -22,14 +24,14 @@ from pathlib import Path
 
 from nexgen_core.report import CheckOutcome, Severity
 
-#: Dove ogni runtime tiene una memoria *strutturata* per conto proprio. Le
-#: trascrizioni di sessione non sono in questo elenco di proposito: sono
-#: materiale grezzo da distillare, non una seconda verità.
+#: Where each runtime keeps its own *structured* memory. Session
+#: transcripts are deliberately not in this list: they are raw material to
+#: be distilled, not a second truth.
 NATIVE_MEMORY_STORES: dict[str, tuple[str, ...]] = {
     "claude": (".claude/memory",),
 }
 
-#: Il frontmatter minimo che rende leggibile lo spazio personale.
+#: The minimum frontmatter that makes the personal space readable.
 REQUIRED_FRONTMATTER = ("status",)
 
 _FRONTMATTER_RE = re.compile(r"\A---\s*\n(.*?)\n---\s*\n", re.DOTALL)
@@ -40,18 +42,18 @@ def _self_file(vault_data: Path) -> Path:
 
 
 def check_agent_self(vault_data: Path) -> CheckOutcome:
-    """Lo spazio personale esiste ed è leggibile?
+    """Does the personal space exist and is it readable?
 
-    Assente non è un guasto: nessuno è obbligato ad averlo. Presente ma
-    illeggibile lo è, perché qualcosa lo ha rotto senza che l'utente scegliesse.
+    Missing is not a failure: nobody is required to have one. Present but
+    unreadable is, because something broke it without the user choosing to.
     """
     self_file = _self_file(vault_data)
     if not self_file.is_file():
         return CheckOutcome(
             id="identity.self_present",
             severity=Severity.UNDETERMINED,
-            message="Lo spazio personale dell'assistente non esiste ancora su questa macchina.",
-            action="Non serve fare niente, a meno che tu non lo voglia creare.",
+            message="The assistant's personal space does not exist on this machine yet.",
+            action="No action needed, unless you want to create it.",
         )
     try:
         self_file.read_text(encoding="utf-8")
@@ -59,29 +61,30 @@ def check_agent_self(vault_data: Path) -> CheckOutcome:
         return CheckOutcome(
             id="identity.self_present",
             severity=Severity.BROKEN,
-            message="Lo spazio personale dell'assistente esiste ma non si riesce a leggere.",
-            action=f"Controlla i permessi di {self_file}",
+            message="The assistant's personal space exists but cannot be read.",
+            action=f"Check the permissions on {self_file}",
             detail=str(exc),
         )
     return CheckOutcome(
         id="identity.self_present",
         severity=Severity.OK,
-        message="Spazio personale presente e leggibile",
+        message="Personal space present and readable",
     )
 
 
 def check_agent_self_metadata(vault_data: Path) -> CheckOutcome:
-    """Il frontmatter dello spazio personale è a posto?
+    """Is the personal space's frontmatter in order?
 
-    Difetto di forma: si riporta, non ferma niente. È esattamente il caso che
-    il 14 agosto ha mandato giù l'intero layer per una riga mancante.
+    Shape defect: it gets reported, it stops nothing. This is exactly the
+    case that took down the whole layer on August 14th over one missing
+    line.
     """
     self_file = _self_file(vault_data)
     if not self_file.is_file():
         return CheckOutcome(
             id="identity.self_metadata",
             severity=Severity.OK,
-            message="Nessun frontmatter da controllare",
+            message="No frontmatter to check",
         )
     try:
         content = self_file.read_text(encoding="utf-8")
@@ -89,7 +92,7 @@ def check_agent_self_metadata(vault_data: Path) -> CheckOutcome:
         return CheckOutcome(
             id="identity.self_metadata",
             severity=Severity.UNDETERMINED,
-            message="Non si riesce a leggere lo spazio personale per controllarne i metadati.",
+            message="Could not read the personal space to check its metadata.",
         )
 
     match = _FRONTMATTER_RE.match(content)
@@ -97,9 +100,9 @@ def check_agent_self_metadata(vault_data: Path) -> CheckOutcome:
         return CheckOutcome(
             id="identity.self_metadata",
             severity=Severity.BROKEN,
-            message="Lo spazio personale non ha l'intestazione dei metadati.",
-            action=f"Aggiungi un blocco '---' con 'status:' in cima a {self_file.name}",
-            detail="Difetto di forma: non impedisce a niente di funzionare.",
+            message="The personal space has no metadata header.",
+            action=f"Add a '---' block with 'status:' at the top of {self_file.name}",
+            detail="Shape defect: it does not stop anything from working.",
         )
 
     body = match.group(1)
@@ -108,22 +111,22 @@ def check_agent_self_metadata(vault_data: Path) -> CheckOutcome:
         return CheckOutcome(
             id="identity.self_metadata",
             severity=Severity.BROKEN,
-            message=f"Allo spazio personale manca {', '.join(missing)} nei metadati.",
-            action=f"Aggiungi '{missing[0]}:' nell'intestazione di {self_file.name}",
-            detail="Difetto di forma: non impedisce a niente di funzionare.",
+            message=f"The personal space is missing {', '.join(missing)} in its metadata.",
+            action=f"Add '{missing[0]}:' to the header of {self_file.name}",
+            detail="Shape defect: it does not stop anything from working.",
         )
     return CheckOutcome(
         id="identity.self_metadata",
         severity=Severity.OK,
-        message="Metadati dello spazio personale a posto",
+        message="Personal space metadata is in order",
     )
 
 
 def check_native_memory_boundary(home: Path) -> CheckOutcome:
-    """Esiste una memoria strutturata accanto al Vault?
+    """Does a structured memory exist alongside the Vault?
 
-    Violazione di confine: due memorie sono due verità, e prima o poi
-    divergono. Non si cancella niente — si dice che c'è.
+    Boundary violation: two memories are two truths, and sooner or later
+    they diverge. Nothing gets deleted — it just gets reported.
     """
     found: list[str] = []
     for runtime, locations in NATIVE_MEMORY_STORES.items():
@@ -139,17 +142,17 @@ def check_native_memory_boundary(home: Path) -> CheckOutcome:
         return CheckOutcome(
             id="identity.native_memory_boundary",
             severity=Severity.OK,
-            message="Nessuna memoria nativa in parallelo al Vault",
+            message="No native memory alongside the Vault",
         )
 
     return CheckOutcome(
         id="identity.native_memory_boundary",
         severity=Severity.BROKEN,
         message=(
-            f"{'Un runtime tiene' if len(found) == 1 else 'Alcuni runtime tengono'} "
-            f"una memoria propria accanto al Vault: {', '.join(found)}. "
-            f"Due memorie separate finiscono per dire cose diverse."
+            f"{'A runtime keeps' if len(found) == 1 else 'Some runtimes keep'} "
+            f"a memory of its own alongside the Vault: {', '.join(found)}. "
+            f"Two separate memories end up saying different things."
         ),
-        action="nexgen inventory   # per vedere cosa contiene prima di decidere",
-        detail="Niente viene cancellato: la decisione è tua.",
+        action="nexgen inventory   # to see what it holds before deciding",
+        detail="Nothing gets deleted: the decision is yours.",
     )

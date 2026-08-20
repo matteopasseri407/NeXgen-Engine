@@ -1,12 +1,12 @@
-"""Ponte di compatibilità verso `nexgen_core.config`.
+"""Compatibility bridge to `nexgen_core.config`.
 
-Esiste perché il Council importa questo nome per percorso. Il rewrite ha
-rinominato `ConfigValidationError` in `ConfigError`, e siccome questo ponte
-faceva `import *` il nome vecchio è semplicemente sparito: il comando
-`council` andava in ImportError prima ancora di stampare l'aiuto.
+Exists because the Council imports this name by path. The rewrite renamed
+`ConfigValidationError` to `ConfigError`, and since this bridge did
+`import *`, the old name simply vanished: the `council` command hit an
+ImportError before it even got to printing help.
 
-Rinominare un simbolo pubblico è un cambio di contratto, e un cambio di
-contratto ha bisogno di una finestra. Questa è la finestra.
+Renaming a public symbol is a contract change, and a contract change
+needs a window. This is that window.
 """
 from __future__ import annotations
 
@@ -24,7 +24,7 @@ from nexgen_core.config import (
     load_skills_manifest,
 )
 
-#: Il nome che la versione precedente esponeva.
+#: The name the previous version exposed.
 ConfigValidationError = ConfigError
 
 __all__ = [

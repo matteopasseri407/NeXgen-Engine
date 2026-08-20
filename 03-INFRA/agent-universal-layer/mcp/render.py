@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """mcp/render.py — NeXgen Engine v2 thin wrapper.
 
-La logica completa (write/revert/reset/adopt/inventory) vive ora in
-nexgen_core.renderer_cli, un'unica implementazione cross-platform. Questo
-file resta per i riferimenti di INIT.md, README e delle skill, e delega
-senza duplicare nulla.
+The full logic (write/revert/reset/adopt/inventory) now lives in
+nexgen_core.renderer_cli, a single cross-platform implementation. This
+file remains for references from INIT.md, README, and the skills, and
+delegates without duplicating anything.
 """
 from __future__ import annotations
 

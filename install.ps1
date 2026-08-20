@@ -1,12 +1,12 @@
 # NeXgen Engine — bootstrap (Windows).
 #
-# Gemello di install.sh, e volutamente altrettanto sottile: trova Python e
-# passa il testimone. La logica non vive qui, vive in
-# 03-INFRA\scripts\nexgen_core\bootstrap.py, una volta sola per entrambe le
-# piattaforme. Due gusci che non contengono logica non possono divergere.
+# Twin of install.sh, and deliberately just as thin: find Python and hand
+# off to it. The logic doesn't live here, it lives in
+# 03-INFRA\scripts\nexgen_core\bootstrap.py, in one place for both
+# platforms. Two shells with no logic in them can't drift apart.
 #
-#   .\install.ps1            preflight, domande e passo successivo
-#   .\install.ps1 -Check     solo controlli, nessuna domanda e nessuna scrittura
+#   .\install.ps1            preflight, questions, and next step
+#   .\install.ps1 -Check     checks only, no questions and no writes
 
 [CmdletBinding()]
 param(

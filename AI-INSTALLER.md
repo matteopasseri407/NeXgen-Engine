@@ -31,8 +31,9 @@ time:
 1. How many CLIs do you want to use — just one, or more than one (Claude
    Code / Codex / OpenCode / Antigravity)?
 2. How many machines need to stay aligned — just this one, or more?
-3. Local-only, or do you have a VPS for n8n/Firecrawl/OCR (Cloud-Server
-   mode)?
+3. Where should the connectors (n8n/Firecrawl/OCR/vault-library) live:
+   nowhere (Local-Only), in Docker on this machine (Local-Full, needs
+   Docker), or on a VPS you have SSH access to (Cloud-Server)?
 4. Any key documents (CV, project brief, brand rules) you want ingested
    into the vault right away?
 
@@ -43,22 +44,25 @@ CLI and 1 machine → `MINIMAL`; 2+ of either → `MULTI`.
 
 Follow `INIT.md`'s Steps 1.5 through 7 (English section) exactly, but as
 direct action instead of a guided conversation: run Step 1.5's read-only
-`agent_sync.py inventory` scan first, and if it finds anything
+`nexgen inventory` scan first (or `python3 03-INFRA/scripts/agent_sync.py inventory`
+before the commands are installed), and if it finds anything
 out-of-manifest, put its ADOPT / START FRESH / PICK BY HAND menu to the
 user and act on their choice — this is a real fork in behavior, not just
 pacing, so do not skip it or decide for them. Then write
 `99-INDEX/USER-PROFILE.md`, ingest any documents given, install MCP
 servers/skills per the chosen profile (skills are the user's own data —
-never assume specific skill names), run `python3 03-INFRA/scripts/agent_sync.py apply`
-(or `agent-sync apply`) if MULTI, deploy the remote stack if Cloud-Server
+never assume specific skill names), run `nexgen sync` (or the legacy
+`agent-sync apply`) if MULTI, start the connectors with `nexgen stack up`
+if Local-Full was chosen, or deploy the remote stack if Cloud-Server
 was chosen. `INIT.md` is the single source of truth for exactly what each
 step does; this file only changes the pacing, not the mechanism.
 
-Finish with `agent-doctor` (MULTI) or a visual check that the chosen CLI
-loads `AGENTS.md`, mounts MCP servers, and sees its skills (MINIMAL).
+Finish with `nexgen doctor` (or the legacy `agent-doctor`, MULTI) or a
+visual check that the chosen CLI loads `AGENTS.md`, mounts MCP servers,
+and sees its skills (MINIMAL).
 
 ## 4. If anything fails
 
 Report the exact command and error to the user in plain language, together
-with the fix suggested by `install.sh`'s own message or `agent-doctor`'s
+with the fix suggested by `install.sh`'s own message or `nexgen doctor`'s
 output. Never silently skip a required step or guess at a fix.

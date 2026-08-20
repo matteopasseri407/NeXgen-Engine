@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""Il publisher (vault-push): pubblicazione sicura delle modifiche per NeXgen Engine v2.
+"""The publisher (vault-push): safe publication of changes for NeXgen Engine v2.
 
-Contratto:
-1. Acquisisce il lock esclusivo host-wide (condiviso con il Guard).
-2. Esegue commit e push in un'unica operazione atomica.
-3. Se il remoto è avanzato, tenta un rebase pulito; in caso di conflitto si arresta senza distruggere dati.
-4. Sincronizza i mirror configurati in modalità best-effort.
+Contract:
+1. Acquires the host-wide exclusive lock (shared with the Guard).
+2. Runs commit and push as a single atomic operation.
+3. If the remote has moved ahead, attempts a clean rebase; on conflict it stops without destroying data.
+4. Syncs the configured mirrors on a best-effort basis.
 """
 from __future__ import annotations
 
@@ -28,7 +28,7 @@ from nexgen_core.paths import resolve_vault_data
 
 
 class Publisher:
-    """Gestore della pubblicazione per vault-push."""
+    """Publication manager for vault-push."""
 
     def __init__(self, vault_data: Path | None = None) -> None:
         _v = resolve_vault_data(override=vault_data)
@@ -40,11 +40,11 @@ class Publisher:
         files: list[str] | None = None,
         timeout: float = 30.0
     ) -> tuple[int, str]:
-        """Esegue il flusso completo di pubblicazione sotto lock."""
+        """Runs the full publication flow under lock."""
         with HostLock(timeout=timeout, command_name="vault-push"):
             auth_remote, mirrors = resolve_remotes(self.vault_data)
-            # Stessa precedenza dei controlli: chi forza il branch con la
-            # variabile d'ambiente lo forza anche per la pubblicazione.
+            # Same precedence as the checks: whoever forces the branch via
+            # the environment variable also forces it for publishing.
             branch = (
                 os.environ.get("KNOWLEDGE_VAULT_BRANCH")
                 or get_current_branch(self.vault_data)
@@ -66,13 +66,13 @@ class Publisher:
 
 
 def main(argv: list[str] | None = None) -> int:
-    """Entry point CLI per il comando vault-push (v2)."""
+    """CLI entry point for the vault-push (v2) command."""
     parser = argparse.ArgumentParser(
         prog="vault-push",
-        description="Pubblica i commit del Vault verso il remoto autoritativo",
+        description="Publishes the Vault's commits to the authoritative remote",
     )
-    parser.add_argument("-m", "--message", default="update: vault sync", help="Messaggio di commit")
-    parser.add_argument("files", nargs="*", help="File specifici da pubblicare")
+    parser.add_argument("-m", "--message", default="update: vault sync", help="Commit message")
+    parser.add_argument("files", nargs="*", help="Specific files to publish")
     args = parser.parse_args(argv)
 
     pub = Publisher()

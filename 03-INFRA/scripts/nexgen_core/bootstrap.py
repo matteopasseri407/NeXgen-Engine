@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""Il primo avvio: cosa manca, cosa c'è, e qual è il passo dopo.
+"""First run: what's missing, what's there, and what's the next step.
 
-Questa logica esisteva due volte, in `install.sh` e in `install.ps1`, tenute
-in passo a mano. Erano già in deriva: uno dei due avvisava che jq serve anche
-agli script di salute, l'altro no. Ora esiste una volta sola, e i due
-installer sono gusci che trovano Python e passano il testimone qui.
+This logic used to exist twice, in `install.sh` and `install.ps1`, kept in
+step by hand. They had already drifted: one of them warned that jq is also
+needed by the health scripts, the other didn't. Now it exists exactly once,
+and the two installers are shells that find Python and hand off here.
 
-Non sostituisce l'installazione guidata da un agente: fa la parte meccanica.
+It doesn't replace the agent-guided install: it does the mechanical part.
 """
 from __future__ import annotations
 
@@ -19,13 +19,13 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-#: La versione di Python sotto la quale il motore non parte.
+#: The Python version below which the engine won't start.
 MINIMUM_PYTHON = (3, 11)
 
-#: Le cartelle che un vault deve avere. Mancanti, si creano.
+#: The folders a vault must have. If missing, they get created.
 SCAFFOLD_DIRS = ("01-NOTES", "02-PROJECTS", "04-NOW", "99-INDEX", "99-SECRETS")
 
-#: I file senza i quali il clone non è completo. Mancanti, si dice e basta.
+#: The files without which the clone isn't complete. If missing, we just say so.
 SCAFFOLD_FILES = (
     "INIT.md",
     "00-START-HERE.md",
@@ -36,7 +36,7 @@ SCAFFOLD_FILES = (
 
 @dataclass(frozen=True)
 class Finding:
-    """Un esito del preflight: cosa si è guardato, com'è andata, e il rimedio."""
+    """A preflight outcome: what was checked, how it went, and the remedy."""
 
     label: str
     ok: bool
@@ -45,7 +45,7 @@ class Finding:
 
 
 def _colour(stream) -> dict[str, str]:
-    """Colori solo se qualcuno li può vedere."""
+    """Colors only if someone can actually see them."""
     if not stream.isatty() or os.environ.get("NO_COLOR"):
         return dict.fromkeys(("bold", "dim", "reset", "green", "red", "yellow", "cyan"), "")
     return {
@@ -55,23 +55,23 @@ def _colour(stream) -> dict[str, str]:
 
 
 def package_hint() -> str:
-    """Come si installa un pacchetto su questo sistema."""
+    """How to install a package on this system."""
     system = platform.system()
     if system == "Darwin":
         if shutil.which("brew"):
             return "brew install"
-        return "installa Homebrew (https://brew.sh), poi: brew install"
+        return "install Homebrew (https://brew.sh), then: brew install"
     if system == "Windows":
         return "winget install"
     for manager, command in (("apt", "sudo apt install"), ("dnf", "sudo dnf install"),
                              ("pacman", "sudo pacman -S"), ("zypper", "sudo zypper install")):
         if shutil.which(manager):
             return command
-    return "il gestore di pacchetti del tuo sistema"
+    return "your system's package manager"
 
 
 def preflight() -> list[Finding]:
-    """Cosa serve, e cosa c'è davvero."""
+    """What's needed, and what's actually there."""
     hint = package_hint()
     found: list[Finding] = []
 
@@ -81,31 +81,31 @@ def preflight() -> list[Finding]:
     wanted = ".".join(str(n) for n in MINIMUM_PYTHON)
     found.append(Finding(
         f"Python {platform.python_version()}", version_ok, True,
-        f"serve Python {wanted} o successivo → {hint} python3",
+        f"needs Python {wanted} or later → {hint} python3",
     ))
 
     has_yaml = importlib.util.find_spec("yaml") is not None
     found.append(Finding("PyYAML", has_yaml, True, "pip install pyyaml"))
 
-    # Il resto è utile ma non blocca: dirlo come blocco fa reinstallare cose
-    # a chi non ne ha bisogno.
+    # The rest is useful but not blocking: reporting it as blocking would
+    # make people reinstall things they don't need.
     found.append(Finding(
         "node/npx", shutil.which("npx") is not None, False,
-        "serve solo per montare connettori MCP o skill installate da npx",
+        "only needed to mount MCP connectors or skills installed via npx",
     ))
     found.append(Finding(
         "gpg", shutil.which("gpg") is not None, False,
-        "serve solo se tieni segreti cifrati in 99-SECRETS/",
+        "only needed if you keep encrypted secrets in 99-SECRETS/",
     ))
     found.append(Finding(
         "docker", shutil.which("docker") is not None, False,
-        "serve solo per l'installazione completa su questa macchina (nexgen stack up)",
+        "only needed for the full install on this machine (nexgen stack up)",
     ))
     return found
 
 
 def scaffold(root: Path, write: bool) -> list[Finding]:
-    """Le cartelle e i file che un vault deve avere."""
+    """The folders and files a vault must have."""
     found: list[Finding] = []
     for name in SCAFFOLD_DIRS:
         target = root / name
@@ -115,23 +115,24 @@ def scaffold(root: Path, write: bool) -> list[Finding]:
         if write:
             target.mkdir(parents=True, exist_ok=True)
             (target / ".gitkeep").touch()
-            found.append(Finding(f"{name}/ (creata)", True))
+            found.append(Finding(f"{name}/ (created)", True))
         else:
-            found.append(Finding(f"{name}/", False, True, "rilancia senza --check per crearla"))
+            found.append(Finding(f"{name}/", False, True, "rerun without --check to create it"))
 
     for name in SCAFFOLD_FILES:
         found.append(Finding(
             name, (root / name).is_file(), True,
-            "il clone sembra incompleto: ricontrolla di aver clonato tutto il repository",
+            "the clone looks incomplete: double-check you cloned the whole repository",
         ))
     return found
 
 
 def detect_clis(home: Path | None = None) -> list[str]:
-    """Quali assistenti da riga di comando ci sono su questa macchina.
+    """Which command-line assistants are on this machine.
 
-    Si guarda il binario, non una cartella: dedurre "installata" da una
-    cartella che il layer stesso crea è un difetto già trovato due volte.
+    We check for the binary, not a folder: inferring "installed" from a
+    folder the layer itself creates is a defect that's already bitten us
+    twice.
     """
     home_dir = home or Path.home()
     found = [name for name in ("claude", "codex", "opencode") if shutil.which(name)]
@@ -141,7 +142,7 @@ def detect_clis(home: Path | None = None) -> list[str]:
 
 
 def install_launchers(root: Path) -> str:
-    """Genera i comandi, se il motore vive in questo clone."""
+    """Generates the commands, if the engine lives in this clone."""
     scripts_dir = root / "03-INFRA" / "scripts"
     if not (scripts_dir / "nexgen_core").is_dir():
         return ""
@@ -150,9 +151,9 @@ def install_launchers(root: Path) -> str:
         from nexgen_core.shims import install_shims
 
         installed = install_shims(scripts_dir=scripts_dir)
-        return f"{len(installed)} comandi installati in ~/.local/bin"
+        return f"{len(installed)} commands installed in ~/.local/bin"
     except Exception as exc:
-        return f"comandi non installati ({exc})"
+        return f"commands not installed ({exc})"
 
 
 def _ask(prompt: str, options: str) -> str:
@@ -163,18 +164,18 @@ def _ask(prompt: str, options: str) -> str:
 
 
 def guided_profile() -> tuple[str, str]:
-    """Due domande, e il profilo che ne consegue. Non scrive niente."""
-    clis = _ask("Quante CLI userai?", "1 / 2+")
-    machines = _ask("Quante macchine vuoi tenere allineate?", "1 / 2+")
-    arch = _ask("Dove vivono i servizi?", "N=nessuno / Q=qui / S=su un server")
+    """Two questions, and the resulting profile. Writes nothing."""
+    clis = _ask("How many CLIs will you use?", "1 / 2+")
+    machines = _ask("How many machines do you want kept in sync?", "1 / 2+")
+    arch = _ask("Where do the services live?", "N=none / H=here / S=on a server")
 
     profile = "MULTI" if ("2" in clis or "2" in machines) else "MINIMAL"
-    mode = {"q": "LOCAL-FULL", "s": "CLOUD-SERVER"}.get(arch[:1], "LOCAL-ONLY")
+    mode = {"h": "LOCAL-FULL", "s": "CLOUD-SERVER"}.get(arch[:1], "LOCAL-ONLY")
     return profile, mode
 
 
 def render(findings: list[Finding], title: str, stream=sys.stdout) -> int:
-    """Stampa un blocco di esiti e restituisce quanti requisiti mancano."""
+    """Prints a block of outcomes and returns how many requirements are missing."""
     c = _colour(stream)
     print(f"\n{c['bold']}{c['cyan']}{title}{c['reset']}", file=stream)
     missing = 0
@@ -192,61 +193,61 @@ def render(findings: list[Finding], title: str, stream=sys.stdout) -> int:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="nexgen-bootstrap",
-        description="Controlla i prerequisiti, prepara il vault e dice qual è il passo dopo.",
+        description="Checks prerequisites, prepares the vault, and says what the next step is.",
     )
     parser.add_argument("--check", action="store_true",
-                        help="Solo controlli: nessuna domanda e nessuna scrittura")
-    parser.add_argument("--root", default=None, help="Radice del vault (default: la cartella del repository)")
+                        help="Checks only: no questions and no writes")
+    parser.add_argument("--root", default=None, help="Vault root (default: the repository folder)")
     args = parser.parse_args(argv)
 
     root = Path(args.root) if args.root else Path(__file__).resolve().parents[3]
     c = _colour(sys.stdout)
 
-    print(f"{c['bold']}{c['cyan']}NeXgen Engine · primo avvio{c['reset']}")
-    print(f"{c['dim']}Un vault in Git per la configurazione e la memoria dei tuoi assistenti.{c['reset']}")
+    print(f"{c['bold']}{c['cyan']}NeXgen Engine · first run{c['reset']}")
+    print(f"{c['dim']}A Git vault for your assistants' configuration and memory.{c['reset']}")
 
-    missing = render(preflight(), "1 · Prerequisiti")
-    missing += render(scaffold(root, write=not args.check), "2 · Struttura del vault")
+    missing = render(preflight(), "1 · Prerequisites")
+    missing += render(scaffold(root, write=not args.check), "2 · Vault structure")
 
     clis = detect_clis()
     found = [Finding(name, True) for name in clis] or [Finding(
-        "nessuna CLI trovata", False, True,
-        "serve un assistente che sappia scrivere file (Claude Code, Codex, OpenCode, Antigravity): "
-        "una chat web non può farlo",
+        "no CLI found", False, True,
+        "you need an assistant that can write files (Claude Code, Codex, OpenCode, Antigravity): "
+        "a web chat can't do it",
     )]
-    missing += render(found, "3 · Assistenti trovati su questa macchina")
+    missing += render(found, "3 · Assistants found on this machine")
 
     if missing:
-        print(f"\n{c['red']}Manca qualcosa di necessario.{c['reset']} Sistemalo e rilancia.")
+        print(f"\n{c['red']}Something required is missing.{c['reset']} Fix it and rerun.")
         return 1
 
     if not args.check and sys.stdin.isatty():
-        print(f"\n{c['bold']}{c['cyan']}4 · Che installazione vuoi{c['reset']}")
-        print(f"  {c['dim']}Nessun file viene scritto: è solo un consiglio.{c['reset']}")
+        print(f"\n{c['bold']}{c['cyan']}4 · Which install do you want{c['reset']}")
+        print(f"  {c['dim']}No file gets written: this is just a recommendation.{c['reset']}")
         profile, mode = guided_profile()
-        print(f"\n  Profilo: {c['bold']}{profile}{c['reset']} · Servizi: {c['bold']}{mode}{c['reset']}")
+        print(f"\n  Profile: {c['bold']}{profile}{c['reset']} · Services: {c['bold']}{mode}{c['reset']}")
         if mode == "LOCAL-FULL":
-            print(f"  {c['dim']}→ i cinque connettori girano qui: 'nexgen stack up' li avvia.{c['reset']}")
+            print(f"  {c['dim']}→ the five connectors run here: 'nexgen stack up' starts them.{c['reset']}")
         elif mode == "CLOUD-SERVER":
-            print(f"  {c['dim']}→ i servizi stanno su un server: vedi 03-INFRA/deploy/.{c['reset']}")
+            print(f"  {c['dim']}→ the services live on a server: see 03-INFRA/deploy/.{c['reset']}")
         else:
-            print(f"  {c['dim']}→ nessun servizio: ricerca nativa, niente automazioni remote.{c['reset']}")
+            print(f"  {c['dim']}→ no services: native search, no remote automation.{c['reset']}")
 
-    print(f"\n{c['bold']}{c['cyan']}5 · Passo successivo{c['reset']}")
-    # `--check` dichiara di non scrivere niente, quindi non scrive niente.
-    # La versione precedente installava comunque i comandi da qui, il che
-    # rendeva falsa la sua stessa promessa e, su un clone di sviluppo,
-    # dirottava i comandi della macchina verso quel clone.
+    print(f"\n{c['bold']}{c['cyan']}5 · Next step{c['reset']}")
+    # `--check` promises to write nothing, so it writes nothing. The
+    # previous version installed the commands from here regardless, which
+    # made its own promise false and, on a development clone, hijacked the
+    # machine's commands toward that clone.
     if not args.check:
         note = install_launchers(root)
         if note:
             print(f"  {c['green']}✓{c['reset']} {note}")
     print(f"""
-  Apri {c['bold']}INIT.md{c['reset']} e incollane il contenuto in un assistente da riga di
-  comando aperto in questa cartella. Ti farà qualche domanda e monterà
-  connettori e skill.
+  Open {c['bold']}INIT.md{c['reset']} and paste its contents into a command-line assistant
+  opened in this folder. It will ask you a few questions and mount the
+  connectors and skills.
 
-  {c['dim']}Poi, per verificare in qualunque momento: nexgen doctor{c['reset']}""")
+  {c['dim']}Then, to verify at any time: nexgen doctor{c['reset']}""")
     return 0
 
 

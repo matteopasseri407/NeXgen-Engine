@@ -27,9 +27,13 @@ One single place decides whether something is broken, one single place tells the
 5. `nexgen_core/megaphone.py` (via `agent-doctor`/`bootstrap-alerts` or the heartbeat) notifies ONLY on FAIL
 
 A manual `agent-sync apply` performs one additional strict readiness classification after the base transaction.
-It reports `PARTIAL` without discarding the installed base when credentials or consumers are not ready.
-It reports `READY` only for strict `FAIL=0`.
-The optional `--require-ready` flag makes `PARTIAL` fail for automation.
+It reports what needs attention and stays silent about what already works.
+`nexgen doctor --strict` also treats "cannot be determined right now" as a
+failure, which is what an automation gate wants; without it, undetermined is
+reported as undetermined and does not fail.
+
+The `READY`/`PARTIAL`/`BASE` classification and the `--require-ready` flag
+that gated on it no longer exist.
 
 ## Inventory
 

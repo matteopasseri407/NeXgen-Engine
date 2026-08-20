@@ -1,17 +1,17 @@
-"""Pianificatore dell'auto-allineamento per NeXgen Engine v2.
+"""Self-alignment scheduler for NeXgen Engine v2.
 
-Porta nel package il ciclo di auto-allineamento all'avvio che la release
-installava tramite agent_sync.py:
-- Linux: unit systemd user (agent-sync.service/.timer, agent-heartbeat,
-  agent-alert@) abilitate con `systemctl --user enable --now`.
-- Windows: scheduled task via schtasks.exe con wrapper VBS nascosto.
+Ports into the package the startup self-alignment cycle that the release
+installed via agent_sync.py:
+- Linux: systemd user units (agent-sync.service/.timer, agent-heartbeat,
+  agent-alert@) enabled with `systemctl --user enable --now`.
+- Windows: scheduled task via schtasks.exe with a hidden VBS wrapper.
 
-Regole:
-1. Rispetta NEXGEN_DISABLE_HOST_MUTATIONS: i test sandbox e i dry-run non
-   toccano mai lo stato di sistema (Task Scheduler, systemd).
-2. Non arma mai un timer contro un comando assente (~/.local/bin/agent-sync).
-3. Il contenuto generato dipende dai percorsi reali (engine_root, vault_data):
-   ogni unit file viene riscritto solo se cambia (write_if_different).
+Rules:
+1. Respects NEXGEN_DISABLE_HOST_MUTATIONS: sandbox tests and dry runs never
+   touch system state (Task Scheduler, systemd).
+2. Never arms a timer against a missing command (~/.local/bin/agent-sync).
+3. The generated content depends on the real paths (engine_root, vault_data):
+   each unit file is rewritten only if it changes (write_if_different).
 """
 from __future__ import annotations
 
@@ -194,11 +194,11 @@ def install_systemd_units(
     vault: Path,
     log: Callable[[str], None] = print,
 ) -> bool:
-    """Scrive e abilita le unit systemd user del ciclo di guardia."""
+    """Writes and enables the guard cycle's systemd user units."""
     if not (home / ".local" / "bin" / "agent-sync").exists():
         warning = (
-            "systemd: ~/.local/bin/agent-sync non esiste ancora; timer non armato "
-            "(riprovato da un futuro giro quando lo shim verrà creato)"
+            "systemd: ~/.local/bin/agent-sync doesn't exist yet; timer not armed "
+            "(will be retried on a future run once the shim is created)"
         )
         log(warning)
         print(warning, file=sys.stderr)
@@ -221,19 +221,19 @@ def install_systemd_units(
 
     systemctl = _resolve_cmd("systemctl")
     if not systemctl:
-        log("systemd: systemctl non trovato — file scritti ma non abilitati")
+        log("systemd: systemctl not found — files written but not enabled")
         return healthy
     if changed:
         r = _run_external([systemctl, "--user", "daemon-reload"], timeout=30)
         if r.returncode != 0:
-            log(f"systemd: user daemon-reload fallito: {(r.stderr or r.stdout).strip()}")
+            log(f"systemd: user daemon-reload failed: {(r.stderr or r.stdout).strip()}")
             healthy = False
     r = _run_external([systemctl, "--user", "enable", "--now", "agent-sync.timer", "agent-heartbeat.timer"], timeout=30)
     if r.returncode != 0:
         log(
-            "systemd: impossibile abilitare agent-sync.timer "
-            f"({(r.stderr or r.stdout).strip()}) — il guard ricorrente non partirà. "
-            "Su una macchina headless spesso manca `loginctl enable-linger $USER`."
+            "systemd: could not enable agent-sync.timer "
+            f"({(r.stderr or r.stdout).strip()}) — the recurring guard won't start. "
+            "On a headless machine this is often missing `loginctl enable-linger $USER`."
         )
         healthy = False
     return healthy
@@ -255,15 +255,15 @@ def install_scheduled_task(
     branch: str,
     log: Callable[[str], None] = print,
 ) -> bool:
-    """Crea/aggiorna le scheduled task Windows (guardia ogni 30 min + heartbeat orario)."""
+    """Creates/updates the Windows scheduled tasks (guard every 30 min + hourly heartbeat)."""
     if _host_mutations_disabled():
         return True
     task_name = "KnowledgeVault Agent Sync"
     script_path = engine_root / "scripts" / "agent-sync.ps1"
     if not script_path.is_file():
         warning = (
-            f"scheduled-task: WARNING — {script_path} non esiste ancora; "
-            "task non installato (riprovato da un futuro giro)"
+            f"scheduled-task: WARNING — {script_path} doesn't exist yet; "
+            "task not installed (will be retried on a future run)"
         )
         log(warning)
         print(warning, file=sys.stderr)
@@ -288,11 +288,11 @@ def install_scheduled_task(
 
     content = wrapper_for("guard")
     if _write_if_different(wrapper_path, content):
-        log("scheduled-task: wrapper hidden aggiornato")
+        log("scheduled-task: hidden wrapper updated")
 
     beat_path = log_dir / "start-agent-heartbeat-hidden.vbs"
     if _write_if_different(beat_path, wrapper_for("heartbeat")):
-        log("scheduled-task: heartbeat wrapper aggiornato")
+        log("scheduled-task: heartbeat wrapper updated")
     beat_task = "KnowledgeVault Agent Heartbeat"
     if not _scheduled_task_invokes_wrapper(beat_task, beat_path):
         r = _run_external(
@@ -300,9 +300,9 @@ def install_scheduled_task(
             timeout=60,
         )
         if r.returncode == 0:
-            log(f"scheduled-task: '{beat_task}' installata via schtasks.exe")
+            log(f"scheduled-task: '{beat_task}' installed via schtasks.exe")
         else:
-            log(f"scheduled-task: heartbeat task fallita ({r.stdout}{r.stderr})")
+            log(f"scheduled-task: heartbeat task failed ({r.stdout}{r.stderr})")
 
     run_cmd = f'wscript.exe "{wrapper_path}"'
     every30 = ["schtasks.exe", "/Create", "/TN", task_name, "/SC", "MINUTE", "/MO", "30", "/TR", run_cmd, "/F"]
@@ -312,34 +312,34 @@ def install_scheduled_task(
     _previous_hash = logon_marker.read_text(encoding="utf-8").strip() if logon_marker.exists() else ""
 
     if _scheduled_task_invokes_wrapper(task_name, wrapper_path):
-        log(f"scheduled-task: '{task_name}' già attiva su {wrapper_path.name}; nessuna riscrittura")
+        log(f"scheduled-task: '{task_name}' already active on {wrapper_path.name}; no rewrite")
     else:
         r = _run_external(every30, timeout=60)
         if r.returncode != 0:
-            log(f"scheduled-task: schtasks.exe fallito per '{task_name}': {r.stdout}{r.stderr}")
+            log(f"scheduled-task: schtasks.exe failed for '{task_name}': {r.stdout}{r.stderr}")
             return False
-        log(f"scheduled-task: '{task_name}' installata via schtasks.exe")
+        log(f"scheduled-task: '{task_name}' installed via schtasks.exe")
 
     if _scheduled_task_invokes_wrapper(f"{task_name} Logon", wrapper_path):
-        log(f"scheduled-task: '{task_name} Logon' già attiva; nessuna riscrittura")
+        log(f"scheduled-task: '{task_name} Logon' already active; no rewrite")
         logon_marker.write_text(_content_hash, encoding="utf-8")
         return True
     if _previous_hash != _content_hash:
         r = _run_external(logon, timeout=60)
         logon_marker.write_text(_content_hash, encoding="utf-8")
         if r.returncode == 0:
-            log(f"scheduled-task: '{task_name} Logon' installata via schtasks.exe")
+            log(f"scheduled-task: '{task_name} Logon' installed via schtasks.exe")
             return True
-        log(f"scheduled-task: logon trigger fallito ({r.stdout}{r.stderr}); fallback alla cartella Startup")
+        log(f"scheduled-task: logon trigger failed ({r.stdout}{r.stderr}); falling back to the Startup folder")
     else:
-        log(f"scheduled-task: '{task_name} Logon' fallita in precedenza; nessun retry (wrapper invariato)")
+        log(f"scheduled-task: '{task_name} Logon' failed previously; not retrying (wrapper unchanged)")
 
     startup_dir = os.environ.get("APPDATA")
     if startup_dir:
         startup_vbs = Path(startup_dir) / "Microsoft" / "Windows" / "Start Menu" / "Programs" / "Startup" / "KnowledgeVault Agent Sync.vbs"
         startup_vbs.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(wrapper_path, startup_vbs)
-        log(f"startup: fallback logon installato {startup_vbs}")
+        log(f"startup: fallback logon installed {startup_vbs}")
     return True
 
 
@@ -352,7 +352,7 @@ def install_scheduler(
     branch: str = "main",
     log: Callable[[str], None] = print,
 ) -> bool:
-    """Dispatcher cross-platform: systemd su POSIX, scheduled task su Windows."""
+    """Cross-platform dispatcher: systemd on POSIX, scheduled task on Windows."""
     if IS_WINDOWS:
         return install_scheduled_task(
             home=home, engine_root=engine_root, vault_data=vault_data, vault=vault, branch=branch, log=log

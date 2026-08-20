@@ -14,7 +14,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "nexgen-engine"
-version = "2.0.0"
+dynamic = ["version"]
 description = "Tiene allineate le tue macchine e i tuoi assistenti da un'unica fonte."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -52,6 +52,13 @@ nexgen-update = "nexgen_core.entrypoints:nexgen_update"
 skills-sync = "nexgen_core.entrypoints:skills_sync"
 agent-skill = "nexgen_core.entrypoints:agent_skill"
 council = "nexgen_core.entrypoints:council"
+
+# La versione ha una fonte sola: il file VERSION, che è anche quello che il
+# processo di rilascio confronta con il tag e che l'aggiornatore legge sulle
+# macchine installate. Dichiararla anche qui significava averne due, e ne
+# erano già uscite due diverse.
+[tool.setuptools.dynamic]
+version = { file = "VERSION" }
 
 [tool.setuptools]
 package-dir = { "" = "03-INFRA/scripts" }

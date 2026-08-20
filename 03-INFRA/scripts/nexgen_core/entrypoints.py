@@ -1,9 +1,9 @@
-"""I nomi ereditati, come punti di ingresso del pacchetto installato.
+"""The legacy names, as entry points of the installed package.
 
-Quando il motore si installa come pacchetto Python, gli alias non possono
-essere script generati: devono essere funzioni che il packaging registra.
-Sono le stesse di `shims.py`, con la stessa tabella, perché una seconda
-tabella è una seconda cosa che va in deriva.
+When the engine installs as a Python package, the aliases can't be generated
+scripts: they have to be functions that packaging registers. They're the
+same ones as `shims.py`, with the same table, because a second table is a
+second thing that drifts.
 """
 from __future__ import annotations
 
@@ -15,14 +15,14 @@ from nexgen_core.shims import LEGACY_ALIASES
 
 
 def _alias(name: str) -> Callable[[], int]:
-    """Costruisce l'entrypoint di un nome ereditato."""
+    """Builds the entry point for a legacy name."""
     prefix = LEGACY_ALIASES[name]
 
     def run() -> int:
         return nexgen_main(prefix + sys.argv[1:])
 
     run.__name__ = name.replace("-", "_")
-    run.__doc__ = f"'{name}': nome storico di 'nexgen {' '.join(prefix)}'.".strip()
+    run.__doc__ = f"'{name}': historical name for 'nexgen {' '.join(prefix)}'.".strip()
     return run
 
 

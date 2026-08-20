@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """ruff_baseline_check.py — NeXgen Engine v2.
 
-Delega interamente a nexgen_core.tools.ruff_baseline (la logica è stata
-portata dentro il package; questo file resta per i riferimenti di CI).
+Delegates entirely to nexgen_core.tools.ruff_baseline (the logic was
+moved into the package; this file remains for CI references).
 """
 from __future__ import annotations
 

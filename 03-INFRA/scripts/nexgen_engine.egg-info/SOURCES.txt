@@ -1,5 +1,6 @@
 LICENSE
 README.md
+VERSION
 pyproject.toml
 03-INFRA/scripts/nexgen_core/__init__.py
 03-INFRA/scripts/nexgen_core/beat.py

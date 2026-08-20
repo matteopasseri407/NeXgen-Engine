@@ -1,9 +1,8 @@
-"""Adattatore Claude Code: postura in ~/.claude/settings.json + hook PreToolUse.
+"""Claude Code adapter: posture in ~/.claude/settings.json + PreToolUse hook.
 
-Claude e' l'unica CLI di questo pacchetto che parla gia' nativamente lo
-stesso JSON che il corpo del guardrail si aspetta in stdin/stdout: nessun
-adattatore intermedio serve, il corpo va registrato direttamente come
-comando dell'hook.
+Claude is the only CLI in this package that already natively speaks the
+same JSON the guardrail body expects on stdin/stdout: no intermediate
+adapter is needed, the body gets registered directly as the hook's command.
 """
 from __future__ import annotations
 
@@ -14,8 +13,8 @@ from typing import Any
 
 from nexgen_core.runtimes.base import GuardrailError, Runtime
 
-#: Vocabolario neutro -> valore che Claude capisce (permissions.defaultMode).
-#: Verificato sul campo, non inventato: la spellatura esatta del binario.
+#: Neutral vocabulary -> value that Claude understands (permissions.defaultMode).
+#: Verified in the field, not invented: the binary's exact spelling.
 _POSTURE_TO_CLAUDE = {"bypass": "bypassPermissions", "accept-edits": "acceptEdits", "ask": "default"}
 _CLAUDE_TO_POSTURE = {v: k for k, v in _POSTURE_TO_CLAUDE.items()}
 
@@ -29,34 +28,34 @@ class ClaudeRuntime(Runtime):
     def is_installed(self, home: Path) -> bool:
         if shutil.which("claude"):
             return True
-        # settings.json e' scritto solo da Claude Code stesso al primo
-        # avvio -- a differenza di ~/.claude.json (config MCP), che questo
-        # layer riscrive ad ogni ciclo indipendentemente dall'installazione.
+        # settings.json is written only by Claude Code itself on first
+        # launch -- unlike ~/.claude.json (MCP config), which this layer
+        # rewrites on every cycle regardless of whether it's installed.
         return self._settings_path(home).is_file()
 
     def _load_settings(self, home: Path) -> dict[str, Any] | None:
-        """None se il file non esiste (CLI mai avviata qui: nulla su cui
-        fare merge). Solleva GuardrailError se esiste ma e' inaffidabile da
-        modificare -- non JSON valido, radice non un oggetto, o una forma di
-        `hooks` che una scrittura a meta' romperebbe."""
+        """None if the file doesn't exist (CLI never launched here: nothing
+        to merge into). Raises GuardrailError if it exists but is unsafe to
+        modify -- invalid JSON, a root that isn't an object, or a `hooks`
+        shape that a half-write would break."""
         path = self._settings_path(home)
         if not path.is_file():
             return None
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError) as exc:
-            raise GuardrailError(f"claude: {path} non e' JSON valido ({exc})") from exc
+            raise GuardrailError(f"claude: {path} is not valid JSON ({exc})") from exc
         if not isinstance(data, dict):
-            raise GuardrailError(f"claude: la radice di {path} non e' un oggetto")
+            raise GuardrailError(f"claude: the root of {path} is not an object")
         hooks = data.get("hooks")
         if hooks is not None:
             if not isinstance(hooks, dict):
-                raise GuardrailError(f"claude: {path}: hooks deve essere un oggetto")
+                raise GuardrailError(f"claude: {path}: hooks must be an object")
             for event, matchers in hooks.items():
                 if not isinstance(matchers, list):
-                    raise GuardrailError(f"claude: {path}: hooks.{event} deve essere una lista")
+                    raise GuardrailError(f"claude: {path}: hooks.{event} must be a list")
                 if any(not isinstance(m, dict) for m in matchers):
-                    raise GuardrailError(f"claude: {path}: hooks.{event} contiene una voce non-oggetto")
+                    raise GuardrailError(f"claude: {path}: hooks.{event} contains a non-object entry")
         return data
 
     def read_posture(self, home: Path) -> str | None:
@@ -74,26 +73,25 @@ class ClaudeRuntime(Runtime):
             return None
         data = self._load_settings(home)
         if data is None:
-            return None  # Claude mai avviata qui: nessuna postura da applicare
+            return None  # Claude never launched here: no posture to apply
         before = json.dumps(data, sort_keys=True)
         perms = data.setdefault("permissions", {})
         if not isinstance(perms, dict):
-            raise GuardrailError("claude: settings.permissions non e' un oggetto")
+            raise GuardrailError("claude: settings.permissions is not an object")
         perms["defaultMode"] = _POSTURE_TO_CLAUDE[posture]
         if posture == "bypass":
-            # Senza questo Claude blocca su un dialogo di conferma
-            # interattivo all'avvio, a cui una guardia in background non
-            # puo' rispondere.
+            # Without this Claude blocks on an interactive confirmation
+            # dialog at startup, which a background guard can't answer.
             data["skipDangerousModePermissionPrompt"] = True
         if json.dumps(data, sort_keys=True) == before:
             return None
         path = self._settings_path(home)
         self.backup(path)
         self.atomic_write(path, json.dumps(data, indent=2) + "\n")
-        return f"claude: postura '{posture}' applicata in {path}"
+        return f"claude: posture '{posture}' applied in {path}"
 
     def install_guardrail(self, home: Path, hook_source: Path, engine_hooks_dir: Path) -> str | None:
-        del engine_hooks_dir  # Claude parla gia' il dialetto nativo del corpo
+        del engine_hooks_dir  # Claude already speaks the body's native dialect
         data = self._load_settings(home)
         if data is None:
             return None
@@ -104,17 +102,17 @@ class ClaudeRuntime(Runtime):
         command = f'node "{dst}"'
         hooks = data.setdefault("hooks", {})
         if not isinstance(hooks, dict):
-            raise GuardrailError("claude: settings.hooks non e' un oggetto")
+            raise GuardrailError("claude: settings.hooks is not an object")
         entries = hooks.setdefault("PreToolUse", [])
         if not isinstance(entries, list):
-            raise GuardrailError("claude: settings.hooks.PreToolUse non e' una lista")
+            raise GuardrailError("claude: settings.hooks.PreToolUse is not a list")
         already_registered = any(
             h.get("command") == command
             for matcher in entries if isinstance(matcher, dict)
             for h in matcher.get("hooks", [])
         )
         if already_registered:
-            return f"claude: corpo del guardrail aggiornato in {dst}" if deployed else None
+            return f"claude: guardrail body updated in {dst}" if deployed else None
 
         entries.append({
             "matcher": "Bash",
@@ -123,4 +121,4 @@ class ClaudeRuntime(Runtime):
         path = self._settings_path(home)
         self.backup(path)
         self.atomic_write(path, json.dumps(data, indent=2) + "\n")
-        return f"claude: hook guardrail registrato in {path}"
+        return f"claude: guardrail hook registered in {path}"

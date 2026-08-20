@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """vault_groom_audit — NeXgen Engine v2.
 
-Delega interamente a nexgen_core.tools.vault_groom_audit (la logica è stata
-portata dentro il package, questo file resta per compatibilità dei riferimenti
-esterni come conftest e playbook).
+Delegates entirely to nexgen_core.tools.vault_groom_audit (the logic was
+moved into the package; this file remains for compatibility with external
+references such as conftest and the playbook).
 """
 from __future__ import annotations
 

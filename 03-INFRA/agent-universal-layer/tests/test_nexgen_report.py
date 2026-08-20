@@ -70,7 +70,8 @@ def test_report_broken_without_remedy():
     assert len(report.broken) == 1
 
     human_out = report.format_human()
-    assert "Problemi rilevati che richiedono il tuo intervento:" in human_out
+    # L'invariante è che il guasto e la sua azione compaiano, non con quale
+    # frase il referto li introduce: quella è testo di prodotto e cambia.
     assert "Credenziali mancanti" in human_out
     assert "Imposta la variabile API_KEY" in human_out
 
@@ -89,7 +90,9 @@ def test_report_undetermined():
     assert report.exit_code(strict=True) == 1
 
     human_out = report.format_human()
-    assert "non è stato possibile verificare al momento" in human_out
+    assert "Connessione internet non disponibile" in human_out, (
+        "un esito indeterminato deve comparire nel referto, nominato"
+    )
 
 
 def test_report_json_serialization():

@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """check_required_rules.py — NeXgen Engine v2.
 
-Delega interamente a nexgen_core.tools.required_rules (la logica è stata
-portata dentro il package; questo file resta per i riferimenti di CI).
+Delegates entirely to nexgen_core.tools.required_rules (the logic was
+moved into the package; this file remains for CI references).
 """
 from __future__ import annotations
 

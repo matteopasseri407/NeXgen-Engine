@@ -1,4 +1,4 @@
-"""Controlli di integrità e allineamento Git per il Vault."""
+"""Git integrity and alignment checks for the Vault."""
 from __future__ import annotations
 
 import os
@@ -15,15 +15,15 @@ from nexgen_core.git_ops import (
 )
 from nexgen_core.report import CheckOutcome, Severity
 
-#: Un commit non pubblicato più vecchio di questa soglia (secondi) è un
-#: problema reale che nessuno ha scelto: è semplicemente rimasto lì senza
-#: che 'vault-push' venisse eseguito. Sovrascrivibile per installazioni con
-#: una cadenza di pubblicazione diversa dalla release.
+#: An unpublished commit older than this threshold (seconds) is a real
+#: problem nobody chose: it simply sat there because 'vault-push' never
+#: ran. Overridable for installations with a publishing cadence different
+#: from the release.
 STALE_UNPUBLISHED_SECONDS = int(os.environ.get("NEXGEN_STALE_UNPUBLISHED_SECONDS", str(2 * 60 * 60)))
 
 
 def check_git_alignment(vault_data: Path, expected_branch: str | None = None) -> CheckOutcome:
-    """Verifica che il Vault sia pulito e allineato con il remoto autoritativo."""
+    """Check that the Vault is clean and aligned with the authoritative remote."""
     branch = expected_branch or os.environ.get("KNOWLEDGE_VAULT_BRANCH") or get_current_branch(vault_data) or "main"
     auth_remote, _ = resolve_remotes(vault_data)
     res = inspect_git_state(vault_data, expected_branch=branch, remote=auth_remote)
@@ -32,29 +32,29 @@ def check_git_alignment(vault_data: Path, expected_branch: str | None = None) ->
         return CheckOutcome(
             id="git.alignment",
             severity=Severity.OK,
-            message=f"Stato dati allineato ({res.message})",
+            message=f"Data state aligned ({res.message})",
         )
     elif res.state == GitState.DIRTY:
         return CheckOutcome(
             id="git.alignment",
             severity=Severity.BROKEN,
-            message=f"Ci sono modifiche non salvate nel Vault ({len(res.uncommitted_files)} file).",
-            action="Esegui 'vault-push' per salvare le tue modifiche prima di sincronizzare.",
+            message=f"There are unsaved changes in the Vault ({len(res.uncommitted_files)} files).",
+            action="Run 'vault-push' to save your changes before syncing.",
             detail=", ".join(res.uncommitted_files[:5]),
         )
     elif res.state == GitState.CONFLICTED:
         return CheckOutcome(
             id="git.alignment",
             severity=Severity.BROKEN,
-            message="È presente un'operazione di merge o rebase interrotta nel Vault.",
-            action="Esegui 'git rebase --abort' o 'git merge --abort' all'interno del Vault.",
+            message="There is an interrupted merge or rebase in the Vault.",
+            action="Run 'git rebase --abort' or 'git merge --abort' inside the Vault.",
         )
     elif res.state == GitState.FETCH_FAILED or res.state == GitState.REMOTE_MISSING:
         return CheckOutcome(
             id="git.alignment",
             severity=Severity.UNDETERMINED,
-            message=f"Impossibile verificare l'allineamento con il server remoto: {res.message}",
-            action="Controlla la connessione internet o la configurazione del remoto.",
+            message=f"Could not check alignment with the remote server: {res.message}",
+            action="Check the internet connection or the remote configuration.",
         )
     elif res.state == GitState.AHEAD:
         oldest_ts = oldest_unpublished_commit_timestamp(vault_data, auth_remote, branch)
@@ -65,13 +65,13 @@ def check_git_alignment(vault_data: Path, expected_branch: str | None = None) ->
                 return CheckOutcome(
                     id="git.alignment",
                     severity=Severity.BROKEN,
-                    message=f"Ci sono commit non pubblicati nel Vault da più di {age_hours}h (il più vecchio supera la soglia di {STALE_UNPUBLISHED_SECONDS // 3600}h).",
-                    action="Esegui 'vault-push' per pubblicarli.",
+                    message=f"There are commits unpublished in the Vault for more than {age_hours}h (the oldest exceeds the {STALE_UNPUBLISHED_SECONDS // 3600}h threshold).",
+                    action="Run 'vault-push' to publish them.",
                 )
         return CheckOutcome(
             id="git.alignment",
             severity=Severity.OK,
-            message="Il Vault locale ha nuovi commit pronti per essere inviati.",
+            message="The local Vault has new commits ready to be pushed.",
         )
     elif res.state == GitState.BEHIND:
         def remedy() -> bool:
@@ -82,26 +82,26 @@ def check_git_alignment(vault_data: Path, expected_branch: str | None = None) ->
         return CheckOutcome(
             id="git.alignment",
             severity=Severity.BROKEN,
-            message=f"Il remoto {auth_remote} ha nuovi commit non ancora scaricati.",
-            action="Esegui 'agent-sync apply' o 'agent-sync pull' per allineare il Vault.",
+            message=f"Remote {auth_remote} has new commits not yet downloaded.",
+            action="Run 'agent-sync apply' or 'agent-sync pull' to align the Vault.",
             remedy=remedy,
         )
     else:
         return CheckOutcome(
             id="git.alignment",
             severity=Severity.BROKEN,
-            message=f"Disallineamento Git nel Vault: {res.message}",
-            action="Esegui 'agent-sync apply' per verificare e tentare l'allineamento.",
+            message=f"Git misalignment in the Vault: {res.message}",
+            action="Run 'agent-sync apply' to check and attempt alignment.",
         )
 
 
 def check_mirror_alignment(vault_data: Path, expected_branch: str | None = None) -> list[CheckOutcome]:
-    """Ogni mirror dichiarato in resolve_remotes deve restare allineato al
-    branch pubblicato sul remoto autoritativo. Il Vault canonico resta
-    sempre quest'ultimo: i mirror sono repliche, non fonti di verità.
+    """Every mirror declared in resolve_remotes must stay aligned with the
+    branch published on the authoritative remote. The canonical Vault is
+    always the latter: mirrors are replicas, not sources of truth.
 
-    Un mirror irraggiungibile non è un guasto del Vault: è undetermined,
-    perché potrebbe essere semplicemente offline in questo momento.
+    An unreachable mirror is not a Vault failure: it is undetermined,
+    because it could simply be offline right now.
     """
     if not (vault_data / ".git").exists():
         return []
@@ -119,7 +119,7 @@ def check_mirror_alignment(vault_data: Path, expected_branch: str | None = None)
             outcomes.append(CheckOutcome(
                 id=id_,
                 severity=Severity.UNDETERMINED,
-                message=f"Impossibile verificare l'allineamento del mirror '{mirror}': il remoto autoritativo '{auth_remote}' non è raggiungibile.",
+                message=f"Could not check the alignment of mirror '{mirror}': the authoritative remote '{auth_remote}' is unreachable.",
             ))
             continue
 
@@ -127,7 +127,7 @@ def check_mirror_alignment(vault_data: Path, expected_branch: str | None = None)
             outcomes.append(CheckOutcome(
                 id=id_,
                 severity=Severity.UNDETERMINED,
-                message=f"Il mirror '{mirror}' non è raggiungibile per verificarne l'allineamento.",
+                message=f"Mirror '{mirror}' is unreachable, so its alignment could not be checked.",
             ))
             continue
 
@@ -138,13 +138,13 @@ def check_mirror_alignment(vault_data: Path, expected_branch: str | None = None)
             outcomes.append(CheckOutcome(
                 id=id_,
                 severity=Severity.OK,
-                message=f"Mirror '{mirror}' allineato al remoto autoritativo '{auth_remote}'",
+                message=f"Mirror '{mirror}' aligned with authoritative remote '{auth_remote}'",
             ))
         else:
             outcomes.append(CheckOutcome(
                 id=id_,
                 severity=Severity.BROKEN,
-                message=f"Il mirror '{mirror}' non è allineato al branch pubblicato su '{auth_remote}'.",
-                action=f"Esegui 'git push {mirror} {branch}' dal Vault per riallinearlo (il Vault canonico resta {auth_remote}).",
+                message=f"Mirror '{mirror}' is not aligned with the branch published on '{auth_remote}'.",
+                action=f"Run 'git push {mirror} {branch}' from the Vault to realign it (the canonical Vault remains {auth_remote}).",
             ))
     return outcomes

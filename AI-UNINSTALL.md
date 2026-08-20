@@ -12,8 +12,9 @@ destructive steps into one unconfirmed batch.
 Follow `docs/uninstall.md` in order; it is the single source of truth for
 exactly what each step removes:
 
-1. **Stop the recurring sync** (MULTI profile, systemd only) — safe, no
-   confirmation needed.
+1. **Stop the recurring sync** (MULTI profile only — systemd user units on
+   Linux, a Task Scheduler entry on Windows) — safe, no confirmation
+   needed.
 2. **Restore or clean per-CLI config** from the `.bak-*` backups next to
    each managed file — safe, no confirmation needed.
 3. **Remove the bootstrap pointer files** (`~/CLAUDE.md`,
@@ -24,14 +25,19 @@ exactly what each step removes:
    `~/.agents/skills/INDEX.md`, then inspect `~/.agents/skill-library/` to
    see the real bodies (never assume specific names, see `docs/uninstall.md`)
    — **ask for confirmation** before deleting, this removes real folders.
-5. **Remove the vault clone** — **ask for explicit confirmation**, this
+5. **Local-Full mode only, before step 6**: run `nexgen stack down` to stop
+   the local connector containers — safe, leaves their data volumes intact,
+   no confirmation needed. To actually delete that data, ask for
+   confirmation first, then run `docker compose down -v` yourself inside
+   each stack's folder under `03-INFRA/deploy/<service>/`.
+6. **Remove the vault clone** — **ask for explicit confirmation**, this
    deletes the user's own notes, projects, and secrets registry along with
    the engine. Suggest a backup first if there's any doubt.
-6. **Cloud-Server mode only**: point out that the VPS stack
+7. **Cloud-Server mode only**: point out that the VPS stack
    (`03-INFRA/deploy/`) needs its own `docker compose down -v` run on the
    VPS itself — do not attempt this remotely unless the user explicitly
    asks you to connect and run it.
-7. **Report what's left behind** — the log file (safe to delete, no
+8. **Report what's left behind** — the log file (safe to delete, no
    secrets) and any `99-SECRETS/` copy that lived outside the vault clone
    you just removed — exactly as `docs/uninstall.md` describes.
 

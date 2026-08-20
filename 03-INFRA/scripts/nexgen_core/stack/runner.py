@@ -1,8 +1,8 @@
-"""Avvio, arresto e stato dello stack locale.
+"""Starting, stopping, and checking the status of the local stack.
 
-Nessun presupposto su un server: niente firewall, niente sshd, niente utenti
-remoti. Qui si assume soltanto che ci sia Docker e che la macchina sia quella
-di chi sta digitando il comando.
+No assumptions about a server: no firewall, no sshd, no remote users. Here
+the only assumption is that Docker is present and that the machine is the
+one the person typing the command is sitting at.
 """
 from __future__ import annotations
 

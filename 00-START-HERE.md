@@ -12,7 +12,7 @@ This is the entry point to your Knowledge Vault. Agents read this file at the st
 
 ## What this Vault is
 
-The Knowledge Vault is your durable memory layer: a Git-backed collection of Markdown notes that agents (Claude, Codex, OpenCode, Gemini, etc.) read and write on your behalf. It is not a chat transcript, a log sink, or a scratchpad — it is structured, curated memory.
+The Knowledge Vault is your durable memory layer: a Git-backed collection of Markdown notes that agents (Claude Code, Codex, OpenCode, Antigravity, etc.) read and write on your behalf. It is not a chat transcript, a log sink, or a scratchpad — it is structured, curated memory.
 
 ## How it is organized
 

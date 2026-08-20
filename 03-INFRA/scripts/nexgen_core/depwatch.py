@@ -1,16 +1,16 @@
-"""La sorveglianza delle dipendenze per NeXgen Engine v2.
+"""Dependency watch for NeXgen Engine v2.
 
-Guarda a monte ogni cosa di terzi che il layer dichiara pinnata: skill
-``origin: github`` pinnate a un commit, skill ``origin: installer`` pinnate a
-una versione (letta dal comando ``install``), server MCP invocati via
-``npx pacchetto@versione``. Produce una lista e si ferma lì: applicare un
-aggiornamento a monte cambia un comportamento che nessuno ha scelto.
+Watches upstream everything third-party that the layer declares pinned:
+``origin: github`` skills pinned to a commit, ``origin: installer`` skills
+pinned to a version (read from the ``install`` command), MCP servers invoked
+via ``npx package@version``. It produces a list and stops there: applying an
+upstream update changes a behavior nobody chose.
 
-Non notifica MAI (niente Megafono, mai). Essere offline non è un incidente:
-se nessun controllo raggiunge l'upstream, non scrive e non riporta nulla,
-perché una workstation è offline in continuazione. Il report prodotto
-(``third-party-upgrades.md``) vive nella cartella di stato locale alla
-macchina e non si sincronizza mai. Solo stdlib, sempre con timeout brevi.
+NEVER notifies (no alerts, ever). Being offline is not an incident: if no
+check reaches upstream, it writes nothing and reports nothing, because a
+workstation is offline all the time. The produced report
+(``third-party-upgrades.md``) lives in the machine-local state folder and
+never syncs. Stdlib only, always with short timeouts.
 """
 from __future__ import annotations
 
@@ -31,7 +31,7 @@ GIT_LS_REMOTE_TIMEOUT_SECONDS = 8
 NPM_REGISTRY_TIMEOUT_SECONDS = 6
 REPORT_FILE_NAME = "third-party-upgrades.md"
 
-#: Un token `pacchetto@versione` in stile npm, scoped o no; `@latest` o un range non è un pin.
+#: An npm-style `package@version` token, scoped or not; `@latest` or a range is not a pin.
 NPM_SPEC_RE = re.compile(r"^(?P<name>(?:@[\w.-]+/)?[\w.-]+)@(?P<version>\d[\w.+-]*)$")
 
 
@@ -52,7 +52,7 @@ class DepwatchResult:
 
 
 def _git_ls_remote_head(repo: str) -> str | None:
-    """Il commit HEAD remoto di `repo`, o None se non raggiungibile ora."""
+    """The remote HEAD commit of `repo`, or None if unreachable right now."""
     try:
         result = subprocess.run(
             ["git", "ls-remote", repo, "HEAD"],
@@ -67,7 +67,7 @@ def _git_ls_remote_head(repo: str) -> str | None:
 
 
 def _npm_latest_version(package: str) -> str | None:
-    """L'ultima versione pubblicata di `package` su npm, o None se offline."""
+    """The latest published version of `package` on npm, or None if offline."""
     url = f"https://registry.npmjs.org/{urllib.parse.quote(package, safe='@')}/latest"
     try:
         with urllib.request.urlopen(url, timeout=NPM_REGISTRY_TIMEOUT_SECONDS) as resp:
@@ -83,7 +83,7 @@ def _npm_spec_tokens(tokens: list[str]) -> list[str]:
 
 
 def _command_tokens(srv: dict) -> list[str]:
-    """La riga di comando dichiarata da un server MCP, appiattita."""
+    """The command line declared by an MCP server, flattened."""
     cmd = srv.get("command") or srv.get("cmd")
     args = srv.get("args", [])
     tokens: list[str] = [str(c) for c in cmd] if isinstance(cmd, list) else [str(cmd)] if cmd else []
@@ -93,7 +93,7 @@ def _command_tokens(srv: dict) -> list[str]:
 
 
 def _collect_skill_pins(skills_raw: dict[str, dict]) -> list[tuple[str, str, str, str]]:
-    """(etichetta, tipo, pin, chiave) per ogni skill github o installer pinnata."""
+    """(label, kind, pin, key) for every pinned github or installer skill."""
     pins: list[tuple[str, str, str, str]] = []
     for name, entry in skills_raw.items():
         if not isinstance(entry, dict):
@@ -113,7 +113,7 @@ def _collect_skill_pins(skills_raw: dict[str, dict]) -> list[tuple[str, str, str
 
 
 def _collect_mcp_pins(mcp_raw: dict[str, dict]) -> list[tuple[str, str, str, str]]:
-    """(etichetta, tipo, pin, chiave) per ogni server MCP invocato via npx."""
+    """(label, kind, pin, key) for every MCP server invoked via npx."""
     pins: list[tuple[str, str, str, str]] = []
     for name, srv in mcp_raw.items():
         if not isinstance(srv, dict):
@@ -160,9 +160,9 @@ def run_depwatch(
     git_ls_remote: Callable[[str], str | None] = _git_ls_remote_head,
     npm_latest_version: Callable[[str], str | None] = _npm_latest_version,
 ) -> DepwatchResult:
-    """Ispeziona a monte ogni pin dichiarato e scrive la lista, senza mai
-    applicare o notificare nulla. Se nessun controllo raggiunge l'upstream
-    (offline, o niente da guardare) non scrive e non riporta niente.
+    """Inspects every declared pin upstream and writes the list, without ever
+    applying or notifying anything. If no check reaches upstream (offline, or
+    nothing to watch), it writes and reports nothing.
     """
     resolved_vault = resolve_vault_data(override=vault_data)
     resolved_state = resolve_state_dir(override=state_dir)
@@ -191,7 +191,7 @@ def run_depwatch(
         findings.append(PinFinding(kind=kind, what=what, pinned=pinned, upstream=upstream, stale=stale))
 
     if not any(f.upstream is not None for f in findings):
-        # Nulla pinnato, o l'upstream non risponde ora: offline non è un incidente, silenzio.
+        # Nothing pinned, or upstream isn't responding right now: offline is not an incident, stay quiet.
         return DepwatchResult(findings=findings, report_path=None, wrote=False)
 
     report_path = resolved_state / REPORT_FILE_NAME

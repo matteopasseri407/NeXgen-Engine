@@ -1,6 +1,6 @@
 """NeXgen Engine Core Package (v2).
 
-Architettura modulare cross-platform (Linux & Windows) per il layer agentico.
+Modular, cross-platform (Linux & Windows) architecture for the agent layer.
 """
 from __future__ import annotations
 

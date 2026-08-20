@@ -1,17 +1,17 @@
-"""Adattatore Codex: sola postura 'bypass' in ~/.codex/config.toml, nessun guardrail.
+"""Codex adapter: 'bypass' posture only in ~/.codex/config.toml, no guardrail.
 
-Solo 'bypass' ha un rendering verificato (contro il flag one-shot
---dangerously-bypass-approvals-and-sandbox del binario installato):
-accept-edits/ask non hanno un default confermato e restano fuori apposta.
+Only 'bypass' has a verified rendering (against the installed binary's
+one-shot --dangerously-bypass-approvals-and-sandbox flag): accept-edits/ask
+have no confirmed default and are deliberately left out.
 
-Nessun guardrail per Codex, ne' qui ne' mai senza una decisione esplicita di
-chi possiede la macchina: i suoi hook stanno dietro un consenso per-hash che
-solo una persona puo' dare in sessione interattiva (o un flag
---dangerously-bypass-hook-trust che nessun provisioner deve premere da solo).
-Un hook scritto qui non girerebbe finche' quella decisione non viene presa
-altrove -- una lacuna silenziosa con l'aspetto di un guardrail funzionante,
-peggio di non averne affatto. agent-doctor lo segnala ad ogni esecuzione:
-Codex e' l'unica CLI che gira senza rete, di proposito.
+No guardrail for Codex, neither here nor ever without an explicit decision
+from whoever owns the machine: its hooks sit behind a per-hash consent that
+only a person can give in an interactive session (or a
+--dangerously-bypass-hook-trust flag that no provisioner should press on its
+own). A hook written here wouldn't run until that decision is made
+elsewhere -- a silent gap that looks like a working guardrail, worse than
+having none at all. agent-doctor flags this on every run: Codex is the only
+CLI that runs without network access, by design.
 """
 from __future__ import annotations
 
@@ -26,8 +26,8 @@ _POSTURE_RENDER = {"bypass": {"approval_policy": "never", "sandbox_mode": "dange
 
 
 def _root_table_end(lines: list[str]) -> int:
-    """Indice della prima riga `[tabella]`: tutto cio' che viene prima
-    (righe vuote, commenti, chiavi bare) e' territorio della root table."""
+    """Index of the first `[table]` line: everything before it (blank
+    lines, comments, bare keys) is root table territory."""
     for i, line in enumerate(lines):
         if re.match(r"^[ \t]*\[", line):
             return i
@@ -35,11 +35,10 @@ def _root_table_end(lines: list[str]) -> int:
 
 
 def _set_root_string(text: str, key: str, value: str) -> str:
-    """Imposta chirurgicamente UNA chiave stringa della root table: tocca
-    solo quella riga (o ne inserisce una prima della prima [tabella]),
-    lasciando ogni commento e sezione intatti -- mai una riscrittura totale
-    del config.toml dell'utente. Il risultato viene ri-parsato e verificato
-    prima di essere restituito."""
+    """Surgically sets ONE root-table string key: touches only that line
+    (or inserts one before the first [table]), leaving every comment and
+    section intact -- never a full rewrite of the user's config.toml. The
+    result is re-parsed and verified before being returned."""
     lines = text.split("\n")
     root_end = _root_table_end(lines)
     pattern = re.compile(rf"^[ \t]*{re.escape(key)}[ \t]*=.*$")
@@ -53,7 +52,7 @@ def _set_root_string(text: str, key: str, value: str) -> str:
     result = "\n".join(lines)
     reparsed = tomllib.loads(result)
     if reparsed.get(key) != value:
-        raise GuardrailError(f"codex: impossibile impostare la chiave TOML {key!r}")
+        raise GuardrailError(f"codex: could not set the TOML key {key!r}")
     return result
 
 
@@ -65,10 +64,10 @@ class CodexRuntime(Runtime):
 
     def is_installed(self, home: Path) -> bool:
         del home
-        # config.toml NON e' un segnale valido: il renderer MCP di questo
-        # stesso layer lo crea da zero ad ogni ciclo anche su una macchina
-        # dove Codex non e' mai stato installato. Solo il binario sul PATH
-        # e' un'impronta che appartiene esclusivamente al prodotto.
+        # config.toml is NOT a valid signal: this same layer's MCP renderer
+        # creates it from scratch on every cycle even on a machine where
+        # Codex was never installed. Only the binary on the PATH is a
+        # footprint that belongs exclusively to the product.
         return bool(shutil.which("codex"))
 
     def read_posture(self, home: Path) -> str | None:
@@ -90,12 +89,12 @@ class CodexRuntime(Runtime):
             return None
         path = self._config_path(home)
         if not path.is_file():
-            return None  # Codex mai avviato qui: nessuna postura da applicare
+            return None  # Codex never launched here: no posture to apply
         raw = path.read_text(encoding="utf-8")
         try:
             current = tomllib.loads(raw)
         except tomllib.TOMLDecodeError as exc:
-            raise GuardrailError(f"codex: {path} non e' TOML valido ({exc})") from exc
+            raise GuardrailError(f"codex: {path} is not valid TOML ({exc})") from exc
         if all(current.get(k) == v for k, v in desired.items()):
             return None
         text = raw
@@ -103,8 +102,8 @@ class CodexRuntime(Runtime):
             text = _set_root_string(text, key, value)
         self.backup(path)
         self.atomic_write(path, text)
-        return f"codex: postura '{posture}' applicata in {path}"
+        return f"codex: posture '{posture}' applied in {path}"
 
     def install_guardrail(self, home: Path, hook_source: Path, engine_hooks_dir: Path) -> str | None:
         del home, hook_source, engine_hooks_dir
-        return None  # Nessun aggancio guardrail verificato per Codex (vedi sopra)
+        return None  # No verified guardrail hookup for Codex (see above)

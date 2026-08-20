@@ -17,10 +17,10 @@ broken link, clear bug with an obvious one-line fix), a PR alone is fine.
 - Python 3.11+ with `pyyaml` (`pip install pyyaml`), or 3.10 with `tomli`
   too.
 - The regression suite lives at
-  `03-INFRA/agent-universal-layer/tests/`; run it with
-  `python3 -m pytest` from that directory (or `bash
-  03-INFRA/agent-universal-layer/tests/run.sh` on Fedora). It's sandboxed
-  and never touches your real `$HOME`.
+  `03-INFRA/agent-universal-layer/tests/`; run it with `python3 -m pytest`
+  (from the repo root or from that directory — `pyproject.toml` points
+  `testpaths` at it either way). It's sandboxed and never touches your real
+  `$HOME`.
 - `bash install.sh --check` runs the same preflight the installer runs —
   useful to confirm your environment has what the project expects.
 

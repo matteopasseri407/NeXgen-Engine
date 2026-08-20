@@ -1,4 +1,4 @@
-"""Controlli di coerenza del catalogo e delle viste delle skill."""
+"""Consistency checks for the skill catalog and its views."""
 from __future__ import annotations
 
 from pathlib import Path
@@ -10,13 +10,13 @@ from nexgen_core.skills import SkillMaterializer, is_safe_skill_name
 
 
 def check_skills_manifest(manifest_path: Path) -> CheckOutcome:
-    """Verifica che skills.manifest.yaml sia presente e valido."""
+    """Check that skills.manifest.yaml is present and valid."""
     if not manifest_path.is_file():
         return CheckOutcome(
             id="skills.manifest_present",
             severity=Severity.BROKEN,
-            message=f"Il manifest delle skill '{manifest_path}' non esiste.",
-            action="Crea o ripristina skills.manifest.yaml dai template.",
+            message=f"The skills manifest '{manifest_path}' does not exist.",
+            action="Create or restore skills.manifest.yaml from the templates.",
         )
 
     try:
@@ -25,19 +25,19 @@ def check_skills_manifest(manifest_path: Path) -> CheckOutcome:
         return CheckOutcome(
             id="skills.manifest_valid",
             severity=Severity.OK,
-            message=f"Manifest skill valido con {skill_count} skill dichiarate",
+            message=f"Skills manifest valid with {skill_count} skills declared",
         )
     except Exception as exc:
         return CheckOutcome(
             id="skills.manifest_valid",
             severity=Severity.BROKEN,
-            message=f"Il manifest delle skill contiene errori: {exc}",
-            action="Correggi la sintassi di skills.manifest.yaml.",
+            message=f"The skills manifest contains errors: {exc}",
+            action="Fix the syntax of skills.manifest.yaml.",
         )
 
 
 def check_skill_library_and_index(vault_data: Path, home: Path) -> CheckOutcome:
-    """Verifica che la libreria di skill e l'indice INDEX.md esistano."""
+    """Check that the skill library and the INDEX.md index exist."""
     index_file = home / ".agents" / "skills" / "INDEX.md"
     mat = SkillMaterializer(vault_data=vault_data, home=home)
 
@@ -49,22 +49,22 @@ def check_skill_library_and_index(vault_data: Path, home: Path) -> CheckOutcome:
         return CheckOutcome(
             id="skills.index_present",
             severity=Severity.BROKEN,
-            message="Il catalogo delle skill (~/.agents/skills/INDEX.md) non è presente.",
-            action="Esegui 'agent-sync apply' per materializzare le skill e rigenerare l'indice.",
+            message="The skill catalog (~/.agents/skills/INDEX.md) is not present.",
+            action="Run 'agent-sync apply' to materialize the skills and regenerate the index.",
             remedy=remedy,
         )
 
     return CheckOutcome(
         id="skills.index_present",
         severity=Severity.OK,
-        message="Catalogo delle skill presente e allineato",
+        message="Skill catalog present and aligned",
     )
 
 
-#: Mappa target -> attributi di SkillMaterializer che ospitano la vista
-#: attiva per quel runtime. Riusa esattamente gli stessi attributi che
-#: SkillMaterializer.materialize() popola, così questa mappa non può
-#: divergere da dove le viste vengono davvero scritte.
+#: Map of target -> SkillMaterializer attributes that hold the active view
+#: for that runtime. Reuses exactly the same attributes that
+#: SkillMaterializer.materialize() populates, so this map can't diverge
+#: from where the views are actually written.
 _TARGET_VIEW_ATTRS: dict[str, tuple[str, ...]] = {
     "claude": ("claude_dir",),
     "antigravity": ("gemini_dir", "gemini_config_dir", "gemini_legacy_dir"),
@@ -74,9 +74,9 @@ _TARGET_VIEW_ATTRS: dict[str, tuple[str, ...]] = {
 
 
 def _library_skill_entries(library_dir: Path) -> list[Path]:
-    """Le sole voci della libreria che sono davvero skill: nome sicuro e
-    (symlink oppure cartella con SKILL.md). Esclude la quarantena/legacy e
-    file accessori come INDEX.md."""
+    """Only the library entries that are actually skills: a safe name and
+    (a symlink or a folder with SKILL.md). Excludes quarantine/legacy and
+    accessory files like INDEX.md."""
     if not library_dir.is_dir():
         return []
     entries = []
@@ -89,9 +89,9 @@ def _library_skill_entries(library_dir: Path) -> list[Path]:
 
 
 def check_skill_library_symlinks(home: Path) -> CheckOutcome:
-    """Le voci della libreria skill non devono essere symlink rotti o
-    auto-referenziali. Non vengono mai rimosse in automatico (il sync è
-    additivo per contratto), quindi vanno segnalate per una pulizia manuale."""
+    """Skill library entries must not be broken or self-referential
+    symlinks. They are never removed automatically (the sync is additive by
+    contract), so they must be reported for manual cleanup."""
     library_dir = home / ".agents" / "skill-library"
     entries = _library_skill_entries(library_dir)
 
@@ -100,23 +100,23 @@ def check_skill_library_symlinks(home: Path) -> CheckOutcome:
         return CheckOutcome(
             id="skills.library_symlinks",
             severity=Severity.BROKEN,
-            message=f"Voce/i della libreria skill con symlink rotto o auto-referenziale: {', '.join(broken)}.",
-            action="Esegui 'agent-sync apply' (skills-sync) per rigenerare la libreria; rimuovi manualmente le voci se restano rotte.",
+            message=f"Skill library entry/entries with a broken or self-referential symlink: {', '.join(broken)}.",
+            action="Run 'agent-sync apply' (skills-sync) to regenerate the library; remove the entries manually if they stay broken.",
         )
     return CheckOutcome(
         id="skills.library_symlinks",
         severity=Severity.OK,
-        message="Nessun symlink rotto nella libreria skill",
+        message="No broken symlinks in the skill library",
     )
 
 
 def check_skills_out_of_manifest(vault_data: Path, home: Path) -> CheckOutcome:
-    """Skill materializzate nella libreria ma assenti dal manifest.
+    """Skills materialized in the library but absent from the manifest.
 
-    Non vengono mai cancellate (il sync è additivo per contratto): sono un
-    disallineamento non dichiarato da adottare o abbandonare
-    consapevolmente, non qualcosa che questo controllo può stabilire da
-    solo, per questo è undetermined e non broken.
+    They are never deleted (the sync is additive by contract): they are an
+    undeclared mismatch to be knowingly adopted or abandoned, not something
+    this check can decide on its own, which is why it's undetermined and
+    not broken.
     """
     mat = SkillMaterializer(vault_data=vault_data, home=home)
     library_dir = home / ".agents" / "skill-library"
@@ -128,18 +128,18 @@ def check_skills_out_of_manifest(vault_data: Path, home: Path) -> CheckOutcome:
         return CheckOutcome(
             id="skills.out_of_manifest",
             severity=Severity.UNDETERMINED,
-            message=f"Skill materializzate ma non dichiarate nel manifest: {', '.join(stray)}.",
-            action="Adotta le skill utili aggiungendole a skills.manifest.yaml, oppure rimuovile manualmente dalla libreria (il sync non le cancella da solo).",
+            message=f"Skills materialized but not declared in the manifest: {', '.join(stray)}.",
+            action="Adopt the useful skills by adding them to skills.manifest.yaml, or remove them manually from the library (the sync won't delete them on its own).",
         )
     return CheckOutcome(
         id="skills.out_of_manifest",
         severity=Severity.OK,
-        message="Nessuna skill fuori manifest da riconciliare",
+        message="No out-of-manifest skills to reconcile",
     )
 
 
 def check_skills_not_materialized(vault_data: Path, home: Path) -> CheckOutcome:
-    """Ogni skill dichiarata nel manifest deve essere materializzata nella libreria non-discovered."""
+    """Every skill declared in the manifest must be materialized in the non-discovered library."""
     mat = SkillMaterializer(vault_data=vault_data, home=home)
     library_dir = home / ".agents" / "skill-library"
 
@@ -154,22 +154,22 @@ def check_skills_not_materialized(vault_data: Path, home: Path) -> CheckOutcome:
         return CheckOutcome(
             id="skills.declared_but_not_materialized",
             severity=Severity.BROKEN,
-            message=f"Skill dichiarate nel manifest ma non materializzate: {', '.join(missing)}.",
-            action="Esegui 'agent-sync apply' (skills-sync) per materializzarle.",
+            message=f"Skills declared in the manifest but not materialized: {', '.join(missing)}.",
+            action="Run 'agent-sync apply' (skills-sync) to materialize them.",
             remedy=remedy,
         )
     return CheckOutcome(
         id="skills.declared_but_not_materialized",
         severity=Severity.OK,
-        message="Tutte le skill dichiarate nel manifest sono materializzate",
+        message="All skills declared in the manifest are materialized",
     )
 
 
 def check_engine_starter_views(vault_data: Path, home: Path) -> CheckOutcome:
-    """I comandi starter (`origin: engine`, esposizione eager/core) del
-    manifest devono esistere come vista attiva in ogni CLI target che
-    dichiarano, non solo nella libreria: sono i comandi che l'utente invoca
-    direttamente (es. '/nexgen-doctor')."""
+    """The manifest's starter commands (`origin: engine`, eager/core
+    exposure) must exist as an active view in every CLI target they
+    declare, not only in the library: they are the commands the user
+    invokes directly (e.g. '/nexgen-doctor')."""
     mat = SkillMaterializer(vault_data=vault_data, home=home)
 
     def remedy() -> bool:
@@ -185,7 +185,7 @@ def check_engine_starter_views(vault_data: Path, home: Path) -> CheckOutcome:
         return CheckOutcome(
             id="skills.engine_starter_views",
             severity=Severity.OK,
-            message="Nessun comando starter del motore dichiarato nel manifest",
+            message="No engine starter commands declared in the manifest",
         )
 
     missing: list[str] = []
@@ -201,25 +201,25 @@ def check_engine_starter_views(vault_data: Path, home: Path) -> CheckOutcome:
         return CheckOutcome(
             id="skills.engine_starter_views",
             severity=Severity.BROKEN,
-            message=f"Comando/i starter del motore non materializzati come vista attiva: {', '.join(missing)}.",
-            action="Esegui 'agent-sync apply' (skills-sync) per rigenerare le viste.",
+            message=f"Engine starter command(s) not materialized as an active view: {', '.join(missing)}.",
+            action="Run 'agent-sync apply' (skills-sync) to regenerate the views.",
             remedy=remedy,
         )
     return CheckOutcome(
         id="skills.engine_starter_views",
         severity=Severity.OK,
-        message="Tutti i comandi starter del motore sono materializzati come vista attiva",
+        message="All engine starter commands are materialized as an active view",
     )
 
 
 def check_skills_manifest_semantics(vault_data: Path, home: Path) -> CheckOutcome | None:
-    """Validazione semantica del manifest (nomi sicuri, origini note, pin
-    completi, sorgente SKILL.md presente): riusa
-    SkillMaterializer.validate_manifest() invece di riscrivere le stesse
-    regole qui."""
+    """Semantic validation of the manifest (safe names, known origins,
+    complete pins, source SKILL.md present): reuses
+    SkillMaterializer.validate_manifest() instead of rewriting the same
+    rules here."""
     manifest_file = skills_manifest(vault_data)
     if not manifest_file.is_file():
-        return None  # già segnalato da check_skills_manifest
+        return None  # already reported by check_skills_manifest
 
     mat = SkillMaterializer(vault_data=vault_data, home=home)
     problems = mat.validate_manifest()
@@ -227,12 +227,12 @@ def check_skills_manifest_semantics(vault_data: Path, home: Path) -> CheckOutcom
         return CheckOutcome(
             id="skills.manifest_semantics",
             severity=Severity.BROKEN,
-            message=f"{len(problems)} problema/i nel manifest delle skill.",
-            action="Correggi le voci indicate: " + "; ".join(problems[:5]),
+            message=f"{len(problems)} problem(s) in the skills manifest.",
+            action="Fix the entries listed: " + "; ".join(problems[:5]),
             detail="; ".join(problems),
         )
     return CheckOutcome(
         id="skills.manifest_semantics",
         severity=Severity.OK,
-        message="Manifest delle skill semanticamente valido",
+        message="Skills manifest is semantically valid",
     )

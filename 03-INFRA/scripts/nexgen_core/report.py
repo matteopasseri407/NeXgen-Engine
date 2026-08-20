@@ -1,13 +1,13 @@
-"""Sistema di reporting ed esiti per NeXgen Engine v2.
+"""Reporting and outcomes system for NeXgen Engine v2.
 
-Ogni controllo restituisce un oggetto strutturato con quattro campi principali
-(id, severity, message, action) più un eventuale rimedio automatico (remedy).
+Every check returns a structured object with four main fields (id, severity,
+message, action) plus an optional automatic remedy.
 
-Regole fondamentali:
-1. Se c'è un remedy e il controllo è broken, viene eseguito in silenzio.
-2. Se non c'è rimedio e lo stato è broken, viene riportato con messaggio chiaro e una sola azione.
-3. Se lo stato è undetermined, viene segnalato distintamente da broken.
-4. Se lo stato è ok, viene conteggiato e taciuto (salvo modalità verbose).
+Core rules:
+1. If there's a remedy and the check is broken, it runs silently.
+2. If there's no remedy and the state is broken, it's reported with a clear message and a single action.
+3. If the state is undetermined, it's reported distinctly from broken.
+4. If the state is ok, it's counted and kept silent (unless verbose mode).
 """
 from __future__ import annotations
 
@@ -18,7 +18,7 @@ from typing import Any, Callable
 
 
 class Severity(str, Enum):
-    """Livelli di severità per un controllo."""
+    """Severity levels for a check."""
     OK = "ok"
     BROKEN = "broken"
     UNDETERMINED = "undetermined"
@@ -26,7 +26,7 @@ class Severity(str, Enum):
 
 @dataclass
 class CheckOutcome:
-    """Esito normalizzato di un controllo di sistema o configurazione."""
+    """Normalized outcome of a system or configuration check."""
 
     id: str
     severity: Severity | str
@@ -41,7 +41,7 @@ class CheckOutcome:
             self.severity = Severity(self.severity.lower())
 
     def to_dict(self) -> dict[str, Any]:
-        """Serializzazione in dizionario per log o output JSON."""
+        """Serializes to a dict for logging or JSON output."""
         return {
             "id": self.id,
             "severity": self.severity.value,
@@ -55,25 +55,25 @@ class CheckOutcome:
 
 @dataclass
 class Report:
-    """Raccoglitore e formattatore degli esiti dei controlli."""
+    """Collector and formatter for check outcomes."""
 
     outcomes: list[CheckOutcome] = field(default_factory=list)
     log_entries: list[str] = field(default_factory=list)
 
     def add(self, outcome: CheckOutcome, apply_remedy: bool = True) -> CheckOutcome:
-        """Aggiunge ed eventualmente applica il rimedio automatico a un esito."""
+        """Adds an outcome and, if applicable, applies its automatic remedy."""
         if apply_remedy and outcome.remedy and outcome.severity == Severity.BROKEN:
             try:
                 res = outcome.remedy()
-                # Consideriamo successo se non lancia eccezioni e non ritorna esplicitamente False
+                # Treated as success unless it raises or explicitly returns False
                 if res is not False:
                     outcome.remedied = True
                     outcome.severity = Severity.OK
-                    log_msg = f"Rimedio automatico applicato con successo per [{outcome.id}]: {outcome.message}"
+                    log_msg = f"Automatic remedy applied successfully for [{outcome.id}]: {outcome.message}"
                     self.log_entries.append(log_msg)
             except Exception as exc:
-                outcome.detail = f"{outcome.detail or ''} (Rimedio fallito: {exc})".strip()
-                self.log_entries.append(f"Rimedio fallito per [{outcome.id}]: {exc}")
+                outcome.detail = f"{outcome.detail or ''} (Remedy failed: {exc})".strip()
+                self.log_entries.append(f"Remedy failed for [{outcome.id}]: {exc}")
 
         self.outcomes.append(outcome)
         return outcome
@@ -99,7 +99,7 @@ class Report:
         return len(self.broken) > 0
 
     def exit_code(self, strict: bool = False) -> int:
-        """Calcola l'exit code di sistema: 0 se tutto ok/rimediato, >0 se ci sono problemi."""
+        """Computes the process exit code: 0 if all ok/remedied, >0 if there are problems."""
         if self.has_failures:
             return 1
         if strict and len(self.undetermined) > 0:
@@ -107,52 +107,52 @@ class Report:
         return 0
 
     def format_human(self, verbose: bool = False) -> str:
-        """Formatta il referto per la lettura umana secondo le regole anti-rumore."""
+        """Formats the report for human reading, following the anti-noise rules."""
         lines: list[str] = []
 
-        # 1. Se ci sono controlli rotti non rimediati, li mostriamo con priorità
+        # 1. Unremedied broken checks are shown first, with priority
         if self.broken:
-            lines.append("Problemi rilevati che richiedono il tuo intervento:")
+            lines.append("Problems detected that need your attention:")
             for item in self.broken:
                 line = f"  - {item.message}"
                 if item.action:
-                    line += f"\n    Azione suggerita: {item.action}"
+                    line += f"\n    Suggested action: {item.action}"
                 if item.detail and verbose:
-                    line += f"\n    [Dettaglio: {item.detail}]"
+                    line += f"\n    [Detail: {item.detail}]"
                 lines.append(line)
 
-        # 2. Se ci sono controlli indeterminati (es. assenza rete o servizio non raggiungibile)
+        # 2. Undetermined checks (e.g. no network, or service unreachable)
         if self.undetermined:
             if lines:
                 lines.append("")
-            lines.append("Controlli che non è stato possibile verificare al momento:")
+            lines.append("Checks that could not be verified right now:")
             for item in self.undetermined:
                 line = f"  - {item.message}"
                 if item.action:
-                    line += f"\n    Azione suggerita: {item.action}"
+                    line += f"\n    Suggested action: {item.action}"
                 if item.detail and verbose:
-                    line += f"\n    [Dettaglio: {item.detail}]"
+                    line += f"\n    [Detail: {item.detail}]"
                 lines.append(line)
 
-        # 3. Riepilogo o dettagli verbose dei controlli superati
+        # 3. Summary, or verbose detail, of passed checks
         if verbose:
             if lines:
                 lines.append("")
-            lines.append(f"Controlli superati ({self.ok_count}):")
+            lines.append(f"Checks passed ({self.ok_count}):")
             for item in self.outcomes:
                 if item.severity == Severity.OK:
-                    remedy_tag = " (riparato automaticamente)" if item.remedied else ""
+                    remedy_tag = " (auto-remedied)" if item.remedied else ""
                     lines.append(f"  [OK] {item.id}: {item.message}{remedy_tag}")
         elif not self.broken and not self.undetermined:
-            # Silenzioso o un'unica riga rassicurante
-            lines.append(f"Tutto allineato e funzionante ({self.ok_count} controlli superati).")
+            # Silent, or a single reassuring line
+            lines.append(f"Everything is aligned and working ({self.ok_count} checks passed).")
         else:
-            lines.append(f"\n({self.ok_count} controlli superati)")
+            lines.append(f"\n({self.ok_count} checks passed)")
 
         return "\n".join(lines)
 
     def format_json(self) -> str:
-        """Restituisce il report completo in formato JSON."""
+        """Returns the full report in JSON format."""
         return json.dumps({
             "healthy": self.is_healthy,
             "ok_count": self.ok_count,

@@ -1,10 +1,11 @@
-"""Controlli sulle istruzioni canoniche e sull'igiene del bootstrap AGENTS.md.
+"""Checks for the canonical instructions and AGENTS.md bootstrap hygiene.
 
-Port dalle sezioni "Canonical instructions" e "Canonical bootstrap hygiene"
-del doctor bash della release. Ogni CLI deriva le proprie istruzioni da UN
-solo file canonico (`instructions/AGENTS.md`); questi controlli verificano
-che il puntatore di ciascuna CLI sia ancora quello, e che il bootstrap stesso
-resti dentro i propri budget dimensionali e non punti a note sparite.
+Ported from the "Canonical instructions" and "Canonical bootstrap hygiene"
+sections of the release's bash doctor. Every CLI derives its own
+instructions from ONE canonical file (`instructions/AGENTS.md`); these
+checks verify that each CLI's pointer still targets it, and that the
+bootstrap itself stays within its size budgets and doesn't point to notes
+that have vanished.
 """
 from __future__ import annotations
 
@@ -19,39 +20,39 @@ from nexgen_core.paths import canonical_instructions
 from nexgen_core.renderer import McpRenderer
 from nexgen_core.report import CheckOutcome, Severity
 
-#: Budget dimensione (byte) del bootstrap canonico AGENTS.md, oltre il quale
-#: conviene spostare contenuto specifico di un compito in una nota
-#: load-on-demand. Sovrascrivibile per installazioni con convenzioni diverse.
+#: Size budget (bytes) for the canonical AGENTS.md bootstrap, beyond which
+#: task-specific content should move into a load-on-demand note.
+#: Overridable for installations with different conventions.
 BOOTSTRAP_MAX_BYTES = int(os.environ.get("NEXGEN_BOOTSTRAP_MAX_BYTES", "40000"))
 
-#: Budget dimensione (byte) per ciascuna nota di dettaglio caricata on-demand
-#: (i file *.md sotto la radice 03-INFRA del Vault).
+#: Size budget (bytes) for each detail note loaded on demand (the *.md
+#: files under the Vault's 03-INFRA root).
 NOTE_MAX_BYTES = int(os.environ.get("NEXGEN_NOTE_MAX_BYTES", "16000"))
 
 _POINTER_RE = re.compile(r"`([^`]+\.md)`")
 
 
 def check_canonical_instructions_present(vault_data: Path) -> CheckOutcome:
-    """Il file di istruzioni canonico deve esistere: è la sorgente unica da
-    cui ogni CLI deriva le proprie."""
+    """The canonical instructions file must exist: it is the single source
+    every CLI derives its own instructions from."""
     canon = canonical_instructions(vault_data)
     if not canon.is_file():
         return CheckOutcome(
             id="instructions.canonical_present",
             severity=Severity.BROKEN,
-            message=f"Il file di istruzioni canonico non esiste ({canon}).",
-            action="Ripristina 03-INFRA/agent-universal-layer/instructions/AGENTS.md dal Vault.",
+            message=f"The canonical instructions file does not exist ({canon}).",
+            action="Restore 03-INFRA/agent-universal-layer/instructions/AGENTS.md from the Vault.",
         )
     return CheckOutcome(
         id="instructions.canonical_present",
         severity=Severity.OK,
-        message="File di istruzioni canonico AGENTS.md presente",
+        message="Canonical instructions file AGENTS.md present",
     )
 
 
 def check_claude_pointer(vault_data: Path, home: Path) -> CheckOutcome:
-    """~/CLAUDE.md deve essere un puntatore leggero al canonico, non una
-    copia o un symlink: una copia diverge in silenzio dal canonico."""
+    """~/CLAUDE.md must be a lightweight pointer to the canonical file, not
+    a copy or a symlink: a copy silently diverges from the canonical."""
     canon = canonical_instructions(vault_data)
     claude_file = home / "CLAUDE.md"
 
@@ -59,8 +60,8 @@ def check_claude_pointer(vault_data: Path, home: Path) -> CheckOutcome:
         return CheckOutcome(
             id="instructions.claude_pointer",
             severity=Severity.BROKEN,
-            message=f"~/CLAUDE.md deve essere un file di testo puntatore, non assente o un symlink ({claude_file}).",
-            action=f"Scrivi in {claude_file} un breve puntatore che referenzi {canon}.",
+            message=f"~/CLAUDE.md must be a plain-text pointer file, not missing or a symlink ({claude_file}).",
+            action=f"Write a short pointer referencing {canon} into {claude_file}.",
         )
 
     try:
@@ -69,53 +70,54 @@ def check_claude_pointer(vault_data: Path, home: Path) -> CheckOutcome:
         return CheckOutcome(
             id="instructions.claude_pointer",
             severity=Severity.UNDETERMINED,
-            message=f"Impossibile leggere ~/CLAUDE.md: {exc}",
+            message=f"Could not read ~/CLAUDE.md: {exc}",
         )
 
     if str(canon) in content:
         return CheckOutcome(
             id="instructions.claude_pointer",
             severity=Severity.OK,
-            message="~/CLAUDE.md punta correttamente al file canonico AGENTS.md",
+            message="~/CLAUDE.md correctly points to the canonical AGENTS.md file",
         )
     return CheckOutcome(
         id="instructions.claude_pointer",
         severity=Severity.BROKEN,
-        message="~/CLAUDE.md non referenzia il percorso del file canonico AGENTS.md (rischio di copia duplicata che diverge in silenzio).",
-        action=f"Sostituisci ~/CLAUDE.md con un puntatore che referenzi {canon}.",
+        message="~/CLAUDE.md does not reference the canonical AGENTS.md file's path (risk of a duplicate copy silently diverging).",
+        action=f"Replace ~/CLAUDE.md with a pointer referencing {canon}.",
     )
 
 
 def _pointer_outcome(cli_name: str, id_: str, pointer_file: Path, canon: Path, *, installed: bool) -> CheckOutcome | None:
-    """Un puntatore CLI->canonico: OK se allineato, BROKEN se presente ma
-    divergente o se la CLI è installata e il puntatore manca del tutto. Una
-    CLI mai installata non è un guasto: non ha alcun percorso di codice che
-    creerà mai questo file, quindi non si riporta affatto."""
+    """A CLI->canonical pointer: OK if aligned, BROKEN if present but
+    diverging or if the CLI is installed and the pointer is missing
+    entirely. A CLI that was never installed is not a failure: it has no
+    code path that will ever create this file, so it isn't reported at
+    all."""
     if pointer_file.exists() or pointer_file.is_symlink():
         try:
             aligned = canon.is_file() and pointer_file.resolve() == canon.resolve()
         except OSError:
             aligned = False
         if aligned:
-            return CheckOutcome(id=id_, severity=Severity.OK, message=f"{cli_name} punta al file canonico AGENTS.md")
+            return CheckOutcome(id=id_, severity=Severity.OK, message=f"{cli_name} points to the canonical AGENTS.md file")
         return CheckOutcome(
             id=id_,
             severity=Severity.BROKEN,
-            message=f"Le istruzioni di {cli_name} ({pointer_file}) non puntano al file canonico AGENTS.md.",
-            action="Esegui 'agent-sync apply' per ricreare il puntatore.",
+            message=f"{cli_name}'s instructions ({pointer_file}) do not point to the canonical AGENTS.md file.",
+            action="Run 'agent-sync apply' to recreate the pointer.",
         )
     if installed:
         return CheckOutcome(
             id=id_,
             severity=Severity.BROKEN,
-            message=f"{cli_name} è installato ma non ha ancora il puntatore alle istruzioni canoniche ({pointer_file}).",
-            action="Esegui 'agent-sync apply' per generare il puntatore.",
+            message=f"{cli_name} is installed but doesn't have the pointer to the canonical instructions yet ({pointer_file}).",
+            action="Run 'agent-sync apply' to generate the pointer.",
         )
     return None
 
 
 def check_cli_instruction_pointers(vault_data: Path, home: Path) -> list[CheckOutcome]:
-    """Puntatori Codex e Antigravity al file canonico AGENTS.md."""
+    """Codex and Antigravity pointers to the canonical AGENTS.md file."""
     canon = canonical_instructions(vault_data)
     targets = (
         ("Codex", "instructions.codex_pointer", home / ".codex" / "AGENTS.md", "codex"),
@@ -130,9 +132,9 @@ def check_cli_instruction_pointers(vault_data: Path, home: Path) -> list[CheckOu
 
 
 def check_opencode_instructions(vault_data: Path, home: Path) -> CheckOutcome | None:
-    """L'array `instructions` della config OpenCode deve includere il file
-    canonico AGENTS.md. OpenCode mai lanciata (nessuna config) non è un
-    guasto e non si riporta."""
+    """OpenCode's config `instructions` array must include the canonical
+    AGENTS.md file. OpenCode never launched (no config) is not a failure
+    and isn't reported."""
     renderer = McpRenderer(vault_data=vault_data, home=home)
     cfg_file = renderer._opencode_config_path()
     installed = shutil.which("opencode") is not None or (home / ".opencode" / "bin" / "opencode").is_file()
@@ -142,8 +144,8 @@ def check_opencode_instructions(vault_data: Path, home: Path) -> CheckOutcome | 
             return CheckOutcome(
                 id="instructions.opencode_pointer",
                 severity=Severity.BROKEN,
-                message=f"OpenCode è installato ma manca il file di configurazione ({cfg_file}).",
-                action="Esegui 'agent-sync apply' per generarlo.",
+                message=f"OpenCode is installed but its configuration file is missing ({cfg_file}).",
+                action="Run 'agent-sync apply' to generate it.",
             )
         return None
 
@@ -154,7 +156,7 @@ def check_opencode_instructions(vault_data: Path, home: Path) -> CheckOutcome | 
         return CheckOutcome(
             id="instructions.opencode_pointer",
             severity=Severity.UNDETERMINED,
-            message=f"Impossibile analizzare la configurazione OpenCode ({cfg_file}): {exc}",
+            message=f"Could not parse the OpenCode configuration ({cfg_file}): {exc}",
         )
 
     entries = data.get("instructions", []) if isinstance(data, dict) else []
@@ -169,19 +171,19 @@ def check_opencode_instructions(vault_data: Path, home: Path) -> CheckOutcome | 
         return CheckOutcome(
             id="instructions.opencode_pointer",
             severity=Severity.BROKEN,
-            message="Le 'instructions' di OpenCode non includono il file canonico AGENTS.md.",
-            action="Esegui 'agent-sync apply' per registrarlo.",
+            message="OpenCode's 'instructions' do not include the canonical AGENTS.md file.",
+            action="Run 'agent-sync apply' to register it.",
         )
     return CheckOutcome(
         id="instructions.opencode_pointer",
         severity=Severity.OK,
-        message="OpenCode carica il file canonico AGENTS.md",
+        message="OpenCode loads the canonical AGENTS.md file",
     )
 
 
 def check_bootstrap_size_budget(vault_data: Path) -> CheckOutcome | None:
-    """Il bootstrap AGENTS.md deve restare dentro il proprio budget
-    dimensionale. Se il canonico manca è già segnalato altrove."""
+    """The AGENTS.md bootstrap must stay within its own size budget. If the
+    canonical file is missing, that's already reported elsewhere."""
     canon = canonical_instructions(vault_data)
     if not canon.is_file():
         return None
@@ -191,19 +193,19 @@ def check_bootstrap_size_budget(vault_data: Path) -> CheckOutcome | None:
         return CheckOutcome(
             id="instructions.bootstrap_size_budget",
             severity=Severity.BROKEN,
-            message=f"Il bootstrap AGENTS.md pesa {size} byte, oltre il budget di {BOOTSTRAP_MAX_BYTES}.",
-            action="Sposta contenuto specifico di un compito in una nota load-on-demand, richiamata solo quando serve.",
+            message=f"The AGENTS.md bootstrap is {size} bytes, over the {BOOTSTRAP_MAX_BYTES} budget.",
+            action="Move task-specific content into a load-on-demand note, pulled in only when needed.",
         )
     return CheckOutcome(
         id="instructions.bootstrap_size_budget",
         severity=Severity.OK,
-        message=f"Bootstrap AGENTS.md entro il budget ({size}/{BOOTSTRAP_MAX_BYTES} byte)",
+        message=f"AGENTS.md bootstrap within budget ({size}/{BOOTSTRAP_MAX_BYTES} bytes)",
     )
 
 
 def check_bootstrap_notes_size(vault_data: Path) -> CheckOutcome | None:
-    """Le note di dettaglio caricate on-demand (03-INFRA/*.md) devono
-    restare dentro il proprio budget dimensionale."""
+    """The detail notes loaded on demand (03-INFRA/*.md) must stay within
+    their own size budget."""
     canon = canonical_instructions(vault_data)
     if not canon.is_file():
         return None
@@ -221,21 +223,21 @@ def check_bootstrap_notes_size(vault_data: Path) -> CheckOutcome | None:
         return CheckOutcome(
             id="instructions.bootstrap_notes_size",
             severity=Severity.BROKEN,
-            message=f"Nota/e di dettaglio oltre il budget di {NOTE_MAX_BYTES} byte: {', '.join(oversized)}.",
-            action="Valuta di dividere la nota in sezioni più piccole caricate on-demand.",
+            message=f"Detail note(s) over the {NOTE_MAX_BYTES}-byte budget: {', '.join(oversized)}.",
+            action="Consider splitting the note into smaller sections loaded on demand.",
         )
     return CheckOutcome(
         id="instructions.bootstrap_notes_size",
         severity=Severity.OK,
-        message=f"Note di dettaglio entro il budget di {NOTE_MAX_BYTES} byte",
+        message=f"Detail notes within the {NOTE_MAX_BYTES}-byte budget",
     )
 
 
 def check_bootstrap_pointer_integrity(vault_data: Path) -> CheckOutcome | None:
-    """Ogni puntatore load-on-demand citato in backtick nel bootstrap
-    (`03-INFRA/...md`, `99-INDEX/...md`, ecc.) deve risolvere a un file
-    esistente sotto il Vault. Le radici valide sono derivate dal filesystem
-    del Vault stesso, non da un elenco cablato."""
+    """Every load-on-demand pointer cited in backticks in the bootstrap
+    (`03-INFRA/...md`, `99-INDEX/...md`, etc.) must resolve to a file that
+    exists under the Vault. The valid roots are derived from the Vault's
+    own filesystem, not a hardcoded list."""
     canon = canonical_instructions(vault_data)
     if not canon.is_file():
         return None
@@ -246,7 +248,7 @@ def check_bootstrap_pointer_integrity(vault_data: Path) -> CheckOutcome | None:
         return CheckOutcome(
             id="instructions.bootstrap_pointer_integrity",
             severity=Severity.UNDETERMINED,
-            message=f"Impossibile leggere il bootstrap AGENTS.md: {exc}",
+            message=f"Could not read the AGENTS.md bootstrap: {exc}",
         )
 
     top_dirs = {p.name for p in vault_data.iterdir() if p.is_dir() and not p.name.startswith(".")}
@@ -267,17 +269,17 @@ def check_bootstrap_pointer_integrity(vault_data: Path) -> CheckOutcome | None:
         return CheckOutcome(
             id="instructions.bootstrap_pointer_integrity",
             severity=Severity.OK,
-            message="Nessun puntatore load-on-demand da verificare nel bootstrap",
+            message="No load-on-demand pointers to check in the bootstrap",
         )
     if missing:
         return CheckOutcome(
             id="instructions.bootstrap_pointer_integrity",
             severity=Severity.BROKEN,
-            message=f"Puntatore/i load-on-demand nel bootstrap che non risolvono a un file esistente: {', '.join(missing)}.",
-            action="Correggi o rimuovi i riferimenti alle note rinominate/rimosse in AGENTS.md.",
+            message=f"Load-on-demand pointer(s) in the bootstrap that don't resolve to an existing file: {', '.join(missing)}.",
+            action="Fix or remove the references to renamed/removed notes in AGENTS.md.",
         )
     return CheckOutcome(
         id="instructions.bootstrap_pointer_integrity",
         severity=Severity.OK,
-        message=f"Tutti i {checked} puntatori load-on-demand del bootstrap risolvono correttamente",
+        message=f"All {checked} load-on-demand pointers in the bootstrap resolve correctly",
     )

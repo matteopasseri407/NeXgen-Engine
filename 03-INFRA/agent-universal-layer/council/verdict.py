@@ -16,7 +16,7 @@ from session import _write_private_text, redact_generated_output
 
 VERDICT_RE = re.compile(r"(?i)verdict\s*:\s*(APPROVE|REVISE|REJECT)\b")
 
-MAX_CONTEXT_FILE_BYTES = 2_000_000  # ~2MB: generoso per un brief/diff di testo, non per un binario
+MAX_CONTEXT_FILE_BYTES = 2_000_000  # ~2MB: generous for a text brief/diff, not for a binary
 
 
 def _read_or_exit(path_str: str, label: str) -> str:
@@ -52,8 +52,8 @@ def build_brief(question: str | None, context_path: str | None, diff_path: str |
 
 def extract_verdict(text: str) -> str:
     """Positional, not textual search: only the LAST non-blank line can carry
-    the verdict. A seat prompt promises 'chiudi SEMPRE con una riga a se'
-    stante' (see prompts/*.md and build_relay_prompt) precisely so a verdict
+    the verdict. A seat prompt promises to 'ALWAYS close with a stand-alone
+    line' (see prompts/*.md and build_relay_prompt) precisely so a verdict
     quoted mid-response -- e.g. a later stage citing a prior stage's
     'VERDICT: REJECT' while itself approving at the end -- is never picked up
     as if it were this response's own conclusion. fullmatch on the trimmed

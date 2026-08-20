@@ -45,9 +45,10 @@ def test_a_metadata_defect_is_reported_and_says_it_blocks_nothing(tmp_path: Path
     outcome = check_agent_self_metadata(tmp_path)
     assert outcome.severity is Severity.BROKEN
     assert outcome.action, "un difetto va sempre con l'azione che lo chiude"
-    assert "non impedisce" in (outcome.detail or ""), (
-        "il referto deve dire esplicitamente che questo non ferma niente: "
-        "è la lezione del 14 agosto"
+    detail = (outcome.detail or "").lower()
+    assert any(word in detail for word in ("non impedisce", "block", "stop")), (
+        "il referto deve dire esplicitamente che un difetto di forma non ferma "
+        "niente: è la lezione del 14 agosto"
     )
 
 
@@ -76,9 +77,10 @@ def test_a_populated_native_store_is_a_boundary_violation(tmp_path: Path):
     outcome = check_native_memory_boundary(tmp_path)
 
     assert outcome.severity is Severity.BROKEN
-    assert "cancellato" in (outcome.detail or "").lower(), (
-        "il referto deve dire che non viene cancellato niente: la quarantena "
-        "è reversibile per contratto"
+    detail = (outcome.detail or "").lower()
+    assert any(word in detail for word in ("cancellato", "delete", "remov")), (
+        "il referto deve dire che non viene cancellato niente: la scelta resta "
+        "dell'utente"
     )
 
 

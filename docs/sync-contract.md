@@ -1,8 +1,9 @@
 # Sync transaction contract
 
-In a MULTI installation, `agent-sync` treats propagation as one guarded
-transaction. It never regenerates CLI files merely because a pull command was
-attempted. The authoritative data state must first be proven safe.
+In a MULTI installation, `nexgen sync`/`nexgen guard` (historical name
+`agent-sync`) treats propagation as one guarded transaction. It never
+regenerates CLI files merely because a pull command was attempted. The
+authoritative data state must first be proven safe.
 
 ## Remote ownership
 
@@ -23,26 +24,31 @@ no mirrors. Invalid configuration stops before the provisioner creates runtime
 files. Inspect the resolved values with:
 
 ```bash
-agent-sync config authoritative_remote
-agent-sync config mirrors
+nexgen config authoritative_remote
+nexgen config mirrors
 ```
+
+(Historical name: `agent-sync config authoritative_remote|mirrors`.)
 
 ## Commands
 
+Historical names (`agent-sync <mode>`) still work as aliases; the table
+below gives the primary `nexgen` names.
+
 | Command | Contract |
 |---|---|
-| `agent-sync guard` | Recurring pull, apply and healthcheck. Never pushes. A busy lock is a safe skip. |
-| `agent-sync apply` | Manual pull and apply transaction. Never pushes. Installs the available base, then classifies strict readiness as `READY` or `PARTIAL`. |
-| `agent-sync apply --require-ready` | Same manual transaction, but returns non-zero unless the strict doctor reports `FAIL=0`. |
-| `agent-sync pull` | Pull and healthcheck only. Never regenerates CLI files. |
-| `agent-sync publish` | Publishes existing commits to the authoritative remote, then configured mirrors. It never pulls or applies. |
-| `agent-sync preflight` | Validates the local configuration contract without pulling or generating runtime files. |
-| `agent-sync doctor` | Runs diagnostics and alerts only. |
-| `agent-sync bootstrap-alerts` | Runs diagnostics and alerts only on FAIL (the v1 n8n credential-provisioning step is gone: alert credentials are env-based in v2, sourced from the private vault's `environment.d`). |
+| `nexgen guard` | Recurring pull, apply and healthcheck. Never pushes. A busy lock is a safe skip. |
+| `nexgen sync` (alias `nexgen apply`) | Manual pull and apply transaction. Never pushes. |
+| `nexgen pull` | Pull and healthcheck only. Never regenerates CLI files. |
+| `nexgen publish` (alias: `nexgen vault push`) | Publishes existing commits to the authoritative remote, then configured mirrors. It never pulls or applies. |
+| `nexgen preflight` | Validates the local configuration contract without pulling or generating runtime files. |
+| `nexgen doctor` | Runs diagnostics and alerts only. |
+| `nexgen bootstrap-alerts` | Runs diagnostics and alerts only on FAIL (internal command, used by the timers). |
 
-Running `agent-sync` without a mode prints help and changes nothing. The old
-implicit `full` path was removed so a typo or forgotten argument cannot combine
-pull, runtime mutation, credential work, and publication.
+Running `nexgen` without a command prints help and changes nothing. `sync`,
+`guard`, `pull`, and `preflight` are separate, explicit commands, so a typo
+or forgotten argument cannot combine pull, runtime mutation, credential
+work, and publication.
 
 ## Freshness gate
 
@@ -55,30 +61,32 @@ diverge, or Git cannot prove their state.
 A deliberate manual recovery is available for a network outage only:
 
 ```bash
-agent-sync apply --allow-offline
+nexgen sync --allow-offline
 ```
 
-This override is rejected for `guard` and never bypasses dirty, ahead, or
-diverged states.
+(`nexgen guard --allow-offline` accepts the same override; it never bypasses
+dirty, ahead, or diverged states — only a missing remote or a failed fetch.)
 
 ## Configuration gate
 
-After a successful pull, and before data migrations or generated runtime
-files, `guard` and `apply` run the same preflight as `agent-sync preflight`.
-It checks the versioned MCP manifest, the optional Council seats file, the
-skills manifest and local Vault skill sources, the portion of Claude settings
-that the hook merger may change, and the host remote declaration already read
-by the provisioner.
+Before generated runtime files are written, `guard` and `sync` run the same
+preflight as `nexgen preflight`. It loads the versioned MCP manifest
+(`mcp/manifest.yaml`) and the skills manifest (`skills.manifest.yaml`) when
+present, and fails the transaction if either is not well-formed (not a
+YAML map, or missing its required top-level section).
 
-MCP and Council files use `schema_version: 1`. The MCP contract rejects an
-unknown CLI target, unsupported transport, invalid environment variable name,
-missing HTTP bearer reference, invalid timeout, or malformed Windows override.
-Council remains optional, so a missing `seats.yaml` keeps it inert. If the file
-exists, it must satisfy its schema before an apply can continue.
+Both manifests carry `schema_version: 1` and are read tolerantly per the
+forward-compatibility invariant: an individual connector or skill entry that
+is malformed, or missing a required field, is skipped with a warning rather
+than stopping the whole document; only a structurally broken manifest (the
+document itself is not a map, or its required top-level key is the wrong
+type) stops the transaction. The Council seats file (`seats.yaml`) is loaded
+the same tolerant way, but only when the `council` command runs — it is not
+part of the `sync`/`guard` preflight.
 
-This makes an invalid source a stop condition before the engine changes a CLI
-configuration. The preflight command itself writes only its normal lock and
-run log.
+This makes a structurally invalid manifest a stop condition before the engine
+changes a CLI configuration. The preflight command itself writes only its
+normal lock and run log.
 
 ## Lock and result
 
@@ -90,35 +98,18 @@ window exits with code `75`; recurring `guard` contention exits successfully
 because the active run already owns the work. Every declared phase reports
 success or failure.
 Failures are aggregated, later independent checks still run, and the final exit
-code is non-zero if any required phase failed.
+code is non-zero if any required phase failed. A successful `sync`/`apply`
+transaction ends with the message "Allineamento completato con successo"
+(alignment complete). Checking whether the result is actually clean is a
+separate step: run `nexgen doctor --strict --summary` after `sync` — `sync`
+itself does not run the strict doctor or classify a readiness verdict.
 
-Manual apply has a separate readiness result after all required phases succeed:
-
-- `BASE` means the provisioner installed every component it could install from the current inputs.
-- `PARTIAL` means the base install succeeded but the strict doctor still reports one or more failures, or could not produce a readable result.
-- `READY` means `agent-doctor --strict` completed with `FAIL=0`. That strict
-  check runs unconditionally at the end of `apply` (with or without
-  `--require-ready`) and includes live probes that start real sessions of
-  installed consumer CLIs and can reach real network services -- see
-  "`agent-doctor --strict`: real live CLI sessions, real network calls" in
-  `docs/what-gets-written.md` for exactly what runs and how to opt out with
-  `NEXGEN_SKIP_LIVE_CONSUMER_PROBES=1`.
-
-Plain `agent-sync apply` returns zero for `PARTIAL`, because progressive setup is valid when credentials, remote services, or a CLI's first launch will happen later.
-It prints and logs `PARTIAL` explicitly.
-Automation that requires a fully operational machine must use `agent-sync apply --require-ready`; that form returns non-zero for `PARTIAL`.
-Required provisioning phase failures remain `failed`, never `PARTIAL`.
-
-`vault-push`'s own commit/rebase/publish logic is the `vault-push` command of
-`nexgen_core/publisher.py` — not a separate implementation. It locks the
-same lock file by default (`AGENT_SYNC_LOCK_FILE`, else `agent-sync.lock`
-under this same host's state directory), so a `guard` cycle and a manual
-`vault-push` on the same machine still serialize against each other. The
-`vault-push` executable shim (and `.cmd` on Windows) forwards into `nexgen_core.publisher`
-(or `agent-sync publish`).
-When the engine itself is unreachable (no resolvable engine or no
-Python) and `KNOWLEDGE_VAULT_REMOTE` is set, a minimal git emergency lane is available —
-announcing the degraded mode loudly rather than failing silently.
+The publish logic (`nexgen vault push`, historical name `vault-push`) is the
+`Publisher` class of `nexgen_core/publisher.py` — not a separate
+implementation. It locks the same lock file by default
+(`AGENT_SYNC_LOCK_FILE`, else `agent-sync.lock` under this same host's state
+directory), so a `guard` cycle and a manual `nexgen vault push` on the same
+machine still serialize against each other.
 
 The Linux and Windows launchers call the same Python implementation. Automated
 tests cover both path dialects and Windows lock code, but an architecture
@@ -170,9 +161,9 @@ their own in sync, not for a team writing to one shared vault at the same
 time. The lock described above (see "Lock and result") is per-machine, not
 per-owner: it is a local file lock under that machine's own home directory,
 and it only serializes concurrent processes running ON THAT SAME machine
-(e.g. a `guard` cycle overlapping a manual `vault-push`). It does nothing to
-arbitrate between a single owner's own several machines running
-concurrently, let alone between 30-40 different people's machines against
+(e.g. a `guard` cycle overlapping a manual `nexgen vault push`). It does
+nothing to arbitrate between a single owner's own several machines running
+concurrently, let alone between many different people's machines against
 the same vault. Concurrent writers are instead protected by git's own
 atomic push: a non-fast-forward push is rejected by the remote outright,
 never silently overwritten, and the publish path fetches, compares, and

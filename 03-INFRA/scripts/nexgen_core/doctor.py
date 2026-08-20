@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Il Giudice (Doctor): verificatore universale di allineamento per NeXgen Engine v2.
+"""The Judge (Doctor): universal alignment verifier for NeXgen Engine v2.
 
-Unica implementazione condivisa per Linux e Windows:
-- Elimina completamente la duplicazione tra Bash e PowerShell.
-- Restituisce esiti strutturati con rimedi automatici (nessun falso allarme).
-- Rispetta il silenzio operativo: conta i successi e segnala solo ciò che richiede attenzione.
+Single implementation shared across Linux and Windows:
+- Eliminates the duplication between Bash and PowerShell entirely.
+- Returns structured outcomes with automatic remedies (no false alarms).
+- Respects operational silence: counts successes and reports only what needs attention.
 """
 from __future__ import annotations
 
@@ -49,7 +49,7 @@ from nexgen_core.report import Report
 
 
 class Doctor:
-    """Giudice dello stato di allineamento del layer agentico."""
+    """Judge of the agent layer's alignment state."""
 
     def __init__(
         self,
@@ -63,27 +63,27 @@ class Doctor:
         self.state_dir = resolve_state_dir(self.home, state_dir)
 
     def run_diagnostics(self, apply_remedies: bool = False) -> Report:
-        """Esegue tutti i controlli registrati (in sola lettura di default)."""
+        """Runs every registered check (read-only by default)."""
         report = Report()
 
-        # 1. Controlli ambiente e directory
+        # 1. Environment and directory checks
         report.add(check_state_dir(self.state_dir), apply_remedy=apply_remedies)
         report.add(check_vault_path(self.vault_data), apply_remedy=apply_remedies)
 
-        # 2. Controlli Git (se il Vault esiste)
+        # 2. Git checks (if the Vault exists)
         if self.vault_data.is_dir():
             report.add(check_git_alignment(self.vault_data), apply_remedy=apply_remedies)
             for outcome in check_mirror_alignment(self.vault_data):
                 report.add(outcome, apply_remedy=apply_remedies)
 
-            # 3. Controlli MCP
+            # 3. MCP checks
             manifest_mcp = self.vault_data / "03-INFRA" / "agent-universal-layer" / "mcp" / "manifest.yaml"
             report.add(check_mcp_manifest(manifest_mcp), apply_remedy=apply_remedies)
             report.add(check_mcp_configs_rendered(self.vault_data, self.home), apply_remedy=apply_remedies)
             for outcome in check_mcp_reachability(self.vault_data, self.home):
                 report.add(outcome, apply_remedy=apply_remedies)
 
-            # 4. Controlli Skill
+            # 4. Skill checks
             manifest_skills = self.vault_data / "03-INFRA" / "agent-universal-layer" / "skills" / "skills.manifest.yaml"
             report.add(check_skills_manifest(manifest_skills), apply_remedy=apply_remedies)
             report.add(check_skill_library_and_index(self.vault_data, self.home), apply_remedy=apply_remedies)
@@ -95,16 +95,16 @@ class Doctor:
             if semantics is not None:
                 report.add(semantics, apply_remedy=apply_remedies)
 
-            # 5. Controlli Identità
+            # 5. Identity checks
             report.add(check_agent_self(self.vault_data), apply_remedy=apply_remedies)
             report.add(check_agent_self_metadata(self.vault_data), apply_remedy=apply_remedies)
             report.add(check_native_memory_boundary(self.home), apply_remedy=apply_remedies)
 
-            # 6. Controlli bootstrap e segreti in env (port dalla release)
+            # 6. Bootstrap and env-secret checks (ported from the release)
             report.add(check_required_rules(self.vault_data), apply_remedy=apply_remedies)
             report.add(check_tokens_in_env(self.vault_data), apply_remedy=apply_remedies)
 
-            # 7. Istruzioni canoniche e igiene del bootstrap
+            # 7. Canonical instructions and bootstrap hygiene
             report.add(check_canonical_instructions_present(self.vault_data), apply_remedy=apply_remedies)
             report.add(check_claude_pointer(self.vault_data, self.home), apply_remedy=apply_remedies)
             for outcome in check_cli_instruction_pointers(self.vault_data, self.home):
@@ -125,13 +125,13 @@ class Doctor:
 
 
 def main(argv: list[str] | None = None) -> int:
-    """Entry point CLI per il comando agent-doctor."""
-    parser = argparse.ArgumentParser(description="NeXgen Engine Doctor (v2) - Diagnostica e verifica allineamento")
-    parser.add_argument("-v", "--verbose", action="store_true", help="Mostra tutti i controlli eseguiti compresi quelli superati")
-    parser.add_argument("--strict", action="store_true", help="Modalità rigorosa: tratta anche gli stati indeterminati come non conformi")
-    parser.add_argument("--json", action="store_true", help="Stampa l'output in formato JSON")
-    parser.add_argument("--summary", action="store_true", help="Stampa il riepilogo con conteggi FAIL=N OK=N")
-    parser.add_argument("--fix", "--remedy", action="store_true", help="Applica i rimedi automatici per i problemi riparabili")
+    """CLI entry point for the agent-doctor command."""
+    parser = argparse.ArgumentParser(description="NeXgen Engine Doctor (v2) - Alignment diagnostics and verification")
+    parser.add_argument("-v", "--verbose", action="store_true", help="Show every check run, including the ones that passed")
+    parser.add_argument("--strict", action="store_true", help="Strict mode: treat undetermined states as non-compliant too")
+    parser.add_argument("--json", action="store_true", help="Print the output in JSON format")
+    parser.add_argument("--summary", action="store_true", help="Print the summary with FAIL=N OK=N counts")
+    parser.add_argument("--fix", "--remedy", action="store_true", help="Apply automatic remedies for fixable problems")
 
     args = parser.parse_args(argv)
 

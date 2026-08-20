@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """skills-sync — NeXgen Engine v2 Skill Synchronizer.
 
-Delega interamente a nexgen_core.skills.
+Delegates entirely to nexgen_core.skills.
 """
 from __future__ import annotations
 

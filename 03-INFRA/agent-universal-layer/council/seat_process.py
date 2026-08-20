@@ -491,10 +491,10 @@ def _build_seat_command(seat: dict, prompt: str, session_dir: Path) -> SeatInvoc
         # Print mode reads stdin when no positional prompt is supplied.  Keeping
         # the brief out of argv avoids both the Windows command-line cap and the
         # POSIX single-argument cap.
-        # --sandbox = restrizioni sul tool run_command (niente rete/filesystem
-        # fuori workspace per i comandi shell), mai --dangerously-skip-permissions.
-        # Non e' un blocco MCP documentato: vedi la nota estesa sopra
-        # _build_seat_command per cosa e' verificato e cosa no per questa CLI.
+        # --sandbox = restrictions on the run_command tool (no network/filesystem
+        # outside the workspace for shell commands), never --dangerously-skip-permissions.
+        # Not a documented MCP block: see the extended note above
+        # _build_seat_command for what is verified and what isn't for this CLI.
         return SeatInvocation(
             ["agy", "--print", "--model", model, "--sandbox"],
             prompt,
@@ -622,14 +622,14 @@ def run_seat(
     session_dir: Path,
     timeout_seconds: float | None = None,
 ) -> tuple[str, dict]:
-    """Legge stdout in streaming (non subprocess.run in blocco): un timeout senza
-    aver mai ricevuto una riga e' un segnale diagnostico diverso da un timeout a
-    meta' risposta (es. quota abbonamento esaurita o blocco lato provider senza
-    errore visibile lato client, verificato dal vivo su un seat a quota esaurita:
-    TimeoutExpired non porta output parziale, va letto mentre arriva). Il parsing
-    dell'output varia per CLI: opencode emette eventi JSONL (`--format json`),
-    Claude restituisce un singolo oggetto JSON verificabile, le altre CLI
-    supportate stampano testo semplice."""
+    """Reads stdout as it streams (not a blocking subprocess.run): a timeout
+    without ever having received a line is a different diagnostic signal
+    than a timeout mid-response (e.g. subscription quota exhausted, or a
+    provider-side block with no error visible client-side -- verified live
+    on a quota-exhausted seat: TimeoutExpired carries no partial output, so
+    it has to be read as it arrives). Output parsing varies per CLI: opencode
+    emits JSONL events (`--format json`), Claude returns a single verifiable
+    JSON object, the other supported CLIs print plain text."""
     model = seat["model"]
     cli = seat["cli"]
     # AUTHORITATIVE enforcement point (2026-07-15, see AGY_BLOCK_REASON above

@@ -1,10 +1,10 @@
-"""Il registro degli adattatori CLI + l'unico punto di integrazione col guard.
+"""The registry of CLI adapters + the single integration point with the guard.
 
-`apply_all()` e' la fase che il ciclo di guardia chiama: riceve la postura e
-il corpo del guardrail gia' RISOLTI (nessun parsing di manifest qui dentro --
-quello resta compito del chiamante, guard.py, che e' anche l'unico posto che
-sa dov'e' il Vault) e ritorna una lista di azioni testuali. Non stampa nulla:
-la formattazione e' del chiamante.
+`apply_all()` is the phase the guard cycle calls: it receives the posture
+and the guardrail body already RESOLVED (no manifest parsing happens in
+here -- that stays the caller's job, guard.py, which is also the only place
+that knows where the Vault is) and returns a list of text actions. It
+prints nothing: formatting is the caller's job.
 """
 from __future__ import annotations
 
@@ -16,8 +16,8 @@ from nexgen_core.runtimes.claude import ClaudeRuntime
 from nexgen_core.runtimes.codex import CodexRuntime
 from nexgen_core.runtimes.opencode import OpenCodeRuntime
 
-#: nome -> istanza. Aggiungere una quinta CLI e' aggiungere un file
-#: runtimes/<nome>.py con la sua classe e una riga qui, mai toccare le altre.
+#: name -> instance. Adding a fifth CLI means adding a
+#: runtimes/<name>.py file with its class and one line here, never touching the others.
 REGISTRY: dict[str, Runtime] = {
     "claude": ClaudeRuntime(),
     "codex": CodexRuntime(),
@@ -33,17 +33,16 @@ def apply_all(
     posture: dict[str, str] | None = None,
     guardrail_source: Path | None = None,
 ) -> list[str]:
-    """Applica postura + guardrail hook su ogni CLI installata.
+    """Applies posture + guardrail hook to every installed CLI.
 
-    Ordine per CLI, non negoziabile: guardrail PRIMA, postura DOPO. Una
-    postura che toglie i prompt non deve mai raggiungere il disco se il suo
-    guardrail dichiarato ha appena fallito l'installazione -- e' esattamente
-    l'incidente che questo ordine previene.
+    Order per CLI, non-negotiable: guardrail FIRST, posture AFTER. A
+    posture that removes prompts must never reach disk if its declared
+    guardrail just failed to install -- that's exactly the incident this
+    ordering prevents.
 
-    Una CLI non installata non e' un guasto: si salta in silenzio. Un
-    guastro REALE durante l'installazione del guardrail (config corrotta,
-    percorso non sicuro) blocca SOLO la postura di quella CLI per questo
-    giro, mai le altre.
+    A CLI that isn't installed is not a failure: it's silently skipped. A
+    REAL failure during guardrail installation (corrupted config, unsafe
+    path) blocks ONLY that CLI's posture for this round, never the others.
     """
     posture = posture or {}
     actions: list[str] = []
@@ -57,7 +56,7 @@ def apply_all(
             try:
                 result = runtime.install_guardrail(home, guardrail_source, engine_hooks_dir)
             except GuardrailError as exc:
-                actions.append(f"[WARN] {runtime.name}: installazione guardrail rifiutata ({exc})")
+                actions.append(f"[WARN] {runtime.name}: guardrail installation refused ({exc})")
                 guardrail_ok = False
             else:
                 if result:
@@ -68,14 +67,14 @@ def apply_all(
             continue
         if not guardrail_ok:
             actions.append(
-                f"[WARN] {runtime.name}: postura '{desired_posture}' NON applicata -- "
-                "il suo guardrail dichiarato non si e' installato correttamente"
+                f"[WARN] {runtime.name}: posture '{desired_posture}' NOT applied -- "
+                "its declared guardrail did not install correctly"
             )
             continue
         try:
             result = runtime.apply_posture(home, desired_posture)
         except GuardrailError as exc:
-            actions.append(f"[WARN] {runtime.name}: applicazione postura rifiutata ({exc})")
+            actions.append(f"[WARN] {runtime.name}: posture application refused ({exc})")
         else:
             if result:
                 actions.append(result)

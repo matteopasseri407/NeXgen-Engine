@@ -71,8 +71,8 @@ constraints, rather than finding them out after the fact.
 `99-INDEX/USER-PROFILE.md` has an optional "Team members" section for
 declaring who besides the vault owner uses this framework, so the Council
 `seats.yaml` doesn't have to be one file everyone edits at once, and a
-skill can be marked `scope: personal` so `skills-sync.py` only puts it on
-its owner's machine. That is all it does: a routing/organizational aid —
+skill can be marked `scope: personal` so `nexgen skill sync` (historical
+name `skills-sync.py`) only puts it on its owner's machine. That is all it does: a routing/organizational aid —
 who owns which host, which seat file, which skills — not a security
 boundary. Every constraint above still holds exactly as written: still one
 profile file whoever edits it last wins, still one secrets archive with

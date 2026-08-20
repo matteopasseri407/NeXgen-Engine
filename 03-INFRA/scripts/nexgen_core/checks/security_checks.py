@@ -1,4 +1,4 @@
-"""Controlli di integrità del bootstrap e dei segreti in env (port dalla release)."""
+"""Bootstrap integrity and env secrets checks (ported from the release)."""
 from __future__ import annotations
 
 import os
@@ -9,11 +9,11 @@ from nexgen_core.report import CheckOutcome, Severity
 
 
 def check_required_rules(vault_data: Path) -> CheckOutcome:
-    """Il bootstrap AGENTS.md non deve perdere le regole invarianti obbligatorie.
+    """The AGENTS.md bootstrap must not lose the mandatory invariant rules.
 
-    Port del guard check_required_rules.py della release: una regola di
-    sicurezza non negoziabile che sparisce dal bootstrap è un drift, non un
-    cambiamento voluto. Read-only.
+    Ported from the release's check_required_rules.py guard: a
+    non-negotiable security rule disappearing from the bootstrap is drift,
+    not a deliberate change. Read-only.
     """
     canon = vault_data / "03-INFRA" / "agent-universal-layer" / "instructions" / "AGENTS.md"
     rules_file = vault_data / "03-INFRA" / "agent-universal-layer" / "instructions" / "required-rules.txt"
@@ -22,15 +22,15 @@ def check_required_rules(vault_data: Path) -> CheckOutcome:
         return CheckOutcome(
             id="bootstrap.rules_guard",
             severity=Severity.UNDETERMINED,
-            message="Il bootstrap canonico AGENTS.md non è presente.",
-            action="Verifica la struttura del vault (03-INFRA/agent-universal-layer/instructions/).",
+            message="The canonical AGENTS.md bootstrap is not present.",
+            action="Check the vault structure (03-INFRA/agent-universal-layer/instructions/).",
         )
     if not rules_file.is_file():
         return CheckOutcome(
             id="bootstrap.rules_guard",
             severity=Severity.UNDETERMINED,
-            message="Il file delle regole obbligatorie required-rules.txt non è presente.",
-            action="Ripristina required-rules.txt accanto ad AGENTS.md.",
+            message="The mandatory rules file required-rules.txt is not present.",
+            action="Restore required-rules.txt next to AGENTS.md.",
         )
 
     from nexgen_core.tools.required_rules import missing_signatures
@@ -42,41 +42,41 @@ def check_required_rules(vault_data: Path) -> CheckOutcome:
                 id="bootstrap.rules_guard",
                 severity=Severity.BROKEN,
                 message=(
-                    f"{len(missing)} regola/e invariante/i richiesta/e assente/i dal bootstrap "
-                    "AGENTS.md (drift non voluto)."
+                    f"{len(missing)} required invariant rule(s) missing from the AGENTS.md "
+                    "bootstrap (unintended drift)."
                 ),
-                action="Riporta le regole mancanti in AGENTS.md: " + "; ".join(missing[:5]),
+                action="Restore the missing rules in AGENTS.md: " + "; ".join(missing[:5]),
                 detail=", ".join(missing),
             )
         return CheckOutcome(
             id="bootstrap.rules_guard",
             severity=Severity.OK,
-            message="Tutte le regole invarianti obbligatorie sono presenti in AGENTS.md",
+            message="All mandatory invariant rules are present in AGENTS.md",
         )
     except OSError as exc:
         return CheckOutcome(
             id="bootstrap.rules_guard",
             severity=Severity.UNDETERMINED,
-            message=f"Impossibile leggere il bootstrap o le regole: {exc}",
+            message=f"Could not read the bootstrap or the rules: {exc}",
         )
 
 
 def check_tokens_in_env(vault_data: Path) -> CheckOutcome:
-    """I token dei server HTTP con auth bearer devono essere impostati in env.
+    """Tokens for HTTP servers with bearer auth must be set in env.
 
-    Port della sezione "Tokens in env" del doctor della release. La regola
-    non è "tutti i token devono esistere sempre", ma "un server a cui
-    l'utente ha scelto di accedere (require_env soddisfatta, come fa il
-    renderer) deve avere il proprio token in env". Un server non attivato
-    è una scelta, non un errore: il renderer non lo monta affatto, quindi
-    l'assenza del token non è un problema.
+    Ported from the "Tokens in env" section of the release's doctor. The
+    rule isn't "every token must always exist", but "a server the user has
+    chosen to enable (require_env satisfied, the same way the renderer
+    checks it) must have its token in env". A server that isn't enabled is
+    a choice, not an error: the renderer doesn't mount it at all, so the
+    missing token isn't a problem.
     """
     manifest_path = vault_data / "03-INFRA" / "agent-universal-layer" / "mcp" / "manifest.yaml"
     if not manifest_path.is_file():
         return CheckOutcome(
             id="env.tokens_in_env",
             severity=Severity.UNDETERMINED,
-            message="Manifest MCP assente, impossibile verificare i token.",
+            message="MCP manifest missing, could not check the tokens.",
         )
 
     data = load_mcp_manifest(manifest_path)
@@ -90,22 +90,22 @@ def check_tokens_in_env(vault_data: Path) -> CheckOutcome:
         env_name = auth.get("env")
         if not env_name:
             continue
-        # Il server è attivo solo se la sua require_env è soddisfatta.
+        # The server is active only if its require_env is satisfied.
         req_env = srv.get("require_env")
         if req_env and not os.environ.get(req_env):
             continue
         if not os.environ.get(env_name):
-            missing.append(f"{name} (richiede {env_name})")
+            missing.append(f"{name} (requires {env_name})")
 
     if missing:
         return CheckOutcome(
             id="env.tokens_in_env",
             severity=Severity.BROKEN,
-            message="Token richiesti dai server HTTP MCP attivi assenti dall'ambiente: " + "; ".join(missing),
-            action="Imposta le env var mancanti (vedi 99-SECRETS / environment.d) e riesegui agent-sync apply.",
+            message="Tokens required by active MCP HTTP servers are missing from the environment: " + "; ".join(missing),
+            action="Set the missing env vars (see 99-SECRETS / environment.d) and rerun agent-sync apply.",
         )
     return CheckOutcome(
         id="env.tokens_in_env",
         severity=Severity.OK,
-        message="Tutti i token dei server HTTP MCP attivi sono presenti nell'ambiente",
+        message="All tokens for active MCP HTTP servers are present in the environment",
     )

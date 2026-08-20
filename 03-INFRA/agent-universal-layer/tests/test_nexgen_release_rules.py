@@ -65,3 +65,18 @@ def test_versions_compare_as_numbers_not_as_text():
 def test_the_repository_version_is_a_real_version():
     version_file = Path(__file__).resolve().parents[3] / "VERSION"
     assert is_semver(version_file.read_text(encoding="utf-8"))
+
+
+def test_the_version_is_declared_in_one_place_only():
+    """Il pacchetto e il file VERSION non possono dire numeri diversi.
+
+    Prima ne dicevano tre: 0.99.1 nel file, 2.0.0 nel pacchetto, 2.0.0 nel
+    packaging. Il file VERSION è la fonte — è quello che il processo di
+    rilascio confronta con il tag e che l'aggiornatore legge sulle macchine.
+    """
+    import nexgen_core
+
+    declared = (Path(__file__).resolve().parents[3] / "VERSION").read_text(encoding="utf-8").strip()
+    assert nexgen_core.__version__ == declared, (
+        f"nexgen_core dichiara {nexgen_core.__version__}, il file VERSION dice {declared}"
+    )

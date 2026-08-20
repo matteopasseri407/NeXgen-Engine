@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """vault-map — NeXgen Engine v2.
 
-Delega interamente a nexgen_core.tools.vault_map (port della logica di
-vault-map.py della release, senza duplicazioni).
+Delegates entirely to nexgen_core.tools.vault_map (a port of the logic
+from the release's vault-map.py, without duplication).
 """
 from __future__ import annotations
 

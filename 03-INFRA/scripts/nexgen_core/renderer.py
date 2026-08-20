@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
-"""Generatore e render delle configurazioni MCP per le 4 CLI (Claude, Codex, OpenCode, Antigravity).
+"""Generator and renderer for MCP configurations across the 4 CLIs (Claude, Codex, OpenCode, Antigravity).
 
-Ordini e regole del contratto:
-1. Manifest canonico (mcp/manifest.yaml) come single source of truth.
-2. Risoluzione comandi stdio (command + args espansi) e server HTTP con token env-ref.
-3. Supporto nativo per le 4 CLI: Claude, Codex (TOML), OpenCode, Antigravity (bridge).
-4. Preservazione additiva dei server live non presenti nel manifest, tranne
-   quelli elencati in `retired_servers`: quello è il meccanismo di rimozione
-   esplicito e cross-CLI, e vince sempre sulla preservazione additiva.
-5. Scrittura atomica con backup di sicurezza e gestione errori rigorosa.
+Contract order and rules:
+1. Canonical manifest (mcp/manifest.yaml) as the single source of truth.
+2. Resolution of stdio commands (command + expanded args) and HTTP servers with env-ref tokens.
+3. Native support for the 4 CLIs: Claude, Codex (TOML), OpenCode, Antigravity (bridge).
+4. Additive preservation of live servers absent from the manifest, except
+   those listed in `retired_servers`: that's the explicit, cross-CLI removal
+   mechanism, and it always wins over additive preservation.
+5. Atomic writes with safety backups and strict error handling.
 """
 from __future__ import annotations
 
@@ -36,7 +36,7 @@ MCP_REMOTE_PACKAGE = "mcp-remote@0.1.38"
 
 
 class McpRenderer:
-    """Render delle configurazioni MCP per ciascuna CLI supportata."""
+    """Renders the MCP configuration for each supported CLI."""
 
     def __init__(
         self,
@@ -57,7 +57,7 @@ class McpRenderer:
         }
 
     def _normalize_windows_shim(self, exe: str) -> str:
-        """Normalizza eseguibili comuni su Windows (npx -> npx.cmd, python3 -> python)."""
+        """Normalizes common executables on Windows (npx -> npx.cmd, python3 -> python)."""
         lower = exe.lower()
         if lower == "npx":
             return "npx.cmd"
@@ -66,12 +66,12 @@ class McpRenderer:
         return exe
 
     def _opencode_config_path(self) -> Path:
-        """Restituisce il percorso nativo della config OpenCode.
+        """Returns OpenCode's native config path.
 
-        OpenCode usa ``opencode.jsonc`` (commenti/virgole finali). La release
-        risolveva il file ESISTENTE con priorità jsonc > json > config.json,
-        così una macchina già configurata veniva aggiornata sul file che
-        OpenCode legge davvero, senza crearne un secondo accanto.
+        OpenCode uses ``opencode.jsonc`` (comments/trailing commas). The
+        release resolved the EXISTING file with priority jsonc > json >
+        config.json, so an already-configured machine got updated on the
+        file OpenCode actually reads, without creating a second one next to it.
         """
         xdg_dir = self.home / ".config" / "opencode"
         xdg_candidates = [xdg_dir / name for name in ("opencode.jsonc", "opencode.json", "config.json")]
@@ -88,13 +88,14 @@ class McpRenderer:
         return xdg_candidates[0]
 
     def retired_server_names(self) -> set[str]:
-        """I nomi dei connettori ritirati: il meccanismo di rimozione esplicito.
+        """The names of retired connectors: the explicit removal mechanism.
 
-        `load_mcp_manifest` esclude già questi nomi dai server attivi, ma le
-        tre CLI che preservano additivamente i server live esistenti (Claude,
-        Antigravity, OpenCode) non li toglierebbero mai da sole: un connettore
-        ritirato deve sparire da ogni configurazione resa, non solo mancare
-        nelle nuove. Rimuoverlo non è un guasto e non va riportato come tale.
+        `load_mcp_manifest` already excludes these names from the active
+        servers, but the three CLIs that additively preserve existing live
+        servers (Claude, Antigravity, OpenCode) would never drop them on
+        their own: a retired connector must disappear from every rendered
+        configuration, not merely be absent from new ones. Removing it is
+        not a failure and must not be reported as one.
         """
         if not self.manifest_path.is_file():
             return set()
@@ -102,7 +103,7 @@ class McpRenderer:
         return set(data.get("retired_servers", set()))
 
     def load_resolved_servers(self, cli_target: str) -> dict[str, dict[str, Any]]:
-        """Carica i server MCP risolti e filtrati per una specifica CLI."""
+        """Loads the MCP servers resolved and filtered for a specific CLI."""
         if not self.manifest_path.is_file():
             return {}
 
@@ -115,21 +116,21 @@ class McpRenderer:
             if cli_target not in targets:
                 continue
 
-            # Controllo require_env
+            # require_env check
             req_env = srv.get("require_env")
             if req_env:
                 env_val = os.environ.get(req_env)
                 if not env_val:
                     continue
 
-            # Override per Windows
+            # Windows override
             entry = dict(srv)
             if IS_WINDOWS and "windows" in entry:
                 win_override = entry.pop("windows")
                 if isinstance(win_override, dict):
                     entry.update(win_override)
 
-            # Risoluzione command ed args
+            # command and args resolution
             cmd = entry.get("command") or entry.get("cmd")
             args = entry.get("args", [])
             if isinstance(cmd, list):
@@ -148,11 +149,11 @@ class McpRenderer:
                 else:
                     entry["args"] = []
 
-            # Risoluzione URL
+            # URL resolution
             if entry.get("url"):
                 entry["url"] = expand_placeholders(str(entry["url"]), self.path_placeholders)
 
-            # Risoluzione env
+            # env resolution
             if "env" in entry and isinstance(entry["env"], dict):
                 entry["env"] = {
                     k: expand_placeholders(str(v), self.path_placeholders)
@@ -164,7 +165,7 @@ class McpRenderer:
         return resolved
 
     def render_claude(self, write: bool = False) -> tuple[bool, str]:
-        """Genera la configurazione MCP per Claude Code (~/.claude.json)."""
+        """Generates the MCP configuration for Claude Code (~/.claude.json)."""
         servers = self.load_resolved_servers("claude")
         cfg_file = self.home / ".claude.json"
         existing: dict[str, Any] = {}
@@ -172,7 +173,7 @@ class McpRenderer:
             try:
                 existing = json.loads(cfg_file.read_text(encoding="utf-8"))
             except Exception as exc:
-                raise ValueError(f"Impossibile analizzare {cfg_file}: JSON non valido ({exc})")
+                raise ValueError(f"Could not parse {cfg_file}: invalid JSON ({exc})")
 
         mcp_servers = existing.get("mcpServers", {})
         for retired in self.retired_server_names():
@@ -197,16 +198,16 @@ class McpRenderer:
         existing["mcpServers"] = mcp_servers
         if write:
             self._backup_and_write(cfg_file, json.dumps(existing, indent=2) + "\n")
-        return True, "Configurazione Claude aggiornata"
+        return True, "Claude configuration updated"
 
-    #: Antigravity legge la stessa configurazione da tre percorsi diversi, a
-    #: seconda di come lo si avvia. Il file vero è uno solo e gli altri tre lo
-    #: raggiungono: scriverne uno e sperare che sia quello giusto significa
-    #: lasciare due varianti su tre con una configurazione vecchia.
+    #: Antigravity reads the same configuration from three different paths,
+    #: depending on how it's launched. There's only one real file and the
+    #: other three reach it: writing one and hoping it's the right one means
+    #: leaving two variants out of three with a stale configuration.
     ANTIGRAVITY_CONSUMER_DIRS = ("antigravity-cli", "antigravity-ide", "config")
 
     def render_antigravity(self, write: bool = False) -> tuple[bool, str]:
-        """Genera la configurazione MCP di Antigravity e la fa raggiungere ai suoi consumatori."""
+        """Generates Antigravity's MCP configuration and fans it out to its consumers."""
         servers = self.load_resolved_servers("antigravity")
         cfg_file = self.home / ".gemini" / "antigravity" / "mcp_config.json"
         existing: dict[str, Any] = {}
@@ -214,7 +215,7 @@ class McpRenderer:
             try:
                 existing = json.loads(cfg_file.read_text(encoding="utf-8"))
             except Exception as exc:
-                raise ValueError(f"Impossibile analizzare {cfg_file}: JSON non valido ({exc})")
+                raise ValueError(f"Could not parse {cfg_file}: invalid JSON ({exc})")
 
         mcp_servers = existing.get("mcpServers", {})
         for retired in self.retired_server_names():
@@ -241,13 +242,13 @@ class McpRenderer:
         if write:
             self._backup_and_write(cfg_file, json.dumps(existing, indent=2) + "\n")
             self._fan_out_antigravity(cfg_file)
-        return True, "Configurazione Antigravity aggiornata"
+        return True, "Antigravity configuration updated"
 
     def _fan_out_antigravity(self, canonical: Path) -> None:
-        """Fa puntare al file canonico tutti i percorsi da cui Antigravity legge.
+        """Points every path Antigravity reads from at the canonical file.
 
-        Dove i collegamenti non si possono creare (Windows senza i privilegi)
-        si copia: l'importante è che nessuna variante resti indietro.
+        Where links can't be created (Windows without privileges) it copies
+        instead: what matters is that no variant is left behind.
         """
         for directory in self.ANTIGRAVITY_CONSUMER_DIRS:
             target = self.home / ".gemini" / directory / "mcp_config.json"

@@ -1,12 +1,13 @@
-"""I servizi che compongono un'installazione completa, dichiarati una volta.
+"""The services that make up a complete installation, declared once.
 
-Sono i cinque connettori che il manifest marca `tier: core`. Quattro sono
-container che si possono ospitare o su un server o sulla propria macchina;
-il quinto, il browser, gira sempre in locale e non ha uno stack da avviare.
+These are the five connectors the manifest marks `tier: core`. Four are
+containers that can be hosted either on a server or on the user's own
+machine; the fifth, the browser, always runs locally and has no stack to
+start.
 
-Questa tabella esiste perché finora l'unico modo di ottenerli era uno script
-che dichiarava "Run ON the VPS" e configurava il firewall di un server. Su una
-macchina sola non c'era niente da eseguire.
+This table exists because until now the only way to get them was a script
+that declared "Run ON the VPS" and configured a server's firewall. On a
+single machine there was nothing to run.
 """
 from __future__ import annotations
 
@@ -16,26 +17,26 @@ from pathlib import Path
 
 @dataclass(frozen=True)
 class Service:
-    """Un servizio dello stack, con ciò che serve per avviarlo e per trovarlo."""
+    """A stack service, with what's needed to start it and to find it."""
 
     name: str
     stack: str
-    """Sottocartella di 03-INFRA/deploy che contiene il suo docker-compose.yml."""
+    """Subfolder of 03-INFRA/deploy that holds its docker-compose.yml."""
     container: str
     port: int
-    """La porta su 127.0.0.1 a cui il compose lo pubblica."""
+    """The port on 127.0.0.1 that compose publishes it on."""
     exports: dict[str, str] = field(default_factory=dict)
-    """Le variabili che la workstation deve avere per montare il connettore.
+    """The variables the workstation needs to have to mount the connector.
 
-    `{porta}` viene sostituita con la porta reale, `{token:NOME}` con il
-    segreto di quel nome preso dal file .env dello stack.
+    `{porta}` is replaced with the real port, `{token:NAME}` with the
+    secret of that name taken from the stack's .env file.
     """
     requires_secret: tuple[str, ...] = ()
-    """Segreti che devono esistere prima di avviare: si generano da soli."""
+    """Secrets that must exist before starting: they generate themselves."""
 
 
-#: I quattro container. L'ordine è quello di avvio: chi non dipende da nessuno
-#: parte per primo, così un errore si vede subito e non a metà.
+#: The four containers. The order is the startup order: whatever depends on
+#: nothing starts first, so a failure shows up right away, not halfway through.
 SERVICES: tuple[Service, ...] = (
     Service(
         name="firecrawl",
@@ -73,13 +74,14 @@ SERVICES: tuple[Service, ...] = (
     ),
 )
 
-#: Il quinto connettore core. Non ha container: vive sulla macchina di chi lo
-#: usa, e lo si nomina qui solo perché "i cinque essenziali" resti vero.
+#: The fifth core connector. It has no container: it lives on the machine
+#: of whoever uses it, and it's named here only so "the five essentials"
+#: stays true.
 LOCAL_ONLY_CONNECTORS = ("playwright",)
 
 
 def deploy_root(engine_root: Path) -> Path:
-    """La cartella che contiene gli stack, dentro il motore installato."""
+    """The folder that holds the stacks, inside the installed engine."""
     return Path(engine_root) / "deploy"
 
 
@@ -88,7 +90,7 @@ def compose_file(engine_root: Path, service: Service) -> Path:
 
 
 def env_file(engine_root: Path) -> Path:
-    """Il file di segreti condiviso dagli stack. Non entra mai in git."""
+    """The secrets file shared by the stacks. Never goes into git."""
     return deploy_root(engine_root) / ".env"
 
 

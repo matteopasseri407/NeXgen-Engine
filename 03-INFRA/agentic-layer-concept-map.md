@@ -81,9 +81,12 @@ automatically.
 Manual apply separates installation from readiness.
 `BASE` means the available components were installed.
 `PARTIAL` keeps that usable base but states that strict consumer or connection checks still fail.
-`READY` is emitted only after `agent-doctor --strict` reports `FAIL=0`.
-This lets a progressive install continue without credentials while preventing an installer agent from describing an unverified machine as complete.
-`agent-sync apply --require-ready` turns `PARTIAL` into a non-zero automation gate.
+`nexgen doctor --strict` fails on anything it cannot determine, not only on
+what it knows is broken: that is the form an installer agent should use before
+calling a machine complete.
+
+The `READY`/`PARTIAL` state machine and `--require-ready` were removed; the
+severity of each check now carries that information directly.
 
 OpenCode config resolution follows the runtime's current precedence within its active config root: `opencode.jsonc`, then `opencode.json`, then `config.json`.
 JSONC comments and host-local model choices survive instruction and MCP reconciliation.

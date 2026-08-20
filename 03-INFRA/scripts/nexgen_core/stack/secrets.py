@@ -1,9 +1,9 @@
-"""I segreti dello stack: generati se mancano, mai sovrascritti, mai stampati.
+"""The stack's secrets: generated if missing, never overwritten, never printed.
 
-Un segreto già presente non viene toccato: rigenerarlo scollegherebbe i dati
-già cifrati con il vecchio. E nessuna funzione qui restituisce un valore
-attraverso un messaggio all'utente o un log: si scrivono su un file con
-permessi stretti e si leggono da lì.
+A secret that's already present is never touched: regenerating it would
+disconnect data already encrypted with the old one. And no function here
+returns a value through a user-facing message or a log: they get written
+to a file with tight permissions and read from there.
 """
 from __future__ import annotations
 
@@ -14,12 +14,12 @@ from pathlib import Path
 
 
 def generate() -> str:
-    """Un segreto nuovo, della stessa forma di `openssl rand -hex 32`."""
+    """A new secret, the same shape as `openssl rand -hex 32`."""
     return _secrets.token_hex(32)
 
 
 def read_env_file(path: Path) -> dict[str, str]:
-    """Legge un file in stile dotenv, ignorando commenti e righe vuote."""
+    """Reads a dotenv-style file, ignoring comments and blank lines."""
     values: dict[str, str] = {}
     if not path.is_file():
         return values
@@ -33,19 +33,19 @@ def read_env_file(path: Path) -> dict[str, str]:
 
 
 def _restrict(path: Path) -> None:
-    """Permessi stretti: il file contiene chiavi operative."""
+    """Tight permissions: the file contains operational keys."""
     try:
         path.chmod(stat.S_IRUSR | stat.S_IWUSR)
     except OSError:
-        # Su un filesystem che non li supporta non c'è niente da fare, e
-        # fallire qui bloccherebbe l'avvio per un dettaglio non applicabile.
+        # On a filesystem that doesn't support them there's nothing to do,
+        # and failing here would block startup over an inapplicable detail.
         pass
 
 
 def ensure(path: Path, names: list[str]) -> list[str]:
-    """Garantisce che ogni nome abbia un valore nel file, generandolo se manca.
+    """Ensures every name has a value in the file, generating it if missing.
 
-    Restituisce i NOMI di ciò che ha generato, mai i valori.
+    Returns the NAMES of what it generated, never the values.
     """
     existing = read_env_file(path)
     missing = [n for n in names if not existing.get(n)]
@@ -73,7 +73,7 @@ def ensure(path: Path, names: list[str]) -> list[str]:
 
 
 def resolve_exports(exports: dict[str, str], port: int, env_values: dict[str, str]) -> dict[str, str]:
-    """Espande i segnaposto di un servizio nei valori reali per la workstation."""
+    """Expands a service's placeholders into the real values for the workstation."""
     resolved: dict[str, str] = {}
     for key, template in exports.items():
         value = template.replace("{porta}", str(port))
@@ -88,15 +88,16 @@ def resolve_exports(exports: dict[str, str], port: int, env_values: dict[str, st
 
 
 def write_workstation_env(path: Path, values: dict[str, str]) -> None:
-    """Scrive le variabili che i runtime leggeranno, con permessi stretti.
+    """Writes the variables the runtimes will read, with tight permissions.
 
-    Il file è generato: si riscrive per intero a ogni giro, così una voce
-    tolta dallo stack sparisce davvero invece di restare a puntare nel vuoto.
+    The file is generated: it gets rewritten in full on every pass, so an
+    entry removed from the stack actually disappears instead of being left
+    pointing at nothing.
     """
     path.parent.mkdir(parents=True, exist_ok=True)
     body = [
-        "# NeXgen Engine — generato automaticamente, non modificare a mano.",
-        "# Variabili dei connettori di uno stack in esecuzione su questa macchina.",
+        "# NeXgen Engine — automatically generated, do not edit by hand.",
+        "# Connector variables for a stack running on this machine.",
         "",
     ]
     body += [f"{key}={value}" for key, value in sorted(values.items())]
@@ -105,7 +106,7 @@ def write_workstation_env(path: Path, values: dict[str, str]) -> None:
 
 
 def workstation_env_path(home: Path | None = None) -> Path:
-    """Dove finiscono le variabili dei connettori su questa macchina."""
+    """Where the connector variables end up on this machine."""
     base = home or Path.home()
     xdg = os.environ.get("XDG_CONFIG_HOME")
     root = Path(xdg) if xdg else base / ".config"

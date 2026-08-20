@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """vault-lifecycle-audit.py — NeXgen Engine v2.
 
-Delega interamente a nexgen_core.tools.vault_lifecycle_audit (la logica è
-stata portata dentro il package; questo file resta per i riferimenti esterni).
+Delegates entirely to nexgen_core.tools.vault_lifecycle_audit (the logic
+was moved into the package; this file remains for external references).
 """
 from __future__ import annotations
 
