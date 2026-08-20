@@ -10,6 +10,8 @@ of any engine release.
 
 ## [Unreleased]
 
+## [0.99.2] - 2026-08-20
+
 ### Added
 
 - **`origin: engine` for skills.** The commands the engine ships existed in two
