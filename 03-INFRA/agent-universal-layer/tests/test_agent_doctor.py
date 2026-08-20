@@ -325,7 +325,8 @@ _CONNECTOR_ENV_VARS = ("N8N_MCP_TOKEN", "VAULT_LIBRARY_TOKEN", "VAULT_LIBRARY_UR
                        "FIRECRAWL_TUNNEL_PORT", "OCR_TUNNEL_PORT")
 
 
-def _run_doctor(sandbox, *args: str, env_overrides: dict | None = None, timeout: int = 60):
+def _run_doctor(sandbox, *args: str, env_overrides: dict | None = None, timeout: int = 60,
+                verbose: bool = True):
     """Like conftest.run_agent_doctor, but lets a test override env vars
     (KNOWLEDGE_VAULT_REMOTE, connector tokens, ...) -- run_agent_doctor()
     itself calls sandbox.env() with no extra kwargs, and sandbox.env()
@@ -338,6 +339,8 @@ def _run_doctor(sandbox, *args: str, env_overrides: dict | None = None, timeout:
     for var in _CONNECTOR_ENV_VARS:
         env.pop(var, None)
     env.update(env_overrides or {})
+    if verbose and "--verbose" not in args and "--summary" not in args:
+        args = ("--verbose", *args)
     return subprocess.run(
         ["bash", str(sandbox.scripts_dir / "agent-doctor.sh"), *args],
         env=env,
@@ -1367,3 +1370,19 @@ def test_doctor_stays_quiet_when_every_engine_owned_skill_resolves(sandbox):
     result = _run_doctor(sandbox)
 
     assert "no longer ships" not in result.stdout, result.stdout
+
+
+def test_default_report_shows_what_is_wrong_and_hides_what_passed(sandbox):
+    """A report that lists forty passing checks trains people to skim past the
+    one line that mattered. The counts still prove the checks ran."""
+    result = _run_doctor(sandbox, verbose=False)
+
+    assert "PASS=" in result.stdout, "the summary must still prove the checks ran"
+    assert "✓" not in result.stdout, result.stdout
+
+
+def test_verbose_still_lists_every_check_that_passed(sandbox):
+    """Hiding them by default is a reading aid, not a loss of information."""
+    result = _run_doctor(sandbox, "--verbose")
+
+    assert "✓" in result.stdout, result.stdout

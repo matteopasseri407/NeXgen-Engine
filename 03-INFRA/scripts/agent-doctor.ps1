@@ -5,11 +5,14 @@
   Firecrawl probe may refresh a small local success cache.
   Usage: .\agent-doctor.ps1            readable report
          .\agent-doctor.ps1 -Summary   one-line summary (for healthcheck)
+         .\agent-doctor.ps1 -Verbose   also list every check that passed
+         (default: only what needs attention, plus the summary -- a report you
+          have to skim to find the one bad line is a report people stop reading)
   NOTE: on Windows, Codex/Antigravity may be copies or symlinks of the canonical
   file. Claude only uses a lightweight pointer to the canonical file to avoid
   duplication with OpenCode when both files are loaded in the same context.
 #>
-param([switch]$Summary, [switch]$Strict)
+param([switch]$Summary, [switch]$Strict, [switch]$Verbose)
 
 $ErrorActionPreference = "Continue"
 $HomeDir = if ($env:USERPROFILE) { $env:USERPROFILE } else { [Environment]::GetFolderPath("UserProfile") }
@@ -116,10 +119,12 @@ if ($env:KNOWLEDGE_VAULT_REMOTE) {
 }
 
 $script:PASS = 0; $script:WARN = 0; $script:FAILN = 0; $script:FAILS = @()
-function ok($m)   { $script:PASS++;  if (-not $Summary) { Write-Host "  [OK]   $m" -ForegroundColor Green } }
+# Passing checks are counted always and printed only on request, matching the
+# bash twin: the default report is what needs attention.
+function ok($m)   { $script:PASS++;  if ((-not $Summary) -and $Verbose) { Write-Host "  [OK]   $m" -ForegroundColor Green } }
 function warn($m) { $script:WARN++;  if (-not $Summary) { Write-Host "  [WARN] $m" -ForegroundColor Yellow } }
 function bad($m)  { $script:FAILN++; $script:FAILS += $m; if (-not $Summary) { Write-Host "  [FAIL] $m" -ForegroundColor Red } }
-function sec($m)  { if (-not $Summary) { Write-Host "`n$m" -ForegroundColor White } }
+function sec($m)  { if ((-not $Summary) -and $Verbose) { Write-Host "`n$m" -ForegroundColor White } }
 function gitc([string[]]$GitArgs) { (& git -C $Vault @GitArgs 2>$null) }
 function httpcode($url, $headers, [string]$method = "Get") {
   try { (Invoke-WebRequest -Uri $url -Method $method -TimeoutSec 6 -Headers $headers -UseBasicParsing -ErrorAction Stop).StatusCode }

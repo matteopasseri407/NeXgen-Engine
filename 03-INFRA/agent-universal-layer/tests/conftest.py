@@ -326,8 +326,14 @@ def run_agent_sync_python(sandbox: Sandbox, mode: str = "apply", timeout: int = 
     )
 
 
-def run_agent_doctor(sandbox: Sandbox, *args: str, timeout: int = 60) -> subprocess.CompletedProcess:
+def run_agent_doctor(sandbox: Sandbox, *args: str, timeout: int = 60,
+                     verbose: bool = True) -> subprocess.CompletedProcess:
+    """`verbose=True` by default because these tests inspect individual check
+    lines, and the doctor's DEFAULT report deliberately prints only what needs
+    attention. A test about that default passes verbose=False."""
     sandbox.assert_is_sandbox()
+    if verbose and "--verbose" not in args and "--summary" not in args:
+        args = ("--verbose", *args)
     if os.name == "nt":
         return subprocess.run(
             ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File",

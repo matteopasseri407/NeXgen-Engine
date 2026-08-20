@@ -47,16 +47,21 @@ fi
 
 QUIET=0
 STRICT=0
+VERBOSE=0
 for arg in "$@"; do
   case "$arg" in
     --summary) QUIET=1 ;;
     --strict) STRICT=1 ;;
+    --verbose) VERBOSE=1 ;;
     -h|--help)
       cat <<'EOF'
-agent-doctor.sh [--summary] [--strict]
+agent-doctor.sh [--summary] [--strict] [--verbose]
 
-Default: fast structural and service health checks.
+Default: fast structural and service health checks, reporting only what is
+         wrong plus the summary. A report you have to skim to find the one bad
+         line is a report people stop reading.
 --summary: one-line output for alerting.
+--verbose: also list every check that passed.
 --strict: add real CLI consumer checks, including OpenCode MCP list,
           Antigravity global MCP path, vault-ocr stdio framing, and one
           cached end-to-end Firecrawl search.
@@ -65,10 +70,12 @@ EOF
   esac
 done
 
-ok()   { PASS=$((PASS+1)); [ "$QUIET" = 1 ] || printf '  \033[32m✓\033[0m %s\n' "$*"; }
+# Passing checks are counted always and printed only on request: the default
+# report is what needs attention. Warnings and failures are never suppressed.
+ok()   { PASS=$((PASS+1)); if [ "$QUIET" != 1 ] && [ "$VERBOSE" = 1 ]; then printf '  \033[32m✓\033[0m %s\n' "$*"; fi; }
 warn() { WARN=$((WARN+1)); [ "$QUIET" = 1 ] || printf '  \033[33m⚠\033[0m %s\n' "$*"; }
 fail() { FAILN=$((FAILN+1)); FAILS="${FAILS}${FAILS:+, }$*"; [ "$QUIET" = 1 ] || printf '  \033[31m✗\033[0m %s\n' "$*"; }
-sec()  { [ "$QUIET" = 1 ] || printf '\n\033[1m%s\033[0m\n' "$*"; }
+sec()  { if [ "$QUIET" != 1 ] && [ "$VERBOSE" = 1 ]; then printf '\n\033[1m%s\033[0m\n' "$*"; fi; }
 code() { curl -s -o /dev/null -m 6 -w '%{http_code}' "$@" 2>/dev/null || echo 000; }
 
 # Temp files created by bearer_cfg() below; always cleaned up on exit so a
@@ -1290,7 +1297,7 @@ if [ "$QUIET" = 1 ]; then
   [ "$FAILN" -gt 0 ] && line="$line | FAIL: $FAILS"
   printf '%s\n' "$line"
 else
-  sec "Summary"
+  printf '\n\033[1m%s\033[0m\n' "Summary"
   printf "  \033[32mPASS=%s\033[0m  \033[33mWARN=%s\033[0m  \033[31mFAIL=%s\033[0m\n" "$PASS" "$WARN" "$FAILN"
   [ "$FAILN" -eq 0 ] && printf "  → \033[32malignment VERIFIED\033[0m\n" || printf "  → \033[31mthere are FAILs to fix\033[0m\n"
 fi
