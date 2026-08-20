@@ -19,10 +19,10 @@ SCRIPTS_DIR = Path(__file__).resolve().parents[2]
 if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
-from nexgen_core.cli import engine, skill_cmds, tool_cmds, vault_cmds
+from nexgen_core.cli import engine, skill_cmds, stack_cmds, tool_cmds, vault_cmds
 
 #: I gruppi di verbi, nell'ordine in cui compaiono nell'aiuto.
-GROUPS = (engine, vault_cmds, skill_cmds, tool_cmds)
+GROUPS = (engine, vault_cmds, skill_cmds, stack_cmds, tool_cmds)
 
 
 def build_parser() -> argparse.ArgumentParser:
