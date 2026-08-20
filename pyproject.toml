@@ -1,0 +1,69 @@
+# NeXgen Engine — pacchetto installabile.
+#
+# Il motore si può usare in due modi, e devono restare entrambi veri:
+#   - installato:  `uv tool install .` oppure `pipx install .`, e i comandi
+#                  arrivano dal packaging;
+#   - clonato:     il repo si usa dov'è, e i comandi arrivano dai launcher
+#                  che `nexgen_core.shims` genera.
+# La tabella dei nomi è una sola (`nexgen_core/shims.py`): gli entrypoint qui
+# sotto la rileggono invece di ridichiararla.
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "nexgen-engine"
+version = "2.0.0"
+description = "Tiene allineate le tue macchine e i tuoi assistenti da un'unica fonte."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { file = "LICENSE" }
+authors = [{ name = "Matteo Passeri" }]
+keywords = ["agents", "mcp", "automation", "knowledge-vault"]
+
+# Una sola dipendenza esterna, dichiarata. I manifest sono YAML perché li
+# scrive una persona; tutto il resto sta nella libreria standard.
+dependencies = ["PyYAML>=6.0,<7.0"]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0", "ruff>=0.6"]
+
+[project.urls]
+Homepage = "https://github.com/nexgen-engine/nexgen-engine"
+
+[project.scripts]
+# Il comando vero.
+nexgen = "nexgen_core.cli:main"
+
+# I nomi ereditati. Restano perché una macchina già installata li invoca per
+# percorso, e perché l'aggiornamento alla v2 lo esegue il `nexgen-update`
+# della versione precedente: se spariscono, l'aggiornamento si ferma a metà.
+agent-sync = "nexgen_core.entrypoints:agent_sync"
+agent-doctor = "nexgen_core.entrypoints:agent_doctor"
+vault-push = "nexgen_core.entrypoints:vault_push"
+vault-groom = "nexgen_core.entrypoints:vault_groom"
+vault-map = "nexgen_core.entrypoints:vault_map"
+agent-now = "nexgen_core.entrypoints:agent_now"
+agent-open-folder = "nexgen_core.entrypoints:agent_open_folder"
+agent-chrome = "nexgen_core.entrypoints:agent_chrome"
+firecrawl-local = "nexgen_core.entrypoints:firecrawl_local"
+nexgen-update = "nexgen_core.entrypoints:nexgen_update"
+skills-sync = "nexgen_core.entrypoints:skills_sync"
+agent-skill = "nexgen_core.entrypoints:agent_skill"
+council = "nexgen_core.entrypoints:council"
+
+[tool.setuptools]
+package-dir = { "" = "03-INFRA/scripts" }
+
+[tool.setuptools.packages.find]
+where = ["03-INFRA/scripts"]
+include = ["nexgen_core*"]
+
+[tool.pytest.ini_options]
+testpaths = ["03-INFRA/agent-universal-layer/tests"]
+pythonpath = ["03-INFRA/scripts"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py311"

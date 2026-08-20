@@ -68,11 +68,25 @@ def expand_placeholders(text: str, context: dict[str, str] | None = None) -> str
 
 
 def load_mcp_manifest(path: Path) -> dict[str, Any]:
-    """Carica e valida mcp/manifest.yaml in modo tollerante."""
+    """Carica e valida mcp/manifest.yaml in modo tollerante.
+
+    ``retired_servers`` è il meccanismo di rimozione esplicito e cross-CLI: un
+    nome elencato lì sparisce dai connettori attivi restituiti, così ogni
+    consumatore (il renderer, la sorveglianza dipendenze) lo vede una volta
+    sola. Un nome presente sia fra i ritirati sia fra i server attivi è un
+    errore del manifest: la voce attiva viene saltata con un avviso, il
+    documento non viene mai rifiutato (invariante 8).
+    """
     raw = _load_yaml(path, "Manifest MCP")
     servers = raw.get("servers", {})
     if not isinstance(servers, dict):
         raise ConfigError(f"{path}: 'servers' deve essere una mappa di connettori")
+
+    retired_raw = raw.get("retired_servers", [])
+    if not isinstance(retired_raw, list):
+        logger.warning("'retired_servers' in %s deve essere una lista, ignorato", path)
+        retired_raw = []
+    retired_servers = {str(name) for name in retired_raw if str(name).strip()}
 
     validated_servers: dict[str, dict[str, Any]] = {}
     for name, srv in servers.items():
@@ -87,11 +101,19 @@ def load_mcp_manifest(path: Path) -> dict[str, Any]:
             logger.warning("Connettore '%s' non specifica né 'command' né 'url', voce saltata", name)
             continue
 
+        if str(name) in retired_servers:
+            logger.warning(
+                "Connettore '%s' in %s è sia attivo che ritirato: manifest inconsistente, "
+                "salto la voce attiva (resta ritirato)", name, path,
+            )
+            continue
+
         validated_servers[str(name)] = srv
 
     return {
         "schema_version": raw.get("schema_version", 1),
         "servers": validated_servers,
+        "retired_servers": retired_servers,
         "hooks": raw.get("hooks", []),
         "raw": raw,
     }

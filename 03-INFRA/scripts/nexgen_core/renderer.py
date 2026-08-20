@@ -84,6 +84,20 @@ class McpRenderer:
                 return candidate
         return xdg_candidates[0]
 
+    def retired_server_names(self) -> set[str]:
+        """I nomi dei connettori ritirati: il meccanismo di rimozione esplicito.
+
+        `load_mcp_manifest` esclude già questi nomi dai server attivi, ma le
+        tre CLI che preservano additivamente i server live esistenti (Claude,
+        Antigravity, OpenCode) non li toglierebbero mai da sole: un connettore
+        ritirato deve sparire da ogni configurazione resa, non solo mancare
+        nelle nuove. Rimuoverlo non è un guasto e non va riportato come tale.
+        """
+        if not self.manifest_path.is_file():
+            return set()
+        data = load_mcp_manifest(self.manifest_path)
+        return set(data.get("retired_servers", set()))
+
     def load_resolved_servers(self, cli_target: str) -> dict[str, dict[str, Any]]:
         """Carica i server MCP risolti e filtrati per una specifica CLI."""
         if not self.manifest_path.is_file():

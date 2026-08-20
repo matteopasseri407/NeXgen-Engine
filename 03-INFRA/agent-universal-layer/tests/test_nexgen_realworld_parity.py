@@ -27,23 +27,20 @@ from nexgen_core.updater import EngineUpdater
 
 def test_a1_shebang_on_all_entrypoints():
     """A1: Tutti i moduli eseguibili devono avere shebang #!/usr/bin/env python3 a riga 1."""
-    targets = [
-        SCRIPTS_DIR / "nexgen_core" / "cli.py",
-        SCRIPTS_DIR / "nexgen_core" / "doctor.py",
-        SCRIPTS_DIR / "nexgen_core" / "publisher.py",
-        SCRIPTS_DIR / "nexgen_core" / "skills.py",
-        SCRIPTS_DIR / "nexgen_core" / "tools" / "now.py",
-        SCRIPTS_DIR / "nexgen_core" / "tools" / "chrome.py",
-        SCRIPTS_DIR / "nexgen_core" / "tools" / "firecrawl.py",
-        SCRIPTS_DIR / "nexgen_core" / "tools" / "open_folder.py",
-        SCRIPTS_DIR / "agent_sync.py",
-        SCRIPTS_DIR / "skills-sync.py",
-        SCRIPTS_DIR / "agent-skill.py",
+    # L'invariante non è "questi undici file esistono": è che ogni modulo
+    # eseguibile per conto suo si dichiari tale. L'elenco si deriva dal codice,
+    # così una riorganizzazione legittima non rompe il test.
+    entrypoints = [
+        f for f in (SCRIPTS_DIR / "nexgen_core").rglob("*.py")
+        if "__pycache__" not in f.parts
+        and 'if __name__ == "__main__":' in f.read_text(encoding="utf-8")
     ]
-    for py_file in targets:
-        assert py_file.is_file(), f"File non trovato: {py_file}"
+    assert entrypoints, "nessun entrypoint trovato: il rilevamento è rotto"
+    for py_file in entrypoints:
         first_line = py_file.read_text(encoding="utf-8").splitlines()[0]
-        assert first_line.startswith("#!/usr/bin/env python"), f"{py_file.name} manca di shebang: {first_line}"
+        assert first_line.startswith("#!/usr/bin/env python"), (
+            f"{py_file.relative_to(SCRIPTS_DIR)} è eseguibile ma non ha shebang: {first_line}"
+        )
 
 
 def test_a3_a7_skills_no_traceback_and_safe_usage(tmp_path: Path, capsys):

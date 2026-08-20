@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 """CLI del renderer MCP per il v2: write/revert/reset/adopt.
 
 Port fedele delle funzioni di mcp/render.py della release (che resta come

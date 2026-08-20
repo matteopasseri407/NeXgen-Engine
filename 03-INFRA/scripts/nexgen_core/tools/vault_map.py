@@ -209,13 +209,13 @@ def scan(vault: Path) -> dict:
     }
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="deterministic structural map of a Markdown vault (read-only)")
     parser.add_argument("--vault", required=True, help="vault root directory")
     parser.add_argument("--json", action="store_true", help="full machine-readable output")
     parser.add_argument("--check", action="store_true", help="one summary line + broken list; always exit 0")
     parser.add_argument("--top", type=int, default=10, help="hubs to show in the human report")
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
     vault = Path(args.vault).expanduser()
     if not vault.is_dir():

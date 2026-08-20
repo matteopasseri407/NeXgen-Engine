@@ -1,0 +1,15 @@
+[console_scripts]
+agent-chrome = nexgen_core.entrypoints:agent_chrome
+agent-doctor = nexgen_core.entrypoints:agent_doctor
+agent-now = nexgen_core.entrypoints:agent_now
+agent-open-folder = nexgen_core.entrypoints:agent_open_folder
+agent-skill = nexgen_core.entrypoints:agent_skill
+agent-sync = nexgen_core.entrypoints:agent_sync
+council = nexgen_core.entrypoints:council
+firecrawl-local = nexgen_core.entrypoints:firecrawl_local
+nexgen = nexgen_core.cli:main
+nexgen-update = nexgen_core.entrypoints:nexgen_update
+skills-sync = nexgen_core.entrypoints:skills_sync
+vault-groom = nexgen_core.entrypoints:vault_groom
+vault-map = nexgen_core.entrypoints:vault_map
+vault-push = nexgen_core.entrypoints:vault_push

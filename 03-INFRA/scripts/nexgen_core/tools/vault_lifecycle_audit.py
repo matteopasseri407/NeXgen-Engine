@@ -214,13 +214,13 @@ def print_section(title: str, rows: list[str], limit: int) -> None:
         print(f"... +{remaining} more")
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Read-only KnowledgeVault lifecycle audit.")
     parser.add_argument("--today", default=date.today().isoformat(), help="YYYY-MM-DD, defaults to today.")
     parser.add_argument("--stale-days", type=int, default=60)
     parser.add_argument("--large-lines", type=int, default=300)
     parser.add_argument("--limit", type=int, default=40)
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
     today = datetime.strptime(args.today, "%Y-%m-%d").date()
     notes = iter_notes()
