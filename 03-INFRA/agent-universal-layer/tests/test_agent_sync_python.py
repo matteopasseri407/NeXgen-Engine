@@ -2806,6 +2806,7 @@ def test_liveness_is_not_frozen_by_a_problem_that_is_already_known(sandbox, monk
     assert not sent, "the guard is completing; a known problem is a different message"
 
 
+@pytest.mark.skipif(os.name == "nt", reason="systemd units are Linux-only; the Windows twin is the scheduled task")
 def test_the_heartbeat_unit_carries_the_path_the_updater_needs(sandbox, monkeypatch):
     """Inside the systemd user manager PATH has no ~/.local/bin, so the updater
     could not see agent-sync, agent-doctor or vault-push, decided it was a
@@ -2823,12 +2824,16 @@ def test_the_updater_is_found_by_name_not_by_an_extensionless_path(sandbox, monk
     extensionless file made the whole feature silently absent on that platform."""
     mod = _alert_env(sandbox, monkeypatch)
     calls: list[list[str]] = []
-    monkeypatch.setattr(mod, "resolve_cmd", lambda name: "C:\\bin\\nexgen-update.cmd")
-    monkeypatch.setattr(mod.Path, "exists", lambda self: True)
+    # A real file, not a blanket Path.exists patch: patching it globally also
+    # broke the environment resolution this function needs.
+    fake = sandbox.home / "bin" / "nexgen-update.cmd"
+    fake.parent.mkdir(parents=True, exist_ok=True)
+    fake.write_text("", encoding="utf-8")
+    monkeypatch.setattr(mod, "resolve_cmd", lambda name: str(fake))
     monkeypatch.setattr(mod, "_run_external",
                         lambda cmd, **k: calls.append(list(cmd)) or SimpleNamespace(
                             returncode=0, stdout="Current: v1.0.0\nLatest released target: v1.0.0\n", stderr=""))
 
     mod._auto_upgrade(mod.Env())
 
-    assert calls and calls[0][0] == "C:\\bin\\nexgen-update.cmd"
+    assert calls and calls[0][0] == str(fake)

@@ -135,8 +135,10 @@ def test_doctor_strict_finds_opencode_in_its_standard_user_install_path(sandbox)
         if entry != str(sandbox.home / ".opencode" / "bin")
     )
 
+    # --verbose because this asserts on a section heading, and the default
+    # report deliberately prints only what needs attention.
     result = subprocess.run(
-        ["bash", str(sandbox.scripts_dir / "agent-doctor.sh"), "--strict"],
+        ["bash", str(sandbox.scripts_dir / "agent-doctor.sh"), "--strict", "--verbose"],
         env=env,
         capture_output=True,
         text=True,

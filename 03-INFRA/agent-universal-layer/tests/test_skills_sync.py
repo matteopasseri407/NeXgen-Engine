@@ -2,8 +2,10 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import shutil
+import sys
 import subprocess
 from pathlib import Path
 from types import SimpleNamespace
@@ -821,20 +823,24 @@ def _installer_skill(sandbox, monkeypatch, tmp_path, *, pinned: str, installed: 
             f"---\nname: plugged-in\ndescription: x\nversion: {installed}\n---\n\nbody\n",
             encoding="utf-8",
         )
-    fake = tmp_path / "fake-installer"
+    # A Python script run through sys.executable, not a shell script: the same
+    # test has to mean something on Windows, where #!/bin/sh is not a program.
+    fake = tmp_path / "fake_installer.py"
     fake.write_text(
-        "#!/bin/sh\n"
-        f'mkdir -p "$1/plugged-in"\n'
-        f'printf -- "---\\nname: plugged-in\\ndescription: x\\nversion: {pinned}\\n---\\n\\nbody\\n"'
-        f' > "$1/plugged-in/SKILL.md"\n',
+        "import pathlib, sys\n"
+        "root = pathlib.Path(sys.argv[1]) / 'plugged-in'\n"
+        "root.mkdir(parents=True, exist_ok=True)\n"
+        "(root / 'SKILL.md').write_text("
+        f"'---\\nname: plugged-in\\ndescription: x\\nversion: {pinned}\\n---\\n\\nbody\\n'"
+        ", encoding='utf-8')\n",
         encoding="utf-8",
     )
-    fake.chmod(0o755)
+    install = json.dumps([sys.executable, str(fake), str(sandbox.active_skills)])
     _write_manifest(
         sandbox,
         "skills:\n  plugged-in:\n    origin: installer\n"
         f"    version: '{pinned}'\n"
-        f"    install: ['{fake}', '{sandbox.active_skills}']\n"
+        f"    install: {install}\n"
         "    targets: [claude]\n    exposure: manual\n",
     )
     mod = load_skills_sync_module(sandbox)
