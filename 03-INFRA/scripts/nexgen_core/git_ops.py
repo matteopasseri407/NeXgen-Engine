@@ -94,6 +94,19 @@ def resolve_remotes(vault_data: Path) -> tuple[str, list[str]]:
     return auth_remote, mirrors
 
 
+def oldest_unpublished_commit_timestamp(repo_dir: Path, remote: str, branch: str) -> float | None:
+    """Timestamp Unix (commit time) del più vecchio commit non ancora
+    pubblicato su `remote`. None se non c'è nessun commit ahead, o se git
+    non riesce a determinarlo (branch/remote assenti, refname invalido)."""
+    res = run_git(repo_dir, "log", "--reverse", "-1", "--format=%ct", f"{remote}/{branch}..HEAD")
+    if res.returncode != 0:
+        return None
+    line = res.stdout.strip().splitlines()[0] if res.stdout.strip() else ""
+    if not line.isdigit():
+        return None
+    return float(line)
+
+
 def get_current_branch(repo_dir: Path) -> str:
     """Restituisce il nome del branch corrente o stringa vuota se detached."""
     r = run_git(repo_dir, "symbolic-ref", "--quiet", "--short", "HEAD")

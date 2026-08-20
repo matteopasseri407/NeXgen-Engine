@@ -352,3 +352,41 @@ def run_agent_doctor(sandbox: Sandbox, *args: str, timeout: int = 60,
         text=True,
         timeout=timeout,
     )
+
+
+# --- gate anti-fuga sulle fixture -------------------------------------------
+#
+# Viveva in tests/run.sh e nel suo gemello tests/run.ps1, due lanciatori che il
+# loro stesso commento dichiarava non canonici ("il runner vero è
+# `python -m pytest`") e che erano già in deriva fra loro: uno avvisava quando
+# saltava il controllo, l'altro lo saltava in silenzio.
+#
+# Vivendo qui, il controllo parte con `pytest` e basta, su ogni piattaforma,
+# senza un lanciatore da tenere in passo.
+
+def _leak_scan_paths() -> tuple[Path, Path, Path] | None:
+    here = Path(__file__).resolve().parent
+    scanner = here.parent / "leak-scan" / "leak_scan.py"
+    patterns = here.parent / "leak-scan" / "leak_patterns.yaml"
+    fixtures = here / "fixtures"
+    if scanner.is_file() and patterns.is_file() and fixtures.is_dir():
+        return scanner, patterns, fixtures
+    return None
+
+
+@pytest.fixture(scope="session", autouse=True)
+def fixtures_carry_no_leaks() -> None:
+    """Le fixture non devono contenere niente che non possa stare in pubblico.
+
+    È bloccante: una fixture che porta un segreto lo porta in ogni clone.
+    """
+    paths = _leak_scan_paths()
+    if paths is None:
+        pytest.skip("leak-scan non presente in questo albero")
+    scanner, patterns, fixtures = paths
+    res = subprocess.run(
+        [sys.executable, str(scanner), "--patterns", str(patterns), "--tree", str(fixtures)],
+        capture_output=True, text=True, check=False, timeout=120,
+    )
+    if res.returncode != 0:
+        pytest.fail(f"Le fixture contengono una fuga:\n{res.stdout}\n{res.stderr}")

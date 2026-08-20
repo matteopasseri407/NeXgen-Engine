@@ -86,16 +86,14 @@ jobs:
         # are always redacted in the output — this log is public.
         run: |
           set -euo pipefail
-          if [ "${{ github.event_name }}" = "pull_request" ]; then
-            RANGE="${{ github.event.pull_request.base.sha }}..${{ github.event.pull_request.head.sha }}"
-          else
-            BEFORE="${{ github.event.before }}"
-            if [ -z "$BEFORE" ] || [ "$BEFORE" = "0000000000000000000000000000000000000000" ]; then
-              RANGE="${{ github.sha }}"
-            else
-              RANGE="$BEFORE..${{ github.sha }}"
-            fi
-          fi
+          # Quale intervallo viene scansionato decide cosa il gate controlla:
+          # è una regola di sicurezza, e vive dove si può provare.
+          RANGE="$(python3 03-INFRA/scripts/nexgen_core/release.py scan-range \
+            --event "${{ github.event_name }}" \
+            --before "${{ github.event.before }}" \
+            --sha "${{ github.sha }}" \
+            --pr-base "${{ github.event.pull_request.base.sha }}" \
+            --pr-head "${{ github.event.pull_request.head.sha }}")"
           python3 03-INFRA/agent-universal-layer/leak-scan/leak_scan.py \
             --patterns 03-INFRA/agent-universal-layer/leak-scan/leak_patterns.yaml \
             --repo . \
