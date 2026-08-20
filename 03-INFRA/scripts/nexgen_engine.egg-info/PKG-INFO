@@ -185,16 +185,12 @@ The security model and reporting instructions are in [`SECURITY.md`](SECURITY.md
    cd ~/KnowledgeVault
    ```
    `bash install.sh --check` on Linux/Mac, or `.\install.ps1 -Check` from PowerShell on Windows. It checks prerequisites, verifies the vault scaffold, and lists which supported AI tools it finds on your machine. It writes nothing.
-2. Open `INIT.md` and paste it into a filesystem-capable CLI such as Claude Code, Codex, OpenCode, or Antigravity. A web chat cannot write files. The setup asks how many tools and machines you plan to use, whether you want Local-Only or Cloud-Server mode, and then writes `99-INDEX/USER-PROFILE.md`. If you already run CLIs configured with their own MCP servers, skills, or configs, Step 1.5 takes over that existing setup: it inventories what is there and lets you adopt it into the canonical source or start fresh.
+2. Open `INIT.md` and paste it into a filesystem-capable CLI such as Claude Code, Codex, OpenCode, or Antigravity. A web chat cannot write files. The setup asks how many tools and machines you plan to use, where the connectors should live (Local-Only, Local-Full, or Cloud-Server), and then writes `99-INDEX/USER-PROFILE.md`. If you already run CLIs configured with their own MCP servers, skills, or configs, Step 1.5 takes over that existing setup: it inventories what is there and lets you adopt it into the canonical source or start fresh.
 3. The agent mounts the MCP servers and skills for your chosen CLI(s), following the manifests in `03-INFRA/`.
-4. If you are using the MULTI profile, run `agent-sync apply` to propagate the canonical configuration.
-   The command reports `READY` only when the strict doctor finishes with `FAIL=0`.
-   If the files were installed but a CLI, credential, tunnel, or remote service is still missing, it reports `PARTIAL` and names the failed checks without undoing the usable base install.
-   Use `agent-sync apply --require-ready` in automation when `PARTIAL` must return a non-zero exit code.
-   That readiness check starts real sessions of the CLIs it finds on your PATH, which can reach their own network services and spend their quota — including a CLI you never chose to use. Export `NEXGEN_SKIP_LIVE_CONSUMER_PROBES=1` before the command to skip them; [`docs/what-gets-written.md`](docs/what-gets-written.md) lists exactly what runs.
-   On Windows, the first `apply` also adds the commands directory to the user PATH.
-   Open a new terminal afterwards so `agent-sync`, `agent-doctor`, `vault-groom`, and `vault-push` resolve as commands.
-5. Make a manual change, such as an extra MCP entry or an edited configuration file, and run `agent-doctor` again to see the difference reported.
+4. If you are using the MULTI profile, run `nexgen sync` to propagate the canonical configuration. The historical name `agent-sync apply` still works, as do all the other pre-v2 command names.
+   It prints each action it took and finishes with a success message, or a non-zero exit code if something blocked it — an unreachable git remote, a failed preflight check, or another sync already running.
+   Commands land in `~/.local/bin`; make sure that folder is on your `PATH` so `nexgen` and the legacy names resolve directly instead of through `python3 ...`.
+5. Make a manual change, such as an extra MCP entry or an edited configuration file, and run `nexgen doctor` (or the legacy `agent-doctor`) again to see the difference reported.
 
 ## Scope and limitations
 
@@ -208,17 +204,17 @@ GitHub pull requests, CI, release signing, and repository-level branch controls 
 
 NeXgen manages configuration through one canonical source, generated files, configuration checks, and separate write paths for different data types.
 It does not intercept tool calls at runtime.
-`agent-doctor` cannot block an otherwise valid-looking but incorrect argument, so runtime permissions and server-side validation remain responsible for that boundary.
+`nexgen doctor` cannot block an otherwise valid-looking but incorrect argument, so runtime permissions and server-side validation remain responsible for that boundary.
 
 ## Core concepts
 
-- **Configuration as code for AI tools.** Manifest files define tools, permissions, and behavior. The `agent-sync` command (backed by `nexgen_core`) generates the configuration required by each supported CLI through the renderer `nexgen_core/renderer.py`, which also provides `--revert` (undo a CLI's config from its own backup) and `--adopt` (read-only draft manifest entries for servers it finds outside the manifest).
+- **Configuration as code for AI tools.** Manifest files define tools, permissions, and behavior. The `nexgen sync` command (the historical name `agent-sync` still works) generates the configuration required by each supported CLI through the renderer `nexgen_core/renderer.py`, which also provides `--revert` (undo a CLI's config from its own backup) and `--adopt` (read-only draft manifest entries for servers it finds outside the manifest).
 - **Version-controlled memory.** The agents read and write Markdown files. Every change is stored in Git, can be reviewed with a diff, and can be reverted. Writes are compare-and-swap: whole-note, or per-section (`update_section`), so two agents editing different sections of the same note both land instead of colliding.
-- **Link hygiene as discipline.** A deterministic, stdlib-only structural map of the vault (`vault-map`: broken wikilinks with relocation hints, orphan notes, hubs) is wired into the flows rather than left as a periodic check: every memory write returns an advisory list of unresolved wikilinks it just introduced (never blocking — deliberate forward links are legitimate), the grooming pass treats orphans and broken links as first-class cleanup candidates, `agent-doctor` keeps a warn-only backstop, and a read-only `map_overview` tool gives agents a token-bounded compass before broad tasks.
-- **Cross-CLI command skills.** Declare a skill once and it surfaces as an explicitly invocable command on every supported runtime (`/name`, `$name` on Codex). Seven starter commands ship with the engine and are installed for you on the first provisioning pass: `vault-doctor`, `vault-close`, `vault-save`, `vault-council`, `vault-groom`, `nexgen-update`, and `vault-map`. MULTI installs `nexgen-update` as a real terminal command too, with Linux and Windows launchers backed by the same updater. It discovers the normal `~/KnowledgeVault` data root without requiring exported variables, preserves private data commits in a single clone, and in a split install keeps the consumer fast-forward-only while advancing an existing private engine pin through `vault-push`. Want none of the chat skills? Empty your `skills.manifest.yaml` (`skills: {}`) and it stays empty. The engine only ever creates that file, never rewrites it.
-- **Vault grooming, optional and manual.** `vault-groom` uses an LLM and a grooming playbook to flag stale, duplicate, or disconnected notes. A normal run and `preview` are read-only. `apply` shows the proposed changes and requires an explicit `yes` before writing in a disposable clone with no remote. An audit compares the result with the approved changes before promotion. If the audit fails, the original vault is left untouched. An optional n8n workflow sends a reminder every 14 days, but it never runs grooming unattended.
-- **AI Council, Beta.** The local orchestrator `council.py` coordinates multiple models for brainstorming and relay tasks. It works from a local `seats.yaml` by itself. If you add the public [LLM Model Routing Governor](https://github.com/matteopasseri407/llm-model-routing-governor), Council reads its per-role proposals while keeping model and CLI identity separate. Claude seats can enter those proposals through explicit model selection. At invocation time, Council checks Claude's returned `modelUsage` value and stops if the CLI used a different model. Every invocation still requires an explicit human choice. See [`docs/council.md`](docs/council.md).
-- **Configuration checks.** In MULTI profile, `agent-doctor` runs more than 30 read-only checks against the live configuration, vault wiring, skills, and secrets handling. It reports `pass`, `warn`, or `fail` for each check and returns a non-zero exit code when it finds an error. In MINIMAL, a single tool on a single machine is checked directly and no doctor is installed.
+- **Link hygiene as discipline.** A deterministic, stdlib-only structural map of the vault (`nexgen vault map`, historical name `vault-map`: broken wikilinks with relocation hints, orphan notes, hubs) is wired into the flows rather than left as a periodic check: every memory write returns an advisory list of unresolved wikilinks it just introduced (never blocking — deliberate forward links are legitimate), the grooming pass treats orphans and broken links as first-class cleanup candidates, `nexgen doctor` keeps a warn-only backstop, and a read-only `map_overview` tool gives agents a token-bounded compass before broad tasks.
+- **Cross-CLI command skills.** Declare a skill once and it surfaces as an explicitly invocable command on every supported runtime (`/name`, `$name` on Codex). Seven starter commands ship with the engine and are installed for you on the first provisioning pass: `nexgen-doctor`, `vault-close`, `vault-save`, `nexgen-council`, `vault-groom`, `nexgen-update`, and `vault-map`. Their earlier names (`vault-doctor`, `vault-council`, `vault-update`) still resolve, kept as deprecated aliases. MULTI installs `nexgen-update` as a real terminal command too, with Linux and Windows launchers backed by the same updater. It discovers the normal `~/KnowledgeVault` data root without requiring exported variables, preserves private data commits in a single clone, and in a split install keeps the consumer fast-forward-only while advancing an existing private engine pin through `nexgen vault push` (historical name `vault-push`). Want none of the chat skills? Empty your `skills.manifest.yaml` (`skills: {}`) and it stays empty. The engine never creates or rewrites that file on its own — it is seeded once from `skills.manifest.yaml.example` during setup, and left alone from then on; if it is missing, `nexgen sync` silently treats the skill set as empty instead of recreating it.
+- **Vault grooming, optional and manual.** `nexgen vault groom` (historical name `vault-groom`) uses an LLM and a grooming playbook to flag stale, duplicate, or disconnected notes. A normal run and `preview` are read-only. `apply` shows the proposed changes and requires an explicit `yes` before writing in a disposable clone with no remote. An audit compares the result with the approved changes before promotion. If the audit fails, the original vault is left untouched. An optional n8n workflow sends a reminder every 14 days, but it never runs grooming unattended.
+- **AI Council, Beta.** `nexgen council` (historical name `council`) coordinates multiple models for brainstorming and relay tasks. It works from a local `seats.yaml` by itself. If you add the public [LLM Model Routing Governor](https://github.com/matteopasseri407/llm-model-routing-governor), Council reads its per-role proposals while keeping model and CLI identity separate. Claude seats can enter those proposals through explicit model selection. At invocation time, Council checks Claude's returned `modelUsage` value and stops if the CLI used a different model. Every invocation still requires an explicit human choice. See [`docs/council.md`](docs/council.md).
+- **Configuration checks.** In MULTI profile, `nexgen doctor` (historical name `agent-doctor`) runs a battery of read-only checks against the live configuration, vault wiring, skills, and secrets handling — git alignment, rendered MCP configs and their reachability, the skill manifest and its materialized library, native-memory boundaries, and canonical-instruction pointer hygiene. It reports `pass`, `warn`, or `fail` for each check and returns a non-zero exit code when it finds an error. In MINIMAL, a single tool on a single machine is checked directly and no doctor is installed.
 - **Cross-platform synchronization, optional.** In MULTI profile, the provisioner keeps generated files aligned across different machines, such as a Windows workstation and a Linux laptop. In MINIMAL, the provisioner is not installed.
 
 ## Architecture: The Three Planes
@@ -266,7 +262,7 @@ It is a solo project under a noncommercial license, Linux stable and Windows in 
 
 | Directory | Purpose |
 |---|---|
-| `03-INFRA/` | The engine. Contains the agent bootstrap rules (`AGENTS.md`), MCP server definitions, and validation scripts (`agent-sync`, `agent-doctor`). |
+| `03-INFRA/` | The engine. Contains the agent bootstrap rules (`AGENTS.md`), MCP server definitions, and the `nexgen` command (`sync`, `doctor`, and the rest). |
 | `99-INDEX/` | The identity layer. Tells agents about the current hardware, operating system, and deployment context (`USER-PROFILE.md`). |
 | `01-NOTES/` | Standard workspace for documentation. |
 | `02-PROJECTS/` | Project tracking and execution logs. |
@@ -274,8 +270,9 @@ It is a solo project under a noncommercial license, Linux stable and Windows in 
 
 ## Deployment modes
 
-1. **Local-Only.** Runs entirely on your machine. Relies on native CLI tools and local models. Good for testing and single-user setups.
-2. **Cloud-Server.** Connects to a self-hosted stack (like n8n for orchestration, Firecrawl for scraping, and dedicated OCR) deployed in **your own private environment** (VPS or local server) over an SSH tunnel. You maintain full ownership of your data; NeXgen does not provide or host these services for you.
+1. **Local-Only.** Runs entirely on your machine, with no connector services. Relies on native CLI tools and local models. Good for testing and single-user setups.
+2. **Local-Full.** The same connectors run in Docker on this machine — `nexgen stack up` starts them and wires the CLIs to `127.0.0.1`. No VPS, no SSH tunnel.
+3. **Cloud-Server.** Connects to a self-hosted stack (like n8n for orchestration, Firecrawl for scraping, and dedicated OCR) deployed in **your own private environment** (a VPS) over an SSH tunnel. You maintain full ownership of your data; NeXgen does not provide or host these services for you.
 
 The setup in `INIT.md` selects the mode that fits your environment.
 
@@ -283,10 +280,10 @@ The setup in `INIT.md` selects the mode that fits your environment.
 
 The framework fits two shapes of usage. The installer (`INIT.md`) asks and picks the right one.
 
-MINIMAL vs. MULTI is a descriptive label for what the guided installer sets up once, at install time — it decides whether the provisioner, doctor, and sync timer get installed at all. No script reads a stored "profile" value back afterward to change its behavior; the one field read at runtime from `99-INDEX/USER-PROFILE.md` is `Mode` (LOCAL-ONLY or CLOUD-SERVER), which `agent-doctor` checks.
+MINIMAL vs. MULTI is a descriptive label for what the guided installer sets up once, at install time — it decides whether the provisioner, doctor, and sync timer get installed at all. No script reads a stored "profile" value back afterward to change its behavior.
 
 - **MINIMAL.** One CLI on one machine, such as Claude Code on a laptop or [OpenCode](https://opencode.ai) in a DeepSeek-based setup. You get the knowledge vault, bootstrap rules, optional skills, and a defined path for writing memory. There is no provisioner, scheduled doctor, or cross-machine synchronization. Add the MCP servers and skills you want directly to the CLI. This profile is intended for one user and one machine.
-- **MULTI.** Two or more CLIs and/or two or more machines. The unified provisioner (`agent-sync`, backed by `nexgen_core`), the doctor, and the healthcheck come online and keep every CLI and machine aligned to the canonical source in the vault. Best for a workstation + laptop setup, or for running multiple CLIs side by side.
+- **MULTI.** Two or more CLIs and/or two or more machines. The unified provisioner (`nexgen sync`, historical name `agent-sync`), the doctor, and the healthcheck come online and keep every CLI and machine aligned to the canonical source in the vault. Best for a workstation + laptop setup, or for running multiple CLIs side by side.
 
 MULTI propagation is a locked, fail-closed transaction. The pull must prove the
 data fresh against one authoritative remote before runtime files are regenerated;
@@ -309,17 +306,18 @@ You don't need to fill out configuration files manually.
 3. Paste its contents into a **filesystem-capable agent CLI** (Claude Code, Codex, OpenCode, Antigravity) opened in this folder, not a plain web chat (claude.ai / gemini), which cannot write files.
 4. The agent will ask how many CLIs and machines you have, your hardware, and your deployment mode, then configure the vault automatically.
 
-To see the setup verify itself, edit a generated file by hand afterward and run `agent-doctor`; see "Demo path" step 5 for what it reports.
+To see the setup verify itself, edit a generated file by hand afterward and run `nexgen doctor` (or the legacy `agent-doctor`); see "Demo path" step 5 for what it reports.
 
 If you prefer fewer setup questions, use `AI-INSTALLER.md` instead of `INIT.md`. It follows the same process with only the required inputs.
+
+The engine is also pip-installable from a checked-out copy of this repository: `pipx install .` or `uv tool install .` from the repo root installs `nexgen` (and every legacy command name) as a real package entry point, no launcher scripts needed. The clone-and-run path above still works too — pick either one.
 
 ## Prerequisites
 
 - Git
-- Python 3.13+ (the latest stable Python line) with PyYAML (`pip install pyyaml`)
+- Python 3.11+ with PyYAML (`pip install pyyaml`)
 - Node.js (for `npx`, needed if you mount MCP servers or external skills)
 - Optional: [OpenCode](https://opencode.ai) as one of the supported CLIs
-- `jq` and `curl` on Linux/Mac (only needed for the MULTI profile sync and health scripts)
 
 ## Platform status
 
@@ -392,16 +390,13 @@ La postura di sicurezza e le istruzioni per segnalare problemi sono in [`SECURIT
    `bash install.sh --check` su Linux o macOS, oppure `.\install.ps1 -Check` da PowerShell su Windows. Il comando controlla i prerequisiti, verifica la struttura del vault e mostra quali strumenti AI supportati trova. Non modifica nulla.
 2. Apri `INIT.md` e incollalo in una CLI capace di modificare file, come Claude Code, Codex, OpenCode o Antigravity.
    Una chat web non può modificare il repository.
-   La procedura chiede quanti strumenti e quante macchine vuoi usare, oltre alla modalità Local-Only o Cloud-Server, poi compila `99-INDEX/USER-PROFILE.md`.
+   La procedura chiede quanti strumenti e quante macchine vuoi usare, e dove devono vivere i connettori (Local-Only, Local-Full o Cloud-Server), poi compila `99-INDEX/USER-PROFILE.md`.
    Se usi già delle CLI configurate con server MCP, skill o config tue, lo Step 1.5 prende in carico il setup esistente, fa l'inventario di quello che c'è e ti fa scegliere se adottarlo nella fonte canonica oppure ripartire da zero.
 3. L'agente monta i server MCP e le skill per le CLI scelte, usando i manifest presenti in `03-INFRA/`.
-4. Se usi il profilo MULTI, cioè almeno due CLI o due macchine, esegui `agent-sync apply` per propagare la configurazione canonica.
-   Il comando dichiara `READY` soltanto quando il doctor rigoroso termina con `FAIL=0`.
-   Se i file sono installati ma manca ancora una CLI, una credenziale, un tunnel o un servizio remoto, dichiara `PARTIAL` e mostra i controlli falliti, senza annullare l'installazione di base già utilizzabile.
-   Nelle automazioni usa `agent-sync apply --require-ready` quando anche `PARTIAL` deve restituire un codice di errore.
-   Quel controllo di prontezza avvia sessioni vere delle CLI che trova nel PATH, che possono raggiungere i loro servizi di rete e consumarne la quota, anche di una CLI che non hai mai scelto di usare. Esporta `NEXGEN_SKIP_LIVE_CONSUMER_PROBES=1` prima del comando per non farle partire, il dettaglio di cosa viene lanciato è in [`docs/what-gets-written.md`](docs/what-gets-written.md).
-   Su Windows, il primo `apply` aggiunge anche la cartella dei comandi al PATH dell'utente, quindi dopo devi aprire un nuovo terminale per usare direttamente `agent-sync`, `agent-doctor`, `vault-groom` e `vault-push`.
-5. Modifica qualcosa fuori dal vault, per esempio una voce MCP o un file di configurazione, poi esegui di nuovo `agent-doctor`.
+4. Se usi il profilo MULTI, cioè almeno due CLI o due macchine, esegui `nexgen sync` per propagare la configurazione canonica. Il nome storico `agent-sync apply` funziona ancora, come tutti gli altri nomi precedenti alla v2.
+   Il comando stampa ogni azione svolta e termina con un messaggio di successo, oppure con un codice di uscita diverso da zero se qualcosa lo ha bloccato — un remote git irraggiungibile, un controllo di preflight fallito, o un altro sync già in corso.
+   I comandi vengono installati in `~/.local/bin`: verifica che quella cartella sia nel tuo `PATH` così `nexgen` e i nomi storici si risolvono direttamente invece che tramite `python3 ...`.
+5. Modifica qualcosa fuori dal vault, per esempio una voce MCP o un file di configurazione, poi esegui di nuovo `nexgen doctor` (o il vecchio `agent-doctor`).
    Vedrai il controllo delle differenze in azione.
 
 ## Cosa fa e cosa non fa
@@ -412,25 +407,25 @@ Parte dal presupposto che tu abbia già scelto gli agenti e gli strumenti da usa
 
 NeXgen gestisce la configurazione attraverso una fonte canonica, file derivati generati automaticamente, controlli sulle differenze e percorsi separati per i diversi tipi di scrittura.
 Non si mette però tra l'agente e i suoi tool mentre lavorano.
-Per esempio, `agent-doctor` non può bloccare una chiamata che contiene argomenti plausibili ma sbagliati.
+Per esempio, `nexgen doctor` non può bloccare una chiamata che contiene argomenti plausibili ma sbagliati.
 I controlli a runtime spettano all'harness della CLI, con i suoi permessi e le richieste di conferma, e ai server MCP, che validano le richieste lato server, per esempio con il lock `expected_hash` di `vault-library`.
 
 ## Concetti base
 
 - **Infrastruttura come codice per gli agenti.** I manifest descrivono tool, permessi e regole di comportamento.
-  Il provisioner unificato `agent-sync` (basato su `nexgen_core`) genera il file di configurazione corretto per ogni CLI richiamando il renderer `nexgen_core/renderer.py`, che offre anche `--revert` (ripristino della config di una CLI dal suo backup) e `--adopt` (bozze read-only di voci manifest per i server trovati fuori dal manifest).
+  Il provisioner unificato `nexgen sync` (nome storico `agent-sync`, ancora funzionante) genera il file di configurazione corretto per ogni CLI richiamando il renderer `nexgen_core/renderer.py`, che offre anche `--revert` (ripristino della config di una CLI dal suo backup) e `--adopt` (bozze read-only di voci manifest per i server trovati fuori dal manifest).
 - **Memoria versionata in Git.** Gli agenti leggono e scrivono file Markdown.
   Ogni modifica entra nella storia del repository, si può controllare con un diff e si può annullare.
   Le scritture sono compare-and-swap: a nota intera oppure per singola sezione (`update_section`), così due agenti che modificano sezioni diverse della stessa nota atterrano entrambi invece di scontrarsi.
-- **Igiene dei collegamenti come disciplina.** Una mappa strutturale deterministica del vault (`vault-map`: wikilink rotti con suggerimento di ricollocazione, note orfane, hub) è cablata nei flussi invece che lasciata come controllo periodico: ogni scrittura di memoria restituisce l'elenco advisory dei wikilink irrisolti appena introdotti (mai bloccante — il link "in avanti" deliberato è legittimo), il grooming tratta orfani e link rotti come candidati di pulizia di prima classe, `agent-doctor` tiene un paracadute warn-only e il tool read-only `map_overview` dà agli agenti una bussola a budget di token prima dei task larghi.
+- **Igiene dei collegamenti come disciplina.** Una mappa strutturale deterministica del vault (`nexgen vault map`, nome storico `vault-map`: wikilink rotti con suggerimento di ricollocazione, note orfane, hub) è cablata nei flussi invece che lasciata come controllo periodico: ogni scrittura di memoria restituisce l'elenco advisory dei wikilink irrisolti appena introdotti (mai bloccante — il link "in avanti" deliberato è legittimo), il grooming tratta orfani e link rotti come candidati di pulizia di prima classe, `nexgen doctor` tiene un paracadute warn-only e il tool read-only `map_overview` dà agli agenti una bussola a budget di token prima dei task larghi.
 - **Comandi cross-CLI come skill.** Dichiari una skill una volta e diventa un comando invocabile su ogni runtime supportato (`/nome`, `$nome` su Codex).
-  Sette comandi starter vengono installati al primo giro di provisioning: `vault-doctor`, `vault-close`, `vault-save`, `vault-council`, `vault-groom`, `nexgen-update` e `vault-map`.
+  Sette comandi starter vengono installati al primo giro di provisioning: `nexgen-doctor`, `vault-close`, `vault-save`, `nexgen-council`, `vault-groom`, `nexgen-update` e `vault-map`. I nomi precedenti (`vault-doctor`, `vault-council`, `vault-update`) restano attivi come alias deprecati.
   Il profilo MULTI installa anche `nexgen-update` come vero comando da terminale, con launcher Linux e Windows sostenuti dallo stesso updater.
   Il comando riconosce il normale Vault in `~/KnowledgeVault` anche da un terminale nuovo, senza richiedere variabili esportate.
-  Nel clone unico conserva i commit dei dati privati; nell'installazione separata mantiene il consumer in fast-forward e aggiorna l'eventuale pin privato tramite `vault-push`.
+  Nel clone unico conserva i commit dei dati privati; nell'installazione separata mantiene il consumer in fast-forward e aggiorna l'eventuale pin privato tramite `nexgen vault push` (nome storico `vault-push`).
   Se non vuoi le skill da chat, svuota `skills.manifest.yaml` con `skills: {}`.
-  Il motore crea quel file soltanto quando manca e non lo riscrive mai.
-- **Grooming del vault, opzionale e manuale.** `vault-groom` usa un playbook e un LLM per trovare note obsolete, duplicate o scollegate.
+  Il motore non crea né riscrive mai quel file da solo: viene seminato una volta sola da `skills.manifest.yaml.example` durante il setup e poi lasciato stare; se manca, `nexgen sync` tratta in silenzio il set di skill come vuoto invece di ricrearlo.
+- **Grooming del vault, opzionale e manuale.** `nexgen vault groom` (nome storico `vault-groom`) usa un playbook e un LLM per trovare note obsolete, duplicate o scollegate.
   L'esecuzione semplice, così come `preview`, è sempre in sola lettura.
   Con `vault-groom apply`, lo strumento propone una tranche di modifiche, la mostra per intero e avvia la scrittura solo dopo che hai digitato `yes`.
   La scrittura avviene in un clone usa e getta del vault, senza remote configurato, quindi da quel clone non è possibile fare push.
@@ -438,7 +433,7 @@ I controlli a runtime spettano all'harness della CLI, con i suoi permessi e le r
   Se qualcosa non torna, il clone resta in quarantena e il vault originale non viene toccato.
   Puoi usare la CLI che hai già tra `claude`, `codex` e `agy`, tramite `GROOM_RUNNER`.
   Un workflow n8n opzionale ti ricorda ogni 14 giorni di eseguire il grooming, ma non avvia mai il lavoro al posto tuo.
-- **Consiglio AI deterministico, in Beta.** `council.py` è un orchestratore locale per coordinare più modelli in attività di brainstorming o relay.
+- **Consiglio AI deterministico, in Beta.** `nexgen council` (nome storico `council`) coordina più modelli in attività di brainstorming o relay.
   Le regole di passaggio sono scritte in Python, non affidate a un altro LLM.
   Funziona da solo con un `seats.yaml` locale.
   Se aggiungi il [LLM Model Routing Governor](https://github.com/matteopasseri407/llm-model-routing-governor), il Council legge le sue proposte per ruolo senza confondere lo stesso modello esposto da CLI diverse.
@@ -446,7 +441,7 @@ I controlli a runtime spettano all'harness della CLI, con i suoi permessi e le r
   Al momento dell'invocazione, il Council controlla il valore `modelUsage` restituito da Claude e si ferma se la CLI ha usato un modello diverso.
   Ogni invocazione richiede comunque una scelta umana esplicita.
   I dettagli sono in [`docs/council.md`](docs/council.md).
-- **Controllo delle differenze.** Nel profilo MULTI, `agent-doctor` esegue oltre 30 verifiche in sola lettura sulla configurazione delle CLI, sul collegamento al vault, sulle skill e sulla gestione dei segreti.
+- **Controllo delle differenze.** Nel profilo MULTI, `nexgen doctor` (nome storico `agent-doctor`) esegue una batteria di verifiche in sola lettura sulla configurazione delle CLI, sul collegamento al vault, sulle skill e sulla gestione dei segreti — allineamento Git, configurazioni MCP generate e loro raggiungibilità, manifest delle skill e libreria materializzata, confini della memoria nativa, igiene dei puntatori alle istruzioni canoniche.
   Per ogni voce mostra `pass`, `warn` o `fail` e restituisce un exit code diverso da zero se trova errori.
   Rileva configurazioni fuori posto, ma non blocca l'esecuzione degli agenti.
   Nel profilo MINIMAL non c'è un doctor, perché una sola CLI su una sola macchina si controlla direttamente.
@@ -507,7 +502,7 @@ NeXgen Engine sta dove queste due idee si incontrano, e aggiunge una cosa sul la
 
 | Directory | Scopo |
 |---|---|
-| `03-INFRA/` | Il motore, con le regole base (`AGENTS.md`), i manifest dei server MCP e gli script di validazione (`agent-sync`, `agent-doctor`). |
+| `03-INFRA/` | Il motore, con le regole base (`AGENTS.md`), i manifest dei server MCP e il comando `nexgen` (`sync`, `doctor` e il resto). |
 | `99-INDEX/` | Il livello di identità, con le informazioni su hardware, sistema operativo e contesto di deployment (`USER-PROFILE.md`). |
 | `01-NOTES/` | Lo spazio di lavoro per la documentazione. |
 | `02-PROJECTS/` | Il tracciamento dei progetti e delle attività. |
@@ -515,10 +510,11 @@ NeXgen Engine sta dove queste due idee si incontrano, e aggiunge una cosa sul la
 
 ## Modalità di deployment
 
-1. **Local-Only.** Tutto gira sulla tua macchina, usando i tool nativi delle CLI e, se vuoi, modelli locali.
+1. **Local-Only.** Tutto gira sulla tua macchina, senza servizi dei connettori, usando i tool nativi delle CLI e, se vuoi, modelli locali.
    È la modalità adatta per i test e per un setup personale.
-2. **Cloud-Server.** Il vault si collega a uno stack remoto, per esempio n8n per l'orchestrazione, Firecrawl per lo scraping e un servizio OCR dedicato.
-   Lo stack gira in un ambiente privato che installi e amministri tu, come una VPS o un server locale, e viene raggiunto tramite tunnel SSH.
+2. **Local-Full.** Gli stessi connettori girano in Docker su questa macchina — `nexgen stack up` li avvia e collega le CLI a `127.0.0.1`. Nessuna VPS, nessun tunnel SSH.
+3. **Cloud-Server.** Il vault si collega a uno stack remoto, per esempio n8n per l'orchestrazione, Firecrawl per lo scraping e un servizio OCR dedicato.
+   Lo stack gira in un ambiente privato che installi e amministri tu, una VPS, e viene raggiunto tramite tunnel SSH.
    NeXgen non fornisce né ospita questi servizi, quindi i dati restano sotto il tuo controllo.
 
 La procedura in `INIT.md` seleziona la modalità più adatta al tuo ambiente.
@@ -527,7 +523,7 @@ La procedura in `INIT.md` seleziona la modalità più adatta al tuo ambiente.
 
 Il setup guidato da `INIT.md` ti chiede quale dei due profili descrive meglio il tuo caso.
 
-MINIMAL e MULTI sono un'etichetta descrittiva di ciò che il setup guidato installa una volta per tutte, al momento dell'installazione: decide se il provisioner, il doctor e il timer di sync vengono installati oppure no. Nessuno script rilegge poi un valore "profilo" salvato per cambiare comportamento a runtime; l'unico campo letto a runtime da `99-INDEX/USER-PROFILE.md` e `Mode` (LOCAL-ONLY o CLOUD-SERVER), controllato da `agent-doctor`.
+MINIMAL e MULTI sono un'etichetta descrittiva di ciò che il setup guidato installa una volta per tutte, al momento dell'installazione: decide se il provisioner, il doctor e il timer di sync vengono installati oppure no. Nessuno script rilegge poi un valore "profilo" salvato per cambiare comportamento a runtime.
 
 - **MINIMAL.** Una sola CLI su una sola macchina, per esempio Claude Code sul portatile oppure [OpenCode](https://opencode.ai) in un setup basato su DeepSeek.
   Ottieni il vault versionato, le regole di bootstrap, le skill caricate quando servono e un percorso definito per la scrittura della memoria.
@@ -535,7 +531,7 @@ MINIMAL e MULTI sono un'etichetta descrittiva di ciò che il setup guidato insta
   Monti manualmente nella CLI i server MCP e le skill che vuoi usare.
   È il profilo pensato per una persona che usa una sola CLI su una sola macchina.
 - **MULTI.** Due o più CLI, oppure due o più macchine.
-  Il provisioner `agent-sync` (basato su `nexgen_core`), il doctor e l'healthcheck mantengono ogni ambiente allineato alla fonte canonica nel vault.
+  Il provisioner `nexgen sync` (nome storico `agent-sync`), il doctor e l'healthcheck mantengono ogni ambiente allineato alla fonte canonica nel vault.
   È il profilo adatto a una configurazione desktop più portatile o a chi usa più CLI in parallelo.
 
 Nel profilo MULTI, la propagazione avviene come una transazione con lock e si interrompe in modo sicuro se qualcosa non torna.
@@ -563,18 +559,19 @@ Non devi preparare a mano i file di configurazione.
 4. L'agente ti chiederà quante CLI e quante macchine vuoi usare, quali sono le caratteristiche del tuo computer e quale modalità di deployment preferisci.
    Poi configurerà il vault in automatico.
 
-Per vedere il setup verificarsi da solo, modifica a mano un file generato e lancia di nuovo `agent-doctor`. Vedi lo step 5 di "Percorso demo" per cosa segnala.
+Per vedere il setup verificarsi da solo, modifica a mano un file generato e lancia di nuovo `nexgen doctor` (o il vecchio `agent-doctor`). Vedi lo step 5 di "Percorso demo" per cosa segnala.
 
 Se vuoi ridurre al minimo le domande, usa `AI-INSTALLER.md` al posto di `INIT.md`.
 La procedura segue gli stessi passaggi e chiede solo le informazioni indispensabili.
 
+Il motore è anche installabile con pip a partire da una copia clonata di questo repository: `pipx install .` oppure `uv tool install .` dalla radice del repo installa `nexgen` (e ogni nome storico) come vero comando di pacchetto, senza bisogno degli script launcher. Il percorso clona-e-lancia sopra resta comunque valido: scegli quello che preferisci.
+
 ## Prerequisiti
 
 - Git.
-- Python 3.13 o superiore (l'ultima linea stabile) con PyYAML, installabile con `pip install pyyaml`.
+- Python 3.11 o superiore, con PyYAML, installabile con `pip install pyyaml`.
 - Node.js, necessario per `npx` se vuoi montare server MCP o skill esterne.
 - [OpenCode](https://opencode.ai), opzionale, come una delle CLI supportate.
-- `jq` e `curl` su Linux o macOS, necessari solo per il sync e gli healthcheck del profilo MULTI.
 
 ## Stato per piattaforma
 

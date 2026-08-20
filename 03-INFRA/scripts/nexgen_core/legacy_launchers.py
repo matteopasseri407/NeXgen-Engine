@@ -115,6 +115,21 @@ def render(name: str, *, windows: bool) -> str:
     return _POSIX.format(name=name, verbs=spoken, args=args)
 
 
+def _normalised(text: str) -> str:
+    """Line endings do not count as a difference.
+
+    Git checks `.ps1` out with CRLF on every platform, by this repository's
+    own attributes. Comparing raw bytes would report every Windows launcher as
+    out of step forever.
+    """
+    return text.replace("\r\n", "\n")
+
+
+def matches(path: Path, content: str) -> bool:
+    """Is the launcher on disk the one the table describes?"""
+    return path.is_file() and _normalised(path.read_text(encoding="utf-8")) == _normalised(content)
+
+
 def expected_files(scripts_dir: Path) -> dict[Path, str]:
     """Every launcher that must exist, and exactly what it must contain."""
     out: dict[Path, str] = {}
@@ -128,7 +143,7 @@ def write_all(scripts_dir: Path) -> list[str]:
     """Writes the launchers, returning the ones that needed changing."""
     changed: list[str] = []
     for path, content in expected_files(scripts_dir).items():
-        if path.is_file() and path.read_text(encoding="utf-8") == content:
+        if matches(path, content):
             continue
         path.write_text(content, encoding="utf-8")
         if path.suffix == ".sh":
@@ -156,7 +171,7 @@ def main(argv: list[str] | None = None) -> int:
     stale = [
         path.name
         for path, content in expected_files(scripts_dir).items()
-        if not path.is_file() or path.read_text(encoding="utf-8") != content
+        if not matches(path, content)
     ]
     if stale:
         print("Out of step with the table: " + ", ".join(sorted(stale)), file=sys.stderr)

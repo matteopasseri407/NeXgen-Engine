@@ -116,12 +116,12 @@ def _preflight() -> int:
         else:
             checked.append(f"newer than {newest}")
 
-    from nexgen_core.legacy_launchers import expected_files
+    from nexgen_core.legacy_launchers import expected_files, matches
 
     stale = [
         path.name
         for path, content in expected_files(repo / "03-INFRA" / "scripts").items()
-        if not path.is_file() or path.read_text(encoding="utf-8") != content
+        if not matches(path, content)
     ]
     if stale:
         problems.append(

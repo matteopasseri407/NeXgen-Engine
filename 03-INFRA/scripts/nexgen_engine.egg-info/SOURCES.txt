@@ -11,9 +11,12 @@ pyproject.toml
 03-INFRA/scripts/nexgen_core/entrypoints.py
 03-INFRA/scripts/nexgen_core/git_ops.py
 03-INFRA/scripts/nexgen_core/guard.py
+03-INFRA/scripts/nexgen_core/i18n.py
 03-INFRA/scripts/nexgen_core/jsonc.py
+03-INFRA/scripts/nexgen_core/legacy_launchers.py
 03-INFRA/scripts/nexgen_core/lock.py
 03-INFRA/scripts/nexgen_core/megaphone.py
+03-INFRA/scripts/nexgen_core/notify.py
 03-INFRA/scripts/nexgen_core/paths.py
 03-INFRA/scripts/nexgen_core/publisher.py
 03-INFRA/scripts/nexgen_core/release.py
@@ -39,6 +42,8 @@ pyproject.toml
 03-INFRA/scripts/nexgen_core/cli/stack_cmds.py
 03-INFRA/scripts/nexgen_core/cli/tool_cmds.py
 03-INFRA/scripts/nexgen_core/cli/vault_cmds.py
+03-INFRA/scripts/nexgen_core/locales/__init__.py
+03-INFRA/scripts/nexgen_core/locales/it.py
 03-INFRA/scripts/nexgen_core/runtimes/__init__.py
 03-INFRA/scripts/nexgen_core/runtimes/antigravity.py
 03-INFRA/scripts/nexgen_core/runtimes/base.py
