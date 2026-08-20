@@ -88,6 +88,13 @@ UL = VAULT / "03-INFRA" / "agent-universal-layer"
 MANIFEST = UL / "skills" / "skills.manifest.yaml"
 USER_PROFILE = VAULT / "99-INDEX" / "USER-PROFILE.md"
 
+# `origin: engine` reads the product's own skills straight from the installed
+# engine, so this script now does resolve AGENT_ENGINE_ROOT (the note above
+# predates that origin). Falling back to the documented default keeps a plain
+# install working without the variable set.
+_engine = Path(os.environ.get("AGENT_ENGINE_ROOT") or str(HOME / ".nexgen-engine" / "03-INFRA"))
+ENGINE_SKILLS = _engine / "agent-universal-layer" / "skills"
+
 LIBRARY = HOME / ".agents" / "skill-library"
 ACTIVE = HOME / ".agents" / "skills"
 LEGACY = LIBRARY / "legacy"
@@ -675,7 +682,7 @@ def load_skills_manifest() -> dict | None:
             fail(f"invalid skills manifest: skill '{name}' must be a mapping")
             return None
         origin = spec.get("origin")
-        if origin not in {"vault", "github"}:
+        if origin not in {"vault", "engine", "github"}:
             fail(f"invalid skills manifest: skill '{name}' has unsupported origin {origin!r}")
             return None
         targets = spec.get("targets", [])
@@ -727,9 +734,11 @@ def validate_manifest_sources(skills: dict) -> bool:
     """
     healthy = True
     for name, spec in skills.items():
-        if spec.get("origin") != "vault":
+        origin = spec.get("origin")
+        if origin not in {"vault", "engine"}:
             continue
-        source = UL / "skills" / name / "SKILL.md"
+        root = ENGINE_SKILLS if origin == "engine" else UL / "skills"
+        source = root / name / "SKILL.md"
         if source.is_file():
             continue
         fail(f"library/{name}: missing canonical Vault source {source}")
@@ -826,10 +835,12 @@ def main() -> int:
             continue
 
         # 1) materialize in the non-discovered library
-        if origin == "vault":
-            source = UL / "skills" / name
+        if origin in {"vault", "engine"}:
+            root = ENGINE_SKILLS if origin == "engine" else UL / "skills"
+            source = root / name
             if not (source / "SKILL.md").is_file():
-                fail(f"library/{name}: missing canonical Vault source {source / 'SKILL.md'}")
+                where = "engine" if origin == "engine" else "Vault"
+                fail(f"library/{name}: missing canonical {where} source {source / 'SKILL.md'}")
                 continue
             ensure_link(source, LIBRARY / name, apply, f"library/{name}")
         elif origin == "github":

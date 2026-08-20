@@ -1988,9 +1988,10 @@ def seed_starter_skills(env: Env) -> None:
     engine that overwrites user data:
       - only when the manifest is absent -- an existing one is never touched,
         so emptying it (`skills: {}`) is a permanent opt-out;
-      - only when the bodies it declares actually resolve under THIS data root,
-        so a split engine/data topology gets nothing rather than a manifest
-        pointing at skills that live in the other clone.
+      - only when the bodies it declares actually resolve, each under the root
+        its origin names: `origin: engine` resolves in the engine clone (that
+        is the point of that origin, and it makes a split topology work instead
+        of being a reason to skip), `origin: vault` under THIS data root.
     """
     target = env.instance_ul / "skills" / "skills.manifest.yaml"
     if target.exists():
@@ -2003,17 +2004,17 @@ def seed_starter_skills(env: Env) -> None:
     except (OSError, yaml.YAMLError) as exc:
         env.log(f"skills: cannot read the shipped starter manifest ({exc}) — not seeding")
         return
-    bodies = env.instance_ul / "skills"
+    roots = {"vault": env.instance_ul / "skills", "engine": env.ul / "skills"}
     absent = sorted(
         name
         for name, spec in declared.items()
         if isinstance(spec, dict)
-        and spec.get("origin") == "vault"
-        and not (bodies / str(name) / "SKILL.md").is_file()
+        and spec.get("origin") in roots
+        and not (roots[spec["origin"]] / str(name) / "SKILL.md").is_file()
     )
     if absent:
         env.log(
-            "skills: the engine's starter commands are not vendored in this data root "
+            "skills: the engine's starter commands do not resolve where their origin says "
             f"({', '.join(absent)}) — not seeding a manifest that would point at nothing"
         )
         return

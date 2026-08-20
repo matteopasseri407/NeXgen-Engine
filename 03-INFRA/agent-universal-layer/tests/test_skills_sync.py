@@ -745,3 +745,67 @@ def test_antigravity_target_warns_on_a_non_portable_skill_name(sandbox, monkeypa
     assert "not agent-skills portable" in out
     view = sandbox.home / ".gemini" / "antigravity-cli" / "skills" / "fake_skill_b"
     assert view.resolve() == (sandbox.skill_library / "fake_skill_b").resolve()
+
+
+def _write_manifest(sandbox, body: str) -> None:
+    (sandbox.skills_dir / "skills.manifest.yaml").write_text(body, encoding="utf-8")
+
+
+def _engine_skill(root: Path, name: str) -> None:
+    body = root / name
+    body.mkdir(parents=True)
+    (body / "SKILL.md").write_text(
+        f"---\nname: {name}\ndescription: shipped with the engine.\n---\n\nbody\n",
+        encoding="utf-8",
+    )
+
+
+def test_engine_origin_reads_the_installed_engine_and_keeps_no_copy_in_the_vault(
+    sandbox, monkeypatch, tmp_path
+):
+    """`origin: engine` is what makes drift impossible: the product's own skills
+    live in the engine and are never vendored into the user's data, so an engine
+    upgrade upgrades them and no stale second copy can exist to go behind."""
+    sb = sandbox
+    engine_skills = tmp_path / "engine" / "agent-universal-layer" / "skills"
+    _engine_skill(engine_skills, "engine-owned")
+    _write_manifest(
+        sb,
+        "skills:\n  engine-owned:\n    origin: engine\n"
+        "    targets: [claude]\n    exposure: manual\n",
+    )
+
+    mod = load_skills_sync_module(sb)
+    mod.ENGINE_SKILLS = engine_skills
+    monkeypatch.setattr(mod.sys, "argv", ["skills-sync.py", "--apply"])
+
+    assert mod.main() == 0
+    assert (sb.skill_library / "engine-owned" / "SKILL.md").is_file()
+    assert not (sb.skills_dir / "engine-owned").exists()
+
+
+def test_engine_origin_fails_loudly_when_the_engine_copy_is_absent(
+    sandbox, monkeypatch, tmp_path, capsys
+):
+    """A missing engine source must be a hard failure, not a silent skip: the
+    command would simply vanish from every CLI without anyone being told.
+
+    The message is asserted, not just the exit code: an engine that rejects
+    `origin: engine` outright also exits non-zero, so the code alone would pass
+    for the wrong reason and prove nothing about this behaviour."""
+    sb = sandbox
+    _write_manifest(
+        sb,
+        "skills:\n  engine-owned:\n    origin: engine\n"
+        "    targets: [claude]\n    exposure: manual\n",
+    )
+
+    mod = load_skills_sync_module(sb)
+    missing = tmp_path / "engine-without-skills"
+    mod.ENGINE_SKILLS = missing
+    monkeypatch.setattr(mod.sys, "argv", ["skills-sync.py", "--apply"])
+
+    assert mod.main() != 0
+    reported = capsys.readouterr().out
+    assert "missing canonical engine source" in reported
+    assert str(missing) in reported
