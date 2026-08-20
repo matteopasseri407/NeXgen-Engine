@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Determinazione deterministica di data, ora e sincronizzazione orologio per NeXgen Engine v2.
+"""Deterministic date, time, and clock-sync detection for NeXgen Engine v2.
 
-Preserva al 100% il contratto a 13 campi di agent-now:
+Preserves agent-now's 13-field contract 100%:
 - local_time, utc_time, timezone, epoch_seconds, date, time, year, weekday
-- ntp_synchronized, ntp_enabled, can_ntp, local_rtc (derivati da timedatectl su Linux e W32Time su Windows)
+- ntp_synchronized, ntp_enabled, can_ntp, local_rtc (derived from timedatectl on Linux and W32Time on Windows)
 """
 from __future__ import annotations
 
@@ -14,9 +14,11 @@ import subprocess
 import sys
 from typing import Any
 
+from nexgen_core.i18n import t
+
 
 def get_ntp_status_linux() -> dict[str, str]:
-    """Interroga timedatectl su Linux per verificare la sincronizzazione NTP."""
+    """Queries timedatectl on Linux to check NTP synchronization."""
     res = {
         "timezone": "",
         "ntp_synchronized": "unknown",
@@ -53,7 +55,7 @@ def get_ntp_status_linux() -> dict[str, str]:
 
 
 def get_ntp_status_windows() -> dict[str, str]:
-    """Verifica lo stato W32Time su Windows."""
+    """Checks W32Time status on Windows."""
     res = {
         "timezone": "",
         "ntp_synchronized": "unknown",
@@ -81,11 +83,11 @@ def get_ntp_status_windows() -> dict[str, str]:
 
 
 def get_agent_now_data() -> dict[str, Any]:
-    """Genera il dizionario completo a 13 campi."""
+    """Generates the complete 13-field dictionary."""
     now_local = datetime.datetime.now().astimezone()
     now_utc = now_local.astimezone(datetime.UTC)
 
-    # Informazioni NTP e Timezone
+    # NTP and timezone info
     if sys.platform == "win32":
         ntp_info = get_ntp_status_windows()
     else:
@@ -93,11 +95,11 @@ def get_agent_now_data() -> dict[str, Any]:
 
     tz_name = ntp_info.get("timezone") or now_local.tzname() or "UTC"
 
-    # Formattazione ISO compatibile con date -Is
+    # ISO formatting compatible with date -Is
     local_iso = now_local.isoformat(timespec="seconds")
     utc_iso = now_utc.strftime("%Y-%m-%dT%H:%M:%S+00:00")
 
-    # Formattazione data e ora
+    # Date and time formatting
     local_date = now_local.strftime("%Y-%m-%d")
     local_time = now_local.strftime("%H:%M:%S%z")
     weekday = now_local.strftime("%A")
@@ -120,11 +122,18 @@ def get_agent_now_data() -> dict[str, Any]:
 
 
 def format_human(data: dict[str, Any]) -> str:
-    return (
-        f"Local: {data['local_time']}\n"
-        f"UTC:   {data['utc_time']}\n"
-        f"TZ:    {data['timezone']}\n"
-        f"NTP:   synchronized={data['ntp_synchronized']} enabled={data['ntp_enabled']} can_ntp={data['can_ntp']} local_rtc={data['local_rtc']}"
+    return t(
+        "Local: {local_time}\n"
+        "UTC:   {utc_time}\n"
+        "TZ:    {timezone}\n"
+        "NTP:   synchronized={ntp_synchronized} enabled={ntp_enabled} can_ntp={can_ntp} local_rtc={local_rtc}",
+        local_time=data["local_time"],
+        utc_time=data["utc_time"],
+        timezone=data["timezone"],
+        ntp_synchronized=data["ntp_synchronized"],
+        ntp_enabled=data["ntp_enabled"],
+        can_ntp=data["can_ntp"],
+        local_rtc=data["local_rtc"],
     )
 
 
@@ -144,11 +153,11 @@ def format_shell(data: dict[str, Any]) -> str:
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Deterministic current date/time source for agents")
+    parser = argparse.ArgumentParser(description=t("Deterministic current date/time source for agents"))
     parser.add_argument("--format", choices=["json", "human", "shell"], default="json")
-    parser.add_argument("--json", action="store_true", help="Output in JSON")
-    parser.add_argument("--human", action="store_true", help="Output human-readable")
-    parser.add_argument("--shell", action="store_true", help="Output for shell eval")
+    parser.add_argument("--json", action="store_true", help=t("Output in JSON"))
+    parser.add_argument("--human", action="store_true", help=t("Output human-readable"))
+    parser.add_argument("--shell", action="store_true", help=t("Output for shell eval"))
 
     args = parser.parse_args(argv)
 

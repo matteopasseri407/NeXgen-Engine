@@ -1,10 +1,10 @@
-"""vault-groom: una passata di grooming del vault, orchestrata.
+"""vault-groom: one orchestrated grooming pass over the vault.
 
-`preview` (il default) è read-only e non scrive mai nulla. `apply` è il
-flusso guardato: propone (read-only), mostra la tranche, richiede "yes",
-esegue dentro un clone usa-e-getta senza `origin`, e promuove nel vault
-reale solo se l'audit (`audit.py`) è pulito. Le regole di sicurezza vivono
-in `gate.py`; questo modulo le mette in fila nell'ordine giusto.
+`preview` (the default) is read-only and never writes anything. `apply` is
+the guarded flow: propose (read-only), show the tranche, require "yes",
+execute inside a throwaway clone with no `origin`, and promote into the
+real vault only if the audit (`audit.py`) is clean. The safety rules live
+in `gate.py`; this module lines them up in the right order.
 """
 from __future__ import annotations
 
@@ -17,7 +17,8 @@ from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 
-from nexgen_core.paths import resolve_engine_root, resolve_vault_data
+from nexgen_core.i18n import t
+from nexgen_core.paths import resolve_engine_root, resolve_home, resolve_vault_data
 from nexgen_core.vault import audit, gate, prompts
 from nexgen_core.vault.git_utils import GitCommandError, git
 from nexgen_core.vault.runner import Runner, RunnerError, get_runner
@@ -33,30 +34,34 @@ RETIRED_MODES = {
     "guarded": "vault-groom: 'run'/'guarded' is retired -- use 'apply'.",
 }
 
-USAGE = """usage: vault-groom [preview|apply]
-
-  (default / preview)  read-only: proposes one grooming tranche and stops.
-                        Never prompts, never writes -- always safe to run.
-  apply                 the guarded flow: propose (read-only), show you the
-                        tranche, require a typed 'yes', then execute exactly
-                        that tranche inside a throwaway clone with no
-                        remote, and promote it into the real vault only if
-                        the audit afterward is clean.
-
-Environment:
-  GROOM_RUNNER       claude|codex|agy (default: claude)
-  GROOM_MODEL        model name passed to the runner (default: claude-sonnet-5)
-  GROOM_NOPUSH=1     after a clean apply, keep the promoted commits local
-                     (skip the auto-publish step)
-  GROOM_LOG          override the preview/propose-pass log path
-  GROOM_STATE_DIR    where clones and audit records land
-                     (default: ~/.local/state/vault-groom)
-  AGENT_VAULT_DATA / KNOWLEDGE_VAULT_PATH   where the vault lives
-"""
+def usage() -> str:
+    """Built lazily, never as a module-level constant: the reader's language
+    is only known once `t()` actually runs, not at import time."""
+    return t(
+        "usage: vault-groom [preview|apply]\n"
+        "\n"
+        "  (default / preview)  read-only: proposes one grooming tranche and stops.\n"
+        "                        Never prompts, never writes -- always safe to run.\n"
+        "  apply                 the guarded flow: propose (read-only), show you the\n"
+        "                        tranche, require a typed 'yes', then execute exactly\n"
+        "                        that tranche inside a throwaway clone with no\n"
+        "                        remote, and promote it into the real vault only if\n"
+        "                        the audit afterward is clean.\n"
+        "\n"
+        "Environment:\n"
+        "  GROOM_RUNNER       claude|codex|agy (default: claude)\n"
+        "  GROOM_MODEL        model name passed to the runner (default: claude-sonnet-5)\n"
+        "  GROOM_NOPUSH=1     after a clean apply, keep the promoted commits local\n"
+        "                     (skip the auto-publish step)\n"
+        "  GROOM_LOG          override the preview/propose-pass log path\n"
+        "  GROOM_STATE_DIR    where clones and audit records land\n"
+        "                     (default: ~/.local/state/vault-groom)\n"
+        "  AGENT_VAULT_DATA / KNOWLEDGE_VAULT_PATH   where the vault lives\n"
+    )
 
 
 def resolve_archive_root(vault: Path, playbook_rel: str = PLAYBOOK) -> str:
-    """Lo legge dal playbook del vault (riga `archive_root: <path>`)."""
+    """Reads it from the vault playbook (`archive_root: <path>` line)."""
     playbook_path = vault / playbook_rel
     if playbook_path.is_file():
         for line in playbook_path.read_text(encoding="utf-8").splitlines():
@@ -69,7 +74,7 @@ def resolve_archive_root(vault: Path, playbook_rel: str = PLAYBOOK) -> str:
 
 
 def make_log_path(suffix: str) -> Path:
-    """Un path di log non prevedibile (mkstemp, non un nome timestamp)."""
+    """An unpredictable log path (mkstemp, not a timestamp name)."""
     fd, name = tempfile.mkstemp(suffix=f"{suffix}.log", prefix="vault-groom-")
     os.close(fd)
     return Path(name)
@@ -78,14 +83,14 @@ def make_log_path(suffix: str) -> Path:
 def preview(
     *, vault: Path, runner: Runner, log_path: Path | None = None, output: Callable[[str], object] = print
 ) -> int:
-    """Il default: propone una tranche, la mostra, non scrive nulla."""
+    """The default: proposes a tranche, shows it, writes nothing."""
     prompt = prompts.build_propose_prompt(PLAYBOOK, str(vault))
     result = runner.run_readonly(prompt)
     log_path = log_path or make_log_path(".preview")
     log_path.write_text(result.text, encoding="utf-8")
     output(result.text)
     output("")
-    output(f"log: {log_path}")
+    output(t("log: {log_path}", log_path=log_path))
     return result.exit_code
 
 
@@ -101,7 +106,7 @@ def apply(
     input_func: Callable[[str], str] = input,
     output: Callable[[str], object] = print,
 ) -> int:
-    """Propone, mostra, conferma, e solo allora esegue -- dentro il clone."""
+    """Proposes, shows, confirms, and only then executes -- inside the clone."""
     propose_log = log_path or make_log_path(".propose")
     prompt = prompts.build_propose_prompt(PLAYBOOK, str(vault))
     proposal = runner.run_readonly(prompt)
@@ -109,14 +114,14 @@ def apply(
     tranche = proposal.text
 
     if not tranche.strip():
-        output("vault-groom: empty proposal, nothing to review -- aborting.")
+        output(t("vault-groom: empty proposal, nothing to review -- aborting."))
         return 1
 
     plan_record = gate.write_plan_record(state_dir, timestamp, tranche)
     tranche_hash = gate.hash_plan_record(plan_record)
 
     if not gate.confirm_tranche(tranche, tranche_hash, input_func=input_func, output=output):
-        output("vault-groom: cancelled, no changes to the vault.")
+        output(t("vault-groom: cancelled, no changes to the vault."))
         return 0
 
     try:
@@ -132,7 +137,7 @@ def apply(
     try:
         clone_dir = gate.prepare_clone(vault, state_dir, timestamp)
     except (subprocess.CalledProcessError, GitCommandError) as exc:
-        output(f"vault-groom: could not prepare the temp clone: {exc}")
+        output(t("vault-groom: could not prepare the temp clone: {error}", error=exc))
         return 1
 
     archive_root = resolve_archive_root(vault)
@@ -164,7 +169,7 @@ def apply(
     state_dir.mkdir(parents=True, exist_ok=True)
     record_path = state_dir / f"{timestamp}.json"
     record_path.write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8")
-    output(f"audit record: {record_path}")
+    output(t("audit record: {record_path}", record_path=record_path))
 
     return exit_code
 
@@ -174,24 +179,24 @@ def main(argv: list[str] | None = None) -> int:
     mode = args[0] if args else "preview"
 
     if mode in ("-h", "--help"):
-        print(USAGE)
+        print(usage())
         return 0
     if mode in RETIRED_MODES:
         print(RETIRED_MODES[mode], file=sys.stderr)
         return 2
     if mode not in ("preview", "apply"):
-        print(f"vault-groom: unknown mode '{mode}'\n\n{USAGE}", file=sys.stderr)
+        print(t("vault-groom: unknown mode '{mode}'\n\n{usage}", mode=mode, usage=usage()), file=sys.stderr)
         return 2
 
     vault = resolve_vault_data()
-    print(f"vault-groom: vault = {vault}", file=sys.stderr)
+    print(t("vault-groom: vault = {vault}", vault=vault), file=sys.stderr)
     if not vault.is_dir():
-        print(f"vault-groom: il vault non esiste o non e' una cartella: {vault}", file=sys.stderr)
+        print(t("vault-groom: the vault does not exist or is not a folder: {vault}", vault=vault), file=sys.stderr)
         return 3
 
     runner_name = os.environ.get("GROOM_RUNNER", DEFAULT_RUNNER)
     model = os.environ.get("GROOM_MODEL", DEFAULT_MODEL)
-    state_dir = Path(os.environ.get("GROOM_STATE_DIR") or Path.home() / ".local" / "state" / "vault-groom")
+    state_dir = Path(os.environ.get("GROOM_STATE_DIR") or resolve_home() / ".local" / "state" / "vault-groom")
     log_override = os.environ.get("GROOM_LOG")
     log_path = Path(log_override) if log_override else None
 

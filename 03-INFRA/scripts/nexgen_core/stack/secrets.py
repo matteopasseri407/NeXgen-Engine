@@ -12,6 +12,8 @@ import secrets as _secrets
 import stat
 from pathlib import Path
 
+from nexgen_core.paths import resolve_home
+
 
 def generate() -> str:
     """A new secret, the same shape as `openssl rand -hex 32`."""
@@ -76,7 +78,7 @@ def resolve_exports(exports: dict[str, str], port: int, env_values: dict[str, st
     """Expands a service's placeholders into the real values for the workstation."""
     resolved: dict[str, str] = {}
     for key, template in exports.items():
-        value = template.replace("{porta}", str(port))
+        value = template.replace("{port}", str(port))
         if value.startswith("{token:") and value.endswith("}"):
             token_name = value[len("{token:"):-1]
             token_value = env_values.get(token_name, "")
@@ -107,7 +109,7 @@ def write_workstation_env(path: Path, values: dict[str, str]) -> None:
 
 def workstation_env_path(home: Path | None = None) -> Path:
     """Where the connector variables end up on this machine."""
-    base = home or Path.home()
+    base = resolve_home(home)
     xdg = os.environ.get("XDG_CONFIG_HOME")
     root = Path(xdg) if xdg else base / ".config"
     return root / "environment.d" / "90-nexgen-stack.conf"

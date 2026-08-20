@@ -1,16 +1,16 @@
-"""L'interfaccia verso i runner LLM (claude/codex/agy) usati da vault-groom.
+"""The interface to the LLM runners (claude/codex/agy) used by vault-groom.
 
-Ogni runner CLI usa il proprio meccanismo di scoping verificato (allowlist
-di strumenti per claude, sandbox `-s` per codex, `--mode` per agy), non un
-set di flag condiviso -- quel dispatch invecchia in fretta, quindi vive
-dietro `Runner`: un oggetto per runner con `run_readonly(prompt)` e
-`run_write(prompt, workdir)`. Aggiungere un runner significa aggiungere una
-classe qui e registrarla in `_RUNNERS`, nient'altro.
+Each CLI runner uses its own verified scoping mechanism (a tool allowlist
+for claude, `-s` sandbox for codex, `--mode` for agy), not a shared set of
+flags -- that dispatch ages fast, so it lives behind `Runner`: one object
+per runner with `run_readonly(prompt)` and `run_write(prompt, workdir)`.
+Adding a runner means adding a class here and registering it in
+`_RUNNERS`, nothing more.
 
-`opencode` è riconosciuto ma rifiutato esplicitamente: non ha un flag di
-scoping per-invocazione (il suo modello di permessi vive in opencode.json,
-controllato una volta per progetto), quindi non c'è modo di garantire che
-la passata di sola lettura sia davvero read-only.
+`opencode` is recognized but explicitly rejected: it has no
+per-invocation scoping flag (its permission model lives in opencode.json,
+checked once per project), so there's no way to guarantee the read-only
+pass is actually read-only.
 """
 from __future__ import annotations
 
@@ -32,19 +32,19 @@ class RunResult:
 
 
 class RunnerError(RuntimeError):
-    """Base per gli errori di risoluzione/avvio di un runner."""
+    """Base class for runner resolution/launch errors."""
 
 
 class RunnerNotFoundError(RunnerError):
-    """Il comando del runner scelto non è sul PATH."""
+    """The chosen runner's command isn't on PATH."""
 
 
 class RunnerUnsupportedError(RunnerError):
-    """Il runner è riconosciuto ma non supportato oggi (opencode)."""
+    """The runner is recognized but not supported today (opencode)."""
 
 
 class RunnerUnknownError(RunnerError):
-    """GROOM_RUNNER non è uno dei nomi riconosciuti."""
+    """GROOM_RUNNER isn't one of the recognized names."""
 
 
 def _kill_process_group(proc: subprocess.Popen) -> None:
@@ -57,13 +57,13 @@ def _kill_process_group(proc: subprocess.Popen) -> None:
 def _run_streaming(
     cmd: list[str], *, cwd: Path | None, input_text: str | None, timeout: int
 ) -> RunResult:
-    """Lancia `cmd`, cattura stdout+stderr uniti, applica un timeout reale.
+    """Launches `cmd`, captures merged stdout+stderr, applies a real timeout.
 
-    Popen + `start_new_session=True`, non `subprocess.run(timeout=...)`: un
-    runner LLM piantato può avere lanciato dei figli propri, e
-    `subprocess.run`'s timeout uccide solo il processo diretto, lasciando i
-    nipoti orfani. Qui il processo entra nel proprio process group, e allo
-    scadere del timeout si uccide l'intero gruppo con SIGKILL.
+    Popen + `start_new_session=True`, not `subprocess.run(timeout=...)`: a
+    stuck LLM runner may have spawned children of its own, and
+    `subprocess.run`'s timeout kills only the direct process, leaving the
+    grandchildren orphaned. Here the process enters its own process group,
+    and when the timeout expires the whole group gets killed with SIGKILL.
     """
     proc = subprocess.Popen(
         cmd,
@@ -85,7 +85,7 @@ def _run_streaming(
 
 
 class Runner:
-    """Contratto comune a tutti i runner LLM."""
+    """Common contract for all LLM runners."""
 
     name = "runner"
 
@@ -95,11 +95,11 @@ class Runner:
         self.timeout = timeout
 
     def run_readonly(self, prompt: str) -> RunResult:
-        """La passata di sola lettura: gira contro il vault reale, senza scrivere."""
+        """The read-only pass: runs against the real vault, without writing."""
         raise NotImplementedError
 
     def run_write(self, prompt: str, workdir: Path) -> RunResult:
-        """Il write pass: gira SOLO dentro `workdir` (il clone senza origin)."""
+        """The write pass: runs ONLY inside `workdir` (the origin-less clone)."""
         raise NotImplementedError
 
 
@@ -112,9 +112,9 @@ class ClaudeRunner(Runner):
         "mcp__vault-library__read_note", "mcp__vault-library__recent_activity",
         "mcp__vault-library__list_related", "mcp__vault-library__get_start_here",
     ]
-    # Push non è in questa lista (vedi anche --disallowedTools sotto): la
-    # VERA garanzia resta il clone senza `origin`, questo è solo un secondo
-    # strato.
+    # Push isn't in this list (see also --disallowedTools below): the REAL
+    # guarantee remains the `origin`-less clone, this is only a second
+    # layer.
     WRITE_TOOLS: ClassVar[list[str]] = [
         "Read", "Edit", "Write", "Grep", "Glob",
         "Bash(python3:*)", "Bash(git:*)", "Bash(mkdir:*)", "Bash(mv:*)",
@@ -141,8 +141,8 @@ class CodexRunner(Runner):
     name = "codex"
 
     def run_readonly(self, prompt: str) -> RunResult:
-        # `-s read-only` è una vera sandbox policy di Codex: la promessa di
-        # non-mutazione è una garanzia runtime, non solo un allowlist.
+        # `-s read-only` is a real Codex sandbox policy: the no-mutation
+        # promise is a runtime guarantee, not just an allowlist.
         cmd = ["codex", "exec", "-s", "read-only", "-m", self.model, "-C", str(self.vault), "-"]
         return _run_streaming(cmd, cwd=None, input_text=prompt, timeout=self.timeout)
 
@@ -187,12 +187,12 @@ OPENCODE_EXPLANATION = (
 
 
 def get_runner(name: str, model: str, vault: Path, *, timeout: int = DEFAULT_TIMEOUT_SECONDS) -> Runner:
-    """Risolve il nome di `GROOM_RUNNER` in un `Runner` pronto all'uso.
+    """Resolves the `GROOM_RUNNER` name into a ready-to-use `Runner`.
 
-    Fallisce forte QUI, prima che qualunque passata parta: `opencode` con
-    la spiegazione del perché, un nome sconosciuto con l'elenco di quelli
-    supportati, un comando riconosciuto ma assente dal PATH con
-    l'istruzione per risolverlo -- mai un generico "command not found".
+    Fails loudly HERE, before any pass starts: `opencode` with the
+    explanation why, an unknown name with the list of supported ones, a
+    recognized command missing from PATH with the instruction to fix it --
+    never a generic "command not found".
     """
     if name == "opencode":
         raise RunnerUnsupportedError(OPENCODE_EXPLANATION)

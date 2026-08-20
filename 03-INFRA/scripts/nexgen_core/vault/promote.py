@@ -1,9 +1,10 @@
-"""Fatti letti dal clone git e le azioni deterministiche del post-audit.
+"""Facts read from the git clone and the deterministic post-audit actions.
 
-Separato da `audit.py` (che decide SE promuovere) per tenere ogni file
-sotto le ~300 righe: qui vivono le sole letture git usate per giudicare il
-clone (pulizia, linearità, cosa ha toccato) e le azioni che accadono solo
-DOPO un audit pulito -- riga di backlog, commit, publish, quarantena.
+Separated from `audit.py` (which decides WHETHER to promote) to keep each
+file under ~300 lines: this is where the git reads used to judge the clone
+live (cleanliness, linearity, what it touched) along with the actions that
+happen only AFTER a clean audit -- backlog line, commit, publish,
+quarantine.
 """
 from __future__ import annotations
 
@@ -31,7 +32,7 @@ def clone_head(clone: Path) -> str:
 
 
 def history_is_linear(clone: Path, base: str, head: str) -> bool:
-    """True se base..head è un first-parent chain lineare (zero merge)."""
+    """True if base..head is a linear first-parent chain (zero merges)."""
     if base == head:
         return True
     out = git(clone, "rev-list", "--min-parents=2", f"{base}..{head}")
@@ -39,11 +40,11 @@ def history_is_linear(clone: Path, base: str, head: str) -> bool:
 
 
 def collect_clone_facts(clone: Path, base: str, head: str) -> tuple[list[dict], list[str], set[str]]:
-    """(commits, files_touched, added_paths) per base..head nel clone.
+    """(commits, files_touched, added_paths) for base..head in the clone.
 
-    `--no-renames`: una rename è scomposta in delete+add grezzi così
-    l'eccezione archive-move in check_coverage vede un path ADDED onesto
-    sotto l'archive root, non una rename collassata.
+    `--no-renames`: a rename is broken down into a raw delete+add so the
+    archive-move exception in check_coverage sees an honest ADDED path
+    under the archive root, not a collapsed rename.
     """
     if base == head:
         return [], [], set()
@@ -70,7 +71,7 @@ def collect_clone_facts(clone: Path, base: str, head: str) -> tuple[list[dict], 
 
 
 def append_backlog_line(vault: Path, record: dict) -> tuple[str, bool]:
-    """Appende la riga di riepilogo, idempotente su timestamp ripetuto."""
+    """Appends the summary line, idempotent on a repeated timestamp."""
     unaddressed = record.get("unaddressed_targets") or []
     out_of_scope = record.get("out_of_scope_targets") or []
     line = (
@@ -104,7 +105,7 @@ def commit_backlog(vault: Path, timestamp: str) -> str | None:
 
 
 def run_publish(vault: Path, engine_scripts: Path) -> subprocess.CompletedProcess:
-    """Invoca `agent_sync.py publish` del motore, con timeout."""
+    """Invokes the engine's `agent_sync.py publish`, with a timeout."""
     env = dict(os.environ)
     env["KNOWLEDGE_VAULT_PATH"] = str(vault)
     exe = sys.executable or shutil.which("python3") or shutil.which("python") or "python3"
@@ -149,10 +150,10 @@ def _on_rm_error(func, path, _exc_info) -> None:
 
 
 def remove_promoted_clone(clone: Path) -> None:
-    """Rimuove il clone promosso -- altrimenti se ne accumula uno per run.
+    """Removes the promoted clone -- otherwise one accumulates per run.
 
-    I cloni in quarantena (audit fallito) non passano mai di qui.
-    `GROOM_KEEP_CLONE=1` salta la rimozione (debug/ispezione).
+    Quarantined clones (failed audit) never pass through here.
+    `GROOM_KEEP_CLONE=1` skips the removal (debug/inspection).
     """
     if os.environ.get("GROOM_KEEP_CLONE") == "1":
         return

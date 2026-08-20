@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from nexgen_core.config import load_mcp_manifest
+from nexgen_core.i18n import t
 from nexgen_core.jsonc import parse_jsonc
 from nexgen_core.renderer import McpRenderer
 from nexgen_core.report import CheckOutcome, Severity
@@ -19,8 +20,8 @@ def check_mcp_manifest(manifest_path: Path) -> CheckOutcome:
         return CheckOutcome(
             id="mcp.manifest_present",
             severity=Severity.BROKEN,
-            message=f"The MCP manifest '{manifest_path}' does not exist.",
-            action="Create or restore mcp/manifest.yaml from the templates.",
+            message=t("The MCP manifest '{manifest_path}' does not exist.", manifest_path=manifest_path),
+            action=t("Create or restore mcp/manifest.yaml from the templates."),
         )
 
     try:
@@ -29,14 +30,14 @@ def check_mcp_manifest(manifest_path: Path) -> CheckOutcome:
         return CheckOutcome(
             id="mcp.manifest_valid",
             severity=Severity.OK,
-            message=f"MCP manifest valid with {server_count} servers declared",
+            message=t("MCP manifest valid with {count} servers declared", count=server_count),
         )
     except Exception as exc:
         return CheckOutcome(
             id="mcp.manifest_valid",
             severity=Severity.BROKEN,
-            message=f"The MCP manifest contains errors: {exc}",
-            action="Fix the syntax of mcp/manifest.yaml.",
+            message=t("The MCP manifest contains errors: {error}", error=exc),
+            action=t("Fix the syntax of mcp/manifest.yaml."),
         )
 
 
@@ -148,8 +149,11 @@ def check_mcp_configs_rendered(vault_data: Path, home: Path) -> CheckOutcome:
         return CheckOutcome(
             id="mcp.rendered_configs",
             severity=Severity.BROKEN,
-            message="Some CLIs' MCP configs are missing servers expected by the manifest: " + "; ".join(broken_parts),
-            action="Run 'agent-sync apply' to regenerate them.",
+            message=t(
+                "Some CLIs' MCP configs are missing servers expected by the manifest: {parts}",
+                parts="; ".join(broken_parts),
+            ),
+            action=t("Run 'agent-sync apply' to regenerate them."),
             remedy=remedy,
             detail=("Extra servers (not in the manifest, additively preserved): " + "; ".join(extra_parts)) if extra_parts else None,
         )
@@ -157,11 +161,14 @@ def check_mcp_configs_rendered(vault_data: Path, home: Path) -> CheckOutcome:
         return CheckOutcome(
             id="mcp.rendered_configs",
             severity=Severity.UNDETERMINED,
-            message="Some CLIs have not been started yet on this machine, so their MCP config could not be checked: " + "; ".join(undetermined_parts),
+            message=t(
+                "Some CLIs have not been started yet on this machine, so their MCP config could not be checked: {parts}",
+                parts="; ".join(undetermined_parts),
+            ),
         )
 
     return CheckOutcome(
         id="mcp.rendered_configs",
         severity=Severity.OK,
-        message="MCP configuration files generated and aligned for all active CLIs",
+        message=t("MCP configuration files generated and aligned for all active CLIs"),
     )

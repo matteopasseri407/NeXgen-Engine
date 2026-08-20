@@ -49,11 +49,11 @@ def _script_dir() -> Path:
     entry = os.environ.get("NEXGEN_RUFF_ENTRY_DIR")
     if entry:
         return Path(entry).resolve()
-    # Il modulo vive in nexgen_core/tools/, quindi la cartella degli script
-    # sta due livelli sopra. Prima si tornava la propria directory, e chi
-    # eseguiva il modulo direttamente si ritrovava a scansionare "nexgen_core"
-    # invece di "03-INFRA" — compreso chi seguiva il comando suggerito qui
-    # sotto, che quindi non funzionava.
+    # The module lives in nexgen_core/tools/, so the scripts folder is two
+    # levels up. It used to return its own directory, and running the
+    # module directly ended up scanning "nexgen_core" instead of
+    # "03-INFRA" — including for anyone following the suggested command
+    # below, which then didn't work.
     return Path(__file__).resolve().parents[2]      # .../03-INFRA/scripts
 
 
@@ -77,11 +77,14 @@ def run_ruff() -> list[dict]:
     else:
         candidate = shutil.which("ruff")
         if not candidate:
+            # Deliberately the real home, not the engine's: this is looking
+            # for a linter someone installed, not for anything the engine
+            # writes. A sandboxed home would simply never find it.
             for venv_path in (
                 REPO_ROOT / ".venv" / "bin" / "ruff",
-                Path.home() / "NeXgen-Engine" / ".venv" / "bin" / "ruff",
-                Path.home() / ".venv" / "bin" / "ruff",
-                Path.home() / ".venvs" / "vault-tools" / "bin" / "ruff",
+                Path.home() / "NeXgen-Engine" / ".venv" / "bin" / "ruff",  # noqa: NEXGEN-REAL-HOME
+                Path.home() / ".venv" / "bin" / "ruff",  # noqa: NEXGEN-REAL-HOME
+                Path.home() / ".venvs" / "vault-tools" / "bin" / "ruff",  # noqa: NEXGEN-REAL-HOME
             ):
                 if venv_path.is_file() and os.access(venv_path, os.X_OK):
                     candidate = str(venv_path)
@@ -182,8 +185,8 @@ def main(argv: list[str] | None = None) -> int:
             "Fix the new lint violations, or if they're deliberate/pre-existing debt "
             "you're knowingly accepting, regenerate the baseline with:"
         )
-        # Il comando suggerito deve funzionare copiandolo così com'è.
-        print("  nexgen doctor --help   # oppure, per rigenerare:")
+        # The suggested command must work when copied as-is.
+        print("  nexgen doctor --help   # or, to regenerate:")
         interpreter = "python" if sys.platform == "win32" else "python3"
         rel_script = (SCRIPT_DIR / "ruff_baseline_check.py").relative_to(REPO_ROOT)
         print(f"  {interpreter} {rel_script} --generate")

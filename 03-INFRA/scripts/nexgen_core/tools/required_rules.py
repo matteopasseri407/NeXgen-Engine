@@ -16,8 +16,8 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-# Il file vive in nexgen_core/tools/, quindi la radice `03-INFRA` sta tre
-# livelli sopra. Prima di questo il default puntava a una cartella inesistente.
+# This file lives in nexgen_core/tools/, so the `03-INFRA` root is three
+# levels up. Before this, the default pointed at a nonexistent folder.
 ENGINE_ROOT = Path(__file__).resolve().parents[3]
 DEFAULT_RULES = ENGINE_ROOT / "agent-universal-layer" / "instructions" / "required-rules.txt"
 

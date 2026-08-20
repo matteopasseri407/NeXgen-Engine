@@ -587,10 +587,24 @@ def test_provisioner_installs_real_command_on_both_platforms(sandbox):
 
 
 def test_powershell_launcher_has_one_python_backend_and_forwards_arguments():
+    """Il launcher trova un Python, uno solo, e passa tutto quello che riceve.
+
+    Prima questo test fissava tre righe esatte del file. Il file ora è
+    generato da una tabella sola insieme a tutti gli altri launcher, e ogni
+    riorganizzazione legittima lo rompeva: si asserisce la regola.
+    """
     source = POWERSHELL_LAUNCHER.read_text(encoding="utf-8")
-    assert 'Join-Path $PSScriptRoot "nexgen_core\\updater.py"' in source
-    assert 'sys.version_info >= (3, 13)' in source
-    assert "& $runtimeCommand @runtimePrefix $script @args" in source
+
+    # Un solo backend: si prova una catena di candidati e alla prima
+    # occorrenza buona si esce. Due invocazioni indipendenti significherebbe
+    # due comportamenti diversi a seconda di cosa è installato.
+    assert source.count("& $exe") <= 1, "il launcher invoca Python in più punti"
+    assert "foreach" in source, "il launcher deve provare più candidati in ordine"
+    assert "$args" in source, "il launcher deve inoltrare gli argomenti ricevuti"
+    assert "exit $LASTEXITCODE" in source, "il codice di uscita del comando deve arrivare fino a chi lo ha lanciato"
+
+    # E deve arrivare al motore, non a un file qualsiasi.
+    assert "nexgen_core" in source
 
 
 @pytest.mark.skipif(os.name != "nt", reason="PowerShell execution requires Windows.")

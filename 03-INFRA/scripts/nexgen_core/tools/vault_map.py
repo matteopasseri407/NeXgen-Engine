@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Mappa strutturale deterministica del vault (vault-map) per NeXgen Engine v2.
+"""Deterministic structural map of the vault (vault-map) for NeXgen Engine v2.
 
-Portata dentro nexgen_core da vault-map.py (release): read-only, stdlib-only.
+Ported into nexgen_core from vault-map.py (release): read-only, stdlib-only.
 
 Read-only, stdlib-only. Reports three things about the wikilink graph:
 
@@ -36,6 +36,8 @@ import re
 import sys
 from collections import Counter
 from pathlib import Path
+
+from nexgen_core.i18n import t
 
 NOTE_EXTENSIONS = (".md", ".markdown", ".mdown", ".mdx")
 FENCED_BLOCK_RE = re.compile(r"^ {0,3}(`{3,}|~{3,}).*?^ {0,3}\1`*\s*$", re.DOTALL | re.MULTILINE)
@@ -210,16 +212,16 @@ def scan(vault: Path) -> dict:
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="deterministic structural map of a Markdown vault (read-only)")
-    parser.add_argument("--vault", required=True, help="vault root directory")
-    parser.add_argument("--json", action="store_true", help="full machine-readable output")
-    parser.add_argument("--check", action="store_true", help="one summary line + broken list; always exit 0")
-    parser.add_argument("--top", type=int, default=10, help="hubs to show in the human report")
+    parser = argparse.ArgumentParser(description=t("deterministic structural map of a Markdown vault (read-only)"))
+    parser.add_argument("--vault", required=True, help=t("vault root directory"))
+    parser.add_argument("--json", action="store_true", help=t("full machine-readable output"))
+    parser.add_argument("--check", action="store_true", help=t("one summary line + broken list; always exit 0"))
+    parser.add_argument("--top", type=int, default=10, help=t("hubs to show in the human report"))
     args = parser.parse_args(argv)
 
     vault = Path(args.vault).expanduser()
     if not vault.is_dir():
-        print(f"vault-map: not a directory: {vault}", file=sys.stderr)
+        print(t("vault-map: not a directory: {vault}", vault=vault), file=sys.stderr)
         return 2
 
     data = scan(vault)
@@ -241,24 +243,26 @@ def main(argv: list[str] | None = None) -> int:
             print(f"broken: ... +{len(data['broken']) - 20} more")
         return 0
 
-    print(f"vault-map: {data['notes']} notes, {data['links']} links")
-    print(f"\nbroken links ({len(data['broken'])}):")
+    print(t("vault-map: {notes} notes, {links} links", notes=data["notes"], links=data["links"]))
+    print("\n" + t("broken links ({count}):", count=len(data["broken"])))
     for entry in data["broken"] or ():
-        hint = f"  (probably moved to: {entry['hint']})" if "hint" in entry else ""
+        hint = t("  (probably moved to: {hint})", hint=entry["hint"]) if "hint" in entry else ""
         print(f"  {entry['source']} -> [[{entry['target']}]]{hint}")
-    print(f"\norphan notes ({len(data['orphans'])}):")
+    print("\n" + t("orphan notes ({count}):", count=len(data["orphans"])))
     for rel in data["orphans"]:
         print(f"  {rel}")
-    print("\ntop hubs (inbound):")
+    print("\n" + t("top hubs (inbound):"))
     for entry in data["hubs"][: args.top]:
         print(f"  {entry['inbound']:3d} <- {entry['path']}")
     if data["archived_broken"]:
         print(
-            f"\ndead links inside archived notes (frozen history, low priority): "
-            f"{len(data['archived_broken'])}"
+            "\n" + t(
+                "dead links inside archived notes (frozen history, low priority): {count}",
+                count=len(data["archived_broken"]),
+            )
         )
     if data["excluded_valid"]:
-        print(f"\nvalid-but-excluded targets (e.g. 99-SECRETS, assets): {len(data['excluded_valid'])}")
+        print("\n" + t("valid-but-excluded targets (e.g. 99-SECRETS, assets): {count}", count=len(data["excluded_valid"])))
     return 0
 
 

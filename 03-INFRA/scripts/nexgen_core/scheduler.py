@@ -21,8 +21,8 @@ import shutil
 import subprocess
 import sys
 import time
+from collections.abc import Callable, Sequence
 from pathlib import Path
-from typing import Callable, Sequence
 
 IS_WINDOWS = sys.platform == "win32"
 HOST_MUTATIONS_DISABLED_ENV = "NEXGEN_DISABLE_HOST_MUTATIONS"

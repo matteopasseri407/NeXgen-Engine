@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""CLI standalone per `nexgen_core.vault.audit` -- compatibilità.
+"""Standalone CLI for `nexgen_core.vault.audit` -- for compatibility.
 
-`groom.py` chiama `run_audit()` direttamente in-process durante `apply`; ma
-`vault_groom_audit.py` (in tools/ e come bridge di primo livello in
-scripts/) è documentato nel playbook del vault come qualcosa che si può
-anche invocare da riga di comando con gli stessi argomenti storici, per
-ispezionare un run a mano. Questo modulo è quel punto d'ingresso.
+`groom.py` calls `run_audit()` directly in-process during `apply`; but
+`vault_groom_audit.py` (in tools/ and as the top-level bridge in scripts/)
+is documented in the vault playbook as something that can also be invoked
+from the command line with the same historical arguments, to inspect a run
+by hand. This module is that entry point.
 """
 from __future__ import annotations
 
@@ -14,6 +14,7 @@ import json
 import sys
 from pathlib import Path
 
+from nexgen_core.i18n import t
 from nexgen_core.vault.audit import AuditRequest, run_audit
 
 
@@ -40,10 +41,10 @@ def _build_request(args: argparse.Namespace) -> AuditRequest:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--vault", required=True, help="the REAL vault -- never touched until promotion")
-    parser.add_argument("--clone", required=True, help="the temp-clone gate's working dir")
+    parser.add_argument("--vault", required=True, help=t("the REAL vault -- never touched until promotion"))
+    parser.add_argument("--clone", required=True, help=t("the temp-clone gate's working dir"))
     parser.add_argument("--branch", default="main")
-    parser.add_argument("--base", required=True, help="the real vault's HEAD before the clone was made")
+    parser.add_argument("--base", required=True, help=t("the real vault's HEAD before the clone was made"))
     parser.add_argument("--archive-root", default="99-ARCHIVE")
     parser.add_argument("--state-dir", required=True)
     parser.add_argument("--timestamp", required=True)
@@ -55,15 +56,15 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--write-log", required=True)
     parser.add_argument(
         "--write-exit-code", required=True, type=int,
-        help="exit code of the write-pass runner CLI -- non-zero blocks promotion unconditionally",
+        help=t("exit code of the write-pass runner CLI -- non-zero blocks promotion unconditionally"),
     )
     parser.add_argument(
         "--push-if-clean", action="store_true", default=False,
-        help="attempt agent_sync.py publish after a successful promotion; omit to never push this run",
+        help=t("attempt agent_sync.py publish after a successful promotion; omit to never push this run"),
     )
     parser.add_argument(
         "--engine-scripts", default=None,
-        help="directory containing agent_sync.py (required together with --push-if-clean)",
+        help=t("directory containing agent_sync.py (required together with --push-if-clean)"),
     )
     args = parser.parse_args(argv)
 
@@ -77,7 +78,7 @@ def main(argv: list[str] | None = None) -> int:
     state_dir.mkdir(parents=True, exist_ok=True)
     record_path = state_dir / f"{args.timestamp}.json"
     record_path.write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8")
-    print(f"audit record: {record_path}")
+    print(t("audit record: {record_path}", record_path=record_path))
 
     return exit_code
 

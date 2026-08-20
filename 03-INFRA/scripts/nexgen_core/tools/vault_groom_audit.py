@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """vault_groom_audit — NeXgen Engine v2.
 
-La logica (il gate di promozione verso il vault reale) ora vive in
-`nexgen_core.vault.audit` (audit puro) e `nexgen_core.vault.audit_cli` (il
-punto d'ingresso da riga di comando). Questo file resta un ponte per chi lo
-invoca ancora con questo nome -- `03-INFRA/scripts/vault_groom_audit.py` in
-cima al repo, il playbook del vault -- senza duplicare la logica.
+The logic (the promotion gate into the real vault) now lives in
+`nexgen_core.vault.audit` (pure audit) and `nexgen_core.vault.audit_cli`
+(the command-line entry point). This file remains a bridge for whoever
+still invokes it under this name -- `03-INFRA/scripts/vault_groom_audit.py`
+at the top of the repo, the vault playbook -- without duplicating the logic.
 """
 from __future__ import annotations
 

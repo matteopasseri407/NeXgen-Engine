@@ -13,6 +13,7 @@ import socket
 from pathlib import Path
 from urllib.parse import urlparse
 
+from nexgen_core.i18n import t
 from nexgen_core.renderer import McpRenderer
 from nexgen_core.report import CheckOutcome, Severity
 
@@ -110,19 +111,19 @@ def check_mcp_reachability(
         if severity == Severity.OK:
             outcomes.append(CheckOutcome(
                 id=id_, severity=Severity.OK,
-                message=f"MCP connector '{name}' reachable",
+                message=t("MCP connector '{name}' reachable", name=name),
             ))
         elif severity == Severity.BROKEN:
             outcomes.append(CheckOutcome(
                 id=id_,
                 severity=Severity.BROKEN,
-                message=f"MCP connector '{name}' is not responding ({detail}).",
-                action=f"Check that the service behind '{name}' is running, then rerun the doctor.",
+                message=t("MCP connector '{name}' is not responding ({detail}).", name=name, detail=detail),
+                action=t("Check that the service behind '{name}' is running, then rerun the doctor.", name=name),
             ))
         else:
             outcomes.append(CheckOutcome(
                 id=id_,
                 severity=Severity.UNDETERMINED,
-                message=f"Could not check the reachability of '{name}' ({detail}).",
+                message=t("Could not check the reachability of '{name}' ({detail}).", name=name, detail=detail),
             ))
     return outcomes

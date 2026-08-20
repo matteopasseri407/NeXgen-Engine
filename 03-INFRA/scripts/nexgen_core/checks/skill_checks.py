@@ -4,6 +4,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from nexgen_core.config import load_skills_manifest
+from nexgen_core.i18n import t
 from nexgen_core.paths import skills_manifest
 from nexgen_core.report import CheckOutcome, Severity
 from nexgen_core.skills import SkillMaterializer, is_safe_skill_name
@@ -15,8 +16,8 @@ def check_skills_manifest(manifest_path: Path) -> CheckOutcome:
         return CheckOutcome(
             id="skills.manifest_present",
             severity=Severity.BROKEN,
-            message=f"The skills manifest '{manifest_path}' does not exist.",
-            action="Create or restore skills.manifest.yaml from the templates.",
+            message=t("The skills manifest '{manifest_path}' does not exist.", manifest_path=manifest_path),
+            action=t("Create or restore skills.manifest.yaml from the templates."),
         )
 
     try:
@@ -25,14 +26,14 @@ def check_skills_manifest(manifest_path: Path) -> CheckOutcome:
         return CheckOutcome(
             id="skills.manifest_valid",
             severity=Severity.OK,
-            message=f"Skills manifest valid with {skill_count} skills declared",
+            message=t("Skills manifest valid with {count} skills declared", count=skill_count),
         )
     except Exception as exc:
         return CheckOutcome(
             id="skills.manifest_valid",
             severity=Severity.BROKEN,
-            message=f"The skills manifest contains errors: {exc}",
-            action="Fix the syntax of skills.manifest.yaml.",
+            message=t("The skills manifest contains errors: {error}", error=exc),
+            action=t("Fix the syntax of skills.manifest.yaml."),
         )
 
 
@@ -49,15 +50,15 @@ def check_skill_library_and_index(vault_data: Path, home: Path) -> CheckOutcome:
         return CheckOutcome(
             id="skills.index_present",
             severity=Severity.BROKEN,
-            message="The skill catalog (~/.agents/skills/INDEX.md) is not present.",
-            action="Run 'agent-sync apply' to materialize the skills and regenerate the index.",
+            message=t("The skill catalog (~/.agents/skills/INDEX.md) is not present."),
+            action=t("Run 'agent-sync apply' to materialize the skills and regenerate the index."),
             remedy=remedy,
         )
 
     return CheckOutcome(
         id="skills.index_present",
         severity=Severity.OK,
-        message="Skill catalog present and aligned",
+        message=t("Skill catalog present and aligned"),
     )
 
 
@@ -100,13 +101,16 @@ def check_skill_library_symlinks(home: Path) -> CheckOutcome:
         return CheckOutcome(
             id="skills.library_symlinks",
             severity=Severity.BROKEN,
-            message=f"Skill library entry/entries with a broken or self-referential symlink: {', '.join(broken)}.",
-            action="Run 'agent-sync apply' (skills-sync) to regenerate the library; remove the entries manually if they stay broken.",
+            message=t(
+                "Skill library entry/entries with a broken or self-referential symlink: {entries}.",
+                entries=", ".join(broken),
+            ),
+            action=t("Run 'agent-sync apply' (skills-sync) to regenerate the library; remove the entries manually if they stay broken."),
         )
     return CheckOutcome(
         id="skills.library_symlinks",
         severity=Severity.OK,
-        message="No broken symlinks in the skill library",
+        message=t("No broken symlinks in the skill library"),
     )
 
 
@@ -128,13 +132,13 @@ def check_skills_out_of_manifest(vault_data: Path, home: Path) -> CheckOutcome:
         return CheckOutcome(
             id="skills.out_of_manifest",
             severity=Severity.UNDETERMINED,
-            message=f"Skills materialized but not declared in the manifest: {', '.join(stray)}.",
-            action="Adopt the useful skills by adding them to skills.manifest.yaml, or remove them manually from the library (the sync won't delete them on its own).",
+            message=t("Skills materialized but not declared in the manifest: {skills}.", skills=", ".join(stray)),
+            action=t("Adopt the useful skills by adding them to skills.manifest.yaml, or remove them manually from the library (the sync won't delete them on its own)."),
         )
     return CheckOutcome(
         id="skills.out_of_manifest",
         severity=Severity.OK,
-        message="No out-of-manifest skills to reconcile",
+        message=t("No out-of-manifest skills to reconcile"),
     )
 
 
@@ -154,14 +158,14 @@ def check_skills_not_materialized(vault_data: Path, home: Path) -> CheckOutcome:
         return CheckOutcome(
             id="skills.declared_but_not_materialized",
             severity=Severity.BROKEN,
-            message=f"Skills declared in the manifest but not materialized: {', '.join(missing)}.",
-            action="Run 'agent-sync apply' (skills-sync) to materialize them.",
+            message=t("Skills declared in the manifest but not materialized: {skills}.", skills=", ".join(missing)),
+            action=t("Run 'agent-sync apply' (skills-sync) to materialize them."),
             remedy=remedy,
         )
     return CheckOutcome(
         id="skills.declared_but_not_materialized",
         severity=Severity.OK,
-        message="All skills declared in the manifest are materialized",
+        message=t("All skills declared in the manifest are materialized"),
     )
 
 
@@ -185,7 +189,7 @@ def check_engine_starter_views(vault_data: Path, home: Path) -> CheckOutcome:
         return CheckOutcome(
             id="skills.engine_starter_views",
             severity=Severity.OK,
-            message="No engine starter commands declared in the manifest",
+            message=t("No engine starter commands declared in the manifest"),
         )
 
     missing: list[str] = []
@@ -201,14 +205,17 @@ def check_engine_starter_views(vault_data: Path, home: Path) -> CheckOutcome:
         return CheckOutcome(
             id="skills.engine_starter_views",
             severity=Severity.BROKEN,
-            message=f"Engine starter command(s) not materialized as an active view: {', '.join(missing)}.",
-            action="Run 'agent-sync apply' (skills-sync) to regenerate the views.",
+            message=t(
+                "Engine starter command(s) not materialized as an active view: {commands}.",
+                commands=", ".join(missing),
+            ),
+            action=t("Run 'agent-sync apply' (skills-sync) to regenerate the views."),
             remedy=remedy,
         )
     return CheckOutcome(
         id="skills.engine_starter_views",
         severity=Severity.OK,
-        message="All engine starter commands are materialized as an active view",
+        message=t("All engine starter commands are materialized as an active view"),
     )
 
 
@@ -227,12 +234,12 @@ def check_skills_manifest_semantics(vault_data: Path, home: Path) -> CheckOutcom
         return CheckOutcome(
             id="skills.manifest_semantics",
             severity=Severity.BROKEN,
-            message=f"{len(problems)} problem(s) in the skills manifest.",
-            action="Fix the entries listed: " + "; ".join(problems[:5]),
+            message=t("{count} problem(s) in the skills manifest.", count=len(problems)),
+            action=t("Fix the entries listed: {entries}", entries="; ".join(problems[:5])),
             detail="; ".join(problems),
         )
     return CheckOutcome(
         id="skills.manifest_semantics",
         severity=Severity.OK,
-        message="Skills manifest is semantically valid",
+        message=t("Skills manifest is semantically valid"),
     )

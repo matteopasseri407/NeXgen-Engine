@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Gestione del browser Chrome condiviso con porta di debug locale (CDP 9222).
+"""Management of the shared Chrome browser with a local debug port (CDP 9222).
 
-Contratto:
-- agent-chrome [args...]: apre la finestra Chrome o passa gli argomenti al browser esistente.
-- agent-chrome --ensure: esce con 0 se CDP su 127.0.0.1:9222 risponde già, altrimenti avvia Chrome.
-- agent-chrome --heal: riavvia Chrome se il processo è rimasto aperto senza la porta CDP.
+Contract:
+- agent-chrome [args...]: opens the Chrome window or passes the arguments to the existing browser.
+- agent-chrome --ensure: exits with 0 if CDP on 127.0.0.1:9222 already responds, otherwise starts Chrome.
+- agent-chrome --heal: restarts Chrome if the process is still open without the CDP port.
 """
 from __future__ import annotations
 
@@ -17,11 +17,14 @@ import time
 import urllib.request
 from pathlib import Path
 
+from nexgen_core.i18n import t
+from nexgen_core.paths import resolve_home
+
 CDP_URL = "http://127.0.0.1:9222/json/version"
 
 
 def is_cdp_up(timeout: float = 2.0) -> bool:
-    """Verifica se la porta di debug CDP (9222) risponde."""
+    """Checks whether the CDP debug port (9222) responds."""
     try:
         req = urllib.request.Request(CDP_URL)
         with urllib.request.urlopen(req, timeout=timeout) as resp:
@@ -31,7 +34,7 @@ def is_cdp_up(timeout: float = 2.0) -> bool:
 
 
 def find_chrome_executable() -> str | None:
-    """Trova il percorso dell'eseguibile di Chrome o Chromium."""
+    """Finds the path to the Chrome or Chromium executable."""
     if sys.platform == "win32":
         candidates = [
             Path(os.environ.get("PROGRAMFILES", "C:\\Program Files")) / "Google" / "Chrome" / "Application" / "chrome.exe",
@@ -51,27 +54,27 @@ def find_chrome_executable() -> str | None:
 
 
 def get_profile_dir() -> Path:
-    """Restituisce la directory del profilo Chrome dedicato al debug."""
+    """Returns the Chrome profile directory dedicated to debugging."""
     env_p = os.environ.get("AGENT_CHROME_PROFILE")
     if env_p:
         return Path(env_p)
     if sys.platform == "win32":
-        local_app = Path(os.environ.get("LOCALAPPDATA", Path.home() / "AppData" / "Local"))
+        local_app = Path(os.environ.get("LOCALAPPDATA", resolve_home() / "AppData" / "Local"))
         return local_app / "Google" / "Chrome" / "User Data" / "chrome-agent-debug"
-    return Path.home() / ".config" / "chrome-agent-debug"
+    return resolve_home() / ".config" / "chrome-agent-debug"
 
 
-#: Quanto si aspetta che Chrome chiuda da sé prima di insistere.
+#: How long to wait for Chrome to close on its own before insisting.
 GRACEFUL_SHUTDOWN_SECONDS = 10.0
 
 
 def singleton_owner_pid(profile: Path) -> int | None:
-    """Chi sta tenendo il profilo di debug, se qualcuno lo sta tenendo.
+    """Who's holding the debug profile, if anyone is.
 
-    Chrome scrive un `SingletonLock` che punta a `host-pid`. Serve a
-    distinguere "Chrome non c'è" da "Chrome c'è ma ha perso la porta di
-    debug": due situazioni con rimedi diversi che senza questo si
-    confondono.
+    Chrome writes a `SingletonLock` pointing at `host-pid`. This is needed
+    to distinguish "Chrome isn't there" from "Chrome is there but lost the
+    debug port": two situations with different remedies that get confused
+    without this.
     """
     lock = profile / "SingletonLock"
     try:
@@ -86,10 +89,10 @@ def singleton_owner_pid(profile: Path) -> int | None:
 
 
 def launch_chrome(extra_args: list[str] | None = None) -> int:
-    """Avvia Chrome con i flag di debug CDP configurati."""
+    """Launches Chrome with the CDP debug flags configured."""
     chrome_bin = find_chrome_executable()
     if not chrome_bin:
-        print("agent-chrome: Chrome o Chromium non trovato nel sistema.", file=sys.stderr)
+        print(t("agent-chrome: Chrome or Chromium not found on this system."), file=sys.stderr)
         return 127
 
     profile = get_profile_dir()
@@ -103,27 +106,27 @@ def launch_chrome(extra_args: list[str] | None = None) -> int:
         "--no-first-run",
     ]
     if sys.platform not in ("win32", "darwin"):
-        # Senza questo, le finestre aperte da qui finiscono raggruppate sotto
-        # una classe generica e il gestore di finestre non le distingue dalle
-        # app installate come scorciatoia.
+        # Without this, windows opened from here end up grouped under a
+        # generic class and the window manager can't tell them apart from
+        # apps installed as a shortcut.
         cmd.append("--class=Google-chrome")
     if extra_args:
         cmd.extend(extra_args)
 
     try:
-        # Avvio in background non bloccante
+        # Non-blocking background launch
         if sys.platform == "win32":
             subprocess.Popen(cmd, creationflags=subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP)
         else:
             subprocess.Popen(cmd, start_new_session=True)
         return 0
     except OSError as exc:
-        print(f"agent-chrome: errore avvio Chrome ({exc})", file=sys.stderr)
+        print(t("agent-chrome: error launching Chrome ({error})", error=exc), file=sys.stderr)
         return 1
 
 
 def heal_chrome(extra_args: list[str] | None = None) -> int:
-    """Riavvia Chrome se il processo è rimasto aperto senza rispondere su CDP."""
+    """Restarts Chrome if the process stayed open without responding on CDP."""
     if is_cdp_up():
         return 0
 
@@ -133,12 +136,15 @@ def heal_chrome(extra_args: list[str] | None = None) -> int:
     owner = singleton_owner_pid(profile)
     if owner is not None:
         print(
-            f"agent-chrome: Chrome tiene il profilo di debug (processo {owner}) "
-            f"ma non risponde sulla porta 9222. Lo riavvio.",
+            t(
+                "agent-chrome: Chrome is holding the debug profile (process {pid}) "
+                "but isn't responding on port 9222. Restarting it.",
+                pid=owner,
+            ),
             file=sys.stderr,
         )
 
-    # Termina eventuali processi Chrome associati al profilo di debug
+    # Terminate any Chrome processes associated with the debug profile
     if sys.platform == "win32":
         try:
             subprocess.run(
@@ -154,8 +160,8 @@ def heal_chrome(extra_args: list[str] | None = None) -> int:
         except Exception:
             pass
     else:
-        # Prima si chiede, poi si insiste: un Chrome ucciso di colpo perde le
-        # schede aperte, e chiuderle non è quello che ci è stato chiesto.
+        # Ask first, insist later: a Chrome killed outright loses the open
+        # tabs, and closing them isn't what we were asked to do.
         with contextlib.suppress(OSError):
             subprocess.run(["pkill", "-f", f"--user-data-dir={profile_str}"], capture_output=True, check=False)
         for _ in range(int(GRACEFUL_SHUTDOWN_SECONDS * 2)):
@@ -186,7 +192,7 @@ def main(argv: list[str] | None = None) -> int:
         elif arg == "--heal":
             mode = "heal"
         elif arg in ("-h", "--help"):
-            print("Uso: agent-chrome [--ensure|--heal] [args...]\n\nGestisce Chrome con porta CDP locale condivisa.")
+            print(t("Usage: agent-chrome [--ensure|--heal] [args...]\n\nManages Chrome with a shared local CDP port."))
             return 0
         else:
             passthrough.append(arg)

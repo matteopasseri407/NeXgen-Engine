@@ -28,7 +28,7 @@ class Service:
     exports: dict[str, str] = field(default_factory=dict)
     """The variables the workstation needs to have to mount the connector.
 
-    `{porta}` is replaced with the real port, `{token:NAME}` with the
+    `{port}` is replaced with the real port, `{token:NAME}` with the
     secret of that name taken from the stack's .env file.
     """
     requires_secret: tuple[str, ...] = ()
@@ -43,7 +43,7 @@ SERVICES: tuple[Service, ...] = (
         stack="firecrawl",
         container="firecrawl-api",
         port=3002,
-        exports={"FIRECRAWL_TUNNEL_PORT": "{porta}", "FIRECRAWL_API_URL": "http://127.0.0.1:{porta}"},
+        exports={"FIRECRAWL_TUNNEL_PORT": "{port}", "FIRECRAWL_API_URL": "http://127.0.0.1:{port}"},
         requires_secret=("FIRECRAWL_REDIS_PASSWORD", "FIRECRAWL_NUQ_POSTGRES_PASSWORD"),
     ),
     Service(
@@ -51,14 +51,14 @@ SERVICES: tuple[Service, ...] = (
         stack="ocr",
         container="vault-ocr-api",
         port=3033,
-        exports={"OCR_TUNNEL_PORT": "{porta}", "VAULT_OCR_API_URL": "http://127.0.0.1:{porta}"},
+        exports={"OCR_TUNNEL_PORT": "{port}", "VAULT_OCR_API_URL": "http://127.0.0.1:{port}"},
     ),
     Service(
         name="n8n",
         stack="n8n",
         container="n8n",
         port=5678,
-        exports={"N8N_TUNNEL_PORT": "{porta}", "N8N_MCP_TOKEN": "{token:N8N_MCP_TOKEN}"},
+        exports={"N8N_TUNNEL_PORT": "{port}", "N8N_MCP_TOKEN": "{token:N8N_MCP_TOKEN}"},
         requires_secret=("N8N_ENCRYPTION_KEY", "N8N_MCP_TOKEN"),
     ),
     Service(
@@ -67,7 +67,7 @@ SERVICES: tuple[Service, ...] = (
         container="vault-mcp",
         port=8081,
         exports={
-            "VAULT_LIBRARY_URL": "http://127.0.0.1:{porta}/mcp",
+            "VAULT_LIBRARY_URL": "http://127.0.0.1:{port}/mcp",
             "VAULT_LIBRARY_TOKEN": "{token:VAULT_LIBRARY_TOKEN}",
         },
         requires_secret=("VAULT_LIBRARY_TOKEN",),

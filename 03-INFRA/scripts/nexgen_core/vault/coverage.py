@@ -1,9 +1,9 @@
-"""Copertura della tranche approvata: cosa doveva essere toccato, cosa no.
+"""Coverage of the approved tranche: what was supposed to be touched, what wasn't.
 
-Estratto da vault_groom_audit.py (release), invariato nella logica: parsing
-best-effort della tabella `| Note | Action | Why |` che PROPOSE_PROMPT
-richiede, poi un controllo bidirezionale contro i file davvero toccati dal
-write pass.
+Extracted from vault_groom_audit.py (release), unchanged in logic:
+best-effort parsing of the `| Note | Action | Why |` table that
+PROPOSE_PROMPT requires, then a bidirectional check against the files
+actually touched by the write pass.
 """
 from __future__ import annotations
 
@@ -12,10 +12,10 @@ from pathlib import Path, PurePosixPath
 
 FILENAME_RE = re.compile(r"`([\w./-]+\.md)`")
 NO_ACTION_RE = re.compile(r"nessuna azione|no action", re.IGNORECASE)
-# Deliberatamente largo (combacia con "archive", "archivia", "archiviare",
-# ...): la colonna Action è prosa libera, non un enum -- questo decide solo
-# quali target sono ELEGIBILI per l'eccezione archive-move sotto, mai la
-# copertura in sé.
+# Deliberately broad (matches "archive", "archivia", "archiviare", ...): the
+# Action column is free prose, not an enum -- this only decides which
+# targets are ELIGIBLE for the archive-move exception below, never coverage
+# itself.
 ARCHIVE_ACTION_RE = re.compile(r"archivi|archive", re.IGNORECASE)
 
 BACKLOG_NOTE = "99-INDEX/vault-cleanup-backlog.md"
@@ -28,18 +28,16 @@ def _under_archive_root(path: str, archive_root: str) -> bool:
 
 
 def extract_action_targets(tranche_text: str) -> tuple[set[str], set[str], bool]:
-    """Estrae i file che la tranche approvata si impegna a toccare.
+    """Extracts the files the approved tranche commits to touching.
 
-    Righe la cui colonna Action dice "no action" non producono un target
-    (mai attesi in files_touched) ma contano comunque come riga
-    correttamente parsata (terzo valore di ritorno), così una tranche
-    tutta "no action" non si confonde con una che non parsa affatto come
-    tabella.
+    Rows whose Action column says "no action" don't produce a target (never
+    expected in files_touched) but still count as a correctly parsed row
+    (third return value), so a tranche that's all "no action" isn't
+    confused with one that doesn't parse as a table at all.
 
-    Ritorna (targets, archive_targets, found_any_row). archive_targets è il
-    sottoinsieme di targets la cui riga legge come un'azione di tipo
-    archivio -- l'unico caso in cui l'eccezione archive-move sotto si
-    applica.
+    Returns (targets, archive_targets, found_any_row). archive_targets is
+    the subset of targets whose row reads as an archive-type action -- the
+    only case where the archive-move exception below applies.
     """
     targets: set[str] = set()
     archive_targets: set[str] = set()
@@ -67,15 +65,15 @@ def extract_action_targets(tranche_text: str) -> tuple[set[str], set[str], bool]
 def check_coverage(
     plan_record: str, files_touched: list[str], added_paths: set[str], archive_root: str
 ) -> dict:
-    """Controllo bidirezionale: ogni target approvato è stato toccato, e
-    nessun file fuori piano è stato toccato.
+    """Bidirectional check: every approved target was touched, and no
+    out-of-plan file was touched.
 
-    Path-exact sul lato "il target è stato toccato": un target o compare
-    verbatim in files_touched o è unaddressed, senza fallback sul basename.
-    L'unica eccezione vive sull'altro lato: un path AGGIUNTO è scusato da
-    out_of_scope se sta sotto `archive_root` E il suo basename combacia con
-    quello (o la forma rinominata `<stem>-archive-<data>.md`, il pattern del
-    playbook) di un target la cui riga è di tipo archivio.
+    Path-exact on the "the target was touched" side: a target either
+    appears verbatim in files_touched or is unaddressed, with no basename
+    fallback. The only exception lives on the other side: an ADDED path is
+    excused from out_of_scope if it's under `archive_root` AND its
+    basename matches that (or the renamed form `<stem>-archive-<date>.md`,
+    the playbook's pattern) of a target whose row is archive-type.
     """
     plan_path = Path(plan_record)
     if not plan_path.is_file():

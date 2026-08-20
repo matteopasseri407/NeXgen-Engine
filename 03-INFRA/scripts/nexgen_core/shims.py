@@ -14,6 +14,8 @@ import stat
 import sys
 from pathlib import Path
 
+from nexgen_core.paths import resolve_home
+
 #: The real command.
 PRIMARY = "nexgen"
 
@@ -108,7 +110,7 @@ def install_shims(
     matches, which is why the guard cycle can call it every round to
     silently repair a deleted or broken command.
     """
-    home_dir = home or Path.home()
+    home_dir = resolve_home(home)
     target_bin = bin_dir or (home_dir / ".local" / "bin")
     target_bin.mkdir(parents=True, exist_ok=True)
 

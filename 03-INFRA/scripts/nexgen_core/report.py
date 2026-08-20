@@ -12,9 +12,12 @@ Core rules:
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Callable
+from typing import Any
+
+from nexgen_core.i18n import t
 
 
 class Severity(str, Enum):
@@ -112,11 +115,11 @@ class Report:
 
         # 1. Unremedied broken checks are shown first, with priority
         if self.broken:
-            lines.append("Problems detected that need your attention:")
+            lines.append(t("Problems detected that need your attention:"))
             for item in self.broken:
                 line = f"  - {item.message}"
                 if item.action:
-                    line += f"\n    Suggested action: {item.action}"
+                    line += f"\n    {t('Suggested action:')} {item.action}"
                 if item.detail and verbose:
                     line += f"\n    [Detail: {item.detail}]"
                 lines.append(line)
@@ -125,11 +128,11 @@ class Report:
         if self.undetermined:
             if lines:
                 lines.append("")
-            lines.append("Checks that could not be verified right now:")
+            lines.append(t("Checks that could not be verified right now:"))
             for item in self.undetermined:
                 line = f"  - {item.message}"
                 if item.action:
-                    line += f"\n    Suggested action: {item.action}"
+                    line += f"\n    {t('Suggested action:')} {item.action}"
                 if item.detail and verbose:
                     line += f"\n    [Detail: {item.detail}]"
                 lines.append(line)
@@ -138,16 +141,16 @@ class Report:
         if verbose:
             if lines:
                 lines.append("")
-            lines.append(f"Checks passed ({self.ok_count}):")
+            lines.append(t("Checks passed ({count}):", count=self.ok_count))
             for item in self.outcomes:
                 if item.severity == Severity.OK:
-                    remedy_tag = " (auto-remedied)" if item.remedied else ""
+                    remedy_tag = f" ({t('auto-remedied')})" if item.remedied else ""
                     lines.append(f"  [OK] {item.id}: {item.message}{remedy_tag}")
         elif not self.broken and not self.undetermined:
             # Silent, or a single reassuring line
-            lines.append(f"Everything is aligned and working ({self.ok_count} checks passed).")
+            lines.append(t("Everything is aligned and working ({count} checks passed).", count=self.ok_count))
         else:
-            lines.append(f"\n({self.ok_count} checks passed)")
+            lines.append("\n" + t("({count} checks passed)", count=self.ok_count))
 
         return "\n".join(lines)
 

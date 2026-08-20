@@ -1,2 +1,2 @@
-"""Utility e strumenti di sistema per NeXgen Engine v2."""
+"""System utilities and tools for NeXgen Engine v2."""
 from __future__ import annotations

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import html
 import json
+import logging
 import os
 import time
 import urllib.parse
@@ -16,10 +17,15 @@ import urllib.request
 from pathlib import Path
 from typing import Any
 
+from nexgen_core import notify
+from nexgen_core.i18n import t
 from nexgen_core.paths import resolve_state_dir
 
 STATE_FILE_NAME = "agent-healthcheck.state"
 DEFAULT_DEBOUNCE_HOURS = 4.0
+
+
+logger = logging.getLogger(__name__)
 
 
 class Megaphone:
@@ -57,7 +63,13 @@ class Megaphone:
         self._save_state(state)
 
     def send_alert(self, title: str, message: str, action: str | None = None, alert_key: str | None = None) -> bool:
-        """Sends an alert through the configured channels (Telegram, webhook, or log)."""
+        """Sends an alert through whichever channel can carry it.
+
+        The order is deliberate: a messaging bot and a webhook reach someone
+        who is not at the machine, so they go first. The desktop comes last as
+        a channel but matters most for the person who configured neither, who
+        would otherwise be told nothing at all.
+        """
         key = alert_key or f"{title}:{message[:50]}"
         if not self.should_notify(key):
             return True
@@ -67,7 +79,7 @@ class Megaphone:
         text = f"🚨 <b>{safe_title}</b>\n\n{safe_msg}"
         if action:
             safe_act = html.escape(action)
-            text += f"\n\n👉 <b>Action required:</b>\n<code>{safe_act}</code>"
+            text += f"\n\n👉 <b>{t('Action required:')}</b>\n<code>{safe_act}</code>"
 
         sent = False
         # 1. Telegram
@@ -81,8 +93,20 @@ class Megaphone:
         if webhook_url:
             sent = self._send_webhook(webhook_url, {"title": title, "message": message, "action": action}) or sent
 
+        # 3. The screen in front of the person. Last, because a message that
+        # reached their phone does not need a toast too — but first in
+        # importance for anyone who configured neither of the above, who until
+        # now received nothing at all.
+        if not sent and notify.desktop_is_available():
+            body = message if not action else f"{message}\n\n{t('Action required:')} {action}"
+            sent = notify.send_desktop(title, body)
+
         if sent:
             self.mark_notified(key)
+        else:
+            # Nothing could carry it. The log is the last place it can exist,
+            # and staying silent here is how an alert disappears completely.
+            logger.warning("alert not delivered: %s — %s", title, message)
         return sent
 
     def _send_telegram(self, token: str, chat_id: str, text: str) -> bool:

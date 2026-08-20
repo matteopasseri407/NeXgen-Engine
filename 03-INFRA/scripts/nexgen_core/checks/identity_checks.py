@@ -22,6 +22,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+from nexgen_core.i18n import t
 from nexgen_core.report import CheckOutcome, Severity
 
 #: Where each runtime keeps its own *structured* memory. Session
@@ -52,8 +53,8 @@ def check_agent_self(vault_data: Path) -> CheckOutcome:
         return CheckOutcome(
             id="identity.self_present",
             severity=Severity.UNDETERMINED,
-            message="The assistant's personal space does not exist on this machine yet.",
-            action="No action needed, unless you want to create it.",
+            message=t("The assistant's personal space does not exist on this machine yet."),
+            action=t("No action needed, unless you want to create it."),
         )
     try:
         self_file.read_text(encoding="utf-8")
@@ -61,14 +62,14 @@ def check_agent_self(vault_data: Path) -> CheckOutcome:
         return CheckOutcome(
             id="identity.self_present",
             severity=Severity.BROKEN,
-            message="The assistant's personal space exists but cannot be read.",
-            action=f"Check the permissions on {self_file}",
+            message=t("The assistant's personal space exists but cannot be read."),
+            action=t("Check the permissions on {self_file}", self_file=self_file),
             detail=str(exc),
         )
     return CheckOutcome(
         id="identity.self_present",
         severity=Severity.OK,
-        message="Personal space present and readable",
+        message=t("Personal space present and readable"),
     )
 
 
@@ -84,7 +85,7 @@ def check_agent_self_metadata(vault_data: Path) -> CheckOutcome:
         return CheckOutcome(
             id="identity.self_metadata",
             severity=Severity.OK,
-            message="No frontmatter to check",
+            message=t("No frontmatter to check"),
         )
     try:
         content = self_file.read_text(encoding="utf-8")
@@ -92,7 +93,7 @@ def check_agent_self_metadata(vault_data: Path) -> CheckOutcome:
         return CheckOutcome(
             id="identity.self_metadata",
             severity=Severity.UNDETERMINED,
-            message="Could not read the personal space to check its metadata.",
+            message=t("Could not read the personal space to check its metadata."),
         )
 
     match = _FRONTMATTER_RE.match(content)
@@ -100,8 +101,8 @@ def check_agent_self_metadata(vault_data: Path) -> CheckOutcome:
         return CheckOutcome(
             id="identity.self_metadata",
             severity=Severity.BROKEN,
-            message="The personal space has no metadata header.",
-            action=f"Add a '---' block with 'status:' at the top of {self_file.name}",
+            message=t("The personal space has no metadata header."),
+            action=t("Add a '---' block with 'status:' at the top of {filename}", filename=self_file.name),
             detail="Shape defect: it does not stop anything from working.",
         )
 
@@ -111,14 +112,14 @@ def check_agent_self_metadata(vault_data: Path) -> CheckOutcome:
         return CheckOutcome(
             id="identity.self_metadata",
             severity=Severity.BROKEN,
-            message=f"The personal space is missing {', '.join(missing)} in its metadata.",
-            action=f"Add '{missing[0]}:' to the header of {self_file.name}",
+            message=t("The personal space is missing {fields} in its metadata.", fields=", ".join(missing)),
+            action=t("Add '{field}:' to the header of {filename}", field=missing[0], filename=self_file.name),
             detail="Shape defect: it does not stop anything from working.",
         )
     return CheckOutcome(
         id="identity.self_metadata",
         severity=Severity.OK,
-        message="Personal space metadata is in order",
+        message=t("Personal space metadata is in order"),
     )
 
 
@@ -142,17 +143,27 @@ def check_native_memory_boundary(home: Path) -> CheckOutcome:
         return CheckOutcome(
             id="identity.native_memory_boundary",
             severity=Severity.OK,
-            message="No native memory alongside the Vault",
+            message=t("No native memory alongside the Vault"),
+        )
+
+    found_list = ", ".join(found)
+    if len(found) == 1:
+        message = t(
+            "A runtime keeps a memory of its own alongside the Vault: {found}. "
+            "Two separate memories end up saying different things.",
+            found=found_list,
+        )
+    else:
+        message = t(
+            "Some runtimes keep a memory of their own alongside the Vault: {found}. "
+            "Two separate memories end up saying different things.",
+            found=found_list,
         )
 
     return CheckOutcome(
         id="identity.native_memory_boundary",
         severity=Severity.BROKEN,
-        message=(
-            f"{'A runtime keeps' if len(found) == 1 else 'Some runtimes keep'} "
-            f"a memory of its own alongside the Vault: {', '.join(found)}. "
-            f"Two separate memories end up saying different things."
-        ),
-        action="nexgen inventory   # to see what it holds before deciding",
+        message=message,
+        action=t("nexgen inventory   # to see what it holds before deciding"),
         detail="Nothing gets deleted: the decision is yours.",
     )

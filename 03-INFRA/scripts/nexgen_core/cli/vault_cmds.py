@@ -1,40 +1,42 @@
-"""I verbi che agiscono sulla memoria.
+"""The verbs that act on memory.
 
-La memoria è il Vault, quindi restano sotto il nome `vault`: `nexgen vault
-push`, `nexgen vault map`. L'invariante che lega il nome a ciò su cui il
-comando agisce sopravvive come spazio dei nomi, senza un secondo binario.
+Memory is the Vault, so they stay under the name `vault`: `nexgen vault
+push`, `nexgen vault map`. The invariant tying the name to what the command
+acts on survives as a namespace, without a second binary.
 """
 from __future__ import annotations
 
+from nexgen_core.i18n import t
+
 
 def _all(args) -> list[str]:
-    """Gli argomenti che il dispatcher non ha riconosciuto, nel loro ordine."""
+    """The arguments the dispatcher didn't recognize, in their original order."""
     return list(getattr(args, "passthrough", []) or [])
 
 
 def register(sub) -> None:
-    p = sub.add_parser("vault", help="Comandi sulla memoria (il Vault)")
-    vsub = p.add_subparsers(dest="vault_command", metavar="verbo")
+    p = sub.add_parser("vault", help=t("Commands on memory (the Vault)"))
+    vsub = p.add_subparsers(dest="vault_command", metavar="verb")
 
-    q = vsub.add_parser("push", aliases=["publish"], help="Pubblica il lavoro durevole")
-    q.add_argument("-m", "--message", default="update: vault sync", help="Messaggio di commit")
-    q.add_argument("files", nargs="*", help="File specifici da pubblicare")
+    q = vsub.add_parser("push", aliases=["publish"], help=t("Publish the durable work"))
+    q.add_argument("-m", "--message", default="update: vault sync", help=t("Commit message"))
+    q.add_argument("files", nargs="*", help=t("Specific files to publish"))
     q.set_defaults(func=cmd_push)
 
-    q = vsub.add_parser("groom", help="Consolida le note: anteprima di default, apply con conferma")
+    q = vsub.add_parser("groom", help=t("Consolidate notes: preview by default, apply with confirmation"))
     q.set_defaults(func=cmd_groom)
 
-    q = vsub.add_parser("map", help="Mappa la struttura delle note")
+    q = vsub.add_parser("map", help=t("Map the structure of the notes"))
     q.set_defaults(func=cmd_map)
 
-    q = vsub.add_parser("lifecycle", help="Analizza freschezza e ciclo di vita delle note")
+    q = vsub.add_parser("lifecycle", help=t("Analyze notes' freshness and lifecycle"))
     q.set_defaults(func=cmd_lifecycle)
 
     p.set_defaults(func=lambda args: _usage(p))
 
-    # `publish` resta anche di primo livello: è il verbo che la release
-    # precedente esponeva, e le macchine già installate lo invocano così.
-    q = sub.add_parser("publish", help="Pubblica il lavoro durevole (alias di 'vault push')")
+    # `publish` also stays top-level: it's the verb the previous release
+    # exposed, and already-installed machines invoke it that way.
+    q = sub.add_parser("publish", help=t("Publish the durable work (alias for 'vault push')"))
     q.add_argument("-m", "--message", default="update: vault sync")
     q.add_argument("files", nargs="*")
     q.set_defaults(func=cmd_push)

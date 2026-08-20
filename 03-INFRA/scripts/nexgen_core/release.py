@@ -13,6 +13,11 @@ from __future__ import annotations
 import argparse
 import re
 import sys
+from pathlib import Path
+
+SCRIPTS_DIR = Path(__file__).resolve().parents[1]
+if str(SCRIPTS_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPTS_DIR))
 
 #: Anchored semver, with optional prerelease and build. Anchored is the
 #: whole point: without anchors, "almost a version" passes as a version.
@@ -70,9 +75,94 @@ def newer_version(left: str, right: str) -> bool:
     return parts(left) > parts(right)
 
 
+#: The marker a private maintainer tool carries. It must never reach the
+#: public tree, and a release is the moment it would.
+#: Assembled rather than written out, so this file does not match its own
+#: search and report itself as the leak.
+PRIVATE_MARKER = "NEXGEN" "-PRIVATE-" "MAINTAINER-TOOL"
+
+
+def _preflight() -> int:
+    """The checks a maintainer would otherwise have to remember.
+
+    Each one has been forgotten at least once: a version that disagreed with
+    its tag, launchers regenerated on one machine and not committed, a lint
+    gate raised instead of respected, and — the one that matters most — a
+    private tool reaching a public repository.
+    """
+    import subprocess
+
+    repo = Path(__file__).resolve().parents[3]
+    problems: list[str] = []
+    checked: list[str] = []
+
+    version = (repo / "VERSION").read_text(encoding="utf-8").strip()
+    if not is_semver(version):
+        problems.append(f"VERSION is not a version: '{version}'")
+    else:
+        checked.append(f"VERSION is {version}")
+
+    tags = subprocess.run(
+        ["git", "-C", str(repo), "tag", "--list", "--sort=-v:refname"],
+        capture_output=True, text=True, check=False, timeout=30,
+    ).stdout.split()
+    if tags:
+        newest = tags[0]
+        if not newer_version(version, newest):
+            problems.append(
+                f"VERSION {version} is not newer than the newest tag {newest}: "
+                f"a release would name a version that already exists"
+            )
+        else:
+            checked.append(f"newer than {newest}")
+
+    from nexgen_core.legacy_launchers import expected_files
+
+    stale = [
+        path.name
+        for path, content in expected_files(repo / "03-INFRA" / "scripts").items()
+        if not path.is_file() or path.read_text(encoding="utf-8") != content
+    ]
+    if stale:
+        problems.append(
+            "launchers out of step with their table (regenerate and commit them): "
+            + ", ".join(sorted(stale))
+        )
+    else:
+        checked.append("legacy launchers match their table")
+
+    leaked = subprocess.run(
+        ["git", "-C", str(repo), "grep", "-l", PRIVATE_MARKER],
+        capture_output=True, text=True, check=False, timeout=60,
+    ).stdout.split()
+    if leaked:
+        problems.append("private maintainer tooling reached the public tree: " + ", ".join(leaked))
+    else:
+        checked.append("no private tooling in the tree")
+
+    baseline = subprocess.run(
+        [sys.executable, str(repo / "03-INFRA" / "scripts" / "ruff_baseline_check.py")],
+        capture_output=True, text=True, check=False, timeout=300,
+    )
+    if baseline.returncode != 0:
+        problems.append("the lint gate does not pass; fix the findings rather than regenerating it")
+    else:
+        checked.append("lint gate passes")
+
+    for line in checked:
+        print(f"  ok   {line}")
+    for line in problems:
+        print(f"  ✗    {line}", file=sys.stderr)
+    if problems:
+        print(f"\n{len(problems)} thing(s) to settle before tagging.", file=sys.stderr)
+        return 1
+    print("\nReady to tag.")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
-        prog="nexgen-release",
+        prog="nexgen-release-rules",
         description="The release rules, callable from CI and from the command line.",
     )
     sub = parser.add_subparsers(dest="command", required=True)
@@ -80,6 +170,8 @@ def main(argv: list[str] | None = None) -> int:
     p = sub.add_parser("check-version", help="Do VERSION and the tag agree?")
     p.add_argument("version")
     p.add_argument("tag")
+
+    sub.add_parser("preflight", help="Everything a release needs to be true before tagging")
 
     p = sub.add_parser("scan-range", help="Which commit range needs to be scanned")
     p.add_argument("--event", required=True)
@@ -89,6 +181,9 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--pr-head", default="")
 
     args = parser.parse_args(argv)
+
+    if args.command == "preflight":
+        return _preflight()
 
     if args.command == "check-version":
         ok, message = version_matches_tag(args.version, args.tag)

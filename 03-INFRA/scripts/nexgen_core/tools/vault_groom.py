@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """vault-groom — NeXgen Engine v2.
 
-Il comando reale (preview di default, apply guardato con il cancello di
-sicurezza) vive in `nexgen_core.vault.groom`. Questo file resta il punto
-d'ingresso eseguibile a cui `shims.py` punta il symlink/launcher.
+The real command (preview by default, apply guarded behind the safety
+gate) lives in `nexgen_core.vault.groom`. This file remains the executable
+entry point that `shims.py` points its symlink/launcher at.
 """
 from __future__ import annotations
 

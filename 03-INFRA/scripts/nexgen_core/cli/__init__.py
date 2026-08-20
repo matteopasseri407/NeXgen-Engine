@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
-"""L'unico entrypoint del motore: `nexgen`.
+"""The engine's single entry point: `nexgen`.
 
-Prima c'erano tredici comandi separati con nomi ereditati da versioni diverse.
-Ora c'è un verbo per ogni cosa che una persona può chiedere, e i vecchi nomi
-continuano a funzionare come alias, perché una macchina già installata li
-invoca per percorso e romperli significa romperla a metà aggiornamento.
+There used to be thirteen separate commands with names inherited from
+different versions. Now there's one verb for everything a person might ask
+for, and the old names keep working as aliases, because an already-installed
+machine invokes them by path and breaking them means breaking it mid-update.
 
-I gruppi di verbi vivono in moduli separati e si registrano qui. Aggiungere un
-comando è aggiungere una riga in un modulo, non toccare questo file.
+The verb groups live in separate modules and register here. Adding a command
+means adding a line in a module, not touching this file.
 """
 from __future__ import annotations
 
@@ -20,17 +20,24 @@ if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
 from nexgen_core.cli import engine, skill_cmds, stack_cmds, tool_cmds, vault_cmds
+from nexgen_core.i18n import set_language, t
 
-#: I gruppi di verbi, nell'ordine in cui compaiono nell'aiuto.
+#: The verb groups, in the order they appear in the help text.
 GROUPS = (engine, vault_cmds, skill_cmds, stack_cmds, tool_cmds)
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="nexgen",
-        description="NeXgen Engine — tiene allineate le tue macchine e i tuoi assistenti.",
+        description=t("NeXgen Engine — keeps your machines and your assistants aligned."),
     )
-    sub = parser.add_subparsers(dest="command", metavar="comando")
+    # The language comes from the system. This forces it, for anyone working
+    # on a machine set up in someone else's language, or who wants the source.
+    parser.add_argument(
+        "--lang", metavar="CODE", default=None,
+        help=t("Force the language of the messages (for example: it, en)"),
+    )
+    sub = parser.add_subparsers(dest="command", metavar="command")
     for group in GROUPS:
         group.register(sub)
     return parser
@@ -38,11 +45,13 @@ def build_parser() -> argparse.ArgumentParser:
 
 def _run_cli(argv: list[str]) -> int:
     parser = build_parser()
-    # Gli argomenti destinati a un sottoprogramma non sono affari di questo
-    # parser: li raccoglie e li consegna intatti a chi li inoltra. Analizzarli
-    # qui significherebbe rifiutare ogni flag che il sottoprogramma aggiunge.
+    # Arguments meant for a subcommand are not this parser's business: it
+    # collects them and hands them off intact to whoever forwards them.
+    # Parsing them here would mean rejecting every flag the subcommand adds.
     args, passthrough = parser.parse_known_args(argv)
     args.passthrough = passthrough
+    if getattr(args, "lang", None):
+        set_language(args.lang)
 
     if not getattr(args, "command", None):
         parser.print_help()
@@ -56,18 +65,18 @@ def _run_cli(argv: list[str]) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
-    """Punto di ingresso, con la rete sotto: un errore non stampa un traceback."""
+    """Entry point, with a safety net: an error never prints a traceback."""
     if argv is None:
         argv = sys.argv[1:]
     try:
         return _run_cli(argv)
     except KeyboardInterrupt:
-        print("\nInterrotto.", file=sys.stderr)
+        print("\n" + t("Interrupted."), file=sys.stderr)
         return 130
     except BrokenPipeError:
         return 0
     except Exception as exc:
-        print(f"[ERRORE] {exc}", file=sys.stderr)
+        print(f"[ERROR] {exc}", file=sys.stderr)
         return 1
 
 

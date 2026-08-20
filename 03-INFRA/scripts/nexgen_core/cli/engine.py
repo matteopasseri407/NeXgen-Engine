@@ -1,74 +1,75 @@
-"""I verbi che agiscono sul motore: allineare, diagnosticare, aggiornare.
+"""The verbs that act on the engine: align, diagnose, update.
 
-Ogni funzione qui riceve gli argomenti già analizzati e restituisce un exit
-code. Nessuna decide come formattare: la formattazione è una scelta presa una
-volta sola al bordo, in `__init__.py`.
+Every function here receives already-parsed arguments and returns an exit
+code. None of them decide how to format output: formatting is a decision
+made exactly once, at the edge, in `__init__.py`.
 """
 from __future__ import annotations
 
 import sys
 from pathlib import Path
 
-from nexgen_core.paths import resolve_engine_root, resolve_vault_data
+from nexgen_core.i18n import t
+from nexgen_core.paths import resolve_engine_root, resolve_home, resolve_vault_data
 
 
 def _all(args) -> list[str]:
-    """Gli argomenti che il dispatcher non ha riconosciuto, nel loro ordine."""
+    """The arguments the dispatcher didn't recognize, in their original order."""
     return list(getattr(args, "passthrough", []) or [])
 
 
 def register(sub) -> None:
-    """Dichiara i verbi del motore sul dispatcher."""
-    p = sub.add_parser("sync", aliases=["apply"], help="Allinea questa macchina adesso")
+    """Declares the engine's verbs on the dispatcher."""
+    p = sub.add_parser("sync", aliases=["apply"], help=t("Align this machine now"))
     p.add_argument("--offline", "--allow-offline", dest="allow_offline", action="store_true",
-                   help="Procedi anche senza raggiungere il remoto")
+                   help=t("Proceed even without reaching the remote"))
     p.add_argument("--skip-mcp", action="store_true",
-                   help="Non rigenerare le configurazioni dei connettori")
+                   help=t("Don't regenerate the connector configurations"))
     p.set_defaults(func=cmd_sync, mode="apply")
 
-    p = sub.add_parser("guard", help="Il ciclo ricorrente di allineamento (non pubblica mai)")
+    p = sub.add_parser("guard", help=t("The recurring alignment cycle (never publishes)"))
     p.add_argument("--offline", "--allow-offline", dest="allow_offline", action="store_true")
     p.add_argument("--skip-mcp", action="store_true")
     p.set_defaults(func=cmd_sync, mode="guard")
 
-    p = sub.add_parser("pull", help="Scarica i dati senza rigenerare i file derivati")
+    p = sub.add_parser("pull", help=t("Download the data without regenerating derived files"))
     p.add_argument("--offline", "--allow-offline", dest="allow_offline", action="store_true")
     p.set_defaults(func=cmd_sync, mode="pull", skip_mcp=False)
 
-    p = sub.add_parser("preflight", help="Controlla la configurazione senza scrivere niente")
+    p = sub.add_parser("preflight", help=t("Check the configuration without writing anything"))
     p.set_defaults(func=cmd_sync, mode="preflight", allow_offline=False, skip_mcp=False)
 
-    p = sub.add_parser("doctor", help="Dimmi se qualcosa non va")
-    p.add_argument("-v", "--verbose", action="store_true", help="Elenca tutto ciò che è stato controllato")
-    p.add_argument("--strict", action="store_true", help="Tratta come guasto anche ciò che non si può determinare")
-    p.add_argument("--json", action="store_true", help="Output in formato JSON")
-    p.add_argument("--summary", action="store_true", help="Una riga di riepilogo")
+    p = sub.add_parser("doctor", help=t("Tell me if something's wrong"))
+    p.add_argument("-v", "--verbose", action="store_true", help=t("List everything that was checked"))
+    p.add_argument("--strict", action="store_true", help=t("Also treat undetermined results as failures"))
+    p.add_argument("--json", action="store_true", help=t("Output in JSON format"))
+    p.add_argument("--summary", action="store_true", help=t("A one-line summary"))
     p.add_argument("--fix", "--remedy", dest="fix", action="store_true",
-                   help="Applica i rimedi automatici disponibili")
+                   help=t("Apply the available automatic remedies"))
     p.set_defaults(func=cmd_doctor)
 
-    p = sub.add_parser("update", help="Aggiorna il motore, con conferma")
+    p = sub.add_parser("update", help=t("Update the engine, with confirmation"))
     p.set_defaults(func=cmd_update)
 
-    p = sub.add_parser("upgrades", help="Mostrami cosa si è mosso a monte")
+    p = sub.add_parser("upgrades", help=t("Show me what's moved upstream"))
     p.set_defaults(func=cmd_upgrades)
 
-    p = sub.add_parser("inventory", help="Cosa c'è installato su questa macchina, senza toccare niente")
+    p = sub.add_parser("inventory", help=t("What's installed on this machine, without touching anything"))
     p.set_defaults(func=cmd_inventory)
 
-    p = sub.add_parser("config", help="Mostra la configurazione dei remoti risolta")
+    p = sub.add_parser("config", help=t("Show the resolved remote configuration"))
     p.add_argument("field", choices=["authoritative_remote", "mirrors"])
     p.set_defaults(func=cmd_config)
 
-    # Verbi interni: li invocano i timer, non le persone.
-    p = sub.add_parser("heartbeat", help="Battito di liveness e manutenzioni (uso interno)")
+    # Internal verbs: invoked by timers, not by people.
+    p = sub.add_parser("heartbeat", help=t("Liveness beat and maintenance tasks (internal use)"))
     p.set_defaults(func=cmd_heartbeat)
 
-    p = sub.add_parser("notify-failure", help="Allarme per un'unità di guardia non partita (uso interno)")
-    p.add_argument("unit", nargs="?", default="un'unità di guardia")
+    p = sub.add_parser("notify-failure", help=t("Alert for a guard unit that failed to start (internal use)"))
+    p.add_argument("unit", nargs="?", default=t("a guard unit"))
     p.set_defaults(func=cmd_notify_failure)
 
-    p = sub.add_parser("bootstrap-alerts", help="Diagnostica e allerta solo sui guasti (uso interno)")
+    p = sub.add_parser("bootstrap-alerts", help=t("Diagnose and alert only on failures (internal use)"))
     p.set_defaults(func=cmd_bootstrap_alerts)
 
 
@@ -124,8 +125,8 @@ def cmd_heartbeat(args) -> int:
     from nexgen_core.beat import Heartbeat
 
     res = Heartbeat().run_beat()
-    status = "attivo" if res["liveness_ok"] else "fermo"
-    print(f"Battito: {status} ({res['liveness_msg']})")
+    status = t("active") if res["liveness_ok"] else t("stalled")
+    print(t("Heartbeat: {status} ({message})", status=status, message=res["liveness_msg"]))
     return 0 if res["liveness_ok"] else 1
 
 
@@ -133,17 +134,18 @@ def cmd_notify_failure(args) -> int:
     from nexgen_core.megaphone import Megaphone
 
     unit = args.unit
-    summary = (
-        f"{unit} non è partita, e finché non parte questa macchina smette di allinearsi. "
-        f"Controllala con: systemctl --user status {unit}"
+    summary = t(
+        "{unit} did not start, and until it does this machine stops staying aligned. "
+        "Check it with: systemctl --user status {unit}",
+        unit=unit,
     )
     if not Megaphone().send_alert(
-        title="La guardia non è partita",
+        title=t("The guard did not start"),
         message=summary,
         action=f"systemctl --user status {unit}",
         alert_key=f"notify-failure-{unit}",
     ):
-        print(f"notify-failure: {summary} (nessun canale di allarme configurato)", file=sys.stderr)
+        print(t("notify-failure: {summary} (no alert channel configured)", summary=summary), file=sys.stderr)
     return 0
 
 
@@ -154,57 +156,57 @@ def cmd_bootstrap_alerts(args) -> int:
     report = Doctor().run_diagnostics(apply_remedies=False)
     if report.has_failures:
         Megaphone().send_alert(
-            title="Ci sono problemi su questa macchina",
+            title=t("There are problems on this machine"),
             message="; ".join(o.message for o in report.broken[:5]),
             action="nexgen doctor",
             alert_key="bootstrap-alerts-doctor",
         )
-    print(f"Diagnostica completata (guasti={len(report.broken)}, a posto={report.ok_count}).")
+    print(t("Diagnostics complete (failures={failures}, ok={ok}).", failures=len(report.broken), ok=report.ok_count))
     return report.exit_code()
 
 
 def cmd_inventory(args) -> int:
-    """Cosa c'è davvero su questa macchina, confrontato con cosa dovrebbe esserci."""
+    """What's actually on this machine, compared against what should be there."""
     from nexgen_core.renderer import McpRenderer
     from nexgen_core.skills import SkillMaterializer
 
-    home = Path.home()
+    home = resolve_home()
     vault_data = resolve_vault_data(home)
     engine_root = resolve_engine_root(home)
     problems = 0
 
-    print(">>> Connettori MCP per runtime")
+    print(t(">>> MCP connectors per runtime"))
     renderer = McpRenderer(vault_data=vault_data, engine_root=engine_root, home=home)
     for cli_name in ("claude", "codex", "antigravity", "opencode"):
         servers = renderer.load_resolved_servers(cli_name)
-        names = ", ".join(sorted(servers)) if servers else "nessuno"
+        names = ", ".join(sorted(servers)) if servers else t("none")
         print(f"  {cli_name}: {len(servers)} — {names}")
 
-    print("\n>>> Skill: manifest a confronto con la libreria materializzata")
+    print("\n" + t(">>> Skills: manifest compared against the materialized library"))
     mat = SkillMaterializer(vault_data=vault_data, engine_root=engine_root, home=home)
     declared = mat.load_manifest()
     materialized = [p.name for p in mat.library_dir.iterdir() if p.is_dir()] if mat.library_dir.is_dir() else []
     extras = sorted(m for m in materialized if m not in declared)
     missing = sorted(s for s in declared if s not in materialized)
-    print(f"  {len(materialized)} materializzate, {len(declared)} dichiarate")
+    print(t("  {materialized} materialized, {declared} declared", materialized=len(materialized), declared=len(declared)))
     if extras:
-        print(f"  fuori manifest (conservate, mai cancellate): {', '.join(extras)}")
+        print(t("  outside the manifest (kept, never deleted): {names}", names=", ".join(extras)))
     if missing:
-        print(f"  dichiarate ma non ancora materializzate: {', '.join(missing)}")
+        print(t("  declared but not materialized yet: {names}", names=", ".join(missing)))
         problems += 1
 
-    print("\n>>> Istruzioni per runtime")
+    print("\n" + t(">>> Instructions per runtime"))
     for label, path, kind in _bootstrap_targets(home):
         state = _instruction_state(path, kind, vault_data)
         print(f"  {label}: {state}")
-        if state.startswith("divergente"):
+        if state.startswith("diverged"):
             problems += 1
 
-    print("\n>>> Memorie native dei runtime")
+    print("\n" + t(">>> Runtimes' native memories"))
     for label, note in _native_memory_report(home):
         print(f"  {label}: {note}")
 
-    print("\nSola lettura: niente è stato modificato.")
+    print("\n" + t("Read-only: nothing was modified."))
     return 2 if problems else 0
 
 
@@ -217,10 +219,10 @@ def _bootstrap_targets(home: Path) -> list[tuple[str, Path, str]]:
 
 
 def _instruction_state(path: Path, kind: str, vault_data: Path) -> str:
-    """Dice non solo se il file c'è, ma se dice ancora la verità.
+    """Says not just whether the file is there, but whether it still tells the truth.
 
-    "Presente" non basta: una copia reale che ha smesso di combaciare con il
-    canonico è esattamente il caso che questo inventario deve scoprire.
+    "Present" isn't enough: a real copy that has stopped matching the
+    canonical file is exactly the case this inventory needs to catch.
     """
     import hashlib
 
@@ -228,35 +230,36 @@ def _instruction_state(path: Path, kind: str, vault_data: Path) -> str:
 
     canon = canonical_instructions(vault_data)
     if not path.exists() and not path.is_symlink():
-        return "assente"
+        return "absent"
     if path.is_symlink():
-        return f"collegamento -> {path.resolve()}"
+        return f"link -> {path.resolve()}"
     try:
         body = path.read_bytes()
     except OSError as exc:
-        return f"illeggibile ({exc})"
+        return f"unreadable ({exc})"
     if kind == "pointer":
-        return "puntatore" if str(canon) in body.decode("utf-8", "replace") else "divergente: non nomina il canonico"
+        return "pointer" if str(canon) in body.decode("utf-8", "replace") else "diverged: does not name the canonical file"
     if not canon.is_file():
-        return "copia reale (il canonico non esiste, impossibile confrontare)"
+        return "real copy (canonical file doesn't exist, can't compare)"
     same = hashlib.sha256(body).hexdigest() == hashlib.sha256(canon.read_bytes()).hexdigest()
-    return "copia allineata" if same else "divergente: copia reale diversa dal canonico"
+    return "copy aligned" if same else "diverged: real copy differs from the canonical file"
 
 
 def _native_memory_report(home: Path) -> list[tuple[str, str]]:
-    """Le memorie che ogni runtime tiene per conto suo, accanto al Vault.
+    """The memories each runtime keeps on its own, alongside the Vault.
 
-    Non è una diagnosi: è un censimento, perché l'onboarding deve poter dire
-    all'utente cosa esiste già prima di proporgli di adottarlo o azzerarlo.
+    This isn't a diagnosis: it's a census, because onboarding needs to be
+    able to tell the user what already exists before proposing to adopt or
+    reset it.
     """
     out: list[tuple[str, str]] = []
 
     claude_memory = home / ".claude" / "memory"
     if claude_memory.is_dir():
         facts = sum(1 for _ in claude_memory.rglob("*.md"))
-        out.append(("claude", f"{facts} fatti durevoli in {claude_memory}"))
+        out.append(("claude", t("{count} durable facts in {path}", count=facts, path=claude_memory)))
     else:
-        out.append(("claude", "nessuna memoria nativa"))
+        out.append(("claude", t("no native memory")))
 
     for label, path in (
         ("codex", home / ".codex" / "sessions"),
@@ -265,8 +268,11 @@ def _native_memory_report(home: Path) -> list[tuple[str, str]]:
     ):
         if path.is_dir():
             count = sum(1 for _ in path.rglob("*") if _.is_file())
-            out.append((label, f"{count} file di trascrizione in {path} (da distillare, non memoria strutturata)"))
+            out.append((label, t(
+                "{count} transcript files in {path} (to be distilled, not structured memory)",
+                count=count, path=path,
+            )))
         else:
-            out.append((label, "nessuna trascrizione"))
+            out.append((label, t("no transcripts")))
 
     return out

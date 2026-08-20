@@ -41,7 +41,7 @@ class GuardrailError(Exception):
 
 class Runtime(ABC):
     """A CLI adapter. `home` travels explicitly on every call (never read
-    from Path.home() internally), so a test can point every method at a
+    by reading the home directory itself), so a test can point every method at a
     tmp_path and the user's real home never gets touched by mistake.
     """
 

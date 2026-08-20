@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 
 from nexgen_core.config import load_mcp_manifest
+from nexgen_core.i18n import t
 from nexgen_core.report import CheckOutcome, Severity
 
 
@@ -22,15 +23,15 @@ def check_required_rules(vault_data: Path) -> CheckOutcome:
         return CheckOutcome(
             id="bootstrap.rules_guard",
             severity=Severity.UNDETERMINED,
-            message="The canonical AGENTS.md bootstrap is not present.",
-            action="Check the vault structure (03-INFRA/agent-universal-layer/instructions/).",
+            message=t("The canonical AGENTS.md bootstrap is not present."),
+            action=t("Check the vault structure (03-INFRA/agent-universal-layer/instructions/)."),
         )
     if not rules_file.is_file():
         return CheckOutcome(
             id="bootstrap.rules_guard",
             severity=Severity.UNDETERMINED,
-            message="The mandatory rules file required-rules.txt is not present.",
-            action="Restore required-rules.txt next to AGENTS.md.",
+            message=t("The mandatory rules file required-rules.txt is not present."),
+            action=t("Restore required-rules.txt next to AGENTS.md."),
         )
 
     from nexgen_core.tools.required_rules import missing_signatures
@@ -41,23 +42,24 @@ def check_required_rules(vault_data: Path) -> CheckOutcome:
             return CheckOutcome(
                 id="bootstrap.rules_guard",
                 severity=Severity.BROKEN,
-                message=(
-                    f"{len(missing)} required invariant rule(s) missing from the AGENTS.md "
-                    "bootstrap (unintended drift)."
+                message=t(
+                    "{count} required invariant rule(s) missing from the AGENTS.md "
+                    "bootstrap (unintended drift).",
+                    count=len(missing),
                 ),
-                action="Restore the missing rules in AGENTS.md: " + "; ".join(missing[:5]),
+                action=t("Restore the missing rules in AGENTS.md: {rules}", rules="; ".join(missing[:5])),
                 detail=", ".join(missing),
             )
         return CheckOutcome(
             id="bootstrap.rules_guard",
             severity=Severity.OK,
-            message="All mandatory invariant rules are present in AGENTS.md",
+            message=t("All mandatory invariant rules are present in AGENTS.md"),
         )
     except OSError as exc:
         return CheckOutcome(
             id="bootstrap.rules_guard",
             severity=Severity.UNDETERMINED,
-            message=f"Could not read the bootstrap or the rules: {exc}",
+            message=t("Could not read the bootstrap or the rules: {error}", error=exc),
         )
 
 
@@ -76,7 +78,7 @@ def check_tokens_in_env(vault_data: Path) -> CheckOutcome:
         return CheckOutcome(
             id="env.tokens_in_env",
             severity=Severity.UNDETERMINED,
-            message="MCP manifest missing, could not check the tokens.",
+            message=t("MCP manifest missing, could not check the tokens."),
         )
 
     data = load_mcp_manifest(manifest_path)
@@ -101,11 +103,14 @@ def check_tokens_in_env(vault_data: Path) -> CheckOutcome:
         return CheckOutcome(
             id="env.tokens_in_env",
             severity=Severity.BROKEN,
-            message="Tokens required by active MCP HTTP servers are missing from the environment: " + "; ".join(missing),
-            action="Set the missing env vars (see 99-SECRETS / environment.d) and rerun agent-sync apply.",
+            message=t(
+                "Tokens required by active MCP HTTP servers are missing from the environment: {tokens}",
+                tokens="; ".join(missing),
+            ),
+            action=t("Set the missing env vars (see 99-SECRETS / environment.d) and rerun agent-sync apply."),
         )
     return CheckOutcome(
         id="env.tokens_in_env",
         severity=Severity.OK,
-        message="All tokens for active MCP HTTP servers are present in the environment",
+        message=t("All tokens for active MCP HTTP servers are present in the environment"),
     )

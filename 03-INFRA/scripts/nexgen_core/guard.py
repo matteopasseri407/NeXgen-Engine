@@ -32,9 +32,10 @@ from nexgen_core.git_ops import (
     inspect_git_state,
     resolve_remotes,
 )
+from nexgen_core.i18n import t
 from nexgen_core.jsonc import parse_jsonc, set_jsonc_top_level_value
 from nexgen_core.lock import HostLock, LockTimeoutError
-from nexgen_core.paths import resolve_engine_root, resolve_vault_data
+from nexgen_core.paths import resolve_engine_root, resolve_home, resolve_vault_data
 from nexgen_core.renderer import McpRenderer
 from nexgen_core.runtimes import apply_all as apply_runtimes
 from nexgen_core.scheduler import install_scheduler
@@ -80,7 +81,7 @@ class GuardRunner:
         engine_root: Path | None = None,
         home: Path | None = None,
     ) -> None:
-        self.home = home or Path.home()
+        self.home = resolve_home(home)
         _v = resolve_vault_data(self.home, vault_data)
         self.vault_data = _v
         self.engine_root = resolve_engine_root(self.home, engine_root)
@@ -96,9 +97,9 @@ class GuardRunner:
                 load_mcp_manifest(manifest_mcp)
             if manifest_skills.is_file():
                 load_skills_manifest(manifest_skills)
-            return True, "MCP and Skill configurations valid"
+            return True, t("MCP and Skill configurations valid")
         except Exception as exc:
-            return False, f"Preflight failed: {exc}"
+            return False, t("Preflight failed: {error}", error=exc)
 
     def align_instructions(self) -> list[str]:
         """Aligns the instruction compatibility pointers (~/CLAUDE.md etc.)."""
@@ -126,7 +127,7 @@ class GuardRunner:
                 with contextlib.suppress(OSError):
                     shutil.copy2(claude_md, backup)
             claude_md.write_text(content, encoding="utf-8")
-            actions.append(f"Updated instruction pointer {claude_md}")
+            actions.append(t("Updated instruction pointer {path}", path=claude_md))
 
         # The other three CLIs read the canonical file directly. Aligning
         # only one of them would mean having a canonical source for one
@@ -137,7 +138,7 @@ class GuardRunner:
             ("antigravity", self.home / ".gemini" / "config" / "AGENTS.md"),
         ):
             if self._link_to_canonical(target, canon):
-                actions.append(f"{label} instructions restored to canonical")
+                actions.append(t("{label} instructions restored to canonical", label=label))
 
         opencode_action = self._align_opencode_instructions(canon)
         if opencode_action:
@@ -210,7 +211,7 @@ class GuardRunner:
                 candidate.write_text(body, encoding="utf-8")
             except OSError:
                 return None
-            return "opencode instructions restored to canonical"
+            return t("opencode instructions restored to canonical")
         return None
 
     def align_local_model_runtime(self) -> list[str]:
@@ -234,10 +235,10 @@ class GuardRunner:
             runtime.unlink(missing_ok=True)
         try:
             runtime.symlink_to(src)
-            actions.append("local-model: relinked local-model-agent.ps1")
+            actions.append(t("local-model: relinked local-model-agent.ps1"))
         except OSError:
             shutil.copy2(src, runtime)
-            actions.append("local-model: copied local-model-agent.ps1")
+            actions.append(t("local-model: copied local-model-agent.ps1"))
         wrappers = {
             "local-worker.ps1": "$ScriptPath = Join-Path $PSScriptRoot 'local-model-agent.ps1'\r\n& $ScriptPath -Mode worker @args\r\n",
             "local-agent.ps1": "$ScriptPath = Join-Path $PSScriptRoot 'local-model-agent.ps1'\r\n& $ScriptPath -Mode agent @args\r\n",
@@ -246,7 +247,7 @@ class GuardRunner:
             target = local_bin / name
             if not target.is_file() or target.read_text(encoding="utf-8", errors="replace") != content:
                 target.write_text(content, encoding="utf-8")
-                actions.append(f"local-model: installed wrapper {name}")
+                actions.append(t("local-model: installed wrapper {name}", name=name))
         return actions
 
     def apply_runtime_permissions(self) -> list[str]:
@@ -266,9 +267,9 @@ class GuardRunner:
         try:
             raw = yaml.safe_load(manifest_path.read_text(encoding="utf-8"))
         except (OSError, yaml.YAMLError) as exc:
-            return [f"[WARN] runtime-permissions: could not read {manifest_path} ({exc})"]
+            return ["[WARN] " + t("runtime-permissions: could not read {path} ({error})", path=manifest_path, error=exc)]
         if not isinstance(raw, dict):
-            return [f"[WARN] runtime-permissions: the root of {manifest_path} is not a map"]
+            return ["[WARN] " + t("runtime-permissions: the root of {path} is not a map", path=manifest_path)]
 
         posture = {
             cli: value
@@ -287,9 +288,9 @@ class GuardRunner:
             candidate = (manifest_path.parent / spec["file"]).resolve()
             if not str(candidate).startswith(str(manifest_path.parent.resolve())):
                 name = spec.get("name", spec["file"])
-                return [f"[WARN] runtime-permissions: {name} escapes permissions/, guardrail rejected"]
+                return ["[WARN] " + t("runtime-permissions: {name} escapes permissions/, guardrail rejected", name=name)]
             if not candidate.is_file():
-                return [f"[WARN] runtime-permissions: guardrail body missing ({candidate})"]
+                return ["[WARN] " + t("runtime-permissions: guardrail body missing ({path})", path=candidate)]
             guardrail_source = candidate
             break
 
@@ -328,7 +329,7 @@ class GuardRunner:
                         return GuardResult(
                             success=False,
                             mode=mode,
-                            message=f"Operation blocked by Git: {git_status.message}",
+                            message=t("Operation blocked by Git: {reason}", reason=git_status.message),
                             exit_code=1,
                         )
                     if git_status.state == GitState.BEHIND:
@@ -337,18 +338,18 @@ class GuardRunner:
                             return GuardResult(
                                 success=False,
                                 mode=mode,
-                                message=f"Error during automatic update: {ff_msg}",
+                                message=t("Error during automatic update: {reason}", reason=ff_msg),
                                 exit_code=1,
                             )
                         actions.append(ff_msg)
                     elif git_status.state == GitState.FRESH:
-                        actions.append(f"Data state: {git_status.message}")
+                        actions.append(t("Data state: {status}", status=git_status.message))
                     elif git_status.state == GitState.AHEAD:
-                        actions.append(f"Data state: {git_status.message}")
+                        actions.append(t("Data state: {status}", status=git_status.message))
 
                 # If this is a pull-only run, stop here
                 if mode == GuardMode.PULL:
-                    return GuardResult(success=True, mode=mode, message="Pull completed", exit_code=0, actions_taken=actions)
+                    return GuardResult(success=True, mode=mode, message=t("Pull completed"), exit_code=0, actions_taken=actions)
 
                 # 2. Preflight
                 pf_ok, pf_msg = self.preflight()
@@ -365,18 +366,18 @@ class GuardRunner:
 
                 # 4. MCP configuration rendering for the CLIs
                 if skip_mcp:
-                    actions.append("MCP configurations not regenerated (explicitly requested)")
+                    actions.append(t("MCP configurations not regenerated (explicitly requested)"))
                 else:
                     rend = McpRenderer(vault_data=self.vault_data, engine_root=self.engine_root, home=self.home)
                     rend.render_all(write=True)
-                    actions.append("MCP configurations regenerated for every CLI")
+                    actions.append(t("MCP configurations regenerated for every CLI"))
 
                 # 4.6 Permission posture + guardrail hook per CLI
                 try:
                     perm_actions = self.apply_runtime_permissions()
                     actions.extend(perm_actions)
                 except Exception as exc:
-                    actions.append(f"[WARN] runtime-permissions: phase skipped due to an unexpected error ({exc})")
+                    actions.append("[WARN] " + t("runtime-permissions: phase skipped due to an unexpected error ({error})", error=exc))
 
                 # 5. Instruction alignment
                 instr_actions = self.align_instructions()
@@ -396,9 +397,9 @@ class GuardRunner:
                     install_shims(home=self.home)
                     repaired = sorted(_launcher_fingerprints(self.home).items() - before.items())
                     if repaired:
-                        actions.append(f"Commands realigned ({len(repaired)})")
+                        actions.append(t("Commands realigned ({count})", count=len(repaired)))
                 except Exception as exc:
-                    actions.append(f"[WARN] Commands not realigned: {exc}")
+                    actions.append("[WARN] " + t("Commands not realigned: {error}", error=exc))
 
                 # 6. Startup self-alignment installation (systemd / scheduled task)
                 try:
@@ -411,19 +412,19 @@ class GuardRunner:
                         log=lambda msg: actions.append(msg),
                     )
                     if sched_ok:
-                        actions.append("Startup self-alignment configured")
+                        actions.append(t("Startup self-alignment configured"))
                 except Exception as exc:
-                    actions.append(f"[WARN] Self-alignment configuration did not succeed: {exc}")
+                    actions.append("[WARN] " + t("Self-alignment configuration did not succeed: {error}", error=exc))
 
                 # 7. Liveness registration for the heartbeat
                 if is_guard or mode == GuardMode.APPLY:
                     self.heartbeat.record_liveness()
-                    actions.append("Liveness recorded successfully")
+                    actions.append(t("Liveness recorded successfully"))
 
                 return GuardResult(
                     success=True,
                     mode=mode,
-                    message="Alignment completed successfully",
+                    message=t("Alignment completed successfully"),
                     exit_code=0,
                     actions_taken=actions,
                 )
@@ -439,6 +440,6 @@ class GuardRunner:
             return GuardResult(
                 success=False,
                 mode=mode,
-                message=f"Error during the alignment operation: {exc}",
+                message=t("Error during the alignment operation: {error}", error=exc),
                 exit_code=1,
             )

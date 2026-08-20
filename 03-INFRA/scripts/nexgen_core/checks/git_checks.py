@@ -13,6 +13,7 @@ from nexgen_core.git_ops import (
     resolve_remotes,
     run_git,
 )
+from nexgen_core.i18n import t
 from nexgen_core.report import CheckOutcome, Severity
 
 #: An unpublished commit older than this threshold (seconds) is a real
@@ -32,29 +33,29 @@ def check_git_alignment(vault_data: Path, expected_branch: str | None = None) ->
         return CheckOutcome(
             id="git.alignment",
             severity=Severity.OK,
-            message=f"Data state aligned ({res.message})",
+            message=t("Data state aligned ({message})", message=res.message),
         )
     elif res.state == GitState.DIRTY:
         return CheckOutcome(
             id="git.alignment",
             severity=Severity.BROKEN,
-            message=f"There are unsaved changes in the Vault ({len(res.uncommitted_files)} files).",
-            action="Run 'vault-push' to save your changes before syncing.",
+            message=t("There are unsaved changes in the Vault ({count} files).", count=len(res.uncommitted_files)),
+            action=t("Run 'vault-push' to save your changes before syncing."),
             detail=", ".join(res.uncommitted_files[:5]),
         )
     elif res.state == GitState.CONFLICTED:
         return CheckOutcome(
             id="git.alignment",
             severity=Severity.BROKEN,
-            message="There is an interrupted merge or rebase in the Vault.",
-            action="Run 'git rebase --abort' or 'git merge --abort' inside the Vault.",
+            message=t("There is an interrupted merge or rebase in the Vault."),
+            action=t("Run 'git rebase --abort' or 'git merge --abort' inside the Vault."),
         )
     elif res.state == GitState.FETCH_FAILED or res.state == GitState.REMOTE_MISSING:
         return CheckOutcome(
             id="git.alignment",
             severity=Severity.UNDETERMINED,
-            message=f"Could not check alignment with the remote server: {res.message}",
-            action="Check the internet connection or the remote configuration.",
+            message=t("Could not check alignment with the remote server: {message}", message=res.message),
+            action=t("Check the internet connection or the remote configuration."),
         )
     elif res.state == GitState.AHEAD:
         oldest_ts = oldest_unpublished_commit_timestamp(vault_data, auth_remote, branch)
@@ -65,13 +66,17 @@ def check_git_alignment(vault_data: Path, expected_branch: str | None = None) ->
                 return CheckOutcome(
                     id="git.alignment",
                     severity=Severity.BROKEN,
-                    message=f"There are commits unpublished in the Vault for more than {age_hours}h (the oldest exceeds the {STALE_UNPUBLISHED_SECONDS // 3600}h threshold).",
-                    action="Run 'vault-push' to publish them.",
+                    message=t(
+                        "There are commits unpublished in the Vault for more than {age_hours}h "
+                        "(the oldest exceeds the {threshold_hours}h threshold).",
+                        age_hours=age_hours, threshold_hours=STALE_UNPUBLISHED_SECONDS // 3600,
+                    ),
+                    action=t("Run 'vault-push' to publish them."),
                 )
         return CheckOutcome(
             id="git.alignment",
             severity=Severity.OK,
-            message="The local Vault has new commits ready to be pushed.",
+            message=t("The local Vault has new commits ready to be pushed."),
         )
     elif res.state == GitState.BEHIND:
         def remedy() -> bool:
@@ -82,16 +87,16 @@ def check_git_alignment(vault_data: Path, expected_branch: str | None = None) ->
         return CheckOutcome(
             id="git.alignment",
             severity=Severity.BROKEN,
-            message=f"Remote {auth_remote} has new commits not yet downloaded.",
-            action="Run 'agent-sync apply' or 'agent-sync pull' to align the Vault.",
+            message=t("Remote {remote} has new commits not yet downloaded.", remote=auth_remote),
+            action=t("Run 'agent-sync apply' or 'agent-sync pull' to align the Vault."),
             remedy=remedy,
         )
     else:
         return CheckOutcome(
             id="git.alignment",
             severity=Severity.BROKEN,
-            message=f"Git misalignment in the Vault: {res.message}",
-            action="Run 'agent-sync apply' to check and attempt alignment.",
+            message=t("Git misalignment in the Vault: {message}", message=res.message),
+            action=t("Run 'agent-sync apply' to check and attempt alignment."),
         )
 
 
@@ -119,7 +124,10 @@ def check_mirror_alignment(vault_data: Path, expected_branch: str | None = None)
             outcomes.append(CheckOutcome(
                 id=id_,
                 severity=Severity.UNDETERMINED,
-                message=f"Could not check the alignment of mirror '{mirror}': the authoritative remote '{auth_remote}' is unreachable.",
+                message=t(
+                    "Could not check the alignment of mirror '{mirror}': the authoritative remote '{remote}' is unreachable.",
+                    mirror=mirror, remote=auth_remote,
+                ),
             ))
             continue
 
@@ -127,7 +135,7 @@ def check_mirror_alignment(vault_data: Path, expected_branch: str | None = None)
             outcomes.append(CheckOutcome(
                 id=id_,
                 severity=Severity.UNDETERMINED,
-                message=f"Mirror '{mirror}' is unreachable, so its alignment could not be checked.",
+                message=t("Mirror '{mirror}' is unreachable, so its alignment could not be checked.", mirror=mirror),
             ))
             continue
 
@@ -138,13 +146,19 @@ def check_mirror_alignment(vault_data: Path, expected_branch: str | None = None)
             outcomes.append(CheckOutcome(
                 id=id_,
                 severity=Severity.OK,
-                message=f"Mirror '{mirror}' aligned with authoritative remote '{auth_remote}'",
+                message=t("Mirror '{mirror}' aligned with authoritative remote '{remote}'", mirror=mirror, remote=auth_remote),
             ))
         else:
             outcomes.append(CheckOutcome(
                 id=id_,
                 severity=Severity.BROKEN,
-                message=f"Mirror '{mirror}' is not aligned with the branch published on '{auth_remote}'.",
-                action=f"Run 'git push {mirror} {branch}' from the Vault to realign it (the canonical Vault remains {auth_remote}).",
+                message=t(
+                    "Mirror '{mirror}' is not aligned with the branch published on '{remote}'.",
+                    mirror=mirror, remote=auth_remote,
+                ),
+                action=t(
+                    "Run 'git push {mirror} {branch}' from the Vault to realign it (the canonical Vault remains {remote}).",
+                    mirror=mirror, branch=branch, remote=auth_remote,
+                ),
             ))
     return outcomes

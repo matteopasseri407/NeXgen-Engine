@@ -15,6 +15,7 @@ import re
 import shutil
 from pathlib import Path
 
+from nexgen_core.i18n import t
 from nexgen_core.jsonc import parse_jsonc
 from nexgen_core.paths import canonical_instructions
 from nexgen_core.renderer import McpRenderer
@@ -40,13 +41,13 @@ def check_canonical_instructions_present(vault_data: Path) -> CheckOutcome:
         return CheckOutcome(
             id="instructions.canonical_present",
             severity=Severity.BROKEN,
-            message=f"The canonical instructions file does not exist ({canon}).",
-            action="Restore 03-INFRA/agent-universal-layer/instructions/AGENTS.md from the Vault.",
+            message=t("The canonical instructions file does not exist ({canon}).", canon=canon),
+            action=t("Restore 03-INFRA/agent-universal-layer/instructions/AGENTS.md from the Vault."),
         )
     return CheckOutcome(
         id="instructions.canonical_present",
         severity=Severity.OK,
-        message="Canonical instructions file AGENTS.md present",
+        message=t("Canonical instructions file AGENTS.md present"),
     )
 
 
@@ -60,8 +61,11 @@ def check_claude_pointer(vault_data: Path, home: Path) -> CheckOutcome:
         return CheckOutcome(
             id="instructions.claude_pointer",
             severity=Severity.BROKEN,
-            message=f"~/CLAUDE.md must be a plain-text pointer file, not missing or a symlink ({claude_file}).",
-            action=f"Write a short pointer referencing {canon} into {claude_file}.",
+            message=t(
+                "~/CLAUDE.md must be a plain-text pointer file, not missing or a symlink ({claude_file}).",
+                claude_file=claude_file,
+            ),
+            action=t("Write a short pointer referencing {canon} into {claude_file}.", canon=canon, claude_file=claude_file),
         )
 
     try:
@@ -70,20 +74,20 @@ def check_claude_pointer(vault_data: Path, home: Path) -> CheckOutcome:
         return CheckOutcome(
             id="instructions.claude_pointer",
             severity=Severity.UNDETERMINED,
-            message=f"Could not read ~/CLAUDE.md: {exc}",
+            message=t("Could not read ~/CLAUDE.md: {error}", error=exc),
         )
 
     if str(canon) in content:
         return CheckOutcome(
             id="instructions.claude_pointer",
             severity=Severity.OK,
-            message="~/CLAUDE.md correctly points to the canonical AGENTS.md file",
+            message=t("~/CLAUDE.md correctly points to the canonical AGENTS.md file"),
         )
     return CheckOutcome(
         id="instructions.claude_pointer",
         severity=Severity.BROKEN,
-        message="~/CLAUDE.md does not reference the canonical AGENTS.md file's path (risk of a duplicate copy silently diverging).",
-        action=f"Replace ~/CLAUDE.md with a pointer referencing {canon}.",
+        message=t("~/CLAUDE.md does not reference the canonical AGENTS.md file's path (risk of a duplicate copy silently diverging)."),
+        action=t("Replace ~/CLAUDE.md with a pointer referencing {canon}.", canon=canon),
     )
 
 
@@ -99,19 +103,25 @@ def _pointer_outcome(cli_name: str, id_: str, pointer_file: Path, canon: Path, *
         except OSError:
             aligned = False
         if aligned:
-            return CheckOutcome(id=id_, severity=Severity.OK, message=f"{cli_name} points to the canonical AGENTS.md file")
+            return CheckOutcome(id=id_, severity=Severity.OK, message=t("{cli_name} points to the canonical AGENTS.md file", cli_name=cli_name))
         return CheckOutcome(
             id=id_,
             severity=Severity.BROKEN,
-            message=f"{cli_name}'s instructions ({pointer_file}) do not point to the canonical AGENTS.md file.",
-            action="Run 'agent-sync apply' to recreate the pointer.",
+            message=t(
+                "{cli_name}'s instructions ({pointer_file}) do not point to the canonical AGENTS.md file.",
+                cli_name=cli_name, pointer_file=pointer_file,
+            ),
+            action=t("Run 'agent-sync apply' to recreate the pointer."),
         )
     if installed:
         return CheckOutcome(
             id=id_,
             severity=Severity.BROKEN,
-            message=f"{cli_name} is installed but doesn't have the pointer to the canonical instructions yet ({pointer_file}).",
-            action="Run 'agent-sync apply' to generate the pointer.",
+            message=t(
+                "{cli_name} is installed but doesn't have the pointer to the canonical instructions yet ({pointer_file}).",
+                cli_name=cli_name, pointer_file=pointer_file,
+            ),
+            action=t("Run 'agent-sync apply' to generate the pointer."),
         )
     return None
 
@@ -144,8 +154,8 @@ def check_opencode_instructions(vault_data: Path, home: Path) -> CheckOutcome | 
             return CheckOutcome(
                 id="instructions.opencode_pointer",
                 severity=Severity.BROKEN,
-                message=f"OpenCode is installed but its configuration file is missing ({cfg_file}).",
-                action="Run 'agent-sync apply' to generate it.",
+                message=t("OpenCode is installed but its configuration file is missing ({cfg_file}).", cfg_file=cfg_file),
+                action=t("Run 'agent-sync apply' to generate it."),
             )
         return None
 
@@ -156,7 +166,7 @@ def check_opencode_instructions(vault_data: Path, home: Path) -> CheckOutcome | 
         return CheckOutcome(
             id="instructions.opencode_pointer",
             severity=Severity.UNDETERMINED,
-            message=f"Could not parse the OpenCode configuration ({cfg_file}): {exc}",
+            message=t("Could not parse the OpenCode configuration ({cfg_file}): {error}", cfg_file=cfg_file, error=exc),
         )
 
     entries = data.get("instructions", []) if isinstance(data, dict) else []
@@ -171,13 +181,13 @@ def check_opencode_instructions(vault_data: Path, home: Path) -> CheckOutcome | 
         return CheckOutcome(
             id="instructions.opencode_pointer",
             severity=Severity.BROKEN,
-            message="OpenCode's 'instructions' do not include the canonical AGENTS.md file.",
-            action="Run 'agent-sync apply' to register it.",
+            message=t("OpenCode's 'instructions' do not include the canonical AGENTS.md file."),
+            action=t("Run 'agent-sync apply' to register it."),
         )
     return CheckOutcome(
         id="instructions.opencode_pointer",
         severity=Severity.OK,
-        message="OpenCode loads the canonical AGENTS.md file",
+        message=t("OpenCode loads the canonical AGENTS.md file"),
     )
 
 
@@ -193,13 +203,19 @@ def check_bootstrap_size_budget(vault_data: Path) -> CheckOutcome | None:
         return CheckOutcome(
             id="instructions.bootstrap_size_budget",
             severity=Severity.BROKEN,
-            message=f"The AGENTS.md bootstrap is {size} bytes, over the {BOOTSTRAP_MAX_BYTES} budget.",
-            action="Move task-specific content into a load-on-demand note, pulled in only when needed.",
+            message=t(
+                "The AGENTS.md bootstrap is {size} bytes, over the {budget} budget.",
+                size=size, budget=BOOTSTRAP_MAX_BYTES,
+            ),
+            action=t("Move task-specific content into a load-on-demand note, pulled in only when needed."),
         )
     return CheckOutcome(
         id="instructions.bootstrap_size_budget",
         severity=Severity.OK,
-        message=f"AGENTS.md bootstrap within budget ({size}/{BOOTSTRAP_MAX_BYTES} bytes)",
+        message=t(
+            "AGENTS.md bootstrap within budget ({size}/{budget} bytes)",
+            size=size, budget=BOOTSTRAP_MAX_BYTES,
+        ),
     )
 
 
@@ -223,13 +239,16 @@ def check_bootstrap_notes_size(vault_data: Path) -> CheckOutcome | None:
         return CheckOutcome(
             id="instructions.bootstrap_notes_size",
             severity=Severity.BROKEN,
-            message=f"Detail note(s) over the {NOTE_MAX_BYTES}-byte budget: {', '.join(oversized)}.",
-            action="Consider splitting the note into smaller sections loaded on demand.",
+            message=t(
+                "Detail note(s) over the {budget}-byte budget: {notes}.",
+                budget=NOTE_MAX_BYTES, notes=", ".join(oversized),
+            ),
+            action=t("Consider splitting the note into smaller sections loaded on demand."),
         )
     return CheckOutcome(
         id="instructions.bootstrap_notes_size",
         severity=Severity.OK,
-        message=f"Detail notes within the {NOTE_MAX_BYTES}-byte budget",
+        message=t("Detail notes within the {budget}-byte budget", budget=NOTE_MAX_BYTES),
     )
 
 
@@ -248,7 +267,7 @@ def check_bootstrap_pointer_integrity(vault_data: Path) -> CheckOutcome | None:
         return CheckOutcome(
             id="instructions.bootstrap_pointer_integrity",
             severity=Severity.UNDETERMINED,
-            message=f"Could not read the AGENTS.md bootstrap: {exc}",
+            message=t("Could not read the AGENTS.md bootstrap: {error}", error=exc),
         )
 
     top_dirs = {p.name for p in vault_data.iterdir() if p.is_dir() and not p.name.startswith(".")}
@@ -269,17 +288,20 @@ def check_bootstrap_pointer_integrity(vault_data: Path) -> CheckOutcome | None:
         return CheckOutcome(
             id="instructions.bootstrap_pointer_integrity",
             severity=Severity.OK,
-            message="No load-on-demand pointers to check in the bootstrap",
+            message=t("No load-on-demand pointers to check in the bootstrap"),
         )
     if missing:
         return CheckOutcome(
             id="instructions.bootstrap_pointer_integrity",
             severity=Severity.BROKEN,
-            message=f"Load-on-demand pointer(s) in the bootstrap that don't resolve to an existing file: {', '.join(missing)}.",
-            action="Fix or remove the references to renamed/removed notes in AGENTS.md.",
+            message=t(
+                "Load-on-demand pointer(s) in the bootstrap that don't resolve to an existing file: {pointers}.",
+                pointers=", ".join(missing),
+            ),
+            action=t("Fix or remove the references to renamed/removed notes in AGENTS.md."),
         )
     return CheckOutcome(
         id="instructions.bootstrap_pointer_integrity",
         severity=Severity.OK,
-        message=f"All {checked} load-on-demand pointers in the bootstrap resolve correctly",
+        message=t("All {checked} load-on-demand pointers in the bootstrap resolve correctly", checked=checked),
     )

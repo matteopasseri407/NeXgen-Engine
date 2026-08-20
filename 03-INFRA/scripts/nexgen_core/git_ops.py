@@ -16,6 +16,8 @@ from pathlib import Path
 
 import yaml
 
+from nexgen_core.i18n import t
+
 
 class GitState(str, Enum):
     FRESH = "fresh"
@@ -47,8 +49,8 @@ def fast_forward_merge(repo_dir: Path, remote: str = "origin", branch: str = "ma
     """Performs a safe fast-forward merge (--ff-only) when the state is BEHIND."""
     res = run_git(repo_dir, "merge", "--ff-only", f"{remote}/{branch}")
     if res.returncode == 0:
-        return True, f"Data updated successfully via fast-forward from {remote}/{branch}"
-    return False, f"Fast-forward failed: {res.stderr.strip()}"
+        return True, t("Data updated successfully via fast-forward from {ref}", ref=f"{remote}/{branch}")
+    return False, t("Fast-forward failed: {error}", error=res.stderr.strip())
 
 
 def run_git(repo_dir: Path, *args: str, timeout: int = 30) -> subprocess.CompletedProcess[str]:
@@ -143,9 +145,9 @@ def check_conflicts_or_rebase(repo_dir: Path) -> str | None:
         git_dir = repo_dir / git_dir
 
     if (git_dir / "rebase-merge").exists() or (git_dir / "rebase-apply").exists():
-        return "a git rebase is in progress in the vault: run 'git rebase --abort' before continuing"
+        return t("a git rebase is in progress in the vault: run 'git rebase --abort' before continuing")
     if (git_dir / "MERGE_HEAD").exists():
-        return "a git merge is in progress in the vault: run 'git merge --abort' before continuing"
+        return t("a git merge is in progress in the vault: run 'git merge --abort' before continuing")
     return None
 
 
@@ -157,7 +159,7 @@ def inspect_git_state(
 ) -> GitStatusResult:
     """Full Git state inspection, per the transactional contract."""
     if remote in ("local", "none"):
-        return GitStatusResult(GitState.LOCAL_ONLY, "Local-Only mode", expected_branch)
+        return GitStatusResult(GitState.LOCAL_ONLY, t("Local-Only mode"), expected_branch)
 
     # 1. Conflicts or pending operations
     conflict_msg = check_conflicts_or_rebase(repo_dir)
@@ -167,10 +169,10 @@ def inspect_git_state(
     # 2. Branch check
     curr_branch = get_current_branch(repo_dir)
     if not curr_branch or curr_branch != expected_branch:
-        found = curr_branch or "detached HEAD"
+        found = curr_branch or t("detached HEAD")
         return GitStatusResult(
             GitState.WRONG_BRANCH,
-            f"Current branch '{found}', expected '{expected_branch}'",
+            t("Current branch '{found}', expected '{expected}'", found=found, expected=expected_branch),
             curr_branch
         )
 
@@ -179,7 +181,7 @@ def inspect_git_state(
     if uncommitted:
         return GitStatusResult(
             GitState.DIRTY,
-            f"Unsaved changes on {len(uncommitted)} tracked files",
+            t("Unsaved changes on {count} tracked files", count=len(uncommitted)),
             curr_branch,
             uncommitted
         )
@@ -187,10 +189,10 @@ def inspect_git_state(
     # 4. Check that the remote exists
     if run_git(repo_dir, "remote", "get-url", remote).returncode != 0:
         if allow_offline:
-            return GitStatusResult(GitState.FRESH, "Offline manually allowed (remote missing)", curr_branch)
+            return GitStatusResult(GitState.FRESH, t("Offline manually allowed (remote missing)"), curr_branch)
         return GitStatusResult(
             GitState.REMOTE_MISSING,
-            f"Authoritative remote '{remote}' not configured",
+            t("Authoritative remote '{remote}' not configured", remote=remote),
             curr_branch
         )
 
@@ -198,9 +200,13 @@ def inspect_git_state(
     fetch_res = run_git(repo_dir, "fetch", "--prune", remote, expected_branch)
     if fetch_res.returncode != 0:
         if allow_offline:
-            return GitStatusResult(GitState.FRESH, "Offline manually allowed", curr_branch)
+            return GitStatusResult(GitState.FRESH, t("Offline manually allowed"), curr_branch)
         detail = (fetch_res.stderr or fetch_res.stdout).strip()
-        msg = f"Could not reach remote {remote}/{expected_branch}" + (f": {detail}" if detail else "")
+        ref = f"{remote}/{expected_branch}"
+        msg = (
+            t("Could not reach remote {ref}: {detail}", ref=ref, detail=detail)
+            if detail else t("Could not reach remote {ref}", ref=ref)
+        )
         return GitStatusResult(GitState.FETCH_FAILED, msg, curr_branch)
 
     # 6. Compare local and remote commits
@@ -208,30 +214,38 @@ def inspect_git_state(
     rh_res = run_git(repo_dir, "rev-parse", f"{remote}/{expected_branch}")
 
     if lh_res.returncode != 0:
-        return GitStatusResult(GitState.ERROR, f"Local branch '{expected_branch}' not found", curr_branch)
+        return GitStatusResult(GitState.ERROR, t("Local branch '{branch}' not found", branch=expected_branch), curr_branch)
 
     # If the remote branch doesn't exist yet (e.g. first push to a new repository)
     if rh_res.returncode != 0:
-        return GitStatusResult(GitState.AHEAD, f"Local branch '{expected_branch}' is not on {remote} yet", curr_branch)
+        return GitStatusResult(
+            GitState.AHEAD,
+            t("Local branch '{branch}' is not on {remote} yet", branch=expected_branch, remote=remote),
+            curr_branch,
+        )
 
     mb_res = run_git(repo_dir, "merge-base", expected_branch, f"{remote}/{expected_branch}")
     if mb_res.returncode != 0:
         return GitStatusResult(
             GitState.ERROR,
-            f"Error computing merge-base with {remote}/{expected_branch}",
+            t("Error computing merge-base with {ref}", ref=f"{remote}/{expected_branch}"),
             curr_branch
         )
 
     lh, rh, mb = lh_res.stdout.strip(), rh_res.stdout.strip(), mb_res.stdout.strip()
 
     if lh == rh:
-        return GitStatusResult(GitState.FRESH, "Data already aligned", curr_branch)
+        return GitStatusResult(GitState.FRESH, t("Data already aligned"), curr_branch)
     elif mb == lh:
-        return GitStatusResult(GitState.BEHIND, f"Remote {remote} has new commits (update available)", curr_branch)
+        return GitStatusResult(GitState.BEHIND, t("Remote {remote} has new commits (update available)", remote=remote), curr_branch)
     elif mb == rh:
-        return GitStatusResult(GitState.AHEAD, f"Local branch has commits not yet sent to {remote}", curr_branch)
+        return GitStatusResult(GitState.AHEAD, t("Local branch has commits not yet sent to {remote}", remote=remote), curr_branch)
     else:
-        return GitStatusResult(GitState.DIVERGED, f"Local branch has diverged from {remote} (manual resolution required)", curr_branch)
+        return GitStatusResult(
+            GitState.DIVERGED,
+            t("Local branch has diverged from {remote} (manual resolution required)", remote=remote),
+            curr_branch,
+        )
 
 
 def publish_changes(
@@ -256,30 +270,30 @@ def publish_changes(
         if files_to_commit:
             add_res = run_git(repo_dir, "add", "--", *files_to_commit)
             if add_res.returncode != 0:
-                return False, f"git add failed: {add_res.stderr}"
+                return False, t("git add failed: {error}", error=add_res.stderr)
 
         # Check whether there's anything staged to commit
         staged_check = run_git(repo_dir, "diff", "--cached", "--quiet")
         if staged_check.returncode != 0:
             c_res = run_git(repo_dir, "commit", "-m", commit_msg)
             if c_res.returncode != 0:
-                return False, f"git commit failed: {c_res.stderr}"
+                return False, t("git commit failed: {error}", error=c_res.stderr)
             committed = True
 
     if remote in ("local", "none"):
         if committed:
-            return True, "Local commit done (Local-Only mode: no remote to update)"
-        return True, "Nothing to commit (Local-Only mode: no remote to update)"
+            return True, t("Local commit done (Local-Only mode: no remote to update)")
+        return True, t("Nothing to commit (Local-Only mode: no remote to update)")
 
     # Fetch and verify before pushing
     fetch_res = run_git(repo_dir, "fetch", "--prune", remote, branch)
     if fetch_res.returncode != 0:
         if committed:
-            return False, (
-                f"{remote} unreachable: the commit stays local, "
-                f"republish it later with 'vault-push'"
+            return False, t(
+                "{remote} unreachable: the commit stays local, publish it later with 'vault-push'",
+                remote=remote,
             )
-        return False, f"Could not reach {remote} for publishing"
+        return False, t("Could not reach {remote} for publishing", remote=remote)
 
     lh = run_git(repo_dir, "rev-parse", branch).stdout.strip()
     rh = run_git(repo_dir, "rev-parse", f"{remote}/{branch}").stdout.strip()
@@ -290,9 +304,9 @@ def publish_changes(
             # We're ahead: normal push
             p_res = run_git(repo_dir, "push", remote, branch)
             if p_res.returncode != 0:
-                return False, f"Push to {remote} failed: {p_res.stderr}"
+                return False, t("Push to {remote} failed: {error}", remote=remote, error=p_res.stderr)
         elif mb == lh:
-            return False, f"Could not push: local branch is behind {remote}"
+            return False, t("Could not push: local branch is behind {remote}", remote=remote)
         else:
             # Divergence. An automatic rebase over a tree with uncommitted
             # changes would put work nobody entrusted to us at risk: better
@@ -300,18 +314,19 @@ def publish_changes(
             dirty = get_uncommitted_files(repo_dir)
             if dirty:
                 shown = ", ".join(dirty[:5]) + ("..." if len(dirty) > 5 else "")
-                return False, (
-                    f"Data has diverged from {remote}, and there are uncommitted changes "
-                    f"({shown}). Not realigning automatically: commit them or stash them, then retry"
+                return False, t(
+                    "Data has diverged from {remote}, and there are uncommitted changes "
+                    "({files}). Not realigning automatically: commit them or stash them, then retry",
+                    remote=remote, files=shown,
                 )
             rebase_res = run_git(repo_dir, "rebase", f"{remote}/{branch}")
             if rebase_res.returncode == 0:
                 p_res = run_git(repo_dir, "push", remote, branch)
                 if p_res.returncode != 0:
-                    return False, f"Push after rebase failed: {p_res.stderr}"
+                    return False, t("Push after rebase failed: {error}", error=p_res.stderr)
             else:
                 run_git(repo_dir, "rebase", "--abort")
-                return False, f"Data has diverged from {remote}, automatic rebase did not succeed"
+                return False, t("Data has diverged from {remote}, automatic rebase did not succeed", remote=remote)
 
     # Mirror update (best effort)
     if mirrors:
@@ -322,4 +337,4 @@ def publish_changes(
                 run_git(repo_dir, "fetch", "--prune", mirror, branch)
                 run_git(repo_dir, "push", "--force-with-lease", mirror, branch)
 
-    return True, "Publication completed successfully"
+    return True, t("Published successfully")

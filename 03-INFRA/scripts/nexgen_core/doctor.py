@@ -44,7 +44,8 @@ from nexgen_core.checks.skill_checks import (
     check_skills_not_materialized,
     check_skills_out_of_manifest,
 )
-from nexgen_core.paths import resolve_state_dir, resolve_vault_data
+from nexgen_core.i18n import t
+from nexgen_core.paths import resolve_home, resolve_state_dir, resolve_vault_data
 from nexgen_core.report import Report
 
 
@@ -57,7 +58,7 @@ class Doctor:
         state_dir: Path | None = None,
         home: Path | None = None,
     ) -> None:
-        self.home = home or Path.home()
+        self.home = resolve_home(home)
         _v = resolve_vault_data(self.home, vault_data)
         self.vault_data = _v
         self.state_dir = resolve_state_dir(self.home, state_dir)
@@ -126,12 +127,12 @@ class Doctor:
 
 def main(argv: list[str] | None = None) -> int:
     """CLI entry point for the agent-doctor command."""
-    parser = argparse.ArgumentParser(description="NeXgen Engine Doctor (v2) - Alignment diagnostics and verification")
-    parser.add_argument("-v", "--verbose", action="store_true", help="Show every check run, including the ones that passed")
-    parser.add_argument("--strict", action="store_true", help="Strict mode: treat undetermined states as non-compliant too")
-    parser.add_argument("--json", action="store_true", help="Print the output in JSON format")
-    parser.add_argument("--summary", action="store_true", help="Print the summary with FAIL=N OK=N counts")
-    parser.add_argument("--fix", "--remedy", action="store_true", help="Apply automatic remedies for fixable problems")
+    parser = argparse.ArgumentParser(description=t("NeXgen Engine Doctor (v2) - Alignment diagnostics and verification"))
+    parser.add_argument("-v", "--verbose", action="store_true", help=t("Show every check run, including the ones that passed"))
+    parser.add_argument("--strict", action="store_true", help=t("Strict mode: treat undetermined states as non-compliant too"))
+    parser.add_argument("--json", action="store_true", help=t("Print the output in JSON format"))
+    parser.add_argument("--summary", action="store_true", help=t("Print the summary with FAIL=N OK=N counts"))
+    parser.add_argument("--fix", "--remedy", action="store_true", help=t("Apply automatic remedies for fixable problems"))
 
     args = parser.parse_args(argv)
 

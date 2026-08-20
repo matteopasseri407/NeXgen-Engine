@@ -1,16 +1,17 @@
 #!/usr/bin/env python3
-"""Materializzazione e sincronizzazione delle skill per NeXgen Engine v2.
+"""Skill materialization and sync for NeXgen Engine v2.
 
-Gestisce le 4 origini delle skill:
-1. vault: posseduta dall'utente, portata da Git nei dati privati.
-2. engine: posseduta dal prodotto, letta dal motore installato senza duplicazioni.
-3. github: terze parti, pinnata a un commit immutabile e clonata/scaricata.
-4. installer: terze parti con installatore dedicato, pinnata a una versione.
+Handles the 4 skill origins:
+1. vault: owned by the user, carried by Git in the private data.
+2. engine: owned by the product, read from the installed engine without duplication.
+3. github: third-party, pinned to an immutable commit and cloned/fetched.
+4. installer: third-party with a dedicated installer, pinned to a version.
 
-Mantiene la libreria non-discovered (~/.agents/skill-library/) e le viste native per le 4 CLI.
+Maintains the non-discovered library (~/.agents/skill-library/) and the native views for the 4 CLIs.
 """
 from __future__ import annotations
 
+import json
 import os
 import platform
 import re
@@ -31,7 +32,8 @@ from nexgen_core.config import (
     SKILL_TARGETS,
     load_skills_manifest,
 )
-from nexgen_core.paths import resolve_engine_root, resolve_vault_data, skills_manifest
+from nexgen_core.i18n import t
+from nexgen_core.paths import resolve_engine_root, resolve_home, resolve_vault_data, skills_manifest
 
 IS_WINDOWS = platform.system() == "Windows"
 
@@ -47,24 +49,28 @@ class SkillEntry:
     repo: str | None = None
     commit: str | None = None
     version: str | None = None
+    install: list[str] = field(default_factory=list)
     path: str | None = None
     description: str = ""
     source_path: Path | None = None
 
 
-#: Un nome di skill è un segmento di percorso, non un percorso: niente
-#: separatori, niente risalite. Senza questo controllo `agent-skill show
-#: ../../qualcosa` legge un file fuori dalla libreria.
+#: A skill name is a path segment, not a path: no separators, no traversal.
+#: Without this check `agent-skill show ../../something` would read a file
+#: outside the library.
 SKILL_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 
-#: Un pin che non è un commit completo non è un pin: un branch o un tag si
-#: sposta sotto i piedi e la skill cambia senza che nessuno l'abbia scelto.
+#: A pin that isn't a full commit isn't a pin: a branch or tag moves under
+#: your feet and the skill changes without anyone having chosen that.
 COMMIT_SHA_RE = re.compile(r"^[0-9a-fA-F]{40}$")
 
-#: Un clone che non risponde non deve tenere fermo il ciclo di guardia.
+#: A clone that doesn't respond must not stall the guard cycle.
 GIT_CLONE_TIMEOUT_SECONDS = 120
 
-#: Git non deve mai fermarsi a chiedere credenziali dentro un timer.
+#: A third-party installer that hangs must not hold the guard cycle open.
+INSTALLER_TIMEOUT_SECONDS = 300
+
+#: Git must never stop to ask for credentials inside a timer.
 GIT_NONINTERACTIVE_ENV = {
     "GIT_TERMINAL_PROMPT": "0",
     "GCM_INTERACTIVE": "Never",
@@ -72,12 +78,12 @@ GIT_NONINTERACTIVE_ENV = {
 
 
 def is_safe_skill_name(name: str) -> bool:
-    """Vero se il nome può diventare un segmento di percorso senza sorprese."""
+    """True if the name can become a path segment with no surprises."""
     return bool(name) and name not in (".", "..") and bool(SKILL_NAME_RE.match(name))
 
 
 def same_tree_content(src: Path, dst: Path) -> bool:
-    """Vero se due alberi contengono esattamente gli stessi file, byte per byte."""
+    """True if two trees contain exactly the same files, byte for byte."""
     if not src.is_dir() or not dst.is_dir():
         return False
     left = {p.relative_to(src): p for p in src.rglob("*") if p.is_file()}
@@ -91,7 +97,7 @@ def same_tree_content(src: Path, dst: Path) -> bool:
 
 
 def next_backup_path(path: Path) -> Path:
-    """Un percorso di backup libero accanto a `path`."""
+    """A free backup path next to `path`."""
     stamp = time.strftime("%Y%m%d-%H%M%S")
     candidate = path.with_name(f"{path.name}.bak-{stamp}")
     n = 2
@@ -102,12 +108,12 @@ def next_backup_path(path: Path) -> Path:
 
 
 def make_link_or_copy(src: Path, dst: Path) -> bool:
-    """Crea un symlink (o copia su Windows se i privilegi symlink non sono attivi).
+    """Creates a symlink (or copies, on Windows if symlink privileges aren't active).
 
-    Una cartella reale trovata al posto della vista non viene mai cancellata:
-    può contenere lavoro che nessuno ci ha affidato. Se il contenuto è già
-    identico non si tocca niente, altrimenti si mette da parte con un backup
-    prima di prendere il posto.
+    A real folder found where the view should be is never deleted: it may
+    hold work nobody entrusted to us. If the content already matches,
+    nothing is touched; otherwise it's set aside with a backup before taking
+    its place.
     """
     dst.parent.mkdir(parents=True, exist_ok=True)
     if dst.is_symlink() or dst.is_file():
@@ -126,7 +132,7 @@ def make_link_or_copy(src: Path, dst: Path) -> bool:
         dst.symlink_to(src, target_is_directory=src.is_dir())
         return True
     except OSError:
-        # Fallback copia per Windows senza symlink developer mode
+        # Copy fallback for Windows without symlink developer mode
         if src.is_dir():
             shutil.copytree(src, dst, dirs_exist_ok=True)
         else:
@@ -135,7 +141,7 @@ def make_link_or_copy(src: Path, dst: Path) -> bool:
 
 
 class SkillMaterializer:
-    """Materializza la libreria di skill e genera le viste native per le CLI."""
+    """Materializes the skill library and generates the native views for the CLIs."""
 
     def __init__(
         self,
@@ -143,7 +149,7 @@ class SkillMaterializer:
         engine_root: Path | None = None,
         home: Path | None = None,
     ) -> None:
-        self.home = home or Path.home()
+        self.home = resolve_home(home)
         _v = resolve_vault_data(self.home, vault_data)
         self.vault_data = _v
         self.engine_root = resolve_engine_root(self.home, engine_root)
@@ -156,6 +162,22 @@ class SkillMaterializer:
         self.gemini_legacy_dir = self.home / ".gemini" / "skills"
         self.codex_dir = self.home / ".codex" / "skills"
         self.opencode_dir = self.home / ".opencode" / "skills"
+
+        #: Le cartelle da cui i runtime scoprono le skill da soli. Un
+        #: installer di terze parti ci lascia la propria copia, e da lì viene
+        #: caricata sempre: è il contrario di pigra. Il motore la sposta.
+        self.dirs_by_target: dict[str, tuple[Path, ...]] = {
+            "claude": (self.claude_dir,),
+            "antigravity": (self.gemini_dir, self.gemini_config_dir, self.gemini_legacy_dir),
+            "codex": (self.codex_dir,),
+            "opencode": (self.active_dir, self.opencode_dir),
+        }
+
+        self.discovery_dirs = (
+            self.active_dir, self.claude_dir, self.gemini_dir,
+            self.gemini_config_dir, self.gemini_legacy_dir,
+            self.codex_dir, self.opencode_dir,
+        )
 
     def load_manifest(self) -> dict[str, SkillEntry]:
         manifest_file = skills_manifest(self.vault_data)
@@ -175,10 +197,11 @@ class SkillMaterializer:
                 repo=raw.get("repo"),
                 commit=raw.get("commit"),
                 version=raw.get("version"),
+                install=list(raw.get("install") or []),
                 path=raw.get("path") or raw.get("sub"),
                 description=raw.get("description", ""),
             )
-            # Risoluzione percorso sorgente
+            # Source path resolution
             if entry.origin == "vault":
                 entry.source_path = self.vault_data / "03-INFRA" / "agent-universal-layer" / "skills" / name
             elif entry.origin == "engine":
@@ -188,14 +211,14 @@ class SkillMaterializer:
         return skills
 
     def _belongs_here(self, entry: SkillEntry) -> bool:
-        """Questa skill riguarda chi sta usando questa macchina?
+        """Does this skill concern whoever is using this machine?
 
-        `scope` e `owner` venivano letti dal manifest e non applicati a
-        niente: un campo che si può scrivere e che non ha effetto è peggio di
-        un campo che manca, perché fa credere di aver deciso qualcosa.
+        `scope` and `owner` used to be read from the manifest and applied to
+        nothing: a field you can set that has no effect is worse than a
+        missing field, because it makes you think something was decided.
 
-        Su una installazione a operatore singolo — nessun `AGENT_TEAM_MEMBER`
-        dichiarato — tutto appartiene a chi c'è, e niente viene saltato.
+        On a single-operator install — no `AGENT_TEAM_MEMBER` declared —
+        everything belongs to whoever is there, and nothing gets skipped.
         """
         if entry.scope != "personal":
             return True
@@ -205,50 +228,50 @@ class SkillMaterializer:
         return entry.owner is None or entry.owner == member
 
     def validate_manifest(self) -> list[str]:
-        """Controlla il manifest senza scrivere niente, e dice cosa non torna.
+        """Checks the manifest without writing anything, and says what's wrong.
 
-        Serve a scoprire un errore prima che il ciclo di guardia lo incontri:
-        una skill dichiarata senza sorgente, un pin che non è un commit, un
-        nome che non può diventare una cartella.
+        Meant to catch an error before the guard cycle runs into it: a skill
+        declared without a source, a pin that isn't a commit, a name that
+        can't become a folder.
         """
         problems: list[str] = []
         manifest_file = skills_manifest(self.vault_data)
         if not manifest_file.is_file():
-            return [f"Il manifest delle skill non esiste: {manifest_file}"]
+            return [t("The skills manifest doesn't exist: {path}", path=manifest_file)]
 
         for name, entry in self.load_manifest().items():
             if not is_safe_skill_name(name):
-                problems.append(f"'{name}': il nome non può diventare una cartella")
+                problems.append(t("'{name}': the name can't become a folder", name=name))
             if entry.origin not in SKILL_ORIGINS:
-                problems.append(f"'{name}': origine '{entry.origin}' sconosciuta")
+                problems.append(t("'{name}': unknown origin '{origin}'", name=name, origin=entry.origin))
             if entry.exposure not in SKILL_EXPOSURES:
-                problems.append(f"'{name}': esposizione '{entry.exposure}' sconosciuta")
-            unknown = [t for t in entry.targets if t not in SKILL_TARGETS]
+                problems.append(t("'{name}': unknown exposure '{exposure}'", name=name, exposure=entry.exposure))
+            unknown = [target for target in entry.targets if target not in SKILL_TARGETS]
             if unknown:
-                problems.append(f"'{name}': runtime sconosciuti {', '.join(unknown)}")
+                problems.append(t("'{name}': unknown runtimes {runtimes}", name=name, runtimes=", ".join(unknown)))
             if entry.origin == "github":
                 if not entry.repo:
-                    problems.append(f"'{name}': origine github senza 'repo'")
+                    problems.append(t("'{name}': github origin without 'repo'", name=name))
                 if not entry.commit:
-                    problems.append(f"'{name}': origine github senza 'commit'")
+                    problems.append(t("'{name}': github origin without 'commit'", name=name))
                 elif not COMMIT_SHA_RE.match(entry.commit):
                     problems.append(
-                        f"'{name}': il pin '{entry.commit}' non è un commit completo a 40 caratteri"
+                        t("'{name}': pin '{commit}' is not a full 40-character commit", name=name, commit=entry.commit)
                     )
             if entry.origin == "installer" and not entry.version:
-                problems.append(f"'{name}': origine installer senza 'version'")
+                problems.append(t("'{name}': installer origin without 'version'", name=name))
             if entry.origin in ("vault", "engine"):
                 src = entry.source_path
                 if src is None or not (src / "SKILL.md").is_file():
-                    problems.append(f"'{name}': manca il file SKILL.md sotto {src}")
+                    problems.append(t("'{name}': missing SKILL.md file under {path}", name=name, path=src))
         return problems
 
     def _ensure_github_checkout(self, cache_dir: Path, entry: SkillEntry) -> tuple[bool, str | None]:
-        """Porta la cache locale esattamente sul commit dichiarato.
+        """Brings the local cache exactly to the declared commit.
 
-        Una cache già presente non basta: se il manifest alza il pin, la copia
-        vecchia va aggiornata. Prima si controlla dove sta davvero la cache,
-        e solo se diverge si va a prendere il commit nuovo.
+        An existing cache isn't enough: if the manifest bumps the pin, the
+        old copy needs updating. First we check where the cache actually
+        is, and only fetch the new commit if it diverges.
         """
         env = {**os.environ, **GIT_NONINTERACTIVE_ENV}
 
@@ -272,28 +295,163 @@ class SkillMaterializer:
                 cache_dir.parent.mkdir(parents=True, exist_ok=True)
                 res = git("clone", "--quiet", entry.repo or "", str(cache_dir))
                 if res.returncode != 0:
-                    return False, (
-                        f"[ERRORE] Skill github '{entry.name}': clonazione di {entry.repo} "
-                        f"fallita: {res.stderr.strip()}"
+                    return False, "[ERROR] " + t(
+                        "github skill '{name}': cloning {repo} failed: {error}",
+                        name=entry.name, repo=entry.repo, error=res.stderr.strip(),
                     )
 
             res = git("checkout", "--quiet", "--detach", entry.commit, cwd=cache_dir)
             if res.returncode != 0:
-                return False, (
-                    f"[ERRORE] Skill github '{entry.name}': il commit {entry.commit} "
-                    f"non è raggiungibile nel repository: {res.stderr.strip()}"
+                return False, "[ERROR] " + t(
+                    "github skill '{name}': commit {commit} is not reachable in the repository: {error}",
+                    name=entry.name, commit=entry.commit, error=res.stderr.strip(),
                 )
             return True, None
         except subprocess.TimeoutExpired:
-            return False, (
-                f"[ERRORE] Skill github '{entry.name}': {entry.repo} non ha risposto entro "
-                f"{GIT_CLONE_TIMEOUT_SECONDS}s, riprovo al giro successivo"
+            return False, "[ERROR] " + t(
+                "github skill '{name}': {repo} did not respond within {timeout}s, retrying next cycle",
+                name=entry.name, repo=entry.repo, timeout=GIT_CLONE_TIMEOUT_SECONDS,
             )
         except OSError as exc:
-            return False, f"[ERRORE] Skill github '{entry.name}': {exc}"
+            return False, "[ERROR] " + t("github skill '{name}': {error}", name=entry.name, error=exc)
+
+    def _target_of(self, directory: Path) -> str | None:
+        """Which runtime reads this directory."""
+        for target, dirs in self.dirs_by_target.items():
+            if directory in dirs:
+                return target
+        return None
+
+    def _installed_versions_file(self) -> Path:
+        from nexgen_core.paths import resolve_state_dir
+
+        return resolve_state_dir(self.home) / "installed-skill-versions.json"
+
+    def _installed_versions(self) -> dict[str, str]:
+        """Which version of each installer-owned skill is materialized here."""
+        path = self._installed_versions_file()
+        if not path.is_file():
+            return {}
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+            return {str(k): str(v) for k, v in data.items()} if isinstance(data, dict) else {}
+        except (OSError, ValueError):
+            return {}
+
+    def _record_installed_version(self, name: str, version: str) -> None:
+        path = self._installed_versions_file()
+        current = self._installed_versions()
+        current[name] = version
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(json.dumps(current, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        except OSError:
+            pass
+
+    def _claim_from_discovery(self, name: str, lib_dest: Path) -> bool:
+        """Moves an installer's copy out of wherever a runtime would find it.
+
+        An installer with a global scope drops its skill straight into a
+        discovery root, and from there every runtime loads it eagerly — the
+        opposite of what the manifest asked for. Remembering to move it by
+        hand is not a mechanism, so the engine moves it: into the library,
+        which no runtime scans, and from there only the declared views are
+        created.
+        """
+        for directory in self.discovery_dirs:
+            candidate = directory / name
+            if not candidate.is_dir() or candidate.is_symlink():
+                continue
+            if lib_dest.exists() or lib_dest.is_symlink():
+                if same_tree_content(candidate, lib_dest):
+                    shutil.rmtree(candidate, ignore_errors=True)
+                    return True
+                continue
+            lib_dest.parent.mkdir(parents=True, exist_ok=True)
+            shutil.move(str(candidate), str(lib_dest))
+            return True
+        return False
+
+    def _install_third_party(self, entry: SkillEntry, lib_dest: Path) -> tuple[bool, str | None]:
+        """Runs a third-party installer, but only when the pin actually moved."""
+        recorded = self._installed_versions().get(entry.name)
+        if recorded == entry.version and lib_dest.is_dir():
+            return True, None
+        if not entry.install:
+            return False, "[ERROR] " + t(
+                "skill '{name}' is installed by its own installer but declares no install command",
+                name=entry.name,
+            )
+        try:
+            result = subprocess.run(
+                list(entry.install), capture_output=True, text=True, check=False,
+                timeout=INSTALLER_TIMEOUT_SECONDS,
+                env={**os.environ, **GIT_NONINTERACTIVE_ENV},
+            )
+        except subprocess.TimeoutExpired:
+            return False, "[ERROR] " + t(
+                "the installer for '{name}' did not finish within {seconds}s",
+                name=entry.name, seconds=INSTALLER_TIMEOUT_SECONDS,
+            )
+        except OSError as exc:
+            return False, f"[ERROR] {exc}"
+        if result.returncode != 0:
+            detail = (result.stderr or result.stdout).strip().splitlines()
+            return False, "[ERROR] " + t(
+                "the installer for '{name}' failed: {reason}",
+                name=entry.name, reason=detail[-1] if detail else "no detail",
+            )
+
+        self._claim_from_discovery(entry.name, lib_dest)
+        if not lib_dest.is_dir():
+            return False, "[ERROR] " + t(
+                "the installer for '{name}' ran but left nothing the engine could find",
+                name=entry.name,
+            )
+        self._record_installed_version(entry.name, entry.version or "")
+        return True, t("Installed skill '{name}' at version {version}", name=entry.name, version=entry.version)
+
+    def _remove_stale_views(self, skills: dict[str, SkillEntry]) -> list[str]:
+        """Takes back a view that is no longer declared.
+
+        Without this, a skill can be made eager but never made lazy again:
+        the view stays for good, and the manifest stops describing reality.
+        Only views the engine itself created are touched — a folder that does
+        not come from the library is someone else's and stays where it is.
+        """
+        actions: list[str] = []
+        for directory in self.discovery_dirs:
+            if not directory.is_dir():
+                continue
+            for candidate in sorted(directory.iterdir()):
+                name = candidate.name
+                lib_source = self.library_dir / name
+                if not lib_source.is_dir():
+                    continue  # non è nostra: si segnala altrove, non si tocca
+                entry = skills.get(name)
+                wanted = (
+                    entry is not None
+                    and entry.exposure in ("eager", "core")
+                    and self._target_of(directory) in entry.targets
+                )
+                if wanted:
+                    continue
+                ours = candidate.is_symlink() and candidate.resolve() == lib_source.resolve()
+                if not ours and not same_tree_content(lib_source, candidate):
+                    continue  # copia divergente: potrebbe contenere lavoro altrui
+                try:
+                    if candidate.is_symlink() or candidate.is_file():
+                        candidate.unlink()
+                    else:
+                        shutil.rmtree(candidate)
+                except OSError:
+                    continue
+                actions.append(t("Skill '{name}' is lazy again for {target}",
+                                 name=name, target=self._target_of(directory) or directory.name))
+        return actions
 
     def materialize(self, apply: bool = True) -> tuple[int, list[str]]:
-        """Materializza tutte le skill nella libreria e crea le viste native."""
+        """Materializes every skill into the library and creates the native views."""
         skills = self.load_manifest()
         actions: list[str] = []
         changes = 0
@@ -306,19 +464,20 @@ class SkillMaterializer:
                 continue
             lib_dest = self.library_dir / name
 
-            # Se la sorgente locale esiste, colleghiamo alla libreria
+            # If the local source exists, link it into the library
             if entry.source_path and entry.source_path.is_dir():
                 if apply:
                     if make_link_or_copy(entry.source_path, lib_dest):
                         changes += 1
-                        actions.append(f"Collegata skill '{name}' alla libreria")
+                        actions.append(t("Linked skill '{name}' into the library", name=name))
             elif entry.origin == "github" and entry.repo and entry.commit:
                 cache_dir = self.home / ".agents" / "cache" / "github-skills" / name
                 if not COMMIT_SHA_RE.match(entry.commit):
-                    actions.append(
-                        f"[ERRORE] Skill github '{name}': il pin '{entry.commit}' non è un commit "
-                        f"completo a 40 caratteri, salto la voce"
-                    )
+                    actions.append("[ERROR] " + t(
+                        "github skill '{name}': pin '{commit}' is not a full "
+                        "40-character commit, skipping the entry",
+                        name=name, commit=entry.commit,
+                    ))
                     continue
 
                 clone_success = False
@@ -328,50 +487,55 @@ class SkillMaterializer:
                         actions.append(problem)
 
                 if clone_success and apply:
-                    # Il manifest può puntare a una sottocartella del repo. Il
-                    # confine va verificato: un `path` con una risalita
-                    # collegherebbe qualcosa che sta fuori dal clone.
+                    # The manifest can point at a subfolder of the repo. The
+                    # boundary needs checking: a `path` that traverses
+                    # upward would link something outside the clone.
                     source = cache_dir
                     if entry.path:
                         candidate = (cache_dir / entry.path).resolve()
                         if not candidate.is_relative_to(cache_dir.resolve()):
-                            actions.append(
-                                f"[ERRORE] Skill github '{name}': il percorso '{entry.path}' "
-                                f"esce dal repository clonato, salto la voce"
-                            )
+                            actions.append("[ERROR] " + t(
+                                "github skill '{name}': path '{path}' "
+                                "escapes the cloned repository, skipping the entry",
+                                name=name, path=entry.path,
+                            ))
                             continue
                         source = candidate
                     if make_link_or_copy(source, lib_dest):
                         changes += 1
-                        actions.append(f"Collegata skill github '{name}' alla libreria")
+                        actions.append(t("Linked github skill '{name}' into the library", name=name))
 
-            # Generazione viste attive (se exposure == eager o core)
+            elif entry.origin == "installer" and apply:
+                installed, note = self._install_third_party(entry, lib_dest)
+                if note:
+                    actions.append(note)
+                    if installed:
+                        changes += 1
+                if not installed:
+                    continue
+
+            # Active view generation (if exposure == eager or core)
             if entry.exposure in ("eager", "core") and lib_dest.is_dir() and apply:
                 for target in entry.targets:
-                    target_dirs: list[Path] = []
-                    if target == "claude":
-                        target_dirs = [self.claude_dir]
-                    elif target == "antigravity":
-                        target_dirs = [self.gemini_dir, self.gemini_config_dir, self.gemini_legacy_dir]
-                    elif target == "codex":
-                        target_dirs = [self.codex_dir]
-                    elif target == "opencode":
-                        target_dirs = [self.active_dir, self.opencode_dir]
+                    target_dirs = list(self.dirs_by_target.get(target, ()))
 
                     for tdir in target_dirs:
                         dest = tdir / name
                         if make_link_or_copy(lib_dest, dest):
                             changes += 1
-                            actions.append(f"Creata vista attiva '{name}' per {target}")
+                            actions.append(t("Created active view '{name}' for {target}", name=name, target=target))
 
-        # Rigenera INDEX.md
+        if apply:
+            actions.extend(self._remove_stale_views(skills))
+
+        # Regenerates INDEX.md
         if apply:
             self.generate_index(skills)
 
         return changes, actions
 
     def generate_index(self, skills: dict[str, SkillEntry] | None = None) -> Path:
-        """Genera il file ~/.agents/skills/INDEX.md con l'indice di tutte le skill."""
+        """Generates the ~/.agents/skills/INDEX.md file with the index of every skill."""
         if skills is None:
             skills = self.load_manifest()
 
@@ -379,11 +543,11 @@ class SkillMaterializer:
         index_file = self.active_dir / "INDEX.md"
 
         lines = [
-            "# Catalogo Skill NeXgen Engine",
+            "# NeXgen Engine Skill Catalog",
             "",
-            "Tutte le skill disponibili nel sistema (caricate on-demand tramite `agent-skill find` o `agent-skill show`).",
+            "Every skill available in the system (loaded on-demand via `agent-skill find` or `agent-skill show`).",
             "",
-            "| Skill | Origine | Esposizione | Descrizione |",
+            "| Skill | Origin | Exposure | Description |",
             "|---|---|---|---|",
         ]
 
@@ -397,12 +561,12 @@ class SkillMaterializer:
         return index_file
 
     def migrate_legacy(self, apply: bool = True) -> list[str]:
-        """Quarantena delle viste eager legacy fuori dalle root di discovery.
+        """Quarantines legacy eager views outside the discovery roots.
 
-        Port da skills-sync.py --migrate-legacy della release: le installazioni
-        vecchie mettevano skill terze direttamente sotto le root discovery.
-        Non vanno cancellate né spostate silenziosamente dal guard ricorrente;
-        --migrate-legacy le preserva in una quarantena locale non indicizzata.
+        Port of skills-sync.py --migrate-legacy from the release: old
+        installations put third-party skills directly under the discovery
+        roots. The recurring guard must not delete or silently move them;
+        --migrate-legacy preserves them in a local, non-indexed quarantine.
         """
         skills = self.load_manifest()
         actions: list[str] = []
@@ -427,38 +591,39 @@ class SkillMaterializer:
                     (scope == "shared" and spec is not None and spec.exposure in ("core", "eager"))
                     or (scope in ("claude", "codex") and spec is not None and "claude" in spec.targets)
                 )
+                prefix = f"legacy/{scope}/{entry.name}"
                 if expected and (managed.exists() or managed.is_symlink()):
-                    actions.append(f"legacy/{scope}/{entry.name}: vista gestita mantenuta")
+                    actions.append(t("{prefix}: managed view kept", prefix=prefix))
                     continue
                 destination = legacy_root / scope / entry.name
                 if destination.exists() or destination.is_symlink():
-                    actions.append(f"legacy/{scope}/{entry.name}: destinazione già esistente, vista lasciata intatta")
+                    actions.append(t("{prefix}: destination already exists, view left untouched", prefix=prefix))
                     continue
                 if not apply:
-                    actions.append(f"legacy/{scope}/{entry.name}: sarebbe messa in quarantena fuori dalle root discovery")
+                    actions.append(t("{prefix}: would be quarantined outside the discovery roots", prefix=prefix))
                     continue
                 destination.parent.mkdir(parents=True, exist_ok=True)
                 shutil.move(str(entry), str(destination))
-                actions.append(f"legacy/{scope}/{entry.name}: messa in quarantena fuori dalle root discovery")
+                actions.append(t("{prefix}: quarantined outside the discovery roots", prefix=prefix))
         return actions
 
 
 def main(argv: list[str] | None = None) -> int:
-    """CLI per la gestione e sincronizzazione delle skill."""
+    """CLI for skill management and sync."""
     if argv is None:
         argv = sys.argv[1:]
 
     mat = SkillMaterializer()
 
     if not argv or argv[0] in ("-h", "--help"):
-        print(
-            "Uso: agent-skill [list|find|show|path] <argomenti>\n"
-            "     skills-sync [apply|index|validate] [--migrate-legacy]"
-        )
+        print(t(
+            "Usage: agent-skill [list|find|show|path] <arguments>\n"
+            "       skills-sync [apply|index|validate] [--migrate-legacy]"
+        ))
         return 0
 
-    # Normalizza i flag stile release (--apply, --index, --migrate-legacy)
-    # in qualunque posizione, accettando anche la forma posizionale v2.
+    # Normalizes the release-style flags (--apply, --index, --migrate-legacy)
+    # at any position, while also accepting the v2 positional form.
     argv_l = [a.lower() for a in argv]
     flag_apply = any(a in ("--apply", "--sync") for a in argv_l)
     flag_index = "--index" in argv_l
@@ -469,21 +634,21 @@ def main(argv: list[str] | None = None) -> int:
 
     if cmd in ("apply", "sync") or flag_apply:
         changes, actions = mat.materialize(apply=True)
-        failed = [a for a in actions if a.startswith("[ERRORE]")]
+        failed = [a for a in actions if a.startswith("[ERROR]")]
         for act in actions:
-            print(f"  {'✗' if act.startswith('[ERRORE]') else '✓'} {act}")
+            print(f"  {'✗' if act.startswith('[ERROR]') else '✓'} {act}")
         if flag_migrate:
             for act in mat.migrate_legacy(apply=True):
                 print(f"  ✓ {act}")
         if failed:
-            # Un errore stampato e poi un'uscita a zero è il modo in cui una
-            # macchina resta indietro senza che nessuno se ne accorga.
+            # An error printed and then a zero exit code is how a machine
+            # falls behind without anyone noticing.
             print(
-                f"{len(failed)} skill su {changes + len(failed)} non sono state sincronizzate.",
+                t("{failed} of {total} skills were not synced.", failed=len(failed), total=changes + len(failed)),
                 file=sys.stderr,
             )
             return 1
-        print(f"Skill sincronizzate con successo ({changes} modifiche applicate).")
+        print(t("Skills synced successfully ({count} changes applied).", count=changes))
         return 0
 
     elif cmd == "validate":
@@ -491,14 +656,14 @@ def main(argv: list[str] | None = None) -> int:
         for problem in problems:
             print(f"  ✗ {problem}", file=sys.stderr)
         if problems:
-            print(f"Manifest delle skill: {len(problems)} problemi.", file=sys.stderr)
+            print(t("Skills manifest: {count} problems.", count=len(problems)), file=sys.stderr)
             return 1
-        print("Manifest delle skill: nessun problema.")
+        print(t("Skills manifest: no problems."))
         return 0
 
     elif cmd == "index" or flag_index:
         idx = mat.generate_index()
-        print(f"Indice generato in {idx}")
+        print(t("Index generated at {path}", path=idx))
         return 0
 
     elif cmd == "list":
@@ -507,30 +672,33 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     elif cmd == "find":
-        terms = [t.lower() for t in positional[1:] if t.strip()]
+        terms = [term.lower() for term in positional[1:] if term.strip()]
         if not terms:
-            print("Uso: agent-skill find <termine> [termine...]", file=sys.stderr)
+            print(t("Usage: agent-skill find <term> [term...]"), file=sys.stderr)
             return 2
         found = False
         for name, s in sorted(mat.load_manifest().items()):
             haystack = f"{name} {s.description or ''}".lower()
-            if all(t in haystack for t in terms):
+            if all(term in haystack for term in terms):
                 print(f"{name}\t{s.description or '-'}")
                 found = True
         if not found:
-            print(f"Nessuna skill gestita corrisponde a: {' '.join(terms)}", file=sys.stderr)
+            print(t("No managed skill matches: {terms}", terms=" ".join(terms)), file=sys.stderr)
             return 1
         return 0
 
     elif cmd in ("show", "path"):
         if len(positional) < 2:
-            print(f"Uso: agent-skill {cmd} <nome-skill>", file=sys.stderr)
+            print(t("Usage: agent-skill {cmd} <skill-name>", cmd=cmd), file=sys.stderr)
             return 2
         name = positional[1]
         if not is_safe_skill_name(name):
             print(
-                f"'{name}' non è un nome di skill valido: sono ammessi lettere, cifre, "
-                f"punto, trattino e trattino basso.",
+                t(
+                    "'{name}' is not a valid skill name: letters, digits, "
+                    "dots, hyphens and underscores are allowed.",
+                    name=name,
+                ),
                 file=sys.stderr,
             )
             return 2
@@ -544,27 +712,32 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     print(
-        f"Comando non riconosciuto: {cmd}\n"
-        f"Uso: agent-skill [list|find|show|path] o skills-sync [apply|index|validate] [--migrate-legacy]",
+        t(
+            "Unrecognized command: {cmd}\n"
+            "Usage: agent-skill [list|find|show|path] or skills-sync [apply|index|validate] [--migrate-legacy]",
+            cmd=cmd,
+        ),
         file=sys.stderr,
     )
     return 1
 
 
 def _missing_skill_hint(mat: SkillMaterializer, name: str) -> str:
-    """Dice perché la skill non c'è, distinguendo i due casi che contano."""
+    """Says why the skill is missing, distinguishing the two cases that matter."""
     manifest = skills_manifest(mat.vault_data)
     if not manifest.is_file():
-        return (
-            f"Skill '{name}' non disponibile: il manifest delle skill non esiste ancora "
-            f"({manifest}). Esegui prima l'allineamento di questa macchina."
+        return t(
+            "Skill '{name}' not available: the skills manifest doesn't exist yet "
+            "({path}). Align this machine first.",
+            name=name, path=manifest,
         )
     if name in mat.load_manifest():
-        return (
-            f"Skill '{name}' è dichiarata nel manifest ma non è ancora stata materializzata. "
-            f"Esegui 'skills-sync apply'."
+        return t(
+            "Skill '{name}' is declared in the manifest but hasn't been materialized yet. "
+            "Run 'skills-sync apply'.",
+            name=name,
         )
-    return f"Skill '{name}' non è dichiarata nel manifest delle skill."
+    return t("Skill '{name}' is not declared in the skills manifest.", name=name)
 
 
 if __name__ == "__main__":

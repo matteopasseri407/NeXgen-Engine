@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import Any
 
 from nexgen_core.depwatch import run_depwatch
+from nexgen_core.i18n import t
 from nexgen_core.megaphone import Megaphone
 from nexgen_core.paths import resolve_engine_root, resolve_state_dir, resolve_vault_data
 from nexgen_core.updater import EngineUpdater
@@ -51,24 +52,24 @@ class Heartbeat:
     def check_liveness(self) -> tuple[bool, str]:
         """Checks whether the Guard has run within the expected window."""
         if not self.liveness_file.is_file():
-            return False, "No guard cycle has been recorded yet"
+            return False, t("No guard cycle has been recorded yet")
 
         try:
             last_ts = float(self.liveness_file.read_text(encoding="utf-8").strip())
             elapsed = time.time() - last_ts
             if elapsed > MAX_LIVENESS_AGE_HOURS * 3600:
                 hours = elapsed / 3600
-                msg = f"The sync cycle has been stalled for {hours:.1f} hours."
+                msg = t("The sync cycle has been stalled for {hours:.1f} hours.", hours=hours)
                 self.megaphone.send_alert(
-                    title="Agent sync is not running",
+                    title=t("Agent sync is not running"),
                     message=msg,
-                    action="Run 'agent-sync apply' in the terminal to check the status.",
+                    action=t("Run 'agent-sync apply' in the terminal to check the status."),
                     alert_key="guard_stale"
                 )
                 return False, msg
-            return True, f"Guard active (last completed {elapsed/60:.0f} minutes ago)"
+            return True, t("Guard active (last completed {minutes:.0f} minutes ago)", minutes=elapsed / 60)
         except Exception as exc:
-            return False, f"Error reading liveness: {exc}"
+            return False, t("Error reading liveness: {error}", error=exc)
 
     def run_dependency_watch(self) -> dict[str, Any]:
         """Inspects pinned third-party dependencies upstream. Never applies

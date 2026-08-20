@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Launcher per AI Council — NeXgen Engine v2."""
+"""Launcher for AI Council — NeXgen Engine v2."""
 from __future__ import annotations
 
 import os
@@ -9,7 +9,7 @@ from pathlib import Path
 
 
 def main(argv: list[str] | None = None) -> int:
-    """Inoltra l'invocazione al modulo canonico council.py."""
+    """Forwards the invocation to the canonical council.py module."""
     if argv is None:
         argv = sys.argv[1:]
 
@@ -17,11 +17,11 @@ def main(argv: list[str] | None = None) -> int:
     council_py = engine_root / "agent-universal-layer" / "council" / "council.py"
 
     if not council_py.is_file():
-        # Fallback percorso relativo locale
+        # Fallback to a local relative path
         council_py = Path(__file__).resolve().parents[2] / "agent-universal-layer" / "council" / "council.py"
 
     if not council_py.is_file():
-        print(f"[ERRORE] Orchestratore AI Council non trovato in {council_py}", file=sys.stderr)
+        print(f"[ERROR] AI Council orchestrator not found at {council_py}", file=sys.stderr)
         return 1
 
     res = subprocess.run([sys.executable, str(council_py), *argv])

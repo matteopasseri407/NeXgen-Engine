@@ -28,8 +28,9 @@ if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
 from nexgen_core.config import expand_placeholders, load_mcp_manifest
+from nexgen_core.i18n import t
 from nexgen_core.jsonc import parse_jsonc, set_jsonc_top_level_value
-from nexgen_core.paths import resolve_engine_root, resolve_vault_data
+from nexgen_core.paths import resolve_engine_root, resolve_home, resolve_vault_data
 
 IS_WINDOWS = platform.system() == "Windows"
 MCP_REMOTE_PACKAGE = "mcp-remote@0.1.38"
@@ -44,7 +45,7 @@ class McpRenderer:
         engine_root: Path | None = None,
         home: Path | None = None,
     ) -> None:
-        self.home = home or Path.home()
+        self.home = resolve_home(home)
         _v = resolve_vault_data(self.home, vault_data)
         self.vault_data = _v
         self.engine_root = resolve_engine_root(self.home, engine_root)
@@ -198,7 +199,7 @@ class McpRenderer:
         existing["mcpServers"] = mcp_servers
         if write:
             self._backup_and_write(cfg_file, json.dumps(existing, indent=2) + "\n")
-        return True, "Claude configuration updated"
+        return True, t("Claude configuration updated")
 
     #: Antigravity reads the same configuration from three different paths,
     #: depending on how it's launched. There's only one real file and the
@@ -242,7 +243,7 @@ class McpRenderer:
         if write:
             self._backup_and_write(cfg_file, json.dumps(existing, indent=2) + "\n")
             self._fan_out_antigravity(cfg_file)
-        return True, "Antigravity configuration updated"
+        return True, t("Antigravity configuration updated")
 
     def _fan_out_antigravity(self, canonical: Path) -> None:
         """Points every path Antigravity reads from at the canonical file.
@@ -267,7 +268,7 @@ class McpRenderer:
                     shutil.copy2(canonical, target)
 
     def render_opencode(self, write: bool = False) -> tuple[bool, str]:
-        """Genera la configurazione MCP per OpenCode (opencode.jsonc, JSONC-aware)."""
+        """Generates the MCP configuration for OpenCode (opencode.jsonc, JSONC-aware)."""
         servers = self.load_resolved_servers("opencode")
         cfg_file = self._opencode_config_path()
         existing: dict[str, Any] = {}
@@ -277,7 +278,7 @@ class McpRenderer:
             try:
                 existing = parse_jsonc(raw_existing) if cfg_file.suffix == ".jsonc" else json.loads(raw_existing)
             except Exception as exc:
-                raise ValueError(f"Impossibile analizzare {cfg_file}: JSON/JSONC non valido ({exc})")
+                raise ValueError(f"Could not parse {cfg_file}: invalid JSON/JSONC ({exc})")
 
         mcp_servers = existing.get("mcp", {})
         for retired in self.retired_server_names():
@@ -314,18 +315,18 @@ class McpRenderer:
 
         existing["mcp"] = mcp_servers
         if write:
-            # JSONC-aware: preserva i commenti del file esistente invece di
-            # sovrascriverlo con JSON puro (che OpenCode non leggerebbe).
+            # JSONC-aware: preserves the existing file's comments instead of
+            # overwriting it with plain JSON (which OpenCode wouldn't read).
             if cfg_file.suffix == ".jsonc" and raw_existing.strip():
                 content = set_jsonc_top_level_value(raw_existing, "mcp", mcp_servers)
             else:
-                # File assente o vuoto: non ci sono commenti da preservare.
+                # File missing or empty: no comments to preserve.
                 content = json.dumps(existing, indent=2) + "\n"
             self._backup_and_write(cfg_file, content)
-        return True, "Configurazione OpenCode aggiornata"
+        return True, t("OpenCode configuration updated")
 
     def render_codex(self, write: bool = False) -> tuple[bool, str]:
-        """Genera la configurazione MCP nativa per Codex (~/.codex/config.toml)."""
+        """Generates Codex's native MCP configuration (~/.codex/config.toml)."""
         servers = self.load_resolved_servers("codex")
         cfg_file = self.home / ".codex" / "config.toml"
 
@@ -333,7 +334,7 @@ class McpRenderer:
         if cfg_file.is_file():
             try:
                 raw = cfg_file.read_text(encoding="utf-8")
-                # Preserva sezioni non-MCP esistenti (es. [model], impostazioni generali)
+                # Preserves existing non-MCP sections (e.g. [model], general settings)
                 in_mcp_section = False
                 for line in raw.splitlines():
                     stripped = line.strip()
@@ -347,7 +348,7 @@ class McpRenderer:
             except OSError:
                 existing_lines = []
 
-        header = "# NeXgen Engine - Configurazione MCP Codex generata automaticamente"
+        header = "# NeXgen Engine - Codex MCP configuration, auto-generated"
         lines: list[str] = []
         if existing_lines:
             cleaned_existing = "\n".join(existing_lines).strip()
@@ -385,10 +386,10 @@ class McpRenderer:
         content = "\n".join(lines).strip() + "\n"
         if write:
             self._backup_and_write(cfg_file, content)
-        return True, "Configurazione Codex aggiornata"
+        return True, t("Codex configuration updated")
 
     def render_all(self, write: bool = False) -> dict[str, bool]:
-        """Esegue il render per tutte le 4 CLI."""
+        """Renders for all 4 CLIs."""
         results: dict[str, bool] = {}
         ok_claude, _ = self.render_claude(write=write)
         ok_agy, _ = self.render_antigravity(write=write)
@@ -401,18 +402,18 @@ class McpRenderer:
         return results
 
     def _backup_and_write(self, path: Path, content: str) -> None:
-        """Esegue backup .bak-<timestamp> e scrive il nuovo contenuto in modo atomico."""
+        """Makes a .bak-<timestamp> backup and writes the new content atomically."""
         path.parent.mkdir(parents=True, exist_ok=True)
         if path.is_file():
             stamp = time.strftime("%Y%m%d-%H%M%S")
             bak = path.with_name(f"{path.name}.bak-{stamp}")
             shutil.copy2(path, bak)
-            # Mantieni solo gli ultimi 3 backup
+            # Keep only the last 3 backups
             backs = sorted(path.parent.glob(f"{path.name}.bak-*"))
             for old in backs[:-3]:
                 old.unlink(missing_ok=True)
 
-        # Scrittura atomica tramite tempfile nello stesso filesystem
+        # Atomic write via a tempfile on the same filesystem
         temp_fd, temp_path = tempfile.mkstemp(dir=str(path.parent), prefix=f"{path.name}.tmp-")
         try:
             with open(temp_fd, "w", encoding="utf-8") as f:

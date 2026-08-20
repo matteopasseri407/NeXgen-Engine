@@ -1,30 +1,31 @@
-"""I verbi dello stack locale: avvia, ferma, guarda com'è messo.
+"""The verbs on the local stack: start, stop, see how it's doing.
 
-L'installazione completa non è più solo "prendi un server": questi cinque
-connettori possono girare sulla macchina di chi li usa, e questi comandi sono
-il modo di ottenerli senza sapere cosa sia un tunnel.
+The full install is no longer just "get a server": these five connectors
+can run on the machine of whoever's using them, and these commands are how
+you get them without knowing what a tunnel is.
 """
 from __future__ import annotations
 
+from nexgen_core.i18n import t
 from nexgen_core.paths import resolve_engine_root
 
 
 def register(sub) -> None:
-    p = sub.add_parser("stack", help="I servizi dei connettori, su questa macchina")
-    ssub = p.add_subparsers(dest="stack_command", metavar="verbo")
+    p = sub.add_parser("stack", help=t("The connector services, on this machine"))
+    ssub = p.add_subparsers(dest="stack_command", metavar="verb")
 
-    q = ssub.add_parser("up", help="Avvia i servizi e configura i connettori")
-    q.add_argument("services", nargs="*", help="Solo alcuni servizi, invece di tutti")
+    q = ssub.add_parser("up", help=t("Start the services and configure the connectors"))
+    q.add_argument("services", nargs="*", help=t("Only some services, instead of all of them"))
     q.set_defaults(func=cmd_up)
 
-    q = ssub.add_parser("down", help="Ferma i servizi, lasciando intatti i dati")
+    q = ssub.add_parser("down", help=t("Stop the services, leaving the data intact"))
     q.add_argument("services", nargs="*")
     q.set_defaults(func=cmd_down)
 
-    q = ssub.add_parser("status", help="Quali servizi stanno rispondendo")
+    q = ssub.add_parser("status", help=t("Which services are responding"))
     q.set_defaults(func=cmd_status)
 
-    q = ssub.add_parser("logs", help="Le ultime righe di un servizio che non parte")
+    q = ssub.add_parser("logs", help=t("The last lines of a service that won't start"))
     q.add_argument("service")
     q.add_argument("-n", "--lines", type=int, default=50)
     q.set_defaults(func=cmd_logs)
@@ -51,7 +52,7 @@ def cmd_up(args) -> int:
     for action in actions:
         print(f"  ✓ {action}")
 
-    # I connettori si montano da soli solo se la workstation sa dove trovarli.
+    # The connectors only mount themselves if the workstation knows where to find them.
     env_values = secrets.read_env_file(env_file(engine_root))
     exports: dict[str, str] = {}
     for service in SERVICES:
@@ -61,8 +62,8 @@ def cmd_up(args) -> int:
 
     target = secrets.workstation_env_path()
     secrets.write_workstation_env(target, exports)
-    print(f"  ✓ Variabili dei connettori scritte in {target}")
-    print("\nRiapri la sessione (o esporta quelle variabili), poi esegui: nexgen sync")
+    print("  ✓ " + t("Connector variables written to {target}", target=target))
+    print("\n" + t("Reopen your session (or export those variables), then run: nexgen sync"))
     return 0
 
 
@@ -85,11 +86,15 @@ def cmd_status(args) -> int:
     rows = runner.status(resolve_engine_root())
     down_count = 0
     for name, alive, where in rows:
-        print(f"  {'attivo    ' if alive else 'non attivo'}  {name:<14} {where}")
+        label = t("running") if alive else t("not running")
+        print(f"  {label:<10}  {name:<14} {where}")
         if not alive:
             down_count += 1
     if down_count:
-        print(f"\n{down_count} servizi su {len(rows)} non rispondono. Avviali con: nexgen stack up")
+        print("\n" + t(
+            "{down} of {total} services are not answering. Start them with: nexgen stack up",
+            down=down_count, total=len(rows),
+        ))
     return 1 if down_count == len(rows) else 0
 
 

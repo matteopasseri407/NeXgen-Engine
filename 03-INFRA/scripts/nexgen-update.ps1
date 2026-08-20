@@ -1,30 +1,25 @@
-$ErrorActionPreference = "Stop"
-# PowerShell 7.3+ opt-in (defaults to $true there): updater.py's non-zero
-# exit codes are checked via $LASTEXITCODE below, so a native failure must not
-# become a terminating error. Harmless no-op on Windows PowerShell 5.1.
-$PSNativeCommandUseErrorActionPreference = $false
-$script = Join-Path $PSScriptRoot "nexgen_core\updater.py"
-$candidates = @()
-foreach ($name in @("python3", "python")) {
-  $found = Get-Command $name -ErrorAction SilentlyContinue
-  if ($found) { $candidates += [pscustomobject]@{ Command = $found.Source; Prefix = @() } }
-}
-$py = Get-Command py -ErrorAction SilentlyContinue
-if ($py) { $candidates += [pscustomobject]@{ Command = $py.Source; Prefix = @("-3") } }
+# NeXgen Engine — generated, do not edit by hand.
+#
+# 'nexgen-update' as the previous release installed it. It holds no logic: it finds a
+# Python and hands over to 'nexgen update'. Regenerate with:
+#   python3 03-INFRA/scripts/nexgen_core/legacy_launchers.py --write
 
-$runtime = $null
-foreach ($candidate in $candidates) {
-  $prefix = @($candidate.Prefix)
-  $candidateCommand = $candidate.Command
-  & $candidateCommand @prefix -c "import sys; raise SystemExit(0 if sys.version_info >= (3, 13) else 1)" 2>$null | Out-Null
-  if ($LASTEXITCODE -eq 0) { $runtime = $candidate; break }
-}
-if (-not $runtime) {
-  Write-Error "nexgen-update: Python 3.13 or newer is required; run install.ps1 -Check"
-  exit 1
+$ErrorActionPreference = 'Stop'
+$scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+$entry = Join-Path $scriptDir 'nexgen_core\cli\__init__.py'
+
+if (-not (Test-Path $entry)) {
+    [Console]::Error.WriteLine("NeXgen: engine files are missing at $entry")
+    exit 1
 }
 
-$runtimePrefix = @($runtime.Prefix)
-$runtimeCommand = $runtime.Command
-& $runtimeCommand @runtimePrefix $script @args
-exit $LASTEXITCODE
+foreach ($candidate in @(@('py', '-3'), @('python3'), @('python'))) {
+    $exe = $candidate[0]
+    if (-not (Get-Command $exe -ErrorAction SilentlyContinue)) { continue }
+    $forward = $candidate[1..($candidate.Length - 1)] + @($entry) + @('update') + $args
+    & $exe @forward
+    exit $LASTEXITCODE
+}
+
+[Console]::Error.WriteLine("NeXgen: Python 3 is not on this system's PATH.")
+exit 1

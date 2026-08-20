@@ -15,6 +15,7 @@ import time
 from pathlib import Path
 from typing import Any
 
+from nexgen_core.i18n import t
 from nexgen_core.paths import resolve_state_dir
 
 EXIT_BUSY_MANUAL = 75
@@ -91,7 +92,10 @@ class HostLock:
 
             elapsed = time.time() - start_time
             if elapsed >= self.timeout:
-                msg = f"Could not acquire lock '{self.lock_path}' after {self.timeout:.1f}s (another process is active)."
+                msg = t(
+                    "Could not acquire lock '{lock_path}' after {timeout:.1f}s (another process is active).",
+                    lock_path=self.lock_path, timeout=self.timeout,
+                )
                 raise LockTimeoutError(msg, self.lock_path, self.is_guard)
 
             time.sleep(0.5)

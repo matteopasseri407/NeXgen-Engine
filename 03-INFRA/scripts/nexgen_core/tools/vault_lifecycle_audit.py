@@ -18,13 +18,15 @@ from dataclasses import dataclass
 from datetime import date, datetime
 from pathlib import Path
 
+from nexgen_core.paths import resolve_home
+
 # Not derived from __file__: this script ships in the ENGINE tree, which is
 # a separate checkout from the vault DATA it's meant to audit. __file__-based
 # anchoring would silently audit the engine repo instead and report a
 # vault that looks empty/pristine. AGENT_VAULT_DATA (falling back to
 # KNOWLEDGE_VAULT_PATH, same cascade as the rest of the layer) points at the
 # actual data root regardless of where this file is deployed.
-ROOT = Path(os.environ.get("AGENT_VAULT_DATA") or os.environ.get("KNOWLEDGE_VAULT_PATH") or Path.home() / "KnowledgeVault").resolve()
+ROOT = Path(os.environ.get("AGENT_VAULT_DATA") or os.environ.get("KNOWLEDGE_VAULT_PATH") or resolve_home() / "KnowledgeVault").resolve()
 SKIP_DIRS = {".git", ".obsidian"}
 SKIP_REL_DIRS = {
     "99-SECRETS/plaintext",

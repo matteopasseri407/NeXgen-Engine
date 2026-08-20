@@ -1,22 +1,22 @@
-"""Il gate di promozione: l'unica strada verso il vault reale e i remoti.
+"""The promotion gate: the only road into the real vault and its remotes.
 
-Chiamato DOPO che il write pass è tornato (con successo o meno -- vedi
-`write_exit_code`). Il write pass non gira mai contro il vault reale: gira
-dentro il clone senza `origin` che `gate.prepare_clone` ha preparato. Questo
-modulo decide se quel clone merita di diventare il vault reale:
+Called AFTER the write pass has returned (successfully or not -- see
+`write_exit_code`). The write pass never runs against the real vault: it
+runs inside the `origin`-less clone that `gate.prepare_clone` prepared.
+This module decides whether that clone deserves to become the real vault:
 
-1. Audita il CLONE, non il vault: albero di lavoro pulito, storia da
-   `base` un first-parent lineare (zero merge commit), copertura pulita
-   (vedi `coverage.py`, letta tramite `promote.py`).
-2. Su un audit pulito, controlla la freschezza (l'HEAD del vault reale
-   deve essere ancora esattamente `base`), poi PROMUOVE: fetcha l'OID
-   esatto del clone nel vault reale e fast-forward su di esso. Nessuna
-   ri-esecuzione: si sposta l'OID auditato, non lo si ri-deriva.
-3. Solo dopo la promozione (codice deterministico, nessun LLM coinvolto)
-   appende la riga di backlog e, se richiesto, pubblica (`promote.py`).
+1. Audits the CLONE, not the vault: clean working tree, history since
+   `base` a linear first-parent chain (zero merge commits), clean coverage
+   (see `coverage.py`, read through `promote.py`).
+2. On a clean audit, checks freshness (the real vault's HEAD must still be
+   exactly `base`), then PROMOTES: fetches the clone's exact OID into the
+   real vault and fast-forwards onto it. No re-execution: the audited OID
+   is moved, never re-derived.
+3. Only after promotion (deterministic code, no LLM involved) does it
+   append the backlog line and, if requested, publish (`promote.py`).
 
-Su QUALSIASI fallimento dell'audit il vault reale non viene mai toccato: il
-clone resta sul posto con un marcatore di quarantena.
+On ANY audit failure the real vault is never touched: the clone stays in
+place with a quarantine marker.
 """
 from __future__ import annotations
 
@@ -88,7 +88,7 @@ class _CloneAudit:
 
 
 def _audit_clone(request: AuditRequest, record: dict, *, output) -> _CloneAudit:
-    """Le tre condizioni non negoziabili sul clone."""
+    """The three non-negotiable conditions on the clone."""
     clean = promote.clone_is_clean(request.clone)
     head = promote.clone_head(request.clone)
     linear = promote.history_is_linear(request.clone, request.base, head)
@@ -117,7 +117,7 @@ def _audit_clone(request: AuditRequest, record: dict, *, output) -> _CloneAudit:
 
 
 def _promote(request: AuditRequest, record: dict, head: str, *, output) -> tuple[dict, int] | None:
-    """Fetch + fast-forward dell'OID esatto auditato. None se promosso."""
+    """Fetch + fast-forward of the exact audited OID. None if promoted."""
     try:
         git(request.vault, "fetch", str(request.clone), request.branch)
         fetched_tip = git(request.vault, "rev-parse", "FETCH_HEAD").strip()
@@ -152,9 +152,9 @@ def _publish_if_requested(request: AuditRequest, record: dict, *, output) -> int
 
 
 def run_audit(request: AuditRequest, *, output=print) -> tuple[dict, int]:
-    """Il gate di promozione. Ritorna (record, exit_code); non scrive da sé
-    il record JSON su disco -- quello è compito del chiamante (CLI o
-    groom.py), che sa dove metterlo."""
+    """The promotion gate. Returns (record, exit_code); it doesn't write
+    the JSON record to disk itself -- that's the caller's job (CLI or
+    groom.py), which knows where to put it."""
     record = _new_record(request)
 
     if request.write_exit_code != 0:

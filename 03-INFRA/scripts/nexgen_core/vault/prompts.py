@@ -1,10 +1,10 @@
-"""I testi che vault-groom manda ai runner LLM.
+"""The texts vault-groom sends to the LLM runners.
 
-Dati, non codice: il giudizio di grooming vive nel playbook del vault
-(`03-INFRA/vault-grooming-playbook.md`), questi sono solo gli involucri che
-lo consegnano al runner in lettura o in scrittura. Tenerli qui, separati da
-`groom.py`, evita di dover scorrere pagine di prosa per leggere
-l'orchestrazione.
+Data, not code: the grooming judgment lives in the vault playbook
+(`03-INFRA/vault-grooming-playbook.md`), these are just the envelopes that
+deliver it to the runner for reading or writing. Keeping them here,
+separate from `groom.py`, avoids having to scroll through pages of prose
+to read the orchestration.
 """
 from __future__ import annotations
 
@@ -44,12 +44,12 @@ WRITE_PROMPT_TEMPLATE = (
 
 
 def build_propose_prompt(playbook: str, vault: str) -> str:
-    """Il prompt della passata di sola lettura (preview e apply, step 1)."""
+    """The prompt for the read-only pass (preview and apply, step 1)."""
     return PROPOSE_PROMPT_TEMPLATE.format(playbook=playbook, vault=vault)
 
 
 def build_write_prompt(playbook: str, plan_record: str, tranche_hash: str, tranche: str) -> str:
-    """Il prompt del write pass: la tranche è quella approvata, non ri-derivata."""
+    """The prompt for the write pass: the tranche is the approved one, not re-derived."""
     return WRITE_PROMPT_TEMPLATE.format(
         playbook=playbook,
         plan_record=plan_record,

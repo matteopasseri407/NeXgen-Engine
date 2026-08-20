@@ -27,8 +27,11 @@ import re
 import shutil
 import subprocess
 import sys
+from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
-from typing import Any, Callable, Mapping, Sequence
+from typing import Any
+
+from nexgen_core.paths import resolve_home
 
 SCRIPTS_DIR = Path(__file__).resolve().parents[1]
 if str(SCRIPTS_DIR) not in sys.path:
@@ -107,7 +110,7 @@ def resolve_repositories(environ: Mapping[str, str]) -> tuple[Path, Path]:
         data_repo = _git_root(Path(data_hint), label="vault data path")
     else:
         home_hint = environ.get("HOME") or environ.get("USERPROFILE")
-        default_home = Path(home_hint).expanduser() if home_hint else Path.home()
+        default_home = Path(home_hint).expanduser() if home_hint else resolve_home()
         default_data = default_home / "KnowledgeVault"
         if default_data.resolve() == engine_repo or (default_data / ".git").exists():
             data_repo = _git_root(default_data, label="default KnowledgeVault")
@@ -541,7 +544,7 @@ def main(
 
 
 class EngineUpdater:
-    """Classe di supporto per invocazione programmatico dell'updater."""
+    """Support class for invoking the updater programmatically."""
 
     @staticmethod
     def main(argv: Sequence[str] | None = None, **kwargs: Any) -> int:
@@ -549,7 +552,7 @@ class EngineUpdater:
 
     @staticmethod
     def check_updates() -> tuple[bool, str, str]:
-        """Controlla se ci sono nuove versioni rilasciate senza applicarle."""
+        """Checks whether new released versions exist, without applying them."""
         try:
             engine_repo, _ = resolve_repositories(os.environ)
             curr = _current_version(engine_repo)

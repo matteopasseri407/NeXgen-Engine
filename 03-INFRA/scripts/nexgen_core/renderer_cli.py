@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""CLI del renderer MCP per il v2: write/revert/reset/adopt.
+"""MCP renderer CLI for v2: write/revert/reset/adopt.
 
-Port fedele delle funzioni di mcp/render.py della release (che resta come
-thin wrapper). Usa McpRenderer per la generazione, e implementa qui il
-revert dai backup, il reset dei soli CLI ricreabili, e l'adopt delle voci
-vive fuori manifest.
+Faithful port of the functions in the release's mcp/render.py (which stays
+in place as a thin wrapper). Uses McpRenderer for generation, and implements
+here the revert from backups, the reset of only the recreatable CLIs, and
+the adoption of live entries outside the manifest.
 """
 from __future__ import annotations
 
@@ -20,12 +20,14 @@ if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
 from nexgen_core.config import load_mcp_manifest
+from nexgen_core.i18n import t
 from nexgen_core.jsonc import parse_jsonc
+from nexgen_core.paths import resolve_home
 from nexgen_core.renderer import McpRenderer
 
-HOME = Path.home()
-# CLI il cui writer puo' ricreare il file da zero (--reset e' sicuro solo qui:
-# claude.json porta stato di sessione/trust che nessuno script rigenera).
+HOME = resolve_home()
+# CLIs whose writer can recreate the file from scratch (--reset is only safe
+# here: claude.json carries session/trust state that no script regenerates).
 RESET_RECREATABLE = {"antigravity", "opencode"}
 
 
@@ -90,7 +92,7 @@ def _validate_config_text(path: Path, text: str) -> None:
 
 
 def cmd_write(cli: str) -> int:
-    """Rigenera la sezione MCP di una CLI dal manifest (--write)."""
+    """Regenerates a CLI's MCP section from the manifest (--write)."""
     r = _renderer()
     funcs = {
         "claude": r.render_claude,
@@ -108,7 +110,7 @@ def cmd_write(cli: str) -> int:
 
 
 def cmd_revert(cli: str) -> int:
-    """Ripristina la config di una CLI dal backup piu' recente (--revert)."""
+    """Restores a CLI's config from its most recent backup (--revert)."""
     path = _cli_config_path(cli)
     backups = _backups_for(path)
     if not backups and not path.exists():
@@ -119,47 +121,49 @@ def cmd_revert(cli: str) -> int:
             backups = [latest_orphan]
     if not backups:
         if not path.exists():
-            print(f">>> {path.name} non presente: niente da ripristinare per {cli}.")
+            print(">>> " + t("{name} not present: nothing to restore for {cli}.", name=path.name, cli=cli))
             return 3
-        print(f">>> nessun backup {path.name}.bak-* trovato: niente da ripristinare.")
+        print(">>> " + t("no backup {pattern} found: nothing to restore.", pattern=f"{path.name}.bak-*"))
         return 1
     latest = backups[-1]
     restored = latest.read_text("utf-8")
     try:
         _validate_config_text(path, restored)
     except (ValueError, json.JSONDecodeError) as exc:
-        print(f">>> STOP: il backup {latest.name} non si analizza ({exc}); rifiuto di ripristinare un file rotto.")
+        print(">>> STOP: " + t("backup {name} doesn't parse ({error}); refusing to restore a broken file.", name=latest.name, error=exc))
         return 2
     if path.exists():
         current = path.read_text("utf-8")
         if current == restored:
-            print(f">>> {cli}: la config e' gia' il backup piu' recente; nessun ripristino necessario.")
+            print(">>> " + t("{cli}: config already matches the most recent backup; nothing to restore.", cli=cli))
             return 0
         _secure_backup(path, current)
     _atomic_write_text(path, restored)
-    print(f">>> RIPRISTINATO {path.name} da {latest.name}.")
+    print(">>> " + t("RESTORED {name} from {source}.", name=path.name, source=latest.name))
     return 0
 
 
 def cmd_reset(cli: str) -> int:
-    """Onboarding reset: backup + rimozione, solo per CLI ricreabili."""
+    """Onboarding reset: backup + removal, only for recreatable CLIs."""
     path = _cli_config_path(cli)
     if not path.exists():
-        print(f">>> {cli}: {path.name} non presente -- gia' pulito, niente da resettare.")
+        print(">>> " + t("{cli}: {name} not present -- already clean, nothing to reset.", cli=cli, name=path.name))
         return 0
     if cli not in RESET_RECREATABLE:
-        print(
-            f">>> RIFIUTATO: il writer di {cli} non puo' ricreare {path.name} da zero se viene "
-            f"rimosso; resetteresti senza via di ritorno se non render.py --revert {cli}. "
-            "Niente viene toccato."
-        )
+        print(">>> REFUSED: " + t(
+            "{cli}'s writer can't recreate {name} from scratch if it gets "
+            "removed; you'd reset with no way back short of render.py --revert {cli}. "
+            "Nothing is touched.",
+            cli=cli, name=path.name,
+        ))
         return 2
     bak = _secure_backup(path, path.read_text("utf-8"))
     path.unlink()
-    print(
-        f">>> RESET {cli}: rimosso {path.name} (backup {bak.name}). Undo con: render.py --revert {cli}. "
-        "Riprovisiona pulito con: agent-sync apply (o render.py --write {cli})."
-    )
+    print(">>> " + t(
+        "RESET {cli}: removed {name} (backup {backup}). Undo with: render.py --revert {cli}. "
+        "Reprovision clean with: agent-sync apply (or render.py --write {cli}).",
+        cli=cli, name=path.name, backup=bak.name,
+    ))
     return 0
 
 
@@ -174,7 +178,7 @@ def _bearer_var(auth_header: Any) -> str | None:
 
 
 def _adopt_entry(cli: str, spec: dict) -> dict:
-    """Inverso best-effort di r_<cli>: da struttura live a stub manifest."""
+    """Best-effort inverse of r_<cli>: from the live structure to a manifest stub."""
     entry: dict[str, Any] = {}
     args = spec.get("args")
     if cli in ("claude", "opencode"):
@@ -248,7 +252,7 @@ def _emit_manifest_stub(name: str, entry: dict) -> str:
 
 
 def _load_live(cli: str) -> dict | None:
-    """Server MCP presenti nella config viva della CLI, o None se non installata."""
+    """MCP servers present in the CLI's live config, or None if not installed."""
     path = _cli_config_path(cli)
     if not path.exists():
         return None
@@ -267,28 +271,28 @@ def _load_live(cli: str) -> dict | None:
             d = parse_jsonc(text) if path.suffix == ".jsonc" else json.loads(text)
             return d.get("mcp", {})
     except Exception as exc:
-        print(f">>> STOP: {path.name} non e' JSON/TOML valido ({exc}). Ripristina un backup .bak-* prima di riprovare.", file=sys.stderr)
+        print(">>> STOP: " + t("{name} is not valid JSON/TOML ({error}). Restore a .bak-* backup before retrying.", name=path.name, error=exc), file=sys.stderr)
         sys.exit(2)
     return {}
 
 
 def cmd_adopt(cli: str, apply: bool = False) -> int:
-    """Trova i server vivi fuori manifest e ne propone (o applica) le voci."""
+    """Finds live servers outside the manifest and proposes (or applies) their entries."""
     manifest_path = _manifest_path()
     try:
         raw = load_mcp_manifest(manifest_path)
         manifest_servers = raw.get("servers", {})
     except Exception as exc:
-        print(f">>> STOP: manifest MCP non valido ({exc}).", file=sys.stderr)
+        print(">>> STOP: " + t("invalid MCP manifest ({error}).", error=exc), file=sys.stderr)
         return 2
     live = _load_live(cli)
     if live is None:
-        print(f">>> {cli} config non presente (non installata, o mai avviata): niente da adottare.")
+        print(">>> " + t("{cli} config not present (not installed, or never launched): nothing to adopt.", cli=cli))
         return 3
     manifest_keys = {name.replace("-", "_") if cli == "codex" else name for name in manifest_servers}
     extras = {k: v for k, v in live.items() if k not in manifest_keys}
     if not extras:
-        print(f">>> {cli}: ogni server vivo e' gia' nel manifest -- niente da adottare.")
+        print(">>> " + t("{cli}: every live server is already in the manifest -- nothing to adopt.", cli=cli))
         return 0
     stubs = []
     for name in sorted(extras):
@@ -301,17 +305,17 @@ def cmd_adopt(cli: str, apply: bool = False) -> int:
         stubs.append(_emit_manifest_stub(name, safe))
     if apply:
         if any("<AUTH>" in s for s in stubs):
-            print(">>> STOP: un server porta un segreto letterale (<AUTH>). Convertilo in riferimento env-var prima di adottare.", file=sys.stderr)
+            print(">>> STOP: " + t("a server carries a literal secret (<AUTH>). Convert it to an env-var reference before adopting."), file=sys.stderr)
             return 2
         try:
             raw_text = manifest_path.read_text(encoding="utf-8")
         except OSError as exc:
-            print(f">>> STOP: impossibile leggere il manifest ({exc}).", file=sys.stderr)
+            print(">>> STOP: " + t("could not read the manifest ({error}).", error=exc), file=sys.stderr)
             return 2
         lines = raw_text.splitlines()
         servers_idx = next((i for i, ln in enumerate(lines) if ln.startswith("servers:")), None)
         if servers_idx is None:
-            print(">>> STOP: impossibile trovare il blocco top-level 'servers:'; aggiungi le voci a mano.", file=sys.stderr)
+            print(">>> STOP: " + t("could not find the top-level 'servers:' block; add the entries by hand."), file=sys.stderr)
             return 2
         end = len(lines)
         for j in range(servers_idx + 1, len(lines)):
@@ -327,25 +331,28 @@ def cmd_adopt(cli: str, apply: bool = False) -> int:
             load_mcp_manifest(manifest_path)
         except Exception as exc:
             manifest_path.write_text(raw_text, encoding="utf-8")
-            print(f">>> STOP: le voci adottate hanno rotto il manifest ({exc}); ripristinato l'originale.", file=sys.stderr)
+            print(">>> STOP: " + t("the adopted entries broke the manifest ({error}); restored the original.", error=exc), file=sys.stderr)
             return 2
-        print(f">>> adottati {len(extras)} server nel manifest: {', '.join(sorted(extras))}. Backup: {bak.name}. Rivedi e committa.")
+        print(">>> " + t(
+            "adopted {count} servers into the manifest: {names}. Backup: {backup}. Review and commit.",
+            count=len(extras), names=", ".join(sorted(extras)), backup=bak.name,
+        ))
         return 0
-    print(f">>> {cli}: {len(extras)} server nella config viva ma NON nel manifest.")
-    print(">>> STUB manifest.yaml di seguito -- rivedi, aggiusta, poi metti sotto 'servers:'. Segreti mostrati come <AUTH>.")
+    print(">>> " + t("{cli}: {count} servers in the live config but NOT in the manifest.", cli=cli, count=len(extras)))
+    print(">>> " + t("manifest.yaml STUB below -- review it, adjust it, then place it under 'servers:'. Secrets shown as <AUTH>."))
     print("servers:")
     for stub in stubs:
         print(stub)
-    print(">>> Rilancia con --apply per aggiungerli sotto 'servers:' (backup + ri-validazione).")
+    print(">>> " + t("Rerun with --apply to add them under 'servers:' (backup + re-validation)."))
     return 0
 
 
 def cmd_inventory() -> int:
-    """Scan read-only dei server MCP per CLI (usato da agent-sync inventory)."""
+    """Read-only scan of the MCP servers per CLI (used by agent-sync inventory)."""
     r = _renderer()
     for cli in ("claude", "codex", "antigravity", "opencode"):
         servers = r.load_resolved_servers(cli)
-        names = ", ".join(sorted(servers)) if servers else "(nessuno)"
+        names = ", ".join(sorted(servers)) if servers else t("(none)")
         print(f"  {cli}: {len(servers)} server -- {names}")
     return 0
 
@@ -354,14 +361,14 @@ def main(argv: list[str] | None = None) -> int:
     if argv is None:
         argv = sys.argv[1:]
     if not argv or argv[0] in ("-h", "--help"):
-        print(
-            "Uso: render.py [--write CLI|--revert CLI|--reset CLI|--adopt CLI [--apply]|--inventory]\n"
-            "  --write CLI      rigenera la sezione MCP della CLI dal manifest\n"
-            "  --revert CLI     ripristina la config della CLI dal backup piu' recente\n"
-            "  --reset CLI      backup + rimozione della config (solo antigravity/opencode)\n"
-            "  --adopt CLI      stub manifest per i server vivi fuori manifest (--apply per applicare)\n"
-            "  --inventory      elenca i server MCP per CLI (read-only)"
-        )
+        print(t(
+            "Usage: render.py [--write CLI|--revert CLI|--reset CLI|--adopt CLI [--apply]|--inventory]\n"
+            "  --write CLI      regenerate the CLI's MCP section from the manifest\n"
+            "  --revert CLI     restore the CLI's config from its most recent backup\n"
+            "  --reset CLI      backup + remove the config (antigravity/opencode only)\n"
+            "  --adopt CLI      manifest stub for live servers outside the manifest (--apply to apply)\n"
+            "  --inventory      list the MCP servers per CLI (read-only)"
+        ))
         return 0
     arg = argv[0]
     if arg == "--write" and len(argv) > 1:
@@ -374,7 +381,7 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_adopt(argv[1], apply="--apply" in argv[2:])
     if arg == "--inventory":
         return cmd_inventory()
-    print(f"render.py: argomento sconosciuto: {arg}", file=sys.stderr)
+    print(t("render.py: unknown argument: {arg}", arg=arg), file=sys.stderr)
     return 2
 
 
