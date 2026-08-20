@@ -167,13 +167,28 @@ def cmd_reset(cli: str) -> int:
     return 0
 
 
+#: What a literal secret becomes in a stub, so the caller's refusal to adopt
+#: one actually has something to find. Without it a live config carrying a
+#: real token was adopted silently, with the token dropped on the floor: the
+#: server then failed to authenticate and nothing said why.
+LITERAL_SECRET = "<AUTH>"
+
+
 def _bearer_var(auth_header: Any) -> str | None:
+    """The environment variable behind a bearer header, if there is one.
+
+    Returns `LITERAL_SECRET` when the header carries the secret itself, which
+    is a different answer from "there is no auth here" and must not be
+    confused with it.
+    """
     if not isinstance(auth_header, str):
         return None
     if auth_header.startswith("Bearer ${"):
         return auth_header[len("Bearer ${"):-1]
     if auth_header.startswith("Bearer {env:"):
         return auth_header[len("Bearer {env:"):-1]
+    if auth_header.startswith("Bearer ") and auth_header[len("Bearer "):].strip():
+        return LITERAL_SECRET
     return None
 
 
@@ -204,8 +219,11 @@ def _adopt_entry(cli: str, spec: dict) -> dict:
         if "url" in spec:
             entry["transport"] = "http"
             entry["url"] = spec.get("url")
-            if spec.get("bearer_token_env_var"):
-                entry["auth"] = {"env": spec["bearer_token_env_var"]}
+            token_ref = spec.get("bearer_token_env_var")
+            if token_ref:
+                entry["auth"] = {"env": token_ref}
+            elif spec.get("bearer_token"):
+                entry["auth"] = {"env": LITERAL_SECRET}
         else:
             entry["transport"] = "stdio"
             entry["command"] = spec.get("command")

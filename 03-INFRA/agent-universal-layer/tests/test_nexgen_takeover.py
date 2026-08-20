@@ -214,3 +214,28 @@ def test_every_component_asks_for_its_home_instead_of_taking_it(monkeypatch):
         "questi punti prendono la home invece di chiederla a resolve_home(), "
         f"e sfuggirebbero all'isolamento: {', '.join(offenders)}"
     )
+
+
+def test_a_live_config_carrying_a_real_token_is_refused_not_swallowed():
+    """Adottare una configurazione con un segreto dentro deve fermarsi.
+
+    Il codice cercava già `<AUTH>` per rifiutare, ma niente lo emetteva mai:
+    un token scritto in chiaro veniva scartato in silenzio, il server smetteva
+    di autenticarsi e nessuno diceva perché.
+    """
+    from nexgen_core.renderer_cli import LITERAL_SECRET, _adopt_entry
+
+    literal = _adopt_entry(
+        "claude",
+        {"type": "http", "url": "https://x", "headers": {"Authorization": "Bearer un-token-vero"}},
+    )
+    assert literal["auth"]["env"] == LITERAL_SECRET
+
+    referenced = _adopt_entry(
+        "claude",
+        {"type": "http", "url": "https://x", "headers": {"Authorization": "Bearer ${TOKEN}"}},
+    )
+    assert referenced["auth"]["env"] == "TOKEN"
+
+    absent = _adopt_entry("claude", {"type": "http", "url": "https://x"})
+    assert "auth" not in absent, "nessuna autenticazione non è la stessa cosa di un segreto"
