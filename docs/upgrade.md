@@ -130,17 +130,10 @@ run somewhere else, and the VPS keeps running the containers it was last
 deployed with. Nothing on your workstation can restart them for you, and
 for a long time nothing even told you they were behind.
 
-Now `agent-doctor` does, for the one service that reports its own version:
-
-```text
-⚠ vault-mcp on the server is 0.3.0 but this engine ships 0.4.0 —
-  the server half of the upgrade was never deployed
-```
-
-It is a WARN and never a FAIL: a lagging server keeps working, and when to
-take it down is your call, not the tool's. For the other three stacks
-`CHANGELOG.md` is the signal — if a release mentions `deploy/`, assume
-the VPS needs the same tag.
+`agent-doctor` (now `nexgen doctor`) does not compare the deployed
+`vault-mcp` server version against the engine version — there is no such
+check. `CHANGELOG.md` is the signal for all four stacks: if a release
+mentions `deploy/`, assume the VPS needs the same tag.
 
 The redeploy is short, and it is documented once, in
 [`03-INFRA/deploy/README.md`](../03-INFRA/deploy/README.md) →

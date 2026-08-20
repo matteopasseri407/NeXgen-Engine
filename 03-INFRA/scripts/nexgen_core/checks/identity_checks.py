@@ -32,7 +32,7 @@ NATIVE_MEMORY_STORES: dict[str, tuple[str, ...]] = {
 #: Il frontmatter minimo che rende leggibile lo spazio personale.
 REQUIRED_FRONTMATTER = ("status",)
 
-_FRONTMATTER_RE = re.compile(r"\A---\s*\n(.*?)\n---\s*\n", re.S)
+_FRONTMATTER_RE = re.compile(r"\A---\s*\n(.*?)\n---\s*\n", re.DOTALL)
 
 
 def _self_file(vault_data: Path) -> Path:
@@ -103,7 +103,7 @@ def check_agent_self_metadata(vault_data: Path) -> CheckOutcome:
         )
 
     body = match.group(1)
-    missing = [key for key in REQUIRED_FRONTMATTER if not re.search(rf"^\s*{key}\s*:", body, re.M)]
+    missing = [key for key in REQUIRED_FRONTMATTER if not re.search(rf"^\s*{key}\s*:", body, re.MULTILINE)]
     if missing:
         return CheckOutcome(
             id="identity.self_metadata",

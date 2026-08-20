@@ -8,9 +8,9 @@ Contratto:
 """
 from __future__ import annotations
 
+import contextlib
 import os
 import shutil
-import contextlib
 import subprocess
 import sys
 import time

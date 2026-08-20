@@ -123,8 +123,8 @@ council relay \
 
 Every mode accepts `--context FILE` for extra background. A seat without a
 confirmed zero-retention guarantee remains usable, but Council prints a warning
-to stderr before sending the brief. The old `--allow-training-risk` flag is
-accepted as a compatibility no-op, so existing scripts do not break.
+to stderr before sending the brief. The old `--allow-training-risk` flag has
+been removed outright, not kept as a no-op: passing it is now a CLI error.
 
 ## Human-approved routing proposals
 
@@ -267,10 +267,10 @@ council clean --all           # removes every kept session now
   A false value prints a clear warning in menus and immediately before the
   model starts. It is metadata, not an execution gate. Secret scanning remains
   blocking and is a separate control.
-- **Legacy retention controls**: `--allow-training-risk` and
-  `council allow-training` remain accepted for command compatibility but no
-  longer change behavior. `council allow-training off` also removes an old
-  marker file left by a previous release.
+- **Legacy retention controls**: the old `--allow-training-risk` flag and the
+  `council allow-training` subcommand have been removed, not deprecated into
+  a no-op. Either one is now a plain CLI error; there is no compatibility
+  path for scripts that still pass them.
 - **Quota**: `--max-rounds` (brainstorm) and `--max-seats` (relay) cap how
   much a session can spend even if you ask for more.
 
