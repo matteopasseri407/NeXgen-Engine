@@ -24,7 +24,7 @@ itself uses:
 - **`cloud-pull.service`** (enabled): refreshes the local mirror by pulling from the remote backend.
 - **`agent-sync.timer` / Windows scheduled task `KnowledgeVault Agent Sync`**: `guard` mode, i.e. locked authoritative pull + automatic propagation of runtime derivatives + healthcheck, with no automatic push. Unsafe Git states block propagation. `apply` is the manual alias of guard. Publishing already-made local commits is a separate `publish` or `vault-push` action. Running without arguments is help-only; there is no combined `full` mode.
 - **`sync/remotes.yaml`**: the data-owned declaration of one authoritative remote and optional publication mirrors. `agent-sync`, `agent-doctor`, and the private publishing helper resolve this same policy.
-- **`vault-push`**: publishes infra files. Cross-platform: the actual logic is one implementation, `agent_sync.py`'s `vault-push` subcommand. `03-INFRA/scripts/vault-push.sh` (symlinked into `~/.local/bin` on Linux/Mac) and `vault-push.ps1` (relinked + a `.cmd` wrapper on Windows) are both thin wrappers that forward into it — same single door on either OS.
+- **`vault-push`**: publishes infra files. Cross-platform: the actual logic is one implementation in Python (`nexgen_core.publisher`), exposed through the `vault-push` shim and the `agent-sync publish` command — same single door on either OS.
 
 ## Retired
 

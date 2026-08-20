@@ -11,7 +11,7 @@ import pytest
 from conftest import REAL_VAULT, load_agent_sync_module
 
 
-SCRIPT = REAL_VAULT / "03-INFRA" / "scripts" / "nexgen_update.py"
+SCRIPT = REAL_VAULT / "03-INFRA" / "scripts" / "nexgen_core" / "updater.py"
 POWERSHELL_LAUNCHER = REAL_VAULT / "03-INFRA" / "scripts" / "nexgen-update.ps1"
 
 
@@ -585,13 +585,13 @@ def test_provisioner_installs_real_command_on_both_platforms(sandbox):
     scripts = REAL_VAULT / "03-INFRA" / "scripts"
     assert (scripts / "nexgen-update.sh").is_file()
     assert (scripts / "nexgen-update.ps1").is_file()
-    assert (scripts / "nexgen_update.py").is_file()
+    assert (scripts / "nexgen_core" / "updater.py").is_file()
 
 
 def test_powershell_launcher_has_one_python_backend_and_forwards_arguments():
     source = POWERSHELL_LAUNCHER.read_text(encoding="utf-8")
-    assert 'Join-Path $PSScriptRoot "nexgen_update.py"' in source
-    assert 'sys.version_info >= (3, 10)' in source
+    assert 'Join-Path $PSScriptRoot "nexgen_core\\updater.py"' in source
+    assert 'sys.version_info >= (3, 13)' in source
     assert "& $runtimeCommand @runtimePrefix $script @args" in source
 
 

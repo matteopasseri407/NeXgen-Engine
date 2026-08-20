@@ -58,20 +58,15 @@ function Test-Prereqs {
   $py = Get-PyBin
   if ($py) {
     $pyVer = (& $py --version 2>&1)
-    & $py -c "import sys; sys.exit(0 if sys.version_info >= (3, 11) else 1)" 2>$null | Out-Null
+    & $py -c "import sys; sys.exit(0 if sys.version_info >= (3, 13) else 1)" 2>$null | Out-Null
     if ($LASTEXITCODE -eq 0) {
       ok "python3 - $pyVer (as '$py')"
     } else {
-      & $py -c "import tomli" 2>$null | Out-Null
-      if ($LASTEXITCODE -eq 0) {
-        ok "python3 - $pyVer (as '$py', <3.11 + tomli - the documented fallback)"
-      } else {
-        bad "python3 - $pyVer is too old (required: 3.11+, or 3.10 with 'pip install tomli') -> winget install Python.Python.3.11"
-        $script:MissReq = 1
-      }
+      bad "python3 - $pyVer is too old (required: 3.13+ - the latest stable Python line) -> winget install Python.Python.3.13"
+      $script:MissReq = 1
     }
   } else {
-    bad "python3 MISSING (required, 3.11+) -> winget install Python.Python.3.11"
+    bad "python3 MISSING (required, 3.13+) -> winget install Python.Python.3.13"
     $script:MissReq = 1
   }
 
@@ -190,6 +185,10 @@ function Show-NextSteps {
   Write-Host ""
   dim "  MCP dialects reference: 03-INFRA/agent-universal-layer/mcp/render.py"
   dim "  Secrets workflow: 99-SECRETS/README.md"
+  $py = Get-PyBin
+  if ($py -and (Test-Path "$ROOT\03-INFRA\scripts\agent_sync.py")) {
+    & $py -c "import sys; sys.path.insert(0, '$ROOT/03-INFRA/scripts'); from nexgen_core.shims import install_shims; install_shims()" 2>$null | Out-Null
+  }
   return 0
 }
 

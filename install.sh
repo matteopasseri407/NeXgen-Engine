@@ -78,16 +78,14 @@ check_prereqs(){
   if have git; then ok "git — $(git --version 2>/dev/null | head -1)"; else bad "git MISSING (required) → $HINT_PKG git"; MISS_REQ=1; fi
   PY="$(pybin)"
   if [ -n "$PY" ]; then
-    if $PY -c 'import sys; sys.exit(0 if sys.version_info >= (3, 11) else 1)' 2>/dev/null; then
+    if $PY -c 'import sys; sys.exit(0 if sys.version_info >= (3, 13) else 1)' 2>/dev/null; then
       ok "python3 — $($PY --version 2>&1) (as '$PY')"
-    elif $PY -c 'import tomli' 2>/dev/null; then
-      ok "python3 — $($PY --version 2>&1) (as '$PY', <3.11 + tomli — the documented fallback)"
     else
-      bad "python3 — $($PY --version 2>&1) is too old (required: 3.11+, or 3.10 with 'pip install tomli') → $HINT_PKG python3.11"
+      bad "python3 — $($PY --version 2>&1) is too old (required: 3.13+ — the latest stable Python line) → $HINT_PKG python3.13"
       MISS_REQ=1
     fi
   else
-    bad "python3 MISSING (required, 3.11+) → $HINT_PKG python3"
+    bad "python3 MISSING (required, 3.13+) → $HINT_PKG python3"
     MISS_REQ=1
   fi
   if [ -n "$PY" ] && $PY -c 'import yaml' 2>/dev/null; then
@@ -178,6 +176,9 @@ next_steps(){
   ${DIM}MCP dialects reference: 03-INFRA/agent-universal-layer/mcp/render.py
   Secrets workflow: 99-SECRETS/README.md${R}
 EOF
+  if [ -n "$PY" ] && [ -f "$ROOT/03-INFRA/scripts/agent_sync.py" ]; then
+    $PY -c "import sys; sys.path.insert(0, '$ROOT/03-INFRA/scripts'); from nexgen_core.shims import install_shims; install_shims()" 2>/dev/null || true
+  fi
 }
 
 # ---- run -------------------------------------------------------------------

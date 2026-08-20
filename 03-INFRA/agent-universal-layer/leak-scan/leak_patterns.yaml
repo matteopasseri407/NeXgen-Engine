@@ -66,6 +66,10 @@ leak_allow:
   # present in every commit made with the tool. Not personal data (found as
   # a real false positive during S0 testing, 2026-07-08).
   - 'noreply@anthropic\.com'
+  # RFC 2606 reserved test domain: every occurrence in this repo is a test
+  # fixture identity (git config user.email in sandboxed tests), never real
+  # personal data.
+  - 'test@example\.com'
   # Generic placeholders used in docs (e.g. USER-PROFILE.md), not a real path
   # (found as a real false positive during S0 testing, 2026-07-08).
   - '/home/user\b'

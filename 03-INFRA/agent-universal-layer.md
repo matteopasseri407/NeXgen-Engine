@@ -18,9 +18,9 @@ For the architecture and the why of each choice, see `03-INFRA/agentic-layer-con
 The universal layer is a set of canonical sources in the vault plus provisioners that generate per-CLI, per-machine derivatives:
 
 - **Instructions:** `agent-universal-layer/instructions/AGENTS.md` is the single bootstrap. Each CLI's pointer file (`~/CLAUDE.md`, `~/.codex/AGENTS.md`, etc.) references it. One file, every agent, drift impossible.
-- **MCP config:** `agent-universal-layer/mcp/manifest.yaml` describes every MCP server once; `render.py` translates it into each CLI's dialect.
-- **Skills:** `agent-universal-layer/skills/skills.manifest.yaml` lists every chosen skill; `scripts/skills-sync.py` materializes bodies in `~/.agents/skill-library`, creates a tiny catalog in `~/.agents/skills`, and wires only declared core or Claude-native views to runtimes.
-- **Scripts:** `scripts/agent-sync.sh` (Linux/Mac) and `scripts/agent-sync.ps1` (Windows) reconcile the live CLI configs with the canonical sources, run healthchecks, and keep the vault in sync.
+- **MCP config:** `agent-universal-layer/mcp/manifest.yaml` describes every MCP server once; the renderer translates it into each CLI's dialect.
+- **Skills:** `agent-universal-layer/skills/skills.manifest.yaml` lists every chosen skill; `skills-sync` materializes bodies in `~/.agents/skill-library`, creates a tiny catalog in `~/.agents/skills`, and wires only declared core or Claude-native views to runtimes.
+- **Scripts:** `agent-sync` (implemented in Python via `nexgen_core`) reconciles the live CLI configs with the canonical sources, runs healthchecks, and keeps the vault in sync across Linux, macOS, and Windows.
 
 ## Provisioning flow
 
@@ -35,7 +35,7 @@ Registering it in the manifest IS part of the install. A tool added for one agen
 
 ## Cross-platform discipline
 
-No architecture change is "done" until it is carried and verified on every machine and CLI it touches. The dialects: `agent-sync.sh`/`.ps1`, path `~/` vs the Windows user profile, `npx` vs `npx.cmd`/wrappers, symlinks vs junctions. Changing only the current machine and calling it done is the recurring bug to avoid.
+No architecture change is "done" until it is carried and verified on every machine and CLI it touches. The dialects: `agent-sync` (and `py -3` on Windows), path `~/` vs the Windows user profile, `npx` vs `npx.cmd`/wrappers, symlinks vs junctions. Changing only the current machine and calling it done is the recurring bug to avoid.
 
 ## Related notes
 

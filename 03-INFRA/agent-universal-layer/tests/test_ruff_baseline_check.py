@@ -69,6 +69,11 @@ def _make_repo(tmp_path: Path) -> Path:
     scripts_dir = repo / "03-INFRA" / "scripts"
     scripts_dir.mkdir(parents=True)
     shutil.copy2(SCRIPT, scripts_dir / "ruff_baseline_check.py")
+    # The v2 wrapper delegates to the nexgen_core package: copy it so the
+    # isolated repo resolves the module instead of the real repo checkout.
+    core_src = REAL_VAULT / "03-INFRA" / "scripts" / "nexgen_core"
+    if core_src.is_dir():
+        shutil.copytree(core_src, scripts_dir / "nexgen_core", dirs_exist_ok=True)
     return repo
 
 

@@ -138,8 +138,8 @@ Il generatore deve installare ciò che può e lasciare il resto visibilmente inc
 Crea inoltre `03-INFRA/agent-universal-layer/sync/remotes.yaml` dal relativo `.example`. Se l'architettura scelta allo Step 1 è **Local-Only**, imposta `authoritative_remote: local`: non c'è un remote privato su cui pubblicare, e questo valore fa sì che agent-sync/agent-doctor saltino i controlli di pubblicazione, invece di scambiare per remote autoritativo l'`origin` del repo pubblico del progetto (con cui l'utente ha clonato il Vault) e chiedere di pubblicarci sopra note private — causa nota di due FAIL falsi in agent-doctor. Se invece è **Cloud-Server**, usa come `authoritative_remote` il remote Git che punta al repo bare del VPS (Step 7) — tipicamente rinominato `origin` una volta ripuntato lì — e inserisci in `mirrors` solo copie di pubblicazione secondarie.
 Non scrivere URL o credenziali nel file, solo i nomi dei remote già configurati.
 Poi istruisci l'utente a lanciare nel terminale il comando di provisioning:
-- Su Linux/Mac: `bash 03-INFRA/scripts/agent-sync.sh apply`
-- Su Windows: `.\03-INFRA\scripts\agent-sync.ps1 apply`
+- Su Linux/Mac: `python3 03-INFRA/scripts/agent_sync.py apply` (oppure `~/.local/bin/agent-sync apply`)
+- Su Windows: `python 03-INFRA\scripts\agent_sync.py apply` (oppure `agent-sync apply`)
 
 Questo comando termina sempre con un controllo di prontezza `agent-doctor --strict`, anche senza `--require-ready`. Quel controllo include probe live che avviano sessioni reali delle CLI installate -- Antigravity tramite `agy --print ... --model "Gemini 3.5 Flash (Medium)"`, OpenCode tramite `opencode mcp list` -- e possono raggiungere servizi di rete reali (il backend del modello di Antigravity, o qualunque server MCP remoto tu abbia montato), anche per una CLI che non hai mai scelto di usare, se il suo binario capita di essere nel PATH. Vedi `docs/what-gets-written.md` per il dettaglio. Se preferisci che questi probe non partano -- ad esempio in un ambiente sandboxato, offline, o semplicemente per non consumarne la quota -- esporta `NEXGEN_SKIP_LIVE_CONSUMER_PROBES=1` PRIMA di lanciare il comando qui sopra.
 
@@ -314,8 +314,8 @@ Install what is available and leave the rest visibly incomplete.
 Also create `03-INFRA/agent-universal-layer/sync/remotes.yaml` from its `.example`. If the architecture chosen in Step 1 is **Local-Only**, set `authoritative_remote: local`: there is no private remote to publish to, and this value makes agent-sync/agent-doctor skip publication checks, instead of mistaking the public project repo's `origin` (the one the user cloned the Vault from) for the authoritative remote and asking them to publish private notes there — a known cause of two false FAILs in agent-doctor. If it is **Cloud-Server** instead, set `authoritative_remote` to the Git remote that points at the VPS's bare repo (Step 7) — typically renamed to `origin` once repointed there — and list only downstream publication copies under `mirrors`.
 Store remote names only, never URLs or credentials.
 Then instruct the user to run the provisioning command in their terminal:
-- On Linux/Mac: `bash 03-INFRA/scripts/agent-sync.sh apply`
-- On Windows: `.\03-INFRA\scripts\agent-sync.ps1 apply`
+- On Linux/Mac: `python3 03-INFRA/scripts/agent_sync.py apply` (or `~/.local/bin/agent-sync apply`)
+- On Windows: `python 03-INFRA\scripts\agent_sync.py apply` (or `agent-sync apply`)
 
 This command always finishes with an `agent-doctor --strict` readiness check, even without `--require-ready`. That check includes live probes that start real sessions of installed CLIs -- Antigravity via `agy --print ... --model "Gemini 3.5 Flash (Medium)"`, OpenCode via `opencode mcp list` -- and can reach real network services (Antigravity's own model backend, or whatever remote MCP server you've mounted), even for a CLI you never chose to use, if its binary happens to be on your PATH. See `docs/what-gets-written.md` for the detail. If you'd rather these probes not run -- say, in a sandboxed or offline environment, or simply to avoid spending their quota -- export `NEXGEN_SKIP_LIVE_CONSUMER_PROBES=1` BEFORE running the command above.
 

@@ -13,7 +13,7 @@ readme = "README.md"
 # COPY in this directory's Dockerfile for why a copy of the file lives
 # here too, next to this pyproject.toml, instead of only at the repo root.
 license = {file = "LICENSE"}
-requires-python = ">=3.11"
+requires-python = ">=3.13"
 dependencies = [
   # MCP SDK 2.x implements the 2026-07-28 protocol revision and keeps serving
   # every earlier revision from the same server, so bumping here does not cut

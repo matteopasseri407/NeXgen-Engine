@@ -49,8 +49,8 @@ user and act on their choice — this is a real fork in behavior, not just
 pacing, so do not skip it or decide for them. Then write
 `99-INDEX/USER-PROFILE.md`, ingest any documents given, install MCP
 servers/skills per the chosen profile (skills are the user's own data —
-never assume specific skill names), run `agent-sync.sh apply` /
-`agent-sync.ps1 apply` if MULTI, deploy the remote stack if Cloud-Server
+never assume specific skill names), run `python3 03-INFRA/scripts/agent_sync.py apply`
+(or `agent-sync apply`) if MULTI, deploy the remote stack if Cloud-Server
 was chosen. `INIT.md` is the single source of truth for exactly what each
 step does; this file only changes the pacing, not the mechanism.
 

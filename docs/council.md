@@ -43,11 +43,9 @@ completely inert. Nothing about the rest of the engine depends on it.
    In a MINIMAL setup, or if the launcher is not on your `PATH`, replace
    `council` below with `python3 03-INFRA/agent-universal-layer/council/council.py`.
 
-`council.sh` (Linux/macOS) and `council.ps1` (Windows, wrapped by the
-generated `council.cmd`) are not two separate Council implementations — both
-are a few lines that resolve their own path and exec the same
-`agent-universal-layer/council/council.py`. All control flow, modes, and
-guardrails below live in that one file.
+The `council` command (and `council.cmd` on Windows) resolves and executes
+`agent-universal-layer/council/council.py` via `nexgen_core/tools/council.py`.
+All control flow, modes, and guardrails below live in that Python engine.
 
 Council does not wrap provider CLIs behind an MCP server. It starts each
 declared CLI as a local subprocess and transports the brief through stdin or a

@@ -8,9 +8,9 @@ description: Run the NeXgen alignment doctor and explain the result in plain lan
 Any text after the command is an optional specific concern to focus on.
 
 1. Run the read-only doctor for this platform: `agent-doctor` (if the bare
-   command is missing, fall back to `bash 03-INFRA/scripts/agent-doctor.sh`
+   command is missing, fall back to `python3 03-INFRA/scripts/agent_sync.py doctor`
    from the engine root on Linux/macOS, or
-   `pwsh -File 03-INFRA\scripts\agent-doctor.ps1` on Windows). It never
+   `py -3 03-INFRA\scripts\agent_sync.py doctor` on Windows). It never
    writes anything, so running it is always safe.
 2. Open with one plain-language sentence: aligned or not, plus the
    PASS/WARN/FAIL counts.

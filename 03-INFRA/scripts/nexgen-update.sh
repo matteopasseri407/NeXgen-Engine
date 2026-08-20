@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Cross-platform logic lives in nexgen_update.py. Resolve this launcher's real
+# Cross-platform logic lives in nexgen_core/updater.py. Resolve this launcher's real
 # directory even when agent-sync installed it as ~/.local/bin/nexgen-update.
 set -eu
 
@@ -13,4 +13,4 @@ while [ -L "$SOURCE" ]; do
   esac
 done
 SCRIPT_DIR="$(cd -P "$(dirname "$SOURCE")" && pwd)"
-exec python3 "$SCRIPT_DIR/nexgen_update.py" "$@"
+exec python3 "$SCRIPT_DIR/nexgen_core/updater.py" "$@"

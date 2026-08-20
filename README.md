@@ -66,7 +66,7 @@ It does not intercept tool calls at runtime.
 - **Version-controlled memory.** The agents read and write Markdown files. Every change is stored in Git, can be reviewed with a diff, and can be reverted. Writes are compare-and-swap: whole-note, or per-section (`update_section`), so two agents editing different sections of the same note both land instead of colliding.
 - **Link hygiene as discipline.** A deterministic, stdlib-only structural map of the vault (`vault-map`: broken wikilinks with relocation hints, orphan notes, hubs) is wired into the flows rather than left as a periodic check: every memory write returns an advisory list of unresolved wikilinks it just introduced (never blocking — deliberate forward links are legitimate), the grooming pass treats orphans and broken links as first-class cleanup candidates, `agent-doctor` keeps a warn-only backstop, and a read-only `map_overview` tool gives agents a token-bounded compass before broad tasks.
 - **Cross-CLI command skills.** Declare a skill once and it surfaces as an explicitly invocable command on every supported runtime (`/name`, `$name` on Codex). Seven starter commands ship with the engine and are installed for you on the first provisioning pass: `vault-doctor`, `vault-close`, `vault-save`, `vault-council`, `vault-groom`, `nexgen-update`, and `vault-map`. MULTI installs `nexgen-update` as a real terminal command too, with Linux and Windows launchers backed by the same updater. It discovers the normal `~/KnowledgeVault` data root without requiring exported variables, preserves private data commits in a single clone, and in a split install keeps the consumer fast-forward-only while advancing an existing private engine pin through `vault-push`. Want none of the chat skills? Empty your `skills.manifest.yaml` (`skills: {}`) and it stays empty. The engine only ever creates that file, never rewrites it.
-- **Vault grooming, optional and manual.** `vault-groom.sh` and `vault-groom.ps1` use an LLM and a grooming playbook to flag stale, duplicate, or disconnected notes. A normal run and `preview` are read-only. `apply` shows the proposed changes and requires an explicit `yes` before writing in a disposable clone with no remote. An audit compares the result with the approved changes before promotion. If the audit fails, the original vault is left untouched. An optional n8n workflow sends a reminder every 14 days, but it never runs grooming unattended.
+- **Vault grooming, optional and manual.** `vault-groom` uses an LLM and a grooming playbook to flag stale, duplicate, or disconnected notes. A normal run and `preview` are read-only. `apply` shows the proposed changes and requires an explicit `yes` before writing in a disposable clone with no remote. An audit compares the result with the approved changes before promotion. If the audit fails, the original vault is left untouched. An optional n8n workflow sends a reminder every 14 days, but it never runs grooming unattended.
 - **AI Council, Beta.** The local orchestrator `council.py` coordinates multiple models for brainstorming and relay tasks. It works from a local `seats.yaml` by itself. If you add the public [LLM Model Routing Governor](https://github.com/matteopasseri407/llm-model-routing-governor), Council reads its per-role proposals while keeping model and CLI identity separate. Claude seats can enter those proposals through explicit model selection. At invocation time, Council checks Claude's returned `modelUsage` value and stops if the CLI used a different model. Every invocation still requires an explicit human choice. See [`docs/council.md`](docs/council.md).
 - **Configuration checks.** In MULTI profile, `agent-doctor` runs more than 30 read-only checks against the live configuration, vault wiring, skills, and secrets handling. It reports `pass`, `warn`, or `fail` for each check and returns a non-zero exit code when it finds an error. In MINIMAL, a single tool on a single machine is checked directly and no doctor is installed.
 - **Cross-platform synchronization, optional.** In MULTI profile, the provisioner keeps generated files aligned across different machines, such as a Windows workstation and a Linux laptop. In MINIMAL, the provisioner is not installed.
@@ -166,7 +166,7 @@ If you prefer fewer setup questions, use `AI-INSTALLER.md` instead of `INIT.md`.
 ## Prerequisites
 
 - Git
-- Python 3.11+ with PyYAML (`pip install pyyaml`), or Python 3.10 with `tomli` too (`pip install pyyaml tomli`)
+- Python 3.13+ (the latest stable Python line) with PyYAML (`pip install pyyaml`)
 - Node.js (for `npx`, needed if you mount MCP servers or external skills)
 - Optional: [OpenCode](https://opencode.ai) as one of the supported CLIs
 - `jq` and `curl` on Linux/Mac (only needed for the MULTI profile sync and health scripts)
@@ -280,7 +280,7 @@ I controlli a runtime spettano all'harness della CLI, con i suoi permessi e le r
   Nel clone unico conserva i commit dei dati privati; nell'installazione separata mantiene il consumer in fast-forward e aggiorna l'eventuale pin privato tramite `vault-push`.
   Se non vuoi le skill da chat, svuota `skills.manifest.yaml` con `skills: {}`.
   Il motore crea quel file soltanto quando manca e non lo riscrive mai.
-- **Grooming del vault, opzionale e manuale.** `vault-groom.sh` e `vault-groom.ps1` usano un playbook e un LLM per trovare note obsolete, duplicate o scollegate.
+- **Grooming del vault, opzionale e manuale.** `vault-groom` usa un playbook e un LLM per trovare note obsolete, duplicate o scollegate.
   L'esecuzione semplice, così come `preview`, è sempre in sola lettura.
   Con `vault-groom apply`, lo strumento propone una tranche di modifiche, la mostra per intero e avvia la scrittura solo dopo che hai digitato `yes`.
   La scrittura avviene in un clone usa e getta del vault, senza remote configurato, quindi da quel clone non è possibile fare push.
@@ -421,8 +421,7 @@ La procedura segue gli stessi passaggi e chiede solo le informazioni indispensab
 ## Prerequisiti
 
 - Git.
-- Python 3.11 o superiore con PyYAML, installabile con `pip install pyyaml`.
-- Python 3.10 con PyYAML e `tomli`, installabili con `pip install pyyaml tomli`.
+- Python 3.13 o superiore (l'ultima linea stabile) con PyYAML, installabile con `pip install pyyaml`.
 - Node.js, necessario per `npx` se vuoi montare server MCP o skill esterne.
 - [OpenCode](https://opencode.ai), opzionale, come una delle CLI supportate.
 - `jq` e `curl` su Linux o macOS, necessari solo per il sync e gli healthcheck del profilo MULTI.

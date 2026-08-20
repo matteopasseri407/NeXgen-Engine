@@ -1,9 +1,9 @@
 $ErrorActionPreference = "Stop"
-# PowerShell 7.3+ opt-in (defaults to $true there): nexgen_update.py's non-zero
+# PowerShell 7.3+ opt-in (defaults to $true there): updater.py's non-zero
 # exit codes are checked via $LASTEXITCODE below, so a native failure must not
 # become a terminating error. Harmless no-op on Windows PowerShell 5.1.
 $PSNativeCommandUseErrorActionPreference = $false
-$script = Join-Path $PSScriptRoot "nexgen_update.py"
+$script = Join-Path $PSScriptRoot "nexgen_core\updater.py"
 $candidates = @()
 foreach ($name in @("python3", "python")) {
   $found = Get-Command $name -ErrorAction SilentlyContinue
@@ -16,11 +16,11 @@ $runtime = $null
 foreach ($candidate in $candidates) {
   $prefix = @($candidate.Prefix)
   $candidateCommand = $candidate.Command
-  & $candidateCommand @prefix -c "import sys; raise SystemExit(0 if sys.version_info >= (3, 10) else 1)" 2>$null | Out-Null
+  & $candidateCommand @prefix -c "import sys; raise SystemExit(0 if sys.version_info >= (3, 13) else 1)" 2>$null | Out-Null
   if ($LASTEXITCODE -eq 0) { $runtime = $candidate; break }
 }
 if (-not $runtime) {
-  Write-Error "nexgen-update: Python 3.10 or newer is required; run install.ps1 -Check"
+  Write-Error "nexgen-update: Python 3.13 or newer is required; run install.ps1 -Check"
   exit 1
 }
 
