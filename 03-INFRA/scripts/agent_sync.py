@@ -1711,7 +1711,7 @@ Description=Say something when the agent sync has not completed in far too long
 
 [Service]
 Type=oneshot
-ExecStart=%h/.local/bin/agent-sync notify-stale
+ExecStart=%h/.local/bin/agent-sync heartbeat
 """
 
 _SYSTEMD_HEARTBEAT_TIMER = """[Unit]
@@ -1815,7 +1815,7 @@ _VBS_TEMPLATE = (
     'processEnv("KNOWLEDGE_VAULT_BRANCH") = "{branch}"\r\n'
     'script = "{script}"\r\n'
     'shell.Run "powershell.exe -NoProfile -ExecutionPolicy Bypass -File " & Chr(34) & script & Chr(34) '
-    '& " guard", 0, True\r\n'
+    '& " {mode}", 0, True\r\n'
 )
 
 
@@ -1868,15 +1868,38 @@ def _install_scheduled_task(env: Env) -> bool:
     def vbs_string(value: Path | str) -> str:
         return str(value).replace('"', '""')
 
-    content = _VBS_TEMPLATE.format(
-        script=vbs_string(script_path),
-        engine_root=vbs_string(env.engine_root),
-        vault_data=vbs_string(env.vault_data),
-        vault=vbs_string(env.vault),
-        branch=vbs_string(env.branch),
-    )
+    def wrapper_for(mode: str) -> str:
+        return _VBS_TEMPLATE.format(
+            script=vbs_string(script_path),
+            engine_root=vbs_string(env.engine_root),
+            vault_data=vbs_string(env.vault_data),
+            vault=vbs_string(env.vault),
+            branch=vbs_string(env.branch),
+            mode=mode,
+        )
+
+    content = wrapper_for("guard")
     if _write_if_different(wrapper_path, content):
         env.log("scheduled-task: hidden wrapper updated")
+    # Windows twin of agent-heartbeat.timer. Task Scheduler has no usable
+    # equivalent of systemd's OnFailure=, but the heartbeat never needed one:
+    # it measures elapsed time since the last completed guard, so it catches a
+    # guard that failed, one that was cancelled, and one that was never
+    # scheduled at all -- the same three cases, without knowing which.
+    beat_path = env.log_dir / "start-agent-heartbeat-hidden.vbs"
+    if _write_if_different(beat_path, wrapper_for("heartbeat")):
+        env.log("scheduled-task: heartbeat wrapper updated")
+    beat_task = "KnowledgeVault Agent Heartbeat"
+    if not _scheduled_task_invokes_wrapper(beat_task, beat_path):
+        r = _run_external(
+            ["schtasks.exe", "/Create", "/TN", beat_task, "/SC", "HOURLY",
+             "/TR", f'wscript.exe "{beat_path}"', "/F"],
+            timeout=30, capture_output=True, text=True)
+        if r.returncode == 0:
+            env.log(f"scheduled-task: installed/updated '{beat_task}' via schtasks.exe")
+        else:
+            env.log(f"scheduled-task: heartbeat task failed ({r.stdout}{r.stderr})")
+
     run_cmd = f'wscript.exe "{wrapper_path}"'
     every30 = ["schtasks.exe", "/Create", "/TN", task_name, "/SC", "MINUTE", "/MO", "30", "/TR", run_cmd, "/F"]
     logon = ["schtasks.exe", "/Create", "/TN", f"{task_name} Logon", "/SC", "ONLOGON", "/TR", run_cmd, "/F"]
@@ -3163,6 +3186,89 @@ def _send_healthcheck(env: Env) -> None:
     _atomic_write_text(state_file, f"{now}\n{sig}\n")
 
 
+AUTO_UPGRADE_DEFAULT = "patch"
+
+
+def _upgrade_step(current: str, target: str) -> str:
+    """'patch', 'minor' or 'major' for the jump between two vX.Y.Z strings."""
+    def parts(v: str) -> tuple[int, int, int]:
+        nums = [int(n) for n in re.findall(r"\d+", v)[:3]]
+        while len(nums) < 3:
+            nums.append(0)
+        return tuple(nums)  # type: ignore[return-value]
+    a, b = parts(current), parts(target)
+    if b[0] != a[0]:
+        return "major"
+    if b[1] != a[1]:
+        return "minor"
+    return "patch"
+
+
+def _auto_upgrade(env: Env) -> None:
+    """Take a released engine upgrade without asking, and say nothing about it.
+
+    Updating itself is the guardian's job, not news: a notification for routine
+    maintenance is how people learn to dismiss notifications. It speaks only
+    when it CANNOT do the work.
+
+    The three brakes are the updater's own and are not reimplemented here: it
+    verifies the release commit signature, refuses to run against a dirty
+    engine or data repository, and only ever offers a released tag -- which
+    exists only after the full CI matrix went green on the merge. This adds one
+    more: how far a jump may be taken unattended, `patch` by default, because a
+    machine that upgrades its own minor versions overnight is a machine whose
+    behaviour changed without anyone choosing it.
+
+    Runs from the heartbeat, never from the guard: the updater's provisioning
+    pass calls `agent-sync apply`, and the guard is holding the host-wide lock
+    that pass would wait on.
+    """
+    level = (os.environ.get("AGENT_AUTO_UPGRADE") or AUTO_UPGRADE_DEFAULT).strip().lower()
+    if level in {"off", "no", "0", "false"}:
+        return
+    updater = env.home / ".local" / "bin" / "nexgen-update"
+    if not updater.exists():
+        return
+    check = _run_external([str(updater), "--check"], timeout=180, capture_output=True, text=True)
+    if check.returncode != 0:
+        _deliver_alert(env, "FAIL could not check for an engine update. "
+                            "Run: nexgen-update --check")
+        return
+    current = target = ""
+    for line in check.stdout.splitlines():
+        if line.startswith("Current:"):
+            current = line.split(":", 1)[1].strip()
+        elif line.startswith("Latest released target:"):
+            target = line.split(":", 1)[1].strip()
+    if not current or not target or current.lstrip("v") == target.lstrip("v"):
+        return
+    step = _upgrade_step(current, target)
+    allowed = {"patch": {"patch"}, "minor": {"patch", "minor"},
+               "all": {"patch", "minor", "major"}}.get(level, {"patch"})
+    if step not in allowed:
+        env.log(f"auto-upgrade: {current} -> {target} is a {step} step, above AGENT_AUTO_UPGRADE={level}")
+        return
+    env.log(f"auto-upgrade: taking {current} -> {target} ({step})")
+    run = _run_external([str(updater), "--yes"], timeout=1800, capture_output=True, text=True)
+    if run.returncode == 0:
+        env.log(f"auto-upgrade: now on {target}")
+        return
+    _deliver_alert(env, f"FAIL the engine could not update itself to {target}. "
+                        f"Run: nexgen-update --check")
+
+
+def _heartbeat_cli(argv: list[str]) -> int:
+    """The independent maintenance beat: check the sync is still alive, then
+    take any released upgrade. Both silent unless they cannot be done."""
+    del argv
+    _notify_stale_cli([])
+    try:
+        _auto_upgrade(Env())
+    except Exception as exc:  # a broken upgrade attempt must not kill the beat
+        Env().log(f"auto-upgrade: aborted ({exc})")
+    return 0
+
+
 def _deliver_alert(env: Env, summary: str) -> bool:
     """The layer's single alert transport. Every trigger goes through here, so
     the golden rule stays intact: one megaphone, whatever wakes it up."""
@@ -3676,6 +3782,8 @@ def main(argv: list[str] | None = None) -> int:
         return _notify_failure_cli(argv[1:])
     if argv[0] == "notify-stale":
         return _notify_stale_cli(argv[1:])
+    if argv[0] == "heartbeat":
+        return _heartbeat_cli(argv[1:])
 
     mode, skip_mcp, allow_offline, require_ready, extras = _parse_cli(argv)
     if mode not in MODES:

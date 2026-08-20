@@ -922,7 +922,7 @@ $core = if (Test-Path -LiteralPath $skActive) {
 } else { 0 }
 ok "$core skill folder(s) present in the shared discovery root; manifest reconciliation follows"
 # Manifest -> library coverage: without this assert, a skill registered in the
-# manifest can go missing on a host for weeks (the humanizer bug).
+# manifest can go missing on a host for weeks (seen in the field).
 $skillsSyncScript = Join-Path $PSScriptRoot "skills-sync.py"
 if ($NexgenPython -and (Test-Path -LiteralPath $skillsSyncScript)) {
   $ssOut = & $NexgenPythonCommand @NexgenPythonPrefix $skillsSyncScript 2>$null

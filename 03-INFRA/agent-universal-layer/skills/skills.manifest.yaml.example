@@ -124,7 +124,7 @@ skills:
     exposure: core
 
   # --- example: a third-party skill, inventoried by pinned commit ------------
-  # humanizer:
+  # some-third-party-skill:
   #   origin: github
   #   repo: <owner>/<repo>
   #   commit: <full-40-character-commit-sha>   # required for origin: github
