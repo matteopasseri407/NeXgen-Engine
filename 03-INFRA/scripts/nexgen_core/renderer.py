@@ -12,6 +12,7 @@ Ordini e regole del contratto:
 """
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import platform
@@ -198,10 +199,16 @@ class McpRenderer:
             self._backup_and_write(cfg_file, json.dumps(existing, indent=2) + "\n")
         return True, "Configurazione Claude aggiornata"
 
+    #: Antigravity legge la stessa configurazione da tre percorsi diversi, a
+    #: seconda di come lo si avvia. Il file vero è uno solo e gli altri tre lo
+    #: raggiungono: scriverne uno e sperare che sia quello giusto significa
+    #: lasciare due varianti su tre con una configurazione vecchia.
+    ANTIGRAVITY_CONSUMER_DIRS = ("antigravity-cli", "antigravity-ide", "config")
+
     def render_antigravity(self, write: bool = False) -> tuple[bool, str]:
-        """Genera la configurazione MCP per Antigravity (~/.gemini/antigravity-ide/mcp_config.json)."""
+        """Genera la configurazione MCP di Antigravity e la fa raggiungere ai suoi consumatori."""
         servers = self.load_resolved_servers("antigravity")
-        cfg_file = self.home / ".gemini" / "antigravity-ide" / "mcp_config.json"
+        cfg_file = self.home / ".gemini" / "antigravity" / "mcp_config.json"
         existing: dict[str, Any] = {}
         if cfg_file.is_file():
             try:
@@ -233,7 +240,30 @@ class McpRenderer:
         existing["mcpServers"] = mcp_servers
         if write:
             self._backup_and_write(cfg_file, json.dumps(existing, indent=2) + "\n")
+            self._fan_out_antigravity(cfg_file)
         return True, "Configurazione Antigravity aggiornata"
+
+    def _fan_out_antigravity(self, canonical: Path) -> None:
+        """Fa puntare al file canonico tutti i percorsi da cui Antigravity legge.
+
+        Dove i collegamenti non si possono creare (Windows senza i privilegi)
+        si copia: l'importante è che nessuna variante resti indietro.
+        """
+        for directory in self.ANTIGRAVITY_CONSUMER_DIRS:
+            target = self.home / ".gemini" / directory / "mcp_config.json"
+            if target == canonical:
+                continue
+            try:
+                if target.is_symlink() and target.resolve() == canonical.resolve():
+                    continue
+                target.parent.mkdir(parents=True, exist_ok=True)
+                if target.exists() or target.is_symlink():
+                    target.unlink()
+                target.symlink_to(canonical)
+            except OSError:
+                with contextlib.suppress(OSError):
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copy2(canonical, target)
 
     def render_opencode(self, write: bool = False) -> tuple[bool, str]:
         """Genera la configurazione MCP per OpenCode (opencode.jsonc, JSONC-aware)."""
