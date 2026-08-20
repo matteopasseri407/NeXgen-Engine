@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import os
 import shutil
+import contextlib
 import subprocess
 import sys
 import time
@@ -60,6 +61,30 @@ def get_profile_dir() -> Path:
     return Path.home() / ".config" / "chrome-agent-debug"
 
 
+#: Quanto si aspetta che Chrome chiuda da sé prima di insistere.
+GRACEFUL_SHUTDOWN_SECONDS = 10.0
+
+
+def singleton_owner_pid(profile: Path) -> int | None:
+    """Chi sta tenendo il profilo di debug, se qualcuno lo sta tenendo.
+
+    Chrome scrive un `SingletonLock` che punta a `host-pid`. Serve a
+    distinguere "Chrome non c'è" da "Chrome c'è ma ha perso la porta di
+    debug": due situazioni con rimedi diversi che senza questo si
+    confondono.
+    """
+    lock = profile / "SingletonLock"
+    try:
+        target = os.readlink(lock)
+    except OSError:
+        return None
+    _, _, pid = target.rpartition("-")
+    try:
+        return int(pid)
+    except ValueError:
+        return None
+
+
 def launch_chrome(extra_args: list[str] | None = None) -> int:
     """Avvia Chrome con i flag di debug CDP configurati."""
     chrome_bin = find_chrome_executable()
@@ -77,6 +102,11 @@ def launch_chrome(extra_args: list[str] | None = None) -> int:
         f"--user-data-dir={profile}",
         "--no-first-run",
     ]
+    if sys.platform not in ("win32", "darwin"):
+        # Senza questo, le finestre aperte da qui finiscono raggruppate sotto
+        # una classe generica e il gestore di finestre non le distingue dalle
+        # app installate come scorciatoia.
+        cmd.append("--class=Google-chrome")
     if extra_args:
         cmd.extend(extra_args)
 
@@ -100,6 +130,14 @@ def heal_chrome(extra_args: list[str] | None = None) -> int:
     profile = get_profile_dir()
     profile_str = str(profile)
 
+    owner = singleton_owner_pid(profile)
+    if owner is not None:
+        print(
+            f"agent-chrome: Chrome tiene il profilo di debug (processo {owner}) "
+            f"ma non risponde sulla porta 9222. Lo riavvio.",
+            file=sys.stderr,
+        )
+
     # Termina eventuali processi Chrome associati al profilo di debug
     if sys.platform == "win32":
         try:
@@ -116,10 +154,20 @@ def heal_chrome(extra_args: list[str] | None = None) -> int:
         except Exception:
             pass
     else:
-        try:
+        # Prima si chiede, poi si insiste: un Chrome ucciso di colpo perde le
+        # schede aperte, e chiuderle non è quello che ci è stato chiesto.
+        with contextlib.suppress(OSError):
             subprocess.run(["pkill", "-f", f"--user-data-dir={profile_str}"], capture_output=True, check=False)
-        except Exception:
-            pass
+        for _ in range(int(GRACEFUL_SHUTDOWN_SECONDS * 2)):
+            if singleton_owner_pid(profile) is None:
+                break
+            time.sleep(0.5)
+        else:
+            with contextlib.suppress(OSError):
+                subprocess.run(
+                    ["pkill", "-9", "-f", f"--user-data-dir={profile_str}"],
+                    capture_output=True, check=False,
+                )
 
     time.sleep(1.0)
     return launch_chrome(extra_args)

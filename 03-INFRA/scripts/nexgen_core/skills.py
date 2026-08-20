@@ -187,6 +187,23 @@ class SkillMaterializer:
 
         return skills
 
+    def _belongs_here(self, entry: SkillEntry) -> bool:
+        """Questa skill riguarda chi sta usando questa macchina?
+
+        `scope` e `owner` venivano letti dal manifest e non applicati a
+        niente: un campo che si può scrivere e che non ha effetto è peggio di
+        un campo che manca, perché fa credere di aver deciso qualcosa.
+
+        Su una installazione a operatore singolo — nessun `AGENT_TEAM_MEMBER`
+        dichiarato — tutto appartiene a chi c'è, e niente viene saltato.
+        """
+        if entry.scope != "personal":
+            return True
+        member = os.environ.get("AGENT_TEAM_MEMBER", "").strip()
+        if not member:
+            return True
+        return entry.owner is None or entry.owner == member
+
     def validate_manifest(self) -> list[str]:
         """Controlla il manifest senza scrivere niente, e dice cosa non torna.
 
@@ -285,6 +302,8 @@ class SkillMaterializer:
         self.active_dir.mkdir(parents=True, exist_ok=True)
 
         for name, entry in skills.items():
+            if not self._belongs_here(entry):
+                continue
             lib_dest = self.library_dir / name
 
             # Se la sorgente locale esiste, colleghiamo alla libreria

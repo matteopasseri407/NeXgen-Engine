@@ -18,7 +18,11 @@ if str(SCRIPTS_DIR) not in sys.path:
 
 from nexgen_core.checks.env_checks import check_state_dir, check_vault_path
 from nexgen_core.checks.git_checks import check_git_alignment, check_mirror_alignment
-from nexgen_core.checks.identity_checks import check_agent_self
+from nexgen_core.checks.identity_checks import (
+    check_agent_self,
+    check_agent_self_metadata,
+    check_native_memory_boundary,
+)
 from nexgen_core.checks.instructions_checks import (
     check_bootstrap_notes_size,
     check_bootstrap_pointer_integrity,
@@ -93,6 +97,8 @@ class Doctor:
 
             # 5. Controlli Identità
             report.add(check_agent_self(self.vault_data), apply_remedy=apply_remedies)
+            report.add(check_agent_self_metadata(self.vault_data), apply_remedy=apply_remedies)
+            report.add(check_native_memory_boundary(self.home), apply_remedy=apply_remedies)
 
             # 6. Controlli bootstrap e segreti in env (port dalla release)
             report.add(check_required_rules(self.vault_data), apply_remedy=apply_remedies)

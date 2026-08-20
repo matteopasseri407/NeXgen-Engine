@@ -13,6 +13,7 @@ Fasi del ciclo di guardia (guard / apply):
 from __future__ import annotations
 
 import contextlib
+import json
 import shutil
 import sys
 import time
@@ -31,6 +32,7 @@ from nexgen_core.git_ops import (
     inspect_git_state,
     resolve_remotes,
 )
+from nexgen_core.jsonc import parse_jsonc, set_jsonc_top_level_value
 from nexgen_core.lock import HostLock, LockTimeoutError
 from nexgen_core.paths import resolve_engine_root, resolve_vault_data
 from nexgen_core.renderer import McpRenderer
@@ -126,7 +128,89 @@ class GuardRunner:
             claude_md.write_text(content, encoding="utf-8")
             actions.append(f"Aggiornato puntatore istruzioni {claude_md}")
 
+        # Le altre tre CLI leggono il canonico direttamente. Allinearne una
+        # sola significa avere una fonte canonica per un runtime e tre copie
+        # ferme per gli altri, che è l'opposto dell'invariante.
+        for label, target in (
+            ("codex", self.home / ".codex" / "AGENTS.md"),
+            ("antigravity", self.home / ".gemini" / "config" / "AGENTS.md"),
+        ):
+            if self._link_to_canonical(target, canon):
+                actions.append(f"Istruzioni di {label} riportate al canonico")
+
+        opencode_action = self._align_opencode_instructions(canon)
+        if opencode_action:
+            actions.append(opencode_action)
+
         return actions
+
+    def _link_to_canonical(self, target: Path, canon: Path) -> bool:
+        """Fa puntare `target` al file canonico. Vero se ha dovuto cambiare qualcosa."""
+        try:
+            if target.is_symlink() and target.resolve() == canon.resolve():
+                return False
+            target.parent.mkdir(parents=True, exist_ok=True)
+            if target.exists() or target.is_symlink():
+                # Una copia reale può contenere righe scritte a mano.
+                if target.is_file() and not target.is_symlink():
+                    backup = target.with_name(
+                        f"{target.name}.pre-instructions-{time.strftime('%Y%m%d-%H%M%S')}.bak"
+                    )
+                    with contextlib.suppress(OSError):
+                        shutil.copy2(target, backup)
+                target.unlink()
+            try:
+                target.symlink_to(canon)
+            except OSError:
+                # Windows senza privilegi di symlink: una copia è meglio del nulla.
+                shutil.copy2(canon, target)
+            return True
+        except OSError:
+            return False
+
+    def _align_opencode_instructions(self, canon: Path) -> str | None:
+        """Aggiunge il canonico all'elenco `instructions` di OpenCode, senza duplicarlo.
+
+        OpenCode non legge un file per convenzione: legge quelli che gli si
+        dichiarano. Se il canonico non è in quell'elenco, quel runtime sta
+        lavorando senza la politica che tutti gli altri hanno.
+        """
+        for candidate in (
+            self.home / ".config" / "opencode" / "opencode.jsonc",
+            self.home / ".config" / "opencode" / "opencode.json",
+        ):
+            if not candidate.is_file():
+                continue
+            try:
+                raw = candidate.read_text(encoding="utf-8")
+                data = parse_jsonc(raw) if candidate.suffix == ".jsonc" else json.loads(raw or "{}")
+            except (OSError, ValueError):
+                return None
+            if not isinstance(data, dict):
+                return None
+
+            declared = data.get("instructions")
+            entries = list(declared) if isinstance(declared, list) else []
+            if str(canon) in entries:
+                return None
+
+            entries.append(str(canon))
+            data["instructions"] = entries
+            try:
+                if candidate.suffix == ".jsonc" and raw.strip():
+                    body = set_jsonc_top_level_value(raw, "instructions", entries)
+                else:
+                    body = json.dumps(data, indent=2) + "\n"
+                backup = candidate.with_name(
+                    f"{candidate.name}.pre-instructions-{time.strftime('%Y%m%d-%H%M%S')}.bak"
+                )
+                with contextlib.suppress(OSError):
+                    shutil.copy2(candidate, backup)
+                candidate.write_text(body, encoding="utf-8")
+            except OSError:
+                return None
+            return "Istruzioni di opencode riportate al canonico"
+        return None
 
     def align_local_model_runtime(self) -> list[str]:
         """Windows-only: relinka l'adapter privato local-model-agent.ps1 (bring-your-own).
