@@ -124,6 +124,22 @@ $script:PASS = 0; $script:WARN = 0; $script:FAILN = 0; $script:FAILS = @()
 function ok($m)   { $script:PASS++;  if ((-not $Summary) -and $Verbose) { Write-Host "  [OK]   $m" -ForegroundColor Green } }
 function warn($m) { $script:WARN++;  if (-not $Summary) { Write-Host "  [WARN] $m" -ForegroundColor Yellow } }
 function bad($m)  { $script:FAILN++; $script:FAILS += $m; if (-not $Summary) { Write-Host "  [FAIL] $m" -ForegroundColor Red } }
+
+function Test-ThirdPartyPins {
+  # Twin of the bash check: the heartbeat writes the list, this surfaces ONE
+  # line. Nothing is applied automatically, so this is a pointer, not an alert.
+  $report = Join-Path $HOME ".local/state/third-party-upgrades.md"
+  if (-not (Test-Path $report)) { ok "third-party pin scan has not run yet (next heartbeat)"; return }
+  $line = Select-String -Path $report -Pattern "are behind upstream" -SimpleMatch |
+          Select-Object -First 1
+  if ($line) {
+    $count = ($line.Line -split " are behind")[0]
+    ok "third-party pins: $count behind upstream (see $report)"
+  } else {
+    ok "third-party pins are current"
+  }
+}
+
 function sec($m)  { if ((-not $Summary) -and $Verbose) { Write-Host "`n$m" -ForegroundColor White } }
 function gitc([string[]]$GitArgs) { (& git -C $Vault @GitArgs 2>$null) }
 function httpcode($url, $headers, [string]$method = "Get") {
@@ -1155,7 +1171,16 @@ if (-not (Test-Path -LiteralPath (Join-Path $ConsumerEngineRepo ".git")) -and
       $curOk = [System.Version]::TryParse($currentVersion, [ref]$cur)
       $latOk = [System.Version]::TryParse(($latestTag -replace '^v', ''), [ref]$lat)
       if ($curOk -and $latOk) {
-        if ($lat -gt $cur) { warn "NeXgen Engine update available: $latestTag (this machine runs v$currentVersion) - run: nexgen-update" }
+        if ($lat -gt $cur) {
+          # A patch is taken by the heartbeat on its own (AGENT_AUTO_UPGRADE
+          # defaults to patch), so announcing it is noise about work already
+          # scheduled. A bigger jump waits for a person and is worth a line.
+          if (($lat.Major -eq $cur.Major) -and ($lat.Minor -eq $cur.Minor)) {
+            ok "engine patch $latestTag available; the heartbeat takes it automatically (running v$currentVersion)"
+          } else {
+            warn "NeXgen Engine update available: $latestTag (this machine runs v$currentVersion) - run: nexgen-update"
+          }
+        }
         else { ok "engine at (or ahead of) the latest released version ($latestTag, running v$currentVersion)" }
       } elseif ("v$currentVersion" -ne $latestTag) {
         warn "NeXgen Engine update available: $latestTag (this machine runs v$currentVersion) - run: nexgen-update"
@@ -1166,12 +1191,14 @@ if (-not (Test-Path -LiteralPath (Join-Path $ConsumerEngineRepo ".git")) -and
   } else { warn "cannot fetch origin - engine version check skipped (offline, or origin unreachable)" }
 }
 
+Test-ThirdPartyPins
+
 if ($Summary) {
   $line = "agent-doctor [windows] PASS=$($script:PASS) WARN=$($script:WARN) FAIL=$($script:FAILN)"
   if ($script:FAILN -gt 0) { $line += " | FAIL: " + ($script:FAILS -join ', ') }
   Write-Output $line
 } else {
-  sec "Summary"
+  Write-Host "`nSummary" -ForegroundColor White
   Write-Host ("  PASS={0}  WARN={1}  FAIL={2}" -f $script:PASS, $script:WARN, $script:FAILN)
   if ($script:FAILN -eq 0) { Write-Host "  -> alignment VERIFIED" -ForegroundColor Green } else { Write-Host "  -> there are FAILs to fix" -ForegroundColor Red }
 }

@@ -2698,3 +2698,88 @@ def test_auto_upgrade_can_be_switched_off_entirely(sandbox, monkeypatch):
     mod._auto_upgrade(mod.Env())
 
     assert not calls
+
+
+# --- somebody has to watch the things we did not write -----------------------
+
+def _pinned_manifests(sandbox, *, commit: str = "a" * 40, version: str = "1.0.0"):
+    skills = sandbox.instance_ul / "skills" if hasattr(sandbox, "instance_ul") else sandbox.ul / "skills"
+    skills.mkdir(parents=True, exist_ok=True)
+    (skills / "skills.manifest.yaml").write_text(
+        "skills:\n"
+        "  borrowed:\n    origin: github\n    repo: someone/borrowed\n"
+        f"    commit: {commit}\n    targets: [claude]\n    exposure: manual\n"
+        "  plugged-in:\n    origin: installer\n"
+        f"    version: '{version}'\n"
+        "    install: ['npx', '--yes', 'plugged-in@1.0.0', 'install']\n"
+        "    targets: [claude]\n    exposure: manual\n",
+        encoding="utf-8",
+    )
+
+
+def test_a_dependency_we_did_not_write_is_noticed_when_it_moves(sandbox, monkeypatch):
+    """Nothing was watching the pins before this: a skill fetched at a commit
+    and a plugin fixed at a version simply stayed where they were until someone
+    tripped over it."""
+    mod = _alert_env(sandbox, monkeypatch)
+    _pinned_manifests(sandbox)
+    monkeypatch.setattr(mod, "_github_head", lambda repo: "b" * 40)
+    monkeypatch.setattr(mod, "_npm_latest", lambda pkg: "2.0.0")
+
+    env = mod.Env()
+    behind = mod._scan_third_party_upgrades(env, force=True)
+
+    report = (env.log_dir / "third-party-upgrades.md").read_text(encoding="utf-8")
+    # >= 2, not == 2: the sandbox's MCP manifest pins npm packages of its own,
+    # and those are third-party pins too. Both kinds must be caught.
+    assert behind >= 2
+    assert "borrowed" in report and "plugged-in" in report
+
+
+def test_finding_an_upgrade_is_a_list_and_never_a_notification(sandbox, monkeypatch):
+    """Applying an upstream change is a decision for a person, so this stops at
+    telling you. It must not page anyone: routine maintenance news is exactly
+    what teaches people to dismiss alerts."""
+    mod = _alert_env(sandbox, monkeypatch)
+    _pinned_manifests(sandbox)
+    sent: list[str] = []
+    monkeypatch.setattr(mod, "_deliver_alert", lambda env, summary: (sent.append(summary), True)[1])
+    monkeypatch.setattr(mod, "_github_head", lambda repo: "b" * 40)
+    monkeypatch.setattr(mod, "_npm_latest", lambda pkg: "2.0.0")
+
+    mod._scan_third_party_upgrades(mod.Env(), force=True)
+
+    assert not sent
+
+
+def test_being_offline_is_a_normal_state_not_an_incident(sandbox, monkeypatch):
+    """A workstation is offline all the time. Reporting that as a problem would
+    make the check the loudest thing in the layer."""
+    mod = _alert_env(sandbox, monkeypatch)
+    _pinned_manifests(sandbox)
+    sent: list[str] = []
+    monkeypatch.setattr(mod, "_deliver_alert", lambda env, summary: (sent.append(summary), True)[1])
+    monkeypatch.setattr(mod, "_github_head", lambda repo: "")
+    monkeypatch.setattr(mod, "_npm_latest", lambda pkg: "")
+
+    env = mod.Env()
+    assert mod._scan_third_party_upgrades(env, force=True) == 0
+    assert not sent
+    assert not (env.log_dir / "third-party-upgrades.md").exists()
+
+
+def test_the_scan_does_not_hit_the_network_on_every_heartbeat(sandbox, monkeypatch):
+    """The heartbeat runs hourly; upstream does not move hourly. Checking every
+    beat would be traffic and rate limits bought with nothing."""
+    mod = _alert_env(sandbox, monkeypatch)
+    _pinned_manifests(sandbox)
+    hits: list[str] = []
+    monkeypatch.setattr(mod, "_github_head", lambda repo: hits.append(repo) or ("b" * 40))
+    monkeypatch.setattr(mod, "_npm_latest", lambda pkg: hits.append(pkg) or "2.0.0")
+
+    env = mod.Env()
+    mod._scan_third_party_upgrades(env, force=True)
+    first = len(hits)
+    mod._scan_third_party_upgrades(env)
+
+    assert len(hits) == first, "a fresh report must not be rebuilt"

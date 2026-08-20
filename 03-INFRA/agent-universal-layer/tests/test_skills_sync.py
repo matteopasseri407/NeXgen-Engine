@@ -877,3 +877,33 @@ def test_a_plugin_already_at_the_pinned_version_is_left_alone(sandbox, monkeypat
 
     assert mod.main() == 0
     assert not (sandbox.active_skills / "plugged-in").exists()
+
+
+def test_an_origin_this_engine_does_not_know_costs_that_entry_and_nothing_else(
+    sandbox, monkeypatch, tmp_path
+):
+    """The manifest lives in the user's data and reaches every machine in
+    minutes; the code that understands it arrives with an engine release. So a
+    manifest will name an origin an older engine has never heard of, and that
+    is normal, not corruption.
+
+    Rejecting the document for it stopped the sync of EVERYTHING -- every skill,
+    every CLI, every machine -- over one entry the machine was not ready for.
+    Verified live on 2026-08-20 before this existed: adding one such entry took
+    the whole layer down with `unsupported origin`."""
+    engine_skills = tmp_path / "engine" / "agent-universal-layer" / "skills"
+    _engine_skill(engine_skills, "engine-owned")
+    _write_manifest(
+        sandbox,
+        "skills:\n"
+        "  from-the-future:\n    origin: teleport\n    targets: [claude]\n    exposure: manual\n"
+        "  engine-owned:\n    origin: engine\n    targets: [claude]\n    exposure: manual\n",
+    )
+
+    mod = load_skills_sync_module(sandbox)
+    mod.ENGINE_SKILLS = engine_skills
+    monkeypatch.setattr(mod.sys, "argv", ["skills-sync.py", "--apply"])
+
+    assert mod.main() == 0, "one unknown entry must not stop the other skills"
+    assert (sandbox.skill_library / "engine-owned" / "SKILL.md").is_file()
+    assert not (sandbox.skill_library / "from-the-future").exists()

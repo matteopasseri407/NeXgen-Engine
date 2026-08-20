@@ -3257,14 +3257,136 @@ def _auto_upgrade(env: Env) -> None:
                         f"Run: nexgen-update --check")
 
 
+UPGRADE_SCAN_INTERVAL_SECONDS = 24 * 3600
+
+
+def _http_json(url: str, timeout: int = 15):
+    """GET returning parsed JSON, or None on any failure. Offline is a normal
+    state for a workstation, not an incident, so nothing is reported here."""
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": "nexgen-engine-upgrade-scan"})
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            return json.loads(resp.read().decode("utf-8"))
+    except (OSError, ValueError):
+        # URLError and socket timeouts are OSError; a malformed body is a
+        # ValueError. Both mean "no answer", which is not an incident.
+        return None
+
+
+def _npm_latest(package: str) -> str:
+    data = _http_json(f"https://registry.npmjs.org/{urllib.parse.quote(package, safe='@/')}/latest")
+    return str((data or {}).get("version") or "")
+
+
+def _github_head(repo: str) -> str:
+    data = _http_json(f"https://api.github.com/repos/{repo}/commits/HEAD")
+    return str((data or {}).get("sha") or "")
+
+
+def _pinned_third_parties(env: Env) -> list[dict]:
+    """Every third-party thing this layer pins: skills fetched from a commit,
+    skills installed at a version, and the npm packages the MCP manifest runs."""
+    out: list[dict] = []
+    skills_manifest = env.instance_ul / "skills" / "skills.manifest.yaml"
+    if skills_manifest.is_file():
+        try:
+            declared = (yaml.safe_load(skills_manifest.read_text(encoding="utf-8")) or {}).get("skills") or {}
+        except (OSError, yaml.YAMLError):
+            declared = {}
+        for name, spec in declared.items():
+            if not isinstance(spec, dict):
+                continue
+            if spec.get("origin") == "github" and spec.get("repo") and spec.get("commit"):
+                out.append({"name": str(name), "kind": "skill-github",
+                            "id": str(spec["repo"]), "pinned": str(spec["commit"])})
+            elif spec.get("origin") == "installer" and spec.get("version"):
+                pkg = ""
+                for token in spec.get("install") or []:
+                    if "@" in str(token)[1:]:
+                        pkg = str(token).rsplit("@", 1)[0]
+                        break
+                if pkg:
+                    out.append({"name": str(name), "kind": "skill-installer",
+                                "id": pkg, "pinned": str(spec["version"])})
+    mcp_manifest = env.instance_ul / "mcp" / "manifest.yaml"
+    if mcp_manifest.is_file():
+        for match in re.finditer(r'"(@?[a-z0-9][a-z0-9._/-]*)@([0-9][0-9a-zA-Z.-]*)"',
+                                 mcp_manifest.read_text(encoding="utf-8")):
+            out.append({"name": match.group(1), "kind": "mcp-npm",
+                        "id": match.group(1), "pinned": match.group(2)})
+    return out
+
+
+def _scan_third_party_upgrades(env: Env, *, force: bool = False) -> int:
+    """Look upstream for newer versions of everything we pin, and write a list.
+
+    Checking is cheap and safe, so it happens on its own. Applying is neither:
+    a new upstream commit changes behaviour nobody chose, which is exactly the
+    kind of decision that stays with a person. So this produces a list and
+    stops -- and it does NOT notify, because a routine list is not an alarm.
+    The doctor surfaces it as one line, and you read it when you want it.
+    """
+    report = env.log_dir / "third-party-upgrades.md"
+    if not force and report.is_file():
+        age = time.time() - report.stat().st_mtime
+        if age < UPGRADE_SCAN_INTERVAL_SECONDS:
+            return 0
+    behind: list[str] = []
+    checked = 0
+    for item in _pinned_third_parties(env):
+        if item["kind"] == "skill-github":
+            latest = _github_head(item["id"])
+            if not latest:
+                continue
+            checked += 1
+            if latest[:12] != item["pinned"][:12]:
+                behind.append(f"- **{item['name']}** ({item['id']}): pinned `{item['pinned'][:12]}`, "
+                              f"upstream `{latest[:12]}`")
+        else:
+            latest = _npm_latest(item["id"])
+            if not latest:
+                continue
+            checked += 1
+            if latest != item["pinned"]:
+                behind.append(f"- **{item['name']}** (`{item['id']}`): pinned `{item['pinned']}`, "
+                              f"latest `{latest}`")
+    if not checked:
+        return 0
+    lines = [f"# Third-party upgrades available ({time.strftime('%Y-%m-%d %H:%M')})", ""]
+    if behind:
+        lines += [f"{len(behind)} of {checked} pinned dependencies are behind upstream.", "",
+                  *behind, "",
+                  ("Raise the pin in the manifest to take one. Nothing here is applied "
+                   "automatically: an upstream change alters behaviour nobody chose.")]
+    else:
+        lines += [f"All {checked} pinned dependencies are current."]
+    env.log_dir.mkdir(parents=True, exist_ok=True)
+    _atomic_write_text(report, "\n".join(lines) + "\n")
+    env.log(f"upgrade-scan: {len(behind)} of {checked} pinned dependencies behind upstream")
+    return len(behind)
+
+
+def _upgrades_cli(argv: list[str]) -> int:
+    env = Env()
+    _scan_third_party_upgrades(env, force="--force" in argv)
+    report = env.log_dir / "third-party-upgrades.md"
+    if report.is_file():
+        print(report.read_text(encoding="utf-8"))
+    return 0
+
+
 def _heartbeat_cli(argv: list[str]) -> int:
     """The independent maintenance beat: check the sync is still alive, then
     take any released upgrade. Both silent unless they cannot be done."""
     del argv
     _notify_stale_cli([])
     try:
+        _scan_third_party_upgrades(Env())
+    except Exception as exc:  # noqa: BLE001 - the beat must survive any scan bug
+        Env().log(f"upgrade-scan: aborted ({exc})")
+    try:
         _auto_upgrade(Env())
-    except Exception as exc:  # a broken upgrade attempt must not kill the beat
+    except Exception as exc:  # noqa: BLE001 - a broken upgrade must not kill the beat
         Env().log(f"auto-upgrade: aborted ({exc})")
     return 0
 
@@ -3784,6 +3906,8 @@ def main(argv: list[str] | None = None) -> int:
         return _notify_stale_cli(argv[1:])
     if argv[0] == "heartbeat":
         return _heartbeat_cli(argv[1:])
+    if argv[0] == "upgrades":
+        return _upgrades_cli(argv[1:])
 
     mode, skip_mcp, allow_offline, require_ready, extras = _parse_cli(argv)
     if mode not in MODES:

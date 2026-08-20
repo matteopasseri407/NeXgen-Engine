@@ -741,6 +741,7 @@ def load_skills_manifest() -> dict | None:
         fail("invalid skills manifest: 'skills' must be a mapping")
         return None
 
+    unsupported: list[str] = []
     for name, spec in skills.items():
         if not isinstance(name, str) or not name.strip():
             fail("invalid skills manifest: every skill name must be a non-empty string")
@@ -757,7 +758,21 @@ def load_skills_manifest() -> dict | None:
             return None
         origin = spec.get("origin")
         if origin not in {"vault", "engine", "github", "installer"}:
-            fail(f"invalid skills manifest: skill '{name}' has unsupported origin {origin!r}")
+            # Forward compatibility, and it is not a nicety. The manifest lives
+            # in the user's data and reaches every machine in minutes; the code
+            # that understands it ships with an engine release. So a manifest
+            # WILL sometimes name an origin an older engine has never heard of.
+            # Rejecting the document for that stops the sync of everything --
+            # every skill, on every CLI, on every machine -- because of one
+            # entry the machine simply is not ready for yet. Skipping that one
+            # entry loudly costs the entry and nothing else.
+            warn(f"skill '{name}': origin {origin!r} is not supported by this engine "
+                 "version, skipping it (upgrade the engine, or fix the manifest)")
+            unsupported.append(name)
+            continue
+        if origin == "installer" and not (spec.get("version") and spec.get("install")):
+            fail(f"invalid skills manifest: skill '{name}' with origin 'installer' "
+                 "needs both `version` and `install`")
             return None
         targets = spec.get("targets", [])
         if not isinstance(targets, list) or not all(isinstance(target, str) for target in targets):
@@ -796,6 +811,8 @@ def load_skills_manifest() -> dict | None:
             fail(f"invalid skills manifest: skill '{name}' owner must be a string")
             return None
 
+    for name in unsupported:
+        skills.pop(name, None)
     return skills
 
 

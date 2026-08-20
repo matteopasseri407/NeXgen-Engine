@@ -1073,6 +1073,21 @@ if [ "${oom_skills:-0}" -gt 0 ] 2>/dev/null; then
 else
   ok "no out-of-manifest skills to reconcile"
 fi
+# Third-party pins, surfaced as ONE line. The scan runs on the heartbeat and
+# writes a list; nothing is applied automatically, because an upstream change
+# alters behaviour nobody chose. So this is neither a warning nor an alert: it
+# is a pointer to a list you read when you want it.
+UPGRADE_REPORT="$HOME/.local/state/third-party-upgrades.md"  # matches Env.log_dir
+if [ -f "$UPGRADE_REPORT" ]; then
+  behind_line="$(grep -m1 'are behind upstream' "$UPGRADE_REPORT" 2>/dev/null || true)"
+  if [ -n "$behind_line" ]; then
+    ok "third-party pins: ${behind_line%% are behind*} behind upstream (see $UPGRADE_REPORT)"
+  else
+    ok "third-party pins are current"
+  fi
+else
+  ok "third-party pin scan has not run yet (next heartbeat)"
+fi
 # Reconciliation after an engine upgrade. `origin: engine` entries name a
 # command the ENGINE ships, so a release that renames or drops one leaves the
 # manifest pointing at a body that no longer exists — and the command simply
