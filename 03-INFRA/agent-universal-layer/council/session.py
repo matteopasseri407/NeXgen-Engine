@@ -17,7 +17,7 @@ import subprocess
 import sys
 import threading
 import time
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 ENGINE_ROOT = Path(__file__).resolve().parent
@@ -73,14 +73,14 @@ def _secure_session_tree(session_dir: Path) -> None:
 def _cleanup_sessions(ttl_days: int, *, remove_all: bool = False, announce: bool = False) -> int:
     if not SESSIONS_DIR.is_dir():
         return 0
-    cutoff = datetime.now(timezone.utc) - timedelta(days=ttl_days)
+    cutoff = datetime.now(UTC) - timedelta(days=ttl_days)
     removed = 0
     for session_dir in sorted(SESSIONS_DIR.iterdir()):
         if not session_dir.is_dir():
             continue
         if not remove_all:
             try:
-                mtime = datetime.fromtimestamp(session_dir.stat().st_mtime, tz=timezone.utc)
+                mtime = datetime.fromtimestamp(session_dir.stat().st_mtime, tz=UTC)
             except OSError:
                 continue
             if mtime >= cutoff:
@@ -138,7 +138,7 @@ def new_session_dir(label: str) -> Path:
     _cleanup_sessions(DEFAULT_TTL_DAYS)
     _private_mkdir(SESSIONS_DIR, parents=True, exist_ok=True)
     _set_private_mode(SESSIONS_DIR, 0o700)
-    timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    timestamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
     base_name = f"council-{slugify(label)}-{timestamp}"
     session_dir = SESSIONS_DIR / base_name
     while True:
@@ -150,7 +150,7 @@ def new_session_dir(label: str) -> Path:
             session_dir = SESSIONS_DIR / f"{base_name}-{os.urandom(3).hex()}"
 
 
-def _force_stop_process_tree(proc: "subprocess.Popen") -> None:
+def _force_stop_process_tree(proc: subprocess.Popen) -> None:
     """Force-stop a seat and reap its launcher.
 
     On Windows an npm ``.cmd`` shim is launched through ``cmd.exe``. Killing
@@ -199,7 +199,7 @@ _ACTIVE_SESSION_KEEP = False
 _CLEANUP_RAN = False
 
 
-def _set_active_proc(proc: "subprocess.Popen | None") -> None:
+def _set_active_proc(proc: subprocess.Popen | None) -> None:
     """Track the seat subprocess currently running, if any, so a SIGTERM or
     interpreter-exit cleanup can try to stop it. Only one seat runs at a
     time (brainstorm/challenge/relay invoke seats sequentially), so a single
@@ -209,7 +209,7 @@ def _set_active_proc(proc: "subprocess.Popen | None") -> None:
         _ACTIVE_PROC = proc
 
 
-def _set_active_session(session_dir: "Path | None", keep: bool = False) -> None:
+def _set_active_session(session_dir: Path | None, keep: bool = False) -> None:
     """Track the ephemeral session dir currently in use, so an interrupted
     run can still be cleaned up like the happy path's ``_finalize_session``
     would (unless the user asked to keep it with ``--keep-session``)."""

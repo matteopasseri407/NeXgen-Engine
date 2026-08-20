@@ -14,6 +14,7 @@ loading and the human-facing proposal), ``relay`` (sequential multi-seat
 relay), and ``verdict`` (brief construction, round running, VERDICT parsing).
 """
 from __future__ import annotations
+
 import argparse
 import sys
 from pathlib import Path
@@ -24,7 +25,7 @@ sys.dont_write_bytecode = True
 
 ENGINE_ROOT = Path(__file__).resolve().parent
 
-from proposal import (  # noqa: E402
+from proposal import (
     SEATS_PATH,
     _print_routing_proposal,
     _print_static_seat_menu,
@@ -34,22 +35,22 @@ from proposal import (  # noqa: E402
     load_seats,
     resolve_seat,
 )
-from relay import (  # noqa: E402
+from relay import (
     DEFAULT_MAX_SEATS,
     RelayQuarantine,
     _load_relay_sequence,
     _run_relay_stage,
     write_relay_verdict,
 )
-from routing import resolve_role_candidates, seat_capabilities  # noqa: E402
-from seat_process import (  # noqa: E402
+from routing import resolve_role_candidates, seat_capabilities
+from seat_process import (
     DEFAULT_SEAT_TIMEOUT_SECONDS,
     _effort_label,
     _format_timeout_seconds,
     _resolve_timeout_seconds,
     _timeout_seconds_argument,
 )
-from session import (  # noqa: E402
+from session import (
     DEFAULT_TTL_DAYS,
     SESSIONS_DIR,
     _cleanup_sessions,
@@ -60,7 +61,7 @@ from session import (  # noqa: E402
     egress_gate,
     new_session_dir,
 )
-from verdict import build_brief, run_rounds, write_verdict  # noqa: E402
+from verdict import build_brief, run_rounds, write_verdict
 
 DEFAULT_MAX_ROUNDS = 3
 

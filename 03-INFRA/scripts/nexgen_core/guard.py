@@ -12,15 +12,15 @@ Fasi del ciclo di guardia (guard / apply):
 """
 from __future__ import annotations
 
-import time
-
 import contextlib
-
 import shutil
 import sys
+import time
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
+
+import yaml
 
 from nexgen_core.beat import Heartbeat
 from nexgen_core.config import load_mcp_manifest, load_skills_manifest
@@ -32,10 +32,25 @@ from nexgen_core.git_ops import (
     resolve_remotes,
 )
 from nexgen_core.lock import HostLock, LockTimeoutError
+from nexgen_core.paths import resolve_engine_root, resolve_vault_data
 from nexgen_core.renderer import McpRenderer
+from nexgen_core.runtimes import apply_all as apply_runtimes
 from nexgen_core.scheduler import install_scheduler
 from nexgen_core.skills import SkillMaterializer
-from nexgen_core.paths import resolve_engine_root, resolve_vault_data
+
+
+def _launcher_fingerprints(home: Path) -> dict[str, int]:
+    """Nome e dimensione di ogni launcher, per dire cosa è cambiato davvero."""
+    bin_dir = home / ".local" / "bin"
+    if not bin_dir.is_dir():
+        return {}
+    out: dict[str, int] = {}
+    for entry in bin_dir.iterdir():
+        try:
+            out[entry.name] = entry.stat().st_size
+        except OSError:
+            continue
+    return out
 
 
 class GuardMode(str, Enum):
@@ -149,7 +164,64 @@ class GuardRunner:
                 actions.append(f"local-model: installato wrapper {name}")
         return actions
 
-    def run(self, mode: GuardMode = GuardMode.APPLY, allow_offline: bool = False) -> GuardResult:
+    def apply_runtime_permissions(self) -> list[str]:
+        """Postura dei permessi + hook guardrail per ogni CLI installata.
+
+        La POLICY -- quale postura, quale corpo di guardrail -- e' dato
+        privato del Vault (03-INFRA/agent-universal-layer/permissions/
+        manifest.yaml), mai dell'engine pubblico: senza quel file questa
+        fase e' un no-op completo, cosi' nessun utente finale eredita la
+        postura permessi di qualcun altro. Il meccanismo che la applica vive
+        in nexgen_core.runtimes; qui si legge solo il manifest e si traduce
+        in argomenti semplici per quel meccanismo.
+        """
+        manifest_path = self.vault_data / "03-INFRA" / "agent-universal-layer" / "permissions" / "manifest.yaml"
+        if not manifest_path.is_file():
+            return []
+        try:
+            raw = yaml.safe_load(manifest_path.read_text(encoding="utf-8"))
+        except (OSError, yaml.YAMLError) as exc:
+            return [f"[WARN] runtime-permissions: impossibile leggere {manifest_path} ({exc})"]
+        if not isinstance(raw, dict):
+            return [f"[WARN] runtime-permissions: la radice di {manifest_path} non è una mappa"]
+
+        posture = {
+            cli: value
+            for cli, value in (raw.get("posture") or {}).items()
+            if isinstance(cli, str) and isinstance(value, str)
+        }
+
+        # Una sola policy di guardrail e' supportata (il primo hook
+        # dichiarato): e' l'unico caso reale, e generalizzare a un elenco
+        # arbitrario di eventi/matcher per CLI e' esattamente la complessita'
+        # a cinque mappe che questo pacchetto sostituisce.
+        guardrail_source: Path | None = None
+        for spec in raw.get("hooks") or []:
+            if not isinstance(spec, dict) or not isinstance(spec.get("file"), str):
+                continue
+            candidate = (manifest_path.parent / spec["file"]).resolve()
+            if not str(candidate).startswith(str(manifest_path.parent.resolve())):
+                name = spec.get("name", spec["file"])
+                return [f"[WARN] runtime-permissions: {name} esce da permissions/, guardrail rifiutato"]
+            if not candidate.is_file():
+                return [f"[WARN] runtime-permissions: corpo del guardrail mancante ({candidate})"]
+            guardrail_source = candidate
+            break
+
+        engine_hooks_dir = self.engine_root / "agent-universal-layer" / "hooks"
+        return apply_runtimes(
+            home=self.home,
+            engine_hooks_dir=engine_hooks_dir,
+            posture=posture,
+            guardrail_source=guardrail_source,
+        )
+
+    def run(
+        self,
+        mode: GuardMode = GuardMode.APPLY,
+        allow_offline: bool = False,
+        skip_mcp: bool = False,
+    ) -> GuardResult:
         """Esegue il ciclo richiesto con gestione lock e sicurezza transazionale."""
         is_guard = (mode == GuardMode.GUARD)
         actions: list[str] = []
@@ -207,9 +279,19 @@ class GuardRunner:
                 actions.extend(skill_actions)
 
                 # 4. Rendering configurazioni MCP per le CLI
-                rend = McpRenderer(vault_data=self.vault_data, engine_root=self.engine_root, home=self.home)
-                rend.render_all(write=True)
-                actions.append("Configurazioni MCP rigenerate per tutte le CLI")
+                if skip_mcp:
+                    actions.append("Configurazioni MCP non rigenerate (richiesto esplicitamente)")
+                else:
+                    rend = McpRenderer(vault_data=self.vault_data, engine_root=self.engine_root, home=self.home)
+                    rend.render_all(write=True)
+                    actions.append("Configurazioni MCP rigenerate per tutte le CLI")
+
+                # 4.6 Postura dei permessi + hook guardrail per CLI
+                try:
+                    perm_actions = self.apply_runtime_permissions()
+                    actions.extend(perm_actions)
+                except Exception as exc:
+                    actions.append(f"[WARN] runtime-permissions: fase saltata per errore imprevisto ({exc})")
 
                 # 5. Allineamento istruzioni
                 instr_actions = self.align_instructions()
@@ -218,6 +300,20 @@ class GuardRunner:
                 # 5b. Adapter local model (Windows, bring-your-own)
                 lm_actions = self.align_local_model_runtime()
                 actions.extend(lm_actions)
+
+                # 5c. I comandi stessi. Un launcher cancellato o rimasto indietro
+                # dopo un aggiornamento è deriva come le altre, e riparare in
+                # silenzio è il mestiere: chiederlo all'utente non lo è.
+                try:
+                    from nexgen_core.shims import install_shims
+
+                    before = _launcher_fingerprints(self.home)
+                    install_shims(home=self.home)
+                    repaired = sorted(_launcher_fingerprints(self.home).items() - before.items())
+                    if repaired:
+                        actions.append(f"Comandi riallineati ({len(repaired)})")
+                except Exception as exc:
+                    actions.append(f"[WARN] Comandi non riallineati: {exc}")
 
                 # 6. Installazione auto-allineamento all'avvio (systemd / scheduled task)
                 try:

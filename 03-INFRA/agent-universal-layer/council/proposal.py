@@ -19,15 +19,14 @@ if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 if str(ENGINE_ROOT) not in sys.path:
     sys.path.insert(0, str(ENGINE_ROOT))
-from config_schema import ConfigValidationError, load_council_config  # noqa: E402
-from routing import (  # noqa: E402
+from config_schema import ConfigValidationError, load_council_config
+from routing import (
     RoutingContractError,
     _probe_codex_seat,
     load_routing_plan,
     resolve_role_candidates,
     seat_capabilities,
 )
-
 from seat_process import AGY_BLOCK_REASON, _effort_label
 
 

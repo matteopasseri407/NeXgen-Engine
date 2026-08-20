@@ -383,7 +383,7 @@ def _feed_stdin(stream, prompt: str) -> None:
             pass
 
 
-def _drain_lines(stream, line_queue: "queue.Queue[str | None]") -> None:
+def _drain_lines(stream, line_queue: queue.Queue[str | None]) -> None:
     for line in stream:
         line_queue.put(line)
     line_queue.put(None)
@@ -679,7 +679,7 @@ def run_seat(
             )
             stdin_writer.start()
 
-        line_queue: "queue.Queue[str | None]" = queue.Queue()
+        line_queue: queue.Queue[str | None] = queue.Queue()
         stderr_lines: list[str] = []
         stdout_reader = threading.Thread(target=_drain_lines, args=(proc.stdout, line_queue), daemon=True)
         stderr_reader = threading.Thread(target=_drain_text, args=(proc.stderr, stderr_lines), daemon=True)

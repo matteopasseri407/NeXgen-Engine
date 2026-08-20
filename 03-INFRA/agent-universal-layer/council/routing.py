@@ -17,7 +17,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-
 LEGACY_HEADING = "### Ranking per ruoli reali"
 LEGACY_END_HEADING = "### Motivazioni concise"
 GOVERNOR_HEADING = "### Proposta di routing per ruolo"

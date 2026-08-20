@@ -11,7 +11,7 @@ from __future__ import annotations
 import sys
 import time
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 from proposal import (
@@ -70,13 +70,13 @@ class RelayQuarantine:
         duration = EXTENDED_QUARANTINE_SECONDS if failures >= 2 else SHORT_QUARANTINE_SECONDS
         blocked_until = now + duration
         self.until[pool] = blocked_until
-        return datetime.fromtimestamp(blocked_until, tz=timezone.utc)
+        return datetime.fromtimestamp(blocked_until, tz=UTC)
 
     def next_reset_iso(self, pools: list[str]) -> str | None:
         future = [self.until[p] for p in pools if self.until.get(p, 0.0) > time.time()]
         if not future:
             return None
-        return datetime.fromtimestamp(min(future), tz=timezone.utc).isoformat(timespec="seconds")
+        return datetime.fromtimestamp(min(future), tz=UTC).isoformat(timespec="seconds")
 
 
 def _dedupe_keep_order(items: list[str]) -> list[str]:
