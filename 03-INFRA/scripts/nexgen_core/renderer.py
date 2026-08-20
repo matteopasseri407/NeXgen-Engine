@@ -13,7 +13,6 @@ from __future__ import annotations
 import json
 import os
 import platform
-import re
 import shutil
 import sys
 import tempfile
@@ -277,7 +276,34 @@ class McpRenderer:
         servers = self.load_resolved_servers("codex")
         cfg_file = self.home / ".codex" / "config.toml"
 
-        lines = ["# NeXgen Engine - Configurazione MCP Codex generata automaticamente", ""]
+        existing_lines: list[str] = []
+        if cfg_file.is_file():
+            try:
+                raw = cfg_file.read_text(encoding="utf-8")
+                # Preserva sezioni non-MCP esistenti (es. [model], impostazioni generali)
+                in_mcp_section = False
+                for line in raw.splitlines():
+                    stripped = line.strip()
+                    if stripped.startswith("[mcp_servers."):
+                        in_mcp_section = True
+                        continue
+                    elif stripped.startswith("[") and not stripped.startswith("[mcp_servers."):
+                        in_mcp_section = False
+                    if not in_mcp_section and not line.startswith("# NeXgen Engine"):
+                        existing_lines.append(line)
+            except OSError:
+                existing_lines = []
+
+        header = "# NeXgen Engine - Configurazione MCP Codex generata automaticamente"
+        lines: list[str] = []
+        if existing_lines:
+            cleaned_existing = "\n".join(existing_lines).strip()
+            if cleaned_existing:
+                lines.append(cleaned_existing)
+                lines.append("")
+
+        lines.append(header)
+        lines.append("")
         for name, srv in servers.items():
             safe_name = name.replace("-", "_")
             lines.append(f"[mcp_servers.{safe_name}]")
@@ -303,7 +329,7 @@ class McpRenderer:
                         lines.append(f'{k} = "{v}"')
             lines.append("")
 
-        content = "\n".join(lines)
+        content = "\n".join(lines).strip() + "\n"
         if write:
             self._backup_and_write(cfg_file, content)
         return True, "Configurazione Codex aggiornata"

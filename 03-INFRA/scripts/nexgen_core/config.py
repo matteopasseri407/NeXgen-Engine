@@ -7,11 +7,10 @@ ma ignorare con avviso i campi sconosciuti e applicare il resto.
 """
 from __future__ import annotations
 
-import json
 import logging
 import os
 import re
-from pathlib import Path, PurePosixPath, PureWindowsPath
+from pathlib import Path
 from typing import Any
 
 import yaml

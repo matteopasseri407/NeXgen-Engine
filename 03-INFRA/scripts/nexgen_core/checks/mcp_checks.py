@@ -40,7 +40,6 @@ def check_mcp_manifest(manifest_path: Path) -> CheckOutcome:
 def check_mcp_configs_rendered(vault_data: Path, home: Path) -> CheckOutcome:
     """Verifica che i file di configurazione MCP delle CLI siano generati e contengano i server attesi."""
     renderer = McpRenderer(vault_data=vault_data, home=home)
-    manifest_path = vault_data / "03-INFRA" / "agent-universal-layer" / "mcp" / "manifest.yaml"
     
     def remedy() -> bool:
         renderer.render_all(write=True)

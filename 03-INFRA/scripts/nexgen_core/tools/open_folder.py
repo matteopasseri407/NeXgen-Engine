@@ -31,6 +31,13 @@ def open_folder(path_str: str) -> int:
         except OSError as exc:
             print(f"Errore apertura cartella su Windows: {exc}", file=sys.stderr)
             return 1
+    elif sys.platform == "darwin":
+        cmd = ["open"]
+        try:
+            subprocess.run([*cmd, str(resolved)], check=True, capture_output=True)
+        except subprocess.CalledProcessError as exc:
+            print(f"Errore apertura cartella su macOS: {exc}", file=sys.stderr)
+            return 1
     else:
         # Linux (gio o xdg-open)
         cmd = ["gio", "open"] if shutil_which("gio") else (["xdg-open"] if shutil_which("xdg-open") else None)

@@ -14,13 +14,10 @@ from __future__ import annotations
 
 import os
 import shutil
-import subprocess
 import sys
-import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
-from typing import Any
 
 from nexgen_core.beat import Heartbeat
 from nexgen_core.config import load_mcp_manifest, load_skills_manifest
@@ -50,7 +47,7 @@ class GuardResult:
     mode: GuardMode
     message: str
     exit_code: int = 0
-    actions_taken: list[str] = ()
+    actions_taken: list[str] = field(default_factory=list)
 
 
 class GuardRunner:

@@ -41,7 +41,7 @@ def _cli_config_path(cli: str) -> Path:
     return {
         "claude": HOME / ".claude.json",
         "codex": Path(os.environ.get("CODEX_HOME") or str(HOME / ".codex")) / "config.toml",
-        "antigravity": HOME / ".gemini" / "antigravity" / "mcp_config.json",
+        "antigravity": HOME / ".gemini" / "antigravity-ide" / "mcp_config.json",
         "opencode": _renderer()._opencode_config_path(),
     }[cli]
 

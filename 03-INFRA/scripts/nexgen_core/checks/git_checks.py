@@ -1,16 +1,18 @@
 """Controlli di integrità e allineamento Git per il Vault."""
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
-from nexgen_core.git_ops import GitState, inspect_git_state, resolve_remotes
+from nexgen_core.git_ops import GitState, get_current_branch, inspect_git_state, resolve_remotes
 from nexgen_core.report import CheckOutcome, Severity
 
 
-def check_git_alignment(vault_data: Path, expected_branch: str = "main") -> CheckOutcome:
+def check_git_alignment(vault_data: Path, expected_branch: str | None = None) -> CheckOutcome:
     """Verifica che il Vault sia pulito e allineato con il remoto autoritativo."""
+    branch = expected_branch or os.environ.get("KNOWLEDGE_VAULT_BRANCH") or get_current_branch(vault_data) or "main"
     auth_remote, _ = resolve_remotes(vault_data)
-    res = inspect_git_state(vault_data, expected_branch=expected_branch, remote=auth_remote)
+    res = inspect_git_state(vault_data, expected_branch=branch, remote=auth_remote)
 
     if res.state == GitState.FRESH or res.state == GitState.LOCAL_ONLY:
         return CheckOutcome(

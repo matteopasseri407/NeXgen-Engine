@@ -1,32 +1,512 @@
 [
   {
-    "file": "03-INFRA/agent-universal-layer/leak-scan/leak_scan.py",
-    "code": "E401",
+    "file": "03-INFRA/agent-universal-layer/council/council.py",
+    "code": "BLE001",
     "count": 1
   },
   {
-    "file": "03-INFRA/agent-universal-layer/mcp/render.py",
-    "code": "E401",
+    "file": "03-INFRA/agent-universal-layer/council/council.py",
+    "code": "EXE001",
     "count": 1
   },
   {
-    "file": "03-INFRA/agent-universal-layer/mcp/render.py",
-    "code": "E701",
-    "count": 5
+    "file": "03-INFRA/agent-universal-layer/council/council.py",
+    "code": "I001",
+    "count": 1
   },
   {
-    "file": "03-INFRA/agent-universal-layer/mcp/render.py",
-    "code": "E702",
-    "count": 37
+    "file": "03-INFRA/agent-universal-layer/council/council.py",
+    "code": "PERF402",
+    "count": 1
   },
   {
-    "file": "03-INFRA/agent-universal-layer/mcp/render.py",
-    "code": "E741",
+    "file": "03-INFRA/agent-universal-layer/council/council.py",
+    "code": "PLW1510",
+    "count": 1
+  },
+  {
+    "file": "03-INFRA/agent-universal-layer/council/council.py",
+    "code": "RUF100",
     "count": 2
   },
   {
-    "file": "03-INFRA/agent-universal-layer/tests/test_render.py",
+    "file": "03-INFRA/agent-universal-layer/council/council.py",
+    "code": "S110",
+    "count": 1
+  },
+  {
+    "file": "03-INFRA/agent-universal-layer/council/council.py",
+    "code": "TRY004",
+    "count": 1
+  },
+  {
+    "file": "03-INFRA/agent-universal-layer/council/council.py",
+    "code": "UP037",
+    "count": 5
+  },
+  {
+    "file": "03-INFRA/agent-universal-layer/council/routing.py",
+    "code": "I001",
+    "count": 1
+  },
+  {
+    "file": "03-INFRA/agent-universal-layer/leak-scan/leak_scan.py",
+    "code": "FURB188",
+    "count": 1
+  },
+  {
+    "file": "03-INFRA/agent-universal-layer/leak-scan/leak_scan.py",
+    "code": "I001",
+    "count": 1
+  },
+  {
+    "file": "03-INFRA/agent-universal-layer/leak-scan/leak_scan.py",
+    "code": "PLW1510",
+    "count": 1
+  },
+  {
+    "file": "03-INFRA/agent-universal-layer/leak-scan/leak_scan.py",
+    "code": "UP035",
+    "count": 1
+  },
+  {
+    "file": "03-INFRA/agent-universal-layer/mcp/render.py",
+    "code": "EXE001",
+    "count": 1
+  },
+  {
+    "file": "03-INFRA/agent-universal-layer/tests/conftest.py",
+    "code": "PLW1510",
+    "count": 5
+  },
+  {
+    "file": "03-INFRA/agent-universal-layer/tests/test_check_required_rules.py",
+    "code": "PLW1510",
+    "count": 1
+  },
+  {
+    "file": "03-INFRA/agent-universal-layer/tests/test_nexgen_phase1.py",
+    "code": "F401",
+    "count": 8
+  },
+  {
+    "file": "03-INFRA/agent-universal-layer/tests/test_nexgen_phase1.py",
     "code": "F841",
+    "count": 1
+  },
+  {
+    "file": "03-INFRA/agent-universal-layer/tests/test_nexgen_phase2.py",
+    "code": "F401",
+    "count": 1
+  },
+  {
+    "file": "03-INFRA/agent-universal-layer/tests/test_nexgen_phase2.py",
+    "code": "RUF059",
+    "count": 2
+  },
+  {
+    "file": "03-INFRA/agent-universal-layer/tests/test_nexgen_phase3.py",
+    "code": "F401",
+    "count": 2
+  },
+  {
+    "file": "03-INFRA/agent-universal-layer/tests/test_nexgen_phase3.py",
+    "code": "RUF059",
+    "count": 1
+  },
+  {
+    "file": "03-INFRA/agent-universal-layer/tests/test_nexgen_phase4.py",
+    "code": "F401",
+    "count": 5
+  },
+  {
+    "file": "03-INFRA/agent-universal-layer/tests/test_nexgen_realworld_parity.py",
+    "code": "F401",
+    "count": 4
+  },
+  {
+    "file": "03-INFRA/agent-universal-layer/tests/test_nexgen_realworld_parity.py",
+    "code": "F841",
+    "count": 1
+  },
+  {
+    "file": "03-INFRA/agent-universal-layer/tests/test_nexgen_realworld_parity.py",
+    "code": "I001",
+    "count": 1
+  },
+  {
+    "file": "03-INFRA/agent-universal-layer/tests/test_nexgen_realworld_parity.py",
+    "code": "RUF059",
+    "count": 3
+  },
+  {
+    "file": "03-INFRA/agent-universal-layer/tests/test_nexgen_tools.py",
+    "code": "F401",
+    "count": 2
+  },
+  {
+    "file": "03-INFRA/agent-universal-layer/tests/test_nexgen_update_command.py",
+    "code": "I001",
+    "count": 1
+  },
+  {
+    "file": "03-INFRA/agent-universal-layer/tests/test_nexgen_update_command.py",
+    "code": "PLW1510",
+    "count": 1
+  },
+  {
+    "file": "03-INFRA/agent-universal-layer/tests/test_ruff_baseline_check.py",
+    "code": "I001",
+    "count": 1
+  },
+  {
+    "file": "03-INFRA/agent-universal-layer/tests/test_ruff_baseline_check.py",
+    "code": "PLW1510",
+    "count": 1
+  },
+  {
+    "file": "03-INFRA/agent-universal-layer/tests/test_vault_lifecycle_audit.py",
+    "code": "I001",
+    "count": 1
+  },
+  {
+    "file": "03-INFRA/agent-universal-layer/tests/test_vault_lifecycle_audit.py",
+    "code": "PLW1510",
+    "count": 1
+  },
+  {
+    "file": "03-INFRA/deploy/ocr/api/app.py",
+    "code": "B008",
+    "count": 1
+  },
+  {
+    "file": "03-INFRA/deploy/ocr/api/app.py",
+    "code": "I001",
+    "count": 1
+  },
+  {
+    "file": "03-INFRA/deploy/ocr/mcp/vault_ocr_mcp.py",
+    "code": "BLE001",
+    "count": 3
+  },
+  {
+    "file": "03-INFRA/deploy/ocr/mcp/vault_ocr_mcp.py",
+    "code": "I001",
+    "count": 1
+  },
+  {
+    "file": "03-INFRA/deploy/ocr/mcp/vault_ocr_mcp.py",
+    "code": "S110",
+    "count": 1
+  },
+  {
+    "file": "03-INFRA/deploy/ocr/mcp/vault_ocr_mcp.py",
+    "code": "UP012",
+    "count": 3
+  },
+  {
+    "file": "03-INFRA/deploy/vault-mcp/ci-smoke.py",
+    "code": "SIM117",
+    "count": 1
+  },
+  {
+    "file": "03-INFRA/deploy/vault-mcp/src/vault_mcp_server/__main__.py",
+    "code": "I001",
+    "count": 1
+  },
+  {
+    "file": "03-INFRA/deploy/vault-mcp/src/vault_mcp_server/config.py",
+    "code": "I001",
+    "count": 1
+  },
+  {
+    "file": "03-INFRA/deploy/vault-mcp/src/vault_mcp_server/config.py",
+    "code": "UP037",
+    "count": 1
+  },
+  {
+    "file": "03-INFRA/deploy/vault-mcp/src/vault_mcp_server/server.py",
+    "code": "BLE001",
+    "count": 1
+  },
+  {
+    "file": "03-INFRA/deploy/vault-mcp/src/vault_mcp_server/server.py",
+    "code": "I001",
+    "count": 1
+  },
+  {
+    "file": "03-INFRA/deploy/vault-mcp/src/vault_mcp_server/vault.py",
+    "code": "BLE001",
+    "count": 1
+  },
+  {
+    "file": "03-INFRA/deploy/vault-mcp/src/vault_mcp_server/vault.py",
+    "code": "FURB192",
+    "count": 1
+  },
+  {
+    "file": "03-INFRA/deploy/vault-mcp/src/vault_mcp_server/vault.py",
+    "code": "I001",
+    "count": 1
+  },
+  {
+    "file": "03-INFRA/deploy/vault-mcp/src/vault_mcp_server/vault.py",
+    "code": "PLW1510",
+    "count": 1
+  },
+  {
+    "file": "03-INFRA/deploy/vault-mcp/src/vault_mcp_server/vault.py",
+    "code": "S110",
+    "count": 1
+  },
+  {
+    "file": "03-INFRA/deploy/vault-mcp/src/vault_mcp_server/vault.py",
+    "code": "SIM103",
+    "count": 1
+  },
+  {
+    "file": "03-INFRA/scripts/config_schema.py",
+    "code": "EXE002",
+    "count": 1
+  },
+  {
+    "file": "03-INFRA/scripts/nexgen_core/beat.py",
+    "code": "BLE001",
+    "count": 1
+  },
+  {
+    "file": "03-INFRA/scripts/nexgen_core/beat.py",
+    "code": "F401",
+    "count": 1
+  },
+  {
+    "file": "03-INFRA/scripts/nexgen_core/checks/env_checks.py",
+    "code": "F401",
+    "count": 1
+  },
+  {
+    "file": "03-INFRA/scripts/nexgen_core/checks/git_checks.py",
+    "code": "I001",
+    "count": 1
+  },
+  {
+    "file": "03-INFRA/scripts/nexgen_core/checks/identity_checks.py",
+    "code": "BLE001",
+    "count": 1
+  },
+  {
+    "file": "03-INFRA/scripts/nexgen_core/checks/mcp_checks.py",
+    "code": "BLE001",
+    "count": 4
+  },
+  {
+    "file": "03-INFRA/scripts/nexgen_core/checks/mcp_checks.py",
+    "code": "I001",
+    "count": 1
+  },
+  {
+    "file": "03-INFRA/scripts/nexgen_core/checks/mcp_checks.py",
+    "code": "S110",
+    "count": 3
+  },
+  {
+    "file": "03-INFRA/scripts/nexgen_core/checks/skill_checks.py",
+    "code": "BLE001",
+    "count": 1
+  },
+  {
+    "file": "03-INFRA/scripts/nexgen_core/cli.py",
+    "code": "BLE001",
+    "count": 1
+  },
+  {
+    "file": "03-INFRA/scripts/nexgen_core/cli.py",
+    "code": "F841",
+    "count": 6
+  },
+  {
+    "file": "03-INFRA/scripts/nexgen_core/cli.py",
+    "code": "FURB105",
+    "count": 3
+  },
+  {
+    "file": "03-INFRA/scripts/nexgen_core/cli.py",
+    "code": "I001",
+    "count": 1
+  },
+  {
+    "file": "03-INFRA/scripts/nexgen_core/git_ops.py",
+    "code": "BLE001",
+    "count": 1
+  },
+  {
+    "file": "03-INFRA/scripts/nexgen_core/git_ops.py",
+    "code": "S110",
+    "count": 1
+  },
+  {
+    "file": "03-INFRA/scripts/nexgen_core/guard.py",
+    "code": "BLE001",
+    "count": 3
+  },
+  {
+    "file": "03-INFRA/scripts/nexgen_core/guard.py",
+    "code": "RUF059",
+    "count": 1
+  },
+  {
+    "file": "03-INFRA/scripts/nexgen_core/guard.py",
+    "code": "SIM114",
+    "count": 1
+  },
+  {
+    "file": "03-INFRA/scripts/nexgen_core/jsonc.py",
+    "code": "TRY004",
+    "count": 1
+  },
+  {
+    "file": "03-INFRA/scripts/nexgen_core/lock.py",
+    "code": "PYI034",
+    "count": 1
+  },
+  {
+    "file": "03-INFRA/scripts/nexgen_core/lock.py",
+    "code": "PYI036",
+    "count": 3
+  },
+  {
+    "file": "03-INFRA/scripts/nexgen_core/lock.py",
+    "code": "UP035",
+    "count": 1
+  },
+  {
+    "file": "03-INFRA/scripts/nexgen_core/megaphone.py",
+    "code": "BLE001",
+    "count": 3
+  },
+  {
+    "file": "03-INFRA/scripts/nexgen_core/megaphone.py",
+    "code": "SIM103",
+    "count": 1
+  },
+  {
+    "file": "03-INFRA/scripts/nexgen_core/renderer.py",
+    "code": "BLE001",
+    "count": 3
+  },
+  {
+    "file": "03-INFRA/scripts/nexgen_core/renderer.py",
+    "code": "EXE001",
+    "count": 1
+  },
+  {
+    "file": "03-INFRA/scripts/nexgen_core/renderer_cli.py",
+    "code": "BLE001",
+    "count": 5
+  },
+  {
+    "file": "03-INFRA/scripts/nexgen_core/report.py",
+    "code": "BLE001",
+    "count": 1
+  },
+  {
+    "file": "03-INFRA/scripts/nexgen_core/report.py",
+    "code": "UP035",
+    "count": 1
+  },
+  {
+    "file": "03-INFRA/scripts/nexgen_core/scheduler.py",
+    "code": "UP035",
+    "count": 1
+  },
+  {
+    "file": "03-INFRA/scripts/nexgen_core/skills.py",
+    "code": "BLE001",
+    "count": 1
+  },
+  {
+    "file": "03-INFRA/scripts/nexgen_core/skills.py",
+    "code": "F401",
+    "count": 1
+  },
+  {
+    "file": "03-INFRA/scripts/nexgen_core/skills.py",
+    "code": "SIM102",
+    "count": 2
+  },
+  {
+    "file": "03-INFRA/scripts/nexgen_core/tools/chrome.py",
+    "code": "BLE001",
+    "count": 3
+  },
+  {
+    "file": "03-INFRA/scripts/nexgen_core/tools/chrome.py",
+    "code": "S110",
+    "count": 2
+  },
+  {
+    "file": "03-INFRA/scripts/nexgen_core/tools/council.py",
+    "code": "PLW1510",
+    "count": 1
+  },
+  {
+    "file": "03-INFRA/scripts/nexgen_core/tools/firecrawl.py",
+    "code": "BLE001",
+    "count": 2
+  },
+  {
+    "file": "03-INFRA/scripts/nexgen_core/tools/firecrawl_health.py",
+    "code": "I001",
+    "count": 1
+  },
+  {
+    "file": "03-INFRA/scripts/nexgen_core/tools/vault_groom_audit.py",
+    "code": "PLW1510",
+    "count": 1
+  },
+  {
+    "file": "03-INFRA/scripts/nexgen_core/tools/vault_lifecycle_audit.py",
+    "code": "DTZ007",
+    "count": 2
+  },
+  {
+    "file": "03-INFRA/scripts/nexgen_core/tools/vault_lifecycle_audit.py",
+    "code": "DTZ011",
+    "count": 1
+  },
+  {
+    "file": "03-INFRA/scripts/nexgen_core/tools/vault_lifecycle_audit.py",
+    "code": "I001",
+    "count": 1
+  },
+  {
+    "file": "03-INFRA/scripts/nexgen_core/tools/vault_map.py",
+    "code": "FURB192",
+    "count": 1
+  },
+  {
+    "file": "03-INFRA/scripts/nexgen_core/tools/vault_map.py",
+    "code": "I001",
+    "count": 1
+  },
+  {
+    "file": "03-INFRA/scripts/nexgen_core/updater.py",
+    "code": "BLE001",
+    "count": 1
+  },
+  {
+    "file": "03-INFRA/scripts/nexgen_core/updater.py",
+    "code": "UP034",
+    "count": 1
+  },
+  {
+    "file": "03-INFRA/scripts/nexgen_core/updater.py",
+    "code": "UP035",
+    "count": 1
+  },
+  {
+    "file": "03-INFRA/scripts/ruff_baseline_check.py",
+    "code": "I001",
     "count": 1
   }
 ]

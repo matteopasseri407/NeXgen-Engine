@@ -13,7 +13,7 @@ import os
 import sys
 import time
 from pathlib import Path
-from typing import Iterator
+from typing import Any, Iterator
 
 EXIT_BUSY_MANUAL = 75
 EXIT_BUSY_GUARD = 0

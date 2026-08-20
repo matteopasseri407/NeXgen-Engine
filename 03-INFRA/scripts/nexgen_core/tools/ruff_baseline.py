@@ -31,6 +31,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -66,12 +67,27 @@ def run_ruff() -> list[dict]:
     # CreateProcess, so a POSIX shebang stub named plain "ruff" is invisible
     # there even when it's on PATH and executable. Real usage (CI, local)
     # never sets this, and gets the real `ruff` from PATH as before.
-    ruff_cmd = json.loads(os.environ["RUFF_CMD"]) if "RUFF_CMD" in os.environ else ["ruff"]
+    if "RUFF_CMD" in os.environ:
+        ruff_cmd = json.loads(os.environ["RUFF_CMD"])
+    else:
+        candidate = shutil.which("ruff")
+        if not candidate:
+            for venv_path in (
+                REPO_ROOT / ".venv" / "bin" / "ruff",
+                Path.home() / "NeXgen-Engine" / ".venv" / "bin" / "ruff",
+                Path.home() / ".venv" / "bin" / "ruff",
+                Path.home() / ".venvs" / "vault-tools" / "bin" / "ruff",
+            ):
+                if venv_path.is_file() and os.access(venv_path, os.X_OK):
+                    candidate = str(venv_path)
+                    break
+        ruff_cmd = [candidate or "ruff"]
     proc = subprocess.run(
         [*ruff_cmd, "check", TARGET_NAME, "--output-format=json"],
         cwd=REPO_ROOT,
         capture_output=True,
         text=True,
+        check=False,
     )
     # ruff exits 0 when clean, 1 when it found lint violations. Anything
     # else (2, a crash, "command not found" surfaced as a huge negative

@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-#!/usr/bin/env python3
 """Il publisher (vault-push): pubblicazione sicura delle modifiche per NeXgen Engine v2.
 
 Contratto:
@@ -21,10 +20,8 @@ if str(SCRIPTS_DIR) not in sys.path:
 
 from nexgen_core.git_ops import (
     get_current_branch,
-    inspect_git_state,
     publish_changes,
     resolve_remotes,
-    run_git,
 )
 from nexgen_core.lock import HostLock
 

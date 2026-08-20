@@ -8,7 +8,6 @@ Contratto:
 """
 from __future__ import annotations
 
-import argparse
 import os
 import shutil
 import subprocess
@@ -93,6 +92,39 @@ def launch_chrome(extra_args: list[str] | None = None) -> int:
         return 1
 
 
+def heal_chrome(extra_args: list[str] | None = None) -> int:
+    """Riavvia Chrome se il processo è rimasto aperto senza rispondere su CDP."""
+    if is_cdp_up():
+        return 0
+
+    profile = get_profile_dir()
+    profile_str = str(profile)
+
+    # Termina eventuali processi Chrome associati al profilo di debug
+    if sys.platform == "win32":
+        try:
+            subprocess.run(
+                [
+                    "powershell",
+                    "-NoProfile",
+                    "-Command",
+                    f"Get-CimInstance Win32_Process | Where-Object {{ $_.CommandLine -like '*{profile_str}*' }} | ForEach-Object {{ Stop-Process -Id $_.ProcessId -Force }}",
+                ],
+                capture_output=True,
+                check=False,
+            )
+        except Exception:
+            pass
+    else:
+        try:
+            subprocess.run(["pkill", "-f", f"--user-data-dir={profile_str}"], capture_output=True, check=False)
+        except Exception:
+            pass
+
+    time.sleep(1.0)
+    return launch_chrome(extra_args)
+
+
 def main(argv: list[str] | None = None) -> int:
     if argv is None:
         argv = sys.argv[1:]
@@ -115,6 +147,8 @@ def main(argv: list[str] | None = None) -> int:
         if is_cdp_up():
             return 0
         return launch_chrome(passthrough)
+    elif mode == "heal":
+        return heal_chrome(passthrough)
 
     return launch_chrome(passthrough)
 

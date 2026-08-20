@@ -7,6 +7,7 @@ Nessun componente notifica per conto proprio.
 """
 from __future__ import annotations
 
+import html
 import json
 import os
 import time
@@ -59,9 +60,12 @@ class Megaphone:
         if not self.should_notify(key):
             return True
 
-        text = f"🚨 *{title}*\n\n{message}"
+        safe_title = html.escape(title)
+        safe_msg = html.escape(message)
+        text = f"🚨 <b>{safe_title}</b>\n\n{safe_msg}"
         if action:
-            text += f"\n\n👉 *Azione richiesta:*\n`{action}`"
+            safe_act = html.escape(action)
+            text += f"\n\n👉 <b>Azione richiesta:</b>\n<code>{safe_act}</code>"
 
         sent = False
         # 1. Telegram
@@ -81,7 +85,7 @@ class Megaphone:
 
     def _send_telegram(self, token: str, chat_id: str, text: str) -> bool:
         url = f"https://api.telegram.org/bot{token}/sendMessage"
-        payload = json.dumps({"chat_id": chat_id, "text": text, "parse_mode": "Markdown"}).encode("utf-8")
+        payload = json.dumps({"chat_id": chat_id, "text": text, "parse_mode": "HTML"}).encode("utf-8")
         req = urllib.request.Request(url, data=payload, headers={"Content-Type": "application/json"})
         try:
             with urllib.request.urlopen(req, timeout=10) as resp:

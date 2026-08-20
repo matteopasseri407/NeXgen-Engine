@@ -12,7 +12,6 @@ import argparse
 import os
 import sys
 from pathlib import Path
-from typing import Any
 
 SCRIPTS_DIR = Path(__file__).resolve().parents[1]
 if str(SCRIPTS_DIR) not in sys.path:
@@ -27,7 +26,7 @@ from nexgen_core.checks.skill_checks import (
     check_skill_library_and_index,
     check_skills_manifest,
 )
-from nexgen_core.report import CheckOutcome, Report, Severity
+from nexgen_core.report import Report
 
 
 class Doctor:

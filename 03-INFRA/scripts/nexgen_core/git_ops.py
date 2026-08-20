@@ -10,10 +10,9 @@ from __future__ import annotations
 
 import os
 import subprocess
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
-from typing import Any
 
 import yaml
 
@@ -37,7 +36,7 @@ class GitStatusResult:
     state: GitState
     message: str
     branch: str = ""
-    uncommitted_files: list[str] = ()
+    uncommitted_files: list[str] = field(default_factory=list)
 
     @property
     def allows_apply(self) -> bool:

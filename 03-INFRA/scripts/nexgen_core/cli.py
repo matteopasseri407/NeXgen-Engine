@@ -204,7 +204,6 @@ def _inventory_cli() -> int:
     # Bootstrap per CLI
     print("")
     print(">>> Onboarding inventory -- bootstrap per CLI (read-only):")
-    canon = vault_data / "03-INFRA" / "agent-universal-layer" / "instructions" / "AGENTS.md"
     bootstraps = [
         ("claude", home / "CLAUDE.md", "pointer"),
         ("codex", home / ".codex" / "AGENTS.md", "mirror"),

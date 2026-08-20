@@ -87,6 +87,7 @@ class SkillMaterializer:
         self.active_dir = self.home / ".agents" / "skills"
         self.claude_dir = self.home / ".claude" / "skills"
         self.gemini_dir = self.home / ".gemini" / "antigravity-cli" / "skills"
+        self.gemini_config_dir = self.home / ".gemini" / "config" / "skills"
         self.gemini_legacy_dir = self.home / ".gemini" / "skills"
         self.codex_dir = self.home / ".codex" / "skills"
         self.opencode_dir = self.home / ".opencode" / "skills"
@@ -180,7 +181,7 @@ class SkillMaterializer:
                     if target == "claude":
                         target_dirs = [self.claude_dir]
                     elif target == "antigravity":
-                        target_dirs = [self.gemini_dir, self.gemini_legacy_dir]
+                        target_dirs = [self.gemini_dir, self.gemini_config_dir, self.gemini_legacy_dir]
                     elif target == "codex":
                         target_dirs = [self.codex_dir]
                     elif target == "opencode":
