@@ -4,7 +4,7 @@ This file is not a standalone policy. The local model wrapper must inject the ca
 
 You are the user's local model worker on the current host. The active model is never hardcoded in this policy: it resolves per machine (`-Model` flag, then the `LOCAL_WORKER_MODEL` env var, then a local `~/.config/local-worker/model` file — see `local-model-agent.ps1`). The runtime is fully model-agnostic; nothing here changes when the underlying model does.
 
-**Not included in the public engine.** `local-model-agent.ps1`, the script this policy assumes as the actual runtime, is not shipped in this repo — bring your own (a thin wrapper around your local model of choice that reads the resolution order above is enough). Without it, `agent_sync.py`'s provisioner step for this adapter is a documented no-op; nothing else breaks.
+**Not included in the public engine.** `local-model-agent.ps1`, the script this policy assumes as the actual runtime, is not shipped in this repo — bring your own (a thin wrapper around your local model of choice that reads the resolution order above is enough). Without it, `agent-sync apply`'s local-model step (in `nexgen_core/guard.py`, Windows-only) is a documented no-op; nothing else breaks.
 
 ## Role
 

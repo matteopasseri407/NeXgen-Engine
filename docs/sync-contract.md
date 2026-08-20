@@ -109,13 +109,13 @@ It prints and logs `PARTIAL` explicitly.
 Automation that requires a fully operational machine must use `agent-sync apply --require-ready`; that form returns non-zero for `PARTIAL`.
 Required provisioning phase failures remain `failed`, never `PARTIAL`.
 
-`vault-push`'s own commit/rebase/publish logic is the `vault-push` subcommand
-of this same `agent_sync.py` — not a separate implementation. It locks the
+`vault-push`'s own commit/rebase/publish logic is the `vault-push` command of
+`nexgen_core/publisher.py` — not a separate implementation. It locks the
 same lock file by default (`AGENT_SYNC_LOCK_FILE`, else `agent-sync.lock`
 under this same host's state directory), so a `guard` cycle and a manual
 `vault-push` on the same machine still serialize against each other. The
 `vault-push` executable shim (and `.cmd` on Windows) forwards into `nexgen_core.publisher`
-(or `agent_sync.py publish`).
+(or `agent-sync publish`).
 When the engine itself is unreachable (no resolvable engine or no
 Python) and `KNOWLEDGE_VAULT_REMOTE` is set, a minimal git emergency lane is available —
 announcing the degraded mode loudly rather than failing silently.
@@ -128,7 +128,7 @@ physical Windows installation.
 ## Configuration layer order
 
 The MCP configuration each CLI receives is the result of a fixed, ordered
-pipeline inside `render.py`. The order below is the contract: it is what the
+pipeline inside `nexgen_core/renderer.py`. The order below is the contract: it is what the
 generated configs are compared against, and a regression test pins it. The
 later a layer runs, the more it wins; a field a later layer does not set is
 simply left as the earlier layer produced it.

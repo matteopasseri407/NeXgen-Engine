@@ -224,6 +224,52 @@ class SkillMaterializer:
         index_file.write_text("\n".join(lines), encoding="utf-8")
         return index_file
 
+    def migrate_legacy(self, apply: bool = True) -> list[str]:
+        """Quarantena delle viste eager legacy fuori dalle root di discovery.
+
+        Port da skills-sync.py --migrate-legacy della release: le installazioni
+        vecchie mettevano skill terze direttamente sotto le root discovery.
+        Non vanno cancellate né spostate silenziosamente dal guard ricorrente;
+        --migrate-legacy le preserva in una quarantena locale non indicizzata.
+        """
+        skills = self.load_manifest()
+        actions: list[str] = []
+        views = {
+            "shared": self.active_dir,
+            "codex": self.codex_dir,
+            "claude": self.claude_dir,
+        }
+        legacy_root = self.library_dir / "legacy"
+        for scope, root in views.items():
+            if not root.is_dir() or root.is_symlink():
+                continue
+            for entry in sorted(root.iterdir()):
+                if entry.name.startswith(".") or entry.name == "INDEX.md":
+                    continue
+                body = entry / "SKILL.md" if entry.is_dir() else entry
+                if not body.is_file():
+                    continue
+                managed = self.library_dir / entry.name
+                spec = skills.get(entry.name)
+                expected = (
+                    (scope == "shared" and spec is not None and spec.exposure in ("core", "eager"))
+                    or (scope in ("claude", "codex") and spec is not None and "claude" in spec.targets)
+                )
+                if expected and (managed.exists() or managed.is_symlink()):
+                    actions.append(f"legacy/{scope}/{entry.name}: vista gestita mantenuta")
+                    continue
+                destination = legacy_root / scope / entry.name
+                if destination.exists() or destination.is_symlink():
+                    actions.append(f"legacy/{scope}/{entry.name}: destinazione già esistente, vista lasciata intatta")
+                    continue
+                if not apply:
+                    actions.append(f"legacy/{scope}/{entry.name}: sarebbe messa in quarantena fuori dalle root discovery")
+                    continue
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                shutil.move(str(entry), str(destination))
+                actions.append(f"legacy/{scope}/{entry.name}: messa in quarantena fuori dalle root discovery")
+        return actions
+
 
 def main(argv: list[str] | None = None) -> int:
     """CLI per la gestione e sincronizzazione delle skill."""
@@ -233,25 +279,52 @@ def main(argv: list[str] | None = None) -> int:
     mat = SkillMaterializer()
 
     if not argv or argv[0] in ("-h", "--help"):
-        print("Uso: agent-skill [find|show] <argomenti>  oppure  skills-sync [apply|index]")
+        print("Uso: agent-skill [list|find|show] <argomenti>  oppure  skills-sync [apply|index] [--migrate-legacy]")
         return 0
 
-    cmd = argv[0].lower()
-    if cmd in ("apply", "sync"):
+    # Normalizza i flag stile release (--apply, --index, --migrate-legacy)
+    # in qualunque posizione, accettando anche la forma posizionale v2.
+    argv_l = [a.lower() for a in argv]
+    flag_apply = any(a in ("--apply", "--sync") for a in argv_l)
+    flag_index = "--index" in argv_l
+    flag_migrate = "--migrate-legacy" in argv_l
+    positional = [a for a in argv if not a.startswith("-")]
+
+    cmd = positional[0].lower() if positional else ""
+
+    if cmd in ("apply", "sync") or flag_apply:
         changes, actions = mat.materialize(apply=True)
         if actions:
             for act in actions:
                 print(f"  ✓ {act}")
+        if flag_migrate:
+            legacy_actions = mat.migrate_legacy(apply=True)
+            if legacy_actions:
+                for act in legacy_actions:
+                    print(f"  ✓ {act}")
         print(f"Skill sincronizzate con successo ({changes} modifiche applicate).")
         return 0
 
-    elif cmd == "index":
+    elif cmd == "index" or flag_index:
         idx = mat.generate_index()
         print(f"Indice generato in {idx}")
         return 0
 
+    elif cmd == "list":
+        skills = mat.load_manifest()
+        rows = []
+        for name in sorted(skills.keys()):
+            s = skills[name]
+            rows.append(f"{name}\t{s.description or '(no description)'}")
+        if not rows:
+            print("Nessuna skill gestita installata.", file=sys.stderr)
+            return 1
+        for row in rows:
+            print(row)
+        return 0
+
     elif cmd == "find":
-        query = argv[1].lower() if len(argv) > 1 else ""
+        query = positional[1].lower() if len(positional) > 1 else ""
         skills = mat.load_manifest()
         found = False
         for name, s in skills.items():
@@ -261,10 +334,10 @@ def main(argv: list[str] | None = None) -> int:
         return 0 if found else 1
 
     elif cmd == "show":
-        if len(argv) < 2:
+        if len(positional) < 2:
             print("Uso: agent-skill show <nome-skill>", file=sys.stderr)
             return 2
-        name = argv[1]
+        name = positional[1]
         body_file = mat.library_dir / name / "SKILL.md"
         if not body_file.is_file():
             body_file = mat.library_dir / f"{name}.md"
@@ -274,7 +347,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Skill '{name}' non trovata nella libreria locale ({mat.library_dir})", file=sys.stderr)
         return 1
 
-    print(f"Comando non riconosciuto: {cmd}\nUso: agent-skill [find|show] o skills-sync [apply|index]", file=sys.stderr)
+    print(f"Comando non riconosciuto: {cmd}\nUso: agent-skill [list|find|show] o skills-sync [apply|index] [--migrate-legacy]", file=sys.stderr)
     return 1
 
 

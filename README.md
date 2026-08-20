@@ -62,7 +62,7 @@ It does not intercept tool calls at runtime.
 
 ## Core concepts
 
-- **Configuration as code for AI tools.** Manifest files define tools, permissions, and behavior. The Python script `agent_sync.py` generates the configuration required by each supported CLI by calling the renderer `render.py`, which also provides `--revert` (undo a CLI's config from its own backup) and `--adopt` (read-only draft manifest entries for servers it finds outside the manifest).
+- **Configuration as code for AI tools.** Manifest files define tools, permissions, and behavior. The `agent-sync` command (backed by `nexgen_core`) generates the configuration required by each supported CLI through the renderer `nexgen_core/renderer.py`, which also provides `--revert` (undo a CLI's config from its own backup) and `--adopt` (read-only draft manifest entries for servers it finds outside the manifest).
 - **Version-controlled memory.** The agents read and write Markdown files. Every change is stored in Git, can be reviewed with a diff, and can be reverted. Writes are compare-and-swap: whole-note, or per-section (`update_section`), so two agents editing different sections of the same note both land instead of colliding.
 - **Link hygiene as discipline.** A deterministic, stdlib-only structural map of the vault (`vault-map`: broken wikilinks with relocation hints, orphan notes, hubs) is wired into the flows rather than left as a periodic check: every memory write returns an advisory list of unresolved wikilinks it just introduced (never blocking — deliberate forward links are legitimate), the grooming pass treats orphans and broken links as first-class cleanup candidates, `agent-doctor` keeps a warn-only backstop, and a read-only `map_overview` tool gives agents a token-bounded compass before broad tasks.
 - **Cross-CLI command skills.** Declare a skill once and it surfaces as an explicitly invocable command on every supported runtime (`/name`, `$name` on Codex). Seven starter commands ship with the engine and are installed for you on the first provisioning pass: `vault-doctor`, `vault-close`, `vault-save`, `vault-council`, `vault-groom`, `nexgen-update`, and `vault-map`. MULTI installs `nexgen-update` as a real terminal command too, with Linux and Windows launchers backed by the same updater. It discovers the normal `~/KnowledgeVault` data root without requiring exported variables, preserves private data commits in a single clone, and in a split install keeps the consumer fast-forward-only while advancing an existing private engine pin through `vault-push`. Want none of the chat skills? Empty your `skills.manifest.yaml` (`skills: {}`) and it stays empty. The engine only ever creates that file, never rewrites it.
@@ -136,7 +136,7 @@ The framework fits two shapes of usage. The installer (`INIT.md`) asks and picks
 MINIMAL vs. MULTI is a descriptive label for what the guided installer sets up once, at install time — it decides whether the provisioner, doctor, and sync timer get installed at all. No script reads a stored "profile" value back afterward to change its behavior; the one field read at runtime from `99-INDEX/USER-PROFILE.md` is `Mode` (LOCAL-ONLY or CLOUD-SERVER), which `agent-doctor` checks.
 
 - **MINIMAL.** One CLI on one machine, such as Claude Code on a laptop or [OpenCode](https://opencode.ai) in a DeepSeek-based setup. You get the knowledge vault, bootstrap rules, optional skills, and a defined path for writing memory. There is no provisioner, scheduled doctor, or cross-machine synchronization. Add the MCP servers and skills you want directly to the CLI. This profile is intended for one user and one machine.
-- **MULTI.** Two or more CLIs and/or two or more machines. The unified Python provisioner (`agent_sync.py`), the doctor, and the healthcheck come online and keep every CLI and machine aligned to the canonical source in the vault. Best for a workstation + laptop setup, or for running multiple CLIs side by side.
+- **MULTI.** Two or more CLIs and/or two or more machines. The unified provisioner (`agent-sync`, backed by `nexgen_core`), the doctor, and the healthcheck come online and keep every CLI and machine aligned to the canonical source in the vault. Best for a workstation + laptop setup, or for running multiple CLIs side by side.
 
 MULTI propagation is a locked, fail-closed transaction. The pull must prove the
 data fresh against one authoritative remote before runtime files are regenerated;
@@ -268,7 +268,7 @@ I controlli a runtime spettano all'harness della CLI, con i suoi permessi e le r
 ## Concetti base
 
 - **Infrastruttura come codice per gli agenti.** I manifest descrivono tool, permessi e regole di comportamento.
-  Lo script Python unificato `agent_sync.py` genera poi il file di configurazione corretto per ogni CLI richiamando il renderer `render.py`, che offre anche `--revert` (ripristino della config di una CLI dal suo backup) e `--adopt` (bozze read-only di voci manifest per i server trovati fuori dal manifest).
+  Il provisioner unificato `agent-sync` (basato su `nexgen_core`) genera il file di configurazione corretto per ogni CLI richiamando il renderer `nexgen_core/renderer.py`, che offre anche `--revert` (ripristino della config di una CLI dal suo backup) e `--adopt` (bozze read-only di voci manifest per i server trovati fuori dal manifest).
 - **Memoria versionata in Git.** Gli agenti leggono e scrivono file Markdown.
   Ogni modifica entra nella storia del repository, si può controllare con un diff e si può annullare.
   Le scritture sono compare-and-swap: a nota intera oppure per singola sezione (`update_section`), così due agenti che modificano sezioni diverse della stessa nota atterrano entrambi invece di scontrarsi.
@@ -385,7 +385,7 @@ MINIMAL e MULTI sono un'etichetta descrittiva di ciò che il setup guidato insta
   Monti manualmente nella CLI i server MCP e le skill che vuoi usare.
   È il profilo pensato per una persona che usa una sola CLI su una sola macchina.
 - **MULTI.** Due o più CLI, oppure due o più macchine.
-  Il provisioner Python `agent_sync.py`, il doctor e l'healthcheck mantengono ogni ambiente allineato alla fonte canonica nel vault.
+  Il provisioner `agent-sync` (basato su `nexgen_core`), il doctor e l'healthcheck mantengono ogni ambiente allineato alla fonte canonica nel vault.
   È il profilo adatto a una configurazione desktop più portatile o a chi usa più CLI in parallelo.
 
 Nel profilo MULTI, la propagazione avviene come una transazione con lock e si interrompe in modo sicuro se qualcosa non torna.

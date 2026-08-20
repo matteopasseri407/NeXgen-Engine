@@ -104,6 +104,42 @@ class GuardRunner:
 
         return actions
 
+    def align_local_model_runtime(self) -> list[str]:
+        """Windows-only: relinka l'adapter privato local-model-agent.ps1 (bring-your-own).
+
+        Port del passo local_model_runtime della release: la vault puo'
+        fornire un adapter privato (mai nel prodotto pubblico); se assente e'
+        il default atteso, non un errore. Installa anche i wrapper stabili
+        local-worker/local-agent.
+        """
+        if sys.platform != "win32":
+            return []
+        src = self.vault_data / "03-INFRA" / "scripts" / "local-model-agent.ps1"
+        if not src.is_file():
+            return []
+        local_bin = self.home / ".local" / "bin"
+        local_bin.mkdir(parents=True, exist_ok=True)
+        actions: list[str] = []
+        runtime = local_bin / "local-model-agent.ps1"
+        if runtime.is_symlink() or runtime.exists():
+            runtime.unlink(missing_ok=True)
+        try:
+            runtime.symlink_to(src)
+            actions.append("local-model: relinkato local-model-agent.ps1")
+        except OSError:
+            shutil.copy2(src, runtime)
+            actions.append("local-model: copiato local-model-agent.ps1")
+        wrappers = {
+            "local-worker.ps1": "$ScriptPath = Join-Path $PSScriptRoot 'local-model-agent.ps1'\r\n& $ScriptPath -Mode worker @args\r\n",
+            "local-agent.ps1": "$ScriptPath = Join-Path $PSScriptRoot 'local-model-agent.ps1'\r\n& $ScriptPath -Mode agent @args\r\n",
+        }
+        for name, content in wrappers.items():
+            target = local_bin / name
+            if not target.is_file() or target.read_text(encoding="utf-8", errors="replace") != content:
+                target.write_text(content, encoding="utf-8")
+                actions.append(f"local-model: installato wrapper {name}")
+        return actions
+
     def run(self, mode: GuardMode = GuardMode.APPLY, allow_offline: bool = False) -> GuardResult:
         """Esegue il ciclo richiesto con gestione lock e sicurezza transazionale."""
         is_guard = (mode == GuardMode.GUARD)
@@ -169,6 +205,10 @@ class GuardRunner:
                 # 5. Allineamento istruzioni
                 instr_actions = self.align_instructions()
                 actions.extend(instr_actions)
+
+                # 5b. Adapter local model (Windows, bring-your-own)
+                lm_actions = self.align_local_model_runtime()
+                actions.extend(lm_actions)
 
                 # 6. Installazione auto-allineamento all'avvio (systemd / scheduled task)
                 try:
