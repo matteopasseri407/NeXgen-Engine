@@ -6,7 +6,14 @@ step by hand. They had already drifted: one of them warned that jq is also
 needed by the health scripts, the other didn't. Now it exists exactly once,
 and the two installers are shells that find Python and hand off here.
 
-It doesn't replace the agent-guided install: it does the mechanical part.
+It goes all the way: prerequisites, vault structure, three questions, the
+profile written from the answers, the authoritative remote named, and the
+first alignment run — ending on one outcome, ready or what is missing and
+how to fix it. `INIT.md` stays as the richer guided path for whoever wants
+it, and as the only step that genuinely needs a conversation: offering to
+ingest the user's own documents.
+
+`--check` remains exactly what it says: it writes nothing at all.
 """
 from __future__ import annotations
 
@@ -23,6 +30,14 @@ SCRIPTS_DIR = Path(__file__).resolve().parents[1]
 if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
+from nexgen_core.first_run import (
+    align_now,
+    commit_setup,
+    remaining_problems,
+    seed_skill_manifest,
+    write_remotes,
+    write_user_profile,
+)
 from nexgen_core.i18n import t
 from nexgen_core.paths import resolve_home
 
@@ -217,11 +232,16 @@ def main(argv: list[str] | None = None) -> int:
     missing += render(scaffold(root, write=not args.check), "2 · " + t("Vault structure"))
 
     clis = detect_clis()
+    # Not a missing requirement any more. The engine's job is to configure
+    # assistants; installing it before any of them exist is a legitimate
+    # order, and the next alignment picks up whatever appears later. Making
+    # this fatal was part of the same assumption as "paste INIT.md into an
+    # agent": that you already had one.
     found = [Finding(name, True) for name in clis] or [Finding(
-        t("no CLI found"), False, True,
-        t(
-            "you need an assistant that can write files (Claude Code, Codex, OpenCode, Antigravity): "
-            "a web chat can't do it"
+        t("no assistant found yet"), False, required=False,
+        remedy=t(
+            "install Claude Code, Codex, OpenCode or Antigravity when you want one: "
+            "the engine will configure it on its own from then on"
         ),
     )]
     missing += render(found, "3 · " + t("Assistants found on this machine"))
@@ -230,37 +250,93 @@ def main(argv: list[str] | None = None) -> int:
         print(f"\n{c['red']}" + t("Something required is missing.") + f"{c['reset']} " + t("Fix it and rerun."))
         return 1
 
-    if not args.check and sys.stdin.isatty():
-        print(f"\n{c['bold']}{c['cyan']}4 · " + t("Which install do you want") + c['reset'])
-        print(f"  {c['dim']}" + t("No file gets written: this is just a recommendation.") + c['reset'])
-        profile, mode = guided_profile()
-        print("\n  " + t("Profile:") + f" {c['bold']}{profile}{c['reset']} · " + t("Services:") + f" {c['bold']}{mode}{c['reset']}")
+    if args.check:
+        print(f"\n{c['bold']}{c['cyan']}4 · " + t("Next step") + c['reset'])
+        print("  " + t("Everything required is in place. Run the installer without --check."))
+        return 0
+
+    if not sys.stdin.isatty():
+        # Nobody to answer the questions. Do the part that needs no answers
+        # and say plainly what was skipped, rather than assuming defaults for
+        # someone who is not there.
+        note = install_launchers(root)
+        if note:
+            print(f"\n{c['green']}✓{c['reset']} {note}")
+        print("\n" + t("Not a terminal: the questions were skipped. "
+                       "Run 'nexgen sync apply' when you are ready."))
+        return 0
+
+    print(f"\n{c['bold']}{c['cyan']}4 · " + t("Three questions") + c['reset'])
+    profile, mode = guided_profile()
+    print("\n  " + t("Profile:") + f" {c['bold']}{profile}{c['reset']} · "
+          + t("Services:") + f" {c['bold']}{mode}{c['reset']}")
+
+    print(f"\n{c['bold']}{c['cyan']}5 · " + t("Setting it up") + c['reset'])
+    steps: list[Finding] = []
+
+    _written, message = write_user_profile(
+        root, profile=profile, clis=clis,
+        machines="primary (this one)" if profile == "MINIMAL" else "primary (this one), secondary",
+    )
+    steps.append(Finding(message, True, required=False))
+
+    _written, message = write_remotes(root, profile=profile)
+    steps.append(Finding(message, True, required=False))
+
+    _written, message = seed_skill_manifest(root)
+    steps.append(Finding(message, True, required=False))
+
+    note = install_launchers(root)
+    if note:
+        steps.append(Finding(note, True, required=False))
+
+    # The alignment refuses to work on a vault with uncommitted changes, and
+    # it is right to. These files are the vault's content, so they belong in
+    # its history before the alignment looks at it.
+    _written, message = commit_setup(root, [
+        root / "99-INDEX" / "USER-PROFILE.md",
+        root / "03-INFRA" / "agent-universal-layer" / "sync" / "remotes.yaml",
+        root / "03-INFRA" / "agent-universal-layer" / "skills" / "skills.manifest.yaml",
+    ])
+    steps.append(Finding(message, True, required=False))
+
+    for step in steps:
+        print(f"  {c['green']}✓{c['reset']} {step.label}")
+
+    aligned, message = align_now()
+    print(("  " + f"{c['green']}✓{c['reset']} " if aligned else "  " + f"{c['red']}✗{c['reset']} ") + message)
+
+    print(f"\n{c['bold']}{c['cyan']}6 · " + t("Where you are") + c['reset'])
+
+    # Not "did the command return zero", but "is this machine actually set
+    # up". They came apart during development, and the install said Ready
+    # over an alignment that had produced nothing at all.
+    count, problems = remaining_problems()
+
+    if aligned and count == 0:
+        print(f"  {c['green']}" + t("Ready.") + f"{c['reset']} " + t("Nothing else is required."))
         if mode == "LOCAL-FULL":
             print(f"  {c['dim']}→ " + t("the five connectors run here: 'nexgen stack up' starts them.") + c['reset'])
         elif mode == "CLOUD-SERVER":
             print(f"  {c['dim']}→ " + t("the services live on a server: see 03-INFRA/deploy/.") + c['reset'])
-        else:
-            print(f"  {c['dim']}→ " + t("no services: native search, no remote automation.") + c['reset'])
+        print("\n  " + t("From now on: 'nexgen doctor' tells you if anything is wrong, "
+                         "and 'nexgen update' brings in a new version."))
+        print(f"  {c['dim']}"
+              + t("Want the guided path too, to bring your own documents in? Open INIT.md.")
+              + c['reset'])
+        return 0
 
-    print(f"\n{c['bold']}{c['cyan']}5 · " + t("Next step") + c['reset'])
-    # `--check` promises to write nothing, so it writes nothing. The
-    # previous version installed the commands from here regardless, which
-    # made its own promise false and, on a development clone, hijacked the
-    # machine's commands toward that clone.
-    if not args.check:
-        note = install_launchers(root)
-        if note:
-            print(f"  {c['green']}✓{c['reset']} {note}")
-    print(
-        "\n  "
-        + t("Open {file} and paste its contents into a command-line assistant\n"
-            "  opened in this folder. It will ask you a few questions and mount the\n"
-            "  connectors and skills.", file=f"{c['bold']}INIT.md{c['reset']}")
-        + f"\n\n  {c['dim']}"
-        + t("Then, to verify at any time: nexgen doctor")
-        + c['reset']
-    )
-    return 0
+    print(f"  {c['yellow']}" + t("Installed. {count} thing(s) still need attention:", count=max(count, 0))
+          + f"{c['reset']}")
+    for line in problems[:5]:
+        print(f"    - {line}")
+    if count > 5:
+        print(f"    {c['dim']}" + t("...and {more} more: run 'nexgen doctor'.", more=count - 5) + c['reset'])
+    if not aligned:
+        print("\n  " + t("The alignment stopped first: {reason}", reason=message))
+    print("  " + t("Run 'nexgen doctor' for the whole list; most of it clears "
+                   "with 'nexgen sync apply'."))
+    return 1
 
 
 if __name__ == "__main__":

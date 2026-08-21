@@ -618,4 +618,74 @@ MESSAGES: dict[str, str] = {
         "L'ultimo ciclo completato ha girato col motore {recorded}, questo è il {current}.",
     "Normal right after an update; it lines up on the next cycle.":
         "Normale subito dopo un aggiornamento: si allinea al ciclo successivo.",
+
+    # --- Primo avvio: l'installazione che arriva fino in fondo ---------------
+    "Three questions": "Tre domande",
+    "Setting it up": "Preparazione",
+    "Where you are": "A che punto sei",
+    "Ready.": "Pronto.",
+    "Nothing else is required.": "Non serve altro.",
+    "Profile filled in: {fields}": "Profilo compilato: {fields}",
+    "Profile already filled in: left untouched.":
+        "Profilo già compilato: lasciato com'è.",
+    "{file} is not in this vault: nothing to fill in.":
+        "{file} non c'è in questo vault: niente da compilare.",
+    "none detected yet": "nessuna rilevata per ora",
+    "Authoritative remote set to '{remote}'.":
+        "Remoto autoritativo impostato su '{remote}'.",
+    "Remotes already declared: left untouched.":
+        "Remoti già dichiarati: lasciati com'erano.",
+    "Skill manifest seeded from the example; it is yours to edit.":
+        "Manifest delle skill creato dall'esempio: da qui in poi è tuo.",
+    "Skill manifest already there: left untouched.":
+        "Manifest delle skill già presente: lasciato com'era.",
+    "No example skill manifest in this vault.":
+        "In questo vault non c'è un manifest delle skill d'esempio.",
+    "Machine aligned.": "Macchina allineata.",
+    "Alignment did not finish: {detail}":
+        "L'allineamento non è arrivato in fondo: {detail}",
+    "Alignment could not be run: {error}":
+        "Non è stato possibile eseguire l'allineamento: {error}",
+    "no reason given": "senza spiegazione",
+    "The check itself could not run: {error}":
+        "Il controllo stesso non è potuto partire: {error}",
+    "Installed. {count} thing(s) still need attention:":
+        "Installato. {count} cosa/e richiedono ancora attenzione:",
+    "...and {more} more: run 'nexgen doctor'.":
+        "...e altre {more}: esegui 'nexgen doctor'.",
+    "Most of these are fixed by running 'nexgen sync apply' again.":
+        "Quasi tutte si risolvono rieseguendo 'nexgen sync apply'.",
+    "From now on: 'nexgen doctor' tells you if anything is wrong, and 'nexgen update' brings in a new version.":
+        "Da adesso: 'nexgen doctor' ti dice se qualcosa non va, e 'nexgen update' porta una versione nuova.",
+    "Want the guided path too, to bring your own documents in? Open INIT.md.":
+        "Vuoi anche il percorso guidato, per portare dentro i tuoi documenti? Apri INIT.md.",
+    "Everything required is in place. Run the installer without --check.":
+        "C'è tutto quello che serve. Esegui l'installer senza --check.",
+    "Not a terminal: the questions were skipped. Run 'nexgen sync apply' when you are ready.":
+        "Non è un terminale: le domande sono state saltate. Esegui 'nexgen sync apply' quando vuoi.",
+    "no assistant found yet": "nessun assistente ancora presente",
+    "install Claude Code, Codex, OpenCode or Antigravity when you want one: the engine will configure it on its own from then on":
+        "installa Claude Code, Codex, OpenCode o Antigravity quando ne vorrai uno: da lì in poi il motore lo configura da sé",
+    "Nothing to do if you did not mean to run it. To run the connectors on this machine: 'nexgen stack up'.":
+        "Niente da fare, se non volevi avviarlo. Per far girare i connettori su questa macchina: 'nexgen stack up'.",
+    "→ {action}": "→ {action}",
+
+    "Setup recorded in the vault's history.":
+        "Configurazione registrata nella storia del vault.",
+    "Nothing to record.": "Niente da registrare.",
+    "Could not stage the setup files.":
+        "Non è stato possibile preparare i file di configurazione.",
+    "Setup could not be recorded: {detail}":
+        "Non è stato possibile registrare la configurazione: {detail}",
+    'Git does not know who you are yet, so the setup was not recorded. Run: git config --global user.email "you@example.com" and git config --global user.name "Your Name"':
+        "Git non sa ancora chi sei, quindi la configurazione non è stata registrata. "
+        'Esegui: git config --global user.email "tu@esempio.it" '
+        'e git config --global user.name "Il Tuo Nome"',
+    " No remote is set up yet, so it stays local for now; 'nexgen config authoritative_remote <name>' names one later.":
+        " Non c'è ancora nessun remoto configurato, quindi per ora resta locale; "
+        "'nexgen config authoritative_remote <nome>' lo imposterà più avanti.",
+    "The alignment stopped first: {reason}":
+        "L'allineamento si è fermato prima: {reason}",
+    "Run 'nexgen doctor' for the whole list; most of it clears with 'nexgen sync apply'.":
+        "Esegui 'nexgen doctor' per l'elenco completo; quasi tutto si risolve con 'nexgen sync apply'.",
 }

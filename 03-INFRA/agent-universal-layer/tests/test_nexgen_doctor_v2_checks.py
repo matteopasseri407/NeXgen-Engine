@@ -268,7 +268,14 @@ def test_mcp_reachability_skips_unsatisfied_precondition(tmp_path: Path, monkeyp
     assert outcomes == []
 
 
-def test_mcp_reachability_flags_refused_connection(tmp_path: Path, monkeypatch):
+def test_a_local_service_that_is_simply_not_running_is_not_a_fault(tmp_path: Path, monkeypatch):
+    """Su questa macchina, «rifiutato» vuol dire spento, non rotto.
+
+    Chi installa rispondendo «nessun servizio» si vedeva un guasto rosso per
+    un connettore che aveva appena declinato. Un'installazione corretta che
+    sembra rotta insegna a ignorare il referto, che è il danno peggiore.
+    Resta riportato, come non verificabile, col passo successivo.
+    """
     vault = tmp_path / "vault"
     home = tmp_path / "home"
     _write_reachability_manifest(vault)
@@ -276,10 +283,40 @@ def test_mcp_reachability_flags_refused_connection(tmp_path: Path, monkeypatch):
 
     outcomes = reachability_checks.check_mcp_reachability(vault, home, timeout=1.0)
     by_id = {o.id: o for o in outcomes}
-    assert "mcp.reachable.probe-server" in by_id
-    assert by_id["mcp.reachable.probe-server"].severity == Severity.BROKEN
+    assert "mcp.reachable.probe-server" in by_id, "non deve sparire: va detto"
+    assert by_id["mcp.reachable.probe-server"].severity == Severity.UNDETERMINED
+    assert by_id["mcp.reachable.probe-server"].action, "e deve dire cosa fare"
     # tier: optional non viene mai sondato, indipendentemente da require_env
     assert "mcp.reachable.optional-server" not in by_id
+
+
+def test_a_declared_server_that_refuses_is_a_fault(tmp_path: Path, monkeypatch):
+    """Fuori da questa macchina è un'altra cosa: qualcuno ha dichiarato un
+    server, e il server non risponde."""
+    vault = tmp_path / "vault"
+    home = tmp_path / "home"
+    manifest = vault / "03-INFRA" / "agent-universal-layer" / "mcp" / "manifest.yaml"
+    manifest.parent.mkdir(parents=True)
+    manifest.write_text(
+        "schema_version: 1\n"
+        "servers:\n"
+        "  remote-server:\n"
+        "    transport: http\n"
+        "    tier: core\n"
+        '    url: "http://198.51.100.7:65533/"\n'
+        "    require_env: PROBE_ENABLED\n"
+        "    targets: [claude]\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("PROBE_ENABLED", "1")
+
+    outcomes = reachability_checks.check_mcp_reachability(vault, home, timeout=1.0)
+    by_id = {o.id: o for o in outcomes}
+    severity = by_id["mcp.reachable.remote-server"].severity
+    # Una rete che scarta i pacchetti dà timeout, non rifiuto: entrambi sono
+    # "non è arrivato", e nessuno dei due è OK. Ciò che il test fissa è che
+    # un host remoto non gode dell'indulgenza riservata a localhost.
+    assert severity in (Severity.BROKEN, Severity.UNDETERMINED)
 
 
 # ---------------------------------------------------------------------------

@@ -26,6 +26,18 @@ PROBE_TIMEOUT_SECONDS = 2.5
 _URL_RE = re.compile(r"https?://[^\s\"']+")
 
 
+def _is_loopback(host: str) -> bool:
+    """Is this address on this machine?"""
+    import ipaddress
+
+    if host in ("localhost", "ip6-localhost", "ip6-loopback"):
+        return True
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
+
+
 def _extract_probe_target(entry: dict) -> str | None:
     """Derive a URL to probe from a resolved MCP connector.
 
@@ -68,6 +80,15 @@ def _probe_tcp(url: str, timeout: float) -> tuple[Severity, str]:
             pass
         return Severity.OK, f"{host}:{port} responds"
     except ConnectionRefusedError:
+        # Refused on loopback means the local service simply is not running,
+        # and whether it should be is the user's choice, not the engine's. A
+        # fresh install that answered "no services" was getting a red failure
+        # for a connector it had just declined — a correct install that looks
+        # broken teaches people to ignore the report. Refused by a host
+        # somewhere else is different: something declared a server, and the
+        # server is not answering.
+        if _is_loopback(host):
+            return Severity.UNDETERMINED, f"{host}:{port} has nothing listening right now"
         return Severity.BROKEN, f"{host}:{port} refuses the connection (no service listening)"
     except TimeoutError:
         return Severity.UNDETERMINED, f"{host}:{port} did not respond within {timeout}s"
@@ -125,5 +146,9 @@ def check_mcp_reachability(
                 id=id_,
                 severity=Severity.UNDETERMINED,
                 message=t("Could not check the reachability of '{name}' ({detail}).", name=name, detail=detail),
+                action=t(
+                    "Nothing to do if you did not mean to run it. To run the connectors "
+                    "on this machine: 'nexgen stack up'."
+                ),
             ))
     return outcomes
