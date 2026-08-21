@@ -171,11 +171,28 @@ The engine is also pip-installable from a checked-out copy of this repository: `
 
 ## Platform status
 
-**Linux: released.** Linux is the most extensively tested platform in this version. The provisioner, doctor, grooming, council, and synchronization tools have been exercised end to end on Fedora and pass CI. macOS uses the same POSIX code paths but has seen less real-world use.
+This table is generated from `nexgen_core/platforms.py`, and a test fails if
+the two disagree — so it says what was actually run, not what is hoped.
 
-**Known limitations.** Cross-platform support and the core orchestrators are still settling:
-- **Windows: physically verified, not yet a cold install.** Physically verified on real hardware and in CI, but an unassisted first-time install hasn't been tested yet — MINIMAL is the safer starting point on Windows until then. What was verified, and what the remaining gap is, is spelled out in the `0.5.1` entry of `CHANGELOG.md`.
-- **AI Council:** `agy` (Antigravity) is blocked as a passive Council seat because it was found to ignore its instructions in testing; using it interactively to call Council is unaffected — see `docs/council.md`'s "Current limitations" for details.
+<!-- platform-status:start -->
+
+| System | Status | On what evidence |
+|---|---|---|
+| Linux | **released** | the platform this is developed and used on daily; the full cycle — install, alignment, doctor, grooming, council, update — runs here and in CI |
+| Windows | **beta** | verified on real hardware and in CI; a first install with no assistance has not been done yet, so MINIMAL is the safer start |
+| macOS | **untested** | shares the POSIX paths with Linux and should work, but nobody has run it end to end; treat a failure here as expected, and reporting it as useful |
+
+| Assistant | Status | What is covered |
+|---|---|---|
+| Claude Code | **complete** | instructions, MCP connectors, skills, guardrails |
+| Codex | **complete** | instructions, MCP connectors, skills |
+| OpenCode | **complete** | instructions, MCP connectors, skills |
+| Antigravity | **complete for configuration, not as a council seat** | configured like the others; excluded as a passive council seat because in testing it ignored the instructions it was given |
+
+<!-- platform-status:end -->
+
+On the council seat: using Antigravity interactively to call the Council is
+unaffected; see "Current limitations" in `docs/council.md`.
 
 ### Antigravity orchestration boundary
 
@@ -425,9 +442,16 @@ Il motore è anche installabile con pip a partire da una copia clonata di questo
 
 ## Stato per piattaforma
 
-**Linux: rilasciato.** È la piattaforma usata ogni giorno e quella su cui il progetto è stato provato di più.
-In questa versione, provisioner, doctor, grooming, council e sync sono stati verificati end to end su Fedora e passano la CI.
-macOS segue gli stessi percorsi POSIX, ma ha ricevuto meno verifiche nell'uso reale.
+La tabella qui sopra, nella sezione inglese, è generata da
+`nexgen_core/platforms.py` e un test fallisce se le due divergono: dice cosa
+è stato eseguito davvero, non cosa si spera.
+
+In sintesi: **Linux rilasciato** — è la piattaforma di sviluppo e d'uso
+quotidiano, e il ciclo completo gira qui e in CI. **Windows beta** —
+verificato su hardware vero e in CI, ma senza un'installazione a freddo
+senza assistenza, quindi MINIMAL resta il punto di partenza prudente.
+**macOS non provato** — condivide i percorsi POSIX con Linux e dovrebbe
+funzionare, ma nessuno l'ha eseguito end to end.
 
 **Limiti noti.** Il supporto multipiattaforma e gli orchestratori principali non sono ancora considerati definitivi.
 - **Windows, verificato fisicamente, manca ancora un'installazione a freddo.** È stato verificato su hardware Windows reale e in CI, ma un'installazione senza assistenza del manutentore non è stata ancora testata, quindi per ora MINIMAL resta il punto di partenza più prudente su Windows. Cosa è stato verificato, e cosa manca ancora, è scritto nella voce `0.5.1` del `CHANGELOG.md`.

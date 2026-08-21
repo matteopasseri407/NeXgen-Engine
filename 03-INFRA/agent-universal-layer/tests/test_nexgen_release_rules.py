@@ -108,3 +108,52 @@ def test_no_build_residue_is_tracked():
         "file rigenerati da una build, tracciati: "
         f"{', '.join(sorted({p.split('/')[-2] for p in residue}))}"
     )
+
+
+def test_the_platform_table_in_the_readme_matches_the_code():
+    """Una promessa di supporto non può derivare dal codice che la mantiene.
+
+    Il README diceva a parole quali sistemi sono supportati, in due lingue,
+    e le parole erano già fuori passo: l'installer gestiva tre piattaforme,
+    il README ne dichiarava due, e macOS stava nel codice senza essere
+    dichiarato da nessuna parte. Ora la tabella si genera, e cambiare la
+    promessa richiede di cambiare il dato.
+    """
+    import sys
+
+    scripts = Path(__file__).resolve().parents[2] / "scripts"
+    if str(scripts) not in sys.path:
+        sys.path.insert(0, str(scripts))
+    from nexgen_core.platforms import END, START, render_markdown
+
+    readme = (Path(__file__).resolve().parents[3] / "README.md").read_text(encoding="utf-8")
+    assert START in readme and END in readme, "i marcatori della tabella non ci sono più"
+
+    start = readme.index(START)
+    end = readme.index(END) + len(END)
+    assert readme[start:end] == render_markdown(), (
+        "la tabella nel README non combacia con nexgen_core/platforms.py: "
+        "rigenerala con 'python3 03-INFRA/scripts/nexgen_core/platforms.py'"
+    )
+
+
+def test_every_platform_the_installer_starts_on_is_declared():
+    """Una piattaforma presente nel codice e assente dalla tabella è il bug
+    che quel file esiste per impedire."""
+    import sys
+
+    scripts = Path(__file__).resolve().parents[2] / "scripts"
+    if str(scripts) not in sys.path:
+        sys.path.insert(0, str(scripts))
+    from nexgen_core.platforms import OPERATING_SYSTEMS
+
+    declared = {s.name for s in OPERATING_SYSTEMS}
+    bootstrap = (scripts / "nexgen_core" / "bootstrap.py").read_text(encoding="utf-8")
+    handled = {
+        "macOS" if token == "Darwin" else token
+        for token in ("Linux", "Darwin", "Windows")
+        if f'"{token}"' in bootstrap
+    }
+    assert handled <= declared, (
+        f"l'installer parte su {sorted(handled - declared)} ma il README non lo dichiara"
+    )
