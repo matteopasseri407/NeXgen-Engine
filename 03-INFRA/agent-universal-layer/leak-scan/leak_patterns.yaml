@@ -83,3 +83,25 @@ leak_allow:
   # push/webhook): a degenerate value, not a secret (found as a false
   # positive in the gate's own commit, S0 2026-07-08).
   - '^0+$'
+  # --- Forms that provably are not secrets, added 2026-08-21 -------------
+  # Each is either reserved by a standard or a well-known public form.
+  # None of these widen a pattern: they are literal, narrow exceptions.
+  #
+  # RFC 5737: addresses reserved FOR DOCUMENTATION, never routable.
+  - 192\.0\.2\.\d{1,3}
+  - 198\.51\.100\.\d{1,3}
+  - 203\.0\.113\.\d{1,3}
+  # A four-component version number, used in tests as an example of what
+  # semver is not. It looks like an address and is not one.
+  - \b1\.2\.3\.4\b
+  # RFC 2606: domain reserved for examples. Generalises test@example.com,
+  # which was already here as a single case.
+  - "[A-Za-z0-9._%+-]+@example\\.(?:com|net|org)\\b"
+  # An Italian example used in a help message, later retired in favour of
+  # example.com: kept because a past commit contains it.
+  - tu@esempio\.it
+  # The form of a public SSH remote, not a credential.
+  - git@github\.com
+  # A calendar date: "seven or more digits" catches it, but a YYYYMMDD
+  # stamp is not a secret.
+  - \b20\d{2}(?:0[1-9]|1[0-2])(?:0[1-9]|[12]\d|3[01])\b

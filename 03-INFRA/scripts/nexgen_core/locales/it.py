@@ -679,7 +679,7 @@ MESSAGES: dict[str, str] = {
         "Non è stato possibile registrare la configurazione: {detail}",
     'Git does not know who you are yet, so the setup was not recorded. Run: git config --global user.email "you@example.com" and git config --global user.name "Your Name"':
         "Git non sa ancora chi sei, quindi la configurazione non è stata registrata. "
-        'Esegui: git config --global user.email "tu@esempio.it" '
+        'Esegui: git config --global user.email "tu@example.com" '
         'e git config --global user.name "Il Tuo Nome"',
     " No remote is set up yet, so it stays local for now; 'nexgen config authoritative_remote <name>' names one later.":
         " Non c'è ancora nessun remoto configurato, quindi per ora resta locale; "
