@@ -22,7 +22,12 @@ from typing import Any
 from nexgen_core.depwatch import run_depwatch
 from nexgen_core.i18n import t
 from nexgen_core.megaphone import Megaphone
-from nexgen_core.paths import resolve_engine_root, resolve_state_dir, resolve_vault_data
+from nexgen_core.paths import (
+    resolve_engine_root,
+    resolve_home,
+    resolve_state_dir,
+    resolve_vault_data,
+)
 from nexgen_core.updater import EngineUpdater
 
 LIVENESS_FILE_NAME = "agent-guard-liveness"
@@ -37,10 +42,17 @@ class Heartbeat:
         state_dir: Path | None = None,
         vault_data: Path | None = None,
         engine_root: Path | None = None,
+        home: Path | None = None,
     ) -> None:
-        self.state_dir = resolve_state_dir(override=state_dir)
-        self.vault_data = resolve_vault_data(override=vault_data)
-        self.engine_root = resolve_engine_root(override=engine_root)
+        # The home has to be threaded through, not looked up again. A caller
+        # working under a sandbox home was still writing this machine's
+        # liveness and taking this machine's lock, because it passed the
+        # vault and the engine and left the state directory to resolve
+        # itself from the environment.
+        self.home = resolve_home(home)
+        self.state_dir = resolve_state_dir(self.home, override=state_dir)
+        self.vault_data = resolve_vault_data(self.home, override=vault_data)
+        self.engine_root = resolve_engine_root(self.home, override=engine_root)
         self.megaphone = Megaphone(state_dir=self.state_dir)
         self.liveness_file = self.state_dir / LIVENESS_FILE_NAME
 

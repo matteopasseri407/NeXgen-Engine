@@ -339,3 +339,55 @@ def test_the_previous_format_is_still_readable(tmp_path, monkeypatch):
     alive, _message = beat.check_liveness()
     assert alive, "il formato precedente non si legge più"
     assert beat.recorded_version() is None, "e non deve inventarsi una versione"
+
+
+def test_a_real_cycle_under_a_sandbox_home_touches_nothing_outside_it(tmp_path, monkeypatch):
+    """L'isolamento va provato eseguendo, non risolvendo percorsi.
+
+    Il test che c'era controllava che `resolve_*` restituisse percorsi dentro
+    la sandbox, e passava. Intanto un ciclo vero scriveva la liveness della
+    macchina vera e ne prendeva il lock, perché `GuardRunner` passava al
+    battito il vault e il motore e lasciava che la cartella di stato se la
+    risolvesse da sola dall'ambiente. Qui si guarda cosa è stato toccato.
+    """
+    import subprocess
+    import time
+
+    from nexgen_core.guard import GuardMode, GuardRunner
+
+    outside = tmp_path / "macchina-vera" / ".local" / "state"
+    outside.mkdir(parents=True)
+    watched = [outside / "agent-guard-liveness", outside / "agent-sync.lock"]
+    for path in watched:
+        path.write_text("non toccare\n", encoding="utf-8")
+    before = {p: p.stat().st_mtime_ns for p in watched}
+    time.sleep(0.01)
+
+    monkeypatch.setenv("NEXGEN_HOME", str(tmp_path / "macchina-vera"))
+    for name in ("AGENT_STATE_DIR", "XDG_STATE_HOME", "AGENT_ENGINE_ROOT"):
+        monkeypatch.delenv(name, raising=False)
+
+    vault = tmp_path / "vault"
+    layer = vault / "03-INFRA" / "agent-universal-layer"
+    for sub, name, body in (
+        ("mcp", "manifest.yaml", "schema_version: 1\nservers: {}\n"),
+        ("skills", "skills.manifest.yaml", "schema_version: 1\nskills: {}\n"),
+        ("instructions", "AGENTS.md", "# Regole\n"),
+    ):
+        (layer / sub).mkdir(parents=True, exist_ok=True)
+        (layer / sub / name).write_text(body, encoding="utf-8")
+    for args in (["init", "-q", "-b", "main"], ["config", "user.email", "t@t"],
+                 ["config", "user.name", "t"], ["add", "-A"], ["commit", "-qm", "init"]):
+        subprocess.run(["git", "-C", str(vault), *args], check=True,
+                       capture_output=True, timeout=60)
+
+    sandbox_home = tmp_path / "sandbox"
+    GuardRunner(vault_data=vault, home=sandbox_home).run(
+        mode=GuardMode.APPLY, allow_offline=True
+    )
+
+    for path in watched:
+        assert path.stat().st_mtime_ns == before[path], (
+            f"un ciclo in sandbox ha scritto {path}: è la macchina di qualcun altro"
+        )
+    assert path.read_text(encoding="utf-8") == "non toccare\n"

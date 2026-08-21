@@ -35,7 +35,12 @@ from nexgen_core.git_ops import (
 from nexgen_core.i18n import t
 from nexgen_core.jsonc import parse_jsonc, set_jsonc_top_level_value
 from nexgen_core.lock import HostLock, LockTimeoutError
-from nexgen_core.paths import resolve_engine_root, resolve_home, resolve_vault_data
+from nexgen_core.paths import (
+    resolve_engine_root,
+    resolve_home,
+    resolve_state_dir,
+    resolve_vault_data,
+)
 from nexgen_core.renderer import McpRenderer
 from nexgen_core.runtimes import apply_all as apply_runtimes
 from nexgen_core.scheduler import install_scheduler
@@ -85,7 +90,10 @@ class GuardRunner:
         _v = resolve_vault_data(self.home, vault_data)
         self.vault_data = _v
         self.engine_root = resolve_engine_root(self.home, engine_root)
-        self.heartbeat = Heartbeat(vault_data=self.vault_data, engine_root=self.engine_root)
+        self.state_dir = resolve_state_dir(self.home)
+        self.heartbeat = Heartbeat(
+            vault_data=self.vault_data, engine_root=self.engine_root, home=self.home
+        )
 
     def preflight(self) -> tuple[bool, str]:
         """Read-only validation of all configuration files."""
@@ -313,7 +321,11 @@ class GuardRunner:
         actions: list[str] = []
 
         try:
-            with HostLock(is_guard=is_guard, command_name=f"agent-sync-{mode.value}"):
+            with HostLock(
+                lock_path=self.state_dir / "agent-sync.lock",
+                is_guard=is_guard,
+                command_name=f"agent-sync-{mode.value}",
+            ):
                 # 1. Git inspection
                 auth_remote, _ = resolve_remotes(self.vault_data)
                 branch = get_current_branch(self.vault_data) or "main"
