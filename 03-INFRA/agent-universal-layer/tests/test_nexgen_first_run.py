@@ -231,3 +231,28 @@ def test_a_remote_that_exists_is_the_one_that_gets_named(tmp_path):
         encoding="utf-8"
     )
     assert "authoritative_remote: origin" in text
+
+
+def test_the_installer_writes_its_commands_inside_the_sandbox(tmp_path, monkeypatch):
+    """La sandbox vale anche per i comandi installati.
+
+    Onesto su cosa prova e cosa no: `install_shims` risolve la home da sé e
+    già rispetta NEXGEN_HOME, quindi questo test passa anche togliendo il
+    parametro esplicito da `install_launchers`. Resta perché fissa la
+    proprietà — i comandi finiscono nella home data — non perché abbia
+    trovato il guasto. Il guasto vero (i comandi di questa macchina riscritti
+    verso una cartella in /tmp durante una prova, alle 10:30 del 21 agosto)
+    non è stato riprodotto: nessuna delle esecuzioni sospette lo rifà.
+    """
+    from nexgen_core.bootstrap import install_launchers
+
+    real = tmp_path / "macchina-vera" / ".local" / "bin"
+    real.mkdir(parents=True)
+    (real / "agent-sync").write_text("#!/bin/sh\n# il comando vero\n", encoding="utf-8")
+
+    monkeypatch.setenv("NEXGEN_HOME", str(tmp_path / "sandbox"))
+
+    install_launchers(REPO_ROOT)
+
+    assert (real / "agent-sync").read_text(encoding="utf-8") == "#!/bin/sh\n# il comando vero\n"
+    assert (tmp_path / "sandbox" / ".local" / "bin" / "nexgen").is_file()

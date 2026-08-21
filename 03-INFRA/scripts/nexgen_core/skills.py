@@ -140,6 +140,27 @@ def make_link_or_copy(src: Path, dst: Path) -> bool:
         return True
 
 
+#: `owner/name`, the shorthand a manifest declares a GitHub skill with.
+GITHUB_SHORTHAND_RE = re.compile(r"^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$")
+
+
+def clone_url(repo: str) -> str:
+    """The URL to clone from, given what the manifest says.
+
+    A manifest names a GitHub skill the way people write it — `owner/name` —
+    and the rewrite handed that straight to `git clone`, which read it as a
+    local path and reported that the repository does not exist. Three skills
+    on this machine failed on every alignment for that reason.
+
+    A value that already carries a scheme, or looks like an SSH remote, is
+    passed through: somebody who wrote a full URL meant it.
+    """
+    repo = repo.strip()
+    if GITHUB_SHORTHAND_RE.match(repo):
+        return f"https://github.com/{repo}.git"
+    return repo
+
+
 class SkillMaterializer:
     """Materializes the skill library and generates the native views for the CLIs."""
 
@@ -293,7 +314,7 @@ class SkillMaterializer:
                     git("fetch", "--quiet", "--all", cwd=cache_dir)
             else:
                 cache_dir.parent.mkdir(parents=True, exist_ok=True)
-                res = git("clone", "--quiet", entry.repo or "", str(cache_dir))
+                res = git("clone", "--quiet", clone_url(entry.repo or ""), str(cache_dir))
                 if res.returncode != 0:
                     return False, "[ERROR] " + t(
                         "github skill '{name}': cloning {repo} failed: {error}",

@@ -83,7 +83,11 @@ def cmd_sync(args) -> int:
         skip_mcp=getattr(args, "skip_mcp", False),
     )
     for act in res.actions_taken:
-        print(f"  ✓ {act}")
+        # An action that reports a failure must not be printed with the mark
+        # that means it worked. Three skills that failed to clone came out
+        # under a green tick, next to the things that actually happened.
+        failed = act.startswith(("[ERROR]", "[ERRORE]"))
+        print(f"  {'✗' if failed else '✓'} {act.split('] ', 1)[-1] if failed else act}")
     print(res.message)
     return res.exit_code
 

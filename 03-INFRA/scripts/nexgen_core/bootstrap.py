@@ -164,7 +164,13 @@ def detect_clis(home: Path | None = None) -> list[str]:
 
 
 def install_launchers(root: Path) -> str:
-    """Generates the commands, if the engine lives in this clone."""
+    """Generates the commands, if the engine lives in this clone.
+
+    The home is asked for, never assumed. Without this the installer wrote
+    into the real `~/.local/bin` even under a sandbox home — which is how a
+    throwaway test left this machine's commands pointing at a directory in
+    /tmp that was then deleted. Three separate incidents, one cause.
+    """
     scripts_dir = root / "03-INFRA" / "scripts"
     if not (scripts_dir / "nexgen_core").is_dir():
         return ""
@@ -172,7 +178,7 @@ def install_launchers(root: Path) -> str:
     try:
         from nexgen_core.shims import install_shims
 
-        installed = install_shims(scripts_dir=scripts_dir)
+        installed = install_shims(scripts_dir=scripts_dir, home=resolve_home())
         return t("{count} commands installed in ~/.local/bin", count=len(installed))
     except Exception as exc:
         return t("commands not installed ({error})", error=exc)

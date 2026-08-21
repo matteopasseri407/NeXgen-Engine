@@ -226,3 +226,29 @@ def test_an_installer_skill_without_an_install_command_is_reported_not_ignored(t
     assert any("monca" in a for a in actions), (
         "una voce che non si può soddisfare deve comparire nel referto, non sparire"
     )
+
+
+def test_a_github_skill_is_cloned_from_where_it_lives():
+    """Il manifest nomina una skill come la scrivono le persone.
+
+    `repo: owner/nome` finiva dritto in `git clone`, che lo leggeva come
+    percorso locale e rispondeva che il repository non esiste. Tre skill su
+    questa macchina fallivano a ogni allineamento per questo.
+    """
+    from nexgen_core.skills import clone_url
+
+    assert clone_url("blader/humanizer") == "https://github.com/blader/humanizer.git"
+    assert clone_url("  owner/name  ") == "https://github.com/owner/name.git"
+
+
+def test_a_full_url_is_left_as_written():
+    """Chi ha scritto un URL intero intendeva quello."""
+    from nexgen_core.skills import clone_url
+
+    for written in (
+        "https://github.com/x/y.git",
+        "git@github.com:x/y.git",
+        "https://gitlab.com/x/y.git",
+        "/un/percorso/locale",
+    ):
+        assert clone_url(written) == written
