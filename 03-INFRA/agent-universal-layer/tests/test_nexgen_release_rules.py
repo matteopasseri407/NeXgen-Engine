@@ -80,3 +80,31 @@ def test_the_version_is_declared_in_one_place_only():
     assert nexgen_core.__version__ == declared, (
         f"nexgen_core dichiara {nexgen_core.__version__}, il file VERSION dice {declared}"
     )
+
+
+def test_no_build_residue_is_tracked():
+    """Ciò che una build rigenera non può stare nel repository.
+
+    `nexgen_engine.egg-info/` era tracciato: lo scrive `pip install -e .`, e
+    da quel momento chiunque costruisca il pacchetto sporca l'albero del
+    motore — che è la condizione con cui l'aggiornatore si rifiuta di
+    lavorare. Stesso guasto della cartella di stato, altra provenienza.
+    """
+    import subprocess
+
+    repo = Path(__file__).resolve().parents[3]
+    tracked = subprocess.run(
+        ["git", "ls-files"], cwd=repo, capture_output=True, text=True, check=True
+    ).stdout.splitlines()
+    residue = [
+        path
+        for path in tracked
+        if ".egg-info/" in path
+        or "__pycache__/" in path
+        or path.endswith((".pyc", ".pyo"))
+        or path.startswith(("build/", "dist/"))
+    ]
+    assert not residue, (
+        "file rigenerati da una build, tracciati: "
+        f"{', '.join(sorted({p.split('/')[-2] for p in residue}))}"
+    )

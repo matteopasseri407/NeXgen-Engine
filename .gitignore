@@ -84,3 +84,13 @@ desktop.ini
 *~
 .idea/
 .vscode/
+
+# Build residue from `pip install -e .` / `python -m build`. It is regenerated
+# on every build, so tracking it means the engine checkout goes dirty the
+# moment anyone builds — and the updater refuses to work on a dirty tree.
+# Same failure mode as the state directory, different origin.
+*.egg-info/
+build/
+dist/
+__pycache__/
+*.py[co]
