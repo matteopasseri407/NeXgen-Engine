@@ -21,6 +21,7 @@ SCRIPTS_DIR = Path(__file__).resolve().parents[2] / "scripts"
 if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
+from nexgen_core import __version__
 from nexgen_core.cli import build_parser
 from nexgen_core.cli import main as nexgen_main
 from nexgen_core.shims import LEGACY_ALIASES, PRIMARY
@@ -98,3 +99,52 @@ def test_the_in_process_entry_point_matches_the_subprocess_one(capsys):
     """`main([])` e l'invocazione da riga di comando devono comportarsi uguale."""
     assert nexgen_main([]) == 0
     assert "usage:" in capsys.readouterr().out.lower()
+
+
+def test_version_flag_prints_the_version_and_exits():
+    res = _run(["--version"])
+    assert res.returncode == 0
+    assert res.stdout.strip() == f"NeXgen Engine {__version__}"
+    assert "Traceback" not in res.stderr
+
+
+def test_action_marks_distinguish_error_warning_and_success():
+    """Un warning non può uscire sotto la spunta che significa 'è andato'. """
+    from nexgen_core.cli.engine import _action_mark
+
+    assert _action_mark("[ERROR] something failed") == ("✗", "something failed")
+    assert _action_mark("[ERRORE] qualcosa è fallito") == ("✗", "qualcosa è fallito")
+    assert _action_mark("[WARN] could not read a file") == ("!", "could not read a file")
+    assert _action_mark("Everything worked") == ("✓", "Everything worked")
+
+
+def test_config_command_names_the_authoritative_remote(tmp_path: Path, monkeypatch, capsys):
+    """`nexgen config authoritative_remote <name>` really writes remotes.yaml:
+    the installer's message promises it, and the read-only reality of it was
+    a silent no-op that left the user thinking they had named a remote."""
+    from argparse import Namespace
+
+    from nexgen_core.cli import engine as engine_cmds
+
+    vault = tmp_path / "vault"
+    monkeypatch.setenv("KNOWLEDGE_VAULT_PATH", str(vault))
+    # A maintainer shell may carry these: the test must never write the real
+    # vault's remotes.yaml.
+    monkeypatch.delenv("AGENT_VAULT_DATA", raising=False)
+    monkeypatch.delenv("KNOWLEDGE_VAULT_REMOTE", raising=False)
+    monkeypatch.delenv("KNOWLEDGE_VAULT_MIRRORS", raising=False)
+
+    rc = engine_cmds.cmd_config(Namespace(field="authoritative_remote", value="oracle-n8n"))
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "oracle-n8n" in out
+
+    remotes = vault / "03-INFRA" / "agent-universal-layer" / "sync" / "remotes.yaml"
+    assert "authoritative_remote: oracle-n8n" in remotes.read_text(encoding="utf-8")
+
+    # Reading it back works, and mirrors stay read-only from the command line.
+    rc_show = engine_cmds.cmd_config(Namespace(field="authoritative_remote", value=None))
+    assert rc_show == 0
+    assert "oracle-n8n" in capsys.readouterr().out
+    rc_mirror = engine_cmds.cmd_config(Namespace(field="mirrors", value="somewhere"))
+    assert rc_mirror == 2

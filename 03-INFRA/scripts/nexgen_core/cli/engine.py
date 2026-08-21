@@ -9,8 +9,15 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+import yaml
+
 from nexgen_core.i18n import t
-from nexgen_core.paths import resolve_engine_root, resolve_home, resolve_vault_data
+from nexgen_core.paths import (
+    remotes_config,
+    resolve_engine_root,
+    resolve_home,
+    resolve_vault_data,
+)
 
 
 def _all(args) -> list[str]:
@@ -59,6 +66,7 @@ def register(sub) -> None:
 
     p = sub.add_parser("config", help=t("Show the resolved remote configuration"))
     p.add_argument("field", choices=["authoritative_remote", "mirrors"])
+    p.add_argument("value", nargs="?", default=None, help=t("New value; writes remotes.yaml"))
     p.set_defaults(func=cmd_config)
 
     # Internal verbs: invoked by timers, not by people.
@@ -73,6 +81,22 @@ def register(sub) -> None:
     p.set_defaults(func=cmd_bootstrap_alerts)
 
 
+def _action_mark(act: str) -> tuple[str, str]:
+    """The mark and the text for one action line, from its own prefix.
+
+    A line that reports a failure must not be printed with the mark that
+    means it worked: three skills that failed to clone came out under a
+    green tick, next to the things that actually happened. A warning is
+    neither: it gets a mark of its own, so a green tick keeps meaning
+    "this worked".
+    """
+    if act.startswith(("[ERROR]", "[ERRORE]")):
+        return "✗", act.split("] ", 1)[-1]
+    if act.startswith(("[WARN]", "[AVVISO]")):
+        return "!", act.split("] ", 1)[-1]
+    return "✓", act
+
+
 def cmd_sync(args) -> int:
     from nexgen_core.guard import GuardMode, GuardRunner
 
@@ -83,11 +107,8 @@ def cmd_sync(args) -> int:
         skip_mcp=getattr(args, "skip_mcp", False),
     )
     for act in res.actions_taken:
-        # An action that reports a failure must not be printed with the mark
-        # that means it worked. Three skills that failed to clone came out
-        # under a green tick, next to the things that actually happened.
-        failed = act.startswith(("[ERROR]", "[ERRORE]"))
-        print(f"  {'✗' if failed else '✓'} {act.split('] ', 1)[-1] if failed else act}")
+        mark, text = _action_mark(act)
+        print(f"  {mark} {text}")
     print(res.message)
     return res.exit_code
 
@@ -120,8 +141,58 @@ def cmd_upgrades(args) -> int:
 def cmd_config(args) -> int:
     from nexgen_core.git_ops import resolve_remotes
 
-    auth_remote, mirrors = resolve_remotes(resolve_vault_data())
+    vault_data = resolve_vault_data()
+    if getattr(args, "value", None) is not None:
+        if args.field != "authoritative_remote":
+            print(t(
+                "Only 'authoritative_remote' can be set from the command line; "
+                "mirrors are edited in remotes.yaml.",
+            ), file=sys.stderr)
+            return 2
+        return _set_authoritative_remote(vault_data, args.value)
+
+    auth_remote, mirrors = resolve_remotes(vault_data)
     print(auth_remote if args.field == "authoritative_remote" else "\n".join(mirrors))
+    return 0
+
+
+def _set_authoritative_remote(vault_data: Path, remote: str) -> int:
+    """Names the authoritative remote in sync/remotes.yaml, keeping the rest.
+
+    The command exists because the installer's own message says so: a
+    single-machine install that named the wrong remote has no other way to
+    fix it. The file is the vault's content, so the write is left uncommitted
+    on purpose: publishing is a decision made by a separate command.
+    """
+    path = remotes_config(vault_data)
+    data: dict = {}
+    if path.is_file():
+        try:
+            loaded = yaml.safe_load(path.read_text(encoding="utf-8"))
+            if isinstance(loaded, dict):
+                data = loaded
+        except (OSError, yaml.YAMLError):
+            data = {}
+    data["schema_version"] = data.get("schema_version", 1)
+    data["authoritative_remote"] = remote.strip()
+    data.setdefault("mirrors", [])
+    body = (
+        "# Written by the installer. `nexgen config authoritative_remote <name>`\n"
+        "# changes it; see docs/sync-contract.md for what the two fields mean.\n"
+        + yaml.safe_dump(data, sort_keys=False)
+    )
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(body, encoding="utf-8")
+    except OSError as exc:
+        print(t("Could not write {path}: {error}", path=path, error=exc), file=sys.stderr)
+        return 1
+    print(t("Authoritative remote set to '{remote}'.", remote=remote.strip()))
+    print(t(
+        "The vault now has uncommitted changes; publish them with "
+        "'nexgen vault push {file}'.",
+        file="03-INFRA/agent-universal-layer/sync/remotes.yaml",
+    ))
     return 0
 
 

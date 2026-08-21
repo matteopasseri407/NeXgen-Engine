@@ -326,27 +326,49 @@ class McpRenderer:
         return True, t("OpenCode configuration updated")
 
     def render_codex(self, write: bool = False) -> tuple[bool, str]:
-        """Generates Codex's native MCP configuration (~/.codex/config.toml)."""
+        """Generates Codex's native MCP configuration (~/.codex/config.toml).
+
+        Additive like the other three CLIs: an existing server that is not in
+        the manifest is preserved verbatim, and one that is env-gated but not
+        resolvable right now (e.g. the recurring guard running without the
+        user's shell environment) keeps the entry already on disk instead of
+        deleting it. Only `retired_servers` remove entries; manifest servers
+        are always re-emitted fresh.
+        """
         servers = self.load_resolved_servers("codex")
         cfg_file = self.home / ".codex" / "config.toml"
 
+        retired = self.retired_server_names()
+        managed = {name.replace("-", "_") for name in servers} | {name.replace("-", "_") for name in retired}
+
         existing_lines: list[str] = []
+        preserved_lines: list[str] = []
         if cfg_file.is_file():
             try:
                 raw = cfg_file.read_text(encoding="utf-8")
-                # Preserves existing non-MCP sections (e.g. [model], general settings)
+                # Preserves existing non-MCP sections (e.g. [model], general
+                # settings) and the mcp_servers entries this engine doesn't own.
                 in_mcp_section = False
+                keep_current = False
                 for line in raw.splitlines():
                     stripped = line.strip()
                     if stripped.startswith("[mcp_servers."):
                         in_mcp_section = True
+                        key = stripped[13:-1] if stripped.endswith("]") else stripped[13:]
+                        keep_current = key.split(".", 1)[0] not in managed
+                        if keep_current:
+                            preserved_lines.append(line)
                         continue
                     elif stripped.startswith("[") and not stripped.startswith("[mcp_servers."):
                         in_mcp_section = False
+                        keep_current = False
                     if not in_mcp_section and not line.startswith("# NeXgen Engine"):
                         existing_lines.append(line)
+                    elif in_mcp_section and keep_current:
+                        preserved_lines.append(line)
             except OSError:
                 existing_lines = []
+                preserved_lines = []
 
         header = "# NeXgen Engine - Codex MCP configuration, auto-generated"
         lines: list[str] = []
@@ -358,6 +380,9 @@ class McpRenderer:
 
         lines.append(header)
         lines.append("")
+        if preserved_lines:
+            lines.append("\n".join(preserved_lines).strip())
+            lines.append("")
         for name, srv in servers.items():
             safe_name = name.replace("-", "_")
             lines.append(f"[mcp_servers.{safe_name}]")
@@ -402,9 +427,19 @@ class McpRenderer:
         return results
 
     def _backup_and_write(self, path: Path, content: str) -> None:
-        """Makes a .bak-<timestamp> backup and writes the new content atomically."""
+        """Makes a .bak-<timestamp> backup and writes the new content atomically.
+
+        A config that already matches is left completely untouched: the guard
+        cycle runs twice an hour, and rewriting a byte-identical file every
+        cycle changes mtimes and piles up backups for nothing.
+        """
         path.parent.mkdir(parents=True, exist_ok=True)
         if path.is_file():
+            try:
+                if path.read_text(encoding="utf-8") == content:
+                    return
+            except (OSError, UnicodeDecodeError):
+                pass
             stamp = time.strftime("%Y%m%d-%H%M%S")
             bak = path.with_name(f"{path.name}.bak-{stamp}")
             shutil.copy2(path, bak)

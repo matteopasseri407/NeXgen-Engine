@@ -61,6 +61,14 @@ def _launcher_fingerprints(home: Path) -> dict[str, int]:
     return out
 
 
+def _same_file(a: str, b: Path) -> bool:
+    """True if both name the same file, whatever the spelling (absolute or ~)."""
+    try:
+        return Path(a).expanduser().resolve() == b.expanduser().resolve()
+    except OSError:
+        return a == str(b)
+
+
 class GuardMode(str, Enum):
     GUARD = "guard"
     APPLY = "apply"
@@ -200,8 +208,8 @@ class GuardRunner:
                 return None
 
             declared = data.get("instructions")
-            entries = list(declared) if isinstance(declared, list) else []
-            if str(canon) in entries:
+            entries = [e for e in declared if isinstance(e, str)] if isinstance(declared, list) else []
+            if any(_same_file(e, canon) for e in entries):
                 return None
 
             entries.append(str(canon))

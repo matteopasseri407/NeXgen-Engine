@@ -264,6 +264,7 @@ def publish_changes(
     whose work no longer exists anywhere.
     """
     committed = False
+    published = False
 
     # The commit happens first, before any consideration of the remote.
     if commit_msg:
@@ -305,6 +306,7 @@ def publish_changes(
             p_res = run_git(repo_dir, "push", remote, branch)
             if p_res.returncode != 0:
                 return False, t("Push to {remote} failed: {error}", remote=remote, error=p_res.stderr)
+            published = True
         elif mb == lh:
             return False, t("Could not push: local branch is behind {remote}", remote=remote)
         else:
@@ -324,6 +326,7 @@ def publish_changes(
                 p_res = run_git(repo_dir, "push", remote, branch)
                 if p_res.returncode != 0:
                     return False, t("Push after rebase failed: {error}", error=p_res.stderr)
+                published = True
             else:
                 run_git(repo_dir, "rebase", "--abort")
                 return False, t("Data has diverged from {remote}, automatic rebase did not succeed", remote=remote)
@@ -337,4 +340,6 @@ def publish_changes(
                 run_git(repo_dir, "fetch", "--prune", mirror, branch)
                 run_git(repo_dir, "push", "--force-with-lease", mirror, branch)
 
-    return True, t("Published successfully")
+    if committed or published:
+        return True, t("Published successfully")
+    return True, t("Nothing to publish")

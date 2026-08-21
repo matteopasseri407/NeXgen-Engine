@@ -19,6 +19,7 @@ SCRIPTS_DIR = Path(__file__).resolve().parents[2]
 if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
+from nexgen_core import __version__
 from nexgen_core.cli import engine, skill_cmds, stack_cmds, tool_cmds, vault_cmds
 from nexgen_core.i18n import set_language, t
 
@@ -36,6 +37,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--lang", metavar="CODE", default=None,
         help=t("Force the language of the messages (for example: it, en)"),
+    )
+    parser.add_argument(
+        "--version", action="version", version=f"NeXgen Engine {__version__}",
+        help=t("Show the engine version and exit"),
     )
     sub = parser.add_subparsers(dest="command", metavar="command")
     for group in GROUPS:

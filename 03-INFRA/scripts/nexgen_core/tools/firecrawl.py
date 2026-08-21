@@ -113,7 +113,7 @@ def main(argv: list[str] | None = None) -> int:
     if argv is None:
         argv = sys.argv[1:]
 
-    parser = argparse.ArgumentParser(description=t("Firecrawl Local CLI (v2)"))
+    parser = argparse.ArgumentParser(prog="nexgen tool firecrawl", description=t("Firecrawl Local CLI (v2)"))
     subparsers = parser.add_subparsers(dest="command")
 
     # status

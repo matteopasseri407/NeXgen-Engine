@@ -153,7 +153,7 @@ def format_shell(data: dict[str, Any]) -> str:
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description=t("Deterministic current date/time source for agents"))
+    parser = argparse.ArgumentParser(prog="nexgen tool now", description=t("Deterministic current date/time source for agents"))
     parser.add_argument("--format", choices=["json", "human", "shell"], default="json")
     parser.add_argument("--json", action="store_true", help=t("Output in JSON"))
     parser.add_argument("--human", action="store_true", help=t("Output human-readable"))

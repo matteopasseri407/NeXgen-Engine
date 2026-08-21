@@ -40,7 +40,7 @@ def check_git_alignment(vault_data: Path, expected_branch: str | None = None) ->
             id="git.alignment",
             severity=Severity.BROKEN,
             message=t("There are unsaved changes in the Vault ({count} files).", count=len(res.uncommitted_files)),
-            action=t("Run 'vault-push' to save your changes before syncing."),
+            action=t("Stage them first ('git add <file>'), then run 'vault-push' to publish them."),
             detail=", ".join(res.uncommitted_files[:5]),
         )
     elif res.state == GitState.CONFLICTED:

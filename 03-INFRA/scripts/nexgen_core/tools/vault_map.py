@@ -213,7 +213,7 @@ def scan(vault: Path) -> dict:
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description=t("deterministic structural map of a Markdown vault (read-only)"))
+    parser = argparse.ArgumentParser(prog="nexgen vault map", description=t("deterministic structural map of a Markdown vault (read-only)"))
     parser.add_argument("--vault", default=None, help=t("vault root directory"))
     parser.add_argument("--json", action="store_true", help=t("full machine-readable output"))
     parser.add_argument("--check", action="store_true", help=t("one summary line + broken list; always exit 0"))

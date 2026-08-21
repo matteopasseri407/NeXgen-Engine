@@ -21,6 +21,7 @@ Regole per chi traduce:
 from __future__ import annotations
 
 MESSAGES: dict[str, str] = {
+    "Show the engine version and exit": "Mostra la versione del motore ed esce",
     # --- Il referto ---------------------------------------------------------
     "Problems detected that need your attention:": "Cose che richiedono la tua attenzione:",
     "Checks that could not be verified right now:": "Cose che non è stato possibile verificare adesso:",
@@ -47,6 +48,7 @@ MESSAGES: dict[str, str] = {
     "Nothing to commit (Local-Only mode: no remote to update)":
         "Non c'era niente da salvare (modalità solo-locale: non c'è nessun remoto da aggiornare)",
     "Published successfully": "Pubblicato",
+    "Nothing to publish": "Niente da pubblicare",
     "Could not reach {remote} for publishing": "Non riesco a raggiungere {remote} per pubblicare",
     (
         "{remote} unreachable: the commit stays local, publish it later with 'vault-push'"
@@ -342,7 +344,7 @@ MESSAGES: dict[str, str] = {
     # --- checks/git_checks.py ---
     "Data state aligned ({message})": "Stato dati allineato ({message})",
     "There are unsaved changes in the Vault ({count} files).": "Ci sono modifiche non salvate nel Vault ({count} file).",
-    "Run 'vault-push' to save your changes before syncing.": "Esegui 'vault-push' per salvare le tue modifiche prima di sincronizzare.",
+    "Stage them first ('git add <file>'), then run 'vault-push' to publish them.": "Prima mettile in stage ('git add <file>'), poi esegui 'vault-push' per pubblicarle.",
     "There is an interrupted merge or rebase in the Vault.": "C'è un'operazione di merge o rebase interrotta nel Vault.",
     "Run 'git rebase --abort' or 'git merge --abort' inside the Vault.": "Esegui 'git rebase --abort' oppure 'git merge --abort' dentro il Vault.",
     "Could not check alignment with the remote server: {message}": "Non riesco a verificare l'allineamento con il server remoto: {message}",
@@ -633,6 +635,12 @@ MESSAGES: dict[str, str] = {
     "none detected yet": "nessuna rilevata per ora",
     "Authoritative remote set to '{remote}'.":
         "Remoto autoritativo impostato su '{remote}'.",
+    "Only 'authoritative_remote' can be set from the command line; mirrors are edited in remotes.yaml.":
+        "Solo 'authoritative_remote' si imposta da riga di comando; i mirror si modificano in remotes.yaml.",
+    "Could not write {path}: {error}":
+        "Impossibile scrivere {path}: {error}",
+    "The vault now has uncommitted changes; publish them with 'nexgen vault push {file}'.":
+        "Il vault ora ha modifiche non committate; pubblicale con 'nexgen vault push {file}'.",
     "Remotes already declared: left untouched.":
         "Remoti già dichiarati: lasciati com'erano.",
     "Skill manifest seeded from the example; it is yours to edit.":
