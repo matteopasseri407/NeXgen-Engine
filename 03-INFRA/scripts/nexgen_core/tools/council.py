@@ -13,12 +13,15 @@ def main(argv: list[str] | None = None) -> int:
     if argv is None:
         argv = sys.argv[1:]
 
-    engine_root = Path(os.environ.get("AGENT_ENGINE_ROOT") or Path(__file__).resolve().parents[3])
+    # This file lives in nexgen_core/tools/, so `03-INFRA` is three levels
+    # up. The fallback used parents[2] and pointed at a directory that has
+    # never existed, so a machine without AGENT_ENGINE_ROOT found nothing.
+    here = Path(__file__).resolve().parents[3]
+    engine_root = Path(os.environ.get("AGENT_ENGINE_ROOT") or here)
     council_py = engine_root / "agent-universal-layer" / "council" / "council.py"
 
     if not council_py.is_file():
-        # Fallback to a local relative path
-        council_py = Path(__file__).resolve().parents[2] / "agent-universal-layer" / "council" / "council.py"
+        council_py = here / "agent-universal-layer" / "council" / "council.py"
 
     if not council_py.is_file():
         print(f"[ERROR] AI Council orchestrator not found at {council_py}", file=sys.stderr)

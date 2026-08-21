@@ -136,6 +136,7 @@ class HostLock:
         if sys.platform == "win32":
             import msvcrt
             with contextlib.suppress(OSError, PermissionError):
+                os.lseek(fd, 0, os.SEEK_SET)
                 msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
         else:
             import fcntl

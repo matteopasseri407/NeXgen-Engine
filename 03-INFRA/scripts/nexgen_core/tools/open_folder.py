@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -42,7 +43,7 @@ def open_folder(path_str: str) -> int:
             return 1
     else:
         # Linux (gio or xdg-open)
-        cmd = ["gio", "open"] if shutil_which("gio") else (["xdg-open"] if shutil_which("xdg-open") else None)
+        cmd = ["gio", "open"] if shutil.which("gio") else (["xdg-open"] if shutil.which("xdg-open") else None)
         if not cmd:
             print(t("Error: could not find a command to open the file manager (gio or xdg-open)."), file=sys.stderr)
             return 127
@@ -54,11 +55,6 @@ def open_folder(path_str: str) -> int:
 
     print(t("Folder opened: {resolved}", resolved=resolved))
     return 0
-
-
-def shutil_which(cmd: str) -> bool:
-    import shutil
-    return shutil.which(cmd) is not None
 
 
 def main(argv: list[str] | None = None) -> int:

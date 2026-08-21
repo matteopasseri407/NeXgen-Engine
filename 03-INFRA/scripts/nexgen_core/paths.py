@@ -87,7 +87,8 @@ def resolve_engine_root(home: Path | None = None, override: Path | None = None) 
 def resolve_state_dir(home: Path | None = None, override: Path | None = None) -> Path:
     """Where the machine-local state lives (locks, timestamps, debounce).
 
-    Precedence: explicit argument, `AGENT_STATE_DIR`, finally `~/.nexgen-engine`.
+    Precedence: explicit argument, `AGENT_STATE_DIR`, `XDG_STATE_HOME`,
+    finally `~/.local/state`.
     """
     if override is not None:
         return Path(override)

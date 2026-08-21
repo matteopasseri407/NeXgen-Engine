@@ -19,6 +19,10 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
+SCRIPTS_DIR = Path(__file__).resolve().parents[1]
+if str(SCRIPTS_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPTS_DIR))
+
 from nexgen_core.i18n import t
 from nexgen_core.paths import resolve_home
 

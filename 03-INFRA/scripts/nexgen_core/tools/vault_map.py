@@ -38,6 +38,7 @@ from collections import Counter
 from pathlib import Path
 
 from nexgen_core.i18n import t
+from nexgen_core.paths import resolve_vault_data
 
 NOTE_EXTENSIONS = (".md", ".markdown", ".mdown", ".mdx")
 FENCED_BLOCK_RE = re.compile(r"^ {0,3}(`{3,}|~{3,}).*?^ {0,3}\1`*\s*$", re.DOTALL | re.MULTILINE)
@@ -213,13 +214,13 @@ def scan(vault: Path) -> dict:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=t("deterministic structural map of a Markdown vault (read-only)"))
-    parser.add_argument("--vault", required=True, help=t("vault root directory"))
+    parser.add_argument("--vault", default=None, help=t("vault root directory"))
     parser.add_argument("--json", action="store_true", help=t("full machine-readable output"))
     parser.add_argument("--check", action="store_true", help=t("one summary line + broken list; always exit 0"))
     parser.add_argument("--top", type=int, default=10, help=t("hubs to show in the human report"))
     args = parser.parse_args(argv)
 
-    vault = Path(args.vault).expanduser()
+    vault = Path(args.vault).expanduser() if args.vault else resolve_vault_data()
     if not vault.is_dir():
         print(t("vault-map: not a directory: {vault}", vault=vault), file=sys.stderr)
         return 2

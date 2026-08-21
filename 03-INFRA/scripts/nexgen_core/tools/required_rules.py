@@ -18,6 +18,8 @@ from pathlib import Path
 
 # This file lives in nexgen_core/tools/, so the `03-INFRA` root is three
 # levels up. Before this, the default pointed at a nonexistent folder.
+# Deliberately not resolve_engine_root(): this tool validates the rules
+# file of the checkout it is part of, not the one an env var names.
 ENGINE_ROOT = Path(__file__).resolve().parents[3]
 DEFAULT_RULES = ENGINE_ROOT / "agent-universal-layer" / "instructions" / "required-rules.txt"
 
