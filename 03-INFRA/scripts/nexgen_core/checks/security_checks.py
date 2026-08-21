@@ -9,7 +9,7 @@ from nexgen_core.i18n import t
 from nexgen_core.report import CheckOutcome, Severity
 
 
-def check_required_rules(vault_data: Path) -> CheckOutcome:
+def check_required_rules(vault_data: Path, engine_root: Path | None = None) -> CheckOutcome:
     """The AGENTS.md bootstrap must not lose the mandatory invariant rules.
 
     Ported from the release's check_required_rules.py guard: a
@@ -18,6 +18,20 @@ def check_required_rules(vault_data: Path) -> CheckOutcome:
     """
     canon = vault_data / "03-INFRA" / "agent-universal-layer" / "instructions" / "AGENTS.md"
     rules_file = vault_data / "03-INFRA" / "agent-universal-layer" / "instructions" / "required-rules.txt"
+    if not rules_file.is_file():
+        if engine_root is not None:
+            candidate = engine_root / "agent-universal-layer" / "instructions" / "required-rules.txt"
+            if candidate.is_file():
+                rules_file = candidate
+        if not rules_file.is_file():
+            from nexgen_core.paths import resolve_engine_root
+            candidate = resolve_engine_root() / "agent-universal-layer" / "instructions" / "required-rules.txt"
+            if candidate.is_file():
+                rules_file = candidate
+            else:
+                from nexgen_core.tools.required_rules import DEFAULT_RULES
+                if DEFAULT_RULES.is_file():
+                    rules_file = DEFAULT_RULES
 
     if not canon.is_file():
         return CheckOutcome(

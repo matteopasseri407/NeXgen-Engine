@@ -252,3 +252,45 @@ def test_a_full_url_is_left_as_written():
         "/un/percorso/locale",
     ):
         assert clone_url(written) == written
+
+
+def test_skill_description_fallback_from_frontmatter(tmp_path, monkeypatch):
+    """La descrizione si legge dal frontmatter di SKILL.md quando manca nel manifest."""
+    vault = _vault_with(
+        tmp_path,
+        "skills:\n  descritta:\n    origin: vault\n",
+    )
+    body = vault / "03-INFRA" / "agent-universal-layer" / "skills" / "descritta"
+    body.mkdir(parents=True, exist_ok=True)
+    (body / "SKILL.md").write_text(
+        "---\nname: descritta\ndescription: Guida speciale per debugging riproducibile.\n---\n# Descritta\n",
+        encoding="utf-8",
+    )
+    mat = _materializer(tmp_path, vault, monkeypatch)
+    skills = mat.load_manifest()
+    assert skills["descritta"].description == "Guida speciale per debugging riproducibile."
+
+
+def test_agent_skill_find_searches_both_name_and_description(tmp_path, monkeypatch, capsys):
+    """`agent-skill find` deve trovare le skill anche tramite parole chiave nella descrizione."""
+    from nexgen_core.skills import main as skills_main
+
+    vault = _vault_with(
+        tmp_path,
+        "skills:\n  diagnostica:\n    origin: vault\n",
+    )
+    body = vault / "03-INFRA" / "agent-universal-layer" / "skills" / "diagnostica"
+    body.mkdir(parents=True, exist_ok=True)
+    (body / "SKILL.md").write_text(
+        "---\nname: diagnostica\ndescription: Gestione dei guasti riproducibili e crash intermittenti.\n---\n# Diagnostica\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("AGENT_VAULT_DATA", str(vault))
+    monkeypatch.setenv("NEXGEN_HOME", str(tmp_path / "home"))
+
+    rc = skills_main(["find", "riproducibili"])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "diagnostica" in out
+    assert "guasti riproducibili" in out
+

@@ -2,10 +2,11 @@
 """Launcher for AI Council — NeXgen Engine v2."""
 from __future__ import annotations
 
-import os
 import subprocess
 import sys
 from pathlib import Path
+
+from nexgen_core.paths import resolve_engine_root
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -13,14 +14,11 @@ def main(argv: list[str] | None = None) -> int:
     if argv is None:
         argv = sys.argv[1:]
 
-    # This file lives in nexgen_core/tools/, so `03-INFRA` is three levels
-    # up. The fallback used parents[2] and pointed at a directory that has
-    # never existed, so a machine without AGENT_ENGINE_ROOT found nothing.
-    here = Path(__file__).resolve().parents[3]
-    engine_root = Path(os.environ.get("AGENT_ENGINE_ROOT") or here)
+    engine_root = resolve_engine_root()
     council_py = engine_root / "agent-universal-layer" / "council" / "council.py"
 
     if not council_py.is_file():
+        here = Path(__file__).resolve().parents[3]
         council_py = here / "agent-universal-layer" / "council" / "council.py"
 
     if not council_py.is_file():

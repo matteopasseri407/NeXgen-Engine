@@ -22,6 +22,8 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
+import yaml
+
 SCRIPTS_DIR = Path(__file__).resolve().parents[1]
 if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
@@ -161,6 +163,23 @@ def clone_url(repo: str) -> str:
     return repo
 
 
+def _extract_frontmatter_description(path: Path) -> str:
+    """Extracts the description field from YAML frontmatter in a skill file."""
+    if not path.is_file():
+        return ""
+    try:
+        content = path.read_text(encoding="utf-8")
+        match = re.match(r"\A---\s*\n(.*?)\n---\s*\n?", content, re.DOTALL)
+        if match:
+            loaded = yaml.safe_load(match.group(1))
+            if isinstance(loaded, dict) and loaded.get("description"):
+                desc = str(loaded["description"]).strip().replace("\n", " ")
+                return " ".join(desc.split())
+    except (OSError, yaml.YAMLError, UnicodeDecodeError, ValueError, TypeError, AttributeError):
+        return ""
+    return ""
+
+
 class SkillMaterializer:
     """Materializes the skill library and generates the native views for the CLIs."""
 
@@ -227,6 +246,21 @@ class SkillMaterializer:
                 entry.source_path = self.vault_data / "03-INFRA" / "agent-universal-layer" / "skills" / name
             elif entry.origin == "engine":
                 entry.source_path = self.engine_root / "agent-universal-layer" / "skills" / name
+
+            # Fallback to SKILL.md frontmatter description when not explicitly declared in manifest
+            if not entry.description:
+                for candidate in (
+                    self.library_dir / name / "SKILL.md",
+                    self.library_dir / f"{name}.md",
+                    (entry.source_path / "SKILL.md") if entry.source_path else None,
+                    entry.source_path if entry.source_path and entry.source_path.suffix == ".md" else None,
+                ):
+                    if candidate and candidate.is_file():
+                        desc = _extract_frontmatter_description(candidate)
+                        if desc:
+                            entry.description = desc
+                            break
+
             skills[name] = entry
 
         return skills

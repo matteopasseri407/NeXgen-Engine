@@ -148,3 +148,19 @@ def test_config_command_names_the_authoritative_remote(tmp_path: Path, monkeypat
     assert "oracle-n8n" in capsys.readouterr().out
     rc_mirror = engine_cmds.cmd_config(Namespace(field="mirrors", value="somewhere"))
     assert rc_mirror == 2
+
+
+def test_tool_subcommands_display_help_with_their_specific_options():
+    """`nexgen tool now --help`, `nexgen tool firecrawl --help` etc. devono mostrare i propri argomenti."""
+    res_now = _run(["tool", "now", "--help"])
+    assert res_now.returncode == 0
+    assert "--format" in res_now.stdout or "--human" in res_now.stdout
+
+    res_fc = _run(["tool", "firecrawl", "--help"])
+    assert res_fc.returncode == 0
+    assert "scrape" in res_fc.stdout and "search" in res_fc.stdout
+
+    res_map = _run(["vault", "map", "--help"])
+    assert res_map.returncode == 0
+    assert "--check" in res_map.stdout or "--json" in res_map.stdout
+

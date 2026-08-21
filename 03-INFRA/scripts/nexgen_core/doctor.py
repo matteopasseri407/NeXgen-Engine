@@ -49,7 +49,12 @@ from nexgen_core.checks.takeover_checks import (
     check_takeover_complete,
 )
 from nexgen_core.i18n import t
-from nexgen_core.paths import resolve_home, resolve_state_dir, resolve_vault_data
+from nexgen_core.paths import (
+    resolve_engine_root,
+    resolve_home,
+    resolve_state_dir,
+    resolve_vault_data,
+)
 from nexgen_core.report import Report
 
 
@@ -61,11 +66,13 @@ class Doctor:
         vault_data: Path | None = None,
         state_dir: Path | None = None,
         home: Path | None = None,
+        engine_root: Path | None = None,
     ) -> None:
         self.home = resolve_home(home)
         _v = resolve_vault_data(self.home, vault_data)
         self.vault_data = _v
         self.state_dir = resolve_state_dir(self.home, state_dir)
+        self.engine_root = resolve_engine_root(self.home, engine_root)
 
     def run_diagnostics(self, apply_remedies: bool = False) -> Report:
         """Runs every registered check (read-only by default)."""
@@ -111,7 +118,7 @@ class Doctor:
             report.add(check_native_memory_boundary(self.home), apply_remedy=apply_remedies)
 
             # 6. Bootstrap and env-secret checks (ported from the release)
-            report.add(check_required_rules(self.vault_data), apply_remedy=apply_remedies)
+            report.add(check_required_rules(self.vault_data, self.engine_root), apply_remedy=apply_remedies)
             report.add(check_tokens_in_env(self.vault_data), apply_remedy=apply_remedies)
 
             # 7. Canonical instructions and bootstrap hygiene
