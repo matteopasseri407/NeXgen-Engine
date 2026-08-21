@@ -369,9 +369,23 @@ def main(
         print(f"Latest released target: {target}")
 
         if _version_tuple(target_version) < _version_tuple(current):
-            raise UpdateError(
-                f"refusing to downgrade from v{current} to {target}; use the manual recovery runbook"
+            # Two different situations, and only one of them is a fault.
+            #
+            # Somebody who names an older version explicitly asked for a
+            # thing that will not happen, and has to be told so.
+            if args.target:
+                raise UpdateError(
+                    f"refusing to downgrade from v{current} to {target}; "
+                    f"use the manual recovery runbook"
+                )
+            # Being ahead of the newest release is simply what running a
+            # pre-release looks like. Reporting it hourly as a refusal told a
+            # person that something had gone wrong when nothing had.
+            print(
+                f"v{current} is ahead of the newest release ({target}): nothing to update to. "
+                f"Expected on a pre-release; the next published release will be picked up."
             )
+            return 0
         if _version_tuple(target_version) == _version_tuple(current):
             print("NeXgen Engine is already at the requested released version.")
             return 0

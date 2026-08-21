@@ -658,3 +658,25 @@ def test_conflicted_merge_is_rolled_back_instead_of_leaving_markers(tmp_path, ca
     status = _git(engine, "status", "--porcelain").stdout.strip()
     assert status == "", f"working tree not clean after rollback: {status!r}"
     assert (engine / "VERSION").read_text(encoding="utf-8").strip() == "0.1.0"
+
+
+def test_being_ahead_of_the_newest_release_is_not_a_fault(tmp_path, capsys):
+    """Chi gira su una pre-release è avanti, non rotto.
+
+    Sulla macchina di sviluppo il battito orario stampava «refusing to
+    downgrade ... use the manual recovery runbook» a ogni giro: un allarme
+    per una situazione normale. Chiedere esplicitamente una versione più
+    vecchia resta un rifiuto, ed è il test qui sopra.
+    """
+    updater = _load_updater()
+    _origin, engine = _upgrade_fixture(tmp_path)
+    assert updater.main(["--yes"], environ=_env(engine), which=lambda _name: None) == 0
+    capsys.readouterr()
+    (engine / "VERSION").write_text("99.0.0\n", encoding="utf-8")
+
+    result = updater.main(["--check"], environ=_env(engine), which=lambda _name: None)
+
+    captured = capsys.readouterr()
+    assert result == 0, "essere avanti non è un guasto"
+    assert "refusing" not in captured.err.lower()
+    assert "ahead of the newest release" in captured.out
