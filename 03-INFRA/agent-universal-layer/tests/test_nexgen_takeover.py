@@ -239,3 +239,103 @@ def test_a_live_config_carrying_a_real_token_is_refused_not_swallowed():
 
     absent = _adopt_entry("claude", {"type": "http", "url": "https://x"})
     assert "auth" not in absent, "nessuna autenticazione non è la stessa cosa di un segreto"
+
+
+# --- Il debito ha una scadenza scritta, non ricordata ------------------------
+#
+# I venti involucri esistono solo per le macchine che arrivano dalla versione
+# precedente. Il modo in cui una compatibilità del genere diventa permanente è
+# che nessuno sia mai costretto a riguardarla.
+
+
+def test_the_transitional_launchers_carry_an_expiry():
+    from nexgen_core.legacy_launchers import REMOVE_AFTER
+    from nexgen_core.release import is_semver
+
+    assert is_semver(REMOVE_AFTER), (
+        f"la scadenza deve essere una versione vera, non '{REMOVE_AFTER}'"
+    )
+
+
+def test_a_release_past_the_expiry_cannot_be_tagged():
+    """Non li cancella da solo: mette la decisione davanti a una persona.
+
+    Cancellarli da sé sarebbe peggio del problema — sono file tracciati nel
+    clone git del motore, e toglierli in locale lo lascerebbe sporco, che è
+    esattamente la condizione con cui l'aggiornatore si rifiuta di lavorare.
+    Se ne vanno nell'unico modo sicuro: cancellati a monte, in un rilascio.
+    """
+    from nexgen_core.legacy_launchers import REMOVE_AFTER, is_expired
+
+    major, minor, patch = (int(p) for p in REMOVE_AFTER.split("."))
+    assert not is_expired(REMOVE_AFTER), "il rilascio della scadenza è ancora ammesso"
+    assert is_expired(f"{major}.{minor}.{patch + 1}"), "il primo dopo la scadenza va fermato"
+    assert is_expired(f"{major}.{minor + 1}.0")
+
+
+def test_the_current_version_has_not_passed_the_expiry():
+    """Se questo fallisce non è un guasto: è la sveglia."""
+    from nexgen_core.legacy_launchers import REMOVE_AFTER, is_expired
+
+    version = (REPO_ROOT / "VERSION").read_text(encoding="utf-8").strip()
+    assert not is_expired(version), (
+        f"il motore è alla {version} e i comandi di transizione scadevano dopo "
+        f"la {REMOVE_AFTER}: cancella legacy_launchers.py e i venti file che "
+        f"scrive, oppure alza REMOVE_AFTER perché una macchina è davvero indietro"
+    )
+
+
+def test_a_machine_that_has_migrated_says_so(tmp_path, monkeypatch):
+    from nexgen_core.legacy_launchers import takeover_complete
+
+    monkeypatch.setenv("NEXGEN_HOME", str(tmp_path))
+    bin_dir = tmp_path / ".local" / "bin"
+    bin_dir.mkdir(parents=True)
+    # Quello che scrive il motore nuovo: file veri, non collegamenti.
+    (bin_dir / "agent-sync").write_text("#!/bin/sh\nexec nexgen sync \"$@\"\n", encoding="utf-8")
+
+    done, pending = takeover_complete()
+    assert done and not pending
+
+
+def test_a_machine_still_on_the_old_launchers_says_that_instead(tmp_path, monkeypatch):
+    from nexgen_core.legacy_launchers import takeover_complete
+
+    monkeypatch.setenv("NEXGEN_HOME", str(tmp_path))
+    bin_dir = tmp_path / ".local" / "bin"
+    bin_dir.mkdir(parents=True)
+    engine = tmp_path / ".nexgen-engine" / "03-INFRA" / "scripts"
+    engine.mkdir(parents=True)
+    (engine / "agent-sync.sh").write_text("#!/bin/sh\n", encoding="utf-8")
+    (bin_dir / "agent-sync").symlink_to(engine / "agent-sync.sh")
+
+    done, pending = takeover_complete()
+    assert not done and pending == ["agent-sync"]
+
+
+def test_the_machine_records_which_engine_completed_the_cycle(tmp_path, monkeypatch):
+    """Senza questo, 'sono tutte migrate?' resta un'impressione."""
+    import nexgen_core
+    from nexgen_core.beat import Heartbeat
+
+    monkeypatch.setenv("AGENT_STATE_DIR", str(tmp_path / "state"))
+    beat = Heartbeat()
+    beat.record_liveness()
+
+    assert beat.recorded_version() == nexgen_core.__version__
+
+
+def test_the_previous_format_is_still_readable(tmp_path, monkeypatch):
+    """Un timestamp nudo è ciò che scriveva la versione prima: deve valere ancora."""
+    import time
+
+    from nexgen_core.beat import Heartbeat
+
+    monkeypatch.setenv("AGENT_STATE_DIR", str(tmp_path / "state"))
+    beat = Heartbeat()
+    beat.state_dir.mkdir(parents=True, exist_ok=True)
+    beat.liveness_file.write_text(str(time.time()), encoding="utf-8")
+
+    alive, _message = beat.check_liveness()
+    assert alive, "il formato precedente non si legge più"
+    assert beat.recorded_version() is None, "e non deve inventarsi una versione"

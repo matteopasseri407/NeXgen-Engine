@@ -600,4 +600,22 @@ MESSAGES: dict[str, str] = {
     "exit code of the write-pass runner CLI -- non-zero blocks promotion unconditionally": "codice di uscita della CLI del write pass -- diverso da zero blocca sempre la promozione",
     "attempt agent_sync.py publish after a successful promotion; omit to never push this run": "tenta 'agent_sync.py publish' dopo una promozione riuscita; ometti per non pubblicare mai in questa esecuzione",
     "directory containing agent_sync.py (required together with --push-if-clean)": "cartella che contiene agent_sync.py (richiesta insieme a --push-if-clean)",
+
+    # --- Passaggio dalla versione precedente -------------------------------
+    "Handover complete: nothing here goes through the previous release's launchers any more.":
+        "Passaggio completato: qui non passa più niente dai comandi della versione precedente.",
+    "{count} command(s) still reach the engine the previous release's way: {names}":
+        "{count} comando/i raggiungono ancora il motore come faceva la versione precedente: {names}",
+    "Run 'nexgen sync apply' once: it replaces them. Until every machine reports this as complete, the transitional launchers cannot be removed (they are due after {version}).":
+        "Esegui 'nexgen sync apply' una volta: li sostituisce. Finché non lo dicono tutte le macchine, i comandi di transizione non si possono togliere (la scadenza è dopo la {version}).",
+    "No engine version recorded here yet; this machine has not completed a cycle with a version that records one.":
+        "Nessuna versione del motore registrata qui: questa macchina non ha ancora completato un ciclo con una versione che la registri.",
+    "It gets recorded on the first completed cycle.":
+        "Viene registrata al primo ciclo completato.",
+    "Last completed cycle: engine {version}":
+        "Ultimo ciclo completato: motore {version}",
+    "The last completed cycle ran engine {recorded}, this one is {current}.":
+        "L'ultimo ciclo completato ha girato col motore {recorded}, questo è il {current}.",
+    "Normal right after an update; it lines up on the next cycle.":
+        "Normale subito dopo un aggiornamento: si allinea al ciclo successivo.",
 }

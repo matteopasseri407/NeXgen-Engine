@@ -45,9 +45,35 @@ class Heartbeat:
         self.liveness_file = self.state_dir / LIVENESS_FILE_NAME
 
     def record_liveness(self) -> None:
-        """Records the successful completion of a Guard cycle."""
+        """Records the successful completion of a Guard cycle, and by whom.
+
+        The version is written alongside the timestamp because otherwise
+        nobody can answer "is this machine still on the old release?" — and
+        that is the question that decides when transitional compatibility
+        can be deleted. Without it the answer is a guess, and the
+        compatibility stays forever.
+
+        The format stays a first line that parses as a float, so a previous
+        version reading this file keeps working: it reads the first line and
+        ignores the rest.
+        """
+        from nexgen_core import __version__
+
         self.state_dir.mkdir(parents=True, exist_ok=True)
-        self.liveness_file.write_text(str(time.time()), encoding="utf-8")
+        self.liveness_file.write_text(
+            f"{time.time()}\n{__version__}\n", encoding="utf-8"
+        )
+
+    def recorded_version(self) -> str | None:
+        """Which engine last completed a cycle here, if it said so.
+
+        `None` means the file was written by a version that did not record
+        one — which is itself the answer: this machine is behind.
+        """
+        if not self.liveness_file.is_file():
+            return None
+        lines = self.liveness_file.read_text(encoding="utf-8").splitlines()
+        return lines[1].strip() if len(lines) >= 2 and lines[1].strip() else None
 
     def check_liveness(self) -> tuple[bool, str]:
         """Checks whether the Guard has run within the expected window."""
@@ -55,7 +81,10 @@ class Heartbeat:
             return False, t("No guard cycle has been recorded yet")
 
         try:
-            last_ts = float(self.liveness_file.read_text(encoding="utf-8").strip())
+            # First line only: later versions may append fields after it,
+            # and this reader must not care.
+            first = self.liveness_file.read_text(encoding="utf-8").splitlines()[0]
+            last_ts = float(first.strip())
             elapsed = time.time() - last_ts
             if elapsed > MAX_LIVENESS_AGE_HOURS * 3600:
                 hours = elapsed / 3600

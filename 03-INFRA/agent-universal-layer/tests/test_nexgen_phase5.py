@@ -293,11 +293,18 @@ def test_beat_liveness_file_is_not_shared_with_the_megaphone_debounce(tmp_path: 
     beat = Heartbeat(state_dir=state_dir, vault_data=tmp_path / "vault", engine_root=tmp_path / "engine")
     beat.record_liveness()
 
-    liveness_content = beat.liveness_file.read_text(encoding="utf-8")
-    # A single float timestamp -- one question, nothing shared with the
-    # Megaphone's own debounce state file.
-    float(liveness_content)
+    # The rule is that this file is not the Megaphone's debounce file. Sharing
+    # one is what froze liveness behind the debounce: two subsystems writing
+    # the same path under different update rules.
     assert beat.liveness_file != beat.megaphone.state_file
+
+    # And the first line stays a bare timestamp, so any reader that only wants
+    # to know when the guard last finished keeps working -- including the
+    # previous release, which reads this file and knows nothing about what may
+    # follow. What comes after is written by the same writer at the same
+    # moment, so it cannot drift out of step with the timestamp above it.
+    lines = beat.liveness_file.read_text(encoding="utf-8").splitlines()
+    float(lines[0])
 
 
 # --------------------------------------------------------------------------

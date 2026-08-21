@@ -116,7 +116,25 @@ def _preflight() -> int:
         else:
             checked.append(f"newer than {newest}")
 
-    from nexgen_core.legacy_launchers import expected_files, matches
+    from nexgen_core.legacy_launchers import (
+        REMOVE_AFTER,
+        expected_files,
+        is_expired,
+        matches,
+    )
+
+    # Compatibility with an expiry, so it cannot become permanent by
+    # inertia. This does not delete anything: it refuses to tag, which puts
+    # the decision in front of a person exactly once.
+    if is_semver(version) and is_expired(version):
+        problems.append(
+            f"the legacy launchers were due to go after {REMOVE_AFTER} and this "
+            f"release is {version}: either delete nexgen_core/legacy_launchers.py "
+            f"and the twenty files it writes, or raise REMOVE_AFTER because a "
+            f"machine is genuinely still on the old release"
+        )
+    else:
+        checked.append(f"legacy launchers still within their window (until {REMOVE_AFTER})")
 
     stale = [
         path.name
