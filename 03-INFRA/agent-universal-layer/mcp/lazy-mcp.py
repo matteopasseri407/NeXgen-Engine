@@ -108,6 +108,8 @@ def _lazy_servers() -> dict[str, dict[str, Any]]:
         if req and not os.environ.get(req):
             continue
         entry = {k: v for k, v in srv.items()}
+        entry.setdefault("readonly", False)
+        entry.setdefault("readonly_tools", [])
         if entry.get("command"):
             entry["command"] = _expand_placeholders(str(entry["command"]), ctx)
         if isinstance(entry.get("args"), list):
@@ -130,7 +132,17 @@ class _ServerHandle:
         self.index: list[dict[str, Any]] | None = None
         self.index_at = 0.0
         self.last_use = time.time()
-        self.mutating = bool(spec.get("mutating"))
+        # FAIL-CLOSED classification: a tool is mutating unless explicitly
+        # allowlisted. MCP tool annotations are advisory and come from
+        # untrusted servers, so they are never trusted here; the manifest
+        # grants read-only status per server (`readonly: true`) or per tool
+        # (`readonly_tools: [...]`). Anything else requires confirmation.
+        self.readonly_server = bool(spec.get("readonly"))
+        self.readonly_tools = set(spec.get("readonly_tools") or [])
+        self.active_calls = 0
+
+    def is_mutating(self, tool: str) -> bool:
+        return not (self.readonly_server or tool in self.readonly_tools)
 
     def _start_stdio(self) -> None:
         if self.proc and self.proc.poll() is None:
@@ -235,7 +247,7 @@ class Waiter:
             time.sleep(30)
             with self._lock:
                 for name, handle in list(self.handles.items()):
-                    if handle.idle():
+                    if handle.active_calls == 0 and handle.idle():
                         handle.stop()
 
     def _audit(self, server: str, tool: str, action: str, confirmed: bool = False) -> None:
@@ -269,7 +281,7 @@ class Waiter:
                 desc = (t.get("description") or "").splitlines()[0][:100]
                 entries.append({"name": t.get("name", ""), "hint": desc})
                 estimated += len(t.get("name", "")) // 4 + len(desc) // 4 + 2
-            result["servers"][name] = {"mutating": handle.mutating, "tools": entries}
+            result["servers"][name] = {"mutating": handle.readonly_server is False or bool(handle.readonly_tools), "tools": entries}
         # Budget enforcement: over budget the index degrades to names only
         # (server granularity), so a bordello of servers cannot blow the
         # bootstrap with descriptions.
@@ -299,13 +311,22 @@ class Waiter:
         handle = self._handle(server, servers[server])
         with self._lock:
             was_loaded = (server, tool) in self.loaded
-        if handle.mutating and not confirm:
+        if handle.is_mutating(tool) and not confirm:
+            self._audit(server, tool, "refused", confirmed=False)
             return {"error": (
-                f"'{tool}' on '{server}' mutates state and requires explicit confirmation: "
-                "call again with \"confirm\": true after reviewing the arguments."
+                f"'{tool}' on '{server}' is not explicitly read-only and requires "
+                "confirmation: call again with \"confirm\": true after reviewing "
+                "the arguments. (Read-only status is granted per server or tool "
+                "in the manifest; the default is fail-closed.)"
             )}
-        resp = handle.rpc("tools/call", {"name": tool, "arguments": arguments}, self._next_rid())
-        self._audit(server, tool, "call", confirmed=confirm or not handle.mutating)
+        with self._lock:
+            handle.active_calls += 1
+        try:
+            resp = handle.rpc("tools/call", {"name": tool, "arguments": arguments}, self._next_rid())
+        finally:
+            with self._lock:
+                handle.active_calls -= 1
+        self._audit(server, tool, "call", confirmed=confirm or not handle.is_mutating(tool))
         if not was_loaded:
             resp.setdefault("hint", "tool definition was never loaded with lazy_load before this call")
         return resp
