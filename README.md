@@ -38,7 +38,7 @@ The security model and reporting instructions are in [`SECURITY.md`](SECURITY.md
 2. Open `INIT.md` and paste it into a filesystem-capable CLI such as Claude Code, Codex, OpenCode, or Antigravity. A web chat cannot write files. The setup asks how many tools and machines you plan to use, where the connectors should live (Local-Only, Local-Full, or Cloud-Server), and then writes `99-INDEX/USER-PROFILE.md`. If you already run CLIs configured with their own MCP servers, skills, or configs, Step 1.5 takes over that existing setup: it inventories what is there and lets you adopt it into the canonical source or start fresh.
 3. The agent mounts the MCP servers and skills for your chosen CLI(s), following the manifests in `03-INFRA/`.
 4. If you are using the MULTI profile, run `nexgen sync` to propagate the canonical configuration. The historical name `agent-sync apply` still works, as do all the other pre-v2 command names.
-   It prints each action it took and finishes with a success message, or a non-zero exit code if something blocked it — an unreachable git remote, a failed preflight check, or another sync already running.
+   It prints each action it took and finishes with a success message, or a non-zero exit code if something blocked it: an unreachable git remote, a failed preflight check, or another sync already running.
    Commands land in `~/.local/bin`; make sure that folder is on your `PATH` so `nexgen` and the legacy names resolve directly instead of through `python3 ...`.
 5. Make a manual change, such as an extra MCP entry or an edited configuration file, and run `nexgen doctor` (or the legacy `agent-doctor`) again to see the difference reported.
 
@@ -60,11 +60,11 @@ It does not intercept tool calls at runtime.
 
 - **Configuration as code for AI tools.** Manifest files define tools, permissions, and behavior. The `nexgen sync` command (the historical name `agent-sync` still works) generates the configuration required by each supported CLI through the renderer `nexgen_core/renderer.py`, which also provides `--revert` (undo a CLI's config from its own backup) and `--adopt` (read-only draft manifest entries for servers it finds outside the manifest).
 - **Version-controlled memory.** The agents read and write Markdown files. Every change is stored in Git, can be reviewed with a diff, and can be reverted. Writes are compare-and-swap: whole-note, or per-section (`update_section`), so two agents editing different sections of the same note both land instead of colliding.
-- **Link hygiene as discipline.** A deterministic, stdlib-only structural map of the vault (`nexgen vault map`, historical name `vault-map`: broken wikilinks with relocation hints, orphan notes, hubs) is wired into the flows rather than left as a periodic check: every memory write returns an advisory list of unresolved wikilinks it just introduced (never blocking — deliberate forward links are legitimate), the grooming pass treats orphans and broken links as first-class cleanup candidates, `nexgen doctor` keeps a warn-only backstop, and a read-only `map_overview` tool gives agents a token-bounded compass before broad tasks.
-- **Cross-CLI command skills.** Declare a skill once and it surfaces as an explicitly invocable command on every supported runtime (`/name`, `$name` on Codex). Seven starter commands ship with the engine and are installed for you on the first provisioning pass: `nexgen-doctor`, `vault-close`, `vault-save`, `nexgen-council`, `vault-groom`, `nexgen-update`, and `vault-map`. Their earlier names (`vault-doctor`, `vault-council`, `vault-update`) still resolve, kept as deprecated aliases. MULTI installs `nexgen-update` as a real terminal command too, with Linux and Windows launchers backed by the same updater. It discovers the normal `~/KnowledgeVault` data root without requiring exported variables, preserves private data commits in a single clone, and in a split install keeps the consumer fast-forward-only while advancing an existing private engine pin through `nexgen vault push` (historical name `vault-push`). Want none of the chat skills? Empty your `skills.manifest.yaml` (`skills: {}`) and it stays empty. The engine never creates or rewrites that file on its own — it is seeded once from `skills.manifest.yaml.example` during setup, and left alone from then on; if it is missing, `nexgen sync` silently treats the skill set as empty instead of recreating it.
+- **Link hygiene as discipline.** A deterministic, stdlib-only structural map of the vault (`nexgen vault map`, historical name `vault-map`: broken wikilinks with relocation hints, orphan notes, hubs) is wired into the flows rather than left as a periodic check: every memory write returns an advisory list of unresolved wikilinks it just introduced (never blocking: deliberate forward links are legitimate), the grooming pass treats orphans and broken links as first-class cleanup candidates, `nexgen doctor` keeps a warn-only backstop, and a read-only `map_overview` tool gives agents a token-bounded compass before broad tasks.
+- **Cross-CLI command skills.** Declare a skill once and it surfaces as an explicitly invocable command on every supported runtime (`/name`, `$name` on Codex). Seven starter commands ship with the engine and are installed for you on the first provisioning pass: `nexgen-doctor`, `vault-close`, `vault-save`, `nexgen-council`, `vault-groom`, `nexgen-update`, and `vault-map`. Their earlier names (`vault-doctor`, `vault-council`, `vault-update`) still resolve, kept as deprecated aliases. MULTI installs `nexgen-update` as a real terminal command too, with Linux and Windows launchers backed by the same updater. It discovers the normal `~/KnowledgeVault` data root without requiring exported variables, preserves private data commits in a single clone, and in a split install keeps the consumer fast-forward-only while advancing an existing private engine pin through `nexgen vault push` (historical name `vault-push`). Want none of the chat skills? Empty your `skills.manifest.yaml` (`skills: {}`) and it stays empty. The engine never creates or rewrites that file on its own: it is seeded once from `skills.manifest.yaml.example` during setup, and left alone from then on; if it is missing, `nexgen sync` silently treats the skill set as empty instead of recreating it.
 - **Vault grooming, optional and manual.** `nexgen vault groom` (historical name `vault-groom`) uses an LLM and a grooming playbook to flag stale, duplicate, or disconnected notes. A normal run and `preview` are read-only. `apply` shows the proposed changes and requires an explicit `yes` before writing in a disposable clone with no remote. An audit compares the result with the approved changes before promotion. If the audit fails, the original vault is left untouched. An optional n8n workflow sends a reminder every 14 days, but it never runs grooming unattended.
 - **AI Council, Beta.** `nexgen council` (historical name `council`) coordinates multiple models for brainstorming and relay tasks. It works from a local `seats.yaml` by itself. If you add the public [LLM Model Routing Governor](https://github.com/matteopasseri407/NeXgen-addon-llm-model-routing-governor), Council reads its per-role proposals while keeping model and CLI identity separate. Claude seats can enter those proposals through explicit model selection. At invocation time, Council checks Claude's returned `modelUsage` value and stops if the CLI used a different model. Every invocation still requires an explicit human choice. See [`docs/council.md`](docs/council.md).
-- **Configuration checks.** In MULTI profile, `nexgen doctor` (historical name `agent-doctor`) runs a battery of read-only checks against the live configuration, vault wiring, skills, and secrets handling — git alignment, rendered MCP configs and their reachability, the skill manifest and its materialized library, native-memory boundaries, and canonical-instruction pointer hygiene. It reports `pass`, `warn`, or `fail` for each check and returns a non-zero exit code when it finds an error. In MINIMAL, a single tool on a single machine is checked directly and no doctor is installed.
+- **Configuration checks.** In MULTI profile, `nexgen doctor` (historical name `agent-doctor`) runs a battery of read-only checks against the live configuration, vault wiring, skills, and secrets handling: git alignment, rendered MCP configs and their reachability, the skill manifest and its materialized library, native-memory boundaries, and canonical-instruction pointer hygiene. It reports `pass`, `warn`, or `fail` for each check and returns a non-zero exit code when it finds an error. In MINIMAL, a single tool on a single machine is checked directly and no doctor is installed.
 - **Cross-platform synchronization, optional.** In MULTI profile, the provisioner keeps generated files aligned across different machines, such as a Windows workstation and a Linux laptop. In MINIMAL, the provisioner is not installed.
 
 ## Architecture: The Three Planes
@@ -104,7 +104,7 @@ The project focuses on configuration, versioned memory, and safety checks above 
 
 If you mainly need to fan one set of rules and MCP config out to many tools, [ruler](https://github.com/intellectronica/ruler) and [rulesync](https://github.com/dyoshikawa/rulesync) are more mature and render to roughly 30 targets, including the four CLIs NeXgen supports. Start there if config fan-out is all you want. If you want Markdown memory an agent can read and write, [Cline's Memory Bank](https://github.com/cline/cline) convention and [basic-memory](https://github.com/basicmachines-co/basic-memory) popularized that idea and are further along.
 
-NeXgen Engine sits where those two ideas meet, and adds one thing on the memory side. It renders MCP config per CLI *and* keeps working memory as plain Markdown in Git, where every write is a compare-and-swap: the memory server rejects a replace unless the caller's SHA-256 hash matches the current content — whole-note, or a single heading's section, so concurrent edits to different parts of one note both land — and each accepted write is its own Git commit that also reports any dead wikilinks it just introduced. That vault, the per-tool config, and a single AGENTS.md are carried between machines by a fail-closed sync, with a doctor that reports drift between the canonical source and the generated files, and a deterministic link-hygiene map over the memory itself.
+NeXgen Engine sits where those two ideas meet, and adds one thing on the memory side. It renders MCP config per CLI *and* keeps working memory as plain Markdown in Git, where every write is a compare-and-swap: the memory server rejects a replace unless the caller's SHA-256 hash matches the current content (whole-note, or a single heading's section, so concurrent edits to different parts of one note both land), and each accepted write is its own Git commit that also reports any dead wikilinks it just introduced. That vault, the per-tool config, and a single AGENTS.md are carried between machines by a fail-closed sync, with a doctor that reports drift between the canonical source and the generated files, and a deterministic link-hygiene map over the memory itself.
 
 It is a solo project under a noncommercial license, Linux stable and Windows in beta. It does not claim to be first at any of these pieces: the reason to look is the specific combination, and the write discipline on the memory.
 
@@ -121,7 +121,7 @@ It is a solo project under a noncommercial license, Linux stable and Windows in 
 ## Deployment modes
 
 1. **Local-Only.** Runs entirely on your machine, with no connector services. Relies on native CLI tools and local models. Good for testing and single-user setups.
-2. **Local-Full.** The same connectors run in Docker on this machine — `nexgen stack up` starts them and wires the CLIs to `127.0.0.1`. No VPS, no SSH tunnel.
+2. **Local-Full.** The same connectors run in Docker on this machine: `nexgen stack up` starts them and wires the CLIs to `127.0.0.1`. No VPS, no SSH tunnel.
 3. **Cloud-Server.** Connects to a self-hosted stack (like n8n for orchestration, Firecrawl for scraping, and dedicated OCR) deployed in **your own private environment** (a VPS) over an SSH tunnel. You maintain full ownership of your data; NeXgen does not provide or host these services for you.
 
 The setup in `INIT.md` selects the mode that fits your environment.
@@ -130,7 +130,7 @@ The setup in `INIT.md` selects the mode that fits your environment.
 
 The framework fits two shapes of usage. The installer (`INIT.md`) asks and picks the right one.
 
-MINIMAL vs. MULTI is a descriptive label for what the guided installer sets up once, at install time — it decides whether the provisioner, doctor, and sync timer get installed at all. No script reads a stored "profile" value back afterward to change its behavior.
+MINIMAL vs. MULTI is a descriptive label for what the guided installer sets up once, at install time: it decides whether the provisioner, doctor, and sync timer get installed at all. No script reads a stored "profile" value back afterward to change its behavior.
 
 - **MINIMAL.** One CLI on one machine, such as Claude Code on a laptop or [OpenCode](https://opencode.ai) in a DeepSeek-based setup. You get the knowledge vault, bootstrap rules, optional skills, and a defined path for writing memory. There is no provisioner, scheduled doctor, or cross-machine synchronization. Add the MCP servers and skills you want directly to the CLI. This profile is intended for one user and one machine.
 - **MULTI.** Two or more CLIs and/or two or more machines. The unified provisioner (`nexgen sync`, historical name `agent-sync`), the doctor, and the healthcheck come online and keep every CLI and machine aligned to the canonical source in the vault. Best for a workstation + laptop setup, or for running multiple CLIs side by side.
@@ -160,7 +160,7 @@ To see the setup verify itself, edit a generated file by hand afterward and run 
 
 If you prefer fewer setup questions, use `AI-INSTALLER.md` instead of `INIT.md`. It follows the same process with only the required inputs.
 
-The engine is also pip-installable from a checked-out copy of this repository: `pipx install .` or `uv tool install .` from the repo root installs `nexgen` (and every legacy command name) as a real package entry point, no launcher scripts needed. The clone-and-run path above still works too — pick either one.
+The engine is also pip-installable from a checked-out copy of this repository: `pipx install .` or `uv tool install .` from the repo root installs `nexgen` (and every legacy command name) as a real package entry point, no launcher scripts needed. The clone-and-run path above still works too. Pick either one.
 
 ## Prerequisites
 
@@ -172,13 +172,13 @@ The engine is also pip-installable from a checked-out copy of this repository: `
 ## Platform status
 
 This table is generated from `nexgen_core/platforms.py`, and a test fails if
-the two disagree — so it says what was actually run, not what is hoped.
+the two disagree, so it says what was actually run, not what is hoped.
 
 <!-- platform-status:start -->
 
 | System | Status | On what evidence |
 |---|---|---|
-| Linux | **released** | the platform this is developed and used on daily; the full cycle — install, alignment, doctor, grooming, council, update — runs here and in CI |
+| Linux | **released** | the platform this is developed and used on daily; the full cycle (install, alignment, doctor, grooming, council, update) runs here and in CI |
 | Windows | **beta** | verified on real hardware and in CI; a first install with no assistance has not been done yet, so MINIMAL is the safer start |
 | macOS | **untested** | shares the POSIX paths with Linux and should work, but nobody has run it end to end; treat a failure here as expected, and reporting it as useful |
 
@@ -187,19 +187,18 @@ the two disagree — so it says what was actually run, not what is hoped.
 | Claude Code | **complete** | instructions, MCP connectors, skills, guardrails |
 | Codex | **complete** | instructions, MCP connectors, skills |
 | OpenCode | **complete** | instructions, MCP connectors, skills |
-| Antigravity | **complete for configuration, not as a council seat** | configured like the others; excluded as a passive council seat because in testing it ignored the instructions it was given |
+| Antigravity | **complete** | instructions, MCP connectors, skills, and a Council seat; the seat was unblocked on 2026-08-22 with a stateless invocation (agy --model ... --disable-slash-commands --new-project --sandbox -p <prompt>) verified live with a nonce prompt |
 
 <!-- platform-status:end -->
 
-On the council seat: using Antigravity interactively to call the Council is
-unaffected; see "Current limitations" in `docs/council.md`.
+Antigravity serves as a Council seat since 2026-08-22; see `docs/council.md` for the invocation and its limits.
 
 ### Antigravity orchestration boundary
 
-Antigravity can orchestrate work, but that is different from being a passive Council seat.
+Antigravity can orchestrate work. It can also serve as a passive Council seat, since the 2026-08-22 invocation change.
 Version 1.1.8 added structured `json` and `stream-json` output, which makes `agy` easier to drive from scripts.
 The [official changelog](https://github.com/google-antigravity/antigravity-cli/blob/main/CHANGELOG.md) also says that version 1.1.9 waits for MCP servers during headless runs so the turn sees the full toolset.
-That behavior conflicts with Council's passive-seat contract, which requires one exact prompt, one selected model, no inherited tools, and no persistent personal context.
+That behavior only matters when the run inherits MCP servers; the Council invocation disables slash commands and project context, so the seat gets one prompt, one selected model, and nothing else.
 
 Public integrations confirm the distinction:
 
@@ -259,7 +258,7 @@ La postura di sicurezza e le istruzioni per segnalare problemi sono in [`SECURIT
    Se usi già delle CLI configurate con server MCP, skill o config tue, lo Step 1.5 prende in carico il setup esistente, fa l'inventario di quello che c'è e ti fa scegliere se adottarlo nella fonte canonica oppure ripartire da zero.
 3. L'agente monta i server MCP e le skill per le CLI scelte, usando i manifest presenti in `03-INFRA/`.
 4. Se usi il profilo MULTI, cioè almeno due CLI o due macchine, esegui `nexgen sync` per propagare la configurazione canonica. Il nome storico `agent-sync apply` funziona ancora, come tutti gli altri nomi precedenti alla v2.
-   Il comando stampa ogni azione svolta e termina con un messaggio di successo, oppure con un codice di uscita diverso da zero se qualcosa lo ha bloccato — un remote git irraggiungibile, un controllo di preflight fallito, o un altro sync già in corso.
+   Il comando stampa ogni azione svolta e termina con un messaggio di successo, oppure con un codice di uscita diverso da zero se qualcosa lo ha bloccato: un remote git irraggiungibile, un controllo di preflight fallito, o un altro sync già in corso.
    I comandi vengono installati in `~/.local/bin`: verifica che quella cartella sia nel tuo `PATH` così `nexgen` e i nomi storici si risolvono direttamente invece che tramite `python3 ...`.
 5. Modifica qualcosa fuori dal vault, per esempio una voce MCP o un file di configurazione, poi esegui di nuovo `nexgen doctor` (o il vecchio `agent-doctor`).
    Vedrai il controllo delle differenze in azione.
@@ -282,7 +281,7 @@ I controlli a runtime spettano all'harness della CLI, con i suoi permessi e le r
 - **Memoria versionata in Git.** Gli agenti leggono e scrivono file Markdown.
   Ogni modifica entra nella storia del repository, si può controllare con un diff e si può annullare.
   Le scritture sono compare-and-swap: a nota intera oppure per singola sezione (`update_section`), così due agenti che modificano sezioni diverse della stessa nota atterrano entrambi invece di scontrarsi.
-- **Igiene dei collegamenti come disciplina.** Una mappa strutturale deterministica del vault (`nexgen vault map`, nome storico `vault-map`: wikilink rotti con suggerimento di ricollocazione, note orfane, hub) è cablata nei flussi invece che lasciata come controllo periodico: ogni scrittura di memoria restituisce l'elenco advisory dei wikilink irrisolti appena introdotti (mai bloccante — il link "in avanti" deliberato è legittimo), il grooming tratta orfani e link rotti come candidati di pulizia di prima classe, `nexgen doctor` tiene un paracadute warn-only e il tool read-only `map_overview` dà agli agenti una bussola a budget di token prima dei task larghi.
+- **Igiene dei collegamenti come disciplina.** Una mappa strutturale deterministica del vault (`nexgen vault map`, nome storico `vault-map`: wikilink rotti con suggerimento di ricollocazione, note orfane, hub) è cablata nei flussi invece che lasciata come controllo periodico: ogni scrittura di memoria restituisce l'elenco advisory dei wikilink irrisolti appena introdotti (mai bloccante: il link "in avanti" deliberato è legittimo), il grooming tratta orfani e link rotti come candidati di pulizia di prima classe, `nexgen doctor` tiene un paracadute warn-only e il tool read-only `map_overview` dà agli agenti una bussola a budget di token prima dei task larghi.
 - **Comandi cross-CLI come skill.** Dichiari una skill una volta e diventa un comando invocabile su ogni runtime supportato (`/nome`, `$nome` su Codex).
   Sette comandi starter vengono installati al primo giro di provisioning: `nexgen-doctor`, `vault-close`, `vault-save`, `nexgen-council`, `vault-groom`, `nexgen-update` e `vault-map`. I nomi precedenti (`vault-doctor`, `vault-council`, `vault-update`) restano attivi come alias deprecati.
   Il profilo MULTI installa anche `nexgen-update` come vero comando da terminale, con launcher Linux e Windows sostenuti dallo stesso updater.
@@ -306,7 +305,7 @@ I controlli a runtime spettano all'harness della CLI, con i suoi permessi e le r
   Al momento dell'invocazione, il Council controlla il valore `modelUsage` restituito da Claude e si ferma se la CLI ha usato un modello diverso.
   Ogni invocazione richiede comunque una scelta umana esplicita.
   I dettagli sono in [`docs/council.md`](docs/council.md).
-- **Controllo delle differenze.** Nel profilo MULTI, `nexgen doctor` (nome storico `agent-doctor`) esegue una batteria di verifiche in sola lettura sulla configurazione delle CLI, sul collegamento al vault, sulle skill e sulla gestione dei segreti — allineamento Git, configurazioni MCP generate e loro raggiungibilità, manifest delle skill e libreria materializzata, confini della memoria nativa, igiene dei puntatori alle istruzioni canoniche.
+- **Controllo delle differenze.** Nel profilo MULTI, `nexgen doctor` (nome storico `agent-doctor`) esegue una batteria di verifiche in sola lettura sulla configurazione delle CLI, sul collegamento al vault, sulle skill e sulla gestione dei segreti: allineamento Git, configurazioni MCP generate e loro raggiungibilità, manifest delle skill e libreria materializzata, confini della memoria nativa, igiene dei puntatori alle istruzioni canoniche.
   Per ogni voce mostra `pass`, `warn` o `fail` e restituisce un exit code diverso da zero se trova errori.
   Rileva configurazioni fuori posto, ma non blocca l'esecuzione degli agenti.
   Nel profilo MINIMAL non c'è un doctor, perché una sola CLI su una sola macchina si controlla direttamente.
@@ -359,7 +358,7 @@ Il progetto si concentra sulla configurazione, sulla memoria versionata e sui co
 
 Se ti serve soprattutto distribuire un set di regole e config MCP a molti strumenti, [ruler](https://github.com/intellectronica/ruler) e [rulesync](https://github.com/dyoshikawa/rulesync) sono più maturi e generano per una trentina di target, incluse le quattro CLI che NeXgen supporta. Parti da lì se ti basta il fan-out della configurazione. Se vuoi una memoria Markdown che un agente legge e scrive, la convenzione [Memory Bank di Cline](https://github.com/cline/cline) e [basic-memory](https://github.com/basicmachines-co/basic-memory) hanno reso popolare l'idea e sono più avanti.
 
-NeXgen Engine sta dove queste due idee si incontrano, e aggiunge una cosa sul lato memoria. Genera la config MCP per ogni CLI *e* tiene la memoria di lavoro come Markdown puro in Git, dove ogni scrittura è un compare-and-swap: il server di memoria rifiuta un replace se l'hash SHA-256 di chi scrive non combacia col contenuto attuale — a nota intera o per singola sezione, così modifiche concorrenti a parti diverse della stessa nota atterrano entrambe — e ogni scrittura accettata diventa un suo commit Git, che segnala anche gli eventuali wikilink morti appena introdotti. Quel vault, la config per-strumento e un unico AGENTS.md vengono portati tra le macchine da un sync che fallisce chiuso, con un doctor che segnala il drift tra la sorgente canonica e i file generati, e una mappa deterministica di igiene dei collegamenti sopra la memoria stessa.
+NeXgen Engine sta dove queste due idee si incontrano, e aggiunge una cosa sul lato memoria. Genera la config MCP per ogni CLI *e* tiene la memoria di lavoro come Markdown puro in Git, dove ogni scrittura è un compare-and-swap: il server di memoria rifiuta un replace se l'hash SHA-256 di chi scrive non combacia col contenuto attuale (a nota intera o per singola sezione, così modifiche concorrenti a parti diverse della stessa nota atterrano entrambe), e ogni scrittura accettata diventa un suo commit Git, che segnala anche gli eventuali wikilink morti appena introdotti. Quel vault, la config per-strumento e un unico AGENTS.md vengono portati tra le macchine da un sync che fallisce chiuso, con un doctor che segnala il drift tra la sorgente canonica e i file generati, e una mappa deterministica di igiene dei collegamenti sopra la memoria stessa.
 
 È un progetto solo-maintainer con licenza noncommerciale, Linux stabile e Windows in beta. Non pretende di essere il primo su nessuno di questi pezzi: il motivo per guardarlo è la combinazione specifica, e la disciplina di scrittura sulla memoria.
 
@@ -377,7 +376,7 @@ NeXgen Engine sta dove queste due idee si incontrano, e aggiunge una cosa sul la
 
 1. **Local-Only.** Tutto gira sulla tua macchina, senza servizi dei connettori, usando i tool nativi delle CLI e, se vuoi, modelli locali.
    È la modalità adatta per i test e per un setup personale.
-2. **Local-Full.** Gli stessi connettori girano in Docker su questa macchina — `nexgen stack up` li avvia e collega le CLI a `127.0.0.1`. Nessuna VPS, nessun tunnel SSH.
+2. **Local-Full.** Gli stessi connettori girano in Docker su questa macchina: `nexgen stack up` li avvia e collega le CLI a `127.0.0.1`. Nessuna VPS, nessun tunnel SSH.
 3. **Cloud-Server.** Il vault si collega a uno stack remoto, per esempio n8n per l'orchestrazione, Firecrawl per lo scraping e un servizio OCR dedicato.
    Lo stack gira in un ambiente privato che installi e amministri tu, una VPS, e viene raggiunto tramite tunnel SSH.
    NeXgen non fornisce né ospita questi servizi, quindi i dati restano sotto il tuo controllo.
@@ -444,23 +443,23 @@ La tabella qui sopra, nella sezione inglese, è generata da
 `nexgen_core/platforms.py` e un test fallisce se le due divergono: dice cosa
 è stato eseguito davvero, non cosa si spera.
 
-In sintesi: **Linux rilasciato** — è la piattaforma di sviluppo e d'uso
-quotidiano, e il ciclo completo gira qui e in CI. **Windows beta** —
+In sintesi: **Linux rilasciato**: è la piattaforma di sviluppo e d'uso
+quotidiano, e il ciclo completo gira qui e in CI. **Windows beta**:
 verificato su hardware vero e in CI, ma senza un'installazione a freddo
 senza assistenza, quindi MINIMAL resta il punto di partenza prudente.
-**macOS non provato** — condivide i percorsi POSIX con Linux e dovrebbe
+**macOS non provato**: condivide i percorsi POSIX con Linux e dovrebbe
 funzionare, ma nessuno l'ha eseguito end to end.
 
 **Limiti noti.** Il supporto multipiattaforma e gli orchestratori principali non sono ancora considerati definitivi.
 - **Windows, verificato fisicamente, manca ancora un'installazione a freddo.** È stato verificato su hardware Windows reale e in CI, ma un'installazione senza assistenza del manutentore non è stata ancora testata, quindi per ora MINIMAL resta il punto di partenza più prudente su Windows. Cosa è stato verificato, e cosa manca ancora, è scritto nella voce `0.5.1` del `CHANGELOG.md`.
-- **Consiglio AI.** `agy` (Antigravity) è escluso come seat passivo del Council perché nei test ignora le istruzioni ricevute, anche se usarlo in modo interattivo per richiamare il Council funziona normalmente. Vedi la sezione "Current limitations" di `docs/council.md` per i dettagli.
+- **Consiglio AI.** `agy` (Antigravity) è operativo come seat passivo del Council dal 2026-08-22, con invocazione stateless verificata live (vedi `docs/council.md`). Resta un limite noto: la risposta sul tier gratuito arriva in minuti, coperta dal timeout di 300s del seggio.
 
 ### Confine di orchestrazione di Antigravity
 
-Antigravity può orchestrare il lavoro, ma questo non significa che possa essere un seat passivo del Council.
+Antigravity può orchestrare il lavoro. Dal 2026-08-22 può anche fare da seat passivo del Council.
 La versione 1.1.8 ha aggiunto l'output strutturato `json` e `stream-json`, rendendo `agy` più facile da pilotare tramite script.
 Il [changelog ufficiale](https://github.com/google-antigravity/antigravity-cli/blob/main/CHANGELOG.md) dichiara anche che la versione 1.1.9 attende l'avvio dei server MCP nei run headless, affinché il turno veda l'intero set di tool.
-Questo comportamento è incompatibile con il contratto del seat passivo del Council, che richiede un prompt esatto, un modello scelto, nessun tool ereditato e nessun contesto personale persistente.
+Il comportamento conta solo se il run eredita i server MCP; l'invocazione del Council disattiva gli slash command e il contesto di progetto, quindi il seggio riceve un prompt, un modello scelto e nient'altro.
 
 Le integrazioni pubbliche confermano la differenza.
 
@@ -472,9 +471,7 @@ Le integrazioni pubbliche confermano la differenza.
 - [antigravity-acp](https://github.com/shubzkothekar/antigravity-acp) espone AGY tramite ACP e rilegge i database persistenti delle conversazioni.
   Il progetto avverte inoltre che il controllo di una sessione Antigravity OAuth tramite software terzo può violare i termini di Google.
 
-Per questo NeXgen consente ad Antigravity di essere il chiamante attivo che convoca il Council, ma mantiene `agy` non invocabile come seat passivo.
-Gli aggiornamenti del protocollo MCP non cambiano la decisione, perché non rimuovono i tool o lo stato persistente di AGY.
-Una futura riattivazione richiede isolamento imposto dal sistema operativo, credenziali separate, rete limitata, binario fissato e verifiche avversarie equivalenti su Linux e Windows.
+Nel Council, l'invocazione del seggio non eredita né tool né stato persistente: `--disable-slash-commands` e `--new-project` fermano l'espansione delle skill di workspace e la cronologia locale, l'ambiente del processo resta l'allowlist senza credenziali, e un timeout di 300s con kill forzato dell'albero copre le risposte lente del tier gratuito.
 
 ## Licenza
 

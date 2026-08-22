@@ -39,8 +39,8 @@ OPERATING_SYSTEMS: tuple[Support, ...] = (
     Support(
         "Linux",
         "released",
-        "the platform this is developed and used on daily; the full cycle — install, "
-        "alignment, doctor, grooming, council, update — runs here and in CI",
+        "the platform this is developed and used on daily; the full cycle (install, "
+        "alignment, doctor, grooming, council, update) runs here and in CI",
     ),
     Support(
         "Windows",
@@ -64,9 +64,11 @@ RUNTIMES: tuple[Support, ...] = (
     Support("OpenCode", "complete", "instructions, MCP connectors, skills"),
     Support(
         "Antigravity",
-        "complete for configuration, not as a council seat",
-        "configured like the others; excluded as a passive council seat because in "
-        "testing it ignored the instructions it was given",
+        "complete",
+        "instructions, MCP connectors, skills, and a Council seat; the seat was "
+        "unblocked on 2026-08-22 with a stateless invocation (agy --model ... "
+        "--disable-slash-commands --new-project --sandbox -p <prompt>) verified live "
+        "with a nonce prompt",
     ),
 )
 
