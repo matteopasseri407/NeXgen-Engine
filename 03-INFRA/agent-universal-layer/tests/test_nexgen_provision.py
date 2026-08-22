@@ -175,3 +175,13 @@ servers:
     problems = report_unsatisfied_deps(vault, tmp_path / "state")
     assert any("b:" in p and "not provisioned" in p for p in problems)
     assert not any(p.startswith("a:") for p in problems)
+
+
+def test_run_build_handles_quoted_arguments(tmp_path: Path):
+    from nexgen_core.provision import _run_build
+    out_file = tmp_path / "out.txt"
+    # Using python executable to write with an argument containing spaces
+    cmd = f'"{sys.executable}" -c "import sys, pathlib; pathlib.Path(sys.argv[1]).write_text(sys.argv[2])" "{out_file}" "hello world with spaces"'
+    _run_build([cmd], tmp_path, "test-server")
+    assert out_file.read_text(encoding="utf-8") == "hello world with spaces"
+

@@ -20,11 +20,11 @@ if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
 from nexgen_core import __version__
-from nexgen_core.cli import engine, skill_cmds, stack_cmds, tool_cmds, vault_cmds
+from nexgen_core.cli import engine, module_cmds, skill_cmds, stack_cmds, tool_cmds, vault_cmds
 from nexgen_core.i18n import set_language, t
 
 #: The verb groups, in the order they appear in the help text.
-GROUPS = (engine, vault_cmds, skill_cmds, stack_cmds, tool_cmds)
+GROUPS = (engine, vault_cmds, skill_cmds, stack_cmds, module_cmds, tool_cmds)
 
 
 def build_parser() -> argparse.ArgumentParser:

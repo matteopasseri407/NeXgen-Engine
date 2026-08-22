@@ -167,3 +167,30 @@ def test_checking_writes_nothing_at_all(tmp_path: Path):
     )
     written = [str(p.relative_to(home)) for p in home.rglob("*")]
     assert not written, f"--check ha scritto: {written}"
+
+
+def test_heal_chrome_powershell_escaping(monkeypatch, tmp_path: Path):
+    from nexgen_core.tools import chrome
+
+    captured_cmds = []
+
+    def mock_run(cmd, **kwargs):
+        captured_cmds.append(cmd)
+        return subprocess.CompletedProcess(cmd, 0, "", "")
+
+    monkeypatch.setattr(chrome, "is_cdp_up", lambda: False)
+    monkeypatch.setattr(chrome, "singleton_owner_pid", lambda p: 1234)
+    monkeypatch.setattr(chrome, "launch_chrome", lambda extra: 0)
+    monkeypatch.setattr(chrome.subprocess, "run", mock_run)
+    monkeypatch.setattr(chrome.sys, "platform", "win32")
+
+    # Set profile with single quotes
+    mock_profile = tmp_path / "Mario's Profile"
+    monkeypatch.setattr(chrome, "get_profile_dir", lambda: mock_profile)
+
+    exit_code = chrome.heal_chrome()
+    assert exit_code == 0
+    assert len(captured_cmds) == 1
+    cmd_str = captured_cmds[0][3]  # The -Command argument
+    assert "Mario''s Profile" in cmd_str
+

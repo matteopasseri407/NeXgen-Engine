@@ -8,6 +8,15 @@ This file tracks the **engine** (this repo). Your own data — manifests,
 instructions, skills, secrets — lives in your KnowledgeVault and is not part
 of any engine release.
 
+## [2.0.0] - 2026-08-22
+
+### Security & Robustness
+
+- **Escaped profile paths in `agent-chrome --heal` on Windows**: Sanitized single quotes when constructing PowerShell commands in `heal_chrome` (`nexgen_core/tools/chrome.py`) to prevent command injection or syntax errors when paths or user environments contain apostrophes or spaces.
+- **Race-free 0600 file permissions on generated secrets**: Files holding operational secrets and environment variables (`.env`, `90-nexgen-stack.conf`) in `nexgen_core/stack/secrets.py` are now created directly with `0o600` permissions (`_write_restricted_text`), eliminating the race window where they were briefly world-readable under default umasks.
+- **Cross-platform and user-scoped lock in `vault-mcp`**: The `vault-library` write lock now uses a user-scoped lock path in the system temporary directory with dual POSIX (`fcntl`) and Windows (`msvcrt`) locking support, preventing multi-user permission collisions and Windows import errors.
+- **Safe argument splitting for manifest build commands**: Replaced naive whitespace splitting with `shlex.split` in `_run_build` (`nexgen_core/provision.py`) to correctly parse quoted arguments with spaces.
+
 ## [0.99.1] - 2026-08-17
 
 ### Fixed

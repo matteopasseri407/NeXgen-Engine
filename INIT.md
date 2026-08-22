@@ -34,6 +34,18 @@ Determina il profilo dalle risposte:
 
 In MINIMAL non saranno installati `nexgen sync`/`nexgen doctor` (nomi storici `agent-sync`, `agent-doctor`), né il timer di sync: sono no-op perché c'è una sola fonte di verità su una sola CLI. (Non esiste un comando `agent-healthcheck`: l'healthcheck è un passo interno di `nexgen sync`, quindi non è installato separatamente in nessun profilo.) La maggior parte delle regole "single source / cross-platform" del bootstrap resta valida come principio ma è pratica no-op.
 
+### Step 1.4b: I moduli, con scelte multiple deterministiche
+
+L'engine è un insieme di **moduli** (memory, semantic-rag, firecrawl, ocr, n8n, browser, council, sync), ognuno con tre stati possibili: `absent` (rimosso), `local` (self-hostato su questa macchina), `remote` (su una VPS di proprietà, raggiunto via tunnel). L'intervista la fai tu, ma le risposte non sono libere: sono scelte multiple sugli stati che il catalogo dichiara per quel modulo, e le scrivi con comandi deterministici.
+
+Procedura:
+1. Esegui `nexgen modules list` e mostra la tabella: cosa esiste e qual è lo stato dichiarato.
+2. Per ogni modulo NON core con più di uno stato possibile, chiedi all'utente una scelta multipla tra SOLO gli stati che il catalogo permette (es. browser: `absent` o `local`, MAI `remote`). Predefiniti consigliati per chi non ha preferenze: `absent` per tutto ciò che non serve, `local` per ciò che gira sulla macchina, `remote` per i servizi sul VPS in Cloud-Server.
+3. Scrivi ogni risposta con `nexgen modules set <modulo> <stato>`. Il comando rifiuta uno stato non supportato: se fallisce, non inventare alternative, riproponi le opzioni del catalogo.
+4. Rilancia `nexgen modules list` e mostra il risultato finale.
+
+Non modificare mai `modules.state.yaml` a mano: l'agent la scrive solo tramite `nexgen modules set`, così il file resta sempre valido rispetto al catalogo (il doctor lo verifica).
+
 ### Step 1.5: Presa in carico di un setup esistente
 
 Molti utenti non partono da un PC vergine: arrivano con delle CLI già usate e piene di roba propria, cioè server MCP, skill e vecchie config accumulate nel tempo. Prima di configurare, prendi in carico quello che c'è già.

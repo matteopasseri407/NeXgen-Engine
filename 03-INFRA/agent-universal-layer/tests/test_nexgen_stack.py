@@ -40,6 +40,15 @@ def test_secrets_file_is_not_world_readable(tmp_path: Path):
     assert not mode & stat.S_IROTH
 
 
+def test_workstation_env_is_not_world_readable(tmp_path: Path):
+    conf = tmp_path / "workstation.conf"
+    secrets.write_workstation_env(conf, {"KEY": "VAL"})
+    mode = conf.stat().st_mode
+    assert not mode & stat.S_IRGRP
+    assert not mode & stat.S_IROTH
+
+
+
 def test_generated_names_never_carry_their_values(tmp_path: Path):
     env = tmp_path / ".env"
     generated = secrets.ensure(env, ["UN_SEGRETO"])

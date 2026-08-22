@@ -1,0 +1,99 @@
+# ============================================================================
+# CANONICAL MODULE CATALOG · NeXgen Engine
+# ----------------------------------------------------------------------------
+# The engine is a set of MODULES: named, installable units that can run on
+# this machine (local), on a VPS you own (remote), or not at all (absent).
+# This file is the catalog: what exists, what it needs, what it depends on.
+# It ships with the engine and carries no user state — the per-machine
+# choice (which modules, where) is data, declared in
+#   $AGENT_VAULT_DATA/03-INFRA/agent-universal-layer/modules.state.yaml
+# (see modules.state.example). Nothing here activates itself: a module is
+# absent unless the machine declares it and its env gates are satisfied.
+#
+# FIELDS
+#   id:          unique slug, the name used everywhere (CLI, state file).
+#   label:       human name.
+#   kind:        core (always part of the engine) | connector (MCP server +
+#                optional backend) | service (backend only) | feature.
+#   states:      which of absent/local/remote the module supports.
+#   env_gates:   env var names that must be set for the module to be active
+#                (mirror the require_env of its MCP servers).
+#   mcp_servers: manifest server names this module mounts, if any.
+#   stack:       docker stack service name (Local-Full), if any.
+#   depends_on:  module ids required for this module to be usable.
+# ============================================================================
+
+schema_version: 1
+
+modules:
+  memory:
+    label: "Memory: vault, rules and the vault-library MCP"
+    kind: core
+    states: [local, remote]
+    env_gates: [VAULT_LIBRARY_URL, VAULT_LIBRARY_TOKEN]
+    mcp_servers: [vault-library]
+    stack: vault-library
+    depends_on: []
+
+  semantic-rag:
+    label: "Semantic search backend (bring your own, reference recipe included)"
+    kind: service
+    states: [absent, local, remote]
+    env_gates: []
+    mcp_servers: []
+    stack: null
+    depends_on: [memory]
+
+  firecrawl:
+    label: "Web scraping (Firecrawl)"
+    kind: connector
+    states: [absent, local, remote]
+    env_gates: [FIRECRAWL_TUNNEL_PORT]
+    mcp_servers: [firecrawl]
+    stack: firecrawl
+    depends_on: []
+
+  ocr:
+    label: "Local OCR (vault-ocr)"
+    kind: connector
+    states: [absent, local, remote]
+    env_gates: [OCR_TUNNEL_PORT]
+    mcp_servers: [vault-ocr]
+    stack: vault-ocr
+    depends_on: []
+
+  n8n:
+    label: "Automations (n8n workflows and the n8n MCP)"
+    kind: service
+    states: [absent, local, remote]
+    env_gates: [N8N_MCP_TOKEN, N8N_TUNNEL_PORT]
+    mcp_servers: [n8n-mcp]
+    stack: n8n
+    depends_on: []
+
+  browser:
+    label: "Visible browser (Playwright MCP + shared Chrome)"
+    kind: connector
+    states: [absent, local]
+    env_gates: []
+    mcp_servers: [playwright]
+    stack: null
+    depends_on: []
+
+  council:
+    label: "AI Council (multi-model review, seats-driven)"
+    kind: feature
+    states: [absent, local]
+    env_gates: []
+    mcp_servers: []
+    stack: null
+    depends_on: [memory]
+
+  sync:
+    label: "Cross-machine sync (MULTI profile)"
+    kind: feature
+    states: [absent, local]
+    env_gates: []
+    mcp_servers: []
+    stack: null
+    depends_on: [memory]
