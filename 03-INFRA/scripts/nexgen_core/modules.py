@@ -184,12 +184,6 @@ def derive_state(
     return results
 
 
-def _env_gates_satisfied(module: ModuleDef, env: dict[str, str]) -> bool:
-    if not module.env_gates:
-        return True
-    return all(env.get(gate) for gate in module.env_gates)
-
-
 def modules_state(vault_data: Path | None = None, engine_root: Path | None = None) -> list[ModuleState]:
     """One-call inventory: catalog from the engine, state from the data root."""
     from nexgen_core.paths import resolve_engine_root

@@ -220,6 +220,18 @@ Determine the profile from the answers:
 
 In MINIMAL, `nexgen sync`/`nexgen doctor` (historical names `agent-sync`, `agent-doctor`), and the sync timer are not installed: they are no-ops because there is a single source of truth on a single CLI. (There is no `agent-healthcheck` command: the healthcheck is a step inside `nexgen sync`, so it is never installed separately, in any profile.) The "propagate to all" rule does not fire. Most "single source / cross-platform" rules in the bootstrap remain valid as a principle but are no-op in practice.
 
+### Step 1.4b: The modules, with deterministic multiple-choice
+
+The engine is a set of **modules** (memory, semantic-rag, firecrawl, ocr, n8n, browser, council, sync), each with three possible states: `absent` (off), `local` (self-hosted on this machine), `remote` (on a VPS you own, reached via tunnel). You conduct the interview, but the answers are not open-ended: they are multiple-choice selections among the states that the catalog declares for that module, and you write them with deterministic commands.
+
+Procedure:
+1. Run `nexgen modules list` and show the table: what exists and what is currently declared.
+2. For each non-core module with more than one possible state, ask the user a multiple-choice question limited ONLY to the states allowed by the catalog (e.g. browser: `absent` or `local`, NEVER `remote`). Recommended defaults for those with no preference: `absent` for anything not needed, `local` for things running on this machine, `remote` for VPS services in Cloud-Server.
+3. Write each response with `nexgen modules set <module> <state>`. The command rejects unsupported states: if it fails, do not invent alternatives, present the catalog options again.
+4. Rerun `nexgen modules list` and show the final result.
+
+Never edit `modules.state.yaml` by hand: the agent writes it only via `nexgen modules set`, ensuring the file remains valid with respect to the catalog (the doctor verifies it).
+
 ### Step 1.5: Take over an existing setup
 
 Most users do not start from a blank machine: they arrive with CLIs they already use, full of their own things, MCP servers, skills, and old configs piled up over time. Before you configure anything, take over what is already there.
