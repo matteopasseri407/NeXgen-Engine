@@ -667,9 +667,18 @@ def run_seat(
                     text_chunks.append(part["text"])
                 if event.get("type") == "step_finish":
                     # Sum across steps: a step_finish carries the step's own
-                    # tokens/cost, not the running total.
-                    part_tokens = part.get("tokens") or 0
-                    part_cost = part.get("cost") or 0.0
+                    # tokens/cost, not the running total. Tokens may arrive
+                    # as an int or as a breakdown dict ({input, output,
+                    # total}) depending on the provider: normalize before
+                    # summing (live bug found by the kimi seat, 2026-08-22).
+                    raw_tokens = part.get("tokens")
+                    if isinstance(raw_tokens, dict):
+                        raw_tokens = raw_tokens.get("total") or sum(v for v in raw_tokens.values() if isinstance(v, (int, float)))
+                    part_tokens = raw_tokens or 0
+                    raw_cost = part.get("cost")
+                    if isinstance(raw_cost, dict):
+                        raw_cost = raw_cost.get("total") or sum(v for v in raw_cost.values() if isinstance(v, (int, float)))
+                    part_cost = raw_cost or 0.0
                     usage = {
                         "tokens": (usage.get("tokens") or 0) + part_tokens,
                         "cost": (usage.get("cost") or 0.0) + part_cost,
