@@ -92,14 +92,30 @@ def _resolve_manifest() -> dict[str, Any]:
         return {}
 
 
+def _resolve_engine_root() -> str:
+    env_root = os.environ.get("AGENT_ENGINE_ROOT")
+    if env_root:
+        return env_root
+    here = Path(__file__).resolve().parents[2]
+    if (here / "agent-universal-layer").is_dir():
+        return str(here)
+    fallback = Path.home() / ".nexgen-engine" / "03-INFRA"
+    if fallback.is_dir():
+        return str(fallback)
+    return str(here)
+
+
 def _lazy_servers() -> dict[str, dict[str, Any]]:
     """Manifest servers with `lazy: true` (placeholders expanded, env gates applied)."""
     data = _resolve_manifest()
+    engine_root = _resolve_engine_root()
+    vault_data = os.environ.get("AGENT_VAULT_DATA") or os.environ.get("KNOWLEDGE_VAULT_PATH") or str(Path.home() / "KnowledgeVault")
     ctx = {
-        "AGENT_ENGINE_ROOT": os.environ.get("AGENT_ENGINE_ROOT", ""),
-        "AGENT_VAULT_DATA": os.environ.get("AGENT_VAULT_DATA", ""),
-        "KNOWLEDGE_VAULT_PATH": os.environ.get("KNOWLEDGE_VAULT_PATH", ""),
+        "AGENT_ENGINE_ROOT": engine_root,
+        "AGENT_VAULT_DATA": vault_data,
+        "KNOWLEDGE_VAULT_PATH": vault_data,
     }
+    is_win = sys.platform == "win32"
     out: dict[str, dict[str, Any]] = {}
     for name, srv in (data.get("servers") or {}).items():
         if not isinstance(srv, dict) or not srv.get("lazy"):
@@ -108,6 +124,10 @@ def _lazy_servers() -> dict[str, dict[str, Any]]:
         if req and not os.environ.get(req):
             continue
         entry = {k: v for k, v in srv.items()}
+        if is_win and "windows" in entry:
+            win_override = entry.pop("windows")
+            if isinstance(win_override, dict):
+                entry.update(win_override)
         entry.setdefault("readonly", False)
         entry.setdefault("readonly_tools", [])
         if entry.get("command"):
@@ -151,20 +171,35 @@ class _ServerHandle:
         env = dict(os.environ)
         if self.spec.get("env"):
             env.update(self.spec["env"])
-        self.proc = subprocess.Popen(
-            cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL, text=True, start_new_session=True, env=env,
-        )
+        is_win = sys.platform == "win32"
+        kwargs: dict[str, Any] = {
+            "stdin": subprocess.PIPE,
+            "stdout": subprocess.PIPE,
+            "stderr": subprocess.DEVNULL,
+            "text": True,
+            "env": env,
+        }
+        if not is_win:
+            kwargs["start_new_session"] = True
+        self.proc = subprocess.Popen(cmd, **kwargs)
 
     def _rpc_stdio(self, method: str, params: dict[str, Any], rid: int) -> dict[str, Any]:
-        self._start_stdio()
+        try:
+            self._start_stdio()
+        except Exception as exc:
+            return {"error": {"code": -32603, "message": f"failed to start {self.name}: {exc}"}}
         payload = json.dumps({"jsonrpc": "2.0", "id": rid, "method": method, "params": params}) + "\n"
         assert self.proc and self.proc.stdin
-        self.proc.stdin.write(payload)
-        self.proc.stdin.flush()
+        try:
+            self.proc.stdin.write(payload)
+            self.proc.stdin.flush()
+        except (BrokenPipeError, OSError) as exc:
+            return {"error": {"code": -32603, "message": f"{self.name} stdin error: {exc}"}}
         deadline = time.time() + 90
         buf = ""
         while time.time() < deadline:
+            if self.proc.poll() is not None:
+                return {"error": {"code": -32603, "message": f"{self.name} process exited with code {self.proc.poll()}"}}
             line = self.proc.stdout.readline() if self.proc.stdout else ""
             if not line:
                 time.sleep(0.05)
@@ -193,6 +228,8 @@ class _ServerHandle:
                 raw = resp.read().decode()
         except urllib.error.HTTPError as exc:
             return {"error": {"code": exc.code, "message": f"{self.name}: HTTP {exc.code}"}}
+        except (urllib.error.URLError, OSError, TimeoutError) as exc:
+            return {"error": {"code": -32603, "message": f"{self.name} connection error: {exc}"}}
         for line in raw.splitlines():
             if line.startswith("data:"):
                 raw = line[5:].strip()
@@ -226,9 +263,15 @@ class _ServerHandle:
     def stop(self) -> None:
         if self.proc and self.proc.poll() is None:
             try:
-                os.killpg(self.proc.pid, signal.SIGKILL)
-            except (OSError, ProcessLookupError):
-                pass
+                if sys.platform == "win32":
+                    self.proc.terminate()
+                else:
+                    os.killpg(self.proc.pid, signal.SIGKILL)
+            except (OSError, ProcessLookupError, AttributeError):
+                try:
+                    self.proc.kill()
+                except (OSError, ProcessLookupError):
+                    pass
 
 
 class Waiter:

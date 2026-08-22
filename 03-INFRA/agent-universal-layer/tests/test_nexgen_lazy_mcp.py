@@ -162,3 +162,86 @@ def test_index_lists_servers_and_tools(tmp_path: Path):
         assert "inputSchema" in r["result"]["content"][0]["text"]
     finally:
         proc.kill()
+
+
+def test_engine_root_placeholder_expansion(tmp_path: Path):
+    """Test that ${AGENT_ENGINE_ROOT} is resolved automatically without env var."""
+    audit = tmp_path / "audit.jsonl"
+    manifest = """
+schema_version: 1
+retired_servers: []
+servers:
+  root_test:
+    lazy: true
+    readonly: true
+    command: python3
+    args: ["${AGENT_ENGINE_ROOT}/deploy/ocr/mcp/vault_ocr_mcp.py"]
+    targets: [antigravity, codex]
+"""
+    vault = tmp_path / "vault"
+    _write_manifest(vault, manifest)
+    env = dict(os.environ, AGENT_VAULT_DATA=str(vault), LAZY_MCP_LOG=str(audit))
+    env.pop("AGENT_ENGINE_ROOT", None)
+    proc = subprocess.Popen(
+        ["python3", str(LAZY_MCP)], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL, text=True, env=env,
+    )
+    try:
+        r = _rpc(proc, "tools/call", {"name": "lazy_list", "arguments": {}}, rid=2)
+        idx = json.loads(r["result"]["content"][0]["text"])
+        assert "root_test" in idx["servers"]
+        tools = idx["servers"]["root_test"]["tools"]
+        names = [t["name"] for t in tools]
+        assert "ocr_extract_image" in names
+    finally:
+        proc.kill()
+
+
+def test_fast_failure_on_crashing_server(tmp_path: Path):
+    """A crashing child server must fail immediately rather than hanging for 90s."""
+    audit = tmp_path / "audit.jsonl"
+    manifest = """
+schema_version: 1
+retired_servers: []
+servers:
+  broken:
+    lazy: true
+    readonly: true
+    command: python3
+    args: ["-c", "import sys; sys.exit(42)"]
+    targets: [antigravity]
+"""
+    t0 = time.time()
+    proc = _start_fake(manifest, tmp_path, audit)
+    try:
+        r = _rpc(proc, "tools/call", {"name": "lazy_call", "arguments": {"server": "broken", "tool": "any"}}, rid=2)
+        elapsed = time.time() - t0
+        assert elapsed < 5.0, f"Call took too long ({elapsed}s), likely hung in loop"
+        assert r.get("result", {}).get("isError") is True
+    finally:
+        proc.kill()
+
+
+def test_unreachable_http_endpoint(tmp_path: Path):
+    """An unreachable HTTP server must return an error without crashing the proxy."""
+    audit = tmp_path / "audit.jsonl"
+    manifest = """
+schema_version: 1
+retired_servers: []
+servers:
+  offline_http:
+    lazy: true
+    readonly: true
+    transport: http
+    url: "http://127.0.0.1:59999/mcp"
+    targets: [antigravity]
+"""
+    proc = _start_fake(manifest, tmp_path, audit)
+    try:
+        r = _rpc(proc, "tools/call", {"name": "lazy_list", "arguments": {}}, rid=2)
+        idx = json.loads(r["result"]["content"][0]["text"])
+        assert "offline_http" in idx["servers"]
+        assert idx["servers"]["offline_http"]["tools"] == []
+    finally:
+        proc.kill()
+
