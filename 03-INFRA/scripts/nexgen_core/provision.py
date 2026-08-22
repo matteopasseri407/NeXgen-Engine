@@ -26,6 +26,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import shlex
 import shutil
 import subprocess
 import sys
@@ -155,7 +156,7 @@ def _verified(deps: dict[str, Any], state_dir: Path) -> dict[str, str] | None:
 
 def _run_build(build: list[Any], workspace: Path, server: str) -> None:
     for step in build:
-        argv = list(step) if isinstance(step, list) else str(step).split()
+        argv = list(step) if isinstance(step, list) else shlex.split(str(step), posix=sys.platform != "win32")
         if not argv:
             continue
         if not shutil.which(argv[0]):

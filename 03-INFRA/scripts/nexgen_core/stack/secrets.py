@@ -44,6 +44,19 @@ def _restrict(path: Path) -> None:
         pass
 
 
+def _write_restricted_text(path: Path, content: str) -> None:
+    """Writes text to a file with 0600 permissions directly, avoiding world-readable race windows."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC
+    try:
+        fd = os.open(str(path), flags, stat.S_IRUSR | stat.S_IWUSR)
+        with open(fd, "w", encoding="utf-8") as handle:
+            handle.write(content)
+    except OSError:
+        path.write_text(content, encoding="utf-8")
+    _restrict(path)
+
+
 def ensure(path: Path, names: list[str]) -> list[str]:
     """Ensures every name has a value in the file, generating it if missing.
 
@@ -69,8 +82,7 @@ def ensure(path: Path, names: list[str]) -> list[str]:
             lines.append(f"{name}={value}")
         generated.append(name)
 
-    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
-    _restrict(path)
+    _write_restricted_text(path, "\n".join(lines) + "\n")
     return generated
 
 
@@ -103,8 +115,7 @@ def write_workstation_env(path: Path, values: dict[str, str]) -> None:
         "",
     ]
     body += [f"{key}={value}" for key, value in sorted(values.items())]
-    path.write_text("\n".join(body) + "\n", encoding="utf-8")
-    _restrict(path)
+    _write_restricted_text(path, "\n".join(body) + "\n")
 
 
 def workstation_env_path(home: Path | None = None) -> Path:

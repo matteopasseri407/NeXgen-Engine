@@ -93,3 +93,23 @@ def test_transcripts_are_not_treated_as_memory(tmp_path: Path):
         (path / "sessione.jsonl").write_text("{}", encoding="utf-8")
 
     assert check_native_memory_boundary(tmp_path).severity is Severity.OK
+
+
+def test_status_uninitialized_is_valid(tmp_path: Path):
+    _write_self(tmp_path, "---\nstatus: uninitialized\n---\n\nNessuna scelta ancora.\n")
+    assert check_agent_self_metadata(tmp_path).severity is Severity.OK
+
+
+def test_status_invalid_is_a_shape_defect_not_blocking(tmp_path: Path):
+    _write_self(tmp_path, "---\nstatus: attivato-ora\n---\n\nCorpo.\n")
+    outcome = check_agent_self_metadata(tmp_path)
+    assert outcome.severity is Severity.WARN
+    assert "uninitialized / active" in (outcome.action or "")
+
+
+def test_example_template_is_well_formed(tmp_path: Path):
+    example = Path(__file__).resolve().parents[2] / "agent-universal-layer" / "templates" / "agent-self.md.example"
+    assert example.is_file(), "il template sanificato deve essere spedito dal motore"
+    _write_self(tmp_path, example.read_text(encoding="utf-8"))
+    assert check_agent_self(tmp_path).severity is Severity.OK
+    assert check_agent_self_metadata(tmp_path).severity is Severity.OK

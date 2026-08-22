@@ -35,6 +35,10 @@ NATIVE_MEMORY_STORES: dict[str, tuple[str, ...]] = {
 #: The minimum frontmatter that makes the personal space readable.
 REQUIRED_FRONTMATTER = ("status",)
 
+#: Valid lifecycle states. Anything else is a shape defect: reported, not
+#: blocking, exactly like a missing key.
+VALID_STATUSES = ("uninitialized", "active")
+
 _FRONTMATTER_RE = re.compile(r"\A---\s*\n(.*?)\n---\s*\n", re.DOTALL)
 
 
@@ -114,6 +118,18 @@ def check_agent_self_metadata(vault_data: Path) -> CheckOutcome:
             severity=Severity.BROKEN,
             message=t("The personal space is missing {fields} in its metadata.", fields=", ".join(missing)),
             action=t("Add '{field}:' to the header of {filename}", field=missing[0], filename=self_file.name),
+            detail="Shape defect: it does not stop anything from working.",
+        )
+    status_match = re.search(r"^\s*status\s*:\s*(\S+)", body, re.MULTILINE)
+    if status_match and status_match.group(1).strip().lower() not in VALID_STATUSES:
+        return CheckOutcome(
+            id="identity.self_metadata",
+            severity=Severity.WARN,
+            message=t(
+                "The personal space declares status '{status}', which is not one of {valid}.",
+                status=status_match.group(1), valid=", ".join(VALID_STATUSES),
+            ),
+            action=t("Use '{valid}' in the header of {filename}", valid=" / ".join(VALID_STATUSES), filename=self_file.name),
             detail="Shape defect: it does not stop anything from working.",
         )
     return CheckOutcome(

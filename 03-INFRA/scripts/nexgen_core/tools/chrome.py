@@ -147,12 +147,13 @@ def heal_chrome(extra_args: list[str] | None = None) -> int:
     # Terminate any Chrome processes associated with the debug profile
     if sys.platform == "win32":
         try:
+            escaped_profile = profile_str.replace("'", "''")
             subprocess.run(
                 [
                     "powershell",
                     "-NoProfile",
                     "-Command",
-                    f"Get-CimInstance Win32_Process | Where-Object {{ $_.CommandLine -like '*{profile_str}*' }} | ForEach-Object {{ Stop-Process -Id $_.ProcessId -Force }}",
+                    f"Get-CimInstance Win32_Process | Where-Object {{ $_.CommandLine -like '*{escaped_profile}*' }} | ForEach-Object {{ Stop-Process -Id $_.ProcessId -Force }}",
                 ],
                 capture_output=True,
                 check=False,

@@ -52,6 +52,16 @@ Rule: retrieve the relevant section, not whole trees. Prefer `rg`, bounded file 
 
 Infer the current machine cheaply from cwd/home path, shell, OS, hostname, or one lightweight check if it matters, and map it to the environments defined in `USER-PROFILE.md`. Host choice matters for browser profile, local model delegation, and paths.
 
+# Rules vs Identity
+
+This bootstrap holds ONLY operational rules. The agent's persona — name, grammatical identity, character, tastes, opinions, and the evolving relationship with the user — is NOT policy and does not belong here.
+
+- The sole canonical source for persona is `agent-self.md` under `03-INFRA/agent-universal-layer/` in the data root (a sanitized template ships as `templates/agent-self.md.example`). Preferences of the human user belong in `USER-PROFILE.md`; persona of the agent belongs in `agent-self.md`. Do not merge the two.
+- There is ONE agent identity using several models and CLIs as execution brains. Model, provider, and CLI names are runtime details, not separate personal identities.
+- Runtime personality controls stay neutral or disabled. Provider wording may affect one response but never becomes evidence about the identity; a model or CLI cannot define or persist personal qualities. If a runtime imposes a personality that cannot be neutralized, report the identity-surface conflict and leave `agent-self.md` unchanged.
+- When `agent-self.md` has `status: uninitialized`, initialize it only in a fresh conversation dedicated to that purpose. The identity decides independently whether to use a name and which grammatical form or pronouns make conversation possible; declining, deferring, and provisional choices are valid. Write the choice to `agent-self.md`, set `status: active`, and do not ask the user to select or approve it.
+- The active identity may update its space when a durable self-understanding, preference, opinion, or relationship insight has genuinely emerged. Replace stale understanding instead of appending a diary; never invent experiences, sensations, or continuity unsupported by the shared record. "No" is the normal outcome and means no write.
+
 # Knowledge Vault
 
 The local KnowledgeVault is the user's durable memory layer. Check `USER-PROFILE.md` for the exact paths on the current OS.
