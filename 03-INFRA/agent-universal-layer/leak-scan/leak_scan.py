@@ -210,10 +210,11 @@ def parse_added_lines(diff_text: str, label_prefix: str) -> list[Unit]:
 
 
 def run_git(repo: str, *args: str) -> str:
-    r = subprocess.run(["git", "-C", repo, *args], capture_output=True, text=True)
+    r = subprocess.run(["git", "-C", repo, *args], capture_output=True, text=False)
     if r.returncode != 0:
-        sys.exit(f"[leak-scan] git command failed: git {' '.join(args)}\n{r.stderr}")
-    return r.stdout
+        err = r.stderr.decode("utf-8", errors="replace")
+        sys.exit(f"[leak-scan] git command failed: git {' '.join(args)}\n{err}")
+    return r.stdout.decode("utf-8", errors="replace")
 
 
 def units_from_staged(repo: str) -> list[Unit]:

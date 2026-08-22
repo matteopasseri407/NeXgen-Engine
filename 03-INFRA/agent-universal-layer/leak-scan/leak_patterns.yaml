@@ -19,7 +19,7 @@ leak_hard:
   # verified against a public registry/API, not a secret — do not widen this
   # to any other prefix without the same reasoning (2026-07-12, packages P8/P10
   # of the security hardening pass both hit this as a real false positive).
-  - '(?<!@)(?<!sha256:)\b[0-9a-f]{40,}\b'
+  - '(?<!@)(?<!sha256:)(?<!rev: ")(?<!rev: \x27)\b[0-9a-f]{40,}\b'
   - '\b\d{7,}\b'                                         # long numeric id: chat id, phone, project number
   # HIGH-ENTROPY token in quotes: 16+ chars, mixed Aa0, no separators.
   # Deliberately alnum-only: catches cred-ids/api-keys but NOT snake/kebab env
