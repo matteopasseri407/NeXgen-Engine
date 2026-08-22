@@ -245,3 +245,52 @@ servers:
     finally:
         proc.kill()
 
+
+
+def test_git_dep_provisioned_at_spawn_with_workspace_substitution(tmp_path: Path):
+    """Dep git pinnata: il cameriere la provvede al primo spawn e sostituisce
+    DEPS_WORKSPACE in args e env (regressione: il token veniva espanso a
+    stringa vuota al caricamento del manifest e il server non partiva)."""
+    audit = tmp_path / "audit.jsonl"
+    src = tmp_path / "src"
+    src.mkdir()
+    subprocess.run(["git", "init", "-q"], cwd=src, check=True)
+    subprocess.run(["git", "config", "user.email", "t@t.t"], cwd=src, check=True)
+    subprocess.run(["git", "config", "user.name", "t"], cwd=src, check=True)
+    server_py = FAKE_SERVER.replace('"value:42"', '"value:"+os.environ.get("FAKE_WS","")')
+    (src / "fake_ws_mcp.py").write_text("import os\n" + server_py, encoding="utf-8")
+    subprocess.run(["git", "add", "."], cwd=src, check=True)
+    subprocess.run(["git", "commit", "-qm", "init"], cwd=src, check=True)
+    rev = subprocess.run(["git", "rev-parse", "HEAD"], cwd=src, check=True, capture_output=True, text=True).stdout.strip()
+
+    manifest = f"""
+schema_version: 1
+retired_servers: []
+servers:
+  fakews:
+    lazy: true
+    command: python3
+    args: ["${{DEPS_WORKSPACE}}/fake_ws_mcp.py"]
+    env: {{FAKE_WS: "${{DEPS_WORKSPACE}}"}}
+    readonly_tools: [read_thing]
+    deps: {{kind: git, repo: "{src.as_uri()}", rev: "{rev}"}}
+"""
+    proc = _start_fake(manifest, tmp_path, audit)
+    try:
+        res = _call(proc, "fakews", "read_thing", rid=11)
+        assert res.get("isError") is not True, res
+        text = res["content"][0]["text"]
+        assert text.startswith("value:"), text
+        ws = text[len("value:"):]
+        assert (Path(ws) / "fake_ws_mcp.py").is_file(), f"workspace {ws} non provisionato"
+    finally:
+        proc.kill()
+    # la verifica offline (install=False) lo conferma dopo lo spawn
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
+    from nexgen_core.provision import ensure_deps
+    ctx, err = ensure_deps(
+        {"kind": "git", "repo": src.as_uri(), "rev": rev},
+        Path.home() / ".local" / "state", install=False, server="fakews",
+    )
+    assert err is None, err
+    assert ctx["DEPS_WORKSPACE"] == ws

@@ -36,7 +36,7 @@ from nexgen_core.checks.instructions_checks import (
     check_cli_instruction_pointers,
     check_opencode_instructions,
 )
-from nexgen_core.checks.mcp_checks import check_mcp_configs_rendered, check_mcp_manifest
+from nexgen_core.checks.mcp_checks import check_mcp_configs_rendered, check_mcp_deps, check_mcp_manifest
 from nexgen_core.checks.reachability_checks import check_mcp_reachability
 from nexgen_core.checks.security_checks import check_required_rules, check_tokens_in_env
 from nexgen_core.checks.skill_checks import (
@@ -104,6 +104,7 @@ class Doctor:
             report.add(check_mcp_configs_rendered(self.vault_data, self.home), apply_remedy=apply_remedies)
             for outcome in check_mcp_reachability(self.vault_data, self.home):
                 report.add(outcome, apply_remedy=apply_remedies)
+            report.add(check_mcp_deps(manifest_mcp, self.state_dir), apply_remedy=apply_remedies)
 
             # 4. Skill checks
             manifest_skills = self.vault_data / "03-INFRA" / "agent-universal-layer" / "skills" / "skills.manifest.yaml"

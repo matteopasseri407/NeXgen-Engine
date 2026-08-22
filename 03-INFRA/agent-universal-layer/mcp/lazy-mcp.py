@@ -130,14 +130,20 @@ def _lazy_servers() -> dict[str, dict[str, Any]]:
                 entry.update(win_override)
         entry.setdefault("readonly", False)
         entry.setdefault("readonly_tools", [])
+        # DEPS_WORKSPACE is a SELF-PRESERVING token here: its real value is
+        # known only at spawn time, after provisioning. Expanding it now to
+        # anything else (including '') would destroy the token before the
+        # spawn can substitute the provisioned workspace.
+        load_ctx = dict(ctx)
+        load_ctx["DEPS_WORKSPACE"] = "${DEPS_WORKSPACE}"
         if entry.get("command"):
-            entry["command"] = _expand_placeholders(str(entry["command"]), ctx)
+            entry["command"] = _expand_placeholders(str(entry["command"]), load_ctx)
         if isinstance(entry.get("args"), list):
-            entry["args"] = [_expand_placeholders(str(a), ctx) for a in entry["args"]]
+            entry["args"] = [_expand_placeholders(str(a), load_ctx) for a in entry["args"]]
         if entry.get("url"):
-            entry["url"] = _expand_placeholders(str(entry["url"]), ctx)
+            entry["url"] = _expand_placeholders(str(entry["url"]), load_ctx)
         if isinstance(entry.get("env"), dict):
-            entry["env"] = {k: _expand_placeholders(str(v), ctx) for k, v in entry["env"].items()}
+            entry["env"] = {k: _expand_placeholders(str(v), load_ctx) for k, v in entry["env"].items()}
         out[name] = entry
     return out
 
@@ -164,13 +170,56 @@ class _ServerHandle:
     def is_mutating(self, tool: str) -> bool:
         return not (self.readonly_server or tool in self.readonly_tools)
 
+    def _provision(self) -> dict[str, str]:
+        """Provision the declared deps (npx pin or pinned git workspace).
+
+        Lazy by design: runs exactly once, at the first spawn of the server.
+        Fail-closed: a dep that cannot be verified or provisioned refuses the
+        spawn with the reason (pin missing, network, build failure...).
+        """
+        deps = self.spec.get("deps")
+        if not deps:
+            return {}
+        # The waiter imports the nexgen_core that lives NEXT TO it: the
+        # checkout that is actually running this file is guaranteed to carry
+        # a compatible provisioner, while AGENT_ENGINE_ROOT may point at a
+        # different (installed) engine version. The local candidate must end
+        # up FIRST on sys.path, so insert the env one before it.
+        here = Path(__file__).resolve()
+        local_scripts = here.parents[2] / "scripts"
+        candidates = []
+        env_root = os.environ.get("AGENT_ENGINE_ROOT")
+        if env_root:
+            candidates.append(Path(env_root) / "scripts")
+        candidates.append(local_scripts)
+        for scripts in candidates:
+            if str(scripts) not in sys.path:
+                sys.path.insert(0, str(scripts))
+        try:
+            from nexgen_core.provision import ensure_deps
+        except Exception as exc:
+            return {"error": f"{self.name}: provisioning unavailable ({exc}); manifest 'deps' cannot be honoured"}
+        state_dir = Path(os.environ.get("AGENT_STATE_DIR")
+                         or os.environ.get("XDG_STATE_HOME")
+                         or str(Path.home() / ".local" / "state"))
+        ctx, error = ensure_deps(deps, state_dir, install=True, server=self.name)
+        if error:
+            return {"error": f"{self.name}: {error}"}
+        return ctx
+
     def _start_stdio(self) -> None:
         if self.proc and self.proc.poll() is None:
             return
+        ctx = self._provision()
+        if "error" in ctx:
+            raise RuntimeError(ctx["error"])
         cmd = [self.spec["command"]] + list(self.spec.get("args", []))
         env = dict(os.environ)
         if self.spec.get("env"):
             env.update(self.spec["env"])
+        if ctx:
+            cmd = [_expand_placeholders(c, ctx) for c in cmd]
+            env = {k: _expand_placeholders(v, ctx) for k, v in env.items()}
         is_win = sys.platform == "win32"
         kwargs: dict[str, Any] = {
             "stdin": subprocess.PIPE,

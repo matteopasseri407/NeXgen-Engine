@@ -143,6 +143,9 @@ class McpRenderer:
 
             # Windows override
             entry = dict(srv)
+            # `deps` is the provisioning contract, resolved at spawn by the
+            # waiter; it must never reach the CLIs' native configs.
+            entry.pop("deps", None)
             if IS_WINDOWS and "windows" in entry:
                 win_override = entry.pop("windows")
                 if isinstance(win_override, dict):

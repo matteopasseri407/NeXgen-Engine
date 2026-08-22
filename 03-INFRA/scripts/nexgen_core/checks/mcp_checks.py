@@ -172,3 +172,45 @@ def check_mcp_configs_rendered(vault_data: Path, home: Path) -> CheckOutcome:
         severity=Severity.OK,
         message=t("MCP configuration files generated and aligned for all active CLIs"),
     )
+
+
+def check_mcp_deps(manifest_path: Path, state_dir: Path) -> CheckOutcome:
+    """Offline-safe check that every server declaring `deps:` is satisfiable.
+
+    Verification only, never installs: npx pins need node on the machine;
+    git pins need their pinned workspace already provisioned (the first lazy
+    load provisions it). A missing workspace is a WARN, not a failure: lazy
+    provisioning is the designed path, and offline is not an incident.
+    """
+    try:
+        data = load_mcp_manifest(manifest_path)
+    except Exception:
+        return CheckOutcome(
+            id="mcp.deps",
+            severity=Severity.UNDETERMINED,
+            message=t("The MCP manifest could not be read, so declared dependencies were not checked."),
+        )
+
+    from nexgen_core.provision import ensure_deps
+
+    problems: list[str] = []
+    for name, srv in (data.get("servers") or {}).items():
+        deps = srv.get("deps")
+        if not isinstance(deps, dict):
+            continue
+        _, error = ensure_deps(deps, state_dir, install=False, server=name)
+        if error:
+            problems.append(f"{name}: {error}")
+
+    if not problems:
+        return CheckOutcome(
+            id="mcp.deps",
+            severity=Severity.OK,
+            message=t("All declared MCP dependencies are satisfied on this machine"),
+        )
+    return CheckOutcome(
+        id="mcp.deps",
+        severity=Severity.WARN,
+        message=t("Some declared MCP dependencies are not provisioned yet: {problems}", problems="; ".join(problems)),
+        detail=t("Git-kind dependencies are provisioned lazily at the first server load; run 'agent-sync apply' once (or use the server) to provision them."),
+    )
