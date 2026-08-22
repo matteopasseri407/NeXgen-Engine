@@ -292,29 +292,18 @@ council clean --all           # removes every kept session now
   the CLI accepted the exact `--model` selection and returned the same
   canonical model through `modelUsage`, with tools disabled and session
   persistence off. `ollama` seats have not yet been verified live.
-- **`agy` (Antigravity) is blocked as a passive Council seat** (found by
-  that same 2026-07-15 live relay run, reproduced 5 independent ways):
-  `agy --print` ignores both `--model` and the given prompt, running its
-  own "Context Initialization" that reads real files from the operator's
-  home instead of answering. Persistent state lives in fixed paths under
-  `~/.gemini/`, resolved independent of `$HOME`; no override flag or env
-  var was found to isolate it. This does **not** affect using `agy`
-  interactively as a *caller* of Council — a human working in Antigravity
-  can shell out to `council` exactly like any other CLI, gated only by the
-  usual propose-before-auto-invoking policy (`AGENTS.md`). Full finding,
-  live evidence, and the three conditions required to re-enable it as a
-  seat: `AGY_BLOCK_REASON` in `council.py`.
+- **`agy` (Antigravity) is fully supported as a Council seat** (verified live on 2026-08-22):
+  invoked via `agy --model <model> --disable-slash-commands --new-project --sandbox [--effort <level>] -p <prompt>`,
+  ensuring stateless text-in/text-out execution without loading local workspace skills, historical memory databases,
+  or unisolated environment tokens.
 - Automated regression tests cover the control flow for all four modes,
-  session cleanup, relay fallback, the `agy` block itself, and the Linux
+  session cleanup, relay fallback, all supported vendor CLIs, and the Linux
   launcher. They use fake seats, so they do not replace live checks of
   each vendor CLI.
 - The Windows launcher has a portable regression test, but still needs a
   physical Windows run before this Beta feature can be called cross-platform.
-- Large prompts use stdin for Codex, and a protected temporary attachment
-  for OpenCode. Claude and Ollama use protected stdin. (Antigravity's
-  transport plumbing also uses stdin and remains covered by tests, but the
-  seat itself is currently blocked — see above.) The automated regression
-  coverage is portable, but the current vendor adapters still need live
-  end-to-end verification.
+- Large prompts use stdin for Codex, a protected temporary attachment
+  for OpenCode, and protected stdin for Claude and Ollama. Antigravity receives
+  the prompt directly via `-p` under the sandboxed invocation.
 - Seats via CLI are slow (minutes, not seconds): this is for brainstorming,
   challenging, and review, not a quick question mid-task.
