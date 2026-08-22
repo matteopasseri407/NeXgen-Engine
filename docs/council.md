@@ -29,9 +29,7 @@ completely inert. Nothing about the rest of the engine depends on it.
    following the comments in the template. Each seat needs `vendor`, `cli`,
    `model`, and an explicit `zero_retention: true|false`. `cli` must be one
    of `opencode`, `agy`, `codex`, `claude`, or `ollama`. Those are the CLIs `council.py` knows
-   how to invoke today — except `agy`, which is a recognized `cli` value but
-   currently refused as a seat outright (see "Current limitations" below);
-   declaring an `agy` seat here is harmless, it just cannot be selected.
+   how to invoke today.
    Set `zero_retention: true` only if you've confirmed
    that with a primary source, not a summary. You can also set an optional
    positive `timeout_seconds` for a seat that is known to need more or less
@@ -61,7 +59,7 @@ return text, and use no filesystem, shell, or MCP tools. Council removes
 application secrets from isolated seat environments and applies vendor CLI
 controls where they exist. Enforcement is not identical across vendors, so the
 "Current limitations" section is authoritative. A CLI that cannot be shown to
-honor this contract is refused as a seat, as `agy` is today.
+honor this contract is refused as a seat.
 
 **Brainstorm.** One seat, 1+ rounds. Each round after the first must attack
 its own previous conclusion instead of just restating it:
@@ -227,9 +225,9 @@ effort label, so the two can't drift apart:
 - `ollama`: `--think` only documents `low`/`medium`/`high`. `xhigh` and
   `max` are downmapped to `--think high`, with the printed label saying so.
   Any other value is dropped with no flag, and the label says that too.
-- `agy`: has no reasoning-effort flag at all. The value is never forwarded;
-  the label reads "(non applicato da questa CLI)" instead of silently
-  looking identical to a seat that actually forwarded it.
+- `agy`: `--effort` accepts `low`/`medium`/`high`, forwarded verbatim.
+  Any other value (`xhigh`, `max`, `none`) is dropped with no flag, and the
+  label says that too.
 
 ## Session handling
 

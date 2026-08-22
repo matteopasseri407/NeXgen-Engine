@@ -208,9 +208,7 @@ Public integrations confirm the distinction:
 - [agy-mcp](https://github.com/Boulea7/agy-mcp/blob/main/docs/security.md) adds environment filtering, worktrees, and the CLI's `--sandbox` flag. Its own security model states that the bridge is not a sandbox for AGY.
 - [antigravity-acp](https://github.com/shubzkothekar/antigravity-acp) exposes AGY through ACP and replays its persistent conversation databases. The project also warns that third-party control of an Antigravity OAuth session may breach Google's terms.
 
-For this reason NeXgen allows Antigravity to act as the active caller that convenes Council, but keeps `agy` non-invocable as a passive seat.
-MCP protocol upgrades do not change that decision because they do not remove AGY's tools or persistent state.
-Reactivation would require operating-system-enforced isolation, separate credentials, restricted network access, a pinned binary, and equivalent adversarial verification on Linux and Windows.
+For this reason NeXgen allows Antigravity to act as the active caller that convenes Council. Since 2026-08-22 `agy` is also usable as a passive Council seat, invoked as `agy --model <model> --disable-slash-commands --new-project --sandbox -p <prompt>`: the two added flags stop the workspace-skill expansion and the local-history bleed that made the plain `--print` path unusable as an oracle, and the seat env stays the credential-free allowlist. Verified live with a nonce prompt on 2026-08-22. The remaining boundaries hold: no tools or persistent state are inherited, MCP protocol upgrades do not change that, and the seat's own 300s timeout with a forced tree kill covers slow free-tier responses.
 
 ## License
 
