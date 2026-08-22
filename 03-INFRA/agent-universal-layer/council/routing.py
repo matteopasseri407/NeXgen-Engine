@@ -22,6 +22,19 @@ LEGACY_END_HEADING = "### Motivazioni concise"
 GOVERNOR_HEADING = "### Proposta di routing per ruolo"
 GOVERNOR_END_MARKER = "<!-- model-routing-governor:end -->"
 GOVERNOR_ROLE_RE = re.compile(r"^####\s+([A-Za-z][A-Za-z0-9_-]*)\s+-\s+\S.*$")
+#: Slot del blocco governato v4, in ordine: i primi tre candidati del ruolo.
+GOVERNOR_SLOTS = ("prescelto", "rimpiazzo 1", "rimpiazzo 2")
+#: Canali della matrice v4 -> CLI del seat che li esegue. Un canale non mappato
+#: lascia il candidato senza CLI: si aggancia al seat solo per etichetta.
+CHANNEL_TO_CLI = {
+    "claude": "claude",
+    "codex": "codex",
+    "agy": "agy",
+    "go": "opencode",
+    "zen": "opencode",
+    "zen-free": "opencode",
+    "local": "ollama",
+}
 PROBE_TIMEOUT_SECONDS = 10
 
 
@@ -98,11 +111,14 @@ def _is_separator_row(cells: list[str]) -> bool:
 
 
 def _parse_governor_role_tables(markdown: str) -> RoutingPlan | None:
-    """Read Governor v3's per-role tables without making Governor mandatory.
+    """Read Governor v4's per-role tables without making Governor mandatory.
 
     Presence of the heading opts the document into this strict shape. A broken
     table therefore fails closed instead of falling through to the legacy
     parser and silently proposing the wrong execution lane.
+
+    Format (v4): ``| Slot | Modello | Canale | Costo | Motivo |`` with the
+    first three slots ``prescelto``, ``rimpiazzo 1``, ``rimpiazzo 2``.
     """
     exact_headings = list(re.finditer(
         rf"(?m)^{re.escape(GOVERNOR_HEADING)}[ \t]*\r?$", markdown,
@@ -133,7 +149,6 @@ def _parse_governor_role_tables(markdown: str) -> RoutingPlan | None:
 
     roles: dict[str, tuple[RoutingCandidate, ...]] = {}
     seen_roles: set[str] = set()
-    expected_slots = ("primario", "fallback 1", "fallback 2")
     for role_index, (line_index, role) in enumerate(role_starts):
         role_key = role.casefold()
         if role_key in seen_roles:
@@ -148,29 +163,34 @@ def _parse_governor_role_tables(markdown: str) -> RoutingPlan | None:
                 raise RoutingContractError(f"Governor role {role} is both assigned and unassigned")
             roles[role] = ()
             continue
-        if len(table_lines) != 5:
-            raise RoutingContractError(f"Governor role {role} must contain one header and three candidates")
+        if len(table_lines) < 2:
+            raise RoutingContractError(f"Governor role {role} must contain a table")
 
         header = [cell.casefold() for cell in _markdown_cells(table_lines[0])]
-        if header != ["slot", "modello", "cli", "$", "motivo"]:
+        if header != ["slot", "modello", "canale", "costo", "motivo"]:
             raise RoutingContractError(f"Governor role {role} has incompatible table columns")
         separator = _markdown_cells(table_lines[1])
         if len(separator) != len(header) or not _is_separator_row(separator):
             raise RoutingContractError(f"Governor role {role} has an invalid table separator")
 
+        rows = [_markdown_cells(line) for line in table_lines[2:] if line.strip()]
+        if len(rows) < 3:
+            raise RoutingContractError(f"Governor role {role} has fewer than three candidate rows")
         ordered: list[RoutingCandidate] = []
         slots: list[str] = []
-        for row in table_lines[2:]:
-            cells = _markdown_cells(row)
-            if len(cells) != len(header):
+        for row in rows[:3]:
+            if len(row) != len(header):
                 raise RoutingContractError(f"Governor role {role} has an incomplete candidate row")
-            slot = _nonempty_string(cells[0], f"{role} slot").casefold()
-            model = _nonempty_string(cells[1], f"{role} model")
-            cli = _nonempty_string(cells[2], f"{role} CLI").casefold()
+            slot = _nonempty_string(row[0], f"{role} slot").casefold()
+            model = _nonempty_string(row[1], f"{role} model")
+            if model == "—":
+                raise RoutingContractError(f"Governor role {role} has an unassigned slot among the top three")
+            channel = _nonempty_string(row[2], f"{role} channel").casefold()
+            cli = CHANNEL_TO_CLI.get(channel)
             slots.append(slot)
             ordered.append(RoutingCandidate(model, cli))
-        if tuple(slots) != expected_slots:
-            raise RoutingContractError(f"Governor role {role} candidates are not in primary/fallback order")
+        if tuple(slots) != GOVERNOR_SLOTS:
+            raise RoutingContractError(f"Governor role {role} candidates are not in prescelto/rimpiazzo order")
         deduped = _dedupe(ordered)
         if len(deduped) != len(ordered):
             raise RoutingContractError(f"Governor role {role} contains duplicate candidates")
