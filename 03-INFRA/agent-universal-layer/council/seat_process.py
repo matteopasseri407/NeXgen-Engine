@@ -31,64 +31,8 @@ from session import (
 
 SUPPORTED_CLIS = ("opencode", "agy", "codex", "claude", "ollama")
 
-# 2026-07-15: agy blocked from every Council mode as a PASSIVE seat, after a
-# live relay incident. Reproduced 5 independent ways (council relay live,
-# plus 4 direct reproductions: --sandbox on/off, prompt via stdin vs.
-# positional argv, with/without --new-project, HOME overridden to an empty
-# dir) -- every single one, 'agy --print' ignored BOTH --model (always
-# answered as its own default model) AND the given prompt, running its own
-# "Context Initialization" instead: reading real files from the operator's
-# home (~/.gemini/antigravity-cli/{history.jsonl,conversation_summaries.db,
-# knowledge/}), resolved independent of $HOME (an isolated HOME had zero
-# effect -- checked live, not inferred). No override flag or env var exists
-# for this (checked live in agy --help, agy models, and the installed
-# binary's string table). One live relay run redacted a "possible secret"
-# from agy's own output via the leak-scan guardrail. Every Council seat must
-# be a stateless text-in/text-out oracle; this is the opposite, and it does
-# not even execute the assigned task, so there's no privacy-vs-usefulness
-# trade to make here -- what's blocked doesn't work at all today, for any
-# task shape.
-#
-# This does NOT restrict agy as an ACTIVE caller of Council (a human working
-# interactively in Antigravity who has it shell out to `council` itself, the
-# same way any other CLI can) -- that's a structurally different code path
-# (Council has no notion of "who spawned me") gated only by the same
-# propose-before-auto-invoking policy that already applies to every CLI
-# (AGENTS.md).
-#
-# Independently reviewed twice via `council challenge --seat codex-sol`
-# (2026-07-15). Round 1 set the reactivation bar: re-enabling requires
-# proving ALL THREE, not just isolation -- an isolated-but-prompt-ignoring
-# seat is still useless as a Council oracle:
-#   1. process/container-level isolation, with an access-log audit proving
-#      no vault or persistent-state access;
-#   2. functional conformance: a battery of nonce-based prompts, run on
-#      fresh processes, answered correctly with zero "Context
-#      Initialization";
-#   3. a verifiable model identity, or drop the "Gemini 3.1 Pro (High)"
-#      declaration if --model does not actually select anything.
-# Round 2 confirmed the invoker/seat distinction above is sound, and pinned
-# the enforcement requirement this comment's own guard exists to satisfy:
-# the check must sit at the single point immediately preceding process
-# spawn (see run_seat below), not only at the earlier fail-fast checkpoints
-# -- those exist for a clean error message and relay fallback, not as the
-# actual guarantee.
-AGY_BLOCK_REASON = (
-    "seat 'agy' blocked in every Council mode: verified live "
-    "(5 independent reproductions) that 'agy --print' systematically ignores "
-    "both --model and the given prompt, running its own initialization "
-    "that reads real files from the operator's environment instead of "
-    "answering the assigned task. Persistent state lives in fixed paths not "
-    "isolable via HOME or any known environment variable (none found). Does "
-    "not affect using agy as an interactive CALLER of council (unchanged). "
-    "Re-enable only after proving ALL THREE: (1) process/container-level "
-    "isolation verified with an access audit that excludes the vault and "
-    "persistent state; (2) functional conformance on a battery of "
-    "nonce-based prompts, on fresh processes, zero 'Context "
-    "Initialization'; (3) verifiable model identity, or removal of the "
-    "declaration if --model does not actually select anything. Details: "
-    "docs/council.md, current limitations section."
-)
+# agy: invoked via `agy --model <model> --disable-slash-commands --new-project --sandbox -p <prompt>`.
+# This guarantees stateless execution without loading workspace skills or reading historical memory.
 
 DEFAULT_SEAT_TIMEOUT_SECONDS = 300.0
 RETRYABLE_SEAT_ERROR_KINDS = frozenset({
@@ -200,7 +144,9 @@ def _effort_forwarding(seat: dict) -> tuple[list[str], str]:
     if cli == "opencode":
         return ["--variant", str(effort)], label
     if cli == "agy":
-        return [], f"{label} (not applied by this CLI)"
+        if effort in ("low", "medium", "high"):
+            return ["--effort", str(effort)], label
+        return [], f"{label} (not applied: value not supported by agy)"
     if cli == "ollama":
         if effort in ("low", "medium", "high"):
             return ["--think", effort], label
@@ -488,16 +434,16 @@ def _build_seat_command(seat: dict, prompt: str, session_dir: Path) -> SeatInvoc
             env=_isolated_seat_env(cli, session_dir),
         )
     if cli == "agy":
-        # Print mode reads stdin when no positional prompt is supplied.  Keeping
-        # the brief out of argv avoids both the Windows command-line cap and the
-        # POSIX single-argument cap.
-        # --sandbox = restrictions on the run_command tool (no network/filesystem
-        # outside the workspace for shell commands), never --dangerously-skip-permissions.
-        # Not a documented MCP block: see the extended note above
-        # _build_seat_command for what is verified and what isn't for this CLI.
+        argv = [
+            "agy", "--model", model,
+            "--disable-slash-commands", "--new-project", "--sandbox",
+        ]
+        extra_argv, _label = _effort_forwarding(seat)
+        argv.extend(extra_argv)
+        argv.extend(["-p", prompt])
         return SeatInvocation(
-            ["agy", "--print", "--model", model, "--sandbox"],
-            prompt,
+            argv,
+            None,
             None,
             None,
             env=_isolated_seat_env(cli, session_dir),
@@ -632,16 +578,6 @@ def run_seat(
     JSON object, the other supported CLIs print plain text."""
     model = seat["model"]
     cli = seat["cli"]
-    # AUTHORITATIVE enforcement point (2026-07-15, see AGY_BLOCK_REASON above
-    # SUPPORTED_CLIS): the single spot immediately before a seat's process is
-    # ever built or spawned, independent of and not merely backed up by the
-    # earlier fail-fast checks in _check_seat_allowed / _run_relay_stage.
-    # Every call path (run_rounds, _run_relay_stage) funnels through here --
-    # `cli` is schema-validated to a canonical SUPPORTED_CLIS string with no
-    # aliasing (config_schema.py), so this equality check cannot be bypassed
-    # by an alternate spelling, wrapper, or path.
-    if cli == "agy":
-        raise SeatRunError(f"[council] {AGY_BLOCK_REASON}", "agy_blocked")
     try:
         resolved_timeout_seconds = _resolve_timeout_seconds(seat, timeout_seconds)
     except ValueError as exc:

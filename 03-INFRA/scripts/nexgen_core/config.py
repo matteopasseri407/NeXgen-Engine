@@ -22,7 +22,7 @@ logger = logging.getLogger("nexgen.config")
 #: two separate constants is how the two lists end up drifting apart.
 RUNTIME_TARGETS = frozenset({"claude", "codex", "antigravity", "opencode"})
 SKILL_TARGETS = RUNTIME_TARGETS
-SKILL_ORIGINS = frozenset({"vault", "engine", "github", "installer"})
+SKILL_ORIGINS = frozenset({"vault", "engine", "github", "installer", "upstream"})
 SKILL_EXPOSURES = frozenset({"lazy", "eager", "manual", "core"})
 
 

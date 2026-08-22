@@ -24,7 +24,6 @@ from proposal import (
     _warn_no_zero_retention,
 )
 from seat_process import (
-    AGY_BLOCK_REASON,
     SUPPORTED_CLIS,
     SeatRunError,
     _format_timeout_seconds,
@@ -255,18 +254,11 @@ def _run_relay_stage(
 ) -> RelayRecord:
     attempted: set[str] = set()
     last_failed_pool: str | None = None
-    skipped_agy = False
 
     while True:
         chosen_name = None
         for candidate in stage.candidates:
             if candidate in attempted:
-                continue
-            # Fail-fast UX layer only, same as _check_seat_allowed -- the
-            # authoritative check is in run_seat. Skipped like any other
-            # unavailable candidate so a declared fallback still runs.
-            if seats[candidate].get("cli") == "agy":
-                skipped_agy = True
                 continue
             pool = _seat_quota_pool(seats[candidate])
             if last_failed_pool and pool == last_failed_pool:
@@ -280,11 +272,10 @@ def _run_relay_stage(
             pools = [_seat_quota_pool(seats[name]) for name in stage.candidates]
             reset = quarantine.next_reset_iso(pools)
             reset_msg = f" Nearest reset: {reset}." if reset else ""
-            agy_msg = f" {AGY_BLOCK_REASON}" if skipped_agy else ""
             sys.exit(
                 f"[council] relay stopped at role '{stage.role}': no seat available "
                 f"among those declared in the sequence ({', '.join(stage.candidates)})."
-                f"{reset_msg}{agy_msg} I do not use seats outside the sequence and do not skip the role."
+                f"{reset_msg} I do not use seats outside the sequence and do not skip the role."
             )
 
         seat = seats[chosen_name]

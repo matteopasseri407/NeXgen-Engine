@@ -41,6 +41,7 @@ from nexgen_core.checks.reachability_checks import check_mcp_reachability
 from nexgen_core.checks.security_checks import check_required_rules, check_tokens_in_env
 from nexgen_core.checks.skill_checks import (
     check_engine_starter_views,
+    check_skill_deps,
     check_skill_library_and_index,
     check_skill_library_symlinks,
     check_skills_manifest,
@@ -109,6 +110,7 @@ class Doctor:
             # 4. Skill checks
             manifest_skills = self.vault_data / "03-INFRA" / "agent-universal-layer" / "skills" / "skills.manifest.yaml"
             report.add(check_skills_manifest(manifest_skills), apply_remedy=apply_remedies)
+            report.add(check_skill_deps(manifest_skills, self.state_dir), apply_remedy=apply_remedies)
             report.add(check_skill_library_and_index(self.vault_data, self.home), apply_remedy=apply_remedies)
             report.add(check_skill_library_symlinks(self.home), apply_remedy=apply_remedies)
             report.add(check_skills_not_materialized(self.vault_data, self.home), apply_remedy=apply_remedies)

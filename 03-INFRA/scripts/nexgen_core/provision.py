@@ -63,6 +63,16 @@ class ProvisionError(Exception):
     """A dependency could not be verified or provisioned. Message is user-facing."""
 
 
+def validate_deps(deps: dict[str, Any], server: str) -> None:
+    """Public pin validation, shared by MCP servers and skills.
+
+    Raises ProvisionError when the deps block is malformed or unpinned.
+    Offline-safe: no network, no state dir access.
+    """
+    _validate_kind(deps, server)
+    _validate_pins(deps, server)
+
+
 def _workspace_root(state_dir: Path) -> Path:
     root = Path(state_dir) / DEPS_DIRNAME
     root.mkdir(parents=True, exist_ok=True)

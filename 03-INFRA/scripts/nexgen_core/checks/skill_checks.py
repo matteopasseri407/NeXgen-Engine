@@ -243,3 +243,47 @@ def check_skills_manifest_semantics(vault_data: Path, home: Path) -> CheckOutcom
         severity=Severity.OK,
         message=t("Skills manifest is semantically valid"),
     )
+
+
+def check_skill_deps(manifest_path: Path, state_dir: Path) -> CheckOutcome:
+    """Offline-safe check of the deps declared by skills (e.g. upstream ones).
+
+    Same contract as MCP server deps: pins mandatory, verification local,
+    provisioning lazy (the first load installs nothing here — skills are
+    instruction sheets; their deps are CLIs and workspaces the model calls).
+    A missing dependency is a WARN: it says what to install, it never fails
+    the doctor.
+    """
+    from nexgen_core.config import load_skills_manifest
+    from nexgen_core.provision import ensure_deps
+
+    try:
+        data = load_skills_manifest(manifest_path)
+    except Exception:
+        return CheckOutcome(
+            id="skills.deps",
+            severity=Severity.UNDETERMINED,
+            message=t("The skills manifest could not be read, so declared skill dependencies were not checked."),
+        )
+
+    problems: list[str] = []
+    for name, skill in (data.get("skills") or {}).items():
+        deps = skill.get("deps")
+        if not isinstance(deps, dict):
+            continue
+        _, error = ensure_deps(deps, state_dir, install=False, server=f"skill {name}")
+        if error:
+            problems.append(f"{name}: {error}")
+
+    if not problems:
+        return CheckOutcome(
+            id="skills.deps",
+            severity=Severity.OK,
+            message=t("All declared skill dependencies are satisfiable on this machine"),
+        )
+    return CheckOutcome(
+        id="skills.deps",
+        severity=Severity.WARN,
+        message=t("Some declared skill dependencies are not satisfiable: {problems}", problems="; ".join(problems)),
+        detail=t("npx pins need node on the machine; git pins need their pinned workspace provisioned (the first use provisions it)."),
+    )

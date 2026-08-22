@@ -54,6 +54,7 @@ class SkillEntry:
     install: list[str] = field(default_factory=list)
     path: str | None = None
     description: str = ""
+    deps: dict | None = None
     source_path: Path | None = None
 
 
@@ -240,6 +241,7 @@ class SkillMaterializer:
                 install=list(raw.get("install") or []),
                 path=raw.get("path") or raw.get("sub"),
                 description=raw.get("description", ""),
+                deps=raw.get("deps") if isinstance(raw.get("deps"), dict) else None,
             )
             # Source path resolution
             if entry.origin == "vault":
@@ -315,6 +317,17 @@ class SkillMaterializer:
                     )
             if entry.origin == "installer" and not entry.version:
                 problems.append(t("'{name}': installer origin without 'version'", name=name))
+            if entry.origin == "upstream":
+                # Inventoried only: the upstream installer owns the bytes.
+                # The deps: block is the contract the doctor verifies.
+                if not entry.deps:
+                    problems.append(t("'{name}': upstream origin without 'deps' (the pin the doctor verifies)", name=name))
+                else:
+                    try:
+                        from nexgen_core.provision import validate_deps
+                        validate_deps(entry.deps, name)
+                    except Exception as exc:
+                        problems.append(str(exc))
             if entry.origin in ("vault", "engine"):
                 src = entry.source_path
                 if src is None or not (src / "SKILL.md").is_file():
@@ -568,6 +581,13 @@ class SkillMaterializer:
                         changes += 1
                 if not installed:
                     continue
+
+            elif entry.origin == "upstream":
+                # Inventoried only, by design: the upstream installer owns
+                # the bytes (per-provider rendered variants, not
+                # vendorizable). Nothing to materialize; the doctor
+                # verifies the declared deps offline-safe.
+                continue
 
             # Active view generation (if exposure == eager or core)
             if entry.exposure in ("eager", "core") and lib_dest.is_dir() and apply:

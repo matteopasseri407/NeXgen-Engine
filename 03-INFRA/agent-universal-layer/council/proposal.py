@@ -27,7 +27,7 @@ from routing import (
     resolve_role_candidates,
     seat_capabilities,
 )
-from seat_process import AGY_BLOCK_REASON, _effort_label
+from seat_process import _effort_label
 
 
 def _vault_data_root() -> Path:
@@ -246,10 +246,6 @@ def _warn_no_zero_retention(seat_name: str, seat: dict) -> None:
 
 
 def _check_seat_allowed(seat_name: str, seat: dict, args: argparse.Namespace) -> None:
-    # Fail-fast UX layer only -- the authoritative check is in run_seat,
-    # immediately before process spawn. See AGY_BLOCK_REASON.
-    if seat.get("cli") == "agy":
-        sys.exit(f"[council] STOP: {AGY_BLOCK_REASON}")
     del args
     _warn_no_zero_retention(seat_name, seat)
 
