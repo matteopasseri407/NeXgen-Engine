@@ -134,7 +134,7 @@ shows the seats the user declared and waits for an explicit choice.
 An optional `routing:` section turns a routing document into a locally verified
 proposal. Set `decision_file` to a relative path inside the private data root.
 Council understands its versioned JSON contract, the per-role tables emitted by
-the public [LLM Model Routing Governor](https://github.com/matteopasseri407/nexgen-addon-llm-model-routing-governor),
+the public [LLM Model Routing Governor](https://github.com/matteopasseri407/neXgen-addon-llm-model-routing-governor),
 and the older flat table for backward compatibility.
 
 The Governor table carries both the model label and the CLI. Council keeps that
