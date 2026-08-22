@@ -453,8 +453,9 @@ def _handle(req: dict[str, Any]) -> None:
                 str(args.get("server", "")), str(args.get("tool", "")),
                 args.get("arguments") or {}, bool(args.get("confirm", False)),
             )
-            if isinstance(res, dict) and "error" in res and isinstance(res["error"], dict):
-                _result(req_id, {"isError": True, "content": [{"type": "text", "text": res["error"].get("message", "error")}]})
+            if isinstance(res, dict) and "error" in res:
+                msg = res["error"] if isinstance(res["error"], str) else res["error"].get("message", "error")
+                _result(req_id, {"isError": True, "content": [{"type": "text", "text": msg}]})
                 return
             content = []
             if isinstance(res, dict) and res.get("result"):

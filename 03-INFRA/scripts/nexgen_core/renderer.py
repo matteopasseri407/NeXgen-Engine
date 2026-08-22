@@ -188,14 +188,15 @@ class McpRenderer:
             return set()
         return set(load_mcp_manifest(self.manifest_path).get("servers", {}))
 
-    def _drop_unmounted(self, mcp_servers: dict, mounted: dict) -> None:
-        """Lazy contract on the config side: a truly lazy server (declared in
-        the manifest, neither core nor enabled) must not linger in a previous
-        render. Two exceptions, both deliberate:
+    def _drop_unmounted(self, mcp_servers: dict, mounted: dict, cli_target: str = "") -> None:
+        """Lazy contract on the config side: a server declared in the manifest
+        but not mounted for this CLI must not linger in a previous render.
+        Exceptions, all deliberate:
         - servers OUTSIDE the manifest are never touched (additive rule);
-        - env-gated servers (`require_env`) stay on disk: the recurring guard
-          runs without the shell environment, and deleting them there would
-          make the doctor report them missing twice an hour, forever."""
+        - env-gated servers that WOULD mount for this CLI (`require_env` and
+          core/enabled and not lazy-routed away) stay on disk: the recurring
+          guard runs without the shell environment, and deleting them there
+          would make the doctor report them missing twice an hour, forever."""
         if not self.manifest_path.is_file():
             return
         data = load_mcp_manifest(self.manifest_path)
@@ -203,7 +204,9 @@ class McpRenderer:
             if name in mounted:
                 continue
             tier = str(srv.get("tier", "")).strip().lower()
-            would_mount = tier == "core" or srv.get("enabled", False)
+            lazy_targets = srv.get("lazy_targets") or ["claude", "codex", "antigravity", "opencode"]
+            routed_away = bool(srv.get("lazy")) and cli_target in lazy_targets
+            would_mount = (tier == "core" or srv.get("enabled", False)) and not routed_away
             if srv.get("require_env") and would_mount:
                 continue
             mcp_servers.pop(name, None)
@@ -242,7 +245,7 @@ class McpRenderer:
         mcp_servers = existing.get("mcpServers", {})
         for retired in self.retired_server_names():
             mcp_servers.pop(retired, None)
-        self._drop_unmounted(mcp_servers, servers)
+        self._drop_unmounted(mcp_servers, servers, cli_target="claude")
         for name, srv in servers.items():
             if srv.get("transport") == "http" or srv.get("url"):
                 auth_env = srv.get("auth", {}).get("env") if isinstance(srv.get("auth"), dict) else None
@@ -285,7 +288,7 @@ class McpRenderer:
         mcp_servers = existing.get("mcpServers", {})
         for retired in self.retired_server_names():
             mcp_servers.pop(retired, None)
-        self._drop_unmounted(mcp_servers, servers)
+        self._drop_unmounted(mcp_servers, servers, cli_target="antigravity")
         bridge_script = self.engine_root / "agent-universal-layer" / "mcp" / "mcp-http-bridge.mjs"
 
         for name, srv in servers.items():
@@ -348,7 +351,7 @@ class McpRenderer:
         mcp_servers = existing.get("mcp", {})
         for retired in self.retired_server_names():
             mcp_servers.pop(retired, None)
-        self._drop_unmounted(mcp_servers, servers)
+        self._drop_unmounted(mcp_servers, servers, cli_target="opencode")
         tools_cfg: dict[str, Any] = dict(existing.get("tools") or {})
         for name, srv in servers.items():
             if srv.get("transport") == "http" or srv.get("url"):
@@ -395,6 +398,11 @@ class McpRenderer:
                     tools_cfg[f"{name}_{tool}"] = False
 
         if tools_cfg:
+            # purge stale denies: entries for servers no longer mounted (or no
+            # longer denied) must not accumulate in the tools section.
+            mounted_names = set(mcp_servers)
+            tools_cfg = {k: v for k, v in tools_cfg.items()
+                         if k.split("_", 1)[0] in mounted_names}
             existing["tools"] = tools_cfg
         existing["mcp"] = mcp_servers
         if write:
@@ -427,7 +435,11 @@ class McpRenderer:
             name.replace("-", "_")
             for name, srv in _manifest_data.get("servers", {}).items()
             if name not in servers and name not in retired
-            and not (srv.get("require_env") and (str(srv.get("tier", "")).strip().lower() == "core" or srv.get("enabled", False)))
+            and not (
+                srv.get("require_env")
+                and (str(srv.get("tier", "")).strip().lower() == "core" or srv.get("enabled", False))
+                and not (srv.get("lazy") and "codex" in (srv.get("lazy_targets") or ["claude", "codex", "antigravity", "opencode"]))
+            )
         }
         managed = {name.replace("-", "_") for name in servers} | {name.replace("-", "_") for name in retired}
 
