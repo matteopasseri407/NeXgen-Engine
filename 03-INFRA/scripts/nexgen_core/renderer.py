@@ -121,6 +121,15 @@ class McpRenderer:
             if tier != "core" and not srv.get("enabled", False):
                 continue
 
+            # Lazy routing: a server declared `lazy: true` is served by the
+            # lazy-mcp proxy, not mounted directly in the CLIs listed in
+            # `lazy_targets` (default: all four). CLIs outside the list keep
+            # it direct (e.g. Claude, which defers schemas natively).
+            if srv.get("lazy"):
+                lazy_targets = srv.get("lazy_targets") or ["claude", "codex", "antigravity", "opencode"]
+                if cli_target in lazy_targets:
+                    continue
+
             targets = srv.get("targets", ["claude", "codex", "antigravity", "opencode"])
             if cli_target not in targets:
                 continue
@@ -340,19 +349,27 @@ class McpRenderer:
         for retired in self.retired_server_names():
             mcp_servers.pop(retired, None)
         self._drop_unmounted(mcp_servers, servers)
+        tools_cfg: dict[str, Any] = dict(existing.get("tools") or {})
         for name, srv in servers.items():
             if srv.get("transport") == "http" or srv.get("url"):
                 url_env = srv.get("url_env")
                 url = f"{{env:{url_env}}}" if url_env else srv["url"]
                 auth_env = srv.get("auth", {}).get("env") if isinstance(srv.get("auth"), dict) else ""
                 headers = {"Authorization": f"Bearer {{env:{auth_env}}}"} if auth_env else {}
-                mcp_servers[name] = {
+                entry: dict[str, Any] = {
                     "type": "remote",
                     "url": url,
-                    "headers": headers,
                     "enabled": True,
-                    "oauth": False,
                 }
+                if srv.get("oauth") and not auth_env:
+                    # OpenCode handles the OAuth flow itself (401 detection,
+                    # RFC 7591 dynamic registration, tokens in mcp-auth.json):
+                    # no headers, no client secrets in the config.
+                    entry["oauth"] = {}
+                else:
+                    entry["headers"] = headers
+                    entry["oauth"] = False
+                mcp_servers[name] = entry
             else:
                 cmd_list = [srv.get("command", "")] + list(srv.get("args", []))
                 entry_dict: dict[str, Any] = {
@@ -369,7 +386,16 @@ class McpRenderer:
                     except (ValueError, TypeError):
                         pass
                 mcp_servers[name] = entry_dict
+            # Transparent trimming on OpenCode: explicit per-tool denies keep
+            # the heavy schema out of the model's context without any load
+            # ceremony — the tools that remain are called directly.
+            deny = srv.get("tools_deny")
+            if isinstance(deny, list) and deny:
+                for tool in deny:
+                    tools_cfg[f"{name}_{tool}"] = False
 
+        if tools_cfg:
+            existing["tools"] = tools_cfg
         existing["mcp"] = mcp_servers
         if write:
             # JSONC-aware: preserves the existing file's comments instead of
