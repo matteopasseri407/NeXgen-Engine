@@ -320,10 +320,12 @@ schema_version: 1
 retired_servers: [old-connector]
 servers:
   old-connector:
+    tier: core
     transport: stdio
     command: fake-old-cmd
     targets: [claude, antigravity]
   keeper:
+    tier: core
     transport: stdio
     command: fake-keep-cmd
     targets: [claude, antigravity]

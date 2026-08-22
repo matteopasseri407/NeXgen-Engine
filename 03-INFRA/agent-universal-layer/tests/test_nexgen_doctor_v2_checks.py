@@ -327,6 +327,7 @@ _MCP_MANIFEST = """
 schema_version: 1
 servers:
   demo-server:
+    tier: core
     transport: stdio
     command: echo
     args: ["hi"]

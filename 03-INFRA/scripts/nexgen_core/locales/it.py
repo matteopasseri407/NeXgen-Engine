@@ -131,6 +131,7 @@ MESSAGES: dict[str, str] = {
     'notify-failure: {summary} (no alert channel configured)': 'notify-failure: {summary} (nessun canale di allarme configurato)',
     'Diagnostics complete (failures={failures}, ok={ok}).': 'Diagnostica completata (guasti={failures}, a posto={ok}).',
     '>>> MCP connectors per runtime': '>>> Connettori MCP per assistente',
+    ' — optional, not mounted: {names}': ' — opzionali, non montati: {names}',
     'none': 'nessuno',
     '>>> Skills: manifest compared against the materialized library': '>>> Skill: manifest a confronto con la libreria materializzata',
     '  {materialized} materialized, {declared} declared': '  {materialized} materializzate, {declared} dichiarate',

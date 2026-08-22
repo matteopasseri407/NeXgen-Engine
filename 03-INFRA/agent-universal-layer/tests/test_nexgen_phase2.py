@@ -61,6 +61,7 @@ def test_mcp_renderer_generation(tmp_path: Path):
 schema_version: 1
 servers:
   vault-mcp:
+    tier: core
     command: ["python3", "-m", "vault_mcp_server"]
     env:
       VAULT_PATH: "${AGENT_VAULT_DATA}"
@@ -100,6 +101,7 @@ def test_codex_render_is_additive_like_the_other_clis(tmp_path: Path, monkeypatc
 schema_version: 1
 servers:
   gated-server:
+    enabled: true
     command: ["npx", "-y", "some-package"]
     require_env: GATED_SERVER_TOKEN
     targets: ["codex"]
@@ -131,6 +133,7 @@ def test_codex_render_removes_a_retired_server_but_keeps_the_rest(tmp_path: Path
 schema_version: 1
 servers:
   keeper:
+    tier: core
     command: ["echo", "hi"]
     targets: ["codex"]
 retired_servers:
@@ -180,3 +183,32 @@ servers:
     renderer.render_codex(write=True)
     assert codex_cfg.stat().st_mtime_ns == first_mtime
     assert not list(codex_cfg.parent.glob(f"{codex_cfg.name}.bak-*"))
+
+
+def test_mcp_lazy_tier_filtering(tmp_path: Path):
+    vault = tmp_path / "vault"
+    _manifest(vault, """
+schema_version: 1
+retired_servers: []
+servers:
+  sempre:
+    tier: core
+    command: echo
+    args: ["a"]
+  opzionale:
+    tier: optional
+    command: echo
+    args: ["b"]
+  opzionale_attivo:
+    tier: optional
+    enabled: true
+    command: echo
+    args: ["c"]
+  senza_tier:
+    command: echo
+    args: ["d"]
+""")
+    renderer = McpRenderer(vault_data=vault, engine_root=Path(__file__).resolve().parents[2], home=tmp_path / "home")
+    mounted = renderer.load_resolved_servers("claude")
+    assert set(mounted) == {"sempre", "opzionale_attivo"}
+    assert renderer.list_lazy_servers("claude") == ["opzionale", "senza_tier"]

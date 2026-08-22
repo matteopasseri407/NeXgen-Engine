@@ -106,11 +106,13 @@ def test_b1_b2_b3_b8_mcp_renderer(tmp_path: Path):
 schema_version: 1
 servers:
   playwright:
+    tier: core
     transport: stdio
     command: node
     args: ["${AGENT_ENGINE_ROOT}/test.mjs", "--arg1"]
     targets: [claude, codex, antigravity, opencode]
   n8n-mcp:
+    tier: core
     transport: http
     url: "http://127.0.0.1:5678/mcp"
     auth: { type: bearer, env: N8N_MCP_TOKEN }

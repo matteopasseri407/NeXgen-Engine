@@ -255,7 +255,9 @@ def cmd_inventory(args) -> int:
     for cli_name in ("claude", "codex", "antigravity", "opencode"):
         servers = renderer.load_resolved_servers(cli_name)
         names = ", ".join(sorted(servers)) if servers else t("none")
-        print(f"  {cli_name}: {len(servers)} — {names}")
+        lazy = renderer.list_lazy_servers(cli_name)
+        lazy_part = t(" — optional, not mounted: {names}", names=", ".join(lazy)) if lazy else ""
+        print(f"  {cli_name}: {len(servers)} — {names}{lazy_part}")
 
     print("\n" + t(">>> Skills: manifest compared against the materialized library"))
     mat = SkillMaterializer(vault_data=vault_data, engine_root=engine_root, home=home)

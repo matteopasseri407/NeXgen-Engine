@@ -113,6 +113,14 @@ class McpRenderer:
         resolved: dict[str, dict[str, Any]] = {}
 
         for name, srv in raw_servers.items():
+            # Lazy contract: `tier: core` is always mounted; anything else
+            # (absent tier or `tier: optional`) is mounted only when the
+            # entry opts in with `enabled: true`. A registered-but-inert
+            # server costs nothing at bootstrap and is never a problem.
+            tier = str(srv.get("tier", "")).strip().lower()
+            if tier != "core" and not srv.get("enabled", False):
+                continue
+
             targets = srv.get("targets", ["claude", "codex", "antigravity", "opencode"])
             if cli_target not in targets:
                 continue
@@ -165,6 +173,52 @@ class McpRenderer:
 
         return resolved
 
+    def manifest_server_names(self) -> set[str]:
+        """Every server declared in the manifest, mounted or not."""
+        if not self.manifest_path.is_file():
+            return set()
+        return set(load_mcp_manifest(self.manifest_path).get("servers", {}))
+
+    def _drop_unmounted(self, mcp_servers: dict, mounted: dict) -> None:
+        """Lazy contract on the config side: a truly lazy server (declared in
+        the manifest, neither core nor enabled) must not linger in a previous
+        render. Two exceptions, both deliberate:
+        - servers OUTSIDE the manifest are never touched (additive rule);
+        - env-gated servers (`require_env`) stay on disk: the recurring guard
+          runs without the shell environment, and deleting them there would
+          make the doctor report them missing twice an hour, forever."""
+        if not self.manifest_path.is_file():
+            return
+        data = load_mcp_manifest(self.manifest_path)
+        for name, srv in data.get("servers", {}).items():
+            if name in mounted:
+                continue
+            tier = str(srv.get("tier", "")).strip().lower()
+            would_mount = tier == "core" or srv.get("enabled", False)
+            if srv.get("require_env") and would_mount:
+                continue
+            mcp_servers.pop(name, None)
+
+    def list_lazy_servers(self, cli_target: str) -> list[str]:
+        """Registered-but-inert servers for a CLI: known to exist, not mounted.
+
+        The lazy contract's inventory side: an optional server without
+        `enabled: true` is a choice, so it is listed, never reported as a
+        problem.
+        """
+        if not self.manifest_path.is_file():
+            return []
+        data = load_mcp_manifest(self.manifest_path)
+        out: list[str] = []
+        for name, srv in data.get("servers", {}).items():
+            tier = str(srv.get("tier", "")).strip().lower()
+            if tier == "core" or srv.get("enabled", False):
+                continue
+            targets = srv.get("targets", ["claude", "codex", "antigravity", "opencode"])
+            if cli_target in targets:
+                out.append(name)
+        return sorted(out)
+
     def render_claude(self, write: bool = False) -> tuple[bool, str]:
         """Generates the MCP configuration for Claude Code (~/.claude.json)."""
         servers = self.load_resolved_servers("claude")
@@ -179,6 +233,7 @@ class McpRenderer:
         mcp_servers = existing.get("mcpServers", {})
         for retired in self.retired_server_names():
             mcp_servers.pop(retired, None)
+        self._drop_unmounted(mcp_servers, servers)
         for name, srv in servers.items():
             if srv.get("transport") == "http" or srv.get("url"):
                 auth_env = srv.get("auth", {}).get("env") if isinstance(srv.get("auth"), dict) else None
@@ -221,6 +276,7 @@ class McpRenderer:
         mcp_servers = existing.get("mcpServers", {})
         for retired in self.retired_server_names():
             mcp_servers.pop(retired, None)
+        self._drop_unmounted(mcp_servers, servers)
         bridge_script = self.engine_root / "agent-universal-layer" / "mcp" / "mcp-http-bridge.mjs"
 
         for name, srv in servers.items():
@@ -283,6 +339,7 @@ class McpRenderer:
         mcp_servers = existing.get("mcp", {})
         for retired in self.retired_server_names():
             mcp_servers.pop(retired, None)
+        self._drop_unmounted(mcp_servers, servers)
         for name, srv in servers.items():
             if srv.get("transport") == "http" or srv.get("url"):
                 url_env = srv.get("url_env")
@@ -339,6 +396,13 @@ class McpRenderer:
         cfg_file = self.home / ".codex" / "config.toml"
 
         retired = self.retired_server_names()
+        _manifest_data = load_mcp_manifest(self.manifest_path) if self.manifest_path.is_file() else {}
+        unmounted = {
+            name.replace("-", "_")
+            for name, srv in _manifest_data.get("servers", {}).items()
+            if name not in servers and name not in retired
+            and not (srv.get("require_env") and (str(srv.get("tier", "")).strip().lower() == "core" or srv.get("enabled", False)))
+        }
         managed = {name.replace("-", "_") for name in servers} | {name.replace("-", "_") for name in retired}
 
         existing_lines: list[str] = []
@@ -355,7 +419,8 @@ class McpRenderer:
                     if stripped.startswith("[mcp_servers."):
                         in_mcp_section = True
                         key = stripped[13:-1] if stripped.endswith("]") else stripped[13:]
-                        keep_current = key.split(".", 1)[0] not in managed
+                        section = key.split(".", 1)[0]
+                        keep_current = section not in managed and section not in unmounted
                         if keep_current:
                             preserved_lines.append(line)
                         continue
