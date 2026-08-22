@@ -265,6 +265,18 @@ council clean --all           # removes every kept session now
   A false value prints a clear warning in menus and immediately before the
   model starts. It is metadata, not an execution gate. Secret scanning remains
   blocking and is a separate control.
+- **Pay-per-use channels**: the governed routing block carries a Costo cell
+  per candidate. A seat whose stated cost is pay-per-use (a currency symbol
+  or a non-zero amount, as opposed to flat/free) is flagged in the proposal
+  and **requires an interactive confirmation before any process starts**:
+  without a `y` on the operator's terminal the call is aborted. This is a
+  hard stop, not a warning: the call spends real money. A seat with no
+  matching candidate in the routing document has no stated cost and is not
+  gated.
+- **Cost recap**: after each completed round or relay stage, Council prints
+  a one-line usage recap when the CLI reports it (`tokens` and `cost`,
+  summed across opencode steps; codex reports `total_cost_usd`). CLIs that
+  do not report usage print nothing.
 - **Legacy retention controls**: the old `--allow-training-risk` flag and the
   `council allow-training` subcommand have been removed, not deprecated into
   a no-op. Either one is now a plain CLI error; there is no compatibility

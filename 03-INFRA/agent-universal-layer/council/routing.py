@@ -58,10 +58,45 @@ class RoutingContractError(ValueError):
 class RoutingCandidate:
     """One decision-approved model identity (a display label) and its optional
     execution CLI. Every producer of a RoutingCandidate resolves it against a
-    seat's ``routing_label`` (or the derived ``routing_id`` variants below)."""
+    seat's ``routing_label`` (or the derived ``routing_id`` variants below).
+
+    ``cost`` is the raw "Costo" cell from the governed block, when present:
+    it is displayed to the human and drives the pay-per-use confirmation
+    gate, never an execution check of its own."""
 
     value: str
     cli: str | None = None
+    cost: str | None = None
+
+
+def is_pay_per_use(cost: str | None) -> bool:
+    """Whether a "Costo" cell means real money per call.
+
+    Conservative on purpose: a cell that clearly names a flat/free channel
+    (forfait, flat, gratis, free, incluso, zero) is not pay-per-use; a cell
+    with a currency symbol or a non-zero amount is. Unknown or empty cells
+    are NOT pay-per-use: without a stated price there is nothing to confirm.
+    """
+    if not cost:
+        return False
+    cell = cost.strip()
+    if cell in ("—", "-", "n/a", "N/A"):
+        return False
+    lowered = cell.casefold()
+    flat_words = ("flat", "forfait", "gratis", "free", "incluso", "included",
+                  "abbonamento", "subscription", "bundled", "inclusa", "incluso")
+    if any(word in lowered for word in flat_words):
+        return False
+    digits = re.findall(r"\d+(?:[.,]\d+)?", cell)
+    if digits:
+        amounts = [float(d.replace(",", ".")) for d in digits]
+        if max(amounts) > 0:
+            return True
+        return False  # zero amounts only (e.g. "$0")
+    if any(symbol in cell for symbol in ("$", "€", "£", "¥")):
+        return True
+    pay_words = ("pay", "consumo", "per uso", "zen", "a chiamata", "on demand")
+    return any(word in lowered for word in pay_words)
 
 
 @dataclass(frozen=True)
@@ -187,8 +222,11 @@ def _parse_governor_role_tables(markdown: str) -> RoutingPlan | None:
                 raise RoutingContractError(f"Governor role {role} has an unassigned slot among the top three")
             channel = _nonempty_string(row[2], f"{role} channel").casefold()
             cli = CHANNEL_TO_CLI.get(channel)
+            cost = row[3].strip() if len(row) > 3 and row[3].strip() else None
+            if cost in ("—", "-"):
+                cost = None
             slots.append(slot)
-            ordered.append(RoutingCandidate(model, cli))
+            ordered.append(RoutingCandidate(model, cli, cost))
         if tuple(slots) != GOVERNOR_SLOTS:
             raise RoutingContractError(f"Governor role {role} candidates are not in prescelto/rimpiazzo order")
         deduped = _dedupe(ordered)
@@ -319,18 +357,29 @@ def seat_capabilities(seats: dict[str, dict[str, Any]]) -> dict[str, SeatCapabil
 
     for name, seat in seats.items():
         cli = str(seat["cli"])
-        if cli == "agy":
-            capabilities[name] = SeatCapability(
-                False,
-                "agy is disabled as a passive Council seat because it does not honor the stateless invocation contract",
-            )
-            continue
         if not shutil.which(cli):
             capabilities[name] = SeatCapability(False, f"CLI '{cli}' not present on this host")
             continue
 
         if cli == "codex":
             capabilities[name] = _probe_codex_seat(seat)
+            continue
+        if cli == "agy":
+            # agy seats were blocked outright until 2026-08-22 (see
+            # seat_process._build_seat_command); now the stateless invocation
+            # works. The model inventory probe (`agy models`) is slow on the
+            # free tier and would time out here, so presence is checked via
+            # --help and model selection is trusted to the explicit --model.
+            if cli not in cli_probe_cache:
+                cli_probe_cache[cli] = _run_probe(["agy", "--help"])
+            successful, output = cli_probe_cache[cli]
+            if not successful:
+                capabilities[name] = SeatCapability(False, f"agy probe failed: {output}")
+                continue
+            capabilities[name] = SeatCapability(
+                True,
+                "agy CLI present; model selected explicitly via --model (stateless invocation since 2026-08-22)",
+            )
             continue
         if cli == "claude":
             if cli not in cli_probe_cache:

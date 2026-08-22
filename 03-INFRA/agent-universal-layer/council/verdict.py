@@ -76,6 +76,23 @@ def extract_verdict(text: str) -> str:
     return match.group(1).upper() if match else "(absent)"
 
 
+def _print_usage_recap(seat_name: str, usage: dict) -> None:
+    """One-line recap of what the call reported spending, when the CLI
+    reports it at all. cost is printed verbatim as the CLI returned it."""
+    if not usage:
+        return
+    tokens = usage.get("tokens")
+    cost = usage.get("cost")
+    parts = []
+    if tokens:
+        parts.append(f"{tokens} tokens")
+    if cost:
+        parts.append(f"cost {cost}")
+    if not parts:
+        return
+    print(f"[council] usage for seat '{seat_name}': " + ", ".join(parts))
+
+
 def run_rounds(
     seat_name: str, seat: dict, session_dir: Path, mode_label: str, brief: str,
     role_prompt_initial: str, role_prompt_continue: str | None, rounds: int,
@@ -87,7 +104,7 @@ def run_rounds(
     for r in range(1, rounds + 1):
         print(f"[council] round {r}/{rounds} — seat: {seat_name} ({seat['model']})")
         try:
-            response, _usage = run_seat(seat, prompt, session_dir, timeout_seconds)
+            response, usage = run_seat(seat, prompt, session_dir, timeout_seconds)
         except SeatRunError as e:
             sys.exit(str(e))
         # Audit FINDING B (2026-07-12): this gate used to be wired only into
@@ -104,6 +121,7 @@ def run_rounds(
                 "[council] seat output with a possible secret: the fragment was redacted, "
                 "the session continues."
             )
+        _print_usage_recap(seat_name, usage)
         seat_file = session_dir / f"{r:02d}-{seat_name}-{mode_label}-r{r}.md"
         _write_private_text(seat_file, response)
         verdict = extract_verdict(response)

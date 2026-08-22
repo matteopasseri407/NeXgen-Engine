@@ -22,7 +22,9 @@ if str(ENGINE_ROOT) not in sys.path:
 from config_schema import ConfigValidationError, load_council_config
 from routing import (
     RoutingContractError,
+    _matches,
     _probe_codex_seat,
+    is_pay_per_use,
     load_routing_plan,
     resolve_role_candidates,
     seat_capabilities,
@@ -138,8 +140,10 @@ def _proposal_lines_for_role(plan, seats: dict, capabilities: dict, role: str) -
                 if seat.get("zero_retention", False)
                 else "WARNING: no verified zero-retention"
             )
+            cost = _seat_cost(plan, name, seat)
+            pay_note = f", WARNING: pay-per-use ({cost})" if is_pay_per_use(cost) else ""
             lines.append(
-                f"    {index}. {name}: {seat['model']} via {seat['cli']}{effort_label}, {retention}."
+                f"    {index}. {name}: {seat['model']} via {seat['cli']}{effort_label}, {retention}{pay_note}."
             )
     else:
         lines.append("    No compatible local seat.")
@@ -168,12 +172,6 @@ def _print_static_seat_menu(seats: dict) -> bool:
     print("[council] no private routing configured. Declared seats, you choose:")
     has_invocable_seat = False
     for name, seat in seats.items():
-        if seat.get("cli") == "agy":
-            print(
-                f"  {name}: DISABLED as a passive Council seat; "
-                "agy does not honor the stateless invocation contract."
-            )
-            continue
         has_invocable_seat = True
         effort_label = _effort_label(seat)
         retention = (
@@ -235,6 +233,22 @@ def _warn_if_explicit_codex_seat_not_default(seat_name: str, seat: dict) -> None
     )
 
 
+def _seat_cost(plan, seat_name: str, seat: dict) -> str | None:
+    """The raw Costo cell of the first candidate matching this seat, if any.
+
+    Used for the pay-per-use warning and confirmation gate. A seat without a
+    matching candidate in the routing document has no stated cost, so no
+    gate applies: there is nothing to confirm.
+    """
+    if not hasattr(plan, "roles"):
+        return None
+    for candidates in plan.roles.values():
+        for candidate in candidates:
+            if _matches(seat, candidate):
+                return candidate.cost
+    return None
+
+
 def _warn_no_zero_retention(seat_name: str, seat: dict) -> None:
     if seat.get("zero_retention", False):
         return
@@ -245,9 +259,30 @@ def _warn_no_zero_retention(seat_name: str, seat: dict) -> None:
     )
 
 
+def _confirm_pay_per_use(seat_name: str, seat: dict, cost: str | None) -> None:
+    """Real-money gate: a pay-per-use seat is never invoked without the human
+    confirming it, because the call spends actual money on a per-use channel.
+    This is a hard stop, not a warning: input() reads the operator's terminal
+    and a non-yes answer aborts before any process is spawned."""
+    if not is_pay_per_use(cost):
+        return
+    print(
+        f"[council] WARNING: seat '{seat_name}' ({seat['model']}) runs on a "
+        f"pay-per-use channel (stated cost: '{cost}'). This call spends real money.",
+        file=sys.stderr,
+    )
+    answer = input(f"Confirm pay-per-use call for seat '{seat_name}'? [y/N] ").strip().casefold()
+    if answer not in ("y", "yes"):
+        sys.exit(f"[council] STOP: pay-per-use seat '{seat_name}' not confirmed.")
+
+
 def _check_seat_allowed(seat_name: str, seat: dict, args: argparse.Namespace) -> None:
     del args
     _warn_no_zero_retention(seat_name, seat)
+    config = load_config()
+    if _routing_enabled(config):
+        plan = _routing_context_or_exit(config)
+        _confirm_pay_per_use(seat_name, seat, _seat_cost(plan, seat_name, seat))
 
 
 def resolve_seat(args: argparse.Namespace, *, default_routing_role: str | None = None) -> tuple[str, dict]:

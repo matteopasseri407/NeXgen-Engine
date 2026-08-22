@@ -160,7 +160,7 @@ def cmd_relay(args: argparse.Namespace) -> None:
         for idx, stage in enumerate(stages, 1):
             record = _run_relay_stage(
                 idx, stage, seats, session_dir, brief, records, quarantine,
-                getattr(args, "timeout_seconds", None),
+                getattr(args, "timeout_seconds", None), config,
             )
             records.append(record)
             if record.verdict == "REJECT" and not continue_on_reject and idx < len(stages):

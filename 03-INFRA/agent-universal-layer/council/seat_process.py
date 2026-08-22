@@ -666,7 +666,14 @@ def run_seat(
                 if event.get("type") == "text" and "text" in part:
                     text_chunks.append(part["text"])
                 if event.get("type") == "step_finish":
-                    usage = {"tokens": part.get("tokens"), "cost": part.get("cost")}
+                    # Sum across steps: a step_finish carries the step's own
+                    # tokens/cost, not the running total.
+                    part_tokens = part.get("tokens") or 0
+                    part_cost = part.get("cost") or 0.0
+                    usage = {
+                        "tokens": (usage.get("tokens") or 0) + part_tokens,
+                        "cost": (usage.get("cost") or 0.0) + part_cost,
+                    }
             else:
                 # Claude emits one JSON object; agy/codex/ollama emit plain
                 # text. For codex the authoritative answer arrives later from

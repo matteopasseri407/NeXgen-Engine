@@ -16,10 +16,12 @@ from pathlib import Path
 
 from proposal import (
     SEATS_PATH,
+    _confirm_pay_per_use,
     _print_routing_proposal,
     _print_static_seat_menu,
     _routing_context_or_exit,
     _routing_enabled,
+    _seat_cost,
     _seat_quota_pool,
     _warn_no_zero_retention,
 )
@@ -32,7 +34,7 @@ from seat_process import (
     run_seat,
 )
 from session import _write_private_text, redact_generated_output, slugify
-from verdict import extract_verdict
+from verdict import _print_usage_recap, extract_verdict
 
 DEFAULT_MAX_SEATS = 5
 SHORT_QUARANTINE_SECONDS = 5 * 60
@@ -251,6 +253,7 @@ def write_relay_verdict(session_dir: Path, records: list[RelayRecord]) -> None:
 def _run_relay_stage(
     idx: int, stage: RelayStage, seats: dict, session_dir: Path, brief: str,
     records: list[RelayRecord], quarantine: RelayQuarantine, invocation_timeout: float | None,
+    config: dict | None = None,
 ) -> RelayRecord:
     attempted: set[str] = set()
     last_failed_pool: str | None = None
@@ -284,6 +287,8 @@ def _run_relay_stage(
         timeout_seconds = _resolve_timeout_seconds(seat, invocation_timeout)
 
         _warn_no_zero_retention(chosen_name, seat)
+        if config and _routing_enabled(config):
+            _confirm_pay_per_use(chosen_name, seat, _seat_cost(_routing_context_or_exit(config), chosen_name, seat))
 
         print(
             f"[council] relay {idx:02d} — role: {stage.role} — "
@@ -291,7 +296,7 @@ def _run_relay_stage(
             f"timeout {_format_timeout_seconds(timeout_seconds)}s)"
         )
         try:
-            response, _usage = run_seat(seat, prompt, session_dir, timeout_seconds)
+            response, usage = run_seat(seat, prompt, session_dir, timeout_seconds)
         except SeatRunError as e:
             attempted.add(chosen_name)
             if not _is_retryable_seat_error(e):
@@ -304,6 +309,7 @@ def _run_relay_stage(
                 f"{blocked_until.isoformat(timespec='seconds')}; trying a different pool if the sequence provides one."
             )
             continue
+        _print_usage_recap(chosen_name, usage)
 
         response, generated_output_redacted = redact_generated_output(response)
         if generated_output_redacted:
