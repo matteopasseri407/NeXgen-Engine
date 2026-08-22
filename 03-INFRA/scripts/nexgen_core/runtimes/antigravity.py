@@ -117,7 +117,7 @@ class AntigravityRuntime(Runtime):
             "enabled": True,
             "PreToolUse": [{
                 "matcher": "run_command",
-                "hooks": [{"type": "command", "command": f'node "{adapter_dst}"', "timeout": timeout + 5}],
+                "hooks": [{"type": "command", "command": f"node {adapter_dst.as_posix()}", "timeout": timeout + 5}],
             }],
         }
         current = self._load_json(hooks_path, label="hooks.json") or {}
