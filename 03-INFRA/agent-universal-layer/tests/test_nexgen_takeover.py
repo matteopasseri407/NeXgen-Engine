@@ -79,9 +79,12 @@ def test_those_launchers_hold_no_logic():
 
 def test_a_legacy_launcher_actually_reaches_the_new_command():
     """Non basta che il file esista: deve arrivare a un comando vero."""
+    if sys.platform == "win32":
+        cmd = ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(SCRIPTS_DIR / "agent-doctor.ps1"), "--help"]
+    else:
+        cmd = ["sh", str(SCRIPTS_DIR / "agent-doctor.sh"), "--help"]
     result = subprocess.run(
-        ["sh", str(SCRIPTS_DIR / "agent-doctor.sh"), "--help"],
-        capture_output=True, text=True, check=False, timeout=60,
+        cmd, capture_output=True, text=True, check=False, timeout=60,
     )
     assert result.returncode == 0, f"agent-doctor.sh non arriva a destinazione:\n{result.stderr}"
     assert "Traceback" not in result.stderr

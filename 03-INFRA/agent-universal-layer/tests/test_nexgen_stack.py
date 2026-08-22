@@ -32,6 +32,7 @@ def test_secrets_are_generated_only_when_missing(tmp_path: Path):
     assert len(values["NUOVO"]) == 64
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="Windows does not support POSIX file permission bits.")
 def test_secrets_file_is_not_world_readable(tmp_path: Path):
     env = tmp_path / ".env"
     secrets.ensure(env, ["UN_SEGRETO"])
@@ -40,6 +41,7 @@ def test_secrets_file_is_not_world_readable(tmp_path: Path):
     assert not mode & stat.S_IROTH
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="Windows does not support POSIX file permission bits.")
 def test_workstation_env_is_not_world_readable(tmp_path: Path):
     conf = tmp_path / "workstation.conf"
     secrets.write_workstation_env(conf, {"KEY": "VAL"})

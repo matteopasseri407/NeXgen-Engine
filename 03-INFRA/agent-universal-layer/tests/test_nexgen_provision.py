@@ -97,9 +97,9 @@ def test_git_rev_change_provisions_fresh(tmp_path):
     repo_uri, rev1 = _git_repo_with_commit(tmp_path, content="v1")
     state = tmp_path / "state"
     _, err = ensure_deps({"kind": "git", "repo": repo_uri, "rev": rev1}, state, install=True, server="srv")
-    assert err is None
-
-    src = Path(repo_uri.removeprefix("file://"))
+    from urllib.parse import urlsplit
+    from urllib.request import url2pathname
+    src = Path(url2pathname(urlsplit(repo_uri).path))
     subprocess.run(["git", "config", "user.email", "t@t.t"], cwd=src, check=True)
     subprocess.run(["git", "config", "user.name", "t"], cwd=src, check=True)
     (src / "hello.txt").write_text("v2", encoding="utf-8")

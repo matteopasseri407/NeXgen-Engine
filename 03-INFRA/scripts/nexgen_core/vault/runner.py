@@ -18,6 +18,7 @@ import os
 import shutil
 import signal
 import subprocess
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import ClassVar
@@ -49,7 +50,12 @@ class RunnerUnknownError(RunnerError):
 
 def _kill_process_group(proc: subprocess.Popen) -> None:
     try:
-        os.killpg(proc.pid, signal.SIGKILL)
+        if sys.platform == "win32":
+            proc.kill()
+        elif hasattr(os, "killpg") and hasattr(signal, "SIGKILL"):
+            os.killpg(proc.pid, signal.SIGKILL)
+        else:
+            proc.kill()
     except (ProcessLookupError, PermissionError, OSError):
         pass
 

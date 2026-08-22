@@ -1,5 +1,10 @@
 [
   {
+    "file": "03-INFRA/agent-universal-layer/council/routing.py",
+    "code": "SIM103",
+    "count": 1
+  },
+  {
     "file": "03-INFRA/agent-universal-layer/council/seat_process.py",
     "code": "PERF402",
     "count": 1
@@ -35,6 +40,16 @@
     "count": 1
   },
   {
+    "file": "03-INFRA/agent-universal-layer/mcp/lazy-mcp.py",
+    "code": "BLE001",
+    "count": 6
+  },
+  {
+    "file": "03-INFRA/agent-universal-layer/mcp/lazy-mcp.py",
+    "code": "S112",
+    "count": 1
+  },
+  {
     "file": "03-INFRA/agent-universal-layer/tests/conftest.py",
     "code": "PLW1510",
     "count": 5
@@ -42,6 +57,41 @@
   {
     "file": "03-INFRA/agent-universal-layer/tests/test_check_required_rules.py",
     "code": "PLW1510",
+    "count": 1
+  },
+  {
+    "file": "03-INFRA/agent-universal-layer/tests/test_nexgen_council_agy.py",
+    "code": "F401",
+    "count": 2
+  },
+  {
+    "file": "03-INFRA/agent-universal-layer/tests/test_nexgen_council_routing.py",
+    "code": "F811",
+    "count": 5
+  },
+  {
+    "file": "03-INFRA/agent-universal-layer/tests/test_nexgen_council_routing.py",
+    "code": "I001",
+    "count": 2
+  },
+  {
+    "file": "03-INFRA/agent-universal-layer/tests/test_nexgen_info_shell.py",
+    "code": "F401",
+    "count": 1
+  },
+  {
+    "file": "03-INFRA/agent-universal-layer/tests/test_nexgen_lazy_mcp.py",
+    "code": "F401",
+    "count": 1
+  },
+  {
+    "file": "03-INFRA/agent-universal-layer/tests/test_nexgen_modules.py",
+    "code": "F401",
+    "count": 2
+  },
+  {
+    "file": "03-INFRA/agent-universal-layer/tests/test_nexgen_modules.py",
+    "code": "F841",
     "count": 1
   },
   {
@@ -56,6 +106,31 @@
   },
   {
     "file": "03-INFRA/agent-universal-layer/tests/test_nexgen_phase3.py",
+    "code": "RUF059",
+    "count": 1
+  },
+  {
+    "file": "03-INFRA/agent-universal-layer/tests/test_nexgen_provision.py",
+    "code": "F401",
+    "count": 2
+  },
+  {
+    "file": "03-INFRA/agent-universal-layer/tests/test_nexgen_provision.py",
+    "code": "I001",
+    "count": 1
+  },
+  {
+    "file": "03-INFRA/agent-universal-layer/tests/test_nexgen_provision.py",
+    "code": "RUF059",
+    "count": 5
+  },
+  {
+    "file": "03-INFRA/agent-universal-layer/tests/test_nexgen_quarantine.py",
+    "code": "F401",
+    "count": 1
+  },
+  {
+    "file": "03-INFRA/agent-universal-layer/tests/test_nexgen_quarantine.py",
     "code": "RUF059",
     "count": 1
   },
@@ -145,11 +220,6 @@
     "count": 1
   },
   {
-    "file": "03-INFRA/scripts/config_schema.py",
-    "code": "EXE002",
-    "count": 1
-  },
-  {
     "file": "03-INFRA/scripts/nexgen_core/beat.py",
     "code": "BLE001",
     "count": 3
@@ -162,12 +232,17 @@
   {
     "file": "03-INFRA/scripts/nexgen_core/checks/mcp_checks.py",
     "code": "BLE001",
+    "count": 3
+  },
+  {
+    "file": "03-INFRA/scripts/nexgen_core/checks/module_checks.py",
+    "code": "BLE001",
     "count": 2
   },
   {
     "file": "03-INFRA/scripts/nexgen_core/checks/skill_checks.py",
     "code": "BLE001",
-    "count": 1
+    "count": 2
   },
   {
     "file": "03-INFRA/scripts/nexgen_core/cli/__init__.py",
@@ -175,8 +250,18 @@
     "count": 1
   },
   {
+    "file": "03-INFRA/scripts/nexgen_core/cli/module_cmds.py",
+    "code": "BLE001",
+    "count": 1
+  },
+  {
     "file": "03-INFRA/scripts/nexgen_core/git_ops.py",
     "code": "BLE001",
+    "count": 1
+  },
+  {
+    "file": "03-INFRA/scripts/nexgen_core/git_ops.py",
+    "code": "RUF059",
     "count": 1
   },
   {
@@ -192,7 +277,7 @@
   {
     "file": "03-INFRA/scripts/nexgen_core/guard.py",
     "code": "RUF059",
-    "count": 1
+    "count": 2
   },
   {
     "file": "03-INFRA/scripts/nexgen_core/guard.py",
@@ -225,6 +310,46 @@
     "count": 1
   },
   {
+    "file": "03-INFRA/scripts/nexgen_core/modules.py",
+    "code": "F401",
+    "count": 2
+  },
+  {
+    "file": "03-INFRA/scripts/nexgen_core/provision.py",
+    "code": "BLE001",
+    "count": 1
+  },
+  {
+    "file": "03-INFRA/scripts/nexgen_core/provision.py",
+    "code": "F401",
+    "count": 1
+  },
+  {
+    "file": "03-INFRA/scripts/nexgen_core/provision.py",
+    "code": "PLW1510",
+    "count": 5
+  },
+  {
+    "file": "03-INFRA/scripts/nexgen_core/provision.py",
+    "code": "PYI034",
+    "count": 1
+  },
+  {
+    "file": "03-INFRA/scripts/nexgen_core/provision.py",
+    "code": "PYI036",
+    "count": 1
+  },
+  {
+    "file": "03-INFRA/scripts/nexgen_core/provision.py",
+    "code": "UP032",
+    "count": 1
+  },
+  {
+    "file": "03-INFRA/scripts/nexgen_core/provision.py",
+    "code": "UP037",
+    "count": 1
+  },
+  {
     "file": "03-INFRA/scripts/nexgen_core/renderer.py",
     "code": "BLE001",
     "count": 3
@@ -236,6 +361,11 @@
   },
   {
     "file": "03-INFRA/scripts/nexgen_core/report.py",
+    "code": "BLE001",
+    "count": 1
+  },
+  {
+    "file": "03-INFRA/scripts/nexgen_core/skills.py",
     "code": "BLE001",
     "count": 1
   },
@@ -263,6 +393,56 @@
     "file": "03-INFRA/scripts/nexgen_core/tools/firecrawl.py",
     "code": "BLE001",
     "count": 3
+  },
+  {
+    "file": "03-INFRA/scripts/nexgen_core/tools/info.py",
+    "code": "BLE001",
+    "count": 2
+  },
+  {
+    "file": "03-INFRA/scripts/nexgen_core/tools/info.py",
+    "code": "F401",
+    "count": 4
+  },
+  {
+    "file": "03-INFRA/scripts/nexgen_core/tools/info.py",
+    "code": "S110",
+    "count": 1
+  },
+  {
+    "file": "03-INFRA/scripts/nexgen_core/tools/info.py",
+    "code": "SIM103",
+    "count": 1
+  },
+  {
+    "file": "03-INFRA/scripts/nexgen_core/tools/shell.py",
+    "code": "B010",
+    "count": 1
+  },
+  {
+    "file": "03-INFRA/scripts/nexgen_core/tools/shell.py",
+    "code": "BLE001",
+    "count": 1
+  },
+  {
+    "file": "03-INFRA/scripts/nexgen_core/tools/shell.py",
+    "code": "F401",
+    "count": 4
+  },
+  {
+    "file": "03-INFRA/scripts/nexgen_core/tools/shell.py",
+    "code": "F811",
+    "count": 1
+  },
+  {
+    "file": "03-INFRA/scripts/nexgen_core/tools/shell.py",
+    "code": "I001",
+    "count": 2
+  },
+  {
+    "file": "03-INFRA/scripts/nexgen_core/tools/shell.py",
+    "code": "RUF012",
+    "count": 4
   },
   {
     "file": "03-INFRA/scripts/nexgen_core/tools/vault_lifecycle_audit.py",

@@ -255,4 +255,5 @@ def test_the_installer_writes_its_commands_inside_the_sandbox(tmp_path, monkeypa
     install_launchers(REPO_ROOT)
 
     assert (real / "agent-sync").read_text(encoding="utf-8") == "#!/bin/sh\n# il comando vero\n"
-    assert (tmp_path / "sandbox" / ".local" / "bin" / "nexgen").is_file()
+    ext = ".cmd" if sys.platform == "win32" else ""
+    assert (tmp_path / "sandbox" / ".local" / "bin" / f"nexgen{ext}").is_file()

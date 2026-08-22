@@ -202,19 +202,30 @@ def guided_profile() -> tuple[str, str]:
     return profile, mode
 
 
+def _sym(char: str, fallback: str, stream: object) -> str:
+    try:
+        char.encode(getattr(stream, "encoding", None) or "utf-8")
+        return char
+    except (UnicodeEncodeError, TypeError):
+        return fallback
+
+
 def render(findings: list[Finding], title: str, stream=sys.stdout) -> int:
     """Prints a block of outcomes and returns how many requirements are missing."""
     c = _colour(stream)
+    ok_sym = _sym("✓", "[OK]", stream)
+    err_sym = _sym("✗", "[X]", stream)
+    warn_sym = _sym("○", "[o]", stream)
     print(f"\n{c['bold']}{c['cyan']}{title}{c['reset']}", file=stream)
     missing = 0
     for f in findings:
         if f.ok:
-            print(f"  {c['green']}✓{c['reset']} {f.label}", file=stream)
+            print(f"  {c['green']}{ok_sym}{c['reset']} {f.label}", file=stream)
         elif f.required:
-            print(f"  {c['red']}✗{c['reset']} {f.label} — {f.remedy}", file=stream)
+            print(f"  {c['red']}{err_sym}{c['reset']} {f.label} — {f.remedy}", file=stream)
             missing += 1
         else:
-            print(f"  {c['yellow']}○{c['reset']} {f.label} — {f.remedy}", file=stream)
+            print(f"  {c['yellow']}{warn_sym}{c['reset']} {f.label} — {f.remedy}", file=stream)
     return missing
 
 
@@ -267,7 +278,8 @@ def main(argv: list[str] | None = None) -> int:
         # someone who is not there.
         note = install_launchers(root)
         if note:
-            print(f"\n{c['green']}✓{c['reset']} {note}")
+            ok_sym = _sym("✓", "[OK]", sys.stdout)
+            print(f"\n{c['green']}{ok_sym}{c['reset']} {note}")
         print("\n" + t("Not a terminal: the questions were skipped. "
                        "Run 'nexgen sync apply' when you are ready."))
         return 0
@@ -306,11 +318,13 @@ def main(argv: list[str] | None = None) -> int:
     ])
     steps.append(Finding(message, True, required=False))
 
+    ok_sym = _sym("✓", "[OK]", sys.stdout)
+    err_sym = _sym("✗", "[X]", sys.stdout)
     for step in steps:
-        print(f"  {c['green']}✓{c['reset']} {step.label}")
+        print(f"  {c['green']}{ok_sym}{c['reset']} {step.label}")
 
     aligned, message = align_now()
-    print(("  " + f"{c['green']}✓{c['reset']} " if aligned else "  " + f"{c['red']}✗{c['reset']} ") + message)
+    print(("  " + f"{c['green']}{ok_sym}{c['reset']} " if aligned else "  " + f"{c['red']}{err_sym}{c['reset']} ") + message)
 
     print(f"\n{c['bold']}{c['cyan']}6 · " + t("Where you are") + c['reset'])
 

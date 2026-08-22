@@ -77,7 +77,8 @@ servers:
     assert claude_cfg.exists()
     claude_data = json.loads(claude_cfg.read_text(encoding="utf-8"))
     assert "vault-mcp" in claude_data["mcpServers"]
-    assert claude_data["mcpServers"]["vault-mcp"]["command"] == "python3"
+    expected_python = "python" if sys.platform == "win32" else "python3"
+    assert claude_data["mcpServers"]["vault-mcp"]["command"] == expected_python
 
     # Render per Antigravity
     renderer.render_antigravity(write=True)

@@ -683,8 +683,16 @@ class SkillMaterializer:
         return actions
 
 
+def _safe_mark(mark: str, stream=sys.stdout) -> str:
+    try:
+        mark.encode(getattr(stream, "encoding", None) or "utf-8")
+        return mark
+    except (UnicodeEncodeError, TypeError):
+        return "[OK]" if mark == "✓" else "[X]"
+
+
 def main(argv: list[str] | None = None) -> int:
-    """CLI for skill management and sync."""
+    """Entrypoint for `skills-sync` and `agent-skill`."""
     if argv is None:
         argv = sys.argv[1:]
 
@@ -706,18 +714,18 @@ def main(argv: list[str] | None = None) -> int:
     positional = [a for a in argv if not a.startswith("-")]
 
     cmd = positional[0].lower() if positional else ""
+    ok_mark = _safe_mark("✓")
+    err_mark = _safe_mark("✗")
 
     if cmd in ("apply", "sync") or flag_apply:
         changes, actions = mat.materialize(apply=True)
         failed = [a for a in actions if a.startswith("[ERROR]")]
         for act in actions:
-            print(f"  {'✗' if act.startswith('[ERROR]') else '✓'} {act}")
+            print(f"  {err_mark if act.startswith('[ERROR]') else ok_mark} {act}")
         if flag_migrate:
             for act in mat.migrate_legacy(apply=True):
-                print(f"  ✓ {act}")
+                print(f"  {ok_mark} {act}")
         if failed:
-            # An error printed and then a zero exit code is how a machine
-            # falls behind without anyone noticing.
             print(
                 t("{failed} of {total} skills were not synced.", failed=len(failed), total=changes + len(failed)),
                 file=sys.stderr,
@@ -729,7 +737,7 @@ def main(argv: list[str] | None = None) -> int:
     elif cmd == "validate":
         problems = mat.validate_manifest()
         for problem in problems:
-            print(f"  ✗ {problem}", file=sys.stderr)
+            print(f"  {_safe_mark('✗', sys.stderr)} {problem}", file=sys.stderr)
         if problems:
             print(t("Skills manifest: {count} problems.", count=len(problems)), file=sys.stderr)
             return 1

@@ -156,7 +156,7 @@ def _verified(deps: dict[str, Any], state_dir: Path) -> dict[str, str] | None:
 
 def _run_build(build: list[Any], workspace: Path, server: str) -> None:
     for step in build:
-        argv = list(step) if isinstance(step, list) else shlex.split(str(step), posix=sys.platform != "win32")
+        argv = list(step) if isinstance(step, list) else shlex.split(str(step), posix=True)
         if not argv:
             continue
         if not shutil.which(argv[0]):

@@ -141,9 +141,13 @@ def test_it_starts_on_a_machine_that_has_nothing(relative: str, tmp_path: Path):
 
 
 def test_the_installer_gets_all_the_way_through_its_checks(tmp_path: Path):
-    """`sh install.sh --check` e' la prima cosa che un utente nuovo esegue."""
+    """`install` `--check` e' la prima cosa che un utente nuovo esegue."""
+    if sys.platform == "win32":
+        cmd = ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(REPO_ROOT / "install.ps1"), "--check"]
+    else:
+        cmd = ["sh", str(REPO_ROOT / "install.sh"), "--check"]
     result = subprocess.run(
-        ["sh", str(REPO_ROOT / "install.sh"), "--check"],
+        cmd,
         capture_output=True, text=True, timeout=180, check=False,
         cwd=tmp_path,
         env=_clean_env(tmp_path / "home"),
@@ -160,8 +164,12 @@ def test_checking_writes_nothing_at_all(tmp_path: Path):
     """
     home = tmp_path / "home"
     home.mkdir()
+    if sys.platform == "win32":
+        cmd = ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(REPO_ROOT / "install.ps1"), "--check"]
+    else:
+        cmd = ["sh", str(REPO_ROOT / "install.sh"), "--check"]
     subprocess.run(
-        ["sh", str(REPO_ROOT / "install.sh"), "--check"],
+        cmd,
         capture_output=True, text=True, timeout=180, check=False,
         cwd=tmp_path, env=_clean_env(home),
     )

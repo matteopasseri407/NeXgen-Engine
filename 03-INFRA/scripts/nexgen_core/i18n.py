@@ -63,8 +63,11 @@ def _from_environment() -> str | None:
         if not raw:
             continue
         code = raw.split(".")[0].split("_")[0].strip().lower()
-        if code and code not in ("c", "posix"):
-            return code
+        if not code:
+            continue
+        if code in ("c", "posix"):
+            return SOURCE_LANGUAGE
+        return code
     return None
 
 

@@ -89,20 +89,21 @@ def register(sub) -> None:
     p.set_defaults(func=cmd_bootstrap_alerts)
 
 
-def _action_mark(act: str) -> tuple[str, str]:
-    """The mark and the text for one action line, from its own prefix.
+def _safe_mark(mark: str, stream=sys.stdout) -> str:
+    try:
+        mark.encode(getattr(stream, "encoding", None) or "utf-8")
+        return mark
+    except (UnicodeEncodeError, TypeError):
+        return "[OK]" if mark == "✓" else "[X]" if mark == "✗" else "[!]"
 
-    A line that reports a failure must not be printed with the mark that
-    means it worked: three skills that failed to clone came out under a
-    green tick, next to the things that actually happened. A warning is
-    neither: it gets a mark of its own, so a green tick keeps meaning
-    "this worked".
-    """
+
+def _action_mark(act: str) -> tuple[str, str]:
+    """The mark and the text for one action line, from its own prefix."""
     if act.startswith(("[ERROR]", "[ERRORE]")):
-        return "✗", act.split("] ", 1)[-1]
+        return _safe_mark("✗"), act.split("] ", 1)[-1]
     if act.startswith(("[WARN]", "[AVVISO]")):
-        return "!", act.split("] ", 1)[-1]
-    return "✓", act
+        return _safe_mark("!"), act.split("] ", 1)[-1]
+    return _safe_mark("✓"), act
 
 
 def cmd_sync(args) -> int:

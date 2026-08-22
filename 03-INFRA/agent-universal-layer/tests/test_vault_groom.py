@@ -379,13 +379,14 @@ def test_claude_runner_never_allows_push(tmp_path, monkeypatch):
 
 
 def test_run_streaming_kills_on_timeout():
+    import sys
     import time
 
     from nexgen_core.vault.runner import _run_streaming
 
     start = time.monotonic()
     result = _run_streaming(
-        ["bash", "-c", "sleep 30"], cwd=None, input_text=None, timeout=1
+        [sys.executable, "-c", "import time; time.sleep(30)"], cwd=None, input_text=None, timeout=1
     )
     elapsed = time.monotonic() - start
 

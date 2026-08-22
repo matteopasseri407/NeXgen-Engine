@@ -108,6 +108,7 @@ def test_opencode_instructions_deduped_by_resolved_path(tmp_path: Path, monkeypa
     whose config spelled it with a tilde ended up with it twice."""
     home = tmp_path / "home"
     monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("USERPROFILE", str(home))
     vault = home / "KnowledgeVault"
     canon = vault / "03-INFRA" / "agent-universal-layer" / "instructions" / "AGENTS.md"
     canon.parent.mkdir(parents=True)
@@ -127,6 +128,7 @@ def test_opencode_instructions_deduped_by_resolved_path(tmp_path: Path, monkeypa
 def test_opencode_instructions_append_when_the_file_is_truly_missing(tmp_path: Path, monkeypatch):
     home = tmp_path / "home"
     monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("USERPROFILE", str(home))
     vault = home / "KnowledgeVault"
     canon = vault / "03-INFRA" / "agent-universal-layer" / "instructions" / "AGENTS.md"
     canon.parent.mkdir(parents=True)

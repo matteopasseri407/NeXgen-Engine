@@ -166,14 +166,13 @@ def test_a_third_party_installer_is_run_and_its_copy_is_taken_out_of_sight(tmp_p
     # L'installer finto fa quello che fa quello vero: scrive nella cartella
     # da cui Claude scopre le skill da sola.
     dropped = mat.claude_dir / "impeccable"
-    installer = tmp_path / "finto-installer.sh"
+    installer = tmp_path / "finto-installer.py"
     installer.write_text(
-        f'#!/bin/sh\nmkdir -p "{dropped}"\nprintf "# impeccable\\n" > "{dropped}/SKILL.md"\n',
+        f'import pathlib; d = pathlib.Path(r"{dropped}"); d.mkdir(parents=True, exist_ok=True); (d / "SKILL.md").write_text("# impeccable\\n", encoding="utf-8")',
         encoding="utf-8",
     )
-    installer.chmod(0o755)
     entry = mat.load_manifest()["impeccable"]
-    entry.install = ["sh", str(installer)]
+    entry.install = [sys.executable, str(installer)]
     monkeypatch.setattr(mat, "load_manifest", lambda: {"impeccable": entry})
 
     _changes, actions = mat.materialize(apply=True)
@@ -196,16 +195,19 @@ def test_the_installer_is_not_run_again_for_a_version_already_installed(tmp_path
     mat = _materializer(tmp_path, vault, monkeypatch)
 
     counter = tmp_path / "quante-volte"
-    installer = tmp_path / "conta.sh"
+    installer = tmp_path / "conta.py"
+    fissa_dir = mat.claude_dir / "fissa"
     installer.write_text(
-        f'#!/bin/sh\nprintf x >> "{counter}"\n'
-        f'mkdir -p "{mat.claude_dir / "fissa"}"\n'
-        f'printf "# fissa\\n" > "{mat.claude_dir / "fissa" / "SKILL.md"}"\n',
+        f'import pathlib\n'
+        f'c = pathlib.Path(r"{counter}")\n'
+        f'c.write_text((c.read_text(encoding="utf-8") if c.is_file() else "") + "x", encoding="utf-8")\n'
+        f'f = pathlib.Path(r"{fissa_dir}")\n'
+        f'f.mkdir(parents=True, exist_ok=True)\n'
+        f'(f / "SKILL.md").write_text("# fissa\\n", encoding="utf-8")\n',
         encoding="utf-8",
     )
-    installer.chmod(0o755)
     entry = mat.load_manifest()["fissa"]
-    entry.install = ["sh", str(installer)]
+    entry.install = [sys.executable, str(installer)]
     monkeypatch.setattr(mat, "load_manifest", lambda: {"fissa": entry})
 
     mat.materialize(apply=True)

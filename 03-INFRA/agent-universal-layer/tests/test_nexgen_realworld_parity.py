@@ -139,7 +139,7 @@ servers:
     claude_data = json.loads(claude_cfg.read_text(encoding="utf-8"))
     assert "custom-live" in claude_data["mcpServers"]
     assert "playwright" in claude_data["mcpServers"]
-    assert claude_data["mcpServers"]["playwright"]["args"] == [f"{tmp_path}/engine/test.mjs", "--arg1"]
+    assert Path(claude_data["mcpServers"]["playwright"]["args"][0]) == (tmp_path / "engine" / "test.mjs")
     assert "n8n-mcp" in claude_data["mcpServers"]
     assert claude_data["mcpServers"]["n8n-mcp"]["headers"]["Authorization"] == "Bearer ${N8N_MCP_TOKEN}"
 

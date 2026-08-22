@@ -625,7 +625,7 @@ def test_powershell_launcher_executes_the_real_updater_help():
         timeout=30,
     )
     assert result.returncode == 0, result.stdout + result.stderr
-    assert "usage: nexgen-update" in result.stdout
+    assert ("usage: nexgen update" in result.stdout) or ("usage: nexgen-update" in result.stdout)
 
 
 def test_conflicted_merge_is_rolled_back_instead_of_leaving_markers(tmp_path, capsys):

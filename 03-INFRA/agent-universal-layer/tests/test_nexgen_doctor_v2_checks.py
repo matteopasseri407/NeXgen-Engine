@@ -37,9 +37,13 @@ pytestmark = pytest.mark.filterwarnings("ignore")
 
 def _make_executable_stub(directory: Path, name: str) -> None:
     directory.mkdir(parents=True, exist_ok=True)
-    stub = directory / name
-    stub.write_text("#!/bin/sh\nexit 0\n")
-    stub.chmod(stub.stat().st_mode | stat.S_IEXEC)
+    if sys.platform == "win32":
+        stub = directory / f"{name}.cmd"
+        stub.write_text("@echo off\nexit /b 0\n", encoding="utf-8")
+    else:
+        stub = directory / name
+        stub.write_text("#!/bin/sh\nexit 0\n")
+        stub.chmod(stub.stat().st_mode | stat.S_IEXEC)
 
 
 def _write_canon(vault_data: Path, content: str = "# Agents Rules\n") -> Path:
