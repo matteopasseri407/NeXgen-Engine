@@ -8,9 +8,10 @@ type: registry
 
 # Secrets registry (non-sensitive)
 
-Index of the secrets held in the encrypted archive (`archive/master-secrets.md.gpg`).
-**Names and env vars only — never values** (policy: `AGENTS.md` → Secrets). This
-file is git-tracked; the encrypted archive is not.
+Index of the secrets this vault points at. **Names and env vars only — never
+values** (policy: `AGENTS.md` → Secrets). This file is git-tracked; values
+never are (they stay in per-machine keyrings/env stores — see `README.md`
+in this folder).
 
 | Name | Provider | Env var | Scope | Last rotated | Notes |
 |---|---|---|---|---|---|

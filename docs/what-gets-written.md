@@ -109,7 +109,7 @@ The one check that reaches the network is the MCP reachability probe: for every 
 
 ## `99-SECRETS/`
 
-Local only. Agents, following the workflow in `99-SECRETS/README.md`, may write to `99-SECRETS/archive/master-secrets.md.gpg` (GPG-encrypted, git-ignored) and `99-SECRETS/secrets-registry.md` (names and env vars only, never values, tracked in git). Nothing in the engine itself (the guard cycle, the doctor, the renderer) writes to either file — both are populated by an agent or by you, by hand, when a secret is added.
+Local only. Agents, following the workflow in `99-SECRETS/README.md`, may write `99-SECRETS/secrets-registry.md` (names and env vars only, never values, tracked in git). Real credential values are never written by the engine: they stay in per-machine keyrings/env stores, outside the vault. Nothing in the engine itself (the guard cycle, the doctor, the renderer) writes the registry either — it is populated by an agent or by you, by hand, when a secret is added.
 
 ## What this never does
 

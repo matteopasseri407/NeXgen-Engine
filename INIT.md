@@ -181,12 +181,12 @@ Dai il benvenuto in NeXgen Engine.
 
 Se l'utente deve gestire segreti (password, API key, token, chiavi SSH, credenziali dei tunnel), spiega la meccanica della cartella `99-SECRETS/`:
 
-- I valori veri stanno solo nell'archivio cifrato `99-SECRETS/archive/master-secrets.md.gpg`, protetto da una passphrase che conosce solo l'utente. Si crea al primo segreto ed è git-ignored.
-- Se quella passphrase viene dimenticata, tutto il contenuto dell'archivio cifrato è perso per sempre: non esiste alcun recupero. Consiglia all'utente un password manager, oppure un backup fisico della sola passphrase (mai del contenuto in chiaro dei segreti).
+- La cartella è uno spazio locale git-ignored: dei suoi contenuti sono tracciati SOLO `README.md`, `.gitkeep` e `secrets-registry.md`. Mai valori in chiaro committati.
 - L'indice non sensibile `99-SECRETS/secrets-registry.md` elenca quali segreti esistono (nome, provider, nome della variabile d'ambiente, data di rotazione), mai i valori. È tracciato da git, così la mappa resta allineata tra le macchine.
-- Regola operativa: a ogni creazione o rotazione di un segreto, aggiorna sia l'archivio cifrato sia la registry, entrambi prima di considerare il task concluso. Mai incollare un valore in una nota normale.
+- I valori veri restano dove la macchina li tiene (keyring del sistema, variabili d'ambiente per-utente, config per-CLI): il motore non spedisce un gestore segreti, la scelta del deposito locale è dell'utente.
+- Regola operativa: a ogni creazione o rotazione di un segreto, aggiorna la registry prima di considerare il task concluso. Mai incollare un valore in una nota normale, in un log o in una risposta.
 
-Il dettaglio dei comandi GPG è in `99-SECRETS/README.md`.
+I dettagli sono in `99-SECRETS/README.md`.
 
 ---
 
@@ -367,9 +367,9 @@ Welcome to NeXgen Engine.
 
 If the user needs to handle secrets (passwords, API keys, tokens, SSH keys, tunnel credentials), explain how the `99-SECRETS/` folder works:
 
-- Actual values live only in the encrypted archive `99-SECRETS/archive/master-secrets.md.gpg`, protected by a passphrase only the user knows. It is created on the first secret and is git-ignored.
-- If that passphrase is forgotten, everything in the encrypted archive is lost permanently: there is no recovery. Suggest a password manager, or a physical backup of the passphrase itself only, never of the plaintext secret values.
+- The folder is a git-ignored local space: only `README.md`, `.gitkeep` and `secrets-registry.md` are tracked. Never commit plaintext values.
 - The non-sensitive index `99-SECRETS/secrets-registry.md` lists which secrets exist (name, provider, env var, rotation date), never values. It is git-tracked so the map stays aligned across machines.
-- Operating rule: on every create or rotation of a secret, update both the encrypted archive and the registry, both before considering the task done. Never paste a value into a normal note.
+- Actual values stay where the machine keeps them (OS keyring, per-user environment variables, per-CLI credential stores): the engine ships no secret manager, the local store choice is the user's.
+- Operating rule: on every create or rotation of a secret, update the registry before considering the task done. Never paste a value into a normal note, a log, or a reply.
 
-The exact GPG commands are in `99-SECRETS/README.md`.
+The details are in `99-SECRETS/README.md`.

@@ -6,7 +6,7 @@
 !99-SECRETS/.gitkeep
 !99-SECRETS/README.md
 !99-SECRETS/secrets-registry.md
-# archive/ (the encrypted .gpg vault) stays ignored: created on first secret.
+# archive/ (legacy encrypted archive, historical) stays ignored: any local-only content goes here.
 99-SECRETS/archive/
 
 # Any local env file, anywhere in the tree (not just deploy/.env) — but

@@ -62,7 +62,9 @@ installs, not one shared install:
    account/namespace provisioned so their tunnel and secrets can't reach
    anyone else's. Pointing two people's clones at the same VPS re-creates
    the risk above.
-4. **A minimal per-person checklist:** their own `99-SECRETS/` archive and
-   passphrase, never shared with anyone including IT; their own filled-in
-   `USER-PROFILE.md`; and confirmation that their CLI's MCP servers point
-   only at infrastructure they alone control.
+4. **A minimal per-person checklist:** their own per-machine credential
+   storage (OS keyring, env vars), never shared with anyone including IT;
+   `99-SECRETS/` as a git-ignored local space with only the non-sensitive
+   registry tracked; their own filled-in `USER-PROFILE.md`; and
+   confirmation that their CLI's MCP servers point only at infrastructure
+   they alone control.

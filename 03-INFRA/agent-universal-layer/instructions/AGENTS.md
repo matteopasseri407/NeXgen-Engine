@@ -126,13 +126,12 @@ Chrome 136+ blocks remote debugging on the standard default data directory. The 
 
 # Secrets
 
-The encrypted recovery archive is `99-SECRETS/archive/master-secrets.md.gpg` inside the KnowledgeVault (create it on first secret — see `INIT.md` for the secrets workflow). When creating, discovering, rotating, or materially changing a password, API key, token, SSH key, webhook secret, tunnel credential, or similar secret:
+`99-SECRETS/` is a git-ignored local space: only `README.md` and `secrets-registry.md` are tracked, and the registry never holds values. This engine ships no secret manager: real credentials live where the machine keeps them (OS keyring, per-user env vars, per-CLI stores). When creating, discovering, rotating, or materially changing a password, API key, token, SSH key, webhook secret, tunnel credential, or similar secret:
 
-- update the encrypted archive
-- update the non-sensitive registry (`99-SECRETS/secrets-registry.md`)
-- do both before considering the task complete
+- update the non-sensitive registry (`99-SECRETS/secrets-registry.md`) with name, provider, env var, scope and rotation date — never the value
+- do it before considering the task complete
 
-If the passphrase is unavailable, say so explicitly and leave a pending registry note. Never paste secrets into normal Vault notes or final summaries.
+Never paste secrets into normal Vault notes, logs, tool summaries, or final responses.
 
 **Trust-plane rules (durable safety, not mechanics).**
 - The semantic/RAG index excludes `99-SECRETS`: never use vault retrieval to recover a credential.
