@@ -95,6 +95,37 @@ def test_report_undetermined():
     )
 
 
+def test_report_warning_is_silent_for_humans():
+    report = Report()
+    warn = CheckOutcome(
+        id="test.warn",
+        severity=Severity.WARN,
+        message="Branch di quarantena presente",
+        action="Riconcilia e rimuovi"
+    )
+    report.add(warn)
+    assert report.has_failures is False
+    assert report.is_healthy is True
+    assert report.exit_code() == 0
+    assert len(report.warnings) == 1
+
+    # Non-verbose: the end user sees no warning (the reassuring phrase is
+    # locale product text, the invariant is the warning's absence)
+    human_out = report.format_human()
+    assert "Branch di quarantena presente" not in human_out
+    assert human_out.strip() != ""
+
+    # Verbose: the warning surfaces for the AI/operator
+    verbose_out = report.format_human(verbose=True)
+    assert "Branch di quarantena presente" in verbose_out
+    assert "Riconcilia e rimuovi" in verbose_out
+
+    # JSON: always visible for the agent layer
+    data = json.loads(report.format_json())
+    assert data["warning_count"] == 1
+    assert len(data["warnings"]) == 1
+
+
 def test_report_json_serialization():
     report = Report()
     report.add(CheckOutcome(id="test.1", severity=Severity.OK, message="Ok 1"))

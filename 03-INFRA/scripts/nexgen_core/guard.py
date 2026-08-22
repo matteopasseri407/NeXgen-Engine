@@ -27,10 +27,13 @@ from nexgen_core.beat import Heartbeat
 from nexgen_core.config import load_mcp_manifest, load_skills_manifest
 from nexgen_core.git_ops import (
     GitState,
+    auto_commit_infra_files,
     fast_forward_merge,
     get_current_branch,
     inspect_git_state,
+    quarantine_diverged_commits,
     resolve_remotes,
+    run_git,
 )
 from nexgen_core.i18n import t
 from nexgen_core.jsonc import parse_jsonc, set_jsonc_top_level_value
@@ -339,6 +342,9 @@ class GuardRunner:
                 branch = get_current_branch(self.vault_data) or "main"
 
                 if mode != GuardMode.PREFLIGHT:
+                    # Auto-commit any pending tracked infra files so they don't block sync
+                    auto_commit_infra_files(self.vault_data)
+
                     git_status = inspect_git_state(
                         self.vault_data,
                         expected_branch=branch,
@@ -362,6 +368,22 @@ class GuardRunner:
                                 exit_code=1,
                             )
                         actions.append(ff_msg)
+                    elif git_status.state == GitState.DIVERGED:
+                        rebase_res = run_git(self.vault_data, "rebase", f"{auth_remote}/{branch}")
+                        if rebase_res.returncode == 0:
+                            actions.append(t("Realigned with {remote}/{branch} via rebase", remote=auth_remote, branch=branch))
+                        else:
+                            run_git(self.vault_data, "rebase", "--abort")
+                            q_ok, q_branch, q_msg = quarantine_diverged_commits(self.vault_data, remote=auth_remote, branch=branch)
+                            if q_ok:
+                                actions.append(q_msg)
+                            else:
+                                return GuardResult(
+                                    success=False,
+                                    mode=mode,
+                                    message=t("Error during divergence resolution: {reason}", reason=q_msg),
+                                    exit_code=1,
+                                )
                     elif git_status.state == GitState.FRESH:
                         actions.append(t("Data state: {status}", status=git_status.message))
                     elif git_status.state == GitState.AHEAD:

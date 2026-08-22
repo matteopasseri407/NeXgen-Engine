@@ -17,7 +17,11 @@ if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
 from nexgen_core.checks.env_checks import check_state_dir, check_vault_path
-from nexgen_core.checks.git_checks import check_git_alignment, check_mirror_alignment
+from nexgen_core.checks.git_checks import (
+    check_git_alignment,
+    check_mirror_alignment,
+    check_quarantine_branches,
+)
 from nexgen_core.checks.identity_checks import (
     check_agent_self,
     check_agent_self_metadata,
@@ -90,6 +94,7 @@ class Doctor:
         # 2. Git checks (if the Vault exists)
         if self.vault_data.is_dir():
             report.add(check_git_alignment(self.vault_data), apply_remedy=apply_remedies)
+            report.add(check_quarantine_branches(self.vault_data), apply_remedy=apply_remedies)
             for outcome in check_mirror_alignment(self.vault_data):
                 report.add(outcome, apply_remedy=apply_remedies)
 
@@ -161,7 +166,7 @@ def main(argv: list[str] | None = None) -> int:
         fail_count = len(report.broken)
         ok_count = report.ok_count
         undet_count = len(report.undetermined)
-        print(f"FAIL={fail_count} OK={ok_count} UNDETERMINED={undet_count}")
+        print(f"FAIL={fail_count} OK={ok_count} WARN={len(report.warnings)} UNDETERMINED={undet_count}")
         if fail_count > 0:
             for b in report.broken:
                 print(f"  ✗ {b.message}")

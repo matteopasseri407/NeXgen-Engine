@@ -42,7 +42,110 @@ class GitStatusResult:
 
     @property
     def allows_apply(self) -> bool:
-        return self.state in {GitState.FRESH, GitState.LOCAL_ONLY, GitState.AHEAD, GitState.BEHIND}
+        return self.state in {
+            GitState.FRESH,
+            GitState.LOCAL_ONLY,
+            GitState.AHEAD,
+            GitState.BEHIND,
+            GitState.DIVERGED,
+        }
+
+
+INFRA_PATH_PREFIXES = (
+    "03-INFRA/",
+    "sync/",
+    "mcp/",
+    "skills/",
+    "permissions/",
+    "hooks/",
+    "AGENTS.md",
+    "USER-PROFILE.md",
+    "00-START-HERE.md",
+)
+
+
+def is_infra_file(filepath: str) -> bool:
+    """True if filepath is a known infrastructure, configuration, or instruction file."""
+    norm = filepath.replace("\\", "/")
+    return any(norm.startswith(p) or f"/{p}" in norm for p in INFRA_PATH_PREFIXES)
+
+
+def auto_commit_infra_files(
+    repo_dir: Path,
+    commit_msg: str = "sync(auto): save uncommitted infra files before sync",
+) -> tuple[bool, list[str]]:
+    """Automatically stages and commits modified tracked infra files so they don't block sync."""
+    dirty = get_uncommitted_files(repo_dir)
+    infra_dirty = [f for f in dirty if is_infra_file(f)]
+    if not infra_dirty:
+        return True, []
+
+    add_res = run_git(repo_dir, "add", "--", *infra_dirty)
+    if add_res.returncode != 0:
+        return False, []
+    c_res = run_git(repo_dir, "commit", "-m", commit_msg)
+    if c_res.returncode != 0:
+        return False, []
+    return True, infra_dirty
+
+
+def list_quarantine_branches(repo_dir: Path) -> list[str]:
+    """Lists all quarantine branches (e.g. quarantine/diverged-*)."""
+    r = run_git(repo_dir, "branch", "--list", "quarantine/*", "--format=%(refname:short)")
+    if r.returncode != 0 or not r.stdout.strip():
+        return []
+    return [b.strip() for b in r.stdout.splitlines() if b.strip()]
+
+
+def quarantine_diverged_commits(
+    repo_dir: Path, remote: str = "origin", branch: str = "main"
+) -> tuple[bool, str, str]:
+    """Isolates diverged local commits into a quarantine branch and resets local branch to remote.
+
+    Returns: (success, quarantine_branch_name, message)
+    """
+    import time
+    timestamp = time.strftime("%Y%m%d-%H%M%S")
+    q_branch = f"quarantine/diverged-{timestamp}"
+
+    # 1. Create quarantine branch at current HEAD
+    b_res = run_git(repo_dir, "branch", q_branch)
+    if b_res.returncode != 0:
+        return False, "", t("Failed to create quarantine branch {branch}: {error}", branch=q_branch, error=b_res.stderr.strip())
+
+    # 2. Preserve any uncommitted tracked changes on the quarantine branch
+    #    before the hard reset: reset --hard would otherwise destroy them.
+    #    If preservation fails, abort: never reset over work that was not saved.
+    sw_res = run_git(repo_dir, "switch", q_branch)
+    if sw_res.returncode != 0:
+        return False, q_branch, t(
+            "Created {q_branch}, but could not switch to it: {error}",
+            q_branch=q_branch, error=sw_res.stderr.strip(),
+        )
+    dirty = get_uncommitted_files(repo_dir)
+    if dirty:
+        add_res = run_git(repo_dir, "add", "--", *dirty)
+        c_res = run_git(repo_dir, "commit", "-m", "quarantine: preserve uncommitted changes before realignment")
+        if add_res.returncode != 0 or c_res.returncode != 0:
+            run_git(repo_dir, "switch", branch)
+            return False, q_branch, t(
+                "Created {q_branch}, but could not preserve uncommitted changes before realignment",
+                q_branch=q_branch,
+            )
+    run_git(repo_dir, "switch", branch)
+
+    # 3. Hard reset local branch to remote/branch
+    r_res = run_git(repo_dir, "reset", "--hard", f"{remote}/{branch}")
+    if r_res.returncode != 0:
+        return False, q_branch, t(
+            "Created {q_branch}, but reset to {remote}/{branch} failed: {error}",
+            q_branch=q_branch, remote=remote, branch=branch, error=r_res.stderr.strip(),
+        )
+
+    return True, q_branch, t(
+        "Diverged local commits moved to quarantine branch '{q_branch}'. Local branch reset to {remote}/{branch}.",
+        q_branch=q_branch, remote=remote, branch=branch,
+    )
 
 
 def fast_forward_merge(repo_dir: Path, remote: str = "origin", branch: str = "main") -> tuple[bool, str]:
@@ -129,7 +232,6 @@ def get_uncommitted_files(repo_dir: Path) -> list[str]:
         return []
     files: list[str] = []
     for line in r.stdout.splitlines():
-        line = line.strip()
         if len(line) > 3:
             files.append(line[3:].strip())
     return files
@@ -266,6 +368,10 @@ def publish_changes(
     committed = False
     published = False
 
+    # First, auto-commit any pending tracked infra files if no explicit files are provided
+    if not files_to_commit and not commit_msg:
+        auto_commit_infra_files(repo_dir)
+
     # The commit happens first, before any consideration of the remote.
     if commit_msg:
         if files_to_commit:
@@ -308,27 +414,36 @@ def publish_changes(
                 return False, t("Push to {remote} failed: {error}", remote=remote, error=p_res.stderr)
             published = True
         elif mb == lh:
-            return False, t("Could not push: local branch is behind {remote}", remote=remote)
+            # We're behind: fast-forward
+            ff_ok, ff_msg = fast_forward_merge(repo_dir, remote=remote, branch=branch)
+            if not ff_ok:
+                return False, ff_msg
+            published = True
         else:
-            # Divergence. An automatic rebase over a tree with uncommitted
-            # changes would put work nobody entrusted to us at risk: better
-            # to stop and say which files are blocking it.
+            # Divergence. Auto-commit any remaining infra files before rebase attempt
+            auto_commit_infra_files(repo_dir)
             dirty = get_uncommitted_files(repo_dir)
+            stashed = False
             if dirty:
-                shown = ", ".join(dirty[:5]) + ("..." if len(dirty) > 5 else "")
-                return False, t(
-                    "Data has diverged from {remote}, and there are uncommitted changes "
-                    "({files}). Not realigning automatically: commit them or stash them, then retry",
-                    remote=remote, files=shown,
-                )
+                stash_res = run_git(repo_dir, "stash", "push", "-m", "nexgen-sync-auto-stash")
+                stashed = (stash_res.returncode == 0 and "No local changes to save" not in stash_res.stdout)
+
             rebase_res = run_git(repo_dir, "rebase", f"{remote}/{branch}")
             if rebase_res.returncode == 0:
+                if stashed:
+                    run_git(repo_dir, "stash", "pop")
                 p_res = run_git(repo_dir, "push", remote, branch)
                 if p_res.returncode != 0:
                     return False, t("Push after rebase failed: {error}", error=p_res.stderr)
                 published = True
             else:
                 run_git(repo_dir, "rebase", "--abort")
+                if stashed:
+                    run_git(repo_dir, "stash", "pop")
+                # Isolate diverged commits to quarantine
+                q_ok, q_branch, q_msg = quarantine_diverged_commits(repo_dir, remote=remote, branch=branch)
+                if q_ok:
+                    return True, q_msg
                 return False, t("Data has diverged from {remote}, automatic rebase did not succeed", remote=remote)
 
     # Mirror update (best effort)

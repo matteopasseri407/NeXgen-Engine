@@ -39,6 +39,11 @@ def register(sub) -> None:
     q.add_argument("--large-lines", type=int, default=150, help=t("Lines before a note is considered large"))
     q.set_defaults(func=cmd_lifecycle)
 
+    q = vsub.add_parser("quarantine", help=t("Inspect or clean up quarantine branches"))
+    q.add_argument("--diff", metavar="BRANCH", help=t("Show diff against main for a quarantine branch"))
+    q.add_argument("--delete", metavar="BRANCH", help=t("Delete a reconciled quarantine branch"))
+    q.set_defaults(func=cmd_quarantine)
+
     p.set_defaults(func=lambda args: _usage(p))
 
     # `publish` also stays top-level: it's the verb the previous release
@@ -95,3 +100,43 @@ def cmd_lifecycle(args) -> int:
         argv.extend(["--large-lines", str(args.large_lines)])
     argv.extend(_all(args))
     return lifecycle_main(argv)
+
+
+def cmd_quarantine(args) -> int:
+    from nexgen_core.git_ops import list_quarantine_branches, run_git
+    from nexgen_core.paths import resolve_vault_data
+
+    vault_data = resolve_vault_data()
+    diff_branch = getattr(args, "diff", None)
+    delete_branch = getattr(args, "delete", None)
+
+    if delete_branch:
+        if not delete_branch.startswith("quarantine/"):
+            print(f"Refusing to delete '{delete_branch}': only quarantine/* branches can be deleted with this command.")
+            return 1
+        r = run_git(vault_data, "branch", "-D", delete_branch)
+        if r.returncode == 0:
+            print(f"Deleted quarantine branch {delete_branch}")
+            return 0
+        print(f"Error deleting branch {delete_branch}: {r.stderr.strip()}")
+        return 1
+
+    if diff_branch:
+        r = run_git(vault_data, "diff", f"main..{diff_branch}")
+        if r.returncode == 0:
+            print(r.stdout)
+            return 0
+        print(f"Error getting diff for {diff_branch}: {r.stderr.strip()}")
+        return 1
+
+    branches = list_quarantine_branches(vault_data)
+    if not branches:
+        print("No quarantine branches in the Vault.")
+        return 0
+    print(f"Quarantine branches ({len(branches)}):")
+    for b in branches:
+        print(f"  - {b}")
+    print("\nTo view diff: nexgen vault quarantine --diff <branch>")
+    print("To delete after reconciliation: nexgen vault quarantine --delete <branch>")
+    return 0
+

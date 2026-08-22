@@ -9,6 +9,7 @@ from nexgen_core.git_ops import (
     GitState,
     get_current_branch,
     inspect_git_state,
+    list_quarantine_branches,
     oldest_unpublished_commit_timestamp,
     resolve_remotes,
     run_git,
@@ -162,3 +163,37 @@ def check_mirror_alignment(vault_data: Path, expected_branch: str | None = None)
                 ),
             ))
     return outcomes
+
+
+def check_quarantine_branches(vault_data: Path) -> CheckOutcome:
+    """Checks whether there are diverged quarantine branches awaiting reconciliation."""
+    if not (vault_data / ".git").exists():
+        return CheckOutcome(
+            id="git.quarantine",
+            severity=Severity.OK,
+            message=t("No quarantine branches in the Vault"),
+        )
+
+    branches = list_quarantine_branches(vault_data)
+    if not branches:
+        return CheckOutcome(
+            id="git.quarantine",
+            severity=Severity.OK,
+            message=t("No quarantine branches in the Vault"),
+        )
+
+    branch_list = ", ".join(branches)
+    first_b = branches[0]
+    return CheckOutcome(
+        id="git.quarantine",
+        severity=Severity.WARN,
+        message=t(
+            "Found {count} quarantine branch(es) with isolated diverged changes: {branches}",
+            count=len(branches),
+            branches=branch_list,
+        ),
+        action=t(
+            "Review diff with 'git diff main..{branch}', reconcile changes into canonical files, then remove the quarantine branch with 'git branch -D {branch}'.",
+            branch=first_b,
+        ),
+    )

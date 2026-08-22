@@ -120,7 +120,7 @@ def cmd_doctor(args) -> int:
     if args.json:
         print(report.format_json())
     elif args.summary:
-        print(f"FAIL={len(report.broken)} OK={report.ok_count} UNDETERMINED={len(report.undetermined)}")
+        print(f"FAIL={len(report.broken)} OK={report.ok_count} WARN={len(report.warnings)} UNDETERMINED={len(report.undetermined)}")
     else:
         print(report.format_human(verbose=args.verbose))
     return report.exit_code(strict=args.strict)

@@ -8,6 +8,7 @@ Core rules:
 2. If there's no remedy and the state is broken, it's reported with a clear message and a single action.
 3. If the state is undetermined, it's reported distinctly from broken.
 4. If the state is ok, it's counted and kept silent (unless verbose mode).
+5. Warnings are silent for the human report: they need no end-user action, an agent takes them in charge (they surface in verbose mode and in JSON).
 """
 from __future__ import annotations
 
@@ -23,6 +24,7 @@ from nexgen_core.i18n import t
 class Severity(str, Enum):
     """Severity levels for a check."""
     OK = "ok"
+    WARN = "warn"
     BROKEN = "broken"
     UNDETERMINED = "undetermined"
 
@@ -90,6 +92,10 @@ class Report:
         return [o for o in self.outcomes if o.severity == Severity.BROKEN]
 
     @property
+    def warnings(self) -> list[CheckOutcome]:
+        return [o for o in self.outcomes if o.severity == Severity.WARN]
+
+    @property
     def undetermined(self) -> list[CheckOutcome]:
         return [o for o in self.outcomes if o.severity == Severity.UNDETERMINED]
 
@@ -124,7 +130,21 @@ class Report:
                     line += f"\n    [Detail: {item.detail}]"
                 lines.append(line)
 
-        # 2. Undetermined checks (e.g. no network, or service unreachable)
+        # 2. Warnings are silent for the human report (verbose only):
+        #    they block nothing and an agent takes them in charge.
+        if self.warnings and verbose:
+            if lines:
+                lines.append("")
+            lines.append(t("Warnings (nothing is blocked):"))
+            for item in self.warnings:
+                line = f"  - {item.message}"
+                if item.action:
+                    line += f"\n    {t('Suggested action:')} {item.action}"
+                if item.detail and verbose:
+                    line += f"\n    [Detail: {item.detail}]"
+                lines.append(line)
+
+        # 3. Undetermined checks (e.g. no network, or service unreachable)
         if self.undetermined:
             if lines:
                 lines.append("")
@@ -160,8 +180,10 @@ class Report:
             "healthy": self.is_healthy,
             "ok_count": self.ok_count,
             "broken_count": len(self.broken),
+            "warning_count": len(self.warnings),
             "undetermined_count": len(self.undetermined),
             "broken": [o.to_dict() for o in self.broken],
+            "warnings": [o.to_dict() for o in self.warnings],
             "undetermined": [o.to_dict() for o in self.undetermined],
             "all": [o.to_dict() for o in self.outcomes],
             "logs": self.log_entries,
