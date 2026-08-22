@@ -238,7 +238,7 @@ def check_bootstrap_notes_size(vault_data: Path) -> CheckOutcome | None:
     if oversized:
         return CheckOutcome(
             id="instructions.bootstrap_notes_size",
-            severity=Severity.BROKEN,
+            severity=Severity.WARN,
             message=t(
                 "Detail note(s) over the {budget}-byte budget: {notes}.",
                 budget=NOTE_MAX_BYTES, notes=", ".join(oversized),

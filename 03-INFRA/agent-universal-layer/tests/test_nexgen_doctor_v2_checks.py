@@ -213,7 +213,7 @@ def test_bootstrap_notes_size(tmp_path: Path):
 
     (notes_dir / "huge-note.md").write_text("x" * (instructions_checks.NOTE_MAX_BYTES + 1))
     outcome = instructions_checks.check_bootstrap_notes_size(vault)
-    assert outcome.severity == Severity.BROKEN
+    assert outcome.severity == Severity.WARN
 
 
 def test_bootstrap_pointer_integrity(tmp_path: Path):
