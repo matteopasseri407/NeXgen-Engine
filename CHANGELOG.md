@@ -10,6 +10,73 @@ of any engine release.
 
 ## [2.0.0] - 2026-08-22
 
+### Added
+
+- **Lazy MCP mounting contract**: a server is mounted only when actually used.
+  The manifest declares `tier` (core = always), `enabled`, `lazy` and
+  `lazy_targets`; the renderer keeps configs clean by removing servers that
+  are no longer mounted. Fail-closed by default: a tool is mutating until an
+  allowlist grants read-only (`readonly`/`readonly_tools`), and MCP tool
+  annotations are never trusted.
+- **The waiter (`lazy-mcp.py`)**: an MCP 2.0 index+load proxy, always mounted
+  on every CLI with three meta-tools — `lazy_list` (live index, budgeted),
+  `lazy_load` (full schema before the call), `lazy_call` (forward with the
+  fail-closed gate, audit log, idle process sweep). It is the native deferral
+  of Claude Code, for the CLIs that lack one.
+- **Dependency provisioning (`deps:` contract)**: servers and skills declare
+  `npx:`/`git:` pinned dependencies that are materialized lazily at first
+  spawn (`${DEPS_WORKSPACE}`), checked offline-safe by the doctor, never
+  installed eagerly, and never unpinned (`@latest` is refused).
+- **Skills: always-lazy routing** through the generated catalog
+  (`~/.agents/skills/INDEX.md`), the same `deps:` contract as MCP servers,
+  and the new `upstream` origin for third-party skills (inventoried in the
+  manifest, never vendorized).
+- **Modules**: a canonical module catalog (`modules.yaml`: memory,
+  semantic-rag, firecrawl, ocr, n8n, browser, council, sync) with per-machine
+  state (`modules.state.yaml`, written only by `nexgen modules set`), an
+  agent-driven install step in INIT.md (1.4b) and doctor checks; activating a
+  module without its env gates is a reported error, not a silent default.
+- **Public rules-vs-identity contract**: `AGENTS.md` holds only operational
+  rules; a sanitized `agent-self.md` template ships with status validation
+  in the doctor.
+- **Council: pay-per-use gate** with interactive confirmation and per-seat
+  usage recap; **Antigravity (agy) unblocked as a full seat** (oracle-mode
+  flags, effort forwarding) and verified live.
+- **`nexgen info`**: visual system status dashboard. **`nexgen shell`**:
+  standalone operator shell.
+- **Installing without an assistant already installed**, and transitional
+  launchers with an observable expiry.
+- **OAuth client id for remote MCP servers** (`oauth_client_id` in the
+  manifest, public identifier only): the renderer emits it into OpenCode
+  config from environment variables.
+
+### Changed
+
+- **The sync is resilient**: poisoned input goes to quarantine, and
+  uncommitted work survives realignment instead of being clobbered.
+- **The machine you develop on is no longer overwritten** by the sync, and
+  the handover from the previous install is survived cleanly.
+- **Running a pre-release is not a fault** reported every hour; oversized
+  detail notes are WARN, not FAIL.
+- **The README platform table is generated** and stops describing a specific
+  laptop; add-on repositories are consistently named `NeXgen-addon-*`.
+- **The council parses the governor v4 routing block** (channel columns,
+  prescelto/rimpiazzo slots) instead of the stale legacy table.
+
+### Fixed
+
+- The waiter: engine-root resolution from the executing checkout, stdio
+  hangs, Windows process-group termination, network guards, and the
+  fail-closed mutating gate (Kimi review, BLOCKER).
+- First end-user bug pass: additive Codex rendering, `--version`, the config
+  setter, truthful push output, warning marks, instruction deduplication and
+  tool programs.
+- A sandboxed cycle could take the real machine's lock; GitHub skills were
+  never cloned; errors wore a checkmark tick; line endings counted as
+  differences; a config carrying the secret itself is refused.
+- Council: `tokens`/`cost` can arrive as dicts and crashed the usage
+  summation (found by the kimi seat).
+
 ### Security & Robustness
 
 - **Escaped profile paths in `agent-chrome --heal` on Windows**: Sanitized single quotes when constructing PowerShell commands in `heal_chrome` (`nexgen_core/tools/chrome.py`) to prevent command injection or syntax errors when paths or user environments contain apostrophes or spaces.
