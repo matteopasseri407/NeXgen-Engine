@@ -101,7 +101,16 @@ both handled:
 ## Linux/Mac notes
 
 - The launcher (e.g. `agent-chrome '<URL>'`) is the only visible Chrome entry point, the dock entry, and the default handler for HTTP/HTTPS/HTML. Plain Chrome launchers are hidden and redirected to the same wrapper.
-- The MULTI provisioner installs the cross-platform `agent-chrome` command from `03-INFRA/scripts/agent-chrome.sh` or `.ps1`. On Linux it also installs the visible `agent-chrome.desktop` entry, a hidden per-user `google-chrome.desktop` compatibility redirect, and the web-app launcher rewrite above, so no old dock, system or web-app launcher can win the first-process race without CDP. The launcher refuses to invent a second daily profile when it finds an unmigrated standard Chrome profile. Selecting `agent-chrome.desktop` as the host's default browser remains an explicit, reversible per-host step and is verified by `agent-doctor`.
+- The engine installs the cross-platform `agent-chrome` command (`nexgen tool
+  chrome`, implemented in `nexgen_core.tools.chrome`). It starts Chrome on the
+  shared debug port, names its windows so the desktop can tell them apart, and
+  reads Chrome's own lock to distinguish "not running" from "running but deaf
+  on the debug port" — `--heal` asks it to stop before insisting, so open tabs
+  survive.
+- It does **not** write `.desktop` entries and does not shadow the
+  distribution's own Chrome launcher. That behaviour existed in the previous
+  version and was deliberately retired: overwriting a system launcher is a
+  surprise an end user should never get from a sync.
 - The launcher passes `--class=Google-chrome` only for real browser windows. A web-app launch keeps Chrome's own `crx_<app-id>` window class, so each installed app keeps its own dock icon.
 - No login autostart by design (laptop battery). The user or any agent starts the same browser on demand.
 - Pass `--class=Google-chrome` (or the equivalent for the DE) to the Chrome binary to prevent the dock from splitting the pinned icon when a custom user-data-dir changes the WM_CLASS.

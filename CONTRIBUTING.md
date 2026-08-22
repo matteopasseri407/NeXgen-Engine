@@ -1,6 +1,6 @@
 # Contributing
 
-This is a solo-maintainer, Beta-stage project. Contributions are welcome,
+This is a solo-maintainer project. Contributions are welcome,
 but set expectations accordingly: review can take a while, and not every PR
 fits the project's scope (see "Design boundaries" and "Scope and
 limitations" in `README.md`) even when it's well built.
@@ -17,12 +17,51 @@ broken link, clear bug with an obvious one-line fix), a PR alone is fine.
 - Python 3.11+ with `pyyaml` (`pip install pyyaml`), or 3.10 with `tomli`
   too.
 - The regression suite lives at
-  `03-INFRA/agent-universal-layer/tests/`; run it with
-  `python3 -m pytest` from that directory (or `bash
-  03-INFRA/agent-universal-layer/tests/run.sh` on Fedora). It's sandboxed
-  and never touches your real `$HOME`.
+  `03-INFRA/agent-universal-layer/tests/`; run it with `python3 -m pytest`
+  (from the repo root or from that directory — `pyproject.toml` points
+  `testpaths` at it either way). It's sandboxed and never touches your real
+  `$HOME`.
 - `bash install.sh --check` runs the same preflight the installer runs —
-  useful to confirm your environment has what the project expects.
+  useful to confirm your environment has what the project expects. In
+  `--check` mode it writes nothing at all.
+
+### Working on the engine while running it
+
+If you already use this engine on the machine you develop on, run the checkout
+under its own home:
+
+```sh
+export NEXGEN_HOME="$HOME/nexgen-dev"
+python3 03-INFRA/scripts/nexgen_core/cli/__init__.py sync
+```
+
+`NEXGEN_HOME` moves everything the engine writes — the commands it installs,
+the runtime configurations it generates, the skill library, the scheduled
+units, its own state — into that directory. Your real setup keeps its
+commands, its connectors and its memories, and the two never meet. Point
+`AGENT_VAULT_DATA` at a throwaway vault too if you would rather not read your
+real one.
+
+Without `NEXGEN_HOME` the engine works against your actual home, which is what
+an installed engine is supposed to do. There is no dry-run flag standing in
+for this: a run that writes somewhere else is easier to trust than a run that
+promises not to write.
+
+A test enforces it. `test_nexgen_takeover.py` fails if any module reads the
+home directory itself instead of asking for it, because one forgotten call is
+all it takes for a development checkout to overwrite a working installation.
+
+### Before tagging a release
+
+```sh
+python3 03-INFRA/scripts/nexgen_core/release.py preflight
+```
+
+It checks the things that have each been forgotten at least once: that
+`VERSION` is a real version and newer than the newest tag, that the launchers
+the previous release's symlinks point at match the table that generates them,
+that no private maintainer tooling reached the public tree, and that the lint
+gate passes rather than having been regenerated.
 
 ## What CI checks on every PR
 

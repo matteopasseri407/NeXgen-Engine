@@ -8,93 +8,81 @@ This file tracks the **engine** (this repo). Your own data — manifests,
 instructions, skills, secrets — lives in your KnowledgeVault and is not part
 of any engine release.
 
-## [Unreleased]
-
-## [0.99.2] - 2026-08-20
+## [2.0.0] - 2026-08-22
 
 ### Added
 
-- **`origin: engine` for skills.** The commands the engine ships existed in two
-  places at once: vendored in the user's data AND shipped in the engine, with
-  nothing keeping the two equal. On a real install seven of the eight had
-  drifted, the data copy always the older one, and the worst case was
-  `nexgen-update` itself still describing a manual `git merge <tag>` procedure
-  that a real command had replaced weeks earlier: the command for upgrading the
-  engine was the one command the engine had failed to upgrade. This origin
-  removes the second copy instead of trying to sync it. The body is read from
-  the installed engine, so an upgrade upgrades the command and no stale copy
-  remains to fall behind. It also makes a split engine/data topology the
-  supported arrangement rather than a reason to skip seeding.
-- **`origin: installer` for skills.** Some skills can only be materialized by
-  their own installer, because they publish a template their installer renders
-  differently per provider. They used to stay outside the manifest entirely,
-  which meant every machine installed them by hand and the versions drifted.
-  The manifest now pins the version and any machine whose copy does not match
-  runs the installer itself. The installer's copy is moved out of the eager
-  discovery root automatically, which was previously a comment asking a human
-  to remember.
-- **An alert trigger that outlives the thing it watches.** The single alert
-  surface lives inside `agent_sync.py`, which means that when the guard does not
-  start, the thing that would have told you does not start either. On a live
-  machine a failed dependency cancelled the guard every thirty minutes for six
-  days and nobody was told. Two triggers now wake the same transport: one from
-  `OnFailure=` naming the unit systemd just failed, and one on an independent
-  hourly beat that measures elapsed time since the last completed run. The
-  second is not redundancy: a job cancelled by a failed dependency never enters
-  a failed state, so `OnFailure=` alone would not have fired in that outage.
-- **A watch on third-party pins.** Nothing was checking them: a skill fetched at
-  a commit or a package fixed at a version simply stayed there until somebody
-  tripped over it. The beat now looks upstream once a day for every pin the
-  layer declares and writes a list. It checks and stops: applying an upstream
-  change alters behaviour nobody chose. It never notifies, and the doctor
-  surfaces it as one line. Being offline writes nothing and reports nothing.
-- **Automatic uptake of released upgrades.** Updating itself is the job, not
-  news, so the beat takes a released upgrade and says nothing about it, speaking
-  only when it cannot. `AGENT_AUTO_UPGRADE` sets the ceiling and defaults to
-  `patch`, because a machine that upgrades its own minor versions overnight is a
-  machine whose behaviour changed without anyone choosing it.
-- **The doctor names engine-owned skills a release stopped shipping.** A release
-  that renames or removes a command leaves any manifest still listing the old
-  name pointing at nothing, and the command disappears from every CLI in
-  silence. The user did not choose that, so it fails rather than warns. A rename
-  that ships a deprecated stub resolves normally and stays quiet.
-- **`tier: core` for connectors.** The five the engine treats as fundamental are
-  marked; everything else is optional, which is also what an unmarked entry
-  means, so nothing promotes itself into the always-on set.
+- **Lazy MCP mounting contract**: a server is mounted only when actually used.
+  The manifest declares `tier` (core = always), `enabled`, `lazy` and
+  `lazy_targets`; the renderer keeps configs clean by removing servers that
+  are no longer mounted. Fail-closed by default: a tool is mutating until an
+  allowlist grants read-only (`readonly`/`readonly_tools`), and MCP tool
+  annotations are never trusted.
+- **The waiter (`lazy-mcp.py`)**: an MCP 2.0 index+load proxy, always mounted
+  on every CLI with three meta-tools — `lazy_list` (live index, budgeted),
+  `lazy_load` (full schema before the call), `lazy_call` (forward with the
+  fail-closed gate, audit log, idle process sweep). It is the native deferral
+  of Claude Code, for the CLIs that lack one.
+- **Dependency provisioning (`deps:` contract)**: servers and skills declare
+  `npx:`/`git:` pinned dependencies that are materialized lazily at first
+  spawn (`${DEPS_WORKSPACE}`), checked offline-safe by the doctor, never
+  installed eagerly, and never unpinned (`@latest` is refused).
+- **Skills: always-lazy routing** through the generated catalog
+  (`~/.agents/skills/INDEX.md`), the same `deps:` contract as MCP servers,
+  and the new `upstream` origin for third-party skills (inventoried in the
+  manifest, never vendorized).
+- **Modules**: a canonical module catalog (`modules.yaml`: memory,
+  semantic-rag, firecrawl, ocr, n8n, browser, council, sync) with per-machine
+  state (`modules.state.yaml`, written only by `nexgen modules set`), an
+  agent-driven install step in INIT.md (1.4b) and doctor checks; activating a
+  module without its env gates is a reported error, not a silent default.
+- **Public rules-vs-identity contract**: `AGENTS.md` holds only operational
+  rules; a sanitized `agent-self.md` template ships with status validation
+  in the doctor.
+- **Council: pay-per-use gate** with interactive confirmation and per-seat
+  usage recap; **Antigravity (agy) unblocked as a full seat** (oracle-mode
+  flags, effort forwarding) and verified live.
+- **`nexgen info`**: visual system status dashboard. **`nexgen shell`**:
+  standalone operator shell.
+- **Installing without an assistant already installed**, and transitional
+  launchers with an observable expiry.
+- **OAuth client id for remote MCP servers** (`oauth_client_id` in the
+  manifest, public identifier only): the renderer emits it into OpenCode
+  config from environment variables.
 
 ### Changed
 
-- **Two commands are renamed, with the old names kept as deprecated stubs.**
-  `vault-doctor` becomes `nexgen-doctor` and `vault-council` becomes
-  `nexgen-council`: both act on the engine and its tooling, not on the Vault,
-  and the `vault-` prefix said the opposite. Memory commands keep their names,
-  because the memory is the Vault. Existing manifests and muscle memory keep
-  working through the stubs, which are `manual` so an alias never takes a seat
-  in the eager showcase next to the command it defers to.
-- **The default report shows what needs attention, not what already works.** It
-  used to list every passing check, with the one that mattered somewhere inside;
-  on a live machine that was 52 lines where 12 were useful. Counts still prove
-  the run completed, and `--verbose` (`-Verbose` on Windows) brings back the
-  full list. `--summary` is untouched.
-- **An optional connector that is not enabled is no longer a warning.** It was
-  reporting a decision the user had deliberately made, on every run, which is
-  how people learn to ignore warnings. It is listed with the variable that
-  enables it, and a core connector missing stays a warning.
-- **The skills manifest tolerates an origin this engine does not know.** Data
-  reaches every machine in minutes; the code that understands it arrives with a
-  release, so a manifest will sometimes name something an older engine has never
-  heard of. That used to reject the whole document and stop the sync of every
-  skill on every machine over one entry. It now skips that entry loudly.
+- **The sync is resilient**: poisoned input goes to quarantine, and
+  uncommitted work survives realignment instead of being clobbered.
+- **The machine you develop on is no longer overwritten** by the sync, and
+  the handover from the previous install is survived cleanly.
+- **Running a pre-release is not a fault** reported every hour; oversized
+  detail notes are WARN, not FAIL.
+- **The README platform table is generated** and stops describing a specific
+  laptop; add-on repositories are consistently named `NeXgen-addon-*`.
+- **The council parses the governor v4 routing block** (channel columns,
+  prescelto/rimpiazzo slots) instead of the stale legacy table.
 
 ### Fixed
 
-- **The Windows twin of the doctor was missing two checks** that exist on Linux,
-  so a release that renamed a command went back to being silent there, in the
-  very check that exists to prevent that. A parity test now fails if either twin
-  loses one.
-- **The seeder refused to seed in a split topology** because it resolved every
-  skill body under the data root. It resolves each entry under the root its
-  origin names.
+- The waiter: engine-root resolution from the executing checkout, stdio
+  hangs, Windows process-group termination, network guards, and the
+  fail-closed mutating gate (Kimi review, BLOCKER).
+- First end-user bug pass: additive Codex rendering, `--version`, the config
+  setter, truthful push output, warning marks, instruction deduplication and
+  tool programs.
+- A sandboxed cycle could take the real machine's lock; GitHub skills were
+  never cloned; errors wore a checkmark tick; line endings counted as
+  differences; a config carrying the secret itself is refused.
+- Council: `tokens`/`cost` can arrive as dicts and crashed the usage
+  summation (found by the kimi seat).
+
+### Security & Robustness
+
+- **Escaped profile paths in `agent-chrome --heal` on Windows**: Sanitized single quotes when constructing PowerShell commands in `heal_chrome` (`nexgen_core/tools/chrome.py`) to prevent command injection or syntax errors when paths or user environments contain apostrophes or spaces.
+- **Race-free 0600 file permissions on generated secrets**: Files holding operational secrets and environment variables (`.env`, `90-nexgen-stack.conf`) in `nexgen_core/stack/secrets.py` are now created directly with `0o600` permissions (`_write_restricted_text`), eliminating the race window where they were briefly world-readable under default umasks.
+- **Cross-platform and user-scoped lock in `vault-mcp`**: The `vault-library` write lock now uses a user-scoped lock path in the system temporary directory with dual POSIX (`fcntl`) and Windows (`msvcrt`) locking support, preventing multi-user permission collisions and Windows import errors.
+- **Safe argument splitting for manifest build commands**: Replaced naive whitespace splitting with `shlex.split` in `_run_build` (`nexgen_core/provision.py`) to correctly parse quoted arguments with spaces.
 
 ## [0.99.1] - 2026-08-17
 

@@ -28,7 +28,6 @@ import uuid
 from pathlib import Path
 from typing import Any
 
-
 API_URL = os.environ.get("VAULT_OCR_API_URL", "http://127.0.0.1:33003").rstrip("/")
 MAX_LOCAL_BYTES = int(os.environ.get("VAULT_OCR_MAX_LOCAL_BYTES", "15728640"))
 # Mirrors the API's own VAULT_OCR_TOKEN (see ../api/app.py:require_ocr_token).

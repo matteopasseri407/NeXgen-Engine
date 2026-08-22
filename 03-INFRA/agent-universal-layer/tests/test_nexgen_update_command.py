@@ -7,11 +7,9 @@ import subprocess
 from pathlib import Path
 
 import pytest
-
 from conftest import REAL_VAULT, load_agent_sync_module
 
-
-SCRIPT = REAL_VAULT / "03-INFRA" / "scripts" / "nexgen_update.py"
+SCRIPT = REAL_VAULT / "03-INFRA" / "scripts" / "nexgen_core" / "updater.py"
 POWERSHELL_LAUNCHER = REAL_VAULT / "03-INFRA" / "scripts" / "nexgen-update.ps1"
 
 
@@ -585,14 +583,28 @@ def test_provisioner_installs_real_command_on_both_platforms(sandbox):
     scripts = REAL_VAULT / "03-INFRA" / "scripts"
     assert (scripts / "nexgen-update.sh").is_file()
     assert (scripts / "nexgen-update.ps1").is_file()
-    assert (scripts / "nexgen_update.py").is_file()
+    assert (scripts / "nexgen_core" / "updater.py").is_file()
 
 
 def test_powershell_launcher_has_one_python_backend_and_forwards_arguments():
+    """Il launcher trova un Python, uno solo, e passa tutto quello che riceve.
+
+    Prima questo test fissava tre righe esatte del file. Il file ora è
+    generato da una tabella sola insieme a tutti gli altri launcher, e ogni
+    riorganizzazione legittima lo rompeva: si asserisce la regola.
+    """
     source = POWERSHELL_LAUNCHER.read_text(encoding="utf-8")
-    assert 'Join-Path $PSScriptRoot "nexgen_update.py"' in source
-    assert 'sys.version_info >= (3, 10)' in source
-    assert "& $runtimeCommand @runtimePrefix $script @args" in source
+
+    # Un solo backend: si prova una catena di candidati e alla prima
+    # occorrenza buona si esce. Due invocazioni indipendenti significherebbe
+    # due comportamenti diversi a seconda di cosa è installato.
+    assert source.count("& $exe") <= 1, "il launcher invoca Python in più punti"
+    assert "foreach" in source, "il launcher deve provare più candidati in ordine"
+    assert "$args" in source, "il launcher deve inoltrare gli argomenti ricevuti"
+    assert "exit $LASTEXITCODE" in source, "il codice di uscita del comando deve arrivare fino a chi lo ha lanciato"
+
+    # E deve arrivare al motore, non a un file qualsiasi.
+    assert "nexgen_core" in source
 
 
 @pytest.mark.skipif(os.name != "nt", reason="PowerShell execution requires Windows.")
@@ -613,7 +625,7 @@ def test_powershell_launcher_executes_the_real_updater_help():
         timeout=30,
     )
     assert result.returncode == 0, result.stdout + result.stderr
-    assert "usage: nexgen-update" in result.stdout
+    assert ("usage: nexgen update" in result.stdout) or ("usage: nexgen-update" in result.stdout)
 
 
 def test_conflicted_merge_is_rolled_back_instead_of_leaving_markers(tmp_path, capsys):
@@ -646,3 +658,25 @@ def test_conflicted_merge_is_rolled_back_instead_of_leaving_markers(tmp_path, ca
     status = _git(engine, "status", "--porcelain").stdout.strip()
     assert status == "", f"working tree not clean after rollback: {status!r}"
     assert (engine / "VERSION").read_text(encoding="utf-8").strip() == "0.1.0"
+
+
+def test_being_ahead_of_the_newest_release_is_not_a_fault(tmp_path, capsys):
+    """Chi gira su una pre-release è avanti, non rotto.
+
+    Sulla macchina di sviluppo il battito orario stampava «refusing to
+    downgrade ... use the manual recovery runbook» a ogni giro: un allarme
+    per una situazione normale. Chiedere esplicitamente una versione più
+    vecchia resta un rifiuto, ed è il test qui sopra.
+    """
+    updater = _load_updater()
+    _origin, engine = _upgrade_fixture(tmp_path)
+    assert updater.main(["--yes"], environ=_env(engine), which=lambda _name: None) == 0
+    capsys.readouterr()
+    (engine / "VERSION").write_text("99.0.0\n", encoding="utf-8")
+
+    result = updater.main(["--check"], environ=_env(engine), which=lambda _name: None)
+
+    captured = capsys.readouterr()
+    assert result == 0, "essere avanti non è un guasto"
+    assert "refusing" not in captured.err.lower()
+    assert "ahead of the newest release" in captured.out

@@ -28,6 +28,10 @@ the session.
    already committed.
 4. Verify the writes landed (read the note back or check
    `recent_activity`), then report what was saved as one short list.
+5. If `agent-doctor` or git reports any quarantine branch (`quarantine/*`),
+   inspect its diff with `git diff main..<branch>`, reconcile the intended
+   changes into canonical files, publish with `vault-push`, and remove the
+   quarantine branch with `git branch -D <branch>`.
 
 In Cloud-Server mode, if the `vault-library` MCP is genuinely unreachable,
 say so and stop: durable facts must not be persisted anywhere else in the

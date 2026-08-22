@@ -181,12 +181,17 @@ def _copy_engine_scripts(sandbox: Sandbox) -> None:
         "agent-chrome.sh", "agent-chrome.ps1",
         "council.sh", "council.ps1", "vault-push.sh", "vault-push.ps1", "vault-groom.sh", "vault-groom.ps1",
         "vault_groom_audit.py", "agent-now.sh", "agent-now.ps1", "agent-open-folder.sh", "agent-open-folder.ps1",
-        "nexgen-update.sh", "nexgen-update.ps1", "nexgen_update.py",
+        "nexgen-update.sh", "nexgen-update.ps1",
         "firecrawl-local.sh", "firecrawl-local.ps1", "firecrawl-search-health.py",
     ):
-        dst = sandbox.scripts_dir / name
-        shutil.copy2(REAL_SCRIPTS / name, dst)
-        dst.chmod(dst.stat().st_mode | stat.S_IEXEC)
+        src = REAL_SCRIPTS / name
+        if src.is_file():
+            dst = sandbox.scripts_dir / name
+            shutil.copy2(src, dst)
+            dst.chmod(dst.stat().st_mode | stat.S_IEXEC)
+
+    if (REAL_SCRIPTS / "nexgen_core").is_dir():
+        shutil.copytree(REAL_SCRIPTS / "nexgen_core", sandbox.scripts_dir / "nexgen_core", dirs_exist_ok=True)
 
     shutil.copy2(FIXTURES / "manifest.yaml", sandbox.mcp_dir / "manifest.yaml")
     shutil.copy2(FIXTURES / "AGENTS.md", sandbox.ul / "instructions" / "AGENTS.md")
@@ -347,3 +352,41 @@ def run_agent_doctor(sandbox: Sandbox, *args: str, timeout: int = 60,
         text=True,
         timeout=timeout,
     )
+
+
+# --- gate anti-fuga sulle fixture -------------------------------------------
+#
+# Viveva in tests/run.sh e nel suo gemello tests/run.ps1, due lanciatori che il
+# loro stesso commento dichiarava non canonici ("il runner vero è
+# `python -m pytest`") e che erano già in deriva fra loro: uno avvisava quando
+# saltava il controllo, l'altro lo saltava in silenzio.
+#
+# Vivendo qui, il controllo parte con `pytest` e basta, su ogni piattaforma,
+# senza un lanciatore da tenere in passo.
+
+def _leak_scan_paths() -> tuple[Path, Path, Path] | None:
+    here = Path(__file__).resolve().parent
+    scanner = here.parent / "leak-scan" / "leak_scan.py"
+    patterns = here.parent / "leak-scan" / "leak_patterns.yaml"
+    fixtures = here / "fixtures"
+    if scanner.is_file() and patterns.is_file() and fixtures.is_dir():
+        return scanner, patterns, fixtures
+    return None
+
+
+@pytest.fixture(scope="session", autouse=True)
+def fixtures_carry_no_leaks() -> None:
+    """Le fixture non devono contenere niente che non possa stare in pubblico.
+
+    È bloccante: una fixture che porta un segreto lo porta in ogni clone.
+    """
+    paths = _leak_scan_paths()
+    if paths is None:
+        pytest.skip("leak-scan non presente in questo albero")
+    scanner, patterns, fixtures = paths
+    res = subprocess.run(
+        [sys.executable, str(scanner), "--patterns", str(patterns), "--tree", str(fixtures)],
+        capture_output=True, text=True, check=False, timeout=120,
+    )
+    if res.returncode != 0:
+        pytest.fail(f"Le fixture contengono una fuga:\n{res.stdout}\n{res.stderr}")

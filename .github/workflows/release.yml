@@ -68,12 +68,10 @@ jobs:
         run: |
           set -euo pipefail
           version="$(tr -d '[:space:]' < VERSION)"
-          case "$version" in
-            [0-9]*.[0-9]*.[0-9]*) ;;
-            *) echo "::error::VERSION is not a semver-looking value: '$version'" >&2; exit 1 ;;
-          esac
-          if [ "v$version" != "$TAG" ]; then
-            echo "::error::the tree at $TAG carries VERSION $version; a release tag must name the version it contains." >&2
+          # La regola vive in Python, dove è ancorata e ha i suoi test. Il
+          # glob che stava qui accettava "1.2.3abc" come se fosse una versione.
+          if ! python3 03-INFRA/scripts/nexgen_core/release.py check-version "$version" "$TAG"; then
+            echo "::error::VERSION e il tag non concordano." >&2
             exit 1
           fi
           echo "version=$version" >> "$GITHUB_OUTPUT"

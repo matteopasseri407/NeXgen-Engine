@@ -1,16 +1,24 @@
-#!/usr/bin/env bash
-# Cross-platform logic lives in nexgen_update.py. Resolve this launcher's real
-# directory even when agent-sync installed it as ~/.local/bin/nexgen-update.
-set -eu
+#!/usr/bin/env sh
+# NeXgen Engine — generated, do not edit by hand.
+#
+# 'nexgen-update' as the previous release installed it. It holds no logic: it finds a
+# Python and hands over to 'nexgen update'. Regenerate with:
+#   python3 03-INFRA/scripts/nexgen_core/legacy_launchers.py --write
+set -u
 
-SOURCE="${BASH_SOURCE[0]}"
-while [ -L "$SOURCE" ]; do
-  SOURCE_DIR="$(cd -P "$(dirname "$SOURCE")" && pwd)"
-  SOURCE="$(readlink "$SOURCE")"
-  case "$SOURCE" in
-    /*) ;;
-    *) SOURCE="$SOURCE_DIR/$SOURCE" ;;
-  esac
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+ENTRY="$SCRIPT_DIR/nexgen_core/cli/__init__.py"
+
+if [ ! -f "$ENTRY" ]; then
+    echo "NeXgen: engine files are missing at $ENTRY" >&2
+    exit 1
+fi
+
+for candidate in python3 python; do
+    if command -v "$candidate" >/dev/null 2>&1; then
+        exec "$candidate" "$ENTRY" "update" "$@"
+    fi
 done
-SCRIPT_DIR="$(cd -P "$(dirname "$SOURCE")" && pwd)"
-exec python3 "$SCRIPT_DIR/nexgen_update.py" "$@"
+
+echo "NeXgen: Python 3 is not on this system's PATH." >&2
+exit 1

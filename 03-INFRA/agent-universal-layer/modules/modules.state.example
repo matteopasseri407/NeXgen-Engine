@@ -1,0 +1,28 @@
+# Per-machine module state. Copy this file to
+#   $AGENT_VAULT_DATA/03-INFRA/agent-universal-layer/modules.state.yaml
+# and declare which modules this machine uses and where their backend runs.
+# The installer writes it once from the architecture choice (Local-Only /
+# Local-Full / Cloud-Server); edit it here when something moves.
+#
+#   memory:    always local (this machine) or remote (vault-library on a VPS)
+#   firecrawl: local | remote | absent
+#   ocr:       local | remote | absent
+#   n8n:       local | remote | absent
+#   semantic-rag: local | remote | absent
+#   browser:   local | absent
+#   council:   local | absent
+#   sync:      local | absent
+#
+# "remote" means the backend runs on a machine you own, reached over a
+# tunnel; the MCP server itself always runs where the CLI runs.
+schema_version: 1
+
+modules:
+  memory: local
+  firecrawl: absent
+  ocr: absent
+  n8n: absent
+  semantic-rag: absent
+  browser: local
+  council: local
+  sync: local

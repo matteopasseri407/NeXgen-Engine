@@ -6,7 +6,7 @@
 !99-SECRETS/.gitkeep
 !99-SECRETS/README.md
 !99-SECRETS/secrets-registry.md
-# archive/ (the encrypted .gpg vault) stays ignored: created on first secret.
+# archive/ (legacy encrypted archive, historical) stays ignored: any local-only content goes here.
 99-SECRETS/archive/
 
 # Any local env file, anywhere in the tree (not just deploy/.env) — but
@@ -50,6 +50,7 @@ id_ed25519
 # Session artifacts from agent CLIs, if ever run inside this repo
 .claude/
 .agents/
+.playwright-mcp/
 
 # Generated Windows runtime wrapper. It contains machine-specific absolute
 # paths and belongs in per-user state, never in the public source checkout.
@@ -84,3 +85,13 @@ desktop.ini
 *~
 .idea/
 .vscode/
+
+# Build residue from `pip install -e .` / `python -m build`. It is regenerated
+# on every build, so tracking it means the engine checkout goes dirty the
+# moment anyone builds — and the updater refuses to work on a dirty tree.
+# Same failure mode as the state directory, different origin.
+*.egg-info/
+build/
+dist/
+__pycache__/
+*.py[co]

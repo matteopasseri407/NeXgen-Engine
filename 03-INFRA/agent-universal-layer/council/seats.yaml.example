@@ -72,7 +72,7 @@
 # - Council funziona anche senza Governor: usa i seat dichiarati e lascia
 #   sempre la scelta all'umano;
 # - integrazione opzionale pronta per il Governor pubblico:
-#   https://github.com/matteopasseri407/llm-model-routing-governor
+#   https://github.com/matteopasseri407/NeXgen-addon-llm-model-routing-governor
 # - se attivo, Council legge soltanto il documento dichiarato nel Vault e propone
 #   il modello concreto qui dichiarato; non esegue mai un seat senza --seat o
 #   una relay senza --sequence scelti esplicitamente dall'umano;

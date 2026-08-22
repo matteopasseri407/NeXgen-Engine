@@ -18,12 +18,13 @@ licensed, whatever you conclude about the mono-user constraints below.
   single hardware/host description and a single model-team configuration
   for the whole vault. The framework has no concept of "which teammate is
   driving right now" — there's one file, and whoever last edited it wins.
-- **One secrets archive, one passphrase.** `99-SECRETS/archive/master-secrets.md.gpg`
-  is a single GPG-encrypted archive "protected by a passphrase only you
-  know" (see `99-SECRETS/README.md`). There's no per-person credential
-  scoping: if a team shares the passphrase, they share every secret in the
-  archive equally; there's no way to give one teammate read access to the
-  n8n token without also handing them the OCR service key.
+- **No shared secret store ships.** `99-SECRETS/` is a git-ignored local
+  space; only `README.md` and `secrets-registry.md` are tracked, and the
+  registry never holds values. Real credentials stay where each machine
+  keeps them (OS keyring, per-user env vars, per-CLI stores). There's no
+  per-person credential scoping: sharing a clone shares config and notes,
+  never credentials, and there's no way to give one teammate read access to
+  the n8n token without also handing them the OCR service key.
 - **No per-file access control beyond your OS.** As `SECURITY.md` already
   states: "Any agent CLI with filesystem access to [the vault] can read and
   write everything inside." That's true for a solo user and it's just as
@@ -39,9 +40,9 @@ licensed, whatever you conclude about the mono-user constraints below.
 
 - **Sharing one vault clone** (the shortest path to "everyone sees the same
   notes") means everyone is in the same trust domain: one shared profile,
-  one shared secrets passphrase, no per-person boundary. Fine for a couple
-  of people who already trust each other with everything; not a fit for a
-  team that wants to compartmentalize who can see what.
+  one shared trust boundary, no per-person credential scoping. Fine for a
+  couple of people who already trust each other with everything; not a fit
+  for a team that wants to compartmentalize who can see what.
 - **Giving everyone their own separate clone** avoids sharing credentials,
   but then nobody's notes, profile, or model routing are shared automatically
   — you lose the "team knowledge base" benefit and you're back to N
@@ -71,8 +72,8 @@ constraints, rather than finding them out after the fact.
 `99-INDEX/USER-PROFILE.md` has an optional "Team members" section for
 declaring who besides the vault owner uses this framework, so the Council
 `seats.yaml` doesn't have to be one file everyone edits at once, and a
-skill can be marked `scope: personal` so `skills-sync.py` only puts it on
-its owner's machine. That is all it does: a routing/organizational aid —
+skill can be marked `scope: personal` so `nexgen skill sync` (historical
+name `skills-sync.py`) only puts it on its owner's machine. That is all it does: a routing/organizational aid —
 who owns which host, which seat file, which skills — not a security
 boundary. Every constraint above still holds exactly as written: still one
 profile file whoever edits it last wins, still one secrets archive with

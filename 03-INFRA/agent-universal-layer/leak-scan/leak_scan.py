@@ -29,7 +29,11 @@ and exit 1. Callers own their own success/failure UX; this script only does
 detection.
 """
 from __future__ import annotations
-import argparse, re, subprocess, sys
+
+import argparse
+import re
+import subprocess
+import sys
 from pathlib import Path
 from typing import Iterable, NamedTuple
 
@@ -206,10 +210,11 @@ def parse_added_lines(diff_text: str, label_prefix: str) -> list[Unit]:
 
 
 def run_git(repo: str, *args: str) -> str:
-    r = subprocess.run(["git", "-C", repo, *args], capture_output=True, text=True)
+    r = subprocess.run(["git", "-C", repo, *args], capture_output=True, text=False)
     if r.returncode != 0:
-        sys.exit(f"[leak-scan] git command failed: git {' '.join(args)}\n{r.stderr}")
-    return r.stdout
+        err = r.stderr.decode("utf-8", errors="replace")
+        sys.exit(f"[leak-scan] git command failed: git {' '.join(args)}\n{err}")
+    return r.stdout.decode("utf-8", errors="replace")
 
 
 def units_from_staged(repo: str) -> list[Unit]:

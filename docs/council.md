@@ -29,9 +29,7 @@ completely inert. Nothing about the rest of the engine depends on it.
    following the comments in the template. Each seat needs `vendor`, `cli`,
    `model`, and an explicit `zero_retention: true|false`. `cli` must be one
    of `opencode`, `agy`, `codex`, `claude`, or `ollama`. Those are the CLIs `council.py` knows
-   how to invoke today — except `agy`, which is a recognized `cli` value but
-   currently refused as a seat outright (see "Current limitations" below);
-   declaring an `agy` seat here is harmless, it just cannot be selected.
+   how to invoke today.
    Set `zero_retention: true` only if you've confirmed
    that with a primary source, not a summary. You can also set an optional
    positive `timeout_seconds` for a seat that is known to need more or less
@@ -43,11 +41,9 @@ completely inert. Nothing about the rest of the engine depends on it.
    In a MINIMAL setup, or if the launcher is not on your `PATH`, replace
    `council` below with `python3 03-INFRA/agent-universal-layer/council/council.py`.
 
-`council.sh` (Linux/macOS) and `council.ps1` (Windows, wrapped by the
-generated `council.cmd`) are not two separate Council implementations — both
-are a few lines that resolve their own path and exec the same
-`agent-universal-layer/council/council.py`. All control flow, modes, and
-guardrails below live in that one file.
+The `council` command (and `council.cmd` on Windows) resolves and executes
+`agent-universal-layer/council/council.py` via `nexgen_core/tools/council.py`.
+All control flow, modes, and guardrails below live in that Python engine.
 
 Council does not wrap provider CLIs behind an MCP server. It starts each
 declared CLI as a local subprocess and transports the brief through stdin or a
@@ -63,7 +59,7 @@ return text, and use no filesystem, shell, or MCP tools. Council removes
 application secrets from isolated seat environments and applies vendor CLI
 controls where they exist. Enforcement is not identical across vendors, so the
 "Current limitations" section is authoritative. A CLI that cannot be shown to
-honor this contract is refused as a seat, as `agy` is today.
+honor this contract is refused as a seat.
 
 **Brainstorm.** One seat, 1+ rounds. Each round after the first must attack
 its own previous conclusion instead of just restating it:
@@ -125,8 +121,8 @@ council relay \
 
 Every mode accepts `--context FILE` for extra background. A seat without a
 confirmed zero-retention guarantee remains usable, but Council prints a warning
-to stderr before sending the brief. The old `--allow-training-risk` flag is
-accepted as a compatibility no-op, so existing scripts do not break.
+to stderr before sending the brief. The old `--allow-training-risk` flag has
+been removed outright, not kept as a no-op: passing it is now a CLI error.
 
 ## Human-approved routing proposals
 
@@ -136,7 +132,7 @@ shows the seats the user declared and waits for an explicit choice.
 An optional `routing:` section turns a routing document into a locally verified
 proposal. Set `decision_file` to a relative path inside the private data root.
 Council understands its versioned JSON contract, the per-role tables emitted by
-the public [LLM Model Routing Governor](https://github.com/matteopasseri407/llm-model-routing-governor),
+the public [LLM Model Routing Governor](https://github.com/matteopasseri407/NeXgen-addon-llm-model-routing-governor),
 and the older flat table for backward compatibility.
 
 The Governor table carries both the model label and the CLI. Council keeps that
@@ -229,9 +225,9 @@ effort label, so the two can't drift apart:
 - `ollama`: `--think` only documents `low`/`medium`/`high`. `xhigh` and
   `max` are downmapped to `--think high`, with the printed label saying so.
   Any other value is dropped with no flag, and the label says that too.
-- `agy`: has no reasoning-effort flag at all. The value is never forwarded;
-  the label reads "(non applicato da questa CLI)" instead of silently
-  looking identical to a seat that actually forwarded it.
+- `agy`: `--effort` accepts `low`/`medium`/`high`, forwarded verbatim.
+  Any other value (`xhigh`, `max`, `none`) is dropped with no flag, and the
+  label says that too.
 
 ## Session handling
 
@@ -269,10 +265,22 @@ council clean --all           # removes every kept session now
   A false value prints a clear warning in menus and immediately before the
   model starts. It is metadata, not an execution gate. Secret scanning remains
   blocking and is a separate control.
-- **Legacy retention controls**: `--allow-training-risk` and
-  `council allow-training` remain accepted for command compatibility but no
-  longer change behavior. `council allow-training off` also removes an old
-  marker file left by a previous release.
+- **Pay-per-use channels**: the governed routing block carries a Costo cell
+  per candidate. A seat whose stated cost is pay-per-use (a currency symbol
+  or a non-zero amount, as opposed to flat/free) is flagged in the proposal
+  and **requires an interactive confirmation before any process starts**:
+  without a `y` on the operator's terminal the call is aborted. This is a
+  hard stop, not a warning: the call spends real money. A seat with no
+  matching candidate in the routing document has no stated cost and is not
+  gated.
+- **Cost recap**: after each completed round or relay stage, Council prints
+  a one-line usage recap when the CLI reports it (`tokens` and `cost`,
+  summed across opencode steps; codex reports `total_cost_usd`). CLIs that
+  do not report usage print nothing.
+- **Legacy retention controls**: the old `--allow-training-risk` flag and the
+  `council allow-training` subcommand have been removed, not deprecated into
+  a no-op. Either one is now a plain CLI error; there is no compatibility
+  path for scripts that still pass them.
 - **Quota**: `--max-rounds` (brainstorm) and `--max-seats` (relay) cap how
   much a session can spend even if you ask for more.
 
@@ -294,29 +302,17 @@ council clean --all           # removes every kept session now
   the CLI accepted the exact `--model` selection and returned the same
   canonical model through `modelUsage`, with tools disabled and session
   persistence off. `ollama` seats have not yet been verified live.
-- **`agy` (Antigravity) is blocked as a passive Council seat** (found by
-  that same 2026-07-15 live relay run, reproduced 5 independent ways):
-  `agy --print` ignores both `--model` and the given prompt, running its
-  own "Context Initialization" that reads real files from the operator's
-  home instead of answering. Persistent state lives in fixed paths under
-  `~/.gemini/`, resolved independent of `$HOME`; no override flag or env
-  var was found to isolate it. This does **not** affect using `agy`
-  interactively as a *caller* of Council — a human working in Antigravity
-  can shell out to `council` exactly like any other CLI, gated only by the
-  usual propose-before-auto-invoking policy (`AGENTS.md`). Full finding,
-  live evidence, and the three conditions required to re-enable it as a
-  seat: `AGY_BLOCK_REASON` in `council.py`.
+- **`agy` (Antigravity) is fully supported as a Council seat** (verified live on 2026-08-22):
+  invoked via `agy --model <model> --disable-slash-commands --new-project --sandbox [--effort <level>] -p <prompt>`,
+  ensuring stateless text-in/text-out execution without loading local workspace skills, historical memory databases,
+  or unisolated environment tokens.
 - Automated regression tests cover the control flow for all four modes,
-  session cleanup, relay fallback, the `agy` block itself, and the Linux
+  session cleanup, relay fallback, all supported vendor CLIs, and the Linux
   launcher. They use fake seats, so they do not replace live checks of
   each vendor CLI.
-- The Windows launcher has a portable regression test, but still needs a
-  physical Windows run before this Beta feature can be called cross-platform.
-- Large prompts use stdin for Codex, and a protected temporary attachment
-  for OpenCode. Claude and Ollama use protected stdin. (Antigravity's
-  transport plumbing also uses stdin and remains covered by tests, but the
-  seat itself is currently blocked — see above.) The automated regression
-  coverage is portable, but the current vendor adapters still need live
-  end-to-end verification.
+- The Windows launcher has portable regression tests and runs natively under the unified Python core.
+- Large prompts use stdin for Codex, a protected temporary attachment
+  for OpenCode, and protected stdin for Claude and Ollama. Antigravity receives
+  the prompt directly via `-p` under the sandboxed invocation.
 - Seats via CLI are slow (minutes, not seconds): this is for brainstorming,
   challenging, and review, not a quick question mid-task.

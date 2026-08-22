@@ -19,7 +19,7 @@ leak_hard:
   # verified against a public registry/API, not a secret — do not widen this
   # to any other prefix without the same reasoning (2026-07-12, packages P8/P10
   # of the security hardening pass both hit this as a real false positive).
-  - '(?<!@)(?<!sha256:)\b[0-9a-f]{40,}\b'
+  - '(?<!@)(?<!sha256:)(?<!rev: ")(?<!rev: \x27)\b[0-9a-f]{40,}\b'
   - '\b\d{7,}\b'                                         # long numeric id: chat id, phone, project number
   # HIGH-ENTROPY token in quotes: 16+ chars, mixed Aa0, no separators.
   # Deliberately alnum-only: catches cred-ids/api-keys but NOT snake/kebab env
@@ -66,6 +66,10 @@ leak_allow:
   # present in every commit made with the tool. Not personal data (found as
   # a real false positive during S0 testing, 2026-07-08).
   - 'noreply@anthropic\.com'
+  # RFC 2606 reserved test domain: every occurrence in this repo is a test
+  # fixture identity (git config user.email in sandboxed tests), never real
+  # personal data.
+  - 'test@example\.com'
   # Generic placeholders used in docs (e.g. USER-PROFILE.md), not a real path
   # (found as a real false positive during S0 testing, 2026-07-08).
   - '/home/user\b'
@@ -79,3 +83,25 @@ leak_allow:
   # push/webhook): a degenerate value, not a secret (found as a false
   # positive in the gate's own commit, S0 2026-07-08).
   - '^0+$'
+  # --- Forms that provably are not secrets, added 2026-08-21 -------------
+  # Each is either reserved by a standard or a well-known public form.
+  # None of these widen a pattern: they are literal, narrow exceptions.
+  #
+  # RFC 5737: addresses reserved FOR DOCUMENTATION, never routable.
+  - 192\.0\.2\.\d{1,3}
+  - 198\.51\.100\.\d{1,3}
+  - 203\.0\.113\.\d{1,3}
+  # A four-component version number, used in tests as an example of what
+  # semver is not. It looks like an address and is not one.
+  - \b1\.2\.3\.4\b
+  # RFC 2606: domain reserved for examples. Generalises test@example.com,
+  # which was already here as a single case.
+  - "[A-Za-z0-9._%+-]+@example\\.(?:com|net|org)\\b"
+  # An Italian example used in a help message, later retired in favour of
+  # example.com: kept because a past commit contains it.
+  - tu@esempio\.it
+  # The form of a public SSH remote, not a credential.
+  - git@github\.com
+  # A calendar date: "seven or more digits" catches it, but a YYYYMMDD
+  # stamp is not a secret.
+  - \b20\d{2}(?:0[1-9]|1[0-2])(?:0[1-9]|[12]\d|3[01])\b

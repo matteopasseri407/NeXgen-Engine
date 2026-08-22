@@ -1,19 +1,21 @@
 from __future__ import annotations
 
+import contextlib
+import hashlib
+import os
+import re
+import subprocess
+import sys
+import tempfile
+import time
 from collections import Counter
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
-import hashlib
-import os
-import re
-import subprocess
-import time
 
 from .config import Settings
-
 
 NOTE_EXTENSIONS = {".md", ".markdown", ".mdown", ".mdx"}
 WIKILINK_RE = re.compile(r"\[\[([^\]]+)\]\]")
@@ -966,16 +968,38 @@ class VaultService:
 
     @contextmanager
     def _write_lock(self):
-        lock_path = Path("/tmp/vault-write.lock")
+        uid_suffix = f"-{os.getuid()}" if hasattr(os, "getuid") else f"-{os.environ.get('USERNAME', 'user')}"
+        lock_path = Path(tempfile.gettempdir()) / f"vault-write{uid_suffix}.lock"
         lock_path.parent.mkdir(parents=True, exist_ok=True)
-        with lock_path.open("w", encoding="utf-8") as handle:
-            import fcntl
-
-            fcntl.flock(handle, fcntl.LOCK_EX)
-            try:
-                yield
-            finally:
-                fcntl.flock(handle, fcntl.LOCK_UN)
+        fd = os.open(str(lock_path), os.O_RDWR | os.O_CREAT, 0o600)
+        try:
+            if sys.platform == "win32":
+                import msvcrt
+                try:
+                    if os.fstat(fd).st_size == 0:
+                        with contextlib.suppress(OSError):
+                            os.write(fd, b"0")
+                            os.lseek(fd, 0, os.SEEK_SET)
+                    msvcrt.locking(fd, msvcrt.LK_LOCK, 1)
+                except OSError:
+                    pass
+                try:
+                    yield
+                finally:
+                    with contextlib.suppress(OSError):
+                        os.lseek(fd, 0, os.SEEK_SET)
+                        msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+            else:
+                import fcntl
+                fcntl.flock(fd, fcntl.LOCK_EX)
+                try:
+                    yield
+                finally:
+                    with contextlib.suppress(OSError):
+                        fcntl.flock(fd, fcntl.LOCK_UN)
+        finally:
+            with contextlib.suppress(OSError):
+                os.close(fd)
 
     def _resolve_write_path(self, note_path: str) -> tuple[Path, str]:
         cleaned = note_path.replace("\\", "/").split("#", 1)[0].split("?", 1)[0].strip()

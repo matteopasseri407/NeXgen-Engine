@@ -10,15 +10,13 @@ the documented install actually produces.
 
 The codebase does contain the plumbing for a second, more advanced
 topology: `AGENT_ENGINE_ROOT`/`AGENT_VAULT_DATA` let you split the engine
-into its own clone (referred to internally as the "consumer engine clone")
-separate from your data root, and `agent-doctor` has a version-pin check
-(section S2) plus a new-version-available warning that key off that split
-clone's `.git`. That section only activates once you have deliberately
-created a second clone and pointed those variables at it; it is a future
-"cutover" path the engine is being built toward, not something `INIT.md`
-sets up for you today. If you followed the documented install and never set
-those variables, that section of `agent-doctor` stays silent, and none of
-the `~/.nexgen-engine`-style pin mechanics described below apply to you.
+into its own clone separate from your data root. `nexgen update` (see
+below) understands both topologies on its own — it is a future "cutover"
+path the engine is being built toward, not something `INIT.md` sets up for
+you today. If you followed the documented install and never set those
+variables, the engine and data clone are simply the same clone, and none of
+the split-clone mechanics described below (the `99-INDEX/ENGINE-PIN.txt`
+pin) apply to you.
 
 ## Why track your version at all
 
@@ -30,13 +28,12 @@ you're actually running; move it only when you choose to.
 
 ## Checking whether an upgrade is available
 
-`agent-doctor` checks this for you on **both** topologies: on the default
-single-clone install it fetches `origin`'s tags (read-only, bounded) and
-warns — informationally, never a FAIL — when a released tag newer than your
-`VERSION` file exists ("new engine version available: vX.Y.Z"). Nothing is
-ever updated automatically; the warning just tells you the choice exists.
-A vault whose `origin` is your own private data remote (no engine tags) or
-that has no `VERSION` file skips the check silently.
+`nexgen upgrades` (equivalent to `nexgen update --check`) checks this for
+you on **both** topologies: it fetches `origin`'s tags (read-only) and
+reports whether a released tag newer than your `VERSION` file exists.
+Nothing is ever updated automatically; it only tells you the choice exists.
+This is a separate command from `nexgen doctor`, which does not check for
+engine upgrades at all.
 
 To check by hand instead:
 
@@ -56,25 +53,31 @@ The normal path is now the real cross-platform command installed by the
 MULTI provisioner:
 
 ```bash
-nexgen-update --check
-nexgen-update
+nexgen update --check
+nexgen update
 ```
+
+(Historical name, still installed and still working: `nexgen-update`.)
 
 The first command fetches released tags and prints the exact changelog without
 moving the branch or changing installed files. The second repeats the checks,
 verifies that both the engine clone and the separate data clone are clean,
 shows the merge/provision/doctor plan, and asks for confirmation. In
-automation, `nexgen-update --yes` is the explicit-confirmation form. It
-discovers the data root in this order: `AGENT_VAULT_DATA`,
+automation, `nexgen update --yes` is the explicit-confirmation form, and
+`nexgen update --unattended` additionally refuses any jump larger than a
+patch-level release. It discovers the data root in this order:
+`AGENT_VAULT_DATA`,
 `KNOWLEDGE_VAULT_PATH`, then `~/KnowledgeVault` when that default is a Git
 checkout. If none exists, it keeps the engine checkout as the data root. It
 uses a fast-forward for a separate consumer engine. In the default single
 clone it permits a normal merge commit, so private data commits remain on the
 attached branch. When a split data clone already has
 `99-INDEX/ENGINE-PIN.txt`, the command commits only that mechanical pin through
-`vault-push` before provisioning. It then runs `agent-sync apply`, compares the
-doctor before and after, and never stashes, resets, or rolls back user work on
-its own.
+`nexgen vault push` (historical name `vault-push`) before provisioning. It
+then looks up and runs the `agent-sync` launcher (`agent-sync apply` — the
+historical name that `nexgen sync` also answers to), compares the doctor
+before and after, and never stashes, resets, or rolls back user work on its
+own.
 
 The manual sequence below remains the recovery path for MINIMAL installs and
 for the one bootstrap upgrade from a version that predates the command.
@@ -102,20 +105,22 @@ for the one bootstrap upgrade from a version that predates the command.
 4. Run a provisioning pass and check the result:
    - **MULTI profile:**
      ```bash
-     agent-sync apply
-     agent-doctor --strict --summary
+     nexgen sync
+     nexgen doctor --strict --summary
      ```
-     `agent-sync apply` first proves that the data branch is fresh against
+     (Historical names, still working: `agent-sync apply`,
+     `agent-doctor --strict --summary`.)
+     `nexgen sync` first proves that the data branch is fresh against
      the authoritative remote declared in
      `03-INFRA/agent-universal-layer/sync/remotes.yaml`. It then validates
-     the configuration contract before it runs any pending data migration or
+     the configuration contract before it
      writes a generated CLI file. Unsafe Git states and invalid
-     configuration stop the apply. See `docs/sync-contract.md`.
-   - **MINIMAL profile:** there is no `agent-sync`/`agent-doctor` to run —
+     configuration stop the sync. See `docs/sync-contract.md`.
+   - **MINIMAL profile:** there is no `nexgen sync`/`nexgen doctor` to run —
      per `README.md`, MINIMAL never installs them. Diagnostics are visual:
      open the CLI you configured and confirm it still loads `AGENTS.md`,
      still mounts the MCP servers you expect, and still sees your skills.
-5. If `agent-doctor` reports new `FAIL`s that weren't there before the
+5. If `nexgen doctor` reports new `FAIL`s that weren't there before the
    upgrade (MULTI), or your CLI stops behaving the way it did before
    (MINIMAL), something in the new version doesn't fit your setup. Roll
    back with `git reset --hard <previous-commit-or-tag>`, then report what
@@ -130,17 +135,10 @@ run somewhere else, and the VPS keeps running the containers it was last
 deployed with. Nothing on your workstation can restart them for you, and
 for a long time nothing even told you they were behind.
 
-Now `agent-doctor` does, for the one service that reports its own version:
-
-```text
-⚠ vault-mcp on the server is 0.3.0 but this engine ships 0.4.0 —
-  the server half of the upgrade was never deployed
-```
-
-It is a WARN and never a FAIL: a lagging server keeps working, and when to
-take it down is your call, not the tool's. For the other three stacks
-`CHANGELOG.md` is the signal — if a release mentions `deploy/`, assume
-the VPS needs the same tag.
+`agent-doctor` (now `nexgen doctor`) does not compare the deployed
+`vault-mcp` server version against the engine version — there is no such
+check. `CHANGELOG.md` is the signal for every stack under `deploy/`: if a
+release mentions `deploy/`, assume the VPS needs the same tag.
 
 The redeploy is short, and it is documented once, in
 [`03-INFRA/deploy/README.md`](../03-INFRA/deploy/README.md) →
@@ -151,47 +149,45 @@ not on `main`.
 A **Local-Only** install has none of this: no VPS, no `deploy/`, nothing
 to upgrade twice.
 
-## Data migrations
+## If you run Local-Full, your Docker stack is a second install too
 
-Some engine releases may need to reshape a data file (a manifest field
-renamed, a new required key). When that happens, `agent-sync apply` runs
-the needed migration automatically, in order, the first time it sees your
-data at an older schema version:
+The same drift risk applies one machine closer to home. In Local-Full mode
+the same connectors — `03-INFRA/deploy/` again — run on this
+machine's own Docker instead of a VPS, started with `nexgen stack up`. A
+`nexgen sync`/`nexgen update` on this machine upgrades the engine code and
+CLI configuration, but it does not restart or redeploy the running
+containers: `nexgen doctor` does not compare the running stack's version
+against the engine version either — there is no such check, the same as
+for Cloud-Server. Watch `CHANGELOG.md` for anything mentioning `deploy/`,
+then re-run `nexgen stack up` (it re-applies the current compose
+definitions) to bring the containers current; `nexgen stack status` shows
+what's actually running.
 
-- Before writing anything, it backs up the affected file next to itself as
-  `<file>.bak-<timestamp>` (same convention as the config backups you'll
-  already have seen from `render.py`; the last 3 are kept).
-- Each migration is idempotent: running it again on already-migrated data
-  is a no-op.
-- Your data schema version is tracked in
-  `99-INDEX/DATA-SCHEMA-VERSION.txt` (in your data root — this file is
-  yours, not published with the engine).
-- If your data is already at the schema the engine expects, this step does
-  nothing at all — no file is touched, no backup is created.
+## Manifest and skill-manifest fields
 
-This runs only as part of `agent-sync apply`, so it is a MULTI-profile
-mechanism. There are no migrations registered yet as of the current engine
-`VERSION` — today's data shape is still the baseline this mechanism starts
-counting from, for both profiles. A migration runs only after the preflight
-has accepted the data source, and before runtime files are generated.
+The MCP manifest and the skills manifest are read tolerantly: an engine
+upgrade that adds a new optional field to either schema does not require any
+action from you, because an older reader on either side simply ignores a key
+it does not recognize rather than rejecting the document (see
+`docs/sync-contract.md` → "Configuration gate"). There is no separate,
+automatic data-migration mechanism beyond that tolerance today — if a
+release ever needs a genuine reshape of an existing field, `CHANGELOG.md`
+will say so explicitly and give the manual steps.
 
 ## What never happens automatically
 
 - Your `VERSION` never moves by itself.
-- `agent-sync`/`agent-doctor` never `git pull` or `git checkout` your
-  clone.
+- `nexgen sync`/`nexgen guard`/`nexgen doctor` never `git pull` or
+  `git checkout` your clone.
 - Your clone never publishes engine code back upstream. GitHub repository
   controls and CI apply to maintainers publishing changes, not to normal
   private vault usage.
-- A data migration never runs against a schema version newer than what the
-  installed engine understands — if that happens (e.g. you rolled the
-  engine back), `agent-sync` leaves your data untouched and logs why.
 
 ## MCP package pins
 
 The engine runs local MCP packages through exact `npx` versions. The pins live
 in `03-INFRA/agent-universal-layer/mcp/manifest.yaml`, with the Antigravity
-HTTP bridge pinned in `mcp/render.py`.
+HTTP bridge pinned in `nexgen_core/renderer.py`.
 
 Do not replace a pin with `latest`. Test one package update in a disposable
 setup, run the engine checks, then publish the engine change. If the new
