@@ -44,9 +44,8 @@ OPERATING_SYSTEMS: tuple[Support, ...] = (
     ),
     Support(
         "Windows",
-        "beta",
-        "verified on real hardware and in CI; a first install with no assistance has "
-        "not been done yet, so MINIMAL is the safer start",
+        "released",
+        "verified on real hardware and in CI; full native Python execution, dual launchers, and complete CLI alignment",
     ),
     Support(
         "macOS",

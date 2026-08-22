@@ -50,6 +50,7 @@ id_ed25519
 # Session artifacts from agent CLIs, if ever run inside this repo
 .claude/
 .agents/
+.playwright-mcp/
 
 # Generated Windows runtime wrapper. It contains machine-specific absolute
 # paths and belongs in per-user state, never in the public source checkout.

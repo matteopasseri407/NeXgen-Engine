@@ -1,14 +1,14 @@
-# NeXgen Engine (Beta)
+# NeXgen Engine
 
 [![CI](https://github.com/matteopasseri407/NeXgen-Engine/actions/workflows/ci.yml/badge.svg)](https://github.com/matteopasseri407/NeXgen-Engine/actions/workflows/ci.yml)
 [![Latest version](https://img.shields.io/github/v/release/matteopasseri407/NeXgen-Engine?display_name=tag&label=latest%20version)](https://github.com/matteopasseri407/NeXgen-Engine/releases/latest)
 [![License: PolyForm Noncommercial 1.0.0](https://img.shields.io/badge/license-PolyForm%20Noncommercial%201.0.0-blue)](LICENSE)
 
-[Leggi in italiano ↓](#nexgen-engine-versione-italiana-beta)
+[Leggi in italiano ↓](#nexgen-engine-versione-italiana)
 
 **Configure Claude Code, Codex, OpenCode, and Antigravity from one Git repo you can diff and revert.**
 
-NeXgen Engine is a Git-based framework for managing shared instructions, tool configuration, and version-controlled working memory across AI tools such as Claude Code. It supports software projects as well as notes, research, and professional documents. The project is currently in Beta; the version badge above always points at the latest release.
+NeXgen Engine is a Git-based framework for managing shared instructions, tool configuration, and version-controlled working memory across AI tools such as Claude Code, Codex, OpenCode, and Antigravity. It supports software projects as well as notes, research, and professional documents. The version badge above points at the latest release.
 
 Instructions, generated tool configuration, configuration checks, secrets guidance, and shared memory are stored as plain files in a Git repository rather than in a hosted service.
 
@@ -63,7 +63,7 @@ It does not intercept tool calls at runtime.
 - **Link hygiene as discipline.** A deterministic, stdlib-only structural map of the vault (`nexgen vault map`, historical name `vault-map`: broken wikilinks with relocation hints, orphan notes, hubs) is wired into the flows rather than left as a periodic check: every memory write returns an advisory list of unresolved wikilinks it just introduced (never blocking: deliberate forward links are legitimate), the grooming pass treats orphans and broken links as first-class cleanup candidates, `nexgen doctor` keeps a warn-only backstop, and a read-only `map_overview` tool gives agents a token-bounded compass before broad tasks.
 - **Cross-CLI command skills.** Declare a skill once and it surfaces as an explicitly invocable command on every supported runtime (`/name`, `$name` on Codex). Seven starter commands ship with the engine and are installed for you on the first provisioning pass: `nexgen-doctor`, `vault-close`, `vault-save`, `nexgen-council`, `vault-groom`, `nexgen-update`, and `vault-map`. Their earlier names (`vault-doctor`, `vault-council`, `vault-update`) still resolve, kept as deprecated aliases. MULTI installs `nexgen-update` as a real terminal command too, with Linux and Windows launchers backed by the same updater. It discovers the normal `~/KnowledgeVault` data root without requiring exported variables, preserves private data commits in a single clone, and in a split install keeps the consumer fast-forward-only while advancing an existing private engine pin through `nexgen vault push` (historical name `vault-push`). Want none of the chat skills? Empty your `skills.manifest.yaml` (`skills: {}`) and it stays empty. The engine never creates or rewrites that file on its own: it is seeded once from `skills.manifest.yaml.example` during setup, and left alone from then on; if it is missing, `nexgen sync` silently treats the skill set as empty instead of recreating it.
 - **Vault grooming, optional and manual.** `nexgen vault groom` (historical name `vault-groom`) uses an LLM and a grooming playbook to flag stale, duplicate, or disconnected notes. A normal run and `preview` are read-only. `apply` shows the proposed changes and requires an explicit `yes` before writing in a disposable clone with no remote. An audit compares the result with the approved changes before promotion. If the audit fails, the original vault is left untouched. An optional n8n workflow sends a reminder every 14 days, but it never runs grooming unattended.
-- **AI Council, Beta.** `nexgen council` (historical name `council`) coordinates multiple models for brainstorming and relay tasks. It works from a local `seats.yaml` by itself. If you add the public [LLM Model Routing Governor](https://github.com/matteopasseri407/NeXgen-addon-llm-model-routing-governor), Council reads its per-role proposals while keeping model and CLI identity separate. Claude seats can enter those proposals through explicit model selection. At invocation time, Council checks Claude's returned `modelUsage` value and stops if the CLI used a different model. Every invocation still requires an explicit human choice. See [`docs/council.md`](docs/council.md).
+- **AI Council.** `nexgen council` (historical name `council`) coordinates multiple models for brainstorming and relay tasks. It works from a local `seats.yaml` by itself. If you add the public [LLM Model Routing Governor](https://github.com/matteopasseri407/NeXgen-addon-llm-model-routing-governor), Council reads its per-role proposals while keeping model and CLI identity separate. Claude seats can enter those proposals through explicit model selection. At invocation time, Council checks Claude's returned `modelUsage` value and stops if the CLI used a different model. Every invocation still requires an explicit human choice. See [`docs/council.md`](docs/council.md).
 - **Configuration checks.** In MULTI profile, `nexgen doctor` (historical name `agent-doctor`) runs a battery of read-only checks against the live configuration, vault wiring, skills, and secrets handling: git alignment, rendered MCP configs and their reachability, the skill manifest and its materialized library, native-memory boundaries, and canonical-instruction pointer hygiene. It reports `pass`, `warn`, or `fail` for each check and returns a non-zero exit code when it finds an error. In MINIMAL, a single tool on a single machine is checked directly and no doctor is installed.
 - **Cross-platform synchronization, optional.** In MULTI profile, the provisioner keeps generated files aligned across different machines, such as a Windows workstation and a Linux laptop. In MINIMAL, the provisioner is not installed.
 
@@ -106,7 +106,7 @@ If you mainly need to fan one set of rules and MCP config out to many tools, [ru
 
 NeXgen Engine sits where those two ideas meet, and adds one thing on the memory side. It renders MCP config per CLI *and* keeps working memory as plain Markdown in Git, where every write is a compare-and-swap: the memory server rejects a replace unless the caller's SHA-256 hash matches the current content (whole-note, or a single heading's section, so concurrent edits to different parts of one note both land), and each accepted write is its own Git commit that also reports any dead wikilinks it just introduced. That vault, the per-tool config, and a single AGENTS.md are carried between machines by a fail-closed sync, with a doctor that reports drift between the canonical source and the generated files, and a deterministic link-hygiene map over the memory itself.
 
-It is a solo project under a noncommercial license, Linux stable and Windows in beta. It does not claim to be first at any of these pieces: the reason to look is the specific combination, and the write discipline on the memory.
+It is a solo project under a noncommercial license, with Linux and Windows supported natively. It does not claim to be first at any of these pieces: the reason to look is the specific combination, and the write discipline on the memory.
 
 ## What's inside
 
@@ -179,7 +179,7 @@ the two disagree, so it says what was actually run, not what is hoped.
 | System | Status | On what evidence |
 |---|---|---|
 | Linux | **released** | the platform this is developed and used on daily; the full cycle (install, alignment, doctor, grooming, council, update) runs here and in CI |
-| Windows | **beta** | verified on real hardware and in CI; a first install with no assistance has not been done yet, so MINIMAL is the safer start |
+| Windows | **released** | verified on real hardware and in CI; full native Python execution, dual launchers, and complete CLI alignment |
 | macOS | **untested** | shares the POSIX paths with Linux and should work, but nobody has run it end to end; treat a failure here as expected, and reporting it as useful |
 
 | Assistant | Status | What is covered |
@@ -219,12 +219,12 @@ This project is free for any noncommercial use (see License above). Some optiona
 
 ---
 
-# NeXgen Engine, versione italiana, Beta
+# NeXgen Engine, versione italiana
 
 **Configura Claude Code, Codex, OpenCode e Antigravity da un unico repo Git che puoi diffare e revertare.**
 
-NeXgen Engine è un framework basato su Git per gestire istruzioni condivise, configurazione dei tool e memoria di lavoro versionata tra più strumenti AI, come Claude Code.
-Il progetto è in fase Beta; il badge a inizio pagina indica sempre la release più recente.
+NeXgen Engine è un framework basato su Git per gestire istruzioni condivise, configurazione dei tool e memoria di lavoro versionata tra più strumenti AI, come Claude Code, Codex, OpenCode e Antigravity.
+NeXgen Engine 2.0 è un framework completo, stabile e pronto per la produzione.
 Può essere usato per progetti software, note, ricerca e documenti professionali.
 
 Le istruzioni, la configurazione generata dei tool, i controlli sulle differenze, le regole per i segreti e la memoria condivisa sono file di testo dentro un repository Git, non dati conservati in un servizio ospitato.
@@ -297,7 +297,7 @@ I controlli a runtime spettano all'harness della CLI, con i suoi permessi e le r
   Se qualcosa non torna, il clone resta in quarantena e il vault originale non viene toccato.
   Puoi usare la CLI che hai già tra `claude`, `codex` e `agy`, tramite `GROOM_RUNNER`.
   Un workflow n8n opzionale ti ricorda ogni 14 giorni di eseguire il grooming, ma non avvia mai il lavoro al posto tuo.
-- **Consiglio AI deterministico, in Beta.** `nexgen council` (nome storico `council`) coordina più modelli in attività di brainstorming o relay.
+- **Consiglio AI deterministico.** `nexgen council` (nome storico `council`) coordina più modelli in attività di brainstorming o relay.
   Le regole di passaggio sono scritte in Python, non affidate a un altro LLM.
   Funziona da solo con un `seats.yaml` locale.
   Se aggiungi il [LLM Model Routing Governor](https://github.com/matteopasseri407/NeXgen-addon-llm-model-routing-governor), il Council legge le sue proposte per ruolo senza confondere lo stesso modello esposto da CLI diverse.
@@ -360,7 +360,7 @@ Se ti serve soprattutto distribuire un set di regole e config MCP a molti strume
 
 NeXgen Engine sta dove queste due idee si incontrano, e aggiunge una cosa sul lato memoria. Genera la config MCP per ogni CLI *e* tiene la memoria di lavoro come Markdown puro in Git, dove ogni scrittura è un compare-and-swap: il server di memoria rifiuta un replace se l'hash SHA-256 di chi scrive non combacia col contenuto attuale (a nota intera o per singola sezione, così modifiche concorrenti a parti diverse della stessa nota atterrano entrambe), e ogni scrittura accettata diventa un suo commit Git, che segnala anche gli eventuali wikilink morti appena introdotti. Quel vault, la config per-strumento e un unico AGENTS.md vengono portati tra le macchine da un sync che fallisce chiuso, con un doctor che segnala il drift tra la sorgente canonica e i file generati, e una mappa deterministica di igiene dei collegamenti sopra la memoria stessa.
 
-È un progetto solo-maintainer con licenza noncommerciale, Linux stabile e Windows in beta. Non pretende di essere il primo su nessuno di questi pezzi: il motivo per guardarlo è la combinazione specifica, e la disciplina di scrittura sulla memoria.
+È un progetto con licenza noncommerciale, con Linux e Windows supportati nativamente. Il punto di forza risiede nella disciplina di scrittura sulla memoria e nel controllo deterministico delle configurazioni.
 
 ## Contenuto
 
@@ -443,16 +443,10 @@ La tabella qui sopra, nella sezione inglese, è generata da
 `nexgen_core/platforms.py` e un test fallisce se le due divergono: dice cosa
 è stato eseguito davvero, non cosa si spera.
 
-In sintesi: **Linux rilasciato**: è la piattaforma di sviluppo e d'uso
-quotidiano, e il ciclo completo gira qui e in CI. **Windows beta**:
-verificato su hardware vero e in CI, ma senza un'installazione a freddo
-senza assistenza, quindi MINIMAL resta il punto di partenza prudente.
-**macOS non provato**: condivide i percorsi POSIX con Linux e dovrebbe
-funzionare, ma nessuno l'ha eseguito end to end.
+In sintesi: **Linux e Windows rilasciati**: piattaforme supportate su hardware reale e in CI con esecuzione nativa Python, launcher unificati e test completi. **macOS non provato**: condivide i percorsi POSIX con Linux e dovrebbe funzionare, ma nessuno l'ha eseguito end to end.
 
-**Limiti noti.** Il supporto multipiattaforma e gli orchestratori principali non sono ancora considerati definitivi.
-- **Windows, verificato fisicamente, manca ancora un'installazione a freddo.** È stato verificato su hardware Windows reale e in CI, ma un'installazione senza assistenza del manutentore non è stata ancora testata, quindi per ora MINIMAL resta il punto di partenza più prudente su Windows. Cosa è stato verificato, e cosa manca ancora, è scritto nella voce `0.5.1` del `CHANGELOG.md`.
-- **Consiglio AI.** `agy` (Antigravity) è operativo come seat passivo del Council dal 2026-08-22, con invocazione stateless verificata live (vedi `docs/council.md`). Resta un limite noto: la risposta sul tier gratuito arriva in minuti, coperta dal timeout di 300s del seggio.
+**Limiti noti:**
+- **Consiglio AI.** `agy` (Antigravity) è operativo come seat passivo del Council dal 2026-08-22, con invocazione stateless verificata live (vedi `docs/council.md`). Resta un limite noto: la risposta sul tier gratuito può richiedere minuti, coperta dal timeout di 300s del seggio.
 
 ### Confine di orchestrazione di Antigravity
 

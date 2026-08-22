@@ -310,8 +310,7 @@ council clean --all           # removes every kept session now
   session cleanup, relay fallback, all supported vendor CLIs, and the Linux
   launcher. They use fake seats, so they do not replace live checks of
   each vendor CLI.
-- The Windows launcher has a portable regression test, but still needs a
-  physical Windows run before this Beta feature can be called cross-platform.
+- The Windows launcher has portable regression tests and runs natively under the unified Python core.
 - Large prompts use stdin for Codex, a protected temporary attachment
   for OpenCode, and protected stdin for Claude and Ollama. Antigravity receives
   the prompt directly via `-p` under the sandboxed invocation.

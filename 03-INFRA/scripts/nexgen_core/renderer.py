@@ -370,8 +370,16 @@ class McpRenderer:
                 if srv.get("oauth") and not auth_env:
                     # OpenCode handles the OAuth flow itself (401 detection,
                     # RFC 7591 dynamic registration, tokens in mcp-auth.json):
-                    # no headers, no client secrets in the config.
-                    entry["oauth"] = {}
+                    # no headers, no client secrets in the config. An
+                    # explicit `oauth_client_id` (a public identifier, never
+                    # a secret) is forwarded for providers that do not
+                    # support dynamic client registration, e.g. Google
+                    # Workspace MCP.
+                    oauth_config: dict[str, Any] = {}
+                    client_id = srv.get("oauth_client_id")
+                    if isinstance(client_id, str) and client_id.strip():
+                        oauth_config["clientId"] = client_id.strip()
+                    entry["oauth"] = oauth_config
                 else:
                     entry["headers"] = headers
                     entry["oauth"] = False
