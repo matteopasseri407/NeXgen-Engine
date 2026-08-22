@@ -27,13 +27,14 @@ $found = $null
 foreach ($candidate in @(@('py', '-3'), @('python3'), @('python'))) {
     $exe = $candidate[0]
     if (-not (Get-Command $exe -ErrorAction SilentlyContinue)) { continue }
-    $probe = $candidate[1..($candidate.Length - 1)] + @('-c', 'import sys; sys.exit(0 if sys.version_info >= (3, 11) else 1)')
+    $extraArgs = if ($candidate.Length -gt 1) { $candidate[1..($candidate.Length - 1)] } else { @() }
+    $probe = $extraArgs + @('-c', 'import sys; sys.exit(0 if sys.version_info >= (3, 11) else 1)')
     & $exe @probe 2>$null
     if ($LASTEXITCODE -eq 0) {
         $forward = @()
         if ($Check) { $forward += '--check' }
         if ($Rest)  { $forward += $Rest }
-        $args = $candidate[1..($candidate.Length - 1)] + @($bootstrap) + $forward
+        $args = $extraArgs + @($bootstrap) + $forward
         & $exe @args
         exit $LASTEXITCODE
     }

@@ -501,7 +501,7 @@ class McpRenderer:
             safe_name = name.replace("-", "_")
             lines.append(f"[mcp_servers.{safe_name}]")
             if srv.get("transport") == "http" or srv.get("url"):
-                lines.append(f'url = "{srv["url"]}"')
+                lines.append(f'url = {json.dumps(srv["url"])}')
                 auth_env = srv.get("auth", {}).get("env") if isinstance(srv.get("auth"), dict) else None
                 if auth_env:
                     lines.append(f'bearer_token_env_var = "{auth_env}"')
@@ -512,14 +512,14 @@ class McpRenderer:
                     if "tool" in timeouts:
                         lines.append(f'tool_timeout_sec = {float(timeouts["tool"])}')
             else:
-                lines.append(f'command = "{srv.get("command", "")}"')
+                lines.append(f'command = {json.dumps(srv.get("command", ""))}')
                 args_json = json.dumps(srv.get("args", []))
                 lines.append(f"args = {args_json}")
                 env = srv.get("env", {})
                 if env:
                     lines.append(f"[mcp_servers.{safe_name}.env]")
                     for k, v in env.items():
-                        lines.append(f'{k} = "{v}"')
+                        lines.append(f'{k} = {json.dumps(str(v))}')
             lines.append("")
 
         content = "\n".join(lines).strip() + "\n"
