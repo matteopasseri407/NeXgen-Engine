@@ -365,6 +365,7 @@ def test_claude_runner_never_allows_push(tmp_path, monkeypatch):
         captured["cwd"] = cwd
         return RunResult(text="ok", exit_code=0)
 
+    monkeypatch.setattr(runner_module.shutil, "which", lambda cmd: f"/bin/{cmd}")
     monkeypatch.setattr(runner_module, "_run_streaming", fake_streaming)
     active = get_runner("claude", "some-model", tmp_path)
     active.run_write("prompt", tmp_path / "clone")

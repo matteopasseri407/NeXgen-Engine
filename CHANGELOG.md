@@ -8,6 +8,15 @@ This file tracks the **engine** (this repo). Your own data — manifests,
 instructions, skills, secrets — lives in your KnowledgeVault and is not part
 of any engine release.
 
+## [2.0.1] - 2026-08-23
+
+### Fixed
+
+- **Docker base image for vault-mcp**: bumped to `python:3.13-slim` matching the `requires-python = ">=3.13"` constraint in `pyproject.toml`.
+- **PowerShell candidate slicing on Windows**: guarded slicing in `install.ps1` to prevent empty/duplicate argument injection when candidate array length is 1.
+- **Council seat validation without local seats.yaml**: `_check_seat_allowed` in `proposal.py` now receives the loaded config and avoids exiting when `seats.yaml` is absent in clean test fixtures.
+- **CI unit test CLI mocks**: added missing `shutil.which` mocks in `test_nexgen_council_routing.py` and `test_vault_groom.py`, and cleaned duplicated test definitions.
+
 ## [2.0.0] - 2026-08-22
 
 ### Added

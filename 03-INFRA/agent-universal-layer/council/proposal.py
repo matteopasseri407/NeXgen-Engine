@@ -276,10 +276,18 @@ def _confirm_pay_per_use(seat_name: str, seat: dict, cost: str | None) -> None:
         sys.exit(f"[council] STOP: pay-per-use seat '{seat_name}' not confirmed.")
 
 
-def _check_seat_allowed(seat_name: str, seat: dict, args: argparse.Namespace) -> None:
+def _check_seat_allowed(
+    seat_name: str,
+    seat: dict,
+    args: argparse.Namespace,
+    config: dict | None = None,
+) -> None:
     del args
     _warn_no_zero_retention(seat_name, seat)
-    config = load_config()
+    if config is None:
+        if not SEATS_PATH.is_file():
+            return
+        config = load_config()
     if _routing_enabled(config):
         plan = _routing_context_or_exit(config)
         _confirm_pay_per_use(seat_name, seat, _seat_cost(plan, seat_name, seat))
@@ -296,7 +304,7 @@ def resolve_seat(args: argparse.Namespace, *, default_routing_role: str | None =
     if seat_name not in seats:
         sys.exit(f"[council] unknown seat: {seat_name}. Available: {', '.join(seats)}")
     seat = seats[seat_name]
-    _check_seat_allowed(seat_name, seat, args)
+    _check_seat_allowed(seat_name, seat, args, config=config)
     _warn_if_explicit_codex_seat_not_default(seat_name, seat)
     author_vendor = getattr(args, "author_vendor", None)
     if author_vendor and seat["vendor"].lower() == author_vendor.lower():

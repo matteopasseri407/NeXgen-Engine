@@ -112,9 +112,11 @@ def test_is_pay_per_use_classification() -> None:
         assert not is_pay_per_use(cell), repr(cell)
 
 
-def test_agy_capability_no_longer_blocked() -> None:
-    from routing import seat_capabilities
-    caps = seat_capabilities({"gemini": {"cli": "agy", "model": "gemini-3.7-flash-high"}})
+def test_agy_capability_no_longer_blocked(monkeypatch) -> None:
+    import routing
+    monkeypatch.setattr(routing.shutil, "which", lambda cmd: "/usr/bin/agy" if cmd == "agy" else None)
+    monkeypatch.setattr(routing, "_run_probe", lambda cmd: (True, "Usage: agy [options]"))
+    caps = routing.seat_capabilities({"gemini": {"cli": "agy", "model": "gemini-3.7-flash-high"}})
     cap = caps["gemini"]
     assert cap.available is True, cap.reason
     assert "stateless" in cap.reason
@@ -137,44 +139,3 @@ def test_pay_per_use_confirmation_skipped_when_free() -> None:
     from proposal import _confirm_pay_per_use
     _confirm_pay_per_use("muse", {"cli": "opencode", "model": "muse-spark"}, "forfait")  # no prompt, no exit
 
-
-def test_v4_parser_keeps_cost_cell() -> None:
-    plan = parse_routing_plan(GOVERNOR_BLOCK_V4)
-    code = plan.roles["L-Code"]
-    assert [c.cost for c in code] == ["$0.125", "forfait", "forfait"]
-    privacy = plan.roles["Privacy"]
-    assert [c.cost for c in privacy] == ["$0", "$0", "$0"]
-
-
-def test_is_pay_per_use_classification() -> None:
-    from routing import is_pay_per_use
-    for cell in ("$0.125", "0.15 €/1M", "$ 2.5", "pay as you go", "a consumo", "zen pay-per-use", "5"):
-        assert is_pay_per_use(cell), cell
-    for cell in ("$0", "€0", "0", "forfait", "flat", "gratis", "free", "incluso", "—", "-", "", None, "n/a"):
-        assert not is_pay_per_use(cell), repr(cell)
-
-
-def test_agy_capability_no_longer_blocked() -> None:
-    from routing import seat_capabilities
-    caps = seat_capabilities({"gemini": {"cli": "agy", "model": "gemini-3.7-flash-high"}})
-    cap = caps["gemini"]
-    assert cap.available is True, cap.reason
-    assert "stateless" in cap.reason
-
-
-def test_pay_per_use_confirmation_required_and_blocking(monkeypatch, capsys) -> None:
-    from proposal import _confirm_pay_per_use
-    seat = {"cli": "opencode", "model": "muse-spark"}
-    monkeypatch.setattr("builtins.input", lambda _prompt: "no")
-    with pytest.raises(SystemExit):
-        _confirm_pay_per_use("muse", seat, "$0.125")
-    err = capsys.readouterr().err
-    assert "pay-per-use" in err and "spends real money" in err
-
-    monkeypatch.setattr("builtins.input", lambda _prompt: "yes")
-    _confirm_pay_per_use("muse", seat, "$0.125")  # no SystemExit
-
-
-def test_pay_per_use_confirmation_skipped_when_free() -> None:
-    from proposal import _confirm_pay_per_use
-    _confirm_pay_per_use("muse", {"cli": "opencode", "model": "muse-spark"}, "forfait")  # no prompt, no exit
