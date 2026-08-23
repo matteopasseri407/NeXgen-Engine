@@ -49,7 +49,41 @@ def test_open_folder_validation(tmp_path: Path):
 
 def test_chrome_profile_resolution():
     profile = get_profile_dir()
-    assert "chrome-agent-debug" in str(profile)
+    assert "chrome-agent-debug" in str(profile) or "ChromeDebugProfile" in str(profile)
+
+
+def test_chrome_profile_env_override(monkeypatch):
+    monkeypatch.setenv("AGENT_CHROME_PROFILE", "/custom/chrome/profile")
+    assert get_profile_dir() == Path("/custom/chrome/profile")
+
+
+def test_chrome_profile_windows_canonical(monkeypatch, tmp_path: Path):
+    from nexgen_core.tools import chrome
+
+    fake_home = tmp_path / "home"
+    fake_home.mkdir()
+    canonical = fake_home / "ChromeDebugProfile"
+    canonical.mkdir()
+
+    monkeypatch.delenv("AGENT_CHROME_PROFILE", raising=False)
+    monkeypatch.setattr(chrome.sys, "platform", "win32")
+    monkeypatch.setattr(chrome, "resolve_home", lambda: fake_home)
+
+    assert chrome.get_profile_dir() == canonical
+
+
+def test_chrome_profile_windows_fallback(monkeypatch, tmp_path: Path):
+    from nexgen_core.tools import chrome
+
+    fake_home = tmp_path / "home"
+    fake_home.mkdir()
+
+    monkeypatch.delenv("AGENT_CHROME_PROFILE", raising=False)
+    monkeypatch.setattr(chrome.sys, "platform", "win32")
+    monkeypatch.setattr(chrome, "resolve_home", lambda: fake_home)
+    monkeypatch.setenv("LOCALAPPDATA", str(fake_home / "AppData" / "Local"))
+
+    assert chrome.get_profile_dir() == fake_home / "AppData" / "Local" / "Google" / "Chrome" / "User Data" / "chrome-agent-debug"
 
 
 def test_firecrawl_client_structure():

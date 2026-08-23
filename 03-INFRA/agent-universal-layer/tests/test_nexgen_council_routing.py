@@ -139,3 +139,43 @@ def test_pay_per_use_confirmation_skipped_when_free() -> None:
     from proposal import _confirm_pay_per_use
     _confirm_pay_per_use("muse", {"cli": "opencode", "model": "muse-spark"}, "forfait")  # no prompt, no exit
 
+
+def test_v4_parser_handles_unassigned_privacy_without_local_models() -> None:
+    block_with_unassigned_privacy = """### Proposta di routing per ruolo
+
+#### L-Code - ratio
+
+Codice.
+
+| Slot | Modello | Canale | Costo | Motivo |
+|---|---|---|---:|---|
+| prescelto | Muse Spark 1.2 | go | $0.125 | il piu leggero |
+| rimpiazzo 1 | GPT-5.6 Luna | codex | forfait | pool mensile |
+| rimpiazzo 2 | Gemini 3.7 Flash | agy | forfait | merito 72 |
+
+#### Privacy - quality-first
+
+NDA.
+
+| Slot | Modello | Canale | Costo | Motivo |
+|---|---|---|---:|---|
+| prescelto | — | — | — | nessun modello locale |
+| rimpiazzo 1 | — | — | — | nessun modello locale |
+| rimpiazzo 2 | — | — | — | nessun modello locale |
+
+<!-- model-routing-governor:end -->
+"""
+    plan = parse_routing_plan(block_with_unassigned_privacy)
+    assert plan.source == "governor-role-tables"
+    assert "Privacy" in plan.roles
+    assert plan.roles["Privacy"] == ()
+    assert len(plan.roles["L-Code"]) == 3
+
+    # Other roles with '—' in top slots must still fail
+    broken_code_block = block_with_unassigned_privacy.replace(
+        "| rimpiazzo 2 | Gemini 3.7 Flash | agy | forfait | merito 72 |",
+        "| rimpiazzo 2 | — | agy | forfait | assente |"
+    )
+    with pytest.raises(RoutingContractError, match="Governor role L-Code has an unassigned slot"):
+        parse_routing_plan(broken_code_block)
+

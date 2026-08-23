@@ -8,6 +8,13 @@ This file tracks the **engine** (this repo). Your own data — manifests,
 instructions, skills, secrets — lives in your KnowledgeVault and is not part
 of any engine release.
 
+## [2.0.2] - 2026-08-23
+
+### Fixed
+
+- **Canonical Windows Chrome profile resolution**: `get_profile_dir()` in `nexgen_core.tools.chrome` checks for `~/ChromeDebugProfile` before falling back to `AppData/Local/Google/Chrome/User Data/chrome-agent-debug`, maintaining parity with single-profile Windows setups on Chrome 136+.
+- **Council unassigned Privacy role handling on non-GPU hosts**: `_parse_governor_role_tables` in `council.routing` recognizes `—` in top candidate slots for the local-only `Privacy` role as explicitly unassigned (`roles["Privacy"] = ()`) instead of raising a fatal `RoutingContractError`, allowing `council propose` to succeed on machines without local GPU models.
+
 ## [2.0.1] - 2026-08-23
 
 ### Fixed

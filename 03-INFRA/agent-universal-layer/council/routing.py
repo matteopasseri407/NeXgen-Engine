@@ -211,6 +211,16 @@ def _parse_governor_role_tables(markdown: str) -> RoutingPlan | None:
         rows = [_markdown_cells(line) for line in table_lines[2:] if line.strip()]
         if len(rows) < 3:
             raise RoutingContractError(f"Governor role {role} has fewer than three candidate rows")
+
+        # Privacy is local-only: su hardware senza modello locale (es. PC-ALESSIA, no GPU)
+        # il Governor emette "—" nei top3. Non è un errore di contratto, è "non assegnato"
+        # e va trattato come ruolo esplicitamente unassigned, non come failure dell'intera proposta.
+        if role.casefold() == "privacy" and any(
+            len(r) > 1 and r[1].strip() == "—" for r in rows[:3]
+        ):
+            roles[role] = ()
+            continue
+
         ordered: list[RoutingCandidate] = []
         slots: list[str] = []
         for row in rows[:3]:

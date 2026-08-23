@@ -59,6 +59,9 @@ def get_profile_dir() -> Path:
     if env_p:
         return Path(env_p)
     if sys.platform == "win32":
+        canonical = resolve_home() / "ChromeDebugProfile"
+        if canonical.is_dir():
+            return canonical
         local_app = Path(os.environ.get("LOCALAPPDATA", resolve_home() / "AppData" / "Local"))
         return local_app / "Google" / "Chrome" / "User Data" / "chrome-agent-debug"
     return resolve_home() / ".config" / "chrome-agent-debug"
