@@ -24,7 +24,7 @@ if (-not (Test-Path $bootstrap)) {
 }
 
 $found = $null
-foreach ($candidate in @(@('py', '-3'), @('python3'), @('python'))) {
+foreach ($candidate in @(@('python'), @('py', '-3'), @('python3'))) {
     $exe = $candidate[0]
     if (-not (Get-Command $exe -ErrorAction SilentlyContinue)) { continue }
     $extraArgs = if ($candidate.Length -gt 1) { $candidate[1..($candidate.Length - 1)] } else { @() }
@@ -34,8 +34,8 @@ foreach ($candidate in @(@('py', '-3'), @('python3'), @('python'))) {
         $forward = @()
         if ($Check) { $forward += '--check' }
         if ($Rest)  { $forward += $Rest }
-        $args = $extraArgs + @($bootstrap) + $forward
-        & $exe @args
+        $launchArgs = $extraArgs + @($bootstrap) + $forward
+        & $exe @launchArgs
         exit $LASTEXITCODE
     }
     $found = $exe
