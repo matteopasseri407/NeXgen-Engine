@@ -75,6 +75,75 @@ def newer_version(left: str, right: str) -> bool:
     return parts(left) > parts(right)
 
 
+def compute_next_version(current: str, bump: str = "patch") -> str:
+    """Computes the next semver version string based on bump type (patch, minor, major, or explicit version)."""
+    current = current.strip().lstrip("v")
+    if not is_semver(current):
+        raise ValueError(f"Current version '{current}' is not valid semver")
+
+    bump = bump.strip()
+    if is_semver(bump.lstrip("v")):
+        return bump.lstrip("v")
+
+    parts = [int(p) for p in current.split("-")[0].split("+")[0].split(".")]
+    while len(parts) < 3:
+        parts.append(0)
+
+    major, minor, patch = parts[0], parts[1], parts[2]
+    if bump in ("patch", "hotfix", "fix"):
+        return f"{major}.{minor}.{patch + 1}"
+    if bump in ("minor", "feature", "feat"):
+        return f"{major}.{minor + 1}.0"
+    if bump in ("major", "breaking"):
+        return f"{major + 1}.0.0"
+    raise ValueError(f"Invalid bump type '{bump}'. Use patch, minor, major, or explicit X.Y.Z.")
+
+
+def bump_version_files(repo_path: Path, new_version: str, notes: str = "") -> list[Path]:
+    """Updates VERSION, nexgen_core/__init__.py, and CHANGELOG.md with the new version."""
+    import datetime
+
+    new_version = new_version.strip().lstrip("v")
+    if not is_semver(new_version):
+        raise ValueError(f"Target version '{new_version}' is not valid semver")
+
+    modified: list[Path] = []
+
+    # 1. VERSION
+    version_file = repo_path / "VERSION"
+    version_file.write_text(f"{new_version}\n", encoding="utf-8")
+    modified.append(version_file)
+
+    # 2. nexgen_core/__init__.py
+    init_file = repo_path / "03-INFRA" / "scripts" / "nexgen_core" / "__init__.py"
+    if init_file.is_file():
+        content = init_file.read_text(encoding="utf-8")
+        updated = re.sub(r'__version__\s*=\s*"[^"]+"', f'__version__ = "{new_version}"', content)
+        if updated != content:
+            init_file.write_text(updated, encoding="utf-8")
+            modified.append(init_file)
+
+    # 3. CHANGELOG.md
+    changelog_file = repo_path / "CHANGELOG.md"
+    if changelog_file.is_file():
+        content = changelog_file.read_text(encoding="utf-8")
+        today = datetime.date.today().isoformat()
+        version_header = f"## [{new_version}] - {today}"
+
+        if f"## [{new_version}]" not in content:
+            if "## [Unreleased]" in content:
+                content = content.replace("## [Unreleased]", f"## [Unreleased]\n\n{version_header}")
+            else:
+                first_h2 = content.find("## [")
+                if first_h2 != -1:
+                    inserted_notes = f"\n\n### Changed\n\n- {notes}\n" if notes else "\n\n### Fixed\n\n- Maintenance and bug fixes.\n"
+                    content = content[:first_h2] + f"{version_header}{inserted_notes}\n" + content[first_h2:]
+            changelog_file.write_text(content, encoding="utf-8")
+            modified.append(changelog_file)
+
+    return modified
+
+
 #: The marker a private maintainer tool carries. It must never reach the
 #: public tree, and a release is the moment it would.
 #: Assembled rather than written out, so this file does not match its own
@@ -198,10 +267,37 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--pr-base", default="")
     p.add_argument("--pr-head", default="")
 
+    p = sub.add_parser("next-version", help="Compute next semver version")
+    p.add_argument("current")
+    p.add_argument("bump", nargs="?", default="patch")
+
+    p = sub.add_parser("bump", help="Bump version files in repository")
+    p.add_argument("bump", nargs="?", default="patch")
+    p.add_argument("--repo", default=".")
+    p.add_argument("--notes", default="")
+
     args = parser.parse_args(argv)
 
     if args.command == "preflight":
         return _preflight()
+
+    if args.command == "next-version":
+        try:
+            print(compute_next_version(args.current, args.bump))
+            return 0
+        except ValueError as exc:
+            print(str(exc), file=sys.stderr)
+            return 1
+
+    if args.command == "bump":
+        repo_path = Path(args.repo).resolve()
+        current = (repo_path / "VERSION").read_text(encoding="utf-8").strip()
+        next_ver = compute_next_version(current, args.bump)
+        modified = bump_version_files(repo_path, next_ver, args.notes)
+        print(f"Bumped version: {current} -> {next_ver}")
+        for m in modified:
+            print(f"  updated: {m}")
+        return 0
 
     if args.command == "check-version":
         ok, message = version_matches_tag(args.version, args.tag)

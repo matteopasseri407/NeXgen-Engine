@@ -14,7 +14,15 @@ SCRIPTS_DIR = Path(__file__).resolve().parents[2] / "scripts"
 if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
-from nexgen_core.release import ZERO_SHA, is_semver, newer_version, scan_range, version_matches_tag
+from nexgen_core.release import (
+    ZERO_SHA,
+    bump_version_files,
+    compute_next_version,
+    is_semver,
+    newer_version,
+    scan_range,
+    version_matches_tag,
+)
 
 
 @pytest.mark.parametrize("value", ["0.0.1", "1.2.3", "10.20.30", "1.2.3-rc.1", "1.2.3+build.5"])
@@ -157,3 +165,32 @@ def test_every_platform_the_installer_starts_on_is_declared():
     assert handled <= declared, (
         f"l'installer parte su {sorted(handled - declared)} ma il README non lo dichiara"
     )
+
+
+def test_compute_next_version():
+    assert compute_next_version("2.0.2", "patch") == "2.0.3"
+    assert compute_next_version("2.0.2", "hotfix") == "2.0.3"
+    assert compute_next_version("2.0.2", "minor") == "2.1.0"
+    assert compute_next_version("2.0.2", "major") == "3.0.0"
+    assert compute_next_version("2.0.2", "2.0.5") == "2.0.5"
+    assert compute_next_version("v2.0.2", "patch") == "2.0.3"
+
+
+def test_bump_version_files(tmp_path: Path):
+    version_file = tmp_path / "VERSION"
+    version_file.write_text("2.0.2\n", encoding="utf-8")
+
+    core_dir = tmp_path / "03-INFRA" / "scripts" / "nexgen_core"
+    core_dir.mkdir(parents=True)
+    init_file = core_dir / "__init__.py"
+    init_file.write_text('__version__ = "2.0.2"\n', encoding="utf-8")
+
+    cl_file = tmp_path / "CHANGELOG.md"
+    cl_file.write_text("# Changelog\n\n## [Unreleased]\n\n### Fixed\n\n- Some fix.\n", encoding="utf-8")
+
+    modified = bump_version_files(tmp_path, "2.0.3")
+    assert version_file in modified
+    assert version_file.read_text(encoding="utf-8").strip() == "2.0.3"
+    assert '__version__ = "2.0.3"' in init_file.read_text(encoding="utf-8")
+    assert "## [2.0.3]" in cl_file.read_text(encoding="utf-8")
+
