@@ -108,6 +108,6 @@ jobs:
         run: |
           set -euo pipefail
           gh release create "$TAG" \
-            --title "NeXgen Engine v$VERSION Beta" \
+            --title "NeXgen Engine v$VERSION" \
             --notes-file RELEASE_NOTES.md \
             --verify-tag
