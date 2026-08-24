@@ -39,14 +39,12 @@ nexgen doctor  # 33+ fail-closed checks: git alignment, MCP reachability, link h
 ```
 
 <p align="center">
-  <img src="assets/nexgen-architecture-banner.png" alt="Three planes: Behavior, Configuration, Memory" width="85%">
-  <br><em>Three planes — Behavior, Configuration, Memory — plus Secrets and Doctor verification.</em>
+  <picture>
+    <source srcset="assets/nexgen-info-demo.webp" type="image/webp">
+    <img src="assets/nexgen-info-demo.png" alt="nexgen info — AI Operating Layer dashboard on Windows (v2.0.4): Host, Vault, Planes & Runtimes, Modules, Security & Diagnostics" width="100%">
+  </picture>
+  <br><em><code>nexgen info</code> on Windows — Host, Vault (344 notes), Planes & Runtimes, Modules and Security & Diagnostics at a glance. Run <code>nexgen doctor</code> for full diagnosis.</em>
 </p>
-
-<!-- Demo GIF placeholder: record with `vhs` or `asciinema` and replace this image.
-     Suggested: `nexgen info` → `nexgen doctor --verbose` → `nexgen sync` cycle, 15s loop.
-     Keep under 2MB, 800px wide.
--->
 
 ---
 
