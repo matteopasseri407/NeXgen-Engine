@@ -31,11 +31,11 @@ from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
-from nexgen_core.paths import resolve_home
-
 SCRIPTS_DIR = Path(__file__).resolve().parents[1]
 if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
+
+from nexgen_core.paths import resolve_home
 
 SEMVER = re.compile(r"^v?(\d+)\.(\d+)\.(\d+)$")
 CHANGELOG_HEADING = re.compile(r"^## \[(\d+\.\d+\.\d+)\].*$", re.MULTILINE)
@@ -133,7 +133,7 @@ def _current_version(engine_repo: Path) -> str:
 
 
 def _released_tags(engine_repo: Path) -> list[str]:
-    _git(engine_repo, "fetch", "--tags", "origin")
+    _git(engine_repo, "fetch", "origin", "+refs/heads/main:refs/remotes/origin/main", "--tags")
     remote_main = _git(engine_repo, "rev-parse", "--verify", "origin/main", check=False)
     if remote_main.returncode != 0:
         raise UpdateError("origin/main is missing; cannot prove which tags are public releases")
