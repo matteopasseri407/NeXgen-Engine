@@ -35,7 +35,7 @@ SCRIPTS_DIR = Path(__file__).resolve().parents[1]
 if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
-from nexgen_core.paths import resolve_home
+from nexgen_core.paths import resolve_home  # noqa: E402
 
 SEMVER = re.compile(r"^v?(\d+)\.(\d+)\.(\d+)$")
 CHANGELOG_HEADING = re.compile(r"^## \[(\d+\.\d+\.\d+)\].*$", re.MULTILINE)
