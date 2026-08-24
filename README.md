@@ -76,23 +76,23 @@ OpenCode · Antigravity    Per-Host OAuth Slots          Link Hygiene Map
 
 ---
 
-## Why NeXgen vs alternatives
+## How it compares
 
-Most tools solve one slice (MCP sync). NeXgen solves the whole operating layer — and is the only one with Windows-native parity, vault memory, and fail-closed diagnostics.
+Different tools solve different slices. Small syncers are great for copying one MCP server quickly. NeXgen targets the full operating layer when you run multiple CLIs on multiple machines and want instructions, MCP, skills, secrets and memory to stay consistent.
 
-| Capability | NeXgen Engine | AgentSync `dallay/agentsync` 54★ | mcp-sync `ztripez` 46★ | mcps-manager 4★ | dotfiles-ai 1★ |
+| Capability | NeXgen Engine | AgentSync | mcp-sync | mcps-manager | dotfiles-ai |
 |---|---|---|---|---|---|
-| **MCP sync** | ✅ 9 agents, manifest `yaml` → native | ✅ symlink | ✅ auto-discover | ✅ bundle | ❌ |
-| **AGENTS.md / instructions** | ✅ canonical `AGENTS.md` + CAS | ⚠️ symlink only | ❌ | ❌ | ⚠️ template |
-| **Skills** | ✅ lazy catalog + `deps:` | ✅ | ❌ | ❌ | ❌ |
-| **Memory vault (Markdown+Git)** | ✅ CAS + `update_section` + `vault-map` | ❌ | ❌ | ❌ | ❌ |
-| **Secrets `age` Zero-Passphrase** | ✅ multi-recipient `0600` + per-host OAuth | ❌ | ❌ | ❌ | ❌ |
-| **Doctor diagnostics** | ✅ 33+ fail-closed checks | ❌ | ❌ | ❌ | ❌ |
-| **Windows native** | ✅ verified + CI + dual launchers | ❓ | ✅ Python | ✅ Node | ❓ |
-| **Tests** | ✅ 400+ unit tests | ⚠️ | ❌ | ❌ | ❌ |
+| **MCP sync** | manifest `yaml` → native, 9 agents | symlink | auto-discover | bundle | — |
+| **AGENTS.md / instructions** | canonical `AGENTS.md` + CAS | symlink | — | — | template |
+| **Skills** | lazy catalog + `deps:` | yes | — | — | — |
+| **Memory vault (Markdown+Git)** | CAS + `update_section` + `vault-map` | — | — | — | — |
+| **Secrets `age` Zero-Passphrase** | multi-recipient `0600` + per-host OAuth | — | — | — | — |
+| **Doctor diagnostics** | 33+ fail-closed checks | — | — | — | — |
+| **Windows native** | verified + CI + dual launchers | community | Python | Node | community |
+| **Tests** | 400+ unit tests | partial | — | — | — |
 | **License** | PolyForm Noncommercial 1.0.0 | MIT | MIT | MIT | MIT |
 
-> If you only need to copy one MCP server between two CLIs, use a small syncer. If you run 2+ CLIs on 2+ machines and want zero drift for instructions, MCP, skills, secrets, and memory — with a doctor that fails closed — NeXgen is the only option that covers all five.
+*Capabilities as of Aug 2026 — contributions and corrections welcome. If you only need a lightweight MCP copy between two CLIs, a small syncer is the faster path. If you want zero drift across instructions, MCP, skills, secrets and memory with a doctor that fails closed, NeXgen covers all five in one place.*
 
 ---
 
