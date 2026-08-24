@@ -1,23 +1,52 @@
 # NeXgen Engine
 
 <p align="center">
-  <img src="assets/nexgen-architecture-banner.png" alt="NeXgen Engine — AI Operating Layer" width="100%">
+  <picture>
+    <source srcset="assets/nexgen-architecture-banner.webp" type="image/webp">
+    <img src="assets/nexgen-architecture-banner.png" alt="NeXgen Engine — AI Operating Layer" width="100%" loading="eager">
+  </picture>
 </p>
 
 <p align="center">
   <a href="https://github.com/matteopasseri407/NeXgen-Engine/actions/workflows/ci.yml"><img src="https://github.com/matteopasseri407/NeXgen-Engine/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <a href="https://github.com/matteopasseri407/NeXgen-Engine/releases/latest"><img src="https://img.shields.io/github/v/release/matteopasseri407/NeXgen-Engine?display_name=tag&label=latest%20version" alt="Latest version"></a>
+  <a href="https://github.com/matteopasseri407/NeXgen-Engine/stargazers"><img src="https://img.shields.io/github/stars/matteopasseri407/NeXgen-Engine?style=flat&label=stars" alt="GitHub stars"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-PolyForm%20Noncommercial%201.0.0-blue" alt="License"></a>
-  <img src="https://img.shields.io/badge/python-3.10%2B-00E5B8?logo=python&logoColor=white" alt="Python 3.10+">
+  <img src="https://img.shields.io/badge/python-3.11%2B-00E5B8?logo=python&logoColor=white" alt="Python 3.11+">
+  <img src="https://img.shields.io/badge/platform-linux%20%7C%20windows-lightgrey" alt="Linux and Windows">
 </p>
 
-[Leggi in italiano ↓](#nexgen-engine-versione-italiana)
+<p align="center">
+  <a href="README.it.md">🇮🇹 Leggi in italiano</a> · <a href="#quick-start">Quick Start</a> · <a href="#why-nexgen-vs-alternatives">Why NeXgen?</a> · <a href="docs/architecture-contract.md">Architecture</a> · <a href="CHANGELOG.md">Changelog</a>
+</p>
 
 **One Canonical Source. Any Agent. Always in Sync.**
 
 NeXgen Engine is a deterministic AI Operating Layer that unifies instructions, tool configuration, secrets, and version-controlled memory across Claude Code, Codex, OpenCode, and Antigravity.
 
 Instead of letting individual agent CLI configurations diverge across machines, NeXgen maintains a single source of truth in Git, compiled into each assistant's native format and verified by automated diagnostics.
+
+---
+
+## Demo
+
+> Visual proof beats architecture diagrams. The two commands below are the whole product: see the state, fix the drift.
+
+```bash
+nexgen info    # visual dashboard: engine version, runtimes aligned, vault hygiene, secrets
+nexgen shell   # interactive REPL [1-7] — manage everything without opening an AI assistant
+nexgen doctor  # 33+ fail-closed checks: git alignment, MCP reachability, link hygiene, permissions
+```
+
+<p align="center">
+  <img src="assets/nexgen-architecture-banner.png" alt="Three planes: Behavior, Configuration, Memory" width="85%">
+  <br><em>Three planes — Behavior, Configuration, Memory — plus Secrets and Doctor verification.</em>
+</p>
+
+<!-- Demo GIF placeholder: record with `vhs` or `asciinema` and replace this image.
+     Suggested: `nexgen info` → `nexgen doctor --verbose` → `nexgen sync` cycle, 15s loop.
+     Keep under 2MB, 800px wide.
+-->
 
 ---
 
@@ -49,7 +78,27 @@ OpenCode · Antigravity    Per-Host OAuth Slots          Link Hygiene Map
 
 ---
 
-## Key Features in v2.0.0
+## Why NeXgen vs alternatives
+
+Most tools solve one slice (MCP sync). NeXgen solves the whole operating layer — and is the only one with Windows-native parity, vault memory, and fail-closed diagnostics.
+
+| Capability | NeXgen Engine | AgentSync `dallay/agentsync` 54★ | mcp-sync `ztripez` 46★ | mcps-manager 4★ | dotfiles-ai 1★ |
+|---|---|---|---|---|---|
+| **MCP sync** | ✅ 9 agents, manifest `yaml` → native | ✅ symlink | ✅ auto-discover | ✅ bundle | ❌ |
+| **AGENTS.md / instructions** | ✅ canonical `AGENTS.md` + CAS | ⚠️ symlink only | ❌ | ❌ | ⚠️ template |
+| **Skills** | ✅ lazy catalog + `deps:` | ✅ | ❌ | ❌ | ❌ |
+| **Memory vault (Markdown+Git)** | ✅ CAS + `update_section` + `vault-map` | ❌ | ❌ | ❌ | ❌ |
+| **Secrets `age` Zero-Passphrase** | ✅ multi-recipient `0600` + per-host OAuth | ❌ | ❌ | ❌ | ❌ |
+| **Doctor diagnostics** | ✅ 33+ fail-closed checks | ❌ | ❌ | ❌ | ❌ |
+| **Windows native** | ✅ verified + CI + dual launchers | ❓ | ✅ Python | ✅ Node | ❓ |
+| **Tests** | ✅ 400+ unit tests | ⚠️ | ❌ | ❌ | ❌ |
+| **License** | PolyForm Noncommercial 1.0.0 | MIT | MIT | MIT | MIT |
+
+> If you only need to copy one MCP server between two CLIs, use a small syncer. If you run 2+ CLIs on 2+ machines and want zero drift for instructions, MCP, skills, secrets, and memory — with a doctor that fails closed — NeXgen is the only option that covers all five.
+
+---
+
+## Key Features in v2.0.4
 
 * **Unified Python Core (`nexgen_core`):** Pure Python implementation running natively across Linux and Windows with 400+ unit tests, eliminating shell script divergence.
 * **Deterministic Modular Layer:** 8-module catalog (`memory`, `semantic-rag`, `firecrawl`, `ocr`, `n8n`, `browser`, `council`, `sync`) managed deterministically with `nexgen modules list` and `nexgen modules set`.
@@ -62,27 +111,46 @@ OpenCode · Antigravity    Per-Host OAuth Slots          Link Hygiene Map
 
 ## Quick Start
 
-### 1. Bootstrap the Engine
-Clone the repository to initialize your KnowledgeVault:
+### Option A — Installed (recommended for daily use)
+
+```bash
+uv tool install nexgen-engine   # or: pipx install nexgen-engine
+nexgen info
+nexgen doctor
+```
+
+Updates via `nexgen update` (with confirmation) and via the scheduled `guard` task that runs at login + every 30 min.
+
+### Option B — Cloned (recommended for hacking the engine)
+
 ```bash
 git clone https://github.com/matteopasseri407/NeXgen-Engine.git ~/KnowledgeVault
 cd ~/KnowledgeVault
-bash install.sh --check
+bash install.sh --check          # Windows PowerShell: .\install.ps1 -Check
 ```
-*(On Windows PowerShell: `.\install.ps1 -Check`)*
 
-### 2. Configure Your Environment
+### 1. Bootstrap
+
+Already done by the installer. Verify:
+
+```bash
+nexgen sync
+nexgen doctor --verbose
+```
+
+### 2. Configure your environment
+
 Open `INIT.md` and paste its contents into your preferred agent CLI (Claude Code, Codex, OpenCode, or Antigravity). The agent will guide you through profile selection and module setup.
 
-### 3. Align and Verify
-Run the engine synchronizer and diagnostics:
+### 3. Align and verify (anytime)
+
 ```bash
 nexgen sync
 nexgen doctor
 ```
 
-### 4. Interactive Operator Shell
-Launch the human dashboard and management shell anytime:
+### 4. Interactive operator shell
+
 ```bash
 nexgen info
 nexgen shell
@@ -117,79 +185,23 @@ nexgen shell
 * **Deterministic Write Paths:** Knowledge notes are modified exclusively via CAS hash verification to prevent race conditions.
 * **Non-Invasive Execution:** The engine manages configuration as code above runtime execution; it does not intercept real-time model token streams.
 
+See `docs/architecture-contract.md` and `docs/sync-contract.md` for the full contracts.
+
+---
+
+## FAQ
+
+**Can I use this commercially?**
+PolyForm Noncommercial 1.0.0 allows free noncommercial use, modification, and self-hosted deployments. Commercial use requires a separate agreement — see `COMMERCIAL.md` and `LICENSE`. The Python packaging and CLI tooling are intended to stay MIT-compatible; the engine's orchestration layer is noncommercial by design.
+
+**How is this different from dotfiles?**
+Dotfiles sync files. NeXgen syncs *semantics*: one `AGENTS.md`, one MCP manifest, one skills manifest — compiled to each CLI's native dialect (JSON/TOML/YAML, different paths on Linux vs Windows), with drift detection and fail-closed guardrails. A symlink farm cannot do that.
+
+**Do I need all four CLIs?**
+No. Install only what you use — `nexgen doctor` warns (not fails) for absent CLIs. Adding a runtime later is one `nexgen sync`.
+
 ---
 
 ## License
 
-PolyForm Noncommercial License 1.0.0. Free for noncommercial use, modification, and self-hosted deployments. See `LICENSE` for details.
-
----
-
-# NeXgen Engine, versione italiana
-
-<p align="center">
-  <img src="assets/nexgen-architecture-banner.png" alt="NeXgen Engine — AI Operating Layer" width="100%">
-</p>
-
-**Una sola sorgente canonica. Qualsiasi agente. Sempre allineati.**
-
-NeXgen Engine è un layer operativo per agenti AI che unifica istruzioni, configurazione degli strumenti, gestione dei segreti e memoria di lavoro versionata tra Claude Code, Codex, OpenCode e Antigravity.
-
-Invece di lasciare che le configurazioni delle varie CLI divergano tra computer diversi, NeXgen mantiene un unico repository Git come sorgente di verità, compilato nei formati nativi di ogni assistente e validato da controlli diagnostici automatici.
-
----
-
-## I Tre Piani Architetturali
-
-NeXgen organizza il lavoro degli agenti in tre piani separati:
-
-1. **Comportamento (Behavior):** Regole operative universali, prompt e guardrail immutabili definiti in `AGENTS.md` e collegati a ogni runtime.
-2. **Configurazione (Configuration):** Manifest astratti di connettori MCP e skill, compilati in modo deterministico nei formati delle varie CLI tramite `nexgen sync`.
-3. **Memoria (Memory):** KnowledgeVault in puro Markdown con blocco atomico compare-and-swap (CAS), aggiornamenti per singola sezione (`update_section`) e cronologia Git completa.
-
----
-
-## Principali Novità della Versione 2.0.0
-
-* **Motore Unificato in Python (`nexgen_core`):** Esecuzione nativa multipiattaforma su Linux e Windows con oltre 400 test automatici, eliminando la duplicazione degli script di shell.
-* **Layer Modulare Deterministico:** Catalogo di 8 moduli (`memory`, `semantic-rag`, `firecrawl`, `ocr`, `n8n`, `browser`, `council`, `sync`) gestito con i comandi `nexgen modules list` e `nexgen modules set`.
-* **Deposito Segreti Age a Zero Passphrase:** Crittografia asimmetrica moderna (`99-SECRETS/secrets.yaml.age`) con chiavi hardware locali a permessi `0600`, slot OAuth per-host isolati contro i conflitti di rotazione dei token e file `secrets.env` per shell e servizi systemd.
-* **Dashboard Grafica e Shell Operatore:** Comandi `nexgen info` per il riepilogo visivo dello stato e `nexgen shell` per una REPL interattiva a menu numerato (`[1-7]`), utilizzabile da un operatore umano senza aprire alcuna CLI di AI.
-* **Supporto Completo per 4 Runtime:** Allineamento nativo per Claude Code, Codex, OpenCode e Antigravity (incluso il ruolo di seggio nel Consiglio AI).
-* **Diagnostica Continua (`nexgen doctor`):** Batteria di oltre 33 controlli automatici su integrità Git, raggiungibilità dei server MCP, igiene dei collegamenti e permessi di sicurezza.
-
----
-
-## Guida Rapida
-
-### 1. Inizializzazione
-Clona il repository per creare la struttura del KnowledgeVault:
-```bash
-git clone https://github.com/matteopasseri407/NeXgen-Engine.git ~/KnowledgeVault
-cd ~/KnowledgeVault
-bash install.sh --check
-```
-*(Su Windows PowerShell: `.\install.ps1 -Check`)*
-
-### 2. Configurazione Guidata
-Apri `INIT.md` e incolla il testo nella tua CLI preferita (Claude Code, Codex, OpenCode o Antigravity). L'agente configurerà il profilo e i moduli desiderati.
-
-### 3. Allineamento e Verifica
-Sincronizza le configurazioni e controlla lo stato:
-```bash
-nexgen sync
-nexgen doctor
-```
-
-### 4. Gestione da Terminale
-Apri la schermata di stato o la shell interattiva:
-```bash
-nexgen info
-nexgen shell
-```
-
----
-
-## Licenza
-
-PolyForm Noncommercial License 1.0.0. Gratuito per qualsiasi uso non commerciale, studio e deployment self-hosted. Consulta il file `LICENSE` per il testo completo.
+PolyForm Noncommercial License 1.0.0. Free for noncommercial use, modification, and self-hosted deployments. See `LICENSE` for details. For commercial inquiries see `COMMERCIAL.md`.

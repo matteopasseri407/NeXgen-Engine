@@ -15,12 +15,12 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "nexgen-engine"
 dynamic = ["version"]
-description = "Tiene allineate le tue macchine e i tuoi assistenti da un'unica fonte."
+description = "One Git repo to configure every AI coding CLI — AGENTS.md, MCP, skills and Markdown memory rendered to each tool's native format, checked for drift and synced fail-closed across Linux & Windows."
 readme = "README.md"
 requires-python = ">=3.11"
 license = { file = "LICENSE" }
 authors = [{ name = "Matteo Passeri" }]
-keywords = ["agents", "mcp", "automation", "knowledge-vault"]
+keywords = ["agents", "mcp", "automation", "knowledge-vault", "ai-agents", "claude-code", "codex", "opencode", "antigravity", "agents-md", "model-context-protocol", "dotfiles", "git-backed-memory", "developer-tools"]
 
 # Una sola dipendenza esterna, dichiarata. I manifest sono YAML perché li
 # scrive una persona; tutto il resto sta nella libreria standard.
@@ -30,7 +30,10 @@ dependencies = ["PyYAML>=6.0,<7.0"]
 dev = ["pytest>=8.0", "ruff>=0.6"]
 
 [project.urls]
-Homepage = "https://github.com/nexgen-engine/nexgen-engine"
+Homepage = "https://github.com/matteopasseri407/NeXgen-Engine"
+Repository = "https://github.com/matteopasseri407/NeXgen-Engine"
+Issues = "https://github.com/matteopasseri407/NeXgen-Engine/issues"
+Changelog = "https://github.com/matteopasseri407/NeXgen-Engine/blob/main/CHANGELOG.md"
 
 [project.scripts]
 # Il comando vero.

@@ -8,6 +8,16 @@ This file tracks the **engine** (this repo). Your own data — manifests,
 instructions, skills, secrets — lives in your KnowledgeVault and is not part
 of any engine release.
 
+## [2.0.4] - 2026-08-24
+
+### Changed
+
+- **README reach optimization:** New `README.md` with comparison table (NeXgen vs AgentSync/mcp-sync/mcps-manager/dotfiles-ai), demo section (`nexgen info`/`shell`/`doctor`), dual quick-start (`uv tool install` + `git clone`), star badge, platform badges, `<picture>` WebP delivery, FAQ and architecture links; Italian content moved to `README.it.md` for SEO. Fixes `pyproject.toml` homepage (`matteopasseri407/NeXgen-Engine`) and adds `Repository`/`Issues`/`Changelog` URLs plus expanded keywords for GitHub/PyPI discovery.
+
+### Fixed
+
+- **Banner asset weight:** `assets/nexgen-architecture-banner.png` compressed from 986 KB to ~34 KB (palette + `optimize`) and shipped with `assets/nexgen-architecture-banner.webp` (~39 KB) for faster GitHub rendering and mobile LCP. Visual quality preserved via adaptive palette.
+
 ## [2.0.3] - 2026-08-23
 
 ### Fixed

@@ -4,4 +4,4 @@ Modular, cross-platform (Linux & Windows) architecture for the agent layer.
 """
 from __future__ import annotations
 
-__version__ = "2.0.3"
+__version__ = "2.0.4"
