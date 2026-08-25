@@ -539,20 +539,21 @@ def test_nexgen_event_sink_script_e2e_socket_and_failsafe(tmp_path: Path):
     assert time.time() - t0 < 0.5
     assert res.stdout == ""  # never pollutes stdout
 
-    # 2. Live socket receiver -> receives payload
-    sock_live = tmp_path / "live.sock"
-    srv = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-    srv.bind(str(sock_live))
-    srv.listen(1)
-    env["NEXGEN_EVENT_IPC_PATH"] = str(sock_live)
+    # 2. Live socket receiver -> receives payload (POSIX only)
+    if sys.platform != "win32" and hasattr(socket, "AF_UNIX"):
+        sock_live = tmp_path / "live.sock"
+        srv = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        srv.bind(str(sock_live))
+        srv.listen(1)
+        env["NEXGEN_EVENT_IPC_PATH"] = str(sock_live)
 
-    proc = subprocess.Popen(["node", str(script_path), "on_step", "codex", "analyzing code"], env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-    conn, _ = srv.accept()
-    data = conn.recv(4096).decode("utf-8")
-    conn.close()
-    srv.close()
-    proc.wait(timeout=2)
-    assert proc.returncode == 0
-    assert '"event":"on_step"' in data
-    assert '"cli":"codex"' in data
-    assert '"text":"analyzing code"' in data
+        proc = subprocess.Popen(["node", str(script_path), "on_step", "codex", "analyzing code"], env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        conn, _ = srv.accept()
+        data = conn.recv(4096).decode("utf-8")
+        conn.close()
+        srv.close()
+        proc.wait(timeout=2)
+        assert proc.returncode == 0
+        assert '"event":"on_step"' in data
+        assert '"cli":"codex"' in data
+        assert '"text":"analyzing code"' in data

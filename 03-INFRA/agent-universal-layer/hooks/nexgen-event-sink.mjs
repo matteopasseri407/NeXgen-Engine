@@ -6,7 +6,7 @@
 //
 // Fail-Safe Contract:
 // 1. Guaranteed exit code 0 under all conditions (never breaks host CLI execution).
-// 2. Strict total wall-clock timeout of 15ms covering connect + write + flush.
+// 2. Strict total wall-clock timeout of 50ms covering connect + write + flush.
 // 3. Instant exit (<0.5ms) if IPC socket is not present on disk.
 
 import { existsSync, readFileSync } from "node:fs";
@@ -30,14 +30,13 @@ function main() {
     process.exit(0);
   }
 
-  // Hard deadline: process terminates cleanly in at most 15ms total
-  const hardTimer = setTimeout(() => {
+  // Hard deadline: process terminates cleanly in at most 50ms total
+  setTimeout(() => {
     process.exit(0);
-  }, 15);
-  hardTimer.unref();
+  }, 50);
 
-  // Fast-path: if Unix socket file doesn't exist on disk, exit immediately (<0.2ms)
-  if (!IS_WIN && !existsSync(SOCK_PATH)) {
+  // Fast-path: if not a Windows named pipe and file doesn't exist on disk, exit immediately (<0.2ms)
+  if (!SOCK_PATH.startsWith("\\\\.\\pipe\\") && !existsSync(SOCK_PATH)) {
     process.exit(0);
   }
 
