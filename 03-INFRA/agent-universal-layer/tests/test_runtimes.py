@@ -520,6 +520,13 @@ def test_opencode_install_event_sink_registers_plugin(tmp_path: Path):
 
 
 def test_nexgen_event_sink_script_e2e_socket_and_failsafe(tmp_path: Path):
+    """Il sink emette solo per le sessioni che il cockpit ha marcato vocali.
+
+    Il gate su COCKPIT_VOCALE e' voluto: senza, ogni terminale aperto si
+    metterebbe a parlare. Un test che non lo imposta e poi attende su accept()
+    non fallisce, si appende - e con lui l'intera suite, nascondendo anche
+    tutti i test dopo di lui. Qui ogni attesa ha una scadenza.
+    """
     import os
     import socket
     import subprocess
@@ -529,31 +536,68 @@ def test_nexgen_event_sink_script_e2e_socket_and_failsafe(tmp_path: Path):
     if not script_path.is_file():
         pytest.skip("nexgen-event-sink.mjs not in hooks folder")
 
-    # 1. Missing socket -> exits 0 immediately
+    vocal = os.environ.copy()
+    vocal["COCKPIT_VOCALE"] = "1"
+    vocal["COCKPIT_SESSION_ID"] = "voice-testrun"
+
+    # 1. Socket assente -> esce 0 subito, e non sporca mai stdout.
+    #    Il margine e' largo perche' il runner Windows avvia node a freddo.
     sock_missing = tmp_path / "missing.sock"
-    env = os.environ.copy()
-    env["NEXGEN_EVENT_IPC_PATH"] = str(sock_missing)
+    vocal["NEXGEN_EVENT_IPC_PATH"] = str(sock_missing)
     t0 = time.time()
-    res = subprocess.run(["node", str(script_path), "on_done", "claude", "test hello"], env=env, capture_output=True, text=True, timeout=2)
+    res = subprocess.run(
+        ["node", str(script_path), "on_done", "claude", "test hello"],
+        env=vocal, capture_output=True, text=True, timeout=10,
+    )
     assert res.returncode == 0
     assert time.time() - t0 < 5.0
     assert res.stdout == ""  # never pollutes stdout
 
-    # 2. Live socket receiver -> receives payload (POSIX only)
-    if sys.platform != "win32" and hasattr(socket, "AF_UNIX"):
-        sock_live = tmp_path / "live.sock"
-        srv = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        srv.bind(str(sock_live))
-        srv.listen(1)
-        env["NEXGEN_EVENT_IPC_PATH"] = str(sock_live)
+    if sys.platform == "win32" or not hasattr(socket, "AF_UNIX"):
+        return
 
-        proc = subprocess.Popen(["node", str(script_path), "on_step", "codex", "analyzing code"], env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    # 2. Socket vivo -> il payload arriva (solo POSIX).
+    sock_live = tmp_path / "live.sock"
+    srv = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    srv.bind(str(sock_live))
+    srv.listen(1)
+    srv.settimeout(15)
+    vocal["NEXGEN_EVENT_IPC_PATH"] = str(sock_live)
+
+    proc = subprocess.Popen(
+        ["node", str(script_path), "on_step", "codex", "analyzing code"],
+        env=vocal, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+    )
+    try:
         conn, _ = srv.accept()
-        data = conn.recv(4096).decode("utf-8")
-        conn.close()
+    except socket.timeout:
+        proc.kill()
         srv.close()
-        proc.wait(timeout=2)
-        assert proc.returncode == 0
-        assert '"event":"on_step"' in data
-        assert '"cli":"codex"' in data
-        assert '"text":"analyzing code"' in data
+        pytest.fail("il sink non ha emesso niente per una sessione vocale")
+    data = conn.recv(4096).decode("utf-8")
+    conn.close()
+    srv.close()
+    proc.wait(timeout=10)
+    assert proc.returncode == 0
+    assert '"event":"on_step"' in data
+    assert '"cli":"codex"' in data
+    assert '"text":"analyzing code"' in data
+
+    # 3. Sessione non marcata vocale -> silenzio. E' la garanzia per cui il
+    #    gate esiste, e prima non era coperta da nessun test.
+    sock_quiet = tmp_path / "quiet.sock"
+    srv2 = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    srv2.bind(str(sock_quiet))
+    srv2.listen(1)
+    srv2.settimeout(3)
+    plain = os.environ.copy()
+    plain.pop("COCKPIT_VOCALE", None)
+    plain["NEXGEN_EVENT_IPC_PATH"] = str(sock_quiet)
+    res = subprocess.run(
+        ["node", str(script_path), "on_step", "codex", "non deve uscire"],
+        env=plain, capture_output=True, text=True, timeout=10,
+    )
+    assert res.returncode == 0
+    with pytest.raises(socket.timeout):
+        srv2.accept()
+    srv2.close()
