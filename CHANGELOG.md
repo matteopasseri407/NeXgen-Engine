@@ -8,6 +8,12 @@ This file tracks the **engine** (this repo). Your own data — manifests,
 instructions, skills, secrets — lives in your KnowledgeVault and is not part
 of any engine release.
 
+## [2.0.5] - 2026-08-25
+
+### Fixed
+
+- Maintenance and bug fixes.
+
 ## [2.0.4] - 2026-08-24
 
 ### Changed
