@@ -375,6 +375,29 @@ def _leak_scan_paths() -> tuple[Path, Path, Path] | None:
 
 
 @pytest.fixture(scope="session", autouse=True)
+def systemctl_never_reaches_the_live_session(tmp_path_factory):
+    """The scheduler ends with `systemctl --user enable --now agent-sync.timer`.
+
+    `--user` talks to the caller's live session bus, so an isolated HOME does
+    not contain it: running the suite silently re-armed the developer's own
+    agent-sync and agent-heartbeat timers. `_make_bin_stubs` already neutralizes
+    systemctl, but only through the `sandbox` fixture's PATH, and three test
+    modules reach the scheduler without it. Verified by stopping the timer,
+    running each test file and reading `systemctl --user is-active` back.
+    """
+    stub_dir = tmp_path_factory.mktemp("global-bin-stubs")
+    for cmd in ("systemctl", "notify-send"):
+        stub = stub_dir / cmd
+        stub.write_text("#!/bin/sh\nexit 0\n")
+        stub.chmod(stub.stat().st_mode | stat.S_IEXEC)
+
+    patcher = pytest.MonkeyPatch()
+    patcher.setenv("PATH", f"{stub_dir}{os.pathsep}{os.environ.get('PATH', '')}")
+    yield
+    patcher.undo()
+
+
+@pytest.fixture(scope="session", autouse=True)
 def fixtures_carry_no_leaks() -> None:
     """Le fixture non devono contenere niente che non possa stare in pubblico.
 
