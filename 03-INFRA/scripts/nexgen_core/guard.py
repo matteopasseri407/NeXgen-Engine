@@ -460,6 +460,26 @@ class GuardRunner:
                 except Exception as exc:
                     actions.append("[WARN] " + t("Self-alignment configuration did not succeed: {error}", error=exc))
 
+                # 6b. Modules this machine declared: their commands and units
+                # are drift like any other. Doing it here is what turns the
+                # guard from something a module has to survive into what keeps
+                # it alive -- every primitive below is idempotent, so a module
+                # already in place costs nothing.
+                try:
+                    from nexgen_core.module_install import install_declared_modules
+                    from nexgen_core.modules import modules_state
+
+                    module_actions = install_declared_modules(
+                        modules_state(vault_data=self.vault_data, engine_root=self.engine_root),
+                        home=self.home,
+                        engine_root=self.engine_root,
+                        log=lambda msg: actions.append(msg),
+                    )
+                    if module_actions:
+                        actions.append(t("Modules realigned ({count})", count=len(module_actions)))
+                except Exception as exc:
+                    actions.append("[WARN] " + t("Modules not realigned: {error}", error=exc))
+
                 # 7. Liveness registration for the heartbeat
                 if is_guard or mode == GuardMode.APPLY:
                     self.heartbeat.record_liveness()
