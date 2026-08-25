@@ -21,9 +21,49 @@
 #   mcp_servers: manifest server names this module mounts, if any.
 #   stack:       docker stack service name (Local-Full), if any.
 #   depends_on:  module ids required for this module to be usable.
+#
+# A module may also ask the engine to install things on its behalf. These
+# fields are DECLARATIVE: they name primitives the engine already owns, and
+# nothing in them runs module-supplied code.
+#   source:      where the module's own files live (~ is expanded).
+#   scope:       host | shared. Where a declaration applies. The state file is
+#                shared between machines through the vault, so a module bound
+#                to one desktop must say `host`. External modules default to
+#                `host`; the engine's own default to `shared`.
+#   health:      a command that proves the module WORKS, not merely that its
+#                files are present. Run by `nexgen doctor`, never by the guard.
+#   provides:    what the engine installs for it.
+#                  shims:          map of command name -> executable it runs
+#                  systemd_units:  unit files, relative to `source`
+#                  runtime_hooks:  integrations into the CLI runtimes
+#                                  (event_sink, guardrail)
+#                  config_files:   map of source (relative) -> destination.
+#                                  Destinations outside the user's home are
+#                                  refused: nothing writes to /etc on a timer.
+#                  compose_file:   a docker-compose.yml the module ships,
+#                                  deployed under the engine's stack root
+#   requires:    preconditions, reported rather than enforced.
+#                  binaries, devices, groups, paths, gpu_mb
+#                  setup: the command that provisions what `paths` asks for.
+#                         The engine NEVER runs it -- pulling gigabytes from a
+#                         timer is not its job -- it prints it when a path is
+#                         missing, so "not provisioned" stops being invisible.
+#
+# THE LINE: the engine INSTALLS, the module PROVISIONS. Everything the engine
+# does is declarative, idempotent and safe to repeat every half hour. Anything
+# that downloads, compiles or needs root belongs to `setup`.
+#
+# THIS FILE IS NOT THE ONLY SOURCE. It holds the modules the engine ships.
+# Anything else declares itself: a repository with a `nexgen-module.yaml` at
+# its root is a module, and a machine picks it up by listing its path under
+# `hosts.<name>.external` in modules.state.yaml. Adding a module must never
+# mean editing the engine.
+#
+# Declaring is not activating: a module is installed only once the machine
+# declares it `local` in modules.state.yaml, exactly as for every other kind.
 # ============================================================================
 
-schema_version: 1
+schema_version: 2
 
 modules:
   memory:
@@ -97,3 +137,4 @@ modules:
     mcp_servers: []
     stack: null
     depends_on: [memory]
+

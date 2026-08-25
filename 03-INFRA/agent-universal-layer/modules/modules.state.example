@@ -13,6 +13,14 @@
 #   council:   local | absent
 #   sync:      local | absent
 #
+# This file travels between machines through the vault, so entries under
+# `modules:` apply EVERYWHERE. A module bound to one machine goes under
+# `hosts.<name>:` instead, and `nexgen modules set` puts it there by itself
+# when the module declares `scope: host`.
+#
+# `external:` lists directories that declare themselves modules with a
+# nexgen-module.yaml. Per host by nature: a checkout exists where it exists.
+#
 # "remote" means the backend runs on a machine you own, reached over a
 # tunnel; the MCP server itself always runs where the CLI runs.
 schema_version: 1
@@ -26,3 +34,10 @@ modules:
   browser: local
   council: local
   sync: local
+
+# hosts:
+#   my-desktop:
+#     external:
+#       - ~/dev/agent-voice-cockpit
+#     modules:
+#       voice: local
