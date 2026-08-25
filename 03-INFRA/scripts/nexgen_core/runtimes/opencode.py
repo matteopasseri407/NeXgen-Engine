@@ -173,3 +173,17 @@ class OpenCodeRuntime(Runtime):
             return False
         self._write_key(config_path, "plugin", [*plugins, entry])
         return True
+
+    def install_event_sink(self, home: Path, sink_source: Path) -> str | None:
+        config_path = self._config_path(home)
+        if not config_path.is_file() and not shutil.which("opencode"):
+            return None
+        plugin_dir = config_path.parent
+        dst = plugin_dir / sink_source.name
+        deployed = self.deploy_bytes(dst, sink_source.read_bytes())
+        plugin_registered = self._register_plugin(config_path, dst)
+        if plugin_registered:
+            return f"opencode: event sink plugin registered in {config_path}"
+        if deployed:
+            return f"opencode: event sink updated in {plugin_dir}"
+        return None

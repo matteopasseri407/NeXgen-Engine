@@ -122,3 +122,55 @@ class ClaudeRuntime(Runtime):
         self.backup(path)
         self.atomic_write(path, json.dumps(data, indent=2) + "\n")
         return f"claude: guardrail hook registered in {path}"
+
+    def install_event_sink(self, home: Path, sink_source: Path) -> str | None:
+        data = self._load_settings(home)
+        if data is None:
+            return None
+        claude_dir = home / ".claude"
+        dst = claude_dir / sink_source.name
+        deployed = self.deploy_bytes(dst, sink_source.read_bytes())
+
+        command_done = f'node "{dst}" on_done claude'
+        command_step = f'node "{dst}" on_step claude'
+
+        hooks = data.setdefault("hooks", {})
+        if not isinstance(hooks, dict):
+            raise GuardrailError("claude: settings.hooks is not an object")
+
+        # Stop hook (on_done)
+        stop_entries = hooks.setdefault("Stop", [])
+        if not isinstance(stop_entries, list):
+            raise GuardrailError("claude: settings.hooks.Stop is not a list")
+        already_registered_stop = any(
+            h.get("command") == command_done
+            for matcher in stop_entries if isinstance(matcher, dict)
+            for h in matcher.get("hooks", [])
+        )
+        if not already_registered_stop:
+            stop_entries.append({
+                "hooks": [{"type": "command", "command": command_done, "timeout": 2}],
+            })
+
+        # PreToolUse hook (on_step)
+        pre_tool_entries = hooks.setdefault("PreToolUse", [])
+        if not isinstance(pre_tool_entries, list):
+            raise GuardrailError("claude: settings.hooks.PreToolUse is not a list")
+        already_registered_step = any(
+            h.get("command") == command_step
+            for matcher in pre_tool_entries if isinstance(matcher, dict)
+            for h in matcher.get("hooks", [])
+        )
+        if not already_registered_step:
+            pre_tool_entries.append({
+                "matcher": "*",
+                "hooks": [{"type": "command", "command": command_step, "timeout": 2}],
+            })
+
+        if already_registered_stop and already_registered_step:
+            return f"claude: event sink updated in {dst}" if deployed else None
+
+        path_settings = self._settings_path(home)
+        self.backup(path_settings)
+        self.atomic_write(path_settings, json.dumps(data, indent=2) + "\n")
+        return f"claude: event sink registered in {path_settings}"

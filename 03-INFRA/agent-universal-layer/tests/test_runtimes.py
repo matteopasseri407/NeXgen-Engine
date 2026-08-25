@@ -437,3 +437,122 @@ def test_guard_apply_runtime_permissions_rejects_path_traversal(tmp_path: Path):
     actions = runner.apply_runtime_permissions()
     assert any("WARN" in a for a in actions)
     assert settings.read_text(encoding="utf-8") == original
+
+
+# ── Event Sink Tests ───────────────────────────────────────────────────
+
+def test_claude_install_event_sink_registers_stop_and_pretooluse(tmp_path: Path):
+    home = tmp_path / "home"
+    settings = home / ".claude" / "settings.json"
+    settings.parent.mkdir(parents=True)
+    settings.write_text("{}", encoding="utf-8")
+
+    sink_source = tmp_path / "nexgen-event-sink.mjs"
+    sink_source.write_text("// dummy sink", encoding="utf-8")
+
+    rt = ClaudeRuntime()
+    action = rt.install_event_sink(home, sink_source)
+    assert action is not None
+    assert "event sink registered" in action
+
+    data = json.loads(settings.read_text(encoding="utf-8"))
+    assert "Stop" in data["hooks"]
+    assert "PreToolUse" in data["hooks"]
+    assert (home / ".claude" / "nexgen-event-sink.mjs").is_file()
+
+    # Idempotent
+    action2 = rt.install_event_sink(home, sink_source)
+    assert action2 is None
+
+
+def test_antigravity_install_event_sink_registers_hooks_json(tmp_path: Path):
+    home = tmp_path / "home"
+    settings = home / ".gemini" / "antigravity-cli" / "settings.json"
+    settings.parent.mkdir(parents=True)
+    settings.write_text("{}", encoding="utf-8")
+
+    sink_source = tmp_path / "nexgen-event-sink.mjs"
+    sink_source.write_text("// dummy sink", encoding="utf-8")
+
+    rt = AntigravityRuntime()
+    action = rt.install_event_sink(home, sink_source)
+    assert action is not None
+
+    hooks_path = home / ".gemini" / "config" / "hooks.json"
+    assert hooks_path.is_file()
+    data = json.loads(hooks_path.read_text(encoding="utf-8"))
+    assert "nexgen-event-sink" in data
+    assert "Stop" in data["nexgen-event-sink"]
+    assert "PreToolUse" in data["nexgen-event-sink"]
+
+
+def test_codex_install_event_sink_registers_hooks_json(tmp_path: Path, monkeypatch):
+    monkeypatch.setattr("nexgen_core.runtimes.codex.shutil.which", lambda name: "/usr/bin/codex" if name == "codex" else None)
+    home = tmp_path / "home"
+
+    sink_source = tmp_path / "nexgen-event-sink.mjs"
+    sink_source.write_text("// dummy sink", encoding="utf-8")
+
+    rt = CodexRuntime()
+    action = rt.install_event_sink(home, sink_source)
+    assert action is not None
+
+    hooks_path = home / ".codex" / "hooks.json"
+    assert hooks_path.is_file()
+    data = json.loads(hooks_path.read_text(encoding="utf-8"))
+    assert "nexgen-event-sink" in data
+    assert "Stop" in data["nexgen-event-sink"]
+
+
+def test_opencode_install_event_sink_registers_plugin(tmp_path: Path):
+    home = tmp_path / "home"
+    config = home / ".config" / "opencode" / "opencode.jsonc"
+    config.parent.mkdir(parents=True)
+    config.write_text("{}", encoding="utf-8")
+
+    sink_source = tmp_path / "nexgen-event-sink.mjs"
+    sink_source.write_text("// dummy sink", encoding="utf-8")
+
+    rt = OpenCodeRuntime()
+    action = rt.install_event_sink(home, sink_source)
+    assert action is not None
+    assert (home / ".config" / "opencode" / "nexgen-event-sink.mjs").is_file()
+
+
+def test_nexgen_event_sink_script_e2e_socket_and_failsafe(tmp_path: Path):
+    import os
+    import socket
+    import subprocess
+    import time
+
+    script_path = Path(__file__).resolve().parents[1] / "hooks" / "nexgen-event-sink.mjs"
+    if not script_path.is_file():
+        pytest.skip("nexgen-event-sink.mjs not in hooks folder")
+
+    # 1. Missing socket -> exits 0 immediately
+    sock_missing = tmp_path / "missing.sock"
+    env = os.environ.copy()
+    env["NEXGEN_EVENT_IPC_PATH"] = str(sock_missing)
+    t0 = time.time()
+    res = subprocess.run(["node", str(script_path), "on_done", "claude", "test hello"], env=env, capture_output=True, text=True, timeout=2)
+    assert res.returncode == 0
+    assert time.time() - t0 < 0.5
+    assert res.stdout == ""  # never pollutes stdout
+
+    # 2. Live socket receiver -> receives payload
+    sock_live = tmp_path / "live.sock"
+    srv = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    srv.bind(str(sock_live))
+    srv.listen(1)
+    env["NEXGEN_EVENT_IPC_PATH"] = str(sock_live)
+
+    proc = subprocess.Popen(["node", str(script_path), "on_step", "codex", "analyzing code"], env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    conn, _ = srv.accept()
+    data = conn.recv(4096).decode("utf-8")
+    conn.close()
+    srv.close()
+    proc.wait(timeout=2)
+    assert proc.returncode == 0
+    assert '"event":"on_step"' in data
+    assert '"cli":"codex"' in data
+    assert '"text":"analyzing code"' in data

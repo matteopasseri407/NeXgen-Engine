@@ -314,11 +314,13 @@ class GuardRunner:
             break
 
         engine_hooks_dir = self.engine_root / "agent-universal-layer" / "hooks"
+        event_sink_source = engine_hooks_dir / "nexgen-event-sink.mjs"
         return apply_runtimes(
             home=self.home,
             engine_hooks_dir=engine_hooks_dir,
             posture=posture,
             guardrail_source=guardrail_source,
+            event_sink_source=event_sink_source if event_sink_source.is_file() else None,
         )
 
     def run(

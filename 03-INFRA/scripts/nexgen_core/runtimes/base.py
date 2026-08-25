@@ -75,6 +75,12 @@ class Runtime(ABC):
         attempt)."""
 
     @abstractmethod
+    def install_event_sink(self, home: Path, sink_source: Path) -> str | None:
+        """Registers the universal event sink hook (IPC emitter for lifecycle events).
+        Default implementation returns None if not supported by the runtime."""
+        del home, sink_source
+        return None
+
     def install_guardrail(self, home: Path, hook_source: Path, engine_hooks_dir: Path) -> str | None:
         """Registers the pre-execution hook whose POLICY lives in
         `hook_source` (private Vault content, identical for every CLI).

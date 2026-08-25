@@ -107,3 +107,39 @@ class CodexRuntime(Runtime):
     def install_guardrail(self, home: Path, hook_source: Path, engine_hooks_dir: Path) -> str | None:
         del home, hook_source, engine_hooks_dir
         return None  # No verified guardrail hookup for Codex (see above)
+
+    def install_event_sink(self, home: Path, sink_source: Path) -> str | None:
+        codex_dir = home / ".codex"
+        if not codex_dir.is_dir() and not shutil.which("codex"):
+            return None
+        codex_dir.mkdir(parents=True, exist_ok=True)
+        dst = codex_dir / sink_source.name
+        deployed = self.deploy_bytes(dst, sink_source.read_bytes())
+        hooks_path = codex_dir / "hooks.json"
+        command_done = f"node {dst.as_posix()} on_done codex"
+        command_step = f"node {dst.as_posix()} on_step codex"
+        desired_entry = {
+            "enabled": True,
+            "Stop": [{"type": "command", "command": command_done, "timeout": 2}],
+            "PreToolUse": [{"type": "command", "command": command_step, "timeout": 2}],
+        }
+        current = {}
+        if hooks_path.is_file():
+            try:
+                import json
+                current = json.loads(hooks_path.read_text(encoding="utf-8"))
+            except (OSError, ValueError, json.JSONDecodeError):
+                current = {}
+        if current.get("nexgen-event-sink") == desired_entry:
+            registered = False
+        else:
+            self.backup(hooks_path)
+            import json
+            updated = {**current, "nexgen-event-sink": desired_entry}
+            self.atomic_write(hooks_path, json.dumps(updated, indent=2) + "\n")
+            registered = True
+        if registered:
+            return f"codex: event sink registered in {hooks_path}"
+        if deployed:
+            return f"codex: event sink updated in {dst}"
+        return None

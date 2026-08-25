@@ -32,6 +32,7 @@ def apply_all(
     engine_hooks_dir: Path,
     posture: dict[str, str] | None = None,
     guardrail_source: Path | None = None,
+    event_sink_source: Path | None = None,
 ) -> list[str]:
     """Applies posture + guardrail hook to every installed CLI.
 
@@ -61,6 +62,14 @@ def apply_all(
             else:
                 if result:
                     actions.append(result)
+
+        if event_sink_source is not None:
+            try:
+                sink_result = runtime.install_event_sink(home, event_sink_source)
+                if sink_result:
+                    actions.append(sink_result)
+            except (OSError, ValueError, TypeError) as exc:
+                actions.append(f"[WARN] {runtime.name}: event sink installation failed ({exc})")
 
         desired_posture = posture.get(runtime.name)
         if not desired_posture:
