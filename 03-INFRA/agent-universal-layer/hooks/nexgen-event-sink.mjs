@@ -9,7 +9,7 @@
 // 2. Strict total wall-clock timeout of 50ms covering connect + write + flush.
 // 3. Instant exit (<0.5ms) if IPC socket is not present on disk.
 
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { connect } from "node:net";
 import { homedir, platform } from "node:os";
 import { join } from "node:path";
@@ -30,63 +30,75 @@ function main() {
     process.exit(0);
   }
 
-  // Hard deadline: process terminates cleanly in at most 50ms total
-  setTimeout(() => {
+  // Hard deadline: process terminates cleanly in at most 40ms total
+  const deadline = setTimeout(() => {
     process.exit(0);
-  }, 50);
+  }, 40);
 
   // Fast-path: if not a Windows named pipe and file doesn't exist on disk, exit immediately (<0.2ms)
   if (!SOCK_PATH.startsWith("\\\\.\\pipe\\") && !existsSync(SOCK_PATH)) {
     process.exit(0);
   }
 
-  // Read event payload from arguments or stdin
   let eventType = process.argv[2] || "on_done";
   let cliName = process.argv[3] || process.env.COCKPIT_CLI || "unknown";
-  let rawText = "";
+  let rawText = process.argv[4] || "";
 
-  try {
-    if (process.argv[4]) {
-      rawText = process.argv[4];
-    } else if (!process.stdin.isTTY) {
-      const buffer = readFileSync(0, "utf8");
-      if (buffer) {
-        try {
-          const parsed = JSON.parse(buffer);
-          rawText = parsed.last_assistant_message || parsed.text || parsed.response || buffer;
-          if (parsed.hook_event_name === "Stop") {
-            eventType = "on_done";
-          }
-        } catch {
-          rawText = buffer;
-        }
-      }
-    }
-  } catch {
-    // Ignore read errors
-  }
+  function emitPayload(text) {
+    const payload = JSON.stringify({
+      event: eventType,
+      cli: cliName,
+      session_id: process.env.COCKPIT_SESSION_ID || "",
+      text: text ? text.slice(0, 4000) : "",
+      ts: Date.now() / 1000,
+    }) + "\n";
 
-  const payload = JSON.stringify({
-    event: eventType,
-    cli: cliName,
-    session_id: process.env.COCKPIT_SESSION_ID || "",
-    text: rawText ? rawText.slice(0, 4000) : "",
-    ts: Date.now() / 1000,
-  }) + "\n";
+    try {
+      const client = connect(SOCK_PATH, () => {
+        client.write(payload, () => {
+          client.end();
+          clearTimeout(deadline);
+          process.exit(0);
+        });
+      });
 
-  try {
-    const client = connect(SOCK_PATH, () => {
-      client.write(payload, () => {
-        client.end();
+      client.on("error", () => {
         process.exit(0);
       });
-    });
-
-    client.on("error", () => {
+    } catch {
       process.exit(0);
+    }
+  }
+
+  if (rawText || process.stdin.isTTY) {
+    emitPayload(rawText);
+  } else {
+    // Non-blocking asynchronous stdin read
+    let stdinBuf = "";
+    process.stdin.setEncoding("utf8");
+    process.stdin.on("data", (chunk) => {
+      stdinBuf += chunk;
+      if (stdinBuf.length > 8192) {
+        process.stdin.pause();
+      }
     });
-  } catch {
-    process.exit(0);
+    process.stdin.on("end", () => {
+      let parsedText = stdinBuf;
+      try {
+        const parsed = JSON.parse(stdinBuf);
+        parsedText = parsed.last_assistant_message || parsed.text || parsed.response || stdinBuf;
+        if (parsed.hook_event_name === "Stop") {
+          eventType = "on_done";
+        }
+      } catch {
+        // use raw stdinBuf
+      }
+      emitPayload(parsedText);
+    });
+    process.stdin.on("error", () => {
+      emitPayload("");
+    });
+    process.stdin.resume();
   }
 }
 
