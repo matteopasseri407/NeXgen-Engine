@@ -1,22 +1,21 @@
-// NeXgen Engine -- Universal Event Sink Hook (IPC emitter for lifecycle events)
+// NeXgen Engine -- Universal Event Sink Hook & Plugin (IPC emitter for lifecycle events)
 //
 // Deployed by agent_sync.py and registered with CLI runtimes (Claude, Codex, Antigravity, OpenCode).
-// Emits lightweight, non-blocking lifecycle events (on_step, on_heartbeat, on_done)
-// to optional local consumers (e.g. nexgen-voice companion, notifications, or supervisors).
+// Dual-mode contract:
+// 1. When imported as an OpenCode plugin: exports lifecycle hooks without terminating process.
+// 2. When executed directly as CLI hook (Claude/Codex/Antigravity): reads stdin/argv, emits to events.sock, exits in <=40ms.
 //
-// Fail-Safe Contract:
-// 1. Guaranteed exit code 0 under all conditions (never breaks host CLI execution).
-// 2. Strict total wall-clock timeout of 50ms covering connect + write + flush.
-// 3. Instant exit (<0.5ms) if IPC socket is not present on disk.
+// Isolation Guarantee:
+// Only sessions launched with COCKPIT_VOCALE=1 (e.g. from Cockpit GUI Tray or 'nexgen-voice tui') emit audio events.
+// All regular terminal windows, background tasks, and IDE processes are 100% silent and exit immediately.
 
 import { existsSync } from "node:fs";
 import { connect } from "node:net";
 import { homedir, platform } from "node:os";
 import { join } from "node:path";
 
-// Unconditional top-level catch-all: NEVER crash or return non-zero
-process.on("uncaughtException", () => process.exit(0));
-process.on("unhandledRejection", () => process.exit(0));
+process.on("uncaughtException", () => {});
+process.on("unhandledRejection", () => {});
 
 const IS_WIN = platform() === "win32";
 const DEFAULT_SOCK = IS_WIN
@@ -25,17 +24,56 @@ const DEFAULT_SOCK = IS_WIN
 
 const SOCK_PATH = process.env.NEXGEN_EVENT_IPC_PATH || DEFAULT_SOCK;
 
+function sendEventAsync(eventType, cliName, text, sessionId = "") {
+  if (process.env.COCKPIT_VOCALE !== "1") {
+    return;
+  }
+  if (!SOCK_PATH.startsWith("\\\\.\\pipe\\") && !existsSync(SOCK_PATH)) {
+    return;
+  }
+  const payload = JSON.stringify({
+    event: eventType,
+    cli: cliName,
+    session_id: sessionId || process.env.COCKPIT_SESSION_ID || "",
+    text: text ? String(text).slice(0, 4000) : "",
+    ts: Date.now() / 1000,
+  }) + "\n";
+
+  try {
+    const client = connect(SOCK_PATH, () => {
+      client.write(payload, () => {
+        client.end();
+      });
+    });
+    client.on("error", () => {});
+  } catch {}
+}
+
+// 1. OpenCode Plugin Export
+export default async function ({ directory }) {
+  return {
+    "session.idle": async (event) => {
+      if (process.env.COCKPIT_VOCALE !== "1") return;
+      sendEventAsync("on_done", "opencode", event?.lastAssistantMessage || "", event?.sessionID || "");
+    },
+    "step.finish": async (event) => {
+      if (process.env.COCKPIT_VOCALE !== "1") return;
+      sendEventAsync("on_step", "opencode", event?.stepOutput || "", event?.sessionID || "");
+    },
+  };
+}
+
+// 2. Direct CLI invocation entry point (Claude / Codex / Antigravity hooks)
 function main() {
-  if (process.env.NEXGEN_DISABLE_EVENT_SINK === "1") {
+  // Strict isolation: if not explicitly marked as vocal, exit instantly
+  if (process.env.COCKPIT_VOCALE !== "1" || process.env.NEXGEN_DISABLE_EVENT_SINK === "1") {
     process.exit(0);
   }
 
-  // Hard deadline: process terminates cleanly in at most 40ms total
   const deadline = setTimeout(() => {
     process.exit(0);
   }, 40);
 
-  // Fast-path: if not a Windows named pipe and file doesn't exist on disk, exit immediately (<0.2ms)
   if (!SOCK_PATH.startsWith("\\\\.\\pipe\\") && !existsSync(SOCK_PATH)) {
     process.exit(0);
   }
@@ -73,7 +111,6 @@ function main() {
   if (rawText || process.stdin.isTTY) {
     emitPayload(rawText);
   } else {
-    // Non-blocking asynchronous stdin read
     let stdinBuf = "";
     process.stdin.setEncoding("utf8");
     process.stdin.on("data", (chunk) => {
@@ -90,9 +127,7 @@ function main() {
         if (parsed.hook_event_name === "Stop") {
           eventType = "on_done";
         }
-      } catch {
-        // use raw stdinBuf
-      }
+      } catch {}
       emitPayload(parsedText);
     });
     process.stdin.on("error", () => {
@@ -102,4 +137,6 @@ function main() {
   }
 }
 
-main();
+if (process.argv[1] && (process.argv[1].endsWith("nexgen-event-sink.mjs") || process.argv[1].endsWith("nexgen-event-sink.js"))) {
+  main();
+}

@@ -519,6 +519,49 @@ def test_opencode_install_event_sink_registers_plugin(tmp_path: Path):
     assert (home / ".config" / "opencode" / "nexgen-event-sink.mjs").is_file()
 
 
+def test_nexgen_event_sink_import_as_opencode_plugin_does_not_exit(tmp_path: Path):
+    """OpenCode registers the sink in its `plugin` array, which IMPORTS the module
+    into OpenCode's own process instead of spawning it. Any top-level `process.exit()`
+    in the module body therefore kills the host CLI a few ms after startup: silent,
+    exit code 0, no output, nothing in the log. That is what made `opencode`
+    unlaunchable in v2.0.5, so the module body must stay side-effect free on import
+    and expose the CLI path only when it is argv[1]."""
+    import json as _json
+    import os
+    import subprocess
+
+    script_path = Path(__file__).resolve().parents[1] / "hooks" / "nexgen-event-sink.mjs"
+    if not script_path.is_file():
+        pytest.skip("nexgen-event-sink.mjs not in hooks folder")
+
+    harness = tmp_path / "harness.mjs"
+    harness.write_text(
+        "import { pathToFileURL } from 'node:url';\n"
+        f"const target = pathToFileURL({_json.dumps(str(script_path))}).href;\n"
+        "const mod = await import(target);\n"
+        "console.log('IMPORT_SURVIVED');\n"
+        "if (typeof mod.default !== 'function') { console.log('NO_PLUGIN_EXPORT'); process.exit(3); }\n"
+        "const hooks = await mod.default({ directory: process.cwd() });\n"
+        "console.log('HOOKS:' + Object.keys(hooks).sort().join(','));\n"
+        "console.log('STILL_ALIVE');\n",
+        encoding="utf-8",
+    )
+
+    # Absent socket is the worst case: it is the branch the old code exited on first.
+    env = os.environ.copy()
+    env["NEXGEN_EVENT_IPC_PATH"] = str(tmp_path / "missing.sock")
+
+    res = subprocess.run(["node", str(harness)], env=env, capture_output=True, text=True, timeout=15, check=False)
+
+    assert "IMPORT_SURVIVED" in res.stdout, f"import killed the host process: {res.stdout!r} {res.stderr!r}"
+    assert "STILL_ALIVE" in res.stdout, f"host process died while using the plugin: {res.stdout!r}"
+    assert res.returncode == 0
+    # The plugin must actually subscribe to something, or registration is pointless.
+    assert "HOOKS:" in res.stdout
+    hook_names = next(line for line in res.stdout.splitlines() if line.startswith("HOOKS:"))
+    assert len(hook_names.removeprefix("HOOKS:").split(",")) >= 1
+
+
 def test_nexgen_event_sink_script_e2e_socket_and_failsafe(tmp_path: Path):
     import os
     import socket
@@ -533,8 +576,13 @@ def test_nexgen_event_sink_script_e2e_socket_and_failsafe(tmp_path: Path):
     sock_missing = tmp_path / "missing.sock"
     env = os.environ.copy()
     env["NEXGEN_EVENT_IPC_PATH"] = str(sock_missing)
+    # The CLI path is opt-in: it stays silent unless the vocal cockpit is on, so the
+    # emitting half of this test has to enable it explicitly. Harmless for sink
+    # revisions that do not gate on it, which simply ignore the variable.
+    env["COCKPIT_VOCALE"] = "1"
+    env.pop("NEXGEN_DISABLE_EVENT_SINK", None)
     t0 = time.time()
-    res = subprocess.run(["node", str(script_path), "on_done", "claude", "test hello"], env=env, capture_output=True, text=True, timeout=2)
+    res = subprocess.run(["node", str(script_path), "on_done", "claude", "test hello"], env=env, capture_output=True, text=True, timeout=2, check=False)
     assert res.returncode == 0
     assert time.time() - t0 < 5.0
     assert res.stdout == ""  # never pollutes stdout
@@ -547,12 +595,23 @@ def test_nexgen_event_sink_script_e2e_socket_and_failsafe(tmp_path: Path):
         srv.listen(1)
         env["NEXGEN_EVENT_IPC_PATH"] = str(sock_live)
 
+        # Bounded: a sink that never connects must fail this test, not block the run
+        # forever. An unbounded accept() here already hung a full suite once, and a
+        # hang is indistinguishable from a slow machine until someone kills the job.
+        srv.settimeout(20)
+
         proc = subprocess.Popen(["node", str(script_path), "on_step", "codex", "analyzing code"], env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        conn, _ = srv.accept()
+        try:
+            conn, _ = srv.accept()
+        except TimeoutError:
+            proc.kill()
+            out, err = proc.communicate(timeout=5)
+            srv.close()
+            pytest.fail(f"sink never connected to the socket; node stdout={out!r} stderr={err!r}")
         data = conn.recv(4096).decode("utf-8")
         conn.close()
         srv.close()
-        proc.wait(timeout=2)
+        proc.wait(timeout=5)
         assert proc.returncode == 0
         assert '"event":"on_step"' in data
         assert '"cli":"codex"' in data
