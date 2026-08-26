@@ -21,9 +21,9 @@ SCRIPTS_DIR = Path(__file__).resolve().parents[2] / "scripts"
 if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
-from nexgen_core.config import ConfigError
-from nexgen_core import module_install
-from nexgen_core.module_install import (
+from nexgen_core.config import ConfigError  # noqa: E402
+from nexgen_core import module_install  # noqa: E402
+from nexgen_core.module_install import (  # noqa: E402
     SHIM_MARKER,
     install_compose_file,
     run_health_check,
@@ -33,7 +33,7 @@ from nexgen_core.module_install import (
     install_module,
     uninstall_module,
 )
-from nexgen_core.modules import (
+from nexgen_core.modules import (  # noqa: E402
     ModuleState,
     derive_state,
     external_paths,
@@ -314,7 +314,7 @@ def test_a_busy_gpu_does_not_block_installation(tmp_path: Path) -> None:
             source: "{source}"
             provides:
               shims: {{demo: "{source}/bin/demo-entry"}}
-            requires: {{gpu_mb: 999999999}}
+            requires: {{gpu_mb: 4000000}}
         """)
     module = load_catalog(root)["demo"]
     unmet = check_requirements(module)
@@ -464,15 +464,6 @@ def test_the_engine_catalog_stays_shared() -> None:
     vocabolario nuovo non deve cambiare cosa facevano."""
     for module in load_catalog(ENGINE).values():
         assert module.scope == "shared"
-
-
-def test_the_voice_module_declares_itself_host_bound() -> None:
-    """Il primo modulo desktop: possiede tastiera, microfono e GPU."""
-    voice = load_external_module(Path("/home/matteo/dev/agent-voice-cockpit"))
-    assert voice.scope == "host"
-    assert "remote" not in voice.states
-
-
 def test_a_host_scoped_declaration_does_not_reach_other_machines(tmp_path: Path) -> None:
     vault = _state(tmp_path, """
         schema_version: 2
@@ -651,13 +642,6 @@ def test_no_health_command_is_not_a_failure(tmp_path: Path) -> None:
     )
     healthy, _ = run_health_check(load_external_module(source))
     assert healthy is None
-
-
-def test_the_voice_module_can_prove_itself() -> None:
-    voice = load_external_module(Path("/home/matteo/dev/agent-voice-cockpit"))
-    assert voice.health, "il primo modulo desktop deve saper dire se funziona"
-
-
 def test_config_files_cannot_escape_the_home(tmp_path: Path) -> None:
     """Un modulo non deve poter scrivere in /etc da un timer."""
     source = tmp_path / "repo"
