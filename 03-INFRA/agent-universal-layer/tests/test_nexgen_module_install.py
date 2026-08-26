@@ -314,7 +314,7 @@ def test_a_busy_gpu_does_not_block_installation(tmp_path: Path) -> None:
             source: "{source}"
             provides:
               shims: {{demo: "{source}/bin/demo-entry"}}
-            requires: {{gpu_mb: 4000000}}
+            requires: {{gpu_mb: 999999}}
         """)
     module = load_catalog(root)["demo"]
     unmet = check_requirements(module)
