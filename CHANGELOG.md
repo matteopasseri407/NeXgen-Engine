@@ -8,6 +8,47 @@ This file tracks the **engine** (this repo). Your own data — manifests,
 instructions, skills, secrets — lives in your KnowledgeVault and is not part
 of any engine release.
 
+## [2.1.0] - 2026-08-26
+
+### Added
+
+- **Module hosting.** A repository carrying a `nexgen-module.yaml` at its root
+  is a module: a machine picks it up with `nexgen modules add <path>`, and the
+  engine installs and repairs what the manifest declares. Adding a module no
+  longer means editing the engine.
+- Manifest vocabulary for modules the catalog could not describe before:
+  `provides` (shims, systemd units, runtime hooks, config files, a compose
+  file) and `requires` (binaries, devices, groups, paths, free VRAM, and the
+  `setup` command that provisions them). Every field is declarative; none of
+  them runs module-supplied code.
+- `scope: host | shared`. The state file travels between machines through the
+  vault, so a flat map declares the same thing everywhere. A module bound to
+  one desktop now says so, and `modules set` writes it under that host by
+  itself. External modules default to `host`.
+- `health`: a command that proves a module works, not merely that its files are
+  present. Run by `nexgen doctor`, never by the guard cycle.
+- `nexgen modules add|remove` for external modules, and `--here|--everywhere`
+  as an explicit override of a module's declared scope.
+- The guard cycle installs, repairs and uninstalls declared modules. A deleted
+  shim or a disabled unit is drift like any other; a module declared `absent`
+  is actually removed, and only files the engine generated are touched.
+
+### Fixed
+
+- **The event sink emitted the hook's own JSON as the reply.** A Claude Stop
+  hook carries `{session_id, transcript_path, cwd, hook_event_name}` and no
+  reply text at all, and the sink fell back to the raw buffer. It now reads the
+  tail of the transcript and extracts the last assistant prose, skipping
+  `isSidechain` rows, which are subagent turns and not the reply. With no prose
+  it emits no text rather than something unreadable.
+- The sink no longer lets a CLI's internal session id shadow
+  `COCKPIT_SESSION_ID`. Consumers gate on the latter, so every event looked as
+  if it came from a session nobody had marked vocal, and was dropped in
+  silence.
+- The sink's end-to-end test waited on `accept()` without a deadline. It did
+  not fail, it hung, and took the rest of the suite with it.
+
+
 ## [2.0.5] - 2026-08-25
 
 ### Fixed
