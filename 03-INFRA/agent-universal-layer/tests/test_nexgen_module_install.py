@@ -7,6 +7,9 @@ ciclo di guardia glielo disfaceva sotto ogni mezz'ora.
 
 Qui si verifica il contratto nuovo: dichiarare non è attivare, l'installazione
 è idempotente, e un requisito non soddisfatto viene detto invece che ignorato.
+
+Gli import stanno in cima: `pythonpath` in pyproject mette gia'
+03-INFRA/scripts sul percorso di pytest, quindi non serve manipolarlo qui.
 """
 from __future__ import annotations
 
@@ -16,24 +19,19 @@ import textwrap
 from pathlib import Path
 
 import pytest
-
-SCRIPTS_DIR = Path(__file__).resolve().parents[2] / "scripts"
-if str(SCRIPTS_DIR) not in sys.path:
-    sys.path.insert(0, str(SCRIPTS_DIR))
-
-from nexgen_core.config import ConfigError  # noqa: E402
-from nexgen_core import module_install  # noqa: E402
-from nexgen_core.module_install import (  # noqa: E402
+from nexgen_core import module_install
+from nexgen_core.config import ConfigError
+from nexgen_core.module_install import (
     SHIM_MARKER,
-    install_compose_file,
-    run_health_check,
-    shim_path,
     check_requirements,
+    install_compose_file,
     install_declared_modules,
     install_module,
+    run_health_check,
+    shim_path,
     uninstall_module,
 )
-from nexgen_core.modules import (  # noqa: E402
+from nexgen_core.modules import (
     ModuleState,
     derive_state,
     external_paths,
@@ -75,15 +73,15 @@ def _desktop_catalog(tmp_path: Path, source: Path) -> Path:
             label: "Demo desktop module"
             kind: feature
             states: [absent, local]
-            source: "{source}"
+            source: "{source.as_posix()}"
             provides:
               shims:
-                demo: "{source}/bin/demo-entry"
+                demo: "{source.as_posix()}/bin/demo-entry"
               systemd_units: [systemd/demo.service]
               runtime_hooks: [event_sink]
             requires:
               binaries: [sh]
-              paths: ["{source}"]
+              paths: ["{source.as_posix()}"]
         """)
 
 
@@ -101,7 +99,7 @@ def test_a_repository_declares_itself_a_module(tmp_path: Path) -> None:
             kind: feature
             states: [absent, local]
             provides:
-              shims: {{demo: "{source}/bin/demo-entry"}}
+              shims: {{demo: "{source.as_posix()}/bin/demo-entry"}}
         """), encoding="utf-8")
 
     module = load_external_module(source)
@@ -109,7 +107,7 @@ def test_a_repository_declares_itself_a_module(tmp_path: Path) -> None:
     # Il repo e' la propria sorgente: ripeterla nel file sarebbe solo un modo
     # per sbagliarla.
     assert module.source_path == source
-    assert dict(module.provides.shims) == {"demo": f"{source}/bin/demo-entry"}
+    assert dict(module.provides.shims) == {"demo": f"{source.as_posix()}/bin/demo-entry"}
 
     catalog = load_catalog(ENGINE, external=[source])
     assert "demo" in catalog and "memory" in catalog, "si aggiunge, non sostituisce"
@@ -194,7 +192,7 @@ def test_install_writes_shim_and_unit(tmp_path: Path) -> None:
     finally:
         os.environ.pop("NEXGEN_DISABLE_HOST_MUTATIONS", None)
 
-    shim = home / ".local" / "bin" / "demo"
+    shim = shim_path(home / ".local" / "bin", "demo")
     unit = home / ".config" / "systemd" / "user" / "demo.service"
     assert shim.is_file() and os.access(shim, os.X_OK)
     assert str(source / "bin" / "demo-entry") in shim.read_text()
@@ -216,6 +214,7 @@ def test_install_is_idempotent(tmp_path: Path) -> None:
     assert first and not second
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="i symlink richiedono privilegi su Windows")
 def test_a_stale_symlink_shim_is_replaced(tmp_path: Path) -> None:
     """Un symlink lasciato da un'installazione precedente punta alla versione vecchia."""
     source = _module_source(tmp_path)
@@ -223,7 +222,7 @@ def test_a_stale_symlink_shim_is_replaced(tmp_path: Path) -> None:
     home = tmp_path / "home"
     bin_dir = home / ".local" / "bin"
     bin_dir.mkdir(parents=True)
-    stale = bin_dir / "demo"
+    stale = shim_path(bin_dir, "demo")
     stale.symlink_to("/usr/bin/false")
 
     os.environ["NEXGEN_DISABLE_HOST_MUTATIONS"] = "1"
@@ -241,7 +240,7 @@ def test_dry_run_writes_nothing(tmp_path: Path) -> None:
     home = tmp_path / "home"
     actions = install_module(module, home=home, dry_run=True)
     assert actions
-    assert not (home / ".local" / "bin" / "demo").exists()
+    assert not shim_path(home / ".local" / "bin", "demo").exists()
 
 
 def test_a_missing_shim_target_is_reported_not_written(tmp_path: Path) -> None:
@@ -251,7 +250,7 @@ def test_a_missing_shim_target_is_reported_not_written(tmp_path: Path) -> None:
     home = tmp_path / "home"
     actions = install_module(module, home=home)
     assert any("does not exist" in a for a in actions)
-    assert not (home / ".local" / "bin" / "demo").exists()
+    assert not shim_path(home / ".local" / "bin", "demo").exists()
 
 
 # --- dichiarare non è attivare -------------------------------------------
@@ -278,7 +277,7 @@ def test_a_declared_module_is_installed(tmp_path: Path) -> None:
     finally:
         os.environ.pop("NEXGEN_DISABLE_HOST_MUTATIONS", None)
     assert actions
-    assert (home / ".local" / "bin" / "demo").is_file()
+    assert shim_path(home / ".local" / "bin", "demo").is_file()
 
 
 # --- requisiti -----------------------------------------------------------
@@ -311,9 +310,9 @@ def test_a_busy_gpu_does_not_block_installation(tmp_path: Path) -> None:
             label: Demo
             kind: feature
             states: [absent, local]
-            source: "{source}"
+            source: "{source.as_posix()}"
             provides:
-              shims: {{demo: "{source}/bin/demo-entry"}}
+              shims: {{demo: "{source.as_posix()}/bin/demo-entry"}}
             requires: {{gpu_mb: 999999}}
         """)
     module = load_catalog(root)["demo"]
@@ -336,7 +335,7 @@ def test_missing_binary_blocks_and_is_named(tmp_path: Path) -> None:
             label: Demo
             kind: feature
             states: [absent, local]
-            source: "{source}"
+            source: "{source.as_posix()}"
             requires: {{binaries: [questo-binario-non-esiste-davvero]}}
         """)
     unmet = check_requirements(load_catalog(root)["demo"])
@@ -492,7 +491,7 @@ def _installed_demo(tmp_path: Path):
 
 def test_uninstall_removes_shim_and_unit(tmp_path: Path) -> None:
     module, home = _installed_demo(tmp_path)
-    shim = home / ".local" / "bin" / "demo"
+    shim = shim_path(home / ".local" / "bin", "demo")
     unit = home / ".config" / "systemd" / "user" / "demo.service"
     assert shim.is_file() and unit.is_file()
 
@@ -508,7 +507,7 @@ def test_uninstall_removes_shim_and_unit(tmp_path: Path) -> None:
 def test_uninstall_never_deletes_a_command_it_did_not_write(tmp_path: Path) -> None:
     """Un comando che l'utente ha messo a mano con lo stesso nome non e' nostro."""
     module, home = _installed_demo(tmp_path)
-    shim = home / ".local" / "bin" / "demo"
+    shim = shim_path(home / ".local" / "bin", "demo")
     shim.write_text("#!/bin/sh\n# roba mia, scritta a mano\nexit 0\n", encoding="utf-8")
 
     actions = uninstall_module(module, home=home)
@@ -518,7 +517,7 @@ def test_uninstall_never_deletes_a_command_it_did_not_write(tmp_path: Path) -> N
 
 def test_a_shim_we_wrote_carries_its_marker(tmp_path: Path) -> None:
     _module, home = _installed_demo(tmp_path)
-    body = (home / ".local" / "bin" / "demo").read_text()
+    body = shim_path(home / ".local" / "bin", "demo").read_text()
     assert SHIM_MARKER.format(module="demo") in body
 
 
@@ -530,12 +529,12 @@ def test_declaring_a_module_absent_uninstalls_it(tmp_path: Path) -> None:
     os.environ["NEXGEN_DISABLE_HOST_MUTATIONS"] = "1"
     try:
         install_declared_modules(derive_state(catalog, {"demo": "local"}, env={}), home=home)
-        assert (home / ".local" / "bin" / "demo").is_file()
+        assert shim_path(home / ".local" / "bin", "demo").is_file()
 
         install_declared_modules(derive_state(catalog, {"demo": "absent"}, env={}), home=home)
     finally:
         os.environ.pop("NEXGEN_DISABLE_HOST_MUTATIONS", None)
-    assert not (home / ".local" / "bin" / "demo").exists()
+    assert not shim_path(home / ".local" / "bin", "demo").exists()
 
 
 def test_uninstalling_twice_is_quiet(tmp_path: Path) -> None:
@@ -554,7 +553,7 @@ def test_uninstall_dry_run_removes_nothing(tmp_path: Path) -> None:
     module, home = _installed_demo(tmp_path)
     actions = uninstall_module(module, home=home, dry_run=True)
     assert actions
-    assert (home / ".local" / "bin" / "demo").is_file()
+    assert shim_path(home / ".local" / "bin", "demo").is_file()
 
 
 # --- le prese che mancavano ----------------------------------------------
@@ -573,9 +572,10 @@ def test_systemd_units_off_linux_are_reported_not_skipped(tmp_path: Path, monkey
     """Tacere lascerebbe il modulo con l'aria di essere installato."""
     source = _module_source(tmp_path)
     module = load_catalog(_desktop_catalog(tmp_path, source))["demo"]
-    monkeypatch.setattr(module_install.sys, "platform", "win32")
+    if sys.platform.startswith("linux"):
+        monkeypatch.setattr(module_install.sys, "platform", "win32")
     actions = module_install.install_systemd_units(module, tmp_path / "home")
-    assert any("systemd unit(s) declared" in a and "win32" in a for a in actions)
+    assert any("systemd unit(s) declared" in a for a in actions)
     assert not (tmp_path / "home" / ".config").exists()
 
 

@@ -20,7 +20,13 @@ from pathlib import Path
 import pytest
 
 SINK = Path(__file__).resolve().parents[1] / "hooks" / "nexgen-event-sink.mjs"
-pytestmark = pytest.mark.skipif(shutil.which("node") is None, reason="node non disponibile")
+pytestmark = [
+    pytest.mark.skipif(shutil.which("node") is None, reason="node non disponibile"),
+    # Il sink parla su un socket unix: su Windows usa una named pipe, che questo
+    # collettore non sa ascoltare. Il percorso Windows e' coperto dal ramo
+    # fast-path in test_runtimes.
+    pytest.mark.skipif(not hasattr(socket, "AF_UNIX"), reason="AF_UNIX non disponibile"),
+]
 
 
 class Collector:
@@ -41,7 +47,8 @@ class Collector:
         while True:
             try:
                 conn, _ = self._srv.accept()
-            except Exception:
+            except OSError:
+                # Timeout o socket chiuso da close(): il collettore ha finito.
                 return
             data = b""
             while True:
@@ -67,7 +74,7 @@ class Collector:
         subprocess.run(
             ["node", str(SINK), event, cli],
             input=json.dumps(payload), text=True, env=self.env(cli=cli, **kw),
-            timeout=15, capture_output=True,
+            timeout=15, capture_output=True, check=False,
         )
         time.sleep(0.35)
 
@@ -174,7 +181,7 @@ def test_the_opencode_plugin_path_obeys_the_same_rules(sink) -> None:
         encoding="utf-8",
     )
     subprocess.run(["node", str(driver)], env=sink.env(session="voice-oc000001", cli="opencode"),
-                   timeout=15, capture_output=True)
+                   timeout=15, capture_output=True, check=False)
     time.sleep(0.35)
     assert len(sink.events) == 1
     assert sink.events[0]["session_id"] == "voice-oc000001"
@@ -187,5 +194,5 @@ def test_no_socket_means_no_work(sink) -> None:
     env["NEXGEN_EVENT_IPC_PATH"] = os.path.join(sink.dir, "non-esiste.sock")
     proc = subprocess.run(["node", str(SINK), "on_done", "claude"],
                           input='{"hook_event_name":"Stop"}', text=True, env=env,
-                          timeout=15, capture_output=True)
+                          timeout=15, capture_output=True, check=False)
     assert proc.returncode == 0
