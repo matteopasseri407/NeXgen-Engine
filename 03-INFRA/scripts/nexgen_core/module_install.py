@@ -193,9 +193,27 @@ def run_health_check(module: ModuleDef, timeout: int = 60) -> tuple[bool | None,
     except (OSError, subprocess.SubprocessError) as exc:
         return None, f"health command could not run: {exc}"
     if proc.returncode == 0:
-        return True, (proc.stdout.strip().splitlines() or ["healthy"])[-1]
-    detail = (proc.stderr or proc.stdout).strip().splitlines()
-    return False, detail[-1] if detail else f"exit {proc.returncode}"
+        return True, _health_detail(proc.stdout, "healthy")
+    return False, _health_detail(
+        f"{proc.stdout}\n{proc.stderr}", f"exit {proc.returncode}"
+    )
+
+
+# What a health command says about a failure, in the order we would rather hear
+# it. Taking the last line instead hands back whatever the module logged last,
+# which is usually a startup notice and never the reason.
+_FAILURE_MARKERS = ("[FAIL]", "FAIL:", "ERROR", "Error:", "error:", "Traceback")
+
+
+def _health_detail(output: str, fallback: str) -> str:
+    lines = [line.strip() for line in (output or "").splitlines() if line.strip()]
+    if not lines:
+        return fallback
+    for marker in _FAILURE_MARKERS:
+        hits = [line for line in lines if marker in line]
+        if hits:
+            return hits[0][:200]
+    return lines[-1][:200]
 
 
 def _write_if_different(path: Path, content: str, dry_run: bool) -> bool:

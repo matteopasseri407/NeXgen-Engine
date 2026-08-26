@@ -24,6 +24,7 @@ from nexgen_core import module_install
 from nexgen_core.config import ConfigError
 from nexgen_core.module_install import (
     SHIM_MARKER,
+    _health_detail,
     check_requirements,
     install_compose_file,
     install_declared_modules,
@@ -682,3 +683,16 @@ def test_config_files_cannot_escape_the_home(tmp_path: Path) -> None:
     actions = module_install.install_config_files(module, tmp_path / "home")
     assert any("refused" in a for a in actions)
     assert not Path("/etc/x.conf").exists()
+
+
+def test_the_reason_of_a_failure_beats_the_last_line() -> None:
+    """L'ultima riga di un comando e' quasi sempre una nota di avvio, non il
+    motivo. Restituirla lascia una diagnosi che non diagnostica niente."""
+    uscita = (
+        "INFO hotkeys: using evdev backend\n"
+        "[FAIL] Qwen3-ASR is NOT loaded while the engine is running\n"
+        "INFO audio: capture stream started\n"
+    )
+    assert "Qwen3-ASR is NOT loaded" in _health_detail(uscita, "boh")
+    assert _health_detail("", "boh") == "boh"
+    assert _health_detail("solo una riga\n", "boh") == "solo una riga"
