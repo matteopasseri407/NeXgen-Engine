@@ -13,6 +13,7 @@ Gli import stanno in cima: `pythonpath` in pyproject mette gia'
 """
 from __future__ import annotations
 
+import json
 import os
 import sys
 import textwrap
@@ -182,6 +183,7 @@ def test_unknown_runtime_hook_is_refused(tmp_path: Path) -> None:
 # --- installazione -------------------------------------------------------
 
 
+@pytest.mark.skipif(not sys.platform.startswith("linux"), reason="unit systemd solo su Linux")
 def test_install_writes_shim_and_unit(tmp_path: Path) -> None:
     source = _module_source(tmp_path)
     module = load_catalog(_desktop_catalog(tmp_path, source))["demo"]
@@ -489,6 +491,7 @@ def _installed_demo(tmp_path: Path):
     return module, home
 
 
+@pytest.mark.skipif(not sys.platform.startswith("linux"), reason="unit systemd solo su Linux")
 def test_uninstall_removes_shim_and_unit(tmp_path: Path) -> None:
     module, home = _installed_demo(tmp_path)
     shim = shim_path(home / ".local" / "bin", "demo")
@@ -574,8 +577,10 @@ def test_systemd_units_off_linux_are_reported_not_skipped(tmp_path: Path, monkey
     module = load_catalog(_desktop_catalog(tmp_path, source))["demo"]
     if sys.platform.startswith("linux"):
         monkeypatch.setattr(module_install.sys, "platform", "win32")
-    actions = module_install.install_systemd_units(module, tmp_path / "home")
-    assert any("systemd unit(s) declared" in a for a in actions)
+    note: list[str] = []
+    actions = module_install.install_systemd_units(module, tmp_path / "home", log=note.append)
+    assert any("systemd unit(s) declared" in n for n in note)
+    assert not actions, "un avviso non e' un cambiamento"
     assert not (tmp_path / "home" / ".config").exists()
 
 
@@ -613,23 +618,39 @@ def test_a_stack_the_engine_never_heard_of_is_refused(tmp_path: Path) -> None:
         load_catalog(ENGINE, external=[source])
 
 
-def test_health_says_installed_from_working(tmp_path: Path) -> None:
-    source = tmp_path / "repo"
-    source.mkdir()
+def _manifest_with_health(source: Path, command: str) -> None:
+    """Scrive un manifesto con un comando di salute, citato per YAML."""
     (source / "nexgen-module.yaml").write_text(
-        "schema_version: 2\nmodules:\n  demo: {label: D, kind: feature, states: [absent, local], health: \"exit 0\"}\n",
+        "schema_version: 2\n"
+        "modules:\n"
+        "  demo:\n"
+        "    label: D\n"
+        "    kind: feature\n"
+        "    states: [absent, local]\n"
+        f"    health: {json.dumps(command)}\n",
         encoding="utf-8",
     )
+
+
+def test_health_says_installed_from_working(tmp_path: Path) -> None:
+    """Il comando gira via shell, che su Windows e' cmd.exe: niente builtin
+    che differiscono fra le due (`;` non separa comandi in cmd). L'interprete
+    che sta gia' eseguendo i test c'e' su entrambe."""
+    source = tmp_path / "repo"
+    source.mkdir()
+    py = Path(sys.executable).as_posix()
+
+    _manifest_with_health(source, f'"{py}" -c "raise SystemExit(0)"')
     healthy, _ = run_health_check(load_external_module(source))
     assert healthy is True
 
-    (source / "nexgen-module.yaml").write_text(
-        "schema_version: 2\nmodules:\n  demo: {label: D, kind: feature, states: [absent, local], "
-        "health: \"echo rotto sul serio >&2; exit 3\"}\n",
-        encoding="utf-8",
+    _manifest_with_health(
+        source,
+        f'"{py}" -c "import sys; sys.stderr.write(\'rotto sul serio\'); raise SystemExit(3)"',
     )
     healthy, detail = run_health_check(load_external_module(source))
-    assert healthy is False and "rotto sul serio" in detail
+    assert healthy is False
+    assert "rotto sul serio" in detail
 
 
 def test_no_health_command_is_not_a_failure(tmp_path: Path) -> None:

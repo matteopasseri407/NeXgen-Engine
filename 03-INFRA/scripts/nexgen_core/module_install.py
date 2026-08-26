@@ -289,15 +289,25 @@ def install_compose_file(module: ModuleDef, engine_root: Path | None, dry_run: b
     return actions
 
 
-def install_systemd_units(module: ModuleDef, home: Path, dry_run: bool = False) -> list[str]:
-    """Copy and enable the module's user units, without touching the engine's."""
+def install_systemd_units(
+    module: ModuleDef,
+    home: Path,
+    dry_run: bool = False,
+    log: Callable[[str], None] = lambda _msg: None,
+) -> list[str]:
+    """Copy and enable the module's user units, without touching the engine's.
+
+    Returns only what CHANGED. A note about the platform is reported through
+    ``log``: keeping it among the actions would make every guard cycle look
+    like a modification, and idempotence would be a claim rather than a fact.
+    """
     actions: list[str] = []
     if not module.provides.systemd_units:
         return actions
     if not sys.platform.startswith("linux"):
         # Saying nothing here would leave the module looking installed on a
         # platform where half of it cannot exist.
-        actions.append(
+        log(
             f"{module.id}: {len(module.provides.systemd_units)} systemd unit(s) declared, "
             f"but this is {sys.platform}: they were not installed"
         )
@@ -354,7 +364,7 @@ def install_module(
     actions = install_shims(module, home_dir, dry_run)
     actions += install_config_files(module, home_dir, dry_run)
     actions += install_compose_file(module, engine_root, dry_run)
-    actions += install_systemd_units(module, home_dir, dry_run)
+    actions += install_systemd_units(module, home_dir, dry_run, log)
     # runtime_hooks are deliberately not rendered here: the guard cycle already
     # owns CLI integration through runtimes/, and two writers on the same
     # settings file is the failure this whole change exists to remove. The
