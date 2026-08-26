@@ -18,9 +18,9 @@ import os
 import shutil
 import subprocess
 import sys
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, Sequence
 
 from nexgen_core.modules import ModuleDef, ModuleState
 from nexgen_core.paths import resolve_home
@@ -84,7 +84,7 @@ def _free_gpu_mb() -> int | None:
     try:
         proc = subprocess.run(
             [nvidia_smi, "--query-gpu=memory.free", "--format=csv,noheader,nounits"],
-            capture_output=True, text=True, timeout=10,
+            capture_output=True, text=True, timeout=10, check=False,
         )
     except (OSError, subprocess.SubprocessError):
         return None
@@ -186,7 +186,7 @@ def run_health_check(module: ModuleDef, timeout: int = 60) -> tuple[bool | None,
     try:
         proc = subprocess.run(
             module.health, shell=True, cwd=str(cwd) if cwd else None,
-            capture_output=True, text=True, timeout=timeout,
+            capture_output=True, text=True, timeout=timeout, check=False,
         )
     except subprocess.TimeoutExpired:
         return False, f"health command timed out after {timeout}s"
@@ -364,7 +364,7 @@ def install_systemd_units(
 
 def _run(args: Sequence[str], timeout: int = 30) -> subprocess.CompletedProcess | None:
     try:
-        return subprocess.run(args, capture_output=True, text=True, timeout=timeout)
+        return subprocess.run(args, capture_output=True, text=True, timeout=timeout, check=False)
     except (OSError, subprocess.SubprocessError):
         return None
 
