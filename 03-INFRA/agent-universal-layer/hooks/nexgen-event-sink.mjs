@@ -69,9 +69,21 @@ function payloadLine(eventType, cliName, text, sessionId) {
   );
 }
 
+function stripThinking(str) {
+  if (!str || typeof str !== "string") return "";
+  return str
+    .replace(/<think>[\s\S]*?<\/think>/gi, "")
+    .replace(/<thought>[\s\S]*?<\/thought>/gi, "")
+    .replace(/\[thought\][\s\S]*?\[\/thought\]/gi, "")
+    .replace(/<reasoning>[\s\S]*?<\/reasoning>/gi, "")
+    .replace(/<\/?(?:think|thought|reasoning)>/gi, "")
+    .trim();
+}
+
 /**
- * Extract assistant prose from a single row object in transcript JSONL.
- * Supports:
+ * Normalizes one row of a JSONL transcript into a reply string, or "" if not a reply.
+ *
+ * Supports multi-dialect JSONL transcripts:
  * - Claude: row.message.role === "assistant" (string or array of text blocks)
  * - Antigravity: row.type === "PLANNER_RESPONSE" / row.source === "MODEL" (string or array)
  * - Codex / generic: row.role === "assistant"
@@ -102,15 +114,15 @@ function extractFromRow(row) {
 
   const content = row.content ?? row.message?.content ?? row.text;
   if (typeof content === "string") {
-    const t = content.trim();
+    const t = stripThinking(content);
     if (t) return t;
   } else if (Array.isArray(content)) {
     const t = content
-      .filter((b) => b && (b.type === "text" || typeof b === "string"))
+      .filter((b) => b && (b.type === "text" || typeof b === "string") && !b.thought && !b.reasoning)
       .map((b) => (typeof b === "string" ? b : b.text || ""))
-      .join("\n")
-      .trim();
-    if (t) return t;
+      .join("\n");
+    const cleaned = stripThinking(t);
+    if (cleaned) return cleaned;
   }
   return "";
 }
@@ -166,7 +178,10 @@ function extractProse(payload, allowTranscript) {
 
   for (const key of keys) {
     const value = payload[key];
-    if (typeof value === "string" && value.trim()) return value;
+    if (typeof value === "string") {
+      const cleaned = stripThinking(value);
+      if (cleaned) return cleaned;
+    }
   }
 
   if (allowTranscript) {
@@ -193,11 +208,53 @@ function send(eventType, cliName, text, sessionId, onDone) {
   }
 }
 
+function getOpencodeReplyFromDb(sessionID) {
+  if (!sessionID) return "";
+  try {
+    const { DatabaseSync } = require("node:sqlite");
+    const dbPath = join(homedir(), ".local", "share", "opencode", "opencode.db");
+    if (!existsSync(dbPath)) return "";
+    const db = new DatabaseSync(dbPath, { readOnly: true });
+    const msgStmt = db.prepare(
+      "SELECT id FROM message WHERE session_id = ? ORDER BY time_created DESC LIMIT 5"
+    );
+    const msgs = msgStmt.all(sessionID);
+    let reply = "";
+    for (const m of msgs) {
+      const partStmt = db.prepare(
+        "SELECT data FROM part WHERE message_id = ? ORDER BY time_created ASC"
+      );
+      const parts = partStmt
+        .all(m.id)
+        .map((r) => {
+          try {
+            return JSON.parse(r.data);
+          } catch {
+            return null;
+          }
+        })
+        .filter(Boolean);
+      const text = parts
+        .filter((p) => p && p.type === "text" && typeof p.text === "string")
+        .map((p) => p.text)
+        .join("\n")
+        .trim();
+      if (text) {
+        reply = text;
+        break;
+      }
+    }
+    db.close();
+    return stripThinking(reply);
+  } catch {
+    return "";
+  }
+}
+
 // --- 1. OpenCode plugin ----------------------------------------------------
 
 export default async function (input) {
   const client = input?.client;
-  const lastTextBySession = new Map();
 
   return {
     event: async ({ event }) => {
@@ -206,16 +263,6 @@ export default async function (input) {
 
       const type = event.type;
       const props = event.properties || {};
-
-      if (type === "message.part.updated" || type === "message.part.delta") {
-        const part = props.part || props;
-        const sessionID = props.sessionID || part.sessionID;
-        if (sessionID && part && (part.type === "text" || typeof part.text === "string")) {
-          if (part.text && typeof part.text === "string") {
-            lastTextBySession.set(sessionID, part.text);
-          }
-        }
-      }
 
       if (type === "step.finish") {
         const text = props.stepOutput || "";
@@ -227,7 +274,7 @@ export default async function (input) {
 
       if (type === "session.idle") {
         const sessionID = props.sessionID || "";
-        let replyText = lastTextBySession.get(sessionID) || "";
+        let replyText = "";
 
         if (client && sessionID && typeof client.session?.messages === "function") {
           try {
@@ -239,9 +286,8 @@ export default async function (input) {
                 if (m?.info?.role === "assistant" || m?.role === "assistant") {
                   const parts = m.parts || [];
                   const text = parts
-                    .filter((p) => p && (p.type === "text" || typeof p.text === "string" || typeof p === "string"))
-                    .map((p) => (typeof p === "string" ? p : (typeof p.text === "string" ? p.text : "")))
-                    .filter(Boolean)
+                    .filter((p) => p && p.type === "text" && typeof p.text === "string")
+                    .map((p) => p.text)
                     .join("\n")
                     .trim();
                   if (text) {
@@ -254,21 +300,22 @@ export default async function (input) {
           } catch {}
         }
 
-        if (sessionID) {
-          lastTextBySession.delete(sessionID);
+        if (!replyText && sessionID) {
+          replyText = getOpencodeReplyFromDb(sessionID);
         }
-        send("on_done", "opencode", replyText, sessionID);
+
+        send("on_done", "opencode", stripThinking(replyText), sessionID);
       }
     },
     // Compatibility hooks if invoked directly by older/future runners
     "session.idle": async (event) => {
       if (!isVocal() || !socketReady()) return;
-      send("on_done", "opencode", event?.lastAssistantMessage || "", event?.sessionID || "");
+      const text = stripThinking(event?.lastAssistantMessage || "");
+      send("on_done", "opencode", text, event?.sessionID || "");
     },
     "step.finish": async (event) => {
       if (!isVocal() || !socketReady()) return;
-      const text = event?.stepOutput || "";
-      if (text) send("on_step", "opencode", text, event?.sessionID || "");
+      send("on_step", "opencode", event?.stepOutput || "", event?.sessionID || "");
     },
   };
 }
