@@ -8,6 +8,17 @@ This file tracks the **engine** (this repo). Your own data — manifests,
 instructions, skills, secrets — lives in your KnowledgeVault and is not part
 of any engine release.
 
+## [2.1.1] - 2026-08-27
+
+### Fixed
+
+- **Universal Event Sink multi-dialect and reasoning filtering**:
+  - Multi-dialect JSONL transcript parsing (`extractFromRow`) supporting Antigravity (`type: "PLANNER_RESPONSE"` / `source: "MODEL"`), Claude, and Codex.
+  - Aligned Antigravity `Stop` lifecycle hook structure in `hooks.json` to flat handler array per native Antigravity specifications.
+  - OpenCode plugin: implemented turn-end snapshot on `session.idle` with strict whitelist on `type === "text"` parts and local SQLite (`opencode.db`) fallback.
+  - Stripped reasoning / internal thinking blocks (`<think>`, `<thought>`, `[thought]`, `<reasoning>`) to prevent leaking chain-of-thought into voice TTS.
+  - Unified session ID propagation across all runtimes (`COCKPIT_SESSION_ID || conversationId || session_id || sessionID`).
+
 ## [2.1.0] - 2026-08-26
 
 ### Added
