@@ -616,3 +616,46 @@ def test_nexgen_event_sink_script_e2e_socket_and_failsafe(tmp_path: Path):
         assert '"event":"on_step"' in data
         assert '"cli":"codex"' in data
         assert '"text":"analyzing code"' in data
+
+        # 3. Antigravity Stop hook with transcriptPath (JSONL format)
+        transcript = tmp_path / "transcript.jsonl"
+        transcript.write_text(
+            '{"step_index":0,"source":"USER_EXPLICIT","type":"USER_INPUT","content":"ciao"}\n'
+            '{"step_index":1,"source":"MODEL","type":"PLANNER_RESPONSE","content":"Risposta vocale di prova da Antigravity."}\n',
+            encoding="utf-8",
+        )
+        srv2 = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        sock_live2 = tmp_path / "live2.sock"
+        srv2.bind(str(sock_live2))
+        srv2.listen(1)
+        srv2.settimeout(20)
+        env["NEXGEN_EVENT_IPC_PATH"] = str(sock_live2)
+        env.pop("COCKPIT_SESSION_ID", None)
+
+        agy_payload = json.dumps({
+            "conversationId": "test-agy-conv-123",
+            "transcriptPath": str(transcript),
+            "terminationReason": "model_stop",
+        })
+        proc2 = subprocess.Popen(
+            ["node", str(script_path), "on_done", "antigravity"],
+            env=env,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        proc2.stdin.write(agy_payload)
+        proc2.stdin.close()
+
+        conn2, _ = srv2.accept()
+        data2 = conn2.recv(4096).decode("utf-8")
+        conn2.close()
+        srv2.close()
+        proc2.wait(timeout=5)
+        assert proc2.returncode == 0
+        assert '"event":"on_done"' in data2
+        assert '"cli":"antigravity"' in data2
+        assert '"text":"Risposta vocale di prova da Antigravity."' in data2
+        assert '"session_id":"test-agy-conv-123"' in data2
+
