@@ -239,8 +239,9 @@ export default async function (input) {
                 if (m?.info?.role === "assistant" || m?.role === "assistant") {
                   const parts = m.parts || [];
                   const text = parts
-                    .filter((p) => p && (p.type === "text" || typeof p.text === "string"))
-                    .map((p) => (typeof p.text === "string" ? p.text : p))
+                    .filter((p) => p && (p.type === "text" || typeof p.text === "string" || typeof p === "string"))
+                    .map((p) => (typeof p === "string" ? p : (typeof p.text === "string" ? p.text : "")))
+                    .filter(Boolean)
                     .join("\n")
                     .trim();
                   if (text) {
@@ -253,6 +254,9 @@ export default async function (input) {
           } catch {}
         }
 
+        if (sessionID) {
+          lastTextBySession.delete(sessionID);
+        }
         send("on_done", "opencode", replyText, sessionID);
       }
     },
