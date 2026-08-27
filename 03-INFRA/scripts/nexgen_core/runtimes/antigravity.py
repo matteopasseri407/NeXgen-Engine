@@ -150,9 +150,9 @@ class AntigravityRuntime(Runtime):
 
         desired_entry = {
             "enabled": True,
-            "Stop": [{
-                "hooks": [{"type": "command", "command": command_done, "timeout": 2}],
-            }],
+            "Stop": [
+                {"type": "command", "command": command_done, "timeout": 2},
+            ],
             "PreToolUse": [{
                 "matcher": "*",
                 "hooks": [{"type": "command", "command": command_step, "timeout": 2}],
