@@ -601,3 +601,46 @@ def test_nexgen_event_sink_script_e2e_socket_and_failsafe(tmp_path: Path):
     with pytest.raises(socket.timeout):
         srv2.accept()
     srv2.close()
+
+    # 4. Antigravity Stop hook with transcriptPath (JSONL format)
+    transcript = tmp_path / "transcript.jsonl"
+    transcript.write_text(
+        '{"step_index":0,"source":"USER_EXPLICIT","type":"USER_INPUT","content":"ciao"}\n'
+        '{"step_index":1,"source":"MODEL","type":"PLANNER_RESPONSE","content":"Risposta vocale di prova da Antigravity."}\n',
+        encoding="utf-8",
+    )
+    srv3 = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    sock_live3 = tmp_path / "live3.sock"
+    srv3.bind(str(sock_live3))
+    srv3.listen(1)
+    srv3.settimeout(20)
+    env3 = os.environ.copy()
+    env3["COCKPIT_VOCALE"] = "1"
+    env3["NEXGEN_EVENT_IPC_PATH"] = str(sock_live3)
+
+    agy_payload = json.dumps({
+        "conversationId": "test-agy-conv-123",
+        "transcriptPath": str(transcript),
+        "terminationReason": "model_stop",
+    })
+    proc3 = subprocess.Popen(
+        ["node", str(script_path), "on_done", "antigravity"],
+        env=env3,
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    proc3.stdin.write(agy_payload)
+    proc3.stdin.close()
+
+    conn3, _ = srv3.accept()
+    data3 = conn3.recv(4096).decode("utf-8")
+    conn3.close()
+    srv3.close()
+    proc3.wait(timeout=5)
+    assert proc3.returncode == 0
+    assert '"event":"on_done"' in data3
+    assert '"cli":"antigravity"' in data3
+    assert '"text":"Risposta vocale di prova da Antigravity."' in data3
+    assert '"session_id":"test-agy-conv-123"' in data3
