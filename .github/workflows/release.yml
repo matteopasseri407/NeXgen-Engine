@@ -100,6 +100,21 @@ jobs:
           print(body[:400])
           PY
 
+      - name: Build distribution artifacts
+        # The sdist is the single byte source for everything downstream:
+        # pipx/uv users, the Homebrew formula (which points at this exact
+        # asset and verifies its sha256), and PyPI when that channel is
+        # configured. One artifact, one hash, verified in three places.
+        run: |
+          python -m pip install --upgrade build
+          python -m build --sdist --wheel
+
+      - name: Checksums
+        run: |
+          cd dist
+          sha256sum * > SHA256SUMS
+          cat SHA256SUMS
+
       - name: Publish
         env:
           GH_TOKEN: ${{ github.token }}
@@ -111,3 +126,45 @@ jobs:
             --title "NeXgen Engine v$VERSION" \
             --notes-file RELEASE_NOTES.md \
             --verify-tag
+          # Assets attach to the release created above; a missing dist/ is
+          # a build failure already caught, never a silent asset-less tag.
+          gh release upload "$TAG" dist/*
+
+      - name: Update the Homebrew tap
+        # Gated on the secret: until the maintainer creates the tap
+        # repository and registers HOMEBREW_TAP_TOKEN, this step is a
+        # visible skip, not a failure. See docs/release-packages.md.
+        env:
+          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          HOMEBREW_TAP_REPO: matteopasseri407/homebrew-nexgen
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+          VERSION: ${{ steps.check.outputs.version }}
+        if: env.HOMEBREW_TAP_TOKEN != ''
+        run: |
+          set -euo pipefail
+          asset="$(ls dist/nexgen_engine-*.tar.gz)"
+          sha="$(sha256sum "$asset" | cut -d' ' -f1)"
+          tap="$(mktemp -d)"
+          git clone --depth 1 "https://x-access-token:${HOMEBREW_TAP_TOKEN}@github.com/${HOMEBREW_TAP_REPO}.git" "$tap"
+          python3 03-INFRA/scripts/release_packages.py \
+            --version "$VERSION" \
+            --asset-url "https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}/$(basename "$asset")" \
+            --asset-sha256 "$sha" \
+            --out-dir "$tap/Formula"
+          git -C "$tap" add Formula/nexgen.rb
+          git -C "$tap" -c user.name=nexgen-release-bot -c user.email=nexgen-release-bot@users.noreply.github.com \
+            commit -m "nexgen-engine $VERSION"
+          git -C "$tap" push origin HEAD
+
+      - name: Publish to PyPI
+        # Same gate: a per-release truth. Until the maintainer registers
+        # the token, packages ship as GitHub release assets only. When it
+        # is set, `uv tool install nexgen-engine` becomes real instead of
+        # aspirational.
+        env:
+          PYPI_API_TOKEN: ${{ secrets.PYPI_API_TOKEN }}
+        if: env.PYPI_API_TOKEN != ''
+        run: |
+          python -m pip install --upgrade twine
+          python -m twine upload --non-interactive -u __token__ -p "$PYPI_API_TOKEN" dist/*

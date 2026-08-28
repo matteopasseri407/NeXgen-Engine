@@ -57,12 +57,66 @@ def expand_placeholders(text: str, context: dict[str, str] | None = None) -> str
             var_name, default_val = var_expr.split(":-", 1)
         else:
             var_name, default_val = var_expr, ""
-
         if var_name in ctx:
             return ctx[var_name]
         return os.environ.get(var_name, default_val)
 
     return re.sub(r"\$\{([^}]+)\}", _replace_match, text)
+
+
+#: The one templating dialect the renderer speaks, deliberately tiny:
+#: `{{ .var }}` for variables and `{{ if eq .os "x" }}A{{ else }}B{{ end }}`
+#: for per-OS branches. It exists because the vault is one file shared by
+#: Linux and Windows machines, and duplicating a whole server entry into a
+#: `windows:` block because ONE arg carries a path is the hand-synced copy
+#: the architecture forbids.
+_IF_BLOCK_RE = re.compile(
+    r"\{\{\s*if\s+eq\s+\.([A-Za-z_][A-Za-z0-9_]*)\s+\"([^\"]*)\"\s*\}\}"
+    r"(.*?)"
+    r"(?:\{\{\s*else\s*\}\}(.*?))?"
+    r"\{\{\s*end\s*\}\}",
+    re.DOTALL,
+)
+_TEMPLATE_RE = re.compile(r"\{\{\s*(.+?)\s*\}\}")
+_VAR_RE = re.compile(r"^\.([A-Za-z_][A-Za-z0-9_]*)$")
+
+
+class TemplateError(ConfigError):
+    """The manifest carries an inline template the engine cannot honor."""
+
+
+def expand_inline_templates(text: str, context: dict[str, str]) -> str:
+    """Expands `{{ .var }}` and `{{ if eq .var "x" }}…{{ else }}…{{ end }}`.
+
+    Runs BEFORE `${VAR}` expansion, so a selected branch may itself carry
+    environment references. Unknown variables and malformed blocks are
+    errors, never silent passthrough: an unexpanded `{{ }}` would land in a
+    CLI config as literal text, which is the kind of quiet wrong this
+    engine exists to prevent.
+    """
+    if "{{" not in text:
+        return text
+
+    def _expand_if(match: re.Match) -> str:
+        name, wanted, then_part, else_part = match.groups()
+        if name not in context:
+            raise TemplateError(f"template condition on unknown variable '.{name}'")
+        chosen = then_part if context[name] == wanted else (else_part or "")
+        return expand_inline_templates(chosen, context)
+
+    text = _IF_BLOCK_RE.sub(_expand_if, text)
+
+    def _expand_var(match: re.Match) -> str:
+        block = match.group(1)
+        var_match = _VAR_RE.match(block)
+        if not var_match:
+            raise TemplateError(f"unsupported template block '{{{{ {block} }}}}'")
+        name = var_match.group(1)
+        if name not in context:
+            raise TemplateError(f"unknown template variable '.{name}'")
+        return context[name]
+
+    return _TEMPLATE_RE.sub(_expand_var, text)
 
 
 def load_mcp_manifest(path: Path) -> dict[str, Any]:

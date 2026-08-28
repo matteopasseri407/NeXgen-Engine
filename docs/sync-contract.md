@@ -96,6 +96,33 @@ preflight as `nexgen preflight`. It loads the versioned MCP manifest
 present, and fails the transaction if either is not well-formed (not a
 YAML map, or missing its required top-level section).
 
+### Writing the manifest: `nexgen mcp add`
+
+The manifest remains the single canonical declaration. Hand edits stay
+allowed; `nexgen mcp add <name> --targets <clis|all>` is the supported way
+to write one without hand-authoring YAML:
+
+- validated before any write (safe manifest key, exactly one of
+  `--command`/`--url`, http(s) URL, single-line strings, auth via env-var
+  name only, secret-shaped `--env` values refused with the `${VAR}` form);
+- written through the same atomic path as `--adopt --apply`: backup
+  (`.bak-<timestamp>`), re-validation by reload, rollback to the original
+  on any failure;
+- a name already declared or listed under `retired_servers` is refused;
+- entries mount by default (`tier: core`); `--lazy` routes them through the
+  proxy instead, and nothing is rendered at add time — the next sync/guard
+  regenerates the CLIs from the manifest, exactly as for hand edits.
+
+### Inline per-OS templates
+
+Manifest string values may carry `{{ .os }}`, `{{ .home }}`, `{{ .vault }}`,
+`{{ .engine }}` and `{{ if eq .os "windows" }}…{{ else }}…{{ end }}`, so one
+declaration covers Linux and Windows machines without duplicating an entry
+into a `windows:` block when only one path differs (that override remains
+valid for whole-entry swaps). The renderer and the lazy proxy expand the
+same dialect; expansion runs before `${VAR}` expansion; an unknown variable
+or malformed block fails the render closed.
+
 Both manifests carry `schema_version: 1` and are read tolerantly per the
 forward-compatibility invariant: an individual connector or skill entry that
 is malformed, or missing a required field, is skipped with a warning rather

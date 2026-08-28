@@ -27,7 +27,7 @@ SCRIPTS_DIR = Path(__file__).resolve().parents[1]
 if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
-from nexgen_core.config import expand_placeholders, load_mcp_manifest
+from nexgen_core.config import expand_inline_templates, expand_placeholders, load_mcp_manifest
 from nexgen_core.i18n import t
 from nexgen_core.jsonc import parse_jsonc, set_jsonc_top_level_value
 from nexgen_core.paths import resolve_engine_root, resolve_home, resolve_vault_data
@@ -56,6 +56,23 @@ class McpRenderer:
             "AGENT_VAULT_DATA": str(self.vault_data),
             "KNOWLEDGE_VAULT_PATH": str(Path(os.environ.get("KNOWLEDGE_VAULT_PATH") or self.vault_data)),
         }
+        # Inline per-OS templating context: one manifest line can carry both
+        # dialects instead of duplicating an entry into a `windows:` block
+        # because a single arg holds a path.
+        self.template_context = {
+            "os": platform.system().lower(),
+            "home": str(self.home),
+            "vault": str(self.vault_data),
+            "engine": str(self.engine_root),
+        }
+
+    def _expand_value(self, text: str) -> str:
+        """One string value of a manifest entry, fully resolved: inline
+        templates first (they select the branch), then ${VAR} placeholders
+        inside whatever the branch chose. Unknown templates fail the render:
+        literal `{{ }}` in a CLI config is the quiet wrong."""
+        expanded = expand_inline_templates(text, self.template_context)
+        return expand_placeholders(expanded, self.path_placeholders)
 
     def _normalize_windows_shim(self, exe: str) -> str:
         """Normalizes common executables on Windows (npx -> npx.cmd, python3 -> python)."""
@@ -155,29 +172,29 @@ class McpRenderer:
             cmd = entry.get("command") or entry.get("cmd")
             args = entry.get("args", [])
             if isinstance(cmd, list):
-                resolved_cmd = [expand_placeholders(str(c), self.path_placeholders) for c in cmd]
+                resolved_cmd = [self._expand_value(str(c)) for c in cmd]
                 if IS_WINDOWS and resolved_cmd:
                     resolved_cmd[0] = self._normalize_windows_shim(resolved_cmd[0])
                 entry["command"] = resolved_cmd[0] if resolved_cmd else ""
                 entry["args"] = resolved_cmd[1:]
             elif isinstance(cmd, str):
-                expanded_cmd = expand_placeholders(cmd, self.path_placeholders)
+                expanded_cmd = self._expand_value(cmd)
                 if IS_WINDOWS:
                     expanded_cmd = self._normalize_windows_shim(expanded_cmd)
                 entry["command"] = expanded_cmd
                 if isinstance(args, list):
-                    entry["args"] = [expand_placeholders(str(a), self.path_placeholders) for a in args]
+                    entry["args"] = [self._expand_value(str(a)) for a in args]
                 else:
                     entry["args"] = []
 
             # URL resolution
             if entry.get("url"):
-                entry["url"] = expand_placeholders(str(entry["url"]), self.path_placeholders)
+                entry["url"] = self._expand_value(str(entry["url"]))
 
             # env resolution
             if "env" in entry and isinstance(entry["env"], dict):
                 entry["env"] = {
-                    k: expand_placeholders(str(v), self.path_placeholders)
+                    k: self._expand_value(str(v))
                     for k, v in entry["env"].items()
                 }
 
