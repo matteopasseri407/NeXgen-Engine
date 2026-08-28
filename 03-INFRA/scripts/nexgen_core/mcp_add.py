@@ -129,7 +129,7 @@ def build_entry(
         raise ValueError(t("--command must be a plain string"))
     if url and not url.startswith(("http://", "https://")):
         raise ValueError(t("--url must be an http(s) URL"))
-    if command and auth_env:
+    if command and auth_env is not None:
         raise ValueError(t(
             "--auth-env only applies to an http server: with --command it would "
             "be silently dropped. Pass credentials through --env instead.",
@@ -139,7 +139,7 @@ def build_entry(
             "--env only applies to a stdio server: with --url it would be "
             "silently dropped. Pass headers via --auth-env.",
         ))
-    if auth_env and not ENV_NAME_RE.fullmatch(auth_env):
+    if auth_env is not None and not ENV_NAME_RE.fullmatch(auth_env):
         raise ValueError(t(
             "--auth-env must name a real environment variable (letters, digits, underscore)",
         ))
