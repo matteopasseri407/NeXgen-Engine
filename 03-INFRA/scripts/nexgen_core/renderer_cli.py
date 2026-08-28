@@ -8,6 +8,7 @@ the adoption of live entries outside the manifest.
 """
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import re
@@ -344,48 +345,68 @@ def _load_live(cli: str) -> dict | None:
 
 
 def insert_server_stubs(manifest_path: Path, stubs: list[str]) -> tuple[bool, str, Path | None]:
-    """Appends stubs under the top-level `servers:` block: locked, atomic,
-    with backup, re-validation and rollback.
+    """Appends stubs under the top-level `servers:` block: locked,
+    validate-before-replace, with backup.
 
     The one write path shared by `--adopt --apply` and `nexgen mcp add`, so
     "append a server to the canonical manifest" has exactly one
-    implementation. Three failure shapes are each closed separately:
-    two concurrent writers interleave (a dedicated host lock serializes the
-    read-modify-write), a process dies mid-write (the replacement is a
-    tmpfile + atomic rename, so the manifest is never truncated), and a
-    write that produces an invalid manifest (reload-revalidation restores
-    the original atomically before returning the reason).
+    implementation. Every failure shape is closed separately:
+
+    - concurrent writers: the WHOLE read-modify-write happens inside one
+      host lock, so two adds cannot silently drop each other's entry;
+    - a candidate that would be invalid: it is validated from a tmpfile
+      BEFORE the replacement, so an invalid manifest never exists on the
+      canonical path, not even for a moment;
+    - a crash mid-write: the replacement itself is an atomic rename of
+      already-validated content, and the `.bak` taken before it covers the
+      remaining window for manual recovery.
     """
     from nexgen_core.lock import HostLock
 
+    lock = HostLock(lock_path=_manifest_lock_path(), command_name="mcp-manifest-write")
     try:
-        raw_text = manifest_path.read_text(encoding="utf-8")
-    except OSError as exc:
-        return False, t("could not read the manifest ({error}).", error=exc), None
-    lines = raw_text.splitlines()
-    servers_idx = next((i for i, ln in enumerate(lines) if ln.startswith("servers:")), None)
-    if servers_idx is None:
-        return False, t("could not find the top-level 'servers:' block; add the entries by hand."), None
-    end = len(lines)
-    for j in range(servers_idx + 1, len(lines)):
-        ln = lines[j]
-        if ln and not ln[0].isspace() and not ln.lstrip().startswith("#"):
-            end = j
-            break
-    new_lines = lines[:end] + [""] + stubs + lines[end:]
-    new_text = "\n".join(new_lines) + ("\n" if raw_text.endswith("\n") else "")
-    bak = _secure_backup(manifest_path, raw_text)
-    try:
-        with HostLock(lock_path=_manifest_lock_path(), command_name="mcp-manifest-write"):
-            _atomic_write_text(manifest_path, new_text)
-            try:
-                load_mcp_manifest(manifest_path)
-            except Exception as exc:
-                _atomic_write_text(manifest_path, raw_text)
-                return False, t("the new entries broke the manifest ({error}); restored the original.", error=exc), bak
+        lock.acquire()
     except Exception as exc:
-        return False, t("could not write the manifest ({error}); nothing changed.", error=exc), bak
-    return True, t("manifest updated"), bak
+        return False, t("could not lock the manifest for writing ({error}).", error=exc), None
+    try:
+        try:
+            raw_text = manifest_path.read_text(encoding="utf-8")
+        except OSError as exc:
+            return False, t("could not read the manifest ({error}).", error=exc), None
+        lines = raw_text.splitlines()
+        servers_idx = next((i for i, ln in enumerate(lines) if ln.startswith("servers:")), None)
+        if servers_idx is None:
+            return False, t("could not find the top-level 'servers:' block; add the entries by hand."), None
+        end = len(lines)
+        for j in range(servers_idx + 1, len(lines)):
+            ln = lines[j]
+            if ln and not ln[0].isspace() and not ln.lstrip().startswith("#"):
+                end = j
+                break
+        new_lines = lines[:end] + [""] + stubs + lines[end:]
+        new_text = "\n".join(new_lines) + ("\n" if raw_text.endswith("\n") else "")
+
+        bak = _secure_backup(manifest_path, raw_text)
+        # Validate the CANDIDATE, not the result: a tmpfile carrying the new
+        # text is loaded with the same loader the sync will use. Only after
+        # it proves valid does the atomic rename swap it in.
+        candidate = manifest_path.with_name(f"{manifest_path.name}.{os.getpid()}.candidate")
+        try:
+            _atomic_write_text(candidate, new_text)
+            load_mcp_manifest(candidate)
+        except Exception as exc:
+            with contextlib.suppress(OSError):
+                candidate.unlink(missing_ok=True)
+            return False, t("the new entries would break the manifest ({error}); nothing was written.", error=exc), bak
+        try:
+            os.replace(candidate, manifest_path)
+        except OSError as exc:
+            with contextlib.suppress(OSError):
+                candidate.unlink(missing_ok=True)
+            return False, t("could not write the manifest ({error}); nothing changed.", error=exc), bak
+        return True, t("manifest updated"), bak
+    finally:
+        lock.release()
 
 
 def cmd_adopt(cli: str, apply: bool = False) -> int:
