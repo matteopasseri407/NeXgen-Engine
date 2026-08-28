@@ -236,6 +236,9 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--check", action="store_true",
                         help=t("Checks only: no questions and no writes"))
+    parser.add_argument("--local", action="store_true",
+                        help=t("Single machine: no questions, no secrets, no remote required. "
+                               "Profile MINIMAL, services LOCAL-ONLY, then alignment and doctor"))
     parser.add_argument("--root", default=None, help=t("Vault root (default: the repository folder)"))
     args = parser.parse_args(argv)
 
@@ -272,22 +275,32 @@ def main(argv: list[str] | None = None) -> int:
         print("  " + t("Everything required is in place. Run the installer without --check."))
         return 0
 
-    if not sys.stdin.isatty():
-        # Nobody to answer the questions. Do the part that needs no answers
-        # and say plainly what was skipped, rather than assuming defaults for
-        # someone who is not there.
-        note = install_launchers(root)
-        if note:
-            ok_sym = _sym("✓", "[OK]", sys.stdout)
-            print(f"\n{c['green']}{ok_sym}{c['reset']} {note}")
-        print("\n" + t("Not a terminal: the questions were skipped. "
-                       "Run 'nexgen sync apply' when you are ready."))
-        return 0
+    if args.local:
+        # The no-conversation install: one machine, no remote, no secrets,
+        # no questions. Everything downstream is the same code the guided
+        # path runs, with the answers already decided — which is why the
+        # alignment and the final doctor verdict below are identical.
+        profile, mode = "MINIMAL", "LOCAL-ONLY"
+        print(f"\n{c['bold']}{c['cyan']}4 · " + t("Local install") + c['reset'])
+        print("  " + t("Profile:") + f" {c['bold']}{profile}{c['reset']} · "
+              + t("Services:") + f" {c['bold']}{mode}{c['reset']}")
+    else:
+        if not sys.stdin.isatty():
+            # Nobody to answer the questions. Do the part that needs no answers
+            # and say plainly what was skipped, rather than assuming defaults for
+            # someone who is not there.
+            note = install_launchers(root)
+            if note:
+                ok_sym = _sym("✓", "[OK]", sys.stdout)
+                print(f"\n{c['green']}{ok_sym}{c['reset']} {note}")
+            print("\n" + t("Not a terminal: the questions were skipped. "
+                           "Run 'nexgen sync apply' when you are ready."))
+            return 0
 
-    print(f"\n{c['bold']}{c['cyan']}4 · " + t("Three questions") + c['reset'])
-    profile, mode = guided_profile()
-    print("\n  " + t("Profile:") + f" {c['bold']}{profile}{c['reset']} · "
-          + t("Services:") + f" {c['bold']}{mode}{c['reset']}")
+        print(f"\n{c['bold']}{c['cyan']}4 · " + t("Three questions") + c['reset'])
+        profile, mode = guided_profile()
+        print("\n  " + t("Profile:") + f" {c['bold']}{profile}{c['reset']} · "
+              + t("Services:") + f" {c['bold']}{mode}{c['reset']}")
 
     print(f"\n{c['bold']}{c['cyan']}5 · " + t("Setting it up") + c['reset'])
     steps: list[Finding] = []

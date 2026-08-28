@@ -8,6 +8,58 @@ This file tracks the **engine** (this repo). Your own data — manifests,
 instructions, skills, secrets — lives in your KnowledgeVault and is not part
 of any engine release.
 
+## [Unreleased]
+
+### Added
+
+- **`nexgen plan`** (and `nexgen sync --dry-run` / `--check`): the plan of
+  what an apply would change, computed read-only and network-free. `plan`
+  exposes drift at exit 0, `plan --check` exits non-zero on drift for CI,
+  `plan --json` dumps the plan with provenance. The plan reuses the doctor's
+  read-only checks as drift probes instead of reimplementing them, and
+  declares its own limits (no upstream check without a fetch; idempotent
+  self-repair phases declared, not enumerated).
+- **`nexgen import --from <cli>`**: manifest stubs generated from a live CLI
+  config, on stdout by default (read-only), `--apply` to write with backup +
+  validation + rollback. Stub entries are semantically validated before they
+  are shown or written: unsafe manifest keys, non-http(s) URLs, multi-line
+  commands/args/env values and auth forms that are not env references are
+  refused on both paths.
+- **`nexgen init --local`**: the no-conversation install for a single
+  machine. Same code path as the guided installer with the answers already
+  decided (profile MINIMAL, services LOCAL-ONLY): profile, `local` remote,
+  seeded skill manifest, commands installed, first alignment, final doctor
+  verdict. No questions, no secrets, no remote required.
+- **MCP tool annotations** surfaced end to end: the lazy proxy carries the
+  upstream `readOnlyHint/destructiveHint/idempotentHint/openWorldHint`
+  through `lazy_list` (advisory only — the fail-closed confirmation gate
+  still depends solely on the manifest's `readonly`/`readonly_tools`), the
+  three meta-tools declare their own annotations, and every vault-library
+  tool declares read-only or mutating.
+- **`nexgen vault map --context <note> --hops N`**: the neighbourhood of one
+  note on the wikilink graph (read-only BFS, resolves path/stem/title),
+  capped neighbours, `--json` for agents.
+- **Orphan-artifact check, WARN-only with allowlist** (`nexgen doctor`): MCP
+  servers configured outside the manifest and skills materialized outside
+  the manifest are now a WARN carrying the config path — never removed,
+  never blocking. Legitimate orphans go into the manifests' own
+  `orphans_allowlist` key (`"cli:name"` or bare name for MCP; skill names
+  for skills). Out-of-manifest skills moved from UNDETERMINED to WARN so
+  they stop appearing as a permanent undetermined state in the human report.
+
+### Fixed
+
+- **vault-library MCP: the read index now excludes `99-SECRETS` by default.**
+  The write path already refused it, but the read index (search, read,
+  related, map) indexed everything unless `EXCLUDE_PATH_PREFIXES` was set —
+  and the first deployment never set it. Secrets recovery through search is
+  exactly the path the vault's own rules forbid; the default is now the safe
+  one and an explicit env still wins.
+- **vault-library MCP: search snippets are redacted and bounded** (~200
+  chars, labelled secrets, bearer forms, PEM/age blocks and long
+  high-entropy runs masked as `[redacted]`). A snippet is orientation, not
+  fidelity.
+
 ## [2.1.1] - 2026-08-27
 
 ### Fixed

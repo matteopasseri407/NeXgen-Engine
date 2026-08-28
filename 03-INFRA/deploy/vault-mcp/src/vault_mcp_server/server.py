@@ -10,6 +10,7 @@ from urllib.parse import urlencode, urlparse
 import uvicorn
 from mcp.server.mcpserver import MCPServer
 from mcp.server.transport_security import TransportSecuritySettings
+from mcp.types import ToolAnnotations
 from starlette.applications import Starlette
 from starlette.datastructures import Headers
 from starlette.middleware.cors import CORSMiddleware
@@ -164,37 +165,55 @@ def create_server(settings: Settings) -> tuple[MCPServer, VaultService]:
         version=__version__,
     )
 
-    @mcp.tool()
+    # Tool annotations are advisory metadata (MCP spec): they let a caller
+    # decide between read and write tools without opening each schema.
+    # Advisory, not a security boundary — the real boundary is that write
+    # tools only exist when VAULT_WRITE_ENABLED=true, and 99-SECRETS is
+    # refused at the write path and excluded from the read index.
+    READ_ONLY = ToolAnnotations(
+        readOnlyHint=True,
+        destructiveHint=False,
+        idempotentHint=True,
+        openWorldHint=False,
+    )
+    MUTATING = ToolAnnotations(
+        readOnlyHint=False,
+        destructiveHint=False,
+        idempotentHint=False,
+        openWorldHint=False,
+    )
+
+    @mcp.tool(annotations=READ_ONLY)
     def get_start_here() -> dict[str, Any]:
         """Return the vault entry note, usually 00-START-HERE.md."""
 
         return vault.get_start_here()
 
-    @mcp.tool()
+    @mcp.tool(annotations=READ_ONLY)
     def read_note(note_ref: str) -> dict[str, Any]:
         """Read a note by relative path, filename, or unique stem."""
 
         return vault.read_note(note_ref)
 
-    @mcp.tool()
+    @mcp.tool(annotations=READ_ONLY)
     def search_notes(query: str, limit: int = 10) -> dict[str, Any]:
         """Search note titles, paths, tags, and body text."""
 
         return vault.search_notes(query=query, limit=limit)
 
-    @mcp.tool()
+    @mcp.tool(annotations=READ_ONLY)
     def list_related(note_ref: str, limit: int = 10) -> dict[str, Any]:
         """List outgoing links, backlinks, and tag-based related notes."""
 
         return vault.list_related(note_ref=note_ref, limit=limit)
 
-    @mcp.tool()
+    @mcp.tool(annotations=READ_ONLY)
     def map_overview() -> dict[str, Any]:
         """Token-bounded structural overview of the vault: note/link counts, top hub notes, first broken wikilinks (with relocation hints) and first orphan notes. Use it to orient before broad tasks — the computed map complements get_start_here's curated door. Read-only."""
 
         return vault.map_overview()
 
-    @mcp.tool()
+    @mcp.tool(annotations=READ_ONLY)
     def recent_activity(limit: int = 15) -> dict[str, Any]:
         """List recently changed notes (path, title, last-change date, and commit message when available). Use to resume context: what was touched recently in the vault."""
 
@@ -202,7 +221,7 @@ def create_server(settings: Settings) -> tuple[MCPServer, VaultService]:
 
     if settings.semantic_enabled and settings.semantic_url:
 
-        @mcp.tool()
+        @mcp.tool(annotations=READ_ONLY)
         def semantic_search(query: str, limit: int = 5) -> dict[str, Any]:
             """Search the vault by meaning/concept (hybrid semantic + keyword), powered by the embedding sidecar. Use when search_notes misses or you do not know the exact words."""
             capped = max(1, min(limit, settings.semantic_max_limit))
@@ -221,19 +240,19 @@ def create_server(settings: Settings) -> tuple[MCPServer, VaultService]:
 
     if settings.write_enabled:
 
-        @mcp.tool()
+        @mcp.tool(annotations=MUTATING)
         def create_note(note_path: str, content: str, message: str = "") -> dict[str, Any]:
             """Create a new Markdown note and commit it to Git. Refuses to overwrite existing notes."""
 
             return vault.create_note(note_path=note_path, content=content, message=message)
 
-        @mcp.tool()
+        @mcp.tool(annotations=MUTATING)
         def append_note(note_path: str, content: str, message: str = "") -> dict[str, Any]:
             """Append Markdown content to a note, or create it if missing, then commit it to Git."""
 
             return vault.append_note(note_path=note_path, content=content, message=message)
 
-        @mcp.tool()
+        @mcp.tool(annotations=MUTATING)
         def update_note(note_ref: str, content: str, expected_hash: str, message: str = "") -> dict[str, Any]:
             """Replace an existing note only when expected_hash matches the current full content hash."""
 
@@ -244,7 +263,7 @@ def create_server(settings: Settings) -> tuple[MCPServer, VaultService]:
                 message=message,
             )
 
-        @mcp.tool()
+        @mcp.tool(annotations=MUTATING)
         def update_section(
             note_ref: str,
             section_heading: str,

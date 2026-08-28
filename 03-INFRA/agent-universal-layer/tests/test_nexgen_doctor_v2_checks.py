@@ -389,6 +389,65 @@ def test_mcp_configs_rendered_ok_when_all_clis_aligned(tmp_path: Path):
     assert outcome.severity == Severity.OK
 
 
+def test_mcp_orphans_warns_with_the_config_path(tmp_path: Path):
+    """Un server vivo nella config ma fuori dal manifest è un orfano:
+    WARN con il path, mai una rimozione e mai un blocco."""
+    vault = tmp_path / "vault"
+    home = tmp_path / "home"
+    home.mkdir()
+    _write_mcp_manifest(vault)
+
+    (home / ".claude.json").write_text(json.dumps({
+        "mcpServers": {"demo-server": {}, "stray-server": {}}
+    }))
+
+    outcome = mcp_checks.check_mcp_orphans(vault, home)
+    assert outcome.severity == Severity.WARN
+    assert "stray-server" in outcome.message
+    assert ".claude.json" in outcome.message
+    # l'orfano non deve comparire come server mancante nel check di render:
+    # qui resta tutto allineato tranne le CLI mai lanciate (indeterminato)
+    rendered = mcp_checks.check_mcp_configs_rendered(vault, home)
+    assert rendered.severity != Severity.BROKEN
+
+
+def test_mcp_orphans_gone_when_the_entry_is_gone(tmp_path: Path):
+    vault = tmp_path / "vault"
+    home = tmp_path / "home"
+    home.mkdir()
+    _write_mcp_manifest(vault)
+
+    (home / ".claude.json").write_text(json.dumps({"mcpServers": {"demo-server": {}}}))
+
+    outcome = mcp_checks.check_mcp_orphans(vault, home)
+    assert outcome.severity == Severity.OK
+
+
+def test_mcp_orphans_honours_the_allowlist(tmp_path: Path):
+    """L'allowlist vive nel manifest: bare name vale su ogni CLI,
+    'cli:name' solo su quella CLI."""
+    vault = tmp_path / "vault"
+    home = tmp_path / "home"
+    home.mkdir()
+    _write_mcp_manifest(vault)
+    manifest = vault / "03-INFRA" / "agent-universal-layer" / "mcp" / "manifest.yaml"
+    manifest.write_text(
+        manifest.read_text(encoding="utf-8")
+        + "\norphans_allowlist: [\"codex:stray-server\"]\n",
+        encoding="utf-8",
+    )
+
+    (home / ".claude.json").write_text(json.dumps({"mcpServers": {}}))
+    (home / ".codex").mkdir(parents=True)
+    (home / ".codex" / "config.toml").write_text(
+        '[mcp_servers.demo_server]\ncommand = "echo"\n\n'
+        '[mcp_servers.stray_server]\ncommand = "echo"\n'
+    )
+
+    outcome = mcp_checks.check_mcp_orphans(vault, home)
+    assert outcome.severity == Severity.OK, outcome.message
+
+
 # ---------------------------------------------------------------------------
 # 5. Commit non pubblicati da troppo tempo
 # ---------------------------------------------------------------------------
@@ -542,7 +601,10 @@ def test_engine_starter_views_broken_then_fixed(tmp_path: Path, monkeypatch):
     assert outcome_after.severity == Severity.OK
 
 
-def test_skills_out_of_manifest_is_undetermined_not_broken(tmp_path: Path, monkeypatch):
+def test_skills_out_of_manifest_warns_and_never_blocks(tmp_path: Path, monkeypatch):
+    """Il disallineamento fuori-manifest non deve bloccare: WARN, non
+    BROKEN e nemmeno UNDETERMINED (che comparirebbe sempre nel report
+    umano). La sostanza resta: non è un guasto, è qualcosa da adottare."""
     vault, home, engine_root = _setup_skills_vault(tmp_path)
     monkeypatch.setenv("AGENT_ENGINE_ROOT", str(engine_root))
 
@@ -551,8 +613,29 @@ def test_skills_out_of_manifest_is_undetermined_not_broken(tmp_path: Path, monke
     (stray / "SKILL.md").write_text("# stray\n")
 
     outcome = skill_checks.check_skills_out_of_manifest(vault, home)
-    assert outcome.severity == Severity.UNDETERMINED
+    assert outcome.severity == Severity.WARN
     assert "stray-skill" in outcome.message
+
+
+def test_skills_out_of_manifest_honours_the_allowlist(tmp_path: Path, monkeypatch):
+    """Un fuori-manifest dichiarato legittimo nel manifest stesso esce
+    dalla segnalazione, e il check torna OK."""
+    vault, home, engine_root = _setup_skills_vault(tmp_path)
+    monkeypatch.setenv("AGENT_ENGINE_ROOT", str(engine_root))
+
+    manifest = vault / "03-INFRA" / "agent-universal-layer" / "skills" / "skills.manifest.yaml"
+    manifest.write_text(
+        manifest.read_text(encoding="utf-8") + "\norphans_allowlist: [stray-skill]\n",
+        encoding="utf-8",
+    )
+
+    stray = home / ".agents" / "skill-library" / "stray-skill"
+    stray.mkdir(parents=True)
+    (stray / "SKILL.md").write_text("# stray\n")
+
+    outcome = skill_checks.check_skills_out_of_manifest(vault, home)
+    assert outcome.severity == Severity.OK
+    assert "stray-skill" not in outcome.message
 
 
 def test_skill_library_symlinks_flags_broken_entry(tmp_path: Path):

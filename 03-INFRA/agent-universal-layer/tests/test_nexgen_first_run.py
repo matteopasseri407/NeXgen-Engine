@@ -257,3 +257,65 @@ def test_the_installer_writes_its_commands_inside_the_sandbox(tmp_path, monkeypa
     assert (real / "agent-sync").read_text(encoding="utf-8") == "#!/bin/sh\n# il comando vero\n"
     ext = ".cmd" if sys.platform == "win32" else ""
     assert (tmp_path / "sandbox" / ".local" / "bin" / f"nexgen{ext}").is_file()
+
+
+def _full_scaffold(tmp_path: Path) -> Path:
+    """Un vault come lo vede l'installer: scaffold completo, niente domande."""
+    vault = _vault(tmp_path)
+    for name in ("01-NOTES", "02-PROJECTS", "04-NOW", "99-SECRETS"):
+        (vault / name).mkdir(parents=True, exist_ok=True)
+    (vault / "INIT.md").write_text("# INIT\n", encoding="utf-8")
+    (vault / "00-START-HERE.md").write_text("# Start\n", encoding="utf-8")
+    instructions = vault / "03-INFRA" / "agent-universal-layer" / "instructions"
+    instructions.mkdir(parents=True, exist_ok=True)
+    (instructions / "AGENTS.md").write_text("# Rules\n", encoding="utf-8")
+    return vault
+
+
+def test_init_local_is_the_no_conversation_install(tmp_path, monkeypatch, capsys):
+    """`nexgen init --local`: una macchina, zero domande, zero segreti.
+
+    Le risposte sono già decise (MINIMAL / LOCAL-ONLY) e il resto del
+    percorso è lo stesso codice dell'installazione guidata: profilo scritto,
+    remoto 'local', manifest seminato, allineamento eseguito, verdetto finale.
+    """
+    from nexgen_core import bootstrap
+
+    vault = _full_scaffold(tmp_path)
+    monkeypatch.setenv("NEXGEN_HOME", str(tmp_path / "sandbox-home"))
+    monkeypatch.setattr(bootstrap, "align_now", lambda timeout=900.0: (True, "ok"))
+    monkeypatch.setattr(bootstrap, "remaining_problems", lambda: (0, []))
+
+    exit_code = bootstrap.main(["--local", "--root", str(vault)])
+
+    assert exit_code == 0
+    capsys.readouterr()  # l'output dipende dalla lingua: si verificano i file
+
+    profile = (vault / "99-INDEX" / "USER-PROFILE.md").read_text(encoding="utf-8")
+    assert "- **profile**: `MINIMAL`" in profile
+    assert "- **sync_method**: `manual`" in profile
+
+    remotes = (vault / "03-INFRA" / "agent-universal-layer" / "sync" / "remotes.yaml").read_text(
+        encoding="utf-8"
+    )
+    assert "authoritative_remote: local" in remotes
+
+    assert (vault / "03-INFRA" / "agent-universal-layer" / "skills" / "skills.manifest.yaml").is_file()
+
+
+def test_init_local_on_a_second_run_fills_nothing_again(tmp_path, monkeypatch, capsys):
+    """Idempotente: alla seconda passata il profilo pieno resta intoccato."""
+    from nexgen_core import bootstrap
+
+    vault = _full_scaffold(tmp_path)
+    monkeypatch.setenv("NEXGEN_HOME", str(tmp_path / "sandbox-home"))
+    monkeypatch.setattr(bootstrap, "align_now", lambda timeout=900.0: (True, "ok"))
+    monkeypatch.setattr(bootstrap, "remaining_problems", lambda: (0, []))
+
+    assert bootstrap.main(["--local", "--root", str(vault)]) == 0
+    assert bootstrap.main(["--local", "--root", str(vault)]) == 0
+
+    # il profilo pieno resta identico: nessuna sovrascrittura alla seconda passata
+    profile = (vault / "99-INDEX" / "USER-PROFILE.md").read_text(encoding="utf-8")
+    assert "- **profile**: `MINIMAL`" in profile
+    assert "[MINIMAL | MULTI]" not in profile

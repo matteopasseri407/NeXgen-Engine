@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import tomllib
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -12,6 +13,8 @@ from nexgen_core.i18n import t
 from nexgen_core.jsonc import parse_jsonc
 from nexgen_core.renderer import McpRenderer
 from nexgen_core.report import CheckOutcome, Severity
+
+logger = logging.getLogger("nexgen.checks.mcp")
 
 
 def check_mcp_manifest(manifest_path: Path) -> CheckOutcome:
@@ -90,6 +93,25 @@ _CLI_RENDER_SPECS: dict[str, _CliRenderSpec] = {
 }
 
 
+def _expected_and_rendered(renderer: McpRenderer, cli: str, path: Path) -> tuple[str | None, set[str], set[str]]:
+    """The expected and rendered server-name sets for one CLI.
+
+    Shared by the drift check and the orphan check so the two cannot
+    disagree about what "rendered" means. The string result is a reason the
+    sets are unknowable (config unreadable); it is None when the sets are
+    meaningful.
+    """
+    expected = set(renderer.load_resolved_servers(cli).keys())
+    if not path.is_file():
+        return f"{cli} (never launched: {path} is missing)", expected, set()
+    spec = _CLI_RENDER_SPECS[cli]
+    try:
+        rendered = spec.reader(path)
+    except Exception as exc:
+        return f"{cli} (unreadable config: {exc})", expected, set()
+    return None, expected, rendered
+
+
 def check_mcp_configs_rendered(vault_data: Path, home: Path) -> CheckOutcome:
     """Compares, for each CLI, the set of servers expected by the manifest
     with the set actually rendered in its native config.
@@ -120,21 +142,14 @@ def check_mcp_configs_rendered(vault_data: Path, home: Path) -> CheckOutcome:
     extra_parts: list[str] = []
 
     for cli, path in cli_paths.items():
-        expected = set(renderer.load_resolved_servers(cli).keys())
-        if not expected:
+        if not renderer.load_resolved_servers(cli):
             continue  # nothing expected for this CLI on this manifest
-
-        if not path.is_file():
-            undetermined_parts.append(f"{cli} (never launched: {path} is missing)")
+        error, expected, rendered = _expected_and_rendered(renderer, cli, path)
+        if error:
+            undetermined_parts.append(error)
             continue
 
         spec = _CLI_RENDER_SPECS[cli]
-        try:
-            rendered = spec.reader(path)
-        except Exception as exc:
-            undetermined_parts.append(f"{cli} (unreadable config: {exc})")
-            continue
-
         norm_expected = {spec.normalize(name): name for name in expected}
         missing_norm = set(norm_expected) - rendered
         missing = {norm_expected[n] for n in missing_norm}
@@ -213,4 +228,98 @@ def check_mcp_deps(manifest_path: Path, state_dir: Path) -> CheckOutcome:
         severity=Severity.WARN,
         message=t("Some declared MCP dependencies are not provisioned yet: {problems}", problems="; ".join(problems)),
         detail=t("Git-kind dependencies are provisioned lazily at the first server load; run 'agent-sync apply' once (or use the server) to provision them."),
+    )
+
+
+def _orphans_allowlist(manifest_path: Path) -> set[str]:
+    """Names the user declared as legitimate outside-the-manifest entries.
+
+    Read from the manifest's own `orphans_allowlist` key, because the
+    manifest is the one canonical declaration the vault carries: an allow
+    decision belongs next to the declarations it exempts. An entry is either
+    a bare server name (exempt on every CLI) or `cli:name` (exempt on that
+    CLI only). Anything malformed is ignored with a warning, never fatal:
+    an allowlist must not become a second way to break the manifest.
+    """
+    try:
+        data = load_mcp_manifest(manifest_path)
+    except Exception:
+        return set()
+    raw = data.get("raw") or {}
+    entries = raw.get("orphans_allowlist")
+    if not isinstance(entries, list):
+        return set()
+    allowed: set[str] = set()
+    for entry in entries:
+        if isinstance(entry, str) and entry.strip():
+            allowed.add(entry.strip())
+        else:
+            logger.warning("Ignoring invalid orphans_allowlist entry in %s: %r", manifest_path, entry)
+    return allowed
+
+
+def check_mcp_orphans(vault_data: Path, home: Path) -> CheckOutcome:
+    """Servers configured in a CLI but not declared in the manifest.
+
+    WARN-only by design, and never removed: the render additively preserves
+    these entries, which means someone put them there outside the manifest,
+    and the check's only job is to make that visible (with the config's
+    path) instead of letting it drift silently. A legitimate one goes into
+    the manifest's `orphans_allowlist`, not into a memory of things to
+    ignore.
+    """
+    renderer = McpRenderer(vault_data=vault_data, home=home)
+    manifest_path = vault_data / "03-INFRA" / "agent-universal-layer" / "mcp" / "manifest.yaml"
+    allowed = _orphans_allowlist(manifest_path)
+
+    cli_paths = {
+        "claude": home / ".claude.json",
+        "antigravity": home / ".gemini" / "antigravity-ide" / "mcp_config.json",
+        "codex": home / ".codex" / "config.toml",
+        "opencode": renderer._opencode_config_path(),
+    }
+
+    orphan_parts: list[str] = []
+    ignored_count = 0
+    for cli, path in cli_paths.items():
+        if not path.is_file():
+            continue  # never launched: nothing rendered, nothing to report
+        error, expected, rendered = _expected_and_rendered(renderer, cli, path)
+        if error:
+            continue  # the rendered-configs check already reports unreadable configs
+        spec = _CLI_RENDER_SPECS[cli]
+        norm_expected = {spec.normalize(name) for name in expected}
+        orphans = sorted(rendered - norm_expected)
+        if not orphans:
+            continue
+        visible = []
+        for name in orphans:
+            # Codex renders section names with underscores; the allowlist
+            # speaks the manifest's names. Both spellings match, plus the
+            # bare form (exempt on every CLI).
+            variants = {name, name.replace("-", "_"), name.replace("_", "-")}
+            if any(v in allowed or f"{cli}:{v}" in allowed for v in variants):
+                ignored_count += 1
+                continue
+            visible.append(name)
+        if visible:
+            orphan_parts.append(f"{cli} ({path}): {', '.join(visible)}")
+
+    if orphan_parts:
+        return CheckOutcome(
+            id="mcp.orphans",
+            severity=Severity.WARN,
+            message=t("MCP servers configured outside the manifest (kept, never removed): {parts}", parts="; ".join(orphan_parts)),
+            action=t("Adopt them with 'nexgen import --from <cli>' or declare them in mcp/manifest.yaml; add them to orphans_allowlist if they are legitimate."),
+        )
+    if ignored_count:
+        return CheckOutcome(
+            id="mcp.orphans",
+            severity=Severity.OK,
+            message=t("No unacknowledged MCP orphans ({count} allowlisted)", count=ignored_count),
+        )
+    return CheckOutcome(
+        id="mcp.orphans",
+        severity=Severity.OK,
+        message=t("No MCP servers configured outside the manifest"),
     )

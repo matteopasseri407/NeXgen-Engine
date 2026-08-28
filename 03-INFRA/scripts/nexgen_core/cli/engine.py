@@ -6,6 +6,7 @@ made exactly once, at the edge, in `__init__.py`.
 """
 from __future__ import annotations
 
+import json
 import sys
 from pathlib import Path
 
@@ -32,7 +33,33 @@ def register(sub) -> None:
                    help=t("Proceed even without reaching the remote"))
     p.add_argument("--skip-mcp", action="store_true",
                    help=t("Don't regenerate the connector configurations"))
+    p.add_argument("--dry-run", dest="dry_run", action="store_true",
+                   help=t("Print the plan instead of applying it (never writes, never fetches)"))
+    p.add_argument("--check", action="store_true",
+                   help=t("Like --dry-run, but exits non-zero when drift is found (for CI)"))
     p.set_defaults(func=cmd_sync, mode="apply")
+
+    p = sub.add_parser("plan", help=t("Show what an apply would change, without changing anything"))
+    p.add_argument("--check", action="store_true",
+                   help=t("Exit non-zero when drift is found"))
+    p.add_argument("--json", action="store_true", help=t("Output in JSON format, with provenance"))
+    p.set_defaults(func=cmd_plan)
+
+    p = sub.add_parser("init", help=t("First-run installer: prepares the vault and aligns this machine"))
+    p.add_argument("--local", action="store_true",
+                   help=t("Single machine: no questions, no secrets, no remote required"))
+    p.add_argument("--root", default=None, help=t("Vault root (default: the repository folder)"))
+    p.set_defaults(func=cmd_init)
+
+    p = sub.add_parser("import", help=t("Generate manifest stubs from a live CLI config (read-only, on stdout)"))
+    p.add_argument("--from", dest="source", required=True,
+                   choices=["claude", "claudecode", "codex", "antigravity", "opencode"],
+                   help=t("The CLI whose live config to read"))
+    p.add_argument("--dry-run", dest="dry_run", action="store_true",
+                   help=t("Print to stdout only (the default; accepted for explicitness)"))
+    p.add_argument("--apply", action="store_true",
+                   help=t("Write the stubs into the manifest (backup + validation + rollback)"))
+    p.set_defaults(func=cmd_import)
 
     p = sub.add_parser("guard", help=t("The recurring alignment cycle (never publishes)"))
     p.add_argument("--offline", "--allow-offline", dest="allow_offline", action="store_true")
@@ -107,6 +134,8 @@ def _action_mark(act: str) -> tuple[str, str]:
 
 
 def cmd_sync(args) -> int:
+    if getattr(args, "dry_run", False) or getattr(args, "check", False):
+        return cmd_plan(args)
     from nexgen_core.guard import GuardMode, GuardRunner
 
     runner = GuardRunner()
@@ -120,6 +149,55 @@ def cmd_sync(args) -> int:
         print(f"  {mark} {text}")
     print(res.message)
     return res.exit_code
+
+
+def cmd_plan(args) -> int:
+    """The single plan object, in its human or machine view."""
+    from nexgen_core.plan import build_sync_plan
+
+    plan = build_sync_plan()
+    if getattr(args, "json", False):
+        print(json.dumps(plan.to_dict(), indent=2, ensure_ascii=False))
+    else:
+        print(t("Plan for {vault} (engine {version}, branch {branch}, commit {commit})",
+                vault=plan.vault, version=plan.engine_version,
+                branch=plan.branch or "?", commit=plan.commit or "?"))
+        for note in plan.git_notes:
+            print(f"  git: {note}")
+        if plan.drift:
+            print(t("DRIFT: an apply would change or unblock the following:"))
+            for action in plan.planned_actions:
+                print(f"  → {action}")
+        else:
+            print(t("No drift: apply would change nothing."))
+        for line in plan.in_sync:
+            print(t("  aligned: {line}", line=line))
+        for line in plan.not_checked:
+            print(t("  not checked here: {line}", line=line))
+    if getattr(args, "check", False) and plan.drift:
+        return 1
+    return 0
+
+
+def cmd_init(args) -> int:
+    from nexgen_core import bootstrap
+
+    argv: list[str] = []
+    if getattr(args, "local", False):
+        argv.append("--local")
+    if getattr(args, "root", None):
+        argv.extend(["--root", args.root])
+    return bootstrap.main(argv)
+
+
+def cmd_import(args) -> int:
+    from nexgen_core import renderer_cli
+
+    target = "claude" if args.source == "claudecode" else args.source
+    argv = ["--adopt", target]
+    if getattr(args, "apply", False):
+        argv.append("--apply")
+    return renderer_cli.main(argv)
 
 
 def cmd_doctor(args) -> int:

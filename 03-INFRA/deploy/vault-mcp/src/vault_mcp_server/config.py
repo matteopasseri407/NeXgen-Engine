@@ -108,6 +108,14 @@ class Settings:
         if default_search_limit > max_search_limit:
             raise ValueError("DEFAULT_SEARCH_LIMIT cannot be greater than MAX_SEARCH_LIMIT")
 
+        # The read index excludes 99-SECRETS by default, same as the write
+        # path: read_note/search on a secrets tree is exactly the recovery
+        # path the vault's own rules forbid, and an operator who never set
+        # EXCLUDE_PATH_PREFIXES (the first deployment did not) got a
+        # secrets-searchable server while believing the exclusion applied.
+        include_path_prefixes = _get_csv("INCLUDE_PATH_PREFIXES")
+        exclude_path_prefixes = _get_csv("EXCLUDE_PATH_PREFIXES", ("99-SECRETS",))
+
         return cls(
             vault_root=vault_root,
             vault_token=vault_token,
@@ -130,8 +138,8 @@ class Settings:
             max_search_limit=max_search_limit,
             start_here_filename=os.getenv("START_HERE_FILENAME", "00-START-HERE.md").strip()
             or "00-START-HERE.md",
-            include_path_prefixes=_get_csv("INCLUDE_PATH_PREFIXES"),
-            exclude_path_prefixes=_get_csv("EXCLUDE_PATH_PREFIXES"),
+            include_path_prefixes=include_path_prefixes,
+            exclude_path_prefixes=exclude_path_prefixes,
             write_exclude_path_prefixes=_get_csv("WRITE_EXCLUDE_PATH_PREFIXES", ("99-SECRETS", ".git")),
             max_write_bytes=_get_int("MAX_WRITE_BYTES", 262_144),
             semantic_url=os.getenv("SEMANTIC_URL", "").strip() or None,

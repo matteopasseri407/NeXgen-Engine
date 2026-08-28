@@ -96,7 +96,7 @@ def _extract_links(text: str) -> list[str]:
     return links
 
 
-def scan(vault: Path) -> dict:
+def scan(vault: Path, collect_adjacency: bool = False) -> dict:
     notes: dict[str, str] = {}
     titles: dict[str, str] = {}
     for path in sorted(vault.rglob("*")):
@@ -164,6 +164,7 @@ def scan(vault: Path) -> dict:
     broken: list[dict[str, str]] = []
     archived_broken: list[dict[str, str]] = []
     excluded_valid: list[dict[str, str]] = []
+    adjacency: dict[str, list[str]] = {rel: [] for rel in notes} if collect_adjacency else {}
     total_links = 0
     for rel in sorted(notes):
         links = _extract_links(notes[rel])
@@ -175,6 +176,8 @@ def scan(vault: Path) -> dict:
             if status == "note" and resolved and resolved != rel:
                 if not generated:
                     inbound[resolved] += 1
+                if collect_adjacency:
+                    adjacency[rel].append(resolved)
             elif status == "excluded":
                 excluded_valid.append({"source": rel, "target": target})
             elif status == "broken":
@@ -209,7 +212,74 @@ def scan(vault: Path) -> dict:
         "orphans": orphans,
         "excluded_valid": sorted(excluded_valid, key=lambda entry: (entry["source"], entry["target"])),
         "hubs": hubs,
+        **({"adjacency": adjacency, "titles": titles} if collect_adjacency else {}),
     }
+
+
+def build_context(vault: Path, note_ref: str, hops: int = 2, max_nodes: int = 10) -> dict:
+    """The neighbourhood of one note on the wikilink graph: read-only BFS.
+
+    Same resolution semantics as the map (and the MCP server): the
+    reference may be a relative path, a unique stem, or a note title.
+    Returns the starting node plus up to `max_nodes` neighbours, closest
+    first, each carrying how it was reached, so an agent can pull the
+    right two or three notes instead of guessing by name.
+    """
+    data = scan(vault, collect_adjacency=True)
+    adjacency: dict[str, list[str]] = data.pop("adjacency")
+    titles: dict[str, str] = data.pop("titles")
+
+    target = note_ref.replace("\\", "/").strip()
+    lowered = target.lower()
+    keys = {lowered, lowered.removesuffix(".md")}
+    start = None
+    for rel in adjacency:
+        if rel.lower() in keys or Path(rel).stem.lower() in keys:
+            start = rel
+            break
+    if start is None:
+        wanted = _normalize_lookup(target)
+        for rel, title in titles.items():
+            if _normalize_lookup(title) == wanted:
+                start = rel
+                break
+    if start is None:
+        raise FileNotFoundError(f"note not found: {note_ref}")
+
+    inbound: dict[str, list[str]] = {}
+    for src, dsts in adjacency.items():
+        for dst in dsts:
+            inbound.setdefault(dst, []).append(src)
+
+    nodes: list[dict] = []
+    seen = {start}
+    frontier: list[tuple[str, str, str]] = [(start, "", "")]  # (rel, direction, via)
+    depth = 0
+    while frontier and depth <= hops and len(nodes) < max_nodes + 1:
+        next_frontier: list[tuple[str, str, str]] = []
+        for rel, direction, via in frontier:
+            if len(nodes) >= max_nodes + 1:
+                break
+            nodes.append({
+                "path": rel,
+                "title": titles.get(rel, ""),
+                "depth": depth,
+                "direction": direction,
+                "via": via,
+            })
+            seen.add(rel)
+            for nxt in sorted(adjacency.get(rel, [])):
+                if nxt not in seen:
+                    next_frontier.append((nxt, "out", rel))
+                    seen.add(nxt)
+            for prv in sorted(inbound.get(rel, [])):
+                if prv not in seen:
+                    next_frontier.append((prv, "in", rel))
+                    seen.add(prv)
+        depth += 1
+        frontier = next_frontier
+
+    return {"context": start, "hops": hops, "max_nodes": max_nodes, "nodes": nodes[: max_nodes + 1]}
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -218,12 +288,36 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--json", action="store_true", help=t("full machine-readable output"))
     parser.add_argument("--check", action="store_true", help=t("one summary line + broken list; always exit 0"))
     parser.add_argument("--top", type=int, default=10, help=t("hubs to show in the human report"))
+    parser.add_argument("--context", default=None, metavar="NOTE",
+                        help=t("the neighbourhood of one note (read-only graph BFS) instead of the whole map"))
+    parser.add_argument("--hops", type=int, default=2, help=t("graph distance for --context (default 2)"))
+    parser.add_argument("--max-nodes", dest="max_nodes", type=int, default=10,
+                        help=t("maximum neighbours listed for --context (default 10)"))
     args = parser.parse_args(argv)
 
     vault = Path(args.vault).expanduser() if args.vault else resolve_vault_data()
     if not vault.is_dir():
         print(t("vault-map: not a directory: {vault}", vault=vault), file=sys.stderr)
         return 2
+
+    if args.context:
+        try:
+            result = build_context(vault, args.context, hops=max(0, args.hops), max_nodes=max(1, args.max_nodes))
+        except FileNotFoundError as exc:
+            print(t("vault-map: {error}", error=exc), file=sys.stderr)
+            return 3
+        if args.json:
+            print(json.dumps(result, ensure_ascii=False, indent=2))
+            return 0
+        print(t("context: {note} (hops={hops}, cap={cap})", note=result["context"], hops=result["hops"], cap=result["max_nodes"]))
+        for node in result["nodes"]:
+            if node["depth"] == 0:
+                print(f"  {node['path']}" + (f" — {node['title']}" if node["title"] else ""))
+                continue
+            arrow = "->" if node["direction"] == "out" else "<-"
+            via = t(" (via {via})", via=node["via"]) if node["via"] else ""
+            print(f"  d{node['depth']} {arrow} {node['path']}" + (f" — {node['title']}" if node["title"] else "") + via)
+        return 0
 
     data = scan(vault)
 

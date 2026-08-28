@@ -22,7 +22,7 @@
 services:
   vault-mcp:
     build: .
-    image: ${VAULT_MCP_IMAGE:-vault-mcp:0.4.0}
+    image: ${VAULT_MCP_IMAGE:-vault-mcp:0.5.0}
     container_name: vault-mcp
     restart: unless-stopped
     read_only: true

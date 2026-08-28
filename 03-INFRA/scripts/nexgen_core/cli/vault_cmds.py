@@ -31,6 +31,10 @@ def register(sub) -> None:
     q = vsub.add_parser("map", help=t("Map the structure of the notes"))
     q.add_argument("--json", action="store_true", help=t("Output in JSON format"))
     q.add_argument("--check", action="store_true", help=t("One-line summary check for doctor/CI"))
+    q.add_argument("--context", default=None, metavar="NOTE",
+                   help=t("The neighbourhood of one note instead of the whole map"))
+    q.add_argument("--hops", type=int, default=2, help=t("Graph distance for --context"))
+    q.add_argument("--max-nodes", dest="max_nodes", type=int, default=10, help=t("Maximum neighbours for --context"))
     q.set_defaults(func=cmd_map)
 
     q = vsub.add_parser("lifecycle", help=t("Analyze notes' freshness and lifecycle"))
@@ -84,6 +88,10 @@ def cmd_map(args) -> int:
         argv.append("--json")
     if getattr(args, "check", False):
         argv.append("--check")
+    if getattr(args, "context", None):
+        argv.extend(["--context", args.context])
+        argv.extend(["--hops", str(getattr(args, "hops", 2) or 2)])
+        argv.extend(["--max-nodes", str(getattr(args, "max_nodes", 10) or 10)])
     argv.extend(_all(args))
     return map_main(argv)
 

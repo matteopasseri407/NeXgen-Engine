@@ -294,3 +294,46 @@ servers:
     )
     assert err is None, err
     assert ctx["DEPS_WORKSPACE"] == ws
+
+
+def test_the_index_carries_the_four_hints_when_the_server_declares_them(tmp_path: Path):
+    """Le annotation dei tool upstream attraversano il proxy nell'indice.
+
+    Advisory: restano etichette per chi chiama, mai una via di bypass del
+    gate fail-closed, che continua a guardare solo readonly/readonly_tools.
+    """
+    fake_with_hints = FAKE_SERVER.replace(
+        '"read_thing", "description"',
+        '"read_thing", "annotations": {"readOnlyHint": True, "destructiveHint": False, '
+        '"idempotentHint": True, "openWorldHint": True}, "description"',
+    )
+    audit = tmp_path / "audit.jsonl"
+    manifest = _base_manifest(fake_with_hints)
+    proc = _start_fake(manifest, tmp_path, audit)
+    try:
+        r = _rpc(proc, "tools/call", {"name": "lazy_list", "arguments": {}}, rid=21)
+        payload = json.loads(r["result"]["content"][0]["text"])
+        tools = {t["name"]: t for t in payload["servers"]["fake"]["tools"]}
+        assert tools["read_thing"].get("annotations") == {
+            "readOnlyHint": True, "destructiveHint": False,
+            "idempotentHint": True, "openWorldHint": True,
+        }
+        # il tool senza annotations resta senza la chiave: nessun default inventato
+        assert "annotations" not in tools["write_thing"]
+    finally:
+        proc.kill()
+
+
+def test_the_meta_tools_expose_their_own_hints(tmp_path: Path):
+    """lazy_list/lazy_load si dichiarano di sola lettura, lazy_call no."""
+    audit = tmp_path / "audit.jsonl"
+    proc = _start_fake(_base_manifest(FAKE_SERVER), tmp_path, audit)
+    try:
+        r = _rpc(proc, "tools/list", rid=22)
+        tools = {t["name"]: t for t in r["result"]["tools"]}
+        assert tools["lazy_list"]["annotations"]["readOnlyHint"] is True
+        assert tools["lazy_load"]["annotations"]["readOnlyHint"] is True
+        assert tools["lazy_call"]["annotations"]["readOnlyHint"] is False
+        assert tools["lazy_call"]["annotations"]["destructiveHint"] is True
+    finally:
+        proc.kill()
