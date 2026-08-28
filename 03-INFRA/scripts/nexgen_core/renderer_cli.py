@@ -68,6 +68,12 @@ def _atomic_write_text(path: Path, text: str) -> None:
     os.replace(tmp, path)
 
 
+def _manifest_lock_path() -> Path:
+    from nexgen_core.paths import resolve_state_dir
+
+    return resolve_state_dir() / "mcp-manifest.lock"
+
+
 def _secure_backup(path: Path, text: str) -> Path:
     stem = path.name + ".bak-" + time.strftime("%Y%m%d-%H%M%S")
     bak = path.with_name(stem)
@@ -338,15 +344,20 @@ def _load_live(cli: str) -> dict | None:
 
 
 def insert_server_stubs(manifest_path: Path, stubs: list[str]) -> tuple[bool, str, Path | None]:
-    """Appends stubs under the top-level `servers:` block: atomic, with
-    backup, re-validation and rollback.
+    """Appends stubs under the top-level `servers:` block: locked, atomic,
+    with backup, re-validation and rollback.
 
     The one write path shared by `--adopt --apply` and `nexgen mcp add`, so
     "append a server to the canonical manifest" has exactly one
-    implementation: a broken manifest after the write restores the original
-    file, and the caller learns the reason instead of inheriting a broken
-    sync.
+    implementation. Three failure shapes are each closed separately:
+    two concurrent writers interleave (a dedicated host lock serializes the
+    read-modify-write), a process dies mid-write (the replacement is a
+    tmpfile + atomic rename, so the manifest is never truncated), and a
+    write that produces an invalid manifest (reload-revalidation restores
+    the original atomically before returning the reason).
     """
+    from nexgen_core.lock import HostLock
+
     try:
         raw_text = manifest_path.read_text(encoding="utf-8")
     except OSError as exc:
@@ -364,12 +375,16 @@ def insert_server_stubs(manifest_path: Path, stubs: list[str]) -> tuple[bool, st
     new_lines = lines[:end] + [""] + stubs + lines[end:]
     new_text = "\n".join(new_lines) + ("\n" if raw_text.endswith("\n") else "")
     bak = _secure_backup(manifest_path, raw_text)
-    manifest_path.write_text(new_text, encoding="utf-8")
     try:
-        load_mcp_manifest(manifest_path)
+        with HostLock(lock_path=_manifest_lock_path(), command_name="mcp-manifest-write"):
+            _atomic_write_text(manifest_path, new_text)
+            try:
+                load_mcp_manifest(manifest_path)
+            except Exception as exc:
+                _atomic_write_text(manifest_path, raw_text)
+                return False, t("the new entries broke the manifest ({error}); restored the original.", error=exc), bak
     except Exception as exc:
-        manifest_path.write_text(raw_text, encoding="utf-8")
-        return False, t("the new entries broke the manifest ({error}); restored the original.", error=exc), bak
+        return False, t("could not write the manifest ({error}); nothing changed.", error=exc), bak
     return True, t("manifest updated"), bak
 
 

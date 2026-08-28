@@ -310,3 +310,13 @@ def test_context_read_only_and_missing_note(tmp_path: Path, capsys):
     assert {"path", "depth", "direction", "via"} <= set(payload["nodes"][0].keys())
 
     assert map_main(["--vault", str(vault), "--context", "inesistente"]) == 3
+
+
+def test_context_rejects_negative_hops(tmp_path: Path):
+    """Un valore assurdo è un errore, non un quartiere vuoto."""
+    import pytest
+
+    from nexgen_core.tools.vault_map import build_context
+
+    with pytest.raises(ValueError):
+        build_context(_context_vault(tmp_path), "hub", hops=-1)

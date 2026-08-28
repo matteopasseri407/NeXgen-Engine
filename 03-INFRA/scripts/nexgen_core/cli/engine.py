@@ -60,7 +60,6 @@ def register(sub) -> None:
     p.add_argument("--apply", action="store_true",
                    help=t("Write the stubs into the manifest (backup + validation + rollback)"))
     p.set_defaults(func=cmd_import)
-
     p = sub.add_parser("guard", help=t("The recurring alignment cycle (never publishes)"))
     p.add_argument("--offline", "--allow-offline", dest="allow_offline", action="store_true")
     p.add_argument("--skip-mcp", action="store_true")
@@ -193,6 +192,11 @@ def cmd_init(args) -> int:
 def cmd_import(args) -> int:
     from nexgen_core import renderer_cli
 
+    if getattr(args, "apply", False) and getattr(args, "dry_run", False):
+        # Mutually exclusive by hand: the error must name the two flags and
+        # why, and this is where the combination is decided.
+        print(t("STOP: --dry-run and --apply contradict each other; pick one."), file=sys.stderr)
+        return 2
     target = "claude" if args.source == "claudecode" else args.source
     argv = ["--adopt", target]
     if getattr(args, "apply", False):

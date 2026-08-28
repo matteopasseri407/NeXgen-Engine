@@ -175,3 +175,69 @@ def test_a_broken_write_is_rolled_back_to_the_original(sandbox, monkeypatch):
 
     assert not ok
     assert _manifest_path(sandbox).read_text(encoding="utf-8") == original
+
+
+# --- Seguiti del council (Luna/Kimi, 2026-08-28) ----------------------------
+
+def test_a_sensitive_env_name_with_a_plain_value_is_refused(sandbox):
+    """PASSWORD=hunter2 e' una credenziale in chiaro a prescindere dalla
+    forma del valore: il NOME conta quanto il contenuto."""
+    before = sandbox.tree_snapshot()
+
+    code, message = add_server(
+        "thing", "claude", command="npx",
+        env_pairs=["PASSWORD=hunter2"],
+        home=sandbox.home, vault_data=sandbox.vault,
+    )
+
+    assert code == 2
+    assert "${" in message
+    assert sandbox.tree_snapshot() == before
+
+
+def test_an_env_reference_with_a_fake_variable_name_is_refused(sandbox):
+    code, message = add_server(
+        "thing", "claude", command="npx",
+        env_pairs=["API_KEY=${non e' un nome}"],
+        home=sandbox.home, vault_data=sandbox.vault,
+    )
+    assert code == 2
+    assert "environment variable" in message
+
+
+def test_an_auth_env_with_a_fake_variable_name_is_refused(sandbox):
+    code, _ = add_server(
+        "remote", "claude", url="https://x.example.com/mcp",
+        auth_env="non un nome",
+        home=sandbox.home, vault_data=sandbox.vault,
+    )
+    assert code == 2
+
+
+def test_flags_that_would_be_silently_dropped_are_refused(sandbox):
+    """--auth-env con --command e --env con --url perdevano il dato senza
+    dirlo: ora sono errori, non sorprese."""
+    code, message = add_server(
+        "remote", "claude", command="npx", auth_env="TOKEN",
+        home=sandbox.home, vault_data=sandbox.vault,
+    )
+    assert code == 2
+    assert "auth-env" in message
+
+    code, message = add_server(
+        "remote", "claude", url="https://x.example.com/mcp",
+        env_pairs=["A=b"],
+        home=sandbox.home, vault_data=sandbox.vault,
+    )
+    assert code == 2
+    assert "--env" in message
+
+
+def test_empty_targets_is_an_error_not_all(sandbox):
+    """Una variabile d'ambiente vuota non deve installare ovunque."""
+    code, message = add_server(
+        "thing", "", command="npx",
+        home=sandbox.home, vault_data=sandbox.vault,
+    )
+    assert code == 2
+    assert "--targets" in message

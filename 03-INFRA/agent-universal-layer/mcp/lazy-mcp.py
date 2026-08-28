@@ -88,17 +88,26 @@ def _expand_placeholders(text: str, ctx: dict[str, str]) -> str:
 #: `{{ if eq .os "windows" }}…{{ end }}`): a server defined once in the
 #: manifest must not render differently depending on which path serves it.
 #: The implementation lives in nexgen_core.config, next to the file's other
-#: lazily-imported engine pieces; if it is somehow unreachable, the {{ }}
-#: text passes through unchanged and the miss is said once on stderr,
-#: never silently buried.
+#: lazily-imported engine pieces. Only an IMPORT failure degrades to
+#: passthrough (with a once-per-process warning): a malformed template is
+#: an error the entry must carry, because sending a literal `{{ }}` to a
+#: spawn is exactly the quiet wrong the dialect exists to prevent.
 _template_warning_shown = False
 
 
 def _template_context() -> dict[str, str]:
-    vault = os.environ.get("AGENT_VAULT_DATA") or os.environ.get("KNOWLEDGE_VAULT_PATH") or str(Path.home() / "KnowledgeVault")
+    """Same resolvers the renderer uses, same values: one {{ .vault }} must
+    not mean two paths depending on which code expands it."""
+    vault = os.environ.get("AGENT_VAULT_DATA") or os.environ.get("KNOWLEDGE_VAULT_PATH")
+    if not vault:
+        import nexgen_core.paths as _paths
+
+        vault = str(_paths.resolve_vault_data())
+    import nexgen_core.paths as _paths
+
     return {
         "os": {"win32": "windows", "darwin": "darwin"}.get(sys.platform, "linux"),
-        "home": str(Path.home()),
+        "home": str(_paths.resolve_home()),
         "vault": vault,
         "engine": _resolve_engine_root(),
     }
@@ -116,11 +125,14 @@ def _expand_templates(text: str) -> str:
     try:
         from nexgen_core.config import expand_inline_templates
         return expand_inline_templates(text, _template_context())
-    except Exception as exc:
+    except ImportError as exc:
+        # The expander itself is unreachable: degrade, visibly.
         if not _template_warning_shown:
             print(f"[lazy-mcp] inline templates not expanded ({exc})", file=sys.stderr)
             _template_warning_shown = True
         return text
+    # TemplateError and everything else propagate: the caller marks the
+    # entry unusable instead of spawning literal {{ }} text.
 
 
 def _resolve_manifest() -> dict[str, Any]:
@@ -180,14 +192,21 @@ def _lazy_servers() -> dict[str, dict[str, Any]]:
         # spawn can substitute the provisioned workspace.
         load_ctx = dict(ctx)
         load_ctx["DEPS_WORKSPACE"] = "${DEPS_WORKSPACE}"
-        if entry.get("command"):
-            entry["command"] = _expand_placeholders(_expand_templates(str(entry["command"])), load_ctx)
-        if isinstance(entry.get("args"), list):
-            entry["args"] = [_expand_placeholders(_expand_templates(str(a)), load_ctx) for a in entry["args"]]
-        if entry.get("url"):
-            entry["url"] = _expand_placeholders(_expand_templates(str(entry["url"])), load_ctx)
-        if isinstance(entry.get("env"), dict):
-            entry["env"] = {k: _expand_placeholders(_expand_templates(str(v)), load_ctx) for k, v in entry["env"].items()}
+        try:
+            if entry.get("command"):
+                entry["command"] = _expand_placeholders(_expand_templates(str(entry["command"])), load_ctx)
+            if isinstance(entry.get("args"), list):
+                entry["args"] = [_expand_placeholders(_expand_templates(str(a)), load_ctx) for a in entry["args"]]
+            if entry.get("url"):
+                entry["url"] = _expand_placeholders(_expand_templates(str(entry["url"])), load_ctx)
+            if isinstance(entry.get("env"), dict):
+                entry["env"] = {k: _expand_placeholders(_expand_templates(str(v)), load_ctx) for k, v in entry["env"].items()}
+        except Exception as exc:
+            # Fail closed per entry: this server is withdrawn from the
+            # index with the reason on stderr, instead of spawning literal
+            # {{ }} text or taking the whole index down with it.
+            print(f"[lazy-mcp] server '{name}' withdrawn: inline template error ({exc})", file=sys.stderr)
+            continue
         out[name] = entry
     return out
 

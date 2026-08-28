@@ -122,3 +122,58 @@ def test_the_plan_declares_what_it_cannot_see(sandbox):
     plan = build_sync_plan()
 
     assert plan.not_checked, "i limiti del piano vanno dichiarati, non taciuti"
+
+
+# --- Seguiti del council (Luna, 2026-08-28) ---------------------------------
+
+def test_a_never_launched_cli_with_expected_servers_is_drift(sandbox):
+    """«Non lanciato mai» non significa «niente da fare»: l'apply creerebbe
+    la config. Il piano lo dichiara come azione prevista, --check esce 1."""
+    _declare_one_skill(sandbox)
+    sandbox.mcp_dir.joinpath("manifest.yaml").write_text(
+        "schema_version: 1\n"
+        "servers:\n"
+        "  atteso:\n"
+        "    transport: stdio\n"
+        "    command: echo\n"
+        "    tier: core\n"
+        "    targets: [claude]\n",
+        encoding="utf-8",
+    )
+    (sandbox.home / ".claude.json").unlink(missing_ok=True)
+
+    plan = build_sync_plan()
+    actions = "\n".join(plan.planned_actions)
+    assert "would create" in actions
+    assert engine_cli.cmd_plan(SimpleNamespace(check=True, json=False)) == 1
+
+
+def test_a_probe_that_cannot_run_is_drift_not_silence(sandbox, monkeypatch):
+    """Se la stessa sonda muore durante il piano, l'apply muore nello stesso
+    punto: il piano dice il motivo invece di stampare un verde falso."""
+    def exploding_probe():
+        raise RuntimeError("boomed")
+
+    monkeypatch.setattr(
+        "nexgen_core.checks.mcp_checks.check_mcp_configs_rendered",
+        exploding_probe,
+    )
+
+    plan = build_sync_plan()
+    assert plan.drift
+    assert any("render currently fails" in a for a in plan.planned_actions)
+
+
+def test_undetermined_probes_are_declared_not_hidden(sandbox, monkeypatch):
+    """UNDETERMINED non è né drift né allineato: finisce in not_checked."""
+    import nexgen_core.checks.mcp_checks as mcp_checks
+    from nexgen_core.report import CheckOutcome, Severity
+
+    monkeypatch.setattr(
+        mcp_checks, "check_mcp_configs_rendered",
+        lambda *a, **k: CheckOutcome(id="mcp.rendered_configs", severity=Severity.UNDETERMINED, message="indeterminato di prova"),
+    )
+
+    plan = build_sync_plan()
+    assert any("[mcp] indeterminato di prova" in line for line in plan.not_checked)
+    assert not any("indeterminato di prova" in a for a in plan.planned_actions)
