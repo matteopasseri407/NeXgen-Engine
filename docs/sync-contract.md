@@ -65,6 +65,11 @@ own output rather than hidden:
 `--check` turns drift into a non-zero exit for CI; `--json` emits the plan
 with provenance (engine version, vault, branch, commit, per-domain findings).
 The plan never runs remedies, never writes, and never touches the network.
+Three rules keep the plan honest: a probe that cannot run is reported as
+drift (apply would fail the same way), an undetermined probe is declared
+under "not checked here" instead of disappearing, and a config file absent
+for a CLI the manifest expects to configure is stated as a planned action
+(`render would create …`), not as a green light.
 
 Running `nexgen` without a command prints help and changes nothing. `sync`,
 `guard`, `pull`, and `preflight` are separate, explicit commands, so a typo
@@ -104,10 +109,14 @@ to write one without hand-authoring YAML:
 
 - validated before any write (safe manifest key, exactly one of
   `--command`/`--url`, http(s) URL, single-line strings, auth via env-var
-  name only, secret-shaped `--env` values refused with the `${VAR}` form);
-- written through the same atomic path as `--adopt --apply`: backup
-  (`.bak-<timestamp>`), re-validation by reload, rollback to the original
-  on any failure;
+  name only, secret-shaped `--env` values refused with the `${VAR}` form,
+  and a sensitive variable NAME with a plain value refused the same way);
+  flag combinations that would be silently dropped (`--auth-env` with
+  `--command`, `--env` with `--url`) are errors;
+- written through the same locked, atomic path as `--adopt --apply`: a
+  dedicated host lock serializes writers, the replacement is a tmpfile +
+  rename (a crash never truncates the manifest), re-validation by reload,
+  atomic rollback to the original on any failure;
 - a name already declared or listed under `retired_servers` is refused;
 - entries mount by default (`tier: core`); `--lazy` routes them through the
   proxy instead, and nothing is rendered at add time — the next sync/guard

@@ -229,6 +229,9 @@ def build_context(vault: Path, note_ref: str, hops: int = 2, max_nodes: int = 10
     adjacency: dict[str, list[str]] = data.pop("adjacency")
     titles: dict[str, str] = data.pop("titles")
 
+    if hops < 0:
+        raise ValueError("hops must be >= 0")
+
     target = note_ref.replace("\\", "/").strip()
     lowered = target.lower()
     keys = {lowered, lowered.removesuffix(".md")}

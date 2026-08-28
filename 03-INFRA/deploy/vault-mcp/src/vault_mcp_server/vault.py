@@ -269,7 +269,14 @@ def _match_section(sections: tuple[NoteSection, ...], section_heading: str) -> N
     return candidates[0]
 
 
-def _make_snippet(text: str, query: str, terms: list[str], size: int = 200) -> str:
+_REDACTED = "[redacted]"
+
+#: How much of a note a search snippet may carry. A module constant so the
+#: property ("orientation, not fidelity") has an address, not just a number.
+SNIPPET_SIZE = 200
+
+
+def _make_snippet(text: str, query: str, terms: list[str], size: int = SNIPPET_SIZE) -> str:
     lowered = text.lower()
     needle = query.lower()
     index = lowered.find(needle) if needle else -1
@@ -307,7 +314,6 @@ _REDACT_PATTERNS = (
     re.compile(r"\b[A-Fa-f0-9]{40,}\b"),
     re.compile(r"\b[A-Za-z0-9+/_-]{43,}={0,2}\b"),
 )
-_REDACTED = "[redacted]"
 
 
 def _redact_snippet(text: str) -> str:

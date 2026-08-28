@@ -40,6 +40,17 @@ SECRET_VALUE_RE = re.compile(
     r"|(\b[A-Za-z0-9+/_-]{43,}={0,2}\b))"  # long base64-ish runs
 )
 
+#: An environment-variable NAME that itself names a secret: `PASSWORD=abc`
+#: is a credential in plain text no matter how innocent the value looks.
+SENSITIVE_NAME_RE = re.compile(
+    r"(?i)(token|secret|password|passwd|pwd|api[_-]?key|access[_-]?key|"
+    r"private[_-]?key|client[_-]?secret|credential|auth)"
+)
+
+#: A real environment-variable name, for references the renderer will
+#: actually resolve.
+ENV_NAME_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+
 
 def _manifest_path(vault_data) -> object:
     return vault_data / "03-INFRA" / "agent-universal-layer" / "mcp" / "manifest.yaml"
@@ -47,8 +58,14 @@ def _manifest_path(vault_data) -> object:
 
 def parse_targets(raw: str | None) -> list[str]:
     """`--targets codex,claude` or `--targets all`, validated against the
-    same RUNTIME_TARGETS the renderer honors."""
-    if raw is None or raw.strip() == "" or raw.strip().lower() == "all":
+    same RUNTIME_TARGETS the renderer honors. Empty is an error, not a
+    synonym for all: an empty shell variable must not silently install a
+    server everywhere."""
+    if raw is None or raw.strip() == "":
+        raise ValueError(t(
+            "--targets is required: a comma-separated CLI list or the literal 'all'",
+        ))
+    if raw.strip().lower() == "all":
         return sorted(RUNTIME_TARGETS)
     targets = [t.strip() for t in raw.split(",") if t.strip()]
     unknown = [t for t in targets if t not in RUNTIME_TARGETS]
@@ -68,14 +85,21 @@ def _parse_env(pairs: list[str] | None) -> dict[str, str]:
         key, sep, value = pair.partition("=")
         if not sep or not key.strip():
             raise ValueError(t("--env entries must be KEY=VALUE, got {pair}", pair=pair))
+        key = key.strip()
         value = value.strip()
-        if SECRET_VALUE_RE.search(value) and not value.startswith("${"):
+        is_reference = value.startswith("${") and value.endswith("}")
+        if is_reference and not ENV_NAME_RE.fullmatch(value[2:-1]):
             raise ValueError(t(
-                "the value of {key} looks like a credential: pass an environment "
-                "reference instead, {key}=${{SOME_VAR}}",
-                key=key.strip(),
+                "{key}=${{...}} must name a real environment variable (letters, digits, underscore)",
+                key=key,
             ))
-        env[key.strip()] = value
+        if not is_reference and (SECRET_VALUE_RE.search(value) or SENSITIVE_NAME_RE.search(key)):
+            raise ValueError(t(
+                "the entry {key} looks like a credential: pass an environment "
+                "reference instead, {key}=${{SOME_VAR}}",
+                key=key,
+            ))
+        env[key] = value
     return env
 
 
@@ -105,6 +129,20 @@ def build_entry(
         raise ValueError(t("--command must be a plain string"))
     if url and not url.startswith(("http://", "https://")):
         raise ValueError(t("--url must be an http(s) URL"))
+    if command and auth_env:
+        raise ValueError(t(
+            "--auth-env only applies to an http server: with --command it would "
+            "be silently dropped. Pass credentials through --env instead.",
+        ))
+    if url and env:
+        raise ValueError(t(
+            "--env only applies to a stdio server: with --url it would be "
+            "silently dropped. Pass headers via --auth-env.",
+        ))
+    if auth_env and not ENV_NAME_RE.fullmatch(auth_env):
+        raise ValueError(t(
+            "--auth-env must name a real environment variable (letters, digits, underscore)",
+        ))
     if readonly and not lazy:
         raise ValueError(t(
             "--readonly only means something behind the lazy proxy; add --lazy",

@@ -362,12 +362,14 @@ def test_the_waiter_expands_the_same_inline_templates(tmp_path: Path):
     real = mod._expand_templates(text)
     assert real == ("C:\\ws" if real_ctx()["os"] == "windows" else "/tmp/ws")
 
-    # un template che non sa onorare passa attraverso, con un avviso una volta:
-    # il cameriere non muore mai per un errore di espansione
-    fallback = "{{ .non_esisto }}"
-    mod._template_warning_shown = False
-    assert mod._expand_templates(fallback) == fallback
-    assert mod._template_warning_shown is True
+    # un template che non sa onorare NON passa attraverso: TemplateError
+    # propaga, e il chiamante ritira il server invece di fare spawn di {{ }}
+    try:
+        mod._expand_templates("{{ .non_esisto }}")
+        raised = False
+    except Exception:
+        raised = True
+    assert raised, "un template rotto deve fallire, non arrivare allo spawn"
 
 
 def test_the_waiter_template_context_tracks_the_host(tmp_path: Path):
@@ -381,3 +383,33 @@ def test_the_waiter_template_context_tracks_the_host(tmp_path: Path):
     ctx = mod._template_context()
     assert ctx["os"] in ("linux", "darwin", "windows")
     assert ctx["os"] == ("windows" if sys.platform == "win32" else ("darwin" if sys.platform == "darwin" else "linux"))
+
+
+def test_a_lazy_server_with_a_broken_template_is_withdrawn(tmp_path: Path, monkeypatch):
+    """Fail-closed per entry: il server col template rotto esce dall'indice
+    con il motivo su stderr, e il resto dell'indice resta in piedi."""
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("lazy_mcp_withdrawn", LAZY_MCP)
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = mod
+    spec.loader.exec_module(mod)
+
+    manifest = (
+        "schema_version: 1\n"
+        "servers:\n"
+        "  rottoserv:\n"
+        "    lazy: true\n"
+        '    command: python3\n'
+        '    args: ["{{ .non_esisto }}"]\n'
+        "  buonoserv:\n"
+        "    lazy: true\n"
+        "    command: echo\n"
+    )
+    _write_manifest(tmp_path, manifest)
+    # il cameriere risolve il manifest da AGENT_VAULT_DATA: nel test, la sandbox
+    monkeypatch.setenv("AGENT_VAULT_DATA", str(tmp_path))
+
+    servers = mod._lazy_servers()
+    assert "rottoserv" not in servers, "il server col template rotto non deve arrivare allo spawn"
+    assert "buonoserv" in servers, "l\'indice non crolla per una entry sola"

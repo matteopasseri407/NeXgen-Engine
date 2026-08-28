@@ -709,3 +709,39 @@ def test_doctor_run_diagnostics_wires_new_checks_without_crashing(tmp_path: Path
     assert "instructions.canonical_present" in ids
     assert "instructions.claude_pointer" in ids
     assert "mcp.rendered_configs" in ids
+
+
+def test_a_manifest_the_renderer_cannot_resolve_is_broken_not_undetermined(tmp_path):
+    """Un template che rompe il render farà fallire l'apply allo stesso modo:
+    è un guasto, non ignoranza."""
+    vault = tmp_path / "vault"
+    home = tmp_path / "home"
+    home.mkdir()
+    manifest = vault / "03-INFRA" / "agent-universal-layer" / "mcp" / "manifest.yaml"
+    manifest.parent.mkdir(parents=True)
+    manifest.write_text(
+        "schema_version: 1\n"
+        "servers:\n"
+        "  demo-server:\n"
+        "    transport: stdio\n"
+        "    command: echo\n"
+        "    tier: core\n"
+        '    args: ["{{ .non_esisto }}"]\n',
+        encoding="utf-8",
+    )
+    (home / ".claude.json").write_text(json.dumps({"mcpServers": {}}))
+
+    outcome = mcp_checks.check_mcp_configs_rendered(vault, home)
+    assert outcome.severity == Severity.BROKEN
+    assert "cannot be rendered" in outcome.message
+
+
+def test_import_refuses_dry_run_and_apply_together(sandbox, capsys):
+    """Le due bandiere erano indipendenti: con entrambe si scriveva davvero."""
+    from types import SimpleNamespace
+
+    from nexgen_core.cli import engine as engine_cli
+
+    code = engine_cli.cmd_import(SimpleNamespace(source="claude", dry_run=True, apply=True))
+    assert code == 2
+    assert "--dry-run and --apply" in capsys.readouterr().err

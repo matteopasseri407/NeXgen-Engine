@@ -41,6 +41,33 @@ of any engine release.
 
 ### Fixed
 
+- **Council review round (2026-08-28, seats Luna/Kimi; Claude and Gemini seats
+  unavailable): fixes from the cross-vendor review of everything since v2.1.1.**
+  - `insert_server_stubs` (the shared `--adopt`/`mcp add` write path) is now
+    locked (dedicated host lock), writes through a tmpfile + atomic rename,
+    and rolls back atomically: a crash mid-write can no longer truncate the
+    manifest, and two concurrent adds can no longer lose one entry.
+  - The lazy proxy no longer fails OPEN on inline templates: only an import
+    failure degrades to passthrough; a malformed template withdraws that
+    single server from the index with the reason on stderr instead of
+    spawning literal `{{ }}` text. The proxy also resolves `{{ .vault }}` /
+    `{{ .home }}` with the same path resolvers the renderer uses.
+  - A manifest the renderer cannot resolve is now BROKEN in the doctor (apply
+    would fail the same way), not undetermined; `nexgen plan` reports a
+    failing probe as drift with the reason, declares undetermined probes in
+    its own output, and states `render would create <config>` for never-
+    launched CLIs the manifest expects to configure (previously a falsely
+    green `plan --check`).
+  - `nexgen import --dry-run --apply` are mutually exclusive (the combination
+    used to write despite `--dry-run`).
+  - `mcp add` refuses a sensitive environment-variable NAME with a plain
+    value (`PASSWORD=abc`), validates `${VAR}` references and `--auth-env`
+    against real variable names, and refuses flag combinations that would
+    have been silently dropped (`--auth-env` with `--command`, `--env` with
+    `--url`). Empty `--targets` is an error, not a synonym for `all`.
+  - PyPI publish uses `TWINE_PASSWORD` in the environment (never argv) and
+    explicit `dist/*.tar.gz dist/*.whl` globs: `SHA256SUMS` is no longer
+    inside the upload set.
 - **leak-scan patterns re-synced across both copies** (public leak-scan and
   the maintainer's sanitize copy): the private `leak_hard` had drifted two
   lookbehind refinements behind, and the allow list gained the documented

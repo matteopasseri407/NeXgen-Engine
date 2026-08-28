@@ -114,16 +114,20 @@ def _git_probe(vault_data: Path) -> tuple[list[str], list[str]]:
     return notes, actions
 
 
-def _probe(outcome) -> tuple[str | None, str | None]:
-    """A check outcome becomes (planned action, in-sync line) or (None, None)."""
-    if outcome is None or outcome.severity == Severity.UNDETERMINED:
-        return None, None
+def _probe(outcome) -> tuple[str | None, str | None, str | None]:
+    """A check outcome becomes (planned action, in-sync line, not-checked line)."""
+    if outcome is None:
+        return None, None, None
     line = outcome.message
     if getattr(outcome, "action", ""):
         line += " → " + outcome.action
     if outcome.severity == Severity.BROKEN:
-        return line, None
-    return None, line
+        return line, None, None
+    if outcome.severity == Severity.UNDETERMINED:
+        # "Could not check" is not "nothing to do": the plan must say so,
+        # because apply may well write there.
+        return None, None, line
+    return None, line, None
 
 
 def build_sync_plan(
@@ -182,17 +186,56 @@ def build_sync_plan(
     ]
 
     for domain, probe in probes:
-        result = probe()
+        try:
+            result = probe()
+        except Exception as exc:
+            # A probe that cannot run means an apply would fail the same
+            # way (same code path): that is drift by definition, and the
+            # plan states the reason instead of dying.
+            plan.planned_actions.append(f"[{domain}] render currently fails: {exc}")
+            continue
         outcomes = result if isinstance(result, list) else [result]
         for outcome in outcomes:
-            action, ok = _probe(outcome)
+            action, ok, unchecked = _probe(outcome)
             if action:
                 plan.planned_actions.append(f"[{domain}] {action}")
             elif ok:
                 plan.in_sync.append(f"[{domain}] {ok}")
+            elif unchecked:
+                plan.not_checked.append(f"[{domain}] {unchecked}")
+
+    # A config file that does not exist yet, for a CLI the manifest expects
+    # to configure, is the clearest planned action there is: the renderer
+    # would create it. The rendered-configs check reports this as
+    # undetermined (it cannot verify alignment), but the plan can — and
+    # must — state it as what an apply would do.
+    plan.planned_actions.extend(_missing_config_actions(vault, home_dir))
 
     plan.not_checked.append(t(
         "Launcher shims, scheduler units and modules: idempotent self-repair "
         "phases; on an aligned machine they write nothing."
     ))
     return plan
+
+
+def _missing_config_actions(vault: Path, home: Path) -> list[str]:
+    """CLIs the manifest expects to configure whose config file is absent."""
+    from nexgen_core.renderer import McpRenderer
+
+    renderer = McpRenderer(vault_data=vault, home=home)
+    cli_paths = {
+        "claude": home / ".claude.json",
+        "antigravity": home / ".gemini" / "antigravity-ide" / "mcp_config.json",
+        "codex": home / ".codex" / "config.toml",
+        "opencode": renderer._opencode_config_path(),
+    }
+    actions: list[str] = []
+    for cli, path in cli_paths.items():
+        try:
+            expected = renderer.load_resolved_servers(cli)
+        except Exception:
+            continue  # a manifest the renderer cannot resolve is reported
+                          # by the probes above; nothing more to add here
+        if expected and not path.is_file():
+            actions.append(f"[mcp] render would create {path} ({cli} never launched)")
+    return actions

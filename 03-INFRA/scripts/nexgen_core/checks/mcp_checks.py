@@ -98,10 +98,14 @@ def _expected_and_rendered(renderer: McpRenderer, cli: str, path: Path) -> tuple
 
     Shared by the drift check and the orphan check so the two cannot
     disagree about what "rendered" means. The string result is a reason the
-    sets are unknowable (config unreadable); it is None when the sets are
-    meaningful.
+    sets are unknowable: prefixed "template:" for a manifest the renderer
+    cannot resolve (apply would fail the same way — that is drift, not
+    ignorance), plain for an unreadable or never-launched config.
     """
-    expected = set(renderer.load_resolved_servers(cli).keys())
+    try:
+        expected = set(renderer.load_resolved_servers(cli).keys())
+    except Exception as exc:
+        return f"template: the manifest cannot be rendered for {cli} ({exc})", set(), set()
     if not path.is_file():
         return f"{cli} (never launched: {path} is missing)", expected, set()
     spec = _CLI_RENDER_SPECS[cli]
@@ -142,12 +146,16 @@ def check_mcp_configs_rendered(vault_data: Path, home: Path) -> CheckOutcome:
     extra_parts: list[str] = []
 
     for cli, path in cli_paths.items():
-        if not renderer.load_resolved_servers(cli):
-            continue  # nothing expected for this CLI on this manifest
         error, expected, rendered = _expected_and_rendered(renderer, cli, path)
         if error:
-            undetermined_parts.append(error)
+            if error.startswith("template:"):
+                # Apply would fail exactly like this: a fault, not ignorance.
+                broken_parts.append(error.removeprefix("template: "))
+            else:
+                undetermined_parts.append(error)
             continue
+        if not expected:
+            continue  # nothing expected for this CLI on this manifest
 
         spec = _CLI_RENDER_SPECS[cli]
         norm_expected = {spec.normalize(name): name for name in expected}

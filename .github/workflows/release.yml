@@ -161,10 +161,14 @@ jobs:
         # Same gate: a per-release truth. Until the maintainer registers
         # the token, packages ship as GitHub release assets only. When it
         # is set, `uv tool install nexgen-engine` becomes real instead of
-        # aspirational.
+        # aspirational. The token travels in the environment, never in
+        # argv (visible in /proc); the globs are explicit because dist/
+        # also carries SHA256SUMS, which is not a Python distribution.
         env:
           PYPI_API_TOKEN: ${{ secrets.PYPI_API_TOKEN }}
+          TWINE_USERNAME: __token__
+          TWINE_PASSWORD: ${{ secrets.PYPI_API_TOKEN }}
         if: env.PYPI_API_TOKEN != ''
         run: |
           python -m pip install --upgrade twine
-          python -m twine upload --non-interactive -u __token__ -p "$PYPI_API_TOKEN" dist/*
+          python -m twine upload --non-interactive dist/*.tar.gz dist/*.whl

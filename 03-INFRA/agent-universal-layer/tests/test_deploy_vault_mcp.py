@@ -25,7 +25,7 @@ if str(SRC) not in sys.path:
 
 from vault_mcp_server import __version__ as vault_mcp_version  # noqa: E402
 from vault_mcp_server.config import Settings  # noqa: E402
-from vault_mcp_server.vault import VaultService, _make_snippet, _redact_snippet  # noqa: E402
+from vault_mcp_server.vault import SNIPPET_SIZE, VaultService, _make_snippet, _redact_snippet  # noqa: E402
 
 
 def _settings(tmp_path: Path, **env: str) -> Settings:
@@ -90,7 +90,7 @@ def test_secrets_never_reach_a_search_snippet(tmp_path: Path):
 def test_snippets_are_short_enough_to_be_orientation(tmp_path: Path):
     body = "parola " * 400
     snippet = _make_snippet(body, "parola", ["parola"])
-    assert len(snippet) <= 260  # 200 di finestra + ellissi
+    assert len(snippet) <= SNIPPET_SIZE + 60  # finestra più le ellissi, non un numero magico
 
 
 @pytest.mark.parametrize(
