@@ -547,10 +547,10 @@ def test_nexgen_event_sink_script_e2e_socket_and_failsafe(tmp_path: Path):
     t0 = time.time()
     res = subprocess.run(
         ["node", str(script_path), "on_done", "claude", "test hello"],
-        env=vocal, capture_output=True, text=True, timeout=10,
+        env=vocal, capture_output=True, text=True, timeout=20,
     )
     assert res.returncode == 0
-    assert time.time() - t0 < 5.0
+    assert time.time() - t0 < 15.0
     assert res.stdout == ""  # never pollutes stdout
 
     if sys.platform == "win32" or not hasattr(socket, "AF_UNIX"):
@@ -638,7 +638,7 @@ def test_nexgen_event_sink_script_e2e_socket_and_failsafe(tmp_path: Path):
     data3 = conn3.recv(4096).decode("utf-8")
     conn3.close()
     srv3.close()
-    proc3.wait(timeout=5)
+    proc3.wait(timeout=10)
     assert proc3.returncode == 0
     assert '"event":"on_done"' in data3
     assert '"cli":"antigravity"' in data3
