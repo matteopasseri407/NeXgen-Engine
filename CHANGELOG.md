@@ -10,6 +10,8 @@ of any engine release.
 
 ## [Unreleased]
 
+## [2.1.2] - 2026-08-28
+
 ### Added
 
 - **`nexgen mcp add <name> --targets <clis|all>`**: add a connector with one
