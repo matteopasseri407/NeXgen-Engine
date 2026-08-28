@@ -236,3 +236,77 @@ def test_heal_chrome_powershell_escaping(monkeypatch, tmp_path: Path):
     cmd_str = captured_cmds[0][3]  # The -Command argument
     assert "Mario''s Profile" in cmd_str
 
+
+
+# --- vault-map --context: il quartiere di una nota, read-only ---------------
+
+def _context_vault(tmp_path: Path) -> Path:
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    (vault / "00-START-HERE.md").write_text("# Start\n\n[[hub]]\n", encoding="utf-8")
+    (vault / "hub.md").write_text("# Hub\n\n[[vicino-a]]\n[[vicino-b]]\n", encoding="utf-8")
+    (vault / "vicino-a.md").write_text("# Vicino A\n\n[[fondolina]]\n", encoding="utf-8")
+    (vault / "vicino-b.md").write_text("# Vicino B\n", encoding="utf-8")
+    (vault / "fondolina.md").write_text("# Fondolina\n", encoding="utf-8")
+    (vault / "isolata.md").write_text("# Isolata\n", encoding="utf-8")
+    return vault
+
+
+def test_context_lists_the_neighbourhood_by_hops(tmp_path: Path):
+    from nexgen_core.tools.vault_map import build_context
+
+    result = build_context(_context_vault(tmp_path), "hub", hops=1, max_nodes=10)
+
+    paths = [n["path"] for n in result["nodes"]]
+    assert paths[0] == "hub.md"
+    assert "vicino-a.md" in paths and "vicino-b.md" in paths
+    assert "00-START-HERE.md" in paths  # inbound conta quanto outbound
+    assert "fondolina.md" not in paths, "a 1 hop non si arriva al secondo anello"
+    assert "isolata.md" not in paths
+
+
+def test_context_at_two_hops_reaches_the_second_ring(tmp_path: Path):
+    from nexgen_core.tools.vault_map import build_context
+
+    result = build_context(_context_vault(tmp_path), "hub", hops=2, max_nodes=10)
+
+    paths = [n["path"] for n in result["nodes"]]
+    assert "fondolina.md" in paths
+    deep = next(n for n in result["nodes"] if n["path"] == "fondolina.md")
+    assert deep["depth"] == 2
+    assert deep["via"] == "vicino-a.md"
+
+
+def test_context_resolves_stem_and_title_and_caps_nodes(tmp_path: Path):
+    from nexgen_core.tools.vault_map import build_context
+
+    vault = _context_vault(tmp_path)
+
+    by_stem = build_context(vault, "vicino-b", hops=1, max_nodes=10)
+    assert by_stem["nodes"][0]["path"] == "vicino-b.md"
+    by_title = build_context(vault, "Fondolina", hops=1, max_nodes=10)
+    assert by_title["nodes"][0]["path"] == "fondolina.md"
+
+    capped = build_context(vault, "hub", hops=2, max_nodes=2)
+    assert len(capped["nodes"]) <= 3  # il nodo di contesto + 2 vicini
+
+
+def test_context_read_only_and_missing_note(tmp_path: Path, capsys):
+    import json as jsonlib
+
+    from nexgen_core.tools.vault_map import main as map_main
+
+    vault = _context_vault(tmp_path)
+    before = {p.name: p.read_text(encoding="utf-8") for p in vault.glob("*.md")}
+
+    assert map_main(["--vault", str(vault), "--context", "hub", "--hops", "2"]) == 0
+    after = {p.name: p.read_text(encoding="utf-8") for p in vault.glob("*.md")}
+    assert before == after
+    capsys.readouterr()  # scarica l'output umano: il JSON deve restare puro
+
+    assert map_main(["--vault", str(vault), "--context", "hub", "--json"]) == 0
+    payload = jsonlib.loads(capsys.readouterr().out)
+    assert payload["context"] == "hub.md"
+    assert {"path", "depth", "direction", "via"} <= set(payload["nodes"][0].keys())
+
+    assert map_main(["--vault", str(vault), "--context", "inesistente"]) == 3

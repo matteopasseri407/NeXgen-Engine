@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sys
 import time
 from pathlib import Path
@@ -252,6 +253,48 @@ def _adopt_entry(cli: str, spec: dict) -> dict:
     return entry
 
 
+def _validate_stub_entry(name: str, entry: dict) -> str | None:
+    """Semantic validation of an adopted stub: reason if hostile, None if sane.
+
+    The stub is generated from a live config someone (or something) else
+    wrote, and it is about to be shown as YAML to paste, or written into
+    the canonical manifest. Structural validity beyond "it parsed" is what
+    keeps an injection out: a server name that means something else in
+    YAML, a command that is not a single plain string, a URL whose scheme
+    is not http(s), arguments or env values carrying newlines are all
+    refused here, on both the stdout path and the --apply path.
+    """
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,63}", name):
+        return f"server name {name!r} is not a safe manifest key"
+    transport = entry.get("transport")
+    if transport not in ("stdio", "http"):
+        return f"{name}: unknown transport {transport!r}"
+    url = entry.get("url")
+    if transport == "http":
+        if not isinstance(url, str) or not url.startswith(("http://", "https://")):
+            return f"{name}: http transport requires an http(s) URL, got {url!r}"
+    command = entry.get("command")
+    if transport == "stdio":
+        if not isinstance(command, str) or not command.strip():
+            return f"{name}: stdio transport requires a non-empty command string"
+        if "\n" in command:
+            return f"{name}: command carries a newline"
+    for arg in entry.get("args") or []:
+        if not isinstance(arg, str) or "\n" in arg:
+            return f"{name}: args must be single-line strings"
+    env = entry.get("env")
+    if env is not None:
+        if not isinstance(env, dict):
+            return f"{name}: env must be a map"
+        for key, value in env.items():
+            if not isinstance(key, str) or not isinstance(value, str) or "\n" in value:
+                return f"{name}: env must map names to single-line strings"
+    auth = entry.get("auth")
+    if auth is not None and not (isinstance(auth, dict) and isinstance(auth.get("env"), str)):
+        return f"{name}: auth must reference an environment variable name"
+    return None
+
+
 def _emit_manifest_stub(name: str, entry: dict) -> str:
     def scalar(v: Any) -> str:
         return json.dumps(v, ensure_ascii=False)
@@ -320,6 +363,10 @@ def cmd_adopt(cli: str, apply: bool = False) -> int:
         auth_env = auth.get("env") if isinstance(auth, dict) else None
         if auth_env:
             safe["auth"] = {"env": auth_env}
+        problem = _validate_stub_entry(name, safe)
+        if problem:
+            print(">>> STOP: " + t("the live config carries an entry I refuse to import ({reason}).", reason=problem), file=sys.stderr)
+            return 2
         stubs.append(_emit_manifest_stub(name, safe))
     if apply:
         if any("<AUTH>" in s for s in stubs):

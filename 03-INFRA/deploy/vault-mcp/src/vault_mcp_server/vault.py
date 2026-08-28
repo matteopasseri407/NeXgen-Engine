@@ -269,7 +269,7 @@ def _match_section(sections: tuple[NoteSection, ...], section_heading: str) -> N
     return candidates[0]
 
 
-def _make_snippet(text: str, query: str, terms: list[str], size: int = 240) -> str:
+def _make_snippet(text: str, query: str, terms: list[str], size: int = 200) -> str:
     lowered = text.lower()
     needle = query.lower()
     index = lowered.find(needle) if needle else -1
@@ -280,7 +280,7 @@ def _make_snippet(text: str, query: str, terms: list[str], size: int = 240) -> s
                 break
     if index < 0:
         snippet = text[:size]
-        return snippet.strip()
+        return _redact_snippet(snippet.strip())
 
     start = max(0, index - size // 3)
     end = min(len(text), start + size)
@@ -289,7 +289,31 @@ def _make_snippet(text: str, query: str, terms: list[str], size: int = 240) -> s
         snippet = "..." + snippet
     if end < len(text):
         snippet = snippet + "..."
-    return snippet
+    return _redact_snippet(snippet)
+
+
+#: Snippet redaction. A snippet is orientation, not fidelity: whatever
+#: matches a secret shape is masked before it leaves the server. Narrow on
+#: labelled assignments (token = ..., Bearer ...), key/credential blocks,
+#: and long high-entropy runs; ordinary prose never matches any of these.
+_REDACT_PATTERNS = (
+    re.compile(
+        r"(?i)\b(token|secret|password|passwd|api[_-]?key|access[_-]?key|"
+        r"authorization|bearer)\b(\s*[:=]\s*)(\"[^\"]*\"|\S+)"
+    ),
+    re.compile(r"(?i)\bbearer\s+\S+"),
+    re.compile(r"-----BEGIN [A-Z0-9 ]+-----.*?-----END [A-Z0-9 ]+-----", re.DOTALL),
+    re.compile(r"\bAGE-SECRET-KEY-[A-Z0-9]{20,}\b"),
+    re.compile(r"\b[A-Fa-f0-9]{40,}\b"),
+    re.compile(r"\b[A-Za-z0-9+/_-]{43,}={0,2}\b"),
+)
+_REDACTED = "[redacted]"
+
+
+def _redact_snippet(text: str) -> str:
+    for pattern in _REDACT_PATTERNS:
+        text = pattern.sub(_REDACTED, text)
+    return text
 
 
 class VaultService:

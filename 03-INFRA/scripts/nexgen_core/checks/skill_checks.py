@@ -117,10 +117,11 @@ def check_skill_library_symlinks(home: Path) -> CheckOutcome:
 def check_skills_out_of_manifest(vault_data: Path, home: Path) -> CheckOutcome:
     """Skills materialized in the library but absent from the manifest.
 
-    They are never deleted (the sync is additive by contract): they are an
-    undeclared mismatch to be knowingly adopted or abandoned, not something
-    this check can decide on its own, which is why it's undetermined and
-    not broken.
+    They are never deleted (the sync is additive by contract) and they
+    never block: the mismatch is reported as a WARN so an agent picks it
+    up, while the human report stays quiet. A skill that is legitimately
+    outside the manifest goes into the manifest's own `orphans_allowlist`
+    rather than being reported forever.
     """
     mat = SkillMaterializer(vault_data=vault_data, home=home)
     library_dir = home / ".agents" / "skill-library"
@@ -129,17 +130,41 @@ def check_skills_out_of_manifest(vault_data: Path, home: Path) -> CheckOutcome:
 
     stray = sorted(materialized - declared)
     if stray:
+        allowed = _skills_orphans_allowlist(vault_data)
+        visible = [name for name in stray if name not in allowed]
+        if not visible:
+            return CheckOutcome(
+                id="skills.out_of_manifest",
+                severity=Severity.OK,
+                message=t("Out-of-manifest skills are all allowlisted ({count})", count=len(stray)),
+            )
         return CheckOutcome(
             id="skills.out_of_manifest",
-            severity=Severity.UNDETERMINED,
-            message=t("Skills materialized but not declared in the manifest: {skills}.", skills=", ".join(stray)),
+            severity=Severity.WARN,
+            message=t("Skills materialized but not declared in the manifest: {skills}.", skills=", ".join(visible)),
             action=t("Adopt the useful skills by adding them to skills.manifest.yaml, or remove them manually from the library (the sync won't delete them on its own)."),
+            detail=t("Allowlisted (not reported): {names}", names=", ".join(sorted(set(stray) - set(visible)))) if len(visible) != len(stray) else None,
         )
     return CheckOutcome(
         id="skills.out_of_manifest",
         severity=Severity.OK,
         message=t("No out-of-manifest skills to reconcile"),
     )
+
+
+def _skills_orphans_allowlist(vault_data: Path) -> set[str]:
+    """Skill names the manifest declares as legitimate outside itself."""
+    path = skills_manifest(vault_data)
+    if not path.is_file():
+        return set()
+    try:
+        data = load_skills_manifest(path)
+    except Exception:
+        return set()
+    entries = (data.get("raw") or {}).get("orphans_allowlist")
+    if not isinstance(entries, list):
+        return set()
+    return {str(entry).strip() for entry in entries if str(entry).strip()}
 
 
 def check_skills_not_materialized(vault_data: Path, home: Path) -> CheckOutcome:

@@ -61,6 +61,11 @@ SSE_ACCEPT = "application/json, text/event-stream"
 LIST_TTL_MS = 60000
 LIST_CACHE_SCOPE = "private"
 
+#: MCP tool annotations, advisory only (a server can claim read-only and
+#: still mutate): they are surfaced to help the caller choose, never to
+#: replace this proxy's own fail-closed confirmation gate.
+HINT_KEYS = ("readOnlyHint", "destructiveHint", "idempotentHint", "openWorldHint")
+
 #: `resultType` is required on every result by 2026-07-28. Older clients pass
 #: unknown result fields through, so the same envelope serves both eras.
 RESULT_TYPE = "complete"
@@ -371,7 +376,17 @@ class Waiter:
             entries = []
             for t in tools:
                 desc = (t.get("description") or "").splitlines()[0][:100]
-                entries.append({"name": t.get("name", ""), "hint": desc})
+                entry: dict[str, Any] = {"name": t.get("name", ""), "hint": desc}
+                annotations = t.get("annotations")
+                if isinstance(annotations, dict):
+                    hints = {
+                        k: bool(annotations[k])
+                        for k in HINT_KEYS
+                        if k in annotations and isinstance(annotations[k], bool)
+                    }
+                    if hints:
+                        entry["annotations"] = hints
+                entries.append(entry)
                 estimated += len(t.get("name", "")) // 4 + len(desc) // 4 + 2
             result["servers"][name] = {"mutating": handle.readonly_server is False or bool(handle.readonly_tools), "tools": entries}
         # Budget enforcement: over budget the index degrades to names only
@@ -436,11 +451,23 @@ def _meta_tools() -> list[dict[str, Any]]:
         {
             "name": "lazy_list",
             "description": "Index of servers behind the lazy proxy: tool names (plus one-line hints) per server, and the mutating flag. Call this first to see what exists; the full index has a token budget and degrades to names only when exceeded.",
+            "annotations": {
+                "readOnlyHint": True,
+                "destructiveHint": False,
+                "idempotentHint": True,
+                "openWorldHint": True,
+            },
             "inputSchema": {"type": "object", "properties": {}, "additionalProperties": False},
         },
         {
             "name": "lazy_load",
             "description": "Load the FULL definition (description + input schema) of one tool into context BEFORE calling it. Mandatory before lazy_call for any tool whose arguments you have not seen in full.",
+            "annotations": {
+                "readOnlyHint": True,
+                "destructiveHint": False,
+                "idempotentHint": True,
+                "openWorldHint": True,
+            },
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -454,6 +481,12 @@ def _meta_tools() -> list[dict[str, Any]]:
         {
             "name": "lazy_call",
             "description": "Forward a call to a lazy server. Servers marked mutating refuse without \"confirm\": true. Always lazy_load first, and confirm explicitly when the call changes state.",
+            "annotations": {
+                "readOnlyHint": False,
+                "destructiveHint": True,
+                "idempotentHint": False,
+                "openWorldHint": True,
+            },
             "inputSchema": {
                 "type": "object",
                 "properties": {

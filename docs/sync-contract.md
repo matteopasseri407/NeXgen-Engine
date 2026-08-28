@@ -39,11 +39,32 @@ below gives the primary `nexgen` names.
 |---|---|
 | `nexgen guard` | Recurring pull, apply and healthcheck. Never pushes. A busy lock is a safe skip. |
 | `nexgen sync` (alias `nexgen apply`) | Manual pull and apply transaction. Never pushes. |
+| `nexgen sync --dry-run` / `nexgen plan` | The plan: what an apply would change, computed without writing, without fetching, and without materializing secrets. Exposes `DRIFT` and always exits 0. |
+| `nexgen sync --check` / `nexgen plan --check` | The same plan, exiting non-zero when drift is found (CI gate). `nexgen plan --json` dumps the plan with provenance. |
 | `nexgen pull` | Pull and healthcheck only. Never regenerates CLI files. |
 | `nexgen publish` (alias: `nexgen vault push`) | Publishes existing commits to the authoritative remote, then configured mirrors. It never pulls or applies. |
 | `nexgen preflight` | Validates the local configuration contract without pulling or generating runtime files. |
 | `nexgen doctor` | Runs diagnostics and alerts only. |
 | `nexgen bootstrap-alerts` | Runs diagnostics and alerts only on FAIL (internal command, used by the timers). |
+
+## The plan (preview without side effects)
+
+`nexgen plan` is the single plan object shared by preview and dump. It probes
+drift with the doctor's own read-only checks (MCP render state, declared
+skills, starter views, instruction pointers) plus a local-only Git probe
+(conflicts, branch, uncommitted work). Two limits are declared in the plan's
+own output rather than hidden:
+
+- **no network**: the upstream behind/ahead state is unknowable without a
+  fetch, and a plan never fetches. Preview and apply are therefore not
+  perfectly equivalent for the upstream part of the Git domain.
+- **probes, not simulation**: the idempotent self-repair phases (shims,
+  scheduler, modules) are declared, not enumerated. On an aligned machine
+  they write nothing.
+
+`--check` turns drift into a non-zero exit for CI; `--json` emits the plan
+with provenance (engine version, vault, branch, commit, per-domain findings).
+The plan never runs remedies, never writes, and never touches the network.
 
 Running `nexgen` without a command prints help and changes nothing. `sync`,
 `guard`, `pull`, and `preflight` are separate, explicit commands, so a typo
