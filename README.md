@@ -112,10 +112,17 @@ Different tools solve different slices. Small syncers are great for copying one 
 ### Option A — Installed (recommended for daily use)
 
 ```bash
-uv tool install nexgen-engine   # or: pipx install nexgen-engine
+# The engine is distributed from this repository (no PyPI package yet):
+uv tool install git+https://github.com/matteopasseri407/NeXgen-Engine   # or: pipx install git+https://github.com/matteopasseri407/NeXgen-Engine
 nexgen info
 nexgen doctor
 ```
+
+Once the maintainer registers a PyPI token or the Homebrew tap (see
+`docs/release-packages.md`), `uv tool install nexgen-engine` and
+`brew install matteopasseri407/nexgen/nexgen` become the shorter paths;
+every release also ships an sdist, a wheel and `SHA256SUMS` as release
+assets, so any installer can verify what it downloads.
 
 Updates via `nexgen update` (with confirmation) and via the scheduled `guard` task that runs at login + every 30 min.
 

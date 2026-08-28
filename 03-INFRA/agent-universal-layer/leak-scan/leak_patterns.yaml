@@ -105,3 +105,8 @@ leak_allow:
   # A calendar date: "seven or more digits" catches it, but a YYYYMMDD
   # stamp is not a secret.
   - \b20\d{2}(?:0[1-9]|1[0-2])(?:0[1-9]|[12]\d|3[01])\b
+  # GitHub's noreply address domain: the release workflow commits to the
+  # tap repo as a bot (user.email=<bot>@users.noreply.github.com), which is
+  # the documented GitHub form for machine identities, not a personal email
+  # (added for release_packages automation, 2026-08-28).
+  - '[A-Za-z0-9._%-]+@users\.noreply\.github\.com\b'

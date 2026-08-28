@@ -12,6 +12,41 @@ of any engine release.
 
 ### Added
 
+- **`nexgen mcp add <name> --targets <clis|all>`**: add a connector with one
+  command instead of hand-writing YAML in the manifest. Validated before any
+  write (safe name, one of `--command`/`--url`, http(s) scheme, single-line
+  strings), atomic with backup + re-validation + rollback (the same write
+  path `--adopt` uses, extracted so both share one implementation), refused
+  for names already declared or retired, and secret-shaped `--env` values are
+  rejected with the `${VAR}` reference they must use. `--lazy`/`--readonly`
+  wire into the lazy proxy's fail-closed gate; entries mount by default
+  (`tier: core`), because an add that reports success and mounts nothing is
+  the worst of both worlds. `nexgen mcp list` shows what would render now.
+- **Inline per-OS templating in the MCP manifest**: `{{ .os }}`, `{{ .home }}`,
+  `{{ .vault }}`, `{{ .engine }}` and `{{ if eq .os "windows" }}A{{ else }}B{{ end }}`
+  in manifest string values, expanded by the renderer and by the lazy proxy
+  alike (one server definition, both dialects — the `windows:` whole-entry
+  override stays for full swaps, templates cover the one-path-differs case).
+  Unknown templates and variables fail the render closed: literal `{{ }}` in
+  a CLI config is the quiet wrong the engine exists to prevent.
+- **Distribution packages on every release**: the release workflow now builds
+  sdist + wheel, attaches them to the GitHub release with `SHA256SUMS`, and
+  can auto-update a Homebrew tap (`docs/release-packages.md`) and publish to
+  PyPI. Both external channels are gated on their secrets and are visible
+  skips until the maintainer registers them. The generated formula pins the
+  release asset and reads the PyYAML resource digest from PyPI at build
+  time. The README quick start no longer claims `uv tool install
+  nexgen-engine` while the package is not on PyPI: it installs from the git
+  URL and says so.
+
+### Fixed
+
+- **leak-scan patterns re-synced across both copies** (public leak-scan and
+  the maintainer's sanitize copy): the private `leak_hard` had drifted two
+  lookbehind refinements behind, and the allow list gained the documented
+  GitHub `@users.noreply.github.com` machine-identity form used by the
+  release bot.
+
 - **`nexgen plan`** (and `nexgen sync --dry-run` / `--check`): the plan of
   what an apply would change, computed read-only and network-free. `plan`
   exposes drift at exit 0, `plan --check` exits non-zero on drift for CI,

@@ -337,3 +337,47 @@ def test_the_meta_tools_expose_their_own_hints(tmp_path: Path):
         assert tools["lazy_call"]["annotations"]["destructiveHint"] is True
     finally:
         proc.kill()
+
+
+def test_the_waiter_expands_the_same_inline_templates(tmp_path: Path):
+    """Il cameriere e il renderer parlano lo stesso dialetto: un server
+    definito una volta si comporta uguale su entrambe le vie."""
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("lazy_mcp_under_test", LAZY_MCP)
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = mod
+    spec.loader.exec_module(mod)
+
+    ctx = {"os": "windows", "home": "C:\\Users\\u", "vault": "C:\\v", "engine": "C:\\e"}
+    text = '{{ if eq .os "windows" }}C:\\ws{{ else }}/tmp/ws{{ end }}'
+    real_ctx = mod._template_context
+    mod._template_context = lambda: ctx
+    try:
+        assert mod._expand_templates(text) == "C:\\ws"
+    finally:
+        mod._template_context = real_ctx
+
+    # sul contesto reale del processo il ramo giusto è quello dell'host
+    real = mod._expand_templates(text)
+    assert real == ("C:\\ws" if real_ctx()["os"] == "windows" else "/tmp/ws")
+
+    # un template che non sa onorare passa attraverso, con un avviso una volta:
+    # il cameriere non muore mai per un errore di espansione
+    fallback = "{{ .non_esisto }}"
+    mod._template_warning_shown = False
+    assert mod._expand_templates(fallback) == fallback
+    assert mod._template_warning_shown is True
+
+
+def test_the_waiter_template_context_tracks_the_host(tmp_path: Path):
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("lazy_mcp_under_test_ctx", LAZY_MCP)
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = mod
+    spec.loader.exec_module(mod)
+
+    ctx = mod._template_context()
+    assert ctx["os"] in ("linux", "darwin", "windows")
+    assert ctx["os"] == ("windows" if sys.platform == "win32" else ("darwin" if sys.platform == "darwin" else "linux"))

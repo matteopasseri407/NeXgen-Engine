@@ -337,6 +337,42 @@ def _load_live(cli: str) -> dict | None:
     return {}
 
 
+def insert_server_stubs(manifest_path: Path, stubs: list[str]) -> tuple[bool, str, Path | None]:
+    """Appends stubs under the top-level `servers:` block: atomic, with
+    backup, re-validation and rollback.
+
+    The one write path shared by `--adopt --apply` and `nexgen mcp add`, so
+    "append a server to the canonical manifest" has exactly one
+    implementation: a broken manifest after the write restores the original
+    file, and the caller learns the reason instead of inheriting a broken
+    sync.
+    """
+    try:
+        raw_text = manifest_path.read_text(encoding="utf-8")
+    except OSError as exc:
+        return False, t("could not read the manifest ({error}).", error=exc), None
+    lines = raw_text.splitlines()
+    servers_idx = next((i for i, ln in enumerate(lines) if ln.startswith("servers:")), None)
+    if servers_idx is None:
+        return False, t("could not find the top-level 'servers:' block; add the entries by hand."), None
+    end = len(lines)
+    for j in range(servers_idx + 1, len(lines)):
+        ln = lines[j]
+        if ln and not ln[0].isspace() and not ln.lstrip().startswith("#"):
+            end = j
+            break
+    new_lines = lines[:end] + [""] + stubs + lines[end:]
+    new_text = "\n".join(new_lines) + ("\n" if raw_text.endswith("\n") else "")
+    bak = _secure_backup(manifest_path, raw_text)
+    manifest_path.write_text(new_text, encoding="utf-8")
+    try:
+        load_mcp_manifest(manifest_path)
+    except Exception as exc:
+        manifest_path.write_text(raw_text, encoding="utf-8")
+        return False, t("the new entries broke the manifest ({error}); restored the original.", error=exc), bak
+    return True, t("manifest updated"), bak
+
+
 def cmd_adopt(cli: str, apply: bool = False) -> int:
     """Finds live servers outside the manifest and proposes (or applies) their entries."""
     manifest_path = _manifest_path()
@@ -372,31 +408,9 @@ def cmd_adopt(cli: str, apply: bool = False) -> int:
         if any("<AUTH>" in s for s in stubs):
             print(">>> STOP: " + t("a server carries a literal secret (<AUTH>). Convert it to an env-var reference before adopting."), file=sys.stderr)
             return 2
-        try:
-            raw_text = manifest_path.read_text(encoding="utf-8")
-        except OSError as exc:
-            print(">>> STOP: " + t("could not read the manifest ({error}).", error=exc), file=sys.stderr)
-            return 2
-        lines = raw_text.splitlines()
-        servers_idx = next((i for i, ln in enumerate(lines) if ln.startswith("servers:")), None)
-        if servers_idx is None:
-            print(">>> STOP: " + t("could not find the top-level 'servers:' block; add the entries by hand."), file=sys.stderr)
-            return 2
-        end = len(lines)
-        for j in range(servers_idx + 1, len(lines)):
-            ln = lines[j]
-            if ln and not ln[0].isspace() and not ln.lstrip().startswith("#"):
-                end = j
-                break
-        new_lines = lines[:end] + [""] + stubs + lines[end:]
-        new_text = "\n".join(new_lines) + ("\n" if raw_text.endswith("\n") else "")
-        bak = _secure_backup(manifest_path, raw_text)
-        manifest_path.write_text(new_text, encoding="utf-8")
-        try:
-            load_mcp_manifest(manifest_path)
-        except Exception as exc:
-            manifest_path.write_text(raw_text, encoding="utf-8")
-            print(">>> STOP: " + t("the adopted entries broke the manifest ({error}); restored the original.", error=exc), file=sys.stderr)
+        ok, message, bak = insert_server_stubs(manifest_path, stubs)
+        if not ok:
+            print(">>> STOP: " + message, file=sys.stderr)
             return 2
         print(">>> " + t(
             "adopted {count} servers into the manifest: {names}. Backup: {backup}. Review and commit.",

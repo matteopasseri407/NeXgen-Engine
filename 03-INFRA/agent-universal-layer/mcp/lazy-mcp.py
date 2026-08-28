@@ -84,6 +84,45 @@ def _expand_placeholders(text: str, ctx: dict[str, str]) -> str:
     return re.sub(r"\$\{([^}]+)\}", repl, text)
 
 
+#: The waiter expands the SAME inline dialect the renderer does (`{{ .os }}`,
+#: `{{ if eq .os "windows" }}…{{ end }}`): a server defined once in the
+#: manifest must not render differently depending on which path serves it.
+#: The implementation lives in nexgen_core.config, next to the file's other
+#: lazily-imported engine pieces; if it is somehow unreachable, the {{ }}
+#: text passes through unchanged and the miss is said once on stderr,
+#: never silently buried.
+_template_warning_shown = False
+
+
+def _template_context() -> dict[str, str]:
+    vault = os.environ.get("AGENT_VAULT_DATA") or os.environ.get("KNOWLEDGE_VAULT_PATH") or str(Path.home() / "KnowledgeVault")
+    return {
+        "os": {"win32": "windows", "darwin": "darwin"}.get(sys.platform, "linux"),
+        "home": str(Path.home()),
+        "vault": vault,
+        "engine": _resolve_engine_root(),
+    }
+
+
+def _expand_templates(text: str) -> str:
+    global _template_warning_shown
+    if "{{" not in text:
+        return text
+    here = Path(__file__).resolve()
+    local_scripts = here.parents[2] / "scripts"
+    for candidate in (_resolve_engine_root() + "/scripts", str(local_scripts)):
+        if Path(candidate).is_dir() and candidate not in sys.path:
+            sys.path.insert(0, candidate)
+    try:
+        from nexgen_core.config import expand_inline_templates
+        return expand_inline_templates(text, _template_context())
+    except Exception as exc:
+        if not _template_warning_shown:
+            print(f"[lazy-mcp] inline templates not expanded ({exc})", file=sys.stderr)
+            _template_warning_shown = True
+        return text
+
+
 def _resolve_manifest() -> dict[str, Any]:
     vault = Path(os.environ.get("AGENT_VAULT_DATA") or os.environ.get("KNOWLEDGE_VAULT_PATH")
                  or str(Path.home() / "KnowledgeVault"))
@@ -142,13 +181,13 @@ def _lazy_servers() -> dict[str, dict[str, Any]]:
         load_ctx = dict(ctx)
         load_ctx["DEPS_WORKSPACE"] = "${DEPS_WORKSPACE}"
         if entry.get("command"):
-            entry["command"] = _expand_placeholders(str(entry["command"]), load_ctx)
+            entry["command"] = _expand_placeholders(_expand_templates(str(entry["command"])), load_ctx)
         if isinstance(entry.get("args"), list):
-            entry["args"] = [_expand_placeholders(str(a), load_ctx) for a in entry["args"]]
+            entry["args"] = [_expand_placeholders(_expand_templates(str(a)), load_ctx) for a in entry["args"]]
         if entry.get("url"):
-            entry["url"] = _expand_placeholders(str(entry["url"]), load_ctx)
+            entry["url"] = _expand_placeholders(_expand_templates(str(entry["url"])), load_ctx)
         if isinstance(entry.get("env"), dict):
-            entry["env"] = {k: _expand_placeholders(str(v), load_ctx) for k, v in entry["env"].items()}
+            entry["env"] = {k: _expand_placeholders(_expand_templates(str(v)), load_ctx) for k, v in entry["env"].items()}
         out[name] = entry
     return out
 

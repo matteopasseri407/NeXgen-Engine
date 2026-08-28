@@ -61,6 +61,29 @@ def register(sub) -> None:
 
     p.set_defaults(func=lambda a: _usage(p))
 
+    # `mcp` sta a livello top-level: è la superficie che rulesync ha reso
+    # familiare e il piano chiede per nome (`nexgen mcp add`).
+    m = sub.add_parser("mcp", help=t("Add and inspect MCP connectors"))
+    msub = m.add_subparsers(dest="mcp_command", metavar="verb")
+
+    a = msub.add_parser("add", help=t("Add one server to the manifest: validated, atomic, with backup"))
+    a.add_argument("name", help=t("Server name in the manifest"))
+    a.add_argument("--targets", required=True,
+                   help=t("Comma-separated CLIs (claude,codex,antigravity,opencode) or 'all'"))
+    a.add_argument("--command", dest="server_command",
+                   help=t("Stdio command (e.g. npx); mutually exclusive with --url"))
+    a.add_argument("--args", action="append", help=t("One argument per flag; repeatable. Use --args=-value for values starting with a dash"))
+    a.add_argument("--url", help=t("http(s) URL of a streamable-http server; mutually exclusive with --command"))
+    a.add_argument("--auth-env", dest="auth_env", help=t("Name of the env var carrying the bearer token (the manifest never stores the token)"))
+    a.add_argument("--env", action="append", help=t("Environment entry KEY=VALUE for a stdio server; values must be ${VAR} references when secret-shaped"))
+    a.add_argument("--lazy", action="store_true", help=t("Serve through the lazy proxy instead of mounting directly"))
+    a.add_argument("--readonly", action="store_true", help=t("Allowlist every tool of this (lazy) server as read-only"))
+    a.add_argument("--dry-run", dest="dry_run", action="store_true", help=t("Print the stub instead of writing"))
+    a.set_defaults(func=cmd_mcp_add)
+
+    a = msub.add_parser("list", help=t("Read-only: the servers per CLI as they would render now"))
+    a.set_defaults(func=cmd_mcp_list)
+
     # The council isn't a tool: it's its own kind of request, and stays top-level.
     c = sub.add_parser("council", help=t("Convene a review across models from different vendors"))
     c.set_defaults(func=cmd_council)
@@ -154,3 +177,28 @@ def cmd_council(args) -> int:
     from nexgen_core.tools.council import main as council_main
 
     return council_main(_all(args))
+
+
+def cmd_mcp_add(args) -> int:
+    from nexgen_core.mcp_add import add_server
+
+    code, message = add_server(
+        args.name,
+        args.targets,
+        command=getattr(args, "server_command", None),
+        args=list(args.args or []),
+        url=getattr(args, "url", None),
+        auth_env=getattr(args, "auth_env", None),
+        env_pairs=list(args.env or []),
+        lazy=getattr(args, "lazy", False),
+        readonly=getattr(args, "readonly", False),
+        dry_run=getattr(args, "dry_run", False),
+    )
+    print(message)
+    return code
+
+
+def cmd_mcp_list(args) -> int:
+    from nexgen_core.renderer_cli import cmd_inventory
+
+    return cmd_inventory()
