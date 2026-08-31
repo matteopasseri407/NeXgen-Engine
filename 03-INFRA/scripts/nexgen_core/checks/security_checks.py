@@ -131,7 +131,8 @@ def check_tokens_in_env(vault_data: Path) -> CheckOutcome:
 
 
 def check_secrets_materialized(home: Path, vault_data: Path | None = None) -> CheckOutcome:
-    """Verifies that secrets.env exists and opencode auth.json is valid with proper permissions."""
+    """Verifies that secrets.env and opencode auth.json are present, have 0600 permissions,
+    and their mapped provider credentials are synchronized without drift."""
     import json
     import shutil
 
@@ -139,6 +140,7 @@ def check_secrets_materialized(home: Path, vault_data: Path | None = None) -> Ch
     opencode_auth = home / ".local" / "share" / "opencode" / "auth.json"
 
     issues: list[str] = []
+    env_vars: dict[str, str] = {}
 
     if not secrets_env.is_file():
         if vault_data and (vault_data / "99-SECRETS" / "secrets.yaml.age").is_file():
@@ -147,6 +149,18 @@ def check_secrets_materialized(home: Path, vault_data: Path | None = None) -> Ch
         mode = secrets_env.stat().st_mode & 0o777
         if mode & 0o077:
             issues.append(f"secrets.env has loose permissions ({oct(mode)}), expected 0600")
+
+    if secrets_env.is_file():
+        try:
+            for line in secrets_env.read_text(encoding="utf-8").splitlines():
+                line = line.strip()
+                if line.startswith("export "):
+                    line = line[len("export "):].strip()
+                if "=" in line:
+                    k, v = line.split("=", 1)
+                    env_vars[k.strip()] = v.strip().strip('"').strip("'")
+        except (OSError, UnicodeDecodeError):
+            pass
 
     if (shutil.which("opencode") or opencode_auth.exists()) and opencode_auth.is_file():
         if os.name != "nt":
@@ -157,6 +171,18 @@ def check_secrets_materialized(home: Path, vault_data: Path | None = None) -> Ch
             data = json.loads(opencode_auth.read_text(encoding="utf-8"))
             if not isinstance(data, dict):
                 issues.append("opencode auth.json root is not an object")
+            else:
+                provider_map = {
+                    "DEEPSEEK_API_KEY": "deepseek",
+                    "NVIDIA_API_KEY": "nvidia",
+                    "OPENCODE_GO_API_KEY": "opencode-go",
+                    "OPENCODE_ZEN_API_KEY": "opencode",
+                }
+                for env_key, provider in provider_map.items():
+                    if env_vars.get(env_key):
+                        auth_entry = data.get(provider)
+                        if not isinstance(auth_entry, dict) or auth_entry.get("key") != env_vars[env_key]:
+                            issues.append(f"provider key mismatch for '{provider}' between secrets.env and auth.json")
         except (OSError, json.JSONDecodeError, UnicodeDecodeError) as exc:
             issues.append(f"opencode auth.json is not valid JSON ({exc})")
 
@@ -174,5 +200,6 @@ def check_secrets_materialized(home: Path, vault_data: Path | None = None) -> Ch
         severity=Severity.OK,
         message=t("Runtime secrets and provider credentials are properly aligned"),
     )
+
 
 

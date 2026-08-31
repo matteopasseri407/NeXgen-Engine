@@ -774,8 +774,23 @@ def test_check_secrets_materialized(tmp_path):
     # Present and 0600 -> OK
     secrets_env = home / ".config" / "nexgen" / "secrets.env"
     secrets_env.parent.mkdir(parents=True)
-    secrets_env.write_text("export FOO=bar\n", encoding="utf-8")
+    secrets_env.write_text("export DEEPSEEK_API_KEY=sk-new-key\n", encoding="utf-8")
     secrets_env.chmod(0o600)
     outcome_ok = security_checks.check_secrets_materialized(home, vault)
     assert outcome_ok.severity == Severity.OK
+
+    # Key drift between secrets.env and auth.json -> WARN
+    auth_json = home / ".local" / "share" / "opencode" / "auth.json"
+    auth_json.parent.mkdir(parents=True)
+    auth_json.write_text(json.dumps({"deepseek": {"type": "api", "key": "sk-old-stale-key"}}), encoding="utf-8")
+    auth_json.chmod(0o600)
+    outcome_drift = security_checks.check_secrets_materialized(home, vault)
+    assert outcome_drift.severity == Severity.WARN
+    assert "provider key mismatch for 'deepseek'" in outcome_drift.message
+
+    # Matching key -> OK
+    auth_json.write_text(json.dumps({"deepseek": {"type": "api", "key": "sk-new-key"}}), encoding="utf-8")
+    outcome_matched = security_checks.check_secrets_materialized(home, vault)
+    assert outcome_matched.severity == Severity.OK
+
 
