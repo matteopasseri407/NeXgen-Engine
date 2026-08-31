@@ -680,3 +680,44 @@ def test_being_ahead_of_the_newest_release_is_not_a_fault(tmp_path, capsys):
     assert result == 0, "essere avanti non è un guasto"
     assert "refusing" not in captured.err.lower()
     assert "ahead of the newest release" in captured.out
+
+
+def test_doctor_with_undetermined_checks_does_not_block_update(tmp_path, capsys, monkeypatch):
+    """Verifica che doctor con check UNDETERMINED (es. Playwright non attivo) non blocchi l'update.
+
+    In modalità summary (senza --strict), agent-doctor termina con rc=0 quando FAIL=0
+    anche se UNDETERMINED > 0 o WARN > 0. L'updater non deve trattarlo come inconsistente.
+    """
+    updater = _load_updater()
+    _origin, engine = _upgrade_fixture(tmp_path)
+    real_run = updater._run
+
+    def fake_commands(args, **kwargs):
+        if args[0] == "fake-doctor":
+            assert args[1:] == ["--summary"], "updater must invoke agent-doctor with --summary (not --strict)"
+            return subprocess.CompletedProcess(
+                args,
+                0,
+                "FAIL=0 OK=33 WARN=2 UNDETERMINED=1\n",
+                "",
+            )
+        if args[0] == "fake-sync":
+            return subprocess.CompletedProcess(args, 0, "", "")
+        return real_run(args, **kwargs)
+
+    monkeypatch.setattr(updater, "_run", fake_commands)
+    commands = {
+        "agent-sync": "fake-sync",
+        "agent-doctor": "fake-doctor",
+    }
+
+    result = updater.main(
+        ["--yes"],
+        environ=_env(engine),
+        which=commands.get,
+    )
+
+    assert result == 0
+    output = capsys.readouterr().out
+    assert "installed and verified" in output
+
