@@ -22,7 +22,14 @@ SCRIPTS_DIR = Path(__file__).resolve().parents[2] / "scripts"
 if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
-from nexgen_core.checks import git_checks, instructions_checks, mcp_checks, reachability_checks, skill_checks
+from nexgen_core.checks import (
+    git_checks,
+    instructions_checks,
+    mcp_checks,
+    reachability_checks,
+    security_checks,
+    skill_checks,
+)
 from nexgen_core.doctor import Doctor
 from nexgen_core.paths import canonical_instructions
 from nexgen_core.report import Severity
@@ -745,3 +752,30 @@ def test_import_refuses_dry_run_and_apply_together(sandbox, capsys):
     code = engine_cli.cmd_import(SimpleNamespace(source="claude", dry_run=True, apply=True))
     assert code == 2
     assert "--dry-run and --apply" in capsys.readouterr().err
+
+
+def test_check_secrets_materialized(tmp_path):
+    home = tmp_path / "home"
+    vault = tmp_path / "vault"
+    home.mkdir()
+    vault.mkdir()
+
+    # OK when no encrypted store and no auth files
+    outcome = security_checks.check_secrets_materialized(home, vault)
+    assert outcome.severity == Severity.OK
+
+    # Missing secrets.env when secrets.yaml.age exists -> WARN
+    (vault / "99-SECRETS").mkdir(parents=True)
+    (vault / "99-SECRETS" / "secrets.yaml.age").write_bytes(b"dummy-age")
+    outcome_warn = security_checks.check_secrets_materialized(home, vault)
+    assert outcome_warn.severity == Severity.WARN
+    assert "secrets.env is missing" in outcome_warn.message
+
+    # Present and 0600 -> OK
+    secrets_env = home / ".config" / "nexgen" / "secrets.env"
+    secrets_env.parent.mkdir(parents=True)
+    secrets_env.write_text("export FOO=bar\n", encoding="utf-8")
+    secrets_env.chmod(0o600)
+    outcome_ok = security_checks.check_secrets_materialized(home, vault)
+    assert outcome_ok.severity == Severity.OK
+

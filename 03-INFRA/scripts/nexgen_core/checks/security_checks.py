@@ -128,3 +128,51 @@ def check_tokens_in_env(vault_data: Path) -> CheckOutcome:
         severity=Severity.OK,
         message=t("All tokens for active MCP HTTP servers are present in the environment"),
     )
+
+
+def check_secrets_materialized(home: Path, vault_data: Path | None = None) -> CheckOutcome:
+    """Verifies that secrets.env exists and opencode auth.json is valid with proper permissions."""
+    import json
+    import shutil
+
+    secrets_env = home / ".config" / "nexgen" / "secrets.env"
+    opencode_auth = home / ".local" / "share" / "opencode" / "auth.json"
+
+    issues: list[str] = []
+
+    if not secrets_env.is_file():
+        if vault_data and (vault_data / "99-SECRETS" / "secrets.yaml.age").is_file():
+            issues.append("secrets.env is missing (run 'nexgen-secrets materialize')")
+    elif os.name != "nt":
+        mode = secrets_env.stat().st_mode & 0o777
+        if mode & 0o077:
+            issues.append(f"secrets.env has loose permissions ({oct(mode)}), expected 0600")
+
+    if (shutil.which("opencode") or opencode_auth.exists()) and opencode_auth.is_file():
+        if os.name != "nt":
+            mode = opencode_auth.stat().st_mode & 0o777
+            if mode & 0o077:
+                issues.append(f"opencode auth.json has loose permissions ({oct(mode)}), expected 0600")
+        try:
+            data = json.loads(opencode_auth.read_text(encoding="utf-8"))
+            if not isinstance(data, dict):
+                issues.append("opencode auth.json root is not an object")
+        except (OSError, json.JSONDecodeError, UnicodeDecodeError) as exc:
+            issues.append(f"opencode auth.json is not valid JSON ({exc})")
+
+    if issues:
+        return CheckOutcome(
+            id="security.secrets_materialized",
+            severity=Severity.WARN,
+            message=t("Secrets or provider credentials drift detected: {issues}", issues="; ".join(issues)),
+            action=t("Run 'nexgen-secrets materialize' and verify permissions with 'chmod 600'."),
+            detail=", ".join(issues),
+        )
+
+    return CheckOutcome(
+        id="security.secrets_materialized",
+        severity=Severity.OK,
+        message=t("Runtime secrets and provider credentials are properly aligned"),
+    )
+
+

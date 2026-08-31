@@ -10,6 +10,11 @@ of any engine release.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Doctor Secrets & Credentials Drift Guard**: Added `check_secrets_materialized` to `Doctor.run_diagnostics()`, verifying that `secrets.env` and OpenCode's `auth.json` are present with restrictive 0600 permissions, ensuring automated detection of runtime credential drift and provider misconfigurations across devices.
+- **Council TUI Utility**: Streamlined ANSI terminal progress rendering for council sessions without third-party dependencies.
+
 ## [2.1.2] - 2026-08-28
 
 ### Added
