@@ -320,3 +320,21 @@ def test_context_rejects_negative_hops(tmp_path: Path):
 
     with pytest.raises(ValueError):
         build_context(_context_vault(tmp_path), "hub", hops=-1)
+
+
+def test_update_notifier_check(monkeypatch, tmp_path: Path):
+    from nexgen_core.tools import update_notifier
+
+    monkeypatch.setattr(update_notifier, "HOME", tmp_path)
+    monkeypatch.setattr(update_notifier, "THROTTLE_FILE", tmp_path / "throttle.json")
+
+    # Mock no updates
+    monkeypatch.setattr("nexgen_core.updater.EngineUpdater.check_updates", lambda: (False, "v2.1.4", "v2.1.4"))
+    assert update_notifier.cmd_check(force=True) == 0
+
+    # Mock update available with prompt declined
+    monkeypatch.setattr("nexgen_core.updater.EngineUpdater.check_updates", lambda: (True, "v2.1.4", "v2.1.5"))
+    monkeypatch.setattr(update_notifier, "_prompt_user", lambda curr, lat: False)
+    assert update_notifier.cmd_check(force=True) == 0
+    assert (tmp_path / "throttle.json").is_file()
+

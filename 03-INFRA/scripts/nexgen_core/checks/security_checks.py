@@ -137,7 +137,12 @@ def check_secrets_materialized(home: Path, vault_data: Path | None = None) -> Ch
     import shutil
 
     secrets_env = home / ".config" / "nexgen" / "secrets.env"
-    opencode_auth = home / ".local" / "share" / "opencode" / "auth.json"
+    auth_candidates = [home / ".local" / "share" / "opencode" / "auth.json"]
+    if os.name == "nt":
+        localappdata = os.environ.get("LOCALAPPDATA")
+        if localappdata:
+            auth_candidates.insert(0, Path(localappdata) / "opencode" / "auth.json")
+    opencode_auth = next((c for c in auth_candidates if c.is_file()), auth_candidates[0])
 
     issues: list[str] = []
     env_vars: dict[str, str] = {}

@@ -10,6 +10,17 @@ of any engine release.
 
 ## [Unreleased]
 
+## [2.1.5] - 2026-08-31
+
+### Added
+
+- **Cross-Platform Update Notifier & UI Prompt**: Added `nexgen tool update-notifier` (`nexgen_core.tools.update_notifier`) providing non-blocking startup and timer checks for new GitHub releases with native dialog prompts (Zenity on Linux, Win32 MessageBox on Windows) and 12-hour throttling.
+
+### Fixed
+
+- **Windows OpenCode Auth Discovery**: Enhanced `check_secrets_materialized` to support `%LOCALAPPDATA%/opencode/auth.json` on Windows alongside POSIX XDG candidates.
+- **Durable Atomic Writing**: Integrated `os.fsync` and initial creation file descriptor mode flags into atomic write operations.
+
 ## [2.1.4] - 2026-08-31
 
 ### Fixed

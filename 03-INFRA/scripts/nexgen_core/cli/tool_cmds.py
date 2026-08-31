@@ -59,6 +59,12 @@ def register(sub) -> None:
 
     q.set_defaults(func=lambda a: _run("firecrawl", _all(a)))
 
+    q = tsub.add_parser("update-notifier", help=t("Check for engine updates and display native UI prompt"))
+    q.add_argument("--force", action="store_true", help=t("Ignore time throttle and prompt if update available"))
+    q.add_argument("--demo", action="store_true", help=t("Simulate prompt dialog for test"))
+    q.add_argument("--install-autostart", action="store_true", help=t("Configure user autostart"))
+    q.set_defaults(func=lambda a: _run("update_notifier", _all(a)))
+
     p.set_defaults(func=lambda a: _usage(p))
 
     # `mcp` sta a livello top-level: è la superficie che rulesync ha reso
