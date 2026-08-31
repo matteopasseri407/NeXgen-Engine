@@ -10,6 +10,8 @@ of any engine release.
 
 ## [Unreleased]
 
+## [2.1.4] - 2026-08-31
+
 ### Fixed
 
 - **Doctor Value Drift Verification**: Extended `check_secrets_materialized` to cross-validate decrypted provider keys in `secrets.env` against OpenCode's `auth.json` (comparing keys without leaking values in output), preventing silent false positives when files exist but carry mismatched credentials.
