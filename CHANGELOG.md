@@ -10,6 +10,11 @@ of any engine release.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Updater Doctor Summary Contract**: In `updater.py`, changed `_doctor` invocation to `agent-doctor --summary` (removing `--strict`), ensuring that `FAIL=0` with optional or undetermined checks (such as debug ports for closed browsers) cleanly exits with code 0 instead of triggering false-positive update abortion.
+- **Update Notifier Import Cleanliness**: Removed unused `pathlib.Path` import in `update_notifier.py` to keep lint baseline fully clean.
+
 ## [2.1.5] - 2026-08-31
 
 ### Added
