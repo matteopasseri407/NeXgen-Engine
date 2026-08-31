@@ -9,7 +9,6 @@ import shutil
 import subprocess
 import sys
 import time
-from pathlib import Path
 
 from nexgen_core.paths import resolve_home
 

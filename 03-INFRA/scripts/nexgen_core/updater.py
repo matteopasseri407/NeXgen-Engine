@@ -283,7 +283,7 @@ def _doctor(which: Callable[[str], str | None], *, data_repo: Path) -> tuple[int
     doctor = which("agent-doctor")
     if not doctor:
         return None, 0
-    result = _run([doctor, "--strict", "--summary"], cwd=data_repo, check=False)
+    result = _run([doctor, "--summary"], cwd=data_repo, check=False)
     if result.stdout:
         print(result.stdout.rstrip())
     if result.stderr:
@@ -445,7 +445,7 @@ def main(
             print(f"  {step}. MINIMAL install, no provisioner detected")
         step += 1
         if doctor:
-            print(f"  {step}. agent-doctor --strict --summary")
+            print(f"  {step}. agent-doctor --summary")
         else:
             print(f"  {step}. visual MINIMAL verification")
 

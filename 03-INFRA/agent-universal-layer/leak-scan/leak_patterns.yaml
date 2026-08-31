@@ -1,59 +1,64 @@
-# Leak-check patterns for the anti-leak gates (S0).
+# Pattern di leak-check per i cancelli anti-leak del repo motore (S0).
 #
-# FORMS ONLY, NEVER REAL VALUES: this file is meant to be identical in both
-# places it lives — here (public repo, used by CI) and in the maintainer's
-# private vault (used by local maintainer checks). Never add a real value
-# here: actual secrets/personal data
-# live only in a private denylist file that this repo never contains and
-# that CI never sees.
+# SOLO FORME (regex), MAI VALORI REALI: questo file e' pensato per vivere
+# identico sia qui (vault privato) sia nel repo pubblico NeXgen-Engine, dove
+# lo usa la CI. Non aggiungere mai un valore vero qui dentro: i segreti/dati
+# reali vivono SOLO nella deny-list privata (sanitize/deny.txt), che l'engine-push
+# e gli hook locali leggono da KNOWLEDGE_VAULT_PATH e la CI pubblica non vede mai.
+#
+# Sincronizzazione (corretto 2026-07-09): sanitize.rules.yaml e sanitize-export.py
+# sono DEAD CODE dall'8/7 (pipeline "sanitize-export -> orphan snapshot" sostituita
+# da engine-push, vedi publish-os.sh). La vera copia gemella da tenere allineata A
+# MANO e' NeXgen-Engine/03-INFRA/agent-universal-layer/leak-scan/leak_patterns.yaml
+# (usata dalla CI pubblica). Un cambiamento qui va replicato la', e viceversa: e' un
+# punto di sync dichiarato, non un dettaglio da dimenticare. Dettaglio completo:
+# 03-INFRA/agentic-layer-concept-map.md, sezione "Pubblicazione del motore pubblico".
 
 leak_hard:
   - '\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b'            # IPv4
-  - '/home/[A-Za-z0-9._-]+'                              # Linux home dir
-  - '(?i)[A-Z]:[\\/]Users[\\/][A-Za-z0-9._-]+'           # Windows home dir (any drive, both separators)
+  - '/home/[A-Za-z0-9._-]+'                              # home Linux
+  - '(?i)[A-Z]:[\\/]Users[\\/][A-Za-z0-9._-]+'          # home Windows (qualsiasi drive, entrambi i separatori)
   - '[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}'     # email
-  # long hex token/hash, EXCLUDING a full-commit-SHA/digest pin in a known-safe
-  # syntactic context: right after '@' (GitHub Actions `uses: owner/repo@<sha>`)
-  # or right after 'sha256:' (Docker `image@sha256:<digest>`). Both lookbehinds
-  # are fixed-width (stdlib re requirement). This is a security-pinning value
-  # verified against a public registry/API, not a secret — do not widen this
-  # to any other prefix without the same reasoning (2026-07-12, packages P8/P10
-  # of the security hardening pass both hit this as a real false positive).
+  # token/hash lunghi (hex), ESCLUSO un pin a commit-SHA/digest completo in un
+  # contesto sintattico gia' noto come sicuro: subito dopo '@' (GitHub Actions
+  # `uses: owner/repo@<sha>`) o subito dopo 'sha256:' (Docker `image@sha256:<digest>`).
+  # Entrambi i lookbehind sono a larghezza fissa (richiesto dal modulo re standard).
+  # E' un valore di pinning verificato via API/registry pubblico, non un segreto —
+  # non allargare questa esclusione ad altri prefissi senza la stessa motivazione
+  # (2026-07-12, i pacchetti P8/P10 dell'hardening security hanno trovato questo
+  # come falso positivo reale).
   - '(?<!@)(?<!sha256:)(?<!rev: ")(?<!rev: \x27)\b[0-9a-f]{40,}\b'
-  - '\b\d{7,}\b'                                         # long numeric id: chat id, phone, project number
-  # HIGH-ENTROPY token in quotes: 16+ chars, mixed Aa0, no separators.
-  # Deliberately alnum-only: catches cred-ids/api-keys but NOT snake/kebab env
-  # names (TELEGRAM_BOT_TOKEN, bearer_token_env_var, agent-universal-layer).
-  # Widening the charset instead of adding a targeted pattern reintroduces
-  # exactly that false-positive class (do not "fix" this by broadening it).
+  - '\b\d{7,}\b'                                         # id numerici lunghi: chat-id, phone, project-number
+  # token ad ALTA ENTROPIA tra virgolette: 16+ char, mix Aa0, nessun separatore.
   - '["\x27](?=[A-Za-z0-9]{16,}["\x27])(?=[A-Za-z0-9]*[a-z])(?=[A-Za-z0-9]*[A-Z])(?=[A-Za-z0-9]*\d)[A-Za-z0-9]{16,}["\x27]'
-  # Same shape, UNQUOTED (audit finding, 2026-07-12): a .env line
-  # (NOME=valore), a bare header value ("Authorization: Bearer <token>",
-  # "X-Api-Key: <token>"), or the same wrapped in a markdown table cell all
-  # carry this token with no surrounding quotes and used to pass clean.
-  # Anchored to three concrete contexts only (never a bare word boundary,
-  # to avoid exploding on ordinary prose/identifiers):
-  #   - after '=' or '= ', where the char before '=' is itself alnum/'_'
-  #     (an identifier), so it never fires on '==', '!=', '<=', '>=', ':='
-  #     comparison/walrus operators in source code;
-  #   - after literal 'Bearer ';
-  #   - after ': ' (generic "Header-Name: value" line).
-  # Same alnum-only, mixed Aa0 entropy check as the quoted pattern above
-  # (same false-positive rationale: catches cred-ids/api-keys but not
-  # snake/kebab env names or identifiers).
+  # stessa forma, SENZA virgolette (audit, 2026-07-12): una riga .env
+  # (NOME=valore), un header nudo ("Authorization: Bearer <token>",
+  # "X-Api-Key: <token>"), o la stessa cosa dentro una cella di tabella
+  # markdown passavano indisturbate perche' il pattern sopra richiede le
+  # virgolette. Ancorato a soli tre contesti concreti (mai un confine di
+  # parola nudo, per non esplodere su prosa/identificatori normali):
+  #   - dopo '=' o '= ', dove il carattere prima di '=' e' alfanumerico/'_'
+  #     (un identificatore), cosi' non scatta mai su operatori di confronto
+  #     '==', '!=', '<=', '>=' o sul walrus ':=' nel codice sorgente;
+  #   - dopo 'Bearer ' letterale;
+  #   - dopo ': ' (riga generica "Nome-Header: valore").
+  # Stesso controllo di entropia solo-alnum, mix Aa0, del pattern tra
+  # virgolette sopra (stessa motivazione anti-falso-positivo: cattura
+  # cred-id/api-key ma non nomi env snake/kebab o identificatori).
   - '(?:(?<=[A-Za-z0-9_]=)|(?<=[A-Za-z0-9_]= )|(?<=Bearer )|(?<=: ))(?=[A-Za-z0-9]{16,}\b)(?=[A-Za-z0-9]*[a-z])(?=[A-Za-z0-9]*[A-Z])(?=[A-Za-z0-9]*\d)[A-Za-z0-9]{16,}'
+  # segreti da provider noti (gia' presenti nel gate ad-hoc di ci.yml, unificati qui)
   - 'AKIA[0-9A-Z]{16}'                                   # AWS access key id
-  # Any PEM private key header. The optional algorithm word covers the
-  # legacy PKCS#1/SEC1/OpenSSH forms; leaving it optional is what catches
-  # bare PKCS#8, the header with no algorithm word at all, which is what
-  # `openssl genpkey` emits by default and what GCP service-account JSON
-  # carries -- neither matched before. The bare header is not spelled out
-  # here on purpose: this file is scanned by the rules it defines.
-  - '-----BEGIN (?:(?:RSA|DSA|EC|OPENSSH|PGP|ENCRYPTED) )?PRIVATE KEY-----'  # private key (incl. PKCS#8)
+  # Qualunque header PEM di chiave privata. La parola dell'algoritmo e'
+  # opzionale, ed e' proprio questo che cattura PKCS#8 nudo, l'header senza
+  # algoritmo, cioe' quello che `openssl genpkey` emette di default e quello
+  # che porta un JSON di service account GCP: prima non matchava nessuno dei
+  # due. L'header nudo non e' scritto qui apposta, questo file passa dalle
+  # regole che definisce.
+  - '-----BEGIN (?:(?:RSA|DSA|EC|OPENSSH|PGP|ENCRYPTED) )?PRIVATE KEY-----'  # chiave privata (incl. PKCS#8)
   - 'gh[po]_[A-Za-z0-9]{36}'                              # GitHub token (ghp_/gho_)
-  - 'sk-[A-Za-z0-9]{20,}'                                 # OpenAI/Anthropic-style API key
-  - '(sk|pk)_(live|test)_[A-Za-z0-9]{16,}'                # Stripe-style secret/publishable key
-  - 'eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}'  # JWT (header.payload.sig)
+  - 'sk-[A-Za-z0-9]{20,}'                                 # stile API key OpenAI/Anthropic
+  - '(sk|pk)_(live|test)_[A-Za-z0-9]{16,}'                # stile chiave Stripe (con underscore)
+  - 'eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}'  # JWT (header.payload.firma)
 
 leak_soft:
   - '(?i)\bmatteo\b'
@@ -62,51 +67,69 @@ leak_allow:
   - '127\.0\.0\.1'
   - '0\.0\.0\.0'
   - '255\.255\.255\.255'
-  # noreply@anthropic.com: Claude Code's generic "Co-Authored-By" trailer,
-  # present in every commit made with the tool. Not personal data (found as
-  # a real false positive during S0 testing, 2026-07-08).
+  # noreply@anthropic.com: trailer generico "Co-Authored-By" di Claude Code,
+  # compare in OGNI commit fatto con lo strumento. Non e' un dato personale
+  # (falso positivo trovato durante il collaudo di S0, 2026-07-08).
   - 'noreply@anthropic\.com'
-  # RFC 2606 reserved test domain: every occurrence in this repo is a test
-  # fixture identity (git config user.email in sandboxed tests), never real
-  # personal data.
+  # Dominio riservato RFC 2606: ogni occorrenza nel repo e' una identita' di
+  # fixture nei test sandbox (git config user.email), mai dati personali.
   - 'test@example\.com'
-  # Generic placeholders used in docs (e.g. USER-PROFILE.md), not a real path
-  # (found as a real false positive during S0 testing, 2026-07-08).
+  # Placeholder generici nella documentazione (es. USER-PROFILE.md), non un
+  # path reale (falso positivo trovato durante il collaudo di S0, 2026-07-08).
   - '/home/user\b'
-  # Generic container image home for the official n8n image, not a maintainer
-  # workstation path (found by full-tree audit, 2026-07-09).
+  # Home generica dell'immagine container ufficiale n8n, non path workstation
+  # del maintainer (trovato da audit full-tree, 2026-07-09).
   - '/home/node\b'
   - '(?i)[A-Z]:[\\/]Users[\\/]user\b'
-  # Generic 15 MiB upload/body limit used in OCR examples, not an ID or phone.
+  # Limite generico 15 MiB usato negli esempi OCR, non ID o telefono.
   - '^15728640$'
-  # Git's null SHA (40 zeros, used to detect a new/deleted branch in a
-  # push/webhook): a degenerate value, not a secret (found as a false
-  # positive in the gate's own commit, S0 2026-07-08).
+  # SHA nullo di git (40 zeri, usato per rilevare un branch nuovo/cancellato
+  # in push/webhook): valore degenere, non un segreto (falso positivo trovato
+  # nel commit dei cancelli stessi, S0 2026-07-08).
   - '^0+$'
-  # --- Forms that provably are not secrets, added 2026-08-21 -------------
-  # Each is either reserved by a standard or a well-known public form.
-  # None of these widen a pattern: they are literal, narrow exceptions.
+  # --- Forme provatamente non-segrete, aggiunte 2026-08-21 --------------
+  # Ognuna e' un valore riservato da uno standard o una forma pubblica nota.
+  # Nessuna allarga i pattern: sono eccezioni letterali e strette.
   #
-  # RFC 5737: addresses reserved FOR DOCUMENTATION, never routable.
+  # RFC 5737: indirizzi riservati ALLA DOCUMENTAZIONE, non instradabili.
   - 192\.0\.2\.\d{1,3}
   - 198\.51\.100\.\d{1,3}
   - 203\.0\.113\.\d{1,3}
-  # A four-component version number, used in tests as an example of what
-  # semver is not. It looks like an address and is not one.
+  # Numero di versione a quattro componenti, usato nei test come esempio di
+  # cosa NON e' semver. Sembra un IP e non lo e'.
   - \b1\.2\.3\.4\b
-  # RFC 2606: domain reserved for examples. Generalises test@example.com,
-  # which was already here as a single case.
+  # RFC 2606: dominio riservato agli esempi. Generalizza test@example.com,
+  # che era gia' qui come caso singolo.
   - "[A-Za-z0-9._%+-]+@example\\.(?:com|net|org)\\b"
-  # An Italian example used in a help message, later retired in favour of
-  # example.com: kept because a past commit contains it.
+  # Esempio italiano usato in un messaggio d'aiuto, poi ritirato in favore di
+  # example.com: resta qui perche' un commit passato lo contiene.
   - tu@esempio\.it
-  # The form of a public SSH remote, not a credential.
+  # Forma di un remote SSH pubblico, non una credenziale.
   - git@github\.com
-  # A calendar date: "seven or more digits" catches it, but a YYYYMMDD
-  # stamp is not a secret.
+  # Una data di calendario: "sette o piu' cifre" la prende, ma un timbro
+  # AAAAMMGG non e' un segreto.
   - \b20\d{2}(?:0[1-9]|1[0-2])(?:0[1-9]|[12]\d|3[01])\b
-  # GitHub's noreply address domain: the release workflow commits to the
-  # tap repo as a bot (user.email=<bot>@users.noreply.github.com), which is
-  # the documented GitHub form for machine identities, not a personal email
-  # (added for release_packages automation, 2026-08-28).
+  # Dominio noreply di GitHub: il workflow di release committa nel tap repo
+  # come bot (user.email=<bot>@users.noreply.github.com), forma documentata
+  # da GitHub per le identita' macchina, non un'email personale
+  # (aggiunta per l'automazione release_packages, 2026-08-28).
   - '[A-Za-z0-9._%-]+@users\.noreply\.github\.com\b'
+  # Windows ConPTY/JOBOBJECT struct field names - ctypes, not secrets (S0 2026-08-29)
+  - '["\x27]?PerProcessUserTimeLimit["\x27]?'
+  - '["\x27]?PerJobUserTimeLimit["\x27]?'
+  - '["\x27]?MinimumWorkingSetSize["\x27]?'
+  - '["\x27]?MaximumWorkingSetSize["\x27]?'
+  - '["\x27]?ActiveProcessLimit["\x27]?'
+  - '["\x27]?ReadOperationCount["\x27]?'
+  - '["\x27]?WriteOperationCount["\x27]?'
+  - '["\x27]?OtherOperationCount["\x27]?'
+  - '["\x27]?ReadTransferCount["\x27]?'
+  - '["\x27]?WriteTransferCount["\x27]?'
+  - '["\x27]?OtherTransferCount["\x27]?'
+  - '["\x27]?BasicLimitInformation["\x27]?'
+  - '["\x27]?ProcessMemoryLimit["\x27]?'
+  - '["\x27]?JobMemoryLimit["\x27]?'
+  - '["\x27]?PeakProcessMemoryUsed["\x27]?'
+  - '["\x27]?PeakJobMemoryUsed["\x27]?'
+  - '["\x27]?Win32SessionHost["\x27]?'
+  - '["\x27]?Win32Host["\x27]?'
