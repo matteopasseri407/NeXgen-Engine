@@ -10,6 +10,10 @@ of any engine release.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Codex Hooks Native Schema Compliance**: In `nexgen_core.runtimes.codex`, aligned `install_event_sink` to register lifecycle hooks inside the top-level `hooks` dictionary (`hooks.Stop` and `hooks.PreToolUse`) instead of writing a foreign `nexgen-event-sink` key at root, resolving `failed to parse hooks config: unknown field nexgen-event-sink, expected description or hooks`. Added automatic purging of legacy root keys during synchronization.
+
 ## [2.1.6] - 2026-08-31
 
 ### Fixed

@@ -500,8 +500,31 @@ def test_codex_install_event_sink_registers_hooks_json(tmp_path: Path, monkeypat
     hooks_path = home / ".codex" / "hooks.json"
     assert hooks_path.is_file()
     data = json.loads(hooks_path.read_text(encoding="utf-8"))
-    assert "nexgen-event-sink" in data
-    assert "Stop" in data["nexgen-event-sink"]
+    assert "hooks" in data
+    assert "Stop" in data["hooks"]
+    assert "PreToolUse" in data["hooks"]
+    assert "nexgen-event-sink" not in data
+
+
+def test_codex_install_event_sink_purges_legacy_root_key(tmp_path: Path, monkeypatch):
+    monkeypatch.setattr("nexgen_core.runtimes.codex.shutil.which", lambda name: "/usr/bin/codex" if name == "codex" else None)
+    home = tmp_path / "home"
+    codex_dir = home / ".codex"
+    codex_dir.mkdir(parents=True)
+    hooks_path = codex_dir / "hooks.json"
+    hooks_path.write_text(json.dumps({"nexgen-event-sink": {"enabled": True}}), encoding="utf-8")
+
+    sink_source = tmp_path / "nexgen-event-sink.mjs"
+    sink_source.write_text("// dummy sink", encoding="utf-8")
+
+    rt = CodexRuntime()
+    action = rt.install_event_sink(home, sink_source)
+    assert action is not None
+
+    data = json.loads(hooks_path.read_text(encoding="utf-8"))
+    assert "nexgen-event-sink" not in data
+    assert "hooks" in data
+
 
 
 def test_opencode_install_event_sink_registers_plugin(tmp_path: Path):

@@ -118,28 +118,72 @@ class CodexRuntime(Runtime):
         hooks_path = codex_dir / "hooks.json"
         command_done = f"node {dst.as_posix()} on_done codex"
         command_step = f"node {dst.as_posix()} on_step codex"
-        desired_entry = {
-            "enabled": True,
-            "Stop": [{"type": "command", "command": command_done, "timeout": 2}],
-            "PreToolUse": [{"type": "command", "command": command_step, "timeout": 2}],
-        }
-        current = {}
+
+        current: dict = {}
         if hooks_path.is_file():
             try:
                 import json
-                current = json.loads(hooks_path.read_text(encoding="utf-8"))
+                loaded = json.loads(hooks_path.read_text(encoding="utf-8"))
+                if isinstance(loaded, dict):
+                    current = loaded
             except (OSError, ValueError, json.JSONDecodeError):
                 current = {}
-        if current.get("nexgen-event-sink") == desired_entry:
-            registered = False
-        else:
+
+        # Codex schema strictly permits only "description" and "hooks" at top level.
+        # Purge any legacy/invalid root keys (such as "nexgen-event-sink").
+        changed = False
+        if "nexgen-event-sink" in current:
+            del current["nexgen-event-sink"]
+            changed = True
+
+        hooks = current.setdefault("hooks", {})
+        if not isinstance(hooks, dict):
+            hooks = {}
+            current["hooks"] = hooks
+            changed = True
+
+        def _has_command(groups: list, cmd: str) -> bool:
+            for g in groups:
+                if isinstance(g, dict):
+                    for h in g.get("hooks", []):
+                        if isinstance(h, dict):
+                            existing_cmd = h.get("command", "")
+                            if existing_cmd == cmd or (sink_source.name in existing_cmd and cmd.split()[-2:] == existing_cmd.split()[-2:]):
+                                return True
+            return False
+
+        # Register Stop hook
+        stop_groups = hooks.setdefault("Stop", [])
+        if not isinstance(stop_groups, list):
+            stop_groups = []
+            hooks["Stop"] = stop_groups
+            changed = True
+
+        if not _has_command(stop_groups, command_done):
+            stop_groups.append({
+                "hooks": [{"type": "command", "command": command_done, "timeout": 5}]
+            })
+            changed = True
+
+        # Register PreToolUse hook
+        pre_groups = hooks.setdefault("PreToolUse", [])
+        if not isinstance(pre_groups, list):
+            pre_groups = []
+            hooks["PreToolUse"] = pre_groups
+            changed = True
+
+        if not _has_command(pre_groups, command_step):
+            pre_groups.append({
+                "hooks": [{"type": "command", "command": command_step, "timeout": 5}]
+            })
+            changed = True
+
+        if changed:
             self.backup(hooks_path)
             import json
-            updated = {**current, "nexgen-event-sink": desired_entry}
-            self.atomic_write(hooks_path, json.dumps(updated, indent=2) + "\n")
-            registered = True
-        if registered:
+            self.atomic_write(hooks_path, json.dumps(current, indent=2) + "\n")
             return f"codex: event sink registered in {hooks_path}"
         if deployed:
             return f"codex: event sink updated in {dst}"
         return None
+
