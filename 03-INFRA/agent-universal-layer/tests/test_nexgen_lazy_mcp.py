@@ -47,6 +47,39 @@ for line in sys.stdin:
     sys.stdout.flush()
 """
 
+#: A server built on the `mcp` SDK 1.x / FastMCP contract: it refuses
+#: `tools/list` until `initialize` has been honoured. The waiter must open
+#: the handshake instead of caching an empty, unreachable index.
+STRICT_SERVER = r"""
+import json, sys
+TOOLS = [
+  {"name": "read_thing", "description": "reads a value", "inputSchema": {"type": "object", "properties": {}}},
+]
+initialized = False
+for line in sys.stdin:
+    line = line.strip()
+    if not line:
+        continue
+    req = json.loads(line)
+    m, rid = req.get("method"), req.get("id")
+    if m == "initialize":
+        initialized = True
+        out = {"jsonrpc": "2.0", "id": rid, "result": {"protocolVersion": "2025-06-18", "capabilities": {"tools": {"listChanged": False}}, "serverInfo": {"name": "strict", "version": "1"}}}
+    elif m == "notifications/initialized":
+        continue
+    elif m == "tools/list":
+        if not initialized:
+            out = {"jsonrpc": "2.0", "id": rid, "error": {"code": -32602, "message": "Received request before initialization was complete"}}
+        else:
+            out = {"jsonrpc": "2.0", "id": rid, "result": {"tools": TOOLS}}
+    elif m == "tools/call":
+        out = {"jsonrpc": "2.0", "id": rid, "result": {"content": [{"type": "text", "text": "value:42"}]}}
+    else:
+        out = {"jsonrpc": "2.0", "id": rid, "error": {"code": -32601, "message": "nf"}}
+    sys.stdout.write(json.dumps(out) + "\n")
+    sys.stdout.flush()
+"""
+
 
 def _write_manifest(vault: Path, body: str) -> None:
     d = vault / "03-INFRA" / "agent-universal-layer" / "mcp"
@@ -159,6 +192,26 @@ def test_index_lists_servers_and_tools(tmp_path: Path):
         names = [t["name"] for t in idx["servers"]["fake"]["tools"]]
         assert names == ["read_thing", "write_thing"]
         r = _rpc(proc, "tools/call", {"name": "lazy_load", "arguments": {"server": "fake", "tool": "write_thing"}}, rid=3)
+        assert "inputSchema" in r["result"]["content"][0]["text"]
+    finally:
+        proc.kill()
+
+
+def test_a_legacy_stdio_server_gets_the_initialize_handshake(tmp_path: Path):
+    """Un server mcp SDK 1.x/FastMCP rifiuta tools/list prima di initialize.
+
+    Regressione: il cameriere mandava solo la lista e cachava il risultato,
+    quindi il server restava indicizzato con zero tool e lazy_load diceva
+    "tool not found". Il comportamento giusto e' handshake, poi lista.
+    """
+    audit = tmp_path / "audit.jsonl"
+    proc = _start_fake(_base_manifest(STRICT_SERVER), tmp_path, audit)
+    try:
+        r = _rpc(proc, "tools/call", {"name": "lazy_list", "arguments": {}}, rid=30)
+        idx = json.loads(r["result"]["content"][0]["text"])
+        names = [t["name"] for t in idx["servers"]["fake"]["tools"]]
+        assert names == ["read_thing"], idx
+        r = _rpc(proc, "tools/call", {"name": "lazy_load", "arguments": {"server": "fake", "tool": "read_thing"}}, rid=31)
         assert "inputSchema" in r["result"]["content"][0]["text"]
     finally:
         proc.kill()

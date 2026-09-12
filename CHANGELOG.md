@@ -12,6 +12,7 @@ of any engine release.
 
 ### Fixed
 
+- **Lazy MCP Legacy Handshake**: In `agent-universal-layer/mcp/lazy-mcp.py`, the waiter now opens the MCP `initialize` handshake before listing tools on legacy stdio servers built on the `mcp` SDK 1.x (FastMCP). Those servers answer `tools/list` with `Received request before initialization was complete`, and the waiter cached that empty result, leaving them indexed with zero tools and unreachable through `lazy_load` (code-intel and far-contracts were silently invisible to every CLI).
 - **Codex Hooks Native Schema Compliance**: In `nexgen_core.runtimes.codex`, aligned `install_event_sink` to register lifecycle hooks inside the top-level `hooks` dictionary (`hooks.Stop` and `hooks.PreToolUse`) instead of writing a foreign `nexgen-event-sink` key at root, resolving `failed to parse hooks config: unknown field nexgen-event-sink, expected description or hooks`. Added automatic purging of legacy root keys during synchronization.
 
 ## [2.1.6] - 2026-08-31

@@ -46,9 +46,13 @@ from pathlib import Path
 from typing import Any
 
 SERVER_NAME = "lazy-mcp"
-SERVER_VERSION = "0.2.0"
+SERVER_VERSION = "0.2.1"
 FRAMING = "headers"
 PROTOCOL_VERSION = "2026-07-28"
+#: Version offered when the waiter has to open the legacy handshake with a
+#: stdio server: the `mcp` SDK 1.x (FastMCP) refuses `tools/list` before
+#: `initialize`, while the 2026-07-28 contract is stateless and needs none.
+LEGACY_PROTOCOL_VERSION = "2025-06-18"
 SUPPORTED_PROTOCOL_VERSIONS = ("2026-07-28", "2025-11-25", "2025-03-26", "2024-11-05")
 UNSUPPORTED_PROTOCOL_VERSION = -32022
 SERVER_CAPABILITIES: dict[str, Any] = {"tools": {"listChanged": False}}
@@ -229,6 +233,8 @@ class _ServerHandle:
         self.readonly_server = bool(spec.get("readonly"))
         self.readonly_tools = set(spec.get("readonly_tools") or [])
         self.active_calls = 0
+        self._init_done = False
+        self._rid = 600
 
     def is_mutating(self, tool: str) -> bool:
         return not (self.readonly_server or tool in self.readonly_tools)
@@ -294,6 +300,9 @@ class _ServerHandle:
         if not is_win:
             kwargs["start_new_session"] = True
         self.proc = subprocess.Popen(cmd, **kwargs)
+        # A respawned process has not been initialized: the handshake state
+        # belongs to the process, not to the handle.
+        self._init_done = False
 
     def _rpc_stdio(self, method: str, params: dict[str, Any], rid: int) -> dict[str, Any]:
         try:
@@ -357,6 +366,45 @@ class _ServerHandle:
             return self._rpc_http(method, params, rid)
         return self._rpc_stdio(method, params, rid)
 
+    def _next_rid(self) -> int:
+        self._rid += 1
+        return self._rid
+
+    def _notify_stdio(self, method: str, params: dict[str, Any]) -> None:
+        """Fire-and-forget notification: no response is expected or read."""
+        if not self.proc or not self.proc.stdin:
+            return
+        payload = json.dumps({"jsonrpc": "2.0", "method": method, "params": params}) + "\n"
+        try:
+            self.proc.stdin.write(payload)
+            self.proc.stdin.flush()
+        except (BrokenPipeError, OSError):
+            pass
+
+    def _initialize_stdio(self) -> bool:
+        """Open the MCP handshake with a legacy stdio server.
+
+        The stateless 2026-07-28 contract needs no handshake, but servers
+        built on the `mcp` SDK 1.x (FastMCP) refuse `tools/list` until
+        `initialize` has been honoured, answering "Received request before
+        initialization was complete". Sending only the list request left
+        them indexed with zero tools, silently unreachable. The handshake
+        is idempotent per live process: a respawn resets the state where the
+        process is spawned.
+        """
+        if self._init_done and self.proc is not None and self.proc.poll() is None:
+            return True
+        resp = self.rpc("initialize", {
+            "protocolVersion": LEGACY_PROTOCOL_VERSION,
+            "capabilities": {},
+            "clientInfo": {"name": SERVER_NAME, "version": SERVER_VERSION},
+        }, self._next_rid())
+        if "error" in resp or "result" not in resp:
+            return False
+        self._notify_stdio("notifications/initialized", {})
+        self._init_done = True
+        return True
+
     def tools_list(self) -> list[dict[str, Any]]:
         if self.index is not None and time.time() - self.index_at < INDEX_TTL:
             return self.index
@@ -364,6 +412,11 @@ class _ServerHandle:
         resp = self.rpc("tools/list", modern, 900 + hash(self.name) % 100)
         if "error" in resp or "result" not in resp:
             resp = self.rpc("tools/list", {}, 900 + hash(self.name) % 100)
+        if ("error" in resp or "result" not in resp) and not self.spec.get("url"):
+            # Legacy stdio server (mcp SDK 1.x): it refuses the list until
+            # the initialize handshake has happened.
+            if self._initialize_stdio():
+                resp = self.rpc("tools/list", {}, 900 + hash(self.name) % 100)
         tools = (resp.get("result") or {}).get("tools", [])
         self.index = tools
         self.index_at = time.time()
