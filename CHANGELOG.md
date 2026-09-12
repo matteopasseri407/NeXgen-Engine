@@ -10,6 +10,8 @@ of any engine release.
 
 ## [Unreleased]
 
+## [2.1.7] - 2026-09-12
+
 ### Fixed
 
 - **Lazy MCP Legacy Handshake**: In `agent-universal-layer/mcp/lazy-mcp.py`, the waiter now opens the MCP `initialize` handshake before listing tools on legacy stdio servers built on the `mcp` SDK 1.x (FastMCP). Those servers answer `tools/list` with `Received request before initialization was complete`, and the waiter cached that empty result, leaving them indexed with zero tools and unreachable through `lazy_load` (code-intel and far-contracts were silently invisible to every CLI).
