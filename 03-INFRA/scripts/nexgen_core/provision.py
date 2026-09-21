@@ -29,7 +29,6 @@ import os
 import shlex
 import shutil
 import subprocess
-import sys
 import tempfile
 import time
 from pathlib import Path
@@ -236,12 +235,12 @@ def _provision_git(deps: dict[str, Any], state_dir: Path, server: str) -> dict[s
             if not shutil.which("git"):
                 raise ProvisionError(t("server '{server}' declares a git dependency but git is not on the machine.", server=server))
             proc = subprocess.run(
-                git + ["init", "-q"], cwd=clone, capture_output=True, text=True,
+                git + ["init", "-q"], cwd=clone, capture_output=True, text=True, timeout=60,
             )
             if proc.returncode != 0:
                 raise ProvisionError(t("git init failed for server '{server}': {err}", server=server, err=(proc.stderr or "").strip()))
             proc = subprocess.run(
-                git + ["remote", "add", "origin", repo], cwd=clone, capture_output=True, text=True,
+                git + ["remote", "add", "origin", repo], cwd=clone, capture_output=True, text=True, timeout=60,
             )
             if proc.returncode != 0:
                 raise ProvisionError(t("git remote add failed for server '{server}': {err}", server=server, err=(proc.stderr or "").strip()))
@@ -252,7 +251,7 @@ def _provision_git(deps: dict[str, Any], state_dir: Path, server: str) -> dict[s
                 raise ProvisionError(
                     t("could not fetch rev '{rev}' of '{repo}' for server '{server}': {err}", rev=rev, repo=repo, server=server, err=(proc.stderr or "").strip().splitlines()[-1])
                 )
-            proc = subprocess.run(git + ["checkout", "-q", "FETCH_HEAD"], cwd=clone, capture_output=True, text=True)
+            proc = subprocess.run(git + ["checkout", "-q", "FETCH_HEAD"], cwd=clone, capture_output=True, text=True, timeout=60)
             if proc.returncode != 0:
                 raise ProvisionError(t("git checkout failed for server '{server}': {err}", server=server, err=(proc.stderr or "").strip()))
             workspace = _run_workspace(clone, deps)

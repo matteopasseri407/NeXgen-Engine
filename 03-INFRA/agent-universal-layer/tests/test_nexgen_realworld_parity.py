@@ -78,7 +78,7 @@ def test_a6_doctor_summary_output(tmp_path: Path, capsys):
     assert hasattr(report, "ok_count")
 
     from nexgen_core.doctor import main as doctor_main
-    res = doctor_main(["--summary"])
+    doctor_main(["--summary"])
     out = capsys.readouterr().out
     assert "FAIL=" in out
     assert "OK=" in out

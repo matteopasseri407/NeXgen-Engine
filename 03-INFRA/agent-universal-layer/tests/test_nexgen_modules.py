@@ -17,7 +17,6 @@ if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
 from nexgen_core.modules import (
-    ModuleState,
     derive_state,
     load_catalog,
     load_state_file,
@@ -60,7 +59,6 @@ def _catalog_file(tmp_path: Path, body: str) -> Path:
 
 
 def test_catalog_loads_and_validates() -> None:
-    from nexgen_core.config import ConfigError
     engine = Path(__file__).resolve().parents[3] / "03-INFRA"
     catalog = load_catalog(engine)
     assert "memory" in catalog and "n8n" in catalog and "sync" in catalog
@@ -69,7 +67,7 @@ def test_catalog_loads_and_validates() -> None:
 
 def test_catalog_rejects_unknown_dependency(tmp_path: Path) -> None:
     from nexgen_core.config import ConfigError
-    d = _catalog_file(tmp_path, """
+    _catalog_file(tmp_path, """
 modules:
   a:
     label: A

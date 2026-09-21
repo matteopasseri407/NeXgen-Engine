@@ -14,15 +14,11 @@ from pathlib import Path
 from typing import Any
 
 from nexgen_core import __version__
-from nexgen_core.i18n import t
 from nexgen_core.modules import modules_state
 from nexgen_core.paths import (
-    canonical_instructions,
-    mcp_manifest,
     resolve_engine_root,
     resolve_home,
     resolve_vault_data,
-    skills_manifest,
 )
 
 

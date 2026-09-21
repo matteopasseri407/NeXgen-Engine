@@ -9,19 +9,17 @@ from __future__ import annotations
 import cmd
 import os
 import shlex
+import subprocess
 import sys
 from pathlib import Path
 from typing import Any
 
-from nexgen_core import __version__
-from nexgen_core.i18n import t
-from nexgen_core.paths import resolve_home, resolve_vault_data
+from nexgen_core.paths import resolve_home
 from nexgen_core.tools.info import (
     C_BOLD,
     C_DARK_SLATE,
     C_DIM,
     C_EMERALD,
-    C_GREEN,
     C_RESET,
     C_SLATE,
     C_WHITE,
@@ -216,7 +214,7 @@ class NeXgenShell(cmd.Cmd):
             print(f"{C_YELLOW}[!] Secrets manager script not found: {script}{C_RESET}")
             return
         arg_str = arg if arg else "list"
-        os.system(f"{sys.executable} {shlex.quote(str(script))} {arg_str}")
+        subprocess.run([sys.executable, str(script), *shlex.split(arg_str)], check=False)
 
     def complete_secrets(self, text: str, line: str, begidx: int, endidx: int) -> list[str]:
         tokens = line.split()

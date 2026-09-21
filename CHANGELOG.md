@@ -10,6 +10,16 @@ of any engine release.
 
 ## [Unreleased]
 
+## [2.1.8] - 2026-09-21
+
+### Fixed
+
+- **Deterministic MCP request IDs**: In `agent-universal-layer/mcp/lazy-mcp.py`, replaced `hash()` with `zlib.crc32()` for JSON-RPC request IDs. Python randomizes `hash(str)` per process via `PYTHONHASHSEED`, so IDs changed on every run and could collide between servers.
+- **Fail-loud manifest and permissions**: `lazy-mcp` now reports an unreadable `manifest.yaml` on stderr instead of returning a silent empty index, and `council/session.py` reports `chmod` failures instead of swallowing them while claiming 0700/0600 privacy.
+- **Git hang guards**: Added explicit timeouts to `leak-scan` git calls and to the `init`/`remote add`/`checkout` steps in `nexgen_core.provision` (fetch already had one), plus `check=False` for ruff PLW1510 compliance.
+- **Shell injection hardening**: `nexgen shell` secrets dispatch now runs via `subprocess.run` with `shlex.split` instead of `os.system` string interpolation.
+- **Lint hygiene**: Removed dead imports across `tools/info.py`, `tools/shell.py`, `provision.py`, `council/session.py` and tests; modernized `leak_scan.py` (`collections.abc.Iterable`, `str.removeprefix`); regenerated `03-INFRA/ruff-baseline.json`.
+
 ## [2.1.7] - 2026-09-12
 
 ### Fixed

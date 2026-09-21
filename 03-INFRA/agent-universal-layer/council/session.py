@@ -28,7 +28,6 @@ if os.name == "nt":
 else:
     _LOCAL_STATE_ROOT = Path.home() / ".local" / "state"
 SESSIONS_DIR = _LOCAL_STATE_ROOT / "council" / "sessions"
-COUNCIL_STATE_DIR = _LOCAL_STATE_ROOT / "council"
 DEFAULT_TTL_DAYS = 7
 
 
@@ -44,8 +43,8 @@ def _set_private_mode(path: Path, mode: int) -> None:
         return
     try:
         os.chmod(path, mode)
-    except OSError:
-        pass
+    except OSError as exc:
+        print(f"[council] chmod failed on {path}: {exc}", file=sys.stderr)
 
 
 def _write_private_text(path: Path, text: str) -> None:

@@ -42,6 +42,7 @@ import threading
 import time
 import urllib.error
 import urllib.request
+import zlib
 from pathlib import Path
 from typing import Any
 
@@ -148,7 +149,8 @@ def _resolve_manifest() -> dict[str, Any]:
     try:
         import yaml
         return yaml.safe_load(path.read_text(encoding="utf-8")) or {}
-    except Exception:
+    except Exception as exc:
+        print(f"[lazy-mcp] manifest unreadable ({path}): {exc}", file=sys.stderr)
         return {}
 
 
@@ -409,14 +411,14 @@ class _ServerHandle:
         if self.index is not None and time.time() - self.index_at < INDEX_TTL:
             return self.index
         modern = {"_meta": {"io.modelcontextprotocol/protocolVersion": PROTOCOL_VERSION}}
-        resp = self.rpc("tools/list", modern, 900 + hash(self.name) % 100)
+        resp = self.rpc("tools/list", modern, 900 + zlib.crc32(self.name.encode()) % 100)
         if "error" in resp or "result" not in resp:
-            resp = self.rpc("tools/list", {}, 900 + hash(self.name) % 100)
+            resp = self.rpc("tools/list", {}, 900 + zlib.crc32(self.name.encode()) % 100)
         if ("error" in resp or "result" not in resp) and not self.spec.get("url"):
             # Legacy stdio server (mcp SDK 1.x): it refuses the list until
             # the initialize handshake has happened.
             if self._initialize_stdio():
-                resp = self.rpc("tools/list", {}, 900 + hash(self.name) % 100)
+                resp = self.rpc("tools/list", {}, 900 + zlib.crc32(self.name.encode()) % 100)
         tools = (resp.get("result") or {}).get("tools", [])
         self.index = tools
         self.index_at = time.time()

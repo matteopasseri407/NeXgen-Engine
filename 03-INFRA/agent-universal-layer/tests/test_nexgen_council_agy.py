@@ -5,14 +5,13 @@ import argparse
 import sys
 from pathlib import Path
 
-import pytest
 
 COUNCIL_DIR = Path(__file__).resolve().parents[2] / "agent-universal-layer" / "council"
 if str(COUNCIL_DIR) not in sys.path:
     sys.path.insert(0, str(COUNCIL_DIR))
 
 from proposal import _check_seat_allowed
-from seat_process import _build_seat_command, _effort_forwarding, _effort_label
+from seat_process import _build_seat_command, _effort_forwarding
 
 
 def test_agy_build_seat_command(tmp_path: Path) -> None:

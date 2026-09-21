@@ -19,7 +19,6 @@ from nexgen_core.git_ops import (
     list_quarantine_branches,
     publish_changes,
     quarantine_diverged_commits,
-    run_git,
 )
 from nexgen_core.report import Severity
 

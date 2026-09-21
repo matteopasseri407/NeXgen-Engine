@@ -24,7 +24,7 @@ from nexgen_core.lock import HostLock, LockTimeoutError
 
 def test_lock_acquire_and_release(tmp_path: Path):
     lock_file = tmp_path / "test.lock"
-    with HostLock(lock_path=lock_file, timeout=2.0) as lock:
+    with HostLock(lock_path=lock_file, timeout=2.0):
         assert lock_file.exists()
         # Un secondo tentativo concorrente deve fallire con timeout
         lock2 = HostLock(lock_path=lock_file, timeout=0.2)

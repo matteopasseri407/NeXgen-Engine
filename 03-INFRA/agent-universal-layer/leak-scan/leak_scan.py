@@ -34,8 +34,9 @@ import argparse
 import re
 import subprocess
 import sys
+from collections.abc import Iterable
 from pathlib import Path
-from typing import Iterable, NamedTuple
+from typing import NamedTuple
 
 try:
     import yaml
@@ -189,8 +190,7 @@ def parse_added_lines(diff_text: str, label_prefix: str) -> list[Unit]:
     for raw in diff_text.splitlines():
         if raw.startswith("+++ "):
             cur_file = raw[4:].split("\t")[0]
-            if cur_file.startswith("b/"):
-                cur_file = cur_file[2:]
+            cur_file = cur_file.removeprefix("b/")
             if cur_file != "/dev/null":
                 label = f"{label_prefix}{cur_file}" if label_prefix else cur_file
                 # the filename itself is new content too (a secret can land in
@@ -210,7 +210,7 @@ def parse_added_lines(diff_text: str, label_prefix: str) -> list[Unit]:
 
 
 def run_git(repo: str, *args: str) -> str:
-    r = subprocess.run(["git", "-C", repo, *args], capture_output=True, text=False)
+    r = subprocess.run(["git", "-C", repo, *args], capture_output=True, text=False, check=False, timeout=120)
     if r.returncode != 0:
         err = r.stderr.decode("utf-8", errors="replace")
         sys.exit(f"[leak-scan] git command failed: git {' '.join(args)}\n{err}")
