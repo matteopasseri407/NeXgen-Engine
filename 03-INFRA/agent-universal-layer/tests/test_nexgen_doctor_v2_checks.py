@@ -398,8 +398,8 @@ def test_mcp_configs_rendered_ok_when_all_clis_aligned(tmp_path: Path):
     _write_mcp_manifest(vault)
 
     (home / ".claude.json").write_text(json.dumps({"mcpServers": {"demo-server": {}}}))
-    (home / ".gemini" / "antigravity-ide").mkdir(parents=True)
-    (home / ".gemini" / "antigravity-ide" / "mcp_config.json").write_text(
+    (home / ".gemini" / "antigravity").mkdir(parents=True)
+    (home / ".gemini" / "antigravity" / "mcp_config.json").write_text(
         json.dumps({"mcpServers": {"demo-server": {}}})
     )
     (home / ".codex").mkdir(parents=True)

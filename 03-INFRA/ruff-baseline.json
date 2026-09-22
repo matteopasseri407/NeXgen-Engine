@@ -192,17 +192,12 @@
   {
     "file": "03-INFRA/scripts/nexgen_core/renderer.py",
     "code": "E402",
-    "count": 4
+    "count": 3
   },
   {
     "file": "03-INFRA/scripts/nexgen_core/renderer_cli.py",
     "code": "E402",
     "count": 5
-  },
-  {
-    "file": "03-INFRA/scripts/nexgen_core/skills.py",
-    "code": "E402",
-    "count": 3
   },
   {
     "file": "03-INFRA/scripts/nexgen_core/tools/vault_groom.py",

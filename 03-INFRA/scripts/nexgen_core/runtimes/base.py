@@ -13,11 +13,10 @@ responsibility, never the caller's.
 """
 from __future__ import annotations
 
-import os
-import shutil
-import time
 from abc import ABC, abstractmethod
 from pathlib import Path
+
+from nexgen_core.errors import NexgenError
 
 #: Neutral vocabulary of the three posture levels this engine knows about.
 #: An adapter without a verified rendering for one of these values silently
@@ -26,7 +25,7 @@ from pathlib import Path
 POSTURES = ("bypass", "accept-edits", "ask")
 
 
-class GuardrailError(Exception):
+class GuardrailError(NexgenError):
     """An anomaly that prevents writing safely: malformed user config, a
     path that escapes the permitted folder, an unexpected shape in a key
     this engine owns.
@@ -93,29 +92,27 @@ class Runtime(ABC):
         order or if this CLI has no verified guardrail hookup."""
 
     # ---- shared helpers, available to every adapter -------------------
+    # Disk mechanics live in exactly one place (`nexgen_core.files`): every
+    # incident that justified this package started with a config file
+    # overwritten with nothing to recover from.
 
     @staticmethod
     def backup(path: Path) -> Path | None:
         """Timestamped copy of an EXISTING user config file, made BEFORE
-        any write. Every incident that justified this package started with
-        a config file overwritten with nothing to recover from. No backup
-        for a file that doesn't exist yet -- there's nothing to preserve."""
-        if not path.is_file():
-            return None
-        stamp = time.strftime("%Y%m%d-%H%M%S")
-        backup_path = path.with_name(f"{path.name}.pre-permissions-{stamp}.bak")
-        shutil.copy2(path, backup_path)
-        return backup_path
+        any write. No backup for a file that doesn't exist yet -- there's
+        nothing to preserve."""
+        from nexgen_core.files import backup_file
+
+        return backup_file(path, tag="permissions")
 
     @staticmethod
     def atomic_write(path: Path, text: str) -> None:
         """Write-then-rename: a crash mid-write must never leave a
         truncated config that the CLI can no longer read on its next
         launch."""
-        path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = path.with_name(f"{path.name}.tmp-{os.getpid()}")
-        tmp.write_text(text, encoding="utf-8")
-        os.replace(tmp, path)
+        from nexgen_core.files import atomic_write_text
+
+        atomic_write_text(path, text)
 
     @staticmethod
     def deploy_bytes(dst: Path, body: bytes) -> bool:

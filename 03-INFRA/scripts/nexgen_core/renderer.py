@@ -13,14 +13,9 @@ Contract order and rules:
 from __future__ import annotations
 
 import contextlib
-import json
 import os
 import platform
-import re
-import shutil
 import sys
-import tempfile
-import time
 from pathlib import Path
 from typing import Any
 
@@ -29,12 +24,14 @@ if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
 from nexgen_core.config import expand_inline_templates, expand_placeholders, load_mcp_manifest
-from nexgen_core.i18n import t
-from nexgen_core.jsonc import parse_jsonc, remove_jsonc_top_level_value, set_jsonc_top_level_value
-from nexgen_core.paths import opencode_config_path, resolve_engine_root, resolve_home, resolve_vault_data
+from nexgen_core.paths import (
+    opencode_config_path,
+    resolve_engine_root,
+    resolve_home,
+    resolve_vault_data,
+)
 
-IS_WINDOWS = platform.system() == "Windows"
-MCP_REMOTE_PACKAGE = "mcp-remote@0.1.38"
+from nexgen_core.mcp_render import IS_WINDOWS
 
 
 class McpRenderer:
@@ -246,368 +243,23 @@ class McpRenderer:
 
     def render_claude(self, write: bool = False) -> tuple[bool, str]:
         """Generates the MCP configuration for Claude Code (~/.claude.json)."""
-        servers = self.load_resolved_servers("claude")
-        cfg_file = self.home / ".claude.json"
-        existing: dict[str, Any] = {}
-        if cfg_file.is_file():
-            try:
-                existing = json.loads(cfg_file.read_text(encoding="utf-8"))
-            except Exception as exc:
-                raise ValueError(f"Could not parse {cfg_file}: invalid JSON ({exc})")
-
-        mcp_servers = existing.get("mcpServers", {})
-        for retired in self.retired_server_names():
-            mcp_servers.pop(retired, None)
-        self._drop_unmounted(mcp_servers, servers, cli_target="claude")
-        for name, srv in servers.items():
-            if srv.get("transport") == "http" or srv.get("url"):
-                auth_env = srv.get("auth", {}).get("env") if isinstance(srv.get("auth"), dict) else None
-                headers = {"Authorization": f"Bearer ${{{auth_env}}}"} if auth_env else {}
-                mcp_servers[name] = {
-                    "type": "http",
-                    "url": srv["url"],
-                    "headers": headers,
-                }
-            else:
-                mcp_servers[name] = {
-                    "type": "stdio",
-                    "command": srv.get("command", ""),
-                    "args": srv.get("args", []),
-                    "env": srv.get("env", {}),
-                }
-
-        existing["mcpServers"] = mcp_servers
-        if write:
-            self._backup_and_write(cfg_file, json.dumps(existing, indent=2) + "\n")
-        return True, t("Claude configuration updated")
-
-    #: Antigravity reads the same configuration from three different paths,
-    #: depending on how it's launched. There's only one real file and the
-    #: other three reach it: writing one and hoping it's the right one means
-    #: leaving two variants out of three with a stale configuration.
-    ANTIGRAVITY_CONSUMER_DIRS = ("antigravity-cli", "antigravity-ide", "config")
+        from nexgen_core.mcp_render import claude
+        return claude.render(self, write=write)
 
     def render_antigravity(self, write: bool = False) -> tuple[bool, str]:
         """Generates Antigravity's MCP configuration and fans it out to its consumers."""
-        servers = self.load_resolved_servers("antigravity")
-        cfg_file = self.home / ".gemini" / "antigravity" / "mcp_config.json"
-        existing: dict[str, Any] = {}
-        if cfg_file.is_file():
-            try:
-                existing = json.loads(cfg_file.read_text(encoding="utf-8"))
-            except Exception as exc:
-                raise ValueError(f"Could not parse {cfg_file}: invalid JSON ({exc})")
-
-        mcp_servers = existing.get("mcpServers", {})
-        for retired in self.retired_server_names():
-            mcp_servers.pop(retired, None)
-        self._drop_unmounted(mcp_servers, servers, cli_target="antigravity")
-        bridge_script = self.engine_root / "agent-universal-layer" / "mcp" / "mcp-http-bridge.mjs"
-
-        for name, srv in servers.items():
-            if srv.get("transport") == "http" or srv.get("url"):
-                auth_env = srv.get("auth", {}).get("env") if isinstance(srv.get("auth"), dict) else ""
-                node_cmd = "node.exe" if IS_WINDOWS else "node"
-                mcp_servers[name] = {
-                    "command": node_cmd,
-                    "args": [str(bridge_script), srv["url"], auth_env, MCP_REMOTE_PACKAGE],
-                    "env": srv.get("env", {}),
-                }
-            else:
-                mcp_servers[name] = {
-                    "command": srv.get("command", ""),
-                    "args": srv.get("args", []),
-                    "env": srv.get("env", {}),
-                }
-
-        existing["mcpServers"] = mcp_servers
-        if write:
-            self._backup_and_write(cfg_file, json.dumps(existing, indent=2) + "\n")
-            self._fan_out_antigravity(cfg_file)
-        return True, t("Antigravity configuration updated")
-
-    def _fan_out_antigravity(self, canonical: Path) -> None:
-        """Points every path Antigravity reads from at the canonical file.
-
-        Where links can't be created (Windows without privileges) it copies
-        instead: what matters is that no variant is left behind.
-        """
-        for directory in self.ANTIGRAVITY_CONSUMER_DIRS:
-            target = self.home / ".gemini" / directory / "mcp_config.json"
-            if target == canonical:
-                continue
-            try:
-                if target.is_symlink() and target.resolve() == canonical.resolve():
-                    continue
-                target.parent.mkdir(parents=True, exist_ok=True)
-                if target.exists() or target.is_symlink():
-                    target.unlink()
-                target.symlink_to(canonical)
-            except OSError:
-                with contextlib.suppress(OSError):
-                    target.parent.mkdir(parents=True, exist_ok=True)
-                    shutil.copy2(canonical, target)
-
-    @staticmethod
-    def _opencode_timeouts(timeouts: Any) -> dict[str, int]:
-        """Map canonical seconds to OpenCode 2's millisecond timeout names."""
-        if not isinstance(timeouts, dict):
-            return {}
-        mapped = {}
-        for source, target in (("startup", "startup"), ("tool", "execution")):
-            try:
-                millis = int(float(timeouts[source]) * 1000)
-                if millis > 0:
-                    mapped[target] = millis
-            except (KeyError, ValueError, TypeError, OverflowError):
-                pass
-        return mapped
+        from nexgen_core.mcp_render import antigravity
+        return antigravity.render(self, write=write)
 
     def render_opencode(self, write: bool = False) -> tuple[bool, str]:
         """Generates native OpenCode 2 MCP config and migrates flat V1 entries."""
-        servers = self.load_resolved_servers("opencode")
-        cfg_file = self.opencode_config_path()
-        existing: dict[str, Any] = {}
-        raw_existing = ""
-        if cfg_file.is_file():
-            raw_existing = cfg_file.read_text(encoding="utf-8")
-            try:
-                existing = parse_jsonc(raw_existing) if cfg_file.suffix == ".jsonc" else json.loads(raw_existing)
-            except Exception as exc:
-                raise ValueError(f"Could not parse {cfg_file}: invalid JSON/JSONC ({exc})")
-
-        raw_mcp = existing.get("mcp", {})
-        if not isinstance(raw_mcp, dict):
-            raise ValueError(f"Could not render {cfg_file}: mcp must be an object")
-        if "servers" in raw_mcp:
-            if not isinstance(raw_mcp["servers"], dict):
-                raise ValueError(f"Could not render {cfg_file}: mcp.servers must be an object")
-            mcp_config = dict(raw_mcp)
-            mcp_servers = dict(raw_mcp["servers"])
-        else:
-            # The old flat layout is no longer the written contract. Move
-            # unknown live servers as well, normalizing fields V2 rejects.
-            mcp_config = {}
-            mcp_servers = {}
-            for name, entry in raw_mcp.items():
-                if not isinstance(entry, dict):
-                    raise ValueError(f"Could not migrate {cfg_file}: MCP server {name!r} must be an object")
-                migrated = dict(entry)
-                enabled = migrated.pop("enabled", None)
-                if enabled is False:
-                    migrated["disabled"] = True
-                if isinstance(migrated.get("timeout"), int):
-                    migrated["timeout"] = {"execution": migrated["timeout"]}
-                oauth = migrated.get("oauth")
-                if isinstance(oauth, dict):
-                    oauth_fields = {
-                        "clientId": "client_id",
-                        "clientSecret": "client_secret",
-                        "callbackPort": "callback_port",
-                        "redirectUri": "redirect_uri",
-                        "authServerMetadataUrl": "auth_server_metadata_url",
-                    }
-                    migrated["oauth"] = {oauth_fields.get(k, k): v for k, v in oauth.items()}
-                mcp_servers[name] = migrated
-        for retired in self.retired_server_names():
-            mcp_servers.pop(retired, None)
-        self._drop_unmounted(mcp_servers, servers, cli_target="opencode")
-        tools_cfg: dict[str, Any] = dict(existing.get("tools") or {})
-        old_tools_cfg = dict(tools_cfg)
-        permissions = existing.get("permissions", [])
-        if not isinstance(permissions, list):
-            raise ValueError(f"Could not render {cfg_file}: permissions must be an array")
-        permissions = list(permissions)
-        old_permissions = list(permissions)
-        for name, srv in servers.items():
-            mapped = self._opencode_timeouts(srv.get("timeouts"))
-            if srv.get("transport") == "http" or srv.get("url"):
-                url_env = srv.get("url_env")
-                url = f"{{env:{url_env}}}" if url_env else srv["url"]
-                auth_env = srv.get("auth", {}).get("env") if isinstance(srv.get("auth"), dict) else ""
-                headers = {"Authorization": f"Bearer {{env:{auth_env}}}"} if auth_env else {}
-                entry: dict[str, Any] = {
-                    "type": "remote",
-                    "url": url,
-                }
-                if auth_env:
-                    entry["headers"] = headers
-                    entry["oauth"] = False
-                elif srv.get("oauth"):
-                    # OpenCode handles the OAuth flow itself (discovery,
-                    # dynamic registration, tokens outside the config):
-                    # no headers, no client secrets in the config. An
-                    # explicit `oauth_client_id` (a public identifier, never
-                    # a secret) is forwarded for providers that do not
-                    # support dynamic client registration, e.g. Google
-                    # Workspace MCP.
-                    oauth_config: dict[str, Any] = {}
-                    client_id = srv.get("oauth_client_id")
-                    if isinstance(client_id, str) and client_id.strip():
-                        oauth_config["client_id"] = client_id.strip()
-                    if oauth_config:
-                        entry["oauth"] = oauth_config
-                elif srv.get("oauth") is False and "oauth" in srv:
-                    entry["oauth"] = False
-            else:
-                cmd_list = [srv.get("command", "")] + list(srv.get("args", []))
-                entry = {
-                    "type": "local",
-                    "command": cmd_list,
-                }
-                if srv.get("env"):
-                    entry["environment"] = srv["env"]
-            if mapped:
-                entry["timeout"] = mapped
-            mcp_servers[name] = entry
-            # V2 denies tools through permissions, including Code Mode tools.
-            deny = srv.get("tools_deny")
-            if isinstance(deny, list) and deny:
-                for tool in deny:
-                    action = re.sub(r"[^A-Za-z0-9_-]", "_", f"{name}_{tool}")
-                    rule = {"action": action, "resource": "*", "effect": "deny"}
-                    if rule not in permissions:
-                        permissions.append(rule)
-                    if tools_cfg.get(action) is False:
-                        tools_cfg.pop(action)
-
-        # This renderer owns MCP entries, not the user's native tool choices.
-        # In particular, websearch remains available as a fallback when the
-        # Firecrawl connector is unavailable. One exception, once: the
-        # previous renderer forced `tools.websearch = false` together with
-        # `websearch = "parallel"` on every machine it touched, so a bare
-        # `false` paired with that exact marker is the old engine's
-        # fingerprint, not a human choice. It is dropped so the documented
-        # fallback lane works again; any other value (true, an object, a
-        # named provider) is the user's and stays exactly as it is.
-        if tools_cfg.get("websearch") is False and existing.get("websearch") == "parallel":
-            tools_cfg.pop("websearch")
-            existing.pop("websearch", None)
-            drop_engine_websearch = True
-        else:
-            drop_engine_websearch = False
-        if "tools" in existing or tools_cfg:
-            existing["tools"] = tools_cfg
-        if permissions:
-            existing["permissions"] = permissions
-        mcp_config["servers"] = mcp_servers
-        existing["mcp"] = mcp_config
-        if write:
-            # JSONC-aware: preserves the existing file's comments instead of
-            # overwriting it with plain JSON (which OpenCode wouldn't read).
-            if cfg_file.suffix == ".jsonc" and raw_existing.strip():
-                content = set_jsonc_top_level_value(raw_existing, "mcp", mcp_config)
-                if "tools" in existing and tools_cfg != old_tools_cfg:
-                    content = set_jsonc_top_level_value(content, "tools", tools_cfg)
-                if permissions and permissions != old_permissions:
-                    content = set_jsonc_top_level_value(content, "permissions", permissions)
-                if drop_engine_websearch:
-                    content = remove_jsonc_top_level_value(content, "websearch")
-            else:
-                # File missing or empty: no comments to preserve.
-                content = json.dumps(existing, indent=2) + "\n"
-            self._backup_and_write(cfg_file, content)
-        return True, t("OpenCode configuration updated")
+        from nexgen_core.mcp_render import opencode
+        return opencode.render(self, write=write)
 
     def render_codex(self, write: bool = False) -> tuple[bool, str]:
-        """Generates Codex's native MCP configuration (~/.codex/config.toml).
-
-        Additive like the other three CLIs: an existing server that is not in
-        the manifest is preserved verbatim, and one that is env-gated but not
-        resolvable right now (e.g. the recurring guard running without the
-        user's shell environment) keeps the entry already on disk instead of
-        deleting it. Only `retired_servers` remove entries; manifest servers
-        are always re-emitted fresh.
-        """
-        servers = self.load_resolved_servers("codex")
-        cfg_file = self.home / ".codex" / "config.toml"
-
-        retired = self.retired_server_names()
-        _manifest_data = load_mcp_manifest(self.manifest_path) if self.manifest_path.is_file() else {}
-        unmounted = {
-            name.replace("-", "_")
-            for name, srv in _manifest_data.get("servers", {}).items()
-            if name not in servers and name not in retired
-            and not (
-                srv.get("require_env")
-                and (str(srv.get("tier", "")).strip().lower() == "core" or srv.get("enabled", False))
-                and not (srv.get("lazy") and "codex" in (srv.get("lazy_targets") or ["claude", "codex", "antigravity", "opencode"]))
-            )
-        }
-        managed = {name.replace("-", "_") for name in servers} | {name.replace("-", "_") for name in retired}
-
-        existing_lines: list[str] = []
-        preserved_lines: list[str] = []
-        if cfg_file.is_file():
-            try:
-                raw = cfg_file.read_text(encoding="utf-8")
-                # Preserves existing non-MCP sections (e.g. [model], general
-                # settings) and the mcp_servers entries this engine doesn't own.
-                in_mcp_section = False
-                keep_current = False
-                for line in raw.splitlines():
-                    stripped = line.strip()
-                    if stripped.startswith("[mcp_servers."):
-                        in_mcp_section = True
-                        key = stripped[13:-1] if stripped.endswith("]") else stripped[13:]
-                        section = key.split(".", 1)[0]
-                        keep_current = section not in managed and section not in unmounted
-                        if keep_current:
-                            preserved_lines.append(line)
-                        continue
-                    elif stripped.startswith("[") and not stripped.startswith("[mcp_servers."):
-                        in_mcp_section = False
-                        keep_current = False
-                    if not in_mcp_section and not line.startswith("# NeXgen Engine"):
-                        existing_lines.append(line)
-                    elif in_mcp_section and keep_current:
-                        preserved_lines.append(line)
-            except OSError:
-                existing_lines = []
-                preserved_lines = []
-
-        header = "# NeXgen Engine - Codex MCP configuration, auto-generated"
-        lines: list[str] = []
-        if existing_lines:
-            cleaned_existing = "\n".join(existing_lines).strip()
-            if cleaned_existing:
-                lines.append(cleaned_existing)
-                lines.append("")
-
-        lines.append(header)
-        lines.append("")
-        if preserved_lines:
-            lines.append("\n".join(preserved_lines).strip())
-            lines.append("")
-        for name, srv in servers.items():
-            safe_name = name.replace("-", "_")
-            lines.append(f"[mcp_servers.{safe_name}]")
-            if srv.get("transport") == "http" or srv.get("url"):
-                lines.append(f'url = {json.dumps(srv["url"])}')
-                auth_env = srv.get("auth", {}).get("env") if isinstance(srv.get("auth"), dict) else None
-                if auth_env:
-                    lines.append(f'bearer_token_env_var = "{auth_env}"')
-                timeouts = srv.get("timeouts", {})
-                if isinstance(timeouts, dict):
-                    if "startup" in timeouts:
-                        lines.append(f'startup_timeout_sec = {float(timeouts["startup"])}')
-                    if "tool" in timeouts:
-                        lines.append(f'tool_timeout_sec = {float(timeouts["tool"])}')
-            else:
-                lines.append(f'command = {json.dumps(srv.get("command", ""))}')
-                args_json = json.dumps(srv.get("args", []))
-                lines.append(f"args = {args_json}")
-                env = srv.get("env", {})
-                if env:
-                    lines.append(f"[mcp_servers.{safe_name}.env]")
-                    for k, v in env.items():
-                        lines.append(f'{k} = {json.dumps(str(v))}')
-            lines.append("")
-
-        content = "\n".join(lines).strip() + "\n"
-        if write:
-            self._backup_and_write(cfg_file, content)
-        return True, t("Codex configuration updated")
+        """Generates Codex's native MCP configuration (~/.codex/config.toml)."""
+        from nexgen_core.mcp_render import codex
+        return codex.render(self, write=write)
 
     def render_all(self, write: bool = False) -> dict[str, bool]:
         """Renders for all 4 CLIs."""
@@ -627,32 +279,13 @@ class McpRenderer:
 
         A config that already matches is left completely untouched: the guard
         cycle runs twice an hour, and rewriting a byte-identical file every
-        cycle changes mtimes and piles up backups for nothing.
+        cycle changes mtimes and piles up backups for nothing. Mechanics in
+        `nexgen_core.files`; the last-3 rotation stays this writer's policy.
         """
-        path.parent.mkdir(parents=True, exist_ok=True)
-        if path.is_file():
-            try:
-                if path.read_text(encoding="utf-8") == content:
-                    return
-            except (OSError, UnicodeDecodeError):
-                pass
-            stamp = time.strftime("%Y%m%d-%H%M%S")
-            bak = path.with_name(f"{path.name}.bak-{stamp}")
-            shutil.copy2(path, bak)
-            # Keep only the last 3 backups
-            backs = sorted(path.parent.glob(f"{path.name}.bak-*"))
-            for old in backs[:-3]:
-                old.unlink(missing_ok=True)
+        from nexgen_core.files import write_text_if_changed
 
-        # Atomic write via a tempfile on the same filesystem
-        temp_fd, temp_path = tempfile.mkstemp(dir=str(path.parent), prefix=f"{path.name}.tmp-")
-        try:
-            with open(temp_fd, "w", encoding="utf-8") as f:
-                f.write(content)
-            os.replace(temp_path, str(path))
-            if not IS_WINDOWS:
-                os.chmod(str(path), 0o600)
-        except Exception:
-            if os.path.exists(temp_path):
-                os.unlink(temp_path)
-            raise
+        # Rendered configs may carry bearer tokens in env blocks: keep the
+        # historical 0600 on POSIX (Windows has no equivalent bit here).
+        if write_text_if_changed(path, content, keep=3) and not IS_WINDOWS:
+            with contextlib.suppress(OSError):
+                os.chmod(path, 0o600)

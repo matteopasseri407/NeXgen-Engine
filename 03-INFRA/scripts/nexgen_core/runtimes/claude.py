@@ -11,6 +11,7 @@ import shutil
 from pathlib import Path
 from typing import Any
 
+from nexgen_core.paths import claude_settings
 from nexgen_core.runtimes.base import GuardrailError, Runtime
 
 #: Neutral vocabulary -> value that Claude understands (permissions.defaultMode).
@@ -23,7 +24,7 @@ class ClaudeRuntime(Runtime):
     name = "claude"
 
     def _settings_path(self, home: Path) -> Path:
-        return home / ".claude" / "settings.json"
+        return claude_settings(home)
 
     def is_installed(self, home: Path) -> bool:
         if shutil.which("claude"):

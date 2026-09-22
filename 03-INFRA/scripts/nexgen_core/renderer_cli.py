@@ -24,7 +24,14 @@ if str(SCRIPTS_DIR) not in sys.path:
 from nexgen_core.config import load_mcp_manifest
 from nexgen_core.i18n import t
 from nexgen_core.jsonc import parse_jsonc
-from nexgen_core.paths import opencode_config_candidates, resolve_home
+from nexgen_core.paths import (
+    antigravity_config,
+    antigravity_configs,
+    claude_config,
+    codex_config,
+    opencode_config_candidates,
+    resolve_home,
+)
 from nexgen_core.renderer import McpRenderer
 
 HOME = resolve_home()
@@ -44,24 +51,25 @@ def _renderer() -> McpRenderer:
 
 def _cli_config_path(cli: str) -> Path:
     return {
-        "claude": HOME / ".claude.json",
-        "codex": Path(os.environ.get("CODEX_HOME") or str(HOME / ".codex")) / "config.toml",
-        "antigravity": HOME / ".gemini" / "antigravity-ide" / "mcp_config.json",
+        "claude": claude_config(HOME),
+        "codex": codex_config(HOME),
+        "antigravity": antigravity_config(HOME),
         "opencode": _renderer().opencode_config_path(),
     }[cli]
 
 
 def _cli_config_candidates(cli: str) -> list[Path]:
-    if cli != "opencode":
-        return [_cli_config_path(cli)]
-    return opencode_config_candidates(HOME)
+    if cli == "opencode":
+        return opencode_config_candidates(HOME)
+    if cli == "antigravity":
+        return antigravity_configs(HOME)
+    return [_cli_config_path(cli)]
 
 
 def _atomic_write_text(path: Path, text: str) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(f"{path.name}.{os.getpid()}.tmp")
-    tmp.write_text(text, encoding="utf-8")
-    os.replace(tmp, path)
+    from nexgen_core.files import atomic_write_text
+
+    atomic_write_text(path, text)
 
 
 def _manifest_lock_path() -> Path:
@@ -71,9 +79,15 @@ def _manifest_lock_path() -> Path:
 
 
 def _secure_backup(path: Path, text: str) -> Path:
+    """Persists caller-provided `text` (usually the live file just read) as
+    a timestamped backup next to `path`. Unlike `files.backup_file`, which
+    snapshots what's on disk, this snapshots what the caller holds --
+    callers pass the content they are about to overwrite."""
+    from nexgen_core.files import atomic_write_text
+
     stem = path.name + ".bak-" + time.strftime("%Y%m%d-%H%M%S")
     bak = path.with_name(stem)
-    bak.write_text(text, encoding="utf-8")
+    atomic_write_text(bak, text)
     return bak
 
 

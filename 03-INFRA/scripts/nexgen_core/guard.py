@@ -16,7 +16,6 @@ import contextlib
 import json
 import shutil
 import sys
-import time
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
@@ -140,11 +139,10 @@ class GuardRunner:
             # The file may contain hand-written lines. Regenerating it is
             # fine; making it disappear without a copy is not.
             if claude_md.is_file():
-                backup = claude_md.with_name(
-                    f"{claude_md.name}.pre-instructions-{time.strftime('%Y%m%d-%H%M%S')}.bak"
-                )
+                from nexgen_core.files import backup_file
+
                 with contextlib.suppress(OSError):
-                    shutil.copy2(claude_md, backup)
+                    backup_file(claude_md, tag="instructions")
             claude_md.write_text(content, encoding="utf-8")
             actions.append(t("Updated instruction pointer {path}", path=claude_md))
 
@@ -177,11 +175,10 @@ class GuardRunner:
             if target.exists() or target.is_symlink():
                 # A real copy may contain hand-written lines.
                 if target.is_file() and not target.is_symlink():
-                    backup = target.with_name(
-                        f"{target.name}.pre-instructions-{time.strftime('%Y%m%d-%H%M%S')}.bak"
-                    )
+                    from nexgen_core.files import backup_file
+
                     with contextlib.suppress(OSError):
-                        shutil.copy2(target, backup)
+                        backup_file(target, tag="instructions")
                 target.unlink()
             try:
                 target.symlink_to(canon)
@@ -257,11 +254,10 @@ class GuardRunner:
                 if not kept:
                     del data["instructions"]
                 body = json.dumps(data, indent=2) + "\n"
-            backup = candidate.with_name(
-                f"{candidate.name}.pre-instructions-{time.strftime('%Y%m%d-%H%M%S')}.bak"
-            )
+            from nexgen_core.files import backup_file
+
             with contextlib.suppress(OSError):
-                shutil.copy2(candidate, backup)
+                backup_file(candidate, tag="instructions")
             candidate.write_text(body, encoding="utf-8")
         except OSError:
             return None
@@ -381,7 +377,14 @@ class GuardRunner:
         allow_offline: bool = False,
         skip_mcp: bool = False,
     ) -> GuardResult:
-        """Runs the requested cycle with locking and transactional safety."""
+        """Runs the requested cycle with locking and transactional safety.
+
+        The orchestration only: lock, route by mode, run each phase in
+        order, convert lock contention and unexpected errors into results.
+        Every phase below is a `_phase_*` method so it can be read, tested
+        and reordered on its own; a phase that must stop the cycle returns
+        its `GuardResult`, otherwise `None`.
+        """
         is_guard = (mode == GuardMode.GUARD)
         actions: list[str] = []
 
@@ -391,153 +394,30 @@ class GuardRunner:
                 is_guard=is_guard,
                 command_name=f"agent-sync-{mode.value}",
             ):
-                # 1. Git inspection
                 auth_remote, _ = resolve_remotes(self.vault_data)
                 branch = get_current_branch(self.vault_data) or "main"
 
-                if mode != GuardMode.PREFLIGHT:
-                    # Auto-commit any pending tracked infra files so they don't block sync
-                    auto_commit_infra_files(self.vault_data)
-
-                    git_status = inspect_git_state(
-                        self.vault_data,
-                        expected_branch=branch,
-                        remote=auth_remote,
-                        allow_offline=allow_offline,
-                    )
-                    if not git_status.allows_apply:
-                        return GuardResult(
-                            success=False,
-                            mode=mode,
-                            message=t("Operation blocked by Git: {reason}", reason=git_status.message),
-                            exit_code=1,
-                        )
-                    if git_status.state == GitState.BEHIND:
-                        ff_ok, ff_msg = fast_forward_merge(self.vault_data, remote=auth_remote, branch=branch)
-                        if not ff_ok:
-                            return GuardResult(
-                                success=False,
-                                mode=mode,
-                                message=t("Error during automatic update: {reason}", reason=ff_msg),
-                                exit_code=1,
-                            )
-                        actions.append(ff_msg)
-                    elif git_status.state == GitState.DIVERGED:
-                        rebase_res = run_git(self.vault_data, "rebase", f"{auth_remote}/{branch}")
-                        if rebase_res.returncode == 0:
-                            actions.append(t("Realigned with {remote}/{branch} via rebase", remote=auth_remote, branch=branch))
-                        else:
-                            run_git(self.vault_data, "rebase", "--abort")
-                            q_ok, q_branch, q_msg = quarantine_diverged_commits(self.vault_data, remote=auth_remote, branch=branch)
-                            if q_ok:
-                                actions.append(q_msg)
-                            else:
-                                return GuardResult(
-                                    success=False,
-                                    mode=mode,
-                                    message=t("Error during divergence resolution: {reason}", reason=q_msg),
-                                    exit_code=1,
-                                )
-                    elif git_status.state == GitState.FRESH:
-                        actions.append(t("Data state: {status}", status=git_status.message))
-                    elif git_status.state == GitState.AHEAD:
-                        actions.append(t("Data state: {status}", status=git_status.message))
+                abort = self._phase_git(mode, allow_offline, auth_remote, branch, actions)
+                if abort is not None:
+                    return abort
 
                 # If this is a pull-only run, stop here
                 if mode == GuardMode.PULL:
                     self._refresh_update_cache_best_effort()
                     return GuardResult(success=True, mode=mode, message=t("Pull completed"), exit_code=0, actions_taken=actions)
 
-                # 2. Preflight
-                pf_ok, pf_msg = self.preflight()
-                if not pf_ok:
-                    return GuardResult(success=False, mode=mode, message=pf_msg, exit_code=1)
+                abort = self._phase_preflight(mode)
+                if abort is not None:
+                    return abort
 
-                if mode == GuardMode.PREFLIGHT:
-                    return GuardResult(success=True, mode=mode, message=pf_msg, exit_code=0)
-
-                # 3. Skill materialization
-                mat = SkillMaterializer(vault_data=self.vault_data, engine_root=self.engine_root, home=self.home)
-                skill_changes, skill_actions = mat.materialize(apply=True)
-                actions.extend(skill_actions)
-
-                # 4. MCP configuration rendering for the CLIs
-                if skip_mcp:
-                    actions.append(t("MCP configurations not regenerated (explicitly requested)"))
-                else:
-                    rend = McpRenderer(vault_data=self.vault_data, engine_root=self.engine_root, home=self.home)
-                    rend.render_all(write=True)
-                    actions.append(t("MCP configurations regenerated for every CLI"))
-
-                # 4.6 Permission posture + guardrail hook per CLI
-                try:
-                    perm_actions = self.apply_runtime_permissions()
-                    actions.extend(perm_actions)
-                except Exception as exc:
-                    actions.append("[WARN] " + t("runtime-permissions: phase skipped due to an unexpected error ({error})", error=exc))
-
-                # 5. Instruction alignment
-                instr_actions = self.align_instructions()
-                actions.extend(instr_actions)
-
-                # 5b. Local model adapter (Windows, bring-your-own)
-                lm_actions = self.align_local_model_runtime()
-                actions.extend(lm_actions)
-
-                # 5c. The commands themselves. A deleted or stale launcher
-                # after an update is drift like any other, and fixing it
-                # silently is the job: asking the user to do it isn't.
-                try:
-                    from nexgen_core.shims import install_shims
-
-                    before = _launcher_fingerprints(self.home)
-                    install_shims(home=self.home)
-                    repaired = sorted(_launcher_fingerprints(self.home).items() - before.items())
-                    if repaired:
-                        actions.append(t("Commands realigned ({count})", count=len(repaired)))
-                except Exception as exc:
-                    actions.append("[WARN] " + t("Commands not realigned: {error}", error=exc))
-
-                # 6. Startup self-alignment installation (systemd / scheduled task)
-                try:
-                    sched_ok = install_scheduler(
-                        home=self.home,
-                        engine_root=self.engine_root,
-                        vault_data=self.vault_data,
-                        vault=self.vault_data,
-                        branch=branch,
-                        log=lambda msg: actions.append(msg),
-                    )
-                    if sched_ok:
-                        actions.append(t("Startup self-alignment configured"))
-                except Exception as exc:
-                    actions.append("[WARN] " + t("Self-alignment configuration did not succeed: {error}", error=exc))
-
-                # 6b. Modules this machine declared: their commands and units
-                # are drift like any other. Doing it here is what turns the
-                # guard from something a module has to survive into what keeps
-                # it alive -- every primitive below is idempotent, so a module
-                # already in place costs nothing.
-                try:
-                    from nexgen_core.module_install import install_declared_modules
-                    from nexgen_core.modules import modules_state
-
-                    module_actions = install_declared_modules(
-                        modules_state(vault_data=self.vault_data, engine_root=self.engine_root),
-                        home=self.home,
-                        engine_root=self.engine_root,
-                        log=lambda msg: actions.append(msg),
-                    )
-                    if module_actions:
-                        actions.append(t("Modules realigned ({count})", count=len(module_actions)))
-                except Exception as exc:
-                    actions.append("[WARN] " + t("Modules not realigned: {error}", error=exc))
-
-                # 7. Liveness registration for the heartbeat
-                if is_guard or mode == GuardMode.APPLY:
-                    self.heartbeat.record_liveness()
-                    actions.append(t("Liveness recorded successfully"))
-                    self._refresh_update_cache_best_effort()
+                self._phase_skills(actions)
+                self._phase_mcp(actions, skip_mcp)
+                self._phase_permissions(actions)
+                self._phase_instructions(actions)
+                self._phase_launchers(actions)
+                self._phase_scheduler(actions, branch)
+                self._phase_modules(actions)
+                self._phase_liveness(actions, is_guard, mode)
 
                 return GuardResult(
                     success=True,
@@ -561,3 +441,163 @@ class GuardRunner:
                 message=t("Error during the alignment operation: {error}", error=exc),
                 exit_code=1,
             )
+
+    def _phase_git(
+        self,
+        mode: GuardMode,
+        allow_offline: bool,
+        auth_remote: str,
+        branch: str,
+        actions: list[str],
+    ) -> GuardResult | None:
+        """Inspects data git state and converges it (fast-forward / rebase /
+        quarantine). Returns a result only when the cycle must stop here."""
+        if mode == GuardMode.PREFLIGHT:
+            return None
+        # Auto-commit any pending tracked infra files so they don't block sync
+        auto_commit_infra_files(self.vault_data)
+
+        git_status = inspect_git_state(
+            self.vault_data,
+            expected_branch=branch,
+            remote=auth_remote,
+            allow_offline=allow_offline,
+        )
+        if not git_status.allows_apply:
+            return GuardResult(
+                success=False,
+                mode=mode,
+                message=t("Operation blocked by Git: {reason}", reason=git_status.message),
+                exit_code=1,
+            )
+        if git_status.state == GitState.BEHIND:
+            ff_ok, ff_msg = fast_forward_merge(self.vault_data, remote=auth_remote, branch=branch)
+            if not ff_ok:
+                return GuardResult(
+                    success=False,
+                    mode=mode,
+                    message=t("Error during automatic update: {reason}", reason=ff_msg),
+                    exit_code=1,
+                )
+            actions.append(ff_msg)
+        elif git_status.state == GitState.DIVERGED:
+            rebase_res = run_git(self.vault_data, "rebase", f"{auth_remote}/{branch}")
+            if rebase_res.returncode == 0:
+                actions.append(t("Realigned with {remote}/{branch} via rebase", remote=auth_remote, branch=branch))
+            else:
+                run_git(self.vault_data, "rebase", "--abort")
+                q_ok, _q_branch, q_msg = quarantine_diverged_commits(self.vault_data, remote=auth_remote, branch=branch)
+                if q_ok:
+                    actions.append(q_msg)
+                else:
+                    return GuardResult(
+                        success=False,
+                        mode=mode,
+                        message=t("Error during divergence resolution: {reason}", reason=q_msg),
+                        exit_code=1,
+                    )
+        elif git_status.state == GitState.FRESH:
+            actions.append(t("Data state: {status}", status=git_status.message))
+        elif git_status.state == GitState.AHEAD:
+            actions.append(t("Data state: {status}", status=git_status.message))
+        return None
+
+    def _phase_preflight(self, mode: GuardMode) -> GuardResult | None:
+        """Read-only validation of all configuration files. In PREFLIGHT
+        mode the success result itself is the answer, so it comes back
+        here instead of falling through to the write phases."""
+        pf_ok, pf_msg = self.preflight()
+        if not pf_ok:
+            return GuardResult(success=False, mode=mode, message=pf_msg, exit_code=1)
+        if mode == GuardMode.PREFLIGHT:
+            return GuardResult(success=True, mode=mode, message=pf_msg, exit_code=0)
+        return None
+
+    def _phase_skills(self, actions: list[str]) -> None:
+        """Skill materialization (skills.py)."""
+        mat = SkillMaterializer(vault_data=self.vault_data, engine_root=self.engine_root, home=self.home)
+        _skill_changes, skill_actions = mat.materialize(apply=True)
+        actions.extend(skill_actions)
+
+    def _phase_mcp(self, actions: list[str], skip_mcp: bool) -> None:
+        """MCP configuration rendering for the CLIs."""
+        if skip_mcp:
+            actions.append(t("MCP configurations not regenerated (explicitly requested)"))
+            return
+        rend = McpRenderer(vault_data=self.vault_data, engine_root=self.engine_root, home=self.home)
+        rend.render_all(write=True)
+        actions.append(t("MCP configurations regenerated for every CLI"))
+
+    def _phase_permissions(self, actions: list[str]) -> None:
+        """Permission posture + guardrail hook per CLI."""
+        try:
+            perm_actions = self.apply_runtime_permissions()
+            actions.extend(perm_actions)
+        except Exception as exc:
+            actions.append("[WARN] " + t("runtime-permissions: phase skipped due to an unexpected error ({error})", error=exc))
+
+    def _phase_instructions(self, actions: list[str]) -> None:
+        """Instruction alignment, plus the Windows-only local-model adapter."""
+        instr_actions = self.align_instructions()
+        actions.extend(instr_actions)
+        lm_actions = self.align_local_model_runtime()
+        actions.extend(lm_actions)
+
+    def _phase_launchers(self, actions: list[str]) -> None:
+        """The commands themselves. A deleted or stale launcher
+        after an update is drift like any other, and fixing it
+        silently is the job: asking the user to do it isn't."""
+        try:
+            from nexgen_core.shims import install_shims
+
+            before = _launcher_fingerprints(self.home)
+            install_shims(home=self.home)
+            repaired = sorted(_launcher_fingerprints(self.home).items() - before.items())
+            if repaired:
+                actions.append(t("Commands realigned ({count})", count=len(repaired)))
+        except Exception as exc:
+            actions.append("[WARN] " + t("Commands not realigned: {error}", error=exc))
+
+    def _phase_scheduler(self, actions: list[str], branch: str) -> None:
+        """Startup self-alignment installation (systemd / scheduled task)."""
+        try:
+            sched_ok = install_scheduler(
+                home=self.home,
+                engine_root=self.engine_root,
+                vault_data=self.vault_data,
+                vault=self.vault_data,
+                branch=branch,
+                log=lambda msg: actions.append(msg),
+            )
+            if sched_ok:
+                actions.append(t("Startup self-alignment configured"))
+        except Exception as exc:
+            actions.append("[WARN] " + t("Self-alignment configuration did not succeed: {error}", error=exc))
+
+    def _phase_modules(self, actions: list[str]) -> None:
+        """Modules this machine declared: their commands and units
+        are drift like any other. Doing it here is what turns the
+        guard from something a module has to survive into what keeps
+        it alive -- every primitive below is idempotent, so a module
+        already in place costs nothing."""
+        try:
+            from nexgen_core.module_install import install_declared_modules
+            from nexgen_core.modules import modules_state
+
+            module_actions = install_declared_modules(
+                modules_state(vault_data=self.vault_data, engine_root=self.engine_root),
+                home=self.home,
+                engine_root=self.engine_root,
+                log=lambda msg: actions.append(msg),
+            )
+            if module_actions:
+                actions.append(t("Modules realigned ({count})", count=len(module_actions)))
+        except Exception as exc:
+            actions.append("[WARN] " + t("Modules not realigned: {error}", error=exc))
+
+    def _phase_liveness(self, actions: list[str], is_guard: bool, mode: GuardMode) -> None:
+        """Liveness registration for the heartbeat."""
+        if is_guard or mode == GuardMode.APPLY:
+            self.heartbeat.record_liveness()
+            actions.append(t("Liveness recorded successfully"))
+            self._refresh_update_cache_best_effort()

@@ -179,3 +179,64 @@ def opencode_agents_file(home: Path | None = None) -> Path:
 def opencode_skills_dir(home: Path | None = None) -> Path:
     """The native V2 per-CLI skill directory OpenCode discovers."""
     return opencode_config_dir(home) / "skills"
+
+
+def claude_config(home: Path | None = None) -> Path:
+    """Claude Code's MCP configuration (session/trust state lives here too,
+    which is why only additive writes are safe on it)."""
+    return resolve_home(home) / ".claude.json"
+
+
+def claude_settings(home: Path | None = None) -> Path:
+    """Claude Code's posture/hook settings (written only by Claude itself
+    on first launch -- never a valid installed-signal, see the runtimes)."""
+    return resolve_home(home) / ".claude" / "settings.json"
+
+
+def codex_home(home: Path | None = None) -> Path:
+    """Codex's home: `$CODEX_HOME` wins when set, else `~/.codex`."""
+    override = os.environ.get("CODEX_HOME")
+    if override:
+        return Path(override).expanduser()
+    return resolve_home(home) / ".codex"
+
+
+def codex_config(home: Path | None = None) -> Path:
+    """Codex's native MCP configuration (TOML)."""
+    return codex_home(home) / "config.toml"
+
+
+#: Folders Antigravity reads an MCP config from. The renderer owns exactly
+#: one of them (the canonical file below) and fans it out to the rest as
+#: symlinks, because different ways of launching Antigravity have been
+#: observed reading different folders.
+ANTIGRAVITY_CONSUMER_DIRS: tuple[str, ...] = ("antigravity-cli", "antigravity-ide", "config")
+
+
+def antigravity_config(home: Path | None = None) -> Path:
+    """The canonical Antigravity MCP configuration the renderer writes.
+
+    Note this is `antigravity/mcp_config.json`, NOT one of the fan-out
+    copies: revert/reset must operate here, where the backups live. Reads
+    may go through any fan-out (same content), writes never do.
+    """
+    return resolve_home(home) / ".gemini" / "antigravity" / "mcp_config.json"
+
+
+def antigravity_configs(home: Path | None = None) -> list[Path]:
+    """Canonical file first, then every fan-out copy (backup discovery)."""
+    resolved = resolve_home(home)
+    return [antigravity_config(resolved)] + [
+        resolved / ".gemini" / directory / "mcp_config.json"
+        for directory in ANTIGRAVITY_CONSUMER_DIRS
+    ]
+
+
+def antigravity_settings(home: Path | None = None) -> Path:
+    """Antigravity's posture/hook settings."""
+    return resolve_home(home) / ".gemini" / "antigravity-cli" / "settings.json"
+
+
+def antigravity_hooks(home: Path | None = None) -> Path:
+    """Antigravity's event-sink hook registration file."""
+    return resolve_home(home) / ".gemini" / "config" / "hooks.json"

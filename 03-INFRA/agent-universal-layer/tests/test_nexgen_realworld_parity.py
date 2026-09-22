@@ -258,8 +258,8 @@ def test_r4_vault_groom_tool_and_shims():
 
 
 def test_r5_mcp_remote_pin():
-    """R5: renderer.py usa il pin esatto mcp-remote@0.1.38."""
-    from nexgen_core.renderer import MCP_REMOTE_PACKAGE
+    """R5: il pin esatto mcp-remote@0.1.38 (casa: mcp_render, dal refactor 2.3.0)."""
+    from nexgen_core.mcp_render import MCP_REMOTE_PACKAGE
     assert MCP_REMOTE_PACKAGE == "mcp-remote@0.1.38"
 
 

@@ -11,6 +11,12 @@ from pathlib import Path
 from nexgen_core.config import load_mcp_manifest
 from nexgen_core.i18n import t
 from nexgen_core.jsonc import parse_jsonc
+from nexgen_core.paths import (
+    antigravity_config,
+    antigravity_configs,
+    claude_config,
+    codex_config,
+)
 from nexgen_core.renderer import McpRenderer
 from nexgen_core.report import CheckOutcome, Severity
 
@@ -138,9 +144,15 @@ def check_mcp_configs_rendered(vault_data: Path, home: Path) -> CheckOutcome:
         return True
 
     cli_paths = {
-        "claude": home / ".claude.json",
-        "antigravity": home / ".gemini" / "antigravity-ide" / "mcp_config.json",
-        "codex": home / ".codex" / "config.toml",
+        "claude": claude_config(home),
+        # Canonical first; a machine Antigravity itself configured (never
+        # rendered here) may only carry a fan-out copy -- same content,
+        # read-only check, so the first existing file wins.
+        "antigravity": next(
+            (p for p in antigravity_configs(home) if p.is_file()),
+            antigravity_config(home),
+        ),
+        "codex": codex_config(home),
         "opencode": renderer.opencode_config_path(),
     }
 
@@ -284,9 +296,12 @@ def check_mcp_orphans(vault_data: Path, home: Path) -> CheckOutcome:
     allowed = _orphans_allowlist(manifest_path)
 
     cli_paths = {
-        "claude": home / ".claude.json",
-        "antigravity": home / ".gemini" / "antigravity-ide" / "mcp_config.json",
-        "codex": home / ".codex" / "config.toml",
+        "claude": claude_config(home),
+        "antigravity": next(
+            (p for p in antigravity_configs(home) if p.is_file()),
+            antigravity_config(home),
+        ),
+        "codex": codex_config(home),
         "opencode": renderer.opencode_config_path(),
     }
 

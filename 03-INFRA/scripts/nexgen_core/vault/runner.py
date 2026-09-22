@@ -21,6 +21,8 @@ import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
+
+from nexgen_core.errors import NexgenError
 from typing import ClassVar
 
 DEFAULT_TIMEOUT_SECONDS = 20 * 60
@@ -32,7 +34,7 @@ class RunResult:
     exit_code: int
 
 
-class RunnerError(RuntimeError):
+class RunnerError(NexgenError, RuntimeError):
     """Base class for runner resolution/launch errors."""
 
 

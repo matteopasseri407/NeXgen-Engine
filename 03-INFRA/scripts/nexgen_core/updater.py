@@ -34,6 +34,7 @@ SCRIPTS_DIR = Path(__file__).resolve().parents[1]
 if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
+from nexgen_core.errors import NexgenError  # noqa: E402
 from nexgen_core.paths import resolve_home  # noqa: E402
 
 SEMVER = re.compile(r"^v?(\d+)\.(\d+)\.(\d+)$")
@@ -42,7 +43,7 @@ BAD_SIGNATURE_STATES = {"B", "R", "X", "Y"}
 UNVERIFIED_SIGNATURE_STATES = {"E", "N"}
 
 
-class UpdateError(RuntimeError):
+class UpdateError(NexgenError, RuntimeError):
     """A safe, actionable update failure."""
 
 

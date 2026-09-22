@@ -15,6 +15,8 @@ from typing import Any
 
 import yaml
 
+from nexgen_core.errors import NexgenError
+
 logger = logging.getLogger("nexgen.config")
 
 #: The four runtimes the layer knows how to configure. Applies to both the
@@ -26,7 +28,7 @@ SKILL_ORIGINS = frozenset({"vault", "engine", "github", "installer", "upstream"}
 SKILL_EXPOSURES = frozenset({"lazy", "eager", "manual", "core"})
 
 
-class ConfigError(ValueError):
+class ConfigError(NexgenError, ValueError):
     """Blocking configuration error (e.g. malformed YAML or missing required fields)."""
 
 

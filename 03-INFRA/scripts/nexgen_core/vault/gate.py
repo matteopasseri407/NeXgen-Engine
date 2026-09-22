@@ -29,13 +29,14 @@ from collections.abc import Callable
 from pathlib import Path
 
 from nexgen_core.git_ops import run_git
+from nexgen_core.errors import NexgenError
 from nexgen_core.i18n import t
 from nexgen_core.vault.git_utils import git
 
 CLONE_TIMEOUT_SECONDS = 300
 
 
-class GateError(RuntimeError):
+class GateError(NexgenError, RuntimeError):
     """A non-negotiable safety rule was not satisfied."""
 
 

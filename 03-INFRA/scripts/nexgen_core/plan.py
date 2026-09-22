@@ -31,7 +31,14 @@ from nexgen_core.git_ops import (
     resolve_remotes,
 )
 from nexgen_core.i18n import t
-from nexgen_core.paths import resolve_engine_root, resolve_home, resolve_vault_data
+from nexgen_core.paths import (
+    antigravity_config,
+    claude_config,
+    codex_config,
+    resolve_engine_root,
+    resolve_home,
+    resolve_vault_data,
+)
 from nexgen_core.report import Severity
 
 
@@ -224,9 +231,9 @@ def _missing_config_actions(vault: Path, home: Path) -> list[str]:
 
     renderer = McpRenderer(vault_data=vault, home=home)
     cli_paths = {
-        "claude": home / ".claude.json",
-        "antigravity": home / ".gemini" / "antigravity-ide" / "mcp_config.json",
-        "codex": home / ".codex" / "config.toml",
+        "claude": claude_config(home),
+        "antigravity": antigravity_config(home),
+        "codex": codex_config(home),
         "opencode": renderer.opencode_config_path(),
     }
     actions: list[str] = []

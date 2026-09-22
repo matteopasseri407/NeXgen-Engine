@@ -40,6 +40,7 @@ except ImportError:  # pragma: no cover - the waiter imports with a fallback
     NPM_SPEC_RE = __import__("re").compile(r"^(?P<name>(?:@[\w.-]+/)?[\w.-]+)@(?P<version>\d[\w.+-]*)$")
 
 from nexgen_core.config import load_mcp_manifest
+from nexgen_core.errors import NexgenError
 from nexgen_core.i18n import t
 from nexgen_core.paths import mcp_manifest, resolve_state_dir
 
@@ -59,7 +60,7 @@ NODE_REQUIRED_MSG = (
 )
 
 
-class ProvisionError(Exception):
+class ProvisionError(NexgenError):
     """A dependency could not be verified or provisioned. Message is user-facing."""
 
 

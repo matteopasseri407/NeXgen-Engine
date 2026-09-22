@@ -441,7 +441,7 @@ def publish_changes(
                 if stashed:
                     run_git(repo_dir, "stash", "pop")
                 # Isolate diverged commits to quarantine
-                q_ok, q_branch, q_msg = quarantine_diverged_commits(repo_dir, remote=remote, branch=branch)
+                q_ok, _q_branch, q_msg = quarantine_diverged_commits(repo_dir, remote=remote, branch=branch)
                 if q_ok:
                     return True, q_msg
                 return False, t("Data has diverged from {remote}, automatic rebase did not succeed", remote=remote)

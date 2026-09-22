@@ -11,6 +11,7 @@ import socket
 import subprocess
 from pathlib import Path
 
+from nexgen_core.errors import NexgenError
 from nexgen_core.i18n import t
 from nexgen_core.stack import secrets
 from nexgen_core.stack.services import SERVICES, Service, compose_file, env_file
@@ -23,7 +24,7 @@ COMPOSE_TIMEOUT_SECONDS = 600
 PORT_TIMEOUT_SECONDS = 2.0
 
 
-class StackError(RuntimeError):
+class StackError(NexgenError, RuntimeError):
     """A problem the user must resolve, with the remedy in the message."""
 
 

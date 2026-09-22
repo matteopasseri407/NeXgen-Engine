@@ -14,6 +14,7 @@ import shutil
 from pathlib import Path
 from typing import Any
 
+from nexgen_core.paths import antigravity_hooks, antigravity_settings
 from nexgen_core.runtimes.base import GuardrailError, Runtime
 
 _IS_WINDOWS = platform.system() == "Windows"
@@ -33,10 +34,10 @@ class AntigravityRuntime(Runtime):
     name = "antigravity"
 
     def _settings_path(self, home: Path) -> Path:
-        return home / ".gemini" / "antigravity-cli" / "settings.json"
+        return antigravity_settings(home)
 
     def _hooks_path(self, home: Path) -> Path:
-        return home / ".gemini" / "config" / "hooks.json"
+        return antigravity_hooks(home)
 
     def is_installed(self, home: Path) -> bool:
         if shutil.which("agy"):

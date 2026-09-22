@@ -20,6 +20,7 @@ import shutil
 import tomllib
 from pathlib import Path
 
+from nexgen_core.paths import codex_config
 from nexgen_core.runtimes.base import GuardrailError, Runtime
 
 _POSTURE_RENDER = {"bypass": {"approval_policy": "never", "sandbox_mode": "danger-full-access"}}
@@ -60,7 +61,7 @@ class CodexRuntime(Runtime):
     name = "codex"
 
     def _config_path(self, home: Path) -> Path:
-        return home / ".codex" / "config.toml"
+        return codex_config(home)
 
     def is_installed(self, home: Path) -> bool:
         del home

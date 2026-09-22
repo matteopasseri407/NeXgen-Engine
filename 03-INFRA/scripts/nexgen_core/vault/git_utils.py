@@ -9,12 +9,13 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from nexgen_core.errors import NexgenError
 from nexgen_core.git_ops import run_git
 
 DEFAULT_TIMEOUT_SECONDS = 30
 
 
-class GitCommandError(RuntimeError):
+class GitCommandError(NexgenError, RuntimeError):
     """A git command in `git(...)` came back with returncode != 0."""
 
 

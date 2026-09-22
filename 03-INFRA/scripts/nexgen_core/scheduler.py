@@ -20,7 +20,6 @@ import os
 import shutil
 import subprocess
 import sys
-import time
 from collections.abc import Callable, Sequence
 from pathlib import Path
 
@@ -133,29 +132,9 @@ def _run_external(args: Sequence[str], *, timeout: int = 30) -> subprocess.Compl
 
 
 def _atomic_write_text(path: Path, content: str) -> None:
-    old_mode = None
-    if path.exists():
-        try:
-            old_mode = path.stat().st_mode
-        except OSError:
-            pass
-    tmp = path.with_name(f"{path.name}.{os.getpid()}.tmp")
-    tmp.write_text(content, encoding="utf-8")
-    if old_mode is not None:
-        try:
-            os.chmod(tmp, old_mode)
-        except OSError:
-            pass
-    delay = 0.05
-    for _ in range(5):
-        try:
-            os.replace(tmp, path)
-            return
-        except PermissionError:
-            if delay >= 0.8:
-                raise
-            time.sleep(delay)
-            delay *= 2
+    from nexgen_core.files import atomic_write_text
+
+    atomic_write_text(path, content)
 
 
 def _write_if_different(path: Path, content: str) -> bool:

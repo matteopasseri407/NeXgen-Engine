@@ -15,6 +15,7 @@ import time
 from pathlib import Path
 from typing import Any
 
+from nexgen_core.errors import NexgenError
 from nexgen_core.i18n import t
 from nexgen_core.paths import resolve_state_dir
 
@@ -23,7 +24,7 @@ EXIT_BUSY_GUARD = 0
 DEFAULT_TIMEOUT_SECONDS = 30.0
 
 
-class LockTimeoutError(TimeoutError):
+class LockTimeoutError(NexgenError, TimeoutError):
     """Raised when the lock cannot be acquired within the timeout."""
     def __init__(self, message: str, lock_path: Path, is_guard: bool = False):
         super().__init__(message)

@@ -172,3 +172,26 @@ def test_opencode_dead_instructions_array_migrated_once(tmp_path: Path, monkeypa
 
     # Idempotenza: niente da migrare quando l'array non nomina il canonico.
     assert runner._drop_dead_opencode_instructions_array() is None
+
+
+def test_guard_phases_run_in_order_without_writes_in_preflight(tmp_path: Path, monkeypatch):
+    """The phase split is structural, not cosmetic: PREFLIGHT must answer
+    without creating anything, and each write phase must be callable alone."""
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("USERPROFILE", str(home))
+    vault = home / "KnowledgeVault"
+    canon = vault / "03-INFRA" / "agent-universal-layer" / "instructions" / "AGENTS.md"
+    canon.parent.mkdir(parents=True)
+    canon.write_text("# rules\n", encoding="utf-8")
+
+    runner = GuardRunner(vault_data=vault, home=home)
+    actions: list[str] = []
+    assert runner._phase_git(GuardMode.PREFLIGHT, True, "origin", "main", actions) is None
+    assert runner._phase_preflight(GuardMode.PREFLIGHT) is not None
+    runner._phase_mcp(actions, skip_mcp=True)
+    assert any("explicitly requested" in a or "esplicita" in a for a in actions)
+    # Nothing materialized: no scope file, no MCP config.
+    assert not (home / ".config" / "opencode" / "AGENTS.md").exists()
+    assert not (home / ".config" / "opencode" / "opencode.jsonc").exists()
+    assert not (home / ".config" / "opencode" / "opencode.json").exists()

@@ -29,6 +29,33 @@ of any engine release.
 
 ### Added
 
+- **Shared error root**: `nexgen_core.errors.NexgenError` parents every
+  deliberate failure (`UpdateError`, `GuardrailError`, `ConfigError`,
+  `ProvisionError`, lock/stack/gate/git/runner errors) via multiple
+  inheritance -- every builtin contract (`ValueError`, `RuntimeError`,
+  `TimeoutError`) survives untouched, and "catch what the engine meant"
+  is now expressible without catching `Exception`.
+- **Single-source CLI paths**: `claude.json`, `codex/config.toml`, the
+  Antigravity canonical file + fan-outs, settings and hooks all resolve
+  from `nexgen_core.paths`. This also fixed a latent write-side bug:
+  `render.py --revert/--reset antigravity` operated on a fan-out symlink
+  instead of the canonical file where the backups live.
+- **One way to write files**: `nexgen_core.files` (`atomic_write_text`
+  with mode preservation + Windows lock retry, timestamped
+  `backup_file` with rotation policy, `write_text_if_changed`). Four
+  scattered implementations delegated to it; the renderer's 0600-on-POSIX
+  policy is preserved explicitly.
+- **Guard phases**: the 173-line `run()` is now orchestration over
+  `_phase_*` methods (git, preflight, skills, MCP, permissions,
+  instructions, launchers, scheduler, modules, liveness), each callable
+  alone.
+- **Skill acquisition split**: `nexgen_core.skill_sources.SkillFetcher`
+  (github/installer fetching, version records, discovery claims) out of
+  the 864-line `skills.py`; the materializer keeps manifest, views,
+  index and CLI.
+- **Renderer split**: `nexgen_core.mcp_render/` owns one module per CLI
+  dialect; `McpRenderer` stays the facade (resolution, manifest,
+  `render_all`), so no caller or test changed shape.
 - **OpenCode V2 native contract, end to end**: the engine now writes what V2
   actually loads. `mcp.servers` nesting (staged `feat/tier0` work, kept and
   completed), `plugins` + ordered `permissions` keys, and the global

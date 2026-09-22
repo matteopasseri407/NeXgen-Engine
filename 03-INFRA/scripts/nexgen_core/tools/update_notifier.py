@@ -55,14 +55,13 @@ def _read_state() -> dict:
 
 
 def _write_state(patch: dict) -> None:
+    from nexgen_core.files import atomic_write_text
+
     try:
         path = _state_file()
-        path.parent.mkdir(parents=True, exist_ok=True)
         data = _read_state()
         data.update(patch)
-        tmp = path.with_name(f"{path.name}.{os.getpid()}.tmp")
-        tmp.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
-        os.replace(tmp, path)
+        atomic_write_text(path, json.dumps(data, indent=2) + "\n")
     except OSError:
         pass
 
