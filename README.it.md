@@ -18,11 +18,11 @@
   <a href="README.md">🇬🇧 Read in English</a> · <a href="#guida-rapida">Guida rapida</a> · <a href="docs/architecture-contract.md">Architettura</a>
 </p>
 
-**Una sola sorgente canonica. Qualsiasi agente. Sempre allineati.**
+**Un solo repo Git che configura ogni CLI di coding AI su ogni macchina — e ne verifica il risultato.**
 
-NeXgen Engine è un layer operativo per agenti AI che unifica istruzioni, configurazione degli strumenti, gestione dei segreti e memoria di lavoro versionata tra Claude Code, Codex, OpenCode e Antigravity.
+NeXgen Engine è un control layer deterministico che mantiene identici istruzioni, configurazione degli strumenti, segreti e memoria versionata tra Claude Code, Codex, OpenCode e Antigravity.
 
-Invece di lasciare che le configurazioni delle varie CLI divergano tra computer diversi, NeXgen mantiene un unico repository Git come sorgente di verità, compilato nei formati nativi di ogni assistente e validato da controlli diagnostici automatici.
+Le configurazioni delle CLI divergono da macchina a macchina. NeXgen tiene un'unica sorgente di verità in Git, la compila nei formati nativi di ogni assistente e ne verifica il risultato con controlli automatici che bocciano invece di far finta che vada tutto bene.
 
 ---
 
@@ -36,14 +36,14 @@ NeXgen organizza il lavoro degli agenti in tre piani separati:
 
 ---
 
-## Principali Novità della Versione 2.0.4
+## Cosa fa
 
-* **Motore Unificato in Python (`nexgen_core`):** Esecuzione nativa multipiattaforma su Linux e Windows con oltre 400 test automatici, eliminando la duplicazione degli script di shell.
-* **Layer Modulare Deterministico:** Catalogo di 8 moduli (`memory`, `semantic-rag`, `firecrawl`, `ocr`, `n8n`, `browser`, `council`, `sync`) gestito con i comandi `nexgen modules list` e `nexgen modules set`.
-* **Deposito Segreti Age a Zero Passphrase:** Crittografia asimmetrica moderna (`99-SECRETS/secrets.yaml.age`) con chiavi hardware locali a permessi `0600`, slot OAuth per-host isolati contro i conflitti di rotazione dei token e file `secrets.env` per shell e servizi systemd.
-* **Dashboard Grafica e Shell Operatore:** Comandi `nexgen info` per il riepilogo visivo dello stato e `nexgen shell` per una REPL interattiva a menu numerato (`[1-7]`), utilizzabile da un operatore umano senza aprire alcuna CLI di AI.
-* **Supporto Completo per 4 Runtime:** Allineamento nativo per Claude Code, Codex, OpenCode e Antigravity (incluso il ruolo di seggio nel Consiglio AI).
-* **Diagnostica Continua (`nexgen doctor`):** Batteria di oltre 33 controlli automatici su integrità Git, raggiungibilità dei server MCP, igiene dei collegamenti e permessi di sicurezza.
+* **Core unico in Python (`nexgen_core`):** gira nativo su Linux e Windows, senza gemelli shell. Suite automatizzata in CI.
+* **Moduli deterministici:** catalogo di 8 moduli (`memory`, `semantic-rag`, `firecrawl`, `ocr`, `n8n`, `browser`, `council`, `sync`) gestito con `nexgen modules list` e `nexgen modules set`.
+* **Segreti:** cifratura asimmetrica `age` (`99-SECRETS/secrets.yaml.age`) su chiavi locali (`0600`), slot OAuth isolati per host, `secrets.env` materializzato per shell e servizi. Niente passphrase da ricordare o digitare.
+* **Shell operatore:** dashboard `nexgen info` e REPL interattiva `nexgen shell`, così la gestione ordinaria non richiede mai una CLI AI aperta.
+* **Quattro runtime:** Claude Code, Codex, OpenCode (nativo V2: istruzioni, `plugins`/`permissions`, viste skill) e Antigravity, ognuno nel suo dialetto, seggi Council inclusi.
+* **Diagnostica che boccia (`nexgen doctor`):** controlli automatici su allineamento Git, manifest, igiene dei link, token e permessi. Un controllo che non può verificare dichiara esito indeterminato invece di passare.
 
 ---
 

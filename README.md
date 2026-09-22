@@ -10,7 +10,6 @@
 <p align="center">
   <a href="https://github.com/matteopasseri407/NeXgen-Engine/actions/workflows/ci.yml"><img src="https://github.com/matteopasseri407/NeXgen-Engine/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <a href="https://github.com/matteopasseri407/NeXgen-Engine/releases/latest"><img src="https://img.shields.io/github/v/release/matteopasseri407/NeXgen-Engine?display_name=tag&label=latest%20version" alt="Latest version"></a>
-  <a href="https://github.com/matteopasseri407/NeXgen-Engine/stargazers"><img src="https://img.shields.io/github/stars/matteopasseri407/NeXgen-Engine?style=flat&label=stars" alt="GitHub stars"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-PolyForm%20Noncommercial%201.0.0-blue" alt="License"></a>
   <img src="https://img.shields.io/badge/python-3.11%2B-00E5B8?logo=python&logoColor=white" alt="Python 3.11+">
   <img src="https://img.shields.io/badge/platform-linux%20%7C%20windows-lightgrey" alt="Linux and Windows">
@@ -20,11 +19,11 @@
   <a href="README.it.md">🇮🇹 Leggi in italiano</a> · <a href="#quick-start">Quick Start</a> · <a href="#why-nexgen-vs-alternatives">Why NeXgen?</a> · <a href="docs/architecture-contract.md">Architecture</a> · <a href="CHANGELOG.md">Changelog</a>
 </p>
 
-**One Canonical Source. Any Agent. Always in Sync.**
+**One Git repo that configures every AI coding CLI on every machine — and checks the result.**
 
-NeXgen Engine is a deterministic AI Operating Layer that unifies instructions, tool configuration, secrets, and version-controlled memory across Claude Code, Codex, OpenCode, and Antigravity.
+NeXgen Engine is a deterministic control layer that keeps instructions, tool configuration, secrets, and version-controlled memory identical across Claude Code, Codex, OpenCode, and Antigravity.
 
-Instead of letting individual agent CLI configurations diverge across machines, NeXgen maintains a single source of truth in Git, compiled into each assistant's native format and verified by automated diagnostics.
+Agent CLI configurations drift across machines. NeXgen keeps a single source of truth in Git, compiles it into each assistant's native format, and verifies the outcome with automated diagnostics that fail instead of passing silently.
 
 ---
 
@@ -35,13 +34,13 @@ Instead of letting individual agent CLI configurations diverge across machines, 
 ```bash
 nexgen info    # visual dashboard: engine version, runtimes aligned, vault hygiene, secrets
 nexgen shell   # interactive REPL [1-7] — manage everything without opening an AI assistant
-nexgen doctor  # 33+ fail-closed checks: git alignment, MCP reachability, link hygiene, permissions
+nexgen doctor  # fail-closed checks: git alignment, MCP reachability, link hygiene, permissions
 ```
 
 <p align="center">
   <picture>
     <source srcset="assets/nexgen-info-demo.webp" type="image/webp">
-    <img src="assets/nexgen-info-demo.png" alt="nexgen info — AI Operating Layer dashboard on Windows (v2.0.4): Host, Vault, Planes & Runtimes, Modules, Security & Diagnostics" width="100%">
+    <img src="assets/nexgen-info-demo.png" alt="nexgen info dashboard on Windows: Host, Vault, Planes & Runtimes, Modules and Security & Diagnostics at a glance" width="100%">
   </picture>
   <br><em><code>nexgen info</code> on Windows — Host, Vault (344 notes), Planes & Runtimes, Modules and Security & Diagnostics at a glance. Run <code>nexgen doctor</code> for full diagnosis.</em>
 </p>
@@ -78,32 +77,32 @@ OpenCode · Antigravity    Per-Host OAuth Slots          Link Hygiene Map
 
 ## How it compares
 
-Different tools solve different slices. Small syncers are great for copying one MCP server quickly. NeXgen targets the full operating layer when you run multiple CLIs on multiple machines and want instructions, MCP, skills, secrets and memory to stay consistent.
+Small syncers copy one MCP server fast. NeXgen covers the full layer when several CLIs on several machines must share instructions, MCP, skills, secrets and memory without drift.
 
 | Capability | NeXgen Engine | AgentSync | mcp-sync | mcps-manager | dotfiles-ai |
 |---|---|---|---|---|---|
-| **MCP sync** | manifest `yaml` → native, 9 agents | symlink | auto-discover | bundle | — |
+| **MCP sync** | manifest `yaml` → native, 4 CLIs | symlink | auto-discover | bundle | — |
 | **AGENTS.md / instructions** | canonical `AGENTS.md` + CAS | symlink | — | — | template |
 | **Skills** | lazy catalog + `deps:` | yes | — | — | — |
 | **Memory vault (Markdown+Git)** | CAS + `update_section` + `vault-map` | — | — | — | — |
 | **Secrets `age` Zero-Passphrase** | multi-recipient `0600` + per-host OAuth | — | — | — | — |
-| **Doctor diagnostics** | 33+ fail-closed checks | — | — | — | — |
-| **Windows native** | verified + CI + dual launchers | community | Python | Node | community |
-| **Tests** | 400+ unit tests | partial | — | — | — |
+| **Doctor diagnostics** | fail-closed checks (see CI) | — | — | — | — |
+| **Windows native** | verified + CI + native shims | community | Python | Node | community |
+| **Tests** | automated suite (see CI) | partial | — | — | — |
 | **License** | PolyForm Noncommercial 1.0.0 | MIT | MIT | MIT | MIT |
 
-*Capabilities as of Aug 2026 — contributions and corrections welcome. If you only need a lightweight MCP copy between two CLIs, a small syncer is the faster path. If you want zero drift across instructions, MCP, skills, secrets and memory with a doctor that fails closed, NeXgen covers all five in one place.*
+*Capabilities as of Sep 2026 — corrections welcome. If you only need a lightweight MCP copy between two CLIs, a small syncer is the faster path. If you want zero drift across instructions, MCP, skills, secrets and memory with a doctor that fails closed, NeXgen covers all five in one place.*
 
 ---
 
-## Key Features in v2.0.4
+## What it does
 
-* **Unified Python Core (`nexgen_core`):** Pure Python implementation running natively across Linux and Windows with 400+ unit tests, eliminating shell script divergence.
-* **Deterministic Modular Layer:** 8-module catalog (`memory`, `semantic-rag`, `firecrawl`, `ocr`, `n8n`, `browser`, `council`, `sync`) managed deterministically with `nexgen modules list` and `nexgen modules set`.
-* **Zero-Passphrase Secrets Store:** Asymmetric `age` encryption (`99-SECRETS/secrets.yaml.age`) using machine-local hardware keys (`0600`), isolated per-host OAuth refresh token slots, and materialized `secrets.env` for shells and systemd services.
-* **Visual CLI & Operator Shell:** Built-in `nexgen info` visual dashboard and standalone `nexgen shell` interactive REPL with selectable menu actions (`[1-7]`), enabling complete human management without opening an AI assistant.
-* **Multi-Runtime Alignment:** Claude Code, Codex, and Antigravity are supported; OpenCode v2 MCP configuration is generated natively, while instructions, plugins, and native skills still need migration (Council seat integration is available).
-* **Fail-Closed Diagnostics (`nexgen doctor`):** 33+ automated sanity checks validating git alignment, manifest reachability, link hygiene, token presence, and permission boundaries.
+* **Single Python core (`nexgen_core`):** runs natively on Linux and Windows, no shell twins. Automated suite in CI.
+* **Deterministic modules:** 8-module catalog (`memory`, `semantic-rag`, `firecrawl`, `ocr`, `n8n`, `browser`, `council`, `sync`) managed with `nexgen modules list` and `nexgen modules set`.
+* **Secrets store:** asymmetric `age` encryption (`99-SECRETS/secrets.yaml.age`) on machine-local keys (`0600`), isolated per-host OAuth slots, materialized `secrets.env` for shells and systemd services. No passphrase to remember or type.
+* **Operator shell:** `nexgen info` status dashboard and `nexgen shell` interactive REPL, so routine management never needs an AI assistant open.
+* **Four runtimes:** Claude Code, Codex, OpenCode (native V2: scope-file instructions, `plugins`/`permissions`, skill views) and Antigravity, each rendered in its own dialect, Council seats included.
+* **Fail-closed diagnostics (`nexgen doctor`):** automated checks over git alignment, manifest reachability, link hygiene, token presence and permission boundaries. A check that cannot verify reports undetermined instead of passing.
 
 ---
 
@@ -170,17 +169,18 @@ nexgen shell
 | System | Status | On what evidence |
 |---|---|---|
 | Linux | **released** | the platform this is developed and used on daily; the full cycle (install, alignment, doctor, grooming, council, update) runs here and in CI |
-| Windows | **released** | verified on real hardware and in CI; full native Python execution, dual launchers, and complete CLI alignment |
+| Windows | **released** | verified on real hardware and in CI; full native Python execution, native command shims, and complete CLI alignment |
 | macOS | **untested** | shares the POSIX paths with Linux and should work, but nobody has run it end to end; treat a failure here as expected, and reporting it as useful |
 
 | Assistant | Status | What is covered |
 |---|---|---|
 | Claude Code | **complete** | instructions, MCP connectors, skills, guardrails |
 | Codex | **complete** | instructions, MCP connectors, skills |
-| OpenCode | **partial on v2** | MCP connectors render in native V2 format; V2 ignores the configured instructions and V1 guardrail/event plugins, and native skills use a different directory |
+| OpenCode | **complete** | scope-file instructions, MCP connectors, native plugins/permissions, skills, and a Council seat |
 | Antigravity | **complete** | instructions, MCP connectors, skills, and a Council seat; the seat was unblocked on 2026-08-22 with a stateless invocation (agy --model ... --disable-slash-commands --new-project --sandbox -p <prompt>) verified live with a nonce prompt |
 
 <!-- platform-status:end -->
+
 
 ---
 

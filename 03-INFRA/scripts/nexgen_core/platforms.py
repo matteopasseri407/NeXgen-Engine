@@ -45,7 +45,7 @@ OPERATING_SYSTEMS: tuple[Support, ...] = (
     Support(
         "Windows",
         "released",
-        "verified on real hardware and in CI; full native Python execution, dual launchers, and complete CLI alignment",
+        "verified on real hardware and in CI; full native Python execution, native command shims, and complete CLI alignment",
     ),
     Support(
         "macOS",
@@ -62,9 +62,8 @@ RUNTIMES: tuple[Support, ...] = (
     Support("Codex", "complete", "instructions, MCP connectors, skills"),
     Support(
         "OpenCode",
-        "partial on v2",
-        "MCP connectors render in native V2 format; V2 ignores the configured "
-        "instructions and V1 guardrail/event plugins, and native skills use a different directory",
+        "complete",
+        "scope-file instructions, MCP connectors, native plugins/permissions, skills, and a Council seat",
     ),
     Support(
         "Antigravity",
