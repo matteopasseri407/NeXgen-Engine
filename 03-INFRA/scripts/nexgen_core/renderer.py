@@ -98,10 +98,6 @@ class McpRenderer:
         """
         return opencode_config_path(self.home)
 
-    def _opencode_config_path(self) -> Path:
-        """Backward-compatible alias of :meth:`opencode_config_path`."""
-        return self.opencode_config_path()
-
     def retired_server_names(self) -> set[str]:
         """The names of retired connectors: the explicit removal mechanism.
 

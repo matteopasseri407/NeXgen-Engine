@@ -449,7 +449,6 @@ def _native_memory_report(home: Path) -> list[tuple[str, str]]:
 
     for label, path in (
         ("codex", home / ".codex" / "sessions"),
-        ("opencode", home / ".opencode" / "storage"),
         ("antigravity", home / ".gemini" / "tmp"),
     ):
         if path.is_dir():
@@ -460,6 +459,23 @@ def _native_memory_report(home: Path) -> list[tuple[str, str]]:
             )))
         else:
             out.append((label, t("no transcripts")))
+
+    # OpenCode V2 keeps sessions under the XDG data dir (sqlite + sidecars);
+    # the pre-V2 `~/.opencode/storage` is only a fallback for machines that
+    # never migrated. Reporting the wrong root would census an empty room.
+    for candidate in (
+        home / ".local" / "share" / "opencode",
+        home / ".opencode" / "storage",
+    ):
+        if candidate.is_dir():
+            count = sum(1 for _ in candidate.rglob("*") if _.is_file())
+            out.append(("opencode", t(
+                "{count} transcript files in {path} (to be distilled, not structured memory)",
+                count=count, path=candidate,
+            )))
+            break
+    else:
+        out.append(("opencode", t("no transcripts")))
 
     return out
 

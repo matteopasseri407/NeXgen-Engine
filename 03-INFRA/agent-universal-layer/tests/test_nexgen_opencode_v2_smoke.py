@@ -214,3 +214,35 @@ def test_smoke_native_skill_directory_is_a_view_target(tmp_path: Path, monkeypat
     mat.materialize(apply=True)
     native_view = opencode_skills_dir(home) / "demo-skill"
     assert native_view.exists()
+
+
+def test_smoke_inventory_reads_the_v2_session_store_not_the_dead_path(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """The inventory censused `~/.opencode/storage`, a pre-V2 path that no
+    longer exists on migrated machines -- every V2 install reported "no
+    transcripts" with a live session store next to it. V2 sessions live
+    under XDG data; the legacy path stays as fallback only."""
+    from nexgen_core.cli.engine import _native_memory_report
+
+    home = tmp_path / "home"
+    home.mkdir()
+    store = home / ".local" / "share" / "opencode"
+    store.mkdir(parents=True)
+    (store / "session.db").write_text("x", encoding="utf-8")
+
+    notes = dict(_native_memory_report(home))
+    assert ".local/share/opencode" in notes["opencode"].replace("\\", "/")
+    assert "no transcripts" not in notes["opencode"]
+
+    # Legacy-only machine: still censused, from the old root.
+    legacy_home = tmp_path / "legacy-home"
+    legacy_store = legacy_home / ".opencode" / "storage"
+    legacy_store.mkdir(parents=True)
+    (legacy_store / "s.json").write_text("x", encoding="utf-8")
+    legacy_notes = dict(_native_memory_report(legacy_home))
+    assert ".opencode/storage" in legacy_notes["opencode"].replace("\\", "/")
+
+    # Neither: honestly empty (either locale).
+    empty_notes = dict(_native_memory_report(tmp_path / "empty-home"))
+    assert "no transcripts" in empty_notes["opencode"] or "nessuna trascrizione" in empty_notes["opencode"]

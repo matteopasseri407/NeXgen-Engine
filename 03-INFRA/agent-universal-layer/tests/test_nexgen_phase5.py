@@ -242,7 +242,7 @@ def test_unattended_refuses_a_minor_jump(tmp_path: Path, capsys):
         raise AssertionError("unattended mode must never ask for confirmation")
 
     result = updater.main(
-        ["--unattended"], environ=_env(engine), input_fn=must_not_prompt, which=lambda _n: None
+        ["--unattended"], environ=_env(engine), input_fn=must_not_prompt
     )
 
     assert result == 1
@@ -262,7 +262,7 @@ def test_unattended_applies_a_patch_jump_without_prompting(tmp_path: Path):
         raise AssertionError("unattended mode must never ask for confirmation")
 
     result = updater.main(
-        ["--unattended"], environ=_env(engine), input_fn=must_not_prompt, which=lambda _n: None
+        ["--unattended"], environ=_env(engine), input_fn=must_not_prompt
     )
 
     assert result == 0
@@ -275,7 +275,7 @@ def test_interactive_mode_still_has_no_ceiling(tmp_path: Path):
     updater = _load_updater()
     _origin, engine = _upgrade_fixture(tmp_path, "0.1.0", "0.2.0")
 
-    result = updater.main(["--yes"], environ=_env(engine), which=lambda _n: None)
+    result = updater.main(["--yes"], environ=_env(engine))
 
     assert result == 0
     assert (engine / "VERSION").read_text(encoding="utf-8").strip() == "0.2.0"

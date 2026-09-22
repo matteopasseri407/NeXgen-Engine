@@ -124,7 +124,7 @@ def test_unattended_refuses_minor_jump_without_moving_head(tmp_path, capsys):
     origin, engine = _upgrade_fixture(tmp_path)
     before = _git(engine, "rev-parse", "HEAD").stdout.strip()
 
-    result = updater.main(["--unattended"], environ=_env(engine), which=lambda _name: None)
+    result = updater.main(["--unattended"], environ=_env(engine))
 
     assert result == 1
     assert _git(engine, "rev-parse", "HEAD").stdout.strip() == before
@@ -144,7 +144,7 @@ def test_bare_command_discovers_default_split_vault(tmp_path, capsys):
     _git(data, "commit", "-m", "seed data")
 
     result = updater.main(
-        ["--check"], environ=_bare_env(engine, home), which=lambda _name: None
+        ["--check"], environ=_bare_env(engine, home)
     )
 
     assert result == 0
@@ -167,7 +167,7 @@ def test_check_reports_release_without_moving_head(tmp_path, capsys):
     _origin, engine = _upgrade_fixture(tmp_path)
     before = _git(engine, "rev-parse", "HEAD").stdout.strip()
 
-    result = updater.main(["--check"], environ=_env(engine), which=lambda _name: None)
+    result = updater.main(["--check"], environ=_env(engine))
 
     assert result == 0
     assert _git(engine, "rev-parse", "HEAD").stdout.strip() == before
@@ -182,7 +182,7 @@ def test_yes_merges_release_without_detaching_head(tmp_path, capsys):
     updater = _load_updater()
     _origin, engine = _upgrade_fixture(tmp_path)
 
-    result = updater.main(["--yes"], environ=_env(engine), which=lambda _name: None)
+    result = updater.main(["--yes"], environ=_env(engine))
 
     assert result == 0
     assert (engine / "VERSION").read_text(encoding="utf-8").strip() == "0.2.0"
@@ -197,7 +197,7 @@ def test_declined_confirmation_moves_nothing(tmp_path, capsys):
     before = _git(engine, "rev-parse", "HEAD").stdout.strip()
 
     result = updater.main(
-        [], environ=_env(engine), input_fn=lambda _prompt: "no", which=lambda _name: None
+        [], environ=_env(engine), input_fn=lambda _prompt: "no"
     )
 
     assert result == 0
@@ -219,7 +219,7 @@ def test_dirty_data_repo_blocks_before_engine_ref_moves(tmp_path, capsys):
     _git(data, "commit", "-m", "seed data")
     note.write_text("work in progress\n", encoding="utf-8")
 
-    result = updater.main(["--yes"], environ=_env(engine, data), which=lambda _name: None)
+    result = updater.main(["--yes"], environ=_env(engine, data))
 
     assert result == 1
     assert _git(engine, "rev-parse", "HEAD").stdout.strip() == before
@@ -232,7 +232,7 @@ def test_dirty_engine_repo_blocks_before_merge(tmp_path, capsys):
     before = _git(engine, "rev-parse", "HEAD").stdout.strip()
     (engine / "local-work.txt").write_text("do not overwrite\n", encoding="utf-8")
 
-    result = updater.main(["--yes"], environ=_env(engine), which=lambda _name: None)
+    result = updater.main(["--yes"], environ=_env(engine))
 
     assert result == 1
     assert _git(engine, "rev-parse", "HEAD").stdout.strip() == before
@@ -245,7 +245,7 @@ def test_detached_engine_checkout_is_refused(tmp_path, capsys):
     before = _git(engine, "rev-parse", "HEAD").stdout.strip()
     _git(engine, "checkout", "--detach", before)
 
-    result = updater.main(["--yes"], environ=_env(engine), which=lambda _name: None)
+    result = updater.main(["--yes"], environ=_env(engine))
 
     assert result == 1
     assert _git(engine, "rev-parse", "HEAD").stdout.strip() == before
@@ -260,7 +260,7 @@ def test_missing_noninteractive_confirmation_fails_without_moving(tmp_path, caps
     def eof(_prompt):
         raise EOFError
 
-    result = updater.main([], environ=_env(engine), input_fn=eof, which=lambda _name: None)
+    result = updater.main([], environ=_env(engine), input_fn=eof)
 
     assert result == 1
     assert _git(engine, "rev-parse", "HEAD").stdout.strip() == before
@@ -272,7 +272,7 @@ def test_unknown_target_fails_closed(tmp_path, capsys):
     _origin, engine = _upgrade_fixture(tmp_path)
 
     result = updater.main(
-        ["--check", "--target", "v9.9.9"], environ=_env(engine), which=lambda _name: None
+        ["--check", "--target", "v9.9.9"], environ=_env(engine)
     )
 
     assert result == 1
@@ -292,7 +292,7 @@ def test_cryptographically_bad_release_signature_is_rejected(tmp_path, capsys, m
 
     monkeypatch.setattr(updater, "_git", bad_signature)
 
-    result = updater.main(["--yes"], environ=_env(engine), which=lambda _name: None)
+    result = updater.main(["--yes"], environ=_env(engine))
 
     assert result == 1
     assert _git(engine, "rev-parse", "HEAD").stdout.strip() == before
@@ -311,7 +311,7 @@ def test_missing_local_public_key_warns_without_mislabeling_release(tmp_path, ca
 
     monkeypatch.setattr(updater, "_git", unverifiable_signature)
 
-    result = updater.main(["--check"], environ=_env(engine), which=lambda _name: None)
+    result = updater.main(["--check"], environ=_env(engine))
 
     assert result == 0
     error = capsys.readouterr().err
@@ -324,7 +324,7 @@ def test_local_only_semver_tag_is_not_treated_as_a_release(tmp_path, capsys):
     _origin, engine = _upgrade_fixture(tmp_path)
     _git(engine, "tag", "v9.9.9")
 
-    result = updater.main(["--check"], environ=_env(engine), which=lambda _name: None)
+    result = updater.main(["--check"], environ=_env(engine))
 
     assert result == 0
     output = capsys.readouterr().out
@@ -340,7 +340,7 @@ def test_release_tag_with_mismatched_version_is_rejected_before_merge(tmp_path, 
     _git(origin, "tag", "-d", "v0.3.1")
     _git(origin, "tag", "v0.3.0")
 
-    result = updater.main(["--yes"], environ=_env(engine), which=lambda _name: None)
+    result = updater.main(["--yes"], environ=_env(engine))
 
     assert result == 1
     assert _git(engine, "rev-parse", "HEAD").stdout.strip() == before
@@ -358,7 +358,7 @@ def test_single_clone_preserves_local_data_commit_with_a_merge(tmp_path, capsys)
     _git(engine, "config", "user.email", "nexgen-merge-test@localhost")
     local_commit = _git(engine, "rev-parse", "HEAD").stdout.strip()
 
-    result = updater.main(["--yes"], environ=_env(engine), which=lambda _name: None)
+    result = updater.main(["--yes"], environ=_env(engine))
 
     assert result == 0
     assert local.read_text(encoding="utf-8") == "keep this history\n"
@@ -384,11 +384,7 @@ def test_split_engine_history_must_fast_forward(tmp_path, capsys):
     _git(data, "add", "note.md")
     _git(data, "commit", "-m", "seed data")
 
-    result = updater.main(
-        ["--yes"],
-        environ=_env(engine, data),
-        which=lambda name: "fake-sync" if name == "agent-sync" else None,
-    )
+    result = updater.main(["--yes"], environ=_env(engine, data))
 
     assert result == 1
     assert _git(engine, "rev-parse", "HEAD").stdout.strip() == before
@@ -410,14 +406,13 @@ def test_missing_single_clone_merge_identity_has_actionable_error(tmp_path, monk
 def test_explicit_downgrade_is_refused(tmp_path, capsys):
     updater = _load_updater()
     _origin, engine = _upgrade_fixture(tmp_path)
-    assert updater.main(["--yes"], environ=_env(engine), which=lambda _name: None) == 0
+    assert updater.main(["--yes"], environ=_env(engine)) == 0
     capsys.readouterr()
     before = _git(engine, "rev-parse", "HEAD").stdout.strip()
 
     result = updater.main(
         ["--check", "--target", "v0.1.0"],
         environ=_env(engine),
-        which=lambda _name: None,
     )
 
     assert result == 1
@@ -428,9 +423,12 @@ def test_explicit_downgrade_is_refused(tmp_path, capsys):
 def test_post_merge_steps_never_touch_PATH(tmp_path, capsys, monkeypatch):
     """The v2.3.0 contract: after the merge deletes the transitional
     launchers, provisioning, pin and doctor must not depend on PATH shims.
-    A `which` that explodes on any call proves nothing consults it: every
-    post-merge step goes through the merged tree's own entry."""
+    Every post-merge step goes through the merged tree's own entry -- and
+    `main` no longer even accepts a `which` resolver to consult."""
+    import inspect
+
     updater = _load_updater()
+    assert "which" not in inspect.signature(updater.main).parameters
     _origin, engine = _upgrade_fixture(tmp_path)
     entry = _tree_entry(engine)
     real_run = updater._run
@@ -440,13 +438,10 @@ def test_post_merge_steps_never_touch_PATH(tmp_path, capsys, monkeypatch):
             return subprocess.CompletedProcess(args, 0, "", "")
         return real_run(args, **kwargs)
 
-    def exploding_which(_name):
-        raise AssertionError("updater consulted PATH during a release run")
-
     monkeypatch.setattr(updater, "_run", fake_entry)
     monkeypatch.setattr(updater, "_doctor", lambda *_args, **_kwargs: (0, 0))
 
-    result = updater.main(["--yes"], environ=_env(engine), which=exploding_which)
+    result = updater.main(["--yes"], environ=_env(engine))
 
     assert result == 0
     assert (engine / "VERSION").read_text(encoding="utf-8").strip() == "0.2.0"
@@ -538,11 +533,7 @@ def test_unreadable_pre_upgrade_doctor_blocks_before_merge(tmp_path, capsys, mon
     before = _git(engine, "rev-parse", "HEAD").stdout.strip()
     monkeypatch.setattr(updater, "_doctor", lambda *_args, **_kwargs: (None, 1))
 
-    result = updater.main(
-        ["--yes"],
-        environ=_env(engine),
-        which=lambda name: "fake-doctor" if name == "agent-doctor" else None,
-    )
+    result = updater.main(["--yes"], environ=_env(engine))
 
     assert result == 1
     assert _git(engine, "rev-parse", "HEAD").stdout.strip() == before
@@ -644,7 +635,7 @@ def test_conflicted_merge_is_rolled_back_instead_of_leaving_markers(tmp_path, ca
     _git(engine, "commit", "-m", "local changelog edit")
     head_before = _git(engine, "rev-parse", "HEAD").stdout.strip()
 
-    result = updater.main(["--yes"], environ=_env(engine), which=lambda _name: None)
+    result = updater.main(["--yes"], environ=_env(engine))
 
     assert result == 1
     assert _git(engine, "rev-parse", "HEAD").stdout.strip() == head_before
@@ -665,11 +656,11 @@ def test_being_ahead_of_the_newest_release_is_not_a_fault(tmp_path, capsys):
     """
     updater = _load_updater()
     _origin, engine = _upgrade_fixture(tmp_path)
-    assert updater.main(["--yes"], environ=_env(engine), which=lambda _name: None) == 0
+    assert updater.main(["--yes"], environ=_env(engine)) == 0
     capsys.readouterr()
     (engine / "VERSION").write_text("99.0.0\n", encoding="utf-8")
 
-    result = updater.main(["--check"], environ=_env(engine), which=lambda _name: None)
+    result = updater.main(["--check"], environ=_env(engine))
 
     captured = capsys.readouterr()
     assert result == 0, "essere avanti non è un guasto"

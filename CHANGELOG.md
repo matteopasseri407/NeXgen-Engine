@@ -81,8 +81,10 @@ of any engine release.
   three do now.
 - **Single OpenCode config resolution**: `renderer`, guardrail adapter,
   inventory, plan and doctor share one public
-  `McpRenderer.opencode_config_path()` instead of reaching into a private
-  method (five call sites).
+  `McpRenderer.opencode_config_path()` on top of the single
+  `nexgen_core.paths` resolution (jsonc > json > AppData-on-Windows),
+  instead of reaching into a private method. Two copies of that precedence
+  had already diverged in edge behavior.
 - **Tool executable bit**: `update_notifier.py` carries a shebang like its
   sibling tools and is now executable as well.
 - **False-green OpenCode instructions**: the doctor checked the
@@ -102,15 +104,19 @@ of any engine release.
   `tools.websearch = false` + `websearch = "parallel"` on every machine.
   That exact fingerprint is dropped once (JSON + JSONC, comments
   preserved); any other value is the user's and is never touched.
-- **Single config resolution**: `renderer`, guardrail adapter and inventory
-  share one `nexgen_core.paths` OpenCode resolution (jsonc > json >
-  AppData-on-Windows). Two copies had already diverged in edge behavior.
 - **Stale views**: eager skills now also materialize into the V2 native
   `~/.config/opencode/skills/` directory from the single manifest; the
   inventory reports the OpenCode scope file instead of ignoring it.
 - **V1 test debt converted, not deleted**: posture/plugin/instructions V1
   assertions rewritten to the V2 contract; exactly one V1→V2 migration
   test stays per surface (matrix: behavior → new test).
+- **Inventory censused a dead session store**: OpenCode V2 sessions live
+  under `~/.local/share/opencode`, but the inventory looked at the pre-V2
+  `~/.opencode/storage` -- every migrated machine reported "no
+  transcripts" next to a live store. V2 path first, legacy fallback.
+- **Dead updater parameter**: `main()` still accepted the PATH resolver
+  the hardened updater no longer consults. Removed with all call sites;
+  the no-PATH proof is now structural instead of a rigged callback.
 
 ### Known limitations (explicit, not presumed)
 

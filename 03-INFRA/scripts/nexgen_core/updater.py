@@ -364,12 +364,7 @@ def main(
     *,
     environ: Mapping[str, str] | None = None,
     input_fn: Callable[[str], str] = input,
-    which: Callable[[str], str | None] | None = None,
 ) -> int:
-    # `which` is accepted for backward compatibility with existing callers
-    # but no longer consulted: since v2.3.0 every post-merge step runs
-    # through the merged tree's own entry (`_tree_entry`), because PATH
-    # shims are exactly what a release is allowed to delete.
     args = build_parser().parse_args(argv)
     env = dict(os.environ if environ is None else environ)
     previous_head = ""
