@@ -67,7 +67,7 @@ _VBS_TEMPLATE = (
     'processEnv("KNOWLEDGE_VAULT_PATH") = "{vault}"\r\n'
     'processEnv("KNOWLEDGE_VAULT_BRANCH") = "{branch}"\r\n'
     'script = "{script}"\r\n'
-    'shell.Run "powershell.exe -NoProfile -ExecutionPolicy Bypass -File " & Chr(34) & script & Chr(34) '
+    'shell.Run "cmd.exe /c " & Chr(34) & script & Chr(34) '
     '& " {mode}", 0, True\r\n'
 )
 
@@ -259,7 +259,11 @@ def install_scheduled_task(
     if _host_mutations_disabled():
         return True
     task_name = "KnowledgeVault Agent Sync"
-    script_path = engine_root / "scripts" / "agent-sync.ps1"
+    # Since v2.3.0 the guard reaches the engine through the installed shim
+    # (`agent-sync.cmd`, written by `install_shims` earlier in the same
+    # cycle), never through a transitional twin inside the checkout: there
+    # is nothing left in 03-INFRA/scripts to point at.
+    script_path = home / ".local" / "bin" / "agent-sync.cmd"
     if not script_path.is_file():
         warning = (
             f"scheduled-task: WARNING — {script_path} doesn't exist yet; "

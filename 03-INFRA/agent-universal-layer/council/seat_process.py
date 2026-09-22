@@ -391,9 +391,8 @@ def _build_seat_command(seat: dict, prompt: str, session_dir: Path) -> SeatInvoc
       ``OPENCODE_CONFIG``/``OPENCODE_CONFIG_CONTENT`` were tested and found
       to merge with (not replace) the user's global ``opencode.json``, so
       they cannot isolate a run from already-configured MCP servers. A
-      working per-server ``"mcp": {"<name>": {"enabled": false}}`` override
-      does exist (confirmed via ``opencode debug config``), but applying it
-      here would require shelling out to an undocumented ``debug``
+      working per-server ``mcp.servers.<name>.disabled`` override exists
+      in V2, but applying it here would require shelling out to a ``debug``
       subcommand to enumerate the user's server names before every seat
       invocation — fragile, version-unstable, and not worth the added
       failure surface for an unverified gain. Prompt-only, like codex.

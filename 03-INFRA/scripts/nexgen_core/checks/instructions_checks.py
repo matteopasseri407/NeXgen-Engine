@@ -9,16 +9,13 @@ that have vanished.
 """
 from __future__ import annotations
 
-import json
 import os
 import re
 import shutil
 from pathlib import Path
 
 from nexgen_core.i18n import t
-from nexgen_core.jsonc import parse_jsonc
 from nexgen_core.paths import canonical_instructions
-from nexgen_core.renderer import McpRenderer
 from nexgen_core.report import CheckOutcome, Severity
 
 #: Size budget (bytes) for the canonical AGENTS.md bootstrap, beyond which
@@ -142,53 +139,76 @@ def check_cli_instruction_pointers(vault_data: Path, home: Path) -> list[CheckOu
 
 
 def check_opencode_instructions(vault_data: Path, home: Path) -> CheckOutcome | None:
-    """OpenCode's config `instructions` array must include the canonical
-    AGENTS.md file. OpenCode never launched (no config) is not a failure
-    and isn't reported."""
-    renderer = McpRenderer(vault_data=vault_data, home=home)
-    cfg_file = renderer._opencode_config_path()
+    """OpenCode V2's GLOBAL scope file must point at the canonical AGENTS.md.
+
+    The V2 config schema accepts an `instructions` array but does not
+    resolve its files (official docs, verified 2026-09-22), so checking
+    that array -- what this check did until v2.2.0 -- was a false green.
+    What the model actually receives is `~/.config/opencode/AGENTS.md`,
+    which the guard symlinks at the canonical bootstrap.
+
+    A real file (not a symlink) is the private identity layer's
+    derivative: never "fixed" here, only reported. If it names the
+    canonical path it is a pointer and counts as aligned; otherwise it is
+    a warning, because replacing persona with a pointer is a human call,
+    not a guard call. OpenCode never launched (no scope file, no config,
+    no binary) is not a failure and isn't reported.
+    """
+    from nexgen_core.paths import canonical_instructions, opencode_agents_file
+
+    canon = canonical_instructions(vault_data)
+    scope = opencode_agents_file(home)
     installed = shutil.which("opencode") is not None or (home / ".opencode" / "bin" / "opencode").is_file()
 
-    if not cfg_file.is_file():
-        if installed:
+    if scope.is_symlink():
+        try:
+            aligned = canon.is_file() and scope.resolve() == canon.resolve()
+        except OSError:
+            aligned = False
+        if aligned:
             return CheckOutcome(
                 id="instructions.opencode_pointer",
-                severity=Severity.BROKEN,
-                message=t("OpenCode is installed but its configuration file is missing ({cfg_file}).", cfg_file=cfg_file),
-                action=t("Run 'agent-sync apply' to generate it."),
+                severity=Severity.OK,
+                message=t("OpenCode V2 loads the canonical AGENTS.md scope file"),
             )
-        return None
-
-    try:
-        raw = cfg_file.read_text(encoding="utf-8")
-        data = parse_jsonc(raw) if cfg_file.suffix == ".jsonc" else json.loads(raw)
-    except (OSError, ValueError) as exc:
-        return CheckOutcome(
-            id="instructions.opencode_pointer",
-            severity=Severity.UNDETERMINED,
-            message=t("Could not parse the OpenCode configuration ({cfg_file}): {error}", cfg_file=cfg_file, error=exc),
-        )
-
-    entries = data.get("instructions", []) if isinstance(data, dict) else []
-    canon_suffix = "/agent-universal-layer/instructions/agents.md"
-    matches = sum(
-        1
-        for item in entries
-        if isinstance(item, str) and item.replace("\\", "/").rstrip("/").lower().endswith(canon_suffix)
-    )
-
-    if matches == 0:
         return CheckOutcome(
             id="instructions.opencode_pointer",
             severity=Severity.BROKEN,
-            message=t("OpenCode's 'instructions' do not include the canonical AGENTS.md file."),
-            action=t("Run 'agent-sync apply' to register it."),
+            message=t("OpenCode's global AGENTS.md scope file points elsewhere ({scope}).", scope=scope),
+            action=t("Run 'agent-sync apply' to restore it to canonical."),
         )
-    return CheckOutcome(
-        id="instructions.opencode_pointer",
-        severity=Severity.OK,
-        message=t("OpenCode loads the canonical AGENTS.md file"),
-    )
+    if scope.is_file():
+        try:
+            content = scope.read_text(encoding="utf-8")
+        except OSError as exc:
+            return CheckOutcome(
+                id="instructions.opencode_pointer",
+                severity=Severity.UNDETERMINED,
+                message=t("Could not read OpenCode's global AGENTS.md scope file: {error}", error=exc),
+            )
+        if str(canon) in content:
+            return CheckOutcome(
+                id="instructions.opencode_pointer",
+                severity=Severity.OK,
+                message=t("OpenCode's global AGENTS.md scope file references the canonical bootstrap"),
+            )
+        return CheckOutcome(
+            id="instructions.opencode_pointer",
+            severity=Severity.WARN,
+            message=t(
+                "OpenCode's global AGENTS.md is a real file, not the canonical pointer "
+                "(private derivative?). V2 loads this file, not the 'instructions' array."
+            ),
+            action=t("Verify it references the canonical bootstrap, or restore the pointer with 'agent-sync apply'."),
+        )
+    if installed:
+        return CheckOutcome(
+            id="instructions.opencode_pointer",
+            severity=Severity.BROKEN,
+            message=t("OpenCode is installed but its global AGENTS.md scope file is missing ({scope}).", scope=scope),
+            action=t("Run 'agent-sync apply' to generate it."),
+        )
+    return None
 
 
 def check_bootstrap_size_budget(vault_data: Path) -> CheckOutcome | None:

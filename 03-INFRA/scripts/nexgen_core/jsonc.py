@@ -202,6 +202,63 @@ def jsonc_top_level_value_span(text: str, key: str) -> tuple[int, int] | None:
         raise ValueError("missing comma after top-level JSONC property")
 
 
+def remove_jsonc_top_level_value(text: str, key: str) -> str:
+    """Surgically removes a top-level property while preserving comments.
+
+    Used for one-time migrations of engine-imposed keys (never for user
+    data): the pair and exactly one adjacent comma go away, everything else
+    -- comments included -- stays byte-identical. Returns the input
+    unchanged when the key is absent.
+    """
+    parsed = parse_jsonc(text)
+    if not isinstance(parsed, dict) or key not in parsed:
+        return text
+    root = _skip_jsonc_trivia(text, 0)
+    if text[root] != "{":
+        raise ValueError("JSONC root is not an object")
+    i = root + 1
+    while True:
+        i = _skip_jsonc_trivia(text, i)
+        if i >= len(text) or text[i] == "}":
+            return text
+        if text[i] != '"':
+            raise ValueError("top-level JSONC property name is not a string")
+        key_start = i
+        name_end = _jsonc_string_end(text, i)
+        name = json.loads(text[i:name_end])
+        colon = _skip_jsonc_trivia(text, name_end)
+        value_start = _skip_jsonc_trivia(text, colon + 1)
+        value_end = _jsonc_value_end(text, value_start)
+        after = _skip_jsonc_trivia(text, value_end)
+        if name == key:
+            if after < len(text) and text[after] == ",":
+                result = text[:key_start] + text[after + 1:]
+            else:
+                # Last (or only) pair: take the preceding comma instead.
+                j = key_start - 1
+                while j > root and (text[j].isspace() or text[j] == ","):
+                    if text[j] == ",":
+                        result = text[:j] + text[value_end:]
+                        break
+                    j -= 1
+                else:
+                    result = text[:key_start] + text[value_end:]
+                    # Only pair in the object: clean the now-empty braces.
+                    reparsed = parse_jsonc(result)
+                    if isinstance(reparsed, dict) and key not in reparsed:
+                        return result
+                    return text
+            reparsed = parse_jsonc(result)
+            if not isinstance(reparsed, dict) or key in reparsed:
+                raise ValueError(f"could not remove top-level JSONC property {key!r}")
+            return result
+        i = after
+        if i < len(text) and text[i] == ",":
+            i += 1
+            continue
+        return text
+
+
 def set_jsonc_top_level_value(text: str, key: str, value: Any) -> str:
     """Surgically sets a top-level value while preserving comments."""
     parsed = parse_jsonc(text)

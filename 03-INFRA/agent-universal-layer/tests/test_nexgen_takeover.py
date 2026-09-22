@@ -25,68 +25,49 @@ if str(SCRIPTS_DIR) not in sys.path:
 from nexgen_core import paths
 
 
-def _v1_launcher_targets() -> list[str]:
-    """I file che i collegamenti della versione precedente cercano.
+def test_windows_task_invokes_installed_shim_not_a_checkout_twin():
+    """Since v2.3.0 there is no twin left in the checkout to point at: the
+    hidden scheduled-task wrapper must drive the installed
+    `agent-sync.cmd` shim (which finds Python and the tree entry itself)."""
+    from nexgen_core.scheduler import _VBS_TEMPLATE
 
-    Sono i nomi che `agent_sync.py` della v1 installava in ~/.local/bin come
-    symlink verso `<motore>/03-INFRA/scripts/<nome>.sh`.
-    """
-    return [
-        "agent-sync", "agent-doctor", "agent-chrome", "agent-now",
-        "agent-open-folder", "council", "firecrawl-local", "nexgen-update",
-        "vault-push", "vault-groom",
-    ]
+    rendered = _VBS_TEMPLATE.format(
+        engine_root="C:\\eng",
+        vault_data="C:\\vault",
+        vault="C:\\vault",
+        branch="main",
+        script="C:\\Users\\t\\.local\\bin\\agent-sync.cmd",
+        mode="guard",
+    )
+    assert "agent-sync.cmd" in rendered
+    assert ".ps1" not in rendered
+    assert "powershell.exe -NoProfile -ExecutionPolicy Bypass -File" not in rendered
 
 
-def test_every_command_the_previous_version_links_to_still_exists():
-    """Un collegamento che punta nel vuoto lascia la macchina senza comandi.
+def test_no_transitional_launcher_twins_remain():
+    """I gemelli `.sh`/`.ps1` se ne sono andati nella 2.3.0 e non devono
+    tornare: un collegamento della v1 che punta nel vuoto lascia la macchina
+    senza comandi, e due implementazioni tenute a mano divergono. Il
+    preflight di release rifiuta la loro resurrezione; questo test lo fissa
+    nella suite, insieme all'assenza del generatore."""
+    import importlib.util
 
-    Dopo l'aggiornamento i collegamenti in ~/.local/bin puntano ancora dentro
-    l'albero del motore. Se il file non c'è, il comando non esiste più — e il
-    primo a fallire è proprio quello che l'aggiornamento esegue subito dopo.
-    """
     scripts = SCRIPTS_DIR
-    missing = [name for name in _v1_launcher_targets() if not (scripts / f"{name}.sh").is_file()]
-    assert not missing, (
-        "questi comandi non esistono più al percorso da cui la versione "
-        f"precedente li invoca: {', '.join(missing)}"
+    twins = sorted(p.name for p in (*scripts.glob("*.sh"), *scripts.glob("*.ps1")))
+    assert not twins, f"gemelli transitori tornati in 03-INFRA/scripts: {', '.join(twins)}"
+    assert importlib.util.find_spec("nexgen_core.legacy_launchers") is None, (
+        "il generatore dei launcher transitori esiste ancora"
     )
 
 
-def test_the_windows_twins_are_there_too():
-    scripts = SCRIPTS_DIR
-    missing = [name for name in _v1_launcher_targets() if not (scripts / f"{name}.ps1").is_file()]
-    assert not missing, f"manca il gemello Windows per: {', '.join(missing)}"
-
-
-def test_those_launchers_hold_no_logic():
-    """Sono involucri, non gemelli.
-
-    Il motivo per cui la riscrittura esiste è che due implementazioni tenute
-    in passo a mano divergono. Questi file possono esistere solo finché non
-    decidono niente.
-    """
-    for name in _v1_launcher_targets():
-        body = (SCRIPTS_DIR / f"{name}.sh").read_text(encoding="utf-8")
-        code_lines = [
-            line for line in body.splitlines()
-            if line.strip() and not line.strip().startswith("#")
-        ]
-        assert len(code_lines) <= 15, (
-            f"{name}.sh ha {len(code_lines)} righe di codice: è tornato a contenere logica"
-        )
-
-
-def test_a_legacy_launcher_actually_reaches_the_new_command():
-    """Non basta che il file esista: deve arrivare a un comando vero."""
-    if sys.platform == "win32":
-        cmd = ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(SCRIPTS_DIR / "agent-doctor.ps1"), "--help"]
-    else:
-        cmd = ["sh", str(SCRIPTS_DIR / "agent-doctor.sh"), "--help"]
+def test_post_merge_commands_come_from_the_tree_not_from_twins():
+    """La prova d'esecuzione che resta: l'entry del tree risponde, quindi il
+    provisioning post-merge dell'updater non ha più bisogno dei gemelli."""
     result = subprocess.run(
-        cmd, capture_output=True, text=True, check=False, timeout=60,
+        [sys.executable, str(SCRIPTS_DIR / "nexgen_core" / "cli" / "__init__.py"), "--help"],
+        capture_output=True, text=True, check=False, timeout=60,
     )
-    assert result.returncode == 0, f"agent-doctor.sh non arriva a destinazione:\n{result.stderr}"
+    assert result.returncode == 0, f"l'entry del tree non risponde:\n{result.stderr}"
     assert "Traceback" not in result.stderr
 
 
@@ -244,76 +225,12 @@ def test_a_live_config_carrying_a_real_token_is_refused_not_swallowed():
     assert "auth" not in absent, "nessuna autenticazione non è la stessa cosa di un segreto"
 
 
-# --- Il debito ha una scadenza scritta, non ricordata ------------------------
+# --- Il debito è stato saldato nella 2.3.0 ------------------------------------
 #
-# I venti involucri esistono solo per le macchine che arrivano dalla versione
-# precedente. Il modo in cui una compatibilità del genere diventa permanente è
-# che nessuno sia mai costretto a riguardarla.
-
-
-def test_the_transitional_launchers_carry_an_expiry():
-    from nexgen_core.legacy_launchers import REMOVE_AFTER
-    from nexgen_core.release import is_semver
-
-    assert is_semver(REMOVE_AFTER), (
-        f"la scadenza deve essere una versione vera, non '{REMOVE_AFTER}'"
-    )
-
-
-def test_a_release_past_the_expiry_cannot_be_tagged():
-    """Non li cancella da solo: mette la decisione davanti a una persona.
-
-    Cancellarli da sé sarebbe peggio del problema — sono file tracciati nel
-    clone git del motore, e toglierli in locale lo lascerebbe sporco, che è
-    esattamente la condizione con cui l'aggiornatore si rifiuta di lavorare.
-    Se ne vanno nell'unico modo sicuro: cancellati a monte, in un rilascio.
-    """
-    from nexgen_core.legacy_launchers import REMOVE_AFTER, is_expired
-
-    major, minor, patch = (int(p) for p in REMOVE_AFTER.split("."))
-    assert not is_expired(REMOVE_AFTER), "il rilascio della scadenza è ancora ammesso"
-    assert is_expired(f"{major}.{minor}.{patch + 1}"), "il primo dopo la scadenza va fermato"
-    assert is_expired(f"{major}.{minor + 1}.0")
-
-
-def test_the_current_version_has_not_passed_the_expiry():
-    """Se questo fallisce non è un guasto: è la sveglia."""
-    from nexgen_core.legacy_launchers import REMOVE_AFTER, is_expired
-
-    version = (REPO_ROOT / "VERSION").read_text(encoding="utf-8").strip()
-    assert not is_expired(version), (
-        f"il motore è alla {version} e i comandi di transizione scadevano dopo "
-        f"la {REMOVE_AFTER}: cancella legacy_launchers.py e i venti file che "
-        f"scrive, oppure alza REMOVE_AFTER perché una macchina è davvero indietro"
-    )
-
-
-def test_a_machine_that_has_migrated_says_so(tmp_path, monkeypatch):
-    from nexgen_core.legacy_launchers import takeover_complete
-
-    monkeypatch.setenv("NEXGEN_HOME", str(tmp_path))
-    bin_dir = tmp_path / ".local" / "bin"
-    bin_dir.mkdir(parents=True)
-    # Quello che scrive il motore nuovo: file veri, non collegamenti.
-    (bin_dir / "agent-sync").write_text("#!/bin/sh\nexec nexgen sync \"$@\"\n", encoding="utf-8")
-
-    done, pending = takeover_complete()
-    assert done and not pending
-
-
-def test_a_machine_still_on_the_old_launchers_says_that_instead(tmp_path, monkeypatch):
-    from nexgen_core.legacy_launchers import takeover_complete
-
-    monkeypatch.setenv("NEXGEN_HOME", str(tmp_path))
-    bin_dir = tmp_path / ".local" / "bin"
-    bin_dir.mkdir(parents=True)
-    engine = tmp_path / ".nexgen-engine" / "03-INFRA" / "scripts"
-    engine.mkdir(parents=True)
-    (engine / "agent-sync.sh").write_text("#!/bin/sh\n", encoding="utf-8")
-    (bin_dir / "agent-sync").symlink_to(engine / "agent-sync.sh")
-
-    done, pending = takeover_complete()
-    assert not done and pending == ["agent-sync"]
+# I venti involucri esistevano solo per le macchine che arrivavano dalla
+# versione precedente. La 2.3.0 li ha cancellati dopo il takeover completo e
+# il preflight rifiuta la loro resurrezione; la scadenza scritta
+# (REMOVE_AFTER) ha smesso di servire nel momento in cui è stata onorata.
 
 
 def test_the_machine_records_which_engine_completed_the_cycle(tmp_path, monkeypatch):

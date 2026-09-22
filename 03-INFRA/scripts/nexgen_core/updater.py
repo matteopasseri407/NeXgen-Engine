@@ -24,7 +24,6 @@ from __future__ import annotations
 import argparse
 import os
 import re
-import shutil
 import subprocess
 import sys
 from collections.abc import Callable, Mapping, Sequence
@@ -54,6 +53,23 @@ class PostMergeError(UpdateError):
         super().__init__(message)
         self.previous_head = previous_head
         self.engine_repo = engine_repo
+
+
+def _tree_entry(engine_repo: Path) -> list[str]:
+    """The merged tree's own front door: the interpreter plus the CLI
+    dispatcher living inside the checkout being installed.
+
+    Post-merge provisioning (apply, doctor, vault push) goes through this
+    and never through a PATH shim. That is what makes deleting the
+    transitional `.sh`/`.ps1` launchers safe in a single release: after the
+    merge removes them, a PATH lookup could dangle on a dead symlink, while
+    this path is the package itself -- if it is missing the tree is corrupt
+    and the update fails closed before anything moves.
+    """
+    entry = engine_repo / "03-INFRA" / "scripts" / "nexgen_core" / "cli" / "__init__.py"
+    if not entry.is_file():
+        raise UpdateError(f"engine checkout is missing its command entry: {entry}")
+    return [sys.executable, str(entry)]
 
 
 def _run(
@@ -242,7 +258,7 @@ def _commit_split_pin(
     target_head: str,
     target: str,
     data_repo: Path,
-    vault_push: str,
+    entry: list[str],
 ) -> None:
     try:
         pin_file.write_text(f"{target_head}\n", encoding="utf-8")
@@ -251,7 +267,9 @@ def _commit_split_pin(
     relative_pin = pin_file.relative_to(data_repo).as_posix()
     result = _run(
         [
-            vault_push,
+            *entry,
+            "vault",
+            "push",
             "-m",
             f"Pin NeXgen Engine to {target}",
             "--",
@@ -279,11 +297,8 @@ def _signature_state(engine_repo: Path, target: str) -> str:
     return state
 
 
-def _doctor(which: Callable[[str], str | None], *, data_repo: Path) -> tuple[int | None, int]:
-    doctor = which("agent-doctor")
-    if not doctor:
-        return None, 0
-    result = _run([doctor, "--summary"], cwd=data_repo, check=False)
+def _doctor(entry: list[str], *, data_repo: Path) -> tuple[int | None, int]:
+    result = _run([*entry, "doctor", "--summary"], cwd=data_repo, check=False)
     if result.stdout:
         print(result.stdout.rstrip())
     if result.stderr:
@@ -349,8 +364,12 @@ def main(
     *,
     environ: Mapping[str, str] | None = None,
     input_fn: Callable[[str], str] = input,
-    which: Callable[[str], str | None] = shutil.which,
+    which: Callable[[str], str | None] | None = None,
 ) -> int:
+    # `which` is accepted for backward compatibility with existing callers
+    # but no longer consulted: since v2.3.0 every post-merge step runs
+    # through the merged tree's own entry (`_tree_entry`), because PATH
+    # shims are exactly what a release is allowed to delete.
     args = build_parser().parse_args(argv)
     env = dict(os.environ if environ is None else environ)
     previous_head = ""
@@ -358,6 +377,7 @@ def main(
     pin_file: Path | None = None
     try:
         engine_repo, data_repo = resolve_repositories(env)
+        entry = _tree_entry(engine_repo)
         split_topology = data_repo != engine_repo
         current = _current_version(engine_repo)
         target = _target_tag(engine_repo, args.target)
@@ -417,21 +437,8 @@ def main(
         elif not _is_ancestor(engine_repo, target):
             _assert_merge_identity(engine_repo)
 
-        sync = which("agent-sync")
-        doctor = which("agent-doctor")
-        vault_push = which("vault-push")
         pin_candidate = data_repo / "99-INDEX" / "ENGINE-PIN.txt"
         pin_file = pin_candidate if split_topology and pin_candidate.is_file() else None
-        if split_topology and not sync:
-            raise UpdateError(
-                "split engine/data topology requires agent-sync; use the one-time "
-                "manual bootstrap in docs/upgrade.md"
-            )
-        if pin_file and not vault_push:
-            raise UpdateError(
-                "the split engine pin requires vault-push; run the one-time "
-                "manual bootstrap in docs/upgrade.md"
-            )
         print("\nPlan:")
         merge_mode = "--ff-only" if split_topology else "--no-edit"
         print(f"  1. git merge {merge_mode} {target}")
@@ -439,24 +446,18 @@ def main(
         if pin_file:
             print(f"  {step}. update 99-INDEX/ENGINE-PIN.txt through vault-push")
             step += 1
-        if sync:
-            print(f"  {step}. agent-sync apply")
-        else:
-            print(f"  {step}. MINIMAL install, no provisioner detected")
+        print(f"  {step}. agent-sync apply")
         step += 1
-        if doctor:
-            print(f"  {step}. agent-doctor --summary")
-        else:
-            print(f"  {step}. visual MINIMAL verification")
+        print(f"  {step}. agent-doctor --summary")
 
         if not (args.yes or args.unattended) and not _confirm(input_fn, current=current, target=target):
             print("Update cancelled. No installed files or branch were changed.")
             return 0
 
-        pre_fail, pre_doctor_rc = _doctor(which, data_repo=data_repo)
-        if doctor and pre_fail is None:
+        pre_fail, pre_doctor_rc = _doctor(entry, data_repo=data_repo)
+        if pre_fail is None:
             raise UpdateError("pre-upgrade doctor did not return a readable FAIL summary")
-        if doctor and pre_doctor_rc != 0 and pre_fail == 0:
+        if pre_doctor_rc != 0 and pre_fail == 0:
             raise UpdateError("pre-upgrade doctor returned an inconsistent result")
         previous_head = _git(engine_repo, "rev-parse", "HEAD").stdout.strip()
         merge = _git(engine_repo, "merge", merge_mode, target, check=False)
@@ -470,14 +471,14 @@ def main(
         if merge.stdout:
             print(merge.stdout.rstrip())
 
-        if pin_file and vault_push:
+        if pin_file:
             try:
                 _commit_split_pin(
                     pin_file=pin_file,
                     target_head=target_head,
                     target=target,
                     data_repo=data_repo,
-                    vault_push=vault_push,
+                    entry=entry,
                 )
             except UpdateError as exc:
                 raise PostMergeError(
@@ -486,25 +487,22 @@ def main(
                     engine_repo=engine_repo,
                 ) from exc
 
-        if sync:
-            provision = _run([sync, "apply"], cwd=data_repo, check=False, capture=False)
-            if provision.returncode != 0:
-                raise PostMergeError(
-                    "engine tag merged, but agent-sync apply failed",
-                    previous_head=previous_head,
-                    engine_repo=engine_repo,
-                )
-        else:
-            print("MINIMAL install: reopen the configured CLI and verify instructions, tools, and skills visually.")
+        provision = _run([*entry, "apply"], cwd=data_repo, check=False, capture=False)
+        if provision.returncode != 0:
+            raise PostMergeError(
+                "engine tag merged, but agent-sync apply failed",
+                previous_head=previous_head,
+                engine_repo=engine_repo,
+            )
 
-        post_fail, post_doctor_rc = _doctor(which, data_repo=data_repo)
-        if doctor and post_fail is None:
+        post_fail, post_doctor_rc = _doctor(entry, data_repo=data_repo)
+        if post_fail is None:
             raise PostMergeError(
                 "engine tag merged, but the final doctor did not return a readable summary",
                 previous_head=previous_head,
                 engine_repo=engine_repo,
             )
-        if doctor and post_doctor_rc != 0 and post_fail == 0:
+        if post_doctor_rc != 0 and post_fail == 0:
             raise PostMergeError(
                 "engine tag merged, but the final doctor returned an inconsistent result",
                 previous_head=previous_head,
@@ -524,10 +522,7 @@ def main(
                 previous_head=previous_head,
                 engine_repo=engine_repo,
             )
-        if post_fail is None:
-            print(f"\nNeXgen Engine {target} installed in MINIMAL mode.")
-            print("Automatic doctor verification was unavailable on this machine.")
-        elif post_fail == 0:
+        if post_fail == 0:
             print(f"\nNeXgen Engine {target} installed and verified on this machine.")
         else:
             print(f"\nNeXgen Engine {target} installed with no new doctor failures.")

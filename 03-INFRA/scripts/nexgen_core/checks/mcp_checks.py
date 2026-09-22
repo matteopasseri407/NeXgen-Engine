@@ -55,7 +55,10 @@ def _rendered_names_claude_style(path: Path) -> set[str]:
 def _rendered_names_opencode(path: Path) -> set[str]:
     raw = path.read_text(encoding="utf-8")
     data = parse_jsonc(raw) if path.suffix == ".jsonc" else json.loads(raw)
-    servers = data.get("mcp", {}) if isinstance(data, dict) else {}
+    mcp = data.get("mcp", {}) if isinstance(data, dict) else {}
+    # A flat V1 config may still connect via OpenCode's compatibility layer,
+    # but it is not aligned with the native V2 renderer contract.
+    servers = mcp.get("servers", {}) if isinstance(mcp, dict) else {}
     return set(servers.keys()) if isinstance(servers, dict) else set()
 
 

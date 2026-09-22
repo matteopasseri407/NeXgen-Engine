@@ -177,7 +177,11 @@ def test_cli_instruction_pointers_ok_when_aligned(tmp_path: Path, monkeypatch):
     assert codex_outcomes[0].severity == Severity.OK
 
 
-def test_opencode_instructions_rules(tmp_path: Path, monkeypatch):
+def test_opencode_instructions_scope_file_rules(tmp_path: Path, monkeypatch):
+    """V2 resolves the global scope file, never the `instructions` array:
+    removing or altering the real scope file must fail the doctor,
+    restoring it must pass -- even when the dead array still names the
+    canonical bootstrap (the false green this replaces)."""
     vault = tmp_path / "vault"
     home = tmp_path / "home"
     home.mkdir()
@@ -185,21 +189,33 @@ def test_opencode_instructions_rules(tmp_path: Path, monkeypatch):
     monkeypatch.setenv("PATH", str(tmp_path / "empty-bin"))  # opencode non sul PATH
     (tmp_path / "empty-bin").mkdir()
 
-    # Nessuna config e OpenCode non installato: non si riporta
+    # Niente scope file e OpenCode non installato: non si riporta
     assert instructions_checks.check_opencode_instructions(vault, home) is None
 
-    cfg = home / ".config" / "opencode" / "opencode.json"
-    cfg.parent.mkdir(parents=True)
+    scope = home / ".config" / "opencode" / "AGENTS.md"
+    scope.parent.mkdir(parents=True)
 
-    # Config presente ma senza il canonico: BROKEN
-    cfg.write_text(json.dumps({"instructions": ["something/else.md"]}))
+    # Symlink al canonico: OK, anche con l'array morto che mente
+    (home / ".config" / "opencode" / "opencode.json").write_text(
+        json.dumps({"instructions": ["something/else.md"]})
+    )
+    scope.symlink_to(canon)
+    outcome = instructions_checks.check_opencode_instructions(vault, home)
+    assert outcome.severity == Severity.OK
+
+    # Rimuovere il target rompe il link: BROKEN (non OK per via dell'array)
+    canon.unlink()
     outcome = instructions_checks.check_opencode_instructions(vault, home)
     assert outcome.severity == Severity.BROKEN
 
-    # Config con il canonico: OK
-    cfg.write_text(json.dumps({"instructions": [str(canon)]}))
+    # File reale che non punta al canonico: WARN, mai un fix automatico
+    # (potrebbe essere il derivato del layer d'identita' privato).
+    if scope.is_symlink():
+        scope.unlink()
+    scope.write_text("# private derivative\n", encoding="utf-8")
+    _write_canon(vault)
     outcome = instructions_checks.check_opencode_instructions(vault, home)
-    assert outcome.severity == Severity.OK
+    assert outcome.severity == Severity.WARN
 
 
 def test_bootstrap_size_budget(tmp_path: Path):
@@ -390,10 +406,41 @@ def test_mcp_configs_rendered_ok_when_all_clis_aligned(tmp_path: Path):
     # Codex normalizza i trattini in underscore nei nomi di sezione TOML.
     (home / ".codex" / "config.toml").write_text('[mcp_servers.demo_server]\ncommand = "echo"\n')
     (home / ".config" / "opencode").mkdir(parents=True)
-    (home / ".config" / "opencode" / "opencode.json").write_text(json.dumps({"mcp": {"demo-server": {}}}))
+    (home / ".config" / "opencode" / "opencode.json").write_text(json.dumps({"mcp": {"servers": {"demo-server": {}}}}))
 
     outcome = mcp_checks.check_mcp_configs_rendered(vault, home)
     assert outcome.severity == Severity.OK
+
+
+def test_mcp_configs_rendered_detects_opencode_v1_flat_layout(tmp_path: Path):
+    vault = tmp_path / "vault"
+    home = tmp_path / "home"
+    home.mkdir()
+    _write_mcp_manifest(vault)
+    cfg = home / ".config" / "opencode" / "opencode.json"
+    cfg.parent.mkdir(parents=True)
+    cfg.write_text(json.dumps({"mcp": {"demo-server": {"type": "local", "command": ["echo"]}}}))
+
+    outcome = mcp_checks.check_mcp_configs_rendered(vault, home)
+    assert outcome.severity == Severity.BROKEN
+    assert "opencode: missing demo-server" in outcome.message
+
+
+def test_mcp_orphans_reads_opencode_v2_servers_not_the_container_key(tmp_path: Path):
+    vault = tmp_path / "vault"
+    home = tmp_path / "home"
+    home.mkdir()
+    _write_mcp_manifest(vault)
+    cfg = home / ".config" / "opencode" / "opencode.json"
+    cfg.parent.mkdir(parents=True)
+    cfg.write_text(json.dumps({"mcp": {"servers": {
+        "demo-server": {}, "outside": {},
+    }, "timeout": {"catalog": 30000}}}))
+
+    outcome = mcp_checks.check_mcp_orphans(vault, home)
+    assert outcome.severity == Severity.WARN
+    assert "outside" in outcome.message
+    assert "): servers" not in outcome.message
 
 
 def test_mcp_orphans_warns_with_the_config_path(tmp_path: Path):
@@ -792,5 +839,3 @@ def test_check_secrets_materialized(tmp_path):
     auth_json.write_text(json.dumps({"deepseek": {"type": "api", "key": "sk-new-key"}}), encoding="utf-8")
     outcome_matched = security_checks.check_secrets_materialized(home, vault)
     assert outcome_matched.severity == Severity.OK
-
-

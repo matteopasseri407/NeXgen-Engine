@@ -4,13 +4,13 @@ from __future__ import annotations
 import importlib.util
 import os
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
 from conftest import REAL_VAULT, load_agent_sync_module
 
 SCRIPT = REAL_VAULT / "03-INFRA" / "scripts" / "nexgen_core" / "updater.py"
-POWERSHELL_LAUNCHER = REAL_VAULT / "03-INFRA" / "scripts" / "nexgen-update.ps1"
 
 
 def _load_updater():
@@ -42,9 +42,36 @@ def _write_release(repo: Path, version: str, previous: str | None = None) -> Non
     if previous:
         changelog += f"\n## [{previous}] - 2026-07-31\n\n### Added\n\n- Release {previous}.\n"
     (repo / "CHANGELOG.md").write_text(changelog, encoding="utf-8")
-    _git(repo, "add", "VERSION", "CHANGELOG.md", "03-INFRA/.gitkeep")
+    # The command entry the hardened updater drives post-merge: it must be
+    # part of every fixture release, because a tree without it fails closed
+    # before anything moves. It is a minimal honest executable (doctor
+    # reports a readable summary, apply succeeds), so success-path tests
+    # exercise the real invocation shape; failure-path tests keep faking
+    # _run on top of it.
+    entry = repo / "03-INFRA" / "scripts" / "nexgen_core" / "cli" / "__init__.py"
+    entry.parent.mkdir(parents=True, exist_ok=True)
+    entry.write_text(
+        '"""Fixture command entry (minimal honest target, never the real CLI)."""\n'
+        "import sys\n"
+        "verbs = sys.argv[1:]\n"
+        "if verbs[:2] == ['doctor', '--summary']:\n"
+        "    print('FAIL=0 OK=1 WARN=0 UNDETERMINED=0')\n"
+        "elif verbs[:1] == ['apply']:\n"
+        "    pass\n"
+        "else:\n"
+        "    print(f'fixture entry: unknown verbs {verbs}', file=sys.stderr)\n"
+        "    sys.exit(2)\n",
+        encoding="utf-8",
+    )
+    _git(repo, "add", "VERSION", "CHANGELOG.md", "03-INFRA/.gitkeep", str(entry.relative_to(repo)))
     _git(repo, "commit", "-m", f"release v{version}")
     _git(repo, "tag", f"v{version}")
+
+
+def _tree_entry(engine: Path) -> list[str]:
+    import sys as _sys
+
+    return [_sys.executable, str(engine / "03-INFRA" / "scripts" / "nexgen_core" / "cli" / "__init__.py")]
 
 
 def _upgrade_fixture(tmp_path: Path) -> tuple[Path, Path]:
@@ -76,6 +103,33 @@ def _bare_env(engine: Path, home: Path) -> dict[str, str]:
     }
     env.update({"AGENT_ENGINE_ROOT": str(engine / "03-INFRA"), "HOME": str(home)})
     return env
+
+
+def test_unattended_ceiling_allows_only_patch_jumps():
+    """The self-updater's contract, unit-pinned: --unattended takes a patch
+    jump (same major.minor) and refuses minor or major ones, naming the
+    interactive recovery instead of asking. Untested until v2.3.0."""
+    import pytest as _pytest
+
+    updater = _load_updater()
+    updater._assert_within_unattended_ceiling("2.1.8", "v2.1.9")  # patch: ok
+    with _pytest.raises(updater.UpdateError, match="unattended update refuses"):
+        updater._assert_within_unattended_ceiling("2.1.8", "v2.2.0")  # minor: no
+    with _pytest.raises(updater.UpdateError, match="unattended update refuses"):
+        updater._assert_within_unattended_ceiling("2.1.8", "v3.0.0")  # major: no
+
+
+def test_unattended_refuses_minor_jump_without_moving_head(tmp_path, capsys):
+    updater = _load_updater()
+    origin, engine = _upgrade_fixture(tmp_path)
+    before = _git(engine, "rev-parse", "HEAD").stdout.strip()
+
+    result = updater.main(["--unattended"], environ=_env(engine), which=lambda _name: None)
+
+    assert result == 1
+    assert _git(engine, "rev-parse", "HEAD").stdout.strip() == before
+    assert (engine / "VERSION").read_text(encoding="utf-8").strip() == "0.1.0"
+    assert "unattended update refuses" in capsys.readouterr().err
 
 
 def test_bare_command_discovers_default_split_vault(tmp_path, capsys):
@@ -134,8 +188,7 @@ def test_yes_merges_release_without_detaching_head(tmp_path, capsys):
     assert (engine / "VERSION").read_text(encoding="utf-8").strip() == "0.2.0"
     assert _git(engine, "symbolic-ref", "--short", "HEAD").stdout.strip() == "main"
     output = capsys.readouterr().out
-    assert "v0.2.0 installed in MINIMAL mode" in output
-    assert "Automatic doctor verification was unavailable" in output
+    assert "v0.2.0 installed and verified" in output
 
 
 def test_declined_confirmation_moves_nothing(tmp_path, capsys):
@@ -372,45 +425,32 @@ def test_explicit_downgrade_is_refused(tmp_path, capsys):
     assert "refusing to downgrade" in capsys.readouterr().err
 
 
-def test_split_topology_without_provisioner_is_refused_before_merge(tmp_path, capsys):
+def test_post_merge_steps_never_touch_PATH(tmp_path, capsys, monkeypatch):
+    """The v2.3.0 contract: after the merge deletes the transitional
+    launchers, provisioning, pin and doctor must not depend on PATH shims.
+    A `which` that explodes on any call proves nothing consults it: every
+    post-merge step goes through the merged tree's own entry."""
     updater = _load_updater()
     _origin, engine = _upgrade_fixture(tmp_path)
-    before = _git(engine, "rev-parse", "HEAD").stdout.strip()
-    data = tmp_path / "data"
-    data.mkdir()
-    _git(data, "init", "-b", "main")
-    (data / "note.md").write_text("clean\n", encoding="utf-8")
-    _git(data, "add", "note.md")
-    _git(data, "commit", "-m", "seed data")
+    entry = _tree_entry(engine)
+    real_run = updater._run
 
-    result = updater.main(["--yes"], environ=_env(engine, data), which=lambda _name: None)
+    def fake_entry(args, **kwargs):
+        if args == entry + ["apply"]:
+            return subprocess.CompletedProcess(args, 0, "", "")
+        return real_run(args, **kwargs)
 
-    assert result == 1
-    assert _git(engine, "rev-parse", "HEAD").stdout.strip() == before
-    assert "split engine/data topology requires agent-sync" in capsys.readouterr().err
+    def exploding_which(_name):
+        raise AssertionError("updater consulted PATH during a release run")
 
+    monkeypatch.setattr(updater, "_run", fake_entry)
+    monkeypatch.setattr(updater, "_doctor", lambda *_args, **_kwargs: (0, 0))
 
-def test_existing_split_pin_requires_vault_push_before_merge(tmp_path, capsys):
-    updater = _load_updater()
-    _origin, engine = _upgrade_fixture(tmp_path)
-    before = _git(engine, "rev-parse", "HEAD").stdout.strip()
-    data = tmp_path / "data"
-    pin = data / "99-INDEX" / "ENGINE-PIN.txt"
-    pin.parent.mkdir(parents=True)
-    _git(data, "init", "-b", "main")
-    pin.write_text(f"{before}\n", encoding="utf-8")
-    _git(data, "add", "99-INDEX/ENGINE-PIN.txt")
-    _git(data, "commit", "-m", "seed engine pin")
+    result = updater.main(["--yes"], environ=_env(engine), which=exploding_which)
 
-    result = updater.main(
-        ["--yes"],
-        environ=_env(engine, data),
-        which=lambda name: "fake-sync" if name == "agent-sync" else None,
-    )
-
-    assert result == 1
-    assert _git(engine, "rev-parse", "HEAD").stdout.strip() == before
-    assert "split engine pin requires vault-push" in capsys.readouterr().err
+    assert result == 0
+    assert (engine / "VERSION").read_text(encoding="utf-8").strip() == "0.2.0"
+    assert "installed and verified" in capsys.readouterr().out
 
 
 def test_split_pin_is_committed_before_provisioning(tmp_path, capsys, monkeypatch):
@@ -427,16 +467,16 @@ def test_split_pin_is_committed_before_provisioning(tmp_path, capsys, monkeypatc
     _git(data, "commit", "-m", "seed engine pin")
     events = []
     real_run = updater._run
+    entry = _tree_entry(engine)
 
     def fake_commands(args, **kwargs):
-        if args[0] == "fake-vault-push":
+        if args == entry + ["vault", "push", "-m", "Pin NeXgen Engine to v0.2.0", "--", "99-INDEX/ENGINE-PIN.txt"]:
             assert pin.read_text(encoding="utf-8").strip() == target_head
-            assert args[-2:] == ["--", "99-INDEX/ENGINE-PIN.txt"]
             _git(data, "add", "--", args[-1])
             _git(data, "commit", "-m", "publish engine pin")
             events.append("pin")
             return subprocess.CompletedProcess(args, 0, "", "")
-        if args[0] == "fake-sync":
+        if args == entry + ["apply"]:
             assert pin.read_text(encoding="utf-8").strip() == target_head
             events.append("sync")
             return subprocess.CompletedProcess(args, 0, "", "")
@@ -444,17 +484,8 @@ def test_split_pin_is_committed_before_provisioning(tmp_path, capsys, monkeypatc
 
     monkeypatch.setattr(updater, "_run", fake_commands)
     monkeypatch.setattr(updater, "_doctor", lambda *_args, **_kwargs: (0, 0))
-    commands = {
-        "agent-sync": "fake-sync",
-        "agent-doctor": "fake-doctor",
-        "vault-push": "fake-vault-push",
-    }
 
-    result = updater.main(
-        ["--yes"],
-        environ=_env(engine, data),
-        which=commands.get,
-    )
+    result = updater.main(["--yes"], environ=_env(engine, data))
 
     assert result == 0
     assert events == ["pin", "sync"]
@@ -478,25 +509,19 @@ def test_failed_split_pin_publish_stops_before_provisioning(tmp_path, capsys, mo
     _git(data, "commit", "-m", "seed engine pin")
     sync_called = False
     real_run = updater._run
+    entry = _tree_entry(engine)
 
     def fail_pin_publish(args, **kwargs):
         nonlocal sync_called
-        if args[0] == "fake-vault-push":
+        if args == entry + ["vault", "push", "-m", "Pin NeXgen Engine to v0.2.0", "--", "99-INDEX/ENGINE-PIN.txt"]:
             return subprocess.CompletedProcess(args, 1, "", "simulated push failure")
-        if args[0] == "fake-sync":
+        if args == entry + ["apply"]:
             sync_called = True
             return subprocess.CompletedProcess(args, 0, "", "")
         return real_run(args, **kwargs)
 
     monkeypatch.setattr(updater, "_run", fail_pin_publish)
-    result = updater.main(
-        ["--yes"],
-        environ=_env(engine, data),
-        which=lambda name: {
-            "agent-sync": "fake-sync",
-            "vault-push": "fake-vault-push",
-        }.get(name),
-    )
+    result = updater.main(["--yes"], environ=_env(engine, data))
 
     assert result == 1
     assert sync_called is False
@@ -529,18 +554,15 @@ def test_failed_provisioning_does_not_auto_rollback(tmp_path, capsys, monkeypatc
     _origin, engine = _upgrade_fixture(tmp_path)
     previous = _git(engine, "rev-parse", "HEAD").stdout.strip()
     real_run = updater._run
+    entry = _tree_entry(engine)
 
     def fake_sync(args, **kwargs):
-        if args[0] == "fake-sync":
+        if args == entry + ["apply"]:
             return subprocess.CompletedProcess(args, 1, "", "simulated sync failure")
         return real_run(args, **kwargs)
 
     monkeypatch.setattr(updater, "_run", fake_sync)
-    result = updater.main(
-        ["--yes"],
-        environ=_env(engine),
-        which=lambda name: "fake-sync" if name == "agent-sync" else None,
-    )
+    result = updater.main(["--yes"], environ=_env(engine))
 
     assert result == 1
     assert (engine / "VERSION").read_text(encoding="utf-8").strip() == "0.2.0"
@@ -556,18 +578,15 @@ def test_new_doctor_failure_is_reported_without_auto_rollback(tmp_path, capsys, 
     doctor_results = iter(((0, 0), (1, 1)))
     monkeypatch.setattr(updater, "_doctor", lambda *_args, **_kwargs: next(doctor_results))
     real_run = updater._run
+    entry = _tree_entry(engine)
 
     def fake_sync(args, **kwargs):
-        if args[0] == "fake-sync":
+        if args == entry + ["apply"]:
             return subprocess.CompletedProcess(args, 0, "", "")
         return real_run(args, **kwargs)
 
     monkeypatch.setattr(updater, "_run", fake_sync)
-    result = updater.main(
-        ["--yes"],
-        environ=_env(engine),
-        which=lambda name: "fake-sync" if name == "agent-sync" else "fake-doctor",
-    )
+    result = updater.main(["--yes"], environ=_env(engine))
 
     assert result == 1
     assert (engine / "VERSION").read_text(encoding="utf-8").strip() == "0.2.0"
@@ -581,51 +600,27 @@ def test_provisioner_installs_real_command_on_both_platforms(sandbox):
     command = module.LINKED_COMMANDS["nexgen-update"]
     assert command == {"source": "engine", "posix": True, "windows": True}
     scripts = REAL_VAULT / "03-INFRA" / "scripts"
-    assert (scripts / "nexgen-update.sh").is_file()
-    assert (scripts / "nexgen-update.ps1").is_file()
+    # Since v2.3.0 the update reaches the engine through the tree entry,
+    # never through a transitional twin: those files are gone for good and
+    # the updater drives `cli/__init__.py` directly (see
+    # test_post_merge_steps_never_touch_PATH).
+    assert (scripts / "nexgen_core" / "cli" / "__init__.py").is_file()
     assert (scripts / "nexgen_core" / "updater.py").is_file()
+    assert not list(scripts.glob("*.sh")) and not list(scripts.glob("*.ps1"))
 
 
-def test_powershell_launcher_has_one_python_backend_and_forwards_arguments():
-    """Il launcher trova un Python, uno solo, e passa tutto quello che riceve.
-
-    Prima questo test fissava tre righe esatte del file. Il file ora è
-    generato da una tabella sola insieme a tutti gli altri launcher, e ogni
-    riorganizzazione legittima lo rompeva: si asserisce la regola.
-    """
-    source = POWERSHELL_LAUNCHER.read_text(encoding="utf-8")
-
-    # Un solo backend: si prova una catena di candidati e alla prima
-    # occorrenza buona si esce. Due invocazioni indipendenti significherebbe
-    # due comportamenti diversi a seconda di cosa è installato.
-    assert source.count("& $exe") <= 1, "il launcher invoca Python in più punti"
-    assert "foreach" in source, "il launcher deve provare più candidati in ordine"
-    assert "$args" in source, "il launcher deve inoltrare gli argomenti ricevuti"
-    assert "exit $LASTEXITCODE" in source, "il codice di uscita del comando deve arrivare fino a chi lo ha lanciato"
-
-    # E deve arrivare al motore, non a un file qualsiasi.
-    assert "nexgen_core" in source
-
-
-@pytest.mark.skipif(os.name != "nt", reason="PowerShell execution requires Windows.")
-def test_powershell_launcher_executes_the_real_updater_help():
+def test_tree_entry_answers_help_on_any_platform():
+    """The execution proof that replaced the deleted `.ps1` launcher test:
+    the tree entry the hardened updater drives answers `--help` with the
+    running interpreter, on Linux and on Windows alike (no shell twin in
+    the middle)."""
+    entry = REAL_VAULT / "03-INFRA" / "scripts" / "nexgen_core" / "cli" / "__init__.py"
     result = subprocess.run(
-        [
-            "powershell.exe",
-            "-NoProfile",
-            "-NonInteractive",
-            "-ExecutionPolicy",
-            "Bypass",
-            "-File",
-            str(POWERSHELL_LAUNCHER),
-            "--help",
-        ],
-        capture_output=True,
-        text=True,
-        timeout=30,
+        [sys.executable, str(entry), "--help"],
+        capture_output=True, text=True, check=False, timeout=60,
     )
     assert result.returncode == 0, result.stdout + result.stderr
-    assert ("usage: nexgen update" in result.stdout) or ("usage: nexgen-update" in result.stdout)
+    assert "Traceback" not in result.stderr
 
 
 def test_conflicted_merge_is_rolled_back_instead_of_leaving_markers(tmp_path, capsys):
@@ -691,31 +686,23 @@ def test_doctor_with_undetermined_checks_does_not_block_update(tmp_path, capsys,
     updater = _load_updater()
     _origin, engine = _upgrade_fixture(tmp_path)
     real_run = updater._run
+    entry = _tree_entry(engine)
 
     def fake_commands(args, **kwargs):
-        if args[0] == "fake-doctor":
-            assert args[1:] == ["--summary"], "updater must invoke agent-doctor with --summary (not --strict)"
+        if args == entry + ["doctor", "--summary"]:
             return subprocess.CompletedProcess(
                 args,
                 0,
                 "FAIL=0 OK=33 WARN=2 UNDETERMINED=1\n",
                 "",
             )
-        if args[0] == "fake-sync":
+        if args == entry + ["apply"]:
             return subprocess.CompletedProcess(args, 0, "", "")
         return real_run(args, **kwargs)
 
     monkeypatch.setattr(updater, "_run", fake_commands)
-    commands = {
-        "agent-sync": "fake-sync",
-        "agent-doctor": "fake-doctor",
-    }
 
-    result = updater.main(
-        ["--yes"],
-        environ=_env(engine),
-        which=commands.get,
-    )
+    result = updater.main(["--yes"], environ=_env(engine))
 
     assert result == 0
     output = capsys.readouterr().out

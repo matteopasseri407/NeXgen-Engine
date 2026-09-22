@@ -182,6 +182,22 @@ jobs:
             -o -iname "requirements*.txt" -print0 \
             | xargs --no-run-if-empty -0 -n1 pip-audit -r
 
+      - name: pip-audit (the published package's own dependencies)
+        # The two steps above audit requirements*.txt files but never the
+        # installable package itself: pyproject.toml declares its own
+        # dependency (PyYAML) and nothing audited it until v2.3.0. Render
+        # that one declaration into a temporary requirements file and scan
+        # it strictly -- a second PyYAML-style dependency later is covered
+        # automatically because the list is generated, not hardcoded.
+        run: |
+          python3 - <<'EOF' > /tmp/nexgen-package-deps.txt
+          import tomllib
+          deps = tomllib.load(open("pyproject.toml", "rb"))["project"]["dependencies"]
+          print("\n".join(deps))
+          EOF
+          cat /tmp/nexgen-package-deps.txt
+          pip-audit -r /tmp/nexgen-package-deps.txt
+
   compose-validate:
     runs-on: ubuntu-latest
     steps:
@@ -367,6 +383,32 @@ jobs:
       - name: Engine regression suite
         working-directory: 03-INFRA/agent-universal-layer/tests
         run: python3 -m pytest -v
+
+  opencode2-smoke:
+    # OpenCode 2 native-contract gate (2026-09-22): the suite above proves
+    # Python behavior, but nothing in it proved the V2 schema the engine
+    # writes until this job. It installs NO OpenCode binary on purpose --
+    # every assertion in the smoke file is pure Python against a fixture
+    # home, so a missing binary can never turn this gate green by absence.
+    # The binary-acceptance test (test_nexgen_opencode_mcp_v2.py, which
+    # skips without the CLI) keeps running inside engine-tests wherever it
+    # can; THIS job is the non-skippable part the audit asked for: config,
+    # instructions, plugins and permissions in native V2 shape, zero skips.
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: "3.x"
+
+      - name: Install test dependencies
+        run: pip install pytest pyyaml
+
+      - name: OpenCode 2 native-contract smoke (no binary, no skips)
+        working-directory: 03-INFRA/agent-universal-layer/tests
+        run: python3 -m pytest test_nexgen_opencode_v2_smoke.py -v
 
   engine-tests-windows:
     # B2.5: Windows now exercises the shared Python provisioner. POSIX-only

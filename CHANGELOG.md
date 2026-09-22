@@ -10,6 +10,117 @@ of any engine release.
 
 ## [Unreleased]
 
+## [2.3.0] - 2026-09-22
+
+> Version note: the requested shorthand `v2.30` is resolved here as
+> `v2.3.0`, not `v2.30.0`.
+
+### Removed
+
+- **Transitional `.sh`/`.ps1` launchers, all of them**: `legacy_launchers.py`
+  and the twenty twins it generated are deleted. The expiry
+  (`REMOVE_AFTER = "2.3.0"`) has been honored, not postponed. What stays:
+  the repo-root `install.sh`, the deploy scripts, and the `nexgen*` /
+  historical command names themselves (real shims in `~/.local/bin`,
+  `.cmd` on Windows).
+- **Handover doctor check**: `takeover.launchers` had no subject left and
+  is removed; `takeover.version` (which engine completed the last cycle
+  here) stays as the per-machine migration record.
+
+### Added
+
+- **OpenCode V2 native contract, end to end**: the engine now writes what V2
+  actually loads. `mcp.servers` nesting (staged `feat/tier0` work, kept and
+  completed), `plugins` + ordered `permissions` keys, and the global
+  `~/.config/opencode/AGENTS.md` scope file symlinked at the canonical
+  bootstrap. The V1 `plugin`/`permission` keys and the flat `mcp` layout
+  migrate once (backup first), then disappear; the dead `instructions`
+  array is no longer written (official docs: accepted but unresolved),
+  and engine-added entries are removed once while user entries stay.
+- **Non-skippable OpenCode 2 smoke gate**: new CI job `opencode2-smoke`
+  runs `test_nexgen_opencode_v2_smoke.py` (7 pure-Python assertions, zero
+  skips, no binary needed) on every push/PR. The binary-acceptance test
+  stays skippable for dev machines; this job is the part that can never go
+  green by absence.
+- **Updater ceiling tests**: `--unattended` patch-only contract (refuses
+  minor/major jumps, names the interactive recovery) finally pinned by
+  unit + integration tests. The updater itself is unchanged by design
+  (deliberate, no auto-rollback, bad signatures rejected).
+- **Package dependency audit**: `dependency-audit` now also scans the
+  published package's own `pyproject.toml` dependencies (PyYAML), which no
+  `requirements*.txt` step ever covered.
+- **Break-proof self-update**: post-merge provisioning, pin and doctor now
+  run through the merged tree's own entry
+  (`python 03-INFRA/scripts/nexgen_core/cli/__init__.py …`), never through
+  a PATH shim. Deleting the transitional launchers in this same release is
+  what this makes safe: the merge can remove the twins while the update is
+  still running, because nothing the updater executes afterwards resolves
+  through them. Pinned by `test_post_merge_steps_never_touch_PATH` (a
+  `which` that explodes on any call) plus a fixture entry that really
+  executes.
+- **Startup update notice that actually appears**: `nexgen tool
+  update-notifier --install-shell-hook` installs a guarded snippet
+  (bash + PowerShell) that runs `--shell-check` on every interactive
+  shell: cache read only, never network (a stale cache refreshes detached
+  in background). Pending updates prompt at most once per day per version
+  -- `Aggiorna ora? [s/N]` hands the terminal to the interactive updater,
+  anything else stays silent. The cache is fed by the guard cycle and the
+  heartbeat (read-only `ls-remote`, silent offline); the graphical lane
+  (XDG autostart/systemd timer) shares the same dismissal state instead of
+  nagging twice. This replaces a notifier that only fired from a headless
+  timer where no dialog can appear.
+
+### Fixed
+
+- **False-green OpenCode instructions**: the doctor checked the
+  `instructions` array V2 never resolves. It now checks the scope file V2
+  really loads (symlink at canonical = OK, altered/missing = BROKEN,
+  private-derivative real file = WARN, never auto-"fixed").
+- **Guardrail/event-sink registration**: adapter now registers under native
+  `plugins`, preserving user plugins and migrating the legacy key.
+  `opencode plugin list` only enumerates package plugins, so file
+  registrations are verified by config state + the smoke test, and the
+  doctor no longer implies protection from a present-but-unregistered file.
+- **Posture without holes**: `bypass`/`accept-edits` translate to ordered
+  V2 rules (`edit` allow, `shell` allow/ask); an explicit user rule on the
+  same (action, resource) pair always wins, so the engine can never punch
+  an allow through a user deny.
+- **Websearch fallback restored**: the previous renderer forced
+  `tools.websearch = false` + `websearch = "parallel"` on every machine.
+  That exact fingerprint is dropped once (JSON + JSONC, comments
+  preserved); any other value is the user's and is never touched.
+- **Single config resolution**: `renderer`, guardrail adapter and inventory
+  share one `nexgen_core.paths` OpenCode resolution (jsonc > json >
+  AppData-on-Windows). Two copies had already diverged in edge behavior.
+- **Stale views**: eager skills now also materialize into the V2 native
+  `~/.config/opencode/skills/` directory from the single manifest; the
+  inventory reports the OpenCode scope file instead of ignoring it.
+- **V1 test debt converted, not deleted**: posture/plugin/instructions V1
+  assertions rewritten to the V2 contract; exactly one V1→V2 migration
+  test stays per surface (matrix: behavior → new test).
+
+### Known limitations (explicit, not presumed)
+
+- A machine that never completed takeover (still reaching the engine
+  through a v1 symlink into a deleted `.sh`) cannot self-update to this
+  release: its post-merge provisioning would dangle. Desktops report
+  takeover complete; laptop Ubuntu + desktop Windows are explicit backlog
+  until verified live. Recovery on a stranded machine (one line, from the
+  checkout):
+  `python3 ~/.nexgen-engine/03-INFRA/scripts/nexgen_core/cli/__init__.py sync apply`
+  (the tree entry repairs the shims itself via `install_shims`).
+
+- Voice mode (`agent-voice-cockpit`) and the OpenClaw centralinista live in
+  private repos outside this engine: untouched here, with their own
+  end-to-end proofs still due. No private code or identity was copied into
+  this release.
+- A scope file that is a real file (private identity derivative) stays
+  WARN until the private identity layer references the canonical
+  bootstrap; the guard will not replace persona with a pointer on its own.
+- Laptop Ubuntu + desktop Windows still owe their live
+  `agent-sync`/`doctor` verification; until then no full-compat claim.
+  Legacy launchers stay until every machine reports takeover complete.
+
 ## [2.1.8] - 2026-09-21
 
 ### Fixed

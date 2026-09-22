@@ -18,7 +18,8 @@ systemctl --user daemon-reload
 ```
 
 If you're on Windows, the MULTI provisioner registers scheduled tasks via
-`schtasks.exe` (backed by `03-INFRA/scripts/agent-sync.ps1`) instead of
+`schtasks.exe` (backed by the installed `~/.local/bin/agent-sync.cmd` shim
+through a hidden `.vbs` wrapper) instead of
 systemd units. Remove them with:
 
 ```powershell
@@ -33,9 +34,9 @@ Before `nexgen sync`/`nexgen guard` overwrites a file it manages, it saves the p
 
 - `~/.claude.json` (the `mcpServers` entries this project added) — `.bak-<timestamp>`
 - `~/.codex/` config — `.bak-<timestamp>`
-- `opencode.json` (the `instructions` field and its MCP section) — `.bak-<timestamp>`
+- `opencode.json`/`opencode.jsonc` (its `mcp.servers` section, `plugins`/`permissions` entries) — `.bak-<timestamp>`
 - `~/.gemini/antigravity/mcp_config.json` — `.bak-<timestamp>`
-- `~/CLAUDE.md`, `~/.codex/AGENTS.md`, `~/.gemini/config/AGENTS.md` (the instructions pointer) — `.pre-instructions-<timestamp>.bak`
+- `~/CLAUDE.md`, `~/.codex/AGENTS.md`, `~/.gemini/config/AGENTS.md`, `~/.config/opencode/AGENTS.md` (the instructions pointer) — `.pre-instructions-<timestamp>.bak`
 - `~/.claude/settings.json` (checkpoint hook, and the permission posture if your vault declared one) — `.pre-permissions-<timestamp>.bak`
 
 Only the three most recent MCP backups are kept, so the one from before this project first ran may already have been pruned.

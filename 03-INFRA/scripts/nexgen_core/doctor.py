@@ -59,10 +59,7 @@ from nexgen_core.checks.skill_checks import (
     check_skills_not_materialized,
     check_skills_out_of_manifest,
 )
-from nexgen_core.checks.takeover_checks import (
-    check_engine_version_recorded,
-    check_takeover_complete,
-)
+from nexgen_core.checks.takeover_checks import check_engine_version_recorded
 from nexgen_core.i18n import t
 from nexgen_core.paths import (
     resolve_engine_root,
@@ -97,9 +94,8 @@ class Doctor:
         report.add(check_state_dir(self.state_dir), apply_remedy=apply_remedies)
         report.add(check_vault_path(self.vault_data), apply_remedy=apply_remedies)
 
-        # 1b. Handover from the previous release: not a fault either way,
-        # but the only place the state is visible per machine.
-        report.add(check_takeover_complete(self.home), apply_remedy=apply_remedies)
+        # 1b. Which engine last completed a cycle here: the per-machine
+        # answer to "are all my machines migrated?".
         report.add(check_engine_version_recorded(self.state_dir), apply_remedy=apply_remedies)
 
         # 2. Git checks (if the Vault exists)

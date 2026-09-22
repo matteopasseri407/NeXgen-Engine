@@ -16,6 +16,7 @@ import contextlib
 import json
 import os
 import platform
+import re
 import shutil
 import sys
 import tempfile
@@ -29,8 +30,8 @@ if str(SCRIPTS_DIR) not in sys.path:
 
 from nexgen_core.config import expand_inline_templates, expand_placeholders, load_mcp_manifest
 from nexgen_core.i18n import t
-from nexgen_core.jsonc import parse_jsonc, set_jsonc_top_level_value
-from nexgen_core.paths import resolve_engine_root, resolve_home, resolve_vault_data
+from nexgen_core.jsonc import parse_jsonc, remove_jsonc_top_level_value, set_jsonc_top_level_value
+from nexgen_core.paths import opencode_config_path, resolve_engine_root, resolve_home, resolve_vault_data
 
 IS_WINDOWS = platform.system() == "Windows"
 MCP_REMOTE_PACKAGE = "mcp-remote@0.1.38"
@@ -86,24 +87,12 @@ class McpRenderer:
     def _opencode_config_path(self) -> Path:
         """Returns OpenCode's native config path.
 
-        OpenCode uses ``opencode.jsonc`` (comments/trailing commas). The
-        release resolved the EXISTING file with priority jsonc > json >
-        config.json, so an already-configured machine got updated on the
-        file OpenCode actually reads, without creating a second one next to it.
+        One shared resolution (see ``nexgen_core.paths``): the release
+        resolved the EXISTING file with priority jsonc > json > config.json,
+        so an already-configured machine got updated on the file OpenCode
+        actually reads, without creating a second one next to it.
         """
-        xdg_dir = self.home / ".config" / "opencode"
-        xdg_candidates = [xdg_dir / name for name in ("opencode.jsonc", "opencode.json", "config.json")]
-        for candidate in xdg_candidates:
-            if candidate.is_file():
-                return candidate
-        if not IS_WINDOWS:
-            return xdg_candidates[0]
-        appdata_dir = Path(os.environ.get("APPDATA") or (self.home / "AppData" / "Roaming")) / "opencode"
-        appdata_candidates = [appdata_dir / name for name in ("opencode.jsonc", "opencode.json", "config.json")]
-        for candidate in appdata_candidates:
-            if candidate.is_file():
-                return candidate
-        return xdg_candidates[0]
+        return opencode_config_path(self.home)
 
     def retired_server_names(self) -> set[str]:
         """The names of retired connectors: the explicit removal mechanism.
@@ -355,8 +344,23 @@ class McpRenderer:
                     target.parent.mkdir(parents=True, exist_ok=True)
                     shutil.copy2(canonical, target)
 
+    @staticmethod
+    def _opencode_timeouts(timeouts: Any) -> dict[str, int]:
+        """Map canonical seconds to OpenCode 2's millisecond timeout names."""
+        if not isinstance(timeouts, dict):
+            return {}
+        mapped = {}
+        for source, target in (("startup", "startup"), ("tool", "execution")):
+            try:
+                millis = int(float(timeouts[source]) * 1000)
+                if millis > 0:
+                    mapped[target] = millis
+            except (KeyError, ValueError, TypeError, OverflowError):
+                pass
+        return mapped
+
     def render_opencode(self, write: bool = False) -> tuple[bool, str]:
-        """Generates the MCP configuration for OpenCode (opencode.jsonc, JSONC-aware)."""
+        """Generates native OpenCode 2 MCP config and migrates flat V1 entries."""
         servers = self.load_resolved_servers("opencode")
         cfg_file = self._opencode_config_path()
         existing: dict[str, Any] = {}
@@ -368,12 +372,51 @@ class McpRenderer:
             except Exception as exc:
                 raise ValueError(f"Could not parse {cfg_file}: invalid JSON/JSONC ({exc})")
 
-        mcp_servers = existing.get("mcp", {})
+        raw_mcp = existing.get("mcp", {})
+        if not isinstance(raw_mcp, dict):
+            raise ValueError(f"Could not render {cfg_file}: mcp must be an object")
+        if "servers" in raw_mcp:
+            if not isinstance(raw_mcp["servers"], dict):
+                raise ValueError(f"Could not render {cfg_file}: mcp.servers must be an object")
+            mcp_config = dict(raw_mcp)
+            mcp_servers = dict(raw_mcp["servers"])
+        else:
+            # The old flat layout is no longer the written contract. Move
+            # unknown live servers as well, normalizing fields V2 rejects.
+            mcp_config = {}
+            mcp_servers = {}
+            for name, entry in raw_mcp.items():
+                if not isinstance(entry, dict):
+                    raise ValueError(f"Could not migrate {cfg_file}: MCP server {name!r} must be an object")
+                migrated = dict(entry)
+                enabled = migrated.pop("enabled", None)
+                if enabled is False:
+                    migrated["disabled"] = True
+                if isinstance(migrated.get("timeout"), int):
+                    migrated["timeout"] = {"execution": migrated["timeout"]}
+                oauth = migrated.get("oauth")
+                if isinstance(oauth, dict):
+                    oauth_fields = {
+                        "clientId": "client_id",
+                        "clientSecret": "client_secret",
+                        "callbackPort": "callback_port",
+                        "redirectUri": "redirect_uri",
+                        "authServerMetadataUrl": "auth_server_metadata_url",
+                    }
+                    migrated["oauth"] = {oauth_fields.get(k, k): v for k, v in oauth.items()}
+                mcp_servers[name] = migrated
         for retired in self.retired_server_names():
             mcp_servers.pop(retired, None)
         self._drop_unmounted(mcp_servers, servers, cli_target="opencode")
         tools_cfg: dict[str, Any] = dict(existing.get("tools") or {})
+        old_tools_cfg = dict(tools_cfg)
+        permissions = existing.get("permissions", [])
+        if not isinstance(permissions, list):
+            raise ValueError(f"Could not render {cfg_file}: permissions must be an array")
+        permissions = list(permissions)
+        old_permissions = list(permissions)
         for name, srv in servers.items():
+            mapped = self._opencode_timeouts(srv.get("timeouts"))
             if srv.get("transport") == "http" or srv.get("url"):
                 url_env = srv.get("url_env")
                 url = f"{{env:{url_env}}}" if url_env else srv["url"]
@@ -382,11 +425,13 @@ class McpRenderer:
                 entry: dict[str, Any] = {
                     "type": "remote",
                     "url": url,
-                    "enabled": True,
                 }
-                if srv.get("oauth") and not auth_env:
-                    # OpenCode handles the OAuth flow itself (401 detection,
-                    # RFC 7591 dynamic registration, tokens in mcp-auth.json):
+                if auth_env:
+                    entry["headers"] = headers
+                    entry["oauth"] = False
+                elif srv.get("oauth"):
+                    # OpenCode handles the OAuth flow itself (discovery,
+                    # dynamic registration, tokens outside the config):
                     # no headers, no client secrets in the config. An
                     # explicit `oauth_client_id` (a public identifier, never
                     # a secret) is forwarded for providers that do not
@@ -395,55 +440,65 @@ class McpRenderer:
                     oauth_config: dict[str, Any] = {}
                     client_id = srv.get("oauth_client_id")
                     if isinstance(client_id, str) and client_id.strip():
-                        oauth_config["clientId"] = client_id.strip()
-                    entry["oauth"] = oauth_config
-                else:
-                    entry["headers"] = headers
+                        oauth_config["client_id"] = client_id.strip()
+                    if oauth_config:
+                        entry["oauth"] = oauth_config
+                elif srv.get("oauth") is False and "oauth" in srv:
                     entry["oauth"] = False
-                mcp_servers[name] = entry
             else:
                 cmd_list = [srv.get("command", "")] + list(srv.get("args", []))
-                entry_dict: dict[str, Any] = {
+                entry = {
                     "type": "local",
                     "command": cmd_list,
-                    "enabled": True,
                 }
                 if srv.get("env"):
-                    entry_dict["environment"] = srv["env"]
-                timeouts = srv.get("timeouts", {})
-                if isinstance(timeouts, dict) and timeouts.get("tool"):
-                    try:
-                        entry_dict["timeout"] = int(float(timeouts["tool"]) * 1000)
-                    except (ValueError, TypeError):
-                        pass
-                mcp_servers[name] = entry_dict
-            # Transparent trimming on OpenCode: explicit per-tool denies keep
-            # the heavy schema out of the model's context without any load
-            # ceremony — the tools that remain are called directly.
+                    entry["environment"] = srv["env"]
+            if mapped:
+                entry["timeout"] = mapped
+            mcp_servers[name] = entry
+            # V2 denies tools through permissions, including Code Mode tools.
             deny = srv.get("tools_deny")
             if isinstance(deny, list) and deny:
                 for tool in deny:
-                    tools_cfg[f"{name}_{tool}"] = False
+                    action = re.sub(r"[^A-Za-z0-9_-]", "_", f"{name}_{tool}")
+                    rule = {"action": action, "resource": "*", "effect": "deny"}
+                    if rule not in permissions:
+                        permissions.append(rule)
+                    if tools_cfg.get(action) is False:
+                        tools_cfg.pop(action)
 
-        # OpenCode 2.0+: enforce Firecrawl primacy over native cloud websearch.
-        # Define provider 'parallel' to prevent TUI interactive selection menus,
-        # but disable the native websearch tool so agents route through local Firecrawl MCP.
-        if "websearch" not in existing:
-            existing["websearch"] = "parallel"
-
-        mounted_names = set(mcp_servers)
-        tools_cfg = {k: v for k, v in tools_cfg.items()
-                     if k.split("_", 1)[0] in mounted_names}
-        tools_cfg["websearch"] = False
-        existing["tools"] = tools_cfg
-        existing["mcp"] = mcp_servers
+        # This renderer owns MCP entries, not the user's native tool choices.
+        # In particular, websearch remains available as a fallback when the
+        # Firecrawl connector is unavailable. One exception, once: the
+        # previous renderer forced `tools.websearch = false` together with
+        # `websearch = "parallel"` on every machine it touched, so a bare
+        # `false` paired with that exact marker is the old engine's
+        # fingerprint, not a human choice. It is dropped so the documented
+        # fallback lane works again; any other value (true, an object, a
+        # named provider) is the user's and stays exactly as it is.
+        if tools_cfg.get("websearch") is False and existing.get("websearch") == "parallel":
+            tools_cfg.pop("websearch")
+            existing.pop("websearch", None)
+            drop_engine_websearch = True
+        else:
+            drop_engine_websearch = False
+        if "tools" in existing or tools_cfg:
+            existing["tools"] = tools_cfg
+        if permissions:
+            existing["permissions"] = permissions
+        mcp_config["servers"] = mcp_servers
+        existing["mcp"] = mcp_config
         if write:
             # JSONC-aware: preserves the existing file's comments instead of
             # overwriting it with plain JSON (which OpenCode wouldn't read).
             if cfg_file.suffix == ".jsonc" and raw_existing.strip():
-                content = set_jsonc_top_level_value(raw_existing, "mcp", mcp_servers)
-                content = set_jsonc_top_level_value(content, "tools", tools_cfg)
-                content = set_jsonc_top_level_value(content, "websearch", existing["websearch"])
+                content = set_jsonc_top_level_value(raw_existing, "mcp", mcp_config)
+                if "tools" in existing and tools_cfg != old_tools_cfg:
+                    content = set_jsonc_top_level_value(content, "tools", tools_cfg)
+                if permissions and permissions != old_permissions:
+                    content = set_jsonc_top_level_value(content, "permissions", permissions)
+                if drop_engine_websearch:
+                    content = remove_jsonc_top_level_value(content, "websearch")
             else:
                 # File missing or empty: no comments to preserve.
                 content = json.dumps(existing, indent=2) + "\n"

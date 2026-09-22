@@ -162,6 +162,9 @@ class GuardRunner:
         opencode_action = self._align_opencode_instructions(canon)
         if opencode_action:
             actions.append(opencode_action)
+        dead_array_action = self._drop_dead_opencode_instructions_array()
+        if dead_array_action:
+            actions.append(dead_array_action)
 
         return actions
 
@@ -190,48 +193,79 @@ class GuardRunner:
             return False
 
     def _align_opencode_instructions(self, canon: Path) -> str | None:
-        """Adds the canonical file to OpenCode's `instructions` list, without duplicating it.
+        """Points OpenCode V2 at the canonical file through the scope file it
+        actually loads (`~/.config/opencode/AGENTS.md`).
 
-        OpenCode doesn't read a file by convention: it reads whatever is
-        declared to it. If the canonical file isn't in that list, that
-        runtime is working without the policy every other runtime has.
+        The V2 config schema accepts an `instructions` array but does not
+        resolve its files (official docs, verified 2026-09-22): a green
+        doctor on that array was a false green. The scope file is a symlink
+        at the canonical bootstrap, exactly like Codex and Antigravity --
+        no content is ever copied, so no private policy or identity can leak
+        into the public engine through this path.
+
+        A REAL file (not a symlink) is left untouched: on a machine with the
+        private identity layer it is that layer's derivative, and replacing
+        it with a pointer would destroy the persona. The doctor reports that
+        case separately instead of "fixing" it here.
         """
-        for candidate in (
-            self.home / ".config" / "opencode" / "opencode.jsonc",
-            self.home / ".config" / "opencode" / "opencode.json",
-        ):
-            if not candidate.is_file():
-                continue
-            try:
-                raw = candidate.read_text(encoding="utf-8")
-                data = parse_jsonc(raw) if candidate.suffix == ".jsonc" else json.loads(raw or "{}")
-            except (OSError, ValueError):
-                return None
-            if not isinstance(data, dict):
-                return None
+        from nexgen_core.paths import opencode_agents_file
 
-            declared = data.get("instructions")
-            entries = [e for e in declared if isinstance(e, str)] if isinstance(declared, list) else []
-            if any(_same_file(e, canon) for e in entries):
-                return None
-
-            entries.append(str(canon))
-            data["instructions"] = entries
-            try:
-                if candidate.suffix == ".jsonc" and raw.strip():
-                    body = set_jsonc_top_level_value(raw, "instructions", entries)
-                else:
-                    body = json.dumps(data, indent=2) + "\n"
-                backup = candidate.with_name(
-                    f"{candidate.name}.pre-instructions-{time.strftime('%Y%m%d-%H%M%S')}.bak"
-                )
-                with contextlib.suppress(OSError):
-                    shutil.copy2(candidate, backup)
-                candidate.write_text(body, encoding="utf-8")
-            except OSError:
-                return None
-            return t("opencode instructions restored to canonical")
+        target = opencode_agents_file(self.home)
+        if target.is_symlink() or not target.exists():
+            if self._link_to_canonical(target, canon):
+                return t("opencode instructions restored to canonical")
+            return None
+        # A real file: private derivative or hand-written. Not ours to take.
         return None
+
+    def _drop_dead_opencode_instructions_array(self) -> str | None:
+        """Removes engine-added canonical entries from the dead V1 array.
+
+        The array is accepted but unresolved by V2, so entries the old guard
+        added only pretend to load the bootstrap. Entries equal to the
+        canonical path go away (backup first); anything else -- a choice the
+        user made -- stays exactly as it is.
+        """
+        from nexgen_core.paths import canonical_instructions
+
+        canon = canonical_instructions(self.vault_data)
+        renderer = McpRenderer(vault_data=self.vault_data, home=self.home)
+        candidate = renderer._opencode_config_path()
+        if not candidate.is_file():
+            return None
+        try:
+            raw = candidate.read_text(encoding="utf-8")
+            data = parse_jsonc(raw) if candidate.suffix == ".jsonc" else json.loads(raw or "{}")
+        except (OSError, ValueError):
+            return None
+        if not isinstance(data, dict) or not isinstance(data.get("instructions"), list):
+            return None
+        entries = data["instructions"]
+        kept = [e for e in entries if not (isinstance(e, str) and _same_file(e, canon))]
+        if len(kept) == len(entries):
+            return None
+        try:
+            if candidate.suffix == ".jsonc" and raw.strip():
+                if kept:
+                    body = set_jsonc_top_level_value(raw, "instructions", kept)
+                else:
+                    from nexgen_core.jsonc import remove_jsonc_top_level_value
+
+                    body = remove_jsonc_top_level_value(raw, "instructions")
+            else:
+                data["instructions"] = kept
+                if not kept:
+                    del data["instructions"]
+                body = json.dumps(data, indent=2) + "\n"
+            backup = candidate.with_name(
+                f"{candidate.name}.pre-instructions-{time.strftime('%Y%m%d-%H%M%S')}.bak"
+            )
+            with contextlib.suppress(OSError):
+                shutil.copy2(candidate, backup)
+            candidate.write_text(body, encoding="utf-8")
+        except OSError:
+            return None
+        return t("opencode dead 'instructions' entries removed")
 
     def align_local_model_runtime(self) -> list[str]:
         """Windows-only: relinks the private local-model-agent.ps1 adapter (bring-your-own).
@@ -268,6 +302,24 @@ class GuardRunner:
                 target.write_text(content, encoding="utf-8")
                 actions.append(t("local-model: installed wrapper {name}", name=name))
         return actions
+
+    def _refresh_update_cache_best_effort(self) -> None:
+        """Records the newest released tag for the shell-startup notice.
+
+        The guard already talked to the network (git inspection fetches),
+        so one read-only `ls-remote` more is marginal -- and it is what
+        feeds `nexgen tool update-notifier --shell-check` without any
+        network at shell startup. Silent by design: an offline machine
+        keeps yesterday's cache, which beats an error in a recurring job.
+        """
+        try:
+            from nexgen_core.tools.update_notifier import refresh_update_cache
+
+            probe = run_git(self.engine_root, "rev-parse", "--show-toplevel")
+            if probe.returncode == 0 and probe.stdout.strip():
+                refresh_update_cache(probe.stdout.strip())
+        except Exception:
+            pass
 
     def apply_runtime_permissions(self) -> list[str]:
         """Permission posture + guardrail hook for every installed CLI.
@@ -393,6 +445,7 @@ class GuardRunner:
 
                 # If this is a pull-only run, stop here
                 if mode == GuardMode.PULL:
+                    self._refresh_update_cache_best_effort()
                     return GuardResult(success=True, mode=mode, message=t("Pull completed"), exit_code=0, actions_taken=actions)
 
                 # 2. Preflight
@@ -484,6 +537,7 @@ class GuardRunner:
                 if is_guard or mode == GuardMode.APPLY:
                     self.heartbeat.record_liveness()
                     actions.append(t("Liveness recorded successfully"))
+                    self._refresh_update_cache_best_effort()
 
                 return GuardResult(
                     success=True,

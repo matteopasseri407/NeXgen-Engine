@@ -304,15 +304,12 @@ def load_agent_sync_module(sandbox: Sandbox):
 
 
 def run_agent_sync(sandbox: Sandbox, mode: str = "apply", timeout: int = 60) -> subprocess.CompletedProcess:
+    """Drives the sandbox engine through its tree entry: since v2.3.0 no
+    transitional twin exists any more, so the helpers invoke
+    `cli/__init__.py` with the same verbs the deleted wrappers forwarded."""
     sandbox.assert_is_sandbox()
-    if os.name == "nt":
-        return subprocess.run(
-            ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File",
-             str(sandbox.scripts_dir / "agent-sync.ps1"), mode],
-            env=sandbox.env(), capture_output=True, text=True, timeout=timeout,
-        )
     return subprocess.run(
-        ["bash", str(sandbox.scripts_dir / "agent-sync.sh"), mode],
+        [sys.executable, str(sandbox.scripts_dir / "nexgen_core" / "cli" / "__init__.py"), mode],
         env=sandbox.env(),
         capture_output=True,
         text=True,
@@ -339,14 +336,9 @@ def run_agent_doctor(sandbox: Sandbox, *args: str, timeout: int = 60,
     sandbox.assert_is_sandbox()
     if verbose and "--verbose" not in args and "--summary" not in args:
         args = ("--verbose", *args)
-    if os.name == "nt":
-        return subprocess.run(
-            ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File",
-             str(sandbox.scripts_dir / "agent-doctor.ps1"), *args],
-            env=sandbox.env(), capture_output=True, text=True, timeout=timeout,
-        )
     return subprocess.run(
-        ["bash", str(sandbox.scripts_dir / "agent-doctor.sh"), *args],
+        [sys.executable, str(sandbox.scripts_dir / "nexgen_core" / "cli" / "__init__.py"),
+         "doctor", *args],
         env=sandbox.env(),
         capture_output=True,
         text=True,

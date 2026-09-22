@@ -70,7 +70,7 @@ servers:
     url: "http://127.0.0.1:${N8N_TUNNEL_PORT:-5678}/mcp-server/http"
     auth: { type: bearer, env: N8N_MCP_TOKEN }
     require_env: N8N_MCP_TOKEN
-    timeouts: { startup: 120, tool: 600 }          # only used by Codex
+    timeouts: { startup: 120, tool: 600 }          # seconds; Codex and OpenCode render their native timeout fields
     targets: [claude, codex, antigravity, opencode]
 
   vault-library:

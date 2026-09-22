@@ -24,7 +24,7 @@ if str(SCRIPTS_DIR) not in sys.path:
 from nexgen_core.config import load_mcp_manifest
 from nexgen_core.i18n import t
 from nexgen_core.jsonc import parse_jsonc
-from nexgen_core.paths import resolve_home
+from nexgen_core.paths import opencode_config_candidates, resolve_home
 from nexgen_core.renderer import McpRenderer
 
 HOME = resolve_home()
@@ -54,12 +54,7 @@ def _cli_config_path(cli: str) -> Path:
 def _cli_config_candidates(cli: str) -> list[Path]:
     if cli != "opencode":
         return [_cli_config_path(cli)]
-    names = ("opencode.jsonc", "opencode.json", "config.json")
-    dirs = [HOME / ".config" / "opencode"]
-    appdata = os.environ.get("APPDATA")
-    if appdata:
-        dirs.append(Path(appdata) / "opencode")
-    return [d / name for d in dirs for name in names]
+    return opencode_config_candidates(HOME)
 
 
 def _atomic_write_text(path: Path, text: str) -> None:
@@ -337,7 +332,8 @@ def _load_live(cli: str) -> dict | None:
             return {k: {kk: vv for kk, vv in v.items() if kk != "$typeName"} for k, v in d.get("mcpServers", {}).items()}
         if cli == "opencode":
             d = parse_jsonc(text) if path.suffix == ".jsonc" else json.loads(text)
-            return d.get("mcp", {})
+            mcp = d.get("mcp", {})
+            return mcp.get("servers", mcp)
     except Exception as exc:
         print(">>> STOP: " + t("{name} is not valid JSON/TOML ({error}). Restore a .bak-* backup before retrying.", name=path.name, error=exc), file=sys.stderr)
         sys.exit(2)

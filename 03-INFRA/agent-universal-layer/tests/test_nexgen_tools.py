@@ -128,7 +128,6 @@ REPO_ROOT = SCRIPTS_DIR.parents[1]
 ENTRY_POINTS_RUN_BY_PATH = (
     "03-INFRA/scripts/nexgen_core/bootstrap.py",
     "03-INFRA/scripts/nexgen_core/cli/__init__.py",
-    "03-INFRA/scripts/nexgen_core/legacy_launchers.py",
     "03-INFRA/scripts/agent_sync.py",
     "03-INFRA/scripts/agent-skill.py",
     "03-INFRA/scripts/skills-sync.py",
@@ -325,8 +324,11 @@ def test_context_rejects_negative_hops(tmp_path: Path):
 def test_update_notifier_check(monkeypatch, tmp_path: Path):
     from nexgen_core.tools import update_notifier
 
-    monkeypatch.setattr(update_notifier, "HOME", tmp_path)
-    monkeypatch.setattr(update_notifier, "THROTTLE_FILE", tmp_path / "throttle.json")
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("NEXGEN_HOME", str(home))
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("AGENT_STATE_DIR", str(tmp_path / "state"))
 
     # Mock no updates
     monkeypatch.setattr("nexgen_core.updater.EngineUpdater.check_updates", lambda: (False, "v2.1.4", "v2.1.4"))
@@ -334,7 +336,7 @@ def test_update_notifier_check(monkeypatch, tmp_path: Path):
 
     # Mock update available with prompt declined
     monkeypatch.setattr("nexgen_core.updater.EngineUpdater.check_updates", lambda: (True, "v2.1.4", "v2.1.5"))
-    monkeypatch.setattr(update_notifier, "_prompt_user", lambda curr, lat: False)
+    monkeypatch.setattr(update_notifier, "_prompt_user", lambda *args, **kwargs: False)
     assert update_notifier.cmd_check(force=True) == 0
-    assert (tmp_path / "throttle.json").is_file()
+    assert update_notifier._dismissed_today("v2.1.5")
 

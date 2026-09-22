@@ -70,7 +70,7 @@ _TARGET_VIEW_ATTRS: dict[str, tuple[str, ...]] = {
     "claude": ("claude_dir",),
     "antigravity": ("gemini_dir", "gemini_config_dir", "gemini_legacy_dir"),
     "codex": ("codex_dir",),
-    "opencode": ("active_dir", "opencode_dir"),
+    "opencode": ("active_dir", "opencode_dir", "opencode_native_dir"),
 }
 
 

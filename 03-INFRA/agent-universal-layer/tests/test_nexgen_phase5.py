@@ -185,7 +185,24 @@ def _write_release(repo: Path, version: str, previous: str | None = None) -> Non
     if previous:
         changelog += f"\n## [{previous}] - 2026-07-31\n\n### Added\n\n- Release {previous}.\n"
     (repo / "CHANGELOG.md").write_text(changelog, encoding="utf-8")
-    _git(repo, "add", "VERSION", "CHANGELOG.md", "03-INFRA/.gitkeep")
+    # Same fixture entry as test_nexgen_update_command: the hardened updater
+    # fails closed on a tree without it, before anything moves.
+    entry = repo / "03-INFRA" / "scripts" / "nexgen_core" / "cli" / "__init__.py"
+    entry.parent.mkdir(parents=True, exist_ok=True)
+    entry.write_text(
+        '"""Fixture command entry (minimal honest target, never the real CLI)."""\n'
+        "import sys\n"
+        "verbs = sys.argv[1:]\n"
+        "if verbs[:2] == ['doctor', '--summary']:\n"
+        "    print('FAIL=0 OK=1 WARN=0 UNDETERMINED=0')\n"
+        "elif verbs[:1] == ['apply']:\n"
+        "    pass\n"
+        "else:\n"
+        "    print(f'fixture entry: unknown verbs {verbs}', file=sys.stderr)\n"
+        "    sys.exit(2)\n",
+        encoding="utf-8",
+    )
+    _git(repo, "add", "VERSION", "CHANGELOG.md", "03-INFRA/.gitkeep", str(entry.relative_to(repo)))
     _git(repo, "commit", "-m", f"release v{version}")
     _git(repo, "tag", f"v{version}")
 

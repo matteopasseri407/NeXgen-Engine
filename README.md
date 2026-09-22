@@ -102,7 +102,7 @@ Different tools solve different slices. Small syncers are great for copying one 
 * **Deterministic Modular Layer:** 8-module catalog (`memory`, `semantic-rag`, `firecrawl`, `ocr`, `n8n`, `browser`, `council`, `sync`) managed deterministically with `nexgen modules list` and `nexgen modules set`.
 * **Zero-Passphrase Secrets Store:** Asymmetric `age` encryption (`99-SECRETS/secrets.yaml.age`) using machine-local hardware keys (`0600`), isolated per-host OAuth refresh token slots, and materialized `secrets.env` for shells and systemd services.
 * **Visual CLI & Operator Shell:** Built-in `nexgen info` visual dashboard and standalone `nexgen shell` interactive REPL with selectable menu actions (`[1-7]`), enabling complete human management without opening an AI assistant.
-* **Comprehensive Multi-Runtime Alignment:** First-class support for Claude Code, Codex, OpenCode, and Antigravity (including Council seat integration).
+* **Multi-Runtime Alignment:** Claude Code, Codex, and Antigravity are supported; OpenCode v2 MCP configuration is generated natively, while instructions, plugins, and native skills still need migration (Council seat integration is available).
 * **Fail-Closed Diagnostics (`nexgen doctor`):** 33+ automated sanity checks validating git alignment, manifest reachability, link hygiene, token presence, and permission boundaries.
 
 ---
@@ -177,7 +177,7 @@ nexgen shell
 |---|---|---|
 | Claude Code | **complete** | instructions, MCP connectors, skills, guardrails |
 | Codex | **complete** | instructions, MCP connectors, skills |
-| OpenCode | **complete** | instructions, MCP connectors, skills |
+| OpenCode | **partial on v2** | MCP connectors render in native V2 format; V2 ignores the configured instructions and V1 guardrail/event plugins, and native skills use a different directory |
 | Antigravity | **complete** | instructions, MCP connectors, skills, and a Council seat; the seat was unblocked on 2026-08-22 with a stateless invocation (agy --model ... --disable-slash-commands --new-project --sandbox -p <prompt>) verified live with a nonce prompt |
 
 <!-- platform-status:end -->

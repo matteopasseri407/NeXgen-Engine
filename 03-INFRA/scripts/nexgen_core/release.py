@@ -185,38 +185,25 @@ def _preflight() -> int:
         else:
             checked.append(f"newer than {newest}")
 
-    from nexgen_core.legacy_launchers import (
-        REMOVE_AFTER,
-        expected_files,
-        is_expired,
-        matches,
+    # The transitional `.sh`/`.ps1` launchers were removed in v2.3.0 after
+    # every machine reported takeover complete. They must never come back:
+    # a resurrected twin reintroduces the exact drift the single-table
+    # generator existed to prevent, and an old machine fetching it would
+    # follow a dead symlink again. (The repo-root install.sh is the
+    # fresh-install entry point, not a transitional twin: it lives outside
+    # 03-INFRA/scripts and is untouched by this gate.)
+    scripts_dir = repo / "03-INFRA" / "scripts"
+    resurrected = sorted(
+        str(path.relative_to(repo))
+        for path in (*scripts_dir.glob("*.sh"), *scripts_dir.glob("*.ps1"))
     )
-
-    # Compatibility with an expiry, so it cannot become permanent by
-    # inertia. This does not delete anything: it refuses to tag, which puts
-    # the decision in front of a person exactly once.
-    if is_semver(version) and is_expired(version):
+    if resurrected:
         problems.append(
-            f"the legacy launchers were due to go after {REMOVE_AFTER} and this "
-            f"release is {version}: either delete nexgen_core/legacy_launchers.py "
-            f"and the twenty files it writes, or raise REMOVE_AFTER because a "
-            f"machine is genuinely still on the old release"
+            "transitional launchers must not come back (.sh/.ps1 twins were "
+            "removed in v2.3.0): " + ", ".join(resurrected)
         )
     else:
-        checked.append(f"legacy launchers still within their window (until {REMOVE_AFTER})")
-
-    stale = [
-        path.name
-        for path, content in expected_files(repo / "03-INFRA" / "scripts").items()
-        if not matches(path, content)
-    ]
-    if stale:
-        problems.append(
-            "launchers out of step with their table (regenerate and commit them): "
-            + ", ".join(sorted(stale))
-        )
-    else:
-        checked.append("legacy launchers match their table")
+        checked.append("no transitional launcher twins in 03-INFRA/scripts")
 
     leaked = subprocess.run(
         ["git", "-C", str(repo), "grep", "-l", PRIVATE_MARKER],

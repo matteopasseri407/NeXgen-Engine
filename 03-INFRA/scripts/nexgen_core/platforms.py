@@ -60,7 +60,12 @@ OPERATING_SYSTEMS: tuple[Support, ...] = (
 RUNTIMES: tuple[Support, ...] = (
     Support("Claude Code", "complete", "instructions, MCP connectors, skills, guardrails"),
     Support("Codex", "complete", "instructions, MCP connectors, skills"),
-    Support("OpenCode", "complete", "instructions, MCP connectors, skills"),
+    Support(
+        "OpenCode",
+        "partial on v2",
+        "MCP connectors render in native V2 format; V2 ignores the configured "
+        "instructions and V1 guardrail/event plugins, and native skills use a different directory",
+    ),
     Support(
         "Antigravity",
         "complete",

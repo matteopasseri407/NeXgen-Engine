@@ -82,8 +82,10 @@ my-command:
   surfaces as a `$my-command` mention.
 - The `antigravity` target links the native view into
   `~/.gemini/antigravity-cli/skills/` (`/my-command` in the agy TUI).
-- The `opencode` target writes nothing — OpenCode reads the shared roots —
-  but makes the sync verify the skill is actually discoverable there.
+- The `opencode` target links the native view into
+  `~/.config/opencode/skills/` (V2 native discovery, alongside the shared
+  `~/.agents/skills/` catalog both V2 runtimes read) — and the sync
+  verifies the skill is actually discoverable there.
 
 Conventions that keep a command portable: lowercase-hyphen names that match
 the folder name; never reuse a CLI built-in name (Claude Code ships a

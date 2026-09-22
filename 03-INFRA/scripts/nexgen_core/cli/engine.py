@@ -383,6 +383,7 @@ def _bootstrap_targets(home: Path) -> list[tuple[str, Path, str]]:
         ("claude", home / "CLAUDE.md", "pointer"),
         ("codex", home / ".codex" / "AGENTS.md", "mirror"),
         ("antigravity", home / ".gemini" / "config" / "AGENTS.md", "mirror"),
+        ("opencode", home / ".config" / "opencode" / "AGENTS.md", "scope"),
     ]
 
 
@@ -400,11 +401,28 @@ def _instruction_state(path: Path, kind: str, vault_data: Path) -> str:
     if not path.exists() and not path.is_symlink():
         return "absent"
     if path.is_symlink():
-        return f"link -> {path.resolve()}"
+        try:
+            target = path.resolve()
+        except OSError as exc:
+            return f"unreadable ({exc})"
+        if not target.exists():
+            return f"broken link -> {target}"
+        if kind == "scope":
+            canon_file = canon.is_file()
+            same = canon_file and target == canon.resolve()
+            return f"link -> {target}" + ("" if same else " (not the canonical bootstrap)")
+        return f"link -> {target}"
     try:
         body = path.read_bytes()
     except OSError as exc:
         return f"unreadable ({exc})"
+    if kind == "scope":
+        # V2 loads this file's content as instructions. A real file here is
+        # the private identity layer's derivative until proven otherwise:
+        # census, not diagnosis -- the doctor owns the verdict.
+        if str(canon) in body.decode("utf-8", "replace"):
+            return "real file referencing the canonical bootstrap"
+        return "real file (verify it references the canonical bootstrap)"
     if kind == "pointer":
         return "pointer" if str(canon) in body.decode("utf-8", "replace") else "diverged: does not name the canonical file"
     if not canon.is_file():

@@ -203,6 +203,11 @@ class SkillMaterializer:
         self.gemini_legacy_dir = self.home / ".gemini" / "skills"
         self.codex_dir = self.home / ".codex" / "skills"
         self.opencode_dir = self.home / ".opencode" / "skills"
+        # OpenCode V2 discovers `~/.config/opencode/skills` natively (plus,
+        # for compatibility, `~/.agents/skills` and `~/.claude/skills`). The
+        # legacy `~/.opencode/skills` stays as a view target so machines
+        # that still carry it keep working, but new views land native.
+        self.opencode_native_dir = self.home / ".config" / "opencode" / "skills"
 
         #: Le cartelle da cui i runtime scoprono le skill da soli. Un
         #: installer di terze parti ci lascia la propria copia, e da lì viene
@@ -211,13 +216,13 @@ class SkillMaterializer:
             "claude": (self.claude_dir,),
             "antigravity": (self.gemini_dir, self.gemini_config_dir, self.gemini_legacy_dir),
             "codex": (self.codex_dir,),
-            "opencode": (self.active_dir, self.opencode_dir),
+            "opencode": (self.active_dir, self.opencode_dir, self.opencode_native_dir),
         }
 
         self.discovery_dirs = (
             self.active_dir, self.claude_dir, self.gemini_dir,
             self.gemini_config_dir, self.gemini_legacy_dir,
-            self.codex_dir, self.opencode_dir,
+            self.codex_dir, self.opencode_dir, self.opencode_native_dir,
         )
 
     def load_manifest(self) -> dict[str, SkillEntry]:

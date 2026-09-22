@@ -228,7 +228,10 @@ def _write_opencode_config(home: Path) -> Path:
     return path
 
 
-def test_opencode_apply_posture_merges_and_preserves_other_permission_keys(tmp_path: Path):
+def test_opencode_apply_posture_migrates_legacy_object_to_v2_rules(tmp_path: Path):
+    """V2 native posture: the legacy `permission` object migrates once into
+    ordered `permissions` rules, then disappears. Foreign dimensions
+    survive as equivalent rules, the user's plugins are untouched."""
     home = tmp_path / "home"
     config = _write_opencode_config(home)
 
@@ -236,10 +239,36 @@ def test_opencode_apply_posture_merges_and_preserves_other_permission_keys(tmp_p
     assert action is not None
 
     data = json.loads(config.read_text(encoding="utf-8"))
-    assert data["permission"]["edit"] == "allow"
-    assert data["permission"]["bash"] == "allow"
-    assert data["permission"]["webfetch"] == "ask"  # dimensione estranea sopravvive
-    assert data["plugin"] == ["some-other-plugin"]  # plugin dell'utente intatto
+    assert "permission" not in data  # migrated, not duplicated
+    rules = {(r["action"], r["resource"]): r["effect"] for r in data["permissions"]}
+    assert rules[("edit", "*")] == "allow"
+    assert rules[("shell", "*")] == "allow"  # V1 `bash` is V2 `shell`
+    assert rules[("webfetch", "*")] == "ask"  # dimensione estranea sopravvive
+    assert data["plugin"] == ["some-other-plugin"]  # plugin dell'utente intatti
+    assert OpenCodeRuntime().read_posture(home) == "bypass"
+
+    # Idempotenza: la seconda corsa non riscrive niente.
+    assert OpenCodeRuntime().apply_posture(home, "bypass") is None
+
+
+def test_opencode_apply_posture_never_overrides_an_explicit_user_deny(tmp_path: Path):
+    """Ordered rules: a user deny on the same (action, resource) pair wins
+    over the engine posture. Appending an allow after it would punch a hole
+    in a fence the user built on purpose."""
+    home = tmp_path / "home"
+    config = home / ".config" / "opencode" / "opencode.jsonc"
+    config.parent.mkdir(parents=True)
+    config.write_text(json.dumps({
+        "permissions": [{"action": "shell", "resource": "*", "effect": "deny"}],
+    }, indent=2), encoding="utf-8")
+
+    action = OpenCodeRuntime().apply_posture(home, "bypass")
+    assert action is not None  # edit allow is still added
+
+    data = json.loads(config.read_text(encoding="utf-8"))
+    shell_rules = [r for r in data["permissions"] if r["action"] == "shell"]
+    assert shell_rules == [{"action": "shell", "resource": "*", "effect": "deny"}]
+    assert {"action": "edit", "resource": "*", "effect": "allow"} in data["permissions"]
 
 
 def test_opencode_install_guardrail_registers_plugin_and_preserves_others(tmp_path: Path):
@@ -256,8 +285,9 @@ def test_opencode_install_guardrail_registers_plugin_and_preserves_others(tmp_pa
     assert action is not None
 
     data = json.loads(config.read_text(encoding="utf-8"))
-    assert "some-other-plugin" in data["plugin"]
-    assert any("opencode-guardrail-plugin.mjs" in p for p in data["plugin"] if isinstance(p, str))
+    assert "plugin" not in data  # legacy key migrated, never rewritten
+    assert "some-other-plugin" in data["plugins"]
+    assert any("opencode-guardrail-plugin.mjs" in p for p in data["plugins"] if isinstance(p, str))
 
     plugin_dir = config.parent
     assert (plugin_dir / "opencode-guardrail-plugin.mjs").read_text(encoding="utf-8") == "// adapter\n"
@@ -540,6 +570,9 @@ def test_opencode_install_event_sink_registers_plugin(tmp_path: Path):
     action = rt.install_event_sink(home, sink_source)
     assert action is not None
     assert (home / ".config" / "opencode" / "nexgen-event-sink.mjs").is_file()
+    data = json.loads(config.read_text(encoding="utf-8"))
+    assert "plugin" not in data
+    assert any("nexgen-event-sink.mjs" in p for p in data["plugins"] if isinstance(p, str))
 
 
 def test_nexgen_event_sink_script_e2e_socket_and_failsafe(tmp_path: Path):

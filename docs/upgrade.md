@@ -47,6 +47,26 @@ cat VERSION                                                  # the version you'r
 If the latest tag is newer than your `VERSION` file, an upgrade is
 available.
 
+## Startup notice (one prompt per day, launch-or-skip)
+
+Every interactive shell can tell you when an upgrade is pending and offer
+to launch it. Install once per machine:
+
+```bash
+nexgen tool update-notifier --install-shell-hook   # bash + PowerShell
+nexgen tool update-notifier --install-autostart    # graphical dialog lane (Linux)
+```
+
+From then on each new shell runs `--shell-check`: a cache read, never
+network (a stale cache refreshes detached in the background). When an
+upgrade is pending you get one line plus `Aggiorna ora? [s/N]`, at most
+once per day per version -- "yes" hands the terminal to the interactive
+`nexgen update` (release notes first, its own confirmation second), "no"
+stays silent until tomorrow. The cache is refreshed by the guard cycle and
+the hourly heartbeat (read-only tag lookup, silent when offline), so the
+prompt never holds a shell startup hostage. Remove with
+`nexgen tool update-notifier --install-shell-hook --remove`.
+
 ## Upgrading
 
 The normal path is now the real cross-platform command installed by the

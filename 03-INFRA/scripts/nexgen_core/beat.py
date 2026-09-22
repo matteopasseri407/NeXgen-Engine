@@ -15,6 +15,7 @@ holding the guard lock):
 from __future__ import annotations
 
 import os
+import subprocess
 import time
 from pathlib import Path
 from typing import Any
@@ -143,10 +144,22 @@ class Heartbeat:
         maintenance tasks the contract assigns to this spot because it runs
         regularly without holding the guard lock."""
         liveness_ok, liveness_msg = self.check_liveness()
+        self_upgrade = self.run_self_upgrade()
+        try:
+            from nexgen_core.tools.update_notifier import refresh_update_cache
+
+            probe = subprocess.run(
+                ["git", "-C", str(self.engine_root), "rev-parse", "--show-toplevel"],
+                capture_output=True, text=True, check=False, timeout=20,
+            )
+            if probe.returncode == 0 and probe.stdout.strip():
+                refresh_update_cache(probe.stdout.strip())
+        except Exception:
+            pass
         return {
             "liveness_ok": liveness_ok,
             "liveness_msg": liveness_msg,
             "dependency_watch": self.run_dependency_watch(),
-            "self_upgrade": self.run_self_upgrade(),
+            "self_upgrade": self_upgrade,
             "timestamp": time.time(),
         }

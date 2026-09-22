@@ -102,10 +102,11 @@ def test_publish_says_nothing_to_publish_when_there_is_nothing(tmp_path: Path):
         set_language(None)
 
 
-def test_opencode_instructions_deduped_by_resolved_path(tmp_path: Path, monkeypatch):
-    """The same canonical file declared as '~/…' must not be appended again
-    as its absolute path: the guard used to compare strings, and a machine
-    whose config spelled it with a tilde ended up with it twice."""
+def test_opencode_scope_file_symlinked_to_canonical_when_missing(tmp_path: Path, monkeypatch):
+    """V2 loads the global scope file, not the `instructions` array: on a
+    machine without one the guard symlinks it at the canonical bootstrap
+    (copy fallback where symlinks need privileges), the same way Codex and
+    Antigravity already work. No content is ever copied."""
     home = tmp_path / "home"
     monkeypatch.setenv("HOME", str(home))
     monkeypatch.setenv("USERPROFILE", str(home))
@@ -113,34 +114,61 @@ def test_opencode_instructions_deduped_by_resolved_path(tmp_path: Path, monkeypa
     canon = vault / "03-INFRA" / "agent-universal-layer" / "instructions" / "AGENTS.md"
     canon.parent.mkdir(parents=True)
     canon.write_text("# rules\n", encoding="utf-8")
-
-    cfg_dir = home / ".config" / "opencode"
-    cfg_dir.mkdir(parents=True)
-    cfg = cfg_dir / "opencode.json"
-    tilde_entry = f"~/{vault.relative_to(home)}/03-INFRA/agent-universal-layer/instructions/AGENTS.md"
-    cfg.write_text(json.dumps({"instructions": [tilde_entry]}), encoding="utf-8")
-
-    runner = GuardRunner(vault_data=vault, home=home)
-    assert runner._align_opencode_instructions(canon) is None
-    assert len(json.loads(cfg.read_text(encoding="utf-8"))["instructions"]) == 1
-
-
-def test_opencode_instructions_append_when_the_file_is_truly_missing(tmp_path: Path, monkeypatch):
-    home = tmp_path / "home"
-    monkeypatch.setenv("HOME", str(home))
-    monkeypatch.setenv("USERPROFILE", str(home))
-    vault = home / "KnowledgeVault"
-    canon = vault / "03-INFRA" / "agent-universal-layer" / "instructions" / "AGENTS.md"
-    canon.parent.mkdir(parents=True)
-    canon.write_text("# rules\n", encoding="utf-8")
-
-    cfg_dir = home / ".config" / "opencode"
-    cfg_dir.mkdir(parents=True)
-    cfg = cfg_dir / "opencode.json"
-    cfg.write_text(json.dumps({"instructions": ["~/somewhere/else.md"]}), encoding="utf-8")
 
     runner = GuardRunner(vault_data=vault, home=home)
     assert runner._align_opencode_instructions(canon) is not None
+    scope = home / ".config" / "opencode" / "AGENTS.md"
+    assert scope.resolve() == canon.resolve()
+
+    # Idempotenza: il link giusto non riscrive niente.
+    assert runner._align_opencode_instructions(canon) is None
+
+
+def test_opencode_scope_file_real_file_is_never_clobbered(tmp_path: Path, monkeypatch):
+    """A real file at the scope path is the private identity layer's
+    derivative: replacing it with a pointer would destroy the persona, so
+    the guard leaves it exactly as it is. The doctor reports it, it never
+    "fixes" it here."""
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("USERPROFILE", str(home))
+    vault = home / "KnowledgeVault"
+    canon = vault / "03-INFRA" / "agent-universal-layer" / "instructions" / "AGENTS.md"
+    canon.parent.mkdir(parents=True)
+    canon.write_text("# rules\n", encoding="utf-8")
+
+    scope = home / ".config" / "opencode" / "AGENTS.md"
+    scope.parent.mkdir(parents=True)
+    scope.write_text("# private derivative\n", encoding="utf-8")
+
+    runner = GuardRunner(vault_data=vault, home=home)
+    assert runner._align_opencode_instructions(canon) is None
+    assert scope.read_text(encoding="utf-8") == "# private derivative\n"
+    assert not scope.is_symlink()
+
+
+def test_opencode_dead_instructions_array_migrated_once(tmp_path: Path, monkeypatch):
+    """The one V1->V2 migration test that stays: V2 accepts the
+    `instructions` array but never resolves it, so canonical entries the
+    old guard added are dead weight. They go away (backup first); a human
+    choice stays."""
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("USERPROFILE", str(home))
+    vault = home / "KnowledgeVault"
+    canon = vault / "03-INFRA" / "agent-universal-layer" / "instructions" / "AGENTS.md"
+    canon.parent.mkdir(parents=True)
+    canon.write_text("# rules\n", encoding="utf-8")
+
+    cfg_dir = home / ".config" / "opencode"
+    cfg_dir.mkdir(parents=True)
+    cfg = cfg_dir / "opencode.json"
+    cfg.write_text(json.dumps({"instructions": [str(canon), "~/somewhere/else.md"]}), encoding="utf-8")
+
+    runner = GuardRunner(vault_data=vault, home=home)
+    assert runner._drop_dead_opencode_instructions_array() is not None
     entries = json.loads(cfg.read_text(encoding="utf-8"))["instructions"]
-    assert str(canon) in entries
-    assert len(entries) == 2
+    assert entries == ["~/somewhere/else.md"]
+
+    # Idempotenza: niente da migrare quando l'array non nomina il canonico.
+    assert runner._drop_dead_opencode_instructions_array() is None

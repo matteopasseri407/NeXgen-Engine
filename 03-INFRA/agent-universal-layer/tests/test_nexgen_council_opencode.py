@@ -25,7 +25,7 @@ def test_opencode_build_seat_command_no_dir_flag(tmp_path: Path) -> None:
     assert invocation.argv[3:5] == ["-m", "opencode-go/muse-spark-1.2-contributor"]
 
 
-def test_render_opencode_websearch_containment(tmp_path: Path) -> None:
+def test_render_opencode_preserves_native_tool_choices(tmp_path: Path) -> None:
     import json
     from nexgen_core.renderer import McpRenderer
 
@@ -36,15 +36,36 @@ def test_render_opencode_websearch_containment(tmp_path: Path) -> None:
     manifest = mcp_dir / "manifest.yaml"
     manifest.write_text("servers: {}\n", encoding="utf-8")
 
+    cfg_file = home / ".config" / "opencode" / "opencode.json"
+    cfg_file.parent.mkdir(parents=True)
+    native = {
+        "websearch": "parallel",
+        "tools": {"websearch": True, "bash": False, "custom_tool": True},
+        "permission": {"websearch": "allow"},
+    }
+    cfg_file.write_text(json.dumps(native), encoding="utf-8")
+
     renderer = McpRenderer(vault_data=vault, home=home)
     success, _msg = renderer.render_opencode(write=True)
     assert success is True
-
-    cfg_file = home / ".config" / "opencode" / "opencode.jsonc"
-    if not cfg_file.is_file():
-        cfg_file = home / ".config" / "opencode" / "opencode.json"
-    assert cfg_file.is_file()
-
     data = json.loads(cfg_file.read_text(encoding="utf-8"))
-    assert data.get("websearch") == "parallel"
-    assert data.get("tools", {}).get("websearch") is False
+    assert data["websearch"] == native["websearch"]
+    assert data["tools"] == native["tools"]
+    assert data["permission"] == native["permission"]
+
+
+def test_render_opencode_does_not_choose_websearch_for_a_new_install(tmp_path: Path) -> None:
+    import json
+    from nexgen_core.renderer import McpRenderer
+
+    vault = tmp_path / "vault"
+    mcp_dir = vault / "03-INFRA" / "agent-universal-layer" / "mcp"
+    mcp_dir.mkdir(parents=True)
+    (mcp_dir / "manifest.yaml").write_text("servers: {}\n", encoding="utf-8")
+
+    renderer = McpRenderer(vault_data=vault, home=tmp_path / "home")
+    assert renderer.render_opencode(write=True)[0]
+    cfg_file = renderer._opencode_config_path()
+    data = json.loads(cfg_file.read_text(encoding="utf-8"))
+    assert "websearch" not in data
+    assert "websearch" not in data.get("tools", {})
