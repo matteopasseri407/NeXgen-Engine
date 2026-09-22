@@ -72,6 +72,19 @@ of any engine release.
 
 ### Fixed
 
+- **Codex views misjudged by legacy migration**: `migrate_legacy` checked
+  `"claude"` in targets for the codex scope too (v2 port copy-paste), so a
+  legitimate codex view looked like a stray on every explicit
+  `--migrate-legacy` run. Each scope now mirrors what `materialize`
+  creates (eager/core + own runtime in targets), and the OpenCode native
+  directory is covered as well. Previously zero tests touched this path;
+  three do now.
+- **Single OpenCode config resolution**: `renderer`, guardrail adapter,
+  inventory, plan and doctor share one public
+  `McpRenderer.opencode_config_path()` instead of reaching into a private
+  method (five call sites).
+- **Tool executable bit**: `update_notifier.py` carries a shebang like its
+  sibling tools and is now executable as well.
 - **False-green OpenCode instructions**: the doctor checked the
   `instructions` array V2 never resolves. It now checks the scope file V2
   really loads (symlink at canonical = OK, altered/missing = BROKEN,

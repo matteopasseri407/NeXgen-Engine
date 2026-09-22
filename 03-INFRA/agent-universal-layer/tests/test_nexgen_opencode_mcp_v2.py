@@ -56,7 +56,7 @@ servers:
 
 def test_opencode_v2_migrates_legacy_and_preserves_unmanaged_servers(tmp_path: Path, monkeypatch) -> None:
     renderer = _renderer(tmp_path)
-    cfg = renderer._opencode_config_path()
+    cfg = renderer.opencode_config_path()
     cfg.parent.mkdir(parents=True)
     cfg.write_text("""{
   // user's setting survives
@@ -105,7 +105,7 @@ def test_opencode_v2_migrates_legacy_and_preserves_unmanaged_servers(tmp_path: P
 
 def test_opencode_v2_preserves_native_options_and_other_cli_output(tmp_path: Path) -> None:
     renderer = _renderer(tmp_path)
-    cfg = renderer._opencode_config_path()
+    cfg = renderer.opencode_config_path()
     cfg.parent.mkdir(parents=True)
     cfg.write_text(json.dumps({
         "mcp": {"timeout": {"catalog": 34000}, "servers": {
@@ -142,7 +142,7 @@ def test_opencode_v2_binary_accepts_rendered_schema(tmp_path: Path) -> None:
 
     renderer = _renderer(tmp_path)
     renderer.render_opencode(write=True)
-    cfg = renderer._opencode_config_path()
+    cfg = renderer.opencode_config_path()
     (tmp_path / "opencode.jsonc").write_text(cfg.read_text(encoding="utf-8"), encoding="utf-8")
     env = dict(os.environ)
     env.pop("OPENCODE_CONFIG", None)

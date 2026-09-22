@@ -65,7 +65,7 @@ def test_render_opencode_does_not_choose_websearch_for_a_new_install(tmp_path: P
 
     renderer = McpRenderer(vault_data=vault, home=tmp_path / "home")
     assert renderer.render_opencode(write=True)[0]
-    cfg_file = renderer._opencode_config_path()
+    cfg_file = renderer.opencode_config_path()
     data = json.loads(cfg_file.read_text(encoding="utf-8"))
     assert "websearch" not in data
     assert "websearch" not in data.get("tools", {})

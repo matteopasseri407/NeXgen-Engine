@@ -654,37 +654,68 @@ class SkillMaterializer:
             "shared": self.active_dir,
             "codex": self.codex_dir,
             "claude": self.claude_dir,
+            "opencode": (self.opencode_dir, self.opencode_native_dir),
         }
         legacy_root = self.library_dir / "legacy"
-        for scope, root in views.items():
-            if not root.is_dir() or root.is_symlink():
+        for scope, roots in views.items():
+            if isinstance(roots, Path):
+                roots = (roots,)
+            for root in roots:
+                actions.extend(self._migrate_legacy_root(scope, root, skills, legacy_root, apply))
+        return actions
+
+    def _migrate_legacy_root(
+        self,
+        scope: str,
+        root: Path,
+        skills: dict[str, SkillEntry],
+        legacy_root: Path,
+        apply: bool,
+    ) -> list[str]:
+        """Quarantines one discovery root's unmanaged views (see
+        :meth:`migrate_legacy`). Split out so every runtime root --
+        including the two OpenCode ones -- shares the exact same rule."""
+        actions: list[str] = []
+        if not root.is_dir() or root.is_symlink():
+            return actions
+        for entry in sorted(root.iterdir()):
+            if entry.name.startswith(".") or entry.name == "INDEX.md":
                 continue
-            for entry in sorted(root.iterdir()):
-                if entry.name.startswith(".") or entry.name == "INDEX.md":
-                    continue
-                body = entry / "SKILL.md" if entry.is_dir() else entry
-                if not body.is_file():
-                    continue
-                managed = self.library_dir / entry.name
-                spec = skills.get(entry.name)
-                expected = (
-                    (scope == "shared" and spec is not None and spec.exposure in ("core", "eager"))
-                    or (scope in ("claude", "codex") and spec is not None and "claude" in spec.targets)
+            body = entry / "SKILL.md" if entry.is_dir() else entry
+            if not body.is_file():
+                continue
+            managed = self.library_dir / entry.name
+            spec = skills.get(entry.name)
+            # One rule per scope, mirroring what materialize() creates: a
+            # native view exists only for eager/core skills naming that
+            # runtime in targets (the shared catalog is the exposure-only
+            # exception). The v2 port checked "claude" for the codex scope
+            # too, so a legitimate codex view looked like a stray on every
+            # explicit --migrate-legacy run.
+            scope_target = {"claude": "claude", "codex": "codex", "opencode": "opencode"}.get(scope)
+            expected = (
+                (scope == "shared" and spec is not None and spec.exposure in ("core", "eager"))
+                or (
+                    scope_target is not None
+                    and spec is not None
+                    and spec.exposure in ("core", "eager")
+                    and scope_target in (spec.targets or [])
                 )
-                prefix = f"legacy/{scope}/{entry.name}"
-                if expected and (managed.exists() or managed.is_symlink()):
-                    actions.append(t("{prefix}: managed view kept", prefix=prefix))
-                    continue
-                destination = legacy_root / scope / entry.name
-                if destination.exists() or destination.is_symlink():
-                    actions.append(t("{prefix}: destination already exists, view left untouched", prefix=prefix))
-                    continue
-                if not apply:
-                    actions.append(t("{prefix}: would be quarantined outside the discovery roots", prefix=prefix))
-                    continue
-                destination.parent.mkdir(parents=True, exist_ok=True)
-                shutil.move(str(entry), str(destination))
-                actions.append(t("{prefix}: quarantined outside the discovery roots", prefix=prefix))
+            )
+            prefix = f"legacy/{scope}/{entry.name}"
+            if expected and (managed.exists() or managed.is_symlink()):
+                actions.append(t("{prefix}: managed view kept", prefix=prefix))
+                continue
+            destination = legacy_root / scope / entry.name
+            if destination.exists() or destination.is_symlink():
+                actions.append(t("{prefix}: destination already exists, view left untouched", prefix=prefix))
+                continue
+            if not apply:
+                actions.append(t("{prefix}: would be quarantined outside the discovery roots", prefix=prefix))
+                continue
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            shutil.move(str(entry), str(destination))
+            actions.append(t("{prefix}: quarantined outside the discovery roots", prefix=prefix))
         return actions
 
 

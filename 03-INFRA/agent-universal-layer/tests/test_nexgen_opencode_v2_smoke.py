@@ -64,7 +64,7 @@ def test_smoke_single_config_resolution(tmp_path: Path, monkeypatch) -> None:
     assert opencode_config_path(home).name == "opencode.json"
     rt = OpenCodeRuntime()
     assert rt._config_path(home).name == "opencode.json"
-    assert McpRenderer(home=home)._opencode_config_path().name == "opencode.json"
+    assert McpRenderer(home=home).opencode_config_path().name == "opencode.json"
 
     (cfg_dir / "opencode.jsonc").write_text("{}", encoding="utf-8")
     assert opencode_config_path(home).name == "opencode.jsonc"
@@ -150,7 +150,7 @@ def test_smoke_engine_fingerprint_websearch_is_dropped_but_user_choice_stays(
     (or any other value) is never second-guessed."""
     home, vault = _sandbox(tmp_path, monkeypatch)
     renderer = McpRenderer(vault_data=vault, home=home)
-    cfg = renderer._opencode_config_path()
+    cfg = renderer.opencode_config_path()
     cfg.parent.mkdir(parents=True)
 
     cfg.write_text(

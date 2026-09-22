@@ -227,7 +227,7 @@ def _missing_config_actions(vault: Path, home: Path) -> list[str]:
         "claude": home / ".claude.json",
         "antigravity": home / ".gemini" / "antigravity-ide" / "mcp_config.json",
         "codex": home / ".codex" / "config.toml",
-        "opencode": renderer._opencode_config_path(),
+        "opencode": renderer.opencode_config_path(),
     }
     actions: list[str] = []
     for cli, path in cli_paths.items():

@@ -162,16 +162,16 @@ def _prompt_user(current: str, latest: str, notes_hint: str = "") -> bool:
 
 
 def _notify_success(latest: str) -> None:
+    import contextlib
+
     if os.name == "nt":
-        try:
+        with contextlib.suppress(Exception):
             ctypes.windll.user32.MessageBoxW(
                 0,
                 f"NeXgen Engine aggiornato con successo alla versione {latest}!",
                 "NeXgen Engine Update",
                 0x00000000 | 0x00000040
             )
-        except Exception:
-            pass
     else:
         if shutil.which("notify-send"):
             subprocess.run([

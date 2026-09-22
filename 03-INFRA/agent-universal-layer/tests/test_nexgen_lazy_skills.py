@@ -296,3 +296,57 @@ def test_agent_skill_find_searches_both_name_and_description(tmp_path, monkeypat
     assert "diagnostica" in out
     assert "guasti riproducibili" in out
 
+
+
+def _managed_view_setup(tmp_path, monkeypatch, name="demo", targets="[codex]", exposure="eager"):
+    vault = _vault_with(
+        tmp_path,
+        f"skills:\n  {name}:\n    origin: vault\n    exposure: {exposure}\n    targets: {targets}\n",
+    )
+    _own_skill(vault, name)
+    mat = _materializer(tmp_path, vault, monkeypatch)
+    mat.materialize(apply=True)  # managed library entry now exists
+    return mat
+
+
+def _real_dir_view(mat: SkillMaterializer, root, name="demo"):
+    """Replaces the materialized symlink with a real directory: the legacy
+    shape migrate_legacy exists for."""
+    view = root / name
+    if view.is_symlink() or view.is_file():
+        view.unlink()
+    view.mkdir(parents=True, exist_ok=True)
+    (view / "SKILL.md").write_text("# demo\n", encoding="utf-8")
+    return view
+
+
+def test_migrate_legacy_keeps_a_legitimate_codex_view(tmp_path, monkeypatch):
+    """Regression: the v2 port checked "claude" for the codex scope, so a
+    legitimate codex view looked like a stray on every --migrate-legacy run."""
+    mat = _managed_view_setup(tmp_path, monkeypatch)
+    view = _real_dir_view(mat, mat.codex_dir)
+
+    actions = mat.migrate_legacy(apply=False)
+    assert any("demo" in a and ("kept" in a or "mantenuta" in a) for a in actions), actions
+    assert view.is_dir()  # dry run touches nothing
+
+
+def test_migrate_legacy_quarantines_a_view_for_the_wrong_runtime(tmp_path, monkeypatch):
+    mat = _managed_view_setup(tmp_path, monkeypatch, targets="[codex]")
+    stray = _real_dir_view(mat, mat.claude_dir)
+
+    actions = mat.migrate_legacy(apply=False)
+    assert any("demo" in a and ("quarantined" in a or "quarantena" in a) for a in actions), actions
+
+    moved = mat.migrate_legacy(apply=True)
+    assert not stray.exists()
+    assert (mat.library_dir / "legacy" / "claude" / "demo" / "SKILL.md").is_file()
+    assert any(("quarantined" in a or "quarantena" in a) for a in moved)
+
+
+def test_migrate_legacy_covers_the_native_opencode_directory(tmp_path, monkeypatch):
+    mat = _managed_view_setup(tmp_path, monkeypatch, targets="[opencode]")
+    _real_dir_view(mat, mat.opencode_native_dir)
+
+    actions = mat.migrate_legacy(apply=False)
+    assert any("demo" in a and ("kept" in a or "mantenuta" in a) for a in actions), actions

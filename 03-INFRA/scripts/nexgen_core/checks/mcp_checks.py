@@ -141,7 +141,7 @@ def check_mcp_configs_rendered(vault_data: Path, home: Path) -> CheckOutcome:
         "claude": home / ".claude.json",
         "antigravity": home / ".gemini" / "antigravity-ide" / "mcp_config.json",
         "codex": home / ".codex" / "config.toml",
-        "opencode": renderer._opencode_config_path(),
+        "opencode": renderer.opencode_config_path(),
     }
 
     broken_parts: list[str] = []
@@ -287,7 +287,7 @@ def check_mcp_orphans(vault_data: Path, home: Path) -> CheckOutcome:
         "claude": home / ".claude.json",
         "antigravity": home / ".gemini" / "antigravity-ide" / "mcp_config.json",
         "codex": home / ".codex" / "config.toml",
-        "opencode": renderer._opencode_config_path(),
+        "opencode": renderer.opencode_config_path(),
     }
 
     orphan_parts: list[str] = []

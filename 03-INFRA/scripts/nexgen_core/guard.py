@@ -230,7 +230,7 @@ class GuardRunner:
 
         canon = canonical_instructions(self.vault_data)
         renderer = McpRenderer(vault_data=self.vault_data, home=self.home)
-        candidate = renderer._opencode_config_path()
+        candidate = renderer.opencode_config_path()
         if not candidate.is_file():
             return None
         try:

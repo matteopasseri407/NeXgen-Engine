@@ -84,15 +84,23 @@ class McpRenderer:
             return "python"
         return exe
 
-    def _opencode_config_path(self) -> Path:
-        """Returns OpenCode's native config path.
+    def opencode_config_path(self) -> Path:
+        """The OpenCode config file actually in effect, shared by every
+        OpenCode path (renderer, guardrail adapter, inventory, doctor).
 
         One shared resolution (see ``nexgen_core.paths``): the release
         resolved the EXISTING file with priority jsonc > json > config.json,
         so an already-configured machine got updated on the file OpenCode
-        actually reads, without creating a second one next to it.
+        actually reads, without creating a second one next to it. Two
+        copies of this precedence already diverged once, which is how
+        renderer, guardrail and doctor ended up able to operate on
+        different files -- hence the single public accessor.
         """
         return opencode_config_path(self.home)
+
+    def _opencode_config_path(self) -> Path:
+        """Backward-compatible alias of :meth:`opencode_config_path`."""
+        return self.opencode_config_path()
 
     def retired_server_names(self) -> set[str]:
         """The names of retired connectors: the explicit removal mechanism.
@@ -362,7 +370,7 @@ class McpRenderer:
     def render_opencode(self, write: bool = False) -> tuple[bool, str]:
         """Generates native OpenCode 2 MCP config and migrates flat V1 entries."""
         servers = self.load_resolved_servers("opencode")
-        cfg_file = self._opencode_config_path()
+        cfg_file = self.opencode_config_path()
         existing: dict[str, Any] = {}
         raw_existing = ""
         if cfg_file.is_file():
