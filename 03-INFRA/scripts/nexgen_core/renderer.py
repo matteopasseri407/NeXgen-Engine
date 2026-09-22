@@ -425,19 +425,25 @@ class McpRenderer:
                 for tool in deny:
                     tools_cfg[f"{name}_{tool}"] = False
 
-        if tools_cfg:
-            # purge stale denies: entries for servers no longer mounted (or no
-            # longer denied) must not accumulate in the tools section.
-            mounted_names = set(mcp_servers)
-            tools_cfg = {k: v for k, v in tools_cfg.items()
-                         if k.split("_", 1)[0] in mounted_names}
-            existing["tools"] = tools_cfg
+        # OpenCode 2.0+: enforce Firecrawl primacy over native cloud websearch.
+        # Define provider 'parallel' to prevent TUI interactive selection menus,
+        # but disable the native websearch tool so agents route through local Firecrawl MCP.
+        if "websearch" not in existing:
+            existing["websearch"] = "parallel"
+
+        mounted_names = set(mcp_servers)
+        tools_cfg = {k: v for k, v in tools_cfg.items()
+                     if k.split("_", 1)[0] in mounted_names}
+        tools_cfg["websearch"] = False
+        existing["tools"] = tools_cfg
         existing["mcp"] = mcp_servers
         if write:
             # JSONC-aware: preserves the existing file's comments instead of
             # overwriting it with plain JSON (which OpenCode wouldn't read).
             if cfg_file.suffix == ".jsonc" and raw_existing.strip():
                 content = set_jsonc_top_level_value(raw_existing, "mcp", mcp_servers)
+                content = set_jsonc_top_level_value(content, "tools", tools_cfg)
+                content = set_jsonc_top_level_value(content, "websearch", existing["websearch"])
             else:
                 # File missing or empty: no comments to preserve.
                 content = json.dumps(existing, indent=2) + "\n"
