@@ -192,12 +192,6 @@ class McpRenderer:
 
         return resolved
 
-    def manifest_server_names(self) -> set[str]:
-        """Every server declared in the manifest, mounted or not."""
-        if not self.manifest_path.is_file():
-            return set()
-        return set(load_mcp_manifest(self.manifest_path).get("servers", {}))
-
     def _drop_unmounted(self, mcp_servers: dict, mounted: dict, cli_target: str = "") -> None:
         """Lazy contract on the config side: a server declared in the manifest
         but not mounted for this CLI must not linger in a previous render.

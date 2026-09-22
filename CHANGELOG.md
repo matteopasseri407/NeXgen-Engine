@@ -56,6 +56,9 @@ of any engine release.
 - **Renderer split**: `nexgen_core.mcp_render/` owns one module per CLI
   dialect; `McpRenderer` stays the facade (resolution, manifest,
   `render_all`), so no caller or test changed shape.
+- **Docs without slop**: README tagline and badges deflated to facts,
+  rot-prone counts replaced by CI links, stale cells fixed, platform
+  table regenerated from data; concept map points at the new modules.
 - **OpenCode V2 native contract, end to end**: the engine now writes what V2
   actually loads. `mcp.servers` nesting (staged `feat/tier0` work, kept and
   completed), `plugins` + ordered `permissions` keys, and the global

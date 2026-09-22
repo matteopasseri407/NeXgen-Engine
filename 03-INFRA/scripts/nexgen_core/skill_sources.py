@@ -212,7 +212,7 @@ class SkillFetcher:
     def _installed_versions_file(self) -> Path:
         return resolve_state_dir(self.home) / "installed-skill-versions.json"
 
-    def installed_versions(self) -> dict[str, str]:
+    def _installed_versions(self) -> dict[str, str]:
         """Which version of each installer-owned skill is materialized here."""
         path = self._installed_versions_file()
         if not path.is_file():
@@ -223,9 +223,9 @@ class SkillFetcher:
         except (OSError, ValueError):
             return {}
 
-    def record_installed_version(self, name: str, version: str) -> None:
+    def _record_installed_version(self, name: str, version: str) -> None:
         path = self._installed_versions_file()
-        current = self.installed_versions()
+        current = self._installed_versions()
         current[name] = version
         try:
             path.parent.mkdir(parents=True, exist_ok=True)
@@ -265,7 +265,7 @@ class SkillFetcher:
         self, entry: SkillEntry, lib_dest: Path, discovery_dirs: tuple[Path, ...]
     ) -> tuple[bool, str | None]:
         """Runs a third-party installer, but only when the pin actually moved."""
-        recorded = self.installed_versions().get(entry.name)
+        recorded = self._installed_versions().get(entry.name)
         if recorded == entry.version and lib_dest.is_dir():
             return True, None
         if not entry.install:
@@ -299,5 +299,5 @@ class SkillFetcher:
                 "the installer for '{name}' ran but left nothing the engine could find",
                 name=entry.name,
             )
-        self.record_installed_version(entry.name, entry.version or "")
+        self._record_installed_version(entry.name, entry.version or "")
         return True, t("Installed skill '{name}' at version {version}", name=entry.name, version=entry.version)
