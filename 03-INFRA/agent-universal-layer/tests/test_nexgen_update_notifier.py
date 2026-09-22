@@ -89,6 +89,9 @@ def test_shell_check_refreshes_stale_cache_in_background(tmp_path, monkeypatch):
         spawned["args"] = args
         raise RuntimeError("nope")  # _spawn swallows everything
 
+    # Hermetic: CI runners have no `nexgen` on PATH, dev machines do. The
+    # spawn decision must not depend on the real environment either way.
+    monkeypatch.setattr(notifier.shutil, "which", lambda _name: "/fake/bin/nexgen")
     monkeypatch.setattr(notifier.subprocess, "Popen", fake_popen)
     assert notifier.cmd_shell_check() == 0
     assert spawned["args"][0][:3] == [spawned["args"][0][0], "tool", "update-notifier"]

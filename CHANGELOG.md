@@ -10,6 +10,20 @@ of any engine release.
 
 ## [Unreleased]
 
+## [2.3.1] - 2026-09-23
+
+> `v2.3.0` was tagged on a commit whose CI was red (one PATH-dependent
+> notifier test, green locally, failing on runners) and before the README
+> and dead-code commits landed. That tag stays untouched -- released tags
+> don't move. This release is the green one: same engine, CI verified.
+
+### Fixed
+
+- **CI hermeticity**: the shell-check background-refresh test depended on
+  a real `nexgen` on PATH, so it passed on dev machines and failed on
+  every runner (Linux + Windows). The resolver is now faked like the
+  spawn itself; verified with and without `nexgen` installed.
+
 ## [2.3.0] - 2026-09-22
 
 > Version note: the requested shorthand `v2.30` is resolved here as
