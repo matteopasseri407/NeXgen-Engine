@@ -68,6 +68,7 @@ class SeatInvocation:
     # exactly that environment and nothing else (codex, agy, opencode: see
     # _isolated_seat_env).
     env: dict[str, str] | None = None
+    cwd: Path | None = None
 
 
 def _is_retryable_seat_error(error: SeatRunError) -> bool:
@@ -414,7 +415,6 @@ def _build_seat_command(seat: dict, prompt: str, session_dir: Path) -> SeatInvoc
         argv = [
             "opencode", "run", OPENCODE_ATTACHED_PROMPT,
             "-m", model, "--format", "json", "--file", str(input_file),
-            "--dir", str(session_dir),
         ]
         # --variant is opencode's real reasoning-effort control (verified via
         # `opencode run --help`: "model variant (provider-specific reasoning
@@ -432,6 +432,7 @@ def _build_seat_command(seat: dict, prompt: str, session_dir: Path) -> SeatInvoc
             None,
             input_file,
             env=_isolated_seat_env(cli, session_dir),
+            cwd=session_dir,
         )
     if cli == "agy":
         argv = [
@@ -602,6 +603,7 @@ def run_seat(
                 # dict => exactly that environment, nothing else (codex,
                 # agy, opencode). See _isolated_seat_env.
                 env=invocation.env,
+                cwd=invocation.cwd,
             )
         except OSError as e:
             raise SeatRunError(f"[council] unable to invoke the seat: {e}", "invocation")
