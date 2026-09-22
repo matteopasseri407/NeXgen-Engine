@@ -9,7 +9,7 @@ COUNCIL_DIR = Path(__file__).resolve().parents[2] / "agent-universal-layer" / "c
 if str(COUNCIL_DIR) not in sys.path:
     sys.path.insert(0, str(COUNCIL_DIR))
 
-from seat_process import OPENCODE_ATTACHED_PROMPT, _build_seat_command
+from seat_process import OPENCODE_ATTACHED_PROMPT, _build_seat_command  # noqa: E402
 
 
 def test_opencode_build_seat_command_no_dir_flag(tmp_path: Path) -> None:
