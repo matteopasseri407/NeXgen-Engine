@@ -3,8 +3,8 @@
 # Image is pinned to an explicit, non-"latest" version tag so a redeploy on
 # a fresh VPS reproduces the same n8n build. To also pin a sha256 digest
 # (recommended once you have Docker/registry access):
-#   docker pull n8nio/n8n:2.29.10
-#   docker inspect --format '{{index .RepoDigests 0}}' n8nio/n8n:2.29.10
+#   docker pull n8nio/n8n:2.35.3
+#   docker inspect --format '{{index .RepoDigests 0}}' n8nio/n8n:2.35.3
 # then set N8N_IMAGE in .env to the printed n8nio/n8n@sha256:... value.
 #
 # Rollback: N8N_IMAGE=n8nio/n8n:<older-tag> docker compose -f n8n/docker-compose.yml up -d
@@ -13,7 +13,7 @@
 
 services:
   n8n:
-    image: ${N8N_IMAGE:-n8nio/n8n:2.29.10}
+    image: ${N8N_IMAGE:-n8nio/n8n:2.35.3}
     container_name: n8n
     restart: unless-stopped
     ports:
