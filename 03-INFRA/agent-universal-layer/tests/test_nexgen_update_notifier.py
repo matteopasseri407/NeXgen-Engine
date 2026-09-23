@@ -151,3 +151,117 @@ def test_gui_check_honors_shared_dismissal(tmp_path, monkeypatch):
     monkeypatch.setattr(notifier, "_prompt_user", lambda *a, **k: (_ for _ in ()).throw(AssertionError("nagged twice")))
 
     assert notifier.cmd_check() == 0
+
+
+def test_shell_check_announces_applied_updates_once_and_asks_nothing(tmp_path, monkeypatch, capsys):
+    _isolate(tmp_path, monkeypatch)
+    _write_cache(has_update=False)
+    state_dir = tmp_path / "state"
+    (state_dir / "nexgen").mkdir(parents=True, exist_ok=True)
+    (state_dir / "nexgen" / "third-party-applied.json").write_text(json.dumps({
+        "applied": [{"what": "skill 'demo' (github o/r)", "new": "b" * 40, "at": time.time()}],
+    }), encoding="utf-8")
+    monkeypatch.setattr(sys.stdin, "isatty", lambda: True)
+    monkeypatch.setattr("builtins.input", lambda _prompt="": (_ for _ in ()).throw(AssertionError("asked")))
+
+    assert notifier.cmd_shell_check() == 0
+    assert "Skill aggiornate: demo." in capsys.readouterr().out
+
+    # Second shell: already said, stays silent.
+    assert notifier.cmd_shell_check() == 0
+    assert capsys.readouterr().out == ""
+
+
+def test_shell_check_held_line_appears_once_per_day(tmp_path, monkeypatch, capsys):
+    _isolate(tmp_path, monkeypatch)
+    _write_cache(has_update=False)
+    state_dir = tmp_path / "state"
+    (state_dir / "nexgen").mkdir(parents=True, exist_ok=True)
+    (state_dir / "nexgen" / "third-party-guard.json").write_text(json.dumps({
+        "checked_at": time.time(),
+        "auto": [], "batch": [],
+        "hold": [{"what": "skill 'demo' (github o/r)", "pinned": "a" * 40,
+                  "upstream": "b" * 40, "reasons": ["x"], "plain": "fermo", "target": None}],
+    }), encoding="utf-8")
+    monkeypatch.setattr(sys.stdin, "isatty", lambda: True)
+    monkeypatch.setattr("builtins.input", lambda _prompt="": (_ for _ in ()).throw(AssertionError("asked")))
+
+    assert notifier.cmd_shell_check() == 0
+    assert "in attesa" in capsys.readouterr().out
+    assert notifier.cmd_shell_check() == 0
+    assert capsys.readouterr().out == ""
+
+
+def test_shell_check_announces_batch_ready_once(tmp_path, monkeypatch, capsys):
+    _isolate(tmp_path, monkeypatch)
+    _write_cache(has_update=False)
+    state_dir = tmp_path / "state"
+    (state_dir / "nexgen").mkdir(parents=True, exist_ok=True)
+    (state_dir / "nexgen" / "third-party-guard.json").write_text(json.dumps({
+        "checked_at": time.time(),
+        "auto": [], "hold": [],
+        "batch": [{"what": "MCP server 'srv' (npm pkg)", "pinned": "1.0.0",
+                   "upstream": "1.0.1", "reasons": ["patch"], "plain": "piano",
+                   "target": {"kind": "npm-version", "manifest": "mcp",
+                              "server": "srv", "package": "pkg"}}],
+    }), encoding="utf-8")
+    monkeypatch.setattr(sys.stdin, "isatty", lambda: True)
+    monkeypatch.setattr("builtins.input", lambda _prompt="": (_ for _ in ()).throw(AssertionError("asked")))
+
+    assert notifier.cmd_shell_check() == 0
+    assert "nexgen skill bump" in capsys.readouterr().out
+    assert notifier.cmd_shell_check() == 0
+    assert capsys.readouterr().out == ""
+
+
+def test_shell_check_batch_and_hold_each_appear_once(tmp_path, monkeypatch, capsys):
+    _isolate(tmp_path, monkeypatch)
+    _write_cache(has_update=False)
+    state_dir = tmp_path / "state"
+    (state_dir / "nexgen").mkdir(parents=True, exist_ok=True)
+    (state_dir / "nexgen" / "third-party-guard.json").write_text(json.dumps({
+        "checked_at": time.time(),
+        "auto": [], "hold": [
+            {"what": "skill 'h' (github o/r)", "pinned": "a" * 40, "upstream": "b" * 40,
+             "reasons": ["x"], "plain": "fermo", "target": None}],
+        "batch": [{"what": "MCP server 'srv' (npm pkg)", "pinned": "1.0.0",
+                   "upstream": "1.0.1", "reasons": ["patch"], "plain": "piano",
+                   "target": {"kind": "npm-version", "manifest": "mcp",
+                              "server": "srv", "package": "pkg"}}],
+    }), encoding="utf-8")
+    monkeypatch.setattr(sys.stdin, "isatty", lambda: True)
+    monkeypatch.setattr("builtins.input", lambda _prompt="": (_ for _ in ()).throw(AssertionError("asked")))
+
+    assert notifier.cmd_shell_check() == 0
+    out = capsys.readouterr().out
+    assert "nexgen skill bump" in out and "in attesa" in out
+    assert notifier.cmd_shell_check() == 0
+    assert capsys.readouterr().out == ""
+
+
+def test_crashed_dialog_does_not_consume_announcement(tmp_path, monkeypatch):
+    _isolate(tmp_path, monkeypatch)
+    state_dir = tmp_path / "state"
+    (state_dir / "nexgen").mkdir(parents=True, exist_ok=True)
+    (state_dir / "nexgen" / "third-party-applied.json").write_text(json.dumps({
+        "applied": [{"what": "skill 'demo' (github o/r)", "new": "b" * 40, "at": time.time()}],
+    }), encoding="utf-8")
+    monkeypatch.setenv("DISPLAY", ":0")
+    monkeypatch.setattr(notifier.shutil, "which", lambda _name: "/usr/bin/zenity")
+
+    crashed = {"rc": 1}
+
+    def _run(*args, **kwargs):
+        class _Proc:
+            returncode = crashed["rc"]
+        return _Proc()
+
+    monkeypatch.setattr(notifier.subprocess, "run", _run)
+    notifier._check_skills_gui()
+    # Still pending: the user saw nothing.
+    assert notifier._skills_notice(mark=False) is not None
+    assert "Skill aggiornate: demo." in (notifier._skills_notice(mark=False) or "")
+
+    crashed["rc"] = 0
+    notifier._check_skills_gui()
+    assert notifier._skills_notice(mark=False) is None

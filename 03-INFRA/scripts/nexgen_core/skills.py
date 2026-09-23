@@ -529,6 +529,11 @@ def main(argv: list[str] | None = None) -> int:
         print(t("Index generated at {path}", path=idx))
         return 0
 
+    elif cmd == "bump":
+        from nexgen_core.thirdparty_bump import bump_batch
+
+        return bump_batch()
+
     elif cmd == "list":
         for name, s in sorted(mat.load_manifest().items()):
             print(f"{name}\t{s.description or '-'}")

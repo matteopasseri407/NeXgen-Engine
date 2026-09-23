@@ -37,6 +37,12 @@ THROTTLE_HOURS = 12
 CACHE_STALE_AFTER_HOURS = 12
 CACHE_TOO_OLD_TO_NAG_DAYS = 7
 
+#: Machine-readable twin depwatch writes next to its markdown report.
+#: The notifier lanes read this file only and never touch the network
+#: for third-party state: freshness comes from the hourly beat and the
+#: detached background refresh, same service as the engine cache.
+SKILLS_REPORT_NAME = "third-party-upgrades.md"
+
 
 def _state_file() -> Path:
     return Path(resolve_state_dir()) / "nexgen" / "update-status.json"
@@ -100,6 +106,23 @@ def _dismissed_today(latest: str) -> bool:
         and dismissed.get("version") == latest
         and dismissed.get("day") == _today()
     )
+
+
+def _skills_report_file() -> Path:
+    return Path(resolve_state_dir()) / SKILLS_REPORT_NAME
+
+
+def _skills_dismissed(key: str, fingerprint: str) -> bool:
+    dismissed = _read_state().get(key)
+    return (
+        isinstance(dismissed, dict)
+        and dismissed.get("fingerprint") == fingerprint
+        and dismissed.get("day") == _today()
+    )
+
+
+def _record_skills_dismissal(key: str, fingerprint: str) -> None:
+    _write_state({key: {"fingerprint": fingerprint, "day": _today()}})
 
 
 def _prompt_linux(current: str, latest: str, notes_hint: str = "") -> bool:
@@ -207,25 +230,64 @@ def cmd_check(force: bool = False) -> int:
         print(f"[update-notifier] check failed: {exc}", file=sys.stderr)
         return 1
 
-    if not has_update:
-        return 0
+    if has_update:
+        if force or not (_dismissed_today(latest) or _is_throttled()):
+            _record_prompt_time(latest)
+            wants_update = _prompt_user(current, latest, _notes_hint())
 
-    if not force and (_dismissed_today(latest) or _is_throttled()):
-        return 0
+            if wants_update:
+                ok = _run_update()
+                if ok:
+                    _notify_success(latest)
+                else:
+                    if os.name != "nt" and shutil.which("zenity"):
+                        subprocess.run(["zenity", "--error", "--title=NeXgen Engine", "--text=Errore durante l'aggiornamento. Riprova con 'nexgen update' dal terminale."], check=False)
+                    return 1
 
-    _record_prompt_time(latest)
-    wants_update = _prompt_user(current, latest, _notes_hint())
-
-    if wants_update:
-        ok = _run_update()
-        if ok:
-            _notify_success(latest)
-        else:
-            if os.name != "nt" and shutil.which("zenity"):
-                subprocess.run(["zenity", "--error", "--title=NeXgen Engine", "--text=Errore durante l'aggiornamento. Riprova con 'nexgen update' dal terminale."], check=False)
-            return 1
-
+    _check_skills_gui(force=force)
     return 0
+
+
+def _check_skills_gui(force: bool = False) -> None:
+    """GUI lane twin for third-party skills/MCP: notice only, never apply.
+
+    Same message as the shell lane, no questions anywhere.
+    """
+    try:
+        message = _skills_notice(mark=False)
+        if not message:
+            return
+        if force:
+            print(message)
+            _confirm_skills_shown()
+            return
+        text = f"{message}\nDettagli: {_skills_report_file()}"
+        if os.name == "nt":
+            try:
+                import contextlib
+
+                with contextlib.suppress(Exception):
+                    ctypes.windll.user32.MessageBoxW(
+                        0, text, "NeXgen Engine — terze parti", 0x00000000 | 0x00000040
+                    )
+                _confirm_skills_shown()
+            except Exception:
+                print(text)
+                _confirm_skills_shown()
+        elif shutil.which("zenity") and (os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY")):
+            proc = subprocess.run([
+                "zenity", "--info",
+                "--title=NeXgen Engine — terze parti",
+                f"--text={text}",
+                "--width=480",
+            ], check=False)
+            if proc.returncode == 0:
+                _confirm_skills_shown()
+        else:
+            print(text)
+            _confirm_skills_shown()
+    except Exception as exc:
+        print(f"[update-notifier] skills check failed: {exc}", file=sys.stderr)
 
 
 def _newest_tag_ls_remote(engine_repo: str, timeout: int = 20) -> str | None:
@@ -297,6 +359,12 @@ def refresh_update_cache(engine_repo: str | None = None, timeout: int = 20) -> d
         _write_state(result)
     except Exception:
         pass
+    try:
+        from nexgen_core.depwatch import run_depwatch
+
+        run_depwatch()
+    except Exception:
+        pass
     return result
 
 
@@ -365,23 +433,26 @@ def _shell_check() -> int:
     state = _read_state()
     if not _cache_fresh(state):
         _spawn_background_refresh()
-        if not _cache_usable(state):
-            return 0
-    if not state.get("has_update"):
-        return 0
+    if _cache_usable(state) and state.get("has_update"):
+        _shell_check_engine(state)
+    _shell_check_skills()
+    return 0
+
+
+def _shell_check_engine(state: dict) -> None:
     current = str(state.get("current", ""))
     latest = str(state.get("latest", ""))
     if not current or not latest or _dismissed_today(latest):
-        return 0
+        return
     if not sys.stdin.isatty():
-        return 0
+        return
     try:
         answer = input(
             f"\nNeXgen Engine: {latest} disponibile (installata: {current}). "
             "Note: `nexgen update --check`. Aggiorna ora? [s/N] "
         )
     except EOFError:
-        return 0
+        return
     _record_prompt_time(latest)
     if answer.strip().lower() in {"s", "si", "y", "yes"}:
         print(f"Avvio `nexgen update` verso {latest}...")
@@ -389,8 +460,157 @@ def _shell_check() -> int:
             os.execvp("nexgen", ["nexgen", "update", "--target", latest.removeprefix("v")])
         except OSError as exc:
             print(f"[update-notifier] cannot launch `nexgen update`: {exc}", file=sys.stderr)
-            return 0
-    return 0
+
+
+def _shell_check_skills() -> None:
+    """Second lane of the same shell hook: says what moved, asks nothing.
+
+    Vetted pins already moved on their own in the hourly beat; this lane
+    only announces them once, plus one quiet line for whatever is held.
+    """
+    try:
+        if not sys.stdin.isatty():
+            return
+        message = _skills_notice()
+        if message:
+            print(f"\n{message}")
+    except Exception as exc:
+        print(f"[update-notifier] skills check failed: {exc}", file=sys.stderr)
+
+
+def _applied_file() -> Path:
+    return Path(resolve_state_dir()) / "nexgen" / "third-party-applied.json"
+
+
+def _short_skill_name(what: str) -> str:
+    import re
+
+    match = re.match(r"^(?:skill|MCP server) '([^']+)'", str(what or ""))
+    return match.group(1) if match else str(what or "")
+
+
+def _take_fresh_applied(mark: bool = True) -> list[str]:
+    """Names bumped since this lane last spoke. Marks them shown.
+
+    At-least-once by design: if two shells race, an update may be
+    announced twice, but never zero times. A lost announcement would
+    silently hide work the machine did on its own. Callers that only
+    peek (the GUI before its dialog) pass mark=False and confirm later.
+    """
+    try:
+        import json
+
+        data = json.loads(_applied_file().read_text(encoding="utf-8"))
+        entries = data.get("applied") if isinstance(data, dict) else None
+        entries = [e for e in entries if isinstance(e, dict)] if isinstance(entries, list) else []
+    except (OSError, ValueError):
+        return []
+    state = _read_state()
+    shown = state.get("skills_shown")
+    shown = set(shown) if isinstance(shown, list) else set()
+
+    def _marker(entry: dict) -> str:
+        return f"{entry.get('what')}|{entry.get('new')}"
+
+    fresh = [e for e in entries if _marker(e) not in shown]
+    if mark:
+        shown.update(_marker(e) for e in fresh)
+        _write_state({"skills_shown": sorted(shown)[-200:]})
+    seen: set[str] = set()
+    names = []
+    for entry in fresh:
+        name = _short_skill_name(str(entry.get("what") or ""))
+        if name and name not in seen:
+            seen.add(name)
+            names.append(name)
+    return names
+
+
+def _confirm_skills_shown() -> None:
+    """Marks currently pending announcements as shown, after they were
+    actually displayed. A crashed dialog must not consume the message."""
+    _skills_notice(mark=True)
+
+
+def _held_once_daily(mark: bool = True) -> str | None:
+    """One quiet line for held items, at most once a day per held set."""
+    try:
+        import hashlib
+        import json
+
+        guard_file = Path(resolve_state_dir()) / "nexgen" / "third-party-guard.json"
+        data = json.loads(guard_file.read_text(encoding="utf-8"))
+        if not isinstance(data, dict):
+            return None
+        if (time.time() - float(data.get("checked_at", 0))) > CACHE_TOO_OLD_TO_NAG_DAYS * 86400:
+            return None
+        held = data.get("hold") if isinstance(data.get("hold"), list) else []
+        held = [h for h in held if isinstance(h, dict) and h.get("what")]
+        if not held:
+            return None
+        fingerprint = hashlib.sha256(
+            "\n".join(sorted(str(h["what"]) for h in held)).encode()
+        ).hexdigest()[:16]
+        if _skills_dismissed("dismissed_skills_hold", fingerprint):
+            return None
+        if mark:
+            _record_skills_dismissal("dismissed_skills_hold", fingerprint)
+        return (
+            f"{len(held)} aggiornamenti delicati in attesa "
+            f"({', '.join(_short_skill_name(str(h['what'])) for h in held[:3])}"
+            f"{', ...' if len(held) > 3 else ''}): dimmi e li leggo io."
+        )
+    except (OSError, ValueError, TypeError):
+        return None
+
+
+def _skills_notice(mark: bool = True) -> str | None:
+    """The whole third-party message for every lane: what moved on its
+    own, what is ready for one yes, plus one line for what is held.
+    No questions, ever."""
+    parts = []
+    applied = _take_fresh_applied(mark=mark)
+    if applied:
+        parts.append(f"Skill aggiornate: {', '.join(applied)}.")
+    batch_line = _batch_once_daily(mark=mark)
+    if batch_line:
+        parts.append(batch_line)
+    held_line = _held_once_daily(mark=mark)
+    if held_line:
+        parts.append(held_line)
+    return "\n".join(parts) or None
+
+
+def _batch_once_daily(mark: bool = True) -> str | None:
+    """Names the BATCH verdicts once a day, so the human knows a single
+    `nexgen skill bump` is waiting. Read-only: the approval stays theirs."""
+    try:
+        import hashlib
+        import json
+
+        guard_file = Path(resolve_state_dir()) / "nexgen" / "third-party-guard.json"
+        data = json.loads(guard_file.read_text(encoding="utf-8"))
+        if not isinstance(data, dict):
+            return None
+        if (time.time() - float(data.get("checked_at", 0))) > CACHE_TOO_OLD_TO_NAG_DAYS * 86400:
+            return None
+        batch = data.get("batch") if isinstance(data.get("batch"), list) else []
+        batch = [b for b in batch if isinstance(b, dict) and b.get("what")]
+        if not batch:
+            return None
+        fingerprint = hashlib.sha256(
+            ("\n".join(sorted(str(b["what"]) for b in batch)) + "|batch").encode()
+        ).hexdigest()[:16]
+        if _skills_dismissed("dismissed_skills_batch", fingerprint):
+            return None
+        if mark:
+            _record_skills_dismissal("dismissed_skills_batch", fingerprint)
+        names = ", ".join(_short_skill_name(str(b["what"])) for b in batch[:4])
+        if len(batch) > 4:
+            names += ", ..."
+        return f"{len(batch)} aggiornamenti tranquilli pronti ({names}): `nexgen skill bump` li alza in un colpo solo."
+    except (OSError, ValueError, TypeError):
+        return None
 
 
 _BASH_HOOK = """# NeXgen Engine update notice (managed: `nexgen tool update-notifier --install-shell-hook --remove` to stop).

@@ -114,14 +114,57 @@ class Heartbeat:
             return False, t("Error reading liveness: {error}", error=exc)
 
     def run_dependency_watch(self) -> dict[str, Any]:
-        """Inspects pinned third-party dependencies upstream. Never applies
-        anything and never notifies: a failure here is missed maintenance,
-        not a reason to stop the rest of the heartbeat."""
+        """Inspects pinned third-party dependencies upstream, judges the
+        stale ones with deterministic rules, and raises the vetted pins
+        without asking. Held items never move here. Never notifies: a
+        failure is missed maintenance, not a reason to stop the heartbeat."""
         try:
             result = run_depwatch(vault_data=self.vault_data, state_dir=self.state_dir)
-            return {"ok": True, "wrote": result.wrote, "stale": sum(f.stale for f in result.findings)}
+            answer: dict[str, Any] = {
+                "ok": True, "wrote": result.wrote,
+                "stale": sum(f.stale for f in result.findings),
+            }
+            try:
+                from nexgen_core.thirdparty_guard import run_guardian
+
+                scopes = self._skill_scopes()
+                answer["guard"] = run_guardian(
+                    result.findings, self.state_dir, skill_scopes=scopes,
+                )
+            except Exception as exc:
+                answer["guard"] = {"ok": False, "error": str(exc)}
+            try:
+                from nexgen_core.thirdparty_bump import auto_apply, read_guard_payload
+
+                payload = read_guard_payload(self.state_dir)
+                answer["auto_applied"] = auto_apply(
+                    payload or {}, self.vault_data, self.home, self.state_dir,
+                )
+            except Exception as exc:
+                answer["auto_applied"] = {"ok": False, "error": str(exc)}
+            return answer
         except Exception as exc:
             return {"ok": False, "error": str(exc)}
+
+    def _skill_scopes(self) -> dict[str, str]:
+        """Vendored subpath per github skill, so the guardian only judges
+        the bytes the engine actually materializes. Unknown skills default
+        to the whole repo, which is the conservative side."""
+        try:
+            from nexgen_core.config import load_skills_manifest
+            from nexgen_core.paths import skills_manifest
+
+            manifest = skills_manifest(self.vault_data)
+            if not manifest.is_file():
+                return {}
+            data = load_skills_manifest(manifest).get("skills", {})
+            scopes: dict[str, str] = {}
+            for name, entry in data.items():
+                if isinstance(entry, dict) and entry.get("origin") == "github":
+                    scopes[str(name)] = str(entry.get("path") or ".")
+            return scopes
+        except Exception:
+            return {}
 
     def run_self_upgrade(self) -> dict[str, Any]:
         """Attempts an unattended upgrade, capped at a patch bump by the

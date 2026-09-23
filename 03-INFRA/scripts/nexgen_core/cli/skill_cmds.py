@@ -31,6 +31,9 @@ def register(sub) -> None:
     q.add_argument("--migrate-legacy", action="store_true", help=t("Quarantine the inherited views"))
     q.set_defaults(func=lambda a: _forward(["apply"] + (["--migrate-legacy"] if a.migrate_legacy else [])))
 
+    q = ssub.add_parser("bump", help=t("Raise guardian-vetted third-party pins with one approval"))
+    q.set_defaults(func=lambda a: _forward(["bump"]))
+
     q = ssub.add_parser("validate", help=t("Check the manifest without writing anything"))
     q.set_defaults(func=lambda a: _forward(["validate"]))
 

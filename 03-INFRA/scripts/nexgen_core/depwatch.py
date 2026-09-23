@@ -2,21 +2,27 @@
 
 Watches upstream everything third-party that the layer declares pinned:
 ``origin: github`` skills pinned to a commit, ``origin: installer`` skills
-pinned to a version (read from the ``install`` command), MCP servers invoked
-via ``npx package@version``. It produces a list and stops there: applying an
-upstream update changes a behavior nobody chose.
+pinned to a version (read from the ``install`` command), ``origin:
+upstream`` skills pinned via their ``deps:`` block (``npx`` spec or ``git``
+repo+rev), MCP servers invoked via ``npx package@version``. It produces a
+list and stops there: applying an upstream update changes a behavior
+nobody chose.
 
 NEVER notifies (no alerts, ever). Being offline is not an incident: if no
 check reaches upstream, it writes nothing and reports nothing, because a
 workstation is offline all the time. The produced report
-(``third-party-upgrades.md``) lives in the machine-local state folder and
-never syncs. Stdlib only, always with short timeouts.
+(``third-party-upgrades.md``) plus its machine-readable sidecar
+(``nexgen/third-party-status.json``, same stale set for the
+update-notifier lanes) live in the machine-local state folder and never
+sync. Stdlib only, always with short timeouts.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import subprocess
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -30,6 +36,7 @@ from nexgen_core.paths import mcp_manifest, resolve_state_dir, resolve_vault_dat
 GIT_LS_REMOTE_TIMEOUT_SECONDS = 8
 NPM_REGISTRY_TIMEOUT_SECONDS = 6
 REPORT_FILE_NAME = "third-party-upgrades.md"
+STATUS_FILE_NAME = "third-party-status.json"
 
 #: An npm-style `package@version` token, scoped or not; `@latest` or a range is not a pin.
 NPM_SPEC_RE = re.compile(r"^(?P<name>(?:@[\w.-]+/)?[\w.-]+)@(?P<version>\d[\w.+-]*)$")
@@ -52,10 +59,22 @@ class DepwatchResult:
 
 
 def _git_ls_remote_head(repo: str) -> str | None:
-    """The remote HEAD commit of `repo`, or None if unreachable right now."""
+    """The remote HEAD commit of `repo`, or None if unreachable right now.
+
+    A manifest names a GitHub skill the way people write it
+    (``owner/name``); that shorthand is resolved to a clone URL first,
+    mirroring what the materializer clones, otherwise every shorthand
+    skill lands in "could not be checked" forever.
+    """
+    try:
+        from nexgen_core.skill_sources import clone_url
+
+        target = clone_url(repo)
+    except Exception:
+        target = repo
     try:
         result = subprocess.run(
-            ["git", "ls-remote", repo, "HEAD"],
+            ["git", "ls-remote", target, "HEAD"],
             capture_output=True, text=True, check=False,
             timeout=GIT_LS_REMOTE_TIMEOUT_SECONDS,
         )
@@ -93,22 +112,50 @@ def _command_tokens(srv: dict) -> list[str]:
 
 
 def _collect_skill_pins(skills_raw: dict[str, dict]) -> list[tuple[str, str, str, str]]:
-    """(label, kind, pin, key) for every pinned github or installer skill."""
+    """(label, kind, pin, key) for every pinned github, installer or upstream skill.
+
+    ``installer`` pins come from ``npx pkg@version`` tokens in the install
+    command; ``upstream`` (and any other origin carrying one) pins come
+    from the ``deps:`` block the doctor already verifies offline-safe:
+    ``npx`` kind via its ``spec``, ``git`` kind via ``repo``+``rev``.
+    """
     pins: list[tuple[str, str, str, str]] = []
+    seen: set[tuple[str, str, str]] = set()
+
+    def _add(label: str, kind: str, pin: str, key: str) -> None:
+        marker = (label, kind, key.strip().lower(), pin.strip().lower())
+        if marker in seen:
+            return
+        seen.add(marker)
+        pins.append((label, kind, pin, key))
+
     for name, entry in skills_raw.items():
         if not isinstance(entry, dict):
             continue
         if entry.get("origin") == "github":
             repo, commit = entry.get("repo"), entry.get("commit")
             if repo and commit:
-                pins.append((f"skill '{name}' (github {repo})", "git-commit", str(commit), str(repo)))
-        elif entry.get("origin") == "installer":
+                _add(f"skill '{name}' (github {repo})", "git-commit", str(commit), str(repo))
+        if entry.get("origin") == "installer":
             install = entry.get("install")
             tokens = [str(t) for t in install] if isinstance(install, list) else []
             for spec in _npm_spec_tokens(tokens):
                 match = NPM_SPEC_RE.match(spec)
                 pkg, ver = match.group("name"), match.group("version")
-                pins.append((f"skill '{name}' (npm {pkg})", "npm-version", ver, pkg))
+                _add(f"skill '{name}' (npm {pkg})", "npm-version", ver, pkg)
+        deps = entry.get("deps")
+        if isinstance(deps, dict):
+            kind = str(deps.get("kind") or "").strip()
+            if kind == "npx":
+                spec = str(deps.get("spec") or "").strip()
+                match = NPM_SPEC_RE.match(spec)
+                if match:
+                    pkg, ver = match.group("name"), match.group("version")
+                    _add(f"skill '{name}' (npm {pkg})", "npm-version", ver, pkg)
+            elif kind == "git":
+                repo, rev = deps.get("repo"), deps.get("rev")
+                if repo and rev:
+                    _add(f"skill '{name}' (git {repo})", "git-commit", str(rev), str(repo))
     return pins
 
 
@@ -196,4 +243,29 @@ def run_depwatch(
 
     report_path = resolved_state / REPORT_FILE_NAME
     _write_report(report_path, findings)
+    _write_status_sidecar(resolved_state, findings)
     return DepwatchResult(findings=findings, report_path=report_path, wrote=True)
+
+
+def _write_status_sidecar(state_dir: Path, findings: list[PinFinding]) -> None:
+    """Machine-readable twin of the report for the update-notifier lanes.
+
+    The shell hook and the GUI timer must never touch the network: they
+    read this file only. Written exactly when the report is written, so
+    "no sidecar" unambiguously means "nothing fresh to show".
+    """
+    try:
+        stale = sorted(f"{f.what}|{f.pinned}|{f.upstream}" for f in findings if f.stale)
+        fingerprint = hashlib.sha256("\n".join(stale).encode()).hexdigest()[:16]
+        payload = {
+            "checked_at": time.time(),
+            "stale_count": len(stale),
+            "stale": sorted(f.what for f in findings if f.stale),
+            "fingerprint": fingerprint,
+            "report": REPORT_FILE_NAME,
+        }
+        sidecar = state_dir / "nexgen" / STATUS_FILE_NAME
+        sidecar.parent.mkdir(parents=True, exist_ok=True)
+        sidecar.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+    except OSError:
+        pass
