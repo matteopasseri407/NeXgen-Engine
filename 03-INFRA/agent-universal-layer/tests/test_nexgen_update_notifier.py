@@ -288,6 +288,7 @@ def test_ensure_shell_hook_installs_once(tmp_path, monkeypatch):
 
 def test_ensure_boot_check_windows_uses_schtasks(tmp_path, monkeypatch):
     home = _isolate(tmp_path, monkeypatch)
+    orig_name = notifier.os.name
     monkeypatch.setattr(notifier.os, "name", "nt")
     monkeypatch.setenv("APPDATA", str(tmp_path / "appdata"))
     calls = []
@@ -311,7 +312,7 @@ def test_ensure_boot_check_windows_uses_schtasks(tmp_path, monkeypatch):
     try:
         notes = notifier.ensure_boot_check(str(home))
     finally:
-        monkeypatch.setattr(notifier.os, "name", "posix")
+        monkeypatch.setattr(notifier.os, "name", orig_name)
     assert any("schtasks" in n for n in notes)
     assert any(argv[:2] == ["schtasks.exe", "/Query"] for argv in calls)
     create = [argv for argv in calls if "/Create" in argv]
@@ -329,6 +330,7 @@ def test_windows_vbs_quotes_spaced_paths():
 
 def test_windows_fallback_removed_after_success(tmp_path, monkeypatch):
     home = _isolate(tmp_path, monkeypatch)
+    orig_name = notifier.os.name
     monkeypatch.setattr(notifier.os, "name", "nt")
     appdata = tmp_path / "appdata"
     monkeypatch.setenv("APPDATA", str(appdata))
@@ -348,7 +350,7 @@ def test_windows_fallback_removed_after_success(tmp_path, monkeypatch):
         notifier.ensure_boot_check(str(home))
         assert not dest.exists()
     finally:
-        monkeypatch.setattr(notifier.os, "name", "posix")
+        monkeypatch.setattr(notifier.os, "name", orig_name)
 
 
 def test_windows_task_probe_matches_notifier_command(monkeypatch):
