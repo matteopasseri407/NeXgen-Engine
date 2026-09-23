@@ -10,6 +10,25 @@ of any engine release.
 
 ## [Unreleased]
 
+## [2.3.2] - 2026-09-23
+
+### Added
+
+- **Third-party skill/MCP upkeep**: depwatch resolves github shorthand
+  and watches upstream `deps` pins; a deterministic guardian judges every
+  stale pin with static rules only (identical bytes move alone, prose-only
+  batches wait for one yes, the rest stays held); `nexgen skill bump`
+  raises the batch with a single approval; the hourly beat raises
+  identical-bytes pins alone with backup, commit and retry-on-failure.
+- **One-line notices**: the shell hook and the GUI timer announce applied
+  updates and ready batches in plain language, once, never asking twice.
+
+### Fixed
+
+- depwatch reported every shorthand github skill as unreachable because
+  `owner/name` went straight to `git ls-remote`; it now resolves the
+  clone URL like the materializer does.
+
 ## [2.3.1] - 2026-09-23
 
 > `v2.3.0` was tagged on a commit whose CI was red (one PATH-dependent
