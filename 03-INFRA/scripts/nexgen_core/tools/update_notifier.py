@@ -693,15 +693,23 @@ def _nexgen_cmd(home: Path) -> str:
     return str(shim) if shim.is_file() else "nexgen"
 
 
-def _write_if_different(path: Path, content: str) -> bool:
+def _write_if_different(path: Path, content: str) -> bool | None:
+    """True when written, False when already correct, None on error.
+
+    None and False both read falsy, so callers must check identity
+    (`is None`) before deciding a lane is installed.
+    """
     try:
         if path.is_file() and path.read_text(encoding="utf-8") == content:
             return False
+    except OSError:
+        pass
+    try:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(content, encoding="utf-8")
         return True
     except OSError:
-        return False
+        return None
 
 
 def _run_quiet(argv: list[str], timeout: int = 60) -> tuple[int, str]:
@@ -715,41 +723,104 @@ def _run_quiet(argv: list[str], timeout: int = 60) -> tuple[int, str]:
 _UPDATE_CHECK_TASK = "NeXgen Engine Update Check"
 
 
-def _windows_task_runs_notifier(exec_cmd: str) -> bool:
-    rc, out = _run_quiet(["schtasks.exe", "/Query", "/TN", _UPDATE_CHECK_TASK, "/XML"])
-    return rc == 0 and exec_cmd in out
-
-
-def _ensure_windows_boot_check(home: Path) -> list[str]:
-    """Logon-time update check on Windows: scheduled task, Startup fallback."""
-    notes: list[str] = []
-    exec_cmd = _nexgen_cmd(home)
-    vbs = home / ".local" / "state" / "nexgen-update-check-hidden.vbs"
-    content = (
+def _windows_vbs_content(exec_cmd: str) -> str:
+    """Hidden-runner script. The launcher path is quoted VBScript-style
+    (doubled quotes): an install under `C:\\Users\\First Last` must run
+    instead of failing silently at logon."""
+    quoted = exec_cmd.replace('"', '""')
+    return (
         'Set shell = CreateObject("WScript.Shell")\n'
-        f'shell.Run "{exec_cmd} tool update-notifier --boot", 0, False\n'
+        f'shell.Run """{quoted}"" tool update-notifier --boot", 0, False\n'
     )
-    if _write_if_different(vbs, content):
+
+
+def _windows_task_runs_notifier(vbs_path: str) -> bool:
+    """True when the logon task already invokes this exact wrapper.
+
+    The task XML carries the `wscript.exe "<wrapper>"` command, not the
+    launcher: matching the launcher instead would recreate the task on
+    every guard run.
+    """
+    rc, out = _run_quiet(["schtasks.exe", "/Query", "/TN", _UPDATE_CHECK_TASK, "/XML"])
+    return rc == 0 and vbs_path in out
+
+
+def _windows_startup_copy(appdata: str | None, home: str) -> str:
+    base = appdata or os.path.join(home, "AppData", "Roaming")
+    return os.path.join(base, "Microsoft", "Windows", "Start Menu",
+                        "Programs", "Startup", "NeXgen Update Check.vbs")
+
+
+def _remove_windows_fallback(home: str) -> bool:
+    """Deletes the Startup fallback copy, if any. Returns True when
+    nothing executable is left behind there."""
+    dest = _windows_startup_copy(os.environ.get("APPDATA"), home)
+    try:
+        if os.path.isfile(dest):
+            os.remove(dest)
+            return True
+        return True
+    except OSError:
+        return os.path.isfile(dest) is False
+
+
+def _ensure_windows_boot_check(home: str) -> list[str]:
+    """Logon-time update check on Windows: scheduled task, Startup fallback.
+
+    String paths throughout (no pathlib): the logic stays testable
+    anywhere, while on real Windows the same calls use native semantics.
+    """
+    notes: list[str] = []
+    shim = os.path.join(home, ".local", "bin", "nexgen.cmd")
+    exec_cmd = shim if os.path.isfile(shim) else "nexgen"
+    state_dir = os.path.join(home, ".local", "state")
+    vbs = os.path.join(state_dir, "nexgen-update-check-hidden.vbs")
+    wrote = _write_text_if_different(vbs, _windows_vbs_content(exec_cmd))
+    if wrote is None and not os.path.isfile(vbs):
+        return ["[WARN] wrapper not writable, logon task skipped (nothing points at thin air)"]
+    if wrote:
         notes.append(f"[autostart] hidden wrapper updated: {vbs}")
-    if _windows_task_runs_notifier(exec_cmd):
-        return notes or ["[autostart] logon task already active"]
+    if _windows_task_runs_notifier(vbs):
+        _remove_windows_fallback(home)
+        if not notes:
+            return ["[autostart] logon task already active"]
+        return notes
     rc, out = _run_quiet([
         "schtasks.exe", "/Create", "/TN", _UPDATE_CHECK_TASK, "/SC", "ONLOGON",
         "/TR", f'wscript.exe "{vbs}"', "/F",
     ])
     if rc == 0:
+        _remove_windows_fallback(home)
         notes.append("[autostart] logon task installed via schtasks.exe")
         return notes
-    startup = Path(os.environ.get("APPDATA") or (home / "AppData" / "Roaming"))
-    dest = (startup / "Microsoft" / "Windows" / "Start Menu" / "Programs"
-            / "Startup" / "NeXgen Update Check.vbs")
+    dest = _windows_startup_copy(os.environ.get("APPDATA"), home)
     try:
-        dest.parent.mkdir(parents=True, exist_ok=True)
+        parent = os.path.dirname(dest)
+        os.makedirs(parent, exist_ok=True)
         shutil.copy2(vbs, dest)
         notes.append(f"[autostart] logon fallback installed: {dest}")
     except OSError as exc:
         notes.append(f"[WARN] logon task failed ({out.strip()}) and Startup fallback failed ({exc})")
     return notes
+
+
+def _write_text_if_different(path_str: str, content: str) -> bool | None:
+    """String-path twin of _write_if_different for the Windows lane."""
+    try:
+        with open(path_str, encoding="utf-8") as handle:
+            if handle.read() == content:
+                return False
+    except OSError:
+        pass
+    try:
+        parent = os.path.dirname(path_str)
+        if parent:
+            os.makedirs(parent, exist_ok=True)
+        with open(path_str, "w", encoding="utf-8") as handle:
+            handle.write(content)
+        return True
+    except OSError:
+        return None
 
 
 def _ensure_posix_boot_check(home: Path) -> list[str]:
@@ -799,8 +870,16 @@ WantedBy=timers.target
     changed = _write_if_different(desktop_file, desktop)
     service_file = home / ".config" / "systemd" / "user" / "nexgen-update-check.service"
     timer_file = home / ".config" / "systemd" / "user" / "nexgen-update-check.timer"
-    changed |= _write_if_different(service_file, service_content)
-    changed |= _write_if_different(timer_file, timer_content)
+    wrote_service = _write_if_different(service_file, service_content)
+    wrote_timer = _write_if_different(timer_file, timer_content)
+    if wrote_service is None or wrote_timer is None:
+        missing = [str(p) for p, w in ((service_file, wrote_service), (timer_file, wrote_timer))
+                   if w is None and not p.is_file()]
+        if missing:
+            notes.append(f"[WARN] boot entries not writable ({', '.join(missing)}), timer skipped")
+            return notes
+        notes.append("[WARN] boot entries could not be verified, enabling anyway")
+    changed = bool(changed or wrote_service or wrote_timer)
     if changed:
         notes.append(f"[autostart] boot entries written under {home}")
     if not shutil.which("systemctl"):
@@ -820,13 +899,15 @@ WantedBy=timers.target
     return notes
 
 
-def ensure_boot_check(home: Path | None = None) -> list[str]:
+def ensure_boot_check(home: Path | str | None = None) -> list[str]:
     """Idempotent boot-time update check for this machine. Never raises:
     a failed lane is a note, not a broken sync."""
     try:
-        resolved = resolve_home(home)
         if os.name == "nt":
-            return _ensure_windows_boot_check(resolved)
+            base = (os.fspath(home) if home is not None
+                    else (os.environ.get("NEXGEN_HOME") or os.path.expanduser("~")))
+            return _ensure_windows_boot_check(base)
+        resolved = resolve_home(home if home is None or isinstance(home, Path) else Path(home))
         return _ensure_posix_boot_check(resolved)
     except Exception as exc:
         return [f"[WARN] boot check not ensured ({exc})"]
@@ -868,6 +949,9 @@ def _remove_autostart(home: Path) -> int:
     if os.name == "nt":
         rc, _ = _run_quiet(["schtasks.exe", "/Delete", "/TN", _UPDATE_CHECK_TASK, "/F"])
         print("[autostart] logon task removed" if rc == 0 else "[autostart] no logon task present")
+        leftover = not _remove_windows_fallback(os.fspath(home))
+        if leftover:
+            print("[WARN] Startup fallback copy could not be removed, delete it by hand")
         return 0
     removed = []
     for path in (home / ".config" / "autostart" / "nexgen-update-check.desktop",

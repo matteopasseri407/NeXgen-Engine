@@ -286,26 +286,68 @@ def test_ensure_shell_hook_installs_once(tmp_path, monkeypatch):
 
 
 def test_ensure_boot_check_windows_uses_schtasks(tmp_path, monkeypatch):
-    import os as _os
-    if _os.name != "nt":
-        pytest.skip("Windows-only lane")
     home = _isolate(tmp_path, monkeypatch)
+    monkeypatch.setattr(notifier.os, "name", "nt")
+    monkeypatch.setenv("APPDATA", str(tmp_path / "appdata"))
     calls = []
 
     def _fake_run(argv, **kwargs):
         calls.append(argv)
+        if argv[:2] == ["schtasks.exe", "/Query"]:
+            class _Missing:
+                returncode = 1
+                stdout = ""
+                stderr = ""
+            return _Missing()
+
         class _Proc:
             returncode = 0
-            stdout = "wscript.exe fake"
+            stdout = "ok"
             stderr = ""
         return _Proc()
 
     monkeypatch.setattr(notifier.subprocess, "run", _fake_run)
-    notes = notifier.ensure_boot_check(home)
+    try:
+        notes = notifier.ensure_boot_check(str(home))
+    finally:
+        monkeypatch.setattr(notifier.os, "name", "posix")
     assert any("schtasks" in n for n in notes)
     assert any(argv[:2] == ["schtasks.exe", "/Query"] for argv in calls)
-    assert any("/Create" in argv for argv in calls)
-    assert (home / ".local" / "state" / "nexgen-update-check-hidden.vbs").is_file()
+    create = [argv for argv in calls if "/Create" in argv]
+    assert len(create) == 1 and "ONLOGON" in create[0]
+    vbs = home / ".local" / "state" / "nexgen-update-check-hidden.vbs"
+    assert vbs.is_file()
+    tr = create[0][create[0].index("/TR") + 1]
+    assert "wscript.exe" in tr and str(vbs) in tr
+
+
+def test_windows_vbs_quotes_spaced_paths():
+    content = notifier._windows_vbs_content("C:\\Users\\First Last\\.local\\bin\\nexgen.cmd")
+    assert 'shell.Run """C:\\Users\\First Last\\.local\\bin\\nexgen.cmd"" tool update-notifier --boot"' in content
+
+
+def test_windows_fallback_removed_after_success(tmp_path, monkeypatch):
+    home = _isolate(tmp_path, monkeypatch)
+    monkeypatch.setattr(notifier.os, "name", "nt")
+    appdata = tmp_path / "appdata"
+    monkeypatch.setenv("APPDATA", str(appdata))
+    try:
+        dest = tmp_path / "appdata" / "Microsoft" / "Windows" / "Start Menu" / "Programs" / "Startup" / "NeXgen Update Check.vbs"
+        dest.parent.mkdir(parents=True)
+        dest.write_text("old", encoding="utf-8")
+
+        def _fake_run(argv, **kwargs):
+            class _Proc:
+                returncode = 0
+                stdout = str(home / ".local" / "state" / "nexgen-update-check-hidden.vbs")
+                stderr = ""
+            return _Proc()
+
+        monkeypatch.setattr(notifier.subprocess, "run", _fake_run)
+        notifier.ensure_boot_check(str(home))
+        assert not dest.exists()
+    finally:
+        monkeypatch.setattr(notifier.os, "name", "posix")
 
 
 def test_windows_task_probe_matches_notifier_command(monkeypatch):

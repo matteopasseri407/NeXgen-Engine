@@ -10,6 +10,26 @@ of any engine release.
 
 ## [Unreleased]
 
+## [2.3.3] - 2026-09-23
+
+## [2.3.3] - 2026-09-23
+
+### Added
+
+- **Boot-time update check on every OS**: the guard keeps the shell
+  hook and the boot check installed at every apply (XDG autostart plus
+  boot timer on Linux, logon task with Startup fallback on Windows).
+- **Passive boot lane**: boot entries run `--boot`, a silent check that
+  delivers the engine plus third-party inventory once and never asks.
+- **Model inventory at boot**: the boot lane publishes this host's CLI
+  inventory to the governor; the publisher skips write, push and webhook
+  when only the stamp moved.
+
+### Fixed
+
+- depwatch resolvers bind late so tests can fake the network; npm pins
+  ahead of the registry count as current, not stale.
+
 ## [2.3.2] - 2026-09-23
 
 ### Added
