@@ -6,6 +6,8 @@ import sys
 import time
 from pathlib import Path
 
+import pytest
+
 SCRIPTS_DIR = Path(__file__).resolve().parents[2] / "scripts"
 if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
@@ -239,6 +241,7 @@ def test_shell_check_batch_and_hold_each_appear_once(tmp_path, monkeypatch, caps
     assert capsys.readouterr().out == ""
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="zenity dialog crash test is POSIX only")
 def test_crashed_dialog_does_not_consume_announcement(tmp_path, monkeypatch):
     _isolate(tmp_path, monkeypatch)
     state_dir = tmp_path / "state"

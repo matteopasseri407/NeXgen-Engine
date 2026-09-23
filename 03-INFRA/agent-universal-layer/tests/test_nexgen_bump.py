@@ -287,6 +287,8 @@ def _git_repo(path: Path) -> None:
         "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@localhost",
     }
     subprocess.run(["git", "init", "-b", "main"], cwd=path, check=True, capture_output=True, env=env)
+    subprocess.run(["git", "config", "user.name", "Test"], cwd=path, check=True, capture_output=True)
+    subprocess.run(["git", "config", "user.email", "test@localhost"], cwd=path, check=True, capture_output=True)
     subprocess.run(["git", "add", "-A"], cwd=path, check=True, capture_output=True, env=env)
     subprocess.run(["git", "commit", "-m", "base"], cwd=path, check=True, capture_output=True, env=env)
 
