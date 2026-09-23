@@ -774,9 +774,13 @@ After=graphical-session.target network-online.target
 
 [Service]
 Type=oneshot
+# Stesso PATH del servizio inventario: senza le bin dei CLI i probe
+# vedrebbero una macchina piu' povera di quella che e'.
+Environment=PATH=%h/.opencode/bin:%h/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 ExecStart={exec_cmd} tool update-notifier --boot
 Environment=DISPLAY=:0
 Environment=XAUTHORITY=%h/.Xauthority
+TimeoutStartSec=300
 
 [Install]
 WantedBy=default.target
@@ -895,10 +899,12 @@ def cmd_boot() -> int:
         print(f"[update-notifier] boot check failed: {exc}", file=sys.stderr)
         return 0
     if not lines:
+        _publish_inventory()
         return 0
     message = "NeXgen aggiornamenti:\n" + "\n".join(f"- {line}" for line in lines)
     print(message)
     _notify_passive(message)
+    _publish_inventory()
     return 0
 
 
@@ -928,6 +934,30 @@ def _boot_inventory() -> list[str]:
     except Exception:
         pass
     return lines
+
+
+def _publish_inventory() -> None:
+    """Sends this host's CLI inventory to the governor, best effort.
+
+    The publisher lives in the vault (private setup, per-host probes);
+    when it is absent there is simply nothing to send. Skip-unchanged
+    lives in the script itself, so a second run after the dedicated
+    inventory timer costs nothing. Never fails the boot.
+    """
+    try:
+        from nexgen_core.paths import resolve_vault_data
+
+        script = resolve_vault_data() / "03-INFRA" / "governor-publish-inventory.py"
+        if not script.is_file():
+            return
+        proc = subprocess.run(
+            [sys.executable, str(script), "--write", "--push"],
+            capture_output=True, text=True, check=False, timeout=280,
+        )
+        tail = ((proc.stderr or "") + (proc.stdout or "")).strip().splitlines()[-3:]
+        print("[boot] inventario governor: " + (" | ".join(tail) if tail else "nessuna risposta"))
+    except Exception as exc:
+        print(f"[boot] inventario governor non inviato ({exc})")
 
 
 def _notify_passive(message: str) -> None:

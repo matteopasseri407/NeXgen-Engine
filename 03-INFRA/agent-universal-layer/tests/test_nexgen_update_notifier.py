@@ -363,3 +363,22 @@ def test_boot_delivers_the_inventory_without_asking(tmp_path, monkeypatch, capsy
     assert notifier.cmd_boot() == 0
     out = capsys.readouterr().out
     assert "demo" in out and "da aggiornare" in out
+
+
+def test_boot_publishes_inventory_when_publisher_exists(tmp_path, monkeypatch, capsys):
+    _isolate(tmp_path, monkeypatch)
+    vault = _empty_vault(tmp_path, monkeypatch)
+    marker = tmp_path / "published.txt"
+    stub = vault / "03-INFRA" / "governor-publish-inventory.py"
+    stub.write_text(
+        "import sys\n"
+        f"assert sys.argv[1:] == ['--write', '--push'], sys.argv\n"
+        f"open({str(marker)!r}, 'w').write('sent')\n",
+        encoding="utf-8",
+    )
+    monkeypatch.delenv("DISPLAY", raising=False)
+    monkeypatch.delenv("WAYLAND_DISPLAY", raising=False)
+
+    assert notifier.cmd_boot() == 0
+    assert marker.read_text(encoding="utf-8") == "sent"
+    assert "inventario governor" in capsys.readouterr().out
