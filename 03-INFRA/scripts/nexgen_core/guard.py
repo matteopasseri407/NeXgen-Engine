@@ -173,12 +173,16 @@ class GuardRunner:
                 return False
             target.parent.mkdir(parents=True, exist_ok=True)
             if target.exists() or target.is_symlink():
-                # A real copy may contain hand-written lines.
+                # A real copy may contain hand-written lines. If the safety
+                # copy itself fails, stop here: unlinking anyway would destroy
+                # the only copy of those lines.
                 if target.is_file() and not target.is_symlink():
                     from nexgen_core.files import backup_file
 
-                    with contextlib.suppress(OSError):
+                    try:
                         backup_file(target, tag="instructions")
+                    except OSError:
+                        return False
                 target.unlink()
             try:
                 target.symlink_to(canon)

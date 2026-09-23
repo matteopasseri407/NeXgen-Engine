@@ -120,13 +120,13 @@ def cmd_quarantine(args) -> int:
 
     if delete_branch:
         if not delete_branch.startswith("quarantine/"):
-            print(f"Refusing to delete '{delete_branch}': only quarantine/* branches can be deleted with this command.")
+            print(t("Refusing to delete '{branch}': only quarantine/* branches can be deleted with this command.", branch=delete_branch))
             return 1
         r = run_git(vault_data, "branch", "-D", delete_branch)
         if r.returncode == 0:
-            print(f"Deleted quarantine branch {delete_branch}")
+            print(t("Deleted quarantine branch {branch}", branch=delete_branch))
             return 0
-        print(f"Error deleting branch {delete_branch}: {r.stderr.strip()}")
+        print(t("Error deleting branch {branch}: {error}", branch=delete_branch, error=r.stderr.strip()))
         return 1
 
     if diff_branch:
@@ -134,14 +134,14 @@ def cmd_quarantine(args) -> int:
         if r.returncode == 0:
             print(r.stdout)
             return 0
-        print(f"Error getting diff for {diff_branch}: {r.stderr.strip()}")
+        print(t("Error getting diff for {branch}: {error}", branch=diff_branch, error=r.stderr.strip()))
         return 1
 
     branches = list_quarantine_branches(vault_data)
     if not branches:
-        print("No quarantine branches in the Vault.")
+        print(t("No quarantine branches in the Vault."))
         return 0
-    print(f"Quarantine branches ({len(branches)}):")
+    print(t("Quarantine branches ({count}):", count=len(branches)))
     for b in branches:
         print(f"  - {b}")
     print("\nTo view diff: nexgen vault quarantine --diff <branch>")

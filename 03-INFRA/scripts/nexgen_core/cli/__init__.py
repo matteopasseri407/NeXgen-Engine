@@ -81,7 +81,8 @@ def main(argv: list[str] | None = None) -> int:
     except BrokenPipeError:
         return 0
     except Exception as exc:
-        print(f"[ERROR] {exc}", file=sys.stderr)
+        print(t("Unexpected error: {error}", error=exc), file=sys.stderr)
+        print(t("Run 'nexgen doctor' to check the machine, and retry."), file=sys.stderr)
         return 1
 
 

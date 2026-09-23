@@ -55,7 +55,12 @@ class HostLock:
 
         if timeout is None:
             env_timeout = os.environ.get("AGENT_SYNC_LOCK_TIMEOUT_SECONDS")
-            self.timeout = float(env_timeout) if env_timeout else DEFAULT_TIMEOUT_SECONDS
+            try:
+                self.timeout = float(env_timeout) if env_timeout else DEFAULT_TIMEOUT_SECONDS
+            except (TypeError, ValueError):
+                # A non-numeric value must never crash the command: fall back
+                # to the default instead of dying in float().
+                self.timeout = DEFAULT_TIMEOUT_SECONDS
         else:
             self.timeout = float(timeout)
 
@@ -94,7 +99,9 @@ class HostLock:
             elapsed = time.time() - start_time
             if elapsed >= self.timeout:
                 msg = t(
-                    "Could not acquire lock '{lock_path}' after {timeout:.1f}s (another process is active).",
+                    "Could not acquire lock '{lock_path}' after {timeout:.1f}s "
+                    "(another sync is still running). Wait a minute and retry; "
+                    "if it keeps happening, look for a stuck 'nexgen sync' process.",
                     lock_path=self.lock_path, timeout=self.timeout,
                 )
                 raise LockTimeoutError(msg, self.lock_path, self.is_guard)

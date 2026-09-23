@@ -52,10 +52,13 @@ if [ -n "${{AGENT_ENGINE_ROOT:-}}" ] && [ -f "$AGENT_ENGINE_ROOT/scripts/nexgen_
 fi
 for candidate in python3 python; do
     if command -v "$candidate" >/dev/null 2>&1; then
-        exec "$candidate" "$NEXGEN_ENTRY" {prefix}"$@"
+        if "$candidate" -c 'import sys; sys.exit(0 if sys.version_info >= (3, 11) else 1)' >/dev/null 2>&1; then
+            exec "$candidate" "$NEXGEN_ENTRY" {prefix}"$@"
+        fi
     fi
 done
-echo "NeXgen: Python 3 is not on this system's PATH." >&2
+echo "NeXgen: Python 3.11 or newer is required but was not found on PATH (tried python3, python)." >&2
+echo "NeXgen: install Python 3.11+ and rerun the command." >&2
 exit 1
 """
 
@@ -69,15 +72,22 @@ if defined AGENT_ENGINE_ROOT (
 )
 where py >nul 2>&1
 if %ERRORLEVEL% equ 0 (
-    py -3 "%NEXGEN_ENTRY%" {prefix}%*
-    exit /b %ERRORLEVEL%
+    py -3 -c "import sys; sys.exit(0 if sys.version_info>=(3,11) else 1)" >nul 2>&1
+    if %ERRORLEVEL% equ 0 (
+        py -3 "%NEXGEN_ENTRY%" {prefix}%*
+        exit /b %ERRORLEVEL%
+    )
 )
 where python >nul 2>&1
 if %ERRORLEVEL% equ 0 (
-    python "%NEXGEN_ENTRY%" {prefix}%*
-    exit /b %ERRORLEVEL%
+    python -c "import sys; sys.exit(0 if sys.version_info>=(3,11) else 1)" >nul 2>&1
+    if %ERRORLEVEL% equ 0 (
+        python "%NEXGEN_ENTRY%" {prefix}%*
+        exit /b %ERRORLEVEL%
+    )
 )
-echo NeXgen: Python 3 is not on this system's PATH. >&2
+echo NeXgen: Python 3.11 or newer is required but was not found on PATH. >&2
+echo NeXgen: install Python 3.11+ and rerun the command. >&2
 exit /b 1
 """
 

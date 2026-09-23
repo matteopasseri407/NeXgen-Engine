@@ -6,6 +6,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+from nexgen_core.i18n import t
 from nexgen_core.paths import resolve_engine_root
 
 
@@ -22,7 +23,7 @@ def main(argv: list[str] | None = None) -> int:
         council_py = here / "agent-universal-layer" / "council" / "council.py"
 
     if not council_py.is_file():
-        print(f"[ERROR] AI Council orchestrator not found at {council_py}", file=sys.stderr)
+        print(t("AI Council orchestrator not found at {path}. Reinstall the engine.", path=council_py), file=sys.stderr)
         return 1
 
     res = subprocess.run([sys.executable, str(council_py), *argv])

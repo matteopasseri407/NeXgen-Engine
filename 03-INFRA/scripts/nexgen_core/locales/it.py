@@ -264,7 +264,6 @@ MESSAGES: dict[str, str] = {
     'Warnings (nothing is blocked):': 'Avvisi (niente è bloccato):',
     'Found {count} quarantine branch(es) with isolated diverged changes: {branches}': 'Trovati {count} branch di quarantena con modifiche divergenti isolate: {branches}',
     "Review diff with 'git diff main..{branch}', reconcile changes into canonical files, then remove the quarantine branch with 'git branch -D {branch}'.": "Verifica il diff con 'git diff main..{branch}', integra le modifiche nei file canonici, poi elimina il branch di quarantena con 'git branch -D {branch}'.",
-    "Could not acquire lock '{lock_path}' after {timeout:.1f}s (another process is active).": "Impossibile acquisire il lock '{lock_path}' dopo {timeout:.1f}s (processo attivo in corso).",
     'No guard cycle has been recorded yet': 'Nessun ciclo di guardia precedentemente registrato',
     'The sync cycle has been stalled for {hours:.1f} hours.': 'Il ciclo di sincronizzazione è fermo da {hours:.1f} ore.',
     'Agent sync is not running': 'Sincronizzazione agente non attiva',
@@ -737,4 +736,34 @@ MESSAGES: dict[str, str] = {
         "L'allineamento si è fermato prima: {reason}",
     "Run 'nexgen doctor' for the whole list; most of it clears with 'nexgen sync apply'.":
         "Esegui 'nexgen doctor' per l'elenco completo; quasi tutto si risolve con 'nexgen sync apply'.",
+
+    # --- Errori parlanti (bug-hunt finale pre-2.3.4) -------------------------
+    "Unexpected error: {error}":
+        "Errore inatteso: {error}",
+    "Run 'nexgen doctor' to check the machine, and retry.":
+        "Esegui 'nexgen doctor' per controllare la macchina e riprova.",
+    (
+        "Could not acquire lock '{lock_path}' after {timeout:.1f}s "
+        "(another sync is still running). Wait a minute and retry; "
+        "if it keeps happening, look for a stuck 'nexgen sync' process."
+    ):
+        (
+            "Non riesco a prendere il lock '{lock_path}' dopo {timeout:.1f}s "
+            "(un altro sync è ancora in corso). Aspetta un minuto e riprova; "
+            "se continua, cerca un processo 'nexgen sync' bloccato."
+        ),
+    "Refusing to delete '{branch}': only quarantine/* branches can be deleted with this command.":
+        "Mi rifiuto di cancellare '{branch}': con questo comando puoi cancellare solo branch quarantine/*.",
+    "Deleted quarantine branch {branch}":
+        "Branch di quarantena {branch} cancellato",
+    "Error deleting branch {branch}: {error}":
+        "Errore cancellando il branch {branch}: {error}",
+    "Error getting diff for {branch}: {error}":
+        "Errore leggendo il diff di {branch}: {error}",
+    "No quarantine branches in the Vault.":
+        "Nessun branch di quarantena nel Vault.",
+    "Quarantine branches ({count}):":
+        "Branch di quarantena ({count}):",
+    "AI Council orchestrator not found at {path}. Reinstall the engine.":
+        "Orchestratore AI Council non trovato in {path}. Reinstalla il motore.",
 }

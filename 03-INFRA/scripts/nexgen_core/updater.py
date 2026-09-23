@@ -557,18 +557,19 @@ class EngineUpdater:
 
     @staticmethod
     def check_updates() -> tuple[bool, str, str]:
-        """Checks whether new released versions exist, without applying them."""
-        try:
-            engine_repo, _ = resolve_repositories(os.environ)
-            curr = _current_version(engine_repo)
-            tags = _released_tags(engine_repo)
-            if tags:
-                latest = tags[0].removeprefix("v")
-                has_up = _version_tuple(latest) > _version_tuple(curr)
-                return has_up, f"v{curr}", f"v{latest}"
-            return False, f"v{curr}", f"v{curr}"
-        except Exception:
-            return False, "unknown", "unknown"
+        """Checks whether new released versions exist, without applying them.
+
+        Raises on failure (offline, broken remote, missing ref): callers must
+        show that, never a quiet "no update" that leaves the machine behind.
+        """
+        engine_repo, _ = resolve_repositories(os.environ)
+        curr = _current_version(engine_repo)
+        tags = _released_tags(engine_repo)
+        if tags:
+            latest = tags[0].removeprefix("v")
+            has_up = _version_tuple(latest) > _version_tuple(curr)
+            return has_up, f"v{curr}", f"v{latest}"
+        return False, f"v{curr}", f"v{curr}"
 
 
 if __name__ == "__main__":
