@@ -270,6 +270,7 @@ def test_crashed_dialog_does_not_consume_announcement(tmp_path, monkeypatch):
     assert notifier._skills_notice(mark=False) is None
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX boot check (XDG autostart, systemd) is POSIX only")
 def test_ensure_boot_check_writes_files_and_is_idempotent(tmp_path, monkeypatch, capsys):
     home = _isolate(tmp_path, monkeypatch)
     first = notifier.ensure_boot_check(home)
