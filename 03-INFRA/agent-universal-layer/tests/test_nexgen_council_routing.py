@@ -179,3 +179,71 @@ NDA.
     with pytest.raises(RoutingContractError, match="Governor role L-Code has an unassigned slot"):
         parse_routing_plan(broken_code_block)
 
+
+
+ROLE_BLOCK = """### Proposta di routing per ruolo
+
+#### L-Test - ratio
+
+Test role.
+
+| Slot | Modello | Canale | Costo | Motivo |
+|---|---|---|---:|---|
+| prescelto | Alpha Model | fakecli-a | forfait | best |
+| rimpiazzo 1 | Beta Model | fakecli-b | forfait | runner-up |
+| rimpiazzo 2 | Gamma Model | fakecli-b | forfait | third |
+
+<!-- model-routing-governor:end -->
+"""
+
+
+def _role_config(tmp_path, monkeypatch):
+    import argparse
+
+    import proposal
+    from routing import SeatCapability
+
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    (vault / "crm.md").write_text(ROLE_BLOCK, encoding="utf-8")
+    monkeypatch.setenv("AGENT_VAULT_DATA", str(vault))
+    seats = {
+        "seat-a": {"cli": "fakecli-a", "vendor": "v", "model": "m-a",
+                   "routing_label": "Alpha Model"},
+        "seat-b": {"cli": "fakecli-b", "vendor": "v", "model": "m-b",
+                   "routing_label": "Beta Model"},
+        "seat-c": {"cli": "fakecli-c", "vendor": "v", "model": "m-c",
+                   "routing_label": "Zeta Model"},
+    }
+    config = {"seats": seats,
+              "routing": {"enabled": True, "decision_file": "crm.md"}}
+    monkeypatch.setattr(
+        proposal, "seat_capabilities",
+        lambda names: {n: SeatCapability(True, "test") for n in names},
+    )
+    args = argparse.Namespace(seat=None, mode="challenge", routing_role="L-Test")
+    return proposal, config, seats, args
+
+
+def test_explicit_seat_outside_role_candidates_is_refused(tmp_path, monkeypatch):
+    proposal, config, seats, args = _role_config(tmp_path, monkeypatch)
+    args.seat = "seat-c"
+    with pytest.raises(SystemExit) as exc:
+        proposal._check_seat_allowed("seat-c", seats["seat-c"], args, config=config)
+    assert "not a candidate for role 'L-Test'" in str(exc.value)
+
+
+def test_candidate_seat_with_role_proceeds(tmp_path, monkeypatch, capsys):
+    proposal, config, seats, args = _role_config(tmp_path, monkeypatch)
+    args.seat = "seat-a"
+    proposal._check_seat_allowed("seat-a", seats["seat-a"], args, config=config)
+    assert "STOP" not in capsys.readouterr().out
+
+
+def test_no_role_means_no_candidacy_gate(tmp_path, monkeypatch, capsys):
+    import argparse
+
+    proposal, config, seats, _ = _role_config(tmp_path, monkeypatch)
+    args = argparse.Namespace(seat="seat-c", mode="challenge", routing_role=None)
+    proposal._check_seat_allowed("seat-c", seats["seat-c"], args, config=config)
+    assert "STOP" not in capsys.readouterr().out

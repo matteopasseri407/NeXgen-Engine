@@ -281,8 +281,8 @@ def _check_seat_allowed(
     seat: dict,
     args: argparse.Namespace,
     config: dict | None = None,
+    default_routing_role: str | None = None,
 ) -> None:
-    del args
     _warn_no_zero_retention(seat_name, seat)
     if config is None:
         if not SEATS_PATH.is_file():
@@ -291,6 +291,39 @@ def _check_seat_allowed(
     if _routing_enabled(config):
         plan = _routing_context_or_exit(config)
         _confirm_pay_per_use(seat_name, seat, _seat_cost(plan, seat_name, seat))
+        _refuse_seat_outside_role(seat_name, args, config, plan, default_routing_role)
+
+
+def _refuse_seat_outside_role(
+    seat_name: str,
+    args: argparse.Namespace,
+    config: dict,
+    plan,
+    default_routing_role: str | None,
+) -> None:
+    """Refuses an explicit seat the routing proposal excluded for this role.
+
+    The proposal is advisory, but invoking past it must never be silent:
+    a seat outside the role's candidates skips the cost confirmation by
+    construction (no stated cost to confirm), so it stops here instead,
+    naming the eligible seats. Dropping --routing-role still runs the seat
+    through the static menu: the override stays possible, never quiet.
+    """
+    seats = config.get("seats") or {}
+    role = _routing_role_for_mode(args, config, default_routing_role)
+    if not role:
+        return
+    try:
+        candidates, _ = resolve_role_candidates(plan, seats, seat_capabilities(seats), role)
+    except RoutingContractError as exc:
+        sys.exit(f"[council] STOP: role '{role}' cannot be verified ({exc}).")
+    if seat_name not in candidates:
+        eligible = ", ".join(candidates) if candidates else "none"
+        sys.exit(
+            f"[council] STOP: seat '{seat_name}' is not a candidate for role '{role}'. "
+            f"Eligible: {eligible}. Rerun naming one of them, or drop --routing-role "
+            "to choose outside the proposal."
+        )
 
 
 def resolve_seat(args: argparse.Namespace, *, default_routing_role: str | None = None) -> tuple[str, dict]:
@@ -304,7 +337,8 @@ def resolve_seat(args: argparse.Namespace, *, default_routing_role: str | None =
     if seat_name not in seats:
         sys.exit(f"[council] unknown seat: {seat_name}. Available: {', '.join(seats)}")
     seat = seats[seat_name]
-    _check_seat_allowed(seat_name, seat, args, config=config)
+    _check_seat_allowed(seat_name, seat, args, config=config,
+                        default_routing_role=default_routing_role)
     _warn_if_explicit_codex_seat_not_default(seat_name, seat)
     author_vendor = getattr(args, "author_vendor", None)
     if author_vendor and seat["vendor"].lower() == author_vendor.lower():
