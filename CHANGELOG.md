@@ -10,6 +10,23 @@ of any engine release.
 
 ## [Unreleased]
 
+## [2.3.4] - 2026-09-23
+
+### Fixed
+
+- **End-user bug sweep**: unhandled CLI errors now speak the user's
+  language and point at `nexgen doctor` instead of a bare `[ERROR]`.
+- A non-numeric `AGENT_SYNC_LOCK_TIMEOUT_SECONDS` falls back to the
+  default instead of crashing; lock contention tells you to wait a
+  minute and names the stuck `nexgen sync` to look for.
+- Vault quarantine and council launcher messages translated (IT).
+- The guard no longer deletes a hand-written instructions file when its
+  safety backup fails: it stops instead.
+- `check_updates` raises on failure (offline, broken remote) instead of
+  reporting a quiet fake "no update"; the notifier surfaces it.
+- Generated launchers require Python 3.11+ with a clear message, on
+  POSIX and Windows, instead of dying with a `SyntaxError` on old Pythons.
+
 ## [2.3.3] - 2026-09-23
 
 ## [2.3.3] - 2026-09-23
