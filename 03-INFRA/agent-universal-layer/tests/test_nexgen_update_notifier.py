@@ -318,3 +318,48 @@ def test_windows_task_probe_matches_notifier_command(monkeypatch):
 
     monkeypatch.setattr(notifier.subprocess, "run", _fake_run)
     assert notifier._windows_task_runs_notifier("other") is False
+
+
+def _empty_vault(tmp_path, monkeypatch):
+    vault = tmp_path / "vault"
+    (vault / "03-INFRA" / "agent-universal-layer" / "skills").mkdir(parents=True)
+    (vault / "03-INFRA" / "agent-universal-layer" / "mcp").mkdir(parents=True)
+    (vault / "03-INFRA" / "agent-universal-layer" / "skills" / "skills.manifest.yaml").write_text(
+        "schema_version: 1\nskills: {}\n", encoding="utf-8")
+    (vault / "03-INFRA" / "agent-universal-layer" / "mcp" / "manifest.yaml").write_text(
+        "schema_version: 1\nservers: {}\n", encoding="utf-8")
+    monkeypatch.setenv("AGENT_VAULT_DATA", str(vault))
+    engine = tmp_path / "engine"
+    engine.mkdir()
+    monkeypatch.setenv("AGENT_ENGINE_ROOT", str(engine))
+    return vault
+
+
+def test_boot_is_silent_when_everything_is_current(tmp_path, monkeypatch, capsys):
+    _isolate(tmp_path, monkeypatch)
+    _empty_vault(tmp_path, monkeypatch)
+    monkeypatch.delenv("DISPLAY", raising=False)
+    monkeypatch.delenv("WAYLAND_DISPLAY", raising=False)
+
+    assert notifier.cmd_boot() == 0
+    assert capsys.readouterr().out == ""
+
+
+def test_boot_delivers_the_inventory_without_asking(tmp_path, monkeypatch, capsys):
+    import nexgen_core.depwatch as depwatch_mod
+
+    _isolate(tmp_path, monkeypatch)
+    vault = _empty_vault(tmp_path, monkeypatch)
+    (vault / "03-INFRA" / "agent-universal-layer" / "skills" / "skills.manifest.yaml").write_text(
+        "schema_version: 1\nskills:\n  demo:\n    origin: github\n"
+        "    repo: o/r\n    commit: " + "a" * 40 + "\n    targets: [claude]\n",
+        encoding="utf-8")
+    monkeypatch.setattr(depwatch_mod, "_git_ls_remote_head", lambda _repo: "b" * 40)
+    monkeypatch.setattr(depwatch_mod, "_npm_latest_version", lambda _pkg: None)
+    monkeypatch.delenv("DISPLAY", raising=False)
+    monkeypatch.delenv("WAYLAND_DISPLAY", raising=False)
+    monkeypatch.setattr("builtins.input", lambda _prompt="": (_ for _ in ()).throw(AssertionError("asked")))
+
+    assert notifier.cmd_boot() == 0
+    out = capsys.readouterr().out
+    assert "demo" in out and "da aggiornare" in out

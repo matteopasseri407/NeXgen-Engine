@@ -58,6 +58,26 @@ class DepwatchResult:
     wrote: bool = False
 
 
+def _is_stale(kind: str, pinned: str, upstream: str | None) -> bool:
+    """True when upstream actually moved past the pin.
+
+    Commits have no ordering here, so any reachable difference counts.
+    Versions compare properly: a pin ahead of the registry (vendor
+    installer faster than npm) is current, not stale.
+    """
+    if upstream is None:
+        return False
+    if kind == "npm-version":
+        old, new = NPM_SPEC_RE.match(f"x@{pinned.strip()}"), NPM_SPEC_RE.match(f"x@{upstream.strip()}")
+        if old and new:
+            mine = re.match(r"(\d+)\.(\d+)\.(\d+)", old.group("version"))
+            theirs = re.match(r"(\d+)\.(\d+)\.(\d+)", new.group("version"))
+            if mine and theirs:
+                return (tuple(int(g) for g in theirs.groups())
+                        > tuple(int(g) for g in mine.groups()))
+    return upstream.strip().lower() != pinned.strip().lower()
+
+
 def _git_ls_remote_head(repo: str) -> str | None:
     """The remote HEAD commit of `repo`, or None if unreachable right now.
 
@@ -204,13 +224,18 @@ def run_depwatch(
     *,
     vault_data: Path | None = None,
     state_dir: Path | None = None,
-    git_ls_remote: Callable[[str], str | None] = _git_ls_remote_head,
-    npm_latest_version: Callable[[str], str | None] = _npm_latest_version,
+    git_ls_remote: Callable[[str], str | None] | None = None,
+    npm_latest_version: Callable[[str], str | None] | None = None,
 ) -> DepwatchResult:
     """Inspects every declared pin upstream and writes the list, without ever
     applying or notifying anything. If no check reaches upstream (offline, or
     nothing to watch), it writes and reports nothing.
+
+    Resolvers default late (not in the signature) so tests can fake the
+    network by patching this module.
     """
+    git_check = git_ls_remote or _git_ls_remote_head
+    npm_check = npm_latest_version or _npm_latest_version
     resolved_vault = resolve_vault_data(override=vault_data)
     resolved_state = resolve_state_dir(override=state_dir)
 
@@ -233,8 +258,8 @@ def run_depwatch(
     pins = _collect_skill_pins(skills_raw) + _collect_mcp_pins(mcp_raw)
     findings: list[PinFinding] = []
     for what, kind, pinned, key in pins:
-        upstream = git_ls_remote(key) if kind == "git-commit" else npm_latest_version(key)
-        stale = upstream is not None and upstream.strip().lower() != pinned.strip().lower()
+        upstream = git_check(key) if kind == "git-commit" else npm_check(key)
+        stale = _is_stale(kind, pinned, upstream)
         findings.append(PinFinding(kind=kind, what=what, pinned=pinned, upstream=upstream, stale=stale))
 
     if not any(f.upstream is not None for f in findings):

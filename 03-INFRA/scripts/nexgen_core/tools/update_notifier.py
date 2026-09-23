@@ -727,7 +727,7 @@ def _ensure_windows_boot_check(home: Path) -> list[str]:
     vbs = home / ".local" / "state" / "nexgen-update-check-hidden.vbs"
     content = (
         'Set shell = CreateObject("WScript.Shell")\n'
-        f'shell.Run "{exec_cmd} tool update-notifier", 0, False\n'
+        f'shell.Run "{exec_cmd} tool update-notifier --boot", 0, False\n'
     )
     if _write_if_different(vbs, content):
         notes.append(f"[autostart] hidden wrapper updated: {vbs}")
@@ -762,7 +762,7 @@ def _ensure_posix_boot_check(home: Path) -> list[str]:
 Type=Application
 Name=NeXgen Update Check
 Comment=Verifica aggiornamenti disponibili per NeXgen Engine
-Exec={exec_cmd} tool update-notifier
+Exec={exec_cmd} tool update-notifier --boot
 Hidden=false
 NoDisplay=false
 X-GNOME-Autostart-enabled=true
@@ -774,7 +774,7 @@ After=graphical-session.target network-online.target
 
 [Service]
 Type=oneshot
-ExecStart={exec_cmd} tool update-notifier
+ExecStart={exec_cmd} tool update-notifier --boot
 Environment=DISPLAY=:0
 Environment=XAUTHORITY=%h/.Xauthority
 
@@ -880,11 +880,98 @@ def _remove_autostart(home: Path) -> int:
     return 0
 
 
+def cmd_boot() -> int:
+    """Boot-time lane: silent check, passive inventory, zero questions.
+
+    Runs at every boot and login (systemd timer, XDG autostart, Windows
+    logon task). It refreshes the engine cache, re-reads third-party pins
+    upstream, and delivers one passive notification with the inventory:
+    engine update pending, if any, plus every stale skill/MCP pin. Silent
+    when everything is up to date. Never prompts, never applies.
+    """
+    try:
+        lines = _boot_inventory()
+    except Exception as exc:
+        print(f"[update-notifier] boot check failed: {exc}", file=sys.stderr)
+        return 0
+    if not lines:
+        return 0
+    message = "NeXgen aggiornamenti:\n" + "\n".join(f"- {line}" for line in lines)
+    print(message)
+    _notify_passive(message)
+    return 0
+
+
+def _boot_inventory() -> list[str]:
+    """Fresh inventory: engine tag plus live third-party pins."""
+    lines: list[str] = []
+    try:
+        refresh_update_cache()
+    except Exception:
+        pass
+    try:
+        state = _read_state()
+        current = str(state.get("current") or "")
+        latest = str(state.get("latest") or "")
+        if state.get("has_update") and current and latest:
+            lines.append(f"motore {current} -> {latest} (`nexgen update --check`)")
+    except Exception:
+        pass
+    try:
+        from nexgen_core.depwatch import run_depwatch
+
+        result = run_depwatch()
+        stale = sorted({f.what for f in result.findings if f.stale})
+        lines.extend(f"{_short_skill_name(what)} da aggiornare" for what in stale[:12])
+        if len(stale) > 12:
+            lines.append(f"altri {len(stale) - 12} nel report di stato")
+    except Exception:
+        pass
+    return lines
+
+
+def _notify_passive(message: str) -> None:
+    """One passive desktop note, never a question, never blocking."""
+    try:
+        if os.name == "nt":
+            _notify_passive_windows(message)
+            return
+        if not (os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY")):
+            return
+        if shutil.which("notify-send"):
+            subprocess.run(["notify-send", "NeXgen Engine", message,
+                            "--icon=system-software-update"], check=False)
+    except Exception:
+        pass
+
+
+def _notify_passive_windows(message: str) -> None:
+    """Windows toast when BurntToast exists, otherwise nothing at all:
+    a boot service must never pop a blocking dialog."""
+    try:
+        probe = subprocess.run(
+            ["powershell", "-NoProfile", "-Command",
+             "Get-Module -ListAvailable -Name BurntToast | Select-Object -First 1"],
+            capture_output=True, text=True, check=False, timeout=30,
+        )
+        if "BurntToast" not in (probe.stdout or ""):
+            return
+        text = message.replace("'", "''")[:380]
+        subprocess.run(
+            ["powershell", "-NoProfile", "-Command",
+             f"New-BurntToastNotification -Text 'NeXgen Engine', '{text}'"],
+            check=False, timeout=30,
+        )
+    except Exception:
+        pass
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="nexgen tool update-notifier", description="NeXgen Engine update notifier with native UI prompt.")
     parser.add_argument("--force", action="store_true", help="ignora il throttle temporale e mostra il prompt se disponibile")
     parser.add_argument("--demo", action="store_true", help="simula il dialogo con una versione fittizia per test")
     parser.add_argument("--install-autostart", action="store_true", help="configura l'avvio automatico all'accesso utente")
+    parser.add_argument("--boot", action="store_true", help="controllo silenzioso all'avvio: aggiorna le cache e manda l'inventario passivo")
     parser.add_argument("--shell-check", action="store_true", help="controllo veloce per l'avvio della shell: legge la cache, chiede al massimo una volta al giorno")
     parser.add_argument("--refresh-cache", action="store_true", help="aggiorna la cache degli update in silenzio (uso interno: hook e guard)")
     parser.add_argument("--install-shell-hook", action="store_true", help="installa l'avviso all'avvio della shell (bash + powershell)")
@@ -897,6 +984,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.install_shell_hook:
         return cmd_install_shell_hook(remove=args.remove, shell=args.shell)
+
+    if args.boot:
+        return cmd_boot()
 
     if args.refresh_cache:
         refresh_update_cache()
