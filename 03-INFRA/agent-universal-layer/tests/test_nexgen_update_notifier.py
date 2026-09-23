@@ -6,6 +6,8 @@ import sys
 import time
 from pathlib import Path
 
+import pytest
+
 SCRIPTS_DIR = Path(__file__).resolve().parents[2] / "scripts"
 if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
@@ -265,3 +267,54 @@ def test_crashed_dialog_does_not_consume_announcement(tmp_path, monkeypatch):
     crashed["rc"] = 0
     notifier._check_skills_gui()
     assert notifier._skills_notice(mark=False) is None
+
+
+def test_ensure_boot_check_writes_files_and_is_idempotent(tmp_path, monkeypatch, capsys):
+    home = _isolate(tmp_path, monkeypatch)
+    first = notifier.ensure_boot_check(home)
+    assert (home / ".config" / "autostart" / "nexgen-update-check.desktop").is_file()
+    assert (home / ".config" / "systemd" / "user" / "nexgen-update-check.timer").is_file()
+    assert any("boot" in note.lower() or "autostart" in note.lower() for note in first)
+    capsys.readouterr()
+
+
+def test_ensure_shell_hook_installs_once(tmp_path, monkeypatch):
+    home = _isolate(tmp_path, monkeypatch)
+    assert notifier.ensure_shell_hook(home) != ["[shell-hook] already present"]
+    assert (home / ".bashrc").is_file()
+    assert notifier.ensure_shell_hook(home) == ["[shell-hook] already present"]
+
+
+def test_ensure_boot_check_windows_uses_schtasks(tmp_path, monkeypatch):
+    import os as _os
+    if _os.name != "nt":
+        pytest.skip("Windows-only lane")
+    home = _isolate(tmp_path, monkeypatch)
+    calls = []
+
+    def _fake_run(argv, **kwargs):
+        calls.append(argv)
+        class _Proc:
+            returncode = 0
+            stdout = "wscript.exe fake"
+            stderr = ""
+        return _Proc()
+
+    monkeypatch.setattr(notifier.subprocess, "run", _fake_run)
+    notes = notifier.ensure_boot_check(home)
+    assert any("schtasks" in n for n in notes)
+    assert any(argv[:2] == ["schtasks.exe", "/Query"] for argv in calls)
+    assert any("/Create" in argv for argv in calls)
+    assert (home / ".local" / "state" / "nexgen-update-check-hidden.vbs").is_file()
+
+
+def test_windows_task_probe_matches_notifier_command(monkeypatch):
+    def _fake_run(argv, **kwargs):
+        class _Proc:
+            returncode = 0
+            stdout = 'wscript.exe "C:\\x\\nexgen-update-check-hidden.vbs"'
+            stderr = ""
+        return _Proc()
+
+    monkeypatch.setattr(notifier.subprocess, "run", _fake_run)
+    assert notifier._windows_task_runs_notifier("other") is False

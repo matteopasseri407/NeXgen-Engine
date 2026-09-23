@@ -50,7 +50,10 @@ available.
 ## Startup notice (one prompt per day, launch-or-skip)
 
 Every interactive shell can tell you when an upgrade is pending and offer
-to launch it. Install once per machine:
+to launch it. The guard installs both lanes on its own at every apply, on
+Linux and Windows: shell hook plus boot-time check (XDG autostart and a
+boot timer on Linux, a logon task on Windows). Manual install or removal
+per machine, if you ever want it by hand:
 
 ```bash
 nexgen tool update-notifier --install-shell-hook   # bash + PowerShell

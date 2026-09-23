@@ -559,7 +559,9 @@ class GuardRunner:
             actions.append("[WARN] " + t("Commands not realigned: {error}", error=exc))
 
     def _phase_scheduler(self, actions: list[str], branch: str) -> None:
-        """Startup self-alignment installation (systemd / scheduled task)."""
+        """Startup self-alignment installation (systemd / scheduled task),
+        plus the update notice lanes: shell hook and boot-time check are
+        drift like any other, so the guard keeps them installed."""
         try:
             sched_ok = install_scheduler(
                 home=self.home,
@@ -573,6 +575,13 @@ class GuardRunner:
                 actions.append(t("Startup self-alignment configured"))
         except Exception as exc:
             actions.append("[WARN] " + t("Self-alignment configuration did not succeed: {error}", error=exc))
+        try:
+            from nexgen_core.tools.update_notifier import ensure_boot_check, ensure_shell_hook
+
+            actions.extend(ensure_shell_hook(self.home))
+            actions.extend(ensure_boot_check(self.home))
+        except Exception as exc:
+            actions.append("[WARN] " + t("Update notice lanes not ensured: {error}", error=exc))
 
     def _phase_modules(self, actions: list[str]) -> None:
         """Modules this machine declared: their commands and units

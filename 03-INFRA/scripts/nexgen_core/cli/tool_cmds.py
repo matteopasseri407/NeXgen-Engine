@@ -63,7 +63,10 @@ def register(sub) -> None:
     q.add_argument("--force", action="store_true", help=t("Ignore time throttle and prompt if update available"))
     q.add_argument("--demo", action="store_true", help=t("Simulate prompt dialog for test"))
     q.add_argument("--install-autostart", action="store_true", help=t("Configure user autostart"))
-    q.set_defaults(func=lambda a: _run("update_notifier", _all(a)))
+    q.add_argument("--install-shell-hook", action="store_true", help=t("Install the shell startup notice"))
+    q.add_argument("--remove", action="store_true", help=t("With an install flag: remove instead of installing"))
+    q.add_argument("--shell", choices=["bash", "powershell"], default=None, help=t("With shell hook: only this shell"))
+    q.set_defaults(func=cmd_update_notifier)
 
     p.set_defaults(func=lambda a: _usage(p))
 
@@ -105,6 +108,21 @@ def _run(module_name: str, argv: list[str]) -> int:
 
     module = importlib.import_module(f"nexgen_core.tools.{module_name}")
     return module.main(argv)
+
+
+def cmd_update_notifier(args) -> int:
+    from nexgen_core.tools import update_notifier
+
+    argv = list(_all(args))
+    for flag, token in (("force", "--force"), ("demo", "--demo"),
+                        ("install_autostart", "--install-autostart"),
+                        ("install_shell_hook", "--install-shell-hook"),
+                        ("remove", "--remove")):
+        if getattr(args, flag, False) and token not in argv:
+            argv.append(token)
+    if getattr(args, "shell", None):
+        argv.extend(["--shell", args.shell])
+    return update_notifier.main(argv)
 
 
 def cmd_now(args) -> int:

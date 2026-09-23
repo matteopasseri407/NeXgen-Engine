@@ -686,15 +686,79 @@ def cmd_install_shell_hook(remove: bool = False, shell: str | None = None) -> in
     return rc
 
 
-def cmd_install_autostart() -> int:
-    home = resolve_home()
-    if os.name != "nt":
-        nexgen_bin = home / ".local" / "bin" / "nexgen"
-        exec_cmd = str(nexgen_bin) if nexgen_bin.is_file() else "nexgen"
-        autostart_dir = home / ".config" / "autostart"
-        autostart_dir.mkdir(parents=True, exist_ok=True)
-        desktop_file = autostart_dir / "nexgen-update-check.desktop"
-        content = f"""[Desktop Entry]
+def _nexgen_cmd(home: Path) -> str:
+    """The launcher the boot entries invoke, preferring the installed shim."""
+    suffix = ".cmd" if os.name == "nt" else ""
+    shim = home / ".local" / "bin" / f"nexgen{suffix}"
+    return str(shim) if shim.is_file() else "nexgen"
+
+
+def _write_if_different(path: Path, content: str) -> bool:
+    try:
+        if path.is_file() and path.read_text(encoding="utf-8") == content:
+            return False
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content, encoding="utf-8")
+        return True
+    except OSError:
+        return False
+
+
+def _run_quiet(argv: list[str], timeout: int = 60) -> tuple[int, str]:
+    try:
+        proc = subprocess.run(argv, capture_output=True, text=True, check=False, timeout=timeout)
+        return proc.returncode, (proc.stdout or "") + (proc.stderr or "")
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return 1, str(exc)
+
+
+_UPDATE_CHECK_TASK = "NeXgen Engine Update Check"
+
+
+def _windows_task_runs_notifier(exec_cmd: str) -> bool:
+    rc, out = _run_quiet(["schtasks.exe", "/Query", "/TN", _UPDATE_CHECK_TASK, "/XML"])
+    return rc == 0 and exec_cmd in out
+
+
+def _ensure_windows_boot_check(home: Path) -> list[str]:
+    """Logon-time update check on Windows: scheduled task, Startup fallback."""
+    notes: list[str] = []
+    exec_cmd = _nexgen_cmd(home)
+    vbs = home / ".local" / "state" / "nexgen-update-check-hidden.vbs"
+    content = (
+        'Set shell = CreateObject("WScript.Shell")\n'
+        f'shell.Run "{exec_cmd} tool update-notifier", 0, False\n'
+    )
+    if _write_if_different(vbs, content):
+        notes.append(f"[autostart] hidden wrapper updated: {vbs}")
+    if _windows_task_runs_notifier(exec_cmd):
+        return notes or ["[autostart] logon task already active"]
+    rc, out = _run_quiet([
+        "schtasks.exe", "/Create", "/TN", _UPDATE_CHECK_TASK, "/SC", "ONLOGON",
+        "/TR", f'wscript.exe "{vbs}"', "/F",
+    ])
+    if rc == 0:
+        notes.append("[autostart] logon task installed via schtasks.exe")
+        return notes
+    startup = Path(os.environ.get("APPDATA") or (home / "AppData" / "Roaming"))
+    dest = (startup / "Microsoft" / "Windows" / "Start Menu" / "Programs"
+            / "Startup" / "NeXgen Update Check.vbs")
+    try:
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(vbs, dest)
+        notes.append(f"[autostart] logon fallback installed: {dest}")
+    except OSError as exc:
+        notes.append(f"[WARN] logon task failed ({out.strip()}) and Startup fallback failed ({exc})")
+    return notes
+
+
+def _ensure_posix_boot_check(home: Path) -> list[str]:
+    """Login-time dialog plus boot timer on Linux: XDG autostart entry and
+    a systemd user timer (OnBootSec covers every boot with linger)."""
+    notes: list[str] = []
+    exec_cmd = _nexgen_cmd(home)
+    desktop_file = home / ".config" / "autostart" / "nexgen-update-check.desktop"
+    desktop = f"""[Desktop Entry]
 Type=Application
 Name=NeXgen Update Check
 Comment=Verifica aggiornamenti disponibili per NeXgen Engine
@@ -704,15 +768,7 @@ NoDisplay=false
 X-GNOME-Autostart-enabled=true
 X-GNOME-Autostart-Delay=120
 """
-        desktop_file.write_text(content, encoding="utf-8")
-        print(f"[autostart] Linux XDG Autostart creato: {desktop_file}")
-
-        systemd_dir = home / ".config" / "systemd" / "user"
-        systemd_dir.mkdir(parents=True, exist_ok=True)
-        service_file = systemd_dir / "nexgen-update-check.service"
-        timer_file = systemd_dir / "nexgen-update-check.timer"
-
-        service_content = f"""[Unit]
+    service_content = f"""[Unit]
 Description=NeXgen Engine Update Check
 After=graphical-session.target network-online.target
 
@@ -725,7 +781,7 @@ Environment=XAUTHORITY=%h/.Xauthority
 [Install]
 WantedBy=default.target
 """
-        timer_content = """[Unit]
+    timer_content = """[Unit]
 Description=Timer per verifica giornaliera aggiornamenti NeXgen Engine
 
 [Timer]
@@ -736,13 +792,91 @@ Persistent=true
 [Install]
 WantedBy=timers.target
 """
-        service_file.write_text(service_content, encoding="utf-8")
-        timer_file.write_text(timer_content, encoding="utf-8")
-        subprocess.run(["systemctl", "--user", "daemon-reload"], check=False)
-        subprocess.run(["systemctl", "--user", "enable", "--now", "nexgen-update-check.timer"], check=False)
-        print(f"[autostart] Systemd user timer attivato: {timer_file}")
-    else:
-        print("[autostart] Su Windows: posiziona un collegamento a 'nexgen tool update-notifier' nella cartella Esecuzione automatica (Startup).")
+    changed = _write_if_different(desktop_file, desktop)
+    service_file = home / ".config" / "systemd" / "user" / "nexgen-update-check.service"
+    timer_file = home / ".config" / "systemd" / "user" / "nexgen-update-check.timer"
+    changed |= _write_if_different(service_file, service_content)
+    changed |= _write_if_different(timer_file, timer_content)
+    if changed:
+        notes.append(f"[autostart] boot entries written under {home}")
+    if not shutil.which("systemctl"):
+        notes.append("[autostart] systemctl not found: files written but timer not enabled")
+        return notes
+    if changed:
+        _run_quiet(["systemctl", "--user", "daemon-reload"], timeout=30)
+    rc, out = _run_quiet(["systemctl", "--user", "is-enabled", "nexgen-update-check.timer"], timeout=30)
+    if "enabled" not in out:
+        rc, out = _run_quiet(["systemctl", "--user", "enable", "--now", "nexgen-update-check.timer"], timeout=60)
+        if rc == 0:
+            notes.append("[autostart] boot timer enabled")
+        else:
+            notes.append(f"[WARN] timer not enabled ({out.strip()}); headless machines need `loginctl enable-linger $USER`")
+    elif not notes:
+        notes.append("[autostart] boot timer already enabled")
+    return notes
+
+
+def ensure_boot_check(home: Path | None = None) -> list[str]:
+    """Idempotent boot-time update check for this machine. Never raises:
+    a failed lane is a note, not a broken sync."""
+    try:
+        resolved = resolve_home(home)
+        if os.name == "nt":
+            return _ensure_windows_boot_check(resolved)
+        return _ensure_posix_boot_check(resolved)
+    except Exception as exc:
+        return [f"[WARN] boot check not ensured ({exc})"]
+
+
+def ensure_shell_hook(home: Path | None = None) -> list[str]:
+    """Idempotent shell-startup notice. Never raises."""
+    try:
+        marker = "NeXgen Engine update notice"
+        targets = []
+        if os.name == "nt":
+            targets = [resolve_home(home) / ".config" / "powershell" / "Microsoft.PowerShell_profile.ps1"]
+        else:
+            targets = [resolve_home(home) / ".bashrc"]
+        missing = [p for p in targets
+                   if not p.is_file() or marker not in p.read_text(encoding="utf-8", errors="replace")]
+        if not missing:
+            return ["[shell-hook] already present"]
+        rc = cmd_install_shell_hook()
+        if rc == 0:
+            return ["[shell-hook] installed for this machine's shells"]
+        return ["[WARN] shell hook installation returned an error"]
+    except Exception as exc:
+        return [f"[WARN] shell hook not ensured ({exc})"]
+
+
+def cmd_install_autostart(remove: bool = False) -> int:
+    home = resolve_home()
+    if remove:
+        return _remove_autostart(home)
+    if os.name != "nt":
+        print("\n".join(_ensure_posix_boot_check(home)))
+        return 0
+    print("\n".join(_ensure_windows_boot_check(home)))
+    return 0
+
+
+def _remove_autostart(home: Path) -> int:
+    if os.name == "nt":
+        rc, _ = _run_quiet(["schtasks.exe", "/Delete", "/TN", _UPDATE_CHECK_TASK, "/F"])
+        print("[autostart] logon task removed" if rc == 0 else "[autostart] no logon task present")
+        return 0
+    removed = []
+    for path in (home / ".config" / "autostart" / "nexgen-update-check.desktop",
+                 home / ".config" / "systemd" / "user" / "nexgen-update-check.service",
+                 home / ".config" / "systemd" / "user" / "nexgen-update-check.timer"):
+        try:
+            if path.is_file():
+                path.unlink()
+                removed.append(str(path))
+        except OSError:
+            pass
+    _run_quiet(["systemctl", "--user", "disable", "--now", "nexgen-update-check.timer"], timeout=60)
+    print("[autostart] removed: " + (", ".join(removed) if removed else "nothing present"))
     return 0
 
 
@@ -759,7 +893,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     if args.install_autostart:
-        return cmd_install_autostart()
+        return cmd_install_autostart(remove=args.remove)
 
     if args.install_shell_hook:
         return cmd_install_shell_hook(remove=args.remove, shell=args.shell)
