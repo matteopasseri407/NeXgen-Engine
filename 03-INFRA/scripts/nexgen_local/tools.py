@@ -39,6 +39,23 @@ class ToolCall:
     chars: int
 
 
+def audit_event(cfg: LaneConfig, name: str, args: dict[str, Any], ok: bool, chars: int) -> None:
+    """Append one JSONL receipt. Raises when the audit cannot be written."""
+    entry = {
+        "ts": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+        "tool": name,
+        "args": args,
+        "ok": ok,
+        "chars": chars,
+    }
+    try:
+        cfg.audit_path.parent.mkdir(parents=True, exist_ok=True)
+        with cfg.audit_path.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(entry, ensure_ascii=False) + "\n")
+    except OSError as exc:
+        raise ToolError(f"audit non scrivibile, chiamata rifiutata: {exc}") from exc
+
+
 class ToolRegistry:
     """The lane's whole capability surface: six read-only tools."""
 
@@ -49,19 +66,7 @@ class ToolRegistry:
     # ------------------------------------------------------------------ audit
 
     def _audit(self, name: str, args: dict[str, Any], ok: bool, chars: int) -> None:
-        entry = {
-            "ts": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
-            "tool": name,
-            "args": args,
-            "ok": ok,
-            "chars": chars,
-        }
-        try:
-            self.cfg.audit_path.parent.mkdir(parents=True, exist_ok=True)
-            with self.cfg.audit_path.open("a", encoding="utf-8") as handle:
-                handle.write(json.dumps(entry, ensure_ascii=False) + "\n")
-        except OSError as exc:
-            raise ToolError(f"audit non scrivibile, chiamata rifiutata: {exc}") from exc
+        audit_event(self.cfg, name, args, ok, chars)
 
     def _record(self, name: str, args: dict[str, Any], output: str) -> str:
         self.calls.append(ToolCall(name=name, args=args, ok=not output.startswith("("), chars=len(output)))

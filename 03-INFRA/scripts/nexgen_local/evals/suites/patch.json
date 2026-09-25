@@ -1,0 +1,14 @@
+[
+  {
+    "id": "fix-typo",
+    "file": "notes.md",
+    "instruction": "Correggi il refuso: 'contiente' deve diventare 'contiene'.",
+    "check": { "contains": "contiene", "not_contains": "contiente" }
+  },
+  {
+    "id": "append-line",
+    "file": "notes.md",
+    "instruction": "Aggiungi in fondo al file una riga con il testo esatto: 'Riga aggiunta dal banco.'",
+    "check": { "contains": "Riga aggiunta dal banco." }
+  }
+]

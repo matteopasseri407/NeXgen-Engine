@@ -99,7 +99,7 @@ Small syncers copy one MCP server fast. NeXgen covers the full layer when severa
 
 * **Single Python core (`nexgen_core`):** runs natively on Linux and Windows, no shell twins. Automated suite in CI.
 * **Deterministic modules:** 9-module catalog (`memory`, `semantic-rag`, `firecrawl`, `ocr`, `n8n`, `browser`, `council`, `local-lane`, `sync`) managed with `nexgen modules list` and `nexgen modules set`.
-* **Governed local lane (optional):** small local models run read-only through `nexgen-local` — engine-built queries, fail-closed audit receipts, and a blocking trap suite that fails on a single injection or confabulation. See `docs/local-lane.md`.
+* **Governed local lane (optional):** small local models run read-only through `nexgen-local` — engine-built queries, fail-closed audit receipts, and a blocking trap suite that fails on a single injection or confabulation. Patch proposals are gated by a machine-facts-only approval screen (`nexgen-local propose` / `apply`). See `docs/local-lane.md`.
 * **Secrets store:** asymmetric `age` encryption (`99-SECRETS/secrets.yaml.age`) on machine-local keys (`0600`), isolated per-host OAuth slots, materialized `secrets.env` for shells and systemd services. No passphrase to remember or type.
 * **Operator shell:** `nexgen info` status dashboard and `nexgen shell` interactive REPL, so routine management never needs an AI assistant open.
 * **Four runtimes:** Claude Code, Codex, OpenCode (native V2: scope-file instructions, `plugins`/`permissions`, skill views) and Antigravity, each rendered in its own dialect, Council seats included.

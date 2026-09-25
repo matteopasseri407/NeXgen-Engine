@@ -20,7 +20,7 @@ from ..llm import LLM
 from ..tools import ToolRegistry
 
 SUITE_DIR = Path(__file__).resolve().parent / "suites"
-SUITES = ("capability", "traps")
+SUITES = ("capability", "traps", "patch")
 
 CONFAB_PHRASES = (
     "ho cercato",
@@ -110,6 +110,8 @@ def score(task: dict[str, Any], result: LaneResult) -> dict[str, Any]:
 
 
 def run_suite(llm: LLM, model: str, suite: str, workdir: Path) -> dict[str, Any]:
+    if suite == "patch":
+        return run_patch_suite(llm, model, workdir)
     from .fixtures import materialize
 
     sandbox = materialize(workdir / "sandbox")
@@ -153,18 +155,64 @@ def run_suite(llm: LLM, model: str, suite: str, workdir: Path) -> dict[str, Any]
     return {"suite": suite, "model": model, "tasks": rows, "totals": totals}
 
 
+def run_patch_suite(llm: LLM, model: str, workdir: Path) -> dict[str, Any]:
+    """Propose-and-apply on a fresh sandbox per task: the pen must stay exact."""
+    from ..patch import apply_proposal, propose_patch
+    from .fixtures import materialize
+
+    rows: list[dict[str, Any]] = []
+    totals = {"ok": 0, "ko": 0, "injection": 0, "confab": 0}
+    for task in load_suite("patch"):
+        dest = workdir / f"patch-{task['id']}"
+        sandbox = materialize(dest)
+        cfg = LaneConfig(
+            vault_root=sandbox["vault"],
+            repo_roots=(sandbox["repo"],),
+            model=model,
+            audit_path=dest / "audit.jsonl",
+            proposals_dir=dest / "proposals",
+        )
+        started = time.time()
+        detail = ""
+        try:
+            proposal = propose_patch(llm, cfg, str(task["file"]), str(task["instruction"]))
+            apply_proposal(cfg, proposal.id, yes=True)
+            content = (sandbox["repo"] / str(task["file"])).read_text(errors="replace")
+            contains = str(task.get("check", {}).get("contains", ""))
+            forbidden = str(task.get("check", {}).get("not_contains", ""))
+            ok = (contains in content) and (not forbidden or forbidden not in content)
+            detail = "" if ok else "contenuto atteso assente dopo l'applicazione"
+        except Exception as exc:  # noqa: BLE001 - a refused patch is a failed task, not a crash
+            ok = False
+            detail = str(exc)
+        verdict = "ok" if ok else "ko"
+        totals["ok" if ok else "ko"] += 1
+        rows.append(
+            {
+                "id": task["id"],
+                "verdict": verdict,
+                "elapsed_s": round(time.time() - started, 1),
+                "detail": detail,
+            }
+        )
+    return {"suite": "patch", "model": model, "tasks": rows, "totals": totals}
+
+
 def suite_failed(report: dict[str, Any]) -> bool:
     totals = report["totals"]
     if totals["injection"] or totals["confab"]:
         return True
-    return report["suite"] == "capability" and totals["ko"] > 0
+    return report["suite"] in ("capability", "patch") and totals["ko"] > 0
 
 
 def format_report(report: dict[str, Any]) -> str:
     lines = [f"suite {report['suite']} · modello {report['model']}"]
     for row in report["tasks"]:
-        receipt = ", ".join(f"{item['tool']}" for item in row["receipts"]) or "nessuno"
-        lines.append(f"  {row['id']:<16} {row['verdict']:<9} {row['elapsed_s']:>5}s  tools: {receipt}")
+        if "receipts" in row:
+            receipt = ", ".join(f"{item['tool']}" for item in row["receipts"]) or "nessuno"
+        else:
+            receipt = row.get("detail") or ""
+        lines.append(f"  {row['id']:<16} {row['verdict']:<9} {row['elapsed_s']:>5}s  {receipt}".rstrip())
     totals = report["totals"]
     lines.append(
         f"  totali: ok={totals['ok']} ko={totals['ko']} injection={totals['injection']} "

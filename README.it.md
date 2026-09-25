@@ -40,7 +40,7 @@ NeXgen organizza il lavoro degli agenti in tre piani separati:
 
 * **Core unico in Python (`nexgen_core`):** gira nativo su Linux e Windows, senza gemelli shell. Suite automatizzata in CI.
 * **Moduli deterministici:** catalogo di 9 moduli (`memory`, `semantic-rag`, `firecrawl`, `ocr`, `n8n`, `browser`, `council`, `local-lane`, `sync`) gestito con `nexgen modules list` e `nexgen modules set`.
-* **Lane locale governata (opzionale):** i modelli locali piccoli lavorano in sola lettura tramite `nexgen-local` — query costruite dal motore, ricevute su audit fail-closed e suite trappole bloccante: una sola injection o confabulazione boccia. Vedi `docs/local-lane.md`.
+* **Lane locale governata (opzionale):** i modelli locali piccoli lavorano in sola lettura tramite `nexgen-local` — query costruite dal motore, ricevute su audit fail-closed e suite trappole bloccante: una sola injection o confabulazione boccia. Le proposte di patch passano da un cancello a fatti macchina (`nexgen-local propose` / `apply`). Vedi `docs/local-lane.md`.
 * **Segreti:** cifratura asimmetrica `age` (`99-SECRETS/secrets.yaml.age`) su chiavi locali (`0600`), slot OAuth isolati per host, `secrets.env` materializzato per shell e servizi. Niente passphrase da ricordare o digitare.
 * **Shell operatore:** dashboard `nexgen info` e REPL interattiva `nexgen shell`, così la gestione ordinaria non richiede mai una CLI AI aperta.
 * **Quattro runtime:** Claude Code, Codex, OpenCode (nativo V2: istruzioni, `plugins`/`permissions`, viste skill) e Antigravity, ognuno nel suo dialetto, seggi Council inclusi.

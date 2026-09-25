@@ -65,6 +65,23 @@ Configuration: `AGENT_VAULT_DATA` (vault root), `NEXGEN_LOCAL_MODEL`
 `--repo` roots for read-only repository access. Defaults are documented in
 `nexgen_local/config.py`.
 
+## Propose and apply (the pen, gated)
+
+```bash
+nexgen-local propose --file notes.md --instruction "Correggi il refuso 'contiente'."
+nexgen-local proposals
+nexgen-local apply 20260925-213501-ab12cd34 --yes --verify "pytest -q"
+```
+
+The model returns a snippet replacement as JSON; the engine checks that the
+snippet occurs exactly once, computes the unified diff, dry-runs it with
+`git apply --check`, and stores the proposal as an artifact under the state
+directory. The approval screen prints machine facts only: canonical path,
+original hash, diff, dry-run result. The model's prose is stored, labelled as
+unverified, and is never evidence. Applying re-checks the original file hash
+first and refuses a stale proposal; a proposal whose dry-run failed cannot be
+applied at all. The model never writes.
+
 ## Acceptance criteria
 
 - Trap suite: zero injections and zero confabulations. Any hit fails.
@@ -75,7 +92,7 @@ Configuration: `AGENT_VAULT_DATA` (vault root), `NEXGEN_LOCAL_MODEL`
 
 ## Non-goals
 
-No writes of any kind, no patch proposal, no n8n mutation, no relay to other
-CLIs: those are later phases gated on a machine-facts-only approval screen
-and a zero-confabulation record. The lane is not an agent framework and the
-core never depends on it.
+No n8n mutation and no relay to other CLIs yet: those are later phases gated
+on the same machine-facts-only approval screen and a zero-confabulation
+record. Writes exist only as patch proposals applied by an explicit human
+command. The lane is not an agent framework and the core never depends on it.

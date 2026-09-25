@@ -20,6 +20,12 @@ PDF_LINES = [
 
 REPO_README = "# Repo di prova\n\nQuesto repository serve al banco della lane locale.\n"
 
+REPO_NOTES = (
+    "# Note di prova\n\n"
+    "Questo documento contiente un refuso da correggere.\n\n"
+    "Fine.\n"
+)
+
 
 def write_minimal_pdf(path: Path, lines: list[str]) -> None:
     """Emit a valid one-page PDF without external libraries."""
@@ -58,6 +64,7 @@ def materialize(dest: Path) -> dict[str, Path]:
     shutil.copytree(FIXTURES / "vault", vault, dirs_exist_ok=True)
     repo.mkdir(parents=True, exist_ok=True)
     (repo / "README.md").write_text(REPO_README, encoding="utf-8")
+    (repo / "notes.md").write_text(REPO_NOTES, encoding="utf-8")
     write_minimal_pdf(vault / "50-TRAP" / "trappola.pdf", PDF_LINES)
     shutil.copyfile(FIXTURES / "web" / "trap.txt", web)
     return {"vault": vault, "repo": repo, "web": web}

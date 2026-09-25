@@ -13,10 +13,12 @@ import shutil
 import sys
 import tempfile
 import urllib.request
+from dataclasses import asdict
 from pathlib import Path
 
 from .config import LaneConfig, default_engine_root
 from .engine import LaneResult
+from .patch import PatchError, apply_proposal, format_gate, list_proposals, propose_patch
 from .tools import ToolRegistry, audit_writable
 
 
@@ -107,6 +109,57 @@ def cmd_eval(args: argparse.Namespace) -> int:
     return 1 if failed else 0
 
 
+def cmd_propose(args: argparse.Namespace) -> int:
+    from .llm import LLMError
+
+    cfg = _config(args)
+    try:
+        llm = _llm(cfg)
+        proposal = propose_patch(llm, cfg, args.file, args.instruction)
+    except LLMError as exc:
+        print(f"nexgen-local: {exc}", file=sys.stderr)
+        return 2
+    except PatchError as exc:
+        print(f"nexgen-local: proposta rifiutata: {exc}", file=sys.stderr)
+        return 1
+    if args.json:
+        print(json.dumps(asdict(proposal), ensure_ascii=False, indent=2))
+    else:
+        print(format_gate(proposal))
+    return 0 if proposal.dry_run else 1
+
+
+def cmd_proposals(args: argparse.Namespace) -> int:
+    cfg = _config(args)
+    items = list_proposals(cfg)
+    if args.json:
+        print(json.dumps([asdict(item) for item in items], ensure_ascii=False, indent=2))
+        return 0
+    if not items:
+        print("nessuna proposta")
+        return 0
+    for item in items:
+        state = "applicata" if item.applied_at else ("pronta" if item.dry_run else "dry-run fallito")
+        print(f"  {item.id}  {state:<15} {item.file}")
+    return 0
+
+
+def cmd_apply(args: argparse.Namespace) -> int:
+    cfg = _config(args)
+    try:
+        result = apply_proposal(cfg, args.proposal_id, yes=args.yes, verify=args.verify or None)
+    except PatchError as exc:
+        print(f"nexgen-local: {exc}", file=sys.stderr)
+        return 1
+    if args.json:
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+    else:
+        print(f"applicata: {result['file']} (proposta {result['id']})")
+        if result["verify"]:
+            print(result["verify"])
+    return 0
+
+
 def cmd_doctor(args: argparse.Namespace) -> int:
     checks: list[tuple[str, bool, str, bool]] = []
 
@@ -142,6 +195,7 @@ def cmd_doctor(args: argparse.Namespace) -> int:
 
     add("pdftotext (PDF)", bool(shutil.which(cfg.pdftotext_cmd)), "opzionale", required=False)
     add("firecrawl-local (web)", bool(shutil.which(cfg.firecrawl_cmd)), "opzionale", required=False)
+    add("git (proposte patch)", bool(shutil.which("git")), "opzionale", required=False)
     add("superficie sola lettura", True, "nessun tool montato scrive")
 
     if args.json:
@@ -173,10 +227,29 @@ def main(argv: list[str] | None = None) -> int:
     run.set_defaults(func=cmd_run)
 
     evaluate = sub.add_parser("eval", help="esegue le suite di valutazione")
-    evaluate.add_argument("--suite", choices=("capability", "traps", "all"), default="all")
+    evaluate.add_argument("--suite", choices=("capability", "traps", "patch", "all"), default="all")
     evaluate.add_argument("--model")
     evaluate.add_argument("--json", action="store_true")
     evaluate.set_defaults(func=cmd_eval)
+
+    propose = sub.add_parser("propose", help="propone una patch (cancello a fatti macchina)")
+    propose.add_argument("--file", required=True)
+    propose.add_argument("--instruction", required=True)
+    propose.add_argument("--model")
+    propose.add_argument("--repo", action="append")
+    propose.add_argument("--json", action="store_true")
+    propose.set_defaults(func=cmd_propose)
+
+    proposals = sub.add_parser("proposals", help="elenca le proposte")
+    proposals.add_argument("--json", action="store_true")
+    proposals.set_defaults(func=cmd_proposals)
+
+    apply_cmd = sub.add_parser("apply", help="applica una proposta (serve --yes)")
+    apply_cmd.add_argument("proposal_id")
+    apply_cmd.add_argument("--yes", action="store_true")
+    apply_cmd.add_argument("--verify", default="")
+    apply_cmd.add_argument("--json", action="store_true")
+    apply_cmd.set_defaults(func=cmd_apply)
 
     doctor = sub.add_parser("doctor", help="verifica precondizioni e superficie")
     doctor.add_argument("--model")
