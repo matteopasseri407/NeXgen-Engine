@@ -93,9 +93,13 @@ nexgen-local relay --cli claude --model claude-opus-5 --prompt "Rivedi questo pi
 One bounded hand-off to another installed CLI, read-only and isolated like a
 Council seat: env allowlist, isolated config directories for codex/opencode,
 `-s read-only` (codex), `--tools ""` (claude), no MCP credentials, hard
-timeout, capped output, one audit receipt per call. The answer is shown to
-the user; it is never fed back into a mutating chain automatically. `agy` is
-not supported in v0 because its isolation is prompt-only.
+timeout, capped output, one audit receipt per call. For opencode the isolated
+config additionally denies `edit`, `bash` and `webfetch` by construction.
+Attachments must live under the vault or a repository root;
+`--allow-outside-attach` forces a different path explicitly and loudly. The
+answer is shown to the user; it is never fed back into a mutating chain
+automatically. `agy` is not supported in v0 because its isolation is
+prompt-only.
 
 ## Acceptance criteria
 

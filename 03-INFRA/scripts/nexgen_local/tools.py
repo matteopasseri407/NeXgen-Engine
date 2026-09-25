@@ -73,6 +73,12 @@ class ToolRegistry:
         self._audit(name, args, ok=not output.startswith("("), chars=len(output))
         return output
 
+    def _refuse(self, name: str, args: dict[str, Any], message: str) -> str:
+        """A refusal is an event too: it leaves a receipt, or it never happened."""
+        self.calls.append(ToolCall(name=name, args=args, ok=False, chars=0))
+        self._audit(name, args, ok=False, chars=0)
+        return message
+
     # ----------------------------------------------------------- confinement
 
     def _resolve(self, rel: str, roots: tuple[Path, ...]) -> Path | None:
@@ -117,10 +123,10 @@ class ToolRegistry:
     def search_vault(self, query: str) -> str:
         terms = [t for t in re.split(r"[^0-9A-Za-zÀ-ÿ]+", str(query)) if len(t) >= MIN_TERM]
         if not terms:
-            return "(query vuota)"
+            return self._refuse("search_vault", {"query": query}, "(query vuota)")
         root = self.cfg.vault_root
         if not root.is_dir():
-            return "(vault non raggiungibile)"
+            return self._refuse("search_vault", {"query": query}, "(vault non raggiungibile)")
         scored: list[tuple[int, int, str]] = []
         for path in root.rglob("*.md"):
             if any(part in self.cfg.excluded_parts for part in path.parts):
@@ -148,27 +154,27 @@ class ToolRegistry:
     def read_vault(self, path: str) -> str:
         target = self._resolve(path, (self.cfg.vault_root,))
         if target is None:
-            return "(rifiutato: percorso fuori perimetro o inesistente)"
+            return self._refuse("read_vault", {"path": path}, "(rifiutato: percorso fuori perimetro o inesistente)")
         return self._record("read_vault", {"path": path}, self._read_text(target))
 
     def read_repo(self, path: str) -> str:
         target = self._resolve(path, self.cfg.repo_roots)
         if target is None:
-            return "(rifiutato: percorso fuori perimetro o inesistente)"
+            return self._refuse("read_repo", {"path": path}, "(rifiutato: percorso fuori perimetro o inesistente)")
         return self._record("read_repo", {"path": path}, self._read_text(target))
 
     def read_pdf(self, path: str) -> str:
         target = self._resolve(path, (self.cfg.vault_root, *self.cfg.repo_roots))
         if target is None:
-            return "(rifiutato: percorso fuori perimetro o inesistente)"
+            return self._refuse("read_pdf", {"path": path}, "(rifiutato: percorso fuori perimetro o inesistente)")
         if target.suffix.lower() != ".pdf":
-            return "(non e' un PDF)"
+            return self._refuse("read_pdf", {"path": path}, "(non e' un PDF)")
         if not shutil.which(self.cfg.pdftotext_cmd):
-            return "(pdftotext non disponibile)"
+            return self._refuse("read_pdf", {"path": path}, "(pdftotext non disponibile)")
         output = self._run([self.cfg.pdftotext_cmd, "-layout", str(target), "-"], timeout=60)
         output = output.strip()
         if not output:
-            return "(nessun testo estraibile)"
+            return self._refuse("read_pdf", {"path": path}, "(nessun testo estraibile)")
         if len(output) > self.cfg.read_chars:
             output = output[: self.cfg.read_chars] + "\n[...troncato]"
         return self._record("read_pdf", {"path": path}, output)
@@ -176,12 +182,12 @@ class ToolRegistry:
     def web_search(self, query: str) -> str:
         query = str(query).strip()
         if not query:
-            return "(query vuota)"
+            return self._refuse("web_search", {"query": query}, "(query vuota)")
         if not shutil.which(self.cfg.firecrawl_cmd):
-            return "(firecrawl-local non disponibile)"
+            return self._refuse("web_search", {"query": query}, "(firecrawl-local non disponibile)")
         output = self._run([self.cfg.firecrawl_cmd, "search", query], timeout=120).strip()
         if not output:
-            return "(nessun risultato)"
+            return self._record("web_search", {"query": query}, "(nessun risultato)")
         if len(output) > self.cfg.read_chars:
             output = output[: self.cfg.read_chars] + "\n[...troncato]"
         return self._record("web_search", {"query": query}, output)

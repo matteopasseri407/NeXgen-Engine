@@ -46,6 +46,7 @@ for a in "$@"; do
   prev="$a"
 done
 if [ -n "$att" ]; then cp "$att" "$DIR/attached.txt"; fi
+if [ -f "${XDG_CONFIG_HOME:-}/opencode.json" ]; then cp "${XDG_CONFIG_HOME}/opencode.json" "$DIR/opencode_config.json"; fi
 printf '\\033[0m> build · finto\\nrisposta finta opencode\\n'
 """
 
@@ -138,12 +139,34 @@ def test_relay_caps_output(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> N
 
 def test_relay_truncates_attachment(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     bin_dir = _fake_bin(tmp_path, "opencode", OPENCODE_FAKE, monkeypatch)
-    attach = tmp_path / "grande.txt"
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    attach = vault / "grande.txt"
     attach.write_text("x" * 70_000, encoding="utf-8")
     result = run_relay(_cfg(tmp_path), "opencode", "model", "domanda", attach=str(attach))
     assert result.truncated is True
     attached = (bin_dir / "attached.txt").read_text(encoding="utf-8")
     assert "[...allegato troncato]" in attached
+
+
+def test_opencode_relay_denies_write_in_isolated_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    bin_dir = _fake_bin(tmp_path, "opencode", OPENCODE_FAKE, monkeypatch)
+    run_relay(_cfg(tmp_path), "opencode", "model", "domanda")
+    config = json.loads((bin_dir / "opencode_config.json").read_text(encoding="utf-8"))
+    assert config["permission"]["edit"] == "deny"
+    assert config["permission"]["bash"] == "deny"
+    assert config["permission"]["webfetch"] == "deny"
+
+
+def test_attach_outside_roots_requires_explicit_flag(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    _fake_bin(tmp_path, "opencode", OPENCODE_FAKE, monkeypatch)
+    attach = tmp_path / "esterno.txt"
+    attach.write_text("contenuto esterno", encoding="utf-8")
+    cfg = _cfg(tmp_path)
+    with pytest.raises(RelayError, match="fuori dalle radici"):
+        run_relay(cfg, "opencode", "model", "domanda", attach=str(attach))
+    result = run_relay(cfg, "opencode", "model", "domanda", attach=str(attach), allow_outside_attach=True)
+    assert result.answer == "risposta finta opencode"
 
 
 def test_available_clis_lists_only_present_ones(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

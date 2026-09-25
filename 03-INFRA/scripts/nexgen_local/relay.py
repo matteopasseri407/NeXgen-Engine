@@ -94,8 +94,39 @@ def _isolated_env(cli: str, workdir: Path) -> dict[str, str]:
         config_home = workdir / "opencode-config"
         config_home.mkdir(parents=True, exist_ok=True)
         os.chmod(config_home, 0o700)
+        # OpenCode has no CLI-level sandbox flag: its permission model lives in
+        # opencode.json. The isolated config denies edit, bash and webfetch by
+        # construction, so the relayed seat cannot write or fetch even if the
+        # prompt is ignored. The dialect is the one verified in the permissions
+        # manifest: permission.{edit,bash,webfetch} = allow|deny.
+        (config_home / "opencode.json").write_text(
+            json.dumps(
+                {
+                    "$schema": "https://opencode.ai/config.json",
+                    "permission": {"edit": "deny", "bash": "deny", "webfetch": "deny"},
+                },
+                indent=1,
+            ),
+            encoding="utf-8",
+        )
         env["XDG_CONFIG_HOME"] = str(config_home)
     return env
+
+
+def _inside_roots(cfg: LaneConfig, path: str) -> bool:
+    try:
+        resolved = Path(path).resolve()
+    except OSError:
+        return False
+    if any(part in cfg.excluded_parts for part in resolved.parts):
+        return False
+    for root in (cfg.vault_root, *cfg.repo_roots):
+        try:
+            resolved.relative_to(root.resolve())
+            return True
+        except (OSError, ValueError):
+            continue
+    return False
 
 
 def _argv(cli: str, model: str, prompt_file: Path, output_file: Path) -> tuple[list[str], str | None]:
@@ -149,6 +180,7 @@ def run_relay(
     *,
     attach: str | None = None,
     timeout: int = DEFAULT_TIMEOUT,
+    allow_outside_attach: bool = False,
 ) -> RelayResult:
     """Run one read-only, isolated hand-off and return the answer."""
     if cli not in RELAY_CLIS:
@@ -161,6 +193,11 @@ def run_relay(
     full_prompt = RELAY_PREFIX + prompt.strip()
     truncated = False
     if attach:
+        if not allow_outside_attach and not _inside_roots(cfg, attach):
+            raise RelayError(
+                f"allegato fuori dalle radici consentite: {attach} "
+                "(usa --allow-outside-attach per forzare, consapevolmente)"
+            )
         try:
             text = Path(attach).read_text(errors="replace")
         except OSError as exc:

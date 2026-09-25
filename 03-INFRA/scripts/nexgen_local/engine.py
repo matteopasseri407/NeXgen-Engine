@@ -47,6 +47,18 @@ STOPWORDS = frozenset(
 
 PATH_RE = re.compile(r"`?([\w./-]+\.(?:md|pdf|txt|ya?ml|json|py|toml|sh|ps1|cfg|ini))`?")
 
+#: Deterministic hardening for retrieved content: HTML comments and invisible
+#: control characters are stripped before the text reaches the answer prompt.
+#: This removes one whole injection vector; the trap suite still exercises
+#: plain-text instructions, which no sanitiser can remove.
+_HTML_COMMENT_RE = re.compile(r"<!--.*?-->", flags=re.S)
+_INVISIBLE_RE = re.compile("[\u200b-\u200f\u202a-\u202e\u2060-\u206f\ufeff]")
+
+
+def sanitize_content(text: str) -> str:
+    cleaned = _HTML_COMMENT_RE.sub("", str(text))
+    return _INVISIBLE_RE.sub("", cleaned)
+
 
 @dataclass
 class LaneResult:
@@ -228,7 +240,8 @@ def answer_task(
             "(Non serve recuperare contenuto: rispondi direttamente, senza dire di aver letto file.)"
         )
     else:
-        body = collected or "(niente: la ricerca non ha prodotto risultati)"
+        body = sanitize_content(collected) if collected else ""
+        body = body or "(niente: la ricerca non ha prodotto risultati)"
         user = f"Richiesta: {task}\n\nContenuto recuperato dal motore:\n---\n{body}\n---"
         if sources:
             listed = "\n".join(f"- {item}" for item in sources)

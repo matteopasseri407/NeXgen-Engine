@@ -12,7 +12,7 @@ from pathlib import Path
 import pytest
 
 from nexgen_local.config import LaneConfig
-from nexgen_local.patch import PatchError, apply_proposal, format_gate, propose_patch
+from nexgen_local.patch import PatchError, apply_proposal, format_gate, load_proposal, propose_patch
 
 
 def _git_repo(tmp_path: Path) -> Path:
@@ -111,6 +111,15 @@ def test_model_prose_is_never_evidence(tmp_path: Path) -> None:
     assert (repo / "notes.md").read_text(encoding="utf-8") == "Questo contiente un refuso.\n"
     apply_proposal(cfg, proposal.id, yes=True)
     assert (repo / "notes.md").read_text(encoding="utf-8") == "Questo contiene un refuso.\n"
+
+
+def test_proposal_id_traversal_is_refused(tmp_path: Path) -> None:
+    repo = _git_repo(tmp_path)
+    cfg = _cfg(tmp_path, repo)
+    with pytest.raises(PatchError, match="non valido"):
+        load_proposal(cfg, "../evil")
+    with pytest.raises(PatchError, match="non valido"):
+        load_proposal(cfg, "20260925-213501-ab12cd34/../../x")
 
 
 def test_failed_dry_run_blocks_application(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

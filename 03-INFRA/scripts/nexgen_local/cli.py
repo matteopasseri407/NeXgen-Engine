@@ -174,9 +174,20 @@ def cmd_relay(args: argparse.Namespace) -> int:
     if not args.cli or not args.model or not args.prompt:
         print("nexgen-local: servono --cli, --model e --prompt (oppure --list)", file=sys.stderr)
         return 2
+    if args.allow_outside_attach:
+        print(
+            "nexgen-local: ATTENZIONE allegato fuori dalle radici consentite, forzato su richiesta",
+            file=sys.stderr,
+        )
     try:
         result = run_relay(
-            cfg, args.cli, args.model, args.prompt, attach=args.file or None, timeout=args.timeout
+            cfg,
+            args.cli,
+            args.model,
+            args.prompt,
+            attach=args.file or None,
+            timeout=args.timeout,
+            allow_outside_attach=args.allow_outside_attach,
         )
     except RelayError as exc:
         print(f"nexgen-local: {exc}", file=sys.stderr)
@@ -287,7 +298,12 @@ def main(argv: list[str] | None = None) -> int:
     relay.add_argument("--cli", choices=RELAY_CLIS)
     relay.add_argument("--model")
     relay.add_argument("--prompt")
-    relay.add_argument("--file", help="allega un file di testo al prompt")
+    relay.add_argument("--file", help="allega un file di testo al prompt (dentro vault/repo)")
+    relay.add_argument(
+        "--allow-outside-attach",
+        action="store_true",
+        help="consenti un allegato fuori dalle radici consentite (esplicito)",
+    )
     relay.add_argument("--timeout", type=int, default=600)
     relay.add_argument("--json", action="store_true")
     relay.set_defaults(func=cmd_relay)
