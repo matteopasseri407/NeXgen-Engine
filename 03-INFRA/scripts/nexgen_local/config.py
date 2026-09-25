@@ -30,6 +30,11 @@ class LaneConfig:
     vault_root: Path
     repo_roots: tuple[Path, ...] = ()
     model: str = DEFAULT_MODEL
+    #: Per-node models: empty means "use `model`". The router can be a smaller
+    #: model than the answerer; measured evidence says a 4B routes fine when
+    #: the engine validates every path against real files.
+    router_model: str = ""
+    answer_model: str = ""
     num_ctx: int = 8192
     temperature: float = 0.0
     max_results: int = 5
@@ -43,6 +48,14 @@ class LaneConfig:
     max_steps: int = 4
     excluded_parts: frozenset[str] = EXCLUDED_PARTS
 
+    @property
+    def router_tag(self) -> str:
+        return self.router_model or self.model
+
+    @property
+    def answer_tag(self) -> str:
+        return self.answer_model or self.model
+
     @classmethod
     def from_env(
         cls,
@@ -51,6 +64,8 @@ class LaneConfig:
         repos: tuple[str | Path, ...] | None = None,
         model: str | None = None,
         audit: str | Path | None = None,
+        router_model: str | None = None,
+        answer_model: str | None = None,
     ) -> "LaneConfig":
         vault_root = Path(
             vault or os.environ.get("AGENT_VAULT_DATA") or (Path.home() / "KnowledgeVault")
@@ -67,5 +82,7 @@ class LaneConfig:
             vault_root=vault_root,
             repo_roots=repo_roots,
             model=model or os.environ.get("NEXGEN_LOCAL_MODEL") or DEFAULT_MODEL,
+            router_model=router_model or os.environ.get("NEXGEN_LOCAL_ROUTER_MODEL") or "",
+            answer_model=answer_model or os.environ.get("NEXGEN_LOCAL_ANSWER_MODEL") or "",
             audit_path=audit_path,
         )

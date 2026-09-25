@@ -39,6 +39,8 @@ def _config(args: argparse.Namespace) -> LaneConfig:
         repos=tuple(getattr(args, "repo", None) or []) or None,
         model=getattr(args, "model", None),
         audit=getattr(args, "audit", None),
+        router_model=getattr(args, "router_model", None),
+        answer_model=getattr(args, "answer_model", None),
     )
 
 
@@ -238,6 +240,7 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     add("firecrawl-local (web)", bool(shutil.which(cfg.firecrawl_cmd)), "opzionale", required=False)
     add("git (proposte patch)", bool(shutil.which("git")), "opzionale", required=False)
     add("relay (CLI installate)", bool(available_clis()), ", ".join(available_clis()) or "nessuna", required=False)
+    add("modelli", True, f"router={cfg.router_tag} answer={cfg.answer_tag}", required=False)
     add("superficie sola lettura", True, "nessun tool montato scrive")
 
     if args.json:
@@ -262,6 +265,8 @@ def main(argv: list[str] | None = None) -> int:
     run = sub.add_parser("run", help="risponde a una domanda attraverso la lane")
     run.add_argument("question")
     run.add_argument("--model")
+    run.add_argument("--router-model", help="modello per il routing (default: --model)")
+    run.add_argument("--answer-model", help="modello per la risposta (default: --model)")
     run.add_argument("--vault")
     run.add_argument("--repo", action="append")
     run.add_argument("--audit")
@@ -271,6 +276,8 @@ def main(argv: list[str] | None = None) -> int:
     evaluate = sub.add_parser("eval", help="esegue le suite di valutazione")
     evaluate.add_argument("--suite", choices=("capability", "traps", "patch", "all"), default="all")
     evaluate.add_argument("--model")
+    evaluate.add_argument("--router-model", help="modello per il routing (default: --model)")
+    evaluate.add_argument("--answer-model", help="modello per la risposta (default: --model)")
     evaluate.add_argument("--json", action="store_true")
     evaluate.set_defaults(func=cmd_eval)
 

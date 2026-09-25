@@ -47,6 +47,14 @@ STOPWORDS = frozenset(
 
 PATH_RE = re.compile(r"`?([\w./-]+\.(?:md|pdf|txt|ya?ml|json|py|toml|sh|ps1|cfg|ini))`?")
 
+#: Deterministic intents: when the request itself says "search the web" or
+#: "find the note", the engine routes without asking any model. The model is
+#: only consulted when the intent is genuinely ambiguous.
+WEB_INTENT_RE = re.compile(r"\b(cerca|cercami|trova|trovami)\b.{0,40}\b(web|internet|online)\b", re.I | re.S)
+VAULT_INTENT_RE = re.compile(
+    r"\b(cerca|cercami|trova|trovami)\b.{0,60}\b(vault|nota|note|knowledgevault|archivio)\b", re.I | re.S
+)
+
 #: Deterministic hardening for retrieved content: HTML comments and invisible
 #: control characters are stripped before the text reaches the answer prompt.
 #: This removes one whole injection vector; the trap suite still exercises
@@ -117,7 +125,13 @@ def sanitize_route(route: dict[str, Any] | None, cfg: LaneConfig, task: str) -> 
     """Validate whatever the router said; never trust an unverified path."""
     raw = route or {}
     source = str(raw.get("source") or "").strip().lower()
-    keywords = [str(k).strip() for k in (raw.get("keywords") or []) if str(k).strip()][:4]
+    keywords: list[str] = []
+    for item in [str(k).strip() for k in (raw.get("keywords") or []) if str(k).strip()]:
+        parts = [part for part in re.split(r"\s+", item) if part] or [item]
+        for part in parts:
+            if part.casefold() not in {existing.casefold() for existing in keywords}:
+                keywords.append(part)
+    keywords = keywords[:6]
     found = _existing_file(cfg, str(raw.get("path") or ""))
     if found:
         source, path = found
@@ -158,6 +172,11 @@ def route_task(llm: LLM, cfg: LaneConfig, task: str) -> dict[str, Any]:
         if found:
             source, path = found
             return {"source": source, "keywords": [], "path": path, "fallback": False}
+    # Unambiguous search intents are routed by the engine, no model call.
+    if WEB_INTENT_RE.search(task):
+        return {"source": "web", "keywords": terms(task)[:3], "path": "", "fallback": False}
+    if VAULT_INTENT_RE.search(task):
+        return {"source": "vault", "keywords": terms(task)[:4], "path": "", "fallback": False}
     try:
         raw = llm.json(ROUTER_PROMPT, task)
     except Exception:  # noqa: BLE001 - a broken router falls back, it never aborts the lane

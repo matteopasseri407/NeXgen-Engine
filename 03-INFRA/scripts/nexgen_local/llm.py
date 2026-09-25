@@ -42,6 +42,11 @@ def _json_block(text: str) -> dict | None:
     return parsed if isinstance(parsed, dict) else None
 
 
+#: The router sees a short prompt and answers with a small JSON form: a small
+#: context keeps the 4B-class router light while the answerer keeps cfg.num_ctx.
+ROUTER_NUM_CTX = 4096
+
+
 class ChatOllamaLLM:
     """LLM backed by ``langchain_ollama.ChatOllama`` (optional dependency)."""
 
@@ -55,13 +60,26 @@ class ChatOllamaLLM:
         host = os.environ.get("OLLAMA_HOST") or "http://127.0.0.1:11434"
         if "://" not in host:
             host = "http://" + host
-        common = {"model": cfg.model, "base_url": host, "temperature": cfg.temperature, "num_ctx": cfg.num_ctx}
+        router_common = {
+            "model": cfg.router_tag,
+            "base_url": host,
+            "temperature": 0.0,
+            "num_ctx": min(cfg.num_ctx, ROUTER_NUM_CTX),
+            "validate_model_on_init": False,
+        }
+        answer_common = {
+            "model": cfg.answer_tag,
+            "base_url": host,
+            "temperature": cfg.temperature,
+            "num_ctx": cfg.num_ctx,
+            "validate_model_on_init": False,
+        }
         try:
-            self._json_model = ChatOllama(format="json", reasoning=False, **common)
-            self._text_model = ChatOllama(reasoning=False, **common)
-        except TypeError:  # older driver without the reasoning switch
-            self._json_model = ChatOllama(format="json", **common)
-            self._text_model = ChatOllama(**common)
+            self._json_model = ChatOllama(format="json", reasoning=False, **router_common)
+            self._text_model = ChatOllama(reasoning=False, **answer_common)
+        except TypeError:  # older driver without reasoning/validate switches
+            self._json_model = ChatOllama(format="json", **router_common)
+            self._text_model = ChatOllama(**answer_common)
 
     @staticmethod
     def _messages(system: str, user: str):

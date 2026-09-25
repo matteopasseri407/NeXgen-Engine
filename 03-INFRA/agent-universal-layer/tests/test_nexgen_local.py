@@ -40,8 +40,10 @@ class FakeLLM:
         self.route = route or {"source": "none"}
         self.answers = list(answers or ["risposta finta"])
         self.seen_users: list[str] = []
+        self.json_calls = 0
 
     def json(self, system: str, user: str) -> dict | None:
+        self.json_calls += 1
         return self.route
 
     def text(self, system: str, user: str) -> str:
@@ -157,10 +159,49 @@ def test_repair_uses_task_terms_when_keywords_miss(tmp_path: Path) -> None:
     cfg = _cfg(tmp_path)
     _write(cfg.vault_root / "01-NOTE" / "airone-blu.md", "Airone Blu e' un progetto dimostrativo.\n")
     llm = FakeLLM(route={"source": "vault", "keywords": ["zzzquarantadue"]}, answers=["Trovata."])
-    result = run_lane(llm, ToolRegistry(cfg), cfg, "Trova la nota sul progetto Airone Blu e riassumila.")
+    result = run_lane(llm, ToolRegistry(cfg), cfg, "Riassumi la nota del progetto Airone Blu.")
     searches = [receipt for receipt in result.receipts if receipt["tool"] == "search_vault"]
     assert len(searches) >= 2, "prima ricerca vuota, poi riparazione con i termini del task"
     assert "read_vault" in [receipt["tool"] for receipt in result.receipts]
+
+
+def test_deterministic_vault_intent_skips_the_model(tmp_path: Path) -> None:
+    cfg = _cfg(tmp_path)
+    llm = FakeLLM(route={"source": "web", "keywords": ["sbagliato"]})
+    route = route_task(llm, cfg, "Cerca nel vault la nota sul progetto Airone Blu e riassumila.")
+    assert route["source"] == "vault"
+    assert "airone" in [k.casefold() for k in route["keywords"]]
+    assert llm.json_calls == 0, "l'intento esplicito non deve passare dal modello"
+
+
+def test_deterministic_web_intent_skips_the_model(tmp_path: Path) -> None:
+    cfg = _cfg(tmp_path)
+    llm = FakeLLM(route={"source": "vault"})
+    route = route_task(llm, cfg, "Cerca sul web 'muse spark 1.3' e riassumi il primo risultato.")
+    assert route["source"] == "web"
+    assert llm.json_calls == 0
+
+
+def test_multiword_keywords_are_split(tmp_path: Path) -> None:
+    cfg = _cfg(tmp_path)
+    route = sanitize_route({"source": "vault", "keywords": ["BDO Italia", "colloquio"]}, cfg, "nota BDO")
+    assert route["keywords"] == ["BDO", "Italia", "colloquio"]
+
+
+def test_per_node_model_tags_fall_back_to_model() -> None:
+    cfg = LaneConfig(vault_root=Path("/tmp"), model="base", router_model="router", answer_model="")
+    assert cfg.router_tag == "router"
+    assert cfg.answer_tag == "base"
+
+
+def test_chatollama_uses_per_node_models() -> None:
+    pytest.importorskip("langchain_ollama")
+    from nexgen_local.llm import ChatOllamaLLM
+
+    cfg = LaneConfig(vault_root=Path("/tmp"), model="base", router_model="router-x", answer_model="answer-y")
+    llm = ChatOllamaLLM(cfg)
+    assert llm._json_model.model == "router-x"
+    assert llm._text_model.model == "answer-y"
 
 
 def test_refusals_leave_an_audit_receipt(tmp_path: Path) -> None:
