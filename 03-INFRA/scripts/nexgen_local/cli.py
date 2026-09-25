@@ -19,6 +19,7 @@ from pathlib import Path
 from .config import LaneConfig, default_engine_root
 from .engine import LaneResult
 from .patch import PatchError, apply_proposal, format_gate, list_proposals, propose_patch
+from .relay import RELAY_CLIS, RelayError, available_clis, run_relay
 from .tools import ToolRegistry, audit_writable
 
 
@@ -160,6 +161,35 @@ def cmd_apply(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_relay(args: argparse.Namespace) -> int:
+    cfg = _config(args)
+    if args.list:
+        clis = available_clis()
+        if args.json:
+            print(json.dumps({"supported": list(RELAY_CLIS), "available": clis}, ensure_ascii=False))
+        else:
+            print("relay — CLI supportati in v0: " + ", ".join(RELAY_CLIS))
+            print("installati qui: " + (", ".join(clis) if clis else "nessuno"))
+        return 0
+    if not args.cli or not args.model or not args.prompt:
+        print("nexgen-local: servono --cli, --model e --prompt (oppure --list)", file=sys.stderr)
+        return 2
+    try:
+        result = run_relay(
+            cfg, args.cli, args.model, args.prompt, attach=args.file or None, timeout=args.timeout
+        )
+    except RelayError as exc:
+        print(f"nexgen-local: {exc}", file=sys.stderr)
+        return 1
+    if args.json:
+        print(json.dumps(asdict(result), ensure_ascii=False, indent=2))
+    else:
+        print(result.answer or "(nessuna risposta)")
+        tail = "troncato" if result.truncated else "completo"
+        print(f"\n[{result.cli} · {result.model} · {result.elapsed_s}s · {tail}]")
+    return 0
+
+
 def cmd_doctor(args: argparse.Namespace) -> int:
     checks: list[tuple[str, bool, str, bool]] = []
 
@@ -196,6 +226,7 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     add("pdftotext (PDF)", bool(shutil.which(cfg.pdftotext_cmd)), "opzionale", required=False)
     add("firecrawl-local (web)", bool(shutil.which(cfg.firecrawl_cmd)), "opzionale", required=False)
     add("git (proposte patch)", bool(shutil.which("git")), "opzionale", required=False)
+    add("relay (CLI installate)", bool(available_clis()), ", ".join(available_clis()) or "nessuna", required=False)
     add("superficie sola lettura", True, "nessun tool montato scrive")
 
     if args.json:
@@ -250,6 +281,16 @@ def main(argv: list[str] | None = None) -> int:
     apply_cmd.add_argument("--verify", default="")
     apply_cmd.add_argument("--json", action="store_true")
     apply_cmd.set_defaults(func=cmd_apply)
+
+    relay = sub.add_parser("relay", help="passa una domanda a un'altra CLI (sola lettura, isolata)")
+    relay.add_argument("--list", action="store_true", help="mostra i CLI supportati e installati")
+    relay.add_argument("--cli", choices=RELAY_CLIS)
+    relay.add_argument("--model")
+    relay.add_argument("--prompt")
+    relay.add_argument("--file", help="allega un file di testo al prompt")
+    relay.add_argument("--timeout", type=int, default=600)
+    relay.add_argument("--json", action="store_true")
+    relay.set_defaults(func=cmd_relay)
 
     doctor = sub.add_parser("doctor", help="verifica precondizioni e superficie")
     doctor.add_argument("--model")

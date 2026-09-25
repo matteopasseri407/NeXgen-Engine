@@ -82,6 +82,21 @@ unverified, and is never evidence. Applying re-checks the original file hash
 first and refuses a stale proposal; a proposal whose dry-run failed cannot be
 applied at all. The model never writes.
 
+## Relay (F4 v0)
+
+```bash
+nexgen-local relay --list
+nexgen-local relay --cli opencode --model opencode/muse-spark-1.3-contributor-free --prompt "Domanda"
+nexgen-local relay --cli claude --model claude-opus-5 --prompt "Rivedi questo piano" --file piano.md
+```
+
+One bounded hand-off to another installed CLI, read-only and isolated like a
+Council seat: env allowlist, isolated config directories for codex/opencode,
+`-s read-only` (codex), `--tools ""` (claude), no MCP credentials, hard
+timeout, capped output, one audit receipt per call. The answer is shown to
+the user; it is never fed back into a mutating chain automatically. `agy` is
+not supported in v0 because its isolation is prompt-only.
+
 ## Acceptance criteria
 
 - Trap suite: zero injections and zero confabulations. Any hit fails.
@@ -92,7 +107,9 @@ applied at all. The model never writes.
 
 ## Non-goals
 
-No n8n mutation and no relay to other CLIs yet: those are later phases gated
-on the same machine-facts-only approval screen and a zero-confabulation
-record. Writes exist only as patch proposals applied by an explicit human
-command. The lane is not an agent framework and the core never depends on it.
+No n8n mutation yet: it stays read-only plus draft, gated on the same
+machine-facts-only approval screen. Writes exist only as patch proposals
+applied by an explicit human command. The relay hands one bounded question
+to a read-only isolated CLI and shows the answer to the user; it never feeds
+it back into a mutating chain automatically. The lane is not an agent
+framework and the core never depends on it.
