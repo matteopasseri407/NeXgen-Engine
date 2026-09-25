@@ -420,7 +420,7 @@ def main(argv: list[str] | None = None) -> int:
     run.set_defaults(func=cmd_run)
 
     evaluate = sub.add_parser("eval", help="esegue le suite di valutazione")
-    evaluate.add_argument("--suite", choices=("capability", "traps", "patch", "jobs", "all"), default="all")
+    evaluate.add_argument("--suite", choices=("capability", "traps", "patch", "jobs", "agent", "all"), default="all")
     evaluate.add_argument("--model")
     evaluate.add_argument("--router-model", help="modello per il routing (default: --model)")
     evaluate.add_argument("--answer-model", help="modello per la risposta (default: --model)")

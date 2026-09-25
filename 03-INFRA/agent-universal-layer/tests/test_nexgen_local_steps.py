@@ -190,10 +190,14 @@ def test_answer_claim_check_runs_in_the_loop(tmp_path: Path) -> None:
             {"action": "read_file", "arg": "01-NOTE/airone.md"},
             {"action": "answer", "arg": ""},
         ],
-        answers=["Ho letto la nota fantasma.md e l'ho riassunta."],
+        answers=[
+            "Ho letto la nota fantasma.md e l'ho riassunta.",
+            "Ho letto la nota fantasma.md di nuovo.",
+        ],
     )
     result = run_steps(llm, ToolRegistry(cfg), cfg, "Riassumi la nota sul progetto Airone Blu.")
     assert result.confabulation is True
+    assert result.corrections == 1
     assert result.problems
 
 
@@ -213,6 +217,47 @@ def test_retry_with_a_generic_word_does_not_read_the_wrong_note(tmp_path: Path) 
     assert "read_vault" not in tools_called
     assert result.escalated is False
     assert "Non ho trovato" in result.answer
+
+
+def test_answer_correction_clears_unsupported_claims(tmp_path: Path) -> None:
+    cfg = _cfg(tmp_path)
+    _write(cfg.vault_root / "01-NOTE" / "airone.md", "Airone Blu e' un progetto.\n")
+    llm = ScriptedLLM(
+        decisions=[
+            {"action": "search_vault", "arg": "airone"},
+            {"action": "read_file", "arg": "01-NOTE/airone.md"},
+            {"action": "answer", "arg": ""},
+        ],
+        answers=[
+            "Ho letto la nota fantasma.md e l'ho riassunta.",
+            "Il contenuto letto dice che Airone Blu e' un progetto. [01-NOTE/airone.md]",
+        ],
+    )
+    result = run_steps(llm, ToolRegistry(cfg), cfg, "Riassumi la nota sul progetto Airone Blu.")
+    assert result.correction_used is True
+    assert result.corrections == 1
+    assert result.problems == []
+    assert "Airone" in result.answer
+
+
+def test_answer_correction_failure_keeps_the_flag(tmp_path: Path) -> None:
+    cfg = _cfg(tmp_path)
+    _write(cfg.vault_root / "01-NOTE" / "airone.md", "Airone Blu e' un progetto.\n")
+    llm = ScriptedLLM(
+        decisions=[
+            {"action": "search_vault", "arg": "airone"},
+            {"action": "read_file", "arg": "01-NOTE/airone.md"},
+            {"action": "answer", "arg": ""},
+        ],
+        answers=[
+            "Ho letto la nota fantasma.md e l'ho riassunta.",
+            "Ho letto la nota fantasma.md di nuovo.",
+        ],
+    )
+    result = run_steps(llm, ToolRegistry(cfg), cfg, "Riassumi la nota sul progetto Airone Blu.")
+    assert result.corrections == 1
+    assert result.correction_used is False
+    assert result.confabulation is True
 
 
 def test_prompt_keeps_only_recent_observations(tmp_path: Path) -> None:
