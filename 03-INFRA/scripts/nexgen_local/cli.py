@@ -60,6 +60,16 @@ def _result_payload(result: LaneResult) -> dict:
     }
 
 
+def _print_receipts(receipts: list[dict]) -> None:
+    print("\nRicevute:")
+    if receipts:
+        for receipt in receipts:
+            detail = ", ".join(f"{k}={v}" for k, v in receipt["args"].items())
+            print(f"  {receipt['tool']}({detail}) ok={receipt['ok']}")
+    else:
+        print("  nessuna")
+
+
 def cmd_run(args: argparse.Namespace) -> int:
     from .graph import run_graph
     from .llm import LLMError
@@ -76,13 +86,53 @@ def cmd_run(args: argparse.Namespace) -> int:
         print(json.dumps(_result_payload(result), ensure_ascii=False, indent=2))
         return 0
     print(result.answer or "(nessuna risposta)")
-    print("\nRicevute:")
-    if result.receipts:
-        for receipt in result.receipts:
-            detail = ", ".join(f"{k}={v}" for k, v in receipt["args"].items())
-            print(f"  {receipt['tool']}({detail}) ok={receipt['ok']}")
-    else:
-        print("  nessuna")
+    _print_receipts(result.receipts)
+    return 0
+
+
+def cmd_research(args: argparse.Namespace) -> int:
+    from .jobs import JobError, job_research
+    from .llm import LLMError
+
+    cfg = _config(args)
+    try:
+        llm = _llm(cfg)
+        result = job_research(llm, ToolRegistry(cfg), cfg, args.topic)
+    except LLMError as exc:
+        print(f"nexgen-local: {exc}", file=sys.stderr)
+        return 2
+    except JobError as exc:
+        print(f"nexgen-local: {exc}", file=sys.stderr)
+        return 1
+    if args.json:
+        print(json.dumps(asdict(result), ensure_ascii=False, indent=2))
+        return 0
+    print(result.answer or "(nessuna risposta)")
+    _print_receipts(result.receipts)
+    return 0
+
+
+def cmd_close(args: argparse.Namespace) -> int:
+    from .jobs import JobError, job_close
+    from .llm import LLMError
+
+    cfg = _config(args)
+    try:
+        llm = _llm(cfg)
+        result = job_close(llm, ToolRegistry(cfg), cfg, args.file, save=args.save)
+    except LLMError as exc:
+        print(f"nexgen-local: {exc}", file=sys.stderr)
+        return 2
+    except JobError as exc:
+        print(f"nexgen-local: {exc}", file=sys.stderr)
+        return 1
+    if args.json:
+        print(json.dumps(asdict(result), ensure_ascii=False, indent=2))
+        return 0
+    print(result.answer or "(nessuna bozza)")
+    if result.draft_path:
+        print(f"\nbozza salvata: {result.draft_path}")
+    _print_receipts(result.receipts)
     return 0
 
 
@@ -274,12 +324,33 @@ def main(argv: list[str] | None = None) -> int:
     run.set_defaults(func=cmd_run)
 
     evaluate = sub.add_parser("eval", help="esegue le suite di valutazione")
-    evaluate.add_argument("--suite", choices=("capability", "traps", "patch", "all"), default="all")
+    evaluate.add_argument("--suite", choices=("capability", "traps", "patch", "jobs", "all"), default="all")
     evaluate.add_argument("--model")
     evaluate.add_argument("--router-model", help="modello per il routing (default: --model)")
     evaluate.add_argument("--answer-model", help="modello per la risposta (default: --model)")
     evaluate.add_argument("--json", action="store_true")
     evaluate.set_defaults(func=cmd_eval)
+
+    research = sub.add_parser("research", help="cerca su vault e web e sintetizza con citazioni")
+    research.add_argument("topic")
+    research.add_argument("--model")
+    research.add_argument("--answer-model", help="modello per la sintesi (default: --model)")
+    research.add_argument("--vault")
+    research.add_argument("--repo", action="append")
+    research.add_argument("--audit")
+    research.add_argument("--json", action="store_true")
+    research.set_defaults(func=cmd_research)
+
+    close = sub.add_parser("close", help="estrae gli esiti durevoli di una sessione in una bozza")
+    close.add_argument("--file", required=True)
+    close.add_argument("--save", action="store_true", help="salva la bozza nella cartella di stato della lane")
+    close.add_argument("--model")
+    close.add_argument("--router-model", help="modello per l'estrazione (default: --model)")
+    close.add_argument("--vault")
+    close.add_argument("--repo", action="append")
+    close.add_argument("--audit")
+    close.add_argument("--json", action="store_true")
+    close.set_defaults(func=cmd_close)
 
     propose = sub.add_parser("propose", help="propone una patch (cancello a fatti macchina)")
     propose.add_argument("--file", required=True)

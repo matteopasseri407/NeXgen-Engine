@@ -1,0 +1,14 @@
+[
+  {
+    "id": "research-airone",
+    "kind": "research",
+    "topic": "progetto Airone Blu",
+    "check": { "any": [["airone"], ["01-NOTE"]] }
+  },
+  {
+    "id": "close-session",
+    "kind": "close",
+    "file": "session.md",
+    "check": { "any": [["## Decisioni"], ["lane", "sola lettura"]] }
+  }
+]

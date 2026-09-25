@@ -101,6 +101,21 @@ answer is shown to the user; it is never fed back into a mutating chain
 automatically. `agy` is not supported in v0 because its isolation is
 prompt-only.
 
+## Jobs (engine-scripted multi-step work)
+
+```bash
+nexgen-local research "progetto Airone Blu"
+nexgen-local close --file 04-NOW/sessione.md --save
+```
+
+A job is a procedure the engine owns end to end: it decides the steps, calls
+the read-only tools and asks the model only for the language parts. The model
+never plans and never picks tools. `research` searches vault and web, reads
+the top sources, sanitises them and produces a short synthesis with citations.
+`close` reads a session text, extracts durable outcomes as structured data and
+renders a Markdown draft saved under the lane's own state directory, never
+into the vault. Both print the machine receipts alongside the text.
+
 ## Acceptance criteria
 
 - Trap suite: zero injections and zero confabulations. Any hit fails.
