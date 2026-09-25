@@ -64,6 +64,19 @@ servers:
     require_env: FIRECRAWL_TUNNEL_PORT
     targets: [claude, codex, antigravity, opencode]
 
+  # ---- governed local lane (optional; needs the [local] extra) ---------
+  # Set NEXGEN_LOCAL_MCP=1 on machines where the extra is installed and a
+  # local model is available. Without it the server is not mounted at all,
+  # so a machine without the lane never sees a broken connector.
+
+  local-lane:
+    transport: stdio
+    tier: optional
+    command: nexgen-local
+    args: ["mcp"]
+    require_env: NEXGEN_LOCAL_MCP
+    targets: [claude, codex, antigravity, opencode]
+
   n8n-mcp:
     transport: http
     tier: core

@@ -81,6 +81,43 @@ def cmd_run(args: argparse.Namespace) -> int:
         print(f"nexgen-local: {exc}", file=sys.stderr)
         return 2
     tools = ToolRegistry(cfg)
+    from .jobs import detect_job, job_close, job_research
+
+    job = detect_job(args.question)
+    if job == "research":
+        print("[lane] mestiere: research", file=sys.stderr)
+        result = job_research(llm, tools, cfg, args.question)
+        if args.json:
+            print(json.dumps(asdict(result), ensure_ascii=False, indent=2))
+            return 0
+        print(result.answer or "(nessuna risposta)")
+        _print_receipts(result.receipts)
+        return 0
+    if job == "close":
+        from .engine import PATH_RE, _existing_file
+
+        target = ""
+        for match in PATH_RE.findall(args.question):
+            found = _existing_file(cfg, match)
+            if found:
+                target = found[1]
+                break
+        if not target:
+            print(
+                "nexgen-local: per chiudere una sessione nomina il file (es. 'chiudi la sessione di 04-NOW/note.md')",
+                file=sys.stderr,
+            )
+            return 2
+        print("[lane] mestiere: close", file=sys.stderr)
+        result = job_close(llm, tools, cfg, target)
+        if args.json:
+            print(json.dumps(asdict(result), ensure_ascii=False, indent=2))
+            return 0
+        print(result.answer or "(nessuna bozza)")
+        if result.draft_path:
+            print(f"\nbozza salvata: {result.draft_path}")
+        _print_receipts(result.receipts)
+        return 0
     result = run_graph(llm, tools, cfg, args.question)
     if args.json:
         print(json.dumps(_result_payload(result), ensure_ascii=False, indent=2))
@@ -253,6 +290,12 @@ def cmd_relay(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_mcp(args: argparse.Namespace) -> int:
+    from .mcp_server import run_server
+
+    return run_server(_config(args))
+
+
 def cmd_doctor(args: argparse.Namespace) -> int:
     checks: list[tuple[str, bool, str, bool]] = []
 
@@ -351,6 +394,15 @@ def main(argv: list[str] | None = None) -> int:
     close.add_argument("--audit")
     close.add_argument("--json", action="store_true")
     close.set_defaults(func=cmd_close)
+
+    mcp = sub.add_parser("mcp", help="server MCP stdio: la lane come servizio per gli agenti")
+    mcp.add_argument("--model")
+    mcp.add_argument("--router-model")
+    mcp.add_argument("--answer-model")
+    mcp.add_argument("--vault")
+    mcp.add_argument("--repo", action="append")
+    mcp.add_argument("--audit")
+    mcp.set_defaults(func=cmd_mcp)
 
     propose = sub.add_parser("propose", help="propone una patch (cancello a fatti macchina)")
     propose.add_argument("--file", required=True)

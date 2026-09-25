@@ -15,6 +15,7 @@ Both return the machine receipts alongside the text.
 """
 from __future__ import annotations
 
+import re
 import time
 from dataclasses import dataclass, field
 from typing import Any
@@ -46,6 +47,21 @@ CLOSE_PROMPT = (
 
 class JobError(RuntimeError):
     """The job was refused (bad input, missing file, unusable model output)."""
+
+
+#: Deterministic job intents: the user asks for the work, the engine picks the
+#: procedure. No model decides which job runs.
+RESEARCH_JOB_RE = re.compile(r"\b(ricerca|approfondisci|documentati|raccogli (informazioni|materiale))\b", re.I)
+CLOSE_JOB_RE = re.compile(r"\b(chiudi (la )?sessione|chiusura sessione|distilla (la )?sessione|salva gli esiti)\b", re.I)
+
+
+def detect_job(task: str) -> str | None:
+    text = str(task or "")
+    if CLOSE_JOB_RE.search(text):
+        return "close"
+    if RESEARCH_JOB_RE.search(text):
+        return "research"
+    return None
 
 
 @dataclass

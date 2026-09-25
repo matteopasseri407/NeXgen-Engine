@@ -30,7 +30,7 @@ dependencies = ["PyYAML>=6.0,<7.0"]
 dev = ["pytest>=8.0", "ruff>=0.6"]
 # The local lane is optional on purpose: the core stays one-dependency.
 # Install with  pip install 'nexgen-engine[local]'  (or uv tool install ...).
-local = ["langgraph>=1.0,<2", "langchain-ollama>=1.0,<2"]
+local = ["langgraph>=1.0,<2", "langchain-ollama>=1.0,<2", "mcp>=2.0,<3"]
 
 [project.urls]
 Homepage = "https://github.com/matteopasseri407/NeXgen-Engine"

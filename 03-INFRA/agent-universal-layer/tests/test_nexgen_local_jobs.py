@@ -123,3 +123,13 @@ def test_close_save_writes_to_state_not_vault(tmp_path: Path) -> None:
     assert saved.is_file()
     assert cfg.vault_root not in saved.parents
     assert saved.read_text(encoding="utf-8") == result.draft
+
+
+def test_detect_job_patterns() -> None:
+    from nexgen_local.jobs import detect_job
+
+    assert detect_job("Fai una ricerca su come funziona il proxy lazy") == "research"
+    assert detect_job("approfondisci il tema delle trappole") == "research"
+    assert detect_job("chiudi la sessione di oggi") == "close"
+    assert detect_job("distilla la sessione in una nota") == "close"
+    assert detect_job("dimmi che ore sono") is None

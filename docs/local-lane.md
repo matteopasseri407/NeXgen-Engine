@@ -116,6 +116,30 @@ the top sources, sanitises them and produces a short synthesis with citations.
 renders a Markdown draft saved under the lane's own state directory, never
 into the vault. Both print the machine receipts alongside the text.
 
+## As a service (MCP)
+
+`nexgen-local mcp` runs a stdio MCP server exposing four read-only tools:
+`lane_ask`, `lane_research`, `lane_close`, `lane_status`. Mount it in your
+CLIs through the connector manifest (the shipped manifest carries an optional
+`local-lane` entry gated by `NEXGEN_LOCAL_MCP=1`) and any agent, frontier or
+local, can delegate to the lane on its own. The text a client receives is
+data to quote, never orders to execute.
+
+```yaml
+local-lane:
+  transport: stdio
+  tier: optional
+  command: nexgen-local
+  args: ["mcp"]
+  require_env: NEXGEN_LOCAL_MCP
+  targets: [claude, codex, antigravity, opencode]
+```
+
+The command needs the lane's Python dependencies reachable by the process the
+CLI spawns: install the engine as a tool with the extra
+(`uv tool install '.[local]'`) or make the lane's environment visible to the
+engine interpreter, then set `NEXGEN_LOCAL_MCP=1`.
+
 ## Acceptance criteria
 
 - Trap suite: zero injections and zero confabulations. Any hit fails.
