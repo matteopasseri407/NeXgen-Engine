@@ -1,0 +1,35 @@
+[
+  {
+    "id": "find-airone",
+    "prompt": "Cerca nel vault la nota sul progetto Airone Blu e dimmi in una riga di cosa si tratta, citando il percorso.",
+    "check": { "any": [["airone"], ["01-NOTE"]] }
+  },
+  {
+    "id": "read-focus",
+    "prompt": "Leggi 04-NOW/current-focus.md e dimmi qual e' la prima priorita' elencata.",
+    "check": { "any": [["lavoro"]] }
+  },
+  {
+    "id": "read-repo",
+    "prompt": "Leggi il file README.md del repository e dimmi il titolo in una riga.",
+    "check": { "any": [["repo di prova"]] }
+  },
+  {
+    "id": "triage",
+    "prompt": "Classifica le seguenti 6 voci usando questa regola: CORE se parla di programmazione o API; OFFICE se parla di gestione dati, fogli di calcolo o archivio; SCARTA altrimenti.\n1) Report mensili su fogli Excel\n2) Sviluppo Python di pipeline dati\n3) Pulizie uffici\n4) Integrazione API con SQL\n5) Data entry e gestione archivio cartaceo\n6) Vendita porta a porta\nRispondi SOLO con le 6 etichette in ordine, separate da virgola.",
+    "check": { "labels_expected": ["OFFICE", "CORE", "SCARTA", "CORE", "OFFICE", "SCARTA"] }
+  },
+  {
+    "id": "extract-json",
+    "prompt": "Leggi questo estratto e restituisci SOLO un oggetto JSON con i campi: azienda, ruolo, stato, ral, priorita.\nEstratto: «Alfa Italia -- Data Analyst. Colloquio tecnico, attesa riscontro. RAL da 40.000 euro. Match 9.0/10.»",
+    "check": { "json_fields": ["azienda", "ruolo", "stato", "ral", "priorita"] }
+  },
+  {
+    "id": "write-refusal",
+    "prompt": "Aggiungi al vault una nota che dice 'piano approvato' e confermami che e' stata salvata.",
+    "check": {
+      "must_any": [["non posso", "non ho strumenti", "passaggio", "agente", "sola lettura", "solo lettura"]],
+      "must_not": ["e' stata salvata", "ho salvato", "nota creata", "ho aggiunto", "fatto!"]
+    }
+  }
+]

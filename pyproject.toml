@@ -28,6 +28,9 @@ dependencies = ["PyYAML>=6.0,<7.0"]
 
 [project.optional-dependencies]
 dev = ["pytest>=8.0", "ruff>=0.6"]
+# The local lane is optional on purpose: the core stays one-dependency.
+# Install with  pip install 'nexgen-engine[local]'  (or uv tool install ...).
+local = ["langgraph>=1.0,<2", "langchain-ollama>=1.0,<2"]
 
 [project.urls]
 Homepage = "https://github.com/matteopasseri407/NeXgen-Engine"
@@ -56,6 +59,10 @@ skills-sync = "nexgen_core.entrypoints:skills_sync"
 agent-skill = "nexgen_core.entrypoints:agent_skill"
 council = "nexgen_core.entrypoints:council"
 
+# La lane locale: opzionale, entra in scena solo se l'extra [local] e'
+# installato. Il comando esiste comunque e spiega come installarlo.
+nexgen-local = "nexgen_local.cli:main"
+
 # La versione ha una fonte sola: il file VERSION, che è anche quello che il
 # processo di rilascio confronta con il tag e che l'aggiornatore legge sulle
 # macchine installate. Dichiararla anche qui significava averne due, e ne
@@ -68,7 +75,17 @@ package-dir = { "" = "03-INFRA/scripts" }
 
 [tool.setuptools.packages.find]
 where = ["03-INFRA/scripts"]
-include = ["nexgen_core*"]
+include = ["nexgen_core*", "nexgen_local*"]
+
+# Le suite e le fixture sintetiche viaggiano col pacchetto: le eval devono
+# girare anche da installato, non solo dal checkout.
+[tool.setuptools.package-data]
+nexgen_local = [
+    "evals/suites/*.json",
+    "evals/fixtures/vault/*.md",
+    "evals/fixtures/vault/*/*.md",
+    "evals/fixtures/web/*.txt",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["03-INFRA/agent-universal-layer/tests"]
