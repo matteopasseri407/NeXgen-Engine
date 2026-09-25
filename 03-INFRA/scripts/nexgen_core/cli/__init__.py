@@ -20,11 +20,11 @@ if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
 from nexgen_core import __version__
-from nexgen_core.cli import engine, module_cmds, skill_cmds, stack_cmds, tool_cmds, vault_cmds
+from nexgen_core.cli import engine, local_cmds, module_cmds, skill_cmds, stack_cmds, tool_cmds, vault_cmds
 from nexgen_core.i18n import set_language, t
 
 #: The verb groups, in the order they appear in the help text.
-GROUPS = (engine, vault_cmds, skill_cmds, stack_cmds, module_cmds, tool_cmds)
+GROUPS = (engine, vault_cmds, skill_cmds, stack_cmds, module_cmds, tool_cmds, local_cmds)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -49,6 +49,11 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def _run_cli(argv: list[str]) -> int:
+    # The lane has its own argparse: delegating before this parser keeps its
+    # flags (and its --help) intact instead of round-tripping through
+    # REMAINDER, which swallows optionals.
+    if argv and argv[0] == "local":
+        return local_cmds.dispatch(argv[1:])
     parser = build_parser()
     # Arguments meant for a subcommand are not this parser's business: it
     # collects them and hands them off intact to whoever forwards them.

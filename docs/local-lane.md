@@ -36,7 +36,7 @@ framework, so the driver stays replaceable. LangChain appears only here:
 the core engine remains one dependency (PyYAML), and the lane is not
 installed unless asked for.
 
-## Measured evidence (2026-09-25, RTX 4070 Super 12 GB)
+## Measured evidence (2026-09-25, 12 GB consumer GPU)
 
 | Check | Gemma 12B (8k ctx, thinking off) | Spark 4B |
 |---|---|---|

@@ -129,6 +129,15 @@ modules:
     stack: null
     depends_on: [memory]
 
+  local-lane:
+    label: "Governed local lane (read-only, optional)"
+    kind: feature
+    states: [absent, local]
+    env_gates: []
+    mcp_servers: []
+    stack: null
+    depends_on: [memory]
+
   sync:
     label: "Cross-machine sync (MULTI profile)"
     kind: feature

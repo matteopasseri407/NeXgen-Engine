@@ -378,7 +378,7 @@ jobs:
           python-version: "3.x"
 
       - name: Install test dependencies
-        run: pip install pytest pyyaml
+        run: pip install pytest pyyaml 'langgraph>=1.0,<2' 'langchain-ollama>=1.0,<2'
 
       - name: Engine regression suite
         working-directory: 03-INFRA/agent-universal-layer/tests
@@ -427,7 +427,7 @@ jobs:
           python-version: "3.x"
 
       - name: Install test dependencies
-        run: pip install pytest pyyaml
+        run: pip install pytest pyyaml 'langgraph>=1.0,<2' 'langchain-ollama>=1.0,<2'
 
       - name: Engine regression suite and agent_sync.py smoke
         working-directory: 03-INFRA/agent-universal-layer/tests

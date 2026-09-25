@@ -36,6 +36,7 @@ LEGACY_ALIASES: dict[str, list[str]] = {
     "skills-sync": ["skill"],
     "agent-skill": ["skill"],
     "council": ["council"],
+    "nexgen-local": ["local"],
 }
 
 #: Backward compatibility for anyone importing the historical table.
