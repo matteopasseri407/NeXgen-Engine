@@ -6,6 +6,7 @@ l'hash del file prima di toccarlo.
 """
 from __future__ import annotations
 
+import argparse
 import subprocess
 from pathlib import Path
 
@@ -13,6 +14,7 @@ import pytest
 
 from nexgen_local.config import LaneConfig
 from nexgen_local.patch import PatchError, apply_proposal, format_gate, load_proposal, propose_patch
+from nexgen_local.tools import ToolError
 
 
 def _git_repo(tmp_path: Path) -> Path:
@@ -20,6 +22,12 @@ def _git_repo(tmp_path: Path) -> Path:
     repo.mkdir()
     subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
     return repo
+
+
+def _git_repo_at(path: Path) -> Path:
+    path.mkdir(parents=True)
+    subprocess.run(["git", "init", "-q"], cwd=path, check=True)
+    return path
 
 
 def _cfg(tmp_path: Path, repo: Path) -> LaneConfig:
@@ -56,8 +64,10 @@ def test_propose_and_apply_happy_path(tmp_path: Path) -> None:
     assert "+Questo contiene un refuso." in proposal.patch
     result = apply_proposal(cfg, proposal.id, yes=True)
     assert result["applied"] is True
+    assert result["verified"] is None
     assert (repo / "notes.md").read_text(encoding="utf-8") == "Questo contiene un refuso.\n"
-    assert len(cfg.audit_path.read_text(encoding="utf-8").strip().splitlines()) == 2
+    # Una riga per la proposta, una d'intento prima della penna, una d'esito.
+    assert len(cfg.audit_path.read_text(encoding="utf-8").strip().splitlines()) == 3
 
 
 def test_apply_requires_explicit_yes(tmp_path: Path) -> None:
@@ -133,3 +143,67 @@ def test_failed_dry_run_blocks_application(tmp_path: Path, monkeypatch: pytest.M
     assert proposal.dry_run is False
     with pytest.raises(PatchError, match="dry-run"):
         apply_proposal(cfg, proposal.id, yes=True)
+
+
+def test_apply_is_bound_to_the_approved_root(tmp_path: Path) -> None:
+    repo_a = _git_repo_at(tmp_path / "a")
+    repo_b = _git_repo_at(tmp_path / "b")
+    (repo_a / "notes.md").write_text("Questo contiente un refuso.\n", encoding="utf-8")
+    (repo_b / "notes.md").write_text("Questo contiente un refuso.\n", encoding="utf-8")
+    cfg_a = _cfg(tmp_path, repo_a)
+    proposal = propose_patch(PatchLLM({"old": "contiente", "new": "contiene"}), cfg_a, "notes.md", "fix")
+
+    cfg_b = _cfg(tmp_path, repo_b)
+    with pytest.raises(PatchError, match="altro root"):
+        apply_proposal(cfg_b, proposal.id, yes=True)
+    assert (repo_a / "notes.md").read_text(encoding="utf-8") == "Questo contiente un refuso.\n"
+    assert (repo_b / "notes.md").read_text(encoding="utf-8") == "Questo contiente un refuso.\n"
+
+    result = apply_proposal(cfg_a, proposal.id, yes=True)
+    assert result["applied"] is True
+    assert (repo_a / "notes.md").read_text(encoding="utf-8") == "Questo contiene un refuso.\n"
+
+
+def test_apply_refuses_before_writing_when_the_audit_is_unwritable(tmp_path: Path) -> None:
+    repo = _git_repo(tmp_path)
+    (repo / "notes.md").write_text("Questo contiente un refuso.\n", encoding="utf-8")
+    cfg = _cfg(tmp_path, repo)
+    proposal = propose_patch(PatchLLM({"old": "contiente", "new": "contiene"}), cfg, "notes.md", "fix")
+
+    blocker = tmp_path / "blocker"
+    blocker.write_text("non e' una directory", encoding="utf-8")
+    blocked = LaneConfig(
+        vault_root=tmp_path / "vault",
+        repo_roots=(repo,),
+        model="fake-model",
+        audit_path=blocker / "audit.jsonl",
+        proposals_dir=tmp_path / "proposals",
+    )
+    with pytest.raises(ToolError):
+        apply_proposal(blocked, proposal.id, yes=True)
+    # Nessuna ricevuta d'intento, nessuna penna: il file resta intatto.
+    assert (repo / "notes.md").read_text(encoding="utf-8") == "Questo contiente un refuso.\n"
+
+
+def test_verify_failure_is_a_distinct_state(tmp_path: Path) -> None:
+    repo = _git_repo(tmp_path)
+    (repo / "notes.md").write_text("Questo contiente un refuso.\n", encoding="utf-8")
+    cfg = _cfg(tmp_path, repo)
+    proposal = propose_patch(PatchLLM({"old": "contiente", "new": "contiene"}), cfg, "notes.md", "fix")
+    result = apply_proposal(cfg, proposal.id, yes=True, verify="false")
+    assert result["applied"] is True
+    assert result["verified"] is False
+    assert result["verify_rc"] != 0
+    assert (repo / "notes.md").read_text(encoding="utf-8") == "Questo contiene un refuso.\n"
+
+
+def test_apply_cli_propagates_verify_failure(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    repo = _git_repo(tmp_path)
+    (repo / "notes.md").write_text("Questo contiente un refuso.\n", encoding="utf-8")
+    cfg = _cfg(tmp_path, repo)
+    proposal = propose_patch(PatchLLM({"old": "contiente", "new": "contiene"}), cfg, "notes.md", "fix")
+    from nexgen_local import cli
+
+    monkeypatch.setattr(cli, "_config", lambda args: cfg)
+    args = argparse.Namespace(proposal_id=proposal.id, yes=True, verify="false", json=False)
+    assert cli.cmd_apply(args) == 3

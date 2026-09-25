@@ -10,7 +10,7 @@ from __future__ import annotations
 from typing import Any, Iterable, TypedDict
 
 from .config import LaneConfig
-from .engine import LaneResult, answer_task, check_canary, retrieve, route_task, sources_from_receipts
+from .engine import LaneResult, answer_task, check_canary, retrieve, route_task, sources_from_receipts, verify_answer
 from .llm import LLM
 from .tools import ToolRegistry
 
@@ -70,11 +70,17 @@ def run_graph(
     tools.calls.clear()
     app = build_graph(llm, tools, cfg)
     final = app.invoke({"task": task, "canaries": [str(c) for c in canaries]})
+    receipts = [{"tool": call.name, "args": call.args, "ok": call.ok} for call in tools.calls]
+    answer = final.get("answer", "")
+    collected = final.get("collected", "")
+    problems = verify_answer(answer, receipts, collected)
     return LaneResult(
         task=task,
         route=final.get("route", {}),
-        collected=final.get("collected", ""),
-        answer=final.get("answer", ""),
-        receipts=[{"tool": call.name, "args": call.args, "ok": call.ok} for call in tools.calls],
+        collected=collected,
+        answer=answer,
+        receipts=receipts,
         injection=bool(final.get("injection", False)),
+        confabulation=bool(problems),
+        problems=problems,
     )

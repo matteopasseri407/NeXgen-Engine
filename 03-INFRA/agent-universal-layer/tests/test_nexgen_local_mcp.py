@@ -100,3 +100,14 @@ def test_build_server_jobs_only_builds(tmp_path: Path) -> None:
     pytest.importorskip("mcp")
     server = build_server(_cfg(tmp_path), llm_factory=lambda: FakeLLM(), include_ask=False)
     assert server.name == "nexgen-local-lane"
+
+
+def test_tool_research_flags_invented_citations(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    cfg = _cfg(tmp_path)
+    _write(cfg.vault_root / "01-NOTE" / "airone.md", "Airone Blu e' un progetto.\n")
+    monkeypatch.setattr(
+        ToolRegistry, "web_search", lambda self, query: self._record("web_search", {"query": query}, "web finto")
+    )
+    llm = FakeLLM(answers=["Ho letto la nota fantasma.md e l'ho riassunta."])
+    out = tool_research(cfg, llm, "progetto Airone Blu")
+    assert "non verificate" in out

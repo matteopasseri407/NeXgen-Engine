@@ -20,7 +20,7 @@ from .config import LaneConfig, default_engine_root
 from .engine import LaneResult
 from .patch import PatchError, apply_proposal, format_gate, list_proposals, propose_patch
 from .relay import RELAY_CLIS, RelayError, available_clis, run_relay
-from .tools import ToolRegistry, audit_writable
+from .tools import ToolError, ToolRegistry, audit_writable
 
 
 def _version() -> str:
@@ -57,7 +57,18 @@ def _result_payload(result: LaneResult) -> dict:
         "answer": result.answer,
         "receipts": result.receipts,
         "injection": result.injection,
+        "confabulation": result.confabulation,
+        "problems": result.problems,
     }
+
+
+def _warn_unverified(problems: list[str]) -> None:
+    """A machine warning on stderr, never mixed into the answer."""
+    if not problems:
+        return
+    print("nexgen-local: ATTENZIONE, risposta non verificata:", file=sys.stderr)
+    for problem in problems:
+        print(f"  - {problem}", file=sys.stderr)
 
 
 def _print_receipts(receipts: list[dict]) -> None:
@@ -89,10 +100,11 @@ def cmd_run(args: argparse.Namespace) -> int:
         result = job_research(llm, tools, cfg, args.question)
         if args.json:
             print(json.dumps(asdict(result), ensure_ascii=False, indent=2))
-            return 0
+            return 1 if result.problems else 0
         print(result.answer or "(nessuna risposta)")
         _print_receipts(result.receipts)
-        return 0
+        _warn_unverified(result.problems)
+        return 1 if result.problems else 0
     if job == "close":
         from .engine import PATH_RE, _existing_file
 
@@ -112,19 +124,21 @@ def cmd_run(args: argparse.Namespace) -> int:
         result = job_close(llm, tools, cfg, target)
         if args.json:
             print(json.dumps(asdict(result), ensure_ascii=False, indent=2))
-            return 0
+            return 1 if result.problems else 0
         print(result.answer or "(nessuna bozza)")
         if result.draft_path:
             print(f"\nbozza salvata: {result.draft_path}")
         _print_receipts(result.receipts)
-        return 0
+        _warn_unverified(result.problems)
+        return 1 if result.problems else 0
     result = run_graph(llm, tools, cfg, args.question)
     if args.json:
         print(json.dumps(_result_payload(result), ensure_ascii=False, indent=2))
-        return 0
+        return 1 if result.problems else 0
     print(result.answer or "(nessuna risposta)")
     _print_receipts(result.receipts)
-    return 0
+    _warn_unverified(result.problems)
+    return 1 if result.problems else 0
 
 
 def cmd_research(args: argparse.Namespace) -> int:
@@ -143,10 +157,11 @@ def cmd_research(args: argparse.Namespace) -> int:
         return 1
     if args.json:
         print(json.dumps(asdict(result), ensure_ascii=False, indent=2))
-        return 0
+        return 1 if result.problems else 0
     print(result.answer or "(nessuna risposta)")
     _print_receipts(result.receipts)
-    return 0
+    _warn_unverified(result.problems)
+    return 1 if result.problems else 0
 
 
 def cmd_close(args: argparse.Namespace) -> int:
@@ -165,12 +180,13 @@ def cmd_close(args: argparse.Namespace) -> int:
         return 1
     if args.json:
         print(json.dumps(asdict(result), ensure_ascii=False, indent=2))
-        return 0
+        return 1 if result.problems else 0
     print(result.answer or "(nessuna bozza)")
     if result.draft_path:
         print(f"\nbozza salvata: {result.draft_path}")
     _print_receipts(result.receipts)
-    return 0
+    _warn_unverified(result.problems)
+    return 1 if result.problems else 0
 
 
 def cmd_eval(args: argparse.Namespace) -> int:
@@ -238,7 +254,7 @@ def cmd_apply(args: argparse.Namespace) -> int:
     cfg = _config(args)
     try:
         result = apply_proposal(cfg, args.proposal_id, yes=args.yes, verify=args.verify or None)
-    except PatchError as exc:
+    except (PatchError, ToolError) as exc:
         print(f"nexgen-local: {exc}", file=sys.stderr)
         return 1
     if args.json:
@@ -247,6 +263,12 @@ def cmd_apply(args: argparse.Namespace) -> int:
         print(f"applicata: {result['file']} (proposta {result['id']})")
         if result["verify"]:
             print(result["verify"])
+    if result.get("verified") is False:
+        print(
+            "nexgen-local: verifica fallita: la modifica e' applicata ma non verificata",
+            file=sys.stderr,
+        )
+        return 3
     return 0
 
 
@@ -420,7 +442,8 @@ def main(argv: list[str] | None = None) -> int:
     apply_cmd = sub.add_parser("apply", help="applica una proposta (serve --yes)")
     apply_cmd.add_argument("proposal_id")
     apply_cmd.add_argument("--yes", action="store_true")
-    apply_cmd.add_argument("--verify", default="")
+    apply_cmd.add_argument("--repo", action="append", help="root del repository (deve combaciare con quello approvato)")
+    apply_cmd.add_argument("--verify", default="", help="comando di verifica dopo l'applicazione; exit 3 se fallisce")
     apply_cmd.add_argument("--json", action="store_true")
     apply_cmd.set_defaults(func=cmd_apply)
 

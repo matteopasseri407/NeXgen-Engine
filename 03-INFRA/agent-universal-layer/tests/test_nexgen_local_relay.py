@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import os
+import tempfile
 from pathlib import Path
 
 import pytest
@@ -174,3 +175,32 @@ def test_available_clis_lists_only_present_ones(tmp_path: Path, monkeypatch: pyt
     # PATH senza ~/.local/bin: le CLI vere installate sulla macchina non contano.
     monkeypatch.setenv("PATH", f"{bin_dir}:/usr/bin:/bin")
     assert available_clis() == ["claude"]
+
+
+def _record_mkdtemp(monkeypatch: pytest.MonkeyPatch) -> list[Path]:
+    created: list[Path] = []
+    real_mkdtemp = tempfile.mkdtemp
+
+    def recording_mkdtemp(*args, **kwargs):
+        path = real_mkdtemp(*args, **kwargs)
+        created.append(Path(path))
+        return path
+
+    monkeypatch.setattr(tempfile, "mkdtemp", recording_mkdtemp)
+    return created
+
+
+def test_relay_removes_its_temporary_directory(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    _fake_bin(tmp_path, "claude", CLAUDE_FAKE, monkeypatch)
+    created = _record_mkdtemp(monkeypatch)
+    result = run_relay(_cfg(tmp_path), "claude", "model", "domanda")
+    assert result.answer == "risposta finta claude"
+    assert created and not any(path.exists() for path in created)
+
+
+def test_relay_removes_the_temporary_directory_on_failure(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    _fake_bin(tmp_path, "claude", "exit 1\n", monkeypatch)
+    created = _record_mkdtemp(monkeypatch)
+    with pytest.raises(RelayError):
+        run_relay(_cfg(tmp_path), "claude", "model", "domanda")
+    assert created and not any(path.exists() for path in created)

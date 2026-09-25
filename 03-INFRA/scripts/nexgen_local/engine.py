@@ -76,6 +76,10 @@ class LaneResult:
     answer: str = ""
     receipts: list[dict[str, Any]] = field(default_factory=list)
     injection: bool = False
+    #: Machine check of the answer's claims: empty problems means every claim
+    #: about work done and every cited source is backed by a successful receipt.
+    confabulation: bool = False
+    problems: list[str] = field(default_factory=list)
 
 
 def terms(text: str) -> list[str]:
@@ -276,6 +280,113 @@ def check_canary(text: str, canaries: Iterable[str]) -> bool:
     return any(str(canary).casefold() in low for canary in canaries if canary)
 
 
+#: Phrases that claim work was done. The engine checks them against the
+#: receipts: the model's prose is never evidence.
+CLAIM_PHRASES = (
+    "ho cercato",
+    "ho eseguito",
+    "ho effettuato",
+    "ho letto",
+    "ho consultato",
+    "ho aperto",
+    "ho trovato il file",
+    "ho usato",
+)
+
+#: Phrases that claim a write. The lane has no write tool, so these are false
+#: whatever the receipts say.
+WRITE_CLAIM_PHRASES = (
+    "ho salvato",
+    "ho scritto",
+    "ho creato",
+    "ho aggiunto",
+    "ho modificato",
+    "ho eliminato",
+    "ho cancellato",
+    "ho applicato",
+)
+
+#: A negation right before a claim turns it into a true statement of absence
+#: ("non ho letto la nota"): that is not a confabulation.
+_NEGATION_RE = re.compile(r"\b(non|nessun|nessuna|nessuno|senza|niente|mai)\b", re.I)
+
+#: Tools whose successful receipt is evidence that a file was actually read.
+_READ_TOOLS = ("read_vault", "read_repo", "read_pdf")
+
+
+def _has_claim(low: str, phrases: Iterable[str]) -> bool:
+    """True when a phrase occurs without a negation in the preceding context."""
+    for phrase in phrases:
+        start = 0
+        while True:
+            index = low.find(phrase, start)
+            if index < 0:
+                break
+            if not _NEGATION_RE.search(low[max(0, index - 40) : index]):
+                return True
+            start = index + len(phrase)
+    return False
+
+
+def _evidence(receipts: list[dict[str, Any]]) -> tuple[list[str], bool]:
+    """(paths actually read, web actually searched) from successful receipts only."""
+    paths: list[str] = []
+    web = False
+    for receipt in receipts:
+        if not receipt.get("ok"):
+            continue
+        name = str(receipt.get("tool") or "")
+        args = receipt.get("args") or {}
+        if name == "web_search":
+            web = True
+        if name in _READ_TOOLS and args.get("path"):
+            paths.append(str(args["path"]))
+    return paths, web
+
+
+def _path_matches(cited: str, read: str) -> bool:
+    left = cited.strip("./").casefold()
+    right = read.strip("./").casefold()
+    return left == right or right.endswith("/" + left) or left.endswith("/" + right)
+
+
+def _cited_paths(text: str) -> list[str]:
+    """Paths the answer presents as sources, ignoring negated mentions."""
+    cited: list[str] = []
+    for match in PATH_RE.finditer(text):
+        if _NEGATION_RE.search(text[max(0, match.start() - 40) : match.start()]):
+            continue
+        path = match.group(1)
+        if path not in cited:
+            cited.append(path)
+    return cited
+
+
+def verify_answer(answer: str, receipts: list[dict[str, Any]], collected: str = "") -> list[str]:
+    """Machine check of the answer's claims, against successful receipts only.
+
+    An empty list means every claim about work done and every cited source is
+    backed by what the engine actually read. A failed search is not evidence;
+    a path cited but never read is a problem; a claimed write is always one.
+    """
+    text = str(answer or "")
+    low = text.casefold()
+    problems: list[str] = []
+    successful = [receipt for receipt in receipts if receipt.get("ok")]
+    if _has_claim(low, CLAIM_PHRASES) and not successful:
+        problems.append("afferma lavoro svolto senza una ricevuta riuscita")
+    if _has_claim(low, WRITE_CLAIM_PHRASES):
+        problems.append("afferma una scrittura che la lane non puo' eseguire")
+    paths, web_ok = _evidence(receipts)
+    for cited in _cited_paths(text):
+        if any(_path_matches(cited, read) for read in paths):
+            continue
+        if web_ok and collected and cited.casefold() in collected.casefold():
+            continue
+        problems.append(f"cita una fonte non letta: {cited}")
+    return problems
+
+
 def run_lane(
     llm: LLM,
     tools: ToolRegistry,
@@ -295,11 +406,15 @@ def run_lane(
         str(route.get("source")),
         sources=sources_from_receipts(tools.calls),
     )
+    receipts = [{"tool": call.name, "args": call.args, "ok": call.ok} for call in tools.calls]
+    problems = verify_answer(answer, receipts, collected)
     return LaneResult(
         task=task,
         route=route,
         collected=collected,
         answer=answer,
-        receipts=[{"tool": call.name, "args": call.args, "ok": call.ok} for call in tools.calls],
+        receipts=receipts,
         injection=check_canary(answer, canaries),
+        confabulation=bool(problems),
+        problems=problems,
     )

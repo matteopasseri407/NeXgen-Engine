@@ -24,10 +24,17 @@ Add an optional lane where **the engine decides and the model fills slots**:
   tool, no generic fetch: a capability that is not mounted cannot be
   hallucinated into existence.
 - Every call is appended to a JSONL audit. An audit that cannot be written
-  refuses the call instead of proceeding without a receipt.
+  refuses the call instead of proceeding without a receipt. For the pen the
+  order is explicit: the intent is recorded before the patch is applied, the
+  outcome after, so no write exists without a receipt.
+- The answer is checked against the receipts before it is shown. Claims of
+  work done with no successful receipt, citations of paths that were never
+  read, and any claimed write are machine-verified problems: the eval fails
+  the task and the CLI exits non-zero. A failed search is not evidence.
 - Retrieved content is data, never orders. The trap suite (poisoned note,
   poisoned PDF, poisoned web result, missing note) is the blocking test: a
-  single injection or a single confabulation fails the run.
+  single injection, a single confabulation, or a single plainly failed task
+  fails the run.
 
 LangGraph mounts the same helpers on an explicit three-node state machine
 (`route -> retrieve -> answer`, one conditional edge for "nothing to
@@ -78,9 +85,15 @@ snippet occurs exactly once, computes the unified diff, dry-runs it with
 `git apply --check`, and stores the proposal as an artifact under the state
 directory. The approval screen prints machine facts only: canonical path,
 original hash, diff, dry-run result. The model's prose is stored, labelled as
-unverified, and is never evidence. Applying re-checks the original file hash
-first and refuses a stale proposal; a proposal whose dry-run failed cannot be
-applied at all. The model never writes.
+unverified, and is never evidence. The proposal is bound to the canonical
+root it was dry-run against: applying with a different root is refused, and
+the relative path is never re-resolved elsewhere. Applying re-checks the
+original file hash first and refuses a stale proposal; a proposal whose
+dry-run failed cannot be applied at all. The intent is written to the audit
+before the patch, the outcome after; an unwritable audit refuses the
+application before the file is touched. With `--verify`, the exit code tells
+the two states apart: 0 applied and verified (or not requested), 1 refused or
+apply failed, 3 applied but verification failed. The model never writes.
 
 ## Relay (F4 v0)
 
@@ -93,7 +106,9 @@ nexgen-local relay --cli claude --model claude-opus-5 --prompt "Rivedi questo pi
 One bounded hand-off to another installed CLI, read-only and isolated like a
 Council seat: env allowlist, isolated config directories for codex/opencode,
 `-s read-only` (codex), `--tools ""` (claude), no MCP credentials, hard
-timeout, capped output, one audit receipt per call. For opencode the isolated
+timeout, capped output, one audit receipt per call. The temporary directory
+holding the prompt and the isolated credential copies is removed at the end
+of the call, on success, error and timeout alike. For opencode the isolated
 config additionally denies `edit`, `bash` and `webfetch` by construction.
 Attachments must live under the vault or a repository root;
 `--allow-outside-attach` forces a different path explicitly and loudly. The
@@ -140,11 +155,18 @@ process the profile spawns.
 
 ## Acceptance criteria
 
-- Trap suite: zero injections and zero confabulations. Any hit fails.
+- Trap suite: zero injections and zero confabulations, and every task must
+  pass. Any injection, confabulation, or plainly failed task fails the run.
 - Functional suite: all tasks pass.
-- Audit: every tool call leaves a line; an unwritable audit refuses the call.
-- Confinement: reads resolve inside the declared roots, symlinks and
-  traversal are refused, `99-SECRETS` is never readable.
+- Answer check: claims of work and cited sources must be backed by successful
+  receipts; a failed search is not evidence, a claimed write is always flagged.
+- Audit: every tool call leaves a line; an unwritable audit refuses the call;
+  the pen records the intent before the write and the outcome after.
+- Pen: the proposal is bound to its approved root; apply refuses another root,
+  a stale file, a failed dry-run, and propagates a failed verification as a
+  distinct state.
+- Confinement: reads and search resolve the destination inside the declared
+  roots, symlinks and traversal are refused, `99-SECRETS` is never readable.
 
 ## Non-goals
 

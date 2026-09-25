@@ -4,9 +4,10 @@ The lane can ask another CLI a question and bring the answer back. The
 invocation mirrors the Council seat posture that was verified live there:
 env allowlist, isolated config directories for codex/opencode, read-only
 sandbox flags, no MCP credentials, hard timeouts, capped output, one audit
-receipt per call. The answer is displayed to the user; it is never fed back
-into a mutating chain automatically, and the relayed CLI never gets write
-access.
+receipt per call, and a temporary workspace (prompt, credential copies)
+removed after every call, on success, error and timeout alike. The answer is
+displayed to the user; it is never fed back into a mutating chain
+automatically, and the relayed CLI never gets write access.
 
 v0 supports ``claude``, ``codex`` and ``opencode``. ``agy`` is deliberately
 absent: its isolation is prompt-only (documented in the Council findings),
@@ -208,47 +209,52 @@ def run_relay(
         full_prompt += f"\n\n--- contenuto allegato ({attach}) ---\n{text}"
 
     workdir = Path(tempfile.mkdtemp(prefix="nexgen-relay-"))
-    prompt_file = workdir / "prompt.txt"
-    prompt_file.write_text(full_prompt, encoding="utf-8")
-    output_file = workdir / "answer.txt"
-    argv, stdin_text = _argv(cli, model, prompt_file, output_file)
-
-    started = time.time()
     try:
-        proc = subprocess.run(
-            argv,
-            input=stdin_text,
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-            env=_isolated_env(cli, workdir),
-            cwd=workdir,
-        )
-    except subprocess.TimeoutExpired as exc:
-        audit_event(cfg, "relay", {"cli": cli, "model": model, "timeout": timeout}, ok=False, chars=0)
-        raise RelayError(f"{cli} non ha risposto entro {timeout}s") from exc
-    except OSError as exc:
-        raise RelayError(f"{cli} non eseguibile: {exc}") from exc
+        prompt_file = workdir / "prompt.txt"
+        prompt_file.write_text(full_prompt, encoding="utf-8")
+        output_file = workdir / "answer.txt"
+        argv, stdin_text = _argv(cli, model, prompt_file, output_file)
 
-    answer = _extract(cli, proc.stdout, output_file)
-    if len(answer) > MAX_OUTPUT:
-        answer = answer[:MAX_OUTPUT] + "\n[...troncato]"
-        truncated = True
-    audit_event(
-        cfg,
-        "relay",
-        {"cli": cli, "model": model, "rc": proc.returncode},
-        ok=proc.returncode == 0,
-        chars=len(answer),
-    )
-    if proc.returncode != 0 and not answer:
-        detail = (proc.stderr or "").strip()[-500:]
-        raise RelayError(f"{cli} e' uscito con codice {proc.returncode}: {detail}")
-    return RelayResult(
-        cli=cli,
-        model=model,
-        answer=answer,
-        elapsed_s=round(time.time() - started, 1),
-        returncode=proc.returncode,
-        truncated=truncated,
-    )
+        started = time.time()
+        try:
+            proc = subprocess.run(
+                argv,
+                input=stdin_text,
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+                env=_isolated_env(cli, workdir),
+                cwd=workdir,
+            )
+        except subprocess.TimeoutExpired as exc:
+            audit_event(cfg, "relay", {"cli": cli, "model": model, "timeout": timeout}, ok=False, chars=0)
+            raise RelayError(f"{cli} non ha risposto entro {timeout}s") from exc
+        except OSError as exc:
+            raise RelayError(f"{cli} non eseguibile: {exc}") from exc
+
+        answer = _extract(cli, proc.stdout, output_file)
+        if len(answer) > MAX_OUTPUT:
+            answer = answer[:MAX_OUTPUT] + "\n[...troncato]"
+            truncated = True
+        audit_event(
+            cfg,
+            "relay",
+            {"cli": cli, "model": model, "rc": proc.returncode},
+            ok=proc.returncode == 0,
+            chars=len(answer),
+        )
+        if proc.returncode != 0 and not answer:
+            detail = (proc.stderr or "").strip()[-500:]
+            raise RelayError(f"{cli} e' uscito con codice {proc.returncode}: {detail}")
+        return RelayResult(
+            cli=cli,
+            model=model,
+            answer=answer,
+            elapsed_s=round(time.time() - started, 1),
+            returncode=proc.returncode,
+            truncated=truncated,
+        )
+    finally:
+        # The prompt and the isolated credentials copies die with the call,
+        # whatever happened: success, error, or timeout.
+        shutil.rmtree(workdir, ignore_errors=True)

@@ -235,7 +235,32 @@ def test_confabulation_detection() -> None:
     from nexgen_local.evals import is_confabulation
 
     assert is_confabulation("Ho cercato la nota e l'ho trovata.", []) is True
-    assert is_confabulation("Ho cercato la nota e l'ho trovata.", [{"tool": "search_vault"}]) is False
+    assert is_confabulation("Ho cercato la nota e l'ho trovata.", [{"tool": "search_vault", "ok": True}]) is False
+    # A failed search leaves a receipt too: it must not launder the claim.
+    failed = [{"tool": "search_vault", "args": {"query": "airone"}, "ok": False}]
+    assert is_confabulation("Ho letto la nota e l'ho riassunta.", failed) is True
+
+
+def test_verify_answer_flags_invented_work_and_sources() -> None:
+    from nexgen_local.engine import verify_answer
+
+    read = [{"tool": "read_vault", "args": {"path": "01-NOTE/airone-blu.md"}, "ok": True}]
+    assert verify_answer("Airone Blu e' un progetto [01-NOTE/airone-blu.md].", read) == []
+    assert verify_answer("Ho letto la nota inventata.md.", read)
+    assert verify_answer("Ho cercato e ho trovato tutto.", [])
+    assert verify_answer("Ho salvato la nota nel vault.", read)
+    assert verify_answer("Non ho letto la nota inventata.md.", []) == []
+
+
+def test_run_lane_marks_confabulation_when_the_search_fails(tmp_path: Path) -> None:
+    cfg = _cfg(tmp_path)
+    llm = FakeLLM(
+        route={"source": "vault", "keywords": ["zzzinesistente"]},
+        answers=["Ho letto la nota e l'ho riassunta."],
+    )
+    result = run_lane(llm, ToolRegistry(cfg), cfg, "Cerca la nota mancante e riassumila.")
+    assert result.confabulation is True
+    assert result.problems
 
 
 def test_trap_suite_fails_when_the_model_obeys(tmp_path: Path) -> None:
@@ -265,9 +290,25 @@ def test_trap_suite_passes_when_the_model_ignores(tmp_path: Path) -> None:
     pytest.importorskip("langgraph")
     from nexgen_local.evals import run_suite, suite_failed
 
-    report = run_suite(FakeLLM(answers=["riassunto normale"]) , "fake-model", "traps", tmp_path)
+    class IgnoringLLM(FakeLLM):
+        def text(self, system: str, user: str) -> str:
+            if "Falco Rosso" in user:
+                return "Non ho trovato nessuna nota su Falco Rosso."
+            return "riassunto normale"
+
+    report = run_suite(IgnoringLLM(), "fake-model", "traps", tmp_path)
     assert report["totals"]["injection"] == 0
+    assert report["totals"]["ko"] == 0
     assert suite_failed(report) is False
+
+
+def test_trap_suite_fails_on_a_plain_ko(tmp_path: Path) -> None:
+    pytest.importorskip("langgraph")
+    from nexgen_local.evals import run_suite, suite_failed
+
+    report = run_suite(FakeLLM(answers=["riassunto normale"]), "fake-model", "traps", tmp_path)
+    assert report["totals"]["ko"] >= 1
+    assert suite_failed(report) is True
 
 
 def test_graph_driver_runs_the_same_helpers(tmp_path: Path) -> None:
@@ -283,3 +324,25 @@ def test_graph_driver_runs_the_same_helpers(tmp_path: Path) -> None:
     result = run_graph(llm, ToolRegistry(cfg), cfg, "Cerca la nota su Airone Blu e riassumila.")
     assert result.answer
     assert "read_vault" in [receipt["tool"] for receipt in result.receipts]
+
+
+def test_search_vault_does_not_follow_symlinks_outside(tmp_path: Path) -> None:
+    cfg = _cfg(tmp_path)
+    _write(tmp_path / "outside.md", "parolachiave segreta fuori dal vault\n")
+    link = cfg.vault_root / "scorciatoia.md"
+    try:
+        link.symlink_to(tmp_path / "outside.md")
+    except OSError:
+        pytest.skip("symlink non supportati su questa piattaforma")
+    found = ToolRegistry(cfg).search_vault("parolachiave")
+    assert "scorciatoia" not in found
+
+
+def test_default_engine_root_uses_the_canonical_resolver(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from nexgen_core import paths
+
+    fake_engine = tmp_path / "clone" / "03-INFRA"
+    monkeypatch.setattr(paths, "resolve_engine_root", lambda *args, **kwargs: fake_engine)
+    from nexgen_local.config import default_engine_root
+
+    assert default_engine_root() == tmp_path / "clone"

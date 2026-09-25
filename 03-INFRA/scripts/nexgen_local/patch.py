@@ -6,7 +6,9 @@ it against the repository and stores the proposal as an artifact. The approval
 screen shows only what the machine verified: canonical path, original hash,
 diff, dry-run result. The model's prose is stored, labelled as unverified, and
 is never evidence. Applying is a separate command that re-checks the original
-hash first and refuses a stale proposal.
+hash first, refuses a stale proposal, and is bound to the root the proposal was
+dry-run against. The intent is recorded in the audit before the patch and the
+outcome after; a failed verification is a distinct state, not a success.
 """
 from __future__ import annotations
 
@@ -23,7 +25,7 @@ from pathlib import Path
 
 from .config import LaneConfig
 from .llm import LLM
-from .tools import audit_event
+from .tools import ToolError, audit_event
 
 MAX_FILE_CHARS = 20_000
 MAX_NEW_CHARS = 20_000
@@ -56,6 +58,8 @@ class Proposal:
     created_at: str = ""
     applied_at: str = ""
     verify_output: str = ""
+    verify_rc: int | None = None
+    verified: bool | None = None
 
 
 def _sha(text: str) -> str:
@@ -94,6 +98,34 @@ def _repo_file(cfg: LaneConfig, file_rel: str) -> tuple[Path, str, Path] | None:
                 return resolved, str(rel), root.resolve()
             break
     return None
+
+
+def _approved_target(cfg: LaneConfig, proposal: Proposal) -> tuple[Path, Path]:
+    """Resolve the destination exactly as approved: the proposal's own root.
+
+    The proposal is bound to the canonical root it was dry-run against; a
+    configuration that does not declare that root cannot apply it, and the
+    relative path is never re-resolved against a different root.
+    """
+    approved = Path(proposal.repo_root).expanduser().resolve()
+    if not any(root.expanduser().resolve() == approved for root in cfg.repo_roots):
+        raise PatchError(
+            f"proposta vincolata a un altro root ({approved}): "
+            "dichiara quel root con --repo per applicarla"
+        )
+    try:
+        candidate = (approved / proposal.file).resolve()
+    except OSError as exc:
+        raise PatchError(f"destinazione non risolvibile: {exc}") from exc
+    if any(part in cfg.excluded_parts for part in candidate.parts):
+        raise PatchError("destinazione in una parte esclusa")
+    try:
+        candidate.relative_to(approved)
+    except (OSError, ValueError):
+        raise PatchError("destinazione fuori dal root approvato") from None
+    if not candidate.is_file():
+        raise PatchError("file di destinazione non piu' raggiungibile")
+    return candidate, approved
 
 
 def _dry_run(repo_root: Path, patch_text: str) -> tuple[bool, str]:
@@ -206,7 +238,14 @@ def propose_patch(llm: LLM, cfg: LaneConfig, file_rel: str, instruction: str) ->
 def apply_proposal(
     cfg: LaneConfig, proposal_id: str, *, yes: bool, verify: str | None = None
 ) -> dict:
-    """Apply exactly the artifact that was shown, after re-verifying the file."""
+    """Apply exactly the artifact that was shown, after re-verifying the file.
+
+    Order of operations: every refusal first, then the write-ahead receipt,
+    then the patch, then the outcome receipt. An audit that cannot record the
+    intent refuses the application before the file is touched. Verification is
+    a distinct state: ``verified`` is None when not requested, False when the
+    command failed or could not run, and the caller must propagate that.
+    """
     if not yes:
         raise PatchError("applicazione rifiutata: serve --yes esplicito")
     proposal = load_proposal(cfg, proposal_id)
@@ -214,12 +253,19 @@ def apply_proposal(
         raise PatchError("proposta gia' applicata")
     if not proposal.dry_run:
         raise PatchError("il dry-run della proposta era fallito: non si applica")
-    target = _repo_file(cfg, proposal.file)
-    if target is None:
-        raise PatchError("file di destinazione non piu' raggiungibile")
-    path, rel, root = target
+    path, root = _approved_target(cfg, proposal)
+    rel = proposal.file
     if _sha(path.read_text(errors="replace")) != proposal.original_hash:
         raise PatchError("proposta stantia: il file e' cambiato dopo la proposta")
+
+    # Write-ahead receipt: the intent is recorded before the pen moves.
+    audit_event(
+        cfg,
+        "apply_patch",
+        {"file": rel, "proposal": proposal.id, "phase": "intent"},
+        ok=True,
+        chars=len(proposal.patch),
+    )
 
     with tempfile.NamedTemporaryFile("w", suffix=".patch", delete=False, encoding="utf-8") as handle:
         handle.write(proposal.patch)
@@ -229,24 +275,60 @@ def apply_proposal(
     finally:
         patch_path.unlink(missing_ok=True)
     if code != 0:
+        audit_event(
+            cfg,
+            "apply_patch",
+            {"file": rel, "proposal": proposal.id, "phase": "result", "rc": code},
+            ok=False,
+            chars=len(proposal.patch),
+        )
         raise PatchError(f"git apply fallito: {output.strip()}")
     if _sha(path.read_text(errors="replace")) != proposal.new_hash:
+        audit_event(
+            cfg,
+            "apply_patch",
+            {"file": rel, "proposal": proposal.id, "phase": "result", "rc": "hash"},
+            ok=False,
+            chars=len(proposal.patch),
+        )
         raise PatchError("il file applicato non corrisponde alla proposta")
 
     verify_output = ""
+    verify_rc: int | None = None
     if verify:
         try:
             proc = subprocess.run(
                 shlex.split(verify), cwd=root, capture_output=True, text=True, timeout=APPLY_TIMEOUT
             )
+            verify_rc = proc.returncode
             verify_output = f"rc={proc.returncode}\n{proc.stdout[-2000:]}{proc.stderr[-1000:]}"
         except (OSError, subprocess.SubprocessError) as exc:
             verify_output = f"verifica non eseguita: {exc}"
+    verified: bool | None = None if not verify else verify_rc == 0
+
     proposal.applied_at = time.strftime("%Y-%m-%dT%H:%M:%S%z")
     proposal.verify_output = verify_output
-    _save(cfg, proposal)
-    audit_event(cfg, "apply_patch", {"file": rel, "proposal": proposal.id}, ok=True, chars=len(proposal.patch))
-    return {"id": proposal.id, "file": rel, "applied": True, "verify": verify_output}
+    proposal.verify_rc = verify_rc
+    proposal.verified = verified
+    try:
+        _save(cfg, proposal)
+        audit_event(
+            cfg,
+            "apply_patch",
+            {"file": rel, "proposal": proposal.id, "phase": "result", "verify_rc": verify_rc},
+            ok=verified is not False,
+            chars=len(proposal.patch),
+        )
+    except (OSError, ToolError) as exc:
+        raise PatchError(f"patch applicata, ma stato o ricevuta finale non salvati: {exc}") from exc
+    return {
+        "id": proposal.id,
+        "file": rel,
+        "applied": True,
+        "verified": verified,
+        "verify_rc": verify_rc,
+        "verify": verify_output,
+    }
 
 
 def format_gate(proposal: Proposal) -> str:

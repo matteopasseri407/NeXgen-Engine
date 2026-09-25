@@ -19,8 +19,17 @@ EXCLUDED_PARTS = frozenset({"99-SECRETS", ".git", "node_modules", ".venv"})
 
 
 def default_engine_root() -> Path:
-    """The engine checkout this module ships inside: 03-INFRA/scripts/nexgen_local -> repo root."""
-    return Path(__file__).resolve().parents[3]
+    """The engine repository this lane reads by default.
+
+    Resolved through the canonical engine resolver, never inferred from this
+    file's position: inside an installed package the old inference returned
+    ``env/lib``, and a second resolver is exactly the divergence NeXgen
+    already paid for once. The resolver names the clone's ``03-INFRA``
+    folder; its parent is the repository.
+    """
+    from nexgen_core.paths import resolve_engine_root
+
+    return resolve_engine_root().resolve().parent
 
 
 @dataclass(frozen=True)

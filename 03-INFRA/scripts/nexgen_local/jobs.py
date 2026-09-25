@@ -21,7 +21,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from .config import LaneConfig
-from .engine import _empty, _existing_file, _longest, sanitize_content, terms
+from .engine import _empty, _existing_file, _longest, sanitize_content, terms, verify_answer
 from .llm import LLM
 from .tools import ToolRegistry, audit_event
 
@@ -72,6 +72,8 @@ class JobResult:
     sources: list[str] = field(default_factory=list)
     draft: str = ""
     draft_path: str = ""
+    confabulation: bool = False
+    problems: list[str] = field(default_factory=list)
 
 
 def _receipts(tools: ToolRegistry) -> list[dict[str, Any]]:
@@ -118,7 +120,16 @@ def job_research(llm: LLM, tools: ToolRegistry, cfg: LaneConfig, topic: str) -> 
         "Dal web:\n---\n" + web_block + "\n---"
     )
     answer = llm.text(RESEARCH_PROMPT, user)
-    return JobResult(job="research", answer=answer, receipts=_receipts(tools), sources=_sources(tools))
+    receipts = _receipts(tools)
+    problems = verify_answer(answer, receipts, web_block)
+    return JobResult(
+        job="research",
+        answer=answer,
+        receipts=receipts,
+        sources=_sources(tools),
+        confabulation=bool(problems),
+        problems=problems,
+    )
 
 
 def _string_list(value: Any, limit: int = MAX_DRAFT_ITEMS) -> list[str]:

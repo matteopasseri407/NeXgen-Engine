@@ -128,13 +128,26 @@ class ToolRegistry:
         if not root.is_dir():
             return self._refuse("search_vault", {"query": query}, "(vault non raggiungibile)")
         scored: list[tuple[int, int, str]] = []
+        root_resolved = root.resolve()
         for path in root.rglob("*.md"):
             if any(part in self.cfg.excluded_parts for part in path.parts):
                 continue
             try:
-                if path.stat().st_size > MAX_SEARCH_BYTES:
+                resolved = path.resolve()
+            except OSError:
+                continue
+            # Same destination check as direct reads: a symlink pointing
+            # outside the vault must not leak its target's content.
+            if any(part in self.cfg.excluded_parts for part in resolved.parts):
+                continue
+            try:
+                resolved.relative_to(root_resolved)
+            except (OSError, ValueError):
+                continue
+            try:
+                if resolved.stat().st_size > MAX_SEARCH_BYTES:
                     continue
-                text = path.read_text(errors="replace").casefold()
+                text = resolved.read_text(errors="replace").casefold()
             except OSError:
                 continue
             rel = str(path.relative_to(root))

@@ -133,3 +133,14 @@ def test_detect_job_patterns() -> None:
     assert detect_job("chiudi la sessione di oggi") == "close"
     assert detect_job("distilla la sessione in una nota") == "close"
     assert detect_job("dimmi che ore sono") is None
+
+
+def test_research_flags_invented_citations(tmp_path: Path) -> None:
+    cfg = _cfg(tmp_path)
+    _write(cfg.vault_root / "01-NOTE" / "airone.md", "Airone Blu.\n")
+    web = tmp_path / "web.txt"
+    web.write_text("Risultato web su Airone Blu.\n", encoding="utf-8")
+    llm = FakeLLM(answers=["## Cosa dicono le fonti\n- Dato inventato [01-NOTE/fantasma.md]"])
+    result = job_research(llm, WebRegistry(cfg, web), cfg, "progetto Airone Blu")
+    assert result.confabulation is True
+    assert any("fantasma" in problem for problem in result.problems)

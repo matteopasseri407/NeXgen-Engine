@@ -29,16 +29,22 @@ def _footer(receipts: list[dict]) -> str:
     return f"\n\n[ricevute: {names}]"
 
 
+def _problems_footer(problems: list[str]) -> str:
+    if not problems:
+        return ""
+    return "\n\n[attenzione: affermazioni non verificate — " + "; ".join(problems) + "]"
+
+
 def tool_ask(cfg: LaneConfig, llm: LLM, question: str) -> str:
     from .graph import run_graph
 
     result = run_graph(llm, ToolRegistry(cfg), cfg, question)
-    return (result.answer or "(nessuna risposta)") + _footer(result.receipts)
+    return (result.answer or "(nessuna risposta)") + _footer(result.receipts) + _problems_footer(result.problems)
 
 
 def tool_research(cfg: LaneConfig, llm: LLM, topic: str) -> str:
     result = job_research(llm, ToolRegistry(cfg), cfg, topic)
-    return (result.answer or "(nessuna risposta)") + _footer(result.receipts)
+    return (result.answer or "(nessuna risposta)") + _footer(result.receipts) + _problems_footer(result.problems)
 
 
 def tool_close(cfg: LaneConfig, llm: LLM, file: str, save: bool = False) -> str:
@@ -46,7 +52,7 @@ def tool_close(cfg: LaneConfig, llm: LLM, file: str, save: bool = False) -> str:
     text = result.answer or "(nessuna bozza)"
     if result.draft_path:
         text += f"\n\nbozza salvata: {result.draft_path}"
-    return text + _footer(result.receipts)
+    return text + _footer(result.receipts) + _problems_footer(result.problems)
 
 
 def tool_status(cfg: LaneConfig) -> str:
