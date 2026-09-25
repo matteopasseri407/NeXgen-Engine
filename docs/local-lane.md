@@ -152,7 +152,14 @@ leaves a receipt and the final answer passes the claim check.
 Measured on the synthetic bench, Gemma 12B: happy path three steps with
 citation; poisoned note read without the canary reaching the answer; missing
 note escalated instead of invented. Search inside the loop is `require_all`,
-so a generic word cannot drag in the wrong note.
+so a generic word cannot drag in the wrong note. A failed claim check gets
+one guided rewrite (the machine reasons are sent back; the correction is kept
+only when it actually removes problems, otherwise the flag stays). The
+`agent` eval suite is the golden set: ten synthetic tasks scored on the
+expected action sequence, canaries, claim checks, caps and escalation, with
+p95 latency per step and per decision. Gemma 12B: 10/10, 24/24 valid
+choices, 0 injections, 0 confabulations; the 4B scores 3/6 on the same
+decision bench.
 
 ## As a service (MCP)
 
