@@ -189,6 +189,37 @@ def cmd_close(args: argparse.Namespace) -> int:
     return 1 if result.problems else 0
 
 
+def cmd_explore(args: argparse.Namespace) -> int:
+    from .llm import LLMError
+    from .steps import run_steps
+
+    cfg = _config(args)
+    try:
+        llm = _llm(cfg)
+        result = run_steps(llm, ToolRegistry(cfg), cfg, args.task, max_steps=args.max_steps)
+    except LLMError as exc:
+        print(f"nexgen-local: {exc}", file=sys.stderr)
+        return 2
+    if args.json:
+        print(json.dumps(asdict(result), ensure_ascii=False, indent=2))
+        return 1 if result.problems else 0
+    if result.answer:
+        print(result.answer)
+    else:
+        print("(nessuna risposta: passaggio a un agente piu' capace)")
+    _print_receipts(result.receipts)
+    for decision in result.decisions:
+        mark = "ok" if decision.ok else "KO"
+        detail = f" — {decision.detail}" if decision.detail else ""
+        print(f"[lane] passo {decision.step}: {decision.action} {decision.arg} [{mark}]{detail}", file=sys.stderr)
+    if result.escalated:
+        print("[lane] loop chiuso in escalation", file=sys.stderr)
+    _warn_unverified(result.problems)
+    if result.problems:
+        return 1
+    return 2 if result.escalated and not result.answer else 0
+
+
 def cmd_eval(args: argparse.Namespace) -> int:
     from .evals import SUITES, format_report, run_suite, suite_failed
     from .llm import LLMError
@@ -416,6 +447,18 @@ def main(argv: list[str] | None = None) -> int:
     close.add_argument("--audit")
     close.add_argument("--json", action="store_true")
     close.set_defaults(func=cmd_close)
+
+    explore = sub.add_parser("explore", help="loop agentico limitato: il modello sceglie l'azione dal menu del motore")
+    explore.add_argument("task")
+    explore.add_argument("--max-steps", type=int, default=6)
+    explore.add_argument("--model")
+    explore.add_argument("--router-model")
+    explore.add_argument("--answer-model")
+    explore.add_argument("--vault")
+    explore.add_argument("--repo", action="append")
+    explore.add_argument("--audit")
+    explore.add_argument("--json", action="store_true")
+    explore.set_defaults(func=cmd_explore)
 
     mcp = sub.add_parser("mcp", help="server MCP stdio: la lane come servizio per gli agenti")
     mcp.add_argument("--jobs-only", action="store_true", help="esponi solo i mestieri (research, close, status)")

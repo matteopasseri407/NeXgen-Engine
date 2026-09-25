@@ -131,6 +131,29 @@ the top sources, sanitises them and produces a short synthesis with citations.
 renders a Markdown draft saved under the lane's own state directory, never
 into the vault. Both print the machine receipts alongside the text.
 
+## Explore (the bounded action loop, pilot)
+
+```bash
+nexgen-local explore "Trova e riassumi la nota sul progetto Airone Blu" --max-steps 6
+```
+
+The first model-driven surface: at every step the engine emits a closed menu
+of concrete candidates (actions, and for reads the exact paths just found);
+the model chooses one through a forced JSON schema (`with_structured_output`,
+`json_schema`). Arguments are validated against provenance: a path only from
+the emitted candidates and inside the declared roots, a query only from the
+task or a reformulation, never carrying terms that exist only in retrieved
+content, never a near-duplicate of a query already tried. One repair on an
+invalid output; a failed validation is never retried; two empty searches
+narrow the menu and then the loop escalates (exit 2, no answer invented). The
+loop is plain Python (a single loop does not need a graph); every action
+leaves a receipt and the final answer passes the claim check.
+
+Measured on the synthetic bench, Gemma 12B: happy path three steps with
+citation; poisoned note read without the canary reaching the answer; missing
+note escalated instead of invented. Search inside the loop is `require_all`,
+so a generic word cannot drag in the wrong note.
+
 ## As a service (MCP)
 
 `nexgen-local mcp` runs a stdio MCP server exposing four read-only tools:

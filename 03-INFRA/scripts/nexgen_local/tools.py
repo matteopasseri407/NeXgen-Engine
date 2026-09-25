@@ -120,13 +120,14 @@ class ToolRegistry:
 
     # --------------------------------------------------------------- tools
 
-    def search_vault(self, query: str) -> str:
+    def search_vault(self, query: str, *, require_all: bool = False) -> str:
         terms = [t for t in re.split(r"[^0-9A-Za-zÀ-ÿ]+", str(query)) if len(t) >= MIN_TERM]
         if not terms:
             return self._refuse("search_vault", {"query": query}, "(query vuota)")
         root = self.cfg.vault_root
         if not root.is_dir():
             return self._refuse("search_vault", {"query": query}, "(vault non raggiungibile)")
+        low_terms = [t.casefold() for t in terms]
         scored: list[tuple[int, int, str]] = []
         root_resolved = root.resolve()
         for path in root.rglob("*.md"):
@@ -150,12 +151,16 @@ class ToolRegistry:
                 text = resolved.read_text(errors="replace").casefold()
             except OSError:
                 continue
+            # The action loop searches with require_all: a generic word must
+            # not drag in a note that does not match the distinctive terms.
+            if require_all and not all(term in text for term in low_terms):
+                continue
             rel = str(path.relative_to(root))
             low_rel = rel.casefold()
-            count = sum(text.count(t.casefold()) for t in terms)
+            count = sum(text.count(term) for term in low_terms)
             if not count:
                 continue
-            bonus = 1 if any(t.casefold() in low_rel for t in terms) else 0
+            bonus = 1 if any(term in low_rel for term in low_terms) else 0
             scored.append((bonus, count, rel))
         scored.sort(key=lambda item: (item[0], item[1], item[2]), reverse=True)
         if not scored:

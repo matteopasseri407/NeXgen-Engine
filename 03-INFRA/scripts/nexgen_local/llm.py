@@ -1,9 +1,10 @@
 """Model access: a tiny interface, one LangChain implementation.
 
-The lane only ever needs two verbs from a model: fill a JSON form (routing)
-and answer in text from provided content. Keeping the interface this small
-is what makes the framework replaceable: the graph and the engine talk to
-``LLM``, not to LangChain.
+The lane only ever needs three verbs from a model: fill a JSON form (routing),
+answer in text from provided content, and choose the next action from a closed
+menu (the bounded loop). Keeping the interface this small is what makes the
+framework replaceable: the graph, the loop and the engine talk to ``LLM``, not
+to LangChain.
 """
 from __future__ import annotations
 
@@ -25,6 +26,8 @@ class LLM(Protocol):
     def json(self, system: str, user: str) -> dict | None: ...
 
     def text(self, system: str, user: str) -> str: ...
+
+    def choose(self, system: str, user: str, actions: list[str]) -> dict | None: ...
 
 
 def _json_block(text: str) -> dict | None:
@@ -74,12 +77,23 @@ class ChatOllamaLLM:
             "num_ctx": cfg.num_ctx,
             "validate_model_on_init": False,
         }
+        # The loop's decision channel: the answerer's competence, the router's
+        # small context. One decision is a short forced-schema object.
+        decision_common = {
+            "model": cfg.answer_tag,
+            "base_url": host,
+            "temperature": 0.0,
+            "num_ctx": min(cfg.num_ctx, ROUTER_NUM_CTX),
+            "validate_model_on_init": False,
+        }
         try:
             self._json_model = ChatOllama(format="json", reasoning=False, **router_common)
             self._text_model = ChatOllama(reasoning=False, **answer_common)
+            self._decision_model = ChatOllama(reasoning=False, **decision_common)
         except TypeError:  # older driver without reasoning/validate switches
             self._json_model = ChatOllama(format="json", **router_common)
             self._text_model = ChatOllama(**answer_common)
+            self._decision_model = ChatOllama(**decision_common)
 
     @staticmethod
     def _messages(system: str, user: str):
@@ -107,3 +121,25 @@ class ChatOllamaLLM:
         except Exception as exc:  # noqa: BLE001
             raise LLMError(f"chiamata al modello fallita: {exc}") from exc
         return self._content(message)
+
+    def choose(self, system: str, user: str, actions: list[str]) -> dict | None:
+        """Forced-schema decision for the bounded loop: one action from the menu."""
+        schema = {
+            "title": "LaneDecision",
+            "type": "object",
+            "properties": {
+                "action": {"type": "string", "enum": list(actions)},
+                "arg": {"type": "string", "description": "query o percorso, vuoto se non serve"},
+                "why": {"type": "string", "description": "una riga"},
+            },
+            "required": ["action"],
+        }
+        try:
+            structured = self._decision_model.with_structured_output(schema, method="json_schema")
+            result = structured.invoke(self._messages(system, user))
+        except Exception as exc:  # noqa: BLE001 - surface a typed error upward
+            raise LLMError(f"decisione del modello fallita: {exc}") from exc
+        if isinstance(result, dict):
+            return result
+        dump = getattr(result, "model_dump", None)
+        return result.model_dump() if callable(dump) else None
