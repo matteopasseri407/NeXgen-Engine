@@ -293,7 +293,7 @@ def cmd_relay(args: argparse.Namespace) -> int:
 def cmd_mcp(args: argparse.Namespace) -> int:
     from .mcp_server import run_server
 
-    return run_server(_config(args))
+    return run_server(_config(args), include_ask=not args.jobs_only)
 
 
 def cmd_doctor(args: argparse.Namespace) -> int:
@@ -396,6 +396,7 @@ def main(argv: list[str] | None = None) -> int:
     close.set_defaults(func=cmd_close)
 
     mcp = sub.add_parser("mcp", help="server MCP stdio: la lane come servizio per gli agenti")
+    mcp.add_argument("--jobs-only", action="store_true", help="esponi solo i mestieri (research, close, status)")
     mcp.add_argument("--model")
     mcp.add_argument("--router-model")
     mcp.add_argument("--answer-model")

@@ -94,3 +94,9 @@ def test_build_server_builds_with_a_fake_factory(tmp_path: Path) -> None:
     pytest.importorskip("mcp")
     server = build_server(_cfg(tmp_path), llm_factory=lambda: FakeLLM())
     assert server.name == "nexgen-local-lane"
+
+
+def test_build_server_jobs_only_builds(tmp_path: Path) -> None:
+    pytest.importorskip("mcp")
+    server = build_server(_cfg(tmp_path), llm_factory=lambda: FakeLLM(), include_ask=False)
+    assert server.name == "nexgen-local-lane"

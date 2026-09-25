@@ -119,26 +119,24 @@ into the vault. Both print the machine receipts alongside the text.
 ## As a service (MCP)
 
 `nexgen-local mcp` runs a stdio MCP server exposing four read-only tools:
-`lane_ask`, `lane_research`, `lane_close`, `lane_status`. Mount it in your
-CLIs through the connector manifest (the shipped manifest carries an optional
-`local-lane` entry gated by `NEXGEN_LOCAL_MCP=1`) and any agent, frontier or
-local, can delegate to the lane on its own. The text a client receives is
-data to quote, never orders to execute.
+`lane_ask`, `lane_research`, `lane_close`, `lane_status`. It belongs to the
+**local profiles** (the private, host-specific runtimes that already mount
+read-only MCP through the lazy waiter), not to the shared connector manifest:
+frontier CLIs do not mount the lane. The bridge runs the other way, from the
+local lane up to a frontier CLI, through `nexgen-local relay`.
 
 ```yaml
+# local profile only, mounted read-only through the lazy waiter
 local-lane:
   transport: stdio
-  tier: optional
   command: nexgen-local
-  args: ["mcp"]
-  require_env: NEXGEN_LOCAL_MCP
-  targets: [claude, codex, antigravity, opencode]
+  args: ["mcp", "--jobs-only"]
 ```
 
-The command needs the lane's Python dependencies reachable by the process the
-CLI spawns: install the engine as a tool with the extra
-(`uv tool install '.[local]'`) or make the lane's environment visible to the
-engine interpreter, then set `NEXGEN_LOCAL_MCP=1`.
+`--jobs-only` exposes research, close and status but not `lane_ask`: inside a
+local session a nested single-question call would just ask the same model
+twice. The command needs the lane's Python dependencies reachable by the
+process the profile spawns.
 
 ## Acceptance criteria
 

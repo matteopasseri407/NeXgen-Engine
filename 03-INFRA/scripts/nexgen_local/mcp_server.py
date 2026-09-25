@@ -64,8 +64,18 @@ def tool_status(cfg: LaneConfig) -> str:
     )
 
 
-def build_server(cfg: LaneConfig | None = None, llm_factory: Callable[[], LLM] | None = None):
-    """Build the stdio server. Imported lazily so the core stays framework-free."""
+def build_server(
+    cfg: LaneConfig | None = None,
+    llm_factory: Callable[[], LLM] | None = None,
+    *,
+    include_ask: bool = True,
+):
+    """Build the stdio server. Imported lazily so the core stays framework-free.
+
+    ``include_ask=False`` exposes only the jobs (research, close, status):
+    that is the right default for a local profile, where a nested single-question
+    call would just ask the same model twice.
+    """
     from mcp.server.mcpserver import MCPServer
 
     cfg = cfg or LaneConfig.from_env()
@@ -84,12 +94,14 @@ def build_server(cfg: LaneConfig | None = None, llm_factory: Callable[[], LLM] |
         ),
     )
 
-    @server.tool(description="Domanda singola alla lane locale (sola lettura).")
-    def lane_ask(question: str) -> str:
-        try:
-            return tool_ask(cfg, llm_factory(), question)
-        except (LLMError, JobError) as exc:
-            return f"(rifiutato: {exc})"
+    if include_ask:
+
+        @server.tool(description="Domanda singola alla lane locale (sola lettura).")
+        def lane_ask(question: str) -> str:
+            try:
+                return tool_ask(cfg, llm_factory(), question)
+            except (LLMError, JobError) as exc:
+                return f"(rifiutato: {exc})"
 
     @server.tool(description="Ricerca su vault e web con sintesi e citazioni (sola lettura).")
     def lane_research(topic: str) -> str:
@@ -117,6 +129,6 @@ def build_server(cfg: LaneConfig | None = None, llm_factory: Callable[[], LLM] |
     return server
 
 
-def run_server(cfg: LaneConfig | None = None) -> int:
-    build_server(cfg).run(transport="stdio")
+def run_server(cfg: LaneConfig | None = None, *, include_ask: bool = True) -> int:
+    build_server(cfg, include_ask=include_ask).run(transport="stdio")
     return 0
