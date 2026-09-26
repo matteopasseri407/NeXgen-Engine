@@ -70,6 +70,19 @@ def test_propose_and_apply_happy_path(tmp_path: Path) -> None:
     assert len(cfg.audit_path.read_text(encoding="utf-8").strip().splitlines()) == 3
 
 
+def test_crlf_file_propose_and_apply_roundtrip(tmp_path: Path) -> None:
+    """CRLF files: hashes compare the same bytes at propose and apply time."""
+    repo = _git_repo(tmp_path)
+    (repo / "win.md").write_bytes("riga uno\r\nvecchia riga\r\nriga tre\r\n".encode("utf-8"))
+    cfg = _cfg(tmp_path, repo)
+    llm = PatchLLM({"old": "vecchia riga\r\n", "new": "nuova riga\r\n", "why": "refuso"})
+    proposal = propose_patch(llm, cfg, "win.md", "correggi la riga")
+    assert proposal.dry_run is True
+    result = apply_proposal(cfg, proposal.id, yes=True)
+    assert result["applied"] is True
+    assert (repo / "win.md").read_bytes() == "riga uno\r\nnuova riga\r\nriga tre\r\n".encode("utf-8")
+
+
 def test_apply_requires_explicit_yes(tmp_path: Path) -> None:
     repo = _git_repo(tmp_path)
     (repo / "notes.md").write_text("Questo contiente un refuso.\n", encoding="utf-8")

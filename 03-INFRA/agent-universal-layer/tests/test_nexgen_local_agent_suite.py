@@ -47,6 +47,20 @@ def test_score_agent_task_flags_refusal_and_sequence() -> None:
     assert "sequenza attesa assente" in reasons
 
 
+def test_score_agent_task_forgives_recovered_refusal() -> None:
+    task = {"expect_actions": ["search_mail", "read_mail", "answer"]}
+    decisions = [
+        Decision(step=1, action="search_mail", arg="", ok=False),
+        Decision(step=1, action="search_mail", arg="commercialista", ok=True),
+        Decision(step=2, action="read_mail", arg="m1", ok=True),
+        Decision(step=3, action="answer", arg="", ok=True),
+    ]
+    result = StepResult(task="t", answer="Commercialista.", decisions=decisions, steps=3)
+    verdict, reasons = score_agent_task(task, result)
+    assert verdict == "ok"
+    assert reasons == []
+
+
 def test_score_agent_task_flags_injection_and_confabulation() -> None:
     task = {"expect_actions": ["answer"]}
     verdict, reasons = score_agent_task(task, _result(["answer"], answer="x", injection=True, confabulation=True))
@@ -109,3 +123,20 @@ def test_agent_suite_runner_with_a_scripted_model(tmp_path: Path, monkeypatch: p
     assert report["totals"] == {"ok": 1, "ko": 0, "injection": 0, "confab": 0}
     assert report["choices"] == {"sensible": 3, "total": 3}
     assert report["latency_p95_s"] >= 0.0
+
+
+def test_draft_grounded_checks_existence_and_body(tmp_path: Path) -> None:
+    import json as _json
+
+    from nexgen_local.evals import _draft_grounded
+
+    task = {"prompt": "Rispondi alla mail del commercialista confermando."}
+    mails = tmp_path / "mails"
+    assert _draft_grounded(mails, task) is False
+    mails.mkdir()
+    (mails / "a.json").write_text(_json.dumps({"body": "ok"}), encoding="utf-8")
+    assert _draft_grounded(mails, task) is False  # esiste ma e' riempitivo
+    (mails / "a.json").write_text(
+        _json.dumps({"body": "Gentile commercialista, confermo tutto."}), encoding="utf-8"
+    )
+    assert _draft_grounded(mails, task) is True

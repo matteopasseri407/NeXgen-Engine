@@ -66,6 +66,12 @@ def _sha(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8", errors="replace")).hexdigest()
 
 
+def _read_text_bytes(path: Path) -> str:
+    """Decode the exact bytes: ``Path.read_text`` normalises CRLF to LF, which
+    would hash differently from the proposal computed over the raw bytes."""
+    return path.read_bytes().decode("utf-8", errors="replace")
+
+
 def _run_git(repo_root: Path, args: list[str], timeout: int = 120) -> tuple[int, str]:
     try:
         proc = subprocess.run(
@@ -255,7 +261,7 @@ def apply_proposal(
         raise PatchError("il dry-run della proposta era fallito: non si applica")
     path, root = _approved_target(cfg, proposal)
     rel = proposal.file
-    if _sha(path.read_text(errors="replace")) != proposal.original_hash:
+    if _sha(_read_text_bytes(path)) != proposal.original_hash:
         raise PatchError("proposta stantia: il file e' cambiato dopo la proposta")
 
     # Write-ahead receipt: the intent is recorded before the pen moves.
@@ -283,7 +289,7 @@ def apply_proposal(
             chars=len(proposal.patch),
         )
         raise PatchError(f"git apply fallito: {output.strip()}")
-    if _sha(path.read_text(errors="replace")) != proposal.new_hash:
+    if _sha(_read_text_bytes(path)) != proposal.new_hash:
         audit_event(
             cfg,
             "apply_patch",

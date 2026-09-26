@@ -106,13 +106,13 @@ def cmd_run(args: argparse.Namespace) -> int:
         _warn_unverified(result.problems)
         return 1 if result.problems else 0
     if job == "close":
-        from .engine import PATH_RE, _existing_file
+        from .engine import PATH_RE, _existing_file, _pinned
 
         target = ""
         for match in PATH_RE.findall(args.question):
             found = _existing_file(cfg, match)
             if found:
-                target = found[1]
+                target = _pinned(found[2], found[1])
                 break
         if not target:
             print(
@@ -202,7 +202,9 @@ def cmd_explore(args: argparse.Namespace) -> int:
         return 2
     if args.json:
         print(json.dumps(asdict(result), ensure_ascii=False, indent=2))
-        return 1 if result.problems else 0
+        if result.problems:
+            return 1
+        return 2 if result.escalated and not result.answer else 0
     if result.answer:
         print(result.answer)
     else:
@@ -279,6 +281,217 @@ def cmd_proposals(args: argparse.Namespace) -> int:
         state = "applicata" if item.applied_at else ("pronta" if item.dry_run else "dry-run fallito")
         print(f"  {item.id}  {state:<15} {item.file}")
     return 0
+
+
+def cmd_mail_propose(args: argparse.Namespace) -> int:
+    from .compose import MailError, format_gate, propose_mail
+    from .llm import LLMError
+
+    cfg = _config(args)
+    try:
+        llm = _llm(cfg)
+        proposal = propose_mail(
+            llm,
+            cfg,
+            args.instruction,
+            reply_to=args.reply or "",
+            to=args.to or "",
+            subject=args.subject or "",
+            provider=args.provider or "gmail",
+        )
+    except LLMError as exc:
+        print(f"nexgen-local: {exc}", file=sys.stderr)
+        return 2
+    except MailError as exc:
+        print(f"nexgen-local: bozza rifiutata: {exc}", file=sys.stderr)
+        return 1
+    if args.json:
+        print(json.dumps(asdict(proposal), ensure_ascii=False, indent=2))
+    else:
+        print(format_gate(proposal))
+    return 0
+
+
+def cmd_mails(args: argparse.Namespace) -> int:
+    from .compose import list_proposals as list_mail_proposals
+
+    cfg = _config(args)
+    items = list_mail_proposals(cfg)
+    if args.json:
+        print(json.dumps([asdict(item) for item in items], ensure_ascii=False, indent=2))
+        return 0
+    if not items:
+        print("nessuna bozza")
+        return 0
+    for item in items:
+        state = "inviata" if item.applied_at else "da approvare"
+        print(f"  {item.id}  {state:<15} {item.to}  {item.subject}")
+    return 0
+
+
+def cmd_mail_send(args: argparse.Namespace) -> int:
+    from .compose import MailError, apply_mail
+
+    cfg = _config(args)
+    try:
+        result = apply_mail(cfg, args.proposal_id, yes=args.yes)
+    except (MailError, ToolError) as exc:
+        print(f"nexgen-local: {exc}", file=sys.stderr)
+        return 1
+    if args.json:
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+    else:
+        print(f"inviata a {result['to']} (proposta {result['id']}, id {result['sent_id']})")
+    return 0
+
+
+def cmd_cal_propose(args: argparse.Namespace) -> int:
+    from .calendars import CalendarError, format_gate, propose_delete, propose_event
+
+    cfg = _config(args)
+    try:
+        if args.delete:
+            proposal = propose_delete(cfg, args.calendar or "primary", args.delete)
+        else:
+            proposal = propose_event(
+                cfg, args.summary or "", args.start or "", args.end or "",
+                args.description or "", args.location or "", args.calendar or "primary",
+            )
+    except CalendarError as exc:
+        print(f"nexgen-local: proposta rifiutata: {exc}", file=sys.stderr)
+        return 1
+    if args.json:
+        print(json.dumps(asdict(proposal), ensure_ascii=False, indent=2))
+    else:
+        print(format_gate(proposal))
+    return 0
+
+
+def cmd_cals(args: argparse.Namespace) -> int:
+    from .calendars import list_proposals as list_cal_proposals
+
+    cfg = _config(args)
+    items = list_cal_proposals(cfg)
+    if args.json:
+        print(json.dumps([asdict(item) for item in items], ensure_ascii=False, indent=2))
+        return 0
+    if not items:
+        print("nessuna proposta")
+        return 0
+    for item in items:
+        state = "applicata" if item.applied_at else "da approvare"
+        print(f"  {item.id}  {state:<15} {item.kind}  {item.summary or item.event_id}")
+    return 0
+
+
+def cmd_cal_apply(args: argparse.Namespace) -> int:
+    from .calendars import CalendarError, apply_proposal as apply_cal
+
+    cfg = _config(args)
+    try:
+        result = apply_cal(cfg, args.proposal_id, yes=args.yes)
+    except (CalendarError, ToolError) as exc:
+        print(f"nexgen-local: {exc}", file=sys.stderr)
+        return 1
+    if args.json:
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+    else:
+        print(f"applicata: {result['kind']} (proposta {result['id']}, id {result['done_id']})")
+    return 0
+
+
+def cmd_wf_propose(args: argparse.Namespace) -> int:
+    from .workflows import WorkflowError, format_gate, propose_run
+
+    cfg = _config(args)
+    try:
+        params = json.loads(args.params) if args.params else {}
+        proposal = propose_run(cfg, args.workflow or "", params)
+    except (WorkflowError, ValueError) as exc:
+        print(f"nexgen-local: esecuzione rifiutata: {exc}", file=sys.stderr)
+        return 1
+    if args.json:
+        print(json.dumps(asdict(proposal), ensure_ascii=False, indent=2))
+    else:
+        print(format_gate(proposal))
+    return 0
+
+
+def cmd_wfs(args: argparse.Namespace) -> int:
+    from .workflows import WorkflowError, list_proposals as list_wf_proposals, load_allowlist
+
+    cfg = _config(args)
+    try:
+        allowed = load_allowlist()
+    except WorkflowError as exc:
+        print(f"nexgen-local: {exc}", file=sys.stderr)
+        return 1
+    if args.json:
+        print(json.dumps({"allowed": sorted(allowed), "proposals": [asdict(p) for p in list_wf_proposals(cfg)]}, ensure_ascii=False, indent=2))
+        return 0
+    print("consentiti: " + (", ".join(sorted(allowed)) or "(nessuno)"))
+    for item in list_wf_proposals(cfg):
+        state = "eseguita" if item.applied_at else "da approvare"
+        print(f"  {item.id}  {state:<15} {item.workflow}")
+    return 0
+
+
+def cmd_wf_run(args: argparse.Namespace) -> int:
+    from .workflows import WorkflowError, confirm_run
+
+    cfg = _config(args)
+    try:
+        result = confirm_run(cfg, args.proposal_id, args.yes)
+    except (WorkflowError, ToolError) as exc:
+        print(f"nexgen-local: {exc}", file=sys.stderr)
+        return 1
+    if args.json:
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+    else:
+        print(f"eseguito: {result['id']}\n{result['outcome'] or '(nessun output)'}")
+    return 0
+
+
+def cmd_drive_propose(args: argparse.Namespace) -> int:
+    from .drive_mcp import DriveGateError, stage_upload
+
+    cfg = _config(args)
+    try:
+        staged = stage_upload(cfg, args.file, args.name or "", args.folder or "")
+    except (DriveGateError, ToolError) as exc:
+        print(f"nexgen-local: caricamento rifiutato: {exc}", file=sys.stderr)
+        return 1
+    if args.json:
+        print(json.dumps(staged, ensure_ascii=False, indent=2))
+    else:
+        print(
+            f"pronto: {staged['name']} ({staged['size']} byte, {staged['mime']})\n"
+            f"  locale: {staged['local_path']}\n"
+            f"  Carica con: nexgen-local drive-upload {staged['id']} --yes"
+        )
+    return 0
+
+
+def cmd_drive_upload(args: argparse.Namespace) -> int:
+    from .drive_mcp import DriveGateError, confirm_upload
+
+    cfg = _config(args)
+    try:
+        result = confirm_upload(cfg, args.proposal_id, args.yes)
+    except (DriveGateError, ToolError) as exc:
+        print(f"nexgen-local: {exc}", file=sys.stderr)
+        return 1
+    if args.json:
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+    else:
+        print(f"caricato: {result['name']} (proposta {result['id']}, drive id {result['drive_id']})")
+    return 0
+
+
+def cmd_drive_mcp(args: argparse.Namespace) -> int:
+    from .drive_mcp import run_server
+
+    return run_server(_config(args))
 
 
 def cmd_apply(args: argparse.Namespace) -> int:
@@ -384,6 +597,14 @@ def cmd_doctor(args: argparse.Namespace) -> int:
 
     add("pdftotext (PDF)", bool(shutil.which(cfg.pdftotext_cmd)), "opzionale", required=False)
     add("firecrawl-local (web)", bool(shutil.which(cfg.firecrawl_cmd)), "opzionale", required=False)
+    from .connectors.auth import status as _connector_status
+
+    _gmail_ok, _gmail_detail = _connector_status()
+    add("gmail/drive/calendar (connettori personali)", _gmail_ok, _gmail_detail, required=False)
+    from .connectors.outlook import status as _outlook_status
+
+    _outlook_ok, _outlook_detail = _outlook_status()
+    add("outlook (connettore personale)", _outlook_ok, _outlook_detail, required=False)
     add("git (proposte patch)", bool(shutil.which("git")), "opzionale", required=False)
     add("relay (CLI installate)", bool(available_clis()), ", ".join(available_clis()) or "nessuna", required=False)
     add("modelli", True, f"router={cfg.router_tag} answer={cfg.answer_tag}", required=False)
@@ -461,7 +682,7 @@ def main(argv: list[str] | None = None) -> int:
     explore.set_defaults(func=cmd_explore)
 
     mcp = sub.add_parser("mcp", help="server MCP stdio: la lane come servizio per gli agenti")
-    mcp.add_argument("--jobs-only", action="store_true", help="esponi solo i mestieri (research, close, status)")
+    mcp.add_argument("--jobs-only", action="store_true", help="nascondi lane_ask; restano research, close, status ed explore")
     mcp.add_argument("--model")
     mcp.add_argument("--router-model")
     mcp.add_argument("--answer-model")
@@ -489,6 +710,82 @@ def main(argv: list[str] | None = None) -> int:
     apply_cmd.add_argument("--verify", default="", help="comando di verifica dopo l'applicazione; exit 3 se fallisce")
     apply_cmd.add_argument("--json", action="store_true")
     apply_cmd.set_defaults(func=cmd_apply)
+
+    mail_propose = sub.add_parser("mail-propose", help="bozza una mail (il corpo lo scrive il modello, la busta il motore)")
+    mail_propose.add_argument("--instruction", required=True, help="cosa deve dire la mail")
+    mail_propose.add_argument("--reply", default="", help="id del messaggio a cui rispondere")
+    mail_propose.add_argument("--to", default="", help="destinatario per un nuovo messaggio")
+    mail_propose.add_argument("--subject", default="", help="oggetto per un nuovo messaggio")
+    mail_propose.add_argument("--provider", default="gmail", choices=("gmail", "outlook"))
+    mail_propose.add_argument("--model")
+    mail_propose.add_argument("--json", action="store_true")
+    mail_propose.set_defaults(func=cmd_mail_propose)
+
+    mails = sub.add_parser("mails", help="elenca le bozze mail da approvare")
+    mails.add_argument("--json", action="store_true")
+    mails.set_defaults(func=cmd_mails)
+
+    mail_send = sub.add_parser("mail-send", help="invia una bozza approvata (serve --yes)")
+    mail_send.add_argument("proposal_id")
+    mail_send.add_argument("--yes", action="store_true")
+    mail_send.add_argument("--json", action="store_true")
+    mail_send.set_defaults(func=cmd_mail_send)
+
+    cal_propose = sub.add_parser("cal-propose", help="propone un evento o un'eliminazione (cancello)")
+    cal_propose.add_argument("--summary", default="", help="titolo dell'evento")
+    cal_propose.add_argument("--start", default="", help="inizio ISO 8601 con timezone")
+    cal_propose.add_argument("--end", default="", help="fine ISO 8601 con timezone")
+    cal_propose.add_argument("--description", default="")
+    cal_propose.add_argument("--location", default="")
+    cal_propose.add_argument("--calendar", default="primary")
+    cal_propose.add_argument("--delete", default="", help="id evento da eliminare (invece di creare)")
+    cal_propose.add_argument("--json", action="store_true")
+    cal_propose.set_defaults(func=cmd_cal_propose)
+
+    cals = sub.add_parser("cals", help="elenca le proposte calendario da approvare")
+    cals.add_argument("--json", action="store_true")
+    cals.set_defaults(func=cmd_cals)
+
+    cal_apply = sub.add_parser("cal-apply", help="applica una proposta calendario (serve --yes)")
+    cal_apply.add_argument("proposal_id")
+    cal_apply.add_argument("--yes", action="store_true")
+    cal_apply.add_argument("--json", action="store_true")
+    cal_apply.set_defaults(func=cmd_cal_apply)
+
+    wf_propose = sub.add_parser("wf-propose", help="prepara l'esecuzione di un workflow consentito")
+    wf_propose.add_argument("--workflow", required=True, help="nome in allowlist")
+    wf_propose.add_argument("--params", default="", help="oggetto JSON per il webhook")
+    wf_propose.add_argument("--json", action="store_true")
+    wf_propose.set_defaults(func=cmd_wf_propose)
+
+    wfs = sub.add_parser("wfs", help="elenca workflow consentiti e proposte")
+    wfs.add_argument("--json", action="store_true")
+    wfs.set_defaults(func=cmd_wfs)
+
+    wf_run = sub.add_parser("wf-run", help="esegue una proposta approvata (serve --yes)")
+    wf_run.add_argument("proposal_id")
+    wf_run.add_argument("--yes", action="store_true")
+    wf_run.add_argument("--json", action="store_true")
+    wf_run.set_defaults(func=cmd_wf_run)
+
+    drive_propose = sub.add_parser("drive-propose", help="prepara un caricamento su Drive (dentro vault/repo)")
+    drive_propose.add_argument("--file", required=True, help="file locale da caricare")
+    drive_propose.add_argument("--name", default="", help="nome su Drive (default: nome file)")
+    drive_propose.add_argument("--folder", default="", help="id cartella di destinazione")
+    drive_propose.add_argument("--json", action="store_true")
+    drive_propose.set_defaults(func=cmd_drive_propose)
+
+    drive_upload = sub.add_parser("drive-upload", help="carica una proposta approvata (serve --yes)")
+    drive_upload.add_argument("proposal_id")
+    drive_upload.add_argument("--yes", action="store_true")
+    drive_upload.add_argument("--json", action="store_true")
+    drive_upload.set_defaults(func=cmd_drive_upload)
+
+    drive_mcp = sub.add_parser("drive-mcp", help="server MCP stdio: Drive per tutti gli agenti")
+    drive_mcp.add_argument("--vault")
+    drive_mcp.add_argument("--repo", action="append")
+    drive_mcp.add_argument("--audit")
+    drive_mcp.set_defaults(func=cmd_drive_mcp)
 
     relay = sub.add_parser("relay", help="passa una domanda a un'altra CLI (sola lettura, isolata)")
     relay.add_argument("--list", action="store_true", help="mostra i CLI supportati e installati")

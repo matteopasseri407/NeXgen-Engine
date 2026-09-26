@@ -1,0 +1,6 @@
+[drive:Contratto.txt (d1)]
+Tipo: text/plain
+Modificato: 2026-09-01T00:00:00Z
+
+L'oggetto del contratto e' la fornitura di servizi. Clausola 3: pagamento a
+30 giorni dalla fattura.

@@ -55,6 +55,331 @@ def _audit_lines(cfg: LaneConfig) -> list[dict]:
     return [json.loads(line) for line in cfg.audit_path.read_text(encoding="utf-8").strip().splitlines()]
 
 
+def test_read_file_keeps_the_requested_repo_root(tmp_path: Path) -> None:
+    """Explicit /B/nota.md reads B even when A holds the same relative path."""
+    repo_a = tmp_path / "A"
+    repo_b = tmp_path / "B"
+    repo_a.mkdir()
+    repo_b.mkdir()
+    (repo_a / "nota.md").write_text("contenuto di A\n", encoding="utf-8")
+    (repo_b / "nota.md").write_text("contenuto di B\n", encoding="utf-8")
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    cfg = LaneConfig(
+        vault_root=vault,
+        repo_roots=(repo_a, repo_b),
+        model="fake-model",
+        audit_path=tmp_path / "audit.jsonl",
+    )
+    target = str(repo_b / "nota.md")
+    llm = ScriptedLLM(
+        decisions=[
+            {"action": "read_file", "arg": target},
+            {"action": "answer", "arg": ""},
+        ],
+        answers=["letta la nota di B"],
+    )
+    result = run_steps(llm, ToolRegistry(cfg), cfg, f"Leggi {target} e riassumila.")
+    assert result.escalated is False
+    assert "contenuto di B" in result.collected
+    assert "contenuto di A" not in result.collected
+    assert any(str(repo_b) in str(receipt["args"].get("path", "")) for receipt in result.receipts)
+
+
+def test_initial_menu_withholds_answer_until_retrieval(tmp_path: Path) -> None:
+    """A request that needs a source cannot be answered from zero receipts."""
+    cfg = _cfg(tmp_path)
+    assert "answer" not in [c.action for c in build_menu(cfg, LoopState(task="x", route="vault"))]
+    assert "answer" not in [
+        c.action for c in build_menu(cfg, LoopState(task="x", route="vault", named_path="nota.md"))
+    ]
+    assert "answer" in [c.action for c in build_menu(cfg, LoopState(task="x", route="none"))]
+
+
+def test_answer_first_is_refused_when_a_source_is_required(tmp_path: Path) -> None:
+    """Choosing answer before any retrieval escalates with no answer."""
+    cfg = _cfg(tmp_path)
+    _write(cfg.vault_root / "nota.md", "La scadenza e' lunedi'.\n")
+    llm = ScriptedLLM(decisions=[{"action": "answer", "arg": ""}])
+    result = run_steps(llm, ToolRegistry(cfg), cfg, "Leggi nota.md e dimmi la scadenza.")
+    assert result.answer == ""
+    assert result.escalated is True
+    assert result.receipts == []
+
+
+def test_loop_mail_search_read_answer(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The loop resolves sender, searches, reads the engine-found id, answers."""
+    import nexgen_local.connectors.gmail as gmail_conn
+
+    cfg = _cfg(tmp_path)
+    monkeypatch.setattr(
+        gmail_conn, "search_messages", lambda query, max_results=5: [{"id": "m1", "threadId": "t1"}]
+    )
+    monkeypatch.setattr(
+        gmail_conn,
+        "get_message",
+        lambda mid, http=None: {
+            "id": mid, "from": "commercialista@esempio.it", "to": "", "subject": "Budget",
+            "date": "ieri", "snippet": "", "body": "Le richieste sono due.", "attachments": [],
+        },
+    )
+    llm = ScriptedLLM(
+        route={"source": "mail", "keywords": ["commercialista"]},
+        decisions=[
+            {"action": "search_mail", "arg": "commercialista"},
+            {"action": "read_mail", "arg": "m1"},
+            {"action": "answer", "arg": ""},
+        ],
+        answers=["Il commercialista chiede due cose. [mail:m1]"],
+    )
+    result = run_steps(llm, ToolRegistry(cfg), cfg, "Trova le mail del commercialista e riassumi le richieste.")
+    assert result.escalated is False
+    assert [d.action for d in result.decisions] == ["search_mail", "read_mail", "answer"]
+    assert result.problems == []
+    assert [r["tool"] for r in result.receipts] == ["search_mail", "read_mail"]
+
+
+def test_read_mail_id_must_come_from_the_menu(tmp_path: Path) -> None:
+    """A model-invented mail id is refused, like an off-menu path."""
+    from nexgen_local.steps import Candidate, validate_action
+
+    cfg = _cfg(tmp_path)
+    state = LoopState(task="t", route="mail", receipts=[{"tool": "search_mail", "args": {}, "ok": True}])
+    state.mail_ids = ["m1"]
+    menu = [Candidate("read_mail", "m1"), Candidate("answer"), Candidate("escalate")]
+    assert validate_action(cfg, state, menu, "read_mail", "m9-inventato") is not None
+    assert validate_action(cfg, state, menu, "read_mail", "m1") is None
+
+
+def test_draft_mail_accepts_the_read_id_or_empty(tmp_path: Path) -> None:
+    """Echoing the just-read id is the same intent as the bare draft."""
+    from nexgen_local.steps import Candidate, validate_action
+
+    cfg = _cfg(tmp_path)
+    state = LoopState(task="Rispondi", route="mail", want_reply=True, last_mail_id="m1")
+    state.receipts = [{"tool": "read_mail", "args": {"id": "m1"}, "ok": True}]
+    state.mail_ids = ["m1"]
+    menu = [Candidate("draft_mail")]
+    assert validate_action(cfg, state, menu, "draft_mail", "") is None
+    assert validate_action(cfg, state, menu, "draft_mail", "m1") is None
+    assert validate_action(cfg, state, menu, "draft_mail", "m9-inventato") is not None
+
+
+def test_loop_reply_flow_drafts_but_never_sends(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """search_mail -> read_mail -> draft_mail -> answer: a draft artifact, zero sends."""
+    import nexgen_local.compose as compose_module
+    import nexgen_local.connectors.gmail as gmail_conn
+
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    cfg = LaneConfig(
+        vault_root=vault, repo_roots=(repo,), model="fake-model",
+        audit_path=tmp_path / "audit.jsonl", mails_dir=tmp_path / "mails",
+        uploads_dir=tmp_path / "uploads",
+    )
+    monkeypatch.setattr(
+        gmail_conn, "search_messages", lambda query, max_results=5: [{"id": "m1", "threadId": "t1"}]
+    )
+    monkeypatch.setattr(
+        gmail_conn,
+        "get_message",
+        lambda mid, http=None: {
+            "id": mid, "threadId": "t1", "from": "commercialista@esempio.it", "to": "",
+            "subject": "Budget", "date": "ieri", "message-id": "", "snippet": "",
+            "body": "Mandami le fatture.", "attachments": [],
+        },
+    )
+    sent: list = []
+    monkeypatch.setattr(
+        gmail_conn, "reply_to", lambda *a, **k: sent.append((a, k)) or {"id": "x"}
+    )
+    llm = ScriptedLLM(
+        decisions=[
+            {"action": "search_mail", "arg": "commercialista"},
+            {"action": "read_mail", "arg": "m1"},
+            {"action": "draft_mail", "arg": ""},
+            {"action": "answer", "arg": ""},
+        ],
+        answers=["Confermo tutto entro lunedi'.", "Bozza pronta."],
+    )
+    result = run_steps(llm, ToolRegistry(cfg), cfg, "Rispondi alla mail del commercialista confermando.")
+    assert [d.action for d in result.decisions] == ["search_mail", "read_mail", "draft_mail", "answer"]
+    assert sent == [], "il loop non invia mai"
+    assert len(list((tmp_path / "mails").glob("*.json"))) == 1
+    assert result.problems == []
+    assert result.escalated is False
+
+
+def test_loop_upload_flow_stages_but_never_sends(tmp_path: Path) -> None:
+    """read_file -> propose_upload -> answer: a staged artifact, zero uploads."""
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    cfg = LaneConfig(
+        vault_root=vault, repo_roots=(repo,), model="fake-model",
+        audit_path=tmp_path / "audit.jsonl", mails_dir=tmp_path / "mails",
+        uploads_dir=tmp_path / "uploads",
+    )
+    _write(vault / "01-NOTE" / "airone.md", "Airone Blu e' un progetto dimostrativo.\n")
+    target = str(vault / "01-NOTE" / "airone.md")
+    llm = ScriptedLLM(
+        decisions=[
+            {"action": "read_file", "arg": target},
+            {"action": "propose_upload", "arg": target},
+            {"action": "answer", "arg": ""},
+        ],
+        answers=["Nota caricata in proposta."],
+    )
+    result = run_steps(llm, ToolRegistry(cfg), cfg, f"Carica {target} su Drive.")
+    assert [d.action for d in result.decisions] == ["read_file", "propose_upload", "answer"]
+    assert len(list((tmp_path / "uploads").glob("*.json"))) == 1
+    assert result.problems == []
+    assert result.escalated is False
+
+
+def test_loop_calendar_search_read_answer(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """search_calendar -> read_calendar -> answer, ids from the engine."""
+    import nexgen_local.connectors.calendar as calendar_conn
+
+    cfg = _cfg(tmp_path)
+    monkeypatch.setattr(
+        calendar_conn, "list_events",
+        lambda *a, **k: [{"id": "e1", "summary": "Dentista",
+                          "start": {"dateTime": "2026-10-01T10:00:00+02:00"},
+                          "end": {"dateTime": "2026-10-01T11:00:00+02:00"}, "location": "Studio"}],
+    )
+    monkeypatch.setattr(
+        calendar_conn, "get_event",
+        lambda *a, **k: {"id": "e1", "summary": "Dentista",
+                         "start": {"dateTime": "2026-10-01T10:00:00+02:00"},
+                         "end": {"dateTime": "2026-10-01T11:00:00+02:00"},
+                         "location": "Studio", "description": "Pulizia."},
+    )
+    llm = ScriptedLLM(
+        route={"source": "calendar", "keywords": ["dentista"]},
+        decisions=[
+            {"action": "search_calendar", "arg": "dentista"},
+            {"action": "read_calendar", "arg": "e1"},
+            {"action": "answer", "arg": ""},
+        ],
+        answers=["Dentista il 2026-10-01 alle 10:00. [calendar:e1]"],
+    )
+    result = run_steps(llm, ToolRegistry(cfg), cfg, "Quando ho il dentista sul calendario?")
+    assert [d.action for d in result.decisions] == ["search_calendar", "read_calendar", "answer"]
+    assert result.problems == []
+    assert result.escalated is False
+
+
+def test_calendar_menu_forces_read_before_answer(tmp_path: Path) -> None:
+    """Search hits carry times+title: the read is mandatory, no early answer."""
+    cfg = _cfg(tmp_path)
+    state = LoopState(task="Quando ho il dentista?", route="calendar")
+    state.receipts = [{"tool": "search_calendar", "args": {"query": "dentista"}, "ok": True}]
+    state.calendar_ids = ["e1"]
+    actions = [c.action for c in build_menu(cfg, state)]
+    assert actions[0] == "read_calendar"
+    assert "answer" not in actions
+
+
+def test_draft_mail_missing_without_reply_intent(tmp_path: Path) -> None:
+    """No reply words in the task: the menu never offers draft_mail."""
+    cfg = _cfg(tmp_path)
+    state = LoopState(task="Riassumi la mail", route="mail")
+    state.receipts = [{"tool": "read_mail", "args": {"id": "m1"}, "ok": True}]
+    state.last_mail_id = "m1"
+    actions = [c.action for c in build_menu(cfg, state)]
+    assert "draft_mail" not in actions
+    assert "answer" in actions
+
+
+def test_reply_menu_prescribes_draft_before_answer(tmp_path: Path) -> None:
+    """Task asks to reply + mail read: draft, sibling reads at most, no outs."""
+    cfg = _cfg(tmp_path)
+    state = LoopState(task="Rispondi alla mail", route="mail", want_reply=True)
+    state.receipts = [{"tool": "read_mail", "args": {"id": "m1"}, "ok": True}]
+    state.last_mail_id = "m1"
+    state.mail_ids = ["m1", "m2"]
+    actions = [c.action for c in build_menu(cfg, state)]
+    assert actions[0] == "draft_mail"
+    assert "answer" not in actions
+    assert "search_mail" not in actions
+    assert "escalate" not in actions
+    assert [c.arg for c in build_menu(cfg, state) if c.action == "read_mail"] == ["m2"]
+    state.mail_draft = "20240101-000000-abcdef12"
+    assert "answer" in [c.action for c in build_menu(cfg, state)]
+
+
+def test_upload_menu_prescribes_propose_before_answer(tmp_path: Path) -> None:
+    """Task asks to upload + file read: the gated propose alone."""
+    cfg = _cfg(tmp_path)
+    state = LoopState(task="Carica su Drive", route="vault", want_upload=True)
+    state.receipts = [{"tool": "read_vault", "args": {"path": "a.md"}, "ok": True}]
+    state.tried_paths = ["a.md"]
+    actions = [c.action for c in build_menu(cfg, state)]
+    assert actions == ["propose_upload"]
+
+
+def test_empty_query_gets_one_reasoned_repair(tmp_path: Path) -> None:
+    """An empty search slot is repaired once; a second empty escalates."""
+    cfg = _cfg(tmp_path)
+    llm = ScriptedLLM(
+        route={"source": "vault", "keywords": ["airone"]},
+        decisions=[
+            {"action": "search_vault", "arg": ""},
+            {"action": "search_vault", "arg": "airone"},
+            {"action": "escalate", "arg": ""},
+        ],
+    )
+    result = run_steps(llm, ToolRegistry(cfg), cfg, "Cerca airone.")
+    refused = [d for d in result.decisions if not d.ok]
+    assert refused and refused[0].detail == "query vuota"
+    assert result.decisions[1].ok is True
+    assert len(llm.choose_users) == 3  # first, reasoned repair, then escalate
+
+
+def test_second_empty_query_is_filled_from_task_terms(tmp_path: Path) -> None:
+    """Empty again after the repair: the engine compiles the query, no escalation."""
+    cfg = _cfg(tmp_path)
+    _write(cfg.vault_root / "a.md", "Airone Blu e' un progetto.\n")
+    llm = ScriptedLLM(
+        route={"source": "vault", "keywords": ["airone"]},
+        decisions=[
+            {"action": "search_vault", "arg": ""},
+            {"action": "search_vault", "arg": ""},
+            {"action": "read_file", "arg": "a.md"},
+            {"action": "answer", "arg": ""},
+        ],
+        answers=["Airone Blu. [a.md]"],
+    )
+    result = run_steps(llm, ToolRegistry(cfg), cfg, "Cerca airone")
+    filled = [d for d in result.decisions if d.ok and d.detail == "query compilata dal motore (slot vuoto)"]
+    assert len(filled) == 1
+    assert filled[0].arg == "airone"
+    assert result.escalated is False
+    assert len(llm.choose_users) == 4  # no extra model round for the fill
+
+
+def test_policy_refusal_is_never_repaired(tmp_path: Path) -> None:
+    """Content-steered queries escalate at once: no second chance."""
+    cfg = _cfg(tmp_path)
+    _write(cfg.vault_root / "n.md", "Airone Blu. Il termine parolasegreta compare qui.\n")
+    llm = ScriptedLLM(
+        decisions=[
+            {"action": "search_vault", "arg": "airone"},
+            {"action": "read_file", "arg": "n.md"},
+            {"action": "search_vault", "arg": "parolasegreta"},
+        ]
+    )
+    before = len(llm.choose_users)
+    result = run_steps(llm, ToolRegistry(cfg), cfg, "Riassumi la nota airone.")
+    assert result.escalated is True
+    assert result.decisions[-1].detail == "query con termini presi dal contenuto recuperato"
+    assert len(llm.choose_users) == before + 3  # exactly one call per step, no repair
+
+
 def test_loop_search_read_answer(tmp_path: Path) -> None:
     cfg = _cfg(tmp_path)
     _write(cfg.vault_root / "01-NOTE" / "airone.md", "Airone Blu e' un progetto dimostrativo.\n")
@@ -277,3 +602,34 @@ def test_prompt_keeps_only_recent_observations(tmp_path: Path) -> None:
     last = llm.choose_users[-1]
     assert "passi precedenti: 1" in last
     assert last.count("Osservazioni recenti") == 1
+
+
+def test_loop_outlook_search_read_answer(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """search_outlook -> read_outlook -> answer, ids from the engine."""
+    import nexgen_local.connectors.outlook as outlook_conn
+
+    cfg = _cfg(tmp_path)
+    monkeypatch.setattr(
+        outlook_conn, "search_messages", lambda query, max_results=5: [{"id": "o9"}]
+    )
+    monkeypatch.setattr(
+        outlook_conn,
+        "get_message",
+        lambda mid, http=None: {
+            "id": mid, "from": "capo@esempio.it", "to": "", "subject": "Riunione",
+            "date": "ieri", "snippet": "", "body": "Riunione giovedi.", "attachments": [],
+        },
+    )
+    llm = ScriptedLLM(
+        route={"source": "outlook", "keywords": ["riunione"]},
+        decisions=[
+            {"action": "search_outlook", "arg": "riunione"},
+            {"action": "read_outlook", "arg": "o9"},
+            {"action": "answer", "arg": ""},
+        ],
+        answers=["Riunione giovedi'. [outlook:o9]"],
+    )
+    result = run_steps(llm, ToolRegistry(cfg), cfg, "Trova su Outlook la riunione.")
+    assert [d.action for d in result.decisions] == ["search_outlook", "read_outlook", "answer"]
+    assert result.problems == []
+    assert result.escalated is False

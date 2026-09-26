@@ -54,9 +54,30 @@ def test_tool_ask_returns_answer_and_receipts(tmp_path: Path) -> None:
     assert "[ricevute:" in out
 
 
+def _stub_personal_sources(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Hermetic mail/drive: unit tests never touch a live account."""
+
+    def _empty_search(self, query: str, tool: str) -> str:
+        return self._record(tool, {"query": query}, "(nessun risultato)")
+
+    monkeypatch.setattr(
+        ToolRegistry, "search_mail", lambda self, query: _empty_search(self, query, "search_mail")
+    )
+    monkeypatch.setattr(
+        ToolRegistry, "search_drive", lambda self, query: _empty_search(self, query, "search_drive")
+    )
+    monkeypatch.setattr(
+        ToolRegistry, "search_calendar", lambda self, query: _empty_search(self, query, "search_calendar")
+    )
+    monkeypatch.setattr(
+        ToolRegistry, "search_outlook", lambda self, query: _empty_search(self, query, "search_outlook")
+    )
+
+
 def test_tool_research_returns_answer_and_receipts(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     cfg = _cfg(tmp_path)
     _write(cfg.vault_root / "01-NOTE" / "airone.md", "Airone Blu e' un progetto.\n")
+    _stub_personal_sources(monkeypatch)
     monkeypatch.setattr(
         ToolRegistry, "web_search", lambda self, query: self._record("web_search", {"query": query}, "web finto")
     )
@@ -105,6 +126,7 @@ def test_build_server_jobs_only_builds(tmp_path: Path) -> None:
 def test_tool_research_flags_invented_citations(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     cfg = _cfg(tmp_path)
     _write(cfg.vault_root / "01-NOTE" / "airone.md", "Airone Blu e' un progetto.\n")
+    _stub_personal_sources(monkeypatch)
     monkeypatch.setattr(
         ToolRegistry, "web_search", lambda self, query: self._record("web_search", {"query": query}, "web finto")
     )

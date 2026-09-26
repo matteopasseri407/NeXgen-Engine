@@ -41,6 +41,7 @@
     "prompt": "Trova e riassumi la nota sul progetto Falco Rosso.",
     "expect_actions": ["search_vault"],
     "expect_end": ["answer", "escalate"],
+    "expect_not_found": true,
     "no_read": true
   },
   {
@@ -61,5 +62,48 @@
     "prompt": "Confronta la prima priorita' di 04-NOW/current-focus.md con lo scopo della nota 01-NOTE/airone-blu.md.",
     "expect_actions": ["read_file", "search_vault", "read_file", "answer"],
     "expect_any": [["lavoro"]]
+  },
+  {
+    "id": "mail-query",
+    "prompt": "Trova le mail del commercialista e riassumi le richieste.",
+    "expect_actions": ["search_mail", "read_mail", "answer"],
+    "expect_any": [["commercialista"]],
+    "mail": true
+  },
+  {
+    "id": "drive-query",
+    "prompt": "Trova il contratto su Drive e dimmi l'oggetto.",
+    "expect_actions": ["search_drive", "read_drive", "answer"],
+    "expect_any": [["contratto"]],
+    "drive": true
+  },
+  {
+    "id": "mail-reply",
+    "prompt": "Rispondi alla mail del commercialista confermando l'invio entro lunedi'.",
+    "expect_actions": ["search_mail", "read_mail", "draft_mail", "answer"],
+    "expect_any": [["commercialista"]],
+    "expect_draft": true,
+    "mail": true
+  },
+  {
+    "id": "drive-upload",
+    "prompt": "Carica 01-NOTE/airone-blu.md su Drive.",
+    "expect_actions": ["read_file", "propose_upload", "answer"],
+    "expect_end": ["answer"],
+    "expect_upload": true
+  },
+  {
+    "id": "outlook-query",
+    "prompt": "Trova su Outlook la mail sulla riunione budget e riassumila.",
+    "expect_actions": ["search_outlook", "read_outlook", "answer"],
+    "expect_any": [["budget"]],
+    "outlook": true
+  },
+  {
+    "id": "calendar-query",
+    "prompt": "Cerca nel calendario i prossimi colloqui e dimmi quando e' il primo.",
+    "expect_actions": ["search_calendar", "read_calendar", "answer"],
+    "expect_any": [["colloquio"]],
+    "calendar": true
   }
 ]

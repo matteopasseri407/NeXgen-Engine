@@ -1,0 +1,7 @@
+[calendar:e1]
+Titolo: Colloquio tecnico
+Inizio: 2026-09-29T10:00:00+02:00
+Fine: 2026-09-29T11:00:00+02:00
+Luogo: Ufficio
+
+Colloquio tecnico per il ruolo, portare il CV aggiornato.

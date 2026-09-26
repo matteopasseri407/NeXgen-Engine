@@ -53,6 +53,10 @@ class LaneConfig:
         default_factory=lambda: Path.home() / ".local/state/nexgen/local-lane/proposals"
     )
     drafts_dir: Path = field(default_factory=lambda: Path.home() / ".local/state/nexgen/local-lane/drafts")
+    mails_dir: Path = field(default_factory=lambda: Path.home() / ".local/state/nexgen/local-lane/mails")
+    uploads_dir: Path = field(default_factory=lambda: Path.home() / ".local/state/nexgen/local-lane/uploads")
+    calendars_dir: Path = field(default_factory=lambda: Path.home() / ".local/state/nexgen/local-lane/calendars")
+    workflows_dir: Path = field(default_factory=lambda: Path.home() / ".local/state/nexgen/local-lane/workflows")
     firecrawl_cmd: str = "firecrawl-local"
     pdftotext_cmd: str = "pdftotext"
     max_steps: int = 4

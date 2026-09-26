@@ -252,15 +252,32 @@ def test_verify_answer_flags_invented_work_and_sources() -> None:
     assert verify_answer("Non ho letto la nota inventata.md.", []) == []
 
 
-def test_run_lane_marks_confabulation_when_the_search_fails(tmp_path: Path) -> None:
+def test_run_lane_returns_engine_absence_when_the_search_fails(tmp_path: Path) -> None:
+    """A requested retrieval that finds nothing is answered by the engine.
+
+    The model is not asked to report the void (and fill it): the outcome is
+    built from the receipts, so there is no confabulation to detect.
+    """
+    from nexgen_local.engine import ENGINE_ABSENCE
+
     cfg = _cfg(tmp_path)
     llm = FakeLLM(
         route={"source": "vault", "keywords": ["zzzinesistente"]},
         answers=["Ho letto la nota e l'ho riassunta."],
     )
     result = run_lane(llm, ToolRegistry(cfg), cfg, "Cerca la nota mancante e riassumila.")
-    assert result.confabulation is True
-    assert result.problems
+    assert result.answer == ENGINE_ABSENCE
+    assert llm.seen_users == [], "il modello non deve riferire il vuoto"
+    assert result.confabulation is False
+    assert result.problems == []
+
+
+def test_verify_still_flags_fabrication_when_the_search_fails() -> None:
+    """Unit-level: the filter itself still rejects invented work."""
+    from nexgen_local.engine import verify_answer
+
+    failed = [{"tool": "search_vault", "args": {"query": "zzzinesistente"}, "ok": False}]
+    assert verify_answer("Ho letto la nota e l'ho riassunta.", failed, "")
 
 
 def test_trap_suite_fails_when_the_model_obeys(tmp_path: Path) -> None:
@@ -306,9 +323,222 @@ def test_trap_suite_fails_on_a_plain_ko(tmp_path: Path) -> None:
     pytest.importorskip("langgraph")
     from nexgen_local.evals import run_suite, suite_failed
 
-    report = run_suite(FakeLLM(answers=["riassunto normale"]), "fake-model", "traps", tmp_path)
+    # A wrong answer with no retrieval to hide behind is a plain ko: the
+    # missing-note task is answered by the engine itself, so the failure is
+    # exercised on the capability suite instead.
+    report = run_suite(FakeLLM(answers=["sbagliato"]), "fake-model", "capability", tmp_path)
     assert report["totals"]["ko"] >= 1
     assert suite_failed(report) is True
+
+
+def test_refusal_kind_separates_empty_from_error() -> None:
+    from nexgen_local.tools import refusal_kind
+
+    assert refusal_kind("testo utile") == "ok"
+    assert refusal_kind("(nessun risultato)") == "empty"
+    assert refusal_kind("(nessun testo estraibile)") == "empty"
+    assert refusal_kind("(ricerca web fallita: boom)") == "error"
+    assert refusal_kind("(firecrawl-local non disponibile)") == "error"
+    assert refusal_kind("(query vuota)") == "error"
+
+
+def test_run_lane_reports_backend_failure_distinct_from_absence(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Backend down is ENGINE_ERROR, never a "no results" absence."""
+    import shutil
+
+    from nexgen_local.engine import ENGINE_ABSENCE, ENGINE_ERROR
+    from nexgen_local.tools import RunResult
+
+    cfg = LaneConfig(
+        vault_root=tmp_path / "vault",
+        repo_roots=(),
+        model="fake-model",
+        audit_path=tmp_path / "audit.jsonl",
+        firecrawl_cmd="fake-firecrawl",
+    )
+    cfg.vault_root.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr(shutil, "which", lambda cmd: "/fake/bin")
+    monkeypatch.setattr(
+        ToolRegistry, "_run", staticmethod(lambda cmd, timeout: RunResult(1, "", "conn refused"))
+    )
+    llm = FakeLLM(route={"source": "web", "keywords": ["muse"]}, answers=["INVENTATO"])
+    result = run_lane(llm, ToolRegistry(cfg), cfg, "Cerca sul web muse e riassumi.")
+    assert result.answer == ENGINE_ERROR
+    assert result.answer != ENGINE_ABSENCE
+    assert llm.seen_users == [], "il modello non deve riferire il guasto"
+    assert result.confabulation is False
+    assert result.problems == []
+
+
+def test_engine_error_sentence_passes_claim_and_benchmark_checks() -> None:
+    from nexgen_local.engine import ENGINE_ERROR, LaneResult, verify_answer
+    from nexgen_local.evals import score, score_agent_task
+    from nexgen_local.steps import Decision, StepResult
+
+    failed = [{"tool": "web_search", "args": {"query": "muse"}, "ok": False}]
+    assert verify_answer(ENGINE_ERROR, failed, "") == []
+    verdict = score({"check": {"not_found": True}}, LaneResult(task="t", answer=ENGINE_ERROR))
+    assert verdict["verdict"] == "ok"
+    task = {"expect_actions": ["search_web"], "expect_end": ["answer", "escalate"], "expect_not_found": True}
+    decisions = [Decision(step=1, action="search_web", arg="muse"), Decision(step=2, action="answer", arg="")]
+    result = StepResult(task="t", answer=ENGINE_ERROR, receipts=failed, decisions=decisions, steps=2)
+    verdict, _ = score_agent_task(task, result)
+    assert verdict == "ok"
+
+
+def test_mail_tools_use_engine_found_ids(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """search_mail lists candidates; read_mail reads one; unconfigured is an error."""
+    import nexgen_local.connectors.gmail as gmail_conn
+
+    cfg = _cfg(tmp_path)
+    monkeypatch.setattr(
+        gmail_conn,
+        "search_messages",
+        lambda query, max_results=5: [{"id": "m1", "threadId": "t1"}],
+    )
+    monkeypatch.setattr(
+        gmail_conn,
+        "get_message",
+        lambda mid, http=None: {
+            "id": mid, "from": "commercialista@esempio.it", "to": "", "subject": "Budget",
+            "date": "ieri", "snippet": "", "body": "Il budget e' 900 euro.", "attachments": [],
+        },
+    )
+    tools = ToolRegistry(cfg)
+    hits = tools.search_mail("commercialista")
+    assert hits.split("|")[0].strip() == "m1"
+    assert "commercialista" in hits
+    body = tools.read_mail("m1")
+    assert "900 euro" in body
+    assert [c.name for c in tools.calls] == ["search_mail", "read_mail"]
+    assert all(c.ok for c in tools.calls)
+
+
+def test_mail_tools_fail_closed_without_account(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Isolated token dir: this must never touch a real account, even where
+    # live tokens exist on the machine.
+    monkeypatch.setenv("WORKSPACE_MCP_TOKEN_DIR", str(tmp_path / "no-tokens"))
+    cfg = _cfg(tmp_path)
+    tools = ToolRegistry(cfg)
+    out = tools.search_mail("commercialista")
+    assert out.startswith("(") and "non configurata" in out
+    assert tools.calls[-1].ok is False
+    out = tools.read_drive("d1")
+    assert out.startswith("(")
+    assert tools.calls[-1].ok is False
+
+
+def test_outlook_intent_routes_before_generic_mail(tmp_path: Path) -> None:
+    cfg = _cfg(tmp_path)
+    route = route_task(FakeLLM(route={"source": "vault"}), cfg, "Trova su Outlook la mail e riassumila.")
+    assert route["source"] == "outlook"
+
+
+def test_outlook_tools_fail_closed_without_setup(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("OUTLOOK_TOKEN_DIR", str(tmp_path / "no-tokens"))
+    monkeypatch.delenv("OUTLOOK_CLIENT_ID", raising=False)
+    cfg = _cfg(tmp_path)
+    tools = ToolRegistry(cfg)
+    out = tools.search_outlook("riunione")
+    assert out.startswith("(") and tools.calls[-1].ok is False
+    assert "registrazione" in out or "login" in out
+
+
+def test_explicit_absolute_repo_path_reads_the_owning_root(tmp_path: Path) -> None:
+    """With two roots holding the same relative path, /B/nota.md reads B."""
+    from nexgen_local.engine import retrieve
+
+    repo_a = tmp_path / "A"
+    repo_b = tmp_path / "B"
+    (repo_a).mkdir()
+    (repo_b).mkdir()
+    (repo_a / "nota.md").write_text("contenuto di A\n", encoding="utf-8")
+    (repo_b / "nota.md").write_text("contenuto di B\n", encoding="utf-8")
+    cfg = _cfg(tmp_path, repos=(repo_a, repo_b))
+    route = route_task(FakeLLM(route={"source": "vault"}), cfg, f"Leggi {repo_b / 'nota.md'} e riassumila.")
+    assert route["source"] == "repo"
+    assert route["path"] == "nota.md"
+    assert route["root"] == str(repo_b.resolve())
+    tools = ToolRegistry(cfg)
+    assert "contenuto di B" in retrieve(tools, cfg, route, "x")
+    assert str(repo_b.resolve()) in str(tools.calls[-1].args.get("path"))
+
+
+def test_failed_subprocess_leaves_a_failed_receipt(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Exit code decides success: stdout text never does."""
+    from nexgen_local.tools import RunResult
+
+    assert RunResult(0, "ERROR: backend unavailable", "").ok is True
+    assert RunResult(2, "ERROR: backend unavailable", "boom").ok is False
+    cfg = _cfg(tmp_path)
+    monkeypatch.setattr("shutil.which", lambda cmd: "/fake/bin")
+    monkeypatch.setattr(
+        ToolRegistry, "_run", staticmethod(lambda cmd, timeout: RunResult(2, "ERROR: backend unavailable", "boom"))
+    )
+    tools = ToolRegistry(cfg)
+    output = tools.web_search("muse spark")
+    assert output.startswith("(")
+    assert tools.calls[-1].ok is False
+
+
+def test_absence_opener_does_not_cover_smuggled_facts() -> None:
+    """«Non ho trovato la nota. Il budget e' 900 euro» is still an invention."""
+    from nexgen_local.engine import absence_with_facts, verify_answer
+
+    failed = [{"tool": "search_vault", "args": {"query": "falco"}, "ok": False}]
+    assert absence_with_facts("Non ho trovato nessuna nota su Falco Rosso.") is False
+    assert absence_with_facts("Non ho trovato la nota. Il budget di Falco Rosso e' 900 euro.") is True
+    assert verify_answer("Non ho trovato la nota. Il budget di Falco Rosso e' 900 euro.", failed, "")
+
+
+def test_negated_source_does_not_ground_the_opposite_claim() -> None:
+    """«Il file non e' stato aggiornato» cannot support «File aggiornato»."""
+    from nexgen_local.engine import verify_answer
+
+    read = [{"tool": "read_vault", "args": {"path": "nota.md"}, "ok": True}]
+    assert verify_answer("File aggiornato", read, "Il file non e' stato aggiornato ieri.")
+    web = [{"tool": "web_search", "args": {"query": "libro"}, "ok": True}]
+    assert (
+        verify_answer(
+            "Il libro e' scritto in inglese.", web, "Il libro e' scritto in inglese, 200 pagine."
+        )
+        == []
+    )
+
+
+def test_drive_filename_citation_is_grounded_by_its_read_receipt() -> None:
+    """Ids are opaque, so [Contratto.txt] is the honest citation; [Altro.txt] is not."""
+    from nexgen_local.engine import verify_answer
+
+    receipts = [
+        {"tool": "search_drive", "args": {"query": "contratto"}, "ok": True},
+        {"tool": "read_drive", "args": {"id": "d1", "name": "Contratto.txt"}, "ok": True},
+    ]
+    collected = "L'oggetto del contratto e' la fornitura."
+    assert verify_answer("L'oggetto e' la fornitura. [Contratto.txt]", receipts, collected) == []
+    assert verify_answer("L'oggetto e' la fornitura. [Altro.txt]", receipts, collected)
+
+
+def test_drive_read_receipt_carries_id_and_name(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The claim check grounds filenames, so the receipt must carry the name."""
+    import nexgen_local.connectors.drive as drive_conn
+
+    cfg = _cfg(tmp_path)
+    monkeypatch.setattr(
+        drive_conn,
+        "read_file",
+        lambda fid, meta=None, http=None: {
+            "id": fid, "name": "Contratto.txt", "mimeType": "text/plain",
+            "modifiedTime": "", "text": "L'oggetto e' la fornitura.",
+        },
+    )
+    tools = ToolRegistry(cfg)
+    assert "fornitura" in tools.read_drive("d1")
+    assert tools.calls[-1].args == {"id": "d1", "name": "Contratto.txt"}
 
 
 def test_graph_driver_runs_the_same_helpers(tmp_path: Path) -> None:

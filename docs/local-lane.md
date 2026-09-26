@@ -116,6 +116,103 @@ answer is shown to the user; it is never fed back into a mutating chain
 automatically. `agy` is not supported in v0 because its isolation is
 prompt-only.
 
+## Personal connectors (Gmail, Drive — read-only, v1)
+
+`nexgen_local/connectors/` owns Gmail, Drive, Calendar and Outlook reads at
+engine level: the same REST shapes and machine-local token stores as the
+private runtime adapters, reimplemented dependency-free (stdlib `urllib`)
+with the lane's receipt and outcome contract. No MCP server, no new dependency.
+
+- Reads only: `search_mail`/`read_mail`, `search_outlook`/`read_outlook`,
+  `search_drive`/`read_drive`, `search_calendar`/`read_calendar`. No
+  send, reply, upload, delete or event mutation exists in this package on purpose:
+  writes need a propose/approve gate (mail in `compose.py` with
+  `--provider gmail|outlook`, calendar in `calendars.py`, uploads in
+  `drive_mcp.py`, workflows in `workflows.py`).
+- Auth reuses `~/.config/nexgen-workspace-mcp/tokens.json` (refresh token,
+  silent refresh) with overrides via `WORKSPACE_MCP_TOKEN_DIR`,
+  `WORKSPACE_GOOGLE_CLIENT_ID`, `WORKSPACE_GOOGLE_CLIENT_SECRET`. Outlook has
+  its own store (`~/.config/nexgen-outlook/`, overrides `OUTLOOK_TOKEN_DIR`,
+  `OUTLOOK_CLIENT_ID`, `OUTLOOK_TENANT_ID`, `OUTLOOK_CLIENT_SECRET`) and needs
+  an Entra app registration first — that interactive step is the owner's, the
+  code is ready and tested against fakes. No tokens on
+  a machine means a fail-closed refusal naming the one-time browser login —
+  an unattended run never opens a browser and never hangs waiting for one.
+- Ids come only from the engine's own search lines: in the loop, `read_mail`
+  and `read_drive` accept an id solely from the emitted menu candidates.
+- Known limits: Drive text comes from Docs export, plain-text download, or
+  Drive-hosted PDFs via pdftotext when installed. Outlook works end to end
+  against fakes; live use needs the Entra app + login. `nexgen-local doctor`
+  reports every connector presence without touching the network.
+
+## Compose (the mail gate, gmail + outlook)
+
+The gate serves both providers (`--provider gmail|outlook`): same screen,
+same receipts, backend chosen per proposal. Old artifacts without a provider
+read as gmail.
+
+```bash
+nexgen-local mail-propose --reply m1 --instruction "Conferma l'invio entro lunedi'."
+nexgen-local mails
+nexgen-local mail-send 20260926-120000-ab12cd34 --yes
+```
+
+Sending is a write, so it follows the pen's contract: the model drafts only
+the body, the engine owns the envelope (a reply answers the sender of an
+engine-retrieved message with threading headers; a new message goes only to
+an address named in the task). The approval screen shows machine facts —
+recipient, subject, in-reply-to — plus the full body as text to approve. Send
+happens only with an explicit `--yes`; the intent is audited before, the
+outcome (provider message id) after. No tokens means a named one-time login
+step, never a browser. Prose claims of sent mail ("ho inviato") are flagged
+by the claim check like any other claimed write: only the gate's receipts
+count.
+
+## Calendar gate
+
+```bash
+nexgen-local cal-propose --summary "Dentista" --start 2026-10-01T10:00:00+02:00 --end 2026-10-01T11:00:00+02:00
+nexgen-local cal-apply 20260926-120000-ab12cd34 --yes
+```
+
+Same contract as mail, without model prose: the human names every field
+(title, ISO start/end, calendar) or the id of the event to delete
+(`--delete`), the gate validates, shows, and applies only with `--yes`.
+Calendar reads (`search_calendar`/`read_calendar`) are wired into the loop
+and research like mail and Drive, with engine-found event ids.
+
+## Drive as a service (MCP)
+
+```bash
+nexgen-local drive-propose --file Contratto.txt
+nexgen-local drive-upload 20260926-120000-ab12cd34 --yes
+```
+
+`nexgen-local drive-mcp` runs a stdio MCP server so every agent gets Drive:
+`drive_search`/`drive_read` free (same text limits as the lane), upload in
+two calls — `drive_propose_upload` stages a file from inside vault/repo and
+returns a preview plus a proposal id, `drive_confirm_upload` sends it once
+and only on explicit confirm. A changed file, a reused id, a missing confirm
+or missing tokens all refuse without touching Drive; intent goes to the audit
+before, the provider id after. Declared in the engine manifest (`drive`,
+core) and in the live vault manifest behind the waiter confirmation gate.
+Binary blobs stay out: text, Docs export, and Drive-hosted PDFs via pdftotext
+when installed. The lane reads the same way.
+
+## Gated workflow runs (n8n webhooks)
+
+```bash
+nexgen-local wf-propose --workflow telegram-send --params '{"file": "a.txt"}'
+nexgen-local wf-run 20260926-120000-ab12cd34 --yes
+```
+
+The narrow path to n8n beside the full-power `n8n-mcp` server: only workflows
+named in a machine-local allowlist (`~/.config/nexgen-workflows/allowlist.json`
+or `NEXGEN_WORKFLOWS_ALLOWLIST`, name to webhook URL) can run, only with
+explicit `--yes`, with audit intent before and outcome after. Approval screens
+never print webhook URLs. This is the lane-safe shape for "send me that file
+on Telegram": a named, reviewed workflow — never a generic executor.
+
 ## Jobs (engine-scripted multi-step work)
 
 ```bash
@@ -125,11 +222,13 @@ nexgen-local close --file 04-NOW/sessione.md --save
 
 A job is a procedure the engine owns end to end: it decides the steps, calls
 the read-only tools and asks the model only for the language parts. The model
-never plans and never picks tools. `research` searches vault and web, reads
-the top sources, sanitises them and produces a short synthesis with citations.
-`close` reads a session text, extracts durable outcomes as structured data and
+never plans and never picks tools. `research` searches the vault, the mail,
+Drive and the web, reads the top sources, sanitises them and produces a short
+synthesis with citations. `close` reads a session text, extracts durable outcomes as structured data and
 renders a Markdown draft saved under the lane's own state directory, never
-into the vault. Both print the machine receipts alongside the text.
+into the vault. Both print the machine receipts alongside the text. When every
+source comes back void, no model is consulted: the engine states the empty or
+failed outcome itself.
 
 ## Explore (the bounded action loop, pilot)
 
@@ -138,16 +237,30 @@ nexgen-local explore "Trova e riassumi la nota sul progetto Airone Blu" --max-st
 ```
 
 The first model-driven surface: at every step the engine emits a closed menu
-of concrete candidates (actions, and for reads the exact paths just found);
+of concrete candidates (actions, and for reads the exact paths just found —
+or, for mail and Drive, the engine-found ids);
 the model chooses one through a forced JSON schema (`with_structured_output`,
 `json_schema`). Arguments are validated against provenance: a path only from
 the emitted candidates and inside the declared roots, a query only from the
 task or a reformulation, never carrying terms that exist only in retrieved
-content, never a near-duplicate of a query already tried. One repair on an
-invalid output; a failed validation is never retried; two empty searches
+content, never a near-duplicate of a query already tried. A request that needs
+a source cannot be answered before retrieval: the first menu carries no
+`answer`, only search, read or escalate. One repair on an
+invalid output, plus one reasoned repair on an empty query slot (a slip, not
+defiance: policy refusals are never retried, and a still-empty slot is
+compiled by the engine from the task terms as a last resort); a failed validation otherwise
+escalates immediately. Two empty searches
 narrow the menu and then the loop escalates (exit 2, no answer invented). The
 loop is plain Python (a single loop does not need a graph); every action
-leaves a receipt and the final answer passes the claim check.
+leaves a receipt and the final answer passes the claim check. When the
+request asks to reply to a mail just read, or to upload a file just read,
+the menu prescribes the gated propose actions (`draft_mail`, `propose_upload`):
+the 12B drafts through LangChain structured output, the engine owns envelope
+and destination, and nothing leaves the machine without human approval.
+Answering instead of proposing would dodge the request, and so would
+escalating out of caution: on those steps the menu carries only the gated
+propose (plus unread hits for mail). Escalation stays available through real
+failures — a refused read, a failed draft — never as a way out.
 
 Measured on the synthetic bench, Gemma 12B: happy path three steps with
 citation; poisoned note read without the canary reaching the answer; missing
@@ -155,16 +268,18 @@ note escalated instead of invented. Search inside the loop is `require_all`,
 so a generic word cannot drag in the wrong note. A failed claim check gets
 one guided rewrite (the machine reasons are sent back; the correction is kept
 only when it actually removes problems, otherwise the flag stays). The
-`agent` eval suite is the golden set: ten synthetic tasks scored on the
+`agent` eval suite is the golden set: sixteen synthetic tasks (vault, web,
+mail, Drive, calendar, Outlook, plus a mail-reply draft and a Drive-upload
+proposal scored on their artifacts) scored on the
 expected action sequence, canaries, claim checks, caps and escalation, with
-p95 latency per step and per decision. Gemma 12B: 10/10, 24/24 valid
-choices, 0 injections, 0 confabulations; the 4B scores 3/6 on the same
-decision bench.
+p95 latency per step and per decision. On all sixteen tasks Gemma 12B
+measures 16/16 with 0 injections and 0 confabulations; the 4B
+scores 3/6 on the read-only decision bench.
 
 ## As a service (MCP)
 
-`nexgen-local mcp` runs a stdio MCP server exposing four read-only tools:
-`lane_ask`, `lane_research`, `lane_close`, `lane_status`. It belongs to the
+`nexgen-local mcp` runs a stdio MCP server exposing read-only tools:
+`lane_ask`, `lane_explore`, `lane_research`, `lane_close`, `lane_status`. It belongs to the
 **local profiles** (the private, host-specific runtimes that already mount
 read-only MCP through the lazy waiter), not to the shared connector manifest:
 frontier CLIs do not mount the lane. The bridge runs the other way, from the
@@ -178,7 +293,8 @@ local-lane:
   args: ["mcp", "--jobs-only"]
 ```
 
-`--jobs-only` exposes research, close and status but not `lane_ask`: inside a
+`--jobs-only` hides `lane_ask` but keeps research, close, status and the
+`lane_explore` loop: inside a
 local session a nested single-question call would just ask the same model
 twice. The command needs the lane's Python dependencies reachable by the
 process the profile spawns.
@@ -190,6 +306,11 @@ process the profile spawns.
 - Functional suite: all tasks pass.
 - Answer check: claims of work and cited sources must be backed by successful
   receipts; a failed search is not evidence, a claimed write is always flagged.
+  Mail and Drive reads count as evidence through their engine-found ids.
+- Retrieval outcomes are three-valued: content, empty (backend answered,
+  nothing found), error (backend down, access missing, path refused). Empty
+  and error are stated by the engine itself, never synthesised by the model;
+  "no mail found" is never reported when the account is disconnected.
 - Audit: every tool call leaves a line; an unwritable audit refuses the call;
   the pen records the intent before the write and the outcome after.
 - Pen: the proposal is bound to its approved root; apply refuses another root,

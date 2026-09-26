@@ -38,6 +38,30 @@ class WebRegistry(ToolRegistry):
     def web_search(self, query: str) -> str:
         return self._record("web_search", {"query": query}, self._fixture.read_text(encoding="utf-8"))
 
+    def search_mail(self, query: str) -> str:
+        return self._record("search_mail", {"query": query}, "(nessun risultato)")
+
+    def read_mail(self, mid: str) -> str:
+        return self._record("read_mail", {"id": mid}, "(nessun risultato)")
+
+    def search_drive(self, query: str) -> str:
+        return self._record("search_drive", {"query": query}, "(nessun risultato)")
+
+    def search_outlook(self, query: str) -> str:
+        return self._record("search_outlook", {"query": query}, "(nessun risultato)")
+
+    def read_outlook(self, mid: str) -> str:
+        return self._record("read_outlook", {"id": mid}, "(nessun risultato)")
+
+    def search_calendar(self, query: str) -> str:
+        return self._record("search_calendar", {"query": query}, "(nessun risultato)")
+
+    def read_calendar(self, event_id: str) -> str:
+        return self._record("read_calendar", {"id": event_id}, "(nessun risultato)")
+
+    def read_drive(self, file_id: str) -> str:
+        return self._record("read_drive", {"id": file_id}, "(nessun risultato)")
+
 
 def _cfg(tmp_path: Path) -> LaneConfig:
     vault = tmp_path / "vault"
@@ -56,6 +80,54 @@ def _cfg(tmp_path: Path) -> LaneConfig:
 def _write(path: Path, text: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(text, encoding="utf-8")
+
+
+def test_research_with_no_usable_source_skips_the_model(tmp_path: Path) -> None:
+    """Vault and web both void: the void is stated by the engine, not synthesised."""
+    from nexgen_local.engine import ENGINE_ABSENCE
+
+    cfg = _cfg(tmp_path)
+    web = tmp_path / "web.txt"
+    web.write_text("(nessun risultato)\n", encoding="utf-8")
+    llm = FakeLLM(answers=["INVENTATO"])
+    result = job_research(llm, WebRegistry(cfg, web), cfg, "zzzinesistente che non esiste")
+    assert result.answer == ENGINE_ABSENCE
+    assert llm.seen_users == []
+    assert result.confabulation is False
+    assert result.problems == []
+
+
+def test_research_reports_backend_failure_without_the_model(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A dead backend is an error outcome, never an absence synthesis."""
+    import shutil
+
+    from nexgen_local.engine import ENGINE_ERROR
+    from nexgen_local.tools import RunResult
+
+    # No live tokens here either: the web backend is the failing one under test.
+    monkeypatch.setenv("WORKSPACE_MCP_TOKEN_DIR", str(tmp_path / "no-tokens"))
+    monkeypatch.setenv("OUTLOOK_TOKEN_DIR", str(tmp_path / "no-ol-tokens"))
+    cfg = LaneConfig(
+        vault_root=tmp_path / "vault",
+        repo_roots=(tmp_path / "repo",),
+        model="fake-model",
+        audit_path=tmp_path / "audit.jsonl",
+        drafts_dir=tmp_path / "drafts",
+        firecrawl_cmd="fake-firecrawl",
+    )
+    cfg.vault_root.mkdir(parents=True, exist_ok=True)
+    cfg.repo_roots[0].mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr(shutil, "which", lambda cmd: "/fake/bin")
+    monkeypatch.setattr(
+        ToolRegistry, "_run", staticmethod(lambda cmd, timeout: RunResult(1, "", "conn refused"))
+    )
+    llm = FakeLLM(answers=["INVENTATO"])
+    result = job_research(llm, ToolRegistry(cfg), cfg, "zzzinesistente")
+    assert result.answer == ENGINE_ERROR
+    assert llm.seen_users == []
+    assert result.confabulation is False
 
 
 def test_research_reads_vault_and_web_and_sanitizes(tmp_path: Path) -> None:

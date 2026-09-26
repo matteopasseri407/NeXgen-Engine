@@ -10,7 +10,17 @@ from __future__ import annotations
 from typing import Any, Iterable, TypedDict
 
 from .config import LaneConfig
-from .engine import LaneResult, answer_task, check_canary, retrieve, route_task, sources_from_receipts, verify_answer
+from .engine import (
+    LaneResult,
+    answer_task,
+    check_canary,
+    engine_sentence,
+    retrieval_outcome,
+    retrieve,
+    route_task,
+    sources_from_receipts,
+    verify_answer,
+)
 from .llm import LLM
 from .tools import ToolRegistry
 
@@ -35,6 +45,13 @@ def build_graph(llm: LLM, tools: ToolRegistry, cfg: LaneConfig):
         return {"collected": retrieve(tools, cfg, state["route"], state["task"])}
 
     def node_answer(state: LaneState) -> dict[str, Any]:
+        collected = state.get("collected", "")
+        outcome = retrieval_outcome(tools.calls, tools.refusals, collected)
+        if outcome != "ok":
+            # Requested retrieval came up empty or failed: the engine states
+            # the outcome itself instead of letting the model report the void.
+            sentence = engine_sentence(outcome)
+            return {"answer": sentence, "injection": check_canary(sentence, state.get("canaries", []))}
         answer = answer_task(
             llm,
             cfg,
@@ -68,6 +85,7 @@ def run_graph(
     canaries: Iterable[str] = (),
 ) -> LaneResult:
     tools.calls.clear()
+    tools.refusals.clear()
     app = build_graph(llm, tools, cfg)
     final = app.invoke({"task": task, "canaries": [str(c) for c in canaries]})
     receipts = [{"tool": call.name, "args": call.args, "ok": call.ok} for call in tools.calls]
