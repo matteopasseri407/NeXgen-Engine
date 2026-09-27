@@ -153,10 +153,15 @@ with the lane's receipt and outcome contract. No MCP server, no new dependency.
   raise what gets read. Long mail bodies and documents need read
   continuation (offset-based, planned) and source-coverage accounting, not
   just a bigger window. Known limit, next step after the profile split.
-- `/local` and `/local4` select the governed profile (agent + model +
-  denies); picking a local model with `/model` alone keeps the current
-  agent and does NOT activate the profile. The profile is the unit, not
-  the model.
+- `/local` selects the governed profile (agent + model + denies); picking a
+  local model with `/model` alone keeps the current agent and does NOT
+  activate the profile. The profile is the unit, not the model.
+- `/local4` (Spark-driven lane) is parked: the 4B failed structured
+  obedience 0/3 (empty slots, router misses, wrong candidate args), always
+  fail-closed but useless as a loop driver. The tag and the `/model` entry
+  stay for free use with 212K of context; the mount, agent and command are
+  removed until a 4B obeys (candidates: another 4B, `json_mode` fallback,
+  few-shot decision examples).
 - Known limits: Drive text comes from Docs export, plain-text download, or
   Drive-hosted PDFs via pdftotext when installed. Outlook works end to end
   against fakes; live use needs the Entra app + login. `nexgen-local doctor`

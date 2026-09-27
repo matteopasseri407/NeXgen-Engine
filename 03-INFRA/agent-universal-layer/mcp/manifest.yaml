@@ -130,19 +130,6 @@ servers:
     targets: [opencode]
     timeouts: { startup: 30, tool: 300 }
 
-  # ---- governed lane on the 4B: same server, model pinned via env --------
-  # The model choice must reach inside the lane, or /local4 becomes
-  # 4B -> 12B -> 4B and the two residents evict each other from 11GB.
-  lane4:
-    transport: stdio
-    tier: core
-    command: nexgen-local
-    args: ["mcp"]
-    env:
-      NEXGEN_LOCAL_MODEL: "spark-x25:240k"
-    targets: [opencode]
-    timeouts: { startup: 30, tool: 300 }
-
   # ---- extra per-CLI (opzionali, non bloccanti) ----------------------------
 
   # filesystem: EXPLICIT roots only, never the whole home. The default here
