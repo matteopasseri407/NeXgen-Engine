@@ -137,6 +137,21 @@ def cmd_code_review(args: argparse.Namespace) -> None:
 
 
 def cmd_relay(args: argparse.Namespace) -> None:
+    from relay import RelayError
+
+    if getattr(args, "resume", ""):
+        _cmd_relay_resume(args)
+        return
+    if getattr(args, "resumable", False):
+        _cmd_relay_start_resumable(args)
+        return
+    try:
+        _cmd_relay_ephemeral(args)
+    except RelayError as e:
+        sys.exit(str(e))
+
+
+def _cmd_relay_ephemeral(args: argparse.Namespace) -> None:
     config = load_config()
     seats = load_seats()
     stages = _load_relay_sequence(args, config, seats)
@@ -180,6 +195,65 @@ def cmd_relay(args: argparse.Namespace) -> None:
     finally:
         _finalize_session(session_dir, keep_session)
         _set_active_session(None)
+
+
+def _cmd_relay_start_resumable(args: argparse.Namespace) -> None:
+    """Fresh resumable run: same validation and gates as ephemeral, then the graph."""
+    from relay import RelayError
+    from relay_graph import start_resumable_relay
+
+    try:
+        summary = start_resumable_relay(
+            question=args.question,
+            context=getattr(args, "context", None),
+            diff=getattr(args, "diff", None),
+            sequence_spec=getattr(args, "sequence", ""),
+            max_seats=int(getattr(args, "max_seats", 5)),
+            continue_on_reject=bool(getattr(args, "continue_on_reject", False)),
+            invocation_timeout=getattr(args, "timeout_seconds", None),
+        )
+    except RelayError as e:
+        sys.exit(str(e))
+    print(f"[council] resumable relay {summary['status']}: "
+          f"{summary['completed']}/{summary['total']} stages complete.")
+    if summary.get("final_verdict"):
+        print(f"[council] final verdict: {summary['final_verdict']}")
+    if summary.get("final_response"):
+        print()
+        print(summary["final_response"])
+
+
+def _cmd_relay_resume(args: argparse.Namespace) -> None:
+    """Resume a kept resumable relay session; refuse on identity mismatch.
+
+    The question/context/diff must reproduce the stored brief and the
+    sequence must match the stored one: a modified brief or sequence
+    refuses without invoking any seat. Exit paths stay here, in the CLI.
+    """
+    from relay import RelayError
+    from relay_graph import resume_relay_session
+
+    try:
+        summary = resume_relay_session(
+            session_ref=str(getattr(args, "resume") or ""),
+            question=args.question,
+            context=getattr(args, "context", None),
+            diff=getattr(args, "diff", None),
+            sequence_spec=getattr(args, "sequence", ""),
+            max_seats=int(getattr(args, "max_seats", 5)),
+            continue_on_reject=bool(getattr(args, "continue_on_reject", False)),
+            invocation_timeout=getattr(args, "timeout_seconds", None),
+            allow_uncertain_rerun=bool(getattr(args, "allow_uncertain_rerun", False)),
+        )
+    except RelayError as e:
+        sys.exit(str(e))
+    print(f"[council] resumed relay {summary['status']}: "
+          f"{summary['completed']}/{summary['total']} stages complete.")
+    if summary.get("final_verdict"):
+        print(f"[council] final verdict: {summary['final_verdict']}")
+    if summary.get("final_response"):
+        print()
+        print(summary["final_response"])
 
 
 def cmd_clean(args: argparse.Namespace) -> None:
@@ -326,6 +400,18 @@ def main() -> int:
     relay.add_argument(
         "--continue-on-reject", action="store_true",
         help="do not stop the relay on an intermediate VERDICT: REJECT (default: stops)",
+    )
+    relay.add_argument(
+        "--resumable", action="store_true",
+        help="persist checkpoints in the kept session so the relay can resume after an interruption",
+    )
+    relay.add_argument(
+        "--resume", metavar="SESSION", default="",
+        help="resume a kept resumable session (name or path); brief and sequence must match",
+    )
+    relay.add_argument(
+        "--allow-uncertain-rerun", action="store_true",
+        help="on resume, re-invoke a stage whose provider response may already exist (quota billed twice at most)",
     )
     _add_common_args(relay, include_seat=False)
     relay.set_defaults(func=cmd_relay)

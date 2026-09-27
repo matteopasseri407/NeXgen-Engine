@@ -119,6 +119,28 @@ council relay \
   --sequence "architect=glm,builder=qwen,reviewer=deepseek-free"
 ```
 
+## Resumable relay
+
+`council relay --resumable` runs the same sequential relay but checkpoints
+progression into SQLite inside the kept session directory, so an interrupted
+run resumes instead of restarting:
+
+```bash
+council relay "Design a rate limiter." --sequence "architect=glm,builder=qwen" --resumable
+# ... interruption (Ctrl+C, dead process, quota pause) ...
+council relay "Design a rate limiter." --sequence "architect=glm,builder=qwen" --resume council-design-a-rate-limiter-20260927T120000Z
+```
+
+Resume recomputes the brief and sequence from your arguments and refuses
+without invoking any seat if either changed. Completed stages are never
+re-invoked. One case needs your explicit decision: if the process died
+after a provider responded but before the outcome was saved, resume
+declares which stage/attempt is uncertain and stops — re-invoking may bill
+quota twice, so pass `--allow-uncertain-rerun` only when you accept that.
+`council clean` (and TTL expiry) removes checkpoints together with the
+session. Requires `pip install 'nexgen-engine[council]'`; brainstorm,
+challenge and parallel seats stay ephemeral.
+
 Every mode accepts `--context FILE` for extra background. A seat without a
 confirmed zero-retention guarantee remains usable, but Council prints a warning
 to stderr before sending the brief. The old `--allow-training-risk` flag has

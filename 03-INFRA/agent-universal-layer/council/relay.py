@@ -8,7 +8,6 @@ and short-quarantining a seat's quota pool on a retryable error.
 """
 from __future__ import annotations
 
-import sys
 import time
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -41,6 +40,21 @@ SHORT_QUARANTINE_SECONDS = 5 * 60
 EXTENDED_QUARANTINE_SECONDS = 15 * 60
 
 
+class RelayError(RuntimeError):
+    """A relay failure as a value, not a process exit.
+
+    Library code (this module, the resumable graph) raises; only the CLI
+    command turns it into ``sys.exit``. ``kind`` names the failure for
+    tests and for the resume logic: invalid_sequence, unknown_seat,
+    unsupported_cli, empty_sequence, seats_cap, human_choice_required,
+    no_seat_available, seat_failed.
+    """
+
+    def __init__(self, message: str, kind: str = "error") -> None:
+        super().__init__(message)
+        self.kind = kind
+
+
 @dataclass
 class RelayStage:
     role: str
@@ -56,10 +70,40 @@ class RelayRecord:
     response: str
 
 
+@dataclass
+class StageAttempt:
+    """One tried seat for one stage: input, seat called, attempt, outcome.
+
+    Recorded by the stage runner when the caller passes a trace list;
+    the resumable graph persists these instead of re-deriving them.
+    ``outcome`` is one of: ok, quarantined (retryable, another pool tried),
+    failed (non-retryable, relay stops), refused (no seat available).
+    """
+
+    stage_idx: int
+    role: str
+    seat_name: str
+    attempt: int
+    pool: str
+    outcome: str
+    detail: str = ""
+
+
 class RelayQuarantine:
     def __init__(self) -> None:
         self.until: dict[str, float] = {}
         self.failures: dict[str, int] = {}
+
+    @classmethod
+    def from_snapshot(cls, until: dict[str, float], failures: dict[str, int]) -> "RelayQuarantine":
+        """Rebuild from persisted plain dicts (the resumable graph round-trips these)."""
+        obj = cls()
+        obj.until = dict(until or {})
+        obj.failures = {str(k): int(v) for k, v in (failures or {}).items()}
+        return obj
+
+    def snapshot(self) -> tuple[dict[str, float], dict[str, int]]:
+        return dict(self.until), dict(self.failures)
 
     def is_blocked(self, pool: str) -> bool:
         return self.until.get(pool, 0.0) > time.time()
@@ -98,12 +142,12 @@ def _parse_inline_sequence(spec: str) -> list[RelayStage]:
         if not item:
             continue
         if "=" not in item:
-            sys.exit("[council] invalid inline relay sequence: use role=seat or role=seat|fallback.")
+            raise RelayError("[council] invalid inline relay sequence: use role=seat or role=seat|fallback.", kind="invalid_sequence")
         role, seats_part = item.split("=", 1)
         role = role.strip()
         candidates = [s.strip() for s in seats_part.split("|") if s.strip()]
         if not role or not candidates:
-            sys.exit("[council] invalid inline relay sequence: role and seat are required.")
+            raise RelayError("[council] invalid inline relay sequence: role and seat are required.", kind="invalid_sequence")
         stages.append(RelayStage(role=role, candidates=_dedupe_keep_order(candidates)))
     return stages
 
@@ -112,10 +156,10 @@ def _relay_stage_from_yaml(item) -> RelayStage:
     if isinstance(item, str):
         parsed = _parse_inline_sequence(item)
         if len(parsed) != 1:
-            sys.exit(f"[council] invalid sequence element: {item}")
+            raise RelayError(f"[council] invalid sequence element: {item}", kind="invalid_sequence")
         return parsed[0]
     if not isinstance(item, dict):
-        sys.exit(f"[council] invalid sequence element: {item!r}")
+        raise RelayError(f"[council] invalid sequence element: {item!r}", kind="invalid_sequence")
     role = str(item.get("role") or "").strip()
     candidates: list[str] = []
     if isinstance(item.get("seats"), list):
@@ -128,7 +172,7 @@ def _relay_stage_from_yaml(item) -> RelayStage:
     if isinstance(fallback, list):
         candidates.extend(str(s).strip() for s in fallback if str(s).strip())
     if not role or not candidates:
-        sys.exit("[council] invalid relay sequence: every stage must have role and seat/seats.")
+        raise RelayError("[council] invalid relay sequence: every stage must have role and seat/seats.", kind="invalid_sequence")
     return RelayStage(role=role, candidates=_dedupe_keep_order(candidates))
 
 
@@ -140,10 +184,10 @@ def _validate_relay_seat(seat_name: str, seats: dict) -> dict:
     candidate; the selected seat receives a warning immediately before egress.
     """
     if seat_name not in seats:
-        sys.exit(f"[council] unknown seat in the relay sequence: {seat_name}. Available: {', '.join(seats)}")
+        raise RelayError(f"[council] unknown seat in the relay sequence: {seat_name}. Available: {', '.join(seats)}", kind="unknown_seat")
     seat = seats[seat_name]
     if seat.get("cli") not in SUPPORTED_CLIS:
-        sys.exit(f"[council] unsupported CLI in the relay sequence: {seat.get('cli')}.")
+        raise RelayError(f"[council] unsupported CLI in the relay sequence: {seat.get('cli')}.", kind="unsupported_cli")
     return seat
 
 
@@ -158,11 +202,18 @@ def _require_human_relay_selection(args, config: dict, seats: dict) -> None:
         _print_static_seat_menu(seats)
         has_candidates = bool(seats)
     if has_candidates:
-        sys.exit(
+        # The menu above was already printed: the raise (not the print) is
+        # the contract. CLI turns it into the same exit; the graph refuses
+        # interactive selection and demands an explicit sequence instead.
+        raise RelayError(
             "[council] human choice required: rerun relay with --sequence "
-            "role=seat|fallback,... or with the explicit name of a sequence."
+            "role=seat|fallback,... or with the explicit name of a sequence.",
+            kind="human_choice_required",
         )
-    sys.exit("[council] no eligible seat to select: fix the mapping, CLI, or policy shown above.")
+    raise RelayError(
+        "[council] no eligible seat to select: fix the mapping, CLI, or policy shown above.",
+        kind="human_choice_required",
+    )
 
 
 def _load_relay_sequence(args, config: dict, seats: dict) -> list[RelayStage]:
@@ -172,21 +223,22 @@ def _load_relay_sequence(args, config: dict, seats: dict) -> list[RelayStage]:
     elif spec:
         sequences = config.get("sequences") or {}
         if spec not in sequences:
-            sys.exit(f"[council] relay sequence '{spec}' not found in {SEATS_PATH}.")
+            raise RelayError(f"[council] relay sequence '{spec}' not found in {SEATS_PATH}.", kind="invalid_sequence")
         stages = [_relay_stage_from_yaml(item) for item in sequences[spec]]
     else:
         _require_human_relay_selection(args, config, seats)
 
     if not stages:
-        sys.exit("[council] empty relay sequence.")
+        raise RelayError("[council] empty relay sequence.", kind="empty_sequence")
     if args.max_seats < 1 or args.max_seats > DEFAULT_MAX_SEATS:
-        sys.exit(f"[council] --max-seats must be between 1 and {DEFAULT_MAX_SEATS}.")
+        raise RelayError(f"[council] --max-seats must be between 1 and {DEFAULT_MAX_SEATS}.", kind="seats_cap")
     if len(stages) > DEFAULT_MAX_SEATS:
-        sys.exit(f"[council] relay supports at most {DEFAULT_MAX_SEATS} stages.")
+        raise RelayError(f"[council] relay supports at most {DEFAULT_MAX_SEATS} stages.", kind="seats_cap")
     if len(stages) > args.max_seats:
-        sys.exit(
+        raise RelayError(
             f"[council] relay sequence has {len(stages)} stages but --max-seats={args.max_seats}. "
-            "Increase the cap or shrink the sequence: I will not silently skip roles."
+            "Increase the cap or shrink the sequence: I will not silently skip roles.",
+            kind="seats_cap",
         )
     for stage in stages:
         for seat_name in stage.candidates:
@@ -250,57 +302,117 @@ def write_relay_verdict(session_dir: Path, records: list[RelayRecord]) -> None:
     _write_private_text(session_dir / "verdict.md", "\n".join(lines) + "\n")
 
 
+def _select_stage_candidate(
+    stage: RelayStage, seats: dict, quarantine: RelayQuarantine,
+    attempted: set[str], last_failed_pool: str | None,
+) -> str | None:
+    """Next untried candidate whose pool is not failed or quarantined.
+
+    Pure selection, no side effects: the loop and the graph share it, so
+    a seat is never picked by two implementations.
+    """
+    for candidate in stage.candidates:
+        if candidate in attempted:
+            continue
+        pool = _seat_quota_pool(seats[candidate])
+        if last_failed_pool and pool == last_failed_pool:
+            continue
+        if quarantine.is_blocked(pool):
+            continue
+        return candidate
+    return None
+
+
+def _refuse_no_seat(stage: RelayStage, seats: dict, quarantine: RelayQuarantine) -> RelayError:
+    pools = [_seat_quota_pool(seats[name]) for name in stage.candidates]
+    reset = quarantine.next_reset_iso(pools)
+    reset_msg = f" Nearest reset: {reset}." if reset else ""
+    return RelayError(
+        f"[council] relay stopped at role '{stage.role}': no seat available "
+        f"among those declared in the sequence ({', '.join(stage.candidates)})."
+        f"{reset_msg} I do not use seats outside the sequence and do not skip the role.",
+        kind="no_seat_available",
+    )
+
+
+def _invoke_stage_candidate(
+    idx: int, stage: RelayStage, chosen_name: str, seats: dict, session_dir: Path,
+    brief: str, records: list[RelayRecord], invocation_timeout: float | None,
+    config: dict | None = None,
+) -> RelayRecord:
+    """Run one chosen seat: prompt, invoke, data checks, artefact, record.
+
+    The only place that calls ``run_seat`` for a relay stage. Raises
+    SeatRunError upward; the caller decides retry vs stop.
+    """
+    seat = seats[chosen_name]
+    prompt = build_relay_prompt(stage.role, brief, records)
+    timeout_seconds = _resolve_timeout_seconds(seat, invocation_timeout)
+
+    _warn_no_zero_retention(chosen_name, seat)
+    if config and _routing_enabled(config):
+        _confirm_pay_per_use(chosen_name, seat, _seat_cost(_routing_context_or_exit(config), chosen_name, seat))
+
+    print(
+        f"[council] relay {idx:02d} — role: {stage.role} — "
+        f"seat: {chosen_name} ({seat['model']}, pool {_seat_quota_pool(seat)}, "
+        f"timeout {_format_timeout_seconds(timeout_seconds)}s)"
+    )
+    response, usage = run_seat(seat, prompt, session_dir, timeout_seconds)
+    _print_usage_recap(chosen_name, usage)
+
+    response, generated_output_redacted = redact_generated_output(response)
+    if generated_output_redacted:
+        print(
+            "[council] seat output with a possible secret: the fragment was redacted, "
+            "the relay continues."
+        )
+    verdict = extract_verdict(response)
+    if verdict == "(absent)":
+        print(f"[council] WARNING: no VERDICT line found in stage {idx}.")
+    seat_file = session_dir / f"{idx:02d}-{chosen_name}-relay-{slugify(stage.role)}.md"
+    _write_private_text(seat_file, response)
+    print(f"[council] relay {idx:02d} verdict: {verdict}")
+    return RelayRecord(stage.role, chosen_name, seat["model"], verdict, response)
+
+
 def _run_relay_stage(
     idx: int, stage: RelayStage, seats: dict, session_dir: Path, brief: str,
     records: list[RelayRecord], quarantine: RelayQuarantine, invocation_timeout: float | None,
-    config: dict | None = None,
+    config: dict | None = None, trace: list[StageAttempt] | None = None,
 ) -> RelayRecord:
     attempted: set[str] = set()
     last_failed_pool: str | None = None
+    attempt = 0
 
     while True:
-        chosen_name = None
-        for candidate in stage.candidates:
-            if candidate in attempted:
-                continue
-            pool = _seat_quota_pool(seats[candidate])
-            if last_failed_pool and pool == last_failed_pool:
-                continue
-            if quarantine.is_blocked(pool):
-                continue
-            chosen_name = candidate
-            break
+        chosen_name = _select_stage_candidate(stage, seats, quarantine, attempted, last_failed_pool)
 
         if chosen_name is None:
-            pools = [_seat_quota_pool(seats[name]) for name in stage.candidates]
-            reset = quarantine.next_reset_iso(pools)
-            reset_msg = f" Nearest reset: {reset}." if reset else ""
-            sys.exit(
-                f"[council] relay stopped at role '{stage.role}': no seat available "
-                f"among those declared in the sequence ({', '.join(stage.candidates)})."
-                f"{reset_msg} I do not use seats outside the sequence and do not skip the role."
-            )
+            if trace is not None:
+                trace.append(
+                    StageAttempt(idx, stage.role, "", attempt, "", "refused", "no seat available")
+                )
+            raise _refuse_no_seat(stage, seats, quarantine)
 
-        seat = seats[chosen_name]
-        pool = _seat_quota_pool(seat)
-        prompt = build_relay_prompt(stage.role, brief, records)
-        timeout_seconds = _resolve_timeout_seconds(seat, invocation_timeout)
-
-        _warn_no_zero_retention(chosen_name, seat)
-        if config and _routing_enabled(config):
-            _confirm_pay_per_use(chosen_name, seat, _seat_cost(_routing_context_or_exit(config), chosen_name, seat))
-
-        print(
-            f"[council] relay {idx:02d} — role: {stage.role} — "
-            f"seat: {chosen_name} ({seat['model']}, pool {pool}, "
-            f"timeout {_format_timeout_seconds(timeout_seconds)}s)"
-        )
+        pool = _seat_quota_pool(seats[chosen_name])
+        attempt += 1
         try:
-            response, usage = run_seat(seat, prompt, session_dir, timeout_seconds)
+            record = _invoke_stage_candidate(
+                idx, stage, chosen_name, seats, session_dir, brief, records,
+                invocation_timeout, config,
+            )
         except SeatRunError as e:
             attempted.add(chosen_name)
+            if trace is not None:
+                trace.append(
+                    StageAttempt(
+                        idx, stage.role, chosen_name, attempt, pool,
+                        "quarantined" if _is_retryable_seat_error(e) else "failed", str(e),
+                    )
+                )
             if not _is_retryable_seat_error(e):
-                sys.exit(str(e))
+                raise RelayError(str(e), kind="seat_failed") from e
             blocked_until = quarantine.register(pool)
             last_failed_pool = pool
             print(str(e))
@@ -309,18 +421,6 @@ def _run_relay_stage(
                 f"{blocked_until.isoformat(timespec='seconds')}; trying a different pool if the sequence provides one."
             )
             continue
-        _print_usage_recap(chosen_name, usage)
-
-        response, generated_output_redacted = redact_generated_output(response)
-        if generated_output_redacted:
-            print(
-                "[council] seat output with a possible secret: the fragment was redacted, "
-                "the relay continues."
-            )
-        verdict = extract_verdict(response)
-        if verdict == "(absent)":
-            print(f"[council] WARNING: no VERDICT line found in stage {idx}.")
-        seat_file = session_dir / f"{idx:02d}-{chosen_name}-relay-{slugify(stage.role)}.md"
-        _write_private_text(seat_file, response)
-        print(f"[council] relay {idx:02d} verdict: {verdict}")
-        return RelayRecord(stage.role, chosen_name, seat["model"], verdict, response)
+        if trace is not None:
+            trace.append(StageAttempt(idx, stage.role, chosen_name, attempt, pool, "ok", ""))
+        return record

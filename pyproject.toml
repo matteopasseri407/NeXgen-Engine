@@ -31,6 +31,9 @@ dev = ["pytest>=8.0", "ruff>=0.6"]
 # The local lane is optional on purpose: the core stays one-dependency.
 # Install with  pip install 'nexgen-engine[local]'  (or uv tool install ...).
 local = ["langgraph>=1.0,<2", "langchain-ollama>=1.0,<2", "mcp>=2.0,<3"]
+# The resumable Council needs only graph persistence: no Ollama, no MCP,
+# and deliberately not the [local] extra.
+council = ["langgraph>=1.0,<2", "langgraph-checkpoint-sqlite>=3,<4"]
 
 [project.urls]
 Homepage = "https://github.com/matteopasseri407/NeXgen-Engine"
