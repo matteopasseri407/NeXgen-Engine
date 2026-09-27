@@ -619,6 +619,7 @@ def test_calendar_search_finds_event_past_the_old_page_limit(
 def test_calendar_query_iso_date_sets_window(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """A named date drives timeMin/timeMax instead of the default window."""
     import nexgen_local.connectors.calendar as calendar_conn
+    from datetime import datetime
 
     cfg = _cfg(tmp_path)
     seen: dict = {}
@@ -631,9 +632,27 @@ def test_calendar_query_iso_date_sets_window(tmp_path: Path, monkeypatch: pytest
     tools = ToolRegistry(cfg)
     out = tools.search_calendar("dentista 2026-10-01")
     assert out == "(nessun risultato)"
-    assert seen["time_min"] == "2026-10-01T00:00:00Z"
-    assert seen["time_max"] == "2026-10-01T23:59:59Z"
+    # Midnight-to-midnight in the SYSTEM zone, whatever it is: the date the
+    # user named, not a UTC shift of it.
+    zone = datetime.now().astimezone().tzinfo
+    assert seen["time_min"] == datetime(2026, 10, 1, tzinfo=zone).isoformat()
+    assert seen["time_max"] == datetime(2026, 10, 2, tzinfo=zone).isoformat()
     assert "2026-10-01" not in seen["q"]  # dates filter time, not text
+
+
+def test_calendar_iso_date_uses_user_zone_like_oggi(tmp_path: Path) -> None:
+    """Same Roman day: '2026-09-28' and 'oggi' query the same interval."""
+    from datetime import datetime, timedelta, timezone
+
+    tools = ToolRegistry(_cfg(tmp_path))
+    rome = timezone(timedelta(hours=2))
+    now = datetime(2026, 9, 28, 0, 30, tzinfo=rome)
+    iso_min, iso_max, _ = tools._calendar_window("dentista 2026-09-28", now)
+    day_min, day_max, _ = tools._calendar_window("dentista oggi", now)
+    assert (iso_min, iso_max) == (day_min, day_max) == (
+        "2026-09-28T00:00:00+02:00",
+        "2026-09-29T00:00:00+02:00",
+    )
 
 
 def test_calendar_oggi_uses_user_zone_not_utc(tmp_path: Path) -> None:
@@ -659,3 +678,49 @@ def test_lane_model_reaches_server_via_env(tmp_path: Path, monkeypatch: pytest.M
     assert cfg.model == "spark-x25:240k"
     assert cfg.router_tag == "spark-x25:240k" and cfg.answer_tag == "spark-x25:240k"
     assert cfg.num_ctx == 217088
+
+
+def test_text_truncation_is_a_typed_refusal_not_empty_success(tmp_path: Path) -> None:
+    """done_reason=length with empty content raises, never returns ''."""
+    import pytest
+
+    from nexgen_local.llm import ChatOllamaLLM, LLMError
+
+    class _Msg:
+        content = ""
+        response_metadata = {"done_reason": "length"}
+
+    with pytest.raises(LLMError, match="troncata"):
+        ChatOllamaLLM._checked_text(_Msg(), what="risposta del modello")
+
+
+def test_empty_stop_is_a_typed_refusal(tmp_path: Path) -> None:
+    """done_reason=stop with empty content raises, never returns ''."""
+    import pytest
+
+    from nexgen_local.llm import ChatOllamaLLM, LLMError
+
+    class _Msg:
+        content = "   "
+        response_metadata = {"done_reason": "stop"}
+
+    with pytest.raises(LLMError, match="vuota"):
+        ChatOllamaLLM._checked_text(_Msg(), what="risposta del modello")
+
+
+def test_json_truncation_degrades_to_none(tmp_path: Path) -> None:
+    """Router truncation is unparseable-form: None, never an exception."""
+    from nexgen_local.llm import ChatOllamaLLM
+
+    llm = ChatOllamaLLM.__new__(ChatOllamaLLM)
+
+    class _FakeModel:
+        def invoke(self, messages):
+            class _Msg:
+                content = '{"source": "va'
+                response_metadata = {"done_reason": "length"}
+
+            return _Msg()
+
+    llm._json_model = _FakeModel()
+    assert llm.json("s", "u") is None

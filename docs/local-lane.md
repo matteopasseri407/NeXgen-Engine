@@ -145,7 +145,11 @@ with the lane's receipt and outcome contract. No MCP server, no new dependency.
   short excerpt was extractable — a partial read, never the whole message).
 - Calendar search filters server-side first (`q`) over a wide page and caps
   matches after: the default window is now to +30 days, and ISO dates (or
-  oggi/domani/dopodomani) named in the query set the window instead.
+  oggi/domani/dopodomani) named in the query set the window instead — day
+  boundaries in the system locale, never UTC.
+- Generation outcomes are explicit: a budget-exhausted (`done_reason=length`)
+  or empty prose raises into the typed error channel instead of returning
+  `""` as a silent success; every node carries a `num_predict` bound.
 - Proposal ids are unique (timestamp plus randomness) in every gate, and
   creation never overwrites: a colliding id refuses instead of replacing the
   proposal shown for approval.

@@ -128,11 +128,39 @@ class ChatOllamaLLM:
             return content
         return json.dumps(content, ensure_ascii=False)
 
+    @staticmethod
+    def _done_reason(message) -> str:
+        """How generation ended: "stop", "length" (budget exhausted), ..."""
+        meta = getattr(message, "response_metadata", {}) or {}
+        return str(meta.get("done_reason") or "stop")
+
+    @classmethod
+    def _checked_text(cls, message, *, what: str) -> str:
+        """Prose out of a generation, fail-closed on truncation or void.
+
+        The output bound (num_predict) covers thinking AND response: a
+        budget eaten by the think channel returns done_reason="length"
+        with empty content. Returning that as answer="" would be a silent
+        success with exit 0, so truncation and empty both raise into the
+        lane's typed error channel instead.
+        """
+        text = cls._content(message)
+        if cls._done_reason(message) == "length":
+            raise LLMError(f"{what} troncata dal budget di generazione (done_reason=length)")
+        if not text.strip():
+            raise LLMError(f"{what} vuota dal modello")
+        return text
+
     def json(self, system: str, user: str) -> dict | None:
         try:
             message = self._json_model.invoke(self._messages(system, user))
         except Exception as exc:  # noqa: BLE001 - surface a typed error upward
             raise LLMError(f"chiamata al modello fallita: {exc}") from exc
+        if self._done_reason(message) == "length":
+            # Truncated form, same as unparseable: every caller degrades
+            # gracefully (fallback route, refused proposal), the router
+            # never aborts the lane.
+            return None
         return _json_block(self._content(message))
 
     def text(self, system: str, user: str) -> str:
@@ -140,7 +168,7 @@ class ChatOllamaLLM:
             message = self._text_model.invoke(self._messages(system, user))
         except Exception as exc:  # noqa: BLE001
             raise LLMError(f"chiamata al modello fallita: {exc}") from exc
-        return self._content(message)
+        return self._checked_text(message, what="risposta del modello")
 
     def choose(self, system: str, user: str, actions: list[str]) -> dict | None:
         """Forced-schema decision for the bounded loop: one action from the menu."""

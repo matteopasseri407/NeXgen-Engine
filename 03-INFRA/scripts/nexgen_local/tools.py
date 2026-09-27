@@ -439,14 +439,19 @@ class ToolRegistry:
         "oggi" is the 28th local, not the 27th UTC. Callers pass
         ``datetime.now().astimezone()`` (system locale), never UTC.
         """
+        from datetime import datetime as _dt
         from datetime import timedelta
 
         dates = sorted({match.group(0)[:10] for match in self._ISO_DATE_RE.finditer(query)})
         free = self._ISO_DATE_RE.sub(" ", query)
         if dates:
-            time_min = f"{dates[0]}T00:00:00Z"
-            time_max = f"{dates[-1]}T23:59:59Z"
-            return time_min, time_max, free
+            # Bare dates live in the USER's zone, like "oggi" does: on the
+            # 28th in Rome, 2026-09-28 means 00:00+02:00, not 00:00Z.
+            # End-exclusive next midnight: no 23:59:59 gaps, no overlap.
+            tz = now.tzinfo
+            first = _dt.strptime(dates[0], "%Y-%m-%d").replace(tzinfo=tz)
+            last = _dt.strptime(dates[-1], "%Y-%m-%d").replace(tzinfo=tz)
+            return first.isoformat(), (last + timedelta(days=1)).isoformat(), free
         if self._RELATIVE_DAY_RE.search(query):
             found = {match.group(1).casefold() for match in self._RELATIVE_DAY_RE.finditer(query)}
             offset = 2 if "dopodomani" in found else (1 if "domani" in found else 0)
