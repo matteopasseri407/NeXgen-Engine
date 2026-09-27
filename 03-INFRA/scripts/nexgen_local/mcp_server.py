@@ -61,21 +61,35 @@ def tool_ask(cfg: LaneConfig, llm: LLM, question: str) -> str:
     return (result.answer or "(nessuna risposta)") + _footer(result.receipts) + _problems_footer(result.problems)
 
 
-def tool_explore(cfg: LaneConfig, llm: LLM, task: str, max_steps: int = 6) -> str:
-    """Bounded action loop exposed as a service: menu, choices, receipts."""
+def tool_explore(cfg: LaneConfig, llm: LLM, task: str, max_steps: int = 6, session_id: str = "") -> str:
+    """Bounded action loop exposed as a service: menu, choices, receipts.
+
+    Empty ``session_id`` runs the ephemeral loop; otherwise the instruction
+    continues the persistent research session (new task text, same sources,
+    receipts and staged proposals). Staging only, never applied.
+    """
+    from .research_graph import ResearchError, research_task
     from .steps import run_steps
 
-    result = run_steps(llm, ToolRegistry(cfg), cfg, task, max_steps=max_steps)
-    lines = [result.answer or "(nessuna risposta: passaggio a un agente piu' capace)"]
-    if result.mail_draft:
-        lines.append(f"[bozza mail da approvare: {result.mail_draft}]")
-    if result.upload_proposal:
-        lines.append(f"[proposta upload da approvare: {result.upload_proposal}]")
-    for decision in result.decisions:
-        mark = "ok" if decision.ok else "KO"
-        detail = f" — {decision.detail}" if decision.detail else ""
-        lines.append(f"[passo {decision.step}: {decision.action} {decision.arg} [{mark}]{detail}]")
-    return "\n".join(lines) + _footer(result.receipts) + _problems_footer(result.problems)
+    if not session_id:
+        result = run_steps(llm, ToolRegistry(cfg), cfg, task, max_steps=max_steps)
+        lines = [result.answer or "(nessuna risposta: passaggio a un agente piu' capace)"]
+        if result.mail_draft:
+            lines.append(f"[bozza mail da approvare: {result.mail_draft}]")
+        if result.upload_proposal:
+            lines.append(f"[proposta upload da approvare: {result.upload_proposal}]")
+        for decision in result.decisions:
+            mark = "ok" if decision.ok else "KO"
+            detail = f" — {decision.detail}" if decision.detail else ""
+            lines.append(f"[passo {decision.step}: {decision.action} {decision.arg} [{mark}]{detail}]")
+        return "\n".join(lines) + _footer(result.receipts) + _problems_footer(result.problems)
+    try:
+        summary = research_task(llm, cfg, task, session_id=session_id, max_steps=max_steps)
+    except ResearchError as exc:
+        return f"(rifiutato: {exc})"
+    lines = [summary["answer"] or "(nessuna risposta: passaggio a un agente piu' capace)"]
+    lines.append(f"[sessione: {summary['session_id']} — stato: {summary['status']}]")
+    return "\n".join(lines)
 
 
 def tool_research(cfg: LaneConfig, llm: LLM, topic: str) -> str:
@@ -150,12 +164,13 @@ def build_server(
     @server.tool(
         description=(
             "Ciclo guidato a piu' passi: il motore propone il menu, il modello sceglie "
-            "(sola lettura, max_steps 1-6)."
+            "(sola lettura, max_steps 1-6). Con session_id continua una ricerca "
+            "persistente (stesse fonti, letture e proposte) invece di ricominciare."
         )
     )
-    def lane_explore(task: str, max_steps: int = 6) -> str:
+    def lane_explore(task: str, max_steps: int = 6, session_id: str = "") -> str:
         try:
-            return tool_explore(cfg, llm_factory(), task, max_steps=max(1, min(int(max_steps), 6)))
+            return tool_explore(cfg, llm_factory(), task, max_steps=max(1, min(int(max_steps), 6)), session_id=session_id or "")
         except (LLMError, JobError) as exc:
             return f"(rifiutato: {exc})"
 

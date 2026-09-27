@@ -138,8 +138,27 @@ after a provider responded but before the outcome was saved, resume
 declares which stage/attempt is uncertain and stops — re-invoking may bill
 quota twice, so pass `--allow-uncertain-rerun` only when you accept that.
 `council clean` (and TTL expiry) removes checkpoints together with the
-session. Requires `pip install 'nexgen-engine[council]'`; brainstorm,
-challenge and parallel seats stay ephemeral.
+session. Requires `pip install 'nexgen-engine[council]'`; brainstorm and
+challenge stay ephemeral.
+
+## Independent consult
+
+`council consult` asks several seats the SAME brief independently and in
+parallel, then runs at most one aimed rebuttal round on disagreements:
+
+```bash
+council consult "Is this migration plan safe?" --seat luna --seat kimi --seat glm
+```
+
+Every seat judges only the original brief (no hand-off, no shared context
+between opinions). Seats that fail abstain with a recorded reason instead
+of aborting the round; if every seat fails the consult refuses rather than
+synthesizing from nothing. Budgets are hard: at most 5 seats, at most 1
+rebuttal round, per-seat timeouts. The transcript (`consult.md`) records
+opinions, rebuttals, abstentions, the verdict tally and the disagreement
+pairs. Measure on comparable cases at equal budget: this earns its place
+only by improving issue coverage or reducing time — more frequent agreement
+is not a quality measure.
 
 Every mode accepts `--context FILE` for extra background. A seat without a
 confirmed zero-retention guarantee remains usable, but Council prints a warning

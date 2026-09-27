@@ -16,11 +16,11 @@ COUNCIL_DIR = Path(__file__).resolve().parents[2] / "agent-universal-layer" / "c
 if str(COUNCIL_DIR) not in sys.path:
     sys.path.insert(0, str(COUNCIL_DIR))
 
-import relay
-import relay_graph
-import session
-from relay import RelayError, RelayQuarantine, RelayRecord, RelayStage
-from relay_graph import (
+import relay  # noqa: E402
+import relay_graph  # noqa: E402
+import session  # noqa: E402
+from relay import RelayError, RelayQuarantine, RelayRecord, RelayStage  # noqa: E402
+from relay_graph import (  # noqa: E402
     _initial_state,
     _uncertain_pending,
     build_relay_app,
@@ -28,7 +28,7 @@ from relay_graph import (
     resume_relay_session,
     start_resumable_relay,
 )
-from seat_process import SeatRunError
+from seat_process import SeatRunError  # noqa: E402
 
 
 class SimulatedCrash(RuntimeError):
@@ -293,11 +293,6 @@ def _start_crashing(monkeypatch, runner: FakeRunner, sandbox: Path, relay_module
     names = [p.name for p in sandbox.iterdir() if p.is_dir()]
     assert len(names) == 1
     # Il checkpoint ha il marker invocato senza record: incertezza rilevabile.
-    try:
-        from langgraph.checkpoint.sqlite import SqliteSaver
-    except ImportError:
-        from langgraph_checkpoint_sqlite import SqliteSaver
-
     snapshot = _read_state(sandbox / names[0], names[0])
     assert _uncertain_pending(snapshot.values) is not None
     monkeypatch.setattr(relay_module, "_write_private_text", real_write)

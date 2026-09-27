@@ -795,3 +795,44 @@ def test_answer_without_read_escalates_instead_of_false_absence(
     result = run_steps(llm, ToolRegistry(cfg), cfg, "Trova la mail sul budget.")
     assert result.escalated is True
     assert result.answer != ENGINE_ABSENCE
+
+
+def test_continue_read_resumes_truncated_file(tmp_path: Path) -> None:
+    """Long note: read truncates, continue_read fetches the next window, then answer."""
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    cfg = LaneConfig(
+        vault_root=vault, repo_roots=(), model="fake-model", read_chars=20,
+        audit_path=tmp_path / "audit.jsonl",
+    )
+    _write(vault / "lunga.md", "lunga " + "0123456789" * 10)
+    llm = ScriptedLLM(
+        route={"source": "vault", "keywords": ["lunga"]},
+        decisions=[
+            {"action": "search_vault", "arg": "lunga"},
+            {"action": "read_file", "arg": "lunga.md"},
+            {"action": "continue_read", "arg": ""},
+            {"action": "answer", "arg": ""},
+        ],
+        answers=["Tutto letto, cento cifre."],
+    )
+    result = run_steps(llm, ToolRegistry(cfg), cfg, "Leggi la nota lunga e dimmi quanto e' lunga.")
+    assert [d.action for d in result.decisions] == ["search_vault", "read_file", "continue_read", "answer"]
+    assert result.problems == [] and result.escalated is False
+    assert "continua da" in result.collected
+
+
+def test_continue_read_capped_at_three_windows(tmp_path: Path) -> None:
+    """After MAX_CONTINUATIONS the menu stops offering continuation."""
+    from nexgen_local.steps import MAX_CONTINUATIONS, _can_continue, build_menu
+
+    cfg = _cfg(tmp_path)
+    state = LoopState(task="leggi tutto", route="vault")
+    state.receipts = [{"tool": "read_vault", "args": {"path": "lunga.md"}, "ok": True}]
+    state.tried_paths = ["lunga.md"]
+    state.reads = ["0123456789"]
+    state.last_read = {"tool": "read_vault", "args": {"path": "lunga.md"},
+                       "offset": 0, "total": 100, "truncated": True}
+    state.continuations = MAX_CONTINUATIONS
+    assert _can_continue(state) is False
+    assert "continue_read" not in [c.action for c in build_menu(cfg, state)]

@@ -60,6 +60,10 @@ class LaneConfig:
     uploads_dir: Path = field(default_factory=lambda: Path.home() / ".local/state/nexgen/local-lane/uploads")
     calendars_dir: Path = field(default_factory=lambda: Path.home() / ".local/state/nexgen/local-lane/calendars")
     workflows_dir: Path = field(default_factory=lambda: Path.home() / ".local/state/nexgen/local-lane/workflows")
+    #: Persistent research sessions (one sqlite each): sources, chunks read,
+    #: coverage and staged proposals across interactions. Working state only,
+    #: swept by age; never vault memory.
+    research_dir: Path = field(default_factory=lambda: Path.home() / ".local/state/nexgen/local-lane/research")
     firecrawl_cmd: str = "firecrawl-local"
     pdftotext_cmd: str = "pdftotext"
     max_steps: int = 4

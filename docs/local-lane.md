@@ -256,6 +256,34 @@ into the vault. Both print the machine receipts alongside the text. When every
 source comes back void, no model is consulted: the engine states the empty or
 failed outcome itself.
 
+## Persistent research (multi-interaction work on sources)
+
+```bash
+nexgen-local explore "Trova la mail, confrontala col contratto e prepara la risposta" --session-id new
+# ... later, same session, no re-search ...
+nexgen-local explore "Apri il secondo documento" --session-id 20260928-001122-ab12cd34
+```
+
+The default `explore` forgets everything when it returns. With
+`--session-id` (or `lane_explore`'s `session_id`, same flow through MCP)
+the SAME loop operations (`decide_step` / `_execute` / `finish_answer` —
+one implementation, shared with the ephemeral loop, never a third
+execution cycle) run under a LangGraph that checkpoints to SQLite after
+every node. "Apri il secondo", "continua la lettura" and "riprendi il
+confronto" continue where the previous interaction stopped: sources read,
+chunks consumed with their coverage, staged proposals and receipts persist;
+sessions sweep by age (30 days) and hold working state only, never vault
+memory. Approval gates stay outside: a resumed session stages proposals
+through the same propose paths and never applies — it cannot double-apply,
+and authorization remains the engine's job in the gates.
+
+Reads are windowed, not silently capped: every source read carries declared
+coverage (`offset/total/truncated`), truncation names the exact resume
+point, and `continue_read` fetches the next window (at most 3 continuations
+per loop, then answer or escalate). The answer's status block lists every
+source with complete/partial coverage, so a resumed "continua" knows what
+is left.
+
 ## Explore (the bounded action loop, pilot)
 
 ```bash

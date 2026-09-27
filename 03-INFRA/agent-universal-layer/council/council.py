@@ -256,6 +256,42 @@ def _cmd_relay_resume(args: argparse.Namespace) -> None:
         print(summary["final_response"])
 
 
+def cmd_consult(args: argparse.Namespace) -> None:
+    from consult import run_consult
+    from relay import RelayError
+
+    try:
+        config = load_config()
+        seats = load_seats()
+        brief = build_brief(args.brief, args.context, args.diff)
+        egress_gate(brief)
+        keep_session = bool(getattr(args, "keep_session", False))
+        session_dir = new_session_dir(args.brief)
+        _set_active_session(session_dir, keep_session)
+        try:
+            _write_private_text(session_dir / "00-brief.md", brief)
+            if keep_session:
+                print(f"[council] session kept: {session_dir}")
+            print(f"[council] mode: consult — seats: {len(args.seat)}")
+            result = run_consult(
+                seats, brief, list(args.seat), session_dir,
+                getattr(args, "timeout_seconds", None), int(args.rebuttals or 0), config,
+            )
+            print(f"[council] consult complete: {len(result.opinions)} opinions, "
+                  f"{len(result.rebuttals)} rebuttals, {len(result.abstentions)} abstentions.")
+            tally = ", ".join(f"{verdict}={count}" for verdict, count in sorted(result.tally.items()))
+            print(f"[council] tally: {tally or '(none)'}")
+            if result.disagreements:
+                print("[council] disagreements: " + ", ".join(f"{a} vs {b}" for a, b in result.disagreements))
+            if keep_session:
+                print(f"[council] file: {session_dir / 'consult.md'}")
+        finally:
+            _finalize_session(session_dir, keep_session)
+            _set_active_session(None)
+    except RelayError as e:
+        sys.exit(str(e))
+
+
 def cmd_clean(args: argparse.Namespace) -> None:
     if not SESSIONS_DIR.is_dir():
         print("[council] no sessions to clean.")
@@ -415,6 +451,18 @@ def main() -> int:
     )
     _add_common_args(relay, include_seat=False)
     relay.set_defaults(func=cmd_relay)
+
+    consult = sub.add_parser("consult", help="independent parallel opinions plus one aimed rebuttal round")
+    consult.add_argument("brief", help="question/plan to put to every seat independently")
+    consult.add_argument("--seat", action="append", required=True, help="seat to consult (repeatable, max 5)")
+    consult.add_argument("--context", metavar="FILE", help="context file to attach")
+    consult.add_argument("--diff", metavar="DIFF_FILE", help="diff/patch to attach to the brief")
+    consult.add_argument(
+        "--rebuttals", type=int, default=1,
+        help="aimed rebuttal rounds on disagreement (0-1; default: 1)",
+    )
+    _add_common_args(consult, include_seat=False)
+    consult.set_defaults(func=cmd_consult)
 
     clean = sub.add_parser("clean", help="removes sessions past the TTL (retention)")
     clean.add_argument("--ttl-days", type=int, default=DEFAULT_TTL_DAYS, help=f"default: {DEFAULT_TTL_DAYS}")

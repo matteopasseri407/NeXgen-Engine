@@ -105,6 +105,11 @@ class ToolRegistry:
         #: to tell "backend worked, nothing found" from "backend failed".
         #: Cleared together with ``calls`` before each run.
         self.refusals: list[str] = []
+        #: Coverage of the latest source read: tool, args, offset, total
+        #: chars and whether it was truncated. The loop's ``continue_read``
+        #: resumes from here; empty when the last read was complete (or a
+        #: fake that records no coverage, which simply offers no continuation).
+        self.last_coverage: dict[str, Any] = {}
 
     # ------------------------------------------------------------------ audit
 
@@ -159,15 +164,36 @@ class ToolRegistry:
             return f"(lettura fallita: {exc})"
         if b"\x00" in data[:4096]:
             return "(file binario, non leggibile come testo)"
-        text = data.decode("utf-8", errors="replace")
-        if len(text) > self.cfg.read_chars:
-            text = text[: self.cfg.read_chars] + "\n[...troncato]"
-        return text
+        return data.decode("utf-8", errors="replace")
 
     def _cap(self, text: str) -> str:
         if len(text) > self.cfg.read_chars:
             text = text[: self.cfg.read_chars] + "\n[...troncato]"
         return text
+
+    def _windowed(self, name: str, args: dict[str, Any], text: str, offset: int = 0) -> str:
+        """One window of a source read with declared coverage.
+
+        The window starts at ``offset`` and spans ``read_chars``; when the
+        text continues past it, the footer names the exact resume point so
+        the loop (or a resumed session) can continue instead of
+        re-reading. Coverage is recorded for ``continue_read``.
+        """
+        total = len(text)
+        start = max(0, int(offset or 0))
+        chunk = text[start : start + self.cfg.read_chars]
+        truncated = start + len(chunk) < total
+        self.last_coverage = {
+            "tool": name,
+            "args": dict(args),
+            "offset": start,
+            "total": total,
+            "truncated": truncated,
+        }
+        if not truncated:
+            return self._record(name, args, text[start:])
+        resume_at = start + len(chunk)
+        return self._record(name, args, chunk + f"\n[...troncato — continua da {resume_at} su {total}]")
 
     # --------------------------------------------------------------- tools
 
@@ -220,19 +246,19 @@ class ToolRegistry:
             "search_vault", {"query": query}, "\n".join(rel for _, _, rel in scored[: self.cfg.max_results])
         )
 
-    def read_vault(self, path: str) -> str:
+    def read_vault(self, path: str, offset: int = 0) -> str:
         target = self._resolve(path, (self.cfg.vault_root,))
         if target is None:
             return self._refuse("read_vault", {"path": path}, "(rifiutato: percorso fuori perimetro o inesistente)")
-        return self._record("read_vault", {"path": path}, self._read_text(target))
+        return self._windowed("read_vault", {"path": path}, self._read_text(target), offset)
 
-    def read_repo(self, path: str) -> str:
+    def read_repo(self, path: str, offset: int = 0) -> str:
         target = self._resolve(path, self.cfg.repo_roots)
         if target is None:
             return self._refuse("read_repo", {"path": path}, "(rifiutato: percorso fuori perimetro o inesistente)")
-        return self._record("read_repo", {"path": path}, self._read_text(target))
+        return self._windowed("read_repo", {"path": path}, self._read_text(target), offset)
 
-    def read_pdf(self, path: str) -> str:
+    def read_pdf(self, path: str, offset: int = 0) -> str:
         target = self._resolve(path, (self.cfg.vault_root, *self.cfg.repo_roots))
         if target is None:
             return self._refuse("read_pdf", {"path": path}, "(rifiutato: percorso fuori perimetro o inesistente)")
@@ -247,9 +273,7 @@ class ToolRegistry:
         output = run.out.strip()
         if not output:
             return self._refuse("read_pdf", {"path": path}, "(nessun testo estraibile)")
-        if len(output) > self.cfg.read_chars:
-            output = output[: self.cfg.read_chars] + "\n[...troncato]"
-        return self._record("read_pdf", {"path": path}, output)
+        return self._windowed("read_pdf", {"path": path}, output, offset)
 
     def web_search(self, query: str) -> str:
         query = str(query).strip()
@@ -270,7 +294,7 @@ class ToolRegistry:
 
     # ------------------------------------------------- personal connectors
 
-    def _read_drive_pdf(self, file_id: str) -> str | None:
+    def _read_drive_pdf(self, file_id: str, offset: int = 0) -> str | None:
         """Drive-hosted PDF through pdftotext: download, convert, forget.
 
         Returns the text (recorded by the caller) or None when pdftotext is
@@ -303,7 +327,7 @@ class ToolRegistry:
                 "",
                 output,
             ]
-            return self._record("read_drive", {"id": file_id}, self._cap("\n".join(lines)))
+            return self._windowed("read_drive", {"id": file_id}, "\n".join(lines), offset)
         finally:
             if tmp is not None:
                 tmp.unlink(missing_ok=True)
@@ -338,7 +362,7 @@ class ToolRegistry:
                 lines.append(f"{hit['id']} |  |  | ")
         return self._record("search_mail", {"query": query}, "\n".join(lines))
 
-    def read_mail(self, mid: str) -> str:
+    def read_mail(self, mid: str, offset: int = 0) -> str:
         from .connectors import ConnectorError
         from .connectors import gmail as gmail_conn
 
@@ -365,7 +389,7 @@ class ToolRegistry:
             lines.append("\n(nota: solo anteprima disponibile, corpo non estraibile)")
         if msg.get("attachments"):
             lines.append("\nAllegati (nomi, non letti): " + ", ".join(msg["attachments"]))
-        return self._record("read_mail", {"id": mid}, self._cap("\n".join(lines)))
+        return self._windowed("read_mail", {"id": mid}, "\n".join(lines), offset)
 
     def search_drive(self, query: str) -> str:
         """Drive files matching the query, one per line with name/type/date."""
@@ -387,7 +411,7 @@ class ToolRegistry:
         ]
         return self._record("search_drive", {"query": query}, "\n".join(lines))
 
-    def read_drive(self, file_id: str) -> str:
+    def read_drive(self, file_id: str, offset: int = 0) -> str:
         from .connectors import ConnectorError
         from .connectors import drive as drive_conn
 
@@ -398,7 +422,7 @@ class ToolRegistry:
             doc = drive_conn.read_file(file_id)
         except ConnectorError as exc:
             if "non leggibile come testo" in exc.refusal and file_id:
-                text = self._read_drive_pdf(file_id)
+                text = self._read_drive_pdf(file_id, offset)
                 if text is not None:
                     return text
             return self._refuse("read_drive", {"id": file_id}, exc.refusal)
@@ -409,8 +433,8 @@ class ToolRegistry:
             "",
             str(doc.get("text", "")),
         ]
-        return self._record(
-            "read_drive", {"id": file_id, "name": doc.get("name", "")}, self._cap("\n".join(lines))
+        return self._windowed(
+            "read_drive", {"id": file_id, "name": doc.get("name", "")}, "\n".join(lines), offset
         )
 
     #: ISO dates (2026-10-01, optionally with a time) named in the query:
@@ -503,7 +527,7 @@ class ToolRegistry:
             "\n".join(calendar_conn.describe_event(item) for item in matching[: self.cfg.max_results]),
         )
 
-    def read_calendar(self, event_id: str) -> str:
+    def read_calendar(self, event_id: str, offset: int = 0) -> str:
         from .connectors import ConnectorError
         from .connectors import calendar as calendar_conn
 
@@ -523,7 +547,7 @@ class ToolRegistry:
             "",
             str(item.get("description", "")),
         ]
-        return self._record("read_calendar", {"id": event_id}, self._cap("\n".join(lines)))
+        return self._windowed("read_calendar", {"id": event_id}, "\n".join(lines), offset)
 
     def search_outlook(self, query: str) -> str:
         """Outlook ids matching the query, one per line with sender/subject/date.
@@ -554,7 +578,7 @@ class ToolRegistry:
                 lines.append(f"{hit['id']} |  |  | ")
         return self._record("search_outlook", {"query": query}, "\n".join(lines))
 
-    def read_outlook(self, mid: str) -> str:
+    def read_outlook(self, mid: str, offset: int = 0) -> str:
         from .connectors import ConnectorError
         from .connectors import outlook as outlook_conn
 
@@ -581,7 +605,7 @@ class ToolRegistry:
             lines.append("\n(nota: solo anteprima disponibile, corpo non estraibile)")
         if msg.get("attachments"):
             lines.append("\nAllegati (nomi, non letti): " + ", ".join(msg["attachments"]))
-        return self._record("read_outlook", {"id": mid}, self._cap("\n".join(lines)))
+        return self._windowed("read_outlook", {"id": mid}, "\n".join(lines), offset)
 
     def engine_status(self) -> str:
         from .config import default_engine_root
@@ -609,20 +633,27 @@ class ToolRegistry:
 
     def call(self, name: str, args: dict[str, Any]) -> str:
         """Dispatch by tool name; unknown names are refused, never guessed."""
+
+        def _offset(a: dict[str, Any]) -> int:
+            try:
+                return max(0, int(a.get("offset", 0) or 0))
+            except (TypeError, ValueError):
+                return 0
+
         table = {
             "search_vault": lambda a: self.search_vault(str(a.get("query", ""))),
-            "read_vault": lambda a: self.read_vault(str(a.get("path", ""))),
-            "read_repo": lambda a: self.read_repo(str(a.get("path", ""))),
-            "read_pdf": lambda a: self.read_pdf(str(a.get("path", ""))),
+            "read_vault": lambda a: self.read_vault(str(a.get("path", "")), _offset(a)),
+            "read_repo": lambda a: self.read_repo(str(a.get("path", "")), _offset(a)),
+            "read_pdf": lambda a: self.read_pdf(str(a.get("path", "")), _offset(a)),
             "web_search": lambda a: self.web_search(str(a.get("query", ""))),
             "search_mail": lambda a: self.search_mail(str(a.get("query", ""))),
-            "read_mail": lambda a: self.read_mail(str(a.get("id", ""))),
+            "read_mail": lambda a: self.read_mail(str(a.get("id", "")), _offset(a)),
             "search_drive": lambda a: self.search_drive(str(a.get("query", ""))),
-            "read_drive": lambda a: self.read_drive(str(a.get("id", ""))),
+            "read_drive": lambda a: self.read_drive(str(a.get("id", "")), _offset(a)),
             "search_calendar": lambda a: self.search_calendar(str(a.get("query", ""))),
-            "read_calendar": lambda a: self.read_calendar(str(a.get("id", ""))),
+            "read_calendar": lambda a: self.read_calendar(str(a.get("id", "")), _offset(a)),
             "search_outlook": lambda a: self.search_outlook(str(a.get("query", ""))),
-            "read_outlook": lambda a: self.read_outlook(str(a.get("id", ""))),
+            "read_outlook": lambda a: self.read_outlook(str(a.get("id", "")), _offset(a)),
             "engine_status": lambda a: self.engine_status(),
         }
         if name not in table:

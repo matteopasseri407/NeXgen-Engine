@@ -191,13 +191,25 @@ def cmd_close(args: argparse.Namespace) -> int:
 
 def cmd_explore(args: argparse.Namespace) -> int:
     from .llm import LLMError
+    from .research_graph import ResearchError, research_task
     from .steps import run_steps
 
     cfg = _config(args)
+    session_id = str(getattr(args, "session_id", "") or "")
+    if session_id == "new":
+        session_id = ""
+        start_persistent = True
+    else:
+        start_persistent = False
     try:
         llm = _llm(cfg)
+        if session_id or start_persistent:
+            summary = research_task(llm, cfg, args.task, session_id=session_id, max_steps=args.max_steps)
+            print(summary["answer"] or "(nessuna risposta: passaggio a un agente piu' capace)")
+            print(f"[sessione: {summary['session_id']} — stato: {summary['status']}]")
+            return 0 if summary["status"] == "answer" else 1
         result = run_steps(llm, ToolRegistry(cfg), cfg, args.task, max_steps=args.max_steps)
-    except LLMError as exc:
+    except (LLMError, ResearchError) as exc:
         print(f"nexgen-local: {exc}", file=sys.stderr)
         return 2
     if args.json:
@@ -676,6 +688,7 @@ def main(argv: list[str] | None = None) -> int:
     explore = sub.add_parser("explore", help="loop agentico limitato: il modello sceglie l'azione dal menu del motore")
     explore.add_argument("task")
     explore.add_argument("--max-steps", type=int, default=6)
+    explore.add_argument("--session-id", default="", help="continua la sessione di ricerca (vuoto: effimero, 'new': nuova persistente)")
     explore.add_argument("--model")
     explore.add_argument("--router-model")
     explore.add_argument("--answer-model")

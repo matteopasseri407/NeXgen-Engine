@@ -54,6 +54,9 @@ from .tools import ToolError, ToolRegistry, audit_event
 MAX_STEPS = 6
 #: The menu never grows beyond this: a short closed list, not a catalog.
 MAX_MENU = 5
+#: Continuations of a truncated read before the loop must answer or escalate:
+#: 4 windows of read_chars keep even a long document bounded for a 12B.
+MAX_CONTINUATIONS = 3
 #: One observation line is truncated to this; the prompt keeps only the last
 #: MAX_PROMPT_OBSERVATIONS of them plus a counter for the earlier steps.
 MAX_OBSERVATION_CHARS = 400
@@ -74,6 +77,7 @@ DECISION_SYSTEM = (
     "poi answer citando l'id della proposta. Niente parte senza conferma umana. "
     "Per le ricerche usa una query breve e diversa da quelle gia' provate. "
     "Se hai gia' letto contenuto sufficiente, scegli answer: non cercare ancora per abitudine. "
+    "Se l'ultima lettura e' troncata e ti serve il resto, scegli continue_read prima di answer. "
     "Scegli escalate quando serve un agente piu' capace."
 )
 
@@ -167,6 +171,12 @@ class LoopState:
     last_mail_id: str = ""
     mail_draft: str = ""
     upload_proposal: str = ""
+    #: Last source read that can be continued: engine-known tool, args and
+    #: coverage straight from the registry. Empty when the last read was
+    #: complete (or a fake that records no coverage).
+    last_read: dict[str, Any] = field(default_factory=dict)
+    #: Windows already consumed on the current read: bounded, never a drain.
+    continuations: int = 0
     #: Rendered proposal blocks for the final answer prompt: the answer is
     #: built from collected content, so a proposal the prompt never sees is
     #: a proposal the answer can never cite.
@@ -298,6 +308,8 @@ def build_menu(cfg: LaneConfig, state: LoopState) -> list[Candidate]:
             # Escalation stays available through real failures, not as a choice.
             return [Candidate("propose_upload", state.tried_paths[-1])]
         menu = [Candidate("answer")]
+        if _can_continue(state):
+            menu.append(Candidate("continue_read"))
         if state.empty_streak < MAX_EMPTY_STREAK:
             if state.route == "web":
                 menu.append(Candidate("search_web"))
@@ -314,9 +326,13 @@ def build_menu(cfg: LaneConfig, state: LoopState) -> list[Candidate]:
             # as a choice: escalation stays available through real failures,
             # not as a way out. Unread hits remain readable.
             menu = [Candidate("draft_mail")]
+            if _can_continue(state):
+                menu.append(Candidate("continue_read"))
             menu += [Candidate("read_mail", mid) for mid in state.mail_ids if mid not in state.read_ids][: MAX_MENU - 1]
             return menu[:MAX_MENU]
         menu = [Candidate("answer")]
+        if _can_continue(state):
+            menu.append(Candidate("continue_read"))
         # Unread hits stay readable: comparing two results never requires
         # finding them again. Re-search of the same source follows, when
         # there is room and retries remain; escalation always closes.
@@ -462,7 +478,7 @@ def validate_action(cfg: LaneConfig, state: LoopState, menu: list[Candidate], ac
             if _overlap(_tokens(arg), _tokens(tried)) >= QUERY_OVERLAP:
                 return "query troppo simile a una gia' provata"
         return None
-    if action in ("answer", "escalate"):
+    if action in ("answer", "escalate", "continue_read"):
         if action == "answer":
             pending = _pending_unread(state)
             if pending:
@@ -481,7 +497,13 @@ def validate_action(cfg: LaneConfig, state: LoopState, menu: list[Candidate], ac
 _ACTION_HELP = {
     "draft_mail": "prepara la bozza, NON invia niente",
     "propose_upload": "prepara la proposta, NON carica niente",
+    "continue_read": "continua la lettura troncata dal punto indicato",
 }
+
+
+def _can_continue(state: LoopState) -> bool:
+    """True when the last read was truncated and windows remain."""
+    return bool(state.last_read.get("truncated")) and state.continuations < MAX_CONTINUATIONS
 
 
 def decision_prompt(state: LoopState, menu: list[Candidate]) -> str:
@@ -558,6 +580,18 @@ def _ask_with_reason(
 # ------------------------------------------------------------- execution
 
 
+#: Which collected store a continued chunk joins, by read action.
+_READ_STORES = {
+    "read_mail": "mail",
+    "read_drive": "drive",
+    "read_outlook": "outlook",
+    "read_calendar": "calendar",
+    "read_vault": "reads",
+    "read_repo": "reads",
+    "read_pdf": "reads",
+}
+
+
 def _execute(llm: LLM, tools: ToolRegistry, state: LoopState, action: str, arg: str) -> None:
     if action == "search_vault":
         output = tools.search_vault(arg, require_all=True)
@@ -623,6 +657,7 @@ def _execute(llm: LLM, tools: ToolRegistry, state: LoopState, action: str, arg: 
             state.reads.append(f"[{dest}]\n{sanitize_content(output)}")
             state.tried_paths.append(dest)
             state.empty_streak = 0
+            state.last_read = dict(tools.last_coverage)
         state.content_seen.append(sanitize_content(output))
         state.observations.append(_observe("read_file", rel, output))
     elif action in ("read_mail", "read_drive"):
@@ -631,6 +666,7 @@ def _execute(llm: LLM, tools: ToolRegistry, state: LoopState, action: str, arg: 
             store = state.mail if action == "read_mail" else state.drive
             store.append(sanitize_content(output))
             state.empty_streak = 0
+            state.last_read = dict(tools.last_coverage)
             if arg not in state.read_ids:
                 state.read_ids.append(arg)
             if action == "read_mail":
@@ -642,6 +678,7 @@ def _execute(llm: LLM, tools: ToolRegistry, state: LoopState, action: str, arg: 
         if not _empty(output):
             state.outlook.append(sanitize_content(output))
             state.empty_streak = 0
+            state.last_read = dict(tools.last_coverage)
             if arg not in state.read_ids:
                 state.read_ids.append(arg)
         state.content_seen.append(sanitize_content(output))
@@ -651,10 +688,31 @@ def _execute(llm: LLM, tools: ToolRegistry, state: LoopState, action: str, arg: 
         if not _empty(output):
             state.calendar.append(sanitize_content(output))
             state.empty_streak = 0
+            state.last_read = dict(tools.last_coverage)
             if arg not in state.read_ids:
                 state.read_ids.append(arg)
         state.content_seen.append(sanitize_content(output))
         state.observations.append(_observe("read_calendar", arg, output))
+    elif action == "continue_read":
+        last = state.last_read
+        if not last.get("truncated") or state.continuations >= MAX_CONTINUATIONS:
+            raise ToolError("niente da continuare: lettura completa o tetto raggiunto")
+        tool = str(last.get("tool", ""))
+        args = dict(last.get("args", {}))
+        args["offset"] = int(last.get("offset", 0)) + tools.cfg.read_chars
+        output = tools.call(tool, args)
+        if _empty(output):
+            # The source shrank mid-read: no chunk, no spiral. The loop
+            # rebuilds the menu from here (answer is offered again).
+            state.last_read = {}
+        else:
+            store = getattr(state, _READ_STORES.get(tool, "reads"))
+            store.append(sanitize_content(output))
+            state.continuations += 1
+            state.empty_streak = 0
+            state.last_read = dict(tools.last_coverage)
+        state.content_seen.append(sanitize_content(output))
+        state.observations.append(_observe("continue_read", "", output))
     elif action == "draft_mail":
         from .compose import MailError, mail_envelope, propose_mail_from_context
 
@@ -735,6 +793,176 @@ def _correct_answer(llm: LLM, task: str, collected: str, answer: str, problems: 
         return ""
 
 
+def decide_step(
+    llm: LLM, cfg: LaneConfig, state: LoopState, menu: list[Candidate], result: StepResult,
+    step_started: float,
+) -> tuple[str, str] | None:
+    """One engine-menu/model-choice/validation round; shared by every driver.
+
+    Returns (action, arg) when the step proceeds; appends the Decision and
+    returns None when the loop must escalate. An ``answer`` or ``escalate``
+    choice is returned normally: the caller finishes or stops.
+    """
+    actions = sorted({candidate.action for candidate in menu})
+    ask_started = time.time()
+    decision = _ask(llm, state, menu, actions)
+    decide_s = round(time.time() - ask_started, 2)
+    if decision is None:
+        result.decisions.append(
+            Decision(
+                state.step,
+                "escalate",
+                "",
+                "",
+                ok=False,
+                detail="output non valido dopo la riparazione",
+                elapsed_s=round(time.time() - step_started, 2),
+                decide_s=decide_s,
+            )
+        )
+        return None
+    action = str(decision.get("action") or "")
+    arg = str(decision.get("arg") or "")
+    why = str(decision.get("why") or "")
+    note = ""
+    problem = validate_action(cfg, state, menu, action, arg)
+    if problem == "query vuota" and action.startswith("search"):
+        # An empty slot is a slip, not defiance: one reasoned repair.
+        # Policy refusals (off-menu, content-steered, duplicates) still
+        # escalate immediately and are never retried.
+        result.decisions.append(
+            Decision(
+                state.step,
+                action,
+                arg,
+                why,
+                ok=False,
+                detail=problem,
+                elapsed_s=round(time.time() - step_started, 2),
+                decide_s=decide_s,
+            )
+        )
+        audit_event(cfg, "step_refused", {"action": action, "arg": arg, "detail": problem}, ok=False, chars=0)
+        repaired = _ask_with_reason(llm, state, menu, actions, problem)
+        if repaired is None:
+            result.decisions.append(
+                Decision(
+                    state.step,
+                    "escalate",
+                    "",
+                    "",
+                    ok=False,
+                    detail="output non valido dopo la riparazione",
+                    elapsed_s=round(time.time() - step_started, 2),
+                    decide_s=decide_s,
+                )
+            )
+            return None
+        action = str(repaired.get("action") or "")
+        arg = str(repaired.get("arg") or "")
+        why = str(repaired.get("why") or "")
+        problem = validate_action(cfg, state, menu, action, arg)
+        if problem == "query vuota" and action.startswith("search"):
+            # Still empty after the repair: the model abdicated the slot,
+            # so the engine fills it from the task terms — the same query
+            # run_lane builds when the model is not involved at all. Task
+            # words are trusted by construction, so this always validates.
+            filled = " ".join(terms(state.task)[:4])
+            if filled:
+                arg = filled
+                note = "query compilata dal motore (slot vuoto)"
+                problem = validate_action(cfg, state, menu, action, arg)
+    if problem:
+        # A failed validation is never retried: the loop escalates.
+        result.decisions.append(
+            Decision(
+                state.step,
+                action,
+                arg,
+                why,
+                ok=False,
+                detail=problem,
+                elapsed_s=round(time.time() - step_started, 2),
+                decide_s=decide_s,
+            )
+        )
+        audit_event(cfg, "step_refused", {"action": action, "arg": arg, "detail": problem}, ok=False, chars=0)
+        return None
+    result.decisions.append(Decision(state.step, action, arg, why, ok=True, decide_s=decide_s, detail=note))
+    return action, arg
+
+
+def finish_answer(
+    llm: LLM, tools: ToolRegistry, cfg: LaneConfig, state: LoopState,
+    route: dict[str, Any], task: str, canaries: Iterable[str],
+    result: StepResult, step_started: float,
+    receipts: list[dict[str, Any]] | None = None,
+    refusals: list[str] | None = None,
+) -> None:
+    """Build the final answer from collected content; shared by every driver.
+
+    ``receipts``/``refusals`` default to this run's registry; the persistent
+    research driver passes the session-accumulated ones instead, so the
+    claim check sees every source the answer was built from.
+    """
+    from types import SimpleNamespace
+
+    blocks = [
+        *state.reads,
+        *state.web,
+        *state.mail,
+        *state.drive,
+        *state.calendar,
+        *state.outlook,
+    ]
+    # Proposals are engine facts with ids the answer must cite:
+    # without them the draft exists but the user never sees it.
+    if state.mail_draft_preview:
+        blocks.append(sanitize_content(state.mail_draft_preview))
+    if state.upload_preview:
+        blocks.append(sanitize_content(state.upload_preview))
+    collected = "\n\n".join(blocks)
+    if receipts is None:
+        receipts = [{"tool": call.name, "args": call.args, "ok": call.ok} for call in tools.calls]
+    if refusals is None:
+        refusals = list(tools.refusals)
+    calls = [SimpleNamespace(name=c.get("tool", ""), args=c.get("args", {}), ok=c.get("ok", False)) for c in receipts]
+    outcome = retrieval_outcome(calls, refusals, collected)
+    if outcome == "ok":
+        answer = answer_task(
+            llm, cfg, task, collected, str(route.get("source")), sources=sources_from_receipts(calls)
+        )
+        problems = verify_answer(answer, receipts, collected)
+        if problems:
+            # One guided correction, kept only when it actually improves.
+            corrected = _correct_answer(llm, task, collected, answer, problems)
+            if corrected:
+                result.corrections += 1
+                corrected_problems = verify_answer(corrected, receipts, collected)
+                if len(corrected_problems) < len(problems):
+                    answer = corrected
+                    problems = corrected_problems
+                    result.correction_used = True
+    else:
+        # Requested retrieval came up empty or failed: the engine
+        # states the outcome itself instead of letting the model
+        # report the void.
+        answer = engine_sentence(outcome)
+        problems = verify_answer(answer, receipts, collected)
+    result.answer = answer
+    if state.proposal_footers:
+        # Engine facts, appended verbatim after the model's prose:
+        # id, recipient and approval command reach the user even
+        # when the model stays terse. The claim check ran on the
+        # model's own words above; this footer claims nothing.
+        result.answer = (result.answer + "\n\n" + "\n".join(state.proposal_footers)).strip()
+    result.collected = collected
+    result.confabulation = bool(problems)
+    result.problems = problems
+    result.injection = check_canary(answer, canaries)
+    result.decisions[-1].elapsed_s = round(time.time() - step_started, 2)
+
+
 def run_steps(
     llm: LLM,
     tools: ToolRegistry,
@@ -766,150 +994,17 @@ def run_steps(
         state.step += 1
         step_started = time.time()
         menu = build_menu(cfg, state)
-        actions = sorted({candidate.action for candidate in menu})
-        ask_started = time.time()
-        decision = _ask(llm, state, menu, actions)
-        decide_s = round(time.time() - ask_started, 2)
-        if decision is None:
-            result.decisions.append(
-                Decision(
-                    state.step,
-                    "escalate",
-                    "",
-                    "",
-                    ok=False,
-                    detail="output non valido dopo la riparazione",
-                    elapsed_s=round(time.time() - step_started, 2),
-                    decide_s=decide_s,
-                )
-            )
+        decided = decide_step(llm, cfg, state, menu, result, step_started)
+        if decided is None:
             escalated = True
             break
-        action = str(decision.get("action") or "")
-        arg = str(decision.get("arg") or "")
-        why = str(decision.get("why") or "")
-        note = ""
-        problem = validate_action(cfg, state, menu, action, arg)
-        if problem == "query vuota" and action.startswith("search"):
-            # An empty slot is a slip, not defiance: one reasoned repair.
-            # Policy refusals (off-menu, content-steered, duplicates) still
-            # escalate immediately and are never retried.
-            result.decisions.append(
-                Decision(
-                    state.step,
-                    action,
-                    arg,
-                    why,
-                    ok=False,
-                    detail=problem,
-                    elapsed_s=round(time.time() - step_started, 2),
-                    decide_s=decide_s,
-                )
-            )
-            audit_event(cfg, "step_refused", {"action": action, "arg": arg, "detail": problem}, ok=False, chars=0)
-            repaired = _ask_with_reason(llm, state, menu, actions, problem)
-            if repaired is None:
-                result.decisions.append(
-                    Decision(
-                        state.step,
-                        "escalate",
-                        "",
-                        "",
-                        ok=False,
-                        detail="output non valido dopo la riparazione",
-                        elapsed_s=round(time.time() - step_started, 2),
-                        decide_s=decide_s,
-                    )
-                )
-                escalated = True
-                break
-            action = str(repaired.get("action") or "")
-            arg = str(repaired.get("arg") or "")
-            why = str(repaired.get("why") or "")
-            problem = validate_action(cfg, state, menu, action, arg)
-            if problem == "query vuota" and action.startswith("search"):
-                # Still empty after the repair: the model abdicated the slot,
-                # so the engine fills it from the task terms — the same query
-                # run_lane builds when the model is not involved at all. Task
-                # words are trusted by construction, so this always validates.
-                filled = " ".join(terms(state.task)[:4])
-                if filled:
-                    arg = filled
-                    note = "query compilata dal motore (slot vuoto)"
-                    problem = validate_action(cfg, state, menu, action, arg)
-        if problem:
-            # A failed validation is never retried: the loop escalates.
-            result.decisions.append(
-                Decision(
-                    state.step,
-                    action,
-                    arg,
-                    why,
-                    ok=False,
-                    detail=problem,
-                    elapsed_s=round(time.time() - step_started, 2),
-                    decide_s=decide_s,
-                )
-            )
-            audit_event(cfg, "step_refused", {"action": action, "arg": arg, "detail": problem}, ok=False, chars=0)
-            escalated = True
-            break
-        result.decisions.append(Decision(state.step, action, arg, why, ok=True, decide_s=decide_s, detail=note))
+        action, arg = decided
         if action == "escalate":
             result.decisions[-1].elapsed_s = round(time.time() - step_started, 2)
             escalated = True
             break
         if action == "answer":
-            blocks = [
-                *state.reads,
-                *state.web,
-                *state.mail,
-                *state.drive,
-                *state.calendar,
-                *state.outlook,
-            ]
-            # Proposals are engine facts with ids the answer must cite:
-            # without them the draft exists but the user never sees it.
-            if state.mail_draft_preview:
-                blocks.append(sanitize_content(state.mail_draft_preview))
-            if state.upload_preview:
-                blocks.append(sanitize_content(state.upload_preview))
-            collected = "\n\n".join(blocks)
-            receipts = [{"tool": call.name, "args": call.args, "ok": call.ok} for call in tools.calls]
-            outcome = retrieval_outcome(tools.calls, tools.refusals, collected)
-            if outcome == "ok":
-                answer = answer_task(
-                    llm, cfg, task, collected, str(route.get("source")), sources=sources_from_receipts(tools.calls)
-                )
-                problems = verify_answer(answer, receipts, collected)
-                if problems:
-                    # One guided correction, kept only when it actually improves.
-                    corrected = _correct_answer(llm, task, collected, answer, problems)
-                    if corrected:
-                        result.corrections += 1
-                        corrected_problems = verify_answer(corrected, receipts, collected)
-                        if len(corrected_problems) < len(problems):
-                            answer = corrected
-                            problems = corrected_problems
-                            result.correction_used = True
-            else:
-                # Requested retrieval came up empty or failed: the engine
-                # states the outcome itself instead of letting the model
-                # report the void.
-                answer = engine_sentence(outcome)
-                problems = verify_answer(answer, receipts, collected)
-            result.answer = answer
-            if state.proposal_footers:
-                # Engine facts, appended verbatim after the model's prose:
-                # id, recipient and approval command reach the user even
-                # when the model stays terse. The claim check ran on the
-                # model's own words above; this footer claims nothing.
-                result.answer = (result.answer + "\n\n" + "\n".join(state.proposal_footers)).strip()
-            result.collected = collected
-            result.confabulation = bool(problems)
-            result.problems = problems
-            result.injection = check_canary(answer, canaries)
-            result.decisions[-1].elapsed_s = round(time.time() - step_started, 2)
+            finish_answer(llm, tools, cfg, state, route, task, canaries, result, step_started)
             break
         try:
             _execute(llm, tools, state, action, arg)
