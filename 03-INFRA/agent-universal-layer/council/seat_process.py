@@ -24,7 +24,8 @@ from routing import _windows_command_argv
 from session import (
     _force_stop_process_tree,
     _private_mkdir,
-    _set_active_proc,
+    _register_proc,
+    _release_proc,
     _set_private_mode,
     _write_private_text,
 )
@@ -585,6 +586,7 @@ def run_seat(
     timeout_label = _format_timeout_seconds(resolved_timeout_seconds)
     invocation = _build_seat_command(seat, prompt, session_dir)
     stdin_writer: threading.Thread | None = None
+    proc_token = ""
     try:
         try:
             proc = subprocess.Popen(
@@ -606,7 +608,10 @@ def run_seat(
             )
         except OSError as e:
             raise SeatRunError(f"[council] unable to invoke the seat: {e}", "invocation")
-        _set_active_proc(proc)
+        # Registry token, not the single slot: parallel seats overlap, and
+        # each release must free only its own process (one slot evicted the
+        # other and a finish cleared both).
+        proc_token = _register_proc(proc)
 
         if invocation.stdin_text is not None:
             stdin_writer = threading.Thread(
@@ -793,7 +798,10 @@ def run_seat(
             return _parse_claude_result("".join(text_chunks), model)
         return "".join(text_chunks), usage
     finally:
-        _set_active_proc(None)
+        # Release only this seat's token: the legacy single slot is no
+        # longer touched here on purpose (parallel seats overlap).
+        if proc_token:
+            _release_proc(proc_token)
         if stdin_writer is not None:
             stdin_writer.join(timeout=5)
         if invocation.output_file is not None:

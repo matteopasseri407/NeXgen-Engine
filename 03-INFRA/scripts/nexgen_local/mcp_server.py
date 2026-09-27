@@ -64,9 +64,9 @@ def tool_ask(cfg: LaneConfig, llm: LLM, question: str) -> str:
 def tool_explore(cfg: LaneConfig, llm: LLM, task: str, max_steps: int = 6, session_id: str = "") -> str:
     """Bounded action loop exposed as a service: menu, choices, receipts.
 
-    Empty ``session_id`` runs the ephemeral loop; otherwise the instruction
-    continues the persistent research session (new task text, same sources,
-    receipts and staged proposals). Staging only, never applied.
+    Empty ``session_id`` runs the ephemeral loop; ``"new"`` starts a new
+    persistent research session (same ``--session-id new`` as the CLI);
+    any other id continues that session. Staging only, never applied.
     """
     from .research_graph import ResearchError, research_task
     from .steps import run_steps
@@ -83,13 +83,15 @@ def tool_explore(cfg: LaneConfig, llm: LLM, task: str, max_steps: int = 6, sessi
             detail = f" — {decision.detail}" if decision.detail else ""
             lines.append(f"[passo {decision.step}: {decision.action} {decision.arg} [{mark}]{detail}]")
         return "\n".join(lines) + _footer(result.receipts) + _problems_footer(result.problems)
+    if session_id == "new":
+        session_id = ""
     try:
         summary = research_task(llm, cfg, task, session_id=session_id, max_steps=max_steps)
     except ResearchError as exc:
         return f"(rifiutato: {exc})"
     lines = [summary["answer"] or "(nessuna risposta: passaggio a un agente piu' capace)"]
     lines.append(f"[sessione: {summary['session_id']} — stato: {summary['status']}]")
-    return "\n".join(lines)
+    return "\n".join(lines) + _problems_footer(summary.get("problems", []))
 
 
 def tool_research(cfg: LaneConfig, llm: LLM, topic: str) -> str:
@@ -165,7 +167,8 @@ def build_server(
         description=(
             "Ciclo guidato a piu' passi: il motore propone il menu, il modello sceglie "
             "(sola lettura, max_steps 1-6). Con session_id continua una ricerca "
-            "persistente (stesse fonti, letture e proposte) invece di ricominciare."
+            "persistente (stesse fonti, letture e proposte) invece di ricominciare; "
+            "session_id='new' ne avvia una."
         )
     )
     def lane_explore(task: str, max_steps: int = 6, session_id: str = "") -> str:

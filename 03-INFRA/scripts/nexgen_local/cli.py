@@ -207,6 +207,9 @@ def cmd_explore(args: argparse.Namespace) -> int:
             summary = research_task(llm, cfg, args.task, session_id=session_id, max_steps=args.max_steps)
             print(summary["answer"] or "(nessuna risposta: passaggio a un agente piu' capace)")
             print(f"[sessione: {summary['session_id']} — stato: {summary['status']}]")
+            _warn_unverified(summary.get("problems", []))
+            if summary.get("problems"):
+                return 1
             return 0 if summary["status"] == "answer" else 1
         result = run_steps(llm, ToolRegistry(cfg), cfg, args.task, max_steps=args.max_steps)
     except (LLMError, ResearchError) as exc:

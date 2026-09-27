@@ -275,7 +275,18 @@ chunks consumed with their coverage, staged proposals and receipts persist;
 sessions sweep by age (30 days) and hold working state only, never vault
 memory. Approval gates stay outside: a resumed session stages proposals
 through the same propose paths and never applies — it cannot double-apply,
-and authorization remains the engine's job in the gates.
+and authorization remains the engine's job in the gates. Checkpoints live
+under `research_dir` with directory 700 and sqlite 600, like council
+sessions: mail bodies must not rely on a protective parent directory.
+
+Each interaction gets a fresh step budget (the cap is per instruction, not
+per session lifetime) and fresh continuations; sources, receipts, staged
+proposals and the last read's resume point carry over, while intents
+(reply/upload) and the route follow the NEW instruction — a "confronta col
+contratto" after a mail run pivots the menu's re-search to Drive. The
+claim-check verdict travels in the summary too: a confabulating answer
+still answers, but the CLI warns on stderr and exits 1, and MCP appends
+the warning footer. Silence would be a lie the exit code tells.
 
 Reads are windowed, not silently capped: every source read carries declared
 coverage (`offset/total/truncated`), truncation names the exact resume

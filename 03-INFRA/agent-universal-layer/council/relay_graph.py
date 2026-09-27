@@ -238,11 +238,19 @@ def _node_complete_attempt(ctx: "_NodeContext") -> dict[str, Any]:
 
 
 def _route_after_attempt(state: RelayGraphState) -> str:
+    """Next node after an attempt: same stage retries, completed advances.
+
+    Completion is per-STAGE, not per-records: ``records`` only grows on
+    success, so a quarantined attempt on stage N with N-1 records must
+    route back to ``begin`` (pick the fallback for the same stage), never
+    to ``next`` (which would skip the stage and index past the end).
+    """
     records = state.get("records", [])
-    if not records:
+    total = len(state.get("stages", []))
+    index = int(state.get("index", 0))
+    if len(records) <= index:
         return "begin"
     last = records[-1]
-    total = len(state.get("stages", []))
     done = len(records)
     if last.get("verdict") == "REJECT" and not state.get("continue_on_reject") and done < total:
         return "finalize"

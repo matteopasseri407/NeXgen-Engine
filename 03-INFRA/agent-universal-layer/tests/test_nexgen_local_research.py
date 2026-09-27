@@ -87,58 +87,80 @@ def _cfg(tmp_path: Path, **over) -> LaneConfig:
     return LaneConfig(**args)
 
 
-def _mail_llm(monkeypatch: pytest.MonkeyPatch, applied: list) -> ScriptedLLM:
+def test_guide_case_compares_mail_and_contract_then_drafts(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Il caso guida su tre interazioni: contratto, poi mail (pivot di fonte
+    alla ripresa), poi risposta — bozza sì, invio mai, fonti conservate."""
     import nexgen_local.compose as compose_module
-    import nexgen_local.connectors.gmail as gmail_conn
+    import nexgen_local.research_graph as rg
 
-    monkeypatch.setattr(
-        gmail_conn, "get_message",
-        lambda mid, http=None: {"id": mid, "from": "a@b.cc", "to": "", "subject": "Budget",
-                                "date": "", "message-id": "", "snippet": "", "body": "B", "attachments": []},
-    )
+    cfg = _cfg(tmp_path)
     monkeypatch.setattr(
         compose_module, "apply_mail",
         lambda *a, **k: (_ for _ in ()).throw(AssertionError("apply chiamato in ricerca!")),
     )
-    return ScriptedLLM(
-        route={"source": "mail", "keywords": ["budget"]},
-        decisions=[
-            {"action": "search_mail", "arg": "budget"},
-            {"action": "read_mail", "arg": "m1"},
-            {"action": "draft_mail", "arg": ""},
-            {"action": "answer", "arg": ""},
-        ],
-        answers=["Confermo tutto.", "Bozza pronta per a@b.cc."],
-    )
-
-
-def test_guide_case_stages_but_never_applies(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Trova la mail, confronta col contratto, prepara la risposta: proposta sì, invio mai."""
-    import nexgen_local.research_graph as rg
-
-    cfg = _cfg(tmp_path)
-    applied: list = []
-    llm = _mail_llm(monkeypatch, applied)
     monkeypatch.setattr(rg, "ToolRegistry", lambda cfg: ComboRegistry(cfg))
 
-    summary = research_task(llm, cfg, "Rispondi alla mail sul budget confrontando il contratto.")
-    assert summary["status"] == "answer"
-    assert summary["collected_proposals"]["mail_draft"], "la bozza deve esistere"
-    assert applied == [], "nessun apply in nessun caso"
-    assert (tmp_path / "mails").glob("*.json") and len(list((tmp_path / "mails").glob("*.json"))) == 1
-    assert "a@b.cc" in summary["answer"] or "m1" in summary["answer"]
-
-    # Continuare non duplica la proposta né applica.
-    llm2 = ScriptedLLM(
-        route={"source": "mail", "keywords": ["budget"]},
-        decisions=[{"action": "answer", "arg": ""}],
-        answers=["Confermo, bozza invariata."],
+    first = research_task(
+        ScriptedLLM(
+            route={"source": "drive", "keywords": ["contratto"]},
+            decisions=[
+                {"action": "search_drive", "arg": "contratto"},
+                {"action": "read_drive", "arg": "d1"},
+                {"action": "answer", "arg": ""},
+            ],
+            answers=["Il contratto dice X."],
+        ),
+        cfg, "Trova il contratto su Drive.",
     )
-    summary2 = research_task(llm2, cfg, "Va bene cosi'.", session_id=summary["session_id"])
-    assert summary2["status"] == "answer"
-    assert applied == []
+    assert first["status"] == "answer"
+
+    second = research_task(
+        ScriptedLLM(
+            route={"source": "mail", "keywords": ["budget"]},
+            decisions=[
+                {"action": "search_mail", "arg": "budget"},
+                {"action": "read_mail", "arg": "m1"},
+                {"action": "answer", "arg": ""},
+            ],
+            answers=["La mail chiede Y, il contratto dice X."],
+        ),
+        cfg, "Ora trova la mail sul budget e confrontala col contratto.",
+        session_id=first["session_id"],
+    )
+    assert second["status"] == "answer"
+    targets = [item["target"] for item in second["reads"]]
+    assert "d1" in targets and "m1" in targets, "entrambe le fonti restano nella sessione"
+
+    third = research_task(
+        ScriptedLLM(
+            route={"source": "mail", "keywords": ["budget"]},
+            decisions=[
+                {"action": "draft_mail", "arg": ""},
+                {"action": "answer", "arg": ""},
+            ],
+            answers=["Confermo tenendo conto del contratto.", "Risposta pronta con confronto."],
+        ),
+        cfg, "Rispondi alla mail tenendo conto del confronto.",
+        session_id=first["session_id"],
+    )
+    assert third["status"] == "answer"
+    assert third["collected_proposals"]["mail_draft"], "la bozza deve esistere"
+    assert len(list((tmp_path / "mails").glob("*.json"))) == 1, "una sola bozza, mai duplicata"
+    assert "d1" in third["status_block"] and "m1" in third["status_block"]
+
+    # Continuare ancora non duplica la proposta né applica.
+    fourth = research_task(
+        ScriptedLLM(
+            route={"source": "mail", "keywords": ["budget"]},
+            decisions=[{"action": "answer", "arg": ""}],
+            answers=["Confermo, bozza invariata."],
+        ),
+        cfg, "Va bene cosi'.",
+        session_id=first["session_id"],
+    )
+    assert fourth["status"] == "answer"
     assert len(list((tmp_path / "mails").glob("*.json"))) == 1
-    assert summary2["collected_proposals"]["mail_draft"] == summary["collected_proposals"]["mail_draft"]
+    assert fourth["collected_proposals"]["mail_draft"] == third["collected_proposals"]["mail_draft"]
 
 
 def test_continue_opens_second_result_without_research(
@@ -225,3 +247,131 @@ def test_unknown_session_refuses_without_model(tmp_path: Path) -> None:
     with pytest.raises(ResearchError, match="inesistente"):
         research_task(llm, cfg, "continua", session_id="nope")
     assert llm.calls == 0
+
+
+def _confab_llm() -> ScriptedLLM:
+    return ScriptedLLM(
+        route={"source": "vault", "keywords": ["gatti"]},
+        decisions=[
+            {"action": "search_vault", "arg": "gatti"},
+            {"action": "read_file", "arg": "gatti.md"},
+            {"action": "answer", "arg": ""},
+        ],
+        answers=[
+            "Ho eseguito i test. File aggiornato e test superati.",
+            "Ho eseguito i test. File aggiornato e verificato.",
+        ],
+    )
+
+
+def _write_gatti(tmp_path: Path) -> None:
+    vault = tmp_path / "vault"
+    vault.mkdir(exist_ok=True)
+    (vault / "gatti.md").write_text("Nota sui gatti.\n", encoding="utf-8")
+
+
+def test_confabulation_is_surfaced_not_silent(tmp_path: Path) -> None:
+    """Risposta inventata: problems/confabulation nel summary, non successo pulito."""
+    _write_gatti(tmp_path)
+    cfg = _cfg(tmp_path)
+    summary = research_task(_confab_llm(), cfg, "Leggi la nota gatti.")
+    assert summary["status"] == "answer"
+    assert summary["problems"], "il verificatore ha rilevato, il summary deve riportare"
+    assert summary["confabulation"] is True
+
+
+def test_cli_persistent_confabulation_fails(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys) -> None:
+    """Stesso caso da CLI: avviso su stderr e uscita 1, non 0."""
+    import argparse
+
+    from nexgen_local import cli as cli_module
+
+    _write_gatti(tmp_path)
+    cfg = _cfg(tmp_path)
+    monkeypatch.setattr(cli_module, "_config", lambda args: cfg)
+    monkeypatch.setattr(cli_module, "_llm", lambda cfg: _confab_llm())
+    args = argparse.Namespace(task="Leggi la nota gatti.", session_id="new", max_steps=6, json=False)
+    assert cli_module.cmd_explore(args) == 1
+    assert "ATTENZIONE" in capsys.readouterr().err
+
+
+def test_mcp_new_starts_persistent_session(tmp_path: Path) -> None:
+    """Da MCP session_id='new' avvia una sessione, non 'inesistente'."""
+    from nexgen_local.mcp_server import tool_explore
+
+    _write_gatti(tmp_path)
+    cfg = _cfg(tmp_path)
+    llm = ScriptedLLM(
+        route={"source": "vault", "keywords": ["gatti"]},
+        decisions=[
+            {"action": "search_vault", "arg": "gatti"},
+            {"action": "read_file", "arg": "gatti.md"},
+            {"action": "answer", "arg": ""},
+        ],
+        answers=["I gatti nella nota."],
+    )
+    out = tool_explore(cfg, llm, "Leggi la nota gatti.", session_id="new")
+    assert "(rifiutato" not in out
+    assert "[sessione:" in out
+    assert list((tmp_path / "research").glob("research-*.sqlite")), "checkpoint persistito"
+
+
+def test_steps_budget_is_per_interaction(tmp_path: Path) -> None:
+    """Prima interazione al tetto, ripresa con budget fresco: legge davvero."""
+    _write_gatti(tmp_path)
+    cfg = _cfg(tmp_path)
+    first = research_task(
+        ScriptedLLM(
+            route={"source": "vault", "keywords": ["gatti"]},
+            decisions=[
+                {"action": "search_vault", "arg": "gatti"},
+                {"action": "read_file", "arg": "gatti.md"},
+                {"action": "answer", "arg": ""},
+            ],
+            answers=["I gatti."],
+        ),
+        cfg, "Leggi la nota gatti.", max_steps=3,
+    )
+    assert first["status"] == "answer"
+    second = research_task(
+        ScriptedLLM(
+            route={"source": "vault", "keywords": ["gatti"]},
+            decisions=[
+                {"action": "read_file", "arg": "gatti.md"},
+                {"action": "answer", "arg": ""},
+            ],
+            answers=["Riletto i gatti."],
+        ),
+        cfg, "Rileggi la nota.", session_id=first["session_id"], max_steps=3,
+    )
+    assert second["status"] == "answer", "il budget riparte a ogni interazione"
+    assert second["reads"], "la ripresa ha letto davvero"
+
+
+def test_research_storage_is_private(tmp_path: Path) -> None:
+    """Directory 700 e sqlite 600: i checkpoint nominano mail e corpi."""
+    import os
+    import stat
+
+    if os.name == "nt":
+        pytest.skip("permessi POSIX non applicabili su Windows")
+    _write_gatti(tmp_path)
+    cfg = _cfg(tmp_path)
+    research_task(
+        ScriptedLLM(
+            route={"source": "vault", "keywords": ["gatti"]},
+            decisions=[
+                {"action": "search_vault", "arg": "gatti"},
+                {"action": "read_file", "arg": "gatti.md"},
+                {"action": "answer", "arg": ""},
+            ],
+            answers=["I gatti."],
+        ),
+        cfg, "Leggi la nota gatti.",
+    )
+    research_dir = tmp_path / "research"
+    assert stat.S_IMODE(research_dir.stat().st_mode) == 0o700
+    files = list(research_dir.glob("research-*.sqlite"))
+    assert files, "checkpoint creato"
+    for path in files:
+        assert stat.S_IMODE(path.stat().st_mode) == 0o600

@@ -65,6 +65,16 @@ class ResearchState(TypedDict, total=False):
     stop: str
     answer: str
     escalated: bool
+    #: Steps consumed by the CURRENT interaction: the cap applies per
+    #: instruction, not to the session lifetime. ``loop.step`` keeps
+    #: numbering every decision globally; this bounds one run.
+    used: int
+    #: Claim-check verdict of the last finished answer: surfaced in the
+    #: summary (and CLI/MCP warnings) instead of dropped. A confabulating
+    #: answer is still an answer, never a silent success.
+    problems: list[str]
+    confabulation: bool
+    injection: bool
 
 
 def _session_file(cfg: LaneConfig, session_id: str) -> Path:
@@ -77,6 +87,26 @@ def _new_session_id() -> str:
     return f"{time.strftime('%Y%m%d-%H%M%S')}-{secrets.token_hex(4)}"
 
 
+def _hydrate_registry(tools: ToolRegistry, receipts: list[dict[str, Any]], refusals: list[str]) -> None:
+    """Restore history into a fresh registry so menus see prior receipts.
+
+    A continued interaction starts with an empty registry; without this,
+    a stageless action like ``draft_mail`` (no tool call of its own) would
+    leave ``state.receipts`` empty and the menu would restart from zero.
+    Refusal texts are restored too: the empty-vs-error taxonomy needs them.
+    """
+    from .tools import ToolCall
+
+    for receipt in receipts:
+        tools.calls.append(
+            ToolCall(
+                name=str(receipt.get("tool", "")),
+                args=dict(receipt.get("args", {}) or {}),
+                ok=bool(receipt.get("ok", False)),
+                chars=0,
+            )
+        )
+    tools.refusals.extend(refusals)
 def _sweep_old_sessions(cfg: LaneConfig) -> None:
     """Remove research sessions older than the TTL; cheap, best-effort."""
     try:
@@ -124,8 +154,33 @@ def _open_saver(session_file: Path):
             raise ResearchError(
                 "ricerca persistente richiede l'extra [local]: pip install 'nexgen-engine[local]'"
             ) from exc
-    session_file.parent.mkdir(parents=True, exist_ok=True)
+    _secure_storage(session_file.parent, None)
     return SqliteSaver.from_conn_string(str(session_file))
+
+
+def _secure_storage(directory: Path, session_file: Path | None) -> None:
+    """Private permissions on research state: dir 700, sqlite files 600.
+
+    The parent chain (``~/.local/state``) is 700 on this host, but a fresh
+    install must not rely on that: checkpoints name mail subjects and
+    bodies, so they get the same treatment as council sessions.
+    No-op where the platform has no POSIX modes.
+    """
+    import os as _os
+
+    if _os.name == "nt":
+        return
+    try:
+        directory.mkdir(parents=True, exist_ok=True)
+        _os.chmod(directory, 0o700)
+    except OSError:
+        pass
+    if session_file is not None:
+        for path in directory.glob(session_file.stem + ".sqlite*"):
+            try:
+                _os.chmod(path, 0o600)
+            except OSError:
+                continue
 
 
 class _Ctx:
@@ -161,7 +216,10 @@ def _node_decide(ctx_factory, state: ResearchState) -> dict[str, Any]:
     menu = build_menu(ctx.cfg, loop)
     decided = decide_step(ctx.llm, ctx.cfg, loop, menu, result, time.time())
     loop.decisions = list(result.decisions)
-    update: dict[str, Any] = {"loop": _loop_to_persisted(loop)}
+    update: dict[str, Any] = {
+        "loop": _loop_to_persisted(loop),
+        "used": int(state.get("used", 0)) + 1,
+    }
     if decided is None:
         update["stop"] = "escalate"
         update["escalated"] = True
@@ -234,6 +292,9 @@ def _node_finish(ctx_factory, state: ResearchState) -> dict[str, Any]:
         "answer": result.answer,
         "escalated": False,
         "stop": "answer",
+        "problems": list(result.problems),
+        "confabulation": bool(result.confabulation),
+        "injection": bool(result.injection),
     }
 
 
@@ -269,7 +330,9 @@ def build_research_app(ctx_factory) -> Any:
             return "finish"
         if pending.get("action") == "escalate":
             return "end_escalate"
-        if int(state.get("loop", {}).get("step", 0)) >= int(state.get("max_steps", MAX_STEPS)):
+        # Per-interaction budget, mirroring run_steps (6 steps run 6 actions):
+        # the 6th decision still executes; only the 7th is capped.
+        if int(state.get("used", 0)) > int(state.get("max_steps", MAX_STEPS)):
             return "cap"
         return "act"
 
@@ -314,6 +377,10 @@ def _initial_research_state(
         stop="",
         answer="",
         escalated=False,
+        used=0,
+        problems=[],
+        confabulation=False,
+        injection=False,
     )
 
 
@@ -349,6 +416,9 @@ def _summary(session_id: str, state: ResearchState) -> dict[str, Any]:
         "reads": list(state.get("reads_log", [])),
         "receipts": list(state.get("receipts", [])),
         "escalated": bool(state.get("escalated", False)),
+        "problems": list(state.get("problems", [])),
+        "confabulation": bool(state.get("confabulation", False)),
+        "injection": bool(state.get("injection", False)),
         "status_block": _status_block(session_id, state),
     }
 
@@ -393,27 +463,55 @@ def research_task(
 
     session_file = _session_file(cfg, session_id)
     with _open_saver(session_file) as saver:
-        app = build_research_app(ctx_factory).compile(checkpointer=saver)
-        thread = {"configurable": {"thread_id": session_id}}
-        if created is not None:
-            final = app.invoke(created, config=thread)
-        else:
-            snapshot = app.get_state(thread)
-            if not snapshot.values:
-                raise ResearchError(f"sessione senza checkpoint: {session_id}")
-            current = dict(snapshot.values)
-            loop = _loop_from_persisted(current["loop"])
-            loop.task = task
-            current["loop"] = _loop_to_persisted(loop)
-            current["task"] = task
-            current["stop"] = ""
-            current["pending"] = None
-            current["answer"] = ""
-            current["escalated"] = False
-            # New run on the same thread with the full carried-over state:
-            # entry runs decide fresh (an as_node rewind would skip it and
-            # strand the router with no pending decision).
-            final = app.invoke(current, config=thread)
+        try:
+            app = build_research_app(ctx_factory).compile(checkpointer=saver)
+            thread = {"configurable": {"thread_id": session_id}}
+            if created is not None:
+                final = app.invoke(created, config=thread)
+            else:
+                snapshot = app.get_state(thread)
+                if not snapshot.values:
+                    raise ResearchError(f"sessione senza checkpoint: {session_id}")
+                # Same registry, continued history: menus and the claim check
+                # see every prior receipt, not just this interaction's calls.
+                _hydrate_registry(tools, snapshot.values.get("receipts", []), snapshot.values.get("refusals", []))
+                current = dict(snapshot.values)
+                loop = _loop_from_persisted(current["loop"])
+                loop.task = task
+                # New instruction, fresh run budget: the cap applies per
+                # interaction, and continuations reset (the previous read's
+                # resume point stays available via last_read).
+                loop.continuations = 0
+                # Intents follow the NEW instruction, not the first one: a
+                # "confronta" continuation must not inherit "rispondi", and a
+                # late "rispondi" must arm the draft menu.
+                loop.want_reply = bool(REPLY_INTENT_RE.search(task))
+                loop.want_upload = bool(UPLOAD_INTENT_RE.search(task))
+                # Re-route when the new instruction names a real source: a
+                # "confronta col contratto" after a mail run pivots the menu's
+                # re-search to Drive instead of re-offering mail.
+                new_route = route_task(llm, cfg, task)
+                if str(new_route.get("source") or "") not in ("", "none"):
+                    current["route"] = dict(new_route)
+                    loop.route = str(new_route.get("source"))
+                current["loop"] = _loop_to_persisted(loop)
+                current["task"] = task
+                current["stop"] = ""
+                current["pending"] = None
+                current["answer"] = ""
+                current["escalated"] = False
+                current["used"] = 0
+                current["problems"] = []
+                current["confabulation"] = False
+                current["injection"] = False
+                # New run on the same thread with the full carried-over state:
+                # entry runs decide fresh (an as_node rewind would skip it and
+                # strand the router with no pending decision).
+                final = app.invoke(current, config=thread)
+        finally:
+            # Checkpoints may hold mail bodies: lock them down even when
+            # the run raised midway.
+            _secure_storage(cfg.research_dir, session_file)
         summary = _summary(session_id, final)
         if summary["answer"]:
             summary["answer"] = summary["answer"] + "\n\n" + summary["status_block"]

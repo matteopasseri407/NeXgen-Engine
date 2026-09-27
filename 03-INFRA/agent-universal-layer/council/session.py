@@ -254,11 +254,12 @@ def _cancel_all_procs() -> int:
 
 
 def _set_active_proc(proc: subprocess.Popen | None) -> None:
-    """Track the seat subprocess currently running, if any, so a SIGTERM or
-    interpreter-exit cleanup can try to stop it. Only one seat runs at a
-    time (brainstorm/challenge/relay invoke seats sequentially), so a single
-    slot is enough. The registry underneath also covers parallel seats:
-    setting registers, clearing releases."""
+    """Legacy single-slot tracker, kept for compatibility only.
+
+    ``run_seat`` no longer uses this: parallel seats overlap, so every
+    invocation registers its own token (``_register_proc``) and releases
+    exactly that token. New code must use the registry, never this slot.
+    """
     global _ACTIVE_PROC, _ACTIVE_TOKEN
     with _STATE_LOCK:
         if _ACTIVE_TOKEN:

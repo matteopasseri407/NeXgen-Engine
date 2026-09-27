@@ -283,6 +283,21 @@ def cmd_consult(args: argparse.Namespace) -> None:
             print(f"[council] tally: {tally or '(none)'}")
             if result.disagreements:
                 print("[council] disagreements: " + ", ".join(f"{a} vs {b}" for a, b in result.disagreements))
+            # Opinions are the product: print them BEFORE cleanup, or a
+            # default (non-kept) session deletes the reasoning unshown.
+            for opinion in result.opinions:
+                print()
+                print(f"## {opinion.seat_name} ({opinion.model}): {opinion.verdict}")
+                print()
+                print(opinion.response)
+            for rebuttal in result.rebuttals:
+                print()
+                print(f"## {rebuttal.seat_name} rebuttal: {rebuttal.verdict}")
+                print()
+                print(rebuttal.response)
+            for abstention in result.abstentions:
+                print()
+                print(f"## {abstention.seat_name} abstained: {abstention.reason}")
             if keep_session:
                 print(f"[council] file: {session_dir / 'consult.md'}")
         finally:

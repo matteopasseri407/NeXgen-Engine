@@ -176,6 +176,28 @@ def test_quota_uses_only_authorized_fallbacks(tmp_path: Path, runner: FakeRunner
     assert final["calls_made"] == 2
 
 
+def test_fallback_on_later_stage_does_not_skip(tmp_path: Path, runner: FakeRunner) -> None:
+    """Primo stadio riuscito, secondo senza quota sul primo candidato: il
+    fallback dichiarato corre sullo STESSO stadio, senza IndexError."""
+    seats, (brief, _) = _seats(), _brief_stages()
+    stages = [
+        RelayStage(role="r1", candidates=["sa"]),
+        RelayStage(role="r2", candidates=["sc", "sb"]),
+    ]
+    graph_dir = tmp_path / "graph"
+    graph_dir.mkdir()
+    runner.script = [
+        ("ok", "APPROVE", "prima"),
+        ("retryable",),
+        ("ok", "APPROVE", "da sb"),
+    ]
+    final = _run_app(graph_dir, seats, _initial_state(brief, stages, 5, False, None), "late-fallback")
+    assert [r["seat_name"] for r in final["records"]] == ["sa", "sb"]
+    assert [r["role"] for r in final["records"]] == ["r1", "r2"]
+    assert runner.calls == ["fake/a", "fake/c", "fake/b"]
+    assert final["stop_reason"] == "completed"
+
+
 def test_quota_with_no_fallback_refuses(tmp_path: Path, runner: FakeRunner) -> None:
     """Solo pool esaurita: rifiuto con lo stesso messaggio del percorso effimero."""
     import relay as relay_module

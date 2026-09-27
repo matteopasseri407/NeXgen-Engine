@@ -158,7 +158,9 @@ rebuttal round, per-seat timeouts. The transcript (`consult.md`) records
 opinions, rebuttals, abstentions, the verdict tally and the disagreement
 pairs. Measure on comparable cases at equal budget: this earns its place
 only by improving issue coverage or reducing time — more frequent agreement
-is not a quality measure.
+is not a quality measure. Opinions and rebuttals print to stdout BEFORE
+session cleanup: a default (non-kept) session would otherwise delete the
+reasoning unshown.
 
 Every mode accepts `--context FILE` for extra background. A seat without a
 confirmed zero-retention guarantee remains usable, but Council prints a warning
