@@ -298,11 +298,15 @@ scores 3/6 on the read-only decision bench.
 ## As a service (MCP)
 
 `nexgen-local mcp` runs a stdio MCP server exposing read-only tools:
-`lane_ask`, `lane_explore`, `lane_research`, `lane_close`, `lane_status`. It belongs to the
-**local profiles** (the private, host-specific runtimes that already mount
-read-only MCP through the lazy waiter), not to the shared connector manifest:
-frontier CLIs do not mount the lane. The bridge runs the other way, from the
-local lane up to a frontier CLI, through `nexgen-local relay`.
+`lane_ask`, `lane_explore`, `lane_research`, `lane_close`, `lane_status`.
+It is declared in the shared connector manifest with `targets: [opencode]`:
+direct-mounted in opencode (the local-inference CLI), not in the frontier
+CLIs, which keep their raw connectors. The bridge runs the other way, from the
+local lane up to a frontier CLI, through `nexgen-local relay`. In opencode
+the `local` agent (pinned 12B, raw `gmail_*`/`calendar_*` denied, upload
+confirm on ask) and the `/local` command (agent + model in one shot) make the
+lane the default path whenever a session runs on local inference; `build`
+and the frontier models are untouched, and the voice cockpit stays out.
 
 ```yaml
 # local profile only, mounted read-only through the lazy waiter

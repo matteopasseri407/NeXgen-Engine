@@ -116,6 +116,20 @@ servers:
     timeouts: { startup: 30, tool: 120 }
     targets: [claude, codex, antigravity, opencode]
 
+  # ---- governed local lane: the 12B loop as a service -------------------
+  # ask/explore/research/close/status. explore runs the closed-menu loop
+  # (the model chooses, the engine owns menus, receipts and envelopes);
+  # writes stay behind propose/approve gates with human confirmation.
+  # Served lazy like drive: a small surface for locally-inferred models.
+  # Voice cockpit stays out.
+  lane:
+    transport: stdio
+    tier: core
+    command: nexgen-local
+    args: ["mcp"]
+    targets: [opencode]
+    timeouts: { startup: 30, tool: 300 }
+
   # ---- extra per-CLI (opzionali, non bloccanti) ----------------------------
 
   # filesystem: EXPLICIT roots only, never the whole home. The default here
