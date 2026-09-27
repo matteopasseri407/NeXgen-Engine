@@ -49,6 +49,11 @@ def _json_block(text: str) -> dict | None:
 #: context keeps the 4B-class router light while the answerer keeps cfg.num_ctx.
 ROUTER_NUM_CTX = 4096
 
+#: Decision cap: the menu prompt is short, but a thinking trace before the
+#: choice can run long. Context is cheap on this box (measured: 8K -> 82K
+#: moves residency by ~0.1GB), thinking tokens are not.
+DECISION_NUM_CTX = 16384
+
 
 class ChatOllamaLLM:
     """LLM backed by ``langchain_ollama.ChatOllama`` (optional dependency)."""
@@ -83,12 +88,17 @@ class ChatOllamaLLM:
             "model": cfg.answer_tag,
             "base_url": host,
             "temperature": 0.0,
-            "num_ctx": min(cfg.num_ctx, ROUTER_NUM_CTX),
+            "num_ctx": min(cfg.num_ctx, DECISION_NUM_CTX),
             "validate_model_on_init": False,
         }
         try:
             self._json_model = ChatOllama(format="json", reasoning=False, **router_common)
-            self._text_model = ChatOllama(reasoning=False, **answer_common)
+            # Prosa con pensiero (bozze, risposte): niente schema forzato qui,
+            # il CoT aiuta e non rompe nulla. Misurato sul golden set.
+            self._text_model = ChatOllama(reasoning=True, **answer_common)
+            # Decisioni SENZA pensiero: il canale e' uno schema forzato
+            # (json_schema) e il think ci va a cazzotti — misurato: 12/16
+            # e p95 decisione da 5s a 170s. Scelta secca, niente rimuginii.
             self._decision_model = ChatOllama(reasoning=False, **decision_common)
         except TypeError:  # older driver without reasoning/validate switches
             self._json_model = ChatOllama(format="json", **router_common)

@@ -322,6 +322,29 @@ local session a nested single-question call would just ask the same model
 twice. The command needs the lane's Python dependencies reachable by the
 process the profile spawns.
 
+## VRAM budget (11-12GB): measured ceilings, not estimates
+
+Single resident model: 12B Q4_K_M (7.6GB) + 4B Q8 (4.4GB) do not fit
+together — alternating them thrashes. Keep one hot; sequential use is
+fine, in-flow splitting is not.
+
+Measured full-GPU ceilings (`ollama ps` PROCESSOR 100% GPU, q8_0 KV +
+flash-attn already default-on in this Ollama):
+
+| model | ceiling | resident |
+|---|---|---|
+| gemma4 12B Q4_K_M | 172032 (168K) | ~8.3GB |
+| spark 4B Q8 | 217088 (212K) | ~5.6GB |
+
+Past the ceiling layers spill to CPU (documented, slower) and past the
+native max the load fails. The opencode `/model` entries carry these
+ceilings; the lane defaults to 64K (`NEXGEN_LOCAL_NUM_CTX` raises it).
+
+Thinking, measured on the golden set: ON on the forced-schema decision
+node backfires (12/16, decision p95 5s -> 170s) and stays OFF there.
+ON on free prose (drafts, answers) holds 16/16 at ~3x step latency
+(step p95 ~7s -> ~22s, decisions unchanged at ~5s).
+
 ## Acceptance criteria
 
 - Trap suite: zero injections and zero confabulations, and every task must

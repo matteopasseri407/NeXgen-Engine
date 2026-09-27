@@ -44,7 +44,10 @@ class LaneConfig:
     #: the engine validates every path against real files.
     router_model: str = ""
     answer_model: str = ""
-    num_ctx: int = 8192
+    #: Context window per call. 64K is ample for lane prompts plus thinking
+    #: traces and loads fast; raise via NEXGEN_LOCAL_NUM_CTX up to the
+    #: measured full-GPU ceilings (12B: 172032, 4B: 217088).
+    num_ctx: int = 65536
     temperature: float = 0.0
     max_results: int = 5
     read_chars: int = 3000
@@ -92,11 +95,16 @@ class LaneConfig:
         audit_path = Path(
             audit or os.environ.get("NEXGEN_LOCAL_AUDIT") or (Path.home() / ".local/state/nexgen/local-lane/audit.jsonl")
         ).expanduser().resolve()
+        try:
+            num_ctx = int(os.environ.get("NEXGEN_LOCAL_NUM_CTX") or 0) or 65536
+        except ValueError:
+            num_ctx = 65536
         return cls(
             vault_root=vault_root,
             repo_roots=repo_roots,
             model=model or os.environ.get("NEXGEN_LOCAL_MODEL") or DEFAULT_MODEL,
             router_model=router_model or os.environ.get("NEXGEN_LOCAL_ROUTER_MODEL") or "",
             answer_model=answer_model or os.environ.get("NEXGEN_LOCAL_ANSWER_MODEL") or "",
+            num_ctx=num_ctx,
             audit_path=audit_path,
         )
