@@ -216,3 +216,14 @@ def test_research_flags_invented_citations(tmp_path: Path) -> None:
     result = job_research(llm, WebRegistry(cfg, web), cfg, "progetto Airone Blu")
     assert result.confabulation is True
     assert any("fantasma" in problem for problem in result.problems)
+
+
+def test_close_save_twice_never_overwrites(tmp_path: Path) -> None:
+    """Same second, two saves: two drafts, no silent overwrite."""
+    cfg = _cfg(tmp_path)
+    _write(cfg.vault_root / "s.md", "contenuto\n")
+    llm = FakeLLM(route={"title": "T", "decisions": ["d"]})
+    first = job_close(llm, ToolRegistry(cfg), cfg, "s.md", save=True)
+    second = job_close(llm, ToolRegistry(cfg), cfg, "s.md", save=True)
+    assert first.draft_path != second.draft_path
+    assert Path(first.draft_path).is_file() and Path(second.draft_path).is_file()

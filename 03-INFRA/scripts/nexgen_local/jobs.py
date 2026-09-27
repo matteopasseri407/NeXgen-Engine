@@ -255,9 +255,21 @@ def job_close(llm: LLM, tools: ToolRegistry, cfg: LaneConfig, session_path: str,
     draft = _render_draft(raw, rel)
     draft_path = ""
     if save:
+        import secrets
+
         cfg.drafts_dir.mkdir(parents=True, exist_ok=True)
-        target = cfg.drafts_dir / f"{time.strftime('%Y%m%d-%H%M%S')}-close.md"
-        target.write_text(draft, encoding="utf-8")
+        # Unique name, exclusive creation: two closes in the same second
+        # must never overwrite each other (same class as proposal ids).
+        for _ in range(5):
+            target = cfg.drafts_dir / f"{time.strftime('%Y%m%d-%H%M%S')}-{secrets.token_hex(4)}-close.md"
+            try:
+                with target.open("x", encoding="utf-8") as handle:
+                    handle.write(draft)
+                break
+            except FileExistsError:
+                continue
+        else:
+            raise JobError("collisione nome bozza, riprova")
         draft_path = str(target)
         audit_event(cfg, "close_draft", {"session": rel, "draft": draft_path}, ok=True, chars=len(draft))
     return JobResult(

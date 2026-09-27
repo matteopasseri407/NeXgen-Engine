@@ -650,7 +650,7 @@ def test_calendar_oggi_uses_user_zone_not_utc(tmp_path: Path) -> None:
 
 
 def test_lane_model_reaches_server_via_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """NEXGEN_LOCAL_MODEL (the lane4 mount) selects the in-lane model."""
+    """NEXGEN_LOCAL_MODEL selects the in-lane model (env passthrough)."""
     from nexgen_local.config import LaneConfig
 
     monkeypatch.setenv("NEXGEN_LOCAL_MODEL", "spark-x25:240k")
