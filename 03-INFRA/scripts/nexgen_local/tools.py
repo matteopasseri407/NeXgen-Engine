@@ -434,6 +434,10 @@ class ToolRegistry:
         oggi/domani/dopodomani pin it relative to now; otherwise the
         default look-ahead applies. Date tokens are removed from the free
         text so they don't pollute the keyword filter.
+
+        ``now`` must carry the USER's zone, not UTC: at 00:30 in Rome,
+        "oggi" is the 28th local, not the 27th UTC. Callers pass
+        ``datetime.now().astimezone()`` (system locale), never UTC.
         """
         from datetime import timedelta
 
@@ -460,7 +464,7 @@ class ToolRegistry:
         server-side first (``q``) over a wide page, then locally — the cap
         applies to matches, never to the raw listing.
         """
-        from datetime import datetime, timezone
+        from datetime import datetime
 
         from .connectors import ConnectorError
         from .connectors import calendar as calendar_conn
@@ -468,7 +472,9 @@ class ToolRegistry:
         query = str(query).strip()
         if not query:
             return self._refuse("search_calendar", {"query": query}, "(query vuota)")
-        now = datetime.now(timezone.utc)
+        # System locale, never UTC: day boundaries are the user's, and the
+        # ISO offsets travel to the provider untouched.
+        now = datetime.now().astimezone()
         time_min, time_max, free = self._calendar_window(query, now)
         try:
             items = calendar_conn.list_events(

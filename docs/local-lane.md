@@ -149,6 +149,14 @@ with the lane's receipt and outcome contract. No MCP server, no new dependency.
 - Proposal ids are unique (timestamp plus randomness) in every gate, and
   creation never overwrites: a colliding id refuses instead of replacing the
   proposal shown for approval.
+- Reads are capped at 3.000 characters each: raising the context does not
+  raise what gets read. Long mail bodies and documents need read
+  continuation (offset-based, planned) and source-coverage accounting, not
+  just a bigger window. Known limit, next step after the profile split.
+- `/local` and `/local4` select the governed profile (agent + model +
+  denies); picking a local model with `/model` alone keeps the current
+  agent and does NOT activate the profile. The profile is the unit, not
+  the model.
 - Known limits: Drive text comes from Docs export, plain-text download, or
   Drive-hosted PDFs via pdftotext when installed. Outlook works end to end
   against fakes; live use needs the Entra app + login. `nexgen-local doctor`
@@ -343,7 +351,10 @@ ceilings; the lane defaults to 64K (`NEXGEN_LOCAL_NUM_CTX` raises it).
 Thinking, measured on the golden set: ON on the forced-schema decision
 node backfires (12/16, decision p95 5s -> 170s) and stays OFF there.
 ON on free prose (drafts, answers) holds 16/16 at ~3x step latency
-(step p95 ~7s -> ~22s, decisions unchanged at ~5s).
+(step p95 ~7s -> ~22s, decisions unchanged at ~5s). Every node carries a
+`num_predict` bound (router 512, decisions 256, prose 2048): a runaway
+thought once pinned the GPU 17 minutes with a dead client, now the worst
+case is bounded instead of hanging the loop forever.
 
 ## Acceptance criteria
 

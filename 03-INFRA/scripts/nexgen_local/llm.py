@@ -73,6 +73,8 @@ class ChatOllamaLLM:
             "base_url": host,
             "temperature": 0.0,
             "num_ctx": min(cfg.num_ctx, ROUTER_NUM_CTX),
+            # A 4-field form; cap it like decisions.
+            "num_predict": 512,
             "validate_model_on_init": False,
         }
         answer_common = {
@@ -80,6 +82,11 @@ class ChatOllamaLLM:
             "base_url": host,
             "temperature": cfg.temperature,
             "num_ctx": cfg.num_ctx,
+            # Bound: thinking + prose share this budget. A runaway thought
+            # once pinned the GPU for 17+ minutes with a dead client;
+            # 2048 tokens (~6-8K chars) cover every draft and answer the
+            # lane allows (bodies cap at 20K chars, answers stay concise).
+            "num_predict": 2048,
             "validate_model_on_init": False,
         }
         # The loop's decision channel: the answerer's competence, the router's
@@ -89,6 +96,9 @@ class ChatOllamaLLM:
             "base_url": host,
             "temperature": 0.0,
             "num_ctx": min(cfg.num_ctx, DECISION_NUM_CTX),
+            # A decision is ~50 tokens of JSON; never let a ramble hang
+            # the loop.
+            "num_predict": 256,
             "validate_model_on_init": False,
         }
         try:

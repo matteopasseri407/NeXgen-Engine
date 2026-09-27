@@ -634,3 +634,28 @@ def test_calendar_query_iso_date_sets_window(tmp_path: Path, monkeypatch: pytest
     assert seen["time_min"] == "2026-10-01T00:00:00Z"
     assert seen["time_max"] == "2026-10-01T23:59:59Z"
     assert "2026-10-01" not in seen["q"]  # dates filter time, not text
+
+
+def test_calendar_oggi_uses_user_zone_not_utc(tmp_path: Path) -> None:
+    """00:30 in Rome on the 28th: 'oggi' is the 28th local, not the 27th UTC."""
+    from datetime import datetime, timezone
+
+    tools = ToolRegistry(_cfg(tmp_path))
+    rome = timezone(__import__("datetime").timedelta(hours=2))
+    now = datetime(2026, 9, 28, 0, 30, tzinfo=rome)
+    time_min, time_max, free = tools._calendar_window("dentista oggi", now)
+    assert time_min == "2026-09-28T00:00:00+02:00"
+    assert time_max == "2026-09-29T00:00:00+02:00"
+    assert "oggi" not in free
+
+
+def test_lane_model_reaches_server_via_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """NEXGEN_LOCAL_MODEL (the lane4 mount) selects the in-lane model."""
+    from nexgen_local.config import LaneConfig
+
+    monkeypatch.setenv("NEXGEN_LOCAL_MODEL", "spark-x25:240k")
+    monkeypatch.setenv("NEXGEN_LOCAL_NUM_CTX", "217088")
+    cfg = LaneConfig.from_env(vault=str(tmp_path / "vault"))
+    assert cfg.model == "spark-x25:240k"
+    assert cfg.router_tag == "spark-x25:240k" and cfg.answer_tag == "spark-x25:240k"
+    assert cfg.num_ctx == 217088
