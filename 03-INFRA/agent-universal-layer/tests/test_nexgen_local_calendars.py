@@ -18,7 +18,6 @@ from nexgen_local.calendars import (
     propose_event,
 )
 from nexgen_local.config import LaneConfig
-from nexgen_local.connectors import ConnectorError
 from nexgen_local.connectors.auth import HttpResult
 
 
@@ -48,7 +47,8 @@ def _fake_calendar(monkeypatch: pytest.MonkeyPatch, store: dict) -> None:
             eid = url.rsplit("/", 1)[-1]
             if req.get_method() == "DELETE":
                 store.pop(eid, None)
-                return HttpResult(200, b"")
+                # Real provider behaviour: 204 No Content, empty body.
+                return HttpResult(204, b"")
             if eid in store:
                 return HttpResult(200, json.dumps({"id": eid, **store[eid]}).encode())
             return HttpResult(404, b"{}")
@@ -133,3 +133,39 @@ def test_cal_cli_roundtrip(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> N
     assert cli_module.cmd_cal_apply(args) == 1
     args = argparse.Namespace(proposal_id=proposal_id, yes=True, json=True)
     assert cli_module.cmd_cal_apply(args) == 0
+
+
+def test_delete_accepts_204_no_content(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The provider answers 204 with no body: success, proposal applied."""
+    import nexgen_local.connectors.calendar as calendar_conn
+
+    cfg = _cfg(tmp_path)
+    store = {"e1": {"summary": "Vecchio", "start": {"dateTime": "2026-10-01T10:00:00+02:00"}}}
+
+    def _http_204(req, timeout: int) -> HttpResult:
+        url = req.full_url
+        if url.endswith("/events/e1") and req.get_method() == "DELETE":
+            store.pop("e1", None)
+            return HttpResult(204, b"")
+        return _fake_calendar_http(store, req)
+
+    def _fake_calendar_http(store: dict, req):  # noqa: ANN001, ANN202 - tiny test double
+        url = req.full_url
+        if "/events/e1" in url and not req.data:
+            return HttpResult(200, json.dumps({"id": "e1", **store["e1"]}).encode())
+        raise AssertionError(f"chiamata non prevista: {url}")
+
+    monkeypatch.setattr(calendar_conn, "_default_http", _http_204)
+    proposal = propose_delete(cfg, "primary", "e1")
+    result = apply_proposal(cfg, proposal.id, yes=True)
+    assert result == {"id": proposal.id, "applied": True, "done_id": "e1", "kind": "delete"}
+    assert "e1" not in store
+
+
+def test_calendar_proposals_get_unique_ids(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Same fields, same second: two proposals, no overwrite."""
+    _fake_calendar(monkeypatch, {})
+    cfg = _cfg(tmp_path)
+    first = propose_event(cfg, "Dentista", "2026-10-01T10:00:00+02:00", "2026-10-01T11:00:00+02:00")
+    second = propose_event(cfg, "Dentista", "2026-10-01T10:00:00+02:00", "2026-10-01T11:00:00+02:00")
+    assert first.id != second.id

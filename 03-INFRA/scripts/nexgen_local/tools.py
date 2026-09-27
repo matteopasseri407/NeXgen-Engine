@@ -355,9 +355,14 @@ class ToolRegistry:
             f"A: {msg.get('to', '')}",
             f"Data: {msg.get('date', '')}",
             f"Oggetto: {msg.get('subject', '')}",
+            f"Lettura: {msg.get('coverage', 'text')}",
             "",
             msg.get("body", ""),
         ]
+        if msg.get("coverage") == "html":
+            lines.append("\n(nota: testo estratto dall'HTML, formattazione rimossa)")
+        elif msg.get("coverage") == "snippet":
+            lines.append("\n(nota: solo anteprima disponibile, corpo non estraibile)")
         if msg.get("attachments"):
             lines.append("\nAllegati (nomi, non letti): " + ", ".join(msg["attachments"]))
         return self._record("read_mail", {"id": mid}, self._cap("\n".join(lines)))
@@ -408,13 +413,54 @@ class ToolRegistry:
             "read_drive", {"id": file_id, "name": doc.get("name", "")}, self._cap("\n".join(lines))
         )
 
+    #: ISO dates (2026-10-01, optionally with a time) named in the query:
+    #: they drive the search window instead of the default.
+    _ISO_DATE_RE = re.compile(r"\b(\d{4})-(\d{2})-(\d{2})(?:[T ]\d{2}:\d{2}(?::\d{2})?(?:Z|[+-]\d{2}:?\d{2})?)?\b")
+    #: Bare day/month hints without a year are ignored on purpose: without a
+    #: year the window would be a guess, and a guessed window hides events.
+    _RELATIVE_DAY_RE = re.compile(r"\b(oggi|domani|dopodomani)\b", re.I)
+
+    #: Default look-ahead when the query names no date: wide enough that a
+    #: dentist three weeks out is still found, narrow enough to stay relevant.
+    DEFAULT_WINDOW_DAYS = 30
+    #: How many events the server may return before the lane filters and caps:
+    #: searching first, limiting after — never the reverse.
+    SEARCH_PAGE = 50
+
+    def _calendar_window(self, query: str, now) -> tuple[str, str, str]:
+        """(time_min, time_max, free text) from the query.
+
+        ISO dates set the window to the named days (whole days, UTC);
+        oggi/domani/dopodomani pin it relative to now; otherwise the
+        default look-ahead applies. Date tokens are removed from the free
+        text so they don't pollute the keyword filter.
+        """
+        from datetime import timedelta
+
+        dates = sorted({match.group(0)[:10] for match in self._ISO_DATE_RE.finditer(query)})
+        free = self._ISO_DATE_RE.sub(" ", query)
+        if dates:
+            time_min = f"{dates[0]}T00:00:00Z"
+            time_max = f"{dates[-1]}T23:59:59Z"
+            return time_min, time_max, free
+        if self._RELATIVE_DAY_RE.search(query):
+            found = {match.group(1).casefold() for match in self._RELATIVE_DAY_RE.finditer(query)}
+            offset = 2 if "dopodomani" in found else (1 if "domani" in found else 0)
+            start = (now + timedelta(days=offset)).replace(hour=0, minute=0, second=0, microsecond=0)
+            end = start + timedelta(days=1)
+            free = self._RELATIVE_DAY_RE.sub(" ", free)
+            return start.isoformat(), end.isoformat(), free
+        return now.isoformat(), (now + timedelta(days=self.DEFAULT_WINDOW_DAYS)).isoformat(), free
+
     def search_calendar(self, query: str) -> str:
         """Upcoming events matching the query, one per line with time/title.
 
         Ids come only from here: read_calendar accepts an engine-found id.
-        Default window is now to +7 days; a query may carry ISO dates.
+        Dates named in the query set the window; the free text filters
+        server-side first (``q``) over a wide page, then locally — the cap
+        applies to matches, never to the raw listing.
         """
-        from datetime import datetime, timedelta, timezone
+        from datetime import datetime, timezone
 
         from .connectors import ConnectorError
         from .connectors import calendar as calendar_conn
@@ -423,16 +469,18 @@ class ToolRegistry:
         if not query:
             return self._refuse("search_calendar", {"query": query}, "(query vuota)")
         now = datetime.now(timezone.utc)
+        time_min, time_max, free = self._calendar_window(query, now)
         try:
             items = calendar_conn.list_events(
                 "primary",
-                now.isoformat(),
-                (now + timedelta(days=7)).isoformat(),
-                self.cfg.max_results,
+                time_min,
+                time_max,
+                self.SEARCH_PAGE,
+                q=" ".join(free.split()),
             )
         except ConnectorError as exc:
             return self._refuse("search_calendar", {"query": query}, exc.refusal)
-        words = [w.casefold() for w in query.split() if len(w) >= 2]
+        words = [w.casefold() for w in free.split() if len(w) >= 2]
         matching = [
             item for item in items
             if not words or any(w in f"{item.get('summary', '')} {item.get('description', '')} {item.get('location', '')}".casefold() for w in words)
@@ -512,9 +560,14 @@ class ToolRegistry:
             f"A: {msg.get('to', '')}",
             f"Data: {msg.get('date', '')}",
             f"Oggetto: {msg.get('subject', '')}",
+            f"Lettura: {msg.get('coverage', 'text')}",
             "",
             msg.get("body", ""),
         ]
+        if msg.get("coverage") == "html":
+            lines.append("\n(nota: testo estratto dall'HTML, formattazione rimossa)")
+        elif msg.get("coverage") == "snippet":
+            lines.append("\n(nota: solo anteprima disponibile, corpo non estraibile)")
         if msg.get("attachments"):
             lines.append("\nAllegati (nomi, non letti): " + ", ".join(msg["attachments"]))
         return self._record("read_outlook", {"id": mid}, self._cap("\n".join(lines)))

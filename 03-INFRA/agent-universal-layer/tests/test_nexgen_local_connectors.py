@@ -234,6 +234,7 @@ def test_outlook_get_strips_html(tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     msg = outlook_mod.get_message("o9", http=http)
     assert msg["from"] == "capo@esempio.it"
     assert msg["body"] == "Riunione giovedi"
+    assert msg["coverage"] == "html"
     assert msg["attachments"] == []
 
 
@@ -274,3 +275,84 @@ def test_outlook_reply_threads_server_side(tmp_path: Path, monkeypatch: pytest.M
     sent = outlook_mod.reply_to("o9", "Confermo.", http=call)
     assert sent["to"] == "capo@esempio.it"
     assert captured["comment"] == "Confermo."
+
+
+def _gmail_html_only() -> bytes:
+    raw = (
+        "<html><body><p>Scadenza <b>30 settembre</b>, importo "
+        "1.250 euro.</p><script>track();</script></body></html>"
+    )
+    body = base64.urlsafe_b64encode(raw.encode()).decode()
+    return json.dumps(
+        {
+            "id": "m9",
+            "snippet": "Scadenza 30 settembre…",
+            "payload": {
+                "headers": [
+                    {"name": "From", "value": "banca@esempio.it"},
+                    {"name": "Subject", "value": "Estratto conto"},
+                ],
+                "parts": [
+                    {"mimeType": "text/html", "filename": "", "body": {"data": body}},
+                ],
+            },
+        }
+    ).encode()
+
+
+def test_gmail_html_only_extracts_text_with_coverage(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """No plain part: facts come from the HTML, flagged as lossy."""
+    _token_dir(tmp_path, monkeypatch)
+    http = _http({"/messages/m9?": (200, _gmail_html_only())})
+    msg = gmail_mod.get_message("m9", http=http)
+    assert "30 settembre" in msg["body"] and "1.250 euro" in msg["body"]
+    assert "track" not in msg["body"]
+    assert "<" not in msg["body"]
+    assert msg["coverage"] == "html"
+
+
+def test_gmail_without_parts_falls_back_to_snippet_with_coverage(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Nothing extractable: the snippet is marked partial, never whole."""
+    _token_dir(tmp_path, monkeypatch)
+    payload = json.dumps(
+        {"id": "m0", "snippet": "breve estratto…", "payload": {"headers": []}}
+    ).encode()
+    http = _http({"/messages/m0?": (200, payload)})
+    msg = gmail_mod.get_message("m0", http=http)
+    assert msg["body"] == "breve estratto…"
+    assert msg["coverage"] == "snippet"
+
+
+def test_gmail_plain_body_reports_full_coverage(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _token_dir(tmp_path, monkeypatch)
+    http = _http({"/messages/m1?": (200, _gmail_full())})
+    assert gmail_mod.get_message("m1", http=http)["coverage"] == "text"
+
+
+def test_gmail_text_attachment_is_not_body(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A named text part is an attachment: its bytes never become the body."""
+    _token_dir(tmp_path, monkeypatch)
+    data = base64.urlsafe_b64encode("allegato, non corpo".encode()).decode()
+    payload = json.dumps(
+        {
+            "id": "m7",
+            "snippet": "anteprima",
+            "payload": {
+                "headers": [],
+                "parts": [
+                    {"mimeType": "text/plain", "filename": "note.txt", "body": {"data": data}},
+                ],
+            },
+        }
+    ).encode()
+    http = _http({"/messages/m7?": (200, payload)})
+    msg = gmail_mod.get_message("m7", http=http)
+    assert msg["body"] == "anteprima"
+    assert msg["coverage"] == "snippet"
+    assert msg["attachments"] == ["note.txt (text/plain)"]

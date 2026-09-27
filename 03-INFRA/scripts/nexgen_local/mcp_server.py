@@ -67,6 +67,10 @@ def tool_explore(cfg: LaneConfig, llm: LLM, task: str, max_steps: int = 6) -> st
 
     result = run_steps(llm, ToolRegistry(cfg), cfg, task, max_steps=max_steps)
     lines = [result.answer or "(nessuna risposta: passaggio a un agente piu' capace)"]
+    if result.mail_draft:
+        lines.append(f"[bozza mail da approvare: {result.mail_draft}]")
+    if result.upload_proposal:
+        lines.append(f"[proposta upload da approvare: {result.upload_proposal}]")
     for decision in result.decisions:
         mark = "ok" if decision.ok else "KO"
         detail = f" — {decision.detail}" if decision.detail else ""

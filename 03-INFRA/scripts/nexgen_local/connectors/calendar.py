@@ -34,7 +34,8 @@ def _call(path: str, http: HttpFn, auth_http: HttpFn | None, method: str = "GET"
         raise ConnectorError(f"(calendario non raggiungibile: {exc})") from exc
     if result.status == 401:
         raise ConnectorError("(calendario: accesso scaduto o revocato, serve un nuovo login)")
-    if result.status not in (200, 201):
+    # Delete answers 204 No Content on success: no body, no JSON, still done.
+    if result.status not in (200, 201, 204):
         raise ConnectorError(f"(calendario: operazione fallita: HTTP {result.status})")
     if not result.body.strip():
         return {}
@@ -50,18 +51,26 @@ def list_events(
     time_max: str = "",
     max_results: int = 10,
     http: HttpFn | None = None,
+    q: str = "",
 ) -> list[dict[str, Any]]:
+    """Upcoming events in the window, optionally pre-filtered server-side.
+
+    ``q`` is the provider's free-text search (summary, description,
+    location): filtering server-side first is what keeps an event past the
+    page limit visible. Callers still refine locally afterwards.
+    """
     call = http or _default_http
-    params = urllib.parse.urlencode(
-        {
-            "timeMin": time_min,
-            "timeMax": time_max,
-            "singleEvents": "true",
-            "orderBy": "startTime",
-            "maxResults": max(1, min(int(max_results), 50)),
-        }
-    )
-    payload = _call(f"/calendars/{urllib.parse.quote(calendar_id)}/events?{params}", call, http)
+    params: dict[str, str] = {
+        "timeMin": time_min,
+        "timeMax": time_max,
+        "singleEvents": "true",
+        "orderBy": "startTime",
+        "maxResults": str(max(1, min(int(max_results), 50))),
+    }
+    if str(q or "").strip():
+        params["q"] = str(q).strip()
+    query = urllib.parse.urlencode(params)
+    payload = _call(f"/calendars/{urllib.parse.quote(calendar_id)}/events?{query}", call, http)
     return payload.get("items", []) if isinstance(payload, dict) else []
 
 

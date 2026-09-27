@@ -576,3 +576,61 @@ def test_default_engine_root_uses_the_canonical_resolver(tmp_path: Path, monkeyp
     from nexgen_local.config import default_engine_root
 
     assert default_engine_root() == tmp_path / "clone"
+
+
+def _calendar_events(count: int, keyword_at: int, keyword: str = "Dentista") -> list[dict]:
+    events = []
+    for index in range(count):
+        summary = keyword if index == keyword_at else f"Evento {index}"
+        events.append(
+            {
+                "id": f"e{index}",
+                "summary": summary,
+                "start": {"dateTime": f"2026-10-{index + 1:02d}T10:00:00+02:00"},
+                "end": {"dateTime": f"2026-10-{index + 1:02d}T11:00:00+02:00"},
+                "location": "",
+                "description": "",
+            }
+        )
+    return events
+
+
+def test_calendar_search_finds_event_past_the_old_page_limit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Six events, dentist sixth: the old fetch-5-then-filter said 'nothing'."""
+    import nexgen_local.connectors.calendar as calendar_conn
+
+    cfg = _cfg(tmp_path)
+    seen: dict = {}
+    events = _calendar_events(6, 5)
+
+    def _fake(calendar_id="", time_min="", time_max="", max_results=10, http=None, q=""):
+        seen.update(max_results=max_results, q=q, time_min=time_min, time_max=time_max)
+        return [event for event in events if not q or q.casefold() in event["summary"].casefold()]
+
+    monkeypatch.setattr(calendar_conn, "list_events", _fake)
+    tools = ToolRegistry(cfg)
+    out = tools.search_calendar("dentista")
+    assert out.startswith("e5 |")
+    assert seen["max_results"] > 5  # search first, cap after
+
+
+def test_calendar_query_iso_date_sets_window(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A named date drives timeMin/timeMax instead of the default window."""
+    import nexgen_local.connectors.calendar as calendar_conn
+
+    cfg = _cfg(tmp_path)
+    seen: dict = {}
+
+    def _fake(calendar_id="", time_min="", time_max="", max_results=10, http=None, q=""):
+        seen.update(time_min=time_min, time_max=time_max, q=q)
+        return []
+
+    monkeypatch.setattr(calendar_conn, "list_events", _fake)
+    tools = ToolRegistry(cfg)
+    out = tools.search_calendar("dentista 2026-10-01")
+    assert out == "(nessun risultato)"
+    assert seen["time_min"] == "2026-10-01T00:00:00Z"
+    assert seen["time_max"] == "2026-10-01T23:59:59Z"
+    assert "2026-10-01" not in seen["q"]  # dates filter time, not text

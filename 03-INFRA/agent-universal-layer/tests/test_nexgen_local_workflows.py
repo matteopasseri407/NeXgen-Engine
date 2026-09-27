@@ -121,3 +121,14 @@ def test_wf_cli_roundtrip(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> No
     )
     args = argparse.Namespace(proposal_id=proposal_id, yes=True, json=True)
     assert cli_module.cmd_wf_run(args) == 0
+
+
+def test_same_workflow_twice_gets_unique_ids(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Same workflow and params in the same second: two artifacts, no overwrite."""
+    cfg = _cfg(tmp_path)
+    _allowlist(tmp_path, monkeypatch)
+    first = propose_run(cfg, "telegram-send", {"file": "a.txt"})
+    second = propose_run(cfg, "telegram-send", {"file": "a.txt"})
+    assert first.id != second.id
+    assert load_proposal(cfg, first.id).params == {"file": "a.txt"}
+    assert load_proposal(cfg, second.id).params == {"file": "a.txt"}

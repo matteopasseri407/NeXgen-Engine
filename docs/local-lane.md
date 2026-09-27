@@ -140,6 +140,15 @@ with the lane's receipt and outcome contract. No MCP server, no new dependency.
   an unattended run never opens a browser and never hangs waiting for one.
 - Ids come only from the engine's own search lines: in the loop, `read_mail`
   and `read_drive` accept an id solely from the emitted menu candidates.
+- Mail reads carry a `Lettura:` coverage line: `text` (plain parts),
+  `html` (text extracted from HTML, formatting removed), `snippet` (only a
+  short excerpt was extractable — a partial read, never the whole message).
+- Calendar search filters server-side first (`q`) over a wide page and caps
+  matches after: the default window is now to +30 days, and ISO dates (or
+  oggi/domani/dopodomani) named in the query set the window instead.
+- Proposal ids are unique (timestamp plus randomness) in every gate, and
+  creation never overwrites: a colliding id refuses instead of replacing the
+  proposal shown for approval.
 - Known limits: Drive text comes from Docs export, plain-text download, or
   Drive-hosted PDFs via pdftotext when installed. Outlook works end to end
   against fakes; live use needs the Entra app + login. `nexgen-local doctor`
@@ -245,7 +254,10 @@ the emitted candidates and inside the declared roots, a query only from the
 task or a reformulation, never carrying terms that exist only in retrieved
 content, never a near-duplicate of a query already tried. A request that needs
 a source cannot be answered before retrieval: the first menu carries no
-`answer`, only search, read or escalate. One repair on an
+`answer`, only search, read or escalate, and after a successful
+mail/Drive/Outlook/calendar search the menu carries the reads plus escalate —
+still no `answer`, and answering with results still unread is refused, so the
+engine never reports "no results" with results in hand. One repair on an
 invalid output, plus one reasoned repair on an empty query slot (a slip, not
 defiance: policy refusals are never retried, and a still-empty slot is
 compiled by the engine from the task terms as a last resort); a failed validation otherwise
@@ -259,7 +271,14 @@ the 12B drafts through LangChain structured output, the engine owns envelope
 and destination, and nothing leaves the machine without human approval.
 Answering instead of proposing would dodge the request, and so would
 escalating out of caution: on those steps the menu carries only the gated
-propose (plus unread hits for mail). Escalation stays available through real
+propose (plus unread hits for mail). After any read, unread siblings stay on
+the menu (compare two results without re-finding them) and the re-search
+offered matches the route — an Outlook read never offers a Drive search.
+Draft and upload proposals are engine facts in the final prompt (id, preview,
+approval command) and travel on the result itself, not only in prose: the
+engine appends the approval pointer (`[motore: ...]` with id, recipient and
+command) to the answer, so the user always receives what they must approve
+even when the model's prose stays terse. Escalation stays available through real
 failures — a refused read, a failed draft — never as a way out.
 
 Measured on the synthetic bench, Gemma 12B: happy path three steps with

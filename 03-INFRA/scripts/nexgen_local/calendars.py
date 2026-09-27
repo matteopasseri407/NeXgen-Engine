@@ -16,7 +16,7 @@ from typing import Any
 from .config import LaneConfig
 from .connectors import ConnectorError
 from .connectors import calendar as calendar_conn
-from .patch import _PROPOSAL_ID_RE
+from .patch import _PROPOSAL_ID_RE, new_proposal_id
 from .tools import ToolError, audit_event
 
 
@@ -46,6 +46,17 @@ def _save(cfg: LaneConfig, proposal: CalendarProposal) -> None:
     target.write_text(json.dumps(asdict(proposal), ensure_ascii=False, indent=1), encoding="utf-8")
 
 
+def _create(cfg: LaneConfig, proposal: CalendarProposal) -> None:
+    """Store a new proposal without ever overwriting an existing one (see patch._create)."""
+    cfg.calendars_dir.mkdir(parents=True, exist_ok=True)
+    target = cfg.calendars_dir / f"{proposal.id}.json"
+    try:
+        with target.open("x", encoding="utf-8") as handle:
+            handle.write(json.dumps(asdict(proposal), ensure_ascii=False, indent=1))
+    except FileExistsError as exc:
+        raise CalendarError(f"collisione id proposta, riprova: {proposal.id}") from exc
+
+
 def load_proposal(cfg: LaneConfig, proposal_id: str) -> CalendarProposal:
     if not _PROPOSAL_ID_RE.fullmatch(str(proposal_id or "")):
         raise CalendarError(f"id proposta non valido: {proposal_id}")
@@ -67,10 +78,17 @@ def list_proposals(cfg: LaneConfig) -> list[CalendarProposal]:
     return proposals
 
 
-def _sha(text: str) -> str:
-    import hashlib
-
-    return hashlib.sha256(text.encode("utf-8", errors="replace")).hexdigest()
+def _store_new(cfg: LaneConfig, proposal: CalendarProposal) -> CalendarProposal:
+    """Assign a unique id and store without overwriting; retry on collision."""
+    for _ in range(5):
+        proposal.id = new_proposal_id()
+        try:
+            _create(cfg, proposal)
+            return proposal
+        except CalendarError as exc:
+            if "collisione" not in str(exc):
+                raise
+    raise CalendarError("collisione id proposta, riprova")
 
 
 def propose_event(
@@ -89,7 +107,7 @@ def propose_event(
     if not start or not end:
         raise CalendarError("inizio/fine mancanti (ISO 8601 con timezone)")
     proposal = CalendarProposal(
-        id=f"{time.strftime('%Y%m%d-%H%M%S')}-{_sha(summary + start + end)[:8]}",
+        id="",
         kind="create",
         calendar_id=str(calendar_id or "primary").strip() or "primary",
         summary=summary,
@@ -100,7 +118,7 @@ def propose_event(
         event_id="",
         created_at=time.strftime("%Y-%m-%dT%H:%M:%S%z"),
     )
-    _save(cfg, proposal)
+    _store_new(cfg, proposal)
     audit_event(cfg, "propose_calendar", {"kind": "create", "summary": summary}, ok=True, chars=len(summary))
     return proposal
 
@@ -115,7 +133,7 @@ def propose_delete(cfg: LaneConfig, calendar_id: str = "primary", event_id: str 
     except ConnectorError as exc:
         raise CalendarError(f"evento non leggibile: {exc.refusal}") from exc
     proposal = CalendarProposal(
-        id=f"{time.strftime('%Y%m%d-%H%M%S')}-{_sha(event_id)[:8]}",
+        id="",
         kind="delete",
         calendar_id=str(calendar_id or "primary").strip() or "primary",
         summary=str(existing.get("summary", "")),
@@ -126,7 +144,7 @@ def propose_delete(cfg: LaneConfig, calendar_id: str = "primary", event_id: str 
         event_id=event_id,
         created_at=time.strftime("%Y-%m-%dT%H:%M:%S%z"),
     )
-    _save(cfg, proposal)
+    _store_new(cfg, proposal)
     audit_event(cfg, "propose_calendar", {"kind": "delete", "event": event_id}, ok=True, chars=0)
     return proposal
 

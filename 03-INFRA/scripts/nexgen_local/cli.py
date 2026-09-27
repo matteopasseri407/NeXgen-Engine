@@ -209,6 +209,10 @@ def cmd_explore(args: argparse.Namespace) -> int:
         print(result.answer)
     else:
         print("(nessuna risposta: passaggio a un agente piu' capace)")
+    if result.mail_draft:
+        print(f"[bozza mail da approvare: {result.mail_draft}]")
+    if result.upload_proposal:
+        print(f"[proposta upload da approvare: {result.upload_proposal}]")
     _print_receipts(result.receipts)
     for decision in result.decisions:
         mark = "ok" if decision.ok else "KO"

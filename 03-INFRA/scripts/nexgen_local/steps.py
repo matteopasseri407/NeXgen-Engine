@@ -114,6 +114,10 @@ class StepResult:
     confabulation: bool = False
     problems: list[str] = field(default_factory=list)
     collected: str = ""
+    #: Proposal ids produced in the loop, returned by the engine itself:
+    #: the caller must not depend on the model echoing them in prose.
+    mail_draft: str = ""
+    upload_proposal: str = ""
     #: One guided rewrite when the claim check fails; bounded, never a loop.
     correction_used: bool = False
     corrections: int = 0
@@ -150,6 +154,9 @@ class LoopState:
     drive_ids: list[str] = field(default_factory=list)
     calendar_ids: list[str] = field(default_factory=list)
     outlook_ids: list[str] = field(default_factory=list)
+    #: Ids already read: the menu keeps offering the rest, so comparing two
+    #: results never requires finding them again.
+    read_ids: list[str] = field(default_factory=list)
     #: Task-level intents, engine-detected: when the request asks to reply to
     #: a mail just read, or to upload a file just read, the menu offers the
     #: gated propose action — never a direct send.
@@ -160,6 +167,15 @@ class LoopState:
     last_mail_id: str = ""
     mail_draft: str = ""
     upload_proposal: str = ""
+    #: Rendered proposal blocks for the final answer prompt: the answer is
+    #: built from collected content, so a proposal the prompt never sees is
+    #: a proposal the answer can never cite.
+    mail_draft_preview: str = ""
+    upload_preview: str = ""
+    #: Engine-worded approval pointers appended to the final answer verbatim:
+    #: the user receives id, recipient and approval command even when the
+    #: model's prose stays terse. Tagged [motore: ...], never model prose.
+    proposal_footers: list[str] = field(default_factory=list)
     empty_streak: int = 0
     decisions: list[Decision] = field(default_factory=list)
 
@@ -172,6 +188,52 @@ UPLOAD_INTENT_RE = re.compile(r"\b(carica|caricare|upload|pubblica su drive)\b",
 
 
 # --------------------------------------------------------------- the menu
+
+
+#: Re-search action per route: after a read the menu offers the same
+#: source again, never a hardcoded default that misleads (Outlook reads
+#: once offered a Drive search).
+_SEARCH_FOR_ROUTE = {
+    "vault": "search_vault",
+    "web": "search_web",
+    "mail": "search_mail",
+    "drive": "search_drive",
+    "calendar": "search_calendar",
+    "outlook": "search_outlook",
+}
+
+#: Which id list belongs to a read action.
+_IDS_FOR_READ = {
+    "read_mail": "mail_ids",
+    "read_drive": "drive_ids",
+    "read_calendar": "calendar_ids",
+    "read_outlook": "outlook_ids",
+}
+
+
+def _unread(state: LoopState, tool: str) -> list[str]:
+    """Engine-found ids of this source not read yet, in search order."""
+    ids = getattr(state, _IDS_FOR_READ.get(tool, ""), []) or []
+    read = set(state.read_ids)
+    return [item for item in ids if item and item not in read]
+
+
+def _pending_unread(state: LoopState) -> str:
+    """Non-empty when search results are still waiting to be read.
+
+    A search that succeeded but was never followed by a read is not an
+    empty result: answering on top of it must be refused, or the engine
+    reports "no results" with results in hand.
+    """
+    if state.route == "mail" and state.mail_ids and not state.mail:
+        return "risultati mail ancora da leggere: apri un id dal menu prima di rispondere"
+    if state.route == "drive" and state.drive_ids and not state.drive:
+        return "risultati drive ancora da leggere: apri un id dal menu prima di rispondere"
+    if state.route == "outlook" and state.outlook_ids and not state.outlook:
+        return "risultati outlook ancora da leggere: apri un id dal menu prima di rispondere"
+    if state.route == "calendar" and state.calendar_ids and not state.calendar:
+        return "risultati calendario ancora da leggere: apri un id dal menu prima di rispondere"
+    return ""
 
 
 def build_menu(cfg: LaneConfig, state: LoopState) -> list[Candidate]:
@@ -209,18 +271,17 @@ def build_menu(cfg: LaneConfig, state: LoopState) -> list[Candidate]:
         menu.append(Candidate("escalate"))
         return menu[:MAX_MENU]
     if tool == "search_mail" and last.get("ok") and state.mail_ids:
-        menu = [Candidate("read_mail", mid) for mid in state.mail_ids[: MAX_MENU - 2]]
-        menu.append(Candidate("answer"))
+        # No answer here: search lines are not content. The model reads
+        # first; answering from zero reads is engine absence, not synthesis.
+        menu = [Candidate("read_mail", mid) for mid in state.mail_ids[: MAX_MENU - 1]]
         menu.append(Candidate("escalate"))
         return menu[:MAX_MENU]
     if tool == "search_drive" and last.get("ok") and state.drive_ids:
-        menu = [Candidate("read_drive", fid) for fid in state.drive_ids[: MAX_MENU - 2]]
-        menu.append(Candidate("answer"))
+        menu = [Candidate("read_drive", fid) for fid in state.drive_ids[: MAX_MENU - 1]]
         menu.append(Candidate("escalate"))
         return menu[:MAX_MENU]
     if tool == "search_outlook" and last.get("ok") and state.outlook_ids:
-        menu = [Candidate("read_outlook", mid) for mid in state.outlook_ids[: MAX_MENU - 2]]
-        menu.append(Candidate("answer"))
+        menu = [Candidate("read_outlook", mid) for mid in state.outlook_ids[: MAX_MENU - 1]]
         menu.append(Candidate("escalate"))
         return menu[:MAX_MENU]
     if tool == "search_calendar" and last.get("ok") and state.calendar_ids:
@@ -253,18 +314,17 @@ def build_menu(cfg: LaneConfig, state: LoopState) -> list[Candidate]:
             # as a choice: escalation stays available through real failures,
             # not as a way out. Unread hits remain readable.
             menu = [Candidate("draft_mail")]
-            menu += [
-                Candidate("read_mail", mid)
-                for mid in state.mail_ids
-                if mid != state.last_mail_id
-            ][: MAX_MENU - 1]
+            menu += [Candidate("read_mail", mid) for mid in state.mail_ids if mid not in state.read_ids][: MAX_MENU - 1]
             return menu[:MAX_MENU]
         menu = [Candidate("answer")]
-        if state.empty_streak < MAX_EMPTY_STREAK:
-            if state.route == "calendar":
-                menu.append(Candidate("search_calendar"))
-            else:
-                menu.append(Candidate("search_mail") if state.route == "mail" else Candidate("search_drive"))
+        # Unread hits stay readable: comparing two results never requires
+        # finding them again. Re-search of the same source follows, when
+        # there is room and retries remain; escalation always closes.
+        for pending in _unread(state, tool)[: MAX_MENU - 2]:
+            menu.append(Candidate(tool, pending))
+        search = _SEARCH_FOR_ROUTE.get(state.route, "")
+        if search and state.empty_streak < MAX_EMPTY_STREAK and len(menu) < MAX_MENU - 1:
+            menu.append(Candidate(search))
         menu.append(Candidate("escalate"))
         return menu[:MAX_MENU]
     # An empty search or a refusal: one retry with a different query, then stop.
@@ -403,6 +463,10 @@ def validate_action(cfg: LaneConfig, state: LoopState, menu: list[Candidate], ac
                 return "query troppo simile a una gia' provata"
         return None
     if action in ("answer", "escalate"):
+        if action == "answer":
+            pending = _pending_unread(state)
+            if pending:
+                return pending
         return None
     return f"azione sconosciuta: {action}"
 
@@ -567,6 +631,8 @@ def _execute(llm: LLM, tools: ToolRegistry, state: LoopState, action: str, arg: 
             store = state.mail if action == "read_mail" else state.drive
             store.append(sanitize_content(output))
             state.empty_streak = 0
+            if arg not in state.read_ids:
+                state.read_ids.append(arg)
             if action == "read_mail":
                 state.last_mail_id = arg
         state.content_seen.append(sanitize_content(output))
@@ -576,6 +642,8 @@ def _execute(llm: LLM, tools: ToolRegistry, state: LoopState, action: str, arg: 
         if not _empty(output):
             state.outlook.append(sanitize_content(output))
             state.empty_streak = 0
+            if arg not in state.read_ids:
+                state.read_ids.append(arg)
         state.content_seen.append(sanitize_content(output))
         state.observations.append(_observe("read_outlook", arg, output))
     elif action == "read_calendar":
@@ -583,6 +651,8 @@ def _execute(llm: LLM, tools: ToolRegistry, state: LoopState, action: str, arg: 
         if not _empty(output):
             state.calendar.append(sanitize_content(output))
             state.empty_streak = 0
+            if arg not in state.read_ids:
+                state.read_ids.append(arg)
         state.content_seen.append(sanitize_content(output))
         state.observations.append(_observe("read_calendar", arg, output))
     elif action == "draft_mail":
@@ -606,6 +676,15 @@ def _execute(llm: LLM, tools: ToolRegistry, state: LoopState, action: str, arg: 
         except MailError as exc:
             raise ToolError(f"bozza rifiutata: {exc}") from exc
         state.mail_draft = proposal.id
+        state.mail_draft_preview = (
+            f"[bozza {proposal.id}]\nA: {proposal.to}\nOggetto: {proposal.subject}\n"
+            f"Stato: da approvare con nexgen-local mail-send {proposal.id} --yes\n\n"
+            f"{proposal.body[:1200]}"
+        )
+        state.proposal_footers.append(
+            f"[motore: bozza {proposal.id} a {proposal.to} ({proposal.subject}) — "
+            f"approva con nexgen-local mail-send {proposal.id} --yes]"
+        )
         detail = f"bozza {proposal.id} a {proposal.to}: {proposal.subject}"
         state.content_seen.append(sanitize_content(detail))
         state.observations.append(f"draft_mail() -> {detail}")
@@ -617,6 +696,14 @@ def _execute(llm: LLM, tools: ToolRegistry, state: LoopState, action: str, arg: 
         except DriveGateError as exc:
             raise ToolError(f"proposta rifiutata: {exc}") from exc
         state.upload_proposal = staged["id"]
+        state.upload_preview = (
+            f"[proposta upload {staged['id']}]\nFile: {staged['name']} ({staged['size']} byte)\n"
+            f"Stato: da approvare con nexgen-local drive-upload {staged['id']} --yes"
+        )
+        state.proposal_footers.append(
+            f"[motore: proposta upload {staged['id']}: {staged['name']} ({staged['size']} byte) — "
+            f"approva con nexgen-local drive-upload {staged['id']} --yes]"
+        )
         detail = f"proposta {staged['id']}: {staged['name']} ({staged['size']} byte)"
         state.content_seen.append(sanitize_content(detail))
         state.observations.append(f"propose_upload({arg}) -> {detail}")
@@ -773,7 +860,21 @@ def run_steps(
             escalated = True
             break
         if action == "answer":
-            collected = "\n\n".join([*state.reads, *state.web, *state.mail, *state.drive, *state.calendar, *state.outlook])
+            blocks = [
+                *state.reads,
+                *state.web,
+                *state.mail,
+                *state.drive,
+                *state.calendar,
+                *state.outlook,
+            ]
+            # Proposals are engine facts with ids the answer must cite:
+            # without them the draft exists but the user never sees it.
+            if state.mail_draft_preview:
+                blocks.append(sanitize_content(state.mail_draft_preview))
+            if state.upload_preview:
+                blocks.append(sanitize_content(state.upload_preview))
+            collected = "\n\n".join(blocks)
             receipts = [{"tool": call.name, "args": call.args, "ok": call.ok} for call in tools.calls]
             outcome = retrieval_outcome(tools.calls, tools.refusals, collected)
             if outcome == "ok":
@@ -798,6 +899,12 @@ def run_steps(
                 answer = engine_sentence(outcome)
                 problems = verify_answer(answer, receipts, collected)
             result.answer = answer
+            if state.proposal_footers:
+                # Engine facts, appended verbatim after the model's prose:
+                # id, recipient and approval command reach the user even
+                # when the model stays terse. The claim check ran on the
+                # model's own words above; this footer claims nothing.
+                result.answer = (result.answer + "\n\n" + "\n".join(state.proposal_footers)).strip()
             result.collected = collected
             result.confabulation = bool(problems)
             result.problems = problems
@@ -828,5 +935,7 @@ def run_steps(
         escalated = True
     result.steps = state.step
     result.escalated = escalated
+    result.mail_draft = state.mail_draft
+    result.upload_proposal = state.upload_proposal
     result.receipts = [{"tool": call.name, "args": call.args, "ok": call.ok} for call in tools.calls]
     return result

@@ -8,8 +8,10 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from nexgen_local.config import LaneConfig
-from nexgen_local.steps import LoopState, build_menu, run_steps
+from nexgen_local.steps import Candidate, LoopState, build_menu, run_steps
 from nexgen_local.tools import ToolRegistry
 
 
@@ -167,7 +169,6 @@ def test_draft_mail_accepts_the_read_id_or_empty(tmp_path: Path) -> None:
 
 def test_loop_reply_flow_drafts_but_never_sends(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """search_mail -> read_mail -> draft_mail -> answer: a draft artifact, zero sends."""
-    import nexgen_local.compose as compose_module
     import nexgen_local.connectors.gmail as gmail_conn
 
     vault = tmp_path / "vault"
@@ -301,6 +302,7 @@ def test_reply_menu_prescribes_draft_before_answer(tmp_path: Path) -> None:
     state = LoopState(task="Rispondi alla mail", route="mail", want_reply=True)
     state.receipts = [{"tool": "read_mail", "args": {"id": "m1"}, "ok": True}]
     state.last_mail_id = "m1"
+    state.read_ids = ["m1"]
     state.mail_ids = ["m1", "m2"]
     actions = [c.action for c in build_menu(cfg, state)]
     assert actions[0] == "draft_mail"
@@ -633,3 +635,163 @@ def test_loop_outlook_search_read_answer(tmp_path: Path, monkeypatch: pytest.Mon
     assert [d.action for d in result.decisions] == ["search_outlook", "read_outlook", "answer"]
     assert result.problems == []
     assert result.escalated is False
+
+
+def test_post_search_menu_has_no_answer_before_read(tmp_path: Path) -> None:
+    """Search lines are not content: mail/drive/outlook read first, like calendar."""
+    from nexgen_local.steps import validate_action
+
+    cfg = _cfg(tmp_path)
+    cases = [
+        ("mail", "search_mail", "mail_ids", "read_mail", ["m1", "m2"]),
+        ("drive", "search_drive", "drive_ids", "read_drive", ["d1", "d2"]),
+        ("outlook", "search_outlook", "outlook_ids", "read_outlook", ["o1", "o2"]),
+    ]
+    for route, tool, ids_attr, read_action, ids in cases:
+        state = LoopState(task="cerca qualcosa", route=route)
+        state.receipts = [{"tool": tool, "args": {"query": "x"}, "ok": True}]
+        setattr(state, ids_attr, list(ids))
+        menu = build_menu(cfg, state)
+        assert "answer" not in [c.action for c in menu], route
+        assert [c.arg for c in menu if c.action == read_action] == ids, route
+        # Answer is not even on the menu; the guard below is the second wall
+        # for any path that still offers it with results unread.
+        guarded = [Candidate("answer"), Candidate("escalate")]
+        problem = validate_action(cfg, state, guarded, "answer", "")
+        assert problem is not None and "ancora da leggere" in problem, route
+
+
+def test_answer_allowed_after_empty_search(tmp_path: Path) -> None:
+    """No ids means truly empty: the engine may report the void."""
+    from nexgen_local.steps import validate_action
+
+    cfg = _cfg(tmp_path)
+    state = LoopState(task="cerca il nulla", route="mail", empty_streak=1)
+    state.receipts = [{"tool": "search_mail", "args": {"query": "zzz"}, "ok": True}]
+    state.mail_ids = []
+    menu = build_menu(cfg, state)
+    assert "answer" in [c.action for c in menu]
+    assert validate_action(cfg, state, menu, "answer", "") is None
+
+
+def test_read_menu_keeps_unread_siblings(tmp_path: Path) -> None:
+    """After the first read the second stays one choice away: compare, don't re-find."""
+    cfg = _cfg(tmp_path)
+    state = LoopState(task="Confronta i due contratti", route="drive")
+    state.receipts = [{"tool": "read_drive", "args": {"id": "d1"}, "ok": True}]
+    state.drive_ids = ["d1", "d2"]
+    state.read_ids = ["d1"]
+    state.drive = ["[drive:Contratto (d1)]\ntesto uno"]
+    menu = build_menu(cfg, state)
+    actions = [c.action for c in menu]
+    assert actions[0] == "answer"
+    assert Candidate("read_drive", "d2") in menu
+    assert Candidate("read_drive", "d1") not in menu
+    assert "escalate" in actions
+
+
+def test_post_read_search_matches_route(tmp_path: Path) -> None:
+    """After an Outlook read the menu offers Outlook search, never Drive."""
+    cfg = _cfg(tmp_path)
+    state = LoopState(task="Trova su Outlook la riunione", route="outlook")
+    state.receipts = [{"tool": "read_outlook", "args": {"id": "o9"}, "ok": True}]
+    state.outlook_ids = ["o9"]
+    state.read_ids = ["o9"]
+    state.outlook = ["[outlook:o9]\nRiunione giovedi'."]
+    actions = [c.action for c in build_menu(cfg, state)]
+    assert "search_outlook" in actions
+    assert "search_drive" not in actions
+    assert "search_mail" not in actions
+
+
+def test_result_carries_draft_id_and_preview(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The draft exists and the answer prompt saw it: id in collected, id in result."""
+    import nexgen_local.connectors.gmail as gmail_conn
+
+    cfg = _cfg(tmp_path)
+    monkeypatch.setattr(
+        gmail_conn, "search_messages", lambda query, max_results=5: [{"id": "m1", "threadId": "t1"}]
+    )
+    monkeypatch.setattr(
+        gmail_conn,
+        "get_message",
+        lambda mid, http=None: {
+            "id": mid, "threadId": "t1", "from": "commercialista@esempio.it", "to": "",
+            "subject": "Budget", "date": "ieri", "message-id": "", "snippet": "",
+            "body": "Mandami le fatture.", "attachments": [],
+        },
+    )
+    llm = ScriptedLLM(
+        route={"source": "mail", "keywords": ["commercialista"]},
+        decisions=[
+            {"action": "search_mail", "arg": "commercialista"},
+            {"action": "read_mail", "arg": "m1"},
+            {"action": "draft_mail", "arg": ""},
+            {"action": "answer", "arg": ""},
+        ],
+        answers=["Confermo entro lunedi'.", "Bozza pronta con id."],
+    )
+    result = run_steps(llm, ToolRegistry(cfg), cfg, "Rispondi alla mail del commercialista.")
+    assert result.mail_draft, "l'id bozza deve tornare dal motore, non dalla prosa"
+    assert result.mail_draft in result.collected
+    assert result.mail_draft in result.answer, "il puntatore di approvazione e' nel testo finale"
+    assert "commercialista@esempio.it" in result.answer
+    assert result.problems == []
+    assert (cfg.mails_dir / f"{result.mail_draft}.json").is_file()
+
+
+def test_result_carries_upload_id_and_preview(tmp_path: Path) -> None:
+    """Same contract for uploads: id in collected, id in result."""
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    cfg = LaneConfig(
+        vault_root=vault, repo_roots=(), model="fake-model",
+        audit_path=tmp_path / "audit.jsonl", mails_dir=tmp_path / "mails",
+        uploads_dir=tmp_path / "uploads",
+    )
+    _write(vault / "nota.md", "Contenuto da caricare.\n")
+    target = str(vault / "nota.md")
+    llm = ScriptedLLM(
+        decisions=[
+            {"action": "read_file", "arg": target},
+            {"action": "propose_upload", "arg": target},
+            {"action": "answer", "arg": ""},
+        ],
+        answers=["Proposta pronta."],
+    )
+    result = run_steps(llm, ToolRegistry(cfg), cfg, f"Carica {target} su Drive.")
+    assert result.upload_proposal, "l'id proposta deve tornare dal motore, non dalla prosa"
+    assert result.upload_proposal in result.collected
+    assert result.upload_proposal in result.answer, "il puntatore di approvazione e' nel testo finale"
+    assert result.problems == []
+
+
+def test_answer_without_read_escalates_instead_of_false_absence(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A search followed by answer-without-read never reports 'no results'."""
+    import nexgen_local.connectors.gmail as gmail_conn
+    from nexgen_local.engine import ENGINE_ABSENCE
+
+    cfg = _cfg(tmp_path)
+    monkeypatch.setattr(
+        gmail_conn, "search_messages", lambda query, max_results=5: [{"id": "m1", "threadId": "t1"}]
+    )
+    monkeypatch.setattr(
+        gmail_conn,
+        "get_message",
+        lambda mid, http=None: {
+            "id": mid, "threadId": "t1", "from": "a@b.cc", "to": "", "subject": "S",
+            "date": "", "message-id": "", "snippet": "", "body": "B", "attachments": [],
+        },
+    )
+    llm = ScriptedLLM(
+        route={"source": "mail", "keywords": ["budget"]},
+        decisions=[
+            {"action": "search_mail", "arg": "budget"},
+            {"action": "answer", "arg": ""},
+        ],
+    )
+    result = run_steps(llm, ToolRegistry(cfg), cfg, "Trova la mail sul budget.")
+    assert result.escalated is True
+    assert result.answer != ENGINE_ABSENCE

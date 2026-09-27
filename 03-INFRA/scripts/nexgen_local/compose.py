@@ -24,7 +24,7 @@ from .connectors import ConnectorError
 from .connectors import gmail as gmail_conn
 from .connectors import outlook as outlook_conn
 from .llm import LLM
-from .patch import _PROPOSAL_ID_RE
+from .patch import _PROPOSAL_ID_RE, new_proposal_id
 from .tools import ToolError, audit_event
 
 MAX_BODY_CHARS = 20_000
@@ -64,16 +64,21 @@ class MailProposal:
     sent_id: str = ""
 
 
-def _sha(text: str) -> str:
-    import hashlib
-
-    return hashlib.sha256(text.encode("utf-8", errors="replace")).hexdigest()
-
-
 def _save(cfg: LaneConfig, proposal: MailProposal) -> None:
     cfg.mails_dir.mkdir(parents=True, exist_ok=True)
     target = cfg.mails_dir / f"{proposal.id}.json"
     target.write_text(json.dumps(asdict(proposal), ensure_ascii=False, indent=1), encoding="utf-8")
+
+
+def _create(cfg: LaneConfig, proposal: MailProposal) -> None:
+    """Store a new draft without ever overwriting an existing one (see patch._create)."""
+    cfg.mails_dir.mkdir(parents=True, exist_ok=True)
+    target = cfg.mails_dir / f"{proposal.id}.json"
+    try:
+        with target.open("x", encoding="utf-8") as handle:
+            handle.write(json.dumps(asdict(proposal), ensure_ascii=False, indent=1))
+    except FileExistsError as exc:
+        raise MailError(f"collisione id proposta, riprova: {proposal.id}") from exc
 
 
 def _migrate(data: dict[str, Any]) -> dict[str, Any]:
@@ -189,7 +194,7 @@ def propose_mail_from_context(
     """
     body = _draft_body(llm, context, instruction)
     proposal = MailProposal(
-        id=f"{time.strftime('%Y%m%d-%H%M%S')}-{_sha(to + subject + body)[:8]}",
+        id="",
         kind=kind,
         provider=provider,
         to=to,
@@ -200,7 +205,16 @@ def propose_mail_from_context(
         model_text="bozza del modello, da approvare riga per riga",
         created_at=time.strftime("%Y-%m-%dT%H:%M:%S%z"),
     )
-    _save(cfg, proposal)
+    for _ in range(5):
+        proposal.id = new_proposal_id()
+        try:
+            _create(cfg, proposal)
+            break
+        except MailError as exc:
+            if "collisione" not in str(exc):
+                raise
+    else:
+        raise MailError("collisione id proposta, riprova")
     audit_event(
         cfg,
         "propose_mail",

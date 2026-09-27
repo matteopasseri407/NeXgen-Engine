@@ -236,3 +236,32 @@ def test_old_proposals_load_as_gmail(tmp_path: Path) -> None:
     from nexgen_local.compose import load_proposal
 
     assert load_proposal(cfg, old["id"]).provider == "gmail"
+
+
+def test_same_body_twice_gets_unique_ids(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Same original, same second: two drafts, two artifacts, no overwrite."""
+    import nexgen_local.connectors.gmail as gmail_conn
+
+    cfg = _cfg(tmp_path)
+    monkeypatch.setattr(gmail_conn, "get_message", lambda mid, http=None: dict(_ORIGINAL))
+    first = propose_mail(DraftLLM("Confermo."), cfg, "conferma", reply_to="m1")
+    second = propose_mail(DraftLLM("Confermo."), cfg, "conferma", reply_to="m1")
+    assert first.id != second.id
+    assert {proposal.id for proposal in list_proposals(cfg)} == {first.id, second.id}
+
+
+def test_mail_propose_never_overwrites(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A colliding id refuses instead of replacing the shown draft."""
+    import nexgen_local.compose as compose_module
+    import nexgen_local.connectors.gmail as gmail_conn
+
+    cfg = _cfg(tmp_path)
+    monkeypatch.setattr(gmail_conn, "get_message", lambda mid, http=None: dict(_ORIGINAL))
+    monkeypatch.setattr(compose_module, "new_proposal_id", lambda: "20260101-000000-deadbeef")
+    first = propose_mail(DraftLLM("Confermo."), cfg, "conferma", reply_to="m1")
+    assert first.id == "20260101-000000-deadbeef"
+    with pytest.raises(MailError, match="collisione"):
+        propose_mail(DraftLLM("Altro testo."), cfg, "conferma", reply_to="m1")
+    from nexgen_local.compose import load_proposal
+
+    assert load_proposal(cfg, first.id).body == "Confermo."

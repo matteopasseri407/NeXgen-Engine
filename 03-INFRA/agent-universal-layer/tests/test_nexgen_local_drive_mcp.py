@@ -236,3 +236,28 @@ def test_drive_cli_upload_roundtrip(tmp_path: Path, monkeypatch: pytest.MonkeyPa
     assert cli_module.cmd_drive_upload(args) == 1
     args = argparse.Namespace(proposal_id=proposal_id, yes=True, json=True)
     assert cli_module.cmd_drive_upload(args) == 0
+
+
+def test_stage_same_bytes_different_names_get_unique_ids(tmp_path: Path) -> None:
+    """Same file staged twice with different names: two artifacts, no overwrite."""
+    cfg = _cfg(tmp_path)
+    _write(tmp_path / "repo" / "contratto.txt", "Clausola 3.\n")
+    first = stage_upload(cfg, "contratto.txt", name="Contratto.txt")
+    second = stage_upload(cfg, "contratto.txt", name="Altro-nome.txt", folder_id="cartella")
+    assert first["id"] != second["id"]
+    assert load_proposal(cfg, first["id"]).name == "Contratto.txt"
+    assert load_proposal(cfg, second["id"]).name == "Altro-nome.txt"
+
+
+def test_stage_never_overwrites_existing_proposal(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A colliding id refuses instead of replacing the shown proposal."""
+    import nexgen_local.drive_mcp as drive_gate
+
+    cfg = _cfg(tmp_path)
+    _write(tmp_path / "repo" / "a.txt", "contenuto\n")
+    monkeypatch.setattr(drive_gate, "new_proposal_id", lambda: "20260101-000000-deadbeef")
+    first = stage_upload(cfg, "a.txt", name="Prima.txt")
+    assert first["id"] == "20260101-000000-deadbeef"
+    with pytest.raises(DriveGateError, match="collisione"):
+        stage_upload(cfg, "a.txt", name="Seconda.txt")
+    assert load_proposal(cfg, first["id"]).name == "Prima.txt"

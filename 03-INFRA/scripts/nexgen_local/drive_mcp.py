@@ -21,6 +21,7 @@ from typing import Any
 from .config import LaneConfig
 from .connectors import ConnectorError
 from .connectors import drive as drive_conn
+from .patch import new_proposal_id
 from .tools import ToolError, audit_event
 
 
@@ -50,6 +51,17 @@ def _save(cfg: LaneConfig, proposal: UploadProposal) -> None:
     cfg.uploads_dir.mkdir(parents=True, exist_ok=True)
     target = cfg.uploads_dir / f"{proposal.id}.json"
     target.write_text(json.dumps(asdict(proposal), ensure_ascii=False, indent=1), encoding="utf-8")
+
+
+def _create(cfg: LaneConfig, proposal: UploadProposal) -> None:
+    """Store a new proposal without ever overwriting an existing one (see patch._create)."""
+    cfg.uploads_dir.mkdir(parents=True, exist_ok=True)
+    target = cfg.uploads_dir / f"{proposal.id}.json"
+    try:
+        with target.open("x", encoding="utf-8") as handle:
+            handle.write(json.dumps(asdict(proposal), ensure_ascii=False, indent=1))
+    except FileExistsError as exc:
+        raise DriveGateError(f"collisione id proposta, riprova: {proposal.id}") from exc
 
 
 def load_proposal(cfg: LaneConfig, proposal_id: str) -> UploadProposal:
@@ -103,7 +115,7 @@ def stage_upload(cfg: LaneConfig, local_path: str, name: str = "", folder_id: st
     resolved_name = str(name or "").strip() or target.name
     mime, _ = mimetypes.guess_type(resolved_name)
     proposal = UploadProposal(
-        id=f"{time.strftime('%Y%m%d-%H%M%S')}-{_sha(data)[:8]}",
+        id="",
         local_path=str(target),
         name=resolved_name,
         mime=mime or "application/octet-stream",
@@ -112,7 +124,16 @@ def stage_upload(cfg: LaneConfig, local_path: str, name: str = "", folder_id: st
         folder_id=str(folder_id or "").strip(),
         created_at=time.strftime("%Y-%m-%dT%H:%M:%S%z"),
     )
-    _save(cfg, proposal)
+    for _ in range(5):
+        proposal.id = new_proposal_id()
+        try:
+            _create(cfg, proposal)
+            break
+        except DriveGateError as exc:
+            if "collisione" not in str(exc):
+                raise
+    else:
+        raise DriveGateError("collisione id proposta, riprova")
     audit_event(
         cfg,
         "drive_upload",

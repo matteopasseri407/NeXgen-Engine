@@ -220,3 +220,15 @@ def test_apply_cli_propagates_verify_failure(tmp_path: Path, monkeypatch: pytest
     monkeypatch.setattr(cli, "_config", lambda args: cfg)
     args = argparse.Namespace(proposal_id=proposal.id, yes=True, verify="false", json=False)
     assert cli.cmd_apply(args) == 3
+
+
+def test_same_patch_twice_gets_unique_ids(tmp_path: Path) -> None:
+    """Same snippet in the same second: two artifacts, no overwrite."""
+    repo = _git_repo(tmp_path)
+    (repo / "notes.md").write_text("Questo contiente un refuso.\n", encoding="utf-8")
+    cfg = _cfg(tmp_path, repo)
+    llm = PatchLLM({"old": "contiente", "new": "contiene", "why": "refuso"})
+    first = propose_patch(llm, cfg, "notes.md", "correggi il refuso")
+    second = propose_patch(llm, cfg, "notes.md", "correggi il refuso")
+    assert first.id != second.id
+    assert load_proposal(cfg, first.id).patch == load_proposal(cfg, second.id).patch

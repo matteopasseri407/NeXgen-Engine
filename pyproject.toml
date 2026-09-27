@@ -82,6 +82,7 @@ include = ["nexgen_core*", "nexgen_local*"]
 [tool.setuptools.package-data]
 nexgen_local = [
     "evals/suites/*.json",
+    "evals/fixtures/*.txt",
     "evals/fixtures/vault/*.md",
     "evals/fixtures/vault/*/*.md",
     "evals/fixtures/web/*.txt",

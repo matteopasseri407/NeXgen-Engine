@@ -71,9 +71,32 @@ def _headers(payload: dict[str, Any]) -> dict[str, str]:
     return found
 
 
-def _walk_text(payload: dict[str, Any], attachments: list[str]) -> list[str]:
-    """Plain-text parts first; attachment names recorded, never fetched here."""
-    texts: list[str] = []
+def _html_to_text(html: str) -> str:
+    """Best-effort text out of an HTML part: tags out, entities decoded.
+
+    Stdlib only, no parser dependency: strip tags, unescape entities,
+    collapse whitespace. Formatting is lost on purpose; the coverage flag
+    tells the reader the text came from HTML.
+    """
+    import html as _html
+    import re
+
+    text = re.sub(r"<script.*?</script>", " ", html, flags=re.S | re.I)
+    text = re.sub(r"<style.*?</style>", " ", text, flags=re.S | re.I)
+    text = re.sub(r"<[^>]+>", " ", text)
+    text = _html.unescape(text)
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def _walk_text(payload: dict[str, Any], attachments: list[str]) -> tuple[list[str], list[str]]:
+    """Plain-text parts and HTML-derived text, kept apart for the coverage flag.
+
+    Attachment names recorded, never fetched here. A part with a filename is
+    an attachment even when its MIME is text/*: its bytes are the attachment,
+    not the message body.
+    """
+    plain: list[str] = []
+    html: list[str] = []
 
     def visit(part: dict[str, Any]) -> None:
         mime = str(part.get("mimeType", ""))
@@ -82,13 +105,23 @@ def _walk_text(payload: dict[str, Any], attachments: list[str]) -> list[str]:
             attachments.append(f"{filename} ({mime or 'allegato'})")
         body = part.get("body") or {}
         data = body.get("data")
-        if mime.startswith("text/plain") and data:
-            texts.append(base64.urlsafe_b64decode(data).decode("utf-8", errors="replace"))
+        if data and not filename:
+            try:
+                text = base64.urlsafe_b64decode(data).decode("utf-8", errors="replace")
+            except ValueError:
+                text = ""
+            if text.strip():
+                if mime.startswith("text/plain"):
+                    plain.append(text)
+                elif mime.startswith("text/html"):
+                    stripped = _html_to_text(text)
+                    if stripped:
+                        html.append(stripped)
         for sub in part.get("parts", []):
             visit(sub)
 
     visit(payload.get("payload") or {})
-    return texts
+    return plain, html
 
 
 def get_message(mid: str, http: HttpFn | None = None) -> dict[str, Any]:
@@ -102,8 +135,19 @@ def get_message(mid: str, http: HttpFn | None = None) -> dict[str, Any]:
         raise ConnectorError("(gmail: messaggio non trovato)")
     headers = _headers(payload)
     attachments: list[str] = []
-    parts = _walk_text(payload, attachments)
-    body = "\n".join(part.strip() for part in parts if part.strip())
+    plain, html = _walk_text(payload, attachments)
+    snippet = str(payload.get("snippet", ""))
+    if plain:
+        # Full fidelity: the provider's own plain-text parts.
+        body, coverage = "\n".join(part.strip() for part in plain if part.strip()), "text"
+    elif html:
+        # Readable but lossy: formatting gone, facts kept, flagged as such.
+        body, coverage = "\n".join(part.strip() for part in html if part.strip()), "html"
+    else:
+        # Nothing extractable: the snippet is a short excerpt (Google's own
+        # definition), never the whole message — flagged so the lane knows
+        # this read is partial.
+        body, coverage = snippet, "snippet"
     return {
         "id": str(payload.get("id", mid)),
         "threadId": str(payload.get("threadId", "")),
@@ -112,8 +156,9 @@ def get_message(mid: str, http: HttpFn | None = None) -> dict[str, Any]:
         "subject": headers.get("subject", ""),
         "date": headers.get("date", ""),
         "message-id": headers.get("message-id", ""),
-        "snippet": str(payload.get("snippet", "")),
-        "body": body or str(payload.get("snippet", "")),
+        "snippet": snippet,
+        "body": body,
+        "coverage": coverage,
         "attachments": attachments,
     }
 

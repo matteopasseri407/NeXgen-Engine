@@ -24,7 +24,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from .config import LaneConfig
-from .patch import _PROPOSAL_ID_RE
+from .patch import _PROPOSAL_ID_RE, new_proposal_id
 from .tools import ToolError, audit_event
 
 
@@ -91,6 +91,17 @@ def _save(cfg: LaneConfig, proposal: WorkflowProposal) -> None:
     target.write_text(json.dumps(asdict(proposal), ensure_ascii=False, indent=1), encoding="utf-8")
 
 
+def _create(cfg: LaneConfig, proposal: WorkflowProposal) -> None:
+    """Store a new proposal without ever overwriting an existing one (see patch._create)."""
+    cfg.workflows_dir.mkdir(parents=True, exist_ok=True)
+    target = cfg.workflows_dir / f"{proposal.id}.json"
+    try:
+        with target.open("x", encoding="utf-8") as handle:
+            handle.write(json.dumps(asdict(proposal), ensure_ascii=False, indent=1))
+    except FileExistsError as exc:
+        raise WorkflowError(f"collisione id proposta, riprova: {proposal.id}") from exc
+
+
 def load_proposal(cfg: LaneConfig, proposal_id: str) -> WorkflowProposal:
     if not _PROPOSAL_ID_RE.fullmatch(str(proposal_id or "")):
         raise WorkflowError(f"id proposta non valido: {proposal_id}")
@@ -112,12 +123,6 @@ def list_proposals(cfg: LaneConfig) -> list[WorkflowProposal]:
     return proposals
 
 
-def _sha(text: str) -> str:
-    import hashlib
-
-    return hashlib.sha256(text.encode("utf-8", errors="replace")).hexdigest()
-
-
 def propose_run(cfg: LaneConfig, workflow: str, params: dict[str, Any] | None = None) -> WorkflowProposal:
     """Stage a run of an allowlisted workflow; sends nothing."""
     name = str(workflow or "").strip()
@@ -130,13 +135,22 @@ def propose_run(cfg: LaneConfig, workflow: str, params: dict[str, Any] | None = 
     if params is not None and not isinstance(params, dict):
         raise WorkflowError("params deve essere un oggetto JSON")
     proposal = WorkflowProposal(
-        id=f"{time.strftime('%Y%m%d-%H%M%S')}-{_sha(name + json.dumps(params or {}, sort_keys=True))[:8]}",
+        id="",
         workflow=name,
         description=str(entry.get("description", "")),
         params=dict(params or {}),
         created_at=time.strftime("%Y-%m-%dT%H:%M:%S%z"),
     )
-    _save(cfg, proposal)
+    for _ in range(5):
+        proposal.id = new_proposal_id()
+        try:
+            _create(cfg, proposal)
+            break
+        except WorkflowError as exc:
+            if "collisione" not in str(exc):
+                raise
+    else:
+        raise WorkflowError("collisione id proposta, riprova")
     audit_event(cfg, "propose_workflow", {"workflow": name}, ok=True, chars=len(json.dumps(proposal.params)))
     return proposal
 

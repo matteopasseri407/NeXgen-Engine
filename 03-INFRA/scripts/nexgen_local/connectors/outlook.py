@@ -217,12 +217,18 @@ def get_message(mid: str, http: HttpFn | None = None) -> dict[str, Any]:
     if not isinstance(payload, dict) or not payload.get("id"):
         raise ConnectorError("(outlook: messaggio non trovato)")
     body = payload.get("body") or {}
-    text = str(body.get("content", "") or "")
-    if body.get("contentType", "text").lower() == "html":
+    raw = str(body.get("content", "") or "")
+    preview = str(payload.get("bodyPreview", ""))
+    if raw.strip() and body.get("contentType", "text").lower() == "html":
         import re
 
-        text = re.sub(r"<[^>]+>", " ", text)
-        text = re.sub(r"\s+", " ", text).strip()
+        stripped = re.sub(r"<[^>]+>", " ", raw)
+        text, coverage = re.sub(r"\s+", " ", stripped).strip(), "html"
+    elif raw.strip():
+        text, coverage = raw, "text"
+    else:
+        # Preview only: a short excerpt, never the whole message.
+        text, coverage = preview, "snippet"
     sender = payload.get("from") or {}
     return {
         "id": str(payload.get("id", mid)),
@@ -232,8 +238,9 @@ def get_message(mid: str, http: HttpFn | None = None) -> dict[str, Any]:
         ),
         "subject": str(payload.get("subject", "")),
         "date": str(payload.get("receivedDateTime", "")),
-        "snippet": str(payload.get("bodyPreview", "")),
-        "body": text or str(payload.get("bodyPreview", "")),
+        "snippet": preview,
+        "body": text or preview,
+        "coverage": coverage if (text or preview) else "snippet",
         "attachments": ["(allegati presenti)"] if payload.get("hasAttachments") else [],
     }
 

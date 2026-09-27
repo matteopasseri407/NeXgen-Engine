@@ -140,3 +140,17 @@ def test_draft_grounded_checks_existence_and_body(tmp_path: Path) -> None:
         _json.dumps({"body": "Gentile commercialista, confermo tutto."}), encoding="utf-8"
     )
     assert _draft_grounded(mails, task) is True
+
+
+def test_wheel_ships_eval_fixtures() -> None:
+    """The benchmark runs from an installed wheel too: fixtures are package data."""
+    import tomllib
+
+    repo = Path(__file__).resolve().parents[3]
+    data = tomllib.loads((repo / "pyproject.toml").read_text(encoding="utf-8"))
+    patterns = data["tool"]["setuptools"]["package-data"]["nexgen_local"]
+    evals = repo / "03-INFRA" / "scripts" / "nexgen_local" / "evals"
+    for path in (evals / "fixtures").glob("*.txt"):
+        assert any(path.match(pattern) for pattern in patterns), path.name
+    assert "evals/suites/*.json" in patterns
+    assert list((evals / "suites").glob("*.json")), "la suite golden deve esistere"
