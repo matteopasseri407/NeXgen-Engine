@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 import pytest
@@ -33,10 +34,16 @@ HELP_TIMEOUT_SECONDS = 30
 
 def _run(argv: list[str]) -> subprocess.CompletedProcess[str]:
     entry = SCRIPTS_DIR / "nexgen_core" / "cli" / "__init__.py"
+    # Sandbox home su entrambe le semantiche: POSIX legge HOME, Windows la
+    # ignora e vuole USERPROFILE (trovato sulla CI Windows come
+    # "Could not determine home directory" per i verbi nuovi come `local`).
+    # Inesistente in entrambi i casi: ermetico, mai la casa vera.
+    fake_home = str(Path(tempfile.gettempdir()) / "nonexistent-home-for-tests")
     return subprocess.run(
         [sys.executable, str(entry), *argv],
         capture_output=True, text=True, check=False, timeout=HELP_TIMEOUT_SECONDS,
-        env={"PATH": "/usr/bin:/bin", "HOME": "/nonexistent-home-for-tests"},
+        env={"PATH": "/usr/bin:/bin", "HOME": "/nonexistent-home-for-tests",
+             "USERPROFILE": fake_home},
     )
 
 

@@ -432,7 +432,9 @@ def validate_action(cfg: LaneConfig, state: LoopState, menu: list[Candidate], ac
     arg = str(arg or "").strip()
     if action == "read_file":
         allowed = {candidate.arg for candidate in candidates if candidate.arg}
-        if arg not in allowed:
+        # Confronto canonico, non tra stringhe: su Windows il menu porta il
+        # path risolto e il modello l'originale (case, \\?\, short names).
+        if arg not in allowed and not any(_same_file(cfg, arg, cand) for cand in allowed):
             return "percorso non tra i candidati del passo"
         if not _existing_file(cfg, arg):
             return "percorso inesistente o fuori dalle radici"

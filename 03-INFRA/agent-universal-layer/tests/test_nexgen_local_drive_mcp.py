@@ -39,8 +39,10 @@ def _cfg(tmp_path: Path) -> LaneConfig:
 
 
 def _write(path: Path, text: str) -> None:
+    # Byte-stable: write_text in modalita' testo traduce \n in \r\n su
+    # Windows e gli hash dei byte non corrisponderebbero piu'.
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(text, encoding="utf-8")
+    path.write_bytes(text.encode("utf-8"))
 
 
 def test_stage_keeps_bytes_on_the_machine(tmp_path: Path) -> None:

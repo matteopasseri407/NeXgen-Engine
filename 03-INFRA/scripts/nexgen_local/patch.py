@@ -101,7 +101,7 @@ def _repo_file(cfg: LaneConfig, file_rel: str) -> tuple[Path, str, Path] | None:
             except (OSError, ValueError):
                 continue
             if resolved.is_file():
-                return resolved, str(rel), root.resolve()
+                return resolved, rel.as_posix(), root.resolve()
             break
     return None
 
@@ -135,11 +135,14 @@ def _approved_target(cfg: LaneConfig, proposal: Proposal) -> tuple[Path, Path]:
 
 
 def _dry_run(repo_root: Path, patch_text: str) -> tuple[bool, str]:
-    with tempfile.NamedTemporaryFile("w", suffix=".patch", delete=False, encoding="utf-8") as handle:
-        handle.write(patch_text)
+    # Byte-exact: in modalita' testo Windows convertirebbe \n in \r\n e
+    # gli hunk CRLF diventerebbero \r\r\n (git apply fallisce).
+    with tempfile.NamedTemporaryFile("wb", suffix=".patch", delete=False) as handle:
+        handle.write(patch_text.encode("utf-8"))
         path = Path(handle.name)
     try:
-        code, output = _run_git(repo_root, ["apply", "--check", "--whitespace=nowarn", str(path)])
+        code, output = _run_git(repo_root, ["-c", "core.autocrlf=false", "-c", "core.safecrlf=false",
+                                            "apply", "--check", "--whitespace=nowarn", str(path)])
     finally:
         path.unlink(missing_ok=True)
     return code == 0, output.strip()
@@ -313,11 +316,12 @@ def apply_proposal(
         chars=len(proposal.patch),
     )
 
-    with tempfile.NamedTemporaryFile("w", suffix=".patch", delete=False, encoding="utf-8") as handle:
-        handle.write(proposal.patch)
+    with tempfile.NamedTemporaryFile("wb", suffix=".patch", delete=False) as handle:
+        handle.write(proposal.patch.encode("utf-8"))
         patch_path = Path(handle.name)
     try:
-        code, output = _run_git(root, ["apply", "--whitespace=nowarn", str(patch_path)])
+        code, output = _run_git(root, ["-c", "core.autocrlf=false", "-c", "core.safecrlf=false",
+                                       "apply", "--whitespace=nowarn", str(patch_path)])
     finally:
         patch_path.unlink(missing_ok=True)
     if code != 0:

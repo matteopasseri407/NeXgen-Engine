@@ -232,7 +232,7 @@ class ToolRegistry:
             # not drag in a note that does not match the distinctive terms.
             if require_all and not all(term in text for term in low_terms):
                 continue
-            rel = str(path.relative_to(root))
+            rel = path.relative_to(root).as_posix()
             low_rel = rel.casefold()
             count = sum(text.count(term) for term in low_terms)
             if not count:
