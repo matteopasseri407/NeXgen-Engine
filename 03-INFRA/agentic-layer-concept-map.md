@@ -121,6 +121,14 @@ Council does not require a routing service. With only `seats.yaml`, it presents 
 
 As of 2026-07-15, `agy` (Antigravity) is refused as a seat outright, at the same point immediately before process spawn that every other seat's invocation funnels through: a live relay run showed `agy --print` ignores both the model selection and the given prompt, reading real local files instead of answering — a violation of the stateless text-in/text-out contract every seat above assumes. This does not affect `agy` as a caller of Council (a human working in Antigravity shelling out to `council` is unaffected by anything in this section). Full finding and reactivation conditions: `docs/council.md`, "Current limitations".
 
+## Council resumable relay
+
+The sequential relay runs two ways over one set of stage operations (`relay._select_stage_candidate` / `relay._invoke_stage_candidate`): ephemeral (in-memory loop, session removed unless kept) and resumable (`council relay --resumable`, resume with `--resume SESSION`). The resumable path persists progression only — brief hash, approved sequence, data-checked completed records, current step, attempts, quarantine deadlines, call count — as LangGraph checkpoints in SQLite inside the kept session directory. It is working state, not a second memory: TTL cleanup removes checkpoints with the session, and ephemeral modes are untouched. A checkpoint with an invoked-but-uncompleted attempt means the provider may already have responded: resume declares the uncertainty and refuses a silent re-invocation unless `--allow-uncertain-rerun` is passed, so quota is never spent twice without an explicit decision. The graph dependency is optional (`pip install 'nexgen-engine[council]'`, no Ollama); brainstorm, challenge and parallel seats stay on the ephemeral path until measured otherwise.
+
+## Council independent consult
+
+`council consult --seat A --seat B` runs the same brief past several seats independently and concurrently (real fan-out, measured peak == seats), then at most one rebuttal round aimed at the disagreement. Failures abstain with reasons instead of aborting; empty rounds refuse. Caps (5 seats, 1 rebuttal round) are refused before any invocation. The multi-process registry in `session.py` tracks every seat subprocess so shutdown and cancellation stop all of them, sequential or parallel — the old single slot stays as the compatibility view. Consult is ephemeral (no checkpoints); it earns a permanent place only by measured coverage or time wins at equal budget.
+
 ## Guardians
 
 - **`agent-sync`** — locks, proves authoritative data freshness, then reconciles live configs with the canonical sources on each machine.

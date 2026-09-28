@@ -137,6 +137,21 @@ def cmd_code_review(args: argparse.Namespace) -> None:
 
 
 def cmd_relay(args: argparse.Namespace) -> None:
+    from relay import RelayError
+
+    if getattr(args, "resume", ""):
+        _cmd_relay_resume(args)
+        return
+    if getattr(args, "resumable", False):
+        _cmd_relay_start_resumable(args)
+        return
+    try:
+        _cmd_relay_ephemeral(args)
+    except RelayError as e:
+        sys.exit(str(e))
+
+
+def _cmd_relay_ephemeral(args: argparse.Namespace) -> None:
     config = load_config()
     seats = load_seats()
     stages = _load_relay_sequence(args, config, seats)
@@ -180,6 +195,116 @@ def cmd_relay(args: argparse.Namespace) -> None:
     finally:
         _finalize_session(session_dir, keep_session)
         _set_active_session(None)
+
+
+def _cmd_relay_start_resumable(args: argparse.Namespace) -> None:
+    """Fresh resumable run: same validation and gates as ephemeral, then the graph."""
+    from relay import RelayError
+    from relay_graph import start_resumable_relay
+
+    try:
+        summary = start_resumable_relay(
+            question=args.question,
+            context=getattr(args, "context", None),
+            diff=getattr(args, "diff", None),
+            sequence_spec=getattr(args, "sequence", ""),
+            max_seats=int(getattr(args, "max_seats", 5)),
+            continue_on_reject=bool(getattr(args, "continue_on_reject", False)),
+            invocation_timeout=getattr(args, "timeout_seconds", None),
+        )
+    except RelayError as e:
+        sys.exit(str(e))
+    print(f"[council] resumable relay {summary['status']}: "
+          f"{summary['completed']}/{summary['total']} stages complete.")
+    if summary.get("final_verdict"):
+        print(f"[council] final verdict: {summary['final_verdict']}")
+    if summary.get("final_response"):
+        print()
+        print(summary["final_response"])
+
+
+def _cmd_relay_resume(args: argparse.Namespace) -> None:
+    """Resume a kept resumable relay session; refuse on identity mismatch.
+
+    The question/context/diff must reproduce the stored brief and the
+    sequence must match the stored one: a modified brief or sequence
+    refuses without invoking any seat. Exit paths stay here, in the CLI.
+    """
+    from relay import RelayError
+    from relay_graph import resume_relay_session
+
+    try:
+        summary = resume_relay_session(
+            session_ref=str(getattr(args, "resume") or ""),
+            question=args.question,
+            context=getattr(args, "context", None),
+            diff=getattr(args, "diff", None),
+            sequence_spec=getattr(args, "sequence", ""),
+            max_seats=int(getattr(args, "max_seats", 5)),
+            continue_on_reject=bool(getattr(args, "continue_on_reject", False)),
+            invocation_timeout=getattr(args, "timeout_seconds", None),
+            allow_uncertain_rerun=bool(getattr(args, "allow_uncertain_rerun", False)),
+        )
+    except RelayError as e:
+        sys.exit(str(e))
+    print(f"[council] resumed relay {summary['status']}: "
+          f"{summary['completed']}/{summary['total']} stages complete.")
+    if summary.get("final_verdict"):
+        print(f"[council] final verdict: {summary['final_verdict']}")
+    if summary.get("final_response"):
+        print()
+        print(summary["final_response"])
+
+
+def cmd_consult(args: argparse.Namespace) -> None:
+    from consult import run_consult
+    from relay import RelayError
+
+    try:
+        config = load_config()
+        seats = load_seats()
+        brief = build_brief(args.brief, args.context, args.diff)
+        egress_gate(brief)
+        keep_session = bool(getattr(args, "keep_session", False))
+        session_dir = new_session_dir(args.brief)
+        _set_active_session(session_dir, keep_session)
+        try:
+            _write_private_text(session_dir / "00-brief.md", brief)
+            if keep_session:
+                print(f"[council] session kept: {session_dir}")
+            print(f"[council] mode: consult — seats: {len(args.seat)}")
+            result = run_consult(
+                seats, brief, list(args.seat), session_dir,
+                getattr(args, "timeout_seconds", None), int(args.rebuttals or 0), config,
+            )
+            print(f"[council] consult complete: {len(result.opinions)} opinions, "
+                  f"{len(result.rebuttals)} rebuttals, {len(result.abstentions)} abstentions.")
+            tally = ", ".join(f"{verdict}={count}" for verdict, count in sorted(result.tally.items()))
+            print(f"[council] tally: {tally or '(none)'}")
+            if result.disagreements:
+                print("[council] disagreements: " + ", ".join(f"{a} vs {b}" for a, b in result.disagreements))
+            # Opinions are the product: print them BEFORE cleanup, or a
+            # default (non-kept) session deletes the reasoning unshown.
+            for opinion in result.opinions:
+                print()
+                print(f"## {opinion.seat_name} ({opinion.model}): {opinion.verdict}")
+                print()
+                print(opinion.response)
+            for rebuttal in result.rebuttals:
+                print()
+                print(f"## {rebuttal.seat_name} rebuttal: {rebuttal.verdict}")
+                print()
+                print(rebuttal.response)
+            for abstention in result.abstentions:
+                print()
+                print(f"## {abstention.seat_name} abstained: {abstention.reason}")
+            if keep_session:
+                print(f"[council] file: {session_dir / 'consult.md'}")
+        finally:
+            _finalize_session(session_dir, keep_session)
+            _set_active_session(None)
+    except RelayError as e:
+        sys.exit(str(e))
 
 
 def cmd_clean(args: argparse.Namespace) -> None:
@@ -327,8 +452,32 @@ def main() -> int:
         "--continue-on-reject", action="store_true",
         help="do not stop the relay on an intermediate VERDICT: REJECT (default: stops)",
     )
+    relay.add_argument(
+        "--resumable", action="store_true",
+        help="persist checkpoints in the kept session so the relay can resume after an interruption",
+    )
+    relay.add_argument(
+        "--resume", metavar="SESSION", default="",
+        help="resume a kept resumable session (name or path); brief and sequence must match",
+    )
+    relay.add_argument(
+        "--allow-uncertain-rerun", action="store_true",
+        help="on resume, re-invoke a stage whose provider response may already exist (quota billed twice at most)",
+    )
     _add_common_args(relay, include_seat=False)
     relay.set_defaults(func=cmd_relay)
+
+    consult = sub.add_parser("consult", help="independent parallel opinions plus one aimed rebuttal round")
+    consult.add_argument("brief", help="question/plan to put to every seat independently")
+    consult.add_argument("--seat", action="append", required=True, help="seat to consult (repeatable, max 5)")
+    consult.add_argument("--context", metavar="FILE", help="context file to attach")
+    consult.add_argument("--diff", metavar="DIFF_FILE", help="diff/patch to attach to the brief")
+    consult.add_argument(
+        "--rebuttals", type=int, default=1,
+        help="aimed rebuttal rounds on disagreement (0-1; default: 1)",
+    )
+    _add_common_args(consult, include_seat=False)
+    consult.set_defaults(func=cmd_consult)
 
     clean = sub.add_parser("clean", help="removes sessions past the TTL (retention)")
     clean.add_argument("--ttl-days", type=int, default=DEFAULT_TTL_DAYS, help=f"default: {DEFAULT_TTL_DAYS}")

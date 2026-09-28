@@ -193,19 +193,82 @@ def _force_stop_process_tree(proc: subprocess.Popen) -> None:
 
 _STATE_LOCK = threading.Lock()
 _ACTIVE_PROC: subprocess.Popen | None = None
+_ACTIVE_TOKEN = ""
 _ACTIVE_SESSION_DIR: Path | None = None
 _ACTIVE_SESSION_KEEP = False
 _CLEANUP_RAN = False
+#: Every seat subprocess currently running, sequential or parallel: the
+#: single slot above stays the compatibility view, this registry is what
+#: shutdown and cancellation actually iterate. Keys are opaque tokens.
+_LIVE_PROCS: dict[str, subprocess.Popen] = {}
+
+
+def _register_proc(proc: subprocess.Popen) -> str:
+    """Track a running seat subprocess; returns its registry token."""
+    token = f"proc-{time.time_ns():x}-{id(proc):x}"
+    with _STATE_LOCK:
+        _LIVE_PROCS[token] = proc
+    return token
+
+
+def _release_proc(token: str) -> None:
+    with _STATE_LOCK:
+        _LIVE_PROCS.pop(token, None)
+
+
+def _live_procs_snapshot() -> list[subprocess.Popen]:
+    with _STATE_LOCK:
+        return list(_LIVE_PROCS.values())
+
+
+def _stop_one_proc(proc: subprocess.Popen) -> None:
+    """Terminate and reap one seat process; never raises."""
+    try:
+        if proc.poll() is None:
+            if os.name == "nt" and getattr(proc, "pid", None) is not None:
+                _force_stop_process_tree(proc)
+            else:
+                proc.terminate()
+                try:
+                    proc.wait(timeout=3)
+                except subprocess.TimeoutExpired:
+                    _force_stop_process_tree(proc)
+    except Exception:
+        pass
+
+
+def _cancel_all_procs() -> int:
+    """Stop every tracked seat subprocess; returns how many were alive."""
+    stopped = 0
+    for proc in _live_procs_snapshot():
+        try:
+            alive = proc.poll() is None
+        except Exception:
+            alive = False
+        if alive:
+            stopped += 1
+        _stop_one_proc(proc)
+    with _STATE_LOCK:
+        _LIVE_PROCS.clear()
+    return stopped
 
 
 def _set_active_proc(proc: subprocess.Popen | None) -> None:
-    """Track the seat subprocess currently running, if any, so a SIGTERM or
-    interpreter-exit cleanup can try to stop it. Only one seat runs at a
-    time (brainstorm/challenge/relay invoke seats sequentially), so a single
-    slot is enough."""
-    global _ACTIVE_PROC
+    """Legacy single-slot tracker, kept for compatibility only.
+
+    ``run_seat`` no longer uses this: parallel seats overlap, so every
+    invocation registers its own token (``_register_proc``) and releases
+    exactly that token. New code must use the registry, never this slot.
+    """
+    global _ACTIVE_PROC, _ACTIVE_TOKEN
     with _STATE_LOCK:
+        if _ACTIVE_TOKEN:
+            _LIVE_PROCS.pop(_ACTIVE_TOKEN, None)
+            _ACTIVE_TOKEN = ""
         _ACTIVE_PROC = proc
+        if proc is not None:
+            _ACTIVE_TOKEN = f"proc-{time.time_ns():x}-{id(proc):x}"
+            _LIVE_PROCS[_ACTIVE_TOKEN] = proc
 
 
 def _set_active_session(session_dir: Path | None, keep: bool = False) -> None:
@@ -231,25 +294,17 @@ def _best_effort_cleanup(*_args) -> None:
     codebase already leaves uncovered outside the try/finally in
     ``_run_mode``/``cmd_relay``.
     """
-    global _CLEANUP_RAN
+    global _CLEANUP_RAN, _ACTIVE_PROC, _ACTIVE_TOKEN
     with _STATE_LOCK:
         if _CLEANUP_RAN:
             return
         _CLEANUP_RAN = True
-        proc, session_dir, keep = _ACTIVE_PROC, _ACTIVE_SESSION_DIR, _ACTIVE_SESSION_KEEP
-    if proc is not None:
-        try:
-            if proc.poll() is None:
-                if os.name == "nt" and getattr(proc, "pid", None) is not None:
-                    _force_stop_process_tree(proc)
-                else:
-                    proc.terminate()
-                    try:
-                        proc.wait(timeout=3)
-                    except subprocess.TimeoutExpired:
-                        _force_stop_process_tree(proc)
-        except Exception:
-            pass
+        _, session_dir, keep = _ACTIVE_PROC, _ACTIVE_SESSION_DIR, _ACTIVE_SESSION_KEEP
+    # Every tracked seat, sequential or parallel: one mechanism, no orphans.
+    _cancel_all_procs()
+    with _STATE_LOCK:
+        _ACTIVE_PROC = None
+        _ACTIVE_TOKEN = ""
     if session_dir is not None and not keep:
         _remove_session_tree(session_dir)
 

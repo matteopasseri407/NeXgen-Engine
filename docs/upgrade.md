@@ -60,6 +60,14 @@ nexgen tool update-notifier --install-shell-hook   # bash + PowerShell
 nexgen tool update-notifier --install-autostart    # graphical dialog lane (Linux)
 ```
 
+Graphical prompts carry the engine logo (`assets/nexgen-logo.jpg`,
+resolved from the checkout at dialog time, stock icon fallback when the
+checkout ships without assets): Linux zenity dialogs via `--window-icon`
+and `notify-send` via `--icon`, Windows passive toasts via BurntToast
+`-AppLogo`. The logo travels on notifications that are already being shown.
+No fixed icon is installed anywhere. Blocking
+`MessageBox` prompts stay text-only: that API cannot carry a custom image.
+
 From then on each new shell runs `--shell-check`: a cache read, never
 network (a stale cache refreshes detached in the background). When an
 upgrade is pending you get one line plus `Aggiorna ora? [s/N]`, at most

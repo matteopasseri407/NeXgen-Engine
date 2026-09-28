@@ -125,6 +125,23 @@ def _record_skills_dismissal(key: str, fingerprint: str) -> None:
     _write_state({key: {"fingerprint": fingerprint, "day": _today()}})
 
 
+def _logo_path() -> str:
+    """Engine logo, only for dialogs that actually communicate something.
+
+    Resolves ``assets/nexgen-logo.jpg`` from the engine checkout; empty when
+    the checkout ships without assets, in which case callers fall back to the
+    stock ``system-software-update`` icon. Nothing is ever installed as a
+    fixed icon: the logo travels on the notification itself.
+    """
+    try:
+        from nexgen_core.paths import resolve_engine_root
+
+        logo = Path(resolve_engine_root()) / "assets" / "nexgen-logo.jpg"
+        return str(logo) if logo.is_file() else ""
+    except Exception:
+        return ""
+
+
 def _prompt_linux(current: str, latest: str, notes_hint: str = "") -> bool:
     if not (os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY")):
         return False
@@ -144,13 +161,15 @@ def _prompt_linux(current: str, latest: str, notes_hint: str = "") -> bool:
             "--ok-label=Aggiorna ora",
             "--cancel-label=Più tardi",
             "--width=420",
-            "--window-icon=system-software-update"
+            f"--window-icon={_logo_path() or 'system-software-update'}",
         ]
         proc = subprocess.run(cmd, check=False)
         return proc.returncode == 0
 
     if shutil.which("kdialog"):
         cmd = ["kdialog", "--yesno", text.replace("<b>", "").replace("</b>", ""), "--title", "NeXgen Engine Update"]
+        if _logo_path():
+            cmd += ["--icon", _logo_path()]
         proc = subprocess.run(cmd, check=False)
         return proc.returncode == 0
 
@@ -195,18 +214,20 @@ def _notify_success(latest: str) -> None:
                 0x00000000 | 0x00000040
             )
     else:
+        icon = _logo_path() or "system-software-update"
         if shutil.which("notify-send"):
             subprocess.run([
                 "notify-send", "NeXgen Engine",
                 f"Aggiornamento a {latest} completato con successo!",
-                "--icon=system-software-update"
+                f"--icon={icon}",
             ], check=False)
         elif shutil.which("zenity"):
             subprocess.run([
                 "zenity", "--info",
                 "--title=NeXgen Engine",
                 f"--text=Aggiornamento a <b>{latest}</b> completato con successo!",
-                "--width=340"
+                "--width=340",
+                f"--window-icon={icon}",
             ], check=False)
 
 
@@ -280,6 +301,7 @@ def _check_skills_gui(force: bool = False) -> None:
                 "--title=NeXgen Engine — terze parti",
                 f"--text={text}",
                 "--width=480",
+                f"--window-icon={_logo_path() or 'system-software-update'}",
             ], check=False)
             if proc.returncode == 0:
                 _confirm_skills_shown()
@@ -449,7 +471,7 @@ def _shell_check_engine(state: dict) -> None:
     try:
         answer = input(
             f"\nNeXgen Engine: {latest} disponibile (installata: {current}). "
-            "Note: `nexgen update --check`. Aggiorna ora? [s/N] "
+            "Nota: `nexgen update --check`. Aggiorna ora? [s/N] "
         )
     except EOFError:
         return
@@ -1054,7 +1076,7 @@ def _notify_passive(message: str) -> None:
             return
         if shutil.which("notify-send"):
             subprocess.run(["notify-send", "NeXgen Engine", message,
-                            "--icon=system-software-update"], check=False)
+                            f"--icon={_logo_path() or 'system-software-update'}"], check=False)
     except Exception:
         pass
 
@@ -1071,9 +1093,11 @@ def _notify_passive_windows(message: str) -> None:
         if "BurntToast" not in (probe.stdout or ""):
             return
         text = message.replace("'", "''")[:380]
+        toast = f"New-BurntToastNotification -Text 'NeXgen Engine', '{text}'"
+        if _logo_path():
+            toast += f" -AppLogo '{_logo_path()}'"
         subprocess.run(
-            ["powershell", "-NoProfile", "-Command",
-             f"New-BurntToastNotification -Text 'NeXgen Engine', '{text}'"],
+            ["powershell", "-NoProfile", "-Command", toast],
             check=False, timeout=30,
         )
     except Exception:

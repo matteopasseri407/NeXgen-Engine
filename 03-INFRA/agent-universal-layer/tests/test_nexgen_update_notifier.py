@@ -428,3 +428,52 @@ def test_boot_publishes_inventory_when_publisher_exists(tmp_path, monkeypatch, c
     assert notifier.cmd_boot() == 0
     assert marker.read_text(encoding="utf-8") == "sent"
     assert "inventario governor" in capsys.readouterr().out
+def test_logo_travels_on_dialogs_not_as_fixed_icon(tmp_path, monkeypatch):
+    """Il logo vive sui dialoghi che comunicano, mai installato come icona fissa."""
+    _isolate(tmp_path, monkeypatch)
+    assert isinstance(notifier._logo_path(), str)  # mai un'eccezione, anche senza checkout
+
+    monkeypatch.setenv("DISPLAY", ":0")
+    monkeypatch.setattr(notifier.shutil, "which", lambda name: "/usr/bin/zenity" if name == "zenity" else None)
+    seen: dict = {}
+
+    def _run(cmd, **kwargs):
+        seen["cmd"] = cmd
+        class _Proc:
+            returncode = 1
+        return _Proc()
+
+    monkeypatch.setattr(notifier.subprocess, "run", _run)
+    assert notifier._prompt_linux("v2.3.4", "v2.3.5") is False
+    icons = [a for a in seen["cmd"] if a.startswith("--window-icon=")]
+    assert len(icons) == 1, "il dialogo che chiede deve portare un'icona"
+    if notifier._logo_path():
+        assert icons[0].endswith("nexgen-logo.jpg")
+    else:
+        assert icons[0] == "--window-icon=system-software-update"
+
+
+def test_windows_toast_carries_logo_only_when_resolved(tmp_path, monkeypatch):
+    """BurntToast: -AppLogo solo se il logo si risolve; MessageBox resta senza."""
+    _isolate(tmp_path, monkeypatch)
+    calls: list = []
+
+    def _run(argv, **kwargs):
+        calls.append(argv)
+        probe = any("Get-Module" in str(a) for a in argv)
+
+        class _Proc:
+            returncode = 0
+            stdout = "BurntToast" if probe else ""
+            stderr = ""
+        return _Proc()
+
+    monkeypatch.setattr(notifier.subprocess, "run", _run)
+    monkeypatch.setattr(notifier, "_logo_path", lambda: "")
+    notifier._notify_passive_windows("aggiornamento disponibile")
+    assert calls and "-AppLogo" not in calls[-1][-1]
+
+    calls.clear()
+    monkeypatch.setattr(notifier, "_logo_path", lambda: "C:\\engine\\assets\\nexgen-logo.jpg")
+    notifier._notify_passive_windows("aggiornamento disponibile")
+    assert calls and "-AppLogo" in calls[-1][-1]

@@ -99,6 +99,37 @@ servers:
       env:
         VAULT_OCR_API_URL: "http://127.0.0.1:${OCR_TUNNEL_PORT:-33003}"
 
+  # ---- personal drive: search/read free, upload gated ------------------
+  # Product-owned Drive access for every agent (engine code, stdlib only,
+  # same machine-local token store as the private workspace adapter).
+  # `drive_search`/`drive_read` are free; upload takes two calls
+  # (`drive_propose_upload` stages inside vault/repo, `drive_confirm_upload`
+  # sends once and only on explicit confirm). No require_env on purpose:
+  # without tokens every tool fails closed naming the one-time login.
+  # Mutating calls stay behind the waiter confirmation gate like every
+  # other mutating MCP tool.
+  drive:
+    transport: stdio
+    tier: core
+    command: nexgen-local
+    args: ["drive-mcp"]
+    timeouts: { startup: 30, tool: 120 }
+    targets: [claude, codex, antigravity, opencode]
+
+  # ---- governed local lane: the 12B loop as a service -------------------
+  # ask/explore/research/close/status. explore runs the closed-menu loop
+  # (the model chooses, the engine owns menus, receipts and envelopes);
+  # writes stay behind propose/approve gates with human confirmation.
+  # Served lazy like drive: a small surface for locally-inferred models.
+  # Voice cockpit stays out.
+  lane:
+    transport: stdio
+    tier: core
+    command: nexgen-local
+    args: ["mcp"]
+    targets: [opencode]
+    timeouts: { startup: 30, tool: 300 }
+
   # ---- extra per-CLI (opzionali, non bloccanti) ----------------------------
 
   # filesystem: EXPLICIT roots only, never the whole home. The default here

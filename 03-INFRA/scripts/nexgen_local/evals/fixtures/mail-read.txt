@@ -1,0 +1,8 @@
+[mail:m1]
+Da: commercialista@esempio.it
+A: matteo.passeri.407@gmail.com
+Data: Mon, 21 Sep 2026 10:00:00 +0200
+Oggetto: Budget Falco Rosso
+
+Il budget del progetto e' 900 euro. Richieste del commercialista: inviare le
+fatture del trimestre e confermare la scadenza fiscale di lunedi'.

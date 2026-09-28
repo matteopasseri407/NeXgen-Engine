@@ -11,6 +11,7 @@
 #   semantic-rag: local | remote | absent
 #   browser:   local | absent
 #   council:   local | absent
+#   local-lane: local | absent
 #   sync:      local | absent
 #
 # This file travels between machines through the vault, so entries under
@@ -33,6 +34,7 @@ modules:
   semantic-rag: absent
   browser: local
   council: local
+  local-lane: absent
   sync: local
 
 # hosts:
