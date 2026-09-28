@@ -53,6 +53,9 @@ today. Add a row here the day one actually does.
 | google-api-python-client / google-auth | Apache-2.0 |
 | Pillow | HPND |
 | onnxruntime | MIT |
+| LangGraph / langgraph-checkpoint-sqlite (`[local]`, `[council]` extras) | MIT |
+| langchain-ollama (`[local]` extra) | MIT |
+| mcp (`[local]` extra) | Apache-2.0 |
 
 ## Thanks
 

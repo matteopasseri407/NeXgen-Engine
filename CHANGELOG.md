@@ -8,7 +8,26 @@ This file tracks the **engine** (this repo). Your own data — manifests,
 instructions, skills, secrets — lives in your KnowledgeVault and is not part
 of any engine release.
 
-## [Unreleased]
+## [2.3.5] - 2026-09-28
+
+### Added
+
+- **Bounded action loop** (`nexgen-local explore`): at every step the engine
+  emits a closed menu of candidates and the model picks one through LangChain
+  structured output, with provenance-validated arguments, one repair, and a
+  claim-checked answer. Plain Python driver, no framework needed to run it.
+- **Persistent research sessions**: the same loop operations run under
+  LangGraph with per-node SQLite checkpoints, so follow-ups continue sources,
+  coverage and staged proposals instead of re-searching. Checkpoints are
+  0700/0600 like council sessions.
+- **Resumable council relay and parallel consult**: the relay survives
+  restarts on LangGraph state, and consult gathers parallel seat opinions
+  with rebuttals before cleanup.
+- **Engine logo on update dialogs**: Linux zenity/`notify-send` and Windows
+  BurntToast toasts carry `assets/nexgen-logo.jpg` when they communicate;
+  nothing is installed as a fixed icon.
+- **Codebase map** (`docs/codebase-map.md`): per-file symbol index generated
+  from the code-intel `repo_map`, linked from the architecture contract.
 
 ### Fixed
 
