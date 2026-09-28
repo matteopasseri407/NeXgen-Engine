@@ -8,6 +8,30 @@ This file tracks the **engine** (this repo). Your own data — manifests,
 instructions, skills, secrets — lives in your KnowledgeVault and is not part
 of any engine release.
 
+## [2.3.6] - 2026-09-28
+
+### Fixed
+
+- **CI green on the lane merge**: the test jobs install
+  `langgraph-checkpoint-sqlite` next to `langgraph` (research and resumable
+  relay need it), and Linux installs `poppler-utils` (the PDF trap extracts
+  for real). The leak gate allowlists fixture domains (`@esempio.it`,
+  `@example.com` addresses), the fake-future token expiry, and the public
+  Google OAuth client ID; fixtures no longer carry a real personal address.
+- **Hermetic lane tests**: calendar gate tests fake auth instead of reading
+  the machine token store (they passed only where a login existed); the
+  Windows-storage test runs its `os.name` branch in a child process (patching
+  it in-process killed the pytest session); CLI help tests sandbox
+  `USERPROFILE` like `HOME` for Windows runners.
+- **Windows paths end to end**: the router reads `C:\...` absolutes, engine
+  paths compare canonical and separator-insensitive (menu, receipts and the
+  claim check agree on slash and backslash), patch temp files are byte-exact
+  with autocrlf-neutral `git apply`, and test file writes are CRLF-stable.
+- **Orchestration is core**: LangGraph, LangChain, MCP client and the SQLite
+  checkpointer moved from the `[local]`/`[council]` extras into the base
+  dependencies. Only the model endpoint (your Ollama server) is yours; the
+  supported driver is a 12B-class local model, smaller ones are best-effort.
+
 ## [2.3.5] - 2026-09-28
 
 ### Added
