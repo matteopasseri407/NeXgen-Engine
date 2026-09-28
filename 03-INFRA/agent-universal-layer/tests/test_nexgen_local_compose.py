@@ -164,7 +164,7 @@ def test_mail_propose_cli_passes_provider(tmp_path: Path, monkeypatch: pytest.Mo
     cfg = _cfg(tmp_path)
     monkeypatch.setattr(
         outlook_conn, "get_message",
-        lambda mid, http=None: {"id": mid, "from": "a@b.cc", "to": "", "subject": "S",
+        lambda mid, http=None: {"id": mid, "from": "a@example.com", "to": "", "subject": "S",
                                 "date": "", "snippet": "", "body": "B", "attachments": []},
     )
     monkeypatch.setattr(cli_module, "_config", lambda args: cfg)
@@ -229,7 +229,7 @@ def test_old_proposals_load_as_gmail(tmp_path: Path) -> None:
     cfg = _cfg(tmp_path)
     cfg.mails_dir.mkdir(parents=True, exist_ok=True)
     old = {
-        "id": "20260101-000000-ab12cd34", "kind": "send", "to": "a@b.cc",
+        "id": "20260101-000000-ab12cd34", "kind": "send", "to": "a@example.com",
         "subject": "s", "in_reply_to": "", "body": "b", "instruction": "i",
     }
     (cfg.mails_dir / f"{old['id']}.json").write_text(_json.dumps(old), encoding="utf-8")

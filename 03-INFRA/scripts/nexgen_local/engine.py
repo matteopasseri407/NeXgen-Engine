@@ -45,7 +45,7 @@ STOPWORDS = frozenset(
     }
 )
 
-PATH_RE = re.compile(r"`?([\w./-]+\.(?:md|pdf|txt|ya?ml|json|py|toml|sh|ps1|cfg|ini))`?")
+PATH_RE = re.compile(r"`?([\w./\\:-]+\.(?:md|pdf|txt|ya?ml|json|py|toml|sh|ps1|cfg|ini))`?")  # \\: = assoluti Windows
 
 #: Deterministic intents: when the request itself says "search the web" or
 #: "find the note", the engine routes without asking any model. The model is
@@ -140,9 +140,11 @@ def _existing_file(cfg: LaneConfig, raw: str) -> tuple[str, str, str] | None:
             except (OSError, ValueError):
                 continue
             if resolved.is_file():
+                # as_posix: su Windows rel avrebbe i backslash e i menu
+                # smetterebbero di corrispondere alle decisioni con gli slash.
                 if resolved.suffix.casefold() == ".pdf":
-                    return "pdf", str(rel), str(root_resolved)
-                return kind, str(rel), str(root_resolved)
+                    return "pdf", rel.as_posix(), str(root_resolved)
+                return kind, rel.as_posix(), str(root_resolved)
             break  # this candidate belongs to this root but is not a file: try the next root
     return None
 

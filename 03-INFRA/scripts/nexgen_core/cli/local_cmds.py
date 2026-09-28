@@ -1,10 +1,10 @@
-"""The `local` verb group: the optional governed lane for local models.
+"""The `local` verb group: the governed lane for local models.
 
-The lane itself lives in ``nexgen_local`` and is only installed with the
-``[local]`` extra. This group exists so a cloned checkout reaches the lane
-through the same name tree as everything else: ``nexgen local ...`` and the
-``nexgen-local`` shim both land here, and a machine without the extra gets
-one clear sentence instead of an ImportError traceback.
+The lane itself lives in ``nexgen_local``; its orchestration ships with the
+engine on every machine. Only the model endpoint (your Ollama server) is
+yours. This group exists so a cloned checkout reaches the lane through the
+same name tree as everything else: ``nexgen local ...`` and the
+``nexgen-local`` shim both land here.
 """
 from __future__ import annotations
 
@@ -20,7 +20,7 @@ def dispatch(lane_args: list[str]) -> int:
         from nexgen_local.cli import main as lane_main
     except ImportError:
         print(
-            t("The local lane needs the optional extra: pip install 'nexgen-engine[local]'"),
+            t("The local lane needs engine dependencies: reinstall the engine."),
             file=sys.stderr,
         )
         return 2

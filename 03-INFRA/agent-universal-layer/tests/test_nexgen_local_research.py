@@ -391,14 +391,29 @@ def test_research_storage_is_private(tmp_path: Path) -> None:
     assert files, "checkpoint creato"
     for path in files:
         assert stat.S_IMODE(path.stat().st_mode) == 0o600
-def test_secure_storage_creates_dir_on_windows_branch(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Su Windows manca mkdir: la dir va creata, solo chmod e' condizionale."""
-    import os
+def test_secure_storage_creates_dir_on_windows_branch(tmp_path: Path) -> None:
+    """Su Windows manca mkdir: la dir va creata, solo chmod e' condizionale.
 
-    from nexgen_local.research_graph import _secure_storage
+    Il ramo Windows gira in un processo figlio: patchare os.name nel
+    processo di pytest corrompe pathlib/tmp e uccide la sessione (trovato
+    sulla CI Linux come INTERNALERROR con una cascata di falliti).
+    """
+    import subprocess
+    import sys
 
     target = tmp_path / "fresh" / "research"
     assert not target.exists()
-    monkeypatch.setattr(os, "name", "nt")
-    _secure_storage(target, None)
-    assert target.is_dir(), "la directory va creata su tutte le piattaforme"
+    scripts = Path(__file__).resolve().parents[2] / "scripts"
+    # os.name va patchato DOPO gli import: prima romperebbe shutil/pathlib
+    # del figlio (import nt). _secure_storage lo legge al momento della call.
+    code = (
+        "import sys; "
+        f"sys.path.insert(0, {str(scripts)!r}); "
+        "from pathlib import Path; "
+        "from nexgen_local.research_graph import _secure_storage; "
+        "import os; os.name = 'nt'; "
+        f"_secure_storage(Path({str(target)!r}), None); "
+        f"sys.exit(0 if Path({str(target)!r}).is_dir() else 1)"
+    )
+    proc = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, timeout=60)
+    assert proc.returncode == 0, f"dir non creata nel ramo nt: {proc.stderr[-500:]}"

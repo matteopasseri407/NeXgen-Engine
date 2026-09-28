@@ -139,7 +139,7 @@ def _require_langgraph():
         from langgraph.graph import END, StateGraph
     except ImportError as exc:
         raise ResearchError(
-            "ricerca persistente richiede l'extra [local]: pip install 'nexgen-engine[local]'"
+            "ricerca persistente senza dipendenze: reinstalla il motore"
         ) from exc
     return END, StateGraph
 
@@ -152,7 +152,7 @@ def _open_saver(session_file: Path):
             from langgraph_checkpoint_sqlite import SqliteSaver  # noqa: F401 - legacy layout
         except ImportError as exc:
             raise ResearchError(
-                "ricerca persistente richiede l'extra [local]: pip install 'nexgen-engine[local]'"
+                "ricerca persistente senza dipendenze: reinstalla il motore"
             ) from exc
     _secure_storage(session_file.parent, None)
     return SqliteSaver.from_conn_string(str(session_file))

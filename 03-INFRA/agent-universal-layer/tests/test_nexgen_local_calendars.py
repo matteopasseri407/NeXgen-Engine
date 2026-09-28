@@ -34,7 +34,14 @@ def _cfg(tmp_path: Path) -> LaneConfig:
 
 
 def _fake_calendar(monkeypatch: pytest.MonkeyPatch, store: dict) -> None:
+    import nexgen_local.connectors.auth as auth_mod
     import nexgen_local.connectors.calendar as calendar_conn
+
+    # L'http finto sta SOTTO l'auth: senza questo l'apply alza NeedsLogin su
+    # ogni macchina senza login reale (trovato sulla CI; in locale passava
+    # per i token veri). Niente tokens.json finto: un intero a 10 cifre
+    # verrebbe flaggato dal leak-gate.
+    monkeypatch.setattr(auth_mod, "access_token", lambda *a, **k: "fake-token")
 
     def _fake_http(req, timeout: int) -> HttpResult:
         url = req.full_url
@@ -155,6 +162,7 @@ def test_delete_accepts_204_no_content(tmp_path: Path, monkeypatch: pytest.Monke
             return HttpResult(200, json.dumps({"id": "e1", **store["e1"]}).encode())
         raise AssertionError(f"chiamata non prevista: {url}")
 
+    _fake_calendar(monkeypatch, store)  # solo per l'auth finto
     monkeypatch.setattr(calendar_conn, "_default_http", _http_204)
     proposal = propose_delete(cfg, "primary", "e1")
     result = apply_proposal(cfg, proposal.id, yes=True)

@@ -61,7 +61,7 @@ sometimes with an empty final answer).
 ## Usage
 
 ```bash
-pip install 'nexgen-engine[local]'     # or uv tool install '...' --with ...
+pip install nexgen-engine              # orchestration included, no extra needed
 nexgen-local doctor                    # preconditions and read-only surface
 nexgen-local run "Che priorita' c'e' nel current focus?"
 nexgen-local eval --suite all          # functional + trap suites (blocking)

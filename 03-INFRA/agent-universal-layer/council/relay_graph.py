@@ -104,8 +104,8 @@ def _require_langgraph():
         from langgraph.graph import END, StateGraph
     except ImportError as exc:
         raise RelayError(
-            "[council] resumable relay needs the optional [council] extra: "
-            "pip install 'nexgen-engine[council]' (no Ollama involved).",
+            "[council] resumable relay without dependencies: "
+            "reinstall the engine (no Ollama involved).",
             kind="missing_dependency",
         ) from exc
     return END, StateGraph
@@ -124,8 +124,8 @@ def _open_saver(session_dir: Path):
             from langgraph_checkpoint_sqlite import SqliteSaver  # noqa: F401 - legacy [council]<3 layout
         except ImportError as exc:
             raise RelayError(
-                "[council] resumable relay needs the optional [council] extra: "
-                "pip install 'nexgen-engine[council]' (no Ollama involved).",
+                "[council] resumable relay without dependencies: "
+                "reinstall the engine (no Ollama involved).",
                 kind="missing_dependency",
             ) from exc
     return SqliteSaver.from_conn_string(str(session_dir / CHECKPOINT_NAME))
