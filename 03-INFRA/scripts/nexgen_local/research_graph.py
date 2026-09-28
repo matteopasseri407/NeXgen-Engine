@@ -164,14 +164,20 @@ def _secure_storage(directory: Path, session_file: Path | None) -> None:
     The parent chain (``~/.local/state``) is 700 on this host, but a fresh
     install must not rely on that: checkpoints name mail subjects and
     bodies, so they get the same treatment as council sessions.
-    No-op where the platform has no POSIX modes.
+    The directory is created on every platform; only chmod is POSIX-only.
     """
     import os as _os
 
-    if _os.name == "nt":
-        return
     try:
         directory.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        pass
+    if _os.name == "nt":
+        # No POSIX modes on Windows: the directory above is still created,
+        # otherwise the first persistent search fails with
+        # "unable to open database file".
+        return
+    try:
         _os.chmod(directory, 0o700)
     except OSError:
         pass

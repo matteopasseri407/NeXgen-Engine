@@ -302,6 +302,7 @@ def test_reply_menu_prescribes_draft_before_answer(tmp_path: Path) -> None:
     state = LoopState(task="Rispondi alla mail", route="mail", want_reply=True)
     state.receipts = [{"tool": "read_mail", "args": {"id": "m1"}, "ok": True}]
     state.last_mail_id = "m1"
+    state.mail = ["[mail:m1]\nDa: a@b.cc\n\nContenuto."]
     state.read_ids = ["m1"]
     state.mail_ids = ["m1", "m2"]
     actions = [c.action for c in build_menu(cfg, state)]
@@ -836,3 +837,53 @@ def test_continue_read_capped_at_three_windows(tmp_path: Path) -> None:
     state.continuations = MAX_CONTINUATIONS
     assert _can_continue(state) is False
     assert "continue_read" not in [c.action for c in build_menu(cfg, state)]
+
+
+def test_reply_menu_after_drive_offers_draft_from_state(tmp_path: Path) -> None:
+    """Mail -> contratto -> risposta: la bozza non dipende dall'ultima lettura."""
+    cfg = _cfg(tmp_path)
+    state = LoopState(task="Rispondi alla mail", route="drive", want_reply=True)
+    state.receipts = [{"tool": "read_drive", "args": {"id": "d1"}, "ok": True}]
+    state.last_mail_id = "m1"
+    state.mail = ["[mail:m1]\nDa: a@b.cc\n\nLa fattura scade lunedi'."]
+    state.drive = ["[drive:Contratto.txt (d1)]\nContratto: oggetto e clausole."]
+    state.mail_ids = ["m1"]
+    state.drive_ids = ["d1"]
+    state.read_ids = ["m1", "d1"]
+    actions = [c.action for c in build_menu(cfg, state)]
+    assert actions[0] == "draft_mail"
+    assert "answer" not in actions
+
+
+def test_draft_body_sees_every_collected_source(tmp_path: Path) -> None:
+    """La bozza passa al modello mail+contratto, non solo l'ultima mail."""
+    from nexgen_local.steps import _execute
+
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    cfg = LaneConfig(
+        vault_root=vault, repo_roots=(), model="fake-model",
+        audit_path=tmp_path / "audit.jsonl", mails_dir=tmp_path / "mails",
+        uploads_dir=tmp_path / "uploads",
+    )
+
+    class RecordingLLM(ScriptedLLM):
+        def __init__(self) -> None:
+            super().__init__(answers=["corpo bozza"])
+            self.text_users: list[str] = []
+
+        def text(self, system: str, user: str) -> str:
+            self.text_users.append(user)
+            return self.answers.pop(0)
+
+    from nexgen_local.steps import LoopState
+
+    state = LoopState(task="Rispondi alla mail", route="mail", want_reply=True)
+    state.mail = ["[mail:m1]\nDa: a@b.cc\nOggetto: Budget\n\nLa fattura scade lunedi'."]
+    state.drive = ["[drive:Contratto.txt (d1)]\nTipo: text/plain\n\nContratto: oggetto e clausole."]
+    state.last_mail_id = "m1"
+    llm = RecordingLLM()
+    _execute(llm, ToolRegistry(cfg), state, "draft_mail", "")
+    assert llm.text_users, "il corpo deve passare dal modello"
+    assert "fattura" in llm.text_users[0]
+    assert "Contratto" in llm.text_users[0] or "clausole" in llm.text_users[0]

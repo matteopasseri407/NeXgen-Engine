@@ -275,6 +275,15 @@ def build_menu(cfg: LaneConfig, state: LoopState) -> list[Candidate]:
 
     last = state.receipts[-1]
     tool = str(last.get("tool"))
+    if last.get("ok") and state.want_reply and state.last_mail_id and state.mail and not state.mail_draft:
+        # State-based, not last-read-based: mail -> contratto -> risposta resta
+        # bloccato se la prescrizione dipende dall'ultima lettura. Dopo Drive
+        # draft_mail non verrebbe offerto anche se la mail e' gia' disponibile.
+        menu = [Candidate("draft_mail")]
+        if _can_continue(state):
+            menu.append(Candidate("continue_read"))
+        menu += [Candidate("read_mail", mid) for mid in state.mail_ids if mid not in state.read_ids][: MAX_MENU - 1]
+        return menu[:MAX_MENU]
     if tool == "search_vault" and last.get("ok") and state.hits:
         menu = [Candidate("read_file", path) for path in state.hits[: MAX_MENU - 2]]
         menu.append(Candidate("answer"))
@@ -319,17 +328,8 @@ def build_menu(cfg: LaneConfig, state: LoopState) -> list[Candidate]:
         menu.append(Candidate("escalate"))
         return menu[:MAX_MENU]
     if tool in ("read_mail", "read_drive", "read_calendar", "read_outlook") and last.get("ok"):
-        if tool == "read_mail" and state.want_reply and state.last_mail_id and not state.mail_draft:
-            # The task asks for a reply and the mail is read: drafting is the
-            # only satisfying move, so the menu prescribes it. No answer (that
-            # would dodge the request), no re-search (dithering), no escalate
-            # as a choice: escalation stays available through real failures,
-            # not as a way out. Unread hits remain readable.
-            menu = [Candidate("draft_mail")]
-            if _can_continue(state):
-                menu.append(Candidate("continue_read"))
-            menu += [Candidate("read_mail", mid) for mid in state.mail_ids if mid not in state.read_ids][: MAX_MENU - 1]
-            return menu[:MAX_MENU]
+        # Reply prescription lives above and is state-based: reaching here
+        # means no draft is pending (already drafted or no reply intent).
         menu = [Candidate("answer")]
         if _can_continue(state):
             menu.append(Candidate("continue_read"))
@@ -716,10 +716,22 @@ def _execute(llm: LLM, tools: ToolRegistry, state: LoopState, action: str, arg: 
     elif action == "draft_mail":
         from .compose import MailError, mail_envelope, propose_mail_from_context
 
-        context = state.mail[-1] if state.mail else ""
-        to, subject = mail_envelope(context)
+        envelope_src = state.mail[-1] if state.mail else ""
+        to, subject = mail_envelope(envelope_src)
         if not to or not state.last_mail_id:
             raise ToolError("bozza rifiutata: nessuna mail letta da cui rispondere")
+        # The draft answers with every source the session read, not just the
+        # last mail: replying "tenendo conto del contratto" requires the
+        # contract in the model context, not only in the persisted receipts.
+        blocks = [
+            *state.reads,
+            *state.web,
+            *state.mail,
+            *state.drive,
+            *state.calendar,
+            *state.outlook,
+        ]
+        context = "\n\n".join(block for block in blocks if block) or envelope_src
         try:
             proposal = propose_mail_from_context(
                 llm,

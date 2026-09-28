@@ -7,6 +7,8 @@ the ones to keep, the implementation is not.
 Anything that reads like an apology for the current design is deliberate. The
 debt is named at the end so a rewrite does not inherit it by accident.
 
+Symbol index into the current code: `codebase-map.md` (generated from code-intel).
+
 ---
 
 ## 1. The invariants

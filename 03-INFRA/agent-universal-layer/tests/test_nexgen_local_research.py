@@ -21,11 +21,13 @@ class ScriptedLLM:
         self.route = route or {"source": "vault", "keywords": ["x"]}
         self.decisions = list(decisions or [])
         self.answers = list(answers or ["risposta finta"])
+        self.text_users: list[str] = []
 
     def json(self, system: str, user: str):
         return self.route
 
     def text(self, system: str, user: str) -> str:
+        self.text_users.append(f"{system}\n{user}")
         return self.answers.pop(0) if self.answers else "risposta finta"
 
     def choose(self, system: str, user: str, actions: list[str]):
@@ -88,8 +90,15 @@ def _cfg(tmp_path: Path, **over) -> LaneConfig:
 
 
 def test_guide_case_compares_mail_and_contract_then_drafts(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Il caso guida su tre interazioni: contratto, poi mail (pivot di fonte
-    alla ripresa), poi risposta — bozza sì, invio mai, fonti conservate."""
+    """Il caso guida su tre interazioni: mail, poi contratto (pivot di fonte
+    alla ripresa), poi risposta — bozza sì, invio mai, fonti conservate.
+
+    L'ordine mail -> Drive e' quello che bloccava la risposta: dopo la
+    lettura Drive il menu deve offrire draft_mail perche' la mail e' gia'
+    disponibile, e la bozza deve vedere il contratto nel contesto del modello
+    (non solo nelle ricevute). Le risposte finte sono neutre di proposito:
+    e' il prompt intercettato a dover contenere entrambe le fonti.
+    """
     import nexgen_local.compose as compose_module
     import nexgen_local.research_graph as rg
 
@@ -102,51 +111,58 @@ def test_guide_case_compares_mail_and_contract_then_drafts(tmp_path: Path, monke
 
     first = research_task(
         ScriptedLLM(
-            route={"source": "drive", "keywords": ["contratto"]},
-            decisions=[
-                {"action": "search_drive", "arg": "contratto"},
-                {"action": "read_drive", "arg": "d1"},
-                {"action": "answer", "arg": ""},
-            ],
-            answers=["Il contratto dice X."],
-        ),
-        cfg, "Trova il contratto su Drive.",
-    )
-    assert first["status"] == "answer"
-
-    second = research_task(
-        ScriptedLLM(
             route={"source": "mail", "keywords": ["budget"]},
             decisions=[
                 {"action": "search_mail", "arg": "budget"},
                 {"action": "read_mail", "arg": "m1"},
                 {"action": "answer", "arg": ""},
             ],
-            answers=["La mail chiede Y, il contratto dice X."],
+            answers=["La mail chiede Y."],
         ),
-        cfg, "Ora trova la mail sul budget e confrontala col contratto.",
+        cfg, "Trova la mail sul budget.",
+    )
+    assert first["status"] == "answer"
+
+    second = research_task(
+        ScriptedLLM(
+            route={"source": "drive", "keywords": ["contratto"]},
+            decisions=[
+                {"action": "search_drive", "arg": "contratto"},
+                {"action": "read_drive", "arg": "d1"},
+                {"action": "answer", "arg": ""},
+            ],
+            answers=["Il contratto dice X, confrontato con la richiesta."],
+        ),
+        cfg, "Ora trova il contratto su Drive per il confronto.",
         session_id=first["session_id"],
     )
     assert second["status"] == "answer"
     targets = [item["target"] for item in second["reads"]]
     assert "d1" in targets and "m1" in targets, "entrambe le fonti restano nella sessione"
 
+    reply_llm = ScriptedLLM(
+        route={"source": "mail", "keywords": ["budget"]},
+        decisions=[
+            {"action": "draft_mail", "arg": ""},
+            {"action": "answer", "arg": ""},
+        ],
+        answers=["Confermo quanto richiesto.", "Risposta pronta."],
+    )
     third = research_task(
-        ScriptedLLM(
-            route={"source": "mail", "keywords": ["budget"]},
-            decisions=[
-                {"action": "draft_mail", "arg": ""},
-                {"action": "answer", "arg": ""},
-            ],
-            answers=["Confermo tenendo conto del contratto.", "Risposta pronta con confronto."],
-        ),
+        reply_llm,
         cfg, "Rispondi alla mail tenendo conto del confronto.",
         session_id=first["session_id"],
     )
-    assert third["status"] == "answer"
+    assert third["status"] == "answer", "dopo Drive la bozza deve essere offribile"
     assert third["collected_proposals"]["mail_draft"], "la bozza deve esistere"
     assert len(list((tmp_path / "mails").glob("*.json"))) == 1, "una sola bozza, mai duplicata"
     assert "d1" in third["status_block"] and "m1" in third["status_block"]
+    draft_prompts = [prompt for prompt in reply_llm.text_users if "corpo di una mail" in prompt]
+    assert draft_prompts, "la bozza deve passare dal prompt del corpo"
+    assert any("fattura" in prompt for prompt in draft_prompts), "la bozza deve vedere la mail"
+    assert any("Contratto" in prompt or "clausole" in prompt for prompt in draft_prompts), (
+        "la bozza deve vedere il contratto letto, non solo l'ultima mail"
+    )
 
     # Continuare ancora non duplica la proposta né applica.
     fourth = research_task(
@@ -375,3 +391,14 @@ def test_research_storage_is_private(tmp_path: Path) -> None:
     assert files, "checkpoint creato"
     for path in files:
         assert stat.S_IMODE(path.stat().st_mode) == 0o600
+def test_secure_storage_creates_dir_on_windows_branch(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Su Windows manca mkdir: la dir va creata, solo chmod e' condizionale."""
+    import os
+
+    from nexgen_local.research_graph import _secure_storage
+
+    target = tmp_path / "fresh" / "research"
+    assert not target.exists()
+    monkeypatch.setattr(os, "name", "nt")
+    _secure_storage(target, None)
+    assert target.is_dir(), "la directory va creata su tutte le piattaforme"

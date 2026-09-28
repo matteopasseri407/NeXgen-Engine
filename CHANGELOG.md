@@ -10,6 +10,29 @@ of any engine release.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Local lane reply sees every source, not just the last mail**: `draft_mail`
+  built the model context from `state.mail[-1]` only, so a reply drafted
+  "tenendo conto del contratto" never showed the contract to the model. The
+  envelope (to/subject) still comes from the last mail read; the draft
+  context now joins all collected blocks (vault reads, web, mail, Drive,
+  calendar, Outlook), the same content the final answer is built from.
+- **Mail -> contract -> reply no longer strands the menu**: the `draft_mail`
+  prescription depended on the last receipt being a mail read, so after a
+  Drive read no draft was offered even with the mail already in session and
+  the request ending in error. The prescription is now state-based
+  (`want_reply` + mail read + no draft yet), whatever was read last.
+- **Persistent research storage on Windows**: `_secure_storage` returned
+  before `mkdir` on `os.name == "nt"`, so the first persistent search failed
+  with SQLite "unable to open database file". The directory is now created
+  on every platform; only `chmod` stays POSIX-only.
+- **Council seat-registry test no longer assumes thread order**: the overlap
+  test asserted A always takes `seat-0`; when B wins the race it failed
+  intermittently (1 failed, 30 passed in a targeted run). The assertion now
+  compares the sorted pair.
+
+
 ## [2.3.4] - 2026-09-23
 
 ### Fixed

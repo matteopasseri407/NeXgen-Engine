@@ -125,8 +125,8 @@ def test_overlapping_seats_stay_registered_until_each_finishes(
     thread_b.join(timeout=15)
     assert not thread_a.is_alive() and not thread_b.is_alive()
     assert errors == {}
-    assert answers["a"][0] == "ciao da seat-0"
-    assert answers["b"][0] == "ciao da seat-1"
+    # No order assumption: whichever thread wins the race takes seat-0.
+    assert sorted([answers["a"][0], answers["b"][0]]) == ["ciao da seat-0", "ciao da seat-1"]
     assert session._LIVE_PROCS == {}, "a fine corsa il registro deve essere vuoto"
 
 

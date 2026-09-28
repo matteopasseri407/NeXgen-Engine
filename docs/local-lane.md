@@ -283,7 +283,12 @@ Each interaction gets a fresh step budget (the cap is per instruction, not
 per session lifetime) and fresh continuations; sources, receipts, staged
 proposals and the last read's resume point carry over, while intents
 (reply/upload) and the route follow the NEW instruction — a "confronta col
-contratto" after a mail run pivots the menu's re-search to Drive. The
+contratto" after a mail run pivots the menu's re-search to Drive. The reply
+prescription is state-based, not last-read-based: mail → contract → reply
+offers `draft_mail` because the mail is in session, whatever was read last.
+The draft itself sees every collected source (mail plus contract), not just
+the last mail. Replying "taking the contract into account" needs the
+contract in the model context, not only in the receipts. The
 claim-check verdict travels in the summary too: a confabulating answer
 still answers, but the CLI warns on stderr and exits 1, and MCP appends
 the warning footer. Silence would be a lie the exit code tells.
