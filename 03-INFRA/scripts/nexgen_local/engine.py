@@ -599,8 +599,10 @@ def _evidence(receipts: list[dict[str, Any]]) -> tuple[list[str], bool, bool]:
 
 
 def _path_matches(cited: str, read: str) -> bool:
-    left = cited.strip("./").casefold()
-    right = read.strip("./").casefold()
+    # Separator-insensitive: le ricevute portano path assoluti del sistema
+    # (backslash su Windows), le citazioni usano gli slash.
+    left = cited.strip("./").replace("\\", "/").casefold()
+    right = read.strip("./").replace("\\", "/").casefold()
     return left == right or right.endswith("/" + left) or left.endswith("/" + right)
 
 
