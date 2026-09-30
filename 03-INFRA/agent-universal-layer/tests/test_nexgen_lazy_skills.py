@@ -1,10 +1,11 @@
-"""Pigro davvero: su tutti i runtime, e reversibile.
+"""Dichiarata una volta, visibile sempre: su tutti i runtime, e senza ritorni.
 
-"Tutto è pigro per difetto" è facile da rispettare finché nessuno cambia idea.
-Le due condizioni difficili sono altre: che una skill installata da uno
-strumento di terze parti non finisca lo stesso dove ogni runtime la carica da
-sola, e che una skill resa immediata possa tornare pigra. Senza la seconda, il
-manifest smette di descrivere la realtà dopo la prima modifica.
+"Il manifest descrive la realtà" è facile da rispettare finché il sync non
+cancella da solo. Le due condizioni difficili sono altre: che una skill
+installata da uno strumento di terze parti non finisca lo stesso dove ogni
+runtime la carica da sola, e che una skill dichiarata non perda mai le viste
+a prescindere dall'exposure. Senza la seconda, le skill spariscono a ogni
+sync (regressione humanizer). Solo uscire dal manifest toglie le viste.
 """
 from __future__ import annotations
 
@@ -38,18 +39,25 @@ def _materializer(tmp_path: Path, vault: Path, monkeypatch) -> SkillMaterializer
     return SkillMaterializer(vault_data=vault, home=tmp_path / "home")
 
 
-def test_a_skill_without_an_exposure_reaches_no_runtime(tmp_path, monkeypatch):
-    vault = _vault_with(tmp_path, "skills:\n  quieta:\n    origin: vault\n")
-    _own_skill(vault, "quieta")
-    mat = _materializer(tmp_path, vault, monkeypatch)
-
-    mat.materialize(apply=True)
-
-    assert (mat.library_dir / "quieta").exists(), "deve stare nella libreria"
-    for directory in mat.discovery_dirs:
-        assert not (directory / "quieta").exists(), (
-            f"pigra per difetto, e invece è comparsa in {directory}"
+def test_a_declared_skill_reaches_the_runtimes_it_names_whatever_the_exposure(tmp_path, monkeypatch):
+    """Regressione humanizer: una skill dichiarata viene sincronizzata nei
+    target che nomina a prescindere dall'exposure. L'exposure non decide
+    più la discovery: solo il manifest (dichiarata sì/no) e i targets."""
+    for exposure in ("manual", "lazy"):
+        vault = _vault_with(
+            tmp_path,
+            f"skills:\n  presente:\n    origin: vault\n    exposure: {exposure}\n",
         )
+        _own_skill(vault, "presente")
+        mat = _materializer(tmp_path, vault, monkeypatch)
+
+        mat.materialize(apply=True)
+
+        assert (mat.library_dir / "presente").exists(), "deve stare nella libreria"
+        for directory in (mat.claude_dir, mat.codex_dir, mat.active_dir, mat.opencode_native_dir):
+            assert (directory / "presente").exists(), (
+                f"exposure {exposure}: dichiarata ma assente in {directory}"
+            )
 
 
 def test_eager_reaches_only_the_runtimes_it_names(tmp_path, monkeypatch):
@@ -67,8 +75,9 @@ def test_eager_reaches_only_the_runtimes_it_names(tmp_path, monkeypatch):
     assert not (mat.opencode_dir / "subito").exists()
 
 
-def test_a_skill_can_be_made_lazy_again(tmp_path, monkeypatch):
-    """Il caso che prima era senza ritorno."""
+def test_lowering_the_exposure_keeps_the_views(tmp_path, monkeypatch):
+    """Abbassare l'exposure non pota più le viste: solo uscire dal manifest
+    le toglie. Prima un passaggio eager->manual cancellava tutto in silenzio."""
     vault = _vault_with(
         tmp_path,
         "skills:\n  ripensata:\n    origin: vault\n    exposure: eager\n    targets: [claude]\n",
@@ -84,10 +93,30 @@ def test_a_skill_can_be_made_lazy_again(tmp_path, monkeypatch):
     )
     mat.materialize(apply=True)
 
-    assert not (mat.claude_dir / "ripensata").exists(), (
-        "tolta dal manifest come immediata, la vista deve sparire"
+    assert (mat.claude_dir / "ripensata").exists(), (
+        "declassata a manual, la vista deve restare"
     )
-    assert (mat.library_dir / "ripensata").exists(), "ma la skill resta disponibile su richiesta"
+    assert (mat.library_dir / "ripensata").exists(), "e la skill resta disponibile su richiesta"
+
+
+def test_a_non_core_skill_survives_repeated_syncs(tmp_path, monkeypatch):
+    """Il caso humanizer, blindato: sync, sync ancora, la vista resta.
+    La potatura tocca solo skill uscite dal manifest, mai quelle dichiarate."""
+    vault = _vault_with(
+        tmp_path,
+        "skills:\n  humanizer-like:\n    origin: vault\n    exposure: manual\n    targets: [claude, codex, antigravity, opencode]\n",
+    )
+    _own_skill(vault, "humanizer-like")
+    mat = _materializer(tmp_path, vault, monkeypatch)
+
+    mat.materialize(apply=True)
+    mat.materialize(apply=True)
+    mat.materialize(apply=True)
+
+    for directory in mat.discovery_dirs:
+        assert (directory / "humanizer-like").exists(), (
+            f"dopo tre sync la vista in {directory} è sparita"
+        )
 
 
 def test_a_skill_dropped_from_the_manifest_loses_its_view(tmp_path, monkeypatch):
@@ -180,11 +209,13 @@ def test_a_third_party_installer_is_run_and_its_copy_is_taken_out_of_sight(tmp_p
     assert (mat.library_dir / "impeccable" / "SKILL.md").is_file(), (
         f"l'installer ha girato ma la skill non è nella libreria: {actions}"
     )
-    assert not dropped.exists(), (
-        "la copia dell'installer è rimasta dove ogni runtime la carica da sola"
+    assert dropped.is_symlink() and dropped.resolve() == (mat.library_dir / "impeccable").resolve(), (
+        "la copia dell'installer deve diventare vista gestita, non restare directory orfana"
     )
-    for directory in mat.discovery_dirs:
-        assert not (directory / "impeccable").exists()
+    for directory in (mat.claude_dir, mat.codex_dir):
+        assert (directory / "impeccable").exists(), (
+            f"dichiarata per {directory}, la vista deve esistere a prescindere dall'exposure"
+        )
 
 
 def test_the_installer_is_not_run_again_for_a_version_already_installed(tmp_path, monkeypatch):

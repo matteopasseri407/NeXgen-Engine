@@ -86,10 +86,12 @@ def test_upstream_without_deps_or_bad_pin_is_rejected(tmp_path: Path):
 def test_materialize_skips_upstream_but_indexes_it(tmp_path: Path):
     m, _ = _manager(tmp_path)
     changes, actions = m.materialize(apply=True)
-    assert changes == 1, actions  # solo local-skill viene materializzata
+    assert changes >= 1, actions  # local-skill in libreria + viste nei target che nomina
     lib = tmp_path / ".agents" / "skill-library"
     assert (lib / "upstream-ok").exists() is False
     assert (lib / "local-skill").is_dir()
+    assert (tmp_path / ".claude" / "skills" / "local-skill").exists()
+    assert not (tmp_path / ".claude" / "skills" / "upstream-ok").exists()
     index = (tmp_path / ".agents" / "skills" / "INDEX.md").read_text(encoding="utf-8")
     assert "`upstream-ok`" in index
     assert "`local-skill`" in index

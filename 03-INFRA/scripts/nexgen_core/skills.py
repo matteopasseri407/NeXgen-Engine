@@ -231,8 +231,12 @@ class SkillMaterializer:
     def _remove_stale_views(self, skills: dict[str, SkillEntry]) -> list[str]:
         """Takes back a view that is no longer declared.
 
-        Without this, a skill can be made eager but never made lazy again:
-        the view stays for good, and the manifest stops describing reality.
+        Only views for skills that left the manifest entirely — or that
+        never named this runtime in targets — are removed. A declared
+        skill keeps its views whatever its exposure: exposure routes
+        loading (INDEX.md + on-demand reads), never discovery. Pruning
+        declared skills made them silently unreachable, which is how
+        skills kept "disappearing" after every sync.
         Only views the engine itself created are touched — a folder that does
         not come from the library is someone else's and stays where it is.
         """
@@ -246,11 +250,10 @@ class SkillMaterializer:
                 if not lib_source.is_dir():
                     continue  # non è nostra: si segnala altrove, non si tocca
                 entry = skills.get(name)
-                wanted = (
-                    entry is not None
-                    and entry.exposure in ("eager", "core")
-                    and self._target_of(directory) in entry.targets
-                )
+                if entry is None:
+                    wanted = False
+                else:
+                    wanted = self._target_of(directory) in (entry.targets or [])
                 if wanted:
                     continue
                 ours = candidate.is_symlink() and candidate.resolve() == lib_source.resolve()
@@ -338,8 +341,12 @@ class SkillMaterializer:
                 # verifies the declared deps offline-safe.
                 continue
 
-            # Active view generation (if exposure == eager or core)
-            if entry.exposure in ("eager", "core") and lib_dest.is_dir() and apply:
+            # Active view generation: every declared skill with materialized
+            # library content gets native views in the runtimes it names.
+            # Exposure does not gate discovery — a declared skill is always
+            # reachable; INDEX.md + on-demand reads route the loading, and
+            # the updater keeps third-party pins current.
+            if lib_dest.is_dir() and apply:
                 for target in entry.targets:
                     target_dirs = list(self.dirs_by_target.get(target, ()))
 
@@ -431,18 +438,17 @@ class SkillMaterializer:
             managed = self.library_dir / entry.name
             spec = skills.get(entry.name)
             # One rule per scope, mirroring what materialize() creates: a
-            # native view exists only for eager/core skills naming that
+            # native view exists for every manifest skill naming that
             # runtime in targets (the shared catalog is the exposure-only
             # exception). The v2 port checked "claude" for the codex scope
             # too, so a legitimate codex view looked like a stray on every
             # explicit --migrate-legacy run.
             scope_target = {"claude": "claude", "codex": "codex", "opencode": "opencode"}.get(scope)
             expected = (
-                (scope == "shared" and spec is not None and spec.exposure in ("core", "eager"))
+                (scope == "shared" and spec is not None)
                 or (
                     scope_target is not None
                     and spec is not None
-                    and spec.exposure in ("core", "eager")
                     and scope_target in (spec.targets or [])
                 )
             )
