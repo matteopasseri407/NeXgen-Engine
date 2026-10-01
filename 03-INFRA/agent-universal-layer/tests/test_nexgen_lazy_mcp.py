@@ -465,3 +465,93 @@ def test_a_lazy_server_with_a_broken_template_is_withdrawn(tmp_path: Path, monke
     servers = mod._lazy_servers()
     assert "rottoserv" not in servers, "il server col template rotto non deve arrivare allo spawn"
     assert "buonoserv" in servers, "l\'indice non crolla per una entry sola"
+
+
+#: A dual-era server, faithful to the mcp SDK 2.x runner: the FIRST request
+#: on the connection decides its protocol era (a version-key envelope opens
+#: 2026-07-28, anything else the handshake era) and it cannot be changed
+#: later. Enveloped requests are refused on the handshake era; the modern
+#: era refuses the initialize handshake and wants a complete envelope on
+#: every request.
+DUAL_ERA_SERVER = r"""
+import json, sys
+TOOLS = [
+  {"name": "read_thing", "description": "reads a value", "inputSchema": {"type": "object", "properties": {}}},
+]
+PV = "io.modelcontextprotocol/protocolVersion"
+CC = "io.modelcontextprotocol/clientCapabilities"
+
+era = None
+initialized = False
+for line in sys.stdin:
+    line = line.strip()
+    if not line:
+        continue
+    req = json.loads(line)
+    m, rid, params = req.get("method"), req.get("id"), req.get("params") or {}
+    meta = params.get("_meta")
+    meta = meta if isinstance(meta, dict) else None
+    has_version_key = meta is not None and PV in meta
+    if m == "notifications/initialized":
+        continue
+    if era is None:
+        era = "modern" if (m != "initialize" and has_version_key) else "legacy"
+    if era == "modern":
+        if m == "initialize":
+            out = {"jsonrpc": "2.0", "id": rid, "error": {"code": -32022, "message": "connection is serving the 2026-07-28 protocol; the initialize handshake is not accepted"}}
+        elif not has_version_key:
+            out = {"jsonrpc": "2.0", "id": rid, "error": {"code": -32602, "message": "params._meta must be an object carrying the required '" + PV + "' and '" + CC + "' envelope keys"}}
+        elif CC not in meta:
+            out = {"jsonrpc": "2.0", "id": rid, "error": {"code": -32602, "message": "params._meta is missing the required envelope key(s): " + CC}}
+        elif m == "tools/list":
+            out = {"jsonrpc": "2.0", "id": rid, "result": {"resultType": "complete", "tools": TOOLS}}
+        elif m == "tools/call":
+            out = {"jsonrpc": "2.0", "id": rid, "result": {"resultType": "complete", "content": [{"type": "text", "text": "value:42"}]}}
+        else:
+            out = {"jsonrpc": "2.0", "id": rid, "error": {"code": -32601, "message": "nf"}}
+    else:
+        if m == "initialize":
+            initialized = True
+            out = {"jsonrpc": "2.0", "id": rid, "result": {"protocolVersion": "2025-06-18", "capabilities": {"tools": {"listChanged": False}}, "serverInfo": {"name": "dual-era", "version": "1"}}}
+        elif has_version_key:
+            out = {"jsonrpc": "2.0", "id": rid, "error": {"code": -32600, "message": "this connection serves the handshake protocol era; requests carrying the 2026-07-28 envelope are not accepted on it"}}
+        elif not initialized:
+            out = {"jsonrpc": "2.0", "id": rid, "error": {"code": -32602, "message": "Received request before initialization was complete"}}
+        elif m == "tools/list":
+            out = {"jsonrpc": "2.0", "id": rid, "result": {"tools": TOOLS}}
+        elif m == "tools/call":
+            out = {"jsonrpc": "2.0", "id": rid, "result": {"content": [{"type": "text", "text": "value:42"}]}}
+        else:
+            out = {"jsonrpc": "2.0", "id": rid, "error": {"code": -32601, "message": "nf"}}
+    sys.stdout.write(json.dumps(out) + "\n")
+    sys.stdout.flush()
+"""
+
+
+def test_the_first_frame_decides_the_protocol_era_of_a_dual_era_server(tmp_path: Path):
+    """Il primo frame decide l'era della connessione, e non si torna indietro.
+
+    Regressione: il cameriere apriva con l'envelope 2026-07-28 mancante di
+    clientCapabilities; il server dual-era restava inchiodato all'era moderna,
+    l'initialize legacy veniva poi rifiutato, e il server restava indicizzato
+    con zero tool per sempre (drive-mcp non chiamabile da nessun agente).
+    Anche col probe completato (era moderna) le chiamate bare restavano
+    rifiutate: il cameriere deve aprire in handshake, che tutti i server
+    della flotta parlano, e tenere l'envelope solo per i server solo-moderni.
+    """
+    audit = tmp_path / "audit.jsonl"
+    manifest = _base_manifest(DUAL_ERA_SERVER).replace(
+        "  fake:\n    lazy: true",
+        "  fake:\n    lazy: true\n    readonly_tools: [read_thing]",
+    )
+    proc = _start_fake(manifest, tmp_path, audit)
+    try:
+        r = _rpc(proc, "tools/call", {"name": "lazy_list", "arguments": {}}, rid=50)
+        idx = json.loads(r["result"]["content"][0]["text"])
+        names = [t["name"] for t in idx["servers"]["fake"]["tools"]]
+        assert names == ["read_thing"], idx
+        res = _call(proc, "fake", "read_thing", rid=51)
+        assert res.get("isError") is not True, res
+        assert res["content"][0]["text"] == "value:42", res
+    finally:
+        proc.kill()

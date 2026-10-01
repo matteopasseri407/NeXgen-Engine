@@ -410,15 +410,31 @@ class _ServerHandle:
     def tools_list(self) -> list[dict[str, Any]]:
         if self.index is not None and time.time() - self.index_at < INDEX_TTL:
             return self.index
-        modern = {"_meta": {"io.modelcontextprotocol/protocolVersion": PROTOCOL_VERSION}}
-        resp = self.rpc("tools/list", modern, 900 + zlib.crc32(self.name.encode()) % 100)
-        if "error" in resp or "result" not in resp:
-            resp = self.rpc("tools/list", {}, 900 + zlib.crc32(self.name.encode()) % 100)
+        # The first frame on a connection decides its protocol era
+        # (handshake vs 2026-07-28) and cannot be changed later: probing with
+        # the version-key envelope first pinned dual-era servers (mcp SDK 2.x,
+        # e.g. drive-mcp) to the modern era, where the legacy initialize is
+        # then refused and every request needs a complete envelope - the
+        # server indexed with zero tools, forever. Bare requests open the
+        # handshake era that every server in the fleet speaks (dual-era ones
+        # included); the envelope is tried only on a fresh spawn, for a
+        # modern-only server.
+        resp = self.rpc("tools/list", {}, 900 + zlib.crc32(self.name.encode()) % 100)
         if ("error" in resp or "result" not in resp) and not self.spec.get("url"):
-            # Legacy stdio server (mcp SDK 1.x): it refuses the list until
-            # the initialize handshake has happened.
+            # Handshake server (mcp SDK 1.x, custom servers): it refuses the
+            # list until `initialize` has been honoured.
             if self._initialize_stdio():
                 resp = self.rpc("tools/list", {}, 900 + zlib.crc32(self.name.encode()) % 100)
+        if "error" in resp or "result" not in resp:
+            # Modern-only server: respawn so the epoch-defining first frame is
+            # a complete 2026-07-28 envelope. Both keys are required;
+            # clientCapabilities: {} is the minimal valid value.
+            self.stop()
+            modern = {"_meta": {
+                "io.modelcontextprotocol/protocolVersion": PROTOCOL_VERSION,
+                "io.modelcontextprotocol/clientCapabilities": {},
+            }}
+            resp = self.rpc("tools/list", modern, 900 + zlib.crc32(self.name.encode()) % 100)
         tools = (resp.get("result") or {}).get("tools", [])
         self.index = tools
         self.index_at = time.time()
