@@ -8,6 +8,24 @@ This file tracks the **engine** (this repo). Your own data — manifests,
 instructions, skills, secrets — lives in your KnowledgeVault and is not part
 of any engine release.
 
+## [2.3.8] - 2026-10-01
+
+### Fixed
+
+- **Lazy proxy protocol era**: `tools_list()` opened with a 2026-07-28
+  envelope missing `clientCapabilities`; on dual-era servers built on the
+  mcp SDK 2.x (like the drive MCP) the rejected probe still pinned the
+  connection to the modern era, the legacy `initialize` fallback was then
+  refused, and the server indexed with zero tools, forever. Bare requests
+  now open the handshake era that every server in the fleet speaks; the
+  complete envelope stays a last resort on a fresh spawn, for a modern-only
+  server. Regression test:
+  `test_the_first_frame_decides_the_protocol_era_of_a_dual_era_server`.
+- **Declared skills always synced to their named targets**: stale-view
+  pruning removes only undeclared skills or target mismatches; exposure no
+  longer gates discovery views, so manually installed skills stop
+  disappearing after every sync.
+
 ## [2.3.7] - 2026-10-01
 
 ### Fixed
