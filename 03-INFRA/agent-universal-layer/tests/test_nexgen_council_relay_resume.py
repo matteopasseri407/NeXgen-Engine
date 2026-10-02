@@ -198,9 +198,14 @@ def test_fallback_on_later_stage_does_not_skip(tmp_path: Path, runner: FakeRunne
     assert final["stop_reason"] == "completed"
 
 
-def test_quota_with_no_fallback_refuses(tmp_path: Path, runner: FakeRunner) -> None:
+def test_quota_with_no_fallback_refuses(tmp_path: Path, runner: FakeRunner, monkeypatch) -> None:
     """Solo pool esaurita: rifiuto con lo stesso messaggio del percorso effimero."""
     import relay as relay_module
+    from types import SimpleNamespace
+
+    # Compare both paths at the same instant, even across a wall-clock second.
+    fixed_time = relay_module.time.time()
+    monkeypatch.setattr(relay_module, "time", SimpleNamespace(time=lambda: fixed_time))
 
     seats, (brief, _) = _seats(), _brief_stages()
     stages = [RelayStage(role="r1", candidates=["sa"])]
