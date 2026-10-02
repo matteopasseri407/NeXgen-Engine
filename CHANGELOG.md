@@ -10,6 +10,8 @@ of any engine release.
 
 ## [Unreleased]
 
+## [2.3.9] - 2026-10-02
+
 ### Fixed
 
 - Council preserves every Governor fallback and distinguishes Go, free Zen and
