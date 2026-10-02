@@ -441,3 +441,32 @@ def test_identity_hashes_catch_sequence_changes() -> None:
     hash_a, _ = identity_hashes(brief, [RelayStage("r1", ["sa"])])
     hash_b, _ = identity_hashes("brief:altro?", [RelayStage("r1", ["sa"])])
     assert hash_a != hash_b
+
+
+@pytest.mark.parametrize("change", [
+    {"model": "remote/changed"}, {"cli": "ollama"},
+    {"reasoning_effort": "max"}, {"quota_pool": "changed-pool"},
+    {"zero_retention": True}, {"timeout_seconds": 1},
+])
+def test_resume_refuses_changed_seat_contract(change, runner, monkeypatch, sandbox):
+    """Aliases alone cannot authorize a different provider on resume."""
+    import proposal
+
+    _patch_loaders(monkeypatch)
+    seats = _seats()
+    monkeypatch.setattr(proposal, "load_config", lambda: {"seats": seats})
+    monkeypatch.setattr(proposal, "load_seats", lambda: seats)
+    runner.script = [("ok", "APPROVE", "first"), ("crash",)]
+    with pytest.raises(SimulatedCrash):
+        start_resumable_relay(question="domanda?", context=None, diff=None,
+                              sequence_spec="r1=sa,r2=sb", max_seats=5,
+                              continue_on_reject=False, invocation_timeout=None)
+    session_name = next(sandbox.iterdir()).name
+    before = list(runner.calls)
+    seats["sb"].update(change)
+    with pytest.raises(RelayError) as exc:
+        resume_relay_session(session_ref=session_name, question="domanda?", context=None, diff=None,
+                             sequence_spec="r1=sa,r2=sb", max_seats=5, continue_on_reject=False,
+                             invocation_timeout=None, allow_uncertain_rerun=True)
+    assert exc.value.kind == "seat_contract_mismatch"
+    assert runner.calls == before

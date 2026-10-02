@@ -32,7 +32,6 @@ from proposal import (
     _routing_context_or_exit,
     _routing_enabled,
     load_config,
-    load_seats,
     resolve_seat,
 )
 from relay import (
@@ -153,7 +152,7 @@ def cmd_relay(args: argparse.Namespace) -> None:
 
 def _cmd_relay_ephemeral(args: argparse.Namespace) -> None:
     config = load_config()
-    seats = load_seats()
+    seats = config["seats"]
     stages = _load_relay_sequence(args, config, seats)
     brief = build_brief(args.question, args.context, args.diff)
     egress_gate(brief)
@@ -262,7 +261,7 @@ def cmd_consult(args: argparse.Namespace) -> None:
 
     try:
         config = load_config()
-        seats = load_seats()
+        seats = config["seats"]
         brief = build_brief(args.brief, args.context, args.diff)
         egress_gate(brief)
         keep_session = bool(getattr(args, "keep_session", False))

@@ -1,8 +1,7 @@
 # AI Council
 
 `council.py` is a local orchestrator that convenes other agentic CLIs you
-already have (paid via their own flat subscription, never a pay-per-use API
-key opened just for this) as advisors: brainstorming, challenging a plan, or
+already have as advisors: brainstorming, challenging a plan, or
 cross-vendor code review. It is explicit Python code, not an LLM, that
 decides who speaks and when.
 
@@ -131,8 +130,10 @@ council relay "Design a rate limiter." --sequence "architect=glm,builder=qwen" -
 council relay "Design a rate limiter." --sequence "architect=glm,builder=qwen" --resume council-design-a-rate-limiter-20260927T120000Z
 ```
 
-Resume recomputes the brief and sequence from your arguments and refuses
-without invoking any seat if either changed. Completed stages are never
+Resume checks the brief, sequence and selected seats before invoking any seat.
+Changing a seat's model, CLI, reasoning effort, quota pool, retention policy,
+timeout or routing identity refuses the resume. Checkpoints created before
+these seat checks must be restarted as a new relay. Completed stages are never
 re-invoked. One case needs your explicit decision: if the process died
 after a provider responded but before the outcome was saved, resume
 declares which stage/attempt is uncertain and stops — re-invoking may bill
@@ -174,16 +175,15 @@ shows the seats the user declared and waits for an explicit choice.
 
 An optional `routing:` section turns a routing document into a locally verified
 proposal. Set `decision_file` to a relative path inside the private data root.
-Council understands its versioned JSON contract, the per-role tables emitted by
-the public [LLM Model Routing Governor](https://github.com/matteopasseri407/NeXgen-addon-llm-model-routing-governor),
+Council understands the per-role Markdown tables emitted by the public [LLM Model Routing Governor](https://github.com/matteopasseri407/NeXgen-addon-llm-model-routing-governor),
 and the older flat table for backward compatibility.
 
-The Governor table carries both the model label and the CLI. Council keeps that
-pair together when it resolves `routing_id` or `routing_label` against local
-seats. This matters when the same model is available through two CLIs with
-different quota pools. An older document without a CLI still works when the
-model maps to one CLI only. If it maps to several CLIs, Council reports the
-ambiguity and does not guess.
+Council retains every fallback in the Governor table and resolves the model
+label together with its channel against local seats. Go, free Zen and paid Zen
+remain separate even though all three use OpenCode. Privacy accepts one or more
+local candidates and ignores explicitly excluded rows. Unknown channels and
+malformed candidate rows stop the proposal. An older flat table works only when
+each model maps to one execution pool; ambiguous matches are excluded.
 
 This is an in-memory adapter. Neither Council nor an external workflow rewrites
 `seats.yaml`. That file remains the local execution allowlist, while the routing
@@ -191,16 +191,11 @@ document supplies the current ordering. A missing CLI, a different model, or a
 different Codex effort removes a candidate from the proposal with an explanation.
 Missing zero-retention does not remove it; the proposal marks it with a warning.
 
-For a `codex` seat the check is concrete: Council reads
-`$CODEX_HOME/config.toml` (default `~/.codex/config.toml`) and compares it
-against the seat's declared `model` and `reasoning_effort` with an exact
-string match — no fuzzy or semver-aware comparison. A mismatch names both
-sides and the file it read:
-
-- `il modello non è quello configurato in Codex (configurato: '<value in
-  config.toml>', seat: '<value in seats.yaml>', file: <path to config.toml>)`
-- `l'effort non coincide con la configurazione Codex (configurato: '<value in
-  config.toml>', seat: '<value in seats.yaml>', file: <path to config.toml>)`
+For a `codex` seat, Council checks the declared model and effort against the
+CLI default in `$CODEX_HOME/config.toml` (default `~/.codex/config.toml`).
+An explicit model can differ from that default if `models_cache.json` lists
+the exact model and supports the requested effort. These checks read local
+metadata and do not spend model quota.
 
 For a `claude` seat, Council first checks that the installed CLI supports
 explicit `--model` selection. It also requires `--effort` when the seat
@@ -308,14 +303,13 @@ council clean --all           # removes every kept session now
   A false value prints a clear warning in menus and immediately before the
   model starts. It is metadata, not an execution gate. Secret scanning remains
   blocking and is a separate control.
-- **Pay-per-use channels**: the governed routing block carries a Costo cell
-  per candidate. A seat whose stated cost is pay-per-use (a currency symbol
-  or a non-zero amount, as opposed to flat/free) is flagged in the proposal
-  and **requires an interactive confirmation before any process starts**:
-  without a `y` on the operator's terminal the call is aborted. This is a
-  hard stop, not a warning: the call spends real money. A seat with no
-  matching candidate in the routing document has no stated cost and is not
-  gated.
+- **Pay-per-use channels**: paid Zen seats require interactive confirmation
+  before each call, including when routing is disabled or the price is missing
+  or zero. Go consumes prepaid quota and does not trigger the cash payment gate.
+  Other channels use the routing document's stated cost. Without a `y` on the
+  operator's terminal, or when stdin is unavailable, a paid call is refused.
+  Consult collects all confirmations on the main thread before starting any
+  opinion or rebuttal workers.
 - **Cost recap**: after each completed round or relay stage, Council prints
   a one-line usage recap when the CLI reports it (`tokens` and `cost`,
   summed across opencode steps; codex reports `total_cost_usd`). CLIs that

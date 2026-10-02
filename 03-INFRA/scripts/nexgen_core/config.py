@@ -204,9 +204,23 @@ def load_skills_manifest(path: Path) -> dict[str, Any]:
 def load_council_config(path: Path) -> dict[str, Any]:
     """Loads council/seats.yaml tolerantly."""
     raw = _load_yaml(path, "Council configuration")
+    for field in ("seats", "routing", "sequences"):
+        if field in raw and not isinstance(raw[field], dict):
+            raise ConfigError(f"Council {field} must be a map/dictionary")
+    for name, seat in raw.get("seats", {}).items():
+        if not isinstance(name, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]*", name):
+            raise ConfigError("Council seat names must be safe file names")
+        if not isinstance(seat, dict):
+            raise ConfigError(f"Council seat {name} must be a map/dictionary")
+        for field in ("cli", "model", "vendor"):
+            if not isinstance(seat.get(field), str) or not seat[field].strip():
+                raise ConfigError(f"Council seat {name} needs a non-empty {field}")
+        if "zero_retention" in seat and not isinstance(seat["zero_retention"], bool):
+            raise ConfigError(f"Council seat {name}: zero_retention must be boolean")
     return {
         "schema_version": raw.get("schema_version", 1),
         "seats": raw.get("seats", {}),
         "routing": raw.get("routing", {}),
+        "sequences": raw.get("sequences", {}),
         "raw": raw,
     }

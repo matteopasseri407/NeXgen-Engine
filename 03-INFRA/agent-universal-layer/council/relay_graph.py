@@ -99,6 +99,14 @@ def identity_hashes(brief: str, stages: list[RelayStage]) -> tuple[str, str]:
     return _sha(brief), _sha(_canonical(sequence))
 
 
+def seat_contract_hash(seats: dict, stages: list[RelayStage]) -> str:
+    """Bind approval to execution and privacy settings, not just aliases."""
+    fields = ("cli", "model", "vendor", "reasoning_effort", "quota_pool",
+              "zero_retention", "timeout_seconds", "routing_id", "routing_label")
+    names = {name for stage in stages for name in stage.candidates}
+    return _sha(_canonical({name: {field: seats[name].get(field) for field in fields} for name in names}))
+
+
 def _require_langgraph():
     try:
         from langgraph.graph import END, StateGraph
@@ -372,6 +380,7 @@ def _write_identity(
     max_seats: int,
     continue_on_reject: bool,
     invocation_timeout: float | None,
+    contract_hash: str | None = None,
 ) -> None:
     _write_private_text(
         session_dir / IDENTITY_NAME,
@@ -382,6 +391,7 @@ def _write_identity(
                 "max_seats": max_seats,
                 "continue_on_reject": continue_on_reject,
                 "invocation_timeout": invocation_timeout,
+                "seat_contract_hash": contract_hash,
             },
             indent=1,
         )
@@ -429,12 +439,12 @@ def start_resumable_relay(
     invocation_timeout: float | None,
 ) -> dict[str, Any]:
     """Fresh resumable run with the ephemeral path's validation and gates."""
-    from proposal import load_config, load_seats
+    from proposal import load_config
     from verdict import build_brief
     from session import egress_gate
 
     config = load_config()
-    seats = load_seats()
+    seats = config["seats"]
     fake_args = SimpleNamespace(sequence=sequence_spec, max_seats=max_seats)
     stages = _load_relay_sequence(fake_args, config, seats)
     brief = build_brief(question, context, diff)
@@ -454,6 +464,7 @@ def start_resumable_relay(
             max_seats,
             continue_on_reject,
             invocation_timeout,
+            seat_contract_hash(seats, stages),
         )
         with _open_saver(session_dir) as saver:
             app = build_relay_app(lambda s: _NodeContext(seats, session_dir, config, s)).compile(checkpointer=saver)
@@ -493,7 +504,7 @@ def resume_relay_session(
     crash-after-response uncertainty is either absent or explicitly
     accepted with ``allow_uncertain_rerun``.
     """
-    from proposal import load_config, load_seats
+    from proposal import load_config
     from verdict import build_brief
     from session import egress_gate
 
@@ -514,7 +525,7 @@ def resume_relay_session(
         ) from exc
 
     config = load_config()
-    seats = load_seats()
+    seats = config["seats"]
     fake_args = SimpleNamespace(sequence=sequence_spec, max_seats=max_seats)
     stages = _load_relay_sequence(fake_args, config, seats)
     brief = build_brief(question, context, diff)
@@ -531,6 +542,14 @@ def resume_relay_session(
             f"[council] cannot resume {session_dir.name}: the sequence does not match "
             "the stored run. Resume is refused.",
             kind="sequence_mismatch",
+        )
+    # Older checkpoints did not record the seat contract and cannot prove
+    # who was approved. An uncertain-rerun override never bypasses this.
+    if identity.get("seat_contract_hash") != seat_contract_hash(seats, stages):
+        raise RelayError(
+            f"[council] cannot resume {session_dir.name}: the approved seat contract "
+            "is missing or changed (model, CLI, effort, pool or policy). Start a new relay.",
+            kind="seat_contract_mismatch",
         )
     stored_flags = (identity.get("max_seats"), identity.get("continue_on_reject"), identity.get("invocation_timeout"))
     if (max_seats, continue_on_reject, invocation_timeout) != stored_flags:

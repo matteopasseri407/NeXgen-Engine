@@ -78,9 +78,11 @@
 #   una relay senza --sequence scelti esplicitamente dall'umano;
 # - ogni seat proponibile deve avere routing_id e/o routing_label, oltre a model
 #   ed effort esatti per la sua CLI;
-# - le tabelle per ruolo del Governor portano Modello + CLI. Questa coppia
-#   distingue lo stesso modello esposto da pool diversi. Un vecchio documento
-#   senza CLI viene rifiutato solo quando il mapping sarebbe ambiguo;
+# - Council conserva tutti i fallback e abbina Modello + Canale: Go, Zen free
+#   e Zen a pagamento restano distinti anche sulla stessa CLI OpenCode. Un
+#   documento legacy si usa soltanto quando il pool locale è univoco;
+# - un seat opencode/<modello> a pagamento richiede consenso anche senza routing
+#   o prezzo dichiarato. opencode-go/<modello> usa invece la quota prepagata;
 # - la CLI viene interrogata in sola lettura quando espone un inventario locale.
 #   Un modello non verificabile o assente viene mostrato come escluso, non viene
 #   sostituito o invocato automaticamente. zero_retention=false resta proponibile
