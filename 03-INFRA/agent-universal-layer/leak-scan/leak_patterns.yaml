@@ -64,6 +64,8 @@ leak_soft:
   - '(?i)\bmatteo\b'
 
 leak_allow:
+  # FNV-1a hash constants used by the Governor, not account identifiers.
+  - '^(?:2166136261|16777619)$'
   - '127\.0\.0\.1'
   - '0\.0\.0\.0'
   - '255\.255\.255\.255'
