@@ -54,6 +54,6 @@ def test_agy_seat_allowed_in_proposal(capsys) -> None:
     seat = {"cli": "agy", "model": "gemini-3.7-flash-high", "zero_retention": False}
     args = argparse.Namespace()
     # Must not raise or sys.exit
-    _check_seat_allowed("gemini", seat, args)
+    _check_seat_allowed("gemini", seat, args, config={"seats": {"gemini": seat}})
     captured = capsys.readouterr()
     assert "WARNING" in captured.err

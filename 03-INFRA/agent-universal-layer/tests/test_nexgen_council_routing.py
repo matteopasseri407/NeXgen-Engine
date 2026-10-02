@@ -189,9 +189,9 @@ Test role.
 
 | Slot | Modello | Canale | Costo | Motivo |
 |---|---|---|---:|---|
-| prescelto | Alpha Model | fakecli-a | forfait | best |
-| rimpiazzo 1 | Beta Model | fakecli-b | forfait | runner-up |
-| rimpiazzo 2 | Gamma Model | fakecli-b | forfait | third |
+| prescelto | Alpha Model | claude | forfait | best |
+| rimpiazzo 1 | Beta Model | codex | forfait | runner-up |
+| rimpiazzo 2 | Gamma Model | codex | forfait | third |
 
 <!-- model-routing-governor:end -->
 """
@@ -208,11 +208,11 @@ def _role_config(tmp_path, monkeypatch):
     (vault / "crm.md").write_text(ROLE_BLOCK, encoding="utf-8")
     monkeypatch.setenv("AGENT_VAULT_DATA", str(vault))
     seats = {
-        "seat-a": {"cli": "fakecli-a", "vendor": "v", "model": "m-a",
+        "seat-a": {"cli": "claude", "vendor": "v", "model": "m-a",
                    "routing_label": "Alpha Model"},
-        "seat-b": {"cli": "fakecli-b", "vendor": "v", "model": "m-b",
+        "seat-b": {"cli": "codex", "vendor": "v", "model": "m-b",
                    "routing_label": "Beta Model"},
-        "seat-c": {"cli": "fakecli-c", "vendor": "v", "model": "m-c",
+        "seat-c": {"cli": "ollama", "vendor": "v", "model": "m-c",
                    "routing_label": "Zeta Model"},
     }
     config = {"seats": seats,

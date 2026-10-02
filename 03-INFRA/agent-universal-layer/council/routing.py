@@ -9,6 +9,7 @@ closed instead of silently reverting to an arbitrary seat.
 from __future__ import annotations
 
 import os
+import json
 import re
 import shutil
 import subprocess
@@ -22,10 +23,7 @@ LEGACY_END_HEADING = "### Motivazioni concise"
 GOVERNOR_HEADING = "### Proposta di routing per ruolo"
 GOVERNOR_END_MARKER = "<!-- model-routing-governor:end -->"
 GOVERNOR_ROLE_RE = re.compile(r"^####\s+([A-Za-z][A-Za-z0-9_-]*)\s+-\s+\S.*$")
-#: Slot del blocco governato v4, in ordine: i primi tre candidati del ruolo.
-GOVERNOR_SLOTS = ("prescelto", "rimpiazzo 1", "rimpiazzo 2")
-#: Canali della matrice v4 -> CLI del seat che li esegue. Un canale non mappato
-#: lascia il candidato senza CLI: si aggancia al seat solo per etichetta.
+#: Governor channels map to a CLI; unknown channels fail closed.
 CHANNEL_TO_CLI = {
     "claude": "claude",
     "codex": "codex",
@@ -33,6 +31,7 @@ CHANNEL_TO_CLI = {
     "go": "opencode",
     "zen": "opencode",
     "zen-free": "opencode",
+    "nvidia": "opencode",
     "local": "ollama",
 }
 PROBE_TIMEOUT_SECONDS = 10
@@ -60,13 +59,28 @@ class RoutingCandidate:
     execution CLI. Every producer of a RoutingCandidate resolves it against a
     seat's ``routing_label`` (or the derived ``routing_id`` variants below).
 
-    ``cost`` is the raw "Costo" cell from the governed block, when present:
-    it is displayed to the human and drives the pay-per-use confirmation
-    gate, never an execution check of its own."""
+    ``channel`` distinguishes pools sharing a CLI. ``cost`` is the raw
+    "Costo" cell, used with the execution pool for payment confirmation."""
 
     value: str
     cli: str | None = None
     cost: str | None = None
+    channel: str | None = None
+
+
+def seat_channel(seat: dict[str, Any]) -> str | None:
+    """Execution pool, derived from the CLI's actual model identifier."""
+    cli = seat.get("cli")
+    if cli == "opencode":
+        provider, _, model = str(seat.get("model", "")).partition("/")
+        if provider == "opencode-go":
+            return "go"
+        if provider == "nvidia":
+            return "nvidia"
+        if provider == "opencode":
+            return "zen-free" if model.endswith("-free") else "zen"
+        return None
+    return {"claude": "claude", "codex": "codex", "agy": "agy", "ollama": "local"}.get(cli)
 
 
 def is_pay_per_use(cost: str | None) -> bool:
@@ -118,12 +132,13 @@ def _nonempty_string(value: object, where: str) -> str:
 
 
 def _dedupe(candidates: list[RoutingCandidate]) -> tuple[RoutingCandidate, ...]:
-    seen: set[tuple[str, str | None]] = set()
+    seen: set[tuple[str, str | None, str | None]] = set()
     unique: list[RoutingCandidate] = []
     for candidate in candidates:
         token = (
             candidate.value.casefold(),
             candidate.cli.casefold() if candidate.cli else None,
+            candidate.channel,
         )
         if token in seen:
             continue
@@ -152,8 +167,8 @@ def _parse_governor_role_tables(markdown: str) -> RoutingPlan | None:
     table therefore fails closed instead of falling through to the legacy
     parser and silently proposing the wrong execution lane.
 
-    Format (v4): ``| Slot | Modello | Canale | Costo | Motivo |`` with the
-    first three slots ``prescelto``, ``rimpiazzo 1``, ``rimpiazzo 2``.
+    Format (v4): ``| Slot | Modello | Canale | Costo | Motivo |``. All
+    numbered fallbacks are retained; explicitly excluded rows are not seats.
     """
     exact_headings = list(re.finditer(
         rf"(?m)^{re.escape(GOVERNOR_HEADING)}[ \t]*\r?$", markdown,
@@ -192,7 +207,12 @@ def _parse_governor_role_tables(markdown: str) -> RoutingPlan | None:
         next_index = role_starts[role_index + 1][0] if role_index + 1 < len(role_starts) else len(lines)
         block = [line.strip() for line in lines[line_index + 1:next_index] if line.strip()]
         unassigned = any(line.casefold().startswith("> **non assegnato.**") for line in block)
-        table_lines = [line for line in block if line.startswith("|")]
+        table_lines = []
+        for line in block:
+            if line.startswith("|"):
+                table_lines.append(line)
+            elif table_lines:
+                break
         if unassigned:
             if table_lines:
                 raise RoutingContractError(f"Governor role {role} is both assigned and unassigned")
@@ -209,36 +229,32 @@ def _parse_governor_role_tables(markdown: str) -> RoutingPlan | None:
             raise RoutingContractError(f"Governor role {role} has an invalid table separator")
 
         rows = [_markdown_cells(line) for line in table_lines[2:] if line.strip()]
-        if len(rows) < 3:
-            raise RoutingContractError(f"Governor role {role} has fewer than three candidate rows")
-
-        # Privacy is local-only: su hardware senza modello locale (es. PC-ALESSIA, no GPU)
-        # il Governor emette "—" nei top3. Non è un errore di contratto, è "non assegnato"
-        # e va trattato come ruolo esplicitamente unassigned, non come failure dell'intera proposta.
-        if role.casefold() == "privacy" and any(
-            len(r) > 1 and r[1].strip() == "—" for r in rows[:3]
-        ):
-            roles[role] = ()
-            continue
+        if not rows:
+            raise RoutingContractError(f"Governor role {role} has no candidate rows")
 
         ordered: list[RoutingCandidate] = []
-        slots: list[str] = []
-        for row in rows[:3]:
+        for index, row in enumerate(rows):
             if len(row) != len(header):
                 raise RoutingContractError(f"Governor role {role} has an incomplete candidate row")
             slot = _nonempty_string(row[0], f"{role} slot").casefold()
+            expected_slot = "prescelto" if index == 0 else f"rimpiazzo {index}"
+            if slot != expected_slot:
+                raise RoutingContractError(f"Governor role {role} candidates are not in prescelto/rimpiazzo order")
             model = _nonempty_string(row[1], f"{role} model")
             if model == "—":
-                raise RoutingContractError(f"Governor role {role} has an unassigned slot among the top three")
+                if role.casefold() == "privacy" or row[4].casefold().startswith("escluso:"):
+                    continue
+                raise RoutingContractError(f"Governor role {role} has an unassigned slot without an exclusion")
             channel = _nonempty_string(row[2], f"{role} channel").casefold()
-            cli = CHANNEL_TO_CLI.get(channel)
+            if channel not in CHANNEL_TO_CLI:
+                raise RoutingContractError(f"Governor role {role} has an unknown channel: {channel}")
+            if role.casefold() == "privacy" and channel != "local":
+                raise RoutingContractError("Governor role Privacy must use only the local channel")
+            cli = CHANNEL_TO_CLI[channel]
             cost = row[3].strip() if len(row) > 3 and row[3].strip() else None
             if cost in ("—", "-"):
                 cost = None
-            slots.append(slot)
-            ordered.append(RoutingCandidate(model, cli, cost))
-        if tuple(slots) != GOVERNOR_SLOTS:
-            raise RoutingContractError(f"Governor role {role} candidates are not in prescelto/rimpiazzo order")
+            ordered.append(RoutingCandidate(model, cli, cost, channel))
         deduped = _dedupe(ordered)
         if len(deduped) != len(ordered):
             raise RoutingContractError(f"Governor role {role} contains duplicate candidates")
@@ -360,6 +376,29 @@ def _probe_codex_seat(seat: dict[str, Any]) -> SeatCapability:
     return SeatCapability(True, "model and effort confirmed by the Codex configuration")
 
 
+def _probe_codex_inventory(seat: dict[str, Any]) -> SeatCapability:
+    """Explicit -m/-c choices can differ from the operator's default."""
+    default = _probe_codex_seat(seat)
+    if default.available:
+        return default
+    cache = _codex_config_path().parent / "models_cache.json"
+    try:
+        data = json.loads(cache.read_text(encoding="utf-8"))
+        models = data.get("models", []) if isinstance(data, dict) else []
+        model = next((m for m in models if isinstance(m, dict) and m.get("slug") == seat["model"]
+                      and m.get("visibility") != "hide"), None)
+    except (OSError, ValueError, TypeError) as exc:
+        return SeatCapability(False, f"Codex model inventory not readable: {exc}")
+    if model is None:
+        return SeatCapability(False, "the model does not appear in Codex's local inventory")
+    effort = seat.get("reasoning_effort")
+    raw_levels = model.get("supported_reasoning_levels", [])
+    levels = {level.get("effort") for level in raw_levels if isinstance(level, dict)} if isinstance(raw_levels, list) else set()
+    if effort and effort != "none" and effort not in levels:
+        return SeatCapability(False, "the requested effort is not supported by this Codex model")
+    return SeatCapability(True, "model and effort confirmed by Codex's local inventory")
+
+
 def seat_capabilities(seats: dict[str, dict[str, Any]]) -> dict[str, SeatCapability]:
     """Probe only local, read-only CLI metadata, once per CLI invocation."""
     cli_probe_cache: dict[str, tuple[bool, str]] = {}
@@ -372,7 +411,7 @@ def seat_capabilities(seats: dict[str, dict[str, Any]]) -> dict[str, SeatCapabil
             continue
 
         if cli == "codex":
-            capabilities[name] = _probe_codex_seat(seat)
+            capabilities[name] = _probe_codex_inventory(seat)
             continue
         if cli == "agy":
             # agy seats were blocked outright until 2026-08-22 (see
@@ -459,6 +498,8 @@ def _routing_id_variants(value: str) -> set[str]:
 def _matches(seat: dict[str, Any], candidate: RoutingCandidate) -> bool:
     if candidate.cli and str(seat.get("cli", "")).casefold() != candidate.cli.casefold():
         return False
+    if candidate.channel and seat_channel(seat) != candidate.channel:
+        return False
     configured = seat.get("routing_label")
     if isinstance(configured, str) and configured.strip().casefold() == candidate.value.casefold():
         return True
@@ -489,11 +530,11 @@ def resolve_role_candidates(
             lane = f" via {candidate.cli}" if candidate.cli else ""
             diagnostics.append(f"{candidate.value}{lane}: no local seat associated")
             continue
-        matched_clis = {str(seats[name].get("cli", "")).casefold() for name in matched}
-        if candidate.cli is None and len(matched_clis) > 1:
+        matched_lanes = {(str(seats[name].get("cli", "")).casefold(), seat_channel(seats[name])) for name in matched}
+        if candidate.channel is None and len(matched_lanes) > 1:
             diagnostics.append(
-                f"{candidate.value}: ambiguous across CLIs ({', '.join(sorted(matched_clis))}); "
-                "the routing document must declare the CLI"
+                f"{candidate.value}: ambiguous across execution pools; "
+                "the routing document must declare the channel"
             )
             continue
         for name in matched:

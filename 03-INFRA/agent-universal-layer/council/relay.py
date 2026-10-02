@@ -350,8 +350,8 @@ def _invoke_stage_candidate(
     timeout_seconds = _resolve_timeout_seconds(seat, invocation_timeout)
 
     _warn_no_zero_retention(chosen_name, seat)
-    if config and _routing_enabled(config):
-        _confirm_pay_per_use(chosen_name, seat, _seat_cost(_routing_context_or_exit(config), chosen_name, seat))
+    plan = _routing_context_or_exit(config) if config and _routing_enabled(config) else None
+    _confirm_pay_per_use(chosen_name, seat, _seat_cost(plan, chosen_name, seat))
 
     print(
         f"[council] relay {idx:02d} — role: {stage.role} — "

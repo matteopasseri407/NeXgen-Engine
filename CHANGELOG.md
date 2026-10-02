@@ -8,6 +8,21 @@ This file tracks the **engine** (this repo). Your own data — manifests,
 instructions, skills, secrets — lives in your KnowledgeVault and is not part
 of any engine release.
 
+## [Unreleased]
+
+## [2.3.9] - 2026-10-02
+
+### Fixed
+
+- Council preserves every Governor fallback and distinguishes Go, free Zen and
+  paid Zen seats sharing a model label. Partial local Privacy rankings stay usable.
+- Paid Zen calls require consent even without a routing price. Consult collects
+  consent before starting parallel workers and records failed rebuttals.
+- Resumable relay refuses changed seat execution or privacy settings. Older
+  checkpoints without a seat contract must start a new relay.
+- Council retains named sequences, validates seat configuration and recognizes
+  explicitly selected Codex models in the local inventory.
+
 ## [2.3.8] - 2026-10-01
 
 ### Fixed

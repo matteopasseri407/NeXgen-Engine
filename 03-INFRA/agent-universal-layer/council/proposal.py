@@ -28,6 +28,7 @@ from routing import (
     load_routing_plan,
     resolve_role_candidates,
     seat_capabilities,
+    seat_channel,
 )
 from seat_process import _effort_label
 
@@ -141,7 +142,7 @@ def _proposal_lines_for_role(plan, seats: dict, capabilities: dict, role: str) -
                 else "WARNING: no verified zero-retention"
             )
             cost = _seat_cost(plan, name, seat)
-            pay_note = f", WARNING: pay-per-use ({cost})" if is_pay_per_use(cost) else ""
+            pay_note = f", WARNING: pay-per-use ({cost or 'price not stated'})" if _seat_is_pay_per_use(seat, cost) else ""
             lines.append(
                 f"    {index}. {name}: {seat['model']} via {seat['cli']}{effort_label}, {retention}{pay_note}."
             )
@@ -259,19 +260,29 @@ def _warn_no_zero_retention(seat_name: str, seat: dict) -> None:
     )
 
 
+def _seat_is_pay_per_use(seat: dict, cost: str | None) -> bool:
+    channel = seat_channel(seat)
+    if channel in ("go", "zen-free", "nvidia", "local"):
+        return False
+    return channel == "zen" or is_pay_per_use(cost)
+
+
 def _confirm_pay_per_use(seat_name: str, seat: dict, cost: str | None) -> None:
     """Real-money gate: a pay-per-use seat is never invoked without the human
     confirming it, because the call spends actual money on a per-use channel.
     This is a hard stop, not a warning: input() reads the operator's terminal
     and a non-yes answer aborts before any process is spawned."""
-    if not is_pay_per_use(cost):
+    if not _seat_is_pay_per_use(seat, cost):
         return
     print(
         f"[council] WARNING: seat '{seat_name}' ({seat['model']}) runs on a "
-        f"pay-per-use channel (stated cost: '{cost}'). This call spends real money.",
+        f"pay-per-use channel (stated cost: '{cost or 'unknown'}'). This call spends real money.",
         file=sys.stderr,
     )
-    answer = input(f"Confirm pay-per-use call for seat '{seat_name}'? [y/N] ").strip().casefold()
+    try:
+        answer = input(f"Confirm pay-per-use call for seat '{seat_name}'? [y/N] ").strip().casefold()
+    except EOFError:
+        answer = ""
     if answer not in ("y", "yes"):
         sys.exit(f"[council] STOP: pay-per-use seat '{seat_name}' not confirmed.")
 
@@ -285,13 +296,14 @@ def _check_seat_allowed(
 ) -> None:
     _warn_no_zero_retention(seat_name, seat)
     if config is None:
-        if not SEATS_PATH.is_file():
-            return
-        config = load_config()
+        config = load_config() if SEATS_PATH.is_file() else {}
     if _routing_enabled(config):
         plan = _routing_context_or_exit(config)
-        _confirm_pay_per_use(seat_name, seat, _seat_cost(plan, seat_name, seat))
         _refuse_seat_outside_role(seat_name, args, config, plan, default_routing_role)
+        cost = _seat_cost(plan, seat_name, seat)
+    else:
+        cost = None
+    _confirm_pay_per_use(seat_name, seat, cost)
 
 
 def _refuse_seat_outside_role(
