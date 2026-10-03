@@ -41,7 +41,7 @@ before integration. Fix new lint findings rather than regenerating the baseline.
 | Atomic writes, backups, private artifacts | `nexgen_core/files.py` | `test_nexgen_foundations.py`, `test_nexgen_quality_regressions.py` |
 | Third-party pin updates and rollback | `nexgen_core/thirdparty_bump.py` | `test_nexgen_bump.py`, `test_nexgen_bump_file_contract.py` |
 | Sync phase ordering and failure status | `nexgen_core/guard.py` | `test_nexgen_phase3.py`, `test_nexgen_quality_regressions.py` |
-| Skill fetch, replacement and pins | `nexgen_core/skill_sources.py` | `test_nexgen_lazy_skills.py`, `test_nexgen_quality_regressions.py` |
+| Skill fetch, replacement and pins | `nexgen_core/skill_sources.py` | `test_nexgen_skill_fetch.py`, `test_nexgen_lazy_skills.py`, `test_nexgen_quality_regressions.py` |
 | Host locking | `nexgen_core/lock.py` | `test_nexgen_lock.py` |
 | Source checkout version fallback | `nexgen_local/version.py` | `test_nexgen_command_surface.py`, `test_nexgen_local_mcp.py` |
 | Local CLI dispatch and shared config/LLM adapters | `nexgen_local/cli.py`, `nexgen_local/cmds/base.py`; domain commands in `cmds/` | `test_nexgen_command_surface.py`, `test_nexgen_local_steps.py` |
@@ -58,6 +58,8 @@ before integration. Fix new lint findings rather than regenerating the baseline.
 | Model requests and deadlines | `nexgen_local/llm.py` | `test_nexgen_llm_deadlines.py` |
 | Council process lifecycle and relay checkpoints | `03-INFRA/agent-universal-layer/council/` | `test_nexgen_council_*.py` |
 | Vault publication and selected files | `nexgen_core/git_ops.py` | `test_nexgen_scoped_publish.py` |
+| MCP mount policy and private connector preservation | `nexgen_core/renderer.py`; dialect writers in `mcp_render/` | `test_nexgen_mcp_preservation.py`, `test_nexgen_phase2.py`, `test_nexgen_lazy_mcp.py` |
+| Released Engine update and mechanical pin | `nexgen_core/updater.py` | `test_nexgen_update_command.py` |
 | Contributor lanes | `nexgen_core/lanes.py` | `test_nexgen_lanes.py` |
 
 Check the actual filenames before selecting a test. Graph modules drive the
@@ -74,6 +76,10 @@ Serialize receipts with `ToolCall.receipt()` so research checkpoints retain
 status when resumed. Text-only methods remain available for CLI/MCP callers;
 refusal-text interpretation is limited to older checkpoints without status.
 Pin updates use `nexgen_core/files.py` rather than a second atomic writer.
+Council artefacts and recovery snapshots use this owner too; `backup_file`
+accepts an already-read text snapshot without generating a second filename policy.
+MCP dialects share `McpRenderer.unmounted_server_names` for mount decisions.
+Skill fetch and placement share `github_skill_source` for repository boundaries.
 
 The plain loop and persistent research import the same state, policy and
 actions. `step_policy.py` chooses admissible actions without model or tool

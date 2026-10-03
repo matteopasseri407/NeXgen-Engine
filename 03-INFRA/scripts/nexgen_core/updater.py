@@ -35,6 +35,7 @@ if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
 from nexgen_core.errors import NexgenError  # noqa: E402
+from nexgen_core.files import atomic_write_text  # noqa: E402
 from nexgen_core.i18n import t  # noqa: E402
 from nexgen_core.paths import resolve_home  # noqa: E402
 
@@ -251,6 +252,9 @@ def _assert_target_version(engine_repo: Path, target: str) -> str:
         raise UpdateError(
             f"release {target} contains VERSION={release_version!r}; expected {expected!r}"
         )
+    entry = _git(engine_repo, "cat-file", "-e", f"{target}:03-INFRA/scripts/nexgen_core/cli/__init__.py", check=False)
+    if entry.returncode:
+        raise UpdateError(f"release {target} is missing its command entry; installed engine unchanged")
     return release_version
 
 
@@ -263,7 +267,7 @@ def _commit_split_pin(
     entry: list[str],
 ) -> None:
     try:
-        pin_file.write_text(f"{target_head}\n", encoding="utf-8")
+        atomic_write_text(pin_file, f"{target_head}\n")
     except OSError as exc:
         raise UpdateError(f"cannot update engine pin {pin_file}: {exc}") from exc
     relative_pin = pin_file.relative_to(data_repo).as_posix()
@@ -590,4 +594,3 @@ class EngineUpdater:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

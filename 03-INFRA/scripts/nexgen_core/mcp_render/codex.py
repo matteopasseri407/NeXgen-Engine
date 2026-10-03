@@ -2,10 +2,15 @@
 from __future__ import annotations
 
 import json
+import re
+import tomllib
 
-from nexgen_core.config import load_mcp_manifest
 from nexgen_core.i18n import t
 from nexgen_core.paths import codex_config
+
+
+def _toml_key(name: str) -> str:
+    return name if re.fullmatch(r"[A-Za-z0-9_-]+", name) else json.dumps(name)
 
 
 def render(renderer, write: bool = False) -> tuple[bool, str]:
@@ -22,24 +27,19 @@ def render(renderer, write: bool = False) -> tuple[bool, str]:
     cfg_file = codex_config(renderer.home)
 
     retired = renderer.retired_server_names()
-    _manifest_data = load_mcp_manifest(renderer.manifest_path) if renderer.manifest_path.is_file() else {}
     unmounted = {
         name.replace("-", "_")
-        for name, srv in _manifest_data.get("servers", {}).items()
-        if name not in servers and name not in retired
-        and not (
-            srv.get("require_env")
-            and (str(srv.get("tier", "")).strip().lower() == "core" or srv.get("enabled", False))
-            and not (srv.get("lazy") and "codex" in (srv.get("lazy_targets") or ["claude", "codex", "antigravity", "opencode"]))
-        )
+        for name in renderer.unmounted_server_names(servers, "codex")
     }
     managed = {name.replace("-", "_") for name in servers} | {name.replace("-", "_") for name in retired}
 
     existing_lines: list[str] = []
     preserved_lines: list[str] = []
+    previous = {}
     if cfg_file.is_file():
         try:
             raw = cfg_file.read_text(encoding="utf-8")
+            previous = tomllib.loads(raw)
             # Preserves existing non-MCP sections (e.g. [model], general
             # settings) and the mcp_servers entries this engine doesn't own.
             in_mcp_section = False
@@ -48,8 +48,7 @@ def render(renderer, write: bool = False) -> tuple[bool, str]:
                 stripped = line.strip()
                 if stripped.startswith("[mcp_servers."):
                     in_mcp_section = True
-                    key = stripped[13:-1] if stripped.endswith("]") else stripped[13:]
-                    section = key.split(".", 1)[0]
+                    section = next(iter(tomllib.loads(stripped)["mcp_servers"]))
                     keep_current = section not in managed and section not in unmounted
                     if keep_current:
                         preserved_lines.append(line)
@@ -61,9 +60,8 @@ def render(renderer, write: bool = False) -> tuple[bool, str]:
                     existing_lines.append(line)
                 elif in_mcp_section and keep_current:
                     preserved_lines.append(line)
-        except OSError:
-            existing_lines = []
-            preserved_lines = []
+        except (OSError, ValueError) as exc:
+            raise ValueError("Cannot read or parse the Codex configuration; original preserved.") from exc
 
     header = "# NeXgen Engine - Codex MCP configuration, auto-generated"
     lines: list[str] = []
@@ -80,7 +78,8 @@ def render(renderer, write: bool = False) -> tuple[bool, str]:
         lines.append("")
     for name, srv in servers.items():
         safe_name = name.replace("-", "_")
-        lines.append(f"[mcp_servers.{safe_name}]")
+        section = _toml_key(safe_name)
+        lines.append(f"[mcp_servers.{section}]")
         if srv.get("transport") == "http" or srv.get("url"):
             lines.append(f'url = {json.dumps(srv["url"])}')
             auth_env = srv.get("auth", {}).get("env") if isinstance(srv.get("auth"), dict) else None
@@ -98,12 +97,24 @@ def render(renderer, write: bool = False) -> tuple[bool, str]:
             lines.append(f"args = {args_json}")
             env = srv.get("env", {})
             if env:
-                lines.append(f"[mcp_servers.{safe_name}.env]")
+                lines.append(f"[mcp_servers.{section}.env]")
                 for k, v in env.items():
-                    lines.append(f'{k} = {json.dumps(str(v))}')
+                    lines.append(f'{_toml_key(k)} = {json.dumps(str(v))}')
         lines.append("")
 
     content = "\n".join(lines).strip() + "\n"
+    generated = tomllib.loads(content)
+    # The line-preserving edit must also preserve the parsed meaning.
+    # Unusual valid TOML layouts may be refused, never silently rewritten
+    # into different settings or a missing private connector.
+    if any(generated.get(key) != value for key, value in previous.items() if key != "mcp_servers"):
+        raise ValueError("Codex rendering would change unrelated settings; original preserved.")
+    old_servers = previous.get("mcp_servers", {})
+    if not isinstance(old_servers, dict):
+        raise ValueError("Codex mcp_servers must be a table; original preserved.")
+    for key, value in old_servers.items():
+        if key not in managed and key not in unmounted and generated.get("mcp_servers", {}).get(key) != value:
+            raise ValueError("Codex rendering would change an unmanaged connector; original preserved.")
     if write:
         renderer._backup_and_write(cfg_file, content)
     return True, t("Codex configuration updated")

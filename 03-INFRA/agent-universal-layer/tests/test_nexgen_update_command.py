@@ -95,6 +95,43 @@ def _env(engine: Path, data: Path | None = None) -> dict[str, str]:
     }
 
 
+def test_release_without_command_entry_is_refused_before_engine_moves(tmp_path, monkeypatch):
+    origin, engine = _upgrade_fixture(tmp_path)
+    entry = "03-INFRA/scripts/nexgen_core/cli/__init__.py"
+    _git(origin, "rm", entry)
+    _git(origin, "commit", "-m", "broken release tree")
+    _git(origin, "tag", "-d", "v0.2.0")
+    _git(origin, "tag", "v0.2.0")
+    updater = _load_updater()
+    monkeypatch.setattr(updater, "_signature_state", lambda *args: "G")
+    before = _git(engine, "rev-parse", "HEAD").stdout
+    assert updater.main(["--yes"], environ=_env(engine)) == 1
+    assert _git(engine, "rev-parse", "HEAD").stdout == before
+
+
+def test_pin_write_failure_preserves_previous_pin_and_skips_publication(tmp_path, monkeypatch):
+    from nexgen_core import files
+    updater = _load_updater()
+    pin = tmp_path / "ENGINE-PIN.txt"
+    pin.write_text("previous-pin\n")
+    calls = []
+    def run(args, **kwargs):
+        calls.append(args)
+        return subprocess.CompletedProcess(args, 0, "", "")
+
+    monkeypatch.setattr(updater, "_run", run)
+
+    def replace(*args):
+        raise OSError("synthetic failed rename")
+
+    monkeypatch.setattr(files.os, "replace", replace)
+    with pytest.raises(updater.UpdateError):
+        updater._commit_split_pin(pin_file=pin, target_head="new-pin", target="v0.2.0",
+                                  data_repo=tmp_path, entry=["synthetic-cli"])
+    assert pin.read_text() == "previous-pin\n"
+    assert calls == []
+
+
 def _bare_env(engine: Path, home: Path) -> dict[str, str]:
     env = {
         key: value
@@ -698,4 +735,3 @@ def test_doctor_with_undetermined_checks_does_not_block_update(tmp_path, capsys,
     assert result == 0
     output = capsys.readouterr().out
     assert "doctor reports no failures" in output
-

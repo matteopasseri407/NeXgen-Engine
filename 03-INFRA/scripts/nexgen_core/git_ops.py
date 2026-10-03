@@ -102,7 +102,7 @@ def auto_commit_infra_files(
     add_res = run_git(repo_dir, "add", "--", *infra_dirty)
     if add_res.returncode != 0:
         return False, []
-    c_res = run_git(repo_dir, "commit", "-m", commit_msg)
+    c_res = run_git(repo_dir, "commit", "-m", commit_msg, "--only", "--", *infra_dirty)
     if c_res.returncode != 0:
         return False, []
     return True, infra_dirty

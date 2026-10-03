@@ -118,7 +118,8 @@ def _safe_tag(tag: str | None) -> str | None:
     return cleaned or "untagged"
 
 
-def backup_file(path: Path, *, tag: str | None = None, keep: int | None = None) -> Path | None:
+def backup_file(path: Path, *, tag: str | None = None, keep: int | None = None,
+                text: str | None = None) -> Path | None:
     """Timestamped copy of an EXISTING file, made BEFORE any write.
 
     Every incident that justified this package started with a config file
@@ -131,11 +132,13 @@ def backup_file(path: Path, *, tag: str | None = None, keep: int | None = None) 
     rotates: only that many newest
     backups survive (the MCP renderer keeps 3); without it backups
     accumulate and their cleanup stays the user's (see `docs/uninstall.md`).
+    ``text`` snapshots bytes already read by a caller instead of rereading
+    a live file that may have changed; that snapshot is published privately.
     """
     import shutil
 
     path = Path(path)
-    if not path.is_file():
+    if text is None and not path.is_file():
         return None
     stamp = f"{time.strftime('%Y%m%d-%H%M%S')}-{time.time_ns()}"
     safe = _safe_tag(tag)
@@ -144,7 +147,10 @@ def backup_file(path: Path, *, tag: str | None = None, keep: int | None = None) 
     os.close(fd)
     backup_path = Path(name)
     try:
-        shutil.copy2(path, backup_path)
+        if text is None:
+            shutil.copy2(path, backup_path)
+        else:
+            atomic_write_text(backup_path, text, preserve_mode=False)
     except BaseException:
         backup_path.unlink(missing_ok=True)
         raise
