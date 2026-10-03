@@ -147,7 +147,7 @@ class NeXgenShell(cmd.Cmd):
             from nexgen_core.cli import _run_cli
             args = shlex.split(raw, posix=sys.platform != "win32")
             _run_cli(args)
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - shell reports, never raises
             print(f"{C_YELLOW}[!] Command error: {exc}{C_RESET}")
         return False
 

@@ -29,7 +29,7 @@ def is_cdp_up(timeout: float = 2.0) -> bool:
         req = urllib.request.Request(CDP_URL)
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             return resp.status == 200
-    except Exception:
+    except Exception:  # noqa: BLE001 - browser launch is best-effort
         return False
 
 
@@ -161,7 +161,7 @@ def heal_chrome(extra_args: list[str] | None = None) -> int:
                 capture_output=True,
                 check=False,
             )
-        except Exception:
+        except Exception:  # noqa: BLE001 - browser launch is best-effort
             pass
     else:
         # Ask first, insist later: a Chrome killed outright loses the open

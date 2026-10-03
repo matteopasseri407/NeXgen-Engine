@@ -14,11 +14,14 @@ from __future__ import annotations
 
 import contextlib
 import json
+import logging
 import shutil
 import sys
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 import yaml
 
@@ -124,7 +127,7 @@ class GuardRunner:
             if manifest_skills.is_file():
                 load_skills_manifest(manifest_skills, strict=True)
             return True, t("MCP and Skill configurations valid")
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - phase failure is recorded, never raises
             return False, t("Preflight failed: {error}", error=exc)
 
     def align_instructions(self) -> list[str]:
@@ -356,8 +359,8 @@ class GuardRunner:
             probe = run_git(self.engine_root, "rev-parse", "--show-toplevel")
             if probe.returncode == 0 and probe.stdout.strip():
                 refresh_update_cache(probe.stdout.strip())
-        except Exception:
-            pass
+        except Exception as exc:  # noqa: BLE001 - offline cache refresh never fails the guard
+            logger.debug("background update-cache refresh skipped: %s", exc)
 
     def apply_runtime_permissions(self) -> list[str]:
         """Permission posture + guardrail hook for every installed CLI.
@@ -496,7 +499,7 @@ class GuardRunner:
                 exit_code=exc.exit_code,
                 actions_taken=actions,
             )
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - phase failure is recorded, never raises
             return GuardResult(
                 success=False,
                 mode=mode,
@@ -605,7 +608,7 @@ class GuardRunner:
         try:
             rend = McpRenderer(vault_data=self.vault_data, engine_root=self.engine_root, home=self.home)
             results = rend.render_all(write=True)
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - phase failure is recorded, never raises
             # A corrupt live config aborts the cycle here: skills already
             # wrote above, so the message must say the transaction is
             # partial instead of dying with a bare traceback.
@@ -620,7 +623,7 @@ class GuardRunner:
         try:
             perm_actions = self.apply_runtime_permissions()
             actions.extend(perm_actions)
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - phase failure is recorded, never raises
             actions.append("[WARN] " + t("runtime-permissions: phase skipped due to an unexpected error ({error})", error=exc))
 
     def _phase_instructions(self, actions: list[str]) -> None:
@@ -642,7 +645,7 @@ class GuardRunner:
             repaired = sorted(_launcher_fingerprints(self.home).items() - before.items())
             if repaired:
                 actions.append(t("Commands realigned ({count})", count=len(repaired)))
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - phase failure is recorded, never raises
             actions.append("[WARN] " + t("Commands not realigned: {error}", error=exc))
 
     def _phase_scheduler(self, actions: list[str], branch: str) -> None:
@@ -662,14 +665,14 @@ class GuardRunner:
                 actions.append(t("Startup self-alignment configured"))
             else:
                 actions.append("[WARN] " + t("Startup self-alignment reported no success and no error; verify with `nexgen doctor`"))
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - phase failure is recorded, never raises
             actions.append("[WARN] " + t("Self-alignment configuration did not succeed: {error}", error=exc))
         try:
             from nexgen_core.tools.update_notifier import ensure_boot_check, ensure_shell_hook
 
             actions.extend(ensure_shell_hook(self.home))
             actions.extend(ensure_boot_check(self.home))
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - phase failure is recorded, never raises
             actions.append("[WARN] " + t("Update notice lanes not ensured: {error}", error=exc))
 
     def _phase_modules(self, actions: list[str]) -> None:
@@ -690,7 +693,7 @@ class GuardRunner:
             )
             if module_actions:
                 actions.append(t("Modules realigned ({count})", count=len(module_actions)))
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - phase failure is recorded, never raises
             actions.append("[WARN] " + t("Modules not realigned: {error}", error=exc))
 
     def _phase_liveness(self, actions: list[str], is_guard: bool, mode: GuardMode) -> None:

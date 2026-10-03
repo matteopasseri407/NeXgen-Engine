@@ -543,7 +543,7 @@ def install_declared_modules(
             # commands and units for something the machine has switched off.
             try:
                 actions += uninstall_module(state.module, home=home, dry_run=dry_run, log=log)
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001 - install error is reported, never raises
                 log(f"{state.module.id}: removal failed ({exc}); will retry next cycle")
             continue
         unmet = check_requirements(state.module, home)
@@ -566,6 +566,6 @@ def install_declared_modules(
             actions += install_module(
                 state.module, home=home, engine_root=engine_root, dry_run=dry_run, log=log
             )
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - install error is reported, never raises
             log(f"{state.module.id}: installation failed ({exc}); siblings continue, will retry next cycle")
     return actions

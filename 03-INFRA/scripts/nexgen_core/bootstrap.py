@@ -180,7 +180,7 @@ def install_launchers(root: Path) -> str:
 
         installed = install_shims(scripts_dir=scripts_dir, home=resolve_home())
         return t("{count} commands installed in ~/.local/bin", count=len(installed))
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - bootstrap reports, never raises
         return t("commands not installed ({error})", error=exc)
 
 

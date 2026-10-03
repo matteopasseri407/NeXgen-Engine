@@ -42,9 +42,9 @@ class FirecrawlClient:
             err_body = exc.read().decode("utf-8", "replace")
             try:
                 return json.loads(err_body)
-            except Exception:
+            except Exception:  # noqa: BLE001 - provider failure falls back, never raises
                 return {"success": False, "error": f"HTTP {exc.code}: {err_body}"}
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - provider failure falls back, never raises
             return {"success": False, "error": str(exc)}
 
     def check_status(self) -> dict[str, Any]:
@@ -61,7 +61,7 @@ class FirecrawlClient:
         except urllib.error.HTTPError as exc:
             # Even a 3xx or a 4xx means someone answered.
             return {"success": exc.code < 500, "http_status": exc.code}
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - provider failure falls back, never raises
             return {"success": False, "error": str(exc)}
 
     def scrape(self, url: str, formats: list[str] | None = None) -> dict[str, Any]:

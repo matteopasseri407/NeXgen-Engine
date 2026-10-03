@@ -8,6 +8,7 @@ Non-negotiable safety rules:
 """
 from __future__ import annotations
 
+import logging
 import os
 import subprocess
 from dataclasses import dataclass, field
@@ -17,6 +18,8 @@ from pathlib import Path
 import yaml
 
 from nexgen_core.i18n import t
+
+logger = logging.getLogger(__name__)
 
 
 class GitState(str, Enum):
@@ -232,8 +235,8 @@ def resolve_remotes(vault_data: Path) -> tuple[str, list[str]]:
                 raw_mirrors = data.get("mirrors", [])
                 if isinstance(raw_mirrors, list):
                     mirrors = [str(m) for m in raw_mirrors if str(m).strip()]
-        except Exception:
-            pass
+        except (OSError, ValueError, yaml.YAMLError) as exc:  # noqa: BLE001 - corrupt remotes.yaml falls back to origin
+            logger.debug("ignoring unreadable remotes.yaml %s: %s", remotes_file, exc)
 
     # Override from environment variables
     if env_remote:

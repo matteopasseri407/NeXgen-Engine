@@ -139,7 +139,7 @@ def _logo_path() -> str:
 
         logo = Path(resolve_engine_root()) / "assets" / "nexgen-logo.jpg"
         return str(logo) if logo.is_file() else ""
-    except Exception:
+    except Exception:  # noqa: BLE001 - notifier never fails the shell
         return ""
 
 
@@ -193,7 +193,7 @@ def _prompt_windows(current: str, latest: str, notes_hint: str = "") -> bool:
     try:
         res = ctypes.windll.user32.MessageBoxW(0, text, title, MB_YESNO | MB_ICONINFORMATION)
         return res == IDYES
-    except Exception:
+    except Exception:  # noqa: BLE001 - notifier never fails the shell
         return False
 
 
@@ -236,7 +236,7 @@ def _run_update() -> bool:
     try:
         from nexgen_core.updater import EngineUpdater
         return EngineUpdater.main(["--yes"]) == 0
-    except Exception:
+    except Exception:  # noqa: BLE001 - notifier never fails the shell
         return False
 
 
@@ -248,7 +248,7 @@ def cmd_check(force: bool = False) -> int:
     try:
         from nexgen_core.updater import EngineUpdater
         has_update, current, latest = EngineUpdater.check_updates()
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - notifier never fails the shell
         print(f"[update-notifier] check failed: {exc}", file=sys.stderr)
         return 1
 
@@ -293,7 +293,7 @@ def _check_skills_gui(force: bool = False) -> None:
                         0, text, "NeXgen Engine — terze parti", 0x00000000 | 0x00000040
                     )
                 _confirm_skills_shown()
-            except Exception:
+            except Exception:  # noqa: BLE001 - notifier never fails the shell
                 print(text)
                 _confirm_skills_shown()
         elif shutil.which("zenity") and (os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY")):
@@ -309,7 +309,7 @@ def _check_skills_gui(force: bool = False) -> None:
         else:
             print(text)
             _confirm_skills_shown()
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - notifier never fails the shell
         print(f"[update-notifier] skills check failed: {exc}", file=sys.stderr)
 
 
@@ -380,13 +380,13 @@ def refresh_update_cache(engine_repo: str | None = None, timeout: int = 20) -> d
                 latest, result.get("current", "")
             )
         _write_state(result)
-    except Exception:
+    except Exception:  # noqa: BLE001 - notifier never fails the shell
         pass
     try:
         from nexgen_core.depwatch import run_depwatch
 
         run_depwatch()
-    except Exception:
+    except Exception:  # noqa: BLE001 - notifier never fails the shell
         pass
     return result
 
@@ -453,7 +453,7 @@ def cmd_shell_check() -> int:
     shell hook must never break a shell startup)."""
     try:
         return _shell_check()
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - notifier never fails the shell
         print(f"[update-notifier] shell check failed: {exc}", file=sys.stderr)
         return 0
 
@@ -503,7 +503,7 @@ def _shell_check_skills() -> None:
         message = _skills_notice()
         if message:
             print(f"\n{message}")
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - notifier never fails the shell
         print(f"[update-notifier] skills check failed: {exc}", file=sys.stderr)
 
 
@@ -987,7 +987,7 @@ def ensure_boot_check(home: Path | str | None = None) -> list[str]:
             return _ensure_windows_boot_check(base)
         resolved = resolve_home(home if home is None or isinstance(home, Path) else Path(home))
         return _ensure_posix_boot_check(resolved)
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - notifier never fails the shell
         return [f"[WARN] boot check not ensured ({exc})"]
 
 
@@ -1008,7 +1008,7 @@ def ensure_shell_hook(home: Path | None = None) -> list[str]:
         if rc == 0:
             return ["[shell-hook] installed for this machine's shells"]
         return ["[WARN] shell hook installation returned an error"]
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - notifier never fails the shell
         return [f"[WARN] shell hook not ensured ({exc})"]
 
 
@@ -1057,7 +1057,7 @@ def cmd_boot() -> int:
     """
     try:
         lines = _boot_inventory()
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - notifier never fails the shell
         print(f"[update-notifier] boot check failed: {exc}", file=sys.stderr)
         return 0
     if not lines:
@@ -1075,7 +1075,7 @@ def _boot_inventory() -> list[str]:
     lines: list[str] = []
     try:
         refresh_update_cache()
-    except Exception:
+    except Exception:  # noqa: BLE001 - notifier never fails the shell
         pass
     try:
         state = _read_state()
@@ -1083,7 +1083,7 @@ def _boot_inventory() -> list[str]:
         latest = str(state.get("latest") or "")
         if state.get("has_update") and current and latest:
             lines.append(f"motore {current} -> {latest} (`nexgen update --check`)")
-    except Exception:
+    except Exception:  # noqa: BLE001 - notifier never fails the shell
         pass
     try:
         from nexgen_core.depwatch import run_depwatch
@@ -1093,7 +1093,7 @@ def _boot_inventory() -> list[str]:
         lines.extend(f"{_short_skill_name(what)} da aggiornare" for what in stale[:12])
         if len(stale) > 12:
             lines.append(f"altri {len(stale) - 12} nel report di stato")
-    except Exception:
+    except Exception:  # noqa: BLE001 - notifier never fails the shell
         pass
     return lines
 
@@ -1118,7 +1118,7 @@ def _publish_inventory() -> None:
         )
         tail = ((proc.stderr or "") + (proc.stdout or "")).strip().splitlines()[-3:]
         print("[boot] inventario governor: " + (" | ".join(tail) if tail else "nessuna risposta"))
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - notifier never fails the shell
         print(f"[boot] inventario governor non inviato ({exc})")
 
 
@@ -1133,7 +1133,7 @@ def _notify_passive(message: str) -> None:
         if shutil.which("notify-send"):
             subprocess.run(["notify-send", "NeXgen Engine", message,
                             f"--icon={_logo_path() or 'system-software-update'}"], check=False)
-    except Exception:
+    except Exception:  # noqa: BLE001 - notifier never fails the shell
         pass
 
 
@@ -1156,7 +1156,7 @@ def _notify_passive_windows(message: str) -> None:
             ["powershell", "-NoProfile", "-Command", toast],
             check=False, timeout=30,
         )
-    except Exception:
+    except Exception:  # noqa: BLE001 - notifier never fails the shell
         pass
 
 

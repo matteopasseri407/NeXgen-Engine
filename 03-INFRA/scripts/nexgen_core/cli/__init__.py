@@ -85,7 +85,7 @@ def main(argv: list[str] | None = None) -> int:
         return 130
     except BrokenPipeError:
         return 0
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - CLI reports, never raises
         print(t("Unexpected error: {error}", error=exc), file=sys.stderr)
         print(t("Run 'nexgen doctor' to check the machine, and retry."), file=sys.stderr)
         return 1

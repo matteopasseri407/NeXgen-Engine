@@ -14,11 +14,14 @@ holding the guard lock):
 """
 from __future__ import annotations
 
+import logging
 import os
 import subprocess
 import time
 from pathlib import Path
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 from nexgen_core.depwatch import run_depwatch
 from nexgen_core.i18n import t
@@ -153,7 +156,7 @@ class Heartbeat:
             if warns:
                 msg += " " + t("(last cycle completed with {count} warnings)", count=warns)
             return True, msg
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - failure is returned, never raises
             # A corrupt liveness file blinds self-monitoring: alert once
             # (debounced) instead of returning a silent False nobody acts on.
             self.megaphone.send_alert(
@@ -182,7 +185,7 @@ class Heartbeat:
                 answer["guard"] = run_guardian(
                     result.findings, self.state_dir, skill_scopes=scopes,
                 )
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001 - failure is returned, never raises
                 answer["guard"] = {"ok": False, "error": str(exc)}
             try:
                 from nexgen_core.thirdparty_bump import auto_apply, read_guard_payload
@@ -191,10 +194,10 @@ class Heartbeat:
                 answer["auto_applied"] = auto_apply(
                     payload or {}, self.vault_data, self.home, self.state_dir,
                 )
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001 - failure is returned, never raises
                 answer["auto_applied"] = {"ok": False, "error": str(exc)}
             return answer
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - failure is returned, never raises
             return {"ok": False, "error": str(exc)}
 
     def _skill_scopes(self) -> dict[str, str]:
@@ -214,7 +217,8 @@ class Heartbeat:
                 if isinstance(entry, dict) and entry.get("origin") == "github":
                     scopes[str(name)] = str(entry.get("path") or ".")
             return scopes
-        except Exception:
+        except Exception as exc:  # noqa: BLE001 - unreadable manifest means whole-repo scopes, never a beat crash
+            logger.debug("skill scopes fallback to whole-repo: %s", exc)
             return {}
 
     def run_self_upgrade(self) -> dict[str, Any]:
@@ -230,7 +234,7 @@ class Heartbeat:
             }
             exit_code = EngineUpdater.main(["--unattended"], environ=environ)
             return {"ok": exit_code == 0, "exit_code": exit_code}
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - failure is returned, never raises
             return {"ok": False, "error": str(exc)}
 
     def run_beat(self) -> dict[str, Any]:
@@ -248,8 +252,8 @@ class Heartbeat:
             )
             if probe.returncode == 0 and probe.stdout.strip():
                 refresh_update_cache(probe.stdout.strip())
-        except Exception:
-            pass
+        except Exception as exc:  # noqa: BLE001 - offline cache refresh never fails the beat
+            logger.debug("background update-cache refresh skipped: %s", exc)
         return {
             "liveness_ok": liveness_ok,
             "liveness_msg": liveness_msg,

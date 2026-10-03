@@ -213,7 +213,7 @@ class SkillMaterializer:
                     try:
                         from nexgen_core.provision import validate_deps
                         validate_deps(entry.deps, name)
-                    except Exception as exc:
+                    except Exception as exc:  # noqa: BLE001 - skill error is reported, never raises
                         problems.append(str(exc))
             if entry.origin in ("vault", "engine"):
                 src = entry.source_path

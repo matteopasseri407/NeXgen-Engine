@@ -86,7 +86,7 @@ def _resolve_clone_target(repo: str) -> str:
         from nexgen_core.skill_sources import clone_url
 
         return clone_url(repo)
-    except Exception:
+    except Exception:  # noqa: BLE001 - guard failure is reported, never raises
         return repo
 
 
@@ -372,7 +372,7 @@ def run_guardian(
         for item in stale:
             try:
                 verdicts.append(judge_finding(item, skill_scopes))
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001 - guard failure is reported, never raises
                 held = GuardFinding(what=item.what, pinned=item.pinned,
                                     upstream=item.upstream or "")
                 held.reasons.append(f"judge crashed: {exc}")
@@ -395,5 +395,5 @@ def run_guardian(
         sidecar.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
         return {"ok": True, "auto": len(payload["auto"]),
                 "batch": len(payload["batch"]), "hold": len(payload["hold"])}
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - guard failure is reported, never raises
         return {"ok": False, "error": str(exc)}
