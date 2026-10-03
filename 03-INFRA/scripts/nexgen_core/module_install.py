@@ -189,7 +189,9 @@ def run_health_check(module: ModuleDef, timeout: int = 60) -> tuple[bool | None,
     """Ask the module to prove it works. (None, reason) when it cannot say.
 
     Called by the doctor, never by the guard: running module-supplied code on a
-    timer is exactly what the declaration model exists to avoid.
+    timer is exactly what the declaration model exists to avoid. `shell=True`
+    is intentional here: `module.health` comes from the vault-owned manifest
+    (not the network), and the doctor is an explicit operator action.
     """
     if not module.health:
         return None, "no health command declared"
@@ -197,7 +199,7 @@ def run_health_check(module: ModuleDef, timeout: int = 60) -> tuple[bool | None,
     if cwd is not None and not cwd.is_dir():
         return None, f"source {cwd} does not exist"
     try:
-        proc = subprocess.run(
+        proc = subprocess.run(  # noqa: S602 - doctor-only, vault-owned manifest string
             module.health, shell=True, cwd=str(cwd) if cwd else None,
             capture_output=True, text=True, timeout=timeout, check=False,
         )

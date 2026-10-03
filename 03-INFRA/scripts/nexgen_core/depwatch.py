@@ -31,10 +31,10 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
-logger = logging.getLogger(__name__)
-
 from nexgen_core.config import ConfigError, load_mcp_manifest, load_skills_manifest
 from nexgen_core.paths import mcp_manifest, resolve_state_dir, resolve_vault_data, skills_manifest
+
+logger = logging.getLogger(__name__)
 
 GIT_LS_REMOTE_TIMEOUT_SECONDS = 8
 NPM_REGISTRY_TIMEOUT_SECONDS = 6

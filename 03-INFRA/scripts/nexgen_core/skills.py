@@ -493,11 +493,10 @@ class SkillMaterializer:
 
 
 def _safe_mark(mark: str, stream=sys.stdout) -> str:
-    try:
-        mark.encode(getattr(stream, "encoding", None) or "utf-8")
-        return mark
-    except (UnicodeEncodeError, TypeError):
-        return "[OK]" if mark == "✓" else "[X]"
+    """Backward-compat wrapper: single implementation lives in nexgen_core.marks."""
+    from nexgen_core.marks import safe_mark
+
+    return safe_mark(mark, stream)
 
 
 def main(argv: list[str] | None = None) -> int:

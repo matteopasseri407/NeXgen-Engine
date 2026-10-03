@@ -607,10 +607,10 @@ def bump_batch(
 
 
 def _short_name(what: str) -> str:
-    import re
+    """Backward-compat wrapper: single implementation in nexgen_core.thirdparty_names."""
+    from nexgen_core.thirdparty_names import short_name
 
-    match = re.match(r"^(?:skill|MCP server) '([^']+)'", str(what or ""))
-    return match.group(1) if match else str(what or "")
+    return short_name(what)
 
 
 def _commit_manifests(vault_data: Path, raisable: list[dict], *, auto: bool = True) -> bool:

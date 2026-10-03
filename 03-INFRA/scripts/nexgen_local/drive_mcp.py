@@ -65,9 +65,9 @@ def _create(cfg: LaneConfig, proposal: UploadProposal) -> None:
 
 
 def load_proposal(cfg: LaneConfig, proposal_id: str) -> UploadProposal:
-    from .patch import _PROPOSAL_ID_RE
+    from .patch import valid_proposal_id
 
-    if not _PROPOSAL_ID_RE.fullmatch(str(proposal_id or "")):
+    if not valid_proposal_id(proposal_id or ""):
         raise DriveGateError(f"id proposta non valido: {proposal_id}")
     target = cfg.uploads_dir / f"{proposal_id}.json"
     if not target.is_file():

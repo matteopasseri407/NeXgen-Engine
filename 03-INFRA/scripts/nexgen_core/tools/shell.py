@@ -140,7 +140,11 @@ class NeXgenShell(cmd.Cmd):
             return self.do_exit("")
 
         if raw.startswith("!"):
-            os.system(raw[1:].strip())
+            # Local REPL escape by design: runs on the operator's own machine
+            # with their own privileges. Empty command is a no-op, never a shell.
+            cmd = raw[1:].strip()
+            if cmd:
+                os.system(cmd)
             return False
 
         try:

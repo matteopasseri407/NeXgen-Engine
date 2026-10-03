@@ -21,8 +21,6 @@ import time
 from pathlib import Path
 from typing import Any
 
-logger = logging.getLogger(__name__)
-
 from nexgen_core.depwatch import run_depwatch
 from nexgen_core.i18n import t
 from nexgen_core.megaphone import Megaphone
@@ -33,6 +31,8 @@ from nexgen_core.paths import (
     resolve_vault_data,
 )
 from nexgen_core.updater import EngineUpdater
+
+logger = logging.getLogger(__name__)
 
 LIVENESS_FILE_NAME = "agent-guard-liveness"
 MAX_LIVENESS_AGE_HOURS = 2.5

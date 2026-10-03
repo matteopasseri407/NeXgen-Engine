@@ -21,8 +21,6 @@ from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
 
-logger = logging.getLogger(__name__)
-
 import yaml
 
 from nexgen_core.beat import Heartbeat
@@ -52,6 +50,8 @@ from nexgen_core.renderer import McpRenderer
 from nexgen_core.runtimes import apply_all as apply_runtimes
 from nexgen_core.scheduler import install_scheduler
 from nexgen_core.skills import SkillMaterializer
+
+logger = logging.getLogger(__name__)
 
 
 def _launcher_fingerprints(home: Path) -> dict[str, str]:

@@ -512,10 +512,10 @@ def _applied_file() -> Path:
 
 
 def _short_skill_name(what: str) -> str:
-    import re
+    """Backward-compat wrapper: single implementation in nexgen_core.thirdparty_names."""
+    from nexgen_core.thirdparty_names import short_name
 
-    match = re.match(r"^(?:skill|MCP server) '([^']+)'", str(what or ""))
-    return match.group(1) if match else str(what or "")
+    return short_name(what)
 
 
 def _take_fresh_applied(mark: bool = True) -> list[str]:

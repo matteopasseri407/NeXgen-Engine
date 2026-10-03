@@ -18,7 +18,7 @@ from nexgen_core.files import write_private_text
 from .config import LaneConfig
 from .connectors import ConnectorError
 from .connectors import calendar as calendar_conn
-from .patch import _PROPOSAL_ID_RE, new_proposal_id
+from .patch import new_proposal_id, valid_proposal_id
 from .tools import ToolError, audit_event
 
 
@@ -57,7 +57,7 @@ def _create(cfg: LaneConfig, proposal: CalendarProposal) -> None:
 
 
 def load_proposal(cfg: LaneConfig, proposal_id: str) -> CalendarProposal:
-    if not _PROPOSAL_ID_RE.fullmatch(str(proposal_id or "")):
+    if not valid_proposal_id(proposal_id or ""):
         raise CalendarError(f"id proposta non valido: {proposal_id}")
     target = cfg.calendars_dir / f"{proposal_id}.json"
     if not target.is_file():

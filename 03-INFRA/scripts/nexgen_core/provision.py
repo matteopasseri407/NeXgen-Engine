@@ -35,8 +35,6 @@ import time
 from pathlib import Path
 from typing import Any
 
-logger = logging.getLogger(__name__)
-
 try:
     from nexgen_core.depwatch import NPM_SPEC_RE
 except ImportError:  # pragma: no cover - the waiter imports with a fallback
@@ -46,6 +44,8 @@ from nexgen_core.config import load_mcp_manifest
 from nexgen_core.errors import NexgenError
 from nexgen_core.i18n import t
 from nexgen_core.paths import mcp_manifest, resolve_state_dir
+
+logger = logging.getLogger(__name__)
 
 #: Subfolder of the machine-local state dir that holds provisioned workspaces.
 DEPS_DIRNAME = "deps"
