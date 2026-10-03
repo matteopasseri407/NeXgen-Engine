@@ -497,15 +497,19 @@ def _publish_inventory() -> None:
     """Sends this host's CLI inventory to the governor, best effort.
 
     The publisher lives in the vault (private setup, per-host probes);
-    when it is absent there is simply nothing to send. Skip-unchanged
-    lives in the script itself, so a second run after the dedicated
-    inventory timer costs nothing. Never fails the boot.
+    end-to-end inventory works only where that script exists. Absence is
+    logged at debug (not silent, not a boot failure): without this line an
+    operator reads 'boot ok' as 'governor updated'.
+    Never fails the boot.
     """
     try:
+        import logging
+
         from nexgen_core.paths import resolve_vault_data
 
         script = resolve_vault_data() / "03-INFRA" / "governor-publish-inventory.py"
         if not script.is_file():
+            logging.getLogger(__name__).debug("governor inventory skipped: no vault script at %s", script)
             return
         proc = subprocess.run(
             [sys.executable, str(script), "--write", "--push"],

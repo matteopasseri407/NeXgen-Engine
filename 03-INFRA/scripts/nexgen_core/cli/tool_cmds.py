@@ -93,7 +93,9 @@ def register(sub) -> None:
     a = msub.add_parser("list", help=t("Read-only: the servers per CLI as they would render now"))
     a.set_defaults(func=cmd_mcp_list)
 
-    # The council isn't a tool: it's its own kind of request, and stays top-level.
+    # The council isn't a tool: it's its own top-level verb. The runner is
+    # the launcher in nexgen_core/tools/council.py, which subprocesses
+    # agent-universal-layer/council/council.py where the logic lives.
     c = sub.add_parser("council", help=t("Convene a review across models from different vendors"))
     c.set_defaults(func=cmd_council)
 

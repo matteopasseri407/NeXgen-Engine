@@ -11,7 +11,17 @@ work lives in sibling modules in this directory -- ``seat_process`` (spawn/
 stream/timeout one seat), ``session`` (session lifecycle, private files,
 shutdown handlers, egress/output privacy gates), ``proposal`` (config/routing
 loading and the human-facing proposal), ``relay`` (sequential multi-seat
-relay), and ``verdict`` (brief construction, round running, VERDICT parsing).
+relay, ephemeral loop), ``relay_graph`` (resumable relay on LangGraph,
+same leaves as relay: _select_stage_candidate/_invoke_stage_candidate),
+and ``verdict`` (brief construction, round running, VERDICT parsing).
+
+Layout contract: this directory runs as scripts via the launcher
+(nexgen_core/tools/council.py → subprocess council.py). Bare
+`from proposal import …` is intentional for both layouts. Underscore
+names are cross-file internals, not API. Routing decisions: role-based
+via routing.resolve_role_candidates, single-seat via proposal.resolve_seat,
+consult bypasses routing (relay._validate_relay_seat) — three correct
+answers by mode, see each cmd_*.
 """
 from __future__ import annotations
 
@@ -24,7 +34,11 @@ from pathlib import Path
 # not leave Python cache files next to the user's data on an error path.
 sys.dont_write_bytecode = True
 
-ENGINE_ROOT = Path(__file__).resolve().parent
+#: This directory (council sources + prompts/), misnamed for history.
+#: Repo-root resolution lives in nexgen_core.paths; the installed-layout
+#: fallback lives in nexgen_core/tools/council.py. Do not add a third.
+COUNCIL_DIR = Path(__file__).resolve().parent
+ENGINE_ROOT = COUNCIL_DIR
 
 from proposal import (
     SEATS_PATH,
@@ -181,11 +195,9 @@ def _cmd_relay_ephemeral(args: argparse.Namespace) -> None:
             )
             records.append(record)
             if record.verdict == "REJECT" and not continue_on_reject and idx < len(stages):
-                print(
-                    f"[council] stage {idx} ({record.role}): VERDICT: REJECT — "
-                    f"stopping the relay, skipping the remaining {len(stages) - idx} stages "
-                    "(use --continue-on-reject to run them anyway)."
-                )
+                from verdict import reject_stop_message
+
+                print(reject_stop_message(idx, record.role, len(stages) - idx))
                 break
 
         write_relay_verdict(session_dir, records)

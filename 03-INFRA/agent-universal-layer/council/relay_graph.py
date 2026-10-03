@@ -318,11 +318,9 @@ def _node_finalize(ctx: "_NodeContext") -> dict[str, Any]:
     if not records:
         return {"stop_reason": "empty"}
     if records[-1].verdict == "REJECT" and not state.get("continue_on_reject") and done < total:
-        print(
-            f"[council] stage {done} ({records[-1].role}): VERDICT: REJECT — "
-            f"stopping the relay, skipping the remaining {total - done} stages "
-            "(use --continue-on-reject to run them anyway)."
-        )
+        from verdict import reject_stop_message
+
+        print(reject_stop_message(done, records[-1].role, total - done))
         stop_reason = "rejected"
     else:
         stop_reason = "completed"
