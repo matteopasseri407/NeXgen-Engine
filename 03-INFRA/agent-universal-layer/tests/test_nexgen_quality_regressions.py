@@ -49,6 +49,59 @@ def test_failed_atomic_replace_preserves_original_and_cleans_own_temp(tmp_path, 
     assert sorted(p.name for p in tmp_path.iterdir()) == ["config.json"]
 
 
+@pytest.mark.parametrize("operation", ["stat", "unlink"])
+def test_atomic_write_retries_transient_metadata_and_cleanup_denials(tmp_path, monkeypatch, operation):
+    from pathlib import Path
+
+    target = tmp_path / "config.json"
+    target.write_text("old")
+    real = getattr(Path, operation)
+    denials = []
+    attempts = []
+
+    def transient(path, *args, **kwargs):
+        affected = path == target if operation == "stat" else path.name.startswith("config.json.")
+        if affected:
+            attempts.append(path)
+        if affected and not denials:
+            denials.append(path)
+            raise PermissionError("transient file lock")
+        return real(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, operation, transient)
+    files.atomic_write_text(target, "new")
+    assert denials
+    assert len(attempts) > 1
+    assert target.read_text() == "new"
+    assert list(tmp_path.iterdir()) == [target]
+
+
+def test_atomic_write_refuses_unknown_permissions_before_publication(tmp_path, monkeypatch):
+    from pathlib import Path
+
+    target = tmp_path / "config.json"
+    target.write_text("old")
+    real_stat = Path.stat
+    attempts = []
+    clock = [0.0]
+    monkeypatch.setattr(files.time, "monotonic", lambda: clock[0])
+    monkeypatch.setattr(files.time, "sleep", lambda delay: clock.__setitem__(0, clock[0] + delay))
+
+    def locked(path, *args, **kwargs):
+        if path == target:
+            attempts.append(path)
+            raise PermissionError("persistent file lock")
+        return real_stat(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "stat", locked)
+    with pytest.raises(PermissionError):
+        files.atomic_write_text(target, "new")
+    assert len(attempts) > 1
+    assert clock[0] <= files._RETRY_BUDGET_SECONDS
+    assert target.read_text() == "old"
+    assert list(tmp_path.iterdir()) == [target]
+
+
 @pytest.mark.parametrize("linked", [False, True])
 def test_failed_skill_replacement_keeps_active_views(tmp_path, monkeypatch, linked):
     import nexgen_core.skill_sources as sources

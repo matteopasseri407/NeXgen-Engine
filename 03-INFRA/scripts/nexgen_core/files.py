@@ -21,10 +21,25 @@ from pathlib import Path
 
 from nexgen_core.i18n import t
 
-#: How long the Windows retry loop waits in total before giving up. Locks
+#: Retry budget per filesystem operation. Locks
 #: from antivirus/indexing usually clear in milliseconds; past this budget
 #: the error is real and must surface, not be retried forever.
 _RETRY_BUDGET_SECONDS = 0.8
+
+
+def _retry_permission_error(operation):
+    """Retry a transient file lock, never conceal a persistent denial."""
+    deadline = time.monotonic() + _RETRY_BUDGET_SECONDS
+    delay = 0.05
+    while True:
+        try:
+            return operation()
+        except PermissionError:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise
+            time.sleep(min(delay, remaining))
+            delay *= 2
 
 
 def atomic_write_text(path: Path, text: str, *, preserve_mode: bool = True, exclusive: bool = False) -> None:
@@ -48,10 +63,10 @@ def atomic_write_text(path: Path, text: str, *, preserve_mode: bool = True, excl
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     old_mode = None
-    if preserve_mode and path.exists():
+    if preserve_mode:
         try:
-            old_mode = path.stat().st_mode & 0o777
-        except OSError:
+            old_mode = _retry_permission_error(path.stat).st_mode & 0o777
+        except FileNotFoundError:
             pass
     # mkstemp creates an exclusive, private file. Only this call's temporary
     # file belongs to us; a filename glob cannot establish ownership.
@@ -64,19 +79,7 @@ def atomic_write_text(path: Path, text: str, *, preserve_mode: bool = True, excl
             handle.write(text)
             handle.flush()
             os.fsync(handle.fileno())
-        delay = 0.05
-        while True:
-            try:
-                if exclusive:
-                    os.link(tmp, path)
-                else:
-                    os.replace(tmp, path)
-                break
-            except PermissionError:
-                if delay >= _RETRY_BUDGET_SECONDS:
-                    raise
-                time.sleep(delay)
-                delay *= 2
+        _retry_permission_error(lambda: os.link(tmp, path) if exclusive else os.replace(tmp, path))
         # Some filesystems (and Windows) do not support directory fsync.
         with contextlib.suppress(OSError):
             dir_fd = os.open(path.parent, os.O_RDONLY)
@@ -85,7 +88,7 @@ def atomic_write_text(path: Path, text: str, *, preserve_mode: bool = True, excl
             finally:
                 os.close(dir_fd)
     finally:
-        tmp.unlink(missing_ok=True)
+        _retry_permission_error(lambda: tmp.unlink(missing_ok=True))
 
 
 def secure_artifact(directory: Path, path: Path | None = None) -> None:

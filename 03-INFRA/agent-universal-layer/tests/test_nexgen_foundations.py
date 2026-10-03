@@ -100,13 +100,16 @@ def test_atomic_write_unique_tmp_and_no_setuid_carry(tmp_path: Path) -> None:
     target = tmp_path / "cfg.json"
     target.write_text("old", encoding="utf-8")
     os.chmod(target, 0o600)
-    errors: list[BaseException] = []
+    errors: list[str] = []
 
     def write(i: int) -> None:
         try:
-            atomic_write_text(target, f"v{i}")
-        except BaseException as exc:  # noqa: BLE001
-            errors.append(exc)
+            for attempt in range(8):
+                atomic_write_text(target, f"v{i}.{attempt}")
+        except BaseException:  # noqa: BLE001
+            import traceback
+
+            errors.append(traceback.format_exc())
 
     threads = [threading.Thread(target=write, args=(i,)) for i in range(8)]
     for thread in threads:
