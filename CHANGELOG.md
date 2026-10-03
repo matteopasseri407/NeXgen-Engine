@@ -83,6 +83,14 @@ of any engine release.
   unreadable files refuse overwrite, manifests fail closed on typos in
   preflight/doctor, remedies count only on explicit success, and the JSONC
   surgeon survives comments, duplicates and thousand-line headers.
+- Wobbly components pinned: inline templates nest and validate the discarded
+  branch, modules no longer flap on transient envs and install in isolation,
+  disabled units re-enable, scheduler respects the mutation freeze and never
+  reports unenabled timers as healthy, corrupt event-sink configs warn per
+  CLI, unverified postures warn instead of passing silent, dead hook
+  registrations warn on missing node, stale Claude hook specs self-repair,
+  Codex profile shadows are reported, liveness alerts on corruption and stays
+  quiet on fresh boot, and shim targets refuse quote-breaking paths.
 
 ### Development
 
