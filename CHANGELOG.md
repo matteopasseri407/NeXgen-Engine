@@ -113,6 +113,10 @@ of any engine release.
 
 ### Development
 
+- The bounded loop separates shared state, menu/provenance policy and action
+  execution from model coordination. Persistent research uses those same
+  owners; existing imports remain compatible. Maintainer AI instructions
+  distinguish the maintenance lane from external contribution intake.
 - Source selection and response evidence are separate modules with compatibility
   exports in the local engine. Consumers use the owning module's public helpers.
 - `check_engine.py` runs the existing lint gate and tests with one command.
