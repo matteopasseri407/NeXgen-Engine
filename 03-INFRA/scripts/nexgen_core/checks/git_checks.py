@@ -8,6 +8,7 @@ from pathlib import Path
 from nexgen_core.git_ops import (
     GitState,
     get_current_branch,
+    get_uncommitted_files,
     inspect_git_state,
     list_quarantine_branches,
     oldest_unpublished_commit_timestamp,
@@ -232,4 +233,52 @@ def check_quarantine_branches(vault_data: Path) -> CheckOutcome:
             "Review diff with 'git diff main..{branch}', reconcile changes into canonical files, then remove the quarantine branch with 'git branch -D {branch}'.",
             branch=first_b,
         ),
+    )
+
+
+def check_engine_lane(engine_root: Path) -> CheckOutcome | None:
+    """The engine checkout must honor the agent-lane contract.
+
+    Work-in-progress sitting on `main`/`release/*` bypasses the lanes and
+    will trip the CI lane-guard on push. WARN only: moving it is a human
+    (or agent) decision, never an automated rewrite. Returns None when
+    this machine does not carry an engine git checkout at all.
+    """
+    repo = engine_root.parent if engine_root.name == "03-INFRA" else engine_root
+    if not (repo / ".git").exists():
+        return None
+    branch = get_current_branch(repo)
+    if not branch:
+        return CheckOutcome(
+            id="git.engine_lane",
+            severity=Severity.WARN,
+            message=t("The engine checkout is on a detached HEAD; lane work belongs on a dev/<agent> branch."),
+            action=t("Check out your dev/<agent> lane before committing."),
+        )
+    guarded = branch == "main" or branch.startswith("release/")
+    if not guarded:
+        return CheckOutcome(
+            id="git.engine_lane",
+            severity=Severity.OK,
+            message=t("Engine checkout on lane branch '{branch}'", branch=branch),
+        )
+    dirty = get_uncommitted_files(repo)
+    ahead = run_git(repo, "rev-list", "--count", f"developer..{branch}").stdout.strip()
+    ahead_count = int(ahead) if ahead.isdigit() else 0
+    if not dirty and ahead_count == 0:
+        return CheckOutcome(
+            id="git.engine_lane",
+            severity=Severity.OK,
+            message=t("Engine checkout on '{branch}', clean and aligned", branch=branch),
+        )
+    parts = []
+    if dirty:
+        parts.append(t("{count} uncommitted files", count=len(dirty)))
+    if ahead_count:
+        parts.append(t("{count} commits ahead of developer", count=ahead_count))
+    return CheckOutcome(
+        id="git.engine_lane",
+        severity=Severity.WARN,
+        message=t("Engine work on '{branch}' belongs on a dev/<agent> lane ({what}).", branch=branch, what="; ".join(parts)),
+        action=t("Move it: git checkout -b dev/<agent> developer, cherry-pick or merge, then merge lane into developer."),
     )
