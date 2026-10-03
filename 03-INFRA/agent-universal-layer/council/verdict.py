@@ -78,6 +78,17 @@ def extract_verdict(text: str) -> str:
     return match.group(1).upper() if match else "(absent)"
 
 
+def reject_stop_message(stage_idx: int, role: str, remaining: int) -> str:
+    """Single owner for the REJECT-stop line: the ephemeral loop and the
+    resumable graph print the same policy text. Two format sites drifted
+    before; agents quoted them as two policies."""
+    return (
+        f"[council] stage {stage_idx} ({role}): VERDICT: REJECT — "
+        f"stopping the relay, skipping the remaining {remaining} stages "
+        "(use --continue-on-reject to run them anyway)."
+    )
+
+
 def _print_usage_recap(seat_name: str, usage: dict) -> None:
     """One-line recap of what the call reported spending, when the CLI
     reports it at all. cost is printed verbatim as the CLI returned it."""

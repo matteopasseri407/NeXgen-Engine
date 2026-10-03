@@ -5,6 +5,13 @@ The private decision document (see routing.py) owns *which model family
 fits a role*. This module owns turning that into a host-local menu: which
 declared seats can actually run it right now, given what is installed and
 what the seat's own CLI reports.
+
+Layout contract (read before importing): this directory runs as scripts,
+not as a package — launched via nexgen_core/tools/council.py, which
+subprocesses council.py. Bare `from proposal import …` / `from relay import`
+is intentional so both the launcher layout and the installed layout work.
+Underscore names are cross-file internals, not public API: new callers use
+the cmd_*/run_* entry points, never a private.
 """
 from __future__ import annotations
 
@@ -13,6 +20,11 @@ import os
 import socket
 import sys
 from pathlib import Path
+
+#: Shared human-gate text: the single-seat gate (sys.exit) and the relay
+#: gate (RelayError, the graph cannot exit mid-node) print the same policy.
+HUMAN_CHOICE_REQUIRED = "[council] human choice required: rerun with --seat NAME."
+NO_ELIGIBLE_SEAT = "[council] no eligible seat to select: fix the mapping, CLI, or policy shown above."
 
 ENGINE_ROOT = Path(__file__).resolve().parent
 SCRIPTS_DIR = ENGINE_ROOT.parent.parent / "scripts"
@@ -206,6 +218,9 @@ def _print_static_seat_menu(seats: dict) -> bool:
 def _require_human_single_selection(
     args: argparse.Namespace, config: dict, seats: dict, default_routing_role: str | None,
 ) -> None:
+    """Single-seat gate: exits after printing the menu. Relay's twin raises
+    RelayError instead (the graph cannot exit mid-node); both share the
+    message constants below so agents don't read two policies."""
     role = _routing_role_for_mode(args, config, default_routing_role)
     if _routing_enabled(config):
         if role:
@@ -217,11 +232,8 @@ def _require_human_single_selection(
     else:
         has_candidates = _print_static_seat_menu(seats)
     if has_candidates:
-        sys.exit(
-            "[council] human choice required: rerun with --seat NAME. "
-            "--routing-role only narrows the proposal, it does not start a seat."
-        )
-    sys.exit("[council] no eligible seat to select: fix the mapping, CLI, or policy shown above.")
+        sys.exit(HUMAN_CHOICE_REQUIRED + " --routing-role only narrows the proposal, it does not start a seat.")
+    sys.exit(NO_ELIGIBLE_SEAT)
 
 
 def _seat_quota_pool(seat: dict) -> str:

@@ -23,6 +23,21 @@ from pathlib import Path
 ENGINE_ROOT = Path(__file__).resolve().parent
 LEAK_SCAN_DIR = ENGINE_ROOT.parent / "leak-scan"
 
+
+def _load_leak_scan():
+    """File-path-loaded (invisible to static imports by design): the egress
+    gate fails closed with a named path when the scanner is absent, never
+    with an importlib AttributeError agents can't attribute."""
+    target = LEAK_SCAN_DIR / "leak_scan.py"
+    if not target.is_file():
+        raise RuntimeError(f"[council] leak-scan assente: {target}")
+    spec = importlib.util.spec_from_file_location("leak_scan", target)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"[council] leak-scan non caricabile: {target}")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
 if os.name == "nt":
     _LOCAL_STATE_ROOT = Path(os.environ.get("LOCALAPPDATA") or (Path.home() / "AppData" / "Local"))
 else:
@@ -365,13 +380,6 @@ def _install_shutdown_handlers() -> None:
         signal.signal(signal.SIGTERM, _handle_sigterm)
         signal.signal(signal.SIGINT, _handle_sigint)
     atexit.register(_best_effort_cleanup)
-
-
-def _load_leak_scan():
-    spec = importlib.util.spec_from_file_location("leak_scan", LEAK_SCAN_DIR / "leak_scan.py")
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    return mod
 
 
 def egress_gate(text: str) -> None:
