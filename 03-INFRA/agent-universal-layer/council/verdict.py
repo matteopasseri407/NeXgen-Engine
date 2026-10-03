@@ -72,6 +72,7 @@ def extract_verdict(text: str) -> str:
     # and silently defeat the relay's REJECT-stop. A QUOTED verdict as the
     # last line ("> VERDICT: REJECT") keeps its quote prefix after the strip
     # and still reads as absent, which is the spoof this parser exists for.
+    last_line = re.sub(r"^#{1,6}\s+", "", last_line)
     last_line = last_line.strip("*_` ").rstrip(".!").rstrip("*_` ")
     match = VERDICT_RE.match(last_line)
     return match.group(1).upper() if match else "(absent)"

@@ -78,6 +78,12 @@ def test_unknown_channel_is_not_a_wildcard():
         parse_routing_plan(_block([("Alpha", "unrecognized", "forfait", "test")]))
 
 
+@pytest.mark.parametrize("prefix", ["> ", "> # ", "Quoted: ", "text # "])
+def test_quoted_verdict_heading_is_not_a_decision(prefix):
+    from verdict import extract_verdict
+    assert extract_verdict(prefix + "VERDICT: REJECT") == "(absent)"
+
+
 def test_go_quota_price_does_not_request_a_cash_payment(monkeypatch):
     monkeypatch.setattr("builtins.input", lambda _: pytest.fail("Go consumes prepaid quota"))
     _confirm_pay_per_use("go", _seat("opencode-go/shared"), "$0.125")
@@ -196,9 +202,10 @@ def test_tables_in_governor_notes_are_not_role_candidates():
     assert [candidate.value for candidate in plan.roles["Privacy"]] == ["local:latest"]
 
 
-def test_explicit_codex_model_can_differ_from_default(tmp_path, monkeypatch):
+def test_explicit_codex_model_can_differ_from_default(tmp_path, monkeypatch, capsys):
     import json
     from routing import _probe_codex_inventory
+    from proposal import _warn_if_explicit_codex_seat_not_default
 
     monkeypatch.setenv("CODEX_HOME", str(tmp_path))
     (tmp_path / "config.toml").write_text('model = "default"\nmodel_reasoning_effort = "high"\n')
@@ -207,3 +214,5 @@ def test_explicit_codex_model_can_differ_from_default(tmp_path, monkeypatch):
     ]}))
     assert _probe_codex_inventory({"model": "other", "reasoning_effort": "max"}).available
     assert not _probe_codex_inventory({"model": "other", "reasoning_effort": "ultra"}).available
+    _warn_if_explicit_codex_seat_not_default("explicit", {"cli": "codex", "model": "other", "reasoning_effort": "max"})
+    assert "warning" not in capsys.readouterr().out

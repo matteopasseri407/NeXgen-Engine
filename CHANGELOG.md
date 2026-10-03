@@ -19,6 +19,14 @@ of any engine release.
   metadata no longer crash an otherwise valid response.
 - Relay and consult validate every selected timeout before starting calls. Paid brainstorms
   require consent for each continuation round through the shared call gate.
+- Council recognizes final Markdown verdict headings, so `# VERDICT: REJECT` stops the relay.
+- Timeouts detect output bytes before a newline and report silent clients without guessing quota exhaustion.
+- Consult prints and saves results as they finish. Unexpected exceptions cancel the other seats.
+  Shutdown requests all process stops concurrently and rejects processes spawned across cancellation.
+- Relay checkpoints count reserved attempts before invocation and include uncertain calls in accepted reruns.
+- Routing proposals preserve Governor slots, identify the host, show missing candidates and manual-only seats,
+  strip Markdown from prices and warn when Go consumes prepaid quota.
+  An explicit seat may override a mode suggestion; requested roles and Privacy remain enforced.
 
 ### Tested
 

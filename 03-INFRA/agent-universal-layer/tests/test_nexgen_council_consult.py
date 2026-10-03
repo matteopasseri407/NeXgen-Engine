@@ -6,6 +6,7 @@ la meccanica (parallelismo vero, cancellazione, transcript) e i tetti, non i seg
 from __future__ import annotations
 
 import sys
+import concurrent.futures
 import threading
 from pathlib import Path
 
@@ -222,3 +223,93 @@ def test_best_effort_cleanup_stops_all_and_removes_dir(tmp_path: Path, clean_reg
     session._best_effort_cleanup()
     assert all(proc.terminated for proc in procs)
     assert not victim.exists()
+
+
+def test_completed_opinion_is_visible_while_another_seat_is_running(tmp_path, monkeypatch, capsys):
+    import consult
+    written, release = threading.Event(), threading.Event()
+    real_write = consult._write_transcript
+
+    def write_progress(*args):
+        real_write(*args)
+        if args[2].opinions:
+            written.set()
+
+    def runner(seat, *args):
+        if seat["model"] == "fake/a":
+            assert release.wait(5)
+        return "Reasoning visible now.\nVERDICT: APPROVE", {}
+
+    monkeypatch.setattr(consult, "_write_transcript", write_progress)
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+        future = pool.submit(run_consult, _seats(), "brief", ["sa", "sb"], tmp_path, None, 0,
+                             runner=runner)
+        try:
+            assert written.wait(2), "fast seat must be published before the slow seat finishes"
+            assert "Reasoning visible now." in capsys.readouterr().out
+            assert "Reasoning visible now." in (tmp_path / "consult.md").read_text(encoding="utf-8")
+            assert not future.done()
+        finally:
+            release.set()
+        assert [op.seat_name for op in future.result(timeout=5).opinions] == ["sa", "sb"]
+
+
+@pytest.mark.parametrize("rebuttal", [False, True])
+def test_unexpected_exception_cancels_other_seats(tmp_path, monkeypatch, rebuttal):
+    import consult
+    entered, release = threading.Event(), threading.Event()
+    cancellations = []
+
+    def cancel():
+        cancellations.append(True)
+        release.set()
+
+    calls = {}
+    def runner(seat, *args):
+        model = seat["model"]
+        calls[model] = calls.get(model, 0) + 1
+        if rebuttal and calls[model] == 1:
+            return "VERDICT: " + ("APPROVE" if model == "fake/a" else "REVISE"), {}
+        if model == "fake/a":
+            entered.set()
+            assert release.wait(2), "a failed peer must cancel the running seat"
+            return "VERDICT: APPROVE", {}
+        assert entered.wait(2)
+        raise RuntimeError("synthetic programming failure")
+
+    monkeypatch.setattr(consult, "_cancel_all_procs", cancel, raising=False)
+    try:
+        with pytest.raises(RuntimeError, match="synthetic programming failure"):
+            run_consult(_seats(), "brief", ["sa", "sb"], tmp_path, None, int(rebuttal), runner=runner)
+    finally:
+        release.set()
+    assert cancellations == [True]
+    assert "Status: failed" in (tmp_path / "consult.md").read_text(encoding="utf-8")
+
+
+def test_shutdown_requests_all_stops_before_waiting(clean_registry, monkeypatch):
+    entered = threading.Event()
+    release = threading.Event()
+    lock = threading.Lock()
+    calls = []
+    procs = [FakeProc() for _ in range(5)]
+    for proc in procs:
+        session._register_proc(proc)
+
+    def stop(proc):
+        with lock:
+            calls.append(proc)
+            if len(calls) == 5:
+                entered.set()
+        release.wait(5)
+        proc.terminate()
+
+    monkeypatch.setattr(session, "_stop_one_proc", stop)
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+        future = pool.submit(session._cancel_all_procs)
+        try:
+            assert entered.wait(2), "shutdown must signal every seat before waiting on any one"
+        finally:
+            release.set()
+        assert future.result(timeout=5) == 5
+    assert all(proc.terminated for proc in procs)

@@ -95,6 +95,27 @@ def _seat(model: str) -> dict:
     return {"cli": "opencode", "model": model}
 
 
+def test_cancellation_during_spawn_stops_the_late_process(tmp_path, monkeypatch, clean_registry):
+    from seat_process import SeatRunError
+    release = threading.Event()
+    created = []
+
+    def factory(*args, **kwargs):
+        proc = FakePopen(release, created, "late")
+        created.append(proc)
+        # Cancellation occurs after OS spawn but before registration.
+        session._cancel_all_procs()
+        release.set()
+        return proc
+
+    monkeypatch.setattr(seat_process.subprocess, "Popen", factory)
+    with pytest.raises(SeatRunError) as error:
+        run_seat(_seat("fake/late"), "brief", tmp_path, 10)
+    assert error.value.kind == "cancelled"
+    assert created[0].terminated
+    assert session._live_procs_snapshot() == []
+
+
 def test_overlapping_seats_stay_registered_until_each_finishes(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, clean_registry
 ) -> None:

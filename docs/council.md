@@ -143,6 +143,9 @@ Resuming them reports the saved failure without calling a provider again,
 even with `--allow-uncertain-rerun`.
 Only one invocation may advance a session at a time.
 A simultaneous resume stops with a busy-session error before calling a seat.
+`calls_made` counts reserved invocation attempts, including uncertain calls and accepted reruns.
+The reservation is checkpointed before invocation, so this count can exceed actual provider calls if a crash or refusal happens before the provider starts.
+It is a conservative quota count, not a billing receipt.
 `council clean` (and TTL expiry) removes checkpoints together with the
 session. LangGraph and its SQLite saver are included in the engine installation.
 Brainstorm and challenge stay ephemeral.
@@ -164,9 +167,12 @@ rebuttal round, per-seat timeouts. The transcript (`consult.md`) records
 opinions, rebuttals, abstentions, the verdict tally and the disagreement
 pairs. Measure on comparable cases at equal budget: this earns its place
 only by improving issue coverage or reducing time — more frequent agreement
-is not a quality measure. Opinions and rebuttals print to stdout BEFORE
-session cleanup: a default (non-kept) session would otherwise delete the
-reasoning unshown.
+is not a quality measure.
+Each completed opinion or rebuttal prints to stdout immediately, even while another seat is still running.
+The transcript is updated after each result and marked completed only after the consult finishes.
+An unexpected exception cancels the other running seats before propagating the failure.
+With `--keep-session`, completed results remain on disk after interruption.
+Without it, completed results remain in terminal output and the ephemeral files are removed.
 
 Every mode accepts `--context FILE` for extra background. A seat without a
 confirmed zero-retention guarantee remains usable, but Council prints a warning
@@ -189,6 +195,9 @@ remain separate even though all three use OpenCode. Privacy accepts one or more
 local candidates and ignores explicitly excluded rows. Unknown channels and
 malformed candidate rows stop the proposal. An older flat table works only when
 each model maps to one execution pool; ambiguous matches are excluded.
+`propose` and `routing-status` identify the current host and retain the original `prescelto` or `rimpiazzo N` slot.
+A missing prescelto does not promote a fallback to prescelto.
+Both commands show exclusions even when other candidates are available, and list declared seats absent from every routing role as manual choices with their local probe results.
 
 This is an in-memory adapter. Neither Council nor an external workflow rewrites
 `seats.yaml`. That file remains the local execution allowlist, while the routing
@@ -210,11 +219,11 @@ requests JSON output and checks `modelUsage` against the exact model declared
 in `seats.yaml`. A missing value or a silent fallback to another model stops
 the run instead of accepting an unverified response.
 
-A `<candidate>: nessun seat locale associato` line under `routing-status` or
-`propose` means no seat in your `seats.yaml` declares that candidate's
-`routing_id` or `routing_label` — typically the routing document is
-proposing a model for a role you simply haven't declared a local seat for
-yet, not that anything is broken.
+A `no local seat associated` line means no declared seat matches that exact model and execution channel.
+Align `seats.yaml` with the intended model, or correct the routing document through its producer.
+Different model versions are never treated as aliases.
+Privacy stays blocked when no matching local seat is declared or available on this host.
+Council does not create local or paid fallback seats automatically.
 
 The proposal never executes a model. `brainstorm`, `challenge`, and `code-review`
 require an explicit human `--seat`; `relay` requires an explicit human
@@ -231,16 +240,12 @@ Use `--routing-role L-Sys` to ask for a different proposal. It still requires
 `--seat` before a single-seat invocation. `council propose --mode relay` lists
 the available candidates for the configured relay roles without invoking them.
 
-An explicit `--seat` bypasses the routing probe entirely — the human already
-decided, and every seat stays runnable this way regardless of what the
-proposal would or wouldn't show. For a `codex` seat specifically, Council
-still runs the same `config.toml` check as a non-blocking, informational
-courtesy: if the seat's declared model or effort no longer match Codex's
-current default, the call still goes through (forwarded explicitly with
-`-m`), but you are told your assumed default is stale instead of finding out
-some other way:
-`[council] avviso: il seat '<name>' non è il default corrente della CLI
-codex (<reason>); verrà inoltrato esplicitamente con -m.`
+An explicit `--seat` can choose outside a mode's suggested role, with a visible warning.
+An explicit `--routing-role` or configured `routing.mode_defaults` still restricts eligible seats, and Privacy always excludes cloud seats.
+Payment confirmation applies independently of role membership, including seats without a stated routing price.
+Go prints a prepaid quota warning before each call and never asks for a cash payment confirmation.
+For Codex, an explicit model may differ from the default if its local models cache verifies the model and effort.
+If local metadata cannot verify them, Council warns before forwarding the explicitly selected model.
 
 ## Timeouts
 

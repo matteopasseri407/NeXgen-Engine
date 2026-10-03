@@ -247,3 +247,77 @@ def test_no_role_means_no_candidacy_gate(tmp_path, monkeypatch, capsys):
     args = argparse.Namespace(seat="seat-c", mode="challenge", routing_role=None)
     proposal._check_seat_allowed("seat-c", seats["seat-c"], args, config=config)
     assert "STOP" not in capsys.readouterr().out
+
+
+def test_mode_suggestion_does_not_override_an_explicit_seat(tmp_path, monkeypatch, capsys):
+    proposal, config, seats, args = _role_config(tmp_path, monkeypatch)
+    args.seat, args.routing_role = "seat-c", None
+    proposal._check_seat_allowed("seat-c", seats["seat-c"], args, config=config,
+                                 default_routing_role="L-Test")
+    assert "outside" in capsys.readouterr().err
+
+
+def test_configured_role_still_enforces_candidates(tmp_path, monkeypatch):
+    proposal, config, seats, args = _role_config(tmp_path, monkeypatch)
+    args.routing_role = None
+    config["routing"]["mode_defaults"] = {"challenge": "L-Test"}
+    with pytest.raises(SystemExit, match="not a candidate"):
+        proposal._check_seat_allowed("seat-c", seats["seat-c"], args, config=config)
+
+
+def test_cost_has_no_markdown_and_go_warns_about_quota(tmp_path, monkeypatch, capsys):
+    import proposal
+    block = GOVERNOR_BLOCK_V4.replace("$0.125", "**$0.125**")
+    plan = parse_routing_plan(block)
+    seat = {"cli": "opencode", "model": "opencode-go/muse-spark-1.2",
+            "routing_label": "Muse Spark 1.2"}
+    assert proposal._seat_cost(plan, "go", seat) == "$0.125"
+    monkeypatch.setattr("builtins.input", lambda *args: pytest.fail("Go is prepaid, no cash consent"))
+    proposal._confirm_seat_call("go", seat)
+    assert "prepaid quota" in capsys.readouterr().err
+
+
+def test_proposal_keeps_governor_slot_when_prescelto_is_missing(tmp_path, monkeypatch):
+    from routing import SeatCapability
+    proposal, config, seats, _ = _role_config(tmp_path, monkeypatch)
+    plan = proposal._routing_context_or_exit(config)
+    seats.pop("seat-a")
+    caps = {name: SeatCapability(True, "test") for name in seats}
+    lines, available = proposal._proposal_lines_for_role(plan, seats, caps, "L-Test")
+    assert available
+    assert any("rimpiazzo 1" in line and "seat-b" in line for line in lines)
+    assert any("prescelto" in line and "Alpha Model" in line for line in lines)
+
+
+def test_unmapped_seat_remains_visible_with_its_probe_failure(tmp_path, monkeypatch):
+    from routing import SeatCapability
+    proposal, config, seats, _ = _role_config(tmp_path, monkeypatch)
+    plan = proposal._routing_context_or_exit(config)
+    caps = {name: SeatCapability(True, "test") for name in seats}
+    caps["seat-c"] = SeatCapability(False, "model missing from host inventory")
+    lines = proposal._routing_seat_diagnostics(plan, seats, caps)
+    assert len(lines) == 1
+    assert "seat-c" in lines[0] and "Manual only" in lines[0]
+    assert "UNAVAILABLE: model missing from host inventory" in lines[0]
+
+
+def test_implicit_privacy_never_allows_cloud_override(tmp_path, monkeypatch):
+    proposal, config, seats, args = _role_config(tmp_path, monkeypatch)
+    args.seat, args.routing_role = "seat-a", None
+    path = tmp_path / "vault" / "crm.md"
+    path.write_text(ROLE_BLOCK.replace("L-Test", "Privacy").replace("| claude |", "| local |")
+                    .replace("| codex |", "| local |"), encoding="utf-8")
+    with pytest.raises(SystemExit, match="not a candidate"):
+        proposal._check_seat_allowed("seat-a", seats["seat-a"], args, config=config,
+                                     default_routing_role="Privacy")
+
+
+def test_privacy_proposal_does_not_offer_manual_cloud_seats(tmp_path, monkeypatch, capsys):
+    proposal, config, seats, args = _role_config(tmp_path, monkeypatch)
+    path = tmp_path / "vault" / "crm.md"
+    path.write_text(GOVERNOR_BLOCK_V4, encoding="utf-8")
+    proposal._print_routing_proposal(args, config, seats, ["Privacy"], title="Privacy")
+    output = capsys.readouterr().out
+    assert "BLOCKED" in output
+    assert "Manual only" not in output
+    assert "m-a" not in output and "m-b" not in output

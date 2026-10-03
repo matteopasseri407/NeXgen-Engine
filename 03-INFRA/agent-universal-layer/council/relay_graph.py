@@ -185,11 +185,15 @@ def _node_begin_attempt(ctx: "_NodeContext") -> dict[str, Any]:
     attempt = int(state.get("attempt", 0)) + 1
     return {
         "attempt": attempt,
+        # Count before invoking. A crash cannot make a possibly billed call
+        # disappear. These are reserved attempts, not a provider billing receipt.
+        "calls_made": int(state.get("calls_made", 0)) + 1,
         "pending": {
             "stage_idx": state["index"] + 1,
             "attempt": attempt,
             "seat": chosen,
             "pool": _seat_quota_pool(ctx.seats[chosen]),
+            "call_counted": True,
         },
     }
 
@@ -203,7 +207,7 @@ def _node_complete_attempt(ctx: "_NodeContext") -> dict[str, Any]:
     quarantine = _quarantine_from(state)
     idx = state["index"] + 1
     records = _records_as_objects(state)
-    update: dict[str, Any] = {"calls_made": int(state.get("calls_made", 0)) + 1}
+    update: dict[str, Any] = {}
     try:
         record = _invoke_stage_candidate(
             idx,
@@ -619,6 +623,21 @@ def resume_relay_session(
                 f"[council] UNCERTAIN rerun accepted: stage {uncertain.get('stage_idx')} "
                 f"seat '{uncertain.get('seat')}' may already have responded; invoking again."
             )
+            attempt = int(state.get("attempt", 0)) + 1
+            app.update_state(thread, {
+                "calls_made": int(state.get("calls_made", 0)) + (1 if uncertain.get("call_counted") else 2),
+                "attempt": attempt,
+                "pending": {**uncertain, "attempt": attempt, "call_counted": True},
+                "trace": state.get("trace", []) + [{
+                    "stage_idx": uncertain["stage_idx"],
+                    "role": state["stages"][state["index"]]["role"],
+                    "seat_name": uncertain["seat"],
+                    "attempt": uncertain["attempt"],
+                    "pool": uncertain["pool"],
+                    "outcome": "uncertain",
+                    "detail": "Explicit rerun accepted; previous attempt may have consumed quota.",
+                }],
+            }, as_node="begin")
         _set_active_session(session_dir, True)
         try:
             final = app.invoke(None, config=thread)

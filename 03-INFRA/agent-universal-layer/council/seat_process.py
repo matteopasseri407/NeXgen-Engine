@@ -3,12 +3,14 @@
 Builds the per-CLI argv/stdin/env for a seat invocation, isolates the
 environment codex/agy/opencode run under (no application bearer tokens, and
 for codex/opencode no on-disk MCP manifest), and streams the subprocess's
-output with a deadline that distinguishes "never produced a line" (likely
-quota exhaustion) from "started, then hung mid-response".
+output with a deadline that distinguishes a silent client from a client
+that produced bytes but did not finish, even without a newline.
 """
 from __future__ import annotations
 
 import argparse
+import codecs
+import io
 import json
 import math
 import os
@@ -24,6 +26,7 @@ from routing import _windows_command_argv
 from session import (
     _force_stop_process_tree,
     _private_mkdir,
+    _proc_registry_epoch,
     _register_proc,
     _release_proc,
     _set_private_mode,
@@ -343,15 +346,39 @@ def _feed_stdin(stream, prompt: str) -> None:
             pass
 
 
-def _drain_lines(stream, line_queue: queue.Queue[str | None]) -> None:
-    for line in stream:
-        line_queue.put(line)
-    line_queue.put(None)
+def _read_chunks(stream, activity: threading.Event):
+    """Observe bytes immediately; keep UTF-8 and universal newline semantics."""
+    buffered = getattr(stream, "buffer", None)
+    if buffered is None or not hasattr(buffered, "read1"):
+        for chunk in stream:
+            if chunk:
+                activity.set()
+                yield chunk
+        return
+    decoder = io.IncrementalNewlineDecoder(codecs.getincrementaldecoder("utf-8")("replace"), True)
+    while data := buffered.read1(4096):
+        activity.set()
+        yield decoder.decode(data)
+    yield decoder.decode(b"", final=True)
 
 
-def _drain_text(stream, sink: list[str]) -> None:
-    for line in stream:
-        sink.append(line)
+def _drain_lines(stream, line_queue: queue.Queue[str | None], activity: threading.Event) -> None:
+    pending = ""
+    try:
+        for chunk in _read_chunks(stream, activity):
+            pending += chunk
+            while "\n" in pending:
+                line, _, pending = pending.partition("\n")
+                line_queue.put(line + "\n")
+        if pending:
+            line_queue.put(pending)
+    finally:
+        line_queue.put(None)
+
+
+def _drain_text(stream, sink: list[str], activity: threading.Event) -> None:
+    for chunk in _read_chunks(stream, activity):
+        sink.append(chunk)
 
 
 def _build_seat_command(seat: dict, prompt: str, session_dir: Path) -> SeatInvocation:
@@ -596,6 +623,7 @@ def run_seat(
     except ValueError as exc:
         raise SeatRunError(f"[council] invalid timeout for seat '{model}': {exc}.", "invalid_timeout") from exc
     timeout_label = _format_timeout_seconds(resolved_timeout_seconds)
+    registry_epoch = _proc_registry_epoch()
     invocation = _build_seat_command(seat, prompt, session_dir)
     stdin_writer: threading.Thread | None = None
     proc_token = ""
@@ -628,7 +656,9 @@ def run_seat(
         # Registry token, not the single slot: parallel seats overlap, and
         # each release must free only its own process (one slot evicted the
         # other and a finish cleared both).
-        proc_token = _register_proc(proc)
+        proc_token = _register_proc(proc, registry_epoch)
+        if not proc_token:
+            raise SeatRunError(f"[council] seat '{model}' cancelled during invocation.", "cancelled")
 
         if invocation.stdin_text is not None:
             stdin_writer = threading.Thread(
@@ -640,25 +670,24 @@ def run_seat(
 
         line_queue: queue.Queue[str | None] = queue.Queue()
         stderr_lines: list[str] = []
-        stdout_reader = threading.Thread(target=_drain_lines, args=(proc.stdout, line_queue), daemon=True)
-        stderr_reader = threading.Thread(target=_drain_text, args=(proc.stderr, stderr_lines), daemon=True)
+        activity = threading.Event()
+        stdout_reader = threading.Thread(target=_drain_lines, args=(proc.stdout, line_queue, activity), daemon=True)
+        stderr_reader = threading.Thread(target=_drain_text, args=(proc.stderr, stderr_lines, activity), daemon=True)
         stdout_reader.start()
         stderr_reader.start()
 
         text_chunks = []
         usage = {}
-        got_any_line = False
         deadline = time.monotonic() + resolved_timeout_seconds
 
         while True:
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 _force_stop_process_tree(proc)
-                if not got_any_line:
+                if not activity.is_set():
                     raise SeatRunError(
                         f"[council] seat '{model}' did not respond within {timeout_label}s "
-                        "without producing any output: likely subscription quota exhausted or a "
-                        "provider-side block (no diagnosable error from the client). Verify manually "
+                        "without producing any output: the client did not provide a diagnosable cause. Verify manually "
                         "before retrying.",
                         "no_output_timeout",
                     )
@@ -673,7 +702,6 @@ def run_seat(
                 continue
             if line is None:
                 break
-            got_any_line = True
             if cli == "opencode":
                 stripped = line.strip()
                 if not stripped:
