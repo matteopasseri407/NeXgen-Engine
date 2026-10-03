@@ -8,6 +8,7 @@ prints nothing: formatting is the caller's job.
 """
 from __future__ import annotations
 
+import shutil
 from pathlib import Path
 
 from nexgen_core.runtimes.antigravity import AntigravityRuntime
@@ -76,6 +77,15 @@ def apply_all(
         desired_posture = posture.get(runtime.name)
         if not desired_posture:
             continue
+        if desired_posture not in runtime.rendered_postures():
+            # Asked for a posture this CLI cannot render: saying nothing
+            # would let the user believe in a least-privilege that was
+            # never applied. Warn once per cycle, apply nothing.
+            actions.append(
+                f"[WARN] {runtime.name}: posture '{desired_posture}' has no verified "
+                f"rendering on this CLI -- nothing applied"
+            )
+            continue
         if not guardrail_ok:
             actions.append(
                 f"[WARN] {runtime.name}: posture '{desired_posture}' NOT applied -- "
@@ -89,5 +99,14 @@ def apply_all(
         else:
             if result:
                 actions.append(result)
+
+    if any("hook" in action for action in actions):
+        if not shutil.which("node"):
+            # Every registered hook above spawns `node`: without it on the
+            # PATH the CLIs hold dead registrations behind a green guard.
+            actions.append(
+                "[WARN] hooks registered but `node` is not on PATH: "
+                "guardrail and event-sink hooks will never fire until it is installed"
+            )
 
     return actions

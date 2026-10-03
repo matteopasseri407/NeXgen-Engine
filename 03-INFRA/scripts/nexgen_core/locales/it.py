@@ -929,4 +929,22 @@ MESSAGES: dict[str, str] = {
     # --- Fondamenta: path/file/config blindati --------------------------------
     "Refusing to overwrite unreadable file {path}: {exc}":
         "Mi rifiuto di sovrascrivere il file illeggibile {path}: {exc}",
+
+    # --- Falla traballanti: scheduler/moduli/runtime/monitor ------------------
+    "template condition on unknown variable '.{name}'":
+        "Condizione template su variabile sconosciuta '.{name}'",
+    "unmatched template block '{{ {block} }}'":
+        "Blocco template spaiato '{{ {block} }}'",
+    "unclosed template block: missing '{{ end }}'":
+        "Blocco template non chiuso: manca '{{ end }}'",
+    "Guard starting up (last cycle {minutes:.0f} minutes ago, machine just started)":
+        "Guardia in avvio (ultimo ciclo {minutes:.0f} minuti fa, macchina appena partita)",
+    "The liveness file cannot be read ({error}); fix or delete it.":
+        "Il file di liveness non si legge ({error}); sistemalo o cancellalo.",
+    "Agent sync self-monitoring is blind":
+        "L'auto-monitoraggio del sync è cieco",
+    "systemd: neither ~/.local/bin/agent-sync nor ~/.local/bin/nexgen exists yet; timer not armed (will be retried on a future run once a shim is created)":
+        "systemd: non c'è ancora né ~/.local/bin/agent-sync né ~/.local/bin/nexgen; timer non armato (si riprova al prossimo giro quando c'è uno shim)",
+    "systemd: systemctl not found — files written but the timers are NOT enabled":
+        "systemd: systemctl non trovato — file scritti ma i timer NON sono attivi",
 }

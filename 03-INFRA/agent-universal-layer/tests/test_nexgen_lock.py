@@ -1,7 +1,6 @@
 """Unit tests for the host-wide lock: timeout validation and contention."""
 from __future__ import annotations
 
-import os
 import sys
 from pathlib import Path
 
@@ -11,7 +10,7 @@ SCRIPTS_DIR = Path(__file__).resolve().parents[2] / "scripts"
 if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
-from nexgen_core.lock import DEFAULT_TIMEOUT_SECONDS, HostLock, LockTimeoutError
+from nexgen_core.lock import DEFAULT_TIMEOUT_SECONDS, HostLock, LockTimeoutError  # noqa: E402
 
 pytestmark = pytest.mark.filterwarnings("ignore")
 

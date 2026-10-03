@@ -11,7 +11,6 @@ to it, keeping only its own naming/retention choice as parameters.
 """
 from __future__ import annotations
 
-import contextlib
 import os
 import re
 import time

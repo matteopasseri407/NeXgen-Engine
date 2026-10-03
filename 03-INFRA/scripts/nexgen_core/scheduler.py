@@ -55,7 +55,7 @@ Description=Tell the user that %i could not run
 
 [Service]
 Type=oneshot
-ExecStart=%h/.local/bin/agent-sync notify-failure %i
+ExecStart=%h/.local/bin/nexgen notify-failure %i
 """
 
 _VBS_TEMPLATE = (
@@ -86,6 +86,23 @@ def _scheduler_path(home: Path) -> str:
     ])
 
 
+def _guard_shim(home: Path) -> str:
+    """The command the timers invoke: whichever launcher actually exists.
+
+    `agent-sync` is the historical name, `nexgen` the current one. Hardcoding
+    the legacy name arms timers against a command a cleanup may delete.
+    """
+    if (home / ".local" / "bin" / "nexgen").exists():
+        return "%h/.local/bin/nexgen sync guard"
+    return "%h/.local/bin/agent-sync guard"
+
+
+def _heartbeat_shim(home: Path) -> str:
+    if (home / ".local" / "bin" / "nexgen").exists():
+        return "%h/.local/bin/nexgen heartbeat"
+    return "%h/.local/bin/agent-sync heartbeat"
+
+
 def _systemd_service_content(home: Path, engine_root: Path, vault_data: Path, vault: Path) -> str:
     lines = [
         "[Unit]",
@@ -101,7 +118,7 @@ def _systemd_service_content(home: Path, engine_root: Path, vault_data: Path, va
     if vault_data.resolve() != vault.resolve():
         lines.append(_systemd_env_line("AGENT_VAULT_DATA", str(vault_data)))
     lines.append(_systemd_env_line("PATH", _scheduler_path(home)))
-    lines.append("ExecStart=%h/.local/bin/agent-sync guard")
+    lines.append(f"ExecStart={_guard_shim(home)}")
     return "\n".join(lines) + "\n"
 
 
@@ -119,7 +136,7 @@ def _systemd_heartbeat_content(home: Path, engine_root: Path, vault_data: Path, 
     if vault_data.resolve() != vault.resolve():
         lines.append(_systemd_env_line("AGENT_VAULT_DATA", str(vault_data)))
     lines.append(_systemd_env_line("PATH", _scheduler_path(home)))
-    lines.append("ExecStart=%h/.local/bin/agent-sync heartbeat")
+    lines.append(f"ExecStart={_heartbeat_shim(home)}")
     return "\n".join(lines) + "\n"
 
 
@@ -138,14 +155,22 @@ def _atomic_write_text(path: Path, content: str) -> None:
 
 
 def _write_if_different(path: Path, content: str) -> bool:
-    if path.exists() and not path.is_symlink():
+    if path.is_symlink():
+        # A managed symlink farm points elsewhere on purpose: write through
+        # the link instead of replacing it with a regular file.
+        try:
+            if path.read_text(encoding="utf-8") == content:
+                return False
+            path.write_text(content, encoding="utf-8")
+            return True
+        except OSError:
+            return False
+    if path.exists():
         try:
             if path.read_text(encoding="utf-8") == content:
                 return False
         except (OSError, UnicodeDecodeError):
             pass
-    if path.is_symlink() or path.exists():
-        path.unlink()
     path.parent.mkdir(parents=True, exist_ok=True)
     _atomic_write_text(path, content)
     return True
@@ -174,10 +199,12 @@ def install_systemd_units(
     log: Callable[[str], None] = print,
 ) -> bool:
     """Writes and enables the guard cycle's systemd user units."""
-    if not (home / ".local" / "bin" / "agent-sync").exists():
+    if _host_mutations_disabled():
+        return True
+    if not (home / ".local" / "bin" / "agent-sync").exists() and not (home / ".local" / "bin" / "nexgen").exists():
         warning = (
-            "systemd: ~/.local/bin/agent-sync doesn't exist yet; timer not armed "
-            "(will be retried on a future run once the shim is created)"
+            "systemd: neither ~/.local/bin/agent-sync nor ~/.local/bin/nexgen exists yet; timer not armed "
+            "(will be retried on a future run once a shim is created)"
         )
         log(warning)
         print(warning, file=sys.stderr)
@@ -200,8 +227,8 @@ def install_systemd_units(
 
     systemctl = _resolve_cmd("systemctl")
     if not systemctl:
-        log("systemd: systemctl not found — files written but not enabled")
-        return healthy
+        log("systemd: systemctl not found — files written but the timers are NOT enabled")
+        return False
     if changed:
         r = _run_external([systemctl, "--user", "daemon-reload"], timeout=30)
         if r.returncode != 0:
@@ -277,6 +304,7 @@ def install_scheduled_task(
     if _write_if_different(beat_path, wrapper_for("heartbeat")):
         log("scheduled-task: heartbeat wrapper updated")
     beat_task = "KnowledgeVault Agent Heartbeat"
+    heartbeat_ok = True
     if not _scheduled_task_invokes_wrapper(beat_task, beat_path):
         r = _run_external(
             ["schtasks.exe", "/Create", "/TN", beat_task, "/SC", "HOURLY", "/TR", f'wscript.exe "{beat_path}"', "/F"],
@@ -285,7 +313,8 @@ def install_scheduled_task(
         if r.returncode == 0:
             log(f"scheduled-task: '{beat_task}' installed via schtasks.exe")
         else:
-            log(f"scheduled-task: heartbeat task failed ({r.stdout}{r.stderr})")
+            log(f"scheduled-task: heartbeat task failed ({r.stdout}{r.stderr}) — hourly beat will not run")
+            heartbeat_ok = False
 
     run_cmd = f'wscript.exe "{wrapper_path}"'
     every30 = ["schtasks.exe", "/Create", "/TN", task_name, "/SC", "MINUTE", "/MO", "30", "/TR", run_cmd, "/F"]
@@ -306,13 +335,15 @@ def install_scheduled_task(
     if _scheduled_task_invokes_wrapper(f"{task_name} Logon", wrapper_path):
         log(f"scheduled-task: '{task_name} Logon' already active; no rewrite")
         logon_marker.write_text(_content_hash, encoding="utf-8")
-        return True
+        return heartbeat_ok
     if _previous_hash != _content_hash:
         r = _run_external(logon, timeout=60)
-        logon_marker.write_text(_content_hash, encoding="utf-8")
         if r.returncode == 0:
+            logon_marker.write_text(_content_hash, encoding="utf-8")
             log(f"scheduled-task: '{task_name} Logon' installed via schtasks.exe")
-            return True
+            return heartbeat_ok
+        # No marker on failure: the next cycle must retry instead of
+        # concluding "failed previously; not retrying" over a stale hash.
         log(f"scheduled-task: logon trigger failed ({r.stdout}{r.stderr}); falling back to the Startup folder")
     else:
         log(f"scheduled-task: '{task_name} Logon' failed previously; not retrying (wrapper unchanged)")
@@ -323,7 +354,9 @@ def install_scheduled_task(
         startup_vbs.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(wrapper_path, startup_vbs)
         log(f"startup: fallback logon installed {startup_vbs}")
-    return True
+        return heartbeat_ok
+    log("scheduled-task: no logon coverage (schtasks denied and APPDATA unset)")
+    return False
 
 
 def install_scheduler(

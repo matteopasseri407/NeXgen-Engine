@@ -735,3 +735,23 @@ def test_apply_all_isolates_event_sink_failure_per_cli(tmp_path: Path, monkeypat
     )
     assert any("[WARN]" in a and "broken" in a for a in actions)
     assert calls == ["working-sink"]
+
+
+def test_unverified_posture_warns_instead_of_silence(tmp_path: Path) -> None:
+    """Asking Codex for 'ask' (no verified rendering) must warn, not pass silent."""
+    import nexgen_core.runtimes as runtimes
+
+    home = tmp_path / "home"
+    home.mkdir()
+    import nexgen_core.runtimes.codex as codex_mod
+    _real = codex_mod.CodexRuntime.is_installed
+    codex_mod.CodexRuntime.is_installed = lambda self, home: True
+    try:
+        actions = runtimes.apply_all(
+            home=home,
+            engine_hooks_dir=tmp_path / "hooks",
+            posture={"codex": "ask"},
+        )
+    finally:
+        codex_mod.CodexRuntime.is_installed = _real
+    assert any("[WARN]" in a and "codex" in a and "ask" in a for a in actions)

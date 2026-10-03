@@ -73,6 +73,25 @@ class Runtime(ABC):
         verified rendering for that value (silent skip, never a guessed
         attempt)."""
 
+    def rendered_postures(self) -> tuple[str, ...]:
+        """Neutral postures this adapter can actually render.
+
+        Lets the orchestrator tell "already correct" apart from "asked
+        for something this CLI cannot do": the latter warns instead of
+        passing silent. The maps live as module globals per adapter
+        (each adapter names its own); this probes the known ones.
+        """
+        import sys as _sys
+
+        module = _sys.modules.get(self.__module__)
+        for attr in ("_POSTURE_RENDER", "_POSTURE_TO_CLAUDE"):
+            render = getattr(module, attr, None) if module is not None else None
+            if render is None:
+                render = getattr(self, attr, None)
+            if isinstance(render, dict):
+                return tuple(render)
+        return ()
+
     @abstractmethod
     def install_event_sink(self, home: Path, sink_source: Path) -> str | None:
         """Registers the universal event sink hook (IPC emitter for lifecycle events).
