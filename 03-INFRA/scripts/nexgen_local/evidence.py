@@ -188,8 +188,13 @@ def retrieval_outcome(calls: list[Any], refusals: list[str], collected: str) -> 
     """
     if not _no_content_retrieved(calls, collected):
         return "ok"
-    if any(refusal_kind(refusal) == "error" for refusal in refusals):
+    if any(getattr(call, "status", None) == "error" for call in calls):
         return "error"
+    # Old checkpoints have only boolean receipts and refusal display text.
+    # Keep that compatibility at this boundary; fresh results use status.
+    if any(getattr(call, "status", None) is None for call in calls):
+        if any(refusal_kind(refusal) == "error" for refusal in refusals):
+            return "error"
     return "empty"
 
 

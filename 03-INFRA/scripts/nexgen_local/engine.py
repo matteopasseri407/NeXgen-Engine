@@ -14,12 +14,12 @@ from typing import Any, Iterable
 
 from .config import LaneConfig
 from .llm import LLM
-from .tools import ToolRegistry
+from .tools import ToolRegistry, ToolResult
 
 from .source_selection import (
     PATH_RE,
     STOPWORDS as STOPWORDS,
-    empty_result as _empty,
+    empty_result as _empty,  # noqa: F401 - legacy text API only
     existing_file as _existing_file,
     longest_term as _longest,
     pinned_path as _pinned,  # noqa: F401 - legacy import compatibility
@@ -170,86 +170,58 @@ def sources_from_receipts(calls: list[Any]) -> list[str]:
     return sources
 
 
-def _search(tools: ToolRegistry, words: list[str]) -> str:
-    query = " ".join(w for w in words if w)
-    return tools.search_vault(query) if query else "(query vuota)"
+def _search(tools: ToolRegistry, words: list[str]) -> ToolResult:
+    return tools.call_result("search_vault", {"query": " ".join(w for w in words if w)})
 
 
 def retrieve(tools: ToolRegistry, cfg: LaneConfig, route: dict[str, Any], task: str) -> str:
-    """Engine-side retrieval: pick the tool, build the query, repair once, read the top hit."""
+    """Pick tools and repair queries using explicit outcomes, never display text."""
     source = route.get("source", "none")
     path = str(route.get("path") or "")
     root = str(route.get("root") or "")
     keywords = [str(k) for k in route.get("keywords") or []]
-    if source == "none":
-        return ""
     if source == "vault":
         if path:
-            output = tools.read_vault(_pinned(root, path))
-            if not _empty(output):
-                return output
-            path = ""
-            root = ""
+            output = tools.call_result("read_vault", {"path": _pinned(root, path)})
+            if output.usable:
+                return output.text
         output = _search(tools, keywords or terms(task)[:4])
-        if _empty(output) and keywords:
+        if not output.usable and keywords:
             joined = " ".join(keywords).casefold()
             for candidate in sorted(terms(task), key=len, reverse=True)[:2]:
                 if candidate.casefold() in joined:
                     continue
                 output = _search(tools, [candidate])
-                if not _empty(output):
+                if output.usable:
                     break
-        if _empty(output):
+        if not output.usable:
             return ""
-        first = output.splitlines()[0].strip()
-        content = tools.read_vault(first)
-        return "" if _empty(content) else content
-    if source == "pdf":
-        content = tools.read_pdf(_pinned(root, path)) if path else ""
-        return "" if _empty(content) else content
-    if source == "repo":
-        content = tools.read_repo(_pinned(root, path)) if path else ""
-        return "" if _empty(content) else content
-    if source == "mail":
+        first = output.text.splitlines()[0].strip()
+        content = tools.call_result("read_vault", {"path": first})
+        return content.text if content.usable else ""
+    if source in ("pdf", "repo"):
+        if not path:
+            return ""
+        content = tools.call_result(f"read_{source}", {"path": _pinned(root, path)})
+        return content.text if content.usable else ""
+    if source in ("mail", "drive", "calendar", "outlook"):
         query = " ".join(keywords) or " ".join(terms(task)[:4])
-        output = tools.search_mail(query)
-        if _empty(output):
+        output = tools.call_result(f"search_{source}", {"query": query})
+        if not output.usable:
             return ""
-        mid = output.splitlines()[0].split("|")[0].strip()
-        content = tools.read_mail(mid) if mid else ""
-        return "" if _empty(content) else content
-    if source == "drive":
-        query = " ".join(keywords) or " ".join(terms(task)[:4])
-        output = tools.search_drive(query)
-        if _empty(output):
+        ident = output.text.splitlines()[0].split("|")[0].strip()
+        if not ident:
             return ""
-        fid = output.splitlines()[0].split("|")[0].strip()
-        content = tools.read_drive(fid) if fid else ""
-        return "" if _empty(content) else content
-    if source == "calendar":
-        query = " ".join(keywords) or " ".join(terms(task)[:4])
-        output = tools.search_calendar(query)
-        if _empty(output):
-            return ""
-        eid = output.splitlines()[0].split("|")[0].strip()
-        content = tools.read_calendar(eid) if eid else ""
-        return "" if _empty(content) else content
-    if source == "outlook":
-        query = " ".join(keywords) or " ".join(terms(task)[:4])
-        output = tools.search_outlook(query)
-        if _empty(output):
-            return ""
-        mid = output.splitlines()[0].split("|")[0].strip()
-        content = tools.read_outlook(mid) if mid else ""
-        return "" if _empty(content) else content
+        content = tools.call_result(f"read_{source}", {"id": ident})
+        return content.text if content.usable else ""
     if source == "web":
         query = " ".join(keywords) or " ".join(terms(task)[:3])
-        output = tools.web_search(query)
-        if _empty(output) and keywords:
+        output = tools.call_result("web_search", {"query": query})
+        if not output.usable and keywords:
             alternative = _longest(terms(task))
             if alternative and alternative.casefold() not in " ".join(keywords).casefold():
-                output = tools.web_search(alternative)
-        return "" if _empty(output) else output
+                output = tools.call_result("web_search", {"query": alternative})
+        return output.text if output.usable else ""
     return ""
 
 
@@ -324,7 +296,7 @@ def run_lane(
         # Empty or failed retrieval is an engine outcome, not a writing
         # prompt: the model is not asked to report the void (and fill it).
         answer = engine_sentence(outcome)
-    receipts = [{"tool": call.name, "args": call.args, "ok": call.ok} for call in tools.calls]
+    receipts = [call.receipt() for call in tools.calls]
     problems = verify_answer(answer, receipts, collected)
     return LaneResult(
         task=task,

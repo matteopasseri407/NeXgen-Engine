@@ -126,6 +126,7 @@ def longest_term(items: Iterable[str]) -> str:
 
 
 def empty_result(result: str) -> bool:
+    """Legacy text protocol. Internal drivers use ToolResult.usable instead."""
     return result.startswith("(")
 
 

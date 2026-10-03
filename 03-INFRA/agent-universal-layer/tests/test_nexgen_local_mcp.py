@@ -58,7 +58,7 @@ def _stub_personal_sources(monkeypatch: pytest.MonkeyPatch) -> None:
     """Hermetic mail/drive: unit tests never touch a live account."""
 
     def _empty_search(self, query: str, tool: str) -> str:
-        return self._record(tool, {"query": query}, "(nessun risultato)")
+        return self._record(tool, {"query": query}, "(nessun risultato)", status="empty")
 
     monkeypatch.setattr(
         ToolRegistry, "search_mail", lambda self, query: _empty_search(self, query, "search_mail")

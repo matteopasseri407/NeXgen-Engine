@@ -31,7 +31,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Iterable
 
-from .source_selection import (empty_result, existing_file, pinned_path, sanitize_content, terms)
+from .source_selection import (existing_file, pinned_path, sanitize_content, terms)
 from .evidence import (engine_sentence, retrieval_outcome, verify_answer)
 from .config import LaneConfig
 from .engine import (ANSWER_PROMPT, answer_task, check_canary, route_task, sources_from_receipts)
@@ -586,53 +586,53 @@ _READ_STORES = {
 
 def _execute(llm: LLM, tools: ToolRegistry, state: LoopState, action: str, arg: str) -> None:
     if action == "search_vault":
-        output = tools.search_vault(arg, require_all=True)
+        output = tools.call_result("search_vault", {"query": arg, "require_all": True})
         state.tried_queries.append(arg)
-        hits = [] if empty_result(output) else [line.strip() for line in output.splitlines() if line.strip()]
+        hits = [] if not output.usable else [line.strip() for line in output.text.splitlines() if line.strip()]
         state.hits = hits
         state.empty_streak = 0 if hits else state.empty_streak + 1
-        state.content_seen.append(sanitize_content(output))
-        state.observations.append(_observe("search_vault", arg, output))
+        state.content_seen.append(sanitize_content(output.text))
+        state.observations.append(_observe("search_vault", arg, output.text))
     elif action == "search_web":
-        output = tools.web_search(arg)
+        output = tools.call_result("web_search", {"query": arg})
         state.tried_queries.append(arg)
-        state.empty_streak = 0 if not empty_result(output) else state.empty_streak + 1
-        if not empty_result(output):
-            state.web.append(f"[web: {arg}]\n{sanitize_content(output)}")
-        state.content_seen.append(sanitize_content(output))
-        state.observations.append(_observe("search_web", arg, output))
+        state.empty_streak = 0 if output.usable else state.empty_streak + 1
+        if output.usable:
+            state.web.append(f"[web: {arg}]\n{sanitize_content(output.text)}")
+        state.content_seen.append(sanitize_content(output.text))
+        state.observations.append(_observe("search_web", arg, output.text))
     elif action == "search_mail":
-        output = tools.search_mail(arg)
+        output = tools.call_result("search_mail", {"query": arg})
         state.tried_queries.append(arg)
-        ids = [] if empty_result(output) else [line.split("|")[0].strip() for line in output.splitlines() if line.strip()]
+        ids = [] if not output.usable else [line.split("|")[0].strip() for line in output.text.splitlines() if line.strip()]
         state.mail_ids = [mid for mid in ids if mid]
         state.empty_streak = 0 if state.mail_ids else state.empty_streak + 1
-        state.content_seen.append(sanitize_content(output))
-        state.observations.append(_observe("search_mail", arg, output))
+        state.content_seen.append(sanitize_content(output.text))
+        state.observations.append(_observe("search_mail", arg, output.text))
     elif action == "search_drive":
-        output = tools.search_drive(arg)
+        output = tools.call_result("search_drive", {"query": arg})
         state.tried_queries.append(arg)
-        ids = [] if empty_result(output) else [line.split("|")[0].strip() for line in output.splitlines() if line.strip()]
+        ids = [] if not output.usable else [line.split("|")[0].strip() for line in output.text.splitlines() if line.strip()]
         state.drive_ids = [fid for fid in ids if fid]
         state.empty_streak = 0 if state.drive_ids else state.empty_streak + 1
-        state.content_seen.append(sanitize_content(output))
-        state.observations.append(_observe("search_drive", arg, output))
+        state.content_seen.append(sanitize_content(output.text))
+        state.observations.append(_observe("search_drive", arg, output.text))
     elif action == "search_outlook":
-        output = tools.search_outlook(arg)
+        output = tools.call_result("search_outlook", {"query": arg})
         state.tried_queries.append(arg)
-        ids = [] if empty_result(output) else [line.split("|")[0].strip() for line in output.splitlines() if line.strip()]
+        ids = [] if not output.usable else [line.split("|")[0].strip() for line in output.text.splitlines() if line.strip()]
         state.outlook_ids = [mid for mid in ids if mid]
         state.empty_streak = 0 if state.outlook_ids else state.empty_streak + 1
-        state.content_seen.append(sanitize_content(output))
-        state.observations.append(_observe("search_outlook", arg, output))
+        state.content_seen.append(sanitize_content(output.text))
+        state.observations.append(_observe("search_outlook", arg, output.text))
     elif action == "search_calendar":
-        output = tools.search_calendar(arg)
+        output = tools.call_result("search_calendar", {"query": arg})
         state.tried_queries.append(arg)
-        ids = [] if empty_result(output) else [line.split("|")[0].strip() for line in output.splitlines() if line.strip()]
+        ids = [] if not output.usable else [line.split("|")[0].strip() for line in output.text.splitlines() if line.strip()]
         state.calendar_ids = [eid for eid in ids if eid]
         state.empty_streak = 0 if state.calendar_ids else state.empty_streak + 1
-        state.content_seen.append(sanitize_content(output))
-        state.observations.append(_observe("search_calendar", arg, output))
+        state.content_seen.append(sanitize_content(output.text))
+        state.observations.append(_observe("search_calendar", arg, output.text))
     elif action == "read_file":
         found = existing_file(tools.cfg, arg)
         if not found:
@@ -640,51 +640,51 @@ def _execute(llm: LLM, tools: ToolRegistry, state: LoopState, action: str, arg: 
         kind, rel, root = found
         dest = pinned_path(root, rel)
         if kind == "vault":
-            output = tools.read_vault(dest)
+            output = tools.call_result("read_vault", {"path": dest})
         elif kind == "repo":
-            output = tools.read_repo(dest)
+            output = tools.call_result("read_repo", {"path": dest})
         else:
-            output = tools.read_pdf(dest)
-        if not empty_result(output):
-            state.reads.append(f"[{dest}]\n{sanitize_content(output)}")
+            output = tools.call_result("read_pdf", {"path": dest})
+        if output.usable:
+            state.reads.append(f"[{dest}]\n{sanitize_content(output.text)}")
             state.tried_paths.append(dest)
             state.empty_streak = 0
             state.last_read = dict(tools.last_coverage)
-        state.content_seen.append(sanitize_content(output))
-        state.observations.append(_observe("read_file", rel, output))
+        state.content_seen.append(sanitize_content(output.text))
+        state.observations.append(_observe("read_file", rel, output.text))
     elif action in ("read_mail", "read_drive"):
-        output = tools.read_mail(arg) if action == "read_mail" else tools.read_drive(arg)
-        if not empty_result(output):
+        output = tools.call_result("read_mail", {"id": arg}) if action == "read_mail" else tools.call_result("read_drive", {"id": arg})
+        if output.usable:
             store = state.mail if action == "read_mail" else state.drive
-            store.append(sanitize_content(output))
+            store.append(sanitize_content(output.text))
             state.empty_streak = 0
             state.last_read = dict(tools.last_coverage)
             if arg not in state.read_ids:
                 state.read_ids.append(arg)
             if action == "read_mail":
                 state.last_mail_id = arg
-        state.content_seen.append(sanitize_content(output))
-        state.observations.append(_observe(action, arg, output))
+        state.content_seen.append(sanitize_content(output.text))
+        state.observations.append(_observe(action, arg, output.text))
     elif action == "read_outlook":
-        output = tools.read_outlook(arg)
-        if not empty_result(output):
-            state.outlook.append(sanitize_content(output))
+        output = tools.call_result("read_outlook", {"id": arg})
+        if output.usable:
+            state.outlook.append(sanitize_content(output.text))
             state.empty_streak = 0
             state.last_read = dict(tools.last_coverage)
             if arg not in state.read_ids:
                 state.read_ids.append(arg)
-        state.content_seen.append(sanitize_content(output))
-        state.observations.append(_observe("read_outlook", arg, output))
+        state.content_seen.append(sanitize_content(output.text))
+        state.observations.append(_observe("read_outlook", arg, output.text))
     elif action == "read_calendar":
-        output = tools.read_calendar(arg)
-        if not empty_result(output):
-            state.calendar.append(sanitize_content(output))
+        output = tools.call_result("read_calendar", {"id": arg})
+        if output.usable:
+            state.calendar.append(sanitize_content(output.text))
             state.empty_streak = 0
             state.last_read = dict(tools.last_coverage)
             if arg not in state.read_ids:
                 state.read_ids.append(arg)
-        state.content_seen.append(sanitize_content(output))
-        state.observations.append(_observe("read_calendar", arg, output))
+        state.content_seen.append(sanitize_content(output.text))
+        state.observations.append(_observe("read_calendar", arg, output.text))
     elif action == "continue_read":
         last = state.last_read
         if not last.get("truncated") or state.continuations >= MAX_CONTINUATIONS:
@@ -692,19 +692,19 @@ def _execute(llm: LLM, tools: ToolRegistry, state: LoopState, action: str, arg: 
         tool = str(last.get("tool", ""))
         args = dict(last.get("args", {}))
         args["offset"] = int(last.get("offset", 0)) + tools.cfg.read_chars
-        output = tools.call(tool, args)
-        if empty_result(output):
+        output = tools.call_result(tool, args)
+        if not output.usable:
             # The source shrank mid-read: no chunk, no spiral. The loop
             # rebuilds the menu from here (answer is offered again).
             state.last_read = {}
         else:
             store = getattr(state, _READ_STORES.get(tool, "reads"))
-            store.append(sanitize_content(output))
+            store.append(sanitize_content(output.text))
             state.continuations += 1
             state.empty_streak = 0
             state.last_read = dict(tools.last_coverage)
-        state.content_seen.append(sanitize_content(output))
-        state.observations.append(_observe("continue_read", "", output))
+        state.content_seen.append(sanitize_content(output.text))
+        state.observations.append(_observe("continue_read", "", output.text))
     elif action == "draft_mail":
         from .compose import MailError, mail_envelope, propose_mail_from_context
 
@@ -771,7 +771,7 @@ def _execute(llm: LLM, tools: ToolRegistry, state: LoopState, action: str, arg: 
         state.observations.append(f"propose_upload({arg}) -> {detail}")
     else:
         raise ToolError(f"azione non eseguibile: {action}")
-    state.receipts = [{"tool": call.name, "args": call.args, "ok": call.ok} for call in tools.calls]
+    state.receipts = [call.receipt() for call in tools.calls]
 
 
 CORRECTION_INSTRUCTION = (
@@ -927,10 +927,10 @@ def finish_answer(
         blocks.append(sanitize_content(state.upload_preview))
     collected = "\n\n".join(blocks)
     if receipts is None:
-        receipts = [{"tool": call.name, "args": call.args, "ok": call.ok} for call in tools.calls]
+        receipts = [call.receipt() for call in tools.calls]
     if refusals is None:
         refusals = list(tools.refusals)
-    calls = [SimpleNamespace(name=c.get("tool", ""), args=c.get("args", {}), ok=c.get("ok", False)) for c in receipts]
+    calls = [SimpleNamespace(name=c.get("tool", ""), args=c.get("args", {}), ok=c.get("ok", False), status=c.get("status")) for c in receipts]
     outcome = retrieval_outcome(calls, refusals, collected)
     if outcome == "ok":
         answer = answer_task(
@@ -1036,5 +1036,5 @@ def run_steps(
     result.escalated = escalated
     result.mail_draft = state.mail_draft
     result.upload_proposal = state.upload_proposal
-    result.receipts = [{"tool": call.name, "args": call.args, "ok": call.ok} for call in tools.calls]
+    result.receipts = [call.receipt() for call in tools.calls]
     return result

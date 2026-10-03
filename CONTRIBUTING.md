@@ -33,10 +33,12 @@ before integration. Fix new lint findings rather than regenerating the baseline.
 | Behavior | Owner | Closest tests in `03-INFRA/agent-universal-layer/tests/` |
 | --- | --- | --- |
 | Atomic writes, backups, private artifacts | `nexgen_core/files.py` | `test_nexgen_foundations.py`, `test_nexgen_quality_regressions.py` |
+| Third-party pin updates and rollback | `nexgen_core/thirdparty_bump.py` | `test_nexgen_bump.py`, `test_nexgen_bump_file_contract.py` |
 | Sync phase ordering and failure status | `nexgen_core/guard.py` | `test_nexgen_phase3.py`, `test_nexgen_quality_regressions.py` |
 | Skill fetch, replacement and pins | `nexgen_core/skill_sources.py` | `test_nexgen_lazy_skills.py`, `test_nexgen_quality_regressions.py` |
 | Host locking | `nexgen_core/lock.py` | `test_nexgen_lock.py` |
 | Source paths, text sanitization, search terms | `nexgen_local/source_selection.py` | `test_nexgen_local.py`, `test_nexgen_local_steps.py` |
+| Tool outcomes, audit receipts and resume compatibility | `nexgen_local/tools.py` | `test_nexgen_tool_outcomes.py`, `test_nexgen_local_research.py` |
 | Response claims and successful read receipts | `nexgen_local/evidence.py` | `test_nexgen_local_steps.py`, `test_nexgen_local_research.py` |
 | Routing and answer pipeline | `nexgen_local/engine.py` | `test_nexgen_local.py` |
 | Model requests and deadlines | `nexgen_local/llm.py` | `test_nexgen_llm_deadlines.py` |
@@ -48,6 +50,16 @@ Check the actual filenames before selecting a test. Graph modules drive the
 existing decision functions; they do not hold a second implementation.
 Import helpers from their owner. `engine.py` retains compatibility exports
 for older callers, but new consumers should use the owning module.
+
+Internal retrieval uses `ToolRegistry.call_result`: `status` declares `ok`,
+`empty` or `error`, `usable` determines whether to consume the result, and
+`text` holds the content. Never infer an outcome from parentheses or message
+wording. Tool implementations, including test doubles, record empty results
+and errors explicitly. Audit must succeed before a receipt enters the registry.
+Serialize receipts with `ToolCall.receipt()` so research checkpoints retain
+status when resumed. Text-only methods remain available for CLI/MCP callers;
+refusal-text interpretation is limited to older checkpoints without status.
+Pin updates use `nexgen_core/files.py` rather than a second atomic writer.
 
 For a bug, first add a test that fails for the reported behavior. Check the
 failure path as well as success: a failed write must preserve the old bytes,

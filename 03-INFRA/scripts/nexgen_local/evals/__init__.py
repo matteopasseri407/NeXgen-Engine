@@ -37,16 +37,16 @@ class MockWebRegistry(ToolRegistry):
 
     def search_mail(self, query: str) -> str:
         # Hermetic evals: the benchmark never touches a live mailbox.
-        return self._record("search_mail", {"query": query}, "(nessun risultato)")
+        return self._record("search_mail", {"query": query}, "(nessun risultato)", status="empty")
 
     def search_drive(self, query: str) -> str:
-        return self._record("search_drive", {"query": query}, "(nessun risultato)")
+        return self._record("search_drive", {"query": query}, "(nessun risultato)", status="empty")
 
     def search_outlook(self, query: str) -> str:
-        return self._record("search_outlook", {"query": query}, "(nessun risultato)")
+        return self._record("search_outlook", {"query": query}, "(nessun risultato)", status="empty")
 
     def search_calendar(self, query: str) -> str:
-        return self._record("search_calendar", {"query": query}, "(nessun risultato)")
+        return self._record("search_calendar", {"query": query}, "(nessun risultato)", status="empty")
 
 
 class FakeMailRegistry(ToolRegistry):
