@@ -12,6 +12,18 @@ of any engine release.
 
 ### Fixed
 
+- Council sanitizes provider error diagnostics before they reach console,
+  transcripts or relay checkpoints. Session files use private atomic writes.
+- Automatic infrastructure commits preserve unrelated staged work.
+- GitHub skill updates validate the declared source in a separate checkout
+  before replacing the usable cache. Failed acquisition preserves old bytes;
+  modified caches are reported rather than certified by their commit alone.
+- MCP rendering shares one policy for removing unmounted connectors, including
+  runtime restrictions on environment-gated entries. Codex validates existing
+  TOML and preserves the meaning of private connectors and unrelated settings.
+  Dotted connector names remain single keys, and recovery backups are unique.
+- Engine updates reject a release missing its command entry before moving the
+  installed checkout. Mechanical pin writes use the shared atomic writer.
 - Local CLI and MCP startup work from an unpackaged source checkout.
 - Google and Outlook persist rotated refresh tokens with atomic private writes;
   publication or permission failures preserve the previous token file.

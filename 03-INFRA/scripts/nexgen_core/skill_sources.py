@@ -15,6 +15,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -152,6 +153,18 @@ def clone_url(repo: str) -> str:
     return repo
 
 
+def github_skill_source(cache_dir: Path, entry: SkillEntry) -> Path:
+    """Resolve a declared skill within its verified repository boundary."""
+    root = cache_dir.resolve()
+    source = (cache_dir / (entry.path or "")).resolve()
+    skill = source / "SKILL.md"
+    if not source.is_relative_to(root) or not skill.resolve().is_relative_to(root):
+        raise ValueError(t("github skill '{name}': source escapes the cloned repository", name=entry.name))
+    if not skill.is_file():
+        raise ValueError(t("github skill '{name}': missing SKILL.md at the declared path", name=entry.name))
+    return source
+
+
 class SkillFetcher:
     """Brings third-party skill bytes to the library door. Placement
     (library links, native views, index) stays the materializer's job:
@@ -162,11 +175,10 @@ class SkillFetcher:
         self.home = resolve_home(home)
 
     def ensure_github_checkout(self, cache_dir: Path, entry: SkillEntry) -> tuple[bool, str | None]:
-        """Brings the local cache exactly to the declared commit.
+        """Verify a pin off to the side, then replace the usable cache.
 
-        An existing cache isn't enough: if the manifest bumps the pin, the
-        old copy needs updating. First we check where the cache actually
-        is, and only fetch the new commit if it diverges.
+        Acquisition failures leave the previous bytes and views intact.
+        Local edits are preserved and reported, never certified by HEAD alone.
         """
         env = {**os.environ, **GIT_NONINTERACTIVE_ENV}
 
@@ -179,58 +191,69 @@ class SkillFetcher:
             )
 
         try:
-            if cache_dir.is_dir() and not cache_dir.is_symlink():
+            if not COMMIT_SHA_RE.fullmatch(entry.commit or ""):
+                raise ValueError(t("github skill '{name}': a full commit pin is required", name=entry.name))
+            if cache_dir.is_symlink():
+                raise ValueError(t("github skill '{name}': cache is a foreign symlink; preserved", name=entry.name))
+            clean_cache = False
+            if cache_dir.is_dir():
                 head = git("rev-parse", "HEAD", cwd=cache_dir)
-                if head.returncode == 0 and head.stdout.strip().lower() == (entry.commit or "").lower():
-                    return True, None
-                # Corrupted cache or not a repo at all (manual copy, failed
-                # clone, wiped .git): fetch/checkout below would fail
-                # forever without ever healing. Re-clone from scratch.
-                is_repo = git("rev-parse", "--git-dir", cwd=cache_dir)
-                if is_repo.returncode != 0:
-                    shutil.rmtree(cache_dir, ignore_errors=True)
-                    cache_dir.parent.mkdir(parents=True, exist_ok=True)
-                    res = git("clone", "--quiet", clone_url(entry.repo or ""), str(cache_dir))
-                    if res.returncode != 0:
-                        return False, "[ERROR] " + t(
-                            "github skill '{name}': cloning {repo} failed: {error}",
-                            name=entry.name, repo=entry.repo, error=res.stderr.strip(),
-                        )
-                else:
-                    fetched = git("fetch", "--quiet", "origin", entry.commit or "", cwd=cache_dir)
-                    if fetched.returncode != 0:
-                        git("fetch", "--quiet", "--all", cwd=cache_dir)
-            else:
-                cache_dir.parent.mkdir(parents=True, exist_ok=True)
-                res = git("clone", "--quiet", clone_url(entry.repo or ""), str(cache_dir))
+                if head.returncode == 0:
+                    dirty = git("status", "--porcelain", "--untracked-files=all", cwd=cache_dir)
+                    if dirty.returncode or dirty.stdout.strip():
+                        raise ValueError(t("github skill '{name}': cache has local changes; preserved", name=entry.name))
+                    clean_cache = True
+                    origin = git("remote", "get-url", "origin", cwd=cache_dir)
+                    if (head.stdout.strip().lower() == (entry.commit or "").lower()
+                            and origin.returncode == 0 and origin.stdout.strip() == clone_url(entry.repo or "")):
+                        github_skill_source(cache_dir, entry)
+                        return True, None
+
+            cache_dir.parent.mkdir(parents=True, exist_ok=True)
+            with tempfile.TemporaryDirectory(prefix=f"{cache_dir.name}.incoming-", dir=cache_dir.parent) as tmp:
+                incoming = Path(tmp) / "checkout"
+                res = git("clone", "--quiet", "--", clone_url(entry.repo or ""), str(incoming))
                 if res.returncode != 0:
                     return False, "[ERROR] " + t(
                         "github skill '{name}': cloning {repo} failed: {error}",
                         name=entry.name, repo=entry.repo, error=res.stderr.strip(),
                     )
-
-            res = git("checkout", "--quiet", "--detach", entry.commit or "", cwd=cache_dir)
-            if res.returncode != 0:
-                # Object store damaged or commit unreachable from this
-                # clone (origin rewrote history, shallow boundary): one
-                # fresh re-clone, then give up for this cycle if it persists.
-                shutil.rmtree(cache_dir, ignore_errors=True)
-                cache_dir.parent.mkdir(parents=True, exist_ok=True)
-                fresh = git("clone", "--quiet", clone_url(entry.repo or ""), str(cache_dir))
-                if fresh.returncode == 0:
-                    res = git("checkout", "--quiet", "--detach", entry.commit or "", cwd=cache_dir)
+                res = git("checkout", "--quiet", "--detach", entry.commit or "", cwd=incoming)
+                if res.returncode:
+                    git("fetch", "--quiet", "origin", entry.commit or "", cwd=incoming)
+                    res = git("checkout", "--quiet", "--detach", entry.commit or "", cwd=incoming)
                 if res.returncode != 0:
                     return False, "[ERROR] " + t(
                         "github skill '{name}': commit {commit} is not reachable in the repository: {error}",
                         name=entry.name, commit=entry.commit, error=res.stderr.strip(),
                     )
+                github_skill_source(incoming, entry)
+                backup = next_backup_path(cache_dir) if cache_dir.exists() else None
+                if backup is not None:
+                    cache_dir.rename(backup)
+                try:
+                    incoming.rename(cache_dir)
+                except OSError:
+                    if backup is not None:
+                        backup.rename(cache_dir)
+                    raise
+                # Clean Git caches are reproducible from their pin. Preserve
+                # an unknown/corrupt directory instead of deleting user bytes.
+                if backup is not None and clean_cache:
+                    try:
+                        shutil.rmtree(backup)
+                    except OSError:
+                        return True, "[WARNING] " + t(
+                            "github skill '{name}': updated; old cache cleanup failed at {path}",
+                            name=entry.name, path=backup,
+                        )
             return True, None
         except subprocess.TimeoutExpired:
             return False, "[ERROR] " + t(
                 "github skill '{name}': {repo} did not respond within {timeout}s, retrying next cycle",
                 name=entry.name, repo=entry.repo, timeout=GIT_CLONE_TIMEOUT_SECONDS,
             )
-        except OSError as exc:
+        except (OSError, ValueError) as exc:
             return False, "[ERROR] " + t("github skill '{name}': {error}", name=entry.name, error=exc)
 
     def _installed_versions_file(self) -> Path:

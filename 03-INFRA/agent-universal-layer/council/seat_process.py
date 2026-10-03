@@ -31,6 +31,7 @@ from session import (
     _release_proc,
     _set_private_mode,
     _write_private_text,
+    redact_generated_output,
 )
 
 SUPPORTED_CLIS = ("opencode", "agy", "codex", "claude", "ollama")
@@ -55,6 +56,9 @@ OPENCODE_ATTACHED_PROMPT = (
 
 class SeatRunError(RuntimeError):
     def __init__(self, message: str, kind: str = "error") -> None:
+        # Diagnostics are provider output too. Sanitize before console,
+        # consultation transcripts or LangGraph checkpoints can retain them.
+        message, _ = redact_generated_output(message)
         super().__init__(message)
         self.kind = kind
 

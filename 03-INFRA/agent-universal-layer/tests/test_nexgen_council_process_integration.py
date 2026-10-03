@@ -62,6 +62,40 @@ def test_nonzero_exit_never_approves_partial_text(fake_provider, tmp_path):
     assert "quota exhausted" in str(error.value)
 
 
+@pytest.mark.parametrize("cli", ["ollama", "opencode"])
+def test_provider_error_redacts_secrets_before_exception_leaves_transport(fake_provider, tmp_path, cli):
+    import json
+    secret = "sk-" + "testcredential" * 3
+    diagnostic = "quota exhausted\nAuthorization: " + secret
+    source = (
+        f"import sys\nsys.stderr.write({diagnostic!r})\nsys.exit(7)\n"
+        if cli == "ollama" else
+        f"print({json.dumps({'type': 'error', 'error': diagnostic})!r})\n"
+    )
+    seat = fake_provider(source, cli=cli)
+    with pytest.raises(SeatRunError) as error:
+        run_seat(seat, "", tmp_path, 10)
+    assert secret not in str(error.value)
+    assert "REDACTED" in str(error.value)
+    assert error.value.kind == ("process_error" if cli == "ollama" else "seat_error")
+    assert session._live_procs_snapshot() == []
+
+
+def test_session_write_failure_preserves_previous_artifact(tmp_path, monkeypatch):
+    import nexgen_core.files as files
+    artifact = tmp_path / "consult.md"
+    artifact.write_text("completed opinion\n", encoding="utf-8")
+
+    def disk_full(_fd):
+        raise OSError("synthetic full disk")
+
+    monkeypatch.setattr(files.os, "fsync", disk_full)
+    with pytest.raises(OSError, match="full disk"):
+        session._write_private_text(artifact, "replacement\n")
+    assert artifact.read_text(encoding="utf-8") == "completed opinion\n"
+    assert sorted(path.name for path in tmp_path.iterdir()) == ["consult.md"]
+
+
 @pytest.mark.parametrize("stream", ["stdout", "stderr"])
 def test_timeout_detects_activity_without_a_newline(fake_provider, tmp_path, stream):
     seat = fake_provider(

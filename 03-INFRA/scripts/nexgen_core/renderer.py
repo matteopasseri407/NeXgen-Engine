@@ -192,8 +192,10 @@ class McpRenderer:
 
         return resolved
 
-    def _drop_unmounted(self, mcp_servers: dict, mounted: dict, cli_target: str = "") -> None:
-        """Lazy contract on the config side: a server declared in the manifest
+    def unmounted_server_names(self, mounted: dict, cli_target: str) -> set[str]:
+        """Names to remove, shared by JSON and TOML dialects.
+
+        Lazy contract on the config side: a server declared in the manifest
         but not mounted for this CLI must not linger in a previous render.
         Exceptions, all deliberate:
         - servers OUTSIDE the manifest are never touched (additive rule);
@@ -202,17 +204,24 @@ class McpRenderer:
           guard runs without the shell environment, and deleting them there
           would make the doctor report them missing twice an hour, forever."""
         if not self.manifest_path.is_file():
-            return
+            return set()
         data = load_mcp_manifest(self.manifest_path)
+        unmounted = set()
         for name, srv in data.get("servers", {}).items():
             if name in mounted:
                 continue
             tier = str(srv.get("tier", "")).strip().lower()
             lazy_targets = srv.get("lazy_targets") or ["claude", "codex", "antigravity", "opencode"]
             routed_away = bool(srv.get("lazy")) and cli_target in lazy_targets
-            would_mount = (tier == "core" or srv.get("enabled", False)) and not routed_away
+            allowed_here = cli_target in srv.get("targets", ["claude", "codex", "antigravity", "opencode"])
+            would_mount = allowed_here and (tier == "core" or srv.get("enabled", False)) and not routed_away
             if srv.get("require_env") and would_mount:
                 continue
+            unmounted.add(name)
+        return unmounted
+
+    def _drop_unmounted(self, mcp_servers: dict, mounted: dict, cli_target: str = "") -> None:
+        for name in self.unmounted_server_names(mounted, cli_target):
             mcp_servers.pop(name, None)
 
     def list_lazy_servers(self, cli_target: str) -> list[str]:

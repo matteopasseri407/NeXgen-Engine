@@ -1,7 +1,7 @@
 """Selected-file publication preserves work staged by another writer."""
 import subprocess
 
-from nexgen_core.git_ops import publish_changes
+from nexgen_core.git_ops import auto_commit_infra_files, publish_changes
 
 
 def git(repo, *args):
@@ -44,6 +44,25 @@ def test_unchanged_explicit_file_does_not_commit_another_authors_index(tmp_path)
     ok, msg = publish_changes(repo, remote="local", commit_msg="selected", files_to_commit=["selected.txt"])
     assert ok, msg
     assert git(repo, "rev-parse", "HEAD") == head
+    assert git(repo, "diff", "--cached", "--name-only").splitlines() == ["other.txt"]
+
+
+def test_auto_commit_infra_preserves_other_staged_work(tmp_path):
+    repo = repository(tmp_path)
+    infra = repo / "03-INFRA" / "settings.yaml"
+    infra.parent.mkdir()
+    infra.write_text("setting: baseline\n")
+    git(repo, "add", "03-INFRA/settings.yaml")
+    git(repo, "commit", "-m", "infra baseline")
+    infra.write_text("setting: changed\n")
+    (repo / "other.txt").write_text("another author\n")
+    git(repo, "add", "other.txt")
+    staged = git(repo, "show", ":other.txt")
+    ok, paths = auto_commit_infra_files(repo)
+    assert ok
+    assert paths == ["03-INFRA/settings.yaml"]
+    assert git(repo, "show", "--pretty=", "--name-only", "HEAD").splitlines() == paths
+    assert git(repo, "show", ":other.txt") == staged
     assert git(repo, "diff", "--cached", "--name-only").splitlines() == ["other.txt"]
 
 

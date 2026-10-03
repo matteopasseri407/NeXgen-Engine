@@ -20,6 +20,8 @@ import time
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
+from nexgen_core.files import write_private_text
+
 ENGINE_ROOT = Path(__file__).resolve().parent
 LEAK_SCAN_DIR = ENGINE_ROOT.parent / "leak-scan"
 
@@ -63,16 +65,8 @@ def _set_private_mode(path: Path, mode: int) -> None:
 
 
 def _write_private_text(path: Path, text: str) -> None:
-    """Write a session artefact without first exposing it to the umask."""
-    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    try:
-        if os.name != "nt":
-            os.fchmod(fd, 0o600)
-    except Exception:
-        os.close(fd)
-        raise
-    with os.fdopen(fd, "w", encoding="utf-8") as handle:
-        handle.write(text)
+    """Publish a complete private artefact through the Engine's file owner."""
+    write_private_text(path, text)
 
 
 def _secure_session_tree(session_dir: Path) -> None:

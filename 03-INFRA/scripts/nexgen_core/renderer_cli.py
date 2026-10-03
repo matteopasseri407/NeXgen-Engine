@@ -13,7 +13,6 @@ import json
 import os
 import re
 import sys
-import time
 from pathlib import Path
 from typing import Any
 
@@ -83,11 +82,10 @@ def _secure_backup(path: Path, text: str) -> Path:
     a timestamped backup next to `path`. Unlike `files.backup_file`, which
     snapshots what's on disk, this snapshots what the caller holds --
     callers pass the content they are about to overwrite."""
-    from nexgen_core.files import atomic_write_text
+    from nexgen_core.files import backup_file
 
-    stem = path.name + ".bak-" + time.strftime("%Y%m%d-%H%M%S")
-    bak = path.with_name(stem)
-    atomic_write_text(bak, text)
+    bak = backup_file(path, text=text)
+    assert bak is not None  # caller-provided bytes always produce a backup
     return bak
 
 
