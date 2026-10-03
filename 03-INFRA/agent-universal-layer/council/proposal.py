@@ -287,6 +287,12 @@ def _confirm_pay_per_use(seat_name: str, seat: dict, cost: str | None) -> None:
         sys.exit(f"[council] STOP: pay-per-use seat '{seat_name}' not confirmed.")
 
 
+def _confirm_seat_call(seat_name: str, seat: dict, config: dict | None = None) -> None:
+    """One price lookup and consent rule for every Council invocation."""
+    plan = _routing_context_or_exit(config) if config and _routing_enabled(config) else None
+    _confirm_pay_per_use(seat_name, seat, _seat_cost(plan, seat_name, seat))
+
+
 def _check_seat_allowed(
     seat_name: str,
     seat: dict,
@@ -300,10 +306,7 @@ def _check_seat_allowed(
     if _routing_enabled(config):
         plan = _routing_context_or_exit(config)
         _refuse_seat_outside_role(seat_name, args, config, plan, default_routing_role)
-        cost = _seat_cost(plan, seat_name, seat)
-    else:
-        cost = None
-    _confirm_pay_per_use(seat_name, seat, cost)
+    _confirm_seat_call(seat_name, seat, config)
 
 
 def _refuse_seat_outside_role(
@@ -338,8 +341,12 @@ def _refuse_seat_outside_role(
         )
 
 
-def resolve_seat(args: argparse.Namespace, *, default_routing_role: str | None = None) -> tuple[str, dict]:
-    config = load_config()
+def resolve_seat(
+    args: argparse.Namespace, *, default_routing_role: str | None = None,
+    config: dict | None = None,
+) -> tuple[str, dict]:
+    if config is None:
+        config = load_config()
     seats = config["seats"]
     if not seats:
         sys.exit(f"[council] {SEATS_PATH} is empty: inert expansion, nothing to do.")

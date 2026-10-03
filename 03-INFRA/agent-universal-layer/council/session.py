@@ -155,11 +155,18 @@ def _force_stop_process_tree(proc: subprocess.Popen) -> None:
     On Windows an npm ``.cmd`` shim is launched through ``cmd.exe``. Killing
     only that parent can leave the Node/Codex child alive with SQLite handles
     open inside the Council session directory. ``taskkill /T`` terminates the
-    exact descendant tree rooted at the launcher PID; other platforms keep
-    the existing single-process kill behavior.
+    exact descendant tree rooted at the launcher PID. POSIX seats start in
+    their own session, so only their owned process group is terminated.
     """
-    used_windows_tree_kill = False
+    used_tree_kill = False
     pid = getattr(proc, "pid", None)
+    group = getattr(proc, "_council_process_group", None)
+    if os.name == "posix" and group is not None:
+        try:
+            os.killpg(group, signal.SIGKILL)
+            used_tree_kill = True
+        except OSError:
+            pass
     if os.name == "nt" and pid is not None:
         try:
             result = subprocess.run(
@@ -169,11 +176,11 @@ def _force_stop_process_tree(proc: subprocess.Popen) -> None:
                 timeout=10,
                 check=False,
             )
-            used_windows_tree_kill = result.returncode == 0
+            used_tree_kill = result.returncode == 0
         except (OSError, subprocess.TimeoutExpired):
             pass
 
-    if not used_windows_tree_kill:
+    if not used_tree_kill:
         try:
             proc.kill()
         except OSError:
@@ -224,6 +231,9 @@ def _live_procs_snapshot() -> list[subprocess.Popen]:
 def _stop_one_proc(proc: subprocess.Popen) -> None:
     """Terminate and reap one seat process; never raises."""
     try:
+        if getattr(proc, "_council_process_group", None) is not None:
+            _force_stop_process_tree(proc)
+            return
         if proc.poll() is None:
             if os.name == "nt" and getattr(proc, "pid", None) is not None:
                 _force_stop_process_tree(proc)

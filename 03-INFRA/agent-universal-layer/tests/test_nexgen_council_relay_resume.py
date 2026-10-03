@@ -7,7 +7,10 @@ non i seggi.
 
 from __future__ import annotations
 
+import concurrent.futures
+import json
 import sys
+import threading
 from pathlib import Path
 
 import pytest
@@ -280,6 +283,122 @@ def test_uncertain_rerun_refused_then_allowed(
     assert summary["status"] == "completed"
     assert summary["completed"] == 2
     assert runner.calls == before + ["fake/a", "fake/c"]
+
+
+@pytest.mark.parametrize("allow_uncertain_rerun", [False, True])
+def test_fatal_outcome_is_saved_and_never_reinvoked(
+    runner: FakeRunner, monkeypatch: pytest.MonkeyPatch, sandbox: Path,
+    allow_uncertain_rerun: bool,
+) -> None:
+    """A known failure survives reopening SQLite and cannot spend quota again."""
+    _patch_loaders(monkeypatch)
+    runner.script = [("fatal",)]
+    with pytest.raises(RelayError) as initial:
+        start_resumable_relay(
+            question="domanda?", context=None, diff=None,
+            sequence_spec="r1=sa|sb,r2=sc", max_seats=5,
+            continue_on_reject=False, invocation_timeout=None,
+        )
+    assert initial.value.kind == "seat_failed"
+    session_dir = next(sandbox.iterdir())
+    state = _read_state(session_dir, session_dir.name).values
+    assert state["stop_reason"] == "failed"
+    assert state["pending"] is None
+    assert state["calls_made"] == 1
+    assert state["trace"][-1]["outcome"] == "failed"
+    with pytest.raises(RelayError) as resumed:
+        resume_relay_session(
+            session_ref=session_dir.name, question="domanda?", context=None,
+            diff=None, sequence_spec="r1=sa|sb,r2=sc", max_seats=5,
+            continue_on_reject=False, invocation_timeout=None,
+            allow_uncertain_rerun=allow_uncertain_rerun,
+        )
+    assert resumed.value.kind == "seat_failed"
+    assert str(resumed.value) == str(initial.value)
+    assert runner.calls == ["fake/a"]
+
+
+@pytest.mark.parametrize("identity", [[], None, "invalid", 7])
+def test_invalid_identity_refuses_without_provider_call(
+    runner: FakeRunner, monkeypatch: pytest.MonkeyPatch, sandbox: Path, identity,
+) -> None:
+    _patch_loaders(monkeypatch)
+    session_dir = sandbox / "malformed"
+    session_dir.mkdir()
+    (session_dir / relay_graph.IDENTITY_NAME).write_text(json.dumps(identity), encoding="utf-8")
+    with pytest.raises(RelayError) as error:
+        resume_relay_session(
+            session_ref="malformed", question="domanda?", context=None, diff=None,
+            sequence_spec="r1=sa|sb,r2=sc", max_seats=5,
+            continue_on_reject=False, invocation_timeout=None,
+        )
+    assert error.value.kind == "session_missing"
+    assert runner.calls == []
+
+
+def test_simultaneous_resume_refuses_second_caller(
+    runner: FakeRunner, monkeypatch: pytest.MonkeyPatch, sandbox: Path,
+) -> None:
+    _patch_loaders(monkeypatch)
+    session_name = _start_crashing(monkeypatch, runner, sandbox, relay)
+    entered, release = threading.Event(), threading.Event()
+    entry_lock = threading.Lock()
+    original_runner = relay.run_seat
+
+    def blocked_runner(*args, **kwargs):
+        with entry_lock:
+            first_call = not entered.is_set()
+            entered.set()
+        if first_call:
+            assert release.wait(timeout=10)
+        return original_runner(*args, **kwargs)
+
+    monkeypatch.setattr(relay, "run_seat", blocked_runner)
+    arguments = dict(
+        session_ref=session_name, question="domanda?", context=None, diff=None,
+        sequence_spec="r1=sa|sb,r2=sc", max_seats=5, continue_on_reject=False,
+        invocation_timeout=None, allow_uncertain_rerun=True,
+    )
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+        first = pool.submit(resume_relay_session, **arguments)
+        try:
+            assert entered.wait(timeout=10)
+            with pytest.raises(RelayError) as error:
+                resume_relay_session(**arguments)
+            assert error.value.kind == "session_busy"
+        finally:
+            release.set()
+        assert first.result(timeout=10)["status"] == "completed"
+    assert runner.calls == ["fake/a", "fake/a", "fake/c"]
+
+
+def test_all_approved_fallbacks_fit_the_graph_budget(
+    runner: FakeRunner, monkeypatch: pytest.MonkeyPatch, sandbox: Path,
+) -> None:
+    """The maximum stage count can exhaust every approved fallback."""
+    import proposal
+    _patch_loaders(monkeypatch)
+    seats = {
+        f"s{idx}": {"cli": "opencode", "model": f"fake/{idx}", "quota_pool": f"pool-{idx}"}
+        for idx in range(15)
+    }
+    monkeypatch.setattr(proposal, "load_config", lambda: {"seats": seats})
+    sequence = ",".join(f"r{idx}=s{idx * 3}|s{idx * 3 + 1}|s{idx * 3 + 2}" for idx in range(5))
+    runner.script = [("retryable",), ("retryable",), ("ok", "APPROVE", "done")] * 5
+    arguments = dict(
+        question="domanda?", context=None, diff=None, sequence_spec=sequence,
+        max_seats=5, continue_on_reject=False, invocation_timeout=None,
+    )
+    summary = start_resumable_relay(**arguments)
+    assert summary["status"] == "completed"
+    assert summary["completed"] == 5
+    assert summary["calls_made"] == 15
+    assert runner.calls == [f"fake/{idx}" for idx in range(15)]
+    # Reopening a fully exhausted sequence must not spend another call.
+    before = list(runner.calls)
+    resumed = resume_relay_session(session_ref=summary["session_dir"], **arguments)
+    assert resumed["status"] == "completed"
+    assert runner.calls == before
 
 
 def _patch_loaders(monkeypatch: pytest.MonkeyPatch) -> None:

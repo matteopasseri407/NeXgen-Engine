@@ -7,7 +7,6 @@ from __future__ import annotations
 
 import sys
 import threading
-import time
 from pathlib import Path
 
 import pytest
@@ -42,6 +41,7 @@ class FakeConsultRunner:
         self._lock = threading.Lock()
         self._live = 0
         self.peak = 0
+        self.barrier: threading.Barrier | None = None
 
     def __call__(self, seat: dict, prompt: str, session_dir: Path, timeout: float):
         model = seat["model"]
@@ -50,11 +50,10 @@ class FakeConsultRunner:
             self._live += 1
             self.peak = max(self.peak, self._live)
         try:
+            if self.barrier is not None:
+                self.barrier.wait(timeout=10)
             entries = self.scripts.get(model, [])
             action = entries.pop(0) if entries else ("ok", "APPROVE", "tutto bene")
-            if len(action) == 3 and action[0] == "sleep":
-                time.sleep(action[1])
-                action = action[2]
             kind = action[0]
             if kind == "ok":
                 _, verdict, body = action
@@ -72,21 +71,30 @@ def _ok(verdict: str = "APPROVE", body: str = "parere") -> tuple:
 
 
 def test_opinions_run_in_parallel(tmp_path: Path) -> None:
-    """Tre seggi da 0.4s finiscono in molto meno della somma: fan-out vero."""
+    """Every seat must enter the runner before any can finish."""
     runner = FakeConsultRunner({
-        "fake/a": [("sleep", 0.4, _ok("APPROVE", "a"))],
-        "fake/b": [("sleep", 0.4, _ok("REVISE", "b"))],
-        "fake/c": [("sleep", 0.4, _ok("APPROVE", "c"))],
+        "fake/a": [_ok("APPROVE", "a")],
+        "fake/b": [_ok("REVISE", "b")],
+        "fake/c": [_ok("APPROVE", "c")],
     })
-    started = time.time()
+    runner.barrier = threading.Barrier(3)
     result = run_consult(_seats(), "brief?", ["sa", "sb", "sc"], tmp_path, None, 0, runner=runner)
-    elapsed = time.time() - started
     assert runner.peak == 3
-    assert elapsed < 1.0
     assert len(result.opinions) == 3
     assert result.disagreements == [("sa", "sb"), ("sb", "sc")]
     assert result.tally == {"APPROVE": 2, "REVISE": 1}
     assert (tmp_path / "consult.md").is_file()
+
+
+@pytest.mark.parametrize("bad_timeout", [0, "invalid", float("nan"), True])
+def test_invalid_timeout_refuses_before_any_call(tmp_path: Path, bad_timeout) -> None:
+    seats = _seats()
+    seats["sb"]["timeout_seconds"] = bad_timeout
+    runner = FakeConsultRunner({})
+    with pytest.raises(RelayError) as error:
+        run_consult(seats, "brief?", ["sa", "sb"], tmp_path, None, 0, runner=runner)
+    assert error.value.kind == "invalid_timeout"
+    assert runner.calls == []
 
 
 def test_failure_abstains_without_aborting(tmp_path: Path) -> None:

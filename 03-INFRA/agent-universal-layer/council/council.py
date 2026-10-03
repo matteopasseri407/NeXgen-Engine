@@ -70,7 +70,8 @@ def _run_mode(
     role_initial_name: str, role_continue_name: str | None, rounds: int,
     default_routing_role: str,
 ) -> None:
-    seat_name, seat = resolve_seat(args, default_routing_role=default_routing_role)
+    config = load_config()
+    seat_name, seat = resolve_seat(args, default_routing_role=default_routing_role, config=config)
     egress_gate(brief)
     timeout_seconds = _resolve_timeout_seconds(seat, getattr(args, "timeout_seconds", None))
 
@@ -95,7 +96,7 @@ def _run_mode(
 
         responses, verdicts = run_rounds(
             seat_name, seat, session_dir, mode, brief, role_initial, role_continue, rounds,
-            timeout_seconds,
+            timeout_seconds, config=config,
         )
 
         write_verdict(session_dir, seat_name, seat, mode, verdicts, responses[-1])

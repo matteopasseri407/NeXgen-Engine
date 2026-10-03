@@ -20,10 +20,7 @@ import concurrent.futures
 from dataclasses import dataclass, field
 
 from proposal import (
-    _confirm_pay_per_use,
-    _routing_context_or_exit,
-    _routing_enabled,
-    _seat_cost,
+    _confirm_seat_call,
     _warn_no_zero_retention,
 )
 from relay import DEFAULT_MAX_SEATS, RelayError, _validate_relay_seat
@@ -142,11 +139,6 @@ def _invoke_one(
     return Opinion(seat_name, seat["model"], verdict, response)
 
 
-def _pay_gate(seat_name: str, seat: dict, config: dict | None) -> None:
-    plan = _routing_context_or_exit(config) if config and _routing_enabled(config) else None
-    _confirm_pay_per_use(seat_name, seat, _seat_cost(plan, seat_name, seat))
-
-
 def run_consult(
     seats: dict,
     brief: str,
@@ -174,20 +166,24 @@ def run_consult(
         raise RelayError(
             f"[council] --rebuttals must be between 0 and {MAX_REBUTTAL_ROUNDS}.", kind="seats_cap"
         )
+    timeouts = {}
     for name in seat_names:
         _validate_relay_seat(name, seats)
+        try:
+            timeouts[name] = _resolve_timeout_seconds(seats[name], invocation_timeout)
+        except ValueError as exc:
+            raise RelayError(f"[council] invalid timeout for seat '{name}': {exc}.", kind="invalid_timeout") from exc
     # Consent is collected on the operator's thread, before any fan-out.
     for name in seat_names:
-        _pay_gate(name, seats[name], config)
+        _confirm_seat_call(name, seats[name], config)
 
     result = ConsultResult()
 
     def ask_opinion(name: str) -> Opinion | Abstention:
         seat = seats[name]
         try:
-            timeout_seconds = _resolve_timeout_seconds(seat, invocation_timeout)
             return _invoke_one(
-                name, seat, build_consult_prompt(brief), session_dir, timeout_seconds,
+                name, seat, build_consult_prompt(brief), session_dir, timeouts[name],
                 f"01-{name}-opinion-{slugify(brief[:30])}.md", runner,
             )
         except SeatRunError as e:
@@ -215,10 +211,9 @@ def run_consult(
             seat = seats[name]
             others = [op for op in result.opinions if op.seat_name != name]
             try:
-                timeout_seconds = _resolve_timeout_seconds(seat, invocation_timeout)
                 return _invoke_one(
                     name, seat, build_rebuttal_prompt(brief, by_seat[name], others),
-                    session_dir, timeout_seconds,
+                    session_dir, timeouts[name],
                     f"02-{name}-rebuttal-{slugify(brief[:30])}.md", runner,
                 )
             except SeatRunError as e:
@@ -226,7 +221,7 @@ def run_consult(
 
         names = [opinion.seat_name for opinion in result.opinions]
         for name in names:
-            _pay_gate(name, seats[name], config)
+            _confirm_seat_call(name, seats[name], config)
         with concurrent.futures.ThreadPoolExecutor(max_workers=len(names)) as pool:
             for outcome in pool.map(ask_rebuttal, names):
                 if isinstance(outcome, Abstention):

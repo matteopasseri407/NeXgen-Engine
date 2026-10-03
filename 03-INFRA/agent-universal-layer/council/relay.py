@@ -15,12 +15,11 @@ from pathlib import Path
 
 from proposal import (
     SEATS_PATH,
-    _confirm_pay_per_use,
+    _confirm_seat_call,
     _print_routing_proposal,
     _print_static_seat_menu,
     _routing_context_or_exit,
     _routing_enabled,
-    _seat_cost,
     _seat_quota_pool,
     _warn_no_zero_retention,
 )
@@ -350,8 +349,7 @@ def _invoke_stage_candidate(
     timeout_seconds = _resolve_timeout_seconds(seat, invocation_timeout)
 
     _warn_no_zero_retention(chosen_name, seat)
-    plan = _routing_context_or_exit(config) if config and _routing_enabled(config) else None
-    _confirm_pay_per_use(chosen_name, seat, _seat_cost(plan, chosen_name, seat))
+    _confirm_seat_call(chosen_name, seat, config)
 
     print(
         f"[council] relay {idx:02d} — role: {stage.role} — "

@@ -76,6 +76,18 @@ def _is_retryable_seat_error(error: SeatRunError) -> bool:
     return error.kind in RETRYABLE_SEAT_ERROR_KINDS
 
 
+def _usage_amount(value: object) -> float:
+    if isinstance(value, dict):
+        total = value.get("total")
+        if isinstance(total, (int, float)) and not isinstance(total, bool) and math.isfinite(total):
+            values = [total]
+        else:
+            values = value.values()
+    else:
+        values = [value]
+    return sum(v for v in values if isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v))
+
+
 def _parse_timeout_seconds(value: object) -> float:
     """Validate one positive, finite timeout expressed in seconds."""
     if isinstance(value, bool):
@@ -605,9 +617,14 @@ def run_seat(
                 # agy, opencode). See _isolated_seat_env.
                 env=invocation.env,
                 cwd=invocation.cwd,
+                start_new_session=os.name == "posix",
             )
         except OSError as e:
             raise SeatRunError(f"[council] unable to invoke the seat: {e}", "invocation")
+        if os.name == "posix":
+            # This group belongs only to this invocation, including children
+            # that keep pipes open after their launcher exits.
+            proc._council_process_group = getattr(proc, "pid", None)
         # Registry token, not the single slot: parallel seats overlap, and
         # each release must free only its own process (one slot evicted the
         # other and a finish cleared both).
@@ -665,11 +682,15 @@ def run_seat(
                     event = json.loads(stripped)
                 except json.JSONDecodeError:
                     continue
+                if not isinstance(event, dict):
+                    continue
                 if event.get("type") == "error":
                     _force_stop_process_tree(proc)
                     raise SeatRunError(f"[council] error from seat: {event.get('error')}", "seat_error")
                 part = event.get("part") or {}
-                if event.get("type") == "text" and "text" in part:
+                if not isinstance(part, dict):
+                    continue
+                if event.get("type") == "text" and isinstance(part.get("text"), str):
                     text_chunks.append(part["text"])
                 if event.get("type") == "step_finish":
                     # Sum across steps: a step_finish carries the step's own
@@ -677,17 +698,9 @@ def run_seat(
                     # as an int or as a breakdown dict ({input, output,
                     # total}) depending on the provider: normalize before
                     # summing (live bug found by the kimi seat, 2026-08-22).
-                    raw_tokens = part.get("tokens")
-                    if isinstance(raw_tokens, dict):
-                        raw_tokens = raw_tokens.get("total") or sum(v for v in raw_tokens.values() if isinstance(v, (int, float)))
-                    part_tokens = raw_tokens or 0
-                    raw_cost = part.get("cost")
-                    if isinstance(raw_cost, dict):
-                        raw_cost = raw_cost.get("total") or sum(v for v in raw_cost.values() if isinstance(v, (int, float)))
-                    part_cost = raw_cost or 0.0
                     usage = {
-                        "tokens": (usage.get("tokens") or 0) + part_tokens,
-                        "cost": (usage.get("cost") or 0.0) + part_cost,
+                        "tokens": usage.get("tokens", 0) + _usage_amount(part.get("tokens")),
+                        "cost": usage.get("cost", 0) + _usage_amount(part.get("cost")),
                     }
             else:
                 # Claude emits one JSON object; agy/codex/ollama emit plain
@@ -801,6 +814,8 @@ def run_seat(
         # Release only this seat's token: the legacy single slot is no
         # longer touched here on purpose (parallel seats overlap).
         if proc_token:
+            if proc.poll() is None or getattr(proc, "_council_process_group", None) is not None:
+                _force_stop_process_tree(proc)
             _release_proc(proc_token)
         if stdin_writer is not None:
             stdin_writer.join(timeout=5)

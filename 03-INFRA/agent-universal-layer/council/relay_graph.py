@@ -19,9 +19,8 @@ uncertainty and refuses a silent re-invocation unless the caller passes
 ``allow_uncertain_rerun``. LangGraph does not make an external call
 happen once; the engine declares the doubt before spending more quota.
 
-langgraph is an optional dependency (``pip install 'nexgen-engine[council]'``,
-separate from the ``[local]`` extra, no Ollama involved) and is imported
-lazily so importing this module never requires it.
+LangGraph and its SQLite saver ship with the engine and are imported lazily.
+No Ollama endpoint is involved in relay checkpointing.
 """
 
 from __future__ import annotations
@@ -29,11 +28,13 @@ from __future__ import annotations
 import hashlib
 import json
 import sys
+from contextlib import contextmanager
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, TypedDict
 
 from proposal import _seat_quota_pool
+from nexgen_core.lock import HostLock, LockTimeoutError
 from relay import (
     RelayError,
     RelayQuarantine,
@@ -55,6 +56,23 @@ from session import (
 
 CHECKPOINT_NAME = "relay-checkpoints.sqlite"
 IDENTITY_NAME = "relay-identity.json"
+
+
+@contextmanager
+def _session_run_lock(session_dir: Path):
+    """One caller may inspect and advance a relay session at a time."""
+    lock = HostLock(session_dir / "relay-run.lock", timeout=0, command_name="council relay")
+    try:
+        lock.acquire()
+    except LockTimeoutError as exc:
+        raise RelayError(
+            f"[council] session {session_dir.name} is already running; wait for that invocation to finish.",
+            kind="session_busy",
+        ) from exc
+    try:
+        yield
+    finally:
+        lock.release()
 
 
 class RelayGraphState(TypedDict, total=False):
@@ -214,7 +232,10 @@ def _node_complete_attempt(ctx: "_NodeContext") -> dict[str, Any]:
             trace_entry["outcome"] = "failed"
             update["trace"] = state.get("trace", []) + [trace_entry]
             update["pending"] = None
-            raise RelayError(str(e), kind="seat_failed") from e
+            # Raising here discards the node update and turns a known
+            # failure into an uncertain invocation on the next resume.
+            update["stop_reason"] = "failed"
+            return update
         blocked_until = quarantine.register(str(pending.get("pool", "")))
         until, failures = quarantine.snapshot()
         update["quarantine_until"] = until
@@ -253,6 +274,8 @@ def _route_after_attempt(state: RelayGraphState) -> str:
     route back to ``begin`` (pick the fallback for the same stage), never
     to ``next`` (which would skip the stage and index past the end).
     """
+    if state.get("stop_reason") == "failed":
+        return "finalize"
     records = state.get("records", [])
     total = len(state.get("stages", []))
     index = int(state.get("index", 0))
@@ -277,8 +300,14 @@ def _node_next_stage(state: RelayGraphState) -> dict[str, Any]:
     }
 
 
+def _refuse_failed_run(state: RelayGraphState) -> None:
+    if state.get("stop_reason") == "failed":
+        raise RelayError(state["trace"][-1]["detail"], kind="seat_failed")
+
+
 def _node_finalize(ctx: "_NodeContext") -> dict[str, Any]:
     state = ctx.state
+    _refuse_failed_run(state)
     records = _records_as_objects(state)
     total = len(state.get("stages", []))
     done = len(records)
@@ -466,7 +495,7 @@ def start_resumable_relay(
             invocation_timeout,
             seat_contract_hash(seats, stages),
         )
-        with _open_saver(session_dir) as saver:
+        with _session_run_lock(session_dir), _open_saver(session_dir) as saver:
             app = build_relay_app(lambda s: _NodeContext(seats, session_dir, config, s)).compile(checkpointer=saver)
             thread = {"configurable": {"thread_id": session_dir.name}}
             final = app.invoke(state, config=thread)
@@ -518,6 +547,8 @@ def resume_relay_session(
         )
     try:
         identity = json.loads(identity_path.read_text(encoding="utf-8"))
+        if not isinstance(identity, dict):
+            raise ValueError("expected an identity object")
     except (OSError, ValueError) as exc:
         raise RelayError(
             f"[council] cannot resume {session_dir.name}: unreadable identity file ({exc}).",
@@ -559,7 +590,7 @@ def resume_relay_session(
         )
 
     saver_cm = _open_saver(session_dir)
-    with saver_cm as saver:
+    with _session_run_lock(session_dir), saver_cm as saver:
         app = build_relay_app(lambda s: _NodeContext(seats, session_dir, config, s)).compile(checkpointer=saver)
         thread = {"configurable": {"thread_id": session_dir.name}}
         snapshot = app.get_state(thread)
@@ -570,6 +601,7 @@ def resume_relay_session(
                 kind="session_missing",
             )
         state = snapshot.values
+        _refuse_failed_run(state)
         if state.get("stop_reason") in ("completed", "rejected"):
             print(f"[council] session {session_dir.name} already {state['stop_reason']}: nothing to resume.")
             return _summary(session_dir, state)

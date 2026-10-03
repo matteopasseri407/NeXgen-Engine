@@ -11,6 +11,7 @@ import re
 import sys
 from pathlib import Path
 
+from proposal import _confirm_seat_call
 from seat_process import SeatRunError, run_seat
 from session import _write_private_text, redact_generated_output
 
@@ -97,11 +98,15 @@ def run_rounds(
     seat_name: str, seat: dict, session_dir: Path, mode_label: str, brief: str,
     role_prompt_initial: str, role_prompt_continue: str | None, rounds: int,
     timeout_seconds: float,
+    config: dict | None = None,
 ) -> tuple[list[str], list[str]]:
     responses: list[str] = []
     verdicts: list[str] = []
     prompt = role_prompt_initial.replace("{brief}", brief)
     for r in range(1, rounds + 1):
+        # resolve_seat already collected consent for the first invocation.
+        if r > 1:
+            _confirm_seat_call(seat_name, seat, config)
         print(f"[council] round {r}/{rounds} — seat: {seat_name} ({seat['model']})")
         try:
             response, usage = run_seat(seat, prompt, session_dir, timeout_seconds)

@@ -138,9 +138,14 @@ re-invoked. One case needs your explicit decision: if the process died
 after a provider responded but before the outcome was saved, resume
 declares which stage/attempt is uncertain and stops — re-invoking may bill
 quota twice, so pass `--allow-uncertain-rerun` only when you accept that.
+Known non-retryable failures are saved before the relay stops.
+Resuming them reports the saved failure without calling a provider again,
+even with `--allow-uncertain-rerun`.
+Only one invocation may advance a session at a time.
+A simultaneous resume stops with a busy-session error before calling a seat.
 `council clean` (and TTL expiry) removes checkpoints together with the
-session. Requires `pip install 'nexgen-engine[council]'`; brainstorm and
-challenge stay ephemeral.
+session. LangGraph and its SQLite saver are included in the engine installation.
+Brainstorm and challenge stay ephemeral.
 
 ## Independent consult
 

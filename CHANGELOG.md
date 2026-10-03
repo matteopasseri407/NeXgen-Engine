@@ -10,6 +10,23 @@ of any engine release.
 
 ## [Unreleased]
 
+### Fixed
+
+- Council saves terminal relay failures before stopping, so resume cannot
+  repeat a known failed call. Concurrent resumes of one session are refused.
+- Timeouts and cancellation terminate the seat's owned process group on POSIX.
+  Windows retains descendant-tree termination. Invalid JSONL events and usage
+  metadata no longer crash an otherwise valid response.
+- Consult validates every timeout before starting calls. Paid brainstorms
+  require consent for each continuation round through the shared call gate.
+
+### Tested
+
+- Offline integration tests use real subprocesses and pipes to verify UTF-8
+  prompts, large stdin and stderr, nonzero exits, timeout and cancellation.
+- SQLite regression tests cover terminal failure, simultaneous resume,
+  malformed identity files and all approved fallbacks across five stages.
+
 ## [2.3.9] - 2026-10-02
 
 ### Fixed
