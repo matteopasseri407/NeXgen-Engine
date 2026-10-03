@@ -12,6 +12,11 @@ of any engine release.
 
 ### Fixed
 
+- Lazy MCP honors declared RPC deadlines for blocked pipes and open HTTP
+  streams, correlates responses by request ID and bounds received output.
+  Negotiated modern protocol settings survive into tool calls, and tools
+  without optional descriptions no longer crash the index. Council, lazy MCP
+  and Vault grooming share owned subprocess cleanup.
 - Council sanitizes provider error diagnostics before they reach console,
   transcripts or relay checkpoints. Session files use private atomic writes.
 - Automatic infrastructure commits preserve unrelated staged work.

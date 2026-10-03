@@ -14,15 +14,14 @@ pass is actually read-only.
 """
 from __future__ import annotations
 
-import os
 import shutil
-import signal
 import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
 
 from nexgen_core.errors import NexgenError
+from nexgen_core.processes import force_stop_process_tree
 from typing import ClassVar
 
 DEFAULT_TIMEOUT_SECONDS = 20 * 60
@@ -51,15 +50,7 @@ class RunnerUnknownError(RunnerError):
 
 
 def _kill_process_group(proc: subprocess.Popen) -> None:
-    try:
-        if sys.platform == "win32":
-            proc.kill()
-        elif hasattr(os, "killpg") and hasattr(signal, "SIGKILL"):
-            os.killpg(proc.pid, signal.SIGKILL)
-        else:
-            proc.kill()
-    except (ProcessLookupError, PermissionError, OSError):
-        pass
+    force_stop_process_tree(proc, process_group=proc.pid if sys.platform != "win32" else None)
 
 
 def _run_streaming(

@@ -57,8 +57,10 @@ before integration. Fix new lint findings rather than regenerating the baseline.
 | Model decisions, bounded repairs and final loop answer | `nexgen_local/steps.py` | `test_nexgen_local_steps.py`, `test_nexgen_tool_outcomes.py` |
 | Model requests and deadlines | `nexgen_local/llm.py` | `test_nexgen_llm_deadlines.py` |
 | Council process lifecycle and relay checkpoints | `03-INFRA/agent-universal-layer/council/` | `test_nexgen_council_*.py` |
+| Owned subprocess cleanup and Windows launch adapters | `nexgen_core/processes.py` | `test_nexgen_council_process_integration.py`, `test_nexgen_mcp_transport.py`, `test_vault_groom.py` |
 | Vault publication and selected files | `nexgen_core/git_ops.py` | `test_nexgen_scoped_publish.py` |
 | MCP mount policy and private connector preservation | `nexgen_core/renderer.py`; dialect writers in `mcp_render/` | `test_nexgen_mcp_preservation.py`, `test_nexgen_phase2.py`, `test_nexgen_lazy_mcp.py` |
+| Lazy MCP deadlines, framing and reply correlation | `03-INFRA/agent-universal-layer/mcp/lazy-mcp.py` | `test_nexgen_mcp_transport.py`, `test_nexgen_lazy_mcp.py` |
 | Released Engine update and mechanical pin | `nexgen_core/updater.py` | `test_nexgen_update_command.py` |
 | Contributor lanes | `nexgen_core/lanes.py` | `test_nexgen_lanes.py` |
 
@@ -80,6 +82,13 @@ Council artefacts and recovery snapshots use this owner too; `backup_file`
 accepts an already-read text snapshot without generating a second filename policy.
 MCP dialects share `McpRenderer.unmounted_server_names` for mount decisions.
 Skill fetch and placement share `github_skill_source` for repository boundaries.
+Council, lazy MCP and Vault grooming share `nexgen_core/processes.py` for
+terminating owned subprocess trees. Pass only a process group created by the
+caller. Lazy MCP applies manifest startup/tool deadlines to RPC I/O, including
+pipe writes, and limits received bytes to 8 MiB per exchange. Provisioning has
+its own deadlines. A timed-out tool call has an unknown outcome and is never
+automatically retried. Only matching JSON-RPC responses complete a request;
+notifications and replies to other requests do not.
 
 The plain loop and persistent research import the same state, policy and
 actions. `step_policy.py` chooses admissible actions without model or tool

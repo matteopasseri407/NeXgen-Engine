@@ -90,9 +90,23 @@ def _spawn_waiter(vault: Path, audit: Path):
     env = dict(os.environ, AGENT_VAULT_DATA=str(vault), LAZY_MCP_LOG=str(audit))
     return subprocess.Popen(
         ["python3", str(LAZY_MCP)], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-        stderr=subprocess.DEVNULL, text=True, env=env,
+        stderr=subprocess.DEVNULL, text=True, env=env, start_new_session=os.name == "posix",
     )
 
+
+
+def _stop_waiter(proc):
+    """EOF exercises real cleanup instead of leaking peers with SIGKILL."""
+    if proc.stdin and not proc.stdin.closed:
+        proc.stdin.close()
+    try:
+        proc.wait(timeout=6)
+    except subprocess.TimeoutExpired:
+        from nexgen_core.processes import force_stop_process_tree
+        force_stop_process_tree(proc, process_group=proc.pid if os.name == "posix" else None)
+    for stream in (proc.stdout, proc.stderr):
+        if stream:
+            stream.close()
 
 def _rpc(proc, method: str, params=None, rid: int = 1):
     proc.stdin.write(json.dumps({"jsonrpc": "2.0", "id": rid, "method": method, "params": params or {}}) + "\n")
@@ -141,7 +155,7 @@ def test_fail_closed_without_any_annotation(tmp_path: Path):
         res = _call(proc, "fake", "write_thing")
         assert res.get("isError") is True
     finally:
-        proc.kill()
+        _stop_waiter(proc)
     log = audit.read_text(encoding="utf-8")
     # il rifiuto va in audit come refused, mai come call eseguita
     assert '"action": "refused"' in log
@@ -163,7 +177,7 @@ def test_readonly_allowlist_passes_without_confirm(tmp_path: Path):
         res = _call(proc, "fake", "write_thing")
         assert res.get("isError") is True, "write_thing non allowlistato deve essere rifiutato"
     finally:
-        proc.kill()
+        _stop_waiter(proc)
     log = audit.read_text(encoding="utf-8")
     assert '"action": "call"' in log
     assert '"tool": "read_thing"' in log
@@ -177,7 +191,7 @@ def test_mutating_with_confirm_executes_and_audits(tmp_path: Path):
         assert res.get("isError") is not True, res
         assert res["content"][0]["text"] == "written:ciao"
     finally:
-        proc.kill()
+        _stop_waiter(proc)
     log = audit.read_text(encoding="utf-8")
     assert '"confirmed": true' in log
 
@@ -193,7 +207,7 @@ def test_index_lists_servers_and_tools(tmp_path: Path):
         r = _rpc(proc, "tools/call", {"name": "lazy_load", "arguments": {"server": "fake", "tool": "write_thing"}}, rid=3)
         assert "inputSchema" in r["result"]["content"][0]["text"]
     finally:
-        proc.kill()
+        _stop_waiter(proc)
 
 
 def test_a_legacy_stdio_server_gets_the_initialize_handshake(tmp_path: Path):
@@ -213,7 +227,7 @@ def test_a_legacy_stdio_server_gets_the_initialize_handshake(tmp_path: Path):
         r = _rpc(proc, "tools/call", {"name": "lazy_load", "arguments": {"server": "fake", "tool": "read_thing"}}, rid=31)
         assert "inputSchema" in r["result"]["content"][0]["text"]
     finally:
-        proc.kill()
+        _stop_waiter(proc)
 
 
 def test_engine_root_placeholder_expansion(tmp_path: Path):
@@ -236,7 +250,7 @@ servers:
     env.pop("AGENT_ENGINE_ROOT", None)
     proc = subprocess.Popen(
         ["python3", str(LAZY_MCP)], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-        stderr=subprocess.DEVNULL, text=True, env=env,
+        stderr=subprocess.DEVNULL, text=True, env=env, start_new_session=os.name == "posix",
     )
     try:
         r = _rpc(proc, "tools/call", {"name": "lazy_list", "arguments": {}}, rid=2)
@@ -246,7 +260,7 @@ servers:
         names = [t["name"] for t in tools]
         assert "ocr_extract_image" in names
     finally:
-        proc.kill()
+        _stop_waiter(proc)
 
 
 def test_fast_failure_on_crashing_server(tmp_path: Path):
@@ -271,7 +285,7 @@ servers:
         assert elapsed < 5.0, f"Call took too long ({elapsed}s), likely hung in loop"
         assert r.get("result", {}).get("isError") is True
     finally:
-        proc.kill()
+        _stop_waiter(proc)
 
 
 def test_unreachable_http_endpoint(tmp_path: Path):
@@ -295,7 +309,7 @@ servers:
         assert "offline_http" in idx["servers"]
         assert idx["servers"]["offline_http"]["tools"] == []
     finally:
-        proc.kill()
+        _stop_waiter(proc)
 
 
 
@@ -336,7 +350,7 @@ servers:
         ws = text[len("value:"):]
         assert (Path(ws) / "fake_ws_mcp.py").is_file(), f"workspace {ws} non provisionato"
     finally:
-        proc.kill()
+        _stop_waiter(proc)
     # la verifica offline (install=False) lo conferma dopo lo spawn
     sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
     from nexgen_core.provision import ensure_deps
@@ -373,7 +387,7 @@ def test_the_index_carries_the_four_hints_when_the_server_declares_them(tmp_path
         # il tool senza annotations resta senza la chiave: nessun default inventato
         assert "annotations" not in tools["write_thing"]
     finally:
-        proc.kill()
+        _stop_waiter(proc)
 
 
 def test_the_meta_tools_expose_their_own_hints(tmp_path: Path):
@@ -388,7 +402,7 @@ def test_the_meta_tools_expose_their_own_hints(tmp_path: Path):
         assert tools["lazy_call"]["annotations"]["readOnlyHint"] is False
         assert tools["lazy_call"]["annotations"]["destructiveHint"] is True
     finally:
-        proc.kill()
+        _stop_waiter(proc)
 
 
 def test_the_waiter_expands_the_same_inline_templates(tmp_path: Path):
@@ -554,4 +568,4 @@ def test_the_first_frame_decides_the_protocol_era_of_a_dual_era_server(tmp_path:
         assert res.get("isError") is not True, res
         assert res["content"][0]["text"] == "value:42", res
     finally:
-        proc.kill()
+        _stop_waiter(proc)

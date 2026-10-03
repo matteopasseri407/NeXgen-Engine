@@ -21,6 +21,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from nexgen_core.files import write_private_text
+from nexgen_core.processes import force_stop_process_tree
 
 ENGINE_ROOT = Path(__file__).resolve().parent
 LEAK_SCAN_DIR = ENGINE_ROOT.parent / "leak-scan"
@@ -159,52 +160,8 @@ def new_session_dir(label: str) -> Path:
 
 
 def _force_stop_process_tree(proc: subprocess.Popen) -> None:
-    """Force-stop a seat and reap its launcher.
-
-    On Windows an npm ``.cmd`` shim is launched through ``cmd.exe``. Killing
-    only that parent can leave the Node/Codex child alive with SQLite handles
-    open inside the Council session directory. ``taskkill /T`` terminates the
-    exact descendant tree rooted at the launcher PID. POSIX seats start in
-    their own session, so only their owned process group is terminated.
-    """
-    used_tree_kill = False
-    pid = getattr(proc, "pid", None)
-    group = getattr(proc, "_council_process_group", None)
-    if os.name == "posix" and group is not None:
-        try:
-            os.killpg(group, signal.SIGKILL)
-            used_tree_kill = True
-        except OSError:
-            pass
-    if os.name == "nt" and pid is not None:
-        try:
-            result = subprocess.run(
-                ["taskkill.exe", "/PID", str(pid), "/T", "/F"],
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                timeout=3,
-                check=False,
-            )
-            used_tree_kill = result.returncode == 0
-        except (OSError, subprocess.TimeoutExpired):
-            pass
-
-    if not used_tree_kill:
-        try:
-            proc.kill()
-        except OSError:
-            pass
-
-    try:
-        proc.wait(timeout=5)
-    except TypeError:  # lightweight test doubles may not accept timeout
-        proc.wait()
-    except subprocess.TimeoutExpired:
-        try:
-            proc.kill()
-            proc.wait(timeout=3)
-        except (OSError, subprocess.TimeoutExpired):
-            pass
+    """Compatibility boundary; process cleanup has one Engine owner."""
+    force_stop_process_tree(proc, process_group=getattr(proc, "_council_process_group", None))
 
 
 _STATE_LOCK = threading.Lock()
