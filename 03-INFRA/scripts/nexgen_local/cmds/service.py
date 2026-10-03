@@ -3,11 +3,12 @@ from __future__ import annotations
 
 import argparse
 import json
-import sys
-from dataclasses import asdict
-from pathlib import Path
 
 from . import base as _base
+from ..relay import available_clis
+from ..tools import audit_writable
+import shutil
+import urllib.request
 
 def _config(args):
     """Resolve via cli facade when patched in tests, else base owner."""
@@ -38,14 +39,9 @@ _result_payload = _base.result_payload
 _warn_unverified = _base.warn_unverified
 _print_receipts = _base.print_receipts
 
-from ..relay import RELAY_CLIS, available_clis
-from ..tools import audit_writable
 
 
 
-import shutil
-import tempfile
-import urllib.request
 
 
 def cmd_mcp(args: argparse.Namespace) -> int:

@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import argparse
-import ctypes
 import datetime
 import json
 import os
@@ -13,7 +11,6 @@ import sys
 import time
 from pathlib import Path
 
-from nexgen_core.i18n import t
 from nexgen_core.paths import resolve_home, resolve_state_dir
 
 THROTTLE_HOURS = 12

@@ -2,22 +2,13 @@
 
 from __future__ import annotations
 
-import argparse
-import ctypes
-import datetime
-import json
-import os
-import shutil
-import subprocess
-import sys
 import time
 from pathlib import Path
 
-from nexgen_core.i18n import t
-from nexgen_core.paths import resolve_home, resolve_state_dir
+from nexgen_core.paths import resolve_state_dir
 
 
-from .notifier_state import CACHE_TOO_OLD_TO_NAG_DAYS, _read_state, _record_skills_dismissal, _skills_dismissed, _skills_report_file, _state_file, _write_state
+from .notifier_state import CACHE_TOO_OLD_TO_NAG_DAYS, _read_state, _record_skills_dismissal, _skills_dismissed, _write_state
 
 
 def _applied_file() -> Path:

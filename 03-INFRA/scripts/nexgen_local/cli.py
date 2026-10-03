@@ -14,17 +14,10 @@ from .cmds.drive import cmd_drive_mcp, cmd_drive_propose, cmd_drive_upload
 from .cmds.mail import cmd_mail_propose, cmd_mail_send, cmd_mails
 from .cmds.patch_cmds import cmd_apply, cmd_proposals, cmd_propose
 from .cmds.relay_cmd import cmd_relay
-from .cmds.run import (
-    _cmd_run_close,
-    _cmd_run_research,
-    cmd_close,
-    cmd_eval,
-    cmd_explore,
-    cmd_research,
-    cmd_run,
-)
+from .cmds.run import cmd_close, cmd_eval, cmd_explore, cmd_research, cmd_run
 from .cmds.service import cmd_doctor, cmd_mcp
 from .cmds.wf import cmd_wf_propose, cmd_wf_run, cmd_wfs
+from .relay import RELAY_CLIS
 
 
 def _version() -> str:

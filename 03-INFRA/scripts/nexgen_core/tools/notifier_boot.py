@@ -2,22 +2,16 @@
 
 from __future__ import annotations
 
-import argparse
-import ctypes
-import datetime
-import json
 import os
 import shutil
 import subprocess
 import sys
-import time
 from pathlib import Path
 
 from nexgen_core.i18n import t
-from nexgen_core.paths import resolve_home, resolve_state_dir
+from nexgen_core.paths import resolve_home
 
 
-from .notifier_prompt import _logo_path
 from .notifier_state import _read_state, refresh_update_cache
 from .notifier_skills import _short_skill_name
 

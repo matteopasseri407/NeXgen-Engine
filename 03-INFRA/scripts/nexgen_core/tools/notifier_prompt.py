@@ -2,25 +2,19 @@
 
 from __future__ import annotations
 
-import argparse
 import ctypes
-import datetime
-import json
 import os
 import shutil
 import subprocess
 import sys
-import time
 from pathlib import Path
 
-from nexgen_core.i18n import t
-from nexgen_core.paths import resolve_home, resolve_state_dir
 
 
 from .notifier_state import (
     _cache_fresh, _cache_usable, _dismissed_today, _is_throttled,
-    _read_state, _record_prompt_time, _skills_dismissed, _skills_report_file,
-    _spawn_background_refresh, _state_file, _today, refresh_update_cache,
+    _read_state, _record_prompt_time, _skills_report_file,
+    _spawn_background_refresh,
 )
 from .notifier_skills import _confirm_skills_shown, _skills_notice
 

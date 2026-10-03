@@ -5,9 +5,10 @@ import argparse
 import json
 import sys
 from dataclasses import asdict
-from pathlib import Path
 
 from . import base as _base
+from ..patch import PatchError, apply_proposal, format_gate, list_proposals, propose_patch
+from ..tools import ToolError
 
 def _config(args):
     """Resolve via cli facade when patched in tests, else base owner."""
@@ -38,8 +39,6 @@ _result_payload = _base.result_payload
 _warn_unverified = _base.warn_unverified
 _print_receipts = _base.print_receipts
 
-from ..patch import PatchError, apply_proposal, format_gate, list_proposals, propose_patch
-from ..tools import ToolError
 
 
 

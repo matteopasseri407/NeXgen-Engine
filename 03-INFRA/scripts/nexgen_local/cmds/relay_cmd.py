@@ -5,9 +5,9 @@ import argparse
 import json
 import sys
 from dataclasses import asdict
-from pathlib import Path
 
 from . import base as _base
+from ..relay import RELAY_CLIS, RelayError, available_clis, run_relay
 
 def _config(args):
     """Resolve via cli facade when patched in tests, else base owner."""
@@ -38,7 +38,6 @@ _result_payload = _base.result_payload
 _warn_unverified = _base.warn_unverified
 _print_receipts = _base.print_receipts
 
-from ..relay import RELAY_CLIS, RelayError, available_clis, run_relay
 
 
 

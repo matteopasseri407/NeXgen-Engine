@@ -7,7 +7,7 @@ public and test-used name, plus the CLI dispatcher (main).
 """
 from __future__ import annotations
 
-from .notifier_boot import (
+from .notifier_boot import (  # noqa: F401 - facade re-exports for backward compat
     _BASH_HOOK,
     _FISH_HOOK,
     _POWERSHELL_HOOK,
@@ -35,7 +35,7 @@ from .notifier_boot import (
     ensure_boot_check,
     ensure_shell_hook,
 )
-from .notifier_prompt import (
+from .notifier_prompt import (  # noqa: F401 - facade re-exports for backward compat
     _check_skills_gui,
     _logo_path,
     _notes_hint,
@@ -50,7 +50,7 @@ from .notifier_prompt import (
     cmd_check,
     cmd_shell_check,
 )
-from .notifier_skills import (
+from .notifier_skills import (  # noqa: F401 - facade re-exports for backward compat
     _applied_file,
     _batch_once_daily,
     _confirm_skills_shown,
@@ -59,7 +59,7 @@ from .notifier_skills import (
     _skills_notice,
     _take_fresh_applied,
 )
-from .notifier_state import (
+from .notifier_state import (  # noqa: F401 - facade re-exports for backward compat
     CACHE_STALE_AFTER_HOURS,
     CACHE_TOO_OLD_TO_NAG_DAYS,
     SKILLS_REPORT_NAME,
@@ -85,15 +85,10 @@ from .notifier_state import (
 # Stdlib handles re-exported so tests can patch via this module
 # (patching notifier.subprocess.run patches the shared stdlib object).
 import argparse
-import ctypes
-import datetime
-import json
-import os
-import shutil
-import subprocess
+import os  # noqa: F401 - re-exported for test patching via notifier.os
+import shutil  # noqa: F401 - re-exported for test patching via notifier.shutil
+import subprocess  # noqa: F401 - re-exported for test patching via notifier.subprocess
 import sys
-import time
-from pathlib import Path
 
 __all__ = ["main"]
 
