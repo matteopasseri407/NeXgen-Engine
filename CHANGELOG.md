@@ -59,6 +59,9 @@ of any engine release.
   staying local-only unnoticed. Liveness records the warning count, the
   doctor rejects unreadable remotes declarations, and every new user-facing
   string ships with its Italian translation.
+- Agent lanes are now the single enforced workflow: `AGENTS.md` names the
+  four rungs, CI `lane-guard` blocks direct commits on release rungs, and
+  the doctor warns on engine work outside a `dev/<agent>` lane.
 
 ### Tested
 

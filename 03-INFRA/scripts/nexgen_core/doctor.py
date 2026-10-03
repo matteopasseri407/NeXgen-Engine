@@ -18,6 +18,7 @@ if str(SCRIPTS_DIR) not in sys.path:
 
 from nexgen_core.checks.env_checks import check_state_dir, check_vault_path
 from nexgen_core.checks.git_checks import (
+    check_engine_lane,
     check_git_alignment,
     check_mirror_alignment,
     check_quarantine_branches,
@@ -106,6 +107,9 @@ class Doctor:
             remotes = check_remotes_config(self.vault_data)
             if remotes is not None:
                 report.add(remotes, apply_remedy=apply_remedies)
+            lane = check_engine_lane(self.engine_root)
+            if lane is not None:
+                report.add(lane, apply_remedy=apply_remedies)
             report.add(check_quarantine_branches(self.vault_data), apply_remedy=apply_remedies)
             for outcome in check_mirror_alignment(self.vault_data):
                 report.add(outcome, apply_remedy=apply_remedies)

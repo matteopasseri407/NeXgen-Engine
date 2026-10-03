@@ -909,4 +909,20 @@ MESSAGES: dict[str, str] = {
             "  python3 {entry} apply\n"
             "  agent-doctor --summary"
         ),
+
+    # --- Agent lanes: un solo workflow per gli agenti -----------------------
+    "The engine checkout is on a detached HEAD; lane work belongs on a dev/<agent> branch.":
+        "Il checkout del motore è su un HEAD staccato; il lavoro di lane va su un branch dev/<agent>.",
+    "Engine checkout on lane branch '{branch}'":
+        "Checkout del motore sul branch di lane '{branch}'",
+    "Engine checkout on '{branch}', clean and aligned":
+        "Checkout del motore su '{branch}', pulito e allineato",
+    "{count} uncommitted files":
+        "{count} file non committati",
+    "{count} commits ahead of developer":
+        "{count} commit avanti a developer",
+    "Engine work on '{branch}' belongs on a dev/<agent> lane ({what}).":
+        "Il lavoro sul motore in '{branch}' va su una lane dev/<agent> ({what}).",
+    "Move it: git checkout -b dev/<agent> developer, cherry-pick or merge, then merge lane into developer.":
+        "Spostalo: git checkout -b dev/<agent> developer, cherry-pick o merge, poi mergia la lane in developer.",
 }
