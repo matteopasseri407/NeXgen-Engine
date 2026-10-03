@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import os
 import sys
 import time
 from pathlib import Path
@@ -283,7 +284,8 @@ def test_ensure_boot_check_writes_files_and_is_idempotent(tmp_path, monkeypatch,
 def test_ensure_shell_hook_installs_once(tmp_path, monkeypatch):
     home = _isolate(tmp_path, monkeypatch)
     assert notifier.ensure_shell_hook(home) != ["[shell-hook] already present"]
-    assert (home / ".bashrc").is_file()
+    expected = home / (".config/powershell/Microsoft.PowerShell_profile.ps1" if os.name == "nt" else ".bashrc")
+    assert expected.is_file()
     assert notifier.ensure_shell_hook(home) == ["[shell-hook] already present"]
 
 
@@ -477,3 +479,28 @@ def test_windows_toast_carries_logo_only_when_resolved(tmp_path, monkeypatch):
     monkeypatch.setattr(notifier, "_logo_path", lambda: "C:\\engine\\assets\\nexgen-logo.jpg")
     notifier._notify_passive_windows("aggiornamento disponibile")
     assert calls and "-AppLogo" in calls[-1][-1]
+
+
+def test_ensure_shell_hook_honors_explicit_home(tmp_path, monkeypatch):
+    default = _isolate(tmp_path, monkeypatch)
+    explicit = tmp_path / 'explicit-home'
+    notifier.ensure_shell_hook(explicit)
+    expected = explicit / ('.config/powershell/Microsoft.PowerShell_profile.ps1' if os.name == 'nt' else '.bashrc')
+    assert expected.is_file()
+    assert not (default / '.bashrc').exists()
+    assert not (default / '.config/powershell/Microsoft.PowerShell_profile.ps1').exists()
+
+
+@pytest.mark.parametrize('shell,relative,block', [
+    ('bash','.bashrc',notifier._BASH_HOOK),
+    ('powershell','.config/powershell/Microsoft.PowerShell_profile.ps1',notifier._POWERSHELL_HOOK),
+    pytest.param('fish','.config/fish/config.fish',notifier._FISH_HOOK,marks=pytest.mark.skipif(os.name == 'nt',reason='POSIX shell')),
+])
+def test_hook_removal_preserves_user_blocks(tmp_path, monkeypatch, shell, relative, block):
+    home = _isolate(tmp_path, monkeypatch)
+    target = home / relative
+    target.parent.mkdir(parents=True, exist_ok=True)
+    content = 'if user_condition\n  user_command\nend\n'
+    target.write_text(content + block + content, encoding='utf-8')
+    assert notifier.cmd_install_shell_hook(remove=True,shell=shell) == 0
+    assert target.read_text(encoding='utf-8') == content + content

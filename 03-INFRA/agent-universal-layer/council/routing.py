@@ -59,13 +59,15 @@ class RoutingCandidate:
     execution CLI. Every producer of a RoutingCandidate resolves it against a
     seat's ``routing_label`` (or the derived ``routing_id`` variants below).
 
-    ``channel`` distinguishes pools sharing a CLI. ``cost`` is the raw
-    "Costo" cell, used with the execution pool for payment confirmation."""
+    ``channel`` distinguishes pools sharing a CLI. ``cost`` is the "Costo"
+    cell without Markdown emphasis. ``slot`` retains the Governor's position
+    even when earlier rows are excluded or unavailable on this host."""
 
     value: str
     cli: str | None = None
     cost: str | None = None
     channel: str | None = None
+    slot: str | None = None
 
 
 def seat_channel(seat: dict[str, Any]) -> str | None:
@@ -251,10 +253,10 @@ def _parse_governor_role_tables(markdown: str) -> RoutingPlan | None:
             if role.casefold() == "privacy" and channel != "local":
                 raise RoutingContractError("Governor role Privacy must use only the local channel")
             cli = CHANNEL_TO_CLI[channel]
-            cost = row[3].strip() if len(row) > 3 and row[3].strip() else None
+            cost = row[3].strip("*_` ") or None
             if cost in ("—", "-"):
                 cost = None
-            ordered.append(RoutingCandidate(model, cli, cost, channel))
+            ordered.append(RoutingCandidate(model, cli, cost, channel, slot))
         deduped = _dedupe(ordered)
         if len(deduped) != len(ordered):
             raise RoutingContractError(f"Governor role {role} contains duplicate candidates")
@@ -524,16 +526,17 @@ def resolve_role_candidates(
 
     selected: list[str] = []
     diagnostics: list[str] = []
-    for candidate in plan.roles[role]:
+    for index, candidate in enumerate(plan.roles[role]):
+        slot = candidate.slot or ("prescelto" if index == 0 else f"rimpiazzo {index}")
         matched = [name for name, seat in seats.items() if _matches(seat, candidate)]
         if not matched:
             lane = f" via {candidate.cli}" if candidate.cli else ""
-            diagnostics.append(f"{candidate.value}{lane}: no local seat associated")
+            diagnostics.append(f"{slot}: {candidate.value}{lane}: no local seat associated")
             continue
         matched_lanes = {(str(seats[name].get("cli", "")).casefold(), seat_channel(seats[name])) for name in matched}
         if candidate.channel is None and len(matched_lanes) > 1:
             diagnostics.append(
-                f"{candidate.value}: ambiguous across execution pools; "
+                f"{slot}: {candidate.value}: ambiguous across execution pools; "
                 "the routing document must declare the channel"
             )
             continue
@@ -542,7 +545,7 @@ def resolve_role_candidates(
                 continue
             capability = capabilities.get(name, SeatCapability(False, "capability not computed"))
             if not capability.available:
-                diagnostics.append(f"{candidate.value}: {capability.reason}")
+                diagnostics.append(f"{slot}: {candidate.value} ({name}): {capability.reason}")
                 continue
             selected.append(name)
     return selected, diagnostics

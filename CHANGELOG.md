@@ -10,6 +10,109 @@ of any engine release.
 
 ## [Unreleased]
 
+### Fixed
+
+- Test fixtures discard inherited config/state overrides before creating their
+  own temporary paths. Windows assertions follow native launcher names and
+  access semantics, and local CLI help avoids initializing asyncio/networking.
+- Initial branch scans exclude the already published main history while still
+  checking every new commit, including values removed before the branch tip.
+  Without a published base, scanning retains the full-ancestry fallback.
+
+- Atomic writes clean up only their own temporary file; backups cannot collide
+  within a process. Failed skill replacement restores the previous directory
+  or symlink, and unchanged linked libraries cannot certify a new pin.
+- Guard stops on skill materialization errors. Lock I/O failures remain errors
+  even in guard mode, rather than being reported as harmless contention.
+- Local model deadlines cancel the native async request, including continuous
+  streams. Decision fallback retains the decision model and rejects truncation;
+  operational failures never trigger a second model call.
+- Drafts and proposals use one atomic private writer for creation and updates.
+  ID collisions and failed writes preserve the previously reviewed artifact.
+- Shell-hook installation honors an explicit home and reports write failures;
+  removal preserves surrounding user blocks and removes the complete managed block.
+- Lane checks cover PR snapshots and direct developer commits, resolve remote
+  integration refs, and inspect release subjects separately from commit hashes.
+
+- Council saves terminal relay failures before stopping, so resume cannot
+  repeat a known failed call. Concurrent resumes of one session are refused.
+- Timeouts and cancellation terminate the seat's owned process group on POSIX.
+  Windows retains descendant-tree termination. Invalid JSONL events and usage
+  metadata no longer crash an otherwise valid response.
+- Relay and consult validate every selected timeout before starting calls. Paid brainstorms
+  require consent for each continuation round through the shared call gate.
+- Council recognizes final Markdown verdict headings, so `# VERDICT: REJECT` stops the relay.
+- Timeouts detect output bytes before a newline and report silent clients without guessing quota exhaustion.
+- Consult prints and saves results as they finish. Unexpected exceptions cancel the other seats.
+  Shutdown requests all process stops concurrently and rejects processes spawned across cancellation.
+- Relay checkpoints count reserved attempts before invocation and include uncertain calls in accepted reruns.
+- Routing proposals preserve Governor slots, identify the host, show missing candidates and manual-only seats,
+  strip Markdown from prices and warn when Go consumes prepaid quota.
+  An explicit seat may override a mode suggestion; requested roles and Privacy remain enforced.
+- Third-party skill pins no longer go false-green: installer claims back up
+  divergent library copies, versions record only when new bytes arrive, and
+  the doctor warns on stale or unrecorded pins. Corrupt github caches re-clone.
+- Git dep pins require a full 40-hex commit, and workspaces re-provision when
+  subdir or build change. Non-npx installer skills are depwatch-visible as
+  manually-watched. The lazy waiter picks up manifest edits, reports errors
+  without caching them, and flags mutating servers correctly.
+- `mcp add` accepts empty flow-style `servers: {}` manifests. Interactive
+  `skill bump` commits and announces like the silent path. Split-topology
+  updates always write the engine pin; the updater recovery also re-applies
+  provisioning, and its success message no longer claims full verification.
+- Plan probes pin freshness, orphans and symlinks, and its no-drift message
+  points at the unchecked domains. Shell-hook notices cover zsh/fish, and
+  background refresh works without `nexgen` on PATH.
+- Local lane calls carry wall-clock timeouts, `run` reports model failures
+  cleanly, resumed research honors the new `--max-steps`, bricked sessions
+  restart instead of erroring, and drafts/proposals/checkpoints share 0600/0700.
+- Sync quarantine stops before a failed switch-back instead of resetting the
+  quarantine branch, refuses the wrong HEAD, and stages before committing.
+  Infra auto-commit matches real paths, porcelain parses NUL-safe renames,
+  stash detection compares stash lists, and rev-parse/merge-base/stash-pop
+  failures report instead of pushing half states. Cherry-pick/revert blocks
+  the cycle like rebase/merge. Non-finite lock timeouts fall back to default.
+- Guard reports partial actions on failure, warns instead of claiming success
+  with degraded phases, validates pulled content, checks MCP render results,
+  keeps hand-written instructions on backup failure, and never fails apply
+  over an optional Windows adapter.
+- Mirrors report their failures instead of drifting silent, and the primary
+  is never pushed twice. New infra files are listed as drift instead of
+  staying local-only unnoticed. Liveness records the warning count, the
+  doctor rejects unreadable remotes declarations, and every new user-facing
+  string ships with its Italian translation.
+- Agent lanes are now the single enforced workflow: `AGENTS.md` names the
+  four rungs, CI `lane-guard` blocks direct commits on release rungs, and
+  the doctor warns on engine work outside a `dev/<agent>` lane.
+- Foundations hardened: vault/engine paths expand `~` and reject relative
+  homes, OpenCode honors `XDG_CONFIG_HOME` with the documented precedence,
+  atomic writes fsync with unique temps and never carry special mode bits,
+  unreadable files refuse overwrite, manifests fail closed on typos in
+  preflight/doctor, remedies count only on explicit success, and the JSONC
+  surgeon survives comments, duplicates and thousand-line headers.
+- Wobbly components pinned: inline templates nest and validate the discarded
+  branch, modules no longer flap on transient envs and install in isolation,
+  disabled units re-enable, scheduler respects the mutation freeze and never
+  reports unenabled timers as healthy, corrupt event-sink configs warn per
+  CLI, unverified postures warn instead of passing silent, dead hook
+  registrations warn on missing node, stale Claude hook specs self-repair,
+  Codex profile shadows are reported, liveness alerts on corruption and stays
+  quiet on fresh boot, and shim targets refuse quote-breaking paths.
+
+### Development
+
+- Source selection and response evidence are separate modules with compatibility
+  exports in the local engine. Consumers use the owning module's public helpers.
+- `check_engine.py` runs the existing lint gate and tests with one command.
+  Contributor guidance maps behaviors to modules and regression tests.
+
+### Tested
+
+- Offline integration tests use real subprocesses and pipes to verify UTF-8
+  prompts, large stdin and stderr, nonzero exits, timeout and cancellation.
+- SQLite regression tests cover terminal failure, simultaneous resume,
+  malformed identity files and all approved fallbacks across five stages.
+
 ## [2.3.9] - 2026-10-02
 
 ### Fixed

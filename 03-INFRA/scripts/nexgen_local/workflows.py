@@ -23,6 +23,8 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Callable
 
+from nexgen_core.files import write_private_text
+
 from .config import LaneConfig
 from .patch import _PROPOSAL_ID_RE, new_proposal_id
 from .tools import ToolError, audit_event
@@ -86,18 +88,15 @@ def load_allowlist() -> dict[str, Any]:
 
 
 def _save(cfg: LaneConfig, proposal: WorkflowProposal) -> None:
-    cfg.workflows_dir.mkdir(parents=True, exist_ok=True)
     target = cfg.workflows_dir / f"{proposal.id}.json"
-    target.write_text(json.dumps(asdict(proposal), ensure_ascii=False, indent=1), encoding="utf-8")
+    write_private_text(target, json.dumps(asdict(proposal), ensure_ascii=False, indent=1))
 
 
 def _create(cfg: LaneConfig, proposal: WorkflowProposal) -> None:
     """Store a new proposal without ever overwriting an existing one (see patch._create)."""
-    cfg.workflows_dir.mkdir(parents=True, exist_ok=True)
     target = cfg.workflows_dir / f"{proposal.id}.json"
     try:
-        with target.open("x", encoding="utf-8") as handle:
-            handle.write(json.dumps(asdict(proposal), ensure_ascii=False, indent=1))
+        write_private_text(target, json.dumps(asdict(proposal), ensure_ascii=False, indent=1), exclusive=True)
     except FileExistsError as exc:
         raise WorkflowError(f"collisione id proposta, riprova: {proposal.id}") from exc
 

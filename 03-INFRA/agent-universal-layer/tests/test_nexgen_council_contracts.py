@@ -78,6 +78,12 @@ def test_unknown_channel_is_not_a_wildcard():
         parse_routing_plan(_block([("Alpha", "unrecognized", "forfait", "test")]))
 
 
+@pytest.mark.parametrize("prefix", ["> ", "> # ", "Quoted: ", "text # "])
+def test_quoted_verdict_heading_is_not_a_decision(prefix):
+    from verdict import extract_verdict
+    assert extract_verdict(prefix + "VERDICT: REJECT") == "(absent)"
+
+
 def test_go_quota_price_does_not_request_a_cash_payment(monkeypatch):
     monkeypatch.setattr("builtins.input", lambda _: pytest.fail("Go consumes prepaid quota"))
     _confirm_pay_per_use("go", _seat("opencode-go/shared"), "$0.125")
@@ -88,6 +94,32 @@ def test_paid_zen_needs_consent_even_without_a_routing_price(monkeypatch, cost):
     monkeypatch.setattr("builtins.input", lambda _: "no")
     with pytest.raises(SystemExit, match="not confirmed"):
         _confirm_pay_per_use("paid", _seat("opencode/shared"), cost)
+
+
+def test_paid_brainstorm_refusal_stops_before_next_round(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    import council
+    import proposal
+    import verdict
+
+    config = {"seats": {"paid": {**_seat("opencode/shared"), "vendor": "synthetic"}}}
+    monkeypatch.setattr(proposal, "load_config", lambda: config)
+    monkeypatch.setattr(council, "load_config", lambda: config)
+    monkeypatch.setattr(council, "egress_gate", lambda _: None)
+    monkeypatch.setattr(council, "new_session_dir", lambda _: tmp_path)
+    decisions = iter(["yes", "no"])
+    monkeypatch.setattr("builtins.input", lambda _: next(decisions))
+    calls = []
+    monkeypatch.setattr(verdict, "run_seat", lambda *args: (calls.append(args) or "VERDICT: APPROVE", {}))
+    args = SimpleNamespace(seat="paid", timeout_seconds=None, keep_session=True)
+    with pytest.raises(SystemExit, match="not confirmed"):
+        council._run_mode(
+            args, "brainstorm", "synthetic", "synthetic", "brainstorm.md",
+            "brainstorm-continue.md", 3, "L-Arch",
+        )
+    assert len(calls) == 1
+    assert (tmp_path / "01-paid-brainstorm-r1.md").is_file()
+    assert not (tmp_path / "02-paid-brainstorm-r2.md").exists()
 
 
 def test_named_sequence_survives_config_loading(tmp_path):
@@ -170,9 +202,10 @@ def test_tables_in_governor_notes_are_not_role_candidates():
     assert [candidate.value for candidate in plan.roles["Privacy"]] == ["local:latest"]
 
 
-def test_explicit_codex_model_can_differ_from_default(tmp_path, monkeypatch):
+def test_explicit_codex_model_can_differ_from_default(tmp_path, monkeypatch, capsys):
     import json
     from routing import _probe_codex_inventory
+    from proposal import _warn_if_explicit_codex_seat_not_default
 
     monkeypatch.setenv("CODEX_HOME", str(tmp_path))
     (tmp_path / "config.toml").write_text('model = "default"\nmodel_reasoning_effort = "high"\n')
@@ -181,3 +214,5 @@ def test_explicit_codex_model_can_differ_from_default(tmp_path, monkeypatch):
     ]}))
     assert _probe_codex_inventory({"model": "other", "reasoning_effort": "max"}).available
     assert not _probe_codex_inventory({"model": "other", "reasoning_effort": "ultra"}).available
+    _warn_if_explicit_codex_seat_not_default("explicit", {"cli": "codex", "model": "other", "reasoning_effort": "max"})
+    assert "warning" not in capsys.readouterr().out

@@ -25,8 +25,9 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import Any, Iterable, TypedDict
 
+from .source_selection import (pinned_path)
 from .config import LaneConfig
-from .engine import _pinned, route_task
+from .engine import (route_task)
 from .llm import LLM
 from .steps import (
     MAX_STEPS,
@@ -166,27 +167,12 @@ def _secure_storage(directory: Path, session_file: Path | None) -> None:
     bodies, so they get the same treatment as council sessions.
     The directory is created on every platform; only chmod is POSIX-only.
     """
-    import os as _os
+    from nexgen_core.files import secure_artifact
 
-    try:
-        directory.mkdir(parents=True, exist_ok=True)
-    except OSError:
-        pass
-    if _os.name == "nt":
-        # No POSIX modes on Windows: the directory above is still created,
-        # otherwise the first persistent search fails with
-        # "unable to open database file".
-        return
-    try:
-        _os.chmod(directory, 0o700)
-    except OSError:
-        pass
+    secure_artifact(directory)
     if session_file is not None:
         for path in directory.glob(session_file.stem + ".sqlite*"):
-            try:
-                _os.chmod(path, 0o600)
-            except OSError:
-                continue
+            secure_artifact(directory, path)
 
 
 class _Ctx:
@@ -429,6 +415,53 @@ def _summary(session_id: str, state: ResearchState) -> dict[str, Any]:
     }
 
 
+def _continue_research(
+    app: Any, thread: dict[str, Any], snapshot: Any, tools: ToolRegistry,
+    llm: LLM, cfg: LaneConfig, canary_list: list[str],
+    session_id: str, task: str, max_steps: int,
+) -> ResearchState:
+    """Continues a persisted session with a new instruction (fresh budget)."""
+    # Same registry, continued history: menus and the claim check
+    # see every prior receipt, not just this interaction's calls.
+    _hydrate_registry(tools, snapshot.values.get("receipts", []), snapshot.values.get("refusals", []))
+    current = dict(snapshot.values)
+    loop = _loop_from_persisted(current["loop"])
+    loop.task = task
+    # New instruction, fresh run budget: the cap applies per
+    # interaction, and continuations reset (the previous read's
+    # resume point stays available via last_read). The caller's
+    # --max-steps wins over the stored one: a resumed run with a
+    # tighter budget must actually stop earlier.
+    loop.continuations = 0
+    # Intents follow the NEW instruction, not the first one: a
+    # "confronta" continuation must not inherit "rispondi", and a
+    # late "rispondi" must arm the draft menu.
+    loop.want_reply = bool(REPLY_INTENT_RE.search(task))
+    loop.want_upload = bool(UPLOAD_INTENT_RE.search(task))
+    # Re-route when the new instruction names a real source: a
+    # "confronta col contratto" after a mail run pivots the menu's
+    # re-search to Drive instead of re-offering mail.
+    new_route = route_task(llm, cfg, task)
+    if str(new_route.get("source") or "") not in ("", "none"):
+        current["route"] = dict(new_route)
+        loop.route = str(new_route.get("source"))
+    current["loop"] = _loop_to_persisted(loop)
+    current["task"] = task
+    current["max_steps"] = max_steps
+    current["stop"] = ""
+    current["pending"] = None
+    current["answer"] = ""
+    current["escalated"] = False
+    current["used"] = 0
+    current["problems"] = []
+    current["confabulation"] = False
+    current["injection"] = False
+    # New run on the same thread with the full carried-over state:
+    # entry runs decide fresh (an as_node rewind would skip it and
+    # strand the router with no pending decision).
+    return app.invoke(current, config=thread)
+
+
 def research_task(
     llm: LLM,
     cfg: LaneConfig,
@@ -455,7 +488,7 @@ def research_task(
         initial = _initial_research_state(session_id, task, route, max_steps, canary_list)
         if named_path and str(route.get("root") or ""):
             loop = _loop_from_persisted(initial["loop"])
-            loop.named_path = _pinned(str(route.get("root")), named_path)
+            loop.named_path = pinned_path(str(route.get("root")), named_path)
             initial["loop"] = _loop_to_persisted(loop)
         created: ResearchState | None = initial
     else:
@@ -477,43 +510,18 @@ def research_task(
             else:
                 snapshot = app.get_state(thread)
                 if not snapshot.values:
-                    raise ResearchError(f"sessione senza checkpoint: {session_id}")
-                # Same registry, continued history: menus and the claim check
-                # see every prior receipt, not just this interaction's calls.
-                _hydrate_registry(tools, snapshot.values.get("receipts", []), snapshot.values.get("refusals", []))
-                current = dict(snapshot.values)
-                loop = _loop_from_persisted(current["loop"])
-                loop.task = task
-                # New instruction, fresh run budget: the cap applies per
-                # interaction, and continuations reset (the previous read's
-                # resume point stays available via last_read).
-                loop.continuations = 0
-                # Intents follow the NEW instruction, not the first one: a
-                # "confronta" continuation must not inherit "rispondi", and a
-                # late "rispondi" must arm the draft menu.
-                loop.want_reply = bool(REPLY_INTENT_RE.search(task))
-                loop.want_upload = bool(UPLOAD_INTENT_RE.search(task))
-                # Re-route when the new instruction names a real source: a
-                # "confronta col contratto" after a mail run pivots the menu's
-                # re-search to Drive instead of re-offering mail.
-                new_route = route_task(llm, cfg, task)
-                if str(new_route.get("source") or "") not in ("", "none"):
-                    current["route"] = dict(new_route)
-                    loop.route = str(new_route.get("source"))
-                current["loop"] = _loop_to_persisted(loop)
-                current["task"] = task
-                current["stop"] = ""
-                current["pending"] = None
-                current["answer"] = ""
-                current["escalated"] = False
-                current["used"] = 0
-                current["problems"] = []
-                current["confabulation"] = False
-                current["injection"] = False
-                # New run on the same thread with the full carried-over state:
-                # entry runs decide fresh (an as_node rewind would skip it and
-                # strand the router with no pending decision).
-                final = app.invoke(current, config=thread)
+                    # Crash before the first persist (kill during decide,
+                    # full disk): the file exists but holds no state. Start
+                    # this instruction fresh on the same session instead of
+                    # bricking the id until the TTL sweep.
+                    route = route_task(llm, cfg, task)
+                    created = _initial_research_state(session_id, task, route, max_steps, canary_list)
+                    final = app.invoke(created, config=thread)
+                else:
+                    final = _continue_research(
+                        app, thread, snapshot, tools, llm, cfg, canary_list,
+                        session_id, task, max_steps,
+                    )
         finally:
             # Checkpoints may hold mail bodies: lock them down even when
             # the run raised midway.

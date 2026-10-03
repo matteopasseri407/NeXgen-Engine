@@ -8,6 +8,7 @@ from pathlib import Path
 from nexgen_core.git_ops import (
     GitState,
     get_current_branch,
+    get_uncommitted_files,
     inspect_git_state,
     list_quarantine_branches,
     oldest_unpublished_commit_timestamp,
@@ -165,6 +166,42 @@ def check_mirror_alignment(vault_data: Path, expected_branch: str | None = None)
     return outcomes
 
 
+def check_remotes_config(vault_data: Path) -> CheckOutcome | None:
+    """The remotes file must parse to a usable declaration.
+
+    A malformed ``remotes.yaml`` falls back to ``origin`` in silence, which
+    can publish to the wrong remote. Missing file is fine (convention over
+    configuration); present-but-unreadable is BROKEN, never silent. Returns
+    None when there is nothing to say.
+    """
+    import yaml
+
+    path = vault_data / "03-INFRA" / "agent-universal-layer" / "sync" / "remotes.yaml"
+    if not path.is_file():
+        return None
+    try:
+        data = yaml.safe_load(path.read_text(encoding="utf-8"))
+    except (OSError, yaml.YAMLError) as exc:
+        return CheckOutcome(
+            id="git.remotes_config",
+            severity=Severity.BROKEN,
+            message=t("The remotes file {path} is unreadable ({error}); pushes would silently fall back to 'origin'.", path=path, error=exc),
+            action=t("Fix the YAML syntax of remotes.yaml."),
+        )
+    if data is not None and not isinstance(data, dict):
+        return CheckOutcome(
+            id="git.remotes_config",
+            severity=Severity.BROKEN,
+            message=t("The remotes file {path} does not contain a map; pushes would silently fall back to 'origin'.", path=path),
+            action=t("Fix the structure of remotes.yaml (authoritative_remote, mirrors)."),
+        )
+    return CheckOutcome(
+        id="git.remotes_config",
+        severity=Severity.OK,
+        message=t("Remotes declaration readable"),
+    )
+
+
 def check_quarantine_branches(vault_data: Path) -> CheckOutcome:
     """Checks whether there are diverged quarantine branches awaiting reconciliation."""
     if not (vault_data / ".git").exists():
@@ -196,4 +233,58 @@ def check_quarantine_branches(vault_data: Path) -> CheckOutcome:
             "Review diff with 'git diff main..{branch}', reconcile changes into canonical files, then remove the quarantine branch with 'git branch -D {branch}'.",
             branch=first_b,
         ),
+    )
+
+
+def check_engine_lane(engine_root: Path) -> CheckOutcome | None:
+    """The engine checkout must honor the agent-lane contract.
+
+    Work-in-progress sitting on `main`/`release/*` bypasses the lanes and
+    will trip the CI lane-guard on push. WARN only: moving it is a human
+    (or agent) decision, never an automated rewrite. Returns None when
+    this machine does not carry an engine git checkout at all.
+    """
+    repo = engine_root.parent if engine_root.name == "03-INFRA" else engine_root
+    if not (repo / ".git").exists():
+        return None
+    branch = get_current_branch(repo)
+    if not branch:
+        return CheckOutcome(
+            id="git.engine_lane",
+            severity=Severity.WARN,
+            message=t("The engine checkout is on a detached HEAD; lane work belongs on a dev/<agent> branch."),
+            action=t("Check out your dev/<agent> lane before committing."),
+        )
+    from nexgen_core.lanes import check_ref, guarded_ref, resolve_revision
+
+    if not guarded_ref(branch):
+        return CheckOutcome(
+            id="git.engine_lane", severity=Severity.OK,
+            message=t("Engine checkout on lane branch '{branch}'", branch=branch),
+        )
+    dirty = get_uncommitted_files(repo)
+    # A missing integration ref is unknown, never proof of alignment.
+    required = "developer" if branch.startswith("release/") else f"origin/{branch}"
+    if resolve_revision(repo, required) is None:
+        return CheckOutcome(
+            id="git.engine_lane", severity=Severity.WARN if dirty else Severity.UNDETERMINED,
+            message=(t("Engine work on '{branch}' belongs on a dev/<agent> lane ({what}).", branch=branch, what=t("{count} uncommitted files", count=len(dirty)))
+                     if dirty else t("Could not check the engine lane: missing ref {ref}", ref=required)),
+            detail=t("{count} uncommitted files", count=len(dirty)) if dirty else "",
+            action=(t("Move the work to your dev/<agent> lane and verify it before integrating.")
+                    if dirty else t("Fetch the engine repository's remote branches and run doctor again.")),
+        )
+    ok, problems = check_ref(repo, branch)
+    if not dirty and ok:
+        return CheckOutcome(
+            id="git.engine_lane", severity=Severity.OK,
+            message=t("Engine checkout on '{branch}', clean and aligned", branch=branch),
+        )
+    detail = "; ".join(problems)
+    if dirty:
+        detail = t("{count} uncommitted files", count=len(dirty)) + ("; " + detail if detail else "")
+    return CheckOutcome(
+        id="git.engine_lane", severity=Severity.WARN,
+        message=t("Engine work on '{branch}' belongs on a dev/<agent> lane ({what}).", branch=branch, what=detail),
+        action=t("Move the work to your dev/<agent> lane and verify it before integrating."),
     )

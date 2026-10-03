@@ -168,7 +168,7 @@ def cmd_plan(args) -> int:
             for action in plan.planned_actions:
                 print(f"  → {action}")
         else:
-            print(t("No drift: apply would change nothing."))
+            print(t("No drift in the probed domains (see 'not checked here' below for the rest)."))
         for line in plan.in_sync:
             print(t("  aligned: {line}", line=line))
         for line in plan.not_checked:

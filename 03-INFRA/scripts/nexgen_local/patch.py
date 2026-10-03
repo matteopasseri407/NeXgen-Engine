@@ -23,6 +23,8 @@ import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
+from nexgen_core.files import write_private_text
+
 from .config import LaneConfig
 from .llm import LLM
 from .tools import ToolError, audit_event
@@ -149,9 +151,8 @@ def _dry_run(repo_root: Path, patch_text: str) -> tuple[bool, str]:
 
 
 def _save(cfg: LaneConfig, proposal: Proposal) -> None:
-    cfg.proposals_dir.mkdir(parents=True, exist_ok=True)
     target = cfg.proposals_dir / f"{proposal.id}.json"
-    target.write_text(json.dumps(asdict(proposal), ensure_ascii=False, indent=1), encoding="utf-8")
+    write_private_text(target, json.dumps(asdict(proposal), ensure_ascii=False, indent=1))
 
 
 def _create(cfg: LaneConfig, proposal: Proposal) -> None:
@@ -162,11 +163,9 @@ def _create(cfg: LaneConfig, proposal: Proposal) -> None:
     never apply a different proposal than the one shown; callers regenerate
     the id and retry.
     """
-    cfg.proposals_dir.mkdir(parents=True, exist_ok=True)
     target = cfg.proposals_dir / f"{proposal.id}.json"
     try:
-        with target.open("x", encoding="utf-8") as handle:
-            handle.write(json.dumps(asdict(proposal), ensure_ascii=False, indent=1))
+        write_private_text(target, json.dumps(asdict(proposal), ensure_ascii=False, indent=1), exclusive=True)
     except FileExistsError as exc:
         raise PatchError(f"collisione id proposta, riprova: {proposal.id}") from exc
 

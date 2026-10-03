@@ -71,6 +71,21 @@ def available_clis() -> list[str]:
     return [cli for cli in RELAY_CLIS if shutil.which(cli)]
 
 
+def _posix_only_chmod(path: Path, mode: int) -> None:
+    """POSIX permission gate; best-effort, never fatal.
+
+    On Windows there is no chmod equivalent for 0700/0600: the isolated
+    credential copies inherit the parent ACL there, so on a shared Windows
+    host the workdir relies on the user profile ACL instead.
+    """
+    if os.name == "nt":
+        return
+    try:
+        os.chmod(path, mode)
+    except OSError:
+        pass
+
+
 def _isolated_env(cli: str, workdir: Path) -> dict[str, str]:
     if cli == "claude":
         # --tools "" already makes every tool, MCP included, uninvocable by
@@ -81,20 +96,20 @@ def _isolated_env(cli: str, workdir: Path) -> dict[str, str]:
     if cli == "codex":
         home = workdir / "codex-home"
         home.mkdir(parents=True, exist_ok=True)
-        os.chmod(home, 0o700)
+        _posix_only_chmod(home, 0o700)
         real_home = Path(os.environ.get("CODEX_HOME") or (Path.home() / ".codex"))
         real_auth = real_home / "auth.json"
         if real_auth.is_file():
             auth_copy = home / "auth.json"
             auth_copy.write_bytes(real_auth.read_bytes())
-            os.chmod(auth_copy, 0o600)
+            _posix_only_chmod(auth_copy, 0o600)
         env["CODEX_HOME"] = str(home)
         if "OPENAI_API_KEY" in os.environ:
             env["OPENAI_API_KEY"] = os.environ["OPENAI_API_KEY"]
     elif cli == "opencode":
         config_home = workdir / "opencode-config"
         config_home.mkdir(parents=True, exist_ok=True)
-        os.chmod(config_home, 0o700)
+        _posix_only_chmod(config_home, 0o700)
         # OpenCode has no CLI-level sandbox flag: its permission model lives in
         # opencode.json. The isolated config denies edit, bash and webfetch by
         # construction, so the relayed seat cannot write or fetch even if the

@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, developer, "release/**", "dev/**"]
   pull_request:
 
 # Default to read-only GITHUB_TOKEN permissions for every job in this
@@ -93,7 +93,8 @@ jobs:
             --before "${{ github.event.before }}" \
             --sha "${{ github.sha }}" \
             --pr-base "${{ github.event.pull_request.base.sha }}" \
-            --pr-head "${{ github.event.pull_request.head.sha }}")"
+            --pr-head "${{ github.event.pull_request.head.sha }}" \
+            --first-push-base origin/main)"
           python3 03-INFRA/agent-universal-layer/leak-scan/leak_scan.py \
             --patterns 03-INFRA/agent-universal-layer/leak-scan/leak_patterns.yaml \
             --repo . \
@@ -125,6 +126,20 @@ jobs:
 
       - name: Ruff baseline gate (03-INFRA)
         run: python3 03-INFRA/scripts/ruff_baseline_check.py
+
+  lane-guard:
+    # Check the actual push range or synthetic PR merge, including developer.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 0
+
+      - name: Lane contract check
+        env:
+          LANE_REF: ${{ github.base_ref || github.ref_name }}
+          LANE_BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: python3 03-INFRA/scripts/lane_guard.py --ref "$LANE_REF" --tip HEAD --base "$LANE_BASE" --first-push-base origin/main
 
   shellcheck:
     runs-on: ubuntu-latest

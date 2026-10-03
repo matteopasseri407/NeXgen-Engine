@@ -11,9 +11,15 @@ to it, keeping only its own naming/retention choice as parameters.
 """
 from __future__ import annotations
 
+import contextlib
+import glob
 import os
+import re
+import tempfile
 import time
 from pathlib import Path
+
+from nexgen_core.i18n import t
 
 #: How long the Windows retry loop waits in total before giving up. Locks
 #: from antivirus/indexing usually clear in milliseconds; past this budget
@@ -21,39 +27,92 @@ from pathlib import Path
 _RETRY_BUDGET_SECONDS = 0.8
 
 
-def atomic_write_text(path: Path, text: str, *, preserve_mode: bool = True) -> None:
+def atomic_write_text(path: Path, text: str, *, preserve_mode: bool = True, exclusive: bool = False) -> None:
     """Write-then-rename: a crash mid-write never leaves a truncated file.
 
-    Carries the file mode across the rename (a config rewritten without
-    its `0600` would silently widen who can read secrets) and retries
-    transient `PermissionError`s (Windows locks from antivirus/indexing),
-    which was previously only the scheduler's writer behavior.
+    Carries the permission bits across the rename (a config rewritten
+    without its `0600` would silently widen who can read secrets; setuid /
+    setgid / sticky bits are never carried: they describe execution, not
+    readability, and inheriting them from a compromised source would
+    escalate it) and retries transient `PermissionError`s (Windows locks
+    from antivirus/indexing), which was previously only the scheduler's
+    writer behavior.
+
+    The complete temporary file is fsynced before publication; directory
+    fsync is best-effort where the filesystem supports it. Exclusive
+    creation publishes with a hard link and refuses an existing target.
+    The temp name is unique per process, thread and call (never just the
+    PID): two writers in one process, or a stale tmp from a crashed run,
+    cannot silently clobber each other.
     """
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     old_mode = None
     if preserve_mode and path.exists():
         try:
-            old_mode = path.stat().st_mode
+            old_mode = path.stat().st_mode & 0o777
         except OSError:
             pass
-    tmp = path.with_name(f"{path.name}.{os.getpid()}.tmp")
-    tmp.write_text(text, encoding="utf-8")
-    if old_mode is not None:
-        try:
-            os.chmod(tmp, old_mode)
-        except OSError:
-            pass
-    delay = 0.05
-    while True:
-        try:
-            os.replace(tmp, path)
-            return
-        except PermissionError:
-            if delay >= _RETRY_BUDGET_SECONDS:
-                raise
-            time.sleep(delay)
-            delay *= 2
+    # mkstemp creates an exclusive, private file. Only this call's temporary
+    # file belongs to us; a filename glob cannot establish ownership.
+    fd, name = tempfile.mkstemp(prefix=f"{path.name}.", suffix=".tmp", dir=path.parent)
+    tmp = Path(name)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            if old_mode is not None:
+                os.chmod(tmp, old_mode)
+            handle.write(text)
+            handle.flush()
+            os.fsync(handle.fileno())
+        delay = 0.05
+        while True:
+            try:
+                if exclusive:
+                    os.link(tmp, path)
+                else:
+                    os.replace(tmp, path)
+                break
+            except PermissionError:
+                if delay >= _RETRY_BUDGET_SECONDS:
+                    raise
+                time.sleep(delay)
+                delay *= 2
+        # Some filesystems (and Windows) do not support directory fsync.
+        with contextlib.suppress(OSError):
+            dir_fd = os.open(path.parent, os.O_RDONLY)
+            try:
+                os.fsync(dir_fd)
+            finally:
+                os.close(dir_fd)
+    finally:
+        tmp.unlink(missing_ok=True)
+
+
+def secure_artifact(directory: Path, path: Path | None = None) -> None:
+    """Establish privacy before writing: 0700 directory, 0600 file on POSIX.
+
+    Permission failures surface. Windows uses the profile's inherited ACL;
+    POSIX chmod cannot establish a Windows access-control policy.
+    """
+    directory.mkdir(parents=True, exist_ok=True, mode=0o700)
+    if os.name != "nt":
+        os.chmod(directory, 0o700)
+        if path is not None:
+            os.chmod(path, 0o600)
+
+
+def write_private_text(path: Path, text: str, *, exclusive: bool = False) -> None:
+    """Publish complete private bytes, optionally refusing an ID collision."""
+    secure_artifact(path.parent)
+    atomic_write_text(path, text, preserve_mode=False, exclusive=exclusive)
+
+
+def _safe_tag(tag: str | None) -> str | None:
+    """A tag that cannot escape the backup filename or its rotation glob."""
+    if tag is None:
+        return None
+    cleaned = re.sub(r"[^A-Za-z0-9_.-]+", "-", tag).strip(".-")
+    return cleaned or "untagged"
 
 
 def backup_file(path: Path, *, tag: str | None = None, keep: int | None = None) -> Path | None:
@@ -65,27 +124,42 @@ def backup_file(path: Path, *, tag: str | None = None, keep: int | None = None) 
 
     `tag` names the reason (`permissions`, `instructions`, ...), producing
     `<name>.pre-<tag>-<timestamp>.bak`; without it, `<name>.bak-<timestamp>`.
-    `keep` rotates: only that many newest backups survive (the MCP renderer
-    keeps 3); without it backups accumulate and their cleanup stays the
-    user's (see `docs/uninstall.md`).
+    An exclusive filename keeps simultaneous backups distinct. `keep`
+    rotates: only that many newest
+    backups survive (the MCP renderer keeps 3); without it backups
+    accumulate and their cleanup stays the user's (see `docs/uninstall.md`).
     """
     import shutil
 
     path = Path(path)
     if not path.is_file():
         return None
-    stamp = time.strftime("%Y%m%d-%H%M%S")
-    stem = f"{path.name}.pre-{tag}-{stamp}.bak" if tag else f"{path.name}.bak-{stamp}"
-    backup_path = path.with_name(stem)
-    shutil.copy2(path, backup_path)
+    stamp = f"{time.strftime('%Y%m%d-%H%M%S')}-{time.time_ns()}"
+    safe = _safe_tag(tag)
+    stem = f"{path.name}.pre-{safe}-{stamp}" if safe else f"{path.name}.bak-{stamp}"
+    fd, name = tempfile.mkstemp(prefix=stem + "-", suffix=".bak", dir=path.parent)
+    os.close(fd)
+    backup_path = Path(name)
+    try:
+        shutil.copy2(path, backup_path)
+    except BaseException:
+        backup_path.unlink(missing_ok=True)
+        raise
     if keep is not None:
-        if tag:
-            matches = sorted(path.parent.glob(f"{path.name}.pre-{tag}-*.bak"))
-        else:
-            matches = sorted(path.parent.glob(f"{path.name}.bak-*"))
-        for old in matches[: max(len(matches) - keep, 0)]:
-            old.unlink(missing_ok=True)
+        _prune_backups(path, safe, keep)
     return backup_path
+
+
+def _prune_backups(path: Path, safe_tag: str | None, keep: int) -> None:
+    """Drops rotated-out backups, oldest first. Runs only after the new
+    content is safely on disk: pruning before a write that then fails
+    would delete history and deliver nothing."""
+    if safe_tag:
+        matches = sorted(path.parent.glob(f"{glob.escape(path.name)}.pre-{safe_tag}-*.bak"))
+    else:
+        matches = sorted(path.parent.glob(f"{glob.escape(path.name)}.bak-*"))
+    for old in matches[: max(len(matches) - keep, 0)]:
+        old.unlink(missing_ok=True)
 
 
 def write_text_if_changed(
@@ -103,8 +177,17 @@ def write_text_if_changed(
         try:
             if path.read_text(encoding="utf-8") == text:
                 return False
-        except (OSError, UnicodeDecodeError):
+        except UnicodeDecodeError as exc:
+            # The file exists but cannot be read as text: overwriting it
+            # would destroy content nobody inspected. Fail closed instead
+            # of publishing new bytes over an unknown original.
+            raise OSError(t("Refusing to overwrite unreadable file {path}: {exc}", path=path, exc=exc)) from exc
+        except OSError:
+            # Unreadable for permissions: the write below would fail too,
+            # but with the original already backed up. Let it surface there.
             pass
-    backup_file(path, tag=tag, keep=keep)
+    backup_file(path, tag=tag)
     atomic_write_text(path, text)
+    if keep is not None:
+        _prune_backups(path, _safe_tag(tag), keep)
     return True

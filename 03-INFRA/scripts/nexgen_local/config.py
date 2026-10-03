@@ -11,6 +11,8 @@ import os
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from nexgen_core.files import secure_artifact as secure_artifact
+
 #: Default Ollama tag. Never hardcoded into behaviour, only into the fallback.
 DEFAULT_MODEL = "gemma4-12b-openclaw:latest"
 

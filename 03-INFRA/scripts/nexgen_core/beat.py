@@ -35,6 +35,21 @@ LIVENESS_FILE_NAME = "agent-guard-liveness"
 MAX_LIVENESS_AGE_HOURS = 2.5
 
 
+def _just_booted(grace_seconds: float) -> bool:
+    """True when the system itself started more recently than the grace window.
+
+    Tells "guard never ran since boot" apart from "guard stalled for hours":
+    only the second deserves an alert. Linux-only signal (`/proc/uptime`);
+    anywhere else it returns False and alerting behaves as before.
+    """
+    try:
+        with open("/proc/uptime", encoding="utf-8") as handle:
+            uptime = float(handle.read().split()[0])
+    except (OSError, ValueError, IndexError):
+        return False
+    return uptime < grace_seconds
+
+
 class Heartbeat:
     """Manager for the hourly heartbeat."""
 
@@ -57,7 +72,7 @@ class Heartbeat:
         self.megaphone = Megaphone(state_dir=self.state_dir)
         self.liveness_file = self.state_dir / LIVENESS_FILE_NAME
 
-    def record_liveness(self) -> None:
+    def record_liveness(self, warnings: int = 0) -> None:
         """Records the successful completion of a Guard cycle, and by whom.
 
         The version is written alongside the timestamp because otherwise
@@ -68,14 +83,29 @@ class Heartbeat:
 
         The format stays a first line that parses as a float, so a previous
         version reading this file keeps working: it reads the first line and
-        ignores the rest.
+        ignores the rest. The warning count rides a third line for the same
+        reason: a cycle that completed with degraded phases is still a
+        completed cycle, but the monitor should say so.
         """
         from nexgen_core import __version__
 
         self.state_dir.mkdir(parents=True, exist_ok=True)
         self.liveness_file.write_text(
-            f"{time.time()}\n{__version__}\n", encoding="utf-8"
+            f"{time.time()}\n{__version__}\nWARN={int(warnings)}\n", encoding="utf-8"
         )
+
+    def recorded_warnings(self) -> int | None:
+        """Warning count of the last recorded cycle, None when unrecorded."""
+        if not self.liveness_file.is_file():
+            return None
+        try:
+            lines = self.liveness_file.read_text(encoding="utf-8").splitlines()
+            for line in lines[2:]:
+                if line.strip().startswith("WARN="):
+                    return int(line.strip().split("=", 1)[1])
+        except (OSError, ValueError):
+            return None
+        return None
 
     def recorded_version(self) -> str | None:
         """Which engine last completed a cycle here, if it said so.
@@ -83,9 +113,10 @@ class Heartbeat:
         `None` means the file was written by a version that did not record
         one — which is itself the answer: this machine is behind.
         """
-        if not self.liveness_file.is_file():
+        try:
+            lines = self.liveness_file.read_text(encoding="utf-8").splitlines()
+        except OSError:
             return None
-        lines = self.liveness_file.read_text(encoding="utf-8").splitlines()
         return lines[1].strip() if len(lines) >= 2 and lines[1].strip() else None
 
     def check_liveness(self) -> tuple[bool, str]:
@@ -100,6 +131,14 @@ class Heartbeat:
             last_ts = float(first.strip())
             elapsed = time.time() - last_ts
             if elapsed > MAX_LIVENESS_AGE_HOURS * 3600:
+                if _just_booted(MAX_LIVENESS_AGE_HOURS * 3600):
+                    # Fresh boot or wake: the guard has not had a chance to
+                    # run yet. Alerting here is the suspend-spam that cries
+                    # stalled at every laptop wake.
+                    return True, t(
+                        "Guard starting up (last cycle {minutes:.0f} minutes ago, machine just started)",
+                        minutes=elapsed / 60,
+                    )
                 hours = elapsed / 3600
                 msg = t("The sync cycle has been stalled for {hours:.1f} hours.", hours=hours)
                 self.megaphone.send_alert(
@@ -109,8 +148,20 @@ class Heartbeat:
                     alert_key="guard_stale"
                 )
                 return False, msg
-            return True, t("Guard active (last completed {minutes:.0f} minutes ago)", minutes=elapsed / 60)
+            msg = t("Guard active (last completed {minutes:.0f} minutes ago)", minutes=elapsed / 60)
+            warns = self.recorded_warnings()
+            if warns:
+                msg += " " + t("(last cycle completed with {count} warnings)", count=warns)
+            return True, msg
         except Exception as exc:
+            # A corrupt liveness file blinds self-monitoring: alert once
+            # (debounced) instead of returning a silent False nobody acts on.
+            self.megaphone.send_alert(
+                title=t("Agent sync self-monitoring is blind"),
+                message=t("The liveness file cannot be read ({error}); fix or delete it.", error=exc),
+                action=t("Run 'agent-sync apply' in the terminal to check the status."),
+                alert_key="guard_liveness_corrupt",
+            )
             return False, t("Error reading liveness: {error}", error=exc)
 
     def run_dependency_watch(self) -> dict[str, Any]:

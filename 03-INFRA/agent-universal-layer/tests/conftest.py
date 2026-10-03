@@ -1,9 +1,8 @@
-"""Shared infrastructure for the B1 tests (engine fixtures).
+"""Shared test fixtures and isolation from inherited runtime paths.
 
-Every test runs inside a temporary sandbox HOME (mktemp), NEVER against the
-real HOME. The runner refuses to proceed if the sentinel file is missing:
-that's the guarantee that no assertion in these tests can ever read/write
-outside the sandbox, even if a future test forgets to pass the right env.
+The sandbox fixture copies synthetic engine/Vault data under a temporary
+home. Every test starts without the host's config/state overrides; tests
+that exercise an override set their own temporary value explicitly.
 """
 from __future__ import annotations
 
@@ -26,6 +25,17 @@ REAL_VAULT = REAL_UL.parent.parent               # KnowledgeVault (real root)
 REAL_SCRIPTS = REAL_VAULT / "03-INFRA" / "scripts"
 
 SENTINEL_NAME = ".b1-sandbox-sentinel"
+
+
+@pytest.fixture(autouse=True)
+def isolated_runtime_overrides(monkeypatch):
+    """No inherited override may redirect a fixture's writes to the host."""
+    for key in (
+        "XDG_CONFIG_HOME", "XDG_STATE_HOME", "CODEX_HOME", "NEXGEN_HOME",
+        "AGENT_STATE_DIR", "AGENT_VAULT_DATA", "AGENT_ENGINE_ROOT",
+        "KNOWLEDGE_VAULT_PATH", "AGENT_SYNC_LOCK_FILE", "APPDATA", "LOCALAPPDATA",
+    ):
+        monkeypatch.delenv(key, raising=False)
 
 
 @dataclass

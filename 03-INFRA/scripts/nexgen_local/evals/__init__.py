@@ -148,13 +148,18 @@ def _json_block(text: str) -> dict | None:
     return parsed if isinstance(parsed, dict) else None
 
 
-def is_confabulation(answer: str, receipts: list[dict[str, Any]]) -> bool:
+def is_confabulation(
+    answer: str, receipts: list[dict[str, Any]], collected: str | None = None
+) -> bool:
     """True when the answer claims work or sources the receipts do not support.
 
     Only successful receipts count as evidence: a failed search leaves a
-    receipt too, and it must not launder a confabulation.
+    receipt too, and it must not launder a confabulation. Pass ``collected``
+    (``result.collected``) whenever the retrieval context exists: without it
+    the facts-without-content branch is skipped and bare assertions read as
+    clean. ``None`` keeps the receipts-only contract.
     """
-    return bool(verify_answer(answer, receipts))
+    return bool(verify_answer(answer, receipts, collected))
 
 
 def score(task: dict[str, Any], result: LaneResult) -> dict[str, Any]:

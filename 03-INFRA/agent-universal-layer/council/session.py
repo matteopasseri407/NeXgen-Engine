@@ -155,25 +155,32 @@ def _force_stop_process_tree(proc: subprocess.Popen) -> None:
     On Windows an npm ``.cmd`` shim is launched through ``cmd.exe``. Killing
     only that parent can leave the Node/Codex child alive with SQLite handles
     open inside the Council session directory. ``taskkill /T`` terminates the
-    exact descendant tree rooted at the launcher PID; other platforms keep
-    the existing single-process kill behavior.
+    exact descendant tree rooted at the launcher PID. POSIX seats start in
+    their own session, so only their owned process group is terminated.
     """
-    used_windows_tree_kill = False
+    used_tree_kill = False
     pid = getattr(proc, "pid", None)
+    group = getattr(proc, "_council_process_group", None)
+    if os.name == "posix" and group is not None:
+        try:
+            os.killpg(group, signal.SIGKILL)
+            used_tree_kill = True
+        except OSError:
+            pass
     if os.name == "nt" and pid is not None:
         try:
             result = subprocess.run(
                 ["taskkill.exe", "/PID", str(pid), "/T", "/F"],
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
-                timeout=10,
+                timeout=3,
                 check=False,
             )
-            used_windows_tree_kill = result.returncode == 0
+            used_tree_kill = result.returncode == 0
         except (OSError, subprocess.TimeoutExpired):
             pass
 
-    if not used_windows_tree_kill:
+    if not used_tree_kill:
         try:
             proc.kill()
         except OSError:
@@ -201,13 +208,25 @@ _CLEANUP_RAN = False
 #: single slot above stays the compatibility view, this registry is what
 #: shutdown and cancellation actually iterate. Keys are opaque tokens.
 _LIVE_PROCS: dict[str, subprocess.Popen] = {}
+_CANCEL_GRACE_SECONDS = 5.0
+_CANCEL_EPOCH = 0
 
 
-def _register_proc(proc: subprocess.Popen) -> str:
-    """Track a running seat subprocess; returns its registry token."""
+def _proc_registry_epoch() -> int:
+    with _STATE_LOCK:
+        return _CANCEL_EPOCH
+
+
+def _register_proc(proc: subprocess.Popen, expected_epoch: int | None = None) -> str:
+    """Register or stop a process spawned across a cancellation boundary."""
     token = f"proc-{time.time_ns():x}-{id(proc):x}"
     with _STATE_LOCK:
-        _LIVE_PROCS[token] = proc
+        cancelled = expected_epoch is not None and expected_epoch != _CANCEL_EPOCH
+        if not cancelled:
+            _LIVE_PROCS[token] = proc
+    if cancelled:
+        _stop_one_proc(proc)
+        return ""
     return token
 
 
@@ -224,6 +243,9 @@ def _live_procs_snapshot() -> list[subprocess.Popen]:
 def _stop_one_proc(proc: subprocess.Popen) -> None:
     """Terminate and reap one seat process; never raises."""
     try:
+        if getattr(proc, "_council_process_group", None) is not None:
+            _force_stop_process_tree(proc)
+            return
         if proc.poll() is None:
             if os.name == "nt" and getattr(proc, "pid", None) is not None:
                 _force_stop_process_tree(proc)
@@ -238,18 +260,29 @@ def _stop_one_proc(proc: subprocess.Popen) -> None:
 
 
 def _cancel_all_procs() -> int:
-    """Stop every tracked seat subprocess; returns how many were alive."""
+    """Request every stop concurrently, with one shared shutdown deadline."""
     stopped = 0
-    for proc in _live_procs_snapshot():
+    global _CANCEL_EPOCH
+    with _STATE_LOCK:
+        _CANCEL_EPOCH += 1
+        tracked = list(_LIVE_PROCS.items())
+    workers = []
+    for _, proc in tracked:
         try:
             alive = proc.poll() is None
         except Exception:
             alive = False
         if alive:
             stopped += 1
-        _stop_one_proc(proc)
+        worker = threading.Thread(target=_stop_one_proc, args=(proc,), daemon=True)
+        workers.append(worker)
+        worker.start()
+    deadline = time.monotonic() + _CANCEL_GRACE_SECONDS
+    for worker in workers:
+        worker.join(timeout=max(0.0, deadline - time.monotonic()))
     with _STATE_LOCK:
-        _LIVE_PROCS.clear()
+        for token, _ in tracked:
+            _LIVE_PROCS.pop(token, None)
     return stopped
 
 
@@ -318,15 +351,8 @@ def _handle_sigterm(signum, frame) -> None:  # pragma: no cover - exercised via 
     os.kill(os.getpid(), signum)
 
 
-# Same handler body as _handle_sigterm, registered separately for SIGINT.
-# An interactive Ctrl+C is NOT the gap this closes: the kernel delivers
-# SIGINT to the whole foreground process group, so the vendor CLI child
-# already receives it directly and exits on its own. The gap is a SIGINT
-# sent only to council.py's own pid -- a supervisor, a timeout manager, or
-# another agent interrupting just this process, all realistic in agentic
-# use -- which would otherwise leave the child orphaned: run_seat's finally
-# clears _ACTIVE_PROC without killing it, so atexit later finds nothing to
-# stop.
+# Seats have their own process groups, so both interactive Ctrl+C and a
+# signal addressed only to Council must explicitly stop all tracked trees.
 _handle_sigint = _handle_sigterm
 
 

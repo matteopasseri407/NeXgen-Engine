@@ -696,3 +696,133 @@ def test_the_reason_of_a_failure_beats_the_last_line() -> None:
     assert "Qwen3-ASR is NOT loaded" in _health_detail(uscita, "boh")
     assert _health_detail("", "boh") == "boh"
     assert _health_detail("solo una riga\n", "boh") == "solo una riga"
+
+
+def test_transient_env_gates_keep_module_instead_of_uninstalling(tmp_path: Path) -> None:
+    """Declared local but gates missing = thin environment, not a removal.
+
+    The guard must keep shims/units in place instead of demolishing and
+    rebuilding them every other cycle (the flap that makes commands appear
+    and vanish).
+    """
+    from nexgen_core.modules import ModuleState
+
+    source = _module_source(tmp_path)
+    (source / "bin").mkdir(parents=True, exist_ok=True)
+    (source / "bin" / "demo-entry").write_text("#!/bin/sh\n", encoding="utf-8")
+    root = _catalog(tmp_path, f"""
+        schema_version: 2
+        modules:
+          demo:
+            label: Demo
+            kind: feature
+            states: [absent, local]
+            source: "{source.as_posix()}"
+            env_gates: [DEMO_TOKEN_THAT_IS_ABSENT]
+            provides:
+              shims:
+                demo: "{source.as_posix()}/bin/demo-entry"
+            requires:
+              binaries: [sh]
+        """)
+    from nexgen_core.modules import load_catalog
+
+    module = load_catalog(root)["demo"]
+    home = tmp_path / "home"
+    # install first with gates satisfied (env override via declared state)
+    states = [ModuleState(module, "local", "state-file", declared="local")]
+    first = install_declared_modules(states, home=home, log=lambda _m: None)
+    assert first, "expected an install on the first pass"
+    # now the transient case: demoted for missing gates, declared=local kept
+    transient = [ModuleState(module, "absent", "env-gates", note="x", declared="local")]
+    logged: list[str] = []
+    second = install_declared_modules(transient, home=home, log=logged.append)
+    assert second == []
+    assert any("kept as-is" in line for line in logged)
+    assert (home / ".local" / "bin" / ("demo.cmd" if os.name == "nt" else "demo")).is_file(), "shim demolished on transient env"
+
+
+def test_one_bad_module_does_not_abort_siblings(tmp_path: Path) -> None:
+    """An unreadable source in one module must not block the others."""
+    source_ok = _module_source(tmp_path)
+    (source_ok / "bin").mkdir(parents=True, exist_ok=True)
+    (source_ok / "bin" / "demo-entry").write_text("#!/bin/sh\n", encoding="utf-8")
+    root = _catalog(tmp_path, f"""
+        schema_version: 2
+        modules:
+          good:
+            label: Good
+            kind: feature
+            states: [absent, local]
+            source: "{source_ok.as_posix()}"
+            provides:
+              shims:
+                good: "{source_ok.as_posix()}/bin/demo-entry"
+            requires:
+              binaries: [sh]
+          bad:
+            label: Bad
+            kind: feature
+            states: [absent, local]
+            source: "/nonexistent-source-dir"
+            provides:
+              shims:
+                bad: "/nonexistent-source-dir/bin/x"
+            requires:
+              binaries: [sh]
+        """)
+    from nexgen_core.modules import load_catalog
+
+    catalog = load_catalog(root)
+    home = tmp_path / "home2"
+    logged: list[str] = []
+    states = [ModuleState(catalog["good"], "local", "state-file"),
+              ModuleState(catalog["bad"], "local", "state-file")]
+    install_declared_modules(states, home=home, log=logged.append)
+    assert (home / ".local" / "bin" / ("good.cmd" if os.name == "nt" else "good")).is_file()
+
+
+def test_unsafe_shim_target_is_refused(tmp_path: Path) -> None:
+    from nexgen_core.module_install import _shim_target
+
+    import pytest as _pytest
+
+    with _pytest.raises(ValueError):
+        _shim_target(__import__("pathlib").Path('/tmp/evil"x'))
+
+
+def test_systemd_units_respect_host_mutation_freeze(tmp_path: Path, monkeypatch) -> None:
+    """With mutations disabled nothing is written and nothing is enabled."""
+    from nexgen_core import scheduler as _sched
+
+    monkeypatch.setenv("NEXGEN_DISABLE_HOST_MUTATIONS", "1")
+    home = tmp_path / "home"
+    assert _sched.install_systemd_units(
+        home=home,
+        engine_root=tmp_path / "eng",
+        vault_data=tmp_path / "vault",
+        vault=tmp_path / "vault",
+        log=lambda _m: None,
+    ) is True
+    assert not (home / ".config" / "systemd").exists()
+
+
+def test_systemd_without_systemctl_reports_not_enabled(tmp_path: Path, monkeypatch) -> None:
+    """systemctl absent = files written, enabled=False (never a green lie)."""
+    from nexgen_core import scheduler as _sched
+
+    monkeypatch.delenv("NEXGEN_DISABLE_HOST_MUTATIONS", raising=False)
+    monkeypatch.setattr(_sched, "_resolve_cmd", lambda _name: None)
+    home = tmp_path / "home"
+    (home / ".local" / "bin" / "nexgen").parent.mkdir(parents=True)
+    (home / ".local" / "bin" / "nexgen").write_text("#!/bin/sh\n", encoding="utf-8")
+    logged: list[str] = []
+    ok = _sched.install_systemd_units(
+        home=home,
+        engine_root=tmp_path / "eng",
+        vault_data=tmp_path / "vault",
+        vault=tmp_path / "vault",
+        log=logged.append,
+    )
+    assert ok is False
+    assert any("NOT enabled" in line for line in logged)

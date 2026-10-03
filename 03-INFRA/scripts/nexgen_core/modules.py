@@ -206,6 +206,11 @@ class ModuleState:
     state: str  # absent | local | remote
     source: str  # where the verdict comes from: state-file | env-gates | default
     note: str = ""
+    # What the state file declared, when it declared anything. A module
+    # declared local/remote but demoted for missing env gates is almost
+    # certainly a transient environment (timer without tokens, new shell),
+    # not a removal decision: the installer must tell those apart.
+    declared: str | None = None
 
 
 def _catalog_path(engine_root: Path) -> Path:
@@ -435,6 +440,7 @@ def derive_state(
                 results.append(ModuleState(
                     module, "absent", "env-gates",
                     note=t("declared {declared} but env gates {gates} are not set", declared=declared, gates=", ".join(module.env_gates)),
+                    declared=declared,
                 ))
                 continue
             results.append(ModuleState(module, declared, "state-file"))

@@ -188,7 +188,7 @@ def test_yes_merges_release_without_detaching_head(tmp_path, capsys):
     assert (engine / "VERSION").read_text(encoding="utf-8").strip() == "0.2.0"
     assert _git(engine, "symbolic-ref", "--short", "HEAD").stdout.strip() == "main"
     output = capsys.readouterr().out
-    assert "v0.2.0 installed and verified" in output
+    assert "v0.2.0 installed: doctor reports no failures" in output
 
 
 def test_declined_confirmation_moves_nothing(tmp_path, capsys):
@@ -445,7 +445,7 @@ def test_post_merge_steps_never_touch_PATH(tmp_path, capsys, monkeypatch):
 
     assert result == 0
     assert (engine / "VERSION").read_text(encoding="utf-8").strip() == "0.2.0"
-    assert "installed and verified" in capsys.readouterr().out
+    assert "doctor reports no failures" in capsys.readouterr().out
 
 
 def test_split_pin_is_committed_before_provisioning(tmp_path, capsys, monkeypatch):
@@ -488,7 +488,7 @@ def test_split_pin_is_committed_before_provisioning(tmp_path, capsys, monkeypatc
     assert _git(data, "status", "--porcelain").stdout == ""
     output = capsys.readouterr().out
     assert "update 99-INDEX/ENGINE-PIN.txt through vault-push" in output
-    assert "installed and verified" in output
+    assert "doctor reports no failures" in output
 
 
 def test_failed_split_pin_publish_stops_before_provisioning(tmp_path, capsys, monkeypatch):
@@ -697,5 +697,5 @@ def test_doctor_with_undetermined_checks_does_not_block_update(tmp_path, capsys,
 
     assert result == 0
     output = capsys.readouterr().out
-    assert "installed and verified" in output
+    assert "doctor reports no failures" in output
 

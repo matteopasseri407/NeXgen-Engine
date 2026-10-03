@@ -31,6 +31,7 @@ import sys
 import time
 from pathlib import Path
 
+from nexgen_core.i18n import t
 from nexgen_core.paths import resolve_home, resolve_state_dir
 
 THROTTLE_HOURS = 12
@@ -405,9 +406,15 @@ def _spawn_background_refresh() -> None:
     """Re-checks origin without holding the shell: detached, silent, cheap."""
     try:
         nexgen = shutil.which("nexgen")
-        if not nexgen:
-            return
-        entry = [nexgen, "tool", "update-notifier", "--refresh-cache"]
+        if nexgen:
+            entry = [nexgen, "tool", "update-notifier", "--refresh-cache"]
+        else:
+            # No shim on PATH (fresh install, PATH not reloaded): run the
+            # checkout's own entry instead of letting the cache rot silent.
+            cli_entry = Path(__file__).resolve().parents[1] / "cli" / "__init__.py"
+            if not cli_entry.is_file():
+                return
+            entry = [sys.executable, str(cli_entry), "tool", "update-notifier", "--refresh-cache"]
         if os.name == "nt":
             creationflags = getattr(subprocess, "DETACHED_PROCESS", 0x00000008)
             subprocess.Popen(
@@ -648,37 +655,55 @@ if ($Host.Name -eq 'ConsoleHost' -and (Get-Command nexgen -ErrorAction SilentlyC
 }
 """
 
+_FISH_HOOK = """# NeXgen Engine update notice (managed: `nexgen tool update-notifier --install-shell-hook --remove` to stop).
+if status is-interactive; and command -v nexgen >/dev/null 2>&1
+  nexgen tool update-notifier --shell-check
+end
+"""
 
-def _append_once(path, block: str) -> bool:
+
+def _append_once(path: Path, block: str) -> bool | None:
+    """True for a write, False if present, None when the write failed."""
+    from nexgen_core.files import write_text_if_changed
+
     marker = "NeXgen Engine update notice"
     try:
         existing = path.read_text(encoding="utf-8") if path.is_file() else ""
+        if marker in existing:
+            return False
+        separator = "\n" if existing and not existing.endswith("\n") else ""
+        return write_text_if_changed(path, existing + separator + block, tag="shell-hook")
     except OSError:
-        return False
-    if marker in existing:
-        return False
-    try:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        with open(path, "a", encoding="utf-8") as handle:
-            if existing and not existing.endswith("\n"):
-                handle.write("\n")
-            handle.write(block if block.endswith("\n") else block + "\n")
-        return True
-    except OSError:
-        return False
+        return None
 
 
-def cmd_install_shell_hook(remove: bool = False, shell: str | None = None) -> int:
-    """Installs (or removes) the shell-startup notice. Bash appends a
-    guarded block to ~/.bashrc; PowerShell to the user profile. Guarded
-    means: interactive shells only, `nexgen` on PATH, marker-checked so a
+def _posix_shell_targets(home: Path) -> list[tuple[str, Path, str]]:
+    """Shell hook targets on POSIX: bash always, zsh/fish only when used.
+
+    Writing a .zshrc or fish config for a shell the user never opened
+    would create files that did not exist; a missing rc means that shell
+    is not in use here.
+    """
+    targets = [("bash", home / ".bashrc", _BASH_HOOK)]
+    zshrc = home / ".zshrc"
+    if zshrc.is_file():
+        targets.append(("zsh", zshrc, _BASH_HOOK))
+    fish_cfg = home / ".config" / "fish" / "config.fish"
+    if fish_cfg.is_file():
+        targets.append(("fish", fish_cfg, _FISH_HOOK))
+    return targets
+
+
+def cmd_install_shell_hook(remove: bool = False, shell: str | None = None, *, home: Path | None = None) -> int:
+    """Installs (or removes) the shell-startup notice. Bash and zsh share
+    the guarded block (~/.bashrc, ~/.zshrc when it exists); fish gets its
+    own syntax; PowerShell to the user profile. Guarded means:
+    interactive shells only, `nexgen` on PATH, marker-checked so a
     second install is a no-op (and removal deletes only our own block)."""
-    home = resolve_home()
-    targets: list[tuple[str, Path, str]] = [
-        ("bash", home / ".bashrc", _BASH_HOOK),
-        ("powershell", home / ".config" / "powershell" / "Microsoft.PowerShell_profile.ps1", _POWERSHELL_HOOK),
-    ]
-    if shell in ("bash", "powershell"):
+    home = resolve_home(home)
+    targets = _posix_shell_targets(home) if os.name != "nt" or shell in ("bash", "zsh", "fish") else []
+    targets.append(("powershell", home / ".config" / "powershell" / "Microsoft.PowerShell_profile.ps1", _POWERSHELL_HOOK))
+    if shell in ("bash", "zsh", "fish", "powershell"):
         targets = [entry for entry in targets if entry[0] == shell]
     marker = "NeXgen Engine update notice"
     rc = 0
@@ -686,13 +711,16 @@ def cmd_install_shell_hook(remove: bool = False, shell: str | None = None) -> in
         if remove:
             try:
                 if path.is_file():
-                    lines = path.read_text(encoding="utf-8").splitlines(keepends=True)
-                    kept = [line for line in lines if marker not in line]
-                    # Drop our two-line blocks: marker line plus the nexgen line around it.
-                    cleaned = [line for line in kept if "nexgen tool update-notifier --shell-check" not in line]
-                    if len(cleaned) != len(lines):
-                        path.write_text("".join(cleaned), encoding="utf-8")
+                    from nexgen_core.files import write_text_if_changed
+
+                    existing = path.read_text(encoding="utf-8")
+                    cleaned = existing.replace(block, "")
+                    if cleaned != existing:
+                        write_text_if_changed(path, cleaned, tag="shell-hook")
                         print(f"[shell-hook] removed from {path}")
+                    elif marker in existing:
+                        print(t("Shell hook: unrecognized managed block in {path}; preserved.", path=path), file=sys.stderr)
+                        rc = 1
                     else:
                         print(f"[shell-hook] not present in {path}")
                 else:
@@ -701,7 +729,11 @@ def cmd_install_shell_hook(remove: bool = False, shell: str | None = None) -> in
                 print(f"[shell-hook] cannot update {path}: {exc}", file=sys.stderr)
                 rc = 1
             continue
-        if _append_once(path, block):
+        changed = _append_once(path, block)
+        if changed is None:
+            print(t("Shell hook: cannot update {path}.", path=path), file=sys.stderr)
+            rc = 1
+        elif changed:
             print(f"[shell-hook] installed for {name} in {path} (restart the shell to take effect)")
         else:
             print(f"[shell-hook] already present for {name} ({path})")
@@ -939,16 +971,16 @@ def ensure_shell_hook(home: Path | None = None) -> list[str]:
     """Idempotent shell-startup notice. Never raises."""
     try:
         marker = "NeXgen Engine update notice"
-        targets = []
+        resolved = resolve_home(home)
         if os.name == "nt":
-            targets = [resolve_home(home) / ".config" / "powershell" / "Microsoft.PowerShell_profile.ps1"]
+            targets = [resolved / ".config" / "powershell" / "Microsoft.PowerShell_profile.ps1"]
         else:
-            targets = [resolve_home(home) / ".bashrc"]
+            targets = [path for _, path, _ in _posix_shell_targets(resolved)]
         missing = [p for p in targets
                    if not p.is_file() or marker not in p.read_text(encoding="utf-8", errors="replace")]
         if not missing:
             return ["[shell-hook] already present"]
-        rc = cmd_install_shell_hook()
+        rc = cmd_install_shell_hook(home=resolved)
         if rc == 0:
             return ["[shell-hook] installed for this machine's shells"]
         return ["[WARN] shell hook installation returned an error"]
@@ -1112,9 +1144,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--boot", action="store_true", help="controllo silenzioso all'avvio: aggiorna le cache e manda l'inventario passivo")
     parser.add_argument("--shell-check", action="store_true", help="controllo veloce per l'avvio della shell: legge la cache, chiede al massimo una volta al giorno")
     parser.add_argument("--refresh-cache", action="store_true", help="aggiorna la cache degli update in silenzio (uso interno: hook e guard)")
-    parser.add_argument("--install-shell-hook", action="store_true", help="installa l'avviso all'avvio della shell (bash + powershell)")
+    parser.add_argument("--install-shell-hook", action="store_true", help="installa l'avviso all'avvio della shell (bash/zsh/fish + powershell)")
     parser.add_argument("--remove", action="store_true", help="con --install-shell-hook: rimuove l'avviso invece di installarlo")
-    parser.add_argument("--shell", choices=["bash", "powershell"], default=None, help="con --install-shell-hook: solo questa shell")
+    parser.add_argument("--shell", choices=["bash", "zsh", "fish", "powershell"], default=None, help="con --install-shell-hook: solo questa shell")
     args = parser.parse_args(argv)
 
     if args.install_autostart:

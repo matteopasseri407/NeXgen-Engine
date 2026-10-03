@@ -15,12 +15,11 @@ from pathlib import Path
 
 from proposal import (
     SEATS_PATH,
-    _confirm_pay_per_use,
+    _confirm_seat_call,
     _print_routing_proposal,
     _print_static_seat_menu,
     _routing_context_or_exit,
     _routing_enabled,
-    _seat_cost,
     _seat_quota_pool,
     _warn_no_zero_retention,
 )
@@ -176,8 +175,8 @@ def _relay_stage_from_yaml(item) -> RelayStage:
     return RelayStage(role=role, candidates=_dedupe_keep_order(candidates))
 
 
-def _validate_relay_seat(seat_name: str, seats: dict) -> dict:
-    """Structural sanity only: the seat must exist and use a supported CLI.
+def _validate_relay_seat(seat_name: str, seats: dict, invocation_timeout: float | None = None) -> dict:
+    """Validate the selected seat's CLI and effective timeout before calls.
 
     The agy execution block is checked per candidate in _run_relay_stage, so
     a declared fallback can still run. Retention metadata never removes a
@@ -188,6 +187,10 @@ def _validate_relay_seat(seat_name: str, seats: dict) -> dict:
     seat = seats[seat_name]
     if seat.get("cli") not in SUPPORTED_CLIS:
         raise RelayError(f"[council] unsupported CLI in the relay sequence: {seat.get('cli')}.", kind="unsupported_cli")
+    try:
+        _resolve_timeout_seconds(seat, invocation_timeout)
+    except ValueError as exc:
+        raise RelayError(f"[council] invalid timeout for seat '{seat_name}': {exc}.", kind="invalid_timeout") from exc
     return seat
 
 
@@ -242,7 +245,7 @@ def _load_relay_sequence(args, config: dict, seats: dict) -> list[RelayStage]:
         )
     for stage in stages:
         for seat_name in stage.candidates:
-            _validate_relay_seat(seat_name, seats)
+            _validate_relay_seat(seat_name, seats, getattr(args, "timeout_seconds", None))
     return stages
 
 
@@ -350,8 +353,7 @@ def _invoke_stage_candidate(
     timeout_seconds = _resolve_timeout_seconds(seat, invocation_timeout)
 
     _warn_no_zero_retention(chosen_name, seat)
-    plan = _routing_context_or_exit(config) if config and _routing_enabled(config) else None
-    _confirm_pay_per_use(chosen_name, seat, _seat_cost(plan, chosen_name, seat))
+    _confirm_seat_call(chosen_name, seat, config)
 
     print(
         f"[council] relay {idx:02d} — role: {stage.role} — "

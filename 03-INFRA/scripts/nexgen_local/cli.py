@@ -17,7 +17,7 @@ from dataclasses import asdict
 from pathlib import Path
 
 from .config import LaneConfig, default_engine_root
-from .engine import LaneResult
+from .engine import (LaneResult)
 from .patch import PatchError, apply_proposal, format_gate, list_proposals, propose_patch
 from .relay import RELAY_CLIS, RelayError, available_clis, run_relay
 from .tools import ToolError, ToolRegistry, audit_writable
@@ -92,50 +92,70 @@ def cmd_run(args: argparse.Namespace) -> int:
         print(f"nexgen-local: {exc}", file=sys.stderr)
         return 2
     tools = ToolRegistry(cfg)
-    from .jobs import detect_job, job_close, job_research
 
-    job = detect_job(args.question)
-    if job == "research":
-        print("[lane] mestiere: research", file=sys.stderr)
-        result = job_research(llm, tools, cfg, args.question)
-        if args.json:
-            print(json.dumps(asdict(result), ensure_ascii=False, indent=2))
-            return 1 if result.problems else 0
-        print(result.answer or "(nessuna risposta)")
-        _print_receipts(result.receipts)
-        _warn_unverified(result.problems)
-        return 1 if result.problems else 0
-    if job == "close":
-        from .engine import PATH_RE, _existing_file, _pinned
+    try:
+        from .jobs import detect_job
 
-        target = ""
-        for match in PATH_RE.findall(args.question):
-            found = _existing_file(cfg, match)
-            if found:
-                target = _pinned(found[2], found[1])
-                break
-        if not target:
-            print(
-                "nexgen-local: per chiudere una sessione nomina il file (es. 'chiudi la sessione di 04-NOW/note.md')",
-                file=sys.stderr,
-            )
-            return 2
-        print("[lane] mestiere: close", file=sys.stderr)
-        result = job_close(llm, tools, cfg, target)
-        if args.json:
-            print(json.dumps(asdict(result), ensure_ascii=False, indent=2))
-            return 1 if result.problems else 0
-        print(result.answer or "(nessuna bozza)")
-        if result.draft_path:
-            print(f"\nbozza salvata: {result.draft_path}")
-        _print_receipts(result.receipts)
-        _warn_unverified(result.problems)
-        return 1 if result.problems else 0
-    result = run_graph(llm, tools, cfg, args.question)
+        job = detect_job(args.question)
+        if job == "research":
+            return _cmd_run_research(args, llm, tools, cfg)
+        if job == "close":
+            return _cmd_run_close(args, llm, tools, cfg)
+        result = run_graph(llm, tools, cfg, args.question)
+    except LLMError as exc:
+        print(f"nexgen-local: {exc}", file=sys.stderr)
+        return 2
     if args.json:
         print(json.dumps(_result_payload(result), ensure_ascii=False, indent=2))
         return 1 if result.problems else 0
     print(result.answer or "(nessuna risposta)")
+    _print_receipts(result.receipts)
+    _warn_unverified(result.problems)
+    return 1 if result.problems else 0
+
+
+def _cmd_run_research(args: argparse.Namespace, llm, tools, cfg) -> int:
+    from .jobs import job_research
+
+    print("[lane] mestiere: research", file=sys.stderr)
+    result = job_research(llm, tools, cfg, args.question)
+    if args.json:
+        print(json.dumps(asdict(result), ensure_ascii=False, indent=2))
+        return 1 if result.problems else 0
+    print(result.answer or "(nessuna risposta)")
+    _print_receipts(result.receipts)
+    _warn_unverified(result.problems)
+    return 1 if result.problems else 0
+
+
+def _cmd_run_close(args: argparse.Namespace, llm, tools, cfg) -> int:
+    from .source_selection import PATH_RE, existing_file, pinned_path
+    from .jobs import JobError, job_close
+
+    target = ""
+    for match in PATH_RE.findall(args.question):
+        found = existing_file(cfg, match)
+        if found:
+            target = pinned_path(found[2], found[1])
+            break
+    if not target:
+        print(
+            "nexgen-local: per chiudere una sessione nomina il file (es. 'chiudi la sessione di 04-NOW/note.md')",
+            file=sys.stderr,
+        )
+        return 2
+    print("[lane] mestiere: close", file=sys.stderr)
+    try:
+        result = job_close(llm, tools, cfg, target)
+    except JobError as exc:
+        print(f"nexgen-local: {exc}", file=sys.stderr)
+        return 2
+    if args.json:
+        print(json.dumps(asdict(result), ensure_ascii=False, indent=2))
+        return 1 if result.problems else 0
+    print(result.answer or "(nessuna bozza)")
+    if result.draft_path:
+        print(f"\nbozza salvata: {result.draft_path}")
     _print_receipts(result.receipts)
     _warn_unverified(result.problems)
     return 1 if result.problems else 0
@@ -626,7 +646,13 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     add("outlook (connettore personale)", _outlook_ok, _outlook_detail, required=False)
     add("git (proposte patch)", bool(shutil.which("git")), "opzionale", required=False)
     add("relay (CLI installate)", bool(available_clis()), ", ".join(available_clis()) or "nessuna", required=False)
-    add("modelli", True, f"router={cfg.router_tag} answer={cfg.answer_tag}", required=False)
+    models_detail = f"router={cfg.router_tag} answer={cfg.answer_tag}"
+    if cfg.router_tag != cfg.answer_tag:
+        # Two resident models on one GPU: every switch pays a load/unload.
+        # Same tag for both keeps one model hot; Ollama evicts the idle one
+        # on its own schedule (this driver exposes no keep_alive knob).
+        models_detail += " (due modelli residenti: possibili attese di load/unload ad ogni cambio)"
+    add("modelli", True, models_detail, required=False)
     add("superficie sola lettura", True, "nessun tool montato scrive")
 
     if args.json:
