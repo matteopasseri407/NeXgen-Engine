@@ -360,7 +360,7 @@ class GuardRunner:
             if probe.returncode == 0 and probe.stdout.strip():
                 refresh_update_cache(probe.stdout.strip())
         except Exception as exc:  # noqa: BLE001 - offline cache refresh never fails the guard
-            logger.debug("background update-cache refresh skipped: %s", exc)
+            logger.debug("background update-cache refresh skipped (%s)", type(exc).__name__)
 
     def apply_runtime_permissions(self) -> list[str]:
         """Permission posture + guardrail hook for every installed CLI.

@@ -14,23 +14,7 @@ from nexgen_core.paths import resolve_home
 
 from .notifier_state import _read_state, refresh_update_cache
 from .notifier_skills import _short_skill_name
-
-def _call_logo_path() -> str:
-    try:
-        from . import update_notifier as _fac
-
-        func = getattr(_fac, "_logo_path", None)
-        if func is not None:
-            # facade re-exports prompt's impl when unpatched; patched lambda differs
-            from .notifier_prompt import _logo_path as _local
-
-            if func is not _local:
-                return func()
-    except ImportError:
-        pass
-    from .notifier_prompt import _logo_path as _local2
-
-    return _local2()
+from .notifier_prompt import _call_logo_path
 
 
 
@@ -166,9 +150,6 @@ def _run_quiet(argv: list[str], timeout: int = 60) -> tuple[int, str]:
         return proc.returncode, (proc.stdout or "") + (proc.stderr or "")
     except (OSError, subprocess.TimeoutExpired) as exc:
         return 1, str(exc)
-
-
-_UPDATE_CHECK_TASK = "NeXgen Engine Update Check"
 
 
 _UPDATE_CHECK_TASK = "NeXgen Engine Update Check"
@@ -497,10 +478,9 @@ def _publish_inventory() -> None:
     """Sends this host's CLI inventory to the governor, best effort.
 
     The publisher lives in the vault (private setup, per-host probes);
-    end-to-end inventory works only where that script exists. Absence is
-    logged at debug (not silent, not a boot failure): without this line an
-    operator reads 'boot ok' as 'governor updated'.
-    Never fails the boot.
+    end-to-end inventory works only where that script exists. Its absence
+    is expected in a public installation and logged at debug. A publisher
+    failure is reported separately and never fails the boot.
     """
     try:
         import logging
@@ -515,6 +495,10 @@ def _publish_inventory() -> None:
             [sys.executable, str(script), "--write", "--push"],
             capture_output=True, text=True, check=False, timeout=280,
         )
+        if proc.returncode:
+            print(f"[boot] inventario Governor non pubblicato (uscita {proc.returncode}). "
+                  "Esegui `nexgen boot-check` per riprovare.")
+            return
         tail = ((proc.stderr or "") + (proc.stdout or "")).strip().splitlines()[-3:]
         print("[boot] inventario governor: " + (" | ".join(tail) if tail else "nessuna risposta"))
     except Exception as exc:  # noqa: BLE001 - notifier never fails the shell

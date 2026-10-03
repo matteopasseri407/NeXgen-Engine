@@ -28,6 +28,35 @@ def _seat(model):
     return {"cli": "opencode", "model": model, "routing_label": "Shared Model"}
 
 
+def test_relay_without_sequence_requires_the_correct_explicit_choice(monkeypatch):
+    from types import SimpleNamespace
+    import relay
+
+    seats = {"local": {"cli": "ollama", "model": "synthetic:latest"}}
+    monkeypatch.setattr(relay, "run_seat", lambda *a: pytest.fail("no sequence authorized"))
+    with pytest.raises(relay.RelayError) as refused:
+        relay._load_relay_sequence(SimpleNamespace(sequence="", max_seats=5), {"seats": seats}, seats)
+    assert refused.value.kind == "human_choice_required"
+    assert "--sequence" in str(refused.value)
+    assert "--seat " not in str(refused.value)
+
+
+def test_missing_privacy_scanner_stops_relay_before_any_run(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    import council
+    import session
+
+    seats = {"local": {"cli": "ollama", "model": "synthetic:latest"}}
+    monkeypatch.setattr(council, "load_config", lambda: {"seats": seats})
+    monkeypatch.setattr(session, "LEAK_SCAN_DIR", tmp_path / "absent")
+    monkeypatch.setattr(council, "new_session_dir", lambda *a: pytest.fail("privacy gate must run first"))
+    monkeypatch.setattr(council, "_run_relay_stage", lambda *a: pytest.fail("brief must not leave"))
+    args = SimpleNamespace(sequence="reviewer=local", max_seats=5, question="synthetic",
+                           context=None, diff=None)
+    with pytest.raises(RuntimeError, match="leak-scan assente"):
+        council._cmd_relay_ephemeral(args)
+
+
 def test_all_six_fallback_channels_are_preserved():
     channels = ["claude", "codex", "agy", "go", "zen-free", "zen"]
     plan = parse_routing_plan(_block([(f"Model {i}", c, "$0", "test") for i, c in enumerate(channels)]))

@@ -218,7 +218,7 @@ class Heartbeat:
                     scopes[str(name)] = str(entry.get("path") or ".")
             return scopes
         except Exception as exc:  # noqa: BLE001 - unreadable manifest means whole-repo scopes, never a beat crash
-            logger.debug("skill scopes fallback to whole-repo: %s", exc)
+            logger.debug("skill scopes fallback to whole-repo (%s)", type(exc).__name__)
             return {}
 
     def run_self_upgrade(self) -> dict[str, Any]:
@@ -253,7 +253,7 @@ class Heartbeat:
             if probe.returncode == 0 and probe.stdout.strip():
                 refresh_update_cache(probe.stdout.strip())
         except Exception as exc:  # noqa: BLE001 - offline cache refresh never fails the beat
-            logger.debug("background update-cache refresh skipped: %s", exc)
+            logger.debug("background update-cache refresh skipped (%s)", type(exc).__name__)
         return {
             "liveness_ok": liveness_ok,
             "liveness_msg": liveness_msg,

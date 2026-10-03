@@ -12,6 +12,15 @@ of any engine release.
 
 ### Fixed
 
+- Local CLI and MCP startup work from an unpackaged source checkout.
+- Google and Outlook persist rotated refresh tokens with atomic private writes;
+  publication or permission failures preserve the previous token file.
+- Scheduler updates through symlinks preserve the link and atomically replace
+  the target. Local CLI adapters and shell hook templates have one owner each.
+- Council relay selection points to `--sequence`; a missing privacy scanner
+  blocks execution. Boot reports failed Governor inventory publication.
+- New transport and manifest failure diagnostics omit raw exception payloads
+  that could contain credentials or token URLs.
 - Local retrieval uses explicit tool outcomes across lane, steps, jobs and
   LangGraph. Valid source text beginning with parentheses is retained; empty
   results and errors stay distinct regardless of display language. Audit

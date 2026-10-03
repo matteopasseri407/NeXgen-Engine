@@ -341,7 +341,7 @@ def report_unsatisfied_deps(vault_data: Path, state_dir: Path | None = None) -> 
     try:
         data = load_mcp_manifest(path)
     except Exception as exc:  # noqa: BLE001 - unreadable manifest means no report, never a doctor crash
-        logger.debug("ignoring unreadable MCP manifest %s: %s", path, exc)
+        logger.debug("ignoring unreadable MCP manifest %s (%s)", path, type(exc).__name__)
         return []
     problems: list[str] = []
     for name, srv in (data.get("servers") or {}).items():
