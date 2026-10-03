@@ -63,11 +63,13 @@ def test_real_empty_search_is_distinct_from_literal_empty_message(tmp_path):
     assert tools.calls[-1].ok
 
 
-def test_parenthesized_continuation_has_successful_receipt(tmp_path):
+@pytest.mark.parametrize("newline", ["\n", "\r\n"])
+def test_parenthesized_continuation_has_successful_receipt(tmp_path, newline):
     cfg = config(tmp_path)
-    (cfg.vault_root / "nota.md").write_text("prima\n(bozza) seconda finestra", encoding="utf-8")
+    prefix = f"prima{newline}"
+    (cfg.vault_root / "nota.md").write_bytes(f"{prefix}(bozza) seconda finestra".encode("utf-8"))
     tools = ToolRegistry(cfg)
-    assert tools.read_vault("nota.md", offset=6).startswith("(bozza)")
+    assert tools.read_vault("nota.md", offset=len(prefix)).startswith("(bozza)")
     assert tools.calls[-1].ok
 
 
