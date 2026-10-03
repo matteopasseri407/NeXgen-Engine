@@ -12,6 +12,9 @@ of any engine release.
 
 ### Fixed
 
+- Vault publication with explicit file paths commits only those paths and
+  preserves other staged edits. Remote divergence stops that publication
+  without stashing, committing or rebasing another writer's work.
 - Atomic writes retry transient metadata and temporary-cleanup denials within
   a bounded deadline. Unknown existing permissions stop publication instead
   of silently replacing the original file.

@@ -41,6 +41,7 @@ before integration. Fix new lint findings rather than regenerating the baseline.
 | Routing and answer pipeline | `nexgen_local/engine.py` | `test_nexgen_local.py` |
 | Model requests and deadlines | `nexgen_local/llm.py` | `test_nexgen_llm_deadlines.py` |
 | Council process lifecycle and relay checkpoints | `03-INFRA/agent-universal-layer/council/` | `test_nexgen_council_*.py` |
+| Vault publication and selected files | `nexgen_core/git_ops.py` | `test_nexgen_scoped_publish.py` |
 | Contributor lanes | `nexgen_core/lanes.py` | `test_nexgen_lanes.py` |
 
 Check the actual filenames before selecting a test. Graph modules drive the
