@@ -10,8 +10,6 @@ of any engine release.
 
 ## [Unreleased]
 
-## [2.3.10] - 2026-10-03
-
 ### Fixed
 
 - Council saves terminal relay failures before stopping, so resume cannot
@@ -19,7 +17,7 @@ of any engine release.
 - Timeouts and cancellation terminate the seat's owned process group on POSIX.
   Windows retains descendant-tree termination. Invalid JSONL events and usage
   metadata no longer crash an otherwise valid response.
-- Consult validates every timeout before starting calls. Paid brainstorms
+- Relay and consult validate every selected timeout before starting calls. Paid brainstorms
   require consent for each continuation round through the shared call gate.
 
 ### Tested

@@ -372,6 +372,25 @@ def test_simultaneous_resume_refuses_second_caller(
     assert runner.calls == ["fake/a", "fake/a", "fake/c"]
 
 
+@pytest.mark.parametrize("timeout", [0, "invalid"])
+def test_relay_invalid_later_timeout_refuses_before_any_call(
+    runner: FakeRunner, monkeypatch: pytest.MonkeyPatch, sandbox: Path, timeout,
+) -> None:
+    import proposal
+    _patch_loaders(monkeypatch)
+    seats = _seats()
+    seats["sc"]["timeout_seconds"] = timeout
+    monkeypatch.setattr(proposal, "load_config", lambda: {"seats": seats})
+    with pytest.raises(RelayError) as error:
+        start_resumable_relay(
+            question="domanda?", context=None, diff=None,
+            sequence_spec="r1=sa|sb,r2=sc", max_seats=5,
+            continue_on_reject=False, invocation_timeout=None,
+        )
+    assert error.value.kind == "invalid_timeout"
+    assert runner.calls == []
+
+
 def test_all_approved_fallbacks_fit_the_graph_budget(
     runner: FakeRunner, monkeypatch: pytest.MonkeyPatch, sandbox: Path,
 ) -> None:

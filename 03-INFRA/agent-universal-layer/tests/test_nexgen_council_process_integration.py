@@ -115,7 +115,7 @@ def test_shutdown_closes_descendant_connections(fake_provider, tmp_path, shutdow
             "print('provider started', flush=True)\ntime.sleep(30)\n"
         )
         with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-            future = pool.submit(run_seat, seat, "", tmp_path, 3)
+            future = pool.submit(run_seat, seat, "", tmp_path, 3 if shutdown == "timeout" else 30)
             connection, _ = listener.accept()
             with connection:
                 child_pid = int(connection.recv(64))
@@ -126,7 +126,13 @@ def test_shutdown_closes_descendant_connections(fake_provider, tmp_path, shutdow
                         future.result(timeout=15)
                     assert error.value.kind == ("partial_timeout" if shutdown == "timeout" else "process_error")
                     connection.settimeout(3)
-                    assert connection.recv(1) == b""
+                    try:
+                        closed = connection.recv(1) == b""
+                    except ConnectionResetError:
+                        # Windows taskkill closes TCP with a reset; both
+                        # reset and EOF prove the child lost its socket.
+                        closed = True
+                    assert closed
                     assert session._live_procs_snapshot() == []
                 finally:
                     # Even a failed regression must not leave a test child.

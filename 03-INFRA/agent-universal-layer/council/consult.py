@@ -168,11 +168,8 @@ def run_consult(
         )
     timeouts = {}
     for name in seat_names:
-        _validate_relay_seat(name, seats)
-        try:
-            timeouts[name] = _resolve_timeout_seconds(seats[name], invocation_timeout)
-        except ValueError as exc:
-            raise RelayError(f"[council] invalid timeout for seat '{name}': {exc}.", kind="invalid_timeout") from exc
+        _validate_relay_seat(name, seats, invocation_timeout)
+        timeouts[name] = _resolve_timeout_seconds(seats[name], invocation_timeout)
     # Consent is collected on the operator's thread, before any fan-out.
     for name in seat_names:
         _confirm_seat_call(name, seats[name], config)

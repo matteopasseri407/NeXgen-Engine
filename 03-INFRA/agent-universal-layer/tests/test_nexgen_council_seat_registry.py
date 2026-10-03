@@ -42,7 +42,9 @@ class FakePopen:
         self._release = release
         self._calls = calls
         self._name = name
-        self.pid = 1000 + len(calls)
+        # No invented OS PID: this double must never target a real process.
+        self.pid = None
+        self.returncode = None
         self.stdin = FakeStdin()
         self.terminated = False
 
@@ -59,16 +61,19 @@ class FakePopen:
         return iter(())
 
     def poll(self):
-        return None
+        return self.returncode
 
     def wait(self, timeout=None):
-        return 0
+        self.returncode = 0
+        return self.returncode
 
     def terminate(self) -> None:
         self.terminated = True
+        self.returncode = -15
 
     def kill(self) -> None:
         self.terminated = True
+        self.returncode = -9
 
 
 @pytest.fixture

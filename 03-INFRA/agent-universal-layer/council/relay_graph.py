@@ -474,7 +474,7 @@ def start_resumable_relay(
 
     config = load_config()
     seats = config["seats"]
-    fake_args = SimpleNamespace(sequence=sequence_spec, max_seats=max_seats)
+    fake_args = SimpleNamespace(sequence=sequence_spec, max_seats=max_seats, timeout_seconds=invocation_timeout)
     stages = _load_relay_sequence(fake_args, config, seats)
     brief = build_brief(question, context, diff)
     egress_gate(brief)
@@ -557,7 +557,7 @@ def resume_relay_session(
 
     config = load_config()
     seats = config["seats"]
-    fake_args = SimpleNamespace(sequence=sequence_spec, max_seats=max_seats)
+    fake_args = SimpleNamespace(sequence=sequence_spec, max_seats=max_seats, timeout_seconds=invocation_timeout)
     stages = _load_relay_sequence(fake_args, config, seats)
     brief = build_brief(question, context, diff)
     egress_gate(brief)
