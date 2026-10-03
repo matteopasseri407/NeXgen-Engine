@@ -925,4 +925,8 @@ MESSAGES: dict[str, str] = {
         "Il lavoro sul motore in '{branch}' va su una lane dev/<agent> ({what}).",
     "Move it: git checkout -b dev/<agent> developer, cherry-pick or merge, then merge lane into developer.":
         "Spostalo: git checkout -b dev/<agent> developer, cherry-pick o merge, poi mergia la lane in developer.",
+
+    # --- Fondamenta: path/file/config blindati --------------------------------
+    "Refusing to overwrite unreadable file {path}: {exc}":
+        "Mi rifiuto di sovrascrivere il file illeggibile {path}: {exc}",
 }

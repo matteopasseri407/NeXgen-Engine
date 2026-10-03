@@ -68,7 +68,9 @@ def apply_all(
                 sink_result = runtime.install_event_sink(home, event_sink_source)
                 if sink_result:
                     actions.append(sink_result)
-            except (OSError, ValueError, TypeError) as exc:
+            except (OSError, ValueError, TypeError, GuardrailError) as exc:
+                # Same isolation as guardrail/posture above: one corrupt CLI
+                # config must warn for its own CLI, never abort the rest.
                 actions.append(f"[WARN] {runtime.name}: event sink installation failed ({exc})")
 
         desired_posture = posture.get(runtime.name)

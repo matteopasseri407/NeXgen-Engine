@@ -62,6 +62,12 @@ of any engine release.
 - Agent lanes are now the single enforced workflow: `AGENTS.md` names the
   four rungs, CI `lane-guard` blocks direct commits on release rungs, and
   the doctor warns on engine work outside a `dev/<agent>` lane.
+- Foundations hardened: vault/engine paths expand `~` and reject relative
+  homes, OpenCode honors `XDG_CONFIG_HOME` with the documented precedence,
+  atomic writes fsync with unique temps and never carry special mode bits,
+  unreadable files refuse overwrite, manifests fail closed on typos in
+  preflight/doctor, remedies count only on explicit success, and the JSONC
+  surgeon survives comments, duplicates and thousand-line headers.
 
 ### Tested
 

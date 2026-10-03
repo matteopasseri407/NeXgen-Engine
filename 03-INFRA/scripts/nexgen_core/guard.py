@@ -109,15 +109,19 @@ class GuardRunner:
         )
 
     def preflight(self) -> tuple[bool, str]:
-        """Read-only validation of all configuration files."""
+        """Read-only validation of all configuration files.
+
+        Strict: a typo that would silently drop a connector or skill fails
+        here, before any phase writes half a world.
+        """
         manifest_mcp = self.vault_data / "03-INFRA" / "agent-universal-layer" / "mcp" / "manifest.yaml"
         manifest_skills = self.vault_data / "03-INFRA" / "agent-universal-layer" / "skills" / "skills.manifest.yaml"
 
         try:
             if manifest_mcp.is_file():
-                load_mcp_manifest(manifest_mcp)
+                load_mcp_manifest(manifest_mcp, strict=True)
             if manifest_skills.is_file():
-                load_skills_manifest(manifest_skills)
+                load_skills_manifest(manifest_skills, strict=True)
             return True, t("MCP and Skill configurations valid")
         except Exception as exc:
             return False, t("Preflight failed: {error}", error=exc)
