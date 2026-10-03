@@ -57,6 +57,31 @@ def _set_root_string(text: str, key: str, value: str) -> str:
     return result
 
 
+def _profile_shadow_keys(text: str, desired: dict[str, str]) -> str:
+    """Root-table keys overridden inside later TOML sections.
+
+    Returns a human list (`approval_policy in [profile.x]`) or "".
+    Profile/project sections take precedence in Codex, so a root edit
+    alone may not be the effective policy.
+    """
+    shadows: list[str] = []
+    section: str | None = None
+    for line in text.splitlines():
+        match = re.match(r"^[ \t]*\[[^[\]]+\][ \t]*$", line)
+        if match:
+            section = line.strip()
+            continue
+        if section is None:
+            continue
+        for key, value in desired.items():
+            match = re.match(rf"^[ \t]*{re.escape(key)}[ \t]*=[ \t]*(.+?)[ \t]*$", line)
+            # Flag only real conflicts: a section echoing the same value is
+            # redundant, not a shadow.
+            if match and value not in match.group(1):
+                shadows.append(f"{key} in {section}")
+    return ", ".join(shadows)
+
+
 class CodexRuntime(Runtime):
     name = "codex"
 
@@ -103,14 +128,23 @@ class CodexRuntime(Runtime):
             text = _set_root_string(text, key, value)
         self.backup(path)
         self.atomic_write(path, text)
-        return f"codex: posture '{posture}' applied in {path}"
+        action = f"codex: posture '{posture}' applied in {path}"
+        shadow = _profile_shadow_keys(raw, desired)
+        if shadow:
+            # Root says one thing, a [profile.*]/[projects.*] table says
+            # another: Codex resolves the profile first, so the report
+            # must not pretend the root edit is the effective policy.
+            action += f" (WARNING: {shadow} override it in profile sections)"
+        return action
 
     def install_guardrail(self, home: Path, hook_source: Path, engine_hooks_dir: Path) -> str | None:
         del home, hook_source, engine_hooks_dir
         return None  # No verified guardrail hookup for Codex (see above)
 
     def install_event_sink(self, home: Path, sink_source: Path) -> str | None:
-        codex_dir = home / ".codex"
+        from nexgen_core.paths import codex_home
+
+        codex_dir = codex_home(home)
         if not codex_dir.is_dir() and not shutil.which("codex"):
             return None
         codex_dir.mkdir(parents=True, exist_ok=True)
@@ -183,7 +217,10 @@ class CodexRuntime(Runtime):
             self.backup(hooks_path)
             import json
             self.atomic_write(hooks_path, json.dumps(current, indent=2) + "\n")
-            return f"codex: event sink registered in {hooks_path}"
+            return (
+                f"codex: event sink written in {hooks_path} "
+                "(requires one interactive consent in Codex before it fires)"
+            )
         if deployed:
             return f"codex: event sink updated in {dst}"
         return None

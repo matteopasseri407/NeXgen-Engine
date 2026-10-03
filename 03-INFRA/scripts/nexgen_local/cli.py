@@ -92,9 +92,10 @@ def cmd_run(args: argparse.Namespace) -> int:
         print(f"nexgen-local: {exc}", file=sys.stderr)
         return 2
     tools = ToolRegistry(cfg)
-    from .jobs import detect_job, job_close, job_research
 
     try:
+        from .jobs import detect_job
+
         job = detect_job(args.question)
         if job == "research":
             return _cmd_run_research(args, llm, tools, cfg)

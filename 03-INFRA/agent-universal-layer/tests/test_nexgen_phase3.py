@@ -272,3 +272,35 @@ def test_liveness_records_warning_count(tmp_path: Path) -> None:
     assert "3" in msg and ("warn" in msg.lower() or "avvis" in msg.lower())
     # First line still a bare float for previous releases.
     float(beat.liveness_file.read_text(encoding="utf-8").splitlines()[0])
+
+
+def test_corrupt_liveness_alerts_instead_of_silence(tmp_path: Path, monkeypatch) -> None:
+    """A corrupt liveness file blinds self-monitoring: it must alert (debounced)."""
+    from nexgen_core.beat import Heartbeat
+
+    beat = Heartbeat(state_dir=tmp_path / "state")
+    beat.state_dir.mkdir(parents=True, exist_ok=True)
+    beat.liveness_file.write_text("not-a-float\n", encoding="utf-8")
+    sent: list[str] = []
+    monkeypatch.setattr(beat.megaphone, "send_alert", lambda **kw: sent.append(kw.get("alert_key", "")) or True)
+    ok, msg = beat.check_liveness()
+    assert ok is False
+    assert sent == ["guard_liveness_corrupt"]
+
+
+def test_boot_suppresses_stale_alert(tmp_path: Path, monkeypatch) -> None:
+    """Fresh boot with an old liveness file: no stale alert, startup message."""
+    import time
+
+    import nexgen_core.beat as beat_mod
+    from nexgen_core.beat import Heartbeat
+
+    beat = Heartbeat(state_dir=tmp_path / "state")
+    beat.state_dir.mkdir(parents=True, exist_ok=True)
+    beat.liveness_file.write_text(f"{time.time() - 5 * 3600}\n2.3.9\n", encoding="utf-8")
+    monkeypatch.setattr(beat_mod, "_just_booted", lambda _grace: True)
+    sent: list[str] = []
+    monkeypatch.setattr(beat.megaphone, "send_alert", lambda **kw: sent.append("x") or True)
+    ok, msg = beat.check_liveness()
+    assert ok is True and sent == []
+    assert "just started" in msg or "appena partita" in msg

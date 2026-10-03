@@ -78,13 +78,10 @@ def expand_placeholders(text: str, context: dict[str, str] | None = None) -> str
 #: Linux and Windows machines, and duplicating a whole server entry into a
 #: `windows:` block because ONE arg carries a path is the hand-synced copy
 #: the architecture forbids.
-_IF_BLOCK_RE = re.compile(
-    r"\{\{\s*if\s+eq\s+\.([A-Za-z_][A-Za-z0-9_]*)\s+\"([^\"]*)\"\s*\}\}"
-    r"(.*?)"
-    r"(?:\{\{\s*else\s*\}\}(.*?))?"
-    r"\{\{\s*end\s*\}\}",
-    re.DOTALL,
-)
+_IF_OPEN_RE = re.compile(r"\{\{\s*if\s+eq\s+\.([A-Za-z_][A-Za-z0-9_]*)\s+\"([^\"]*)\"\s*\}\}")
+_IF_ELSE_RE = re.compile(r"\{\{\s*else\s*\}\}")
+_IF_END_RE = re.compile(r"\{\{\s*end\s*\}\}")
+_TOKEN_RE = re.compile(r"\{\{\s*(if\s+eq\s+\.[A-Za-z_][A-Za-z0-9_]*\s+\"[^\"]*\"|else|end)\s*\}\}")
 _TEMPLATE_RE = re.compile(r"\{\{\s*(.+?)\s*\}\}")
 _VAR_RE = re.compile(r"^\.([A-Za-z_][A-Za-z0-9_]*)$")
 
@@ -101,23 +98,25 @@ def expand_inline_templates(text: str, context: dict[str, str]) -> str:
     errors, never silent passthrough: an unexpanded `{{ }}` would land in a
     CLI config as literal text, which is the kind of quiet wrong this
     engine exists to prevent.
+
+    Nesting is supported via a depth-counted scan (the old non-greedy
+    regex truncated on the first inner `{{ end }}`). Both branches are
+    validated even when only one is selected: a typo in a Windows branch
+    must fail on Linux too, otherwise it sleeps until a Windows user gets
+    a broken config.
     """
     if "{{" not in text:
         return text
-
-    def _expand_if(match: re.Match) -> str:
-        name, wanted, then_part, else_part = match.groups()
-        if name not in context:
-            raise TemplateError(f"template condition on unknown variable '.{name}'")
-        chosen = then_part if context[name] == wanted else (else_part or "")
-        return expand_inline_templates(chosen, context)
-
-    text = _IF_BLOCK_RE.sub(_expand_if, text)
+    text = _expand_if_blocks(text, context)
 
     def _expand_var(match: re.Match) -> str:
         block = match.group(1)
         var_match = _VAR_RE.match(block)
         if not var_match:
+            # Stray control keywords outside a resolved block are malformed,
+            # not variables.
+            if re.fullmatch(r"(if\s+eq\s+\..*|else|end)", block):
+                raise TemplateError(f"unmatched template block '{{{{ {block} }}}}'")
             raise TemplateError(f"unsupported template block '{{{{ {block} }}}}'")
         name = var_match.group(1)
         if name not in context:
@@ -125,6 +124,63 @@ def expand_inline_templates(text: str, context: dict[str, str]) -> str:
         return context[name]
 
     return _TEMPLATE_RE.sub(_expand_var, text)
+
+
+def _expand_if_blocks(text: str, context: dict[str, str]) -> str:
+    """Resolves all `{{ if }}…{{ else }}…{{ end }}` blocks, nesting-aware."""
+    out: list[str] = []
+    pos = 0
+    while True:
+        open_match = _IF_OPEN_RE.search(text, pos)
+        if open_match is None:
+            out.append(text[pos:])
+            break
+        name, wanted = open_match.group(1), open_match.group(2)
+        if name not in context:
+            raise TemplateError(f"template condition on unknown variable '.{name}'")
+        open_end = open_match.end()
+        then_part, else_part, block_end = _split_if_block(text, open_end)
+        # Validate BOTH branches (recursion raises on malformed content);
+        # only the selected one lands in the output.
+        expanded_then = expand_inline_templates(then_part, context)
+        expanded_else = expand_inline_templates(else_part, context) if else_part else ""
+        out.append(text[pos:open_match.start()])
+        out.append(expanded_then if context[name] == wanted else expanded_else)
+        pos = block_end
+    return "".join(out)
+
+
+def _split_if_block(text: str, start: int) -> tuple[str, str, int]:
+    """Splits one `{{ if }}` body into (then, else, end_pos), nesting-aware.
+
+    `start` is the offset right after the opening `{{ if … }}`. Returns the
+    raw then-part, the raw else-part ("" when no `{{ else }}`), and the
+    offset right after the matching `{{ end }}`. Raises TemplateError on a
+    missing `{{ end }}` or a stray `{{ else }}`.
+    """
+    depth = 1
+    cursor = start
+    else_start: int | None = None
+    else_end: int | None = None
+    while True:
+        token = _TOKEN_RE.search(text, cursor)
+        if token is None:
+            raise TemplateError("unclosed template block: missing '{{ end }}'")
+        kind = token.group(1)
+        if kind.startswith("if"):
+            depth += 1
+        elif kind == "else":
+            if depth == 1 and else_start is None:
+                else_start, else_end = token.start(), token.end()
+            # `else` at depth > 1 belongs to an inner block: skip it here,
+            # the recursive expansion will handle it.
+        elif kind == "end":
+            depth -= 1
+            if depth == 0:
+                then_part = text[start:else_start if else_start is not None else token.start()]
+                else_part = text[else_end:token.start()] if else_start is not None else ""
+                return then_part, else_part, token.end()
+        cursor = token.end()
 
 
 def load_mcp_manifest(path: Path, *, strict: bool = False) -> dict[str, Any]:

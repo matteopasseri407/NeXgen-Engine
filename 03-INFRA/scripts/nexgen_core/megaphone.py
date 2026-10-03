@@ -65,6 +65,11 @@ class Megaphone:
     def send_alert(self, title: str, message: str, action: str | None = None, alert_key: str | None = None) -> bool:
         """Sends an alert through whichever channel can carry it.
 
+        Returns True when the alert was delivered OR deliberately suppressed
+        by debounce (both mean "handled, do not retry"): only an undelivered
+        alert with no channel at all returns False. Callers must not read
+        True as proof of delivery to a phone screen.
+
         The order is deliberate: a messaging bot and a webhook reach someone
         who is not at the machine, so they go first. The desktop comes last as
         a channel but matters most for the person who configured neither, who

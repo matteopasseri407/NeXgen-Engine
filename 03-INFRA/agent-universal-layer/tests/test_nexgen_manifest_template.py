@@ -135,3 +135,33 @@ def test_an_unhonorable_template_fails_the_render(sandbox):
     renderer = McpRenderer(vault_data=sandbox.vault, home=sandbox.home)
     with pytest.raises(TemplateError):
         renderer.load_resolved_servers("claude")
+
+
+def test_nested_templates_resolve_inside_out():
+    from nexgen_core.config import expand_inline_templates
+
+    ctx = {"os": "linux"}
+    nested = '{{ if eq .os "linux" }}A{{ if eq .os "linux" }}B{{ else }}C{{ end }}D{{ else }}E{{ end }}'
+    assert expand_inline_templates(nested, ctx) == "ABD"
+
+
+def test_discarded_branch_typo_still_fails():
+    import pytest as _pytest
+
+    from nexgen_core.config import TemplateError, expand_inline_templates
+
+    ctx = {"os": "linux"}
+    with _pytest.raises(TemplateError):
+        expand_inline_templates('{{ if eq .os "linux" }}ok{{ else }}{{ .bogus }}{{ end }}', ctx)
+
+
+def test_unclosed_and_stray_blocks_fail():
+    import pytest as _pytest
+
+    from nexgen_core.config import TemplateError, expand_inline_templates
+
+    ctx = {"os": "linux"}
+    with _pytest.raises(TemplateError):
+        expand_inline_templates('{{ if eq .os "linux" }}oops', ctx)
+    with _pytest.raises(TemplateError):
+        expand_inline_templates("hello {{ end }}", ctx)
