@@ -36,6 +36,7 @@ def check_ref(
     *,
     tip: str | None = None,
     base: str | None = None,
+    first_push_base: str | None = None,
 ) -> tuple[bool, list[str]]:
     """Check a snapshot, never rewrite it. Developer requires a known base."""
     if not guarded_ref(ref):
@@ -44,6 +45,10 @@ def check_ref(
     if target is None:
         return False, [f"could not resolve {tip or ref}"]
     if ref in ("developer", "main"):
+        if base == "0" * 40:
+            if first_push_base is None:
+                return False, ["first push requires an explicit published base; pass --first-push-base"]
+            base = first_push_base
         previous = resolve_revision(repo, base or f"origin/{ref}")
         if previous is None:
             return False, [f"could not resolve the previous {ref} tip; pass --base"]
@@ -83,8 +88,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--repo", default=".")
     parser.add_argument("--tip", help="snapshot to check (CI uses HEAD)")
     parser.add_argument("--base", help="previous tip, or the PR's target commit")
+    parser.add_argument("--first-push-base", help="published base when the push's previous tip is all zeros")
     args = parser.parse_args(argv)
-    ok, problems = check_ref(Path(args.repo), args.ref, args.integration, tip=args.tip, base=args.base)
+    ok, problems = check_ref(
+        Path(args.repo), args.ref, args.integration, tip=args.tip, base=args.base,
+        first_push_base=args.first_push_base,
+    )
     if ok:
         print(f"lane-guard: {args.ref} honors the lane contract.")
         return 0

@@ -139,7 +139,7 @@ jobs:
         env:
           LANE_REF: ${{ github.base_ref || github.ref_name }}
           LANE_BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
-        run: python3 03-INFRA/scripts/lane_guard.py --ref "$LANE_REF" --tip HEAD --base "$LANE_BASE"
+        run: python3 03-INFRA/scripts/lane_guard.py --ref "$LANE_REF" --tip HEAD --base "$LANE_BASE" --first-push-base origin/main
 
   shellcheck:
     runs-on: ubuntu-latest

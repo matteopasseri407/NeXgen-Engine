@@ -178,3 +178,34 @@ def test_missing_integration_ref_is_unknown_in_doctor(tmp_path):
     _git(repo, 'branch', '-D', 'developer')
     outcome = check_engine_lane(repo)
     assert outcome.severity == Severity.UNDETERMINED
+
+
+def test_first_developer_push_checks_merges_from_published_base(tmp_path):
+    repo = _repo_with_lanes(tmp_path)
+    _git(repo, "update-ref", "refs/remotes/origin/main", "main")
+    _git(repo, "checkout", "-qb", "dev/first", "developer")
+    _git(repo, "commit", "--allow-empty", "-m", "lane work")
+    _git(repo, "checkout", "developer")
+    _git(repo, "merge", "--no-ff", "dev/first", "-m", "merge first lane")
+    command = [
+        sys.executable, str(SCRIPTS_DIR / "lane_guard.py"),
+        "--repo", str(repo), "--ref", "developer", "--tip", "HEAD",
+        "--base", "0" * 40, "--first-push-base", "origin/main",
+    ]
+    result = subprocess.run(command, capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+    _git(repo, "commit", "--allow-empty", "-m", "direct fix")
+    result = subprocess.run(command, capture_output=True, text=True)
+    assert result.returncode == 1
+    assert "direct commit on developer" in result.stderr
+
+
+def test_first_push_base_cannot_override_an_existing_tip(tmp_path):
+    from nexgen_core.lanes import check_ref
+    repo = _repo_with_lanes(tmp_path)
+    base = _git(repo, "rev-parse", "developer").stdout.strip()
+    _git(repo, "checkout", "developer")
+    _git(repo, "commit", "--allow-empty", "-m", "direct fix")
+    assert not check_ref(repo, "developer", base="0" * 40)[0]
+    assert not check_ref(repo, "developer", base="0" * 40, first_push_base="missing")[0]
+    assert not check_ref(repo, "developer", base=base, first_push_base="HEAD")[0]

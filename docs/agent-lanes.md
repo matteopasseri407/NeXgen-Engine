@@ -19,6 +19,9 @@ into 60 breakages. The fix is structural, not disciplinary:
 
 Runs on pushes and pull requests. PRs check the target branch against its
 base commit using the proposed merge snapshot. Pushes use the previous tip.
+The first push of `developer` uses frozen `origin/main` as its published
+base and checks every new first-parent commit from that base. It fails if
+that base cannot be resolved.
 
 - `main` is frozen: advancing it fails the check.
 - `developer` must advance through merges; direct first-parent commits fail.
