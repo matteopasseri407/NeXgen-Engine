@@ -53,7 +53,14 @@ def resolve_home(home: Path | None = None) -> Path:
         return Path(home)
     sandbox = os.environ.get("NEXGEN_HOME")
     if sandbox:
-        return Path(sandbox).expanduser()
+        expanded = Path(sandbox).expanduser()
+        if not expanded.is_absolute():
+            # A relative sandbox anchors at the process CWD: cron and the
+            # terminal would silently operate on two different homes.
+            raise ValueError(
+                f"NEXGEN_HOME must be an absolute path, got {sandbox!r}"
+            )
+        return expanded
     return Path.home()
 
 
@@ -61,13 +68,15 @@ def resolve_vault_data(home: Path | None = None, override: Path | None = None) -
     """Where the private data (the Vault) lives.
 
     Precedence: explicit argument, `AGENT_VAULT_DATA`, `KNOWLEDGE_VAULT_PATH`,
-    finally `~/KnowledgeVault`.
+    finally `~/KnowledgeVault`. Environment values honor `~` like the
+    shell does: without expansion the engine would work on a literal
+    `./~/KnowledgeVault` and report an empty vault as if the data vanished.
     """
     if override is not None:
-        return Path(override)
+        return Path(override).expanduser()
     env = os.environ.get("AGENT_VAULT_DATA") or os.environ.get("KNOWLEDGE_VAULT_PATH")
     if env:
-        return Path(env)
+        return Path(env).expanduser()
     return resolve_home(home) / DEFAULT_VAULT_DIRNAME
 
 
@@ -78,10 +87,10 @@ def resolve_engine_root(home: Path | None = None, override: Path | None = None) 
     `~/.nexgen-engine/03-INFRA`.
     """
     if override is not None:
-        return Path(override)
+        return Path(override).expanduser()
     env = os.environ.get("AGENT_ENGINE_ROOT")
     if env:
-        return Path(env)
+        return Path(env).expanduser()
     return resolve_home(home) / ENGINE_DIRNAME / ENGINE_SUBDIR
 
 
@@ -89,16 +98,19 @@ def resolve_state_dir(home: Path | None = None, override: Path | None = None) ->
     """Where the machine-local state lives (locks, timestamps, debounce).
 
     Precedence: explicit argument, `AGENT_STATE_DIR`, `XDG_STATE_HOME`,
-    finally `~/.local/state`.
+    finally `~/.local/state`. `XDG_STATE_HOME` applies only when no explicit
+    home is in play: an explicit `home` (sandbox, tests) or `NEXGEN_HOME`
+    keeps state under that home, otherwise two writers would lock two
+    different files believing each one is alone.
     """
     if override is not None:
-        return Path(override)
+        return Path(override).expanduser()
     env = os.environ.get("AGENT_STATE_DIR")
     if env:
-        return Path(env)
+        return Path(env).expanduser()
     xdg = os.environ.get("XDG_STATE_HOME")
     if xdg and home is None and not os.environ.get("NEXGEN_HOME"):
-        return Path(xdg)
+        return Path(xdg).expanduser()
     return resolve_home(home).joinpath(*STATE_SUBPATH)
 
 
@@ -136,24 +148,38 @@ OPENCODE_CONFIG_NAMES: tuple[str, ...] = ("opencode.jsonc", "opencode.json", "co
 
 
 def opencode_config_dir(home: Path | None = None) -> Path:
-    """The directory holding OpenCode's global configuration."""
+    """The directory holding OpenCode's global configuration.
+
+    Honors `XDG_CONFIG_HOME` like OpenCode itself does: without it the
+    engine reads and writes `~/.config/opencode` while the CLI on an
+    XDG-redirected machine reads elsewhere, and every render, backup and
+    revert operates on the wrong file while reporting success.
+    """
+    xdg = os.environ.get("XDG_CONFIG_HOME")
+    if xdg:
+        return Path(xdg).expanduser() / "opencode"
     return resolve_home(home) / ".config" / "opencode"
 
 
 def opencode_config_candidates(home: Path | None = None) -> list[Path]:
     """Every config file OpenCode could be reading, in its own precedence.
 
-    XDG first, then the Windows AppData location (only consulted on
-    Windows, mirroring what the two previous copies did). Callers that need
-    backups or revert discovery use the whole list; callers that write use
-    :func:`opencode_config_path`.
+    Name-major across directories (`opencode.jsonc` anywhere beats
+    `config.json` anywhere): that is the declared contract above, and a
+    dir-major order would let a stale `config.json` shadow the live
+    `opencode.jsonc` on multi-location machines. Then the Windows AppData
+    location (only consulted on Windows, mirroring what the two previous
+    copies did). Callers that need backups or revert discovery use the
+    whole list; callers that write use :func:`opencode_config_path`.
     """
     resolved = resolve_home(home)
-    dirs = [resolved / ".config" / "opencode"]
+    dirs = [opencode_config_dir(home)]
     if sys.platform == "win32":
         appdata = Path(os.environ.get("APPDATA") or (resolved / "AppData" / "Roaming"))
-        dirs.append(appdata / "opencode")
-    return [d / name for d in dirs for name in OPENCODE_CONFIG_NAMES]
+        candidate = appdata / "opencode"
+        if candidate != dirs[0]:
+            dirs.append(candidate)
+    return [d / name for name in OPENCODE_CONFIG_NAMES for d in dirs]
 
 
 def opencode_config_path(home: Path | None = None) -> Path:
@@ -194,7 +220,13 @@ def claude_settings(home: Path | None = None) -> Path:
 
 
 def codex_home(home: Path | None = None) -> Path:
-    """Codex's home: `$CODEX_HOME` wins when set, else `~/.codex`."""
+    """Codex's home: `$CODEX_HOME` wins when set, else `~/.codex` under `home`.
+
+    The environment keeps precedence on purpose: every in-repo caller
+    passes the effective home, so `$CODEX_HOME` custom locations keep
+    working. Sandboxes needing isolation must unset the variable instead
+    of passing a different home and expecting it to win.
+    """
     override = os.environ.get("CODEX_HOME")
     if override:
         return Path(override).expanduser()

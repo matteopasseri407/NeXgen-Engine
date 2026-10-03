@@ -34,7 +34,7 @@ def check_mcp_manifest(manifest_path: Path) -> CheckOutcome:
         )
 
     try:
-        data = load_mcp_manifest(manifest_path)
+        data = load_mcp_manifest(manifest_path, strict=True)
         server_count = len(data.get("servers", {}))
         return CheckOutcome(
             id="mcp.manifest_valid",

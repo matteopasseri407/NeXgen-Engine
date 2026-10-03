@@ -65,17 +65,31 @@ class Report:
     outcomes: list[CheckOutcome] = field(default_factory=list)
     log_entries: list[str] = field(default_factory=list)
 
-    def add(self, outcome: CheckOutcome, apply_remedy: bool = True) -> CheckOutcome:
-        """Adds an outcome and, if applicable, applies its automatic remedy."""
+    def add(self, outcome: CheckOutcome, apply_remedy: bool = False) -> CheckOutcome:
+        """Adds an outcome and, if applicable, applies its automatic remedy.
+
+        Read-only by default: collecting an outcome must never mutate the
+        system as a side effect. Callers that intend to repair pass
+        ``apply_remedy=True`` explicitly (the doctor does so only under
+        ``--fix``).
+
+        A remedy counts as successful only on an explicit ``True``: ``None``
+        (the declared "unknown" of the ``bool | None`` signature) keeps the
+        check BROKEN instead of promoting an unverified fix to OK.
+        """
         if apply_remedy and outcome.remedy and outcome.severity == Severity.BROKEN:
             try:
                 res = outcome.remedy()
-                # Treated as success unless it raises or explicitly returns False
-                if res is not False:
+                if res is True:
                     outcome.remedied = True
                     outcome.severity = Severity.OK
                     log_msg = f"Automatic remedy applied successfully for [{outcome.id}]: {outcome.message}"
                     self.log_entries.append(log_msg)
+                else:
+                    self.log_entries.append(
+                        f"Remedy for [{outcome.id}] did not confirm success "
+                        f"(returned {res!r}); check stays broken"
+                    )
             except Exception as exc:
                 outcome.detail = f"{outcome.detail or ''} (Remedy failed: {exc})".strip()
                 self.log_entries.append(f"Remedy failed for [{outcome.id}]: {exc}")

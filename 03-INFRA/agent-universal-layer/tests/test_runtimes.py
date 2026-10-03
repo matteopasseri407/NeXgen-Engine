@@ -700,3 +700,38 @@ def test_nexgen_event_sink_script_e2e_socket_and_failsafe(tmp_path: Path):
     assert '"cli":"antigravity"' in data3
     assert '"text":"Risposta vocale di prova da Antigravity."' in data3
     assert '"session_id":"test-agy-conv-123"' in data3
+
+
+def test_apply_all_isolates_event_sink_failure_per_cli(tmp_path: Path, monkeypatch) -> None:
+    """A GuardrailError from one CLI's event sink must warn for that CLI,
+    never abort the remaining ones."""
+    import nexgen_core.runtimes as runtimes
+    from nexgen_core.runtimes.base import GuardrailError
+
+    calls: list[str] = []
+
+    class BrokenSink:
+        name = "broken"
+        def is_installed(self, home): return True
+        def install_guardrail(self, home, source, hooks_dir): return None
+        def install_event_sink(self, home, source):
+            raise GuardrailError("broken: settings corrupted")
+        def apply_posture(self, home, posture): return None
+
+    class WorkingSink:
+        name = "working"
+        def is_installed(self, home): return True
+        def install_guardrail(self, home, source, hooks_dir): return None
+        def install_event_sink(self, home, source):
+            calls.append("working-sink")
+            return "working sink registered"
+        def apply_posture(self, home, posture): return None
+
+    monkeypatch.setattr(runtimes, "REGISTRY", {"broken": BrokenSink(), "working": WorkingSink()})
+    actions = runtimes.apply_all(
+        home=tmp_path / "home",
+        engine_hooks_dir=tmp_path / "hooks",
+        event_sink_source=tmp_path / "sink.mjs",
+    )
+    assert any("[WARN]" in a and "broken" in a for a in actions)
+    assert calls == ["working-sink"]
