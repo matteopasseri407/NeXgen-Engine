@@ -12,6 +12,13 @@ of any engine release.
 
 ### Fixed
 
+- Test fixtures discard inherited config/state overrides before creating their
+  own temporary paths. Windows assertions follow native launcher names and
+  access semantics, and local CLI help avoids initializing asyncio/networking.
+- Initial branch scans exclude the already published main history while still
+  checking every new commit, including values removed before the branch tip.
+  Without a published base, scanning retains the full-ancestry fallback.
+
 - Atomic writes clean up only their own temporary file; backups cannot collide
   within a process. Failed skill replacement restores the previous directory
   or symlink, and unchanged linked libraries cannot certify a new pin.

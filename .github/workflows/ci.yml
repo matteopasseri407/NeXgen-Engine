@@ -93,7 +93,8 @@ jobs:
             --before "${{ github.event.before }}" \
             --sha "${{ github.sha }}" \
             --pr-base "${{ github.event.pull_request.base.sha }}" \
-            --pr-head "${{ github.event.pull_request.head.sha }}")"
+            --pr-head "${{ github.event.pull_request.head.sha }}" \
+            --first-push-base origin/main)"
           python3 03-INFRA/agent-universal-layer/leak-scan/leak_scan.py \
             --patterns 03-INFRA/agent-universal-layer/leak-scan/leak_patterns.yaml \
             --repo . \

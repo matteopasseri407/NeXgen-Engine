@@ -50,7 +50,7 @@ def version_matches_tag(version: str, tag: str) -> tuple[bool, str]:
     return True, f"{tag} and VERSION {version} agree"
 
 
-def scan_range(event_name: str, before: str, sha: str, pr_base: str = "", pr_head: str = "") -> str:
+def scan_range(event_name: str, before: str, sha: str, pr_base: str = "", pr_head: str = "", first_push_base: str = "") -> str:
     """The commit range the leak-prevention gate must examine.
 
     This is a security decision, not CI scaffolding: getting it wrong means
@@ -61,8 +61,9 @@ def scan_range(event_name: str, before: str, sha: str, pr_base: str = "", pr_hea
             raise ValueError("a pull request must declare base and head")
         return f"{pr_base}..{pr_head}"
     if not before or before == ZERO_SHA:
-        # First push to a branch: there's no "before" to compare against.
-        return sha
+        # Without a trusted published base, a bare SHA scans all ancestors.
+        # Never reduce this to sha^: that would miss earlier branch commits.
+        return f"{first_push_base}..{sha}" if first_push_base else sha
     return f"{before}..{sha}"
 
 
@@ -253,6 +254,7 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--sha", required=True)
     p.add_argument("--pr-base", default="")
     p.add_argument("--pr-head", default="")
+    p.add_argument("--first-push-base", default="", help="already published ref; absent means full ancestry")
 
     p = sub.add_parser("next-version", help="Compute next semver version")
     p.add_argument("current")
@@ -292,7 +294,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0 if ok else 1
 
     try:
-        print(scan_range(args.event, args.before, args.sha, args.pr_base, args.pr_head))
+        print(scan_range(args.event, args.before, args.sha, args.pr_base, args.pr_head, args.first_push_base))
     except ValueError as exc:
         print(str(exc), file=sys.stderr)
         return 1

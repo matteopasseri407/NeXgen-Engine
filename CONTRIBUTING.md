@@ -63,7 +63,9 @@ uses the same checkout, create a separate Git worktree. Switching branches
 in a shared directory does not isolate the two sessions' files.
 
 Prefer the regression suite's synthetic fixtures for runtime changes. Tests
-redirect the affected paths and disable host mutations. A manual sync is a
+redirect the affected paths and disable host mutations. The shared fixture
+removes inherited config/state overrides; override tests supply temporary
+locations explicitly. A manual sync is a
 live write operation unless you deliberately isolate it: `NEXGEN_HOME`
 changes the default home, but `CODEX_HOME`, `XDG_CONFIG_HOME`,
 `AGENT_STATE_DIR` and `AGENT_VAULT_DATA` can still select explicit locations.

@@ -284,7 +284,8 @@ def test_ensure_boot_check_writes_files_and_is_idempotent(tmp_path, monkeypatch,
 def test_ensure_shell_hook_installs_once(tmp_path, monkeypatch):
     home = _isolate(tmp_path, monkeypatch)
     assert notifier.ensure_shell_hook(home) != ["[shell-hook] already present"]
-    assert (home / ".bashrc").is_file()
+    expected = home / (".config/powershell/Microsoft.PowerShell_profile.ps1" if os.name == "nt" else ".bashrc")
+    assert expected.is_file()
     assert notifier.ensure_shell_hook(home) == ["[shell-hook] already present"]
 
 

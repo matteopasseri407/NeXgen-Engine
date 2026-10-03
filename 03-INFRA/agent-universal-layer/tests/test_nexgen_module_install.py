@@ -739,7 +739,7 @@ def test_transient_env_gates_keep_module_instead_of_uninstalling(tmp_path: Path)
     second = install_declared_modules(transient, home=home, log=logged.append)
     assert second == []
     assert any("kept as-is" in line for line in logged)
-    assert (home / ".local" / "bin" / "demo").is_file(), "shim demolished on transient env"
+    assert (home / ".local" / "bin" / ("demo.cmd" if os.name == "nt" else "demo")).is_file(), "shim demolished on transient env"
 
 
 def test_one_bad_module_does_not_abort_siblings(tmp_path: Path) -> None:
@@ -779,7 +779,7 @@ def test_one_bad_module_does_not_abort_siblings(tmp_path: Path) -> None:
     states = [ModuleState(catalog["good"], "local", "state-file"),
               ModuleState(catalog["bad"], "local", "state-file")]
     install_declared_modules(states, home=home, log=logged.append)
-    assert (home / ".local" / "bin" / "good").is_file()
+    assert (home / ".local" / "bin" / ("good.cmd" if os.name == "nt" else "good")).is_file()
 
 
 def test_unsafe_shim_target_is_refused(tmp_path: Path) -> None:

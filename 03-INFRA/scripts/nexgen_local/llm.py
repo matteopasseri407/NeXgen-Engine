@@ -8,7 +8,6 @@ to LangChain.
 """
 from __future__ import annotations
 
-import asyncio
 import json
 import os
 import re
@@ -82,6 +81,8 @@ class ChatOllamaLLM:
     """Synchronous contract backed by cancellable LangChain/Ollama requests."""
 
     def __init__(self, cfg: LaneConfig) -> None:
+        import asyncio
+
         try:
             from langchain_ollama import ChatOllama
             from httpx import AsyncHTTPTransport
@@ -162,6 +163,8 @@ class ChatOllamaLLM:
 
     def _invoke(self, model, messages, timeout: float):
         """The synchronous LLM contract drives a cancellable async request."""
+        import asyncio
+
         # Also supports injected backends without constructing a real client.
         if not hasattr(self, "_runner"):
             self._runner = asyncio.Runner()

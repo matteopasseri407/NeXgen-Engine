@@ -41,9 +41,14 @@ def test_opencode_candidates_honor_xdg_and_name_order(tmp_path: Path, monkeypatc
     xdg = tmp_path / "xdg"
     (xdg / "opencode").mkdir(parents=True)
     monkeypatch.setenv("XDG_CONFIG_HOME", str(xdg))
-    names = [p.name for p in opencode_config_candidates(home)]
-    assert names == ["opencode.jsonc", "opencode.json", "config.json"]
-    assert all(str(p).startswith(str(xdg)) for p in opencode_config_candidates(home))
+    candidates = opencode_config_candidates(home)
+    names = ["opencode.jsonc", "opencode.json", "config.json"]
+    assert [p.name for p in candidates if p.parent == xdg / "opencode"] == names
+    if sys.platform == "win32":
+        assert [p.name for p in candidates] == ["opencode.jsonc", "opencode.jsonc", "opencode.json", "opencode.json", "config.json", "config.json"]
+        assert candidates[1].parent == home / "AppData" / "Roaming" / "opencode"
+    else:
+        assert len(candidates) == 3
 
 
 def test_strict_manifest_names_every_bad_entry(tmp_path: Path) -> None:
@@ -113,7 +118,8 @@ def test_atomic_write_unique_tmp_and_no_setuid_carry(tmp_path: Path) -> None:
     leftovers = list(tmp_path.glob("cfg.json.*.tmp"))
     assert leftovers == []
     mode = target.stat().st_mode & 0o7777
-    assert mode & 0o777 == 0o600
+    if os.name != "nt":
+        assert mode & 0o777 == 0o600
     assert mode & 0o7000 == 0
 
 
