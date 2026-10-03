@@ -14,7 +14,7 @@ SCRIPTS_DIR = Path(__file__).resolve().parents[2]
 if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
-from nexgen_core.vault.groom import main as groom_main
+from nexgen_core.vault.groom import main as groom_main  # noqa: E402 - sys.path shim for cloned checkout
 
 
 def main(argv: list[str] | None = None) -> int:

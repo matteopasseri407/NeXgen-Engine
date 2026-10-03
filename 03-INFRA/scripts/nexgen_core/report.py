@@ -90,7 +90,7 @@ class Report:
                         f"Remedy for [{outcome.id}] did not confirm success "
                         f"(returned {res!r}); check stays broken"
                     )
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001 - report tolerates unreadable input
                 outcome.detail = f"{outcome.detail or ''} (Remedy failed: {exc})".strip()
                 self.log_entries.append(f"Remedy failed for [{outcome.id}]: {exc}")
 

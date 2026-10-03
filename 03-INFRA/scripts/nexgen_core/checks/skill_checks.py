@@ -28,7 +28,7 @@ def check_skills_manifest(manifest_path: Path) -> CheckOutcome:
             severity=Severity.OK,
             message=t("Skills manifest valid with {count} skills declared", count=skill_count),
         )
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - check failure is reported, never raises
         return CheckOutcome(
             id="skills.manifest_valid",
             severity=Severity.BROKEN,
@@ -159,7 +159,7 @@ def _skills_orphans_allowlist(vault_data: Path) -> set[str]:
         return set()
     try:
         data = load_skills_manifest(path)
-    except Exception:
+    except Exception:  # noqa: BLE001 - check failure is reported, never raises
         return set()
     entries = (data.get("raw") or {}).get("orphans_allowlist")
     if not isinstance(entries, list):
@@ -343,7 +343,7 @@ def check_skill_deps(manifest_path: Path, state_dir: Path) -> CheckOutcome:
 
     try:
         data = load_skills_manifest(manifest_path)
-    except Exception:
+    except Exception:  # noqa: BLE001 - check failure is reported, never raises
         return CheckOutcome(
             id="skills.deps",
             severity=Severity.UNDETERMINED,

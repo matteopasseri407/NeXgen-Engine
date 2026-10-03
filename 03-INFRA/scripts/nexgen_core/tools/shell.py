@@ -140,14 +140,18 @@ class NeXgenShell(cmd.Cmd):
             return self.do_exit("")
 
         if raw.startswith("!"):
-            os.system(raw[1:].strip())
+            # Local REPL escape by design: runs on the operator's own machine
+            # with their own privileges. Empty command is a no-op, never a shell.
+            cmd = raw[1:].strip()
+            if cmd:
+                os.system(cmd)
             return False
 
         try:
             from nexgen_core.cli import _run_cli
             args = shlex.split(raw, posix=sys.platform != "win32")
             _run_cli(args)
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - shell reports, never raises
             print(f"{C_YELLOW}[!] Command error: {exc}{C_RESET}")
         return False
 

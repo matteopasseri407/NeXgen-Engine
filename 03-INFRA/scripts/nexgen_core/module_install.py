@@ -189,7 +189,9 @@ def run_health_check(module: ModuleDef, timeout: int = 60) -> tuple[bool | None,
     """Ask the module to prove it works. (None, reason) when it cannot say.
 
     Called by the doctor, never by the guard: running module-supplied code on a
-    timer is exactly what the declaration model exists to avoid.
+    timer is exactly what the declaration model exists to avoid. `shell=True`
+    is intentional here: `module.health` comes from the vault-owned manifest
+    (not the network), and the doctor is an explicit operator action.
     """
     if not module.health:
         return None, "no health command declared"
@@ -197,7 +199,7 @@ def run_health_check(module: ModuleDef, timeout: int = 60) -> tuple[bool | None,
     if cwd is not None and not cwd.is_dir():
         return None, f"source {cwd} does not exist"
     try:
-        proc = subprocess.run(
+        proc = subprocess.run(  # noqa: S602 - doctor-only, vault-owned manifest string
             module.health, shell=True, cwd=str(cwd) if cwd else None,
             capture_output=True, text=True, timeout=timeout, check=False,
         )
@@ -235,10 +237,9 @@ def _write_if_different(path: Path, content: str, dry_run: bool) -> bool:
         return False
     if dry_run:
         return True
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(f"{path.name}.tmp-{os.getpid()}")
-    tmp.write_text(content, encoding="utf-8")
-    os.replace(tmp, path)
+    from nexgen_core.files import atomic_write_text
+
+    atomic_write_text(path, content)
     return True
 
 
@@ -544,7 +545,7 @@ def install_declared_modules(
             # commands and units for something the machine has switched off.
             try:
                 actions += uninstall_module(state.module, home=home, dry_run=dry_run, log=log)
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001 - install error is reported, never raises
                 log(f"{state.module.id}: removal failed ({exc}); will retry next cycle")
             continue
         unmet = check_requirements(state.module, home)
@@ -567,6 +568,6 @@ def install_declared_modules(
             actions += install_module(
                 state.module, home=home, engine_root=engine_root, dry_run=dry_run, log=log
             )
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - install error is reported, never raises
             log(f"{state.module.id}: installation failed ({exc}); siblings continue, will retry next cycle")
     return actions

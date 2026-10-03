@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import re
 import subprocess
 import time
@@ -32,6 +33,8 @@ from pathlib import Path
 
 from nexgen_core.config import ConfigError, load_mcp_manifest, load_skills_manifest
 from nexgen_core.paths import mcp_manifest, resolve_state_dir, resolve_vault_data, skills_manifest
+
+logger = logging.getLogger(__name__)
 
 GIT_LS_REMOTE_TIMEOUT_SECONDS = 8
 NPM_REGISTRY_TIMEOUT_SECONDS = 6
@@ -90,7 +93,8 @@ def _git_ls_remote_head(repo: str) -> str | None:
         from nexgen_core.skill_sources import clone_url
 
         target = clone_url(repo)
-    except Exception:
+    except Exception as exc:  # noqa: BLE001 - clone_url is total; defensive fallback keeps the check offline-safe
+        logger.debug("clone_url failed for %r: %s", repo, exc)
         target = repo
     try:
         result = subprocess.run(

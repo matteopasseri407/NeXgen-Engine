@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import os
 import shlex
 import shutil
@@ -43,6 +44,8 @@ from nexgen_core.config import load_mcp_manifest
 from nexgen_core.errors import NexgenError
 from nexgen_core.i18n import t
 from nexgen_core.paths import mcp_manifest, resolve_state_dir
+
+logger = logging.getLogger(__name__)
 
 #: Subfolder of the machine-local state dir that holds provisioned workspaces.
 DEPS_DIRNAME = "deps"
@@ -337,7 +340,8 @@ def report_unsatisfied_deps(vault_data: Path, state_dir: Path | None = None) -> 
     path = mcp_manifest(vault_data)
     try:
         data = load_mcp_manifest(path)
-    except Exception:
+    except Exception as exc:  # noqa: BLE001 - unreadable manifest means no report, never a doctor crash
+        logger.debug("ignoring unreadable MCP manifest %s: %s", path, exc)
         return []
     problems: list[str] = []
     for name, srv in (data.get("servers") or {}).items():

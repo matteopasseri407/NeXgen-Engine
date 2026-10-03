@@ -93,7 +93,7 @@ def cmd_add(args) -> int:
     repo = Path(args.path).expanduser().resolve()
     try:
         module = load_external_module(repo)
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - module error is reported, never raises
         print(str(exc), file=sys.stderr)
         return 2
     path = write_state_file(_vault(args), add_external=str(repo))
@@ -144,7 +144,7 @@ def cmd_set(args) -> int:
         host = current_host() if module.scope == "host" else None
     try:
         path = write_state_file(vault_data, module=args.module, state=args.state, host=host)
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - module error is reported, never raises
         print(t("Could not write the state: {error}", error=exc), file=sys.stderr)
         return 1
     if host:

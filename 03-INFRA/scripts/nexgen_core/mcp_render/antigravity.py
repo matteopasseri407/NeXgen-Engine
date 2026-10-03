@@ -20,7 +20,7 @@ def render(renderer, write: bool = False) -> tuple[bool, str]:
     if cfg_file.is_file():
         try:
             existing = json.loads(cfg_file.read_text(encoding="utf-8"))
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - render fallback, never raises
             raise ValueError(f"Could not parse {cfg_file}: invalid JSON ({exc})")
 
     mcp_servers = existing.get("mcpServers", {})

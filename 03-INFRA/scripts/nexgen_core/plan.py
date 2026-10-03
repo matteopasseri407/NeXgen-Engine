@@ -219,7 +219,7 @@ def build_sync_plan(
     for domain, probe in probes:
         try:
             result = probe()
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - plan error is reported, never raises
             # A probe that cannot run means an apply would fail the same
             # way (same code path): that is drift by definition, and the
             # plan states the reason instead of dying.
@@ -268,7 +268,7 @@ def _missing_config_actions(vault: Path, home: Path) -> list[str]:
     for cli, path in cli_paths.items():
         try:
             expected = renderer.load_resolved_servers(cli)
-        except Exception:
+        except Exception:  # noqa: BLE001 - plan error is reported, never raises
             continue  # a manifest the renderer cannot resolve is reported
                           # by the probes above; nothing more to add here
         if expected and not path.is_file():

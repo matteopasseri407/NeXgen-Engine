@@ -15,7 +15,8 @@ from pathlib import Path
 from typing import Any
 
 from ..config import LaneConfig
-from ..engine import LaneResult, check_canary, honest_empty_outcome, verify_answer
+from ..engine import LaneResult, check_canary
+from ..evidence import honest_empty_outcome, verify_answer
 from ..graph import run_graph
 from ..llm import LLM
 from ..tools import ToolRegistry

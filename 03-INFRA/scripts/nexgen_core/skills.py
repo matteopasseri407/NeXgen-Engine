@@ -213,7 +213,7 @@ class SkillMaterializer:
                     try:
                         from nexgen_core.provision import validate_deps
                         validate_deps(entry.deps, name)
-                    except Exception as exc:
+                    except Exception as exc:  # noqa: BLE001 - skill error is reported, never raises
                         problems.append(str(exc))
             if entry.origin in ("vault", "engine"):
                 src = entry.source_path
@@ -493,11 +493,10 @@ class SkillMaterializer:
 
 
 def _safe_mark(mark: str, stream=sys.stdout) -> str:
-    try:
-        mark.encode(getattr(stream, "encoding", None) or "utf-8")
-        return mark
-    except (UnicodeEncodeError, TypeError):
-        return "[OK]" if mark == "✓" else "[X]"
+    """Backward-compat wrapper: single implementation lives in nexgen_core.marks."""
+    from nexgen_core.marks import safe_mark
+
+    return safe_mark(mark, stream)
 
 
 def main(argv: list[str] | None = None) -> int:

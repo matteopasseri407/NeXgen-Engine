@@ -15,7 +15,7 @@ def check_modules_catalog(engine_root: Path, vault_data: Path) -> CheckOutcome:
     named as a warning, never silently ignored."""
     try:
         catalog = load_catalog(engine_root, external=external_paths(vault_data))
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - check failure is reported, never raises
         return CheckOutcome(
             id="modules.catalog",
             severity=Severity.BROKEN,
@@ -25,7 +25,7 @@ def check_modules_catalog(engine_root: Path, vault_data: Path) -> CheckOutcome:
 
     try:
         declared = load_state_file(vault_data)
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - check failure is reported, never raises
         return CheckOutcome(
             id="modules.catalog",
             severity=Severity.WARN,
@@ -75,7 +75,7 @@ def check_modules_ready(engine_root: Path, vault_data: Path) -> list[CheckOutcom
     try:
         catalog = load_catalog(engine_root, external=external_paths(vault_data))
         states = derive_state(catalog, load_state_file(vault_data))
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - check failure is reported, never raises
         return [CheckOutcome(
             id="modules.ready",
             severity=Severity.WARN,

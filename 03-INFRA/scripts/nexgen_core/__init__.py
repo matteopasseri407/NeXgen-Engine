@@ -26,7 +26,7 @@ def _read_version() -> str:
         from importlib.metadata import version
 
         return version("nexgen-engine")
-    except Exception:
+    except Exception:  # noqa: BLE001 - fallback locale, never raises
         return "unknown"
 
 

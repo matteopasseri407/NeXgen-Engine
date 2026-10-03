@@ -83,7 +83,7 @@ def get_engine_info(vault_data: Path | None = None) -> dict[str, Any]:
     m_states = []
     try:
         m_states = modules_state(vault, engine_root)
-    except Exception:
+    except Exception:  # noqa: BLE001 - info tolerates unreadable state
         pass
 
     # Secrets store check
@@ -111,7 +111,7 @@ def get_engine_info(vault_data: Path | None = None) -> dict[str, Any]:
             doctor_status = f"{report.ok_count}/{len(report.outcomes)} pass ({len(report.broken)} broken)"
         if report.warnings:
             doctor_status += f", {len(report.warnings)} warnings"
-    except Exception:
+    except Exception:  # noqa: BLE001 - info tolerates unreadable state
         doctor_status = "not evaluated"
 
     # Notes count

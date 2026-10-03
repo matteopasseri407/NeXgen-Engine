@@ -248,7 +248,7 @@ def apply_plan(
 
         skills_raw = load_skills_manifest(skills_path).get("skills", {})
         mcp_raw = load_mcp_manifest(mcp_path).get("servers", {}) if mcp_path.is_file() else {}
-    except Exception:
+    except Exception:  # noqa: BLE001 - bump failure is reported, never raises
         skills_raw, mcp_raw = {}, {}
 
     def _approved(change: tuple, name: str, field: str | None) -> bool:
@@ -479,7 +479,7 @@ def apply_plan(
             sync_notes = _rematerialize(vault_data, home,
                                         any(w == "skills" for _, w, _, _, _ in planned),
                                         any(w == "mcp" for _, w, _, _, _ in planned))
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - bump failure is reported, never raises
             sync_notes = [f"[ERROR] materialization failed ({exc})"]
         failed = [n for n in sync_notes if n.startswith("[ERROR]")]
         notes.extend(sync_notes)
@@ -607,10 +607,10 @@ def bump_batch(
 
 
 def _short_name(what: str) -> str:
-    import re
+    """Backward-compat wrapper: single implementation in nexgen_core.thirdparty_names."""
+    from nexgen_core.thirdparty_names import short_name
 
-    match = re.match(r"^(?:skill|MCP server) '([^']+)'", str(what or ""))
-    return match.group(1) if match else str(what or "")
+    return short_name(what)
 
 
 def _commit_manifests(vault_data: Path, raisable: list[dict], *, auto: bool = True) -> bool:
@@ -639,7 +639,7 @@ def _commit_manifests(vault_data: Path, raisable: list[dict], *, auto: bool = Tr
         result = _run(vault_data, "commit", "-m", f"chore(pins): guardian {'auto-' if auto else ''}bump {label}",
                       "--", *[str(p) for p in paths])
         return result.returncode == 0
-    except Exception:
+    except Exception:  # noqa: BLE001 - bump failure is reported, never raises
         return False
 
 
@@ -713,5 +713,5 @@ def auto_apply(
             return {"ok": True, "applied": 0, "busy": True}
         return {"ok": not errors, "applied": bumps,
                 "error": "; ".join(errors) if errors else None}
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - bump failure is reported, never raises
         return {"ok": False, "error": str(exc)}

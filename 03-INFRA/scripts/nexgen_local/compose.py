@@ -26,7 +26,7 @@ from .connectors import ConnectorError
 from .connectors import gmail as gmail_conn
 from .connectors import outlook as outlook_conn
 from .llm import LLM
-from .patch import _PROPOSAL_ID_RE, new_proposal_id
+from .patch import new_proposal_id, valid_proposal_id
 from .tools import ToolError, audit_event
 
 MAX_BODY_CHARS = 20_000
@@ -86,7 +86,7 @@ def _migrate(data: dict[str, Any]) -> dict[str, Any]:
 
 
 def load_proposal(cfg: LaneConfig, proposal_id: str) -> MailProposal:
-    if not _PROPOSAL_ID_RE.fullmatch(str(proposal_id or "")):
+    if not valid_proposal_id(proposal_id or ""):
         raise MailError(f"id proposta non valido: {proposal_id}")
     target = cfg.mails_dir / f"{proposal_id}.json"
     if not target.is_file():

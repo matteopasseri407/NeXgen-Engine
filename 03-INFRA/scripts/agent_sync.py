@@ -30,7 +30,7 @@ LINKED_COMMANDS: dict[str, dict[str, object]] = {
     "vault-ocr-local":   {"source": "vault",  "posix": True,  "windows": False, "optional": True},
 }
 
-from nexgen_core.cli import main
+from nexgen_core.cli import main  # noqa: E402 - sys.path shim for cloned checkout
 
 if __name__ == "__main__":
     sys.exit(main())

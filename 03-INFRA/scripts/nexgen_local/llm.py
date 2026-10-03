@@ -254,7 +254,7 @@ class ChatOllamaLLM:
         try:
             structured = self._decision_model.with_structured_output(schema, method="json_schema", include_raw=True)
             result = self._invoke(structured, self._messages(system, user), DECISION_TIMEOUT_SECONDS)
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - LLM failure falls back, never raises
             # Old driver without json_schema support: degrade to the plain
             # JSON channel and validate the menu locally, instead of failing
             # every decision into escalation. A timeout is not a missing

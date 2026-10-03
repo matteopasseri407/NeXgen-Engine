@@ -21,10 +21,10 @@ SCRIPTS_DIR = Path(__file__).resolve().parents[1]
 if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
-from nexgen_core.config import load_mcp_manifest
-from nexgen_core.i18n import t
-from nexgen_core.jsonc import parse_jsonc
-from nexgen_core.paths import (
+from nexgen_core.config import load_mcp_manifest  # noqa: E402 - sys.path shim for cloned checkout
+from nexgen_core.i18n import t  # noqa: E402 - sys.path shim for cloned checkout
+from nexgen_core.jsonc import parse_jsonc  # noqa: E402 - sys.path shim for cloned checkout
+from nexgen_core.paths import (  # noqa: E402 - sys.path shim for cloned checkout
     antigravity_config,
     antigravity_configs,
     claude_config,
@@ -32,7 +32,7 @@ from nexgen_core.paths import (
     opencode_config_candidates,
     resolve_home,
 )
-from nexgen_core.renderer import McpRenderer
+from nexgen_core.renderer import McpRenderer  # noqa: E402 - sys.path shim for cloned checkout
 
 HOME = resolve_home()
 # CLIs whose writer can recreate the file from scratch (--reset is only safe
@@ -100,7 +100,7 @@ def _validate_config_text(path: Path, text: str) -> None:
         try:
             import tomllib
             tomllib.loads(text)
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - config error is reported, never raises
             raise ValueError(exc)
     elif path.suffix == ".jsonc":
         parse_jsonc(text)
@@ -119,7 +119,7 @@ def cmd_write(cli: str) -> int:
     }
     try:
         ok, msg = funcs[cli](write=True)
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - config error is reported, never raises
         print(f">>> STOP: {exc}", file=sys.stderr)
         return 2
     print(f">>> {cli}: {msg}")
@@ -348,7 +348,7 @@ def _load_live(cli: str) -> dict | None:
             d = parse_jsonc(text) if path.suffix == ".jsonc" else json.loads(text)
             mcp = d.get("mcp", {})
             return mcp.get("servers", mcp)
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - config error is reported, never raises
         print(">>> STOP: " + t("{name} is not valid JSON/TOML ({error}). Restore a .bak-* backup before retrying.", name=path.name, error=exc), file=sys.stderr)
         sys.exit(2)
     return {}
@@ -376,7 +376,7 @@ def insert_server_stubs(manifest_path: Path, stubs: list[str]) -> tuple[bool, st
     lock = HostLock(lock_path=_manifest_lock_path(), command_name="mcp-manifest-write")
     try:
         lock.acquire()
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - config error is reported, never raises
         return False, t("could not lock the manifest for writing ({error}).", error=exc), None
     try:
         try:
@@ -415,7 +415,7 @@ def insert_server_stubs(manifest_path: Path, stubs: list[str]) -> tuple[bool, st
         try:
             _atomic_write_text(candidate, new_text)
             load_mcp_manifest(candidate)
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - config error is reported, never raises
             with contextlib.suppress(OSError):
                 candidate.unlink(missing_ok=True)
             return False, t("the new entries would break the manifest ({error}); nothing was written.", error=exc), bak
@@ -436,7 +436,7 @@ def cmd_adopt(cli: str, apply: bool = False) -> int:
     try:
         raw = load_mcp_manifest(manifest_path)
         manifest_servers = raw.get("servers", {})
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - config error is reported, never raises
         print(">>> STOP: " + t("invalid MCP manifest ({error}).", error=exc), file=sys.stderr)
         return 2
     live = _load_live(cli)
