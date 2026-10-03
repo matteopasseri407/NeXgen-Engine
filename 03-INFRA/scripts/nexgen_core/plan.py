@@ -118,6 +118,21 @@ def _git_probe(vault_data: Path) -> tuple[list[str], list[str]]:
         ))
         actions.append(t("Commit or stash the pending changes."))
 
+    # New infra files nobody staged: never committed, never pushed, while
+    # every other report says aligned. Listed, not auto-committed.
+    from nexgen_core.git_ops import get_untracked_infra_files
+
+    untracked_infra = get_untracked_infra_files(vault_data)
+    if untracked_infra:
+        shown = ", ".join(untracked_infra[:5])
+        if len(untracked_infra) > 5:
+            shown += t(" and {count} more", count=len(untracked_infra) - 5)
+        notes.append(t(
+            "{count} new infra files never committed ({files}): stage and publish them, or they stay local-only.",
+            count=len(untracked_infra), files=shown,
+        ))
+        actions.append(t("Stage the new infra files with vault-push."))
+
     return notes, actions
 
 
@@ -170,22 +185,31 @@ def build_sync_plan(
         plan.not_checked.append(t("The vault directory does not exist; nothing else was probed."))
         return plan
 
-    # The probes are the doctor's own read-only checks, reused rather than
-    # reimplemented: one definition of "aligned", two consumers.
+    # The probes are a subset of the doctor's read-only checks, reused
+    # rather than reimplemented. Subset, not all: reachability and anything
+    # needing the network stay doctor-only, and the plan says so below
+    # instead of printing a "no drift" that nobody verified.
     from nexgen_core.checks.instructions_checks import (
         check_claude_pointer,
         check_cli_instruction_pointers,
         check_opencode_instructions,
     )
-    from nexgen_core.checks.mcp_checks import check_mcp_configs_rendered
+    from nexgen_core.checks.mcp_checks import check_mcp_configs_rendered, check_mcp_orphans
     from nexgen_core.checks.skill_checks import (
         check_engine_starter_views,
+        check_skill_library_symlinks,
         check_skills_not_materialized,
+        check_skills_out_of_manifest,
+        check_skills_pin_freshness,
     )
 
     probes: list[tuple[str, object]] = [
         ("mcp", lambda: check_mcp_configs_rendered(vault, home_dir)),
+        ("mcp", lambda: check_mcp_orphans(vault, home_dir)),
         ("skills", lambda: check_skills_not_materialized(vault, home_dir)),
+        ("skills", lambda: check_skills_pin_freshness(vault, home_dir)),
+        ("skills", lambda: check_skills_out_of_manifest(vault, home_dir)),
+        ("skills", lambda: check_skill_library_symlinks(home_dir)),
         ("skills", lambda: check_engine_starter_views(vault, home_dir)),
         ("instructions", lambda: check_claude_pointer(vault, home_dir)),
         ("instructions", lambda: check_cli_instruction_pointers(vault, home_dir)),
@@ -221,6 +245,10 @@ def build_sync_plan(
     plan.not_checked.append(t(
         "Launcher shims, scheduler units and modules: idempotent self-repair "
         "phases; on an aligned machine they write nothing."
+    ))
+    plan.not_checked.append(t(
+        "MCP reachability, upstream versions and secrets drift: doctor-only, "
+        "they need the network or live credentials a plan never touches."
     ))
     return plan
 

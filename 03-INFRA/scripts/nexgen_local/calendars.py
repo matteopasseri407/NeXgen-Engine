@@ -13,7 +13,7 @@ import time
 from dataclasses import asdict, dataclass
 from typing import Any
 
-from .config import LaneConfig
+from .config import LaneConfig, secure_artifact
 from .connectors import ConnectorError
 from .connectors import calendar as calendar_conn
 from .patch import _PROPOSAL_ID_RE, new_proposal_id
@@ -44,6 +44,7 @@ def _save(cfg: LaneConfig, proposal: CalendarProposal) -> None:
     cfg.calendars_dir.mkdir(parents=True, exist_ok=True)
     target = cfg.calendars_dir / f"{proposal.id}.json"
     target.write_text(json.dumps(asdict(proposal), ensure_ascii=False, indent=1), encoding="utf-8")
+    secure_artifact(cfg.calendars_dir, target)
 
 
 def _create(cfg: LaneConfig, proposal: CalendarProposal) -> None:
@@ -55,6 +56,7 @@ def _create(cfg: LaneConfig, proposal: CalendarProposal) -> None:
             handle.write(json.dumps(asdict(proposal), ensure_ascii=False, indent=1))
     except FileExistsError as exc:
         raise CalendarError(f"collisione id proposta, riprova: {proposal.id}") from exc
+    secure_artifact(cfg.calendars_dir, target)
 
 
 def load_proposal(cfg: LaneConfig, proposal_id: str) -> CalendarProposal:

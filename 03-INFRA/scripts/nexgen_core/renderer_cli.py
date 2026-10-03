@@ -387,6 +387,17 @@ def insert_server_stubs(manifest_path: Path, stubs: list[str]) -> tuple[bool, st
         servers_idx = next((i for i, ln in enumerate(lines) if ln.startswith("servers:")), None)
         if servers_idx is None:
             return False, t("could not find the top-level 'servers:' block; add the entries by hand."), None
+        head, sep, tail = lines[servers_idx].partition("servers:")
+        tail_code = tail.split("#", 1)[0].strip()
+        if tail_code and tail_code not in ("{}", "[]", "null", "~"):
+            # Non-empty flow style (`servers: {a: b}`): expanding it by text
+            # surgery could drop entries, so refuse with a precise action
+            # instead of writing a manifest that lost servers.
+            return False, t("the 'servers:' block is flow-style with entries; expand it to block style by hand, then rerun."), None
+        if tail_code in ("{}", "[]", "null", "~"):
+            # Empty flow style (`servers: {}`): normalize to a block header
+            # so the stubs below parse as entries of the same mapping.
+            lines[servers_idx] = "servers:" if not head.strip() else f"{head}servers:"
         end = len(lines)
         for j in range(servers_idx + 1, len(lines)):
             ln = lines[j]

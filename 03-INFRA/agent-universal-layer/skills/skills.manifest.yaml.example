@@ -36,8 +36,12 @@
 #             the shared roots (its target just verifies discoverability). Skills
 #             kept out of every eager view are still reachable through the
 #             universal `agent-skill find|show` command.
-#   exposure: manual (default — invisible to eager runtimes, loaded lazily) or
-#             core (the single exception, visible under ~/.agents/skills).
+#   exposure: manual/lazy (default — loaded on demand via the catalog) or
+#             core/eager (starter commands, showcased in ~/.agents/skills).
+#             Exposure never gates the native views: a declared skill gets a
+#             view in every runtime named in `targets`, whatever its exposure.
+#             (Pruning declared skills made them silently unreachable after
+#             every sync; loading is routed by INDEX.md + on-demand reads.)
 #
 # ADDITIVE by design: unregistered legacy skills are never deleted.
 # `skills-sync.py --apply --migrate-legacy` quarantines them locally, out of the

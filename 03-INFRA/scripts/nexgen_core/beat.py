@@ -57,7 +57,7 @@ class Heartbeat:
         self.megaphone = Megaphone(state_dir=self.state_dir)
         self.liveness_file = self.state_dir / LIVENESS_FILE_NAME
 
-    def record_liveness(self) -> None:
+    def record_liveness(self, warnings: int = 0) -> None:
         """Records the successful completion of a Guard cycle, and by whom.
 
         The version is written alongside the timestamp because otherwise
@@ -68,14 +68,29 @@ class Heartbeat:
 
         The format stays a first line that parses as a float, so a previous
         version reading this file keeps working: it reads the first line and
-        ignores the rest.
+        ignores the rest. The warning count rides a third line for the same
+        reason: a cycle that completed with degraded phases is still a
+        completed cycle, but the monitor should say so.
         """
         from nexgen_core import __version__
 
         self.state_dir.mkdir(parents=True, exist_ok=True)
         self.liveness_file.write_text(
-            f"{time.time()}\n{__version__}\n", encoding="utf-8"
+            f"{time.time()}\n{__version__}\nWARN={int(warnings)}\n", encoding="utf-8"
         )
+
+    def recorded_warnings(self) -> int | None:
+        """Warning count of the last recorded cycle, None when unrecorded."""
+        if not self.liveness_file.is_file():
+            return None
+        try:
+            lines = self.liveness_file.read_text(encoding="utf-8").splitlines()
+            for line in lines[2:]:
+                if line.strip().startswith("WARN="):
+                    return int(line.strip().split("=", 1)[1])
+        except (OSError, ValueError):
+            return None
+        return None
 
     def recorded_version(self) -> str | None:
         """Which engine last completed a cycle here, if it said so.
@@ -109,7 +124,11 @@ class Heartbeat:
                     alert_key="guard_stale"
                 )
                 return False, msg
-            return True, t("Guard active (last completed {minutes:.0f} minutes ago)", minutes=elapsed / 60)
+            msg = t("Guard active (last completed {minutes:.0f} minutes ago)", minutes=elapsed / 60)
+            warns = self.recorded_warnings()
+            if warns:
+                msg += " " + t("(last cycle completed with {count} warnings)", count=warns)
+            return True, msg
         except Exception as exc:
             return False, t("Error reading liveness: {error}", error=exc)
 

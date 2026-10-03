@@ -435,6 +435,11 @@ class _ServerHandle:
                 "io.modelcontextprotocol/clientCapabilities": {},
             }}
             resp = self.rpc("tools/list", modern, 900 + zlib.crc32(self.name.encode()) % 100)
+        if "error" in resp or "result" not in resp:
+            # Error or malformed reply: report no tools WITHOUT caching.
+            # Caching the failure would wedge the server as "tool not found"
+            # for INDEX_TTL even after it recovers.
+            return []
         tools = (resp.get("result") or {}).get("tools", [])
         self.index = tools
         self.index_at = time.time()
@@ -493,6 +498,20 @@ class Waiter:
             if h is None:
                 h = _ServerHandle(name, spec)
                 self.handles[name] = h
+                return h
+            if h.spec != spec:
+                # Manifest changed under a live waiter (command/args/env/
+                # url/readonly/deps): the old handle would serve the stale
+                # config until process exit. Swap it; the old proc dies.
+                try:
+                    h.stop()
+                except Exception:
+                    pass
+                h = _ServerHandle(name, spec)
+                self.handles[name] = h
+                # A dropped spec may have renamed the tool surface: prior
+                # loads could authorize args against a stale schema.
+                self.loaded = {(s, t) for (s, t) in self.loaded if s != name}
             return h
 
     def index(self) -> dict[str, Any]:
@@ -517,7 +536,7 @@ class Waiter:
                         entry["annotations"] = hints
                 entries.append(entry)
                 estimated += len(t.get("name", "")) // 4 + len(desc) // 4 + 2
-            result["servers"][name] = {"mutating": handle.readonly_server is False or bool(handle.readonly_tools), "tools": entries}
+            result["servers"][name] = {"mutating": not handle.readonly_server, "tools": entries}
         # Budget enforcement: over budget the index degrades to names only
         # (server granularity), so a bordello of servers cannot blow the
         # bootstrap with descriptions.

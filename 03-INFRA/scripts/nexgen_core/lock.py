@@ -5,6 +5,11 @@ Preserves the operational contract:
 - Configurable timeout (default 30 seconds via AGENT_SYNC_LOCK_TIMEOUT_SECONDS).
 - Contention on 'guard': clean exit with code 0 (another operation is already running).
 - Contention on manual operations ('apply', 'publish', 'vault-push'): exit with code 75.
+
+Scope limit: this is a HOST lock, and the state dir must live on local
+storage. On a network share (NFS/SMB) POSIX locks can be client-local, so
+two hosts could both believe they hold it. Never point the state dir at a
+share; the vault itself syncs through git, not through shared files.
 """
 from __future__ import annotations
 
@@ -56,11 +61,17 @@ class HostLock:
         if timeout is None:
             env_timeout = os.environ.get("AGENT_SYNC_LOCK_TIMEOUT_SECONDS")
             try:
-                self.timeout = float(env_timeout) if env_timeout else DEFAULT_TIMEOUT_SECONDS
+                parsed = float(env_timeout) if env_timeout else DEFAULT_TIMEOUT_SECONDS
             except (TypeError, ValueError):
                 # A non-numeric value must never crash the command: fall back
                 # to the default instead of dying in float().
-                self.timeout = DEFAULT_TIMEOUT_SECONDS
+                parsed = DEFAULT_TIMEOUT_SECONDS
+            # NaN never satisfies `elapsed >= timeout` (infinite poll);
+            # infinite waits forever; both come from a misconfigured env,
+            # never from intent. Negative/zero stays: try once, fail fast.
+            import math
+
+            self.timeout = DEFAULT_TIMEOUT_SECONDS if not math.isfinite(parsed) else parsed
         else:
             self.timeout = float(timeout)
 
@@ -70,7 +81,13 @@ class HostLock:
 
     def acquire(self) -> bool:
         """Tries to acquire the lock within the timeout."""
-        self.lock_path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            self.lock_path.parent.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            raise LockTimeoutError(
+                t("Could not prepare the lock directory '{path}' ({error}).", path=self.lock_path.parent, error=exc),
+                self.lock_path, self.is_guard,
+            ) from exc
         start_time = time.time()
 
         while True:

@@ -29,6 +29,7 @@ from nexgen_core.git_ops import (
     auto_commit_infra_files,
     fast_forward_merge,
     get_current_branch,
+    get_untracked_infra_files,
     inspect_git_state,
     quarantine_diverged_commits,
     resolve_remotes,
@@ -49,15 +50,17 @@ from nexgen_core.scheduler import install_scheduler
 from nexgen_core.skills import SkillMaterializer
 
 
-def _launcher_fingerprints(home: Path) -> dict[str, int]:
-    """Name and size of every launcher, to tell what actually changed."""
+def _launcher_fingerprints(home: Path) -> dict[str, str]:
+    """Content hash of every launcher, to tell what actually changed."""
+    import hashlib
+
     bin_dir = home / ".local" / "bin"
     if not bin_dir.is_dir():
         return {}
-    out: dict[str, int] = {}
+    out: dict[str, str] = {}
     for entry in bin_dir.iterdir():
         try:
-            out[entry.name] = entry.stat().st_size
+            out[entry.name] = hashlib.sha256(entry.read_bytes()).hexdigest()[:16]
         except OSError:
             continue
     return out
@@ -137,14 +140,25 @@ class GuardRunner:
 
         if not claude_md.is_file() or claude_md.read_text(encoding="utf-8") != content:
             # The file may contain hand-written lines. Regenerating it is
-            # fine; making it disappear without a copy is not.
+            # fine; making it disappear without a copy is not: if the
+            # safety copy itself fails, stop instead of destroying the
+            # only copy of those lines.
             if claude_md.is_file():
                 from nexgen_core.files import backup_file
 
-                with contextlib.suppress(OSError):
+                try:
                     backup_file(claude_md, tag="instructions")
-            claude_md.write_text(content, encoding="utf-8")
-            actions.append(t("Updated instruction pointer {path}", path=claude_md))
+                except OSError as exc:
+                    actions.append("[WARN] " + t(
+                        "instruction pointer {path} left untouched: safety backup failed ({error})",
+                        path=claude_md, error=exc,
+                    ))
+                else:
+                    claude_md.write_text(content, encoding="utf-8")
+                    actions.append(t("Updated instruction pointer {path}", path=claude_md))
+            else:
+                claude_md.write_text(content, encoding="utf-8")
+                actions.append(t("Updated instruction pointer {path}", path=claude_md))
 
         # The other three CLIs read the canonical file directly. Aligning
         # only one of them would mean having a canonical source for one
@@ -154,8 +168,11 @@ class GuardRunner:
             ("codex", self.home / ".codex" / "AGENTS.md"),
             ("antigravity", self.home / ".gemini" / "config" / "AGENTS.md"),
         ):
-            if self._link_to_canonical(target, canon):
+            changed, warn = self._link_to_canonical(target, canon)
+            if changed:
                 actions.append(t("{label} instructions restored to canonical", label=label))
+            if warn:
+                actions.append(warn)
 
         opencode_action = self._align_opencode_instructions(canon)
         if opencode_action:
@@ -166,11 +183,15 @@ class GuardRunner:
 
         return actions
 
-    def _link_to_canonical(self, target: Path, canon: Path) -> bool:
-        """Points `target` at the canonical file. True if something had to change."""
+    def _link_to_canonical(self, target: Path, canon: Path) -> tuple[bool, str | None]:
+        """Points `target` at the canonical file.
+
+        Returns (changed, warning): a failed safety copy skips the target
+        with a warning instead of silently leaving a stale pointer behind.
+        """
         try:
             if target.is_symlink() and target.resolve() == canon.resolve():
-                return False
+                return False, None
             target.parent.mkdir(parents=True, exist_ok=True)
             if target.exists() or target.is_symlink():
                 # A real copy may contain hand-written lines. If the safety
@@ -181,17 +202,22 @@ class GuardRunner:
 
                     try:
                         backup_file(target, tag="instructions")
-                    except OSError:
-                        return False
+                    except OSError as exc:
+                        return False, ("[WARN] " + t(
+                            "instruction pointer {path} left untouched: safety backup failed ({error})",
+                            path=target, error=exc,
+                        ))
                 target.unlink()
             try:
                 target.symlink_to(canon)
             except OSError:
                 # Windows without symlink privileges: a copy beats nothing.
                 shutil.copy2(canon, target)
-            return True
-        except OSError:
-            return False
+            return True, None
+        except OSError as exc:
+            return False, ("[WARN] " + t(
+                "instruction pointer {path} not aligned ({error})", path=target, error=exc,
+            ))
 
     def _align_opencode_instructions(self, canon: Path) -> str | None:
         """Points OpenCode V2 at the canonical file through the scope file it
@@ -213,9 +239,10 @@ class GuardRunner:
 
         target = opencode_agents_file(self.home)
         if target.is_symlink() or not target.exists():
-            if self._link_to_canonical(target, canon):
+            changed, warn = self._link_to_canonical(target, canon)
+            if changed:
                 return t("opencode instructions restored to canonical")
-            return None
+            return warn
         # A real file: private derivative or hand-written. Not ours to take.
         return None
 
@@ -284,8 +311,14 @@ class GuardRunner:
         local_bin.mkdir(parents=True, exist_ok=True)
         actions: list[str] = []
         runtime = local_bin / "local-model-agent.ps1"
-        if runtime.is_symlink() or runtime.exists():
-            runtime.unlink(missing_ok=True)
+        try:
+            if runtime.is_symlink() or runtime.exists():
+                runtime.unlink(missing_ok=True)
+        except OSError as exc:
+            # An optional adapter must never fail the whole apply: on
+            # Windows a locked .ps1 is routine, not corruption.
+            actions.append("[WARN] " + t("local-model: adapter not relinked ({error})", error=exc))
+            return actions
         try:
             runtime.symlink_to(src)
             actions.append(t("local-model: relinked local-model-agent.ps1"))
@@ -405,10 +438,21 @@ class GuardRunner:
                 if abort is not None:
                     return abort
 
-                # If this is a pull-only run, stop here
+                # Pull downloads without regenerating derived files, by
+                # contract (`nexgen pull` help). The pulled content is still
+                # validated read-only, and the message says apply is next:
+                # otherwise the user believes they are synchronized while
+                # every CLI still runs yesterday's configs.
                 if mode == GuardMode.PULL:
                     self._refresh_update_cache_best_effort()
-                    return GuardResult(success=True, mode=mode, message=t("Pull completed"), exit_code=0, actions_taken=actions)
+                    abort = self._phase_preflight(mode)
+                    if abort is not None:
+                        return abort
+                    return GuardResult(
+                        success=True, mode=mode,
+                        message=t("Pull completed (derived files not regenerated: run apply next)"),
+                        exit_code=0, actions_taken=actions,
+                    )
 
                 abort = self._phase_preflight(mode)
                 if abort is not None:
@@ -423,6 +467,14 @@ class GuardRunner:
                 self._phase_modules(actions)
                 self._phase_liveness(actions, is_guard, mode)
 
+                if any(action.startswith(("[WARN]", "[AVVISO]")) for action in actions):
+                    return GuardResult(
+                        success=True,
+                        mode=mode,
+                        message=t("Alignment completed with warnings (see actions above)"),
+                        exit_code=0,
+                        actions_taken=actions,
+                    )
                 return GuardResult(
                     success=True,
                     mode=mode,
@@ -437,6 +489,7 @@ class GuardRunner:
                 mode=mode,
                 message=str(exc),
                 exit_code=exc.exit_code,
+                actions_taken=actions,
             )
         except Exception as exc:
             return GuardResult(
@@ -444,6 +497,9 @@ class GuardRunner:
                 mode=mode,
                 message=t("Error during the alignment operation: {error}", error=exc),
                 exit_code=1,
+                # The partial work matters most on failure: it says what
+                # was already written before the cycle stopped.
+                actions_taken=actions,
             )
 
     def _phase_git(
@@ -459,7 +515,18 @@ class GuardRunner:
         if mode == GuardMode.PREFLIGHT:
             return None
         # Auto-commit any pending tracked infra files so they don't block sync
-        auto_commit_infra_files(self.vault_data)
+        auto_ok, _auto_committed = auto_commit_infra_files(self.vault_data)
+        if not auto_ok:
+            # inspect_git_state below will still block fail-closed on DIRTY,
+            # but the message must name the real cause (commit failed), not
+            # just "unsaved changes".
+            actions.append("[WARN] " + t("Infra auto-commit failed; the Git inspection below decides whether the cycle can proceed"))
+        untracked_infra = get_untracked_infra_files(self.vault_data)
+        if untracked_infra:
+            actions.append(t(
+                "New infra files never committed ({count}): stage them with vault-push, or they stay local-only.",
+                count=len(untracked_infra),
+            ))
 
         git_status = inspect_git_state(
             self.vault_data,
@@ -528,9 +595,18 @@ class GuardRunner:
         if skip_mcp:
             actions.append(t("MCP configurations not regenerated (explicitly requested)"))
             return
-        rend = McpRenderer(vault_data=self.vault_data, engine_root=self.engine_root, home=self.home)
-        rend.render_all(write=True)
+        try:
+            rend = McpRenderer(vault_data=self.vault_data, engine_root=self.engine_root, home=self.home)
+            results = rend.render_all(write=True)
+        except Exception as exc:
+            # A corrupt live config aborts the cycle here: skills already
+            # wrote above, so the message must say the transaction is
+            # partial instead of dying with a bare traceback.
+            raise RuntimeError(t("MCP rendering failed after skills were synced ({error}): fix the CLI config and re-run", error=exc)) from exc
         actions.append(t("MCP configurations regenerated for every CLI"))
+        failed = sorted(cli for cli, ok in results.items() if not ok)
+        if failed:
+            actions.append("[WARN] " + t("MCP render reported no change applied for: {clis}", clis=", ".join(failed)))
 
     def _phase_permissions(self, actions: list[str]) -> None:
         """Permission posture + guardrail hook per CLI."""
@@ -577,6 +653,8 @@ class GuardRunner:
             )
             if sched_ok:
                 actions.append(t("Startup self-alignment configured"))
+            else:
+                actions.append("[WARN] " + t("Startup self-alignment reported no success and no error; verify with `nexgen doctor`"))
         except Exception as exc:
             actions.append("[WARN] " + t("Self-alignment configuration did not succeed: {error}", error=exc))
         try:
@@ -611,6 +689,7 @@ class GuardRunner:
     def _phase_liveness(self, actions: list[str], is_guard: bool, mode: GuardMode) -> None:
         """Liveness registration for the heartbeat."""
         if is_guard or mode == GuardMode.APPLY:
-            self.heartbeat.record_liveness()
+            warns = sum(1 for action in actions if action.startswith(("[WARN]", "[AVVISO]")))
+            self.heartbeat.record_liveness(warnings=warns)
             actions.append(t("Liveness recorded successfully"))
             self._refresh_update_cache_best_effort()

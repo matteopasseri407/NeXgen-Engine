@@ -20,7 +20,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Any
 
-from .config import LaneConfig
+from .config import LaneConfig, secure_artifact
 from .engine import _empty, _existing_file, _longest, engine_sentence, retrieval_outcome, sanitize_content, terms, verify_answer
 from .llm import LLM
 from .tools import ToolRegistry, audit_event
@@ -270,6 +270,7 @@ def job_close(llm: LLM, tools: ToolRegistry, cfg: LaneConfig, session_path: str,
                 continue
         else:
             raise JobError("collisione nome bozza, riprova")
+        secure_artifact(cfg.drafts_dir, target)
         draft_path = str(target)
         audit_event(cfg, "close_draft", {"session": rel, "draft": draft_path}, ok=True, chars=len(draft))
     return JobResult(

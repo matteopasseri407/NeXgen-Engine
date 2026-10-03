@@ -27,6 +27,38 @@ of any engine release.
 - Routing proposals preserve Governor slots, identify the host, show missing candidates and manual-only seats,
   strip Markdown from prices and warn when Go consumes prepaid quota.
   An explicit seat may override a mode suggestion; requested roles and Privacy remain enforced.
+- Third-party skill pins no longer go false-green: installer claims back up
+  divergent library copies, versions record only when new bytes arrive, and
+  the doctor warns on stale or unrecorded pins. Corrupt github caches re-clone.
+- Git dep pins require a full 40-hex commit, and workspaces re-provision when
+  subdir or build change. Non-npx installer skills are depwatch-visible as
+  manually-watched. The lazy waiter picks up manifest edits, reports errors
+  without caching them, and flags mutating servers correctly.
+- `mcp add` accepts empty flow-style `servers: {}` manifests. Interactive
+  `skill bump` commits and announces like the silent path. Split-topology
+  updates always write the engine pin; the updater recovery also re-applies
+  provisioning, and its success message no longer claims full verification.
+- Plan probes pin freshness, orphans and symlinks, and its no-drift message
+  points at the unchecked domains. Shell-hook notices cover zsh/fish, and
+  background refresh works without `nexgen` on PATH.
+- Local lane calls carry wall-clock timeouts, `run` reports model failures
+  cleanly, resumed research honors the new `--max-steps`, bricked sessions
+  restart instead of erroring, and drafts/proposals/checkpoints share 0600/0700.
+- Sync quarantine stops before a failed switch-back instead of resetting the
+  quarantine branch, refuses the wrong HEAD, and stages before committing.
+  Infra auto-commit matches real paths, porcelain parses NUL-safe renames,
+  stash detection compares stash lists, and rev-parse/merge-base/stash-pop
+  failures report instead of pushing half states. Cherry-pick/revert blocks
+  the cycle like rebase/merge. Non-finite lock timeouts fall back to default.
+- Guard reports partial actions on failure, warns instead of claiming success
+  with degraded phases, validates pulled content, checks MCP render results,
+  keeps hand-written instructions on backup failure, and never fails apply
+  over an optional Windows adapter.
+- Mirrors report their failures instead of drifting silent, and the primary
+  is never pushed twice. New infra files are listed as drift instead of
+  staying local-only unnoticed. Liveness records the warning count, the
+  doctor rejects unreadable remotes declarations, and every new user-facing
+  string ships with its Italian translation.
 
 ### Tested
 

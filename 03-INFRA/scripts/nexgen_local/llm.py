@@ -54,6 +54,16 @@ ROUTER_NUM_CTX = 4096
 #: moves residency by ~0.1GB), thinking tokens are not.
 DECISION_NUM_CTX = 16384
 
+#: Wall-clock bounds per channel (seconds). num_predict caps how much the
+#: model may generate, not how long a stalled connection may hang: a
+#: runaway once pinned the GPU for 17+ minutes with a dead client. These
+#: ride on RunnableConfig (core-level, driver-independent) because the
+#: installed ChatOllama exposes no request timeout of its own. Generous on
+#: purpose: they bound hangs, not normal latency on a loaded box.
+JSON_TIMEOUT_SECONDS = 180
+TEXT_TIMEOUT_SECONDS = 600
+DECISION_TIMEOUT_SECONDS = 180
+
 
 class ChatOllamaLLM:
     """LLM backed by ``langchain_ollama.ChatOllama`` (optional dependency)."""
@@ -153,7 +163,9 @@ class ChatOllamaLLM:
 
     def json(self, system: str, user: str) -> dict | None:
         try:
-            message = self._json_model.invoke(self._messages(system, user))
+            message = self._json_model.invoke(
+                self._messages(system, user), config={"timeout": JSON_TIMEOUT_SECONDS}
+            )
         except Exception as exc:  # noqa: BLE001 - surface a typed error upward
             raise LLMError(f"chiamata al modello fallita: {exc}") from exc
         if self._done_reason(message) == "length":
@@ -165,7 +177,9 @@ class ChatOllamaLLM:
 
     def text(self, system: str, user: str) -> str:
         try:
-            message = self._text_model.invoke(self._messages(system, user))
+            message = self._text_model.invoke(
+                self._messages(system, user), config={"timeout": TEXT_TIMEOUT_SECONDS}
+            )
         except Exception as exc:  # noqa: BLE001
             raise LLMError(f"chiamata al modello fallita: {exc}") from exc
         return self._checked_text(message, what="risposta del modello")
@@ -184,9 +198,27 @@ class ChatOllamaLLM:
         }
         try:
             structured = self._decision_model.with_structured_output(schema, method="json_schema")
-            result = structured.invoke(self._messages(system, user))
-        except Exception as exc:  # noqa: BLE001 - surface a typed error upward
-            raise LLMError(f"decisione del modello fallita: {exc}") from exc
+            result = structured.invoke(
+                self._messages(system, user), config={"timeout": DECISION_TIMEOUT_SECONDS}
+            )
+        except Exception as exc:
+            # Old driver without json_schema support: degrade to the plain
+            # JSON channel and validate the menu locally, instead of failing
+            # every decision into escalation. A timeout is not a missing
+            # feature — it surfaces as a typed error, never a silent retry
+            # that would double the hang.
+            if "timeout" in f"{type(exc).__name__} {exc}".lower():
+                raise LLMError(f"decisione del modello fallita: {exc}") from exc
+            try:
+                fallback = self._json_model.invoke(
+                    self._messages(system, user), config={"timeout": DECISION_TIMEOUT_SECONDS}
+                )
+            except Exception as fallback_exc:  # noqa: BLE001
+                raise LLMError(f"decisione del modello fallita: {fallback_exc}") from fallback_exc
+            parsed = _json_block(self._content(fallback))
+            if isinstance(parsed, dict) and parsed.get("action") in actions:
+                return parsed
+            return None
         if isinstance(result, dict):
             return result
         dump = getattr(result, "model_dump", None)

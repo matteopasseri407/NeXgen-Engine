@@ -275,10 +275,12 @@ def build_menu(cfg: LaneConfig, state: LoopState) -> list[Candidate]:
 
     last = state.receipts[-1]
     tool = str(last.get("tool"))
-    if last.get("ok") and state.want_reply and state.last_mail_id and state.mail and not state.mail_draft:
+    if state.want_reply and state.last_mail_id and state.mail and not state.mail_draft:
         # State-based, not last-read-based: mail -> contratto -> risposta resta
-        # bloccato se la prescrizione dipende dall'ultima lettura. Dopo Drive
-        # draft_mail non verrebbe offerto anche se la mail e' gia' disponibile.
+        # proponibile anche se l'ultima chiamata (una ricerca Drive vuota, un
+        # continue_read fallito) e' andata KO. La prescrizione dipende solo
+        # dallo stato (mail letta, bozza assente), mai dall'esito dell'ultima
+        # riga di ricevuta.
         menu = [Candidate("draft_mail")]
         if _can_continue(state):
             menu.append(Candidate("continue_read"))
