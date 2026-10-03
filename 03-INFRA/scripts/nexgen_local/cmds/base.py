@@ -31,6 +31,17 @@ def make_llm(cfg: LaneConfig):
     return ChatOllamaLLM(cfg)
 
 
+def command_config(args: argparse.Namespace) -> LaneConfig:
+    """Adapt old facade overrides once; the implementation stays independent."""
+    facade = sys.modules.get("nexgen_local.cli")
+    return getattr(facade, "_config", get_config)(args)
+
+
+def command_llm(cfg: LaneConfig):
+    facade = sys.modules.get("nexgen_local.cli")
+    return getattr(facade, "_llm", make_llm)(cfg)
+
+
 def result_payload(result: LaneResult) -> dict:
     return {
         "task": result.task,

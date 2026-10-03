@@ -23,7 +23,7 @@ from pathlib import Path
 
 #: Shared human-gate text: the single-seat gate (sys.exit) and the relay
 #: gate (RelayError, the graph cannot exit mid-node) print the same policy.
-HUMAN_CHOICE_REQUIRED = "[council] human choice required: rerun with --seat NAME."
+HUMAN_CHOICE_REQUIRED = "[council] human choice required:"
 NO_ELIGIBLE_SEAT = "[council] no eligible seat to select: fix the mapping, CLI, or policy shown above."
 
 ENGINE_ROOT = Path(__file__).resolve().parent
@@ -232,7 +232,7 @@ def _require_human_single_selection(
     else:
         has_candidates = _print_static_seat_menu(seats)
     if has_candidates:
-        sys.exit(HUMAN_CHOICE_REQUIRED + " --routing-role only narrows the proposal, it does not start a seat.")
+        sys.exit(HUMAN_CHOICE_REQUIRED + " rerun with --seat NAME. --routing-role only narrows the proposal, it does not start a seat.")
     sys.exit(NO_ELIGIBLE_SEAT)
 
 

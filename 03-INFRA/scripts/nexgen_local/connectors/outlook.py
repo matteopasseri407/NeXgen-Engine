@@ -93,14 +93,9 @@ def refresh_tokens(tokens: dict[str, Any], http: HttpFn | None = None) -> dict[s
         raise AuthError(f"(accesso rifiutato dal provider: HTTP {result.status})")
     try:
         payload = json.loads(result.body.decode("utf-8", errors="replace"))
-        access = str(payload["access_token"])
+        updated = _store.refreshed_tokens(tokens, payload)
     except (ValueError, KeyError) as exc:
         raise AuthError("(accesso rifiutato dal provider: risposta illeggibile)") from exc
-    updated = {
-        **tokens,
-        "access_token": access,
-        "expires_at": int(time.time()) + int(payload.get("expires_in", 3600)),
-    }
     save_tokens(updated)
     return updated
 

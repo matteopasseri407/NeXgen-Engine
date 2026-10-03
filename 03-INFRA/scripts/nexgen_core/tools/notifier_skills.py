@@ -144,23 +144,3 @@ def _batch_once_daily(mark: bool = True) -> str | None:
         return f"{len(batch)} aggiornamenti tranquilli pronti ({names}): `nexgen skill bump` li alza in un colpo solo."
     except (OSError, ValueError, TypeError):
         return None
-
-
-_BASH_HOOK = """# NeXgen Engine update notice (managed: `nexgen tool update-notifier --install-shell-hook --remove` to stop).
-if [[ $- == *i* ]] && command -v nexgen >/dev/null 2>&1; then
-  nexgen tool update-notifier --shell-check
-fi
-"""
-
-_POWERSHELL_HOOK = """
-# NeXgen Engine update notice (managed: remove this block to stop).
-if ($Host.Name -eq 'ConsoleHost' -and (Get-Command nexgen -ErrorAction SilentlyContinue)) {
-  nexgen tool update-notifier --shell-check
-}
-"""
-
-_FISH_HOOK = """# NeXgen Engine update notice (managed: `nexgen tool update-notifier --install-shell-hook --remove` to stop).
-if status is-interactive; and command -v nexgen >/dev/null 2>&1
-  nexgen tool update-notifier --shell-check
-end
-"""

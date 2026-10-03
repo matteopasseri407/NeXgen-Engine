@@ -9,36 +9,8 @@ from dataclasses import asdict
 from . import base as _base
 from ..tools import ToolError
 
-def _config(args):
-    """Resolve via cli facade when patched in tests, else base owner."""
-    try:
-        from .. import cli as _cli
 
-        func = getattr(_cli, "_config", None)
-        if func is not None and func.__module__ != __name__:
-            return func(args)
-    except ImportError:
-        pass
-    return _base.get_config(args)
-
-
-def _llm(cfg):
-    try:
-        from .. import cli as _cli
-
-        func = getattr(_cli, "_llm", None)
-        if func is not None and func.__module__ != __name__:
-            return func(cfg)
-    except ImportError:
-        pass
-    return _base.make_llm(cfg)
-
-
-_result_payload = _base.result_payload
-_warn_unverified = _base.warn_unverified
-_print_receipts = _base.print_receipts
-
-
+_config = _base.command_config
 
 
 def cmd_cal_propose(args: argparse.Namespace) -> int:

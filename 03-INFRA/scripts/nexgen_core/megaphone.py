@@ -41,7 +41,7 @@ class Megaphone:
         try:
             return json.loads(self.state_file.read_text(encoding="utf-8"))
         except (OSError, ValueError) as exc:  # noqa: BLE001 - corrupt state resets debounce, never crashes alerts
-            logger.debug("ignoring corrupt megaphone state %s: %s", self.state_file, exc)
+            logger.debug("ignoring corrupt megaphone state %s (%s)", self.state_file, type(exc).__name__)
             return {}
 
     def _save_state(self, state: dict[str, Any]) -> None:
@@ -123,7 +123,7 @@ class Megaphone:
             with urllib.request.urlopen(req, timeout=10) as resp:
                 return resp.status == 200
         except Exception as exc:  # noqa: BLE001 - transport failure falls back to webhook/desktop, never raises
-            logger.debug("telegram send failed: %s", exc)
+            logger.debug("telegram send failed (%s)", type(exc).__name__)
             return False
 
     def _send_webhook(self, url: str, data: dict[str, Any]) -> bool:
@@ -133,5 +133,5 @@ class Megaphone:
             with urllib.request.urlopen(req, timeout=10) as resp:
                 return resp.status in (200, 201, 204)
         except Exception as exc:  # noqa: BLE001 - transport failure falls back to desktop, never raises
-            logger.debug("webhook send failed: %s", exc)
+            logger.debug("webhook send failed (%s)", type(exc).__name__)
             return False

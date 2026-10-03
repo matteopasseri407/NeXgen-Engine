@@ -43,6 +43,10 @@ before integration. Fix new lint findings rather than regenerating the baseline.
 | Sync phase ordering and failure status | `nexgen_core/guard.py` | `test_nexgen_phase3.py`, `test_nexgen_quality_regressions.py` |
 | Skill fetch, replacement and pins | `nexgen_core/skill_sources.py` | `test_nexgen_lazy_skills.py`, `test_nexgen_quality_regressions.py` |
 | Host locking | `nexgen_core/lock.py` | `test_nexgen_lock.py` |
+| Source checkout version fallback | `nexgen_local/version.py` | `test_nexgen_command_surface.py`, `test_nexgen_local_mcp.py` |
+| Local CLI dispatch and shared config/LLM adapters | `nexgen_local/cli.py`, `nexgen_local/cmds/base.py`; domain commands in `cmds/` | `test_nexgen_command_surface.py`, `test_nexgen_local_steps.py` |
+| OAuth token persistence and refresh payloads | `nexgen_local/connectors/token_store.py`; provider requests in `auth.py` and `outlook.py` | `test_nexgen_stabilization_contracts.py`, `test_nexgen_local_mcp.py` |
+| Update cache, skill notices, prompts and shell/boot hooks | `nexgen_core/tools/notifier_state.py`, `notifier_skills.py`, `notifier_prompt.py`, `notifier_boot.py` | `test_nexgen_update_notifier.py`, `test_nexgen_stabilization_contracts.py` |
 | Source paths, text sanitization, search terms | `nexgen_local/source_selection.py` | `test_nexgen_local.py`, `test_nexgen_local_steps.py` |
 | Tool outcomes, audit receipts and resume compatibility | `nexgen_local/tools.py` | `test_nexgen_tool_outcomes.py`, `test_nexgen_local_research.py` |
 | Response claims and successful read receipts | `nexgen_local/evidence.py` | `test_nexgen_local_steps.py`, `test_nexgen_local_research.py` |
@@ -78,6 +82,17 @@ send/upload approval remains in the existing gates. `steps.py` coordinates
 model decisions and answers. Its older imports remain aliases for compatibility;
 new consumers import state, policy and actions directly from their owners.
 Changing state fields requires checking persisted research compatibility.
+
+`cmds/base.py` owns the local CLI configuration and model adapter, including
+the compatibility boundary for older callers that patch `cli._config` or
+`cli._llm`. Domain commands import those helpers directly. `update_notifier.py`
+keeps the command entry points; cache, skill notices, prompts and boot hooks
+each have their own owner. Shell hook templates live only in `notifier_boot.py`.
+Google and Outlook share token publication and refresh-payload merging through
+`token_store.py`, while each provider retains its endpoint and scopes.
+Failure diagnostics around credentials and manifests log the operation and
+exception type; raw exception messages can include token URLs or configuration
+contents. Keep those payloads out of logs.
 
 For a bug, first add a test that fails for the reported behavior. Check the
 failure path as well as success: a failed write must preserve the old bytes,

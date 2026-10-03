@@ -158,13 +158,7 @@ def _write_if_different(path: Path, content: str) -> bool:
     if path.is_symlink():
         # A managed symlink farm points elsewhere on purpose: write through
         # the link instead of replacing it with a regular file.
-        try:
-            if path.read_text(encoding="utf-8") == content:
-                return False
-            path.write_text(content, encoding="utf-8")
-            return True
-        except OSError:
-            return False
+        path = path.resolve(strict=True)
     if path.exists():
         try:
             if path.read_text(encoding="utf-8") == content:

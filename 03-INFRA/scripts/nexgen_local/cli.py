@@ -24,12 +24,8 @@ def _version() -> str:
     return _base.version_str()
 
 
-def _config(args: argparse.Namespace):
-    return _base.get_config(args)
-
-
-def _llm(cfg):
-    return _base.make_llm(cfg)
+_config = _base.get_config
+_llm = _base.make_llm
 
 
 def _result_payload(result):

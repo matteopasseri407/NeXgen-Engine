@@ -94,7 +94,7 @@ def _git_ls_remote_head(repo: str) -> str | None:
 
         target = clone_url(repo)
     except Exception as exc:  # noqa: BLE001 - clone_url is total; defensive fallback keeps the check offline-safe
-        logger.debug("clone_url failed for %r: %s", repo, exc)
+        logger.debug("clone_url failed (%s)", type(exc).__name__)
         target = repo
     try:
         result = subprocess.run(
