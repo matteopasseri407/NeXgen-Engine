@@ -165,6 +165,42 @@ def check_mirror_alignment(vault_data: Path, expected_branch: str | None = None)
     return outcomes
 
 
+def check_remotes_config(vault_data: Path) -> CheckOutcome | None:
+    """The remotes file must parse to a usable declaration.
+
+    A malformed ``remotes.yaml`` falls back to ``origin`` in silence, which
+    can publish to the wrong remote. Missing file is fine (convention over
+    configuration); present-but-unreadable is BROKEN, never silent. Returns
+    None when there is nothing to say.
+    """
+    import yaml
+
+    path = vault_data / "03-INFRA" / "agent-universal-layer" / "sync" / "remotes.yaml"
+    if not path.is_file():
+        return None
+    try:
+        data = yaml.safe_load(path.read_text(encoding="utf-8"))
+    except (OSError, yaml.YAMLError) as exc:
+        return CheckOutcome(
+            id="git.remotes_config",
+            severity=Severity.BROKEN,
+            message=t("The remotes file {path} is unreadable ({error}); pushes would silently fall back to 'origin'.", path=path, error=exc),
+            action=t("Fix the YAML syntax of remotes.yaml."),
+        )
+    if data is not None and not isinstance(data, dict):
+        return CheckOutcome(
+            id="git.remotes_config",
+            severity=Severity.BROKEN,
+            message=t("The remotes file {path} does not contain a map; pushes would silently fall back to 'origin'.", path=path),
+            action=t("Fix the structure of remotes.yaml (authoritative_remote, mirrors)."),
+        )
+    return CheckOutcome(
+        id="git.remotes_config",
+        severity=Severity.OK,
+        message=t("Remotes declaration readable"),
+    )
+
+
 def check_quarantine_branches(vault_data: Path) -> CheckOutcome:
     """Checks whether there are diverged quarantine branches awaiting reconciliation."""
     if not (vault_data / ".git").exists():

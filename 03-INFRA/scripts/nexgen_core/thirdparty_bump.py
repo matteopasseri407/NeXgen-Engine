@@ -605,8 +605,14 @@ def bump_batch(
     try:
         with HostLock(lock_path=resolved_state / "third-party-bump.lock",
                       timeout=30, command_name="third-party-bump"):
-            bumps, notes, _moved = apply_plan(raisable, resolved_vault, sync=sync,
+            bumps, notes, moved = apply_plan(raisable, resolved_vault, sync=sync,
                                           home=resolved_home)
+            if moved:
+                # Same finalization as the silent path: without the commit
+                # the next updater stops on a dirty tree, and without the
+                # record the shell lane never announces the interactive bump.
+                _commit_manifests(resolved_vault, moved, auto=False)
+                _record_applied(resolved_state, moved)
     except LockTimeoutError:
         print(t("Another bump is already running, retry in a minute."))
         return EXIT_BUSY_MANUAL
@@ -623,7 +629,7 @@ def _short_name(what: str) -> str:
     return match.group(1) if match else str(what or "")
 
 
-def _commit_manifests(vault_data: Path, raisable: list[dict]) -> bool:
+def _commit_manifests(vault_data: Path, raisable: list[dict], *, auto: bool = True) -> bool:
     """Commits exactly the two manifests, never pushes.
 
     The pin bump is mechanical and traceable; the message names the pins
@@ -646,7 +652,7 @@ def _commit_manifests(vault_data: Path, raisable: list[dict]) -> bool:
         # are never swept into this mechanical commit.
         if _run(vault_data, "add", "--", *[str(p) for p in paths]).returncode != 0:
             return False
-        result = _run(vault_data, "commit", "-m", f"chore(pins): guardian auto-bump {label}",
+        result = _run(vault_data, "commit", "-m", f"chore(pins): guardian {'auto-' if auto else ''}bump {label}",
                       "--", *[str(p) for p in paths])
         return result.returncode == 0
     except Exception:

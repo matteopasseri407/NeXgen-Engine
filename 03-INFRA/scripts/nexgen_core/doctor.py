@@ -21,6 +21,7 @@ from nexgen_core.checks.git_checks import (
     check_git_alignment,
     check_mirror_alignment,
     check_quarantine_branches,
+    check_remotes_config,
 )
 from nexgen_core.checks.identity_checks import (
     check_agent_self,
@@ -58,6 +59,7 @@ from nexgen_core.checks.skill_checks import (
     check_skills_manifest_semantics,
     check_skills_not_materialized,
     check_skills_out_of_manifest,
+    check_skills_pin_freshness,
 )
 from nexgen_core.checks.takeover_checks import check_engine_version_recorded
 from nexgen_core.i18n import t
@@ -101,6 +103,9 @@ class Doctor:
         # 2. Git checks (if the Vault exists)
         if self.vault_data.is_dir():
             report.add(check_git_alignment(self.vault_data), apply_remedy=apply_remedies)
+            remotes = check_remotes_config(self.vault_data)
+            if remotes is not None:
+                report.add(remotes, apply_remedy=apply_remedies)
             report.add(check_quarantine_branches(self.vault_data), apply_remedy=apply_remedies)
             for outcome in check_mirror_alignment(self.vault_data):
                 report.add(outcome, apply_remedy=apply_remedies)
@@ -126,6 +131,7 @@ class Doctor:
             report.add(check_skill_library_and_index(self.vault_data, self.home), apply_remedy=apply_remedies)
             report.add(check_skill_library_symlinks(self.home), apply_remedy=apply_remedies)
             report.add(check_skills_not_materialized(self.vault_data, self.home), apply_remedy=apply_remedies)
+            report.add(check_skills_pin_freshness(self.vault_data, self.home), apply_remedy=apply_remedies)
             report.add(check_skills_out_of_manifest(self.vault_data, self.home), apply_remedy=apply_remedies)
             report.add(check_engine_starter_views(self.vault_data, self.home), apply_remedy=apply_remedies)
             semantics = check_skills_manifest_semantics(self.vault_data, self.home)

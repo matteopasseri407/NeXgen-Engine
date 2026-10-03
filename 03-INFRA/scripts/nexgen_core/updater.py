@@ -35,6 +35,7 @@ if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
 from nexgen_core.errors import NexgenError  # noqa: E402
+from nexgen_core.i18n import t  # noqa: E402
 from nexgen_core.paths import resolve_home  # noqa: E402
 
 SEMVER = re.compile(r"^v?(\d+)\.(\d+)\.(\d+)$")
@@ -434,7 +435,10 @@ def main(
             _assert_merge_identity(engine_repo)
 
         pin_candidate = data_repo / "99-INDEX" / "ENGINE-PIN.txt"
-        pin_file = pin_candidate if split_topology and pin_candidate.is_file() else None
+        # In a split topology the pin is this machine's migration record:
+        # create it when missing instead of silently leaving the fleet
+        # unpinned (a "success" that diverges the next alignment).
+        pin_file = pin_candidate if split_topology else None
         print("\nPlan:")
         merge_mode = "--ff-only" if split_topology else "--no-edit"
         print(f"  1. git merge {merge_mode} {target}")
@@ -519,7 +523,9 @@ def main(
                 engine_repo=engine_repo,
             )
         if post_fail == 0:
-            print(f"\nNeXgen Engine {target} installed and verified on this machine.")
+            print(f"\nNeXgen Engine {target} installed: doctor reports no failures.")
+            print("Warnings listed above (if any) are non-blocking: unprovisioned")
+            print("optional deps provision on first use, orphans stay untouched by design.")
         else:
             print(f"\nNeXgen Engine {target} installed with no new doctor failures.")
             print(f"The machine still has {post_fail} pre-existing doctor failure(s).")
@@ -534,6 +540,16 @@ def main(
         print(
             "The updater will not roll back automatically. After reviewing the failure, the recoverable rollback is:\n"
             f"  git -C {exc.engine_repo} reset --hard {exc.previous_head}",
+            file=sys.stderr,
+        )
+        print(
+            t(
+                "Resetting the engine is only half the recovery: generated configs and views "
+                "may already be half-new. Re-run provisioning from the restored tree afterwards:\n"
+                "  python3 {entry} apply\n"
+                "  agent-doctor --summary",
+                entry=f"{exc.engine_repo}/03-INFRA/scripts/nexgen_core/cli/__init__.py",
+            ),
             file=sys.stderr,
         )
         if pin_file:

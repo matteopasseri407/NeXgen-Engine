@@ -178,13 +178,27 @@ class SkillFetcher:
             )
 
         try:
-            if cache_dir.is_dir():
+            if cache_dir.is_dir() and not cache_dir.is_symlink():
                 head = git("rev-parse", "HEAD", cwd=cache_dir)
-                if head.returncode == 0 and head.stdout.strip().lower() == entry.commit.lower():
+                if head.returncode == 0 and head.stdout.strip().lower() == (entry.commit or "").lower():
                     return True, None
-                fetched = git("fetch", "--quiet", "origin", entry.commit, cwd=cache_dir)
-                if fetched.returncode != 0:
-                    git("fetch", "--quiet", "--all", cwd=cache_dir)
+                # Corrupted cache or not a repo at all (manual copy, failed
+                # clone, wiped .git): fetch/checkout below would fail
+                # forever without ever healing. Re-clone from scratch.
+                is_repo = git("rev-parse", "--git-dir", cwd=cache_dir)
+                if is_repo.returncode != 0:
+                    shutil.rmtree(cache_dir, ignore_errors=True)
+                    cache_dir.parent.mkdir(parents=True, exist_ok=True)
+                    res = git("clone", "--quiet", clone_url(entry.repo or ""), str(cache_dir))
+                    if res.returncode != 0:
+                        return False, "[ERROR] " + t(
+                            "github skill '{name}': cloning {repo} failed: {error}",
+                            name=entry.name, repo=entry.repo, error=res.stderr.strip(),
+                        )
+                else:
+                    fetched = git("fetch", "--quiet", "origin", entry.commit or "", cwd=cache_dir)
+                    if fetched.returncode != 0:
+                        git("fetch", "--quiet", "--all", cwd=cache_dir)
             else:
                 cache_dir.parent.mkdir(parents=True, exist_ok=True)
                 res = git("clone", "--quiet", clone_url(entry.repo or ""), str(cache_dir))
@@ -194,12 +208,21 @@ class SkillFetcher:
                         name=entry.name, repo=entry.repo, error=res.stderr.strip(),
                     )
 
-            res = git("checkout", "--quiet", "--detach", entry.commit, cwd=cache_dir)
+            res = git("checkout", "--quiet", "--detach", entry.commit or "", cwd=cache_dir)
             if res.returncode != 0:
-                return False, "[ERROR] " + t(
-                    "github skill '{name}': commit {commit} is not reachable in the repository: {error}",
-                    name=entry.name, commit=entry.commit, error=res.stderr.strip(),
-                )
+                # Object store damaged or commit unreachable from this
+                # clone (origin rewrote history, shallow boundary): one
+                # fresh re-clone, then give up for this cycle if it persists.
+                shutil.rmtree(cache_dir, ignore_errors=True)
+                cache_dir.parent.mkdir(parents=True, exist_ok=True)
+                fresh = git("clone", "--quiet", clone_url(entry.repo or ""), str(cache_dir))
+                if fresh.returncode == 0:
+                    res = git("checkout", "--quiet", "--detach", entry.commit or "", cwd=cache_dir)
+                if res.returncode != 0:
+                    return False, "[ERROR] " + t(
+                        "github skill '{name}': commit {commit} is not reachable in the repository: {error}",
+                        name=entry.name, commit=entry.commit, error=res.stderr.strip(),
+                    )
             return True, None
         except subprocess.TimeoutExpired:
             return False, "[ERROR] " + t(
@@ -255,11 +278,47 @@ class SkillFetcher:
                 if same_tree_content(candidate, lib_dest):
                     shutil.rmtree(candidate, ignore_errors=True)
                     return True
-                continue
+                # New bytes arrived but the library holds different ones:
+                # set the old aside instead of silently keeping stale bytes
+                # while the version is recorded as new (false-green pin).
+                try:
+                    backup = next_backup_path(lib_dest)
+                    # next_backup_path needs a real path: never a symlink.
+                    if lib_dest.is_symlink():
+                        lib_dest.unlink()
+                    else:
+                        lib_dest.rename(backup)
+                except OSError:
+                    return False
+                try:
+                    shutil.move(str(candidate), str(lib_dest))
+                except (OSError, shutil.Error):
+                    return False
+                return True
             lib_dest.parent.mkdir(parents=True, exist_ok=True)
             shutil.move(str(candidate), str(lib_dest))
             return True
         return False
+
+    def _tree_fingerprint(self, root: Path) -> dict[str, str] | None:
+        """Content hash per file, or None when the tree doesn't exist."""
+        import hashlib
+
+        if not root.is_dir() or root.is_symlink():
+            return None
+        out: dict[str, str] = {}
+        try:
+            for path in sorted(root.rglob("*")):
+                if not path.is_file() or path.is_symlink():
+                    continue
+                try:
+                    digest = hashlib.sha256(path.read_bytes()).hexdigest()
+                except OSError:
+                    return None
+                out[str(path.relative_to(root))] = digest
+        except OSError:
+            return None
+        return out
 
     def install_third_party(
         self, entry: SkillEntry, lib_dest: Path, discovery_dirs: tuple[Path, ...]
@@ -273,6 +332,7 @@ class SkillFetcher:
                 "skill '{name}' is installed by its own installer but declares no install command",
                 name=entry.name,
             )
+        before = self._tree_fingerprint(lib_dest)
         try:
             result = subprocess.run(
                 list(entry.install), capture_output=True, text=True, check=False,
@@ -293,11 +353,27 @@ class SkillFetcher:
                 name=entry.name, reason=detail[-1] if detail else "no detail",
             )
 
-        self.claim_from_discovery(entry.name, lib_dest, discovery_dirs)
+        claimed = self.claim_from_discovery(entry.name, lib_dest, discovery_dirs)
         if not lib_dest.is_dir():
             return False, "[ERROR] " + t(
                 "the installer for '{name}' ran but left nothing the engine could find",
                 name=entry.name,
             )
-        self._record_installed_version(entry.name, entry.version or "")
-        return True, t("Installed skill '{name}' at version {version}", name=entry.name, version=entry.version)
+        if claimed:
+            # New bytes moved into the library (or the candidate matched
+            # the library byte for byte and was deduplicated): the pin is
+            # genuinely materialized.
+            self._record_installed_version(entry.name, entry.version or "")
+            return True, t("Installed skill '{name}' at version {version}", name=entry.name, version=entry.version)
+        if before is None or self._tree_fingerprint(lib_dest) != before:
+            # No candidate in any discovery dir, but the library content
+            # changed under the installer: an in-place writer. Accept it.
+            self._record_installed_version(entry.name, entry.version or "")
+            return True, t("Installed skill '{name}' at version {version}", name=entry.name, version=entry.version)
+        # The installer exited 0 but left no observable new bytes, while
+        # the library still holds the old version: recording the new
+        # version would declare the pin current on stale bytes.
+        return False, "[ERROR] " + t(
+            "the installer for '{name}' ran but left no new copy to claim: keeping the previous version",
+            name=entry.name,
+        )

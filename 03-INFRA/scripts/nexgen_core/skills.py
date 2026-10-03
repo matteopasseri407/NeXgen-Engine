@@ -247,8 +247,27 @@ class SkillMaterializer:
             for candidate in sorted(directory.iterdir()):
                 name = candidate.name
                 lib_source = self.library_dir / name
-                if not lib_source.is_dir():
-                    continue  # non è nostra: si segnala altrove, non si tocca
+                if not lib_source.is_dir() and not lib_source.is_symlink():
+                    # No library entry at all: a dangling view-symlink that
+                    # still points at the library path is ours and safe to
+                    # take back (its target is already gone). Anything else
+                    # (a real folder, a foreign link) may hold someone's
+                    # work: reported by the orphans check, never touched.
+                    if candidate.is_symlink():
+                        try:
+                            raw_target = Path(os.readlink(candidate))
+                            target = raw_target if raw_target.is_absolute() else candidate.parent / raw_target
+                            points_at_library = target.resolve() == lib_source.resolve()
+                        except OSError:
+                            continue
+                        if points_at_library:
+                            try:
+                                candidate.unlink()
+                            except OSError:
+                                continue
+                            actions.append(t("Skill '{name}' removed with its library entry for {target}",
+                                             name=name, target=self._target_of(directory) or directory.name))
+                    continue
                 entry = skills.get(name)
                 if entry is None:
                     wanted = False
@@ -324,6 +343,10 @@ class SkillMaterializer:
                     if make_link_or_copy(source, lib_dest):
                         changes += 1
                         actions.append(t("Linked github skill '{name}' into the library", name=name))
+                    # Record the materialized pin even when the link was
+                    # already current: without this the doctor cannot tell a
+                    # fresh pin from a failed fetch that left stale bytes.
+                    self.fetcher._record_installed_version(name, entry.commit or "")
 
             elif entry.origin == "installer" and apply:
                 installed, note = self.fetcher.install_third_party(entry, lib_dest, self.discovery_dirs)

@@ -725,7 +725,7 @@ def test_json_truncation_degrades_to_none(tmp_path: Path) -> None:
     llm = ChatOllamaLLM.__new__(ChatOllamaLLM)
 
     class _FakeModel:
-        def invoke(self, messages):
+        def invoke(self, messages, config=None):
             class _Msg:
                 content = '{"source": "va'
                 response_metadata = {"done_reason": "length"}

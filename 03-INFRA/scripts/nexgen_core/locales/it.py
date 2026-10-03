@@ -766,4 +766,147 @@ MESSAGES: dict[str, str] = {
         "Branch di quarantena ({count}):",
     "AI Council orchestrator not found at {path}. Reinstall the engine.":
         "Orchestratore AI Council non trovato in {path}. Reinstalla il motore.",
+
+    # --- Secondo giro: sync/guard production grade ---------------------------
+    "Refusing to quarantine: HEAD is on '{found}', not '{expected}'":
+        "Mi rifiuto di mettere in quarantena: sei su '{found}', non su '{expected}'",
+    "Created {q_branch}, but could not stage uncommitted changes before realignment: {error}":
+        "Creato {q_branch}, ma non riesco a preparare le modifiche non committate prima del riallineamento: {error}",
+    (
+        "Work preserved on {q_branch}, but could not switch back to {branch}: {error}. "
+        "No reset was performed; switch back by hand and retry."
+    ):
+        (
+            "Lavoro al sicuro su {q_branch}, ma non riesco a tornare su {branch}: {error}. "
+            "Nessun reset eseguito; torna indietro a mano e riprova."
+        ),
+    (
+        "{remote} unreachable or without branch {branch}: the commit stays local, publish it later with 'vault-push'"
+    ):
+        (
+            "{remote} non raggiungibile o senza branch {branch}: il commit resta qui, "
+            "ripubblicalo più tardi con 'vault-push'"
+        ),
+    "Could not resolve {remote}/{branch} for publishing":
+        "Non riesco a risolvere {remote}/{branch} per pubblicare",
+    (
+        "Rebase succeeded but restoring the stashed changes failed: resolve the conflict, then push with 'vault-push'. "
+        "Nothing was pushed; the work is in 'git stash list'."
+    ):
+        (
+            "Rebase riuscito ma non riesco a ripristinare le modifiche accantonate: risolvi il conflitto, "
+            "poi pusha con 'vault-push'. Non ho pushato niente; il lavoro è in 'git stash list'."
+        ),
+    (
+        "Rebase failed and could not be aborted cleanly: resolve the state by hand "
+        "('git rebase --abort', 'git stash list'), then retry. Nothing was pushed."
+    ):
+        (
+            "Rebase fallito e non riesco ad abortirlo in modo pulito: sistema lo stato a mano "
+            "('git rebase --abort', 'git stash list'), poi riprova. Non ho pushato niente."
+        ),
+    (
+        "Rebase aborted and stashed changes could not be restored: resolve the conflict, "
+        "then push with 'vault-push'. Nothing was pushed; the work is in 'git stash list'."
+    ):
+        (
+            "Rebase abortito ma non riesco a ripristinare le modifiche accantonate: risolvi il conflitto, "
+            "poi pusha con 'vault-push'. Non ho pushato niente; il lavoro è in 'git stash list'."
+        ),
+    "a git cherry-pick is in progress in the vault: resolve it before continuing":
+        "c'è un cherry-pick a metà nel Vault: sistemalo prima di continuare",
+    "a git revert is in progress in the vault: resolve it before continuing":
+        "c'è un revert a metà nel Vault: sistemalo prima di continuare",
+    "mirror {mirror} not updated ({error}); primary is safe, retry the mirror later":
+        "mirror {mirror} non aggiornato ({error}); il primario è a posto, riprova il mirror più tardi",
+    (
+        "{count} new infra files never committed ({files}): stage and publish them, or they stay local-only."
+    ):
+        (
+            "{count} file infra nuovi mai committati ({files}): mettili in stage e pubblicali, "
+            "o restano solo qui."
+        ),
+    "Stage the new infra files with vault-push.":
+        "Metti in stage i nuovi file infra con vault-push.",
+    (
+        "New infra files never committed ({count}): stage them with vault-push, or they stay local-only."
+    ):
+        (
+            "File infra nuovi mai committati ({count}): mettili in stage con vault-push, "
+            "o restano solo qui."
+        ),
+    "Could not prepare the lock directory '{path}' ({error}).":
+        "Non riesco a preparare la cartella del lock '{path}' ({error}).",
+    (
+        "MCP rendering failed after skills were synced ({error}): fix the CLI config and re-run"
+    ):
+        (
+            "Render MCP fallito dopo aver sincronizzato le skill ({error}): sistema la config del CLI e rilancia"
+        ),
+    "MCP render reported no change applied for: {clis}":
+        "Il render MCP non ha applicato modifiche per: {clis}",
+    "Pull completed (derived files not regenerated: run apply next)":
+        "Pull completato (file derivati non rigenerati: ora lancia apply)",
+    "Alignment completed with warnings (see actions above)":
+        "Allineamento completato con avvisi (vedi sopra)",
+    "instruction pointer {path} left untouched: safety backup failed ({error})":
+        "Puntatore istruzioni {path} lasciato com'è: backup di sicurezza fallito ({error})",
+    "instruction pointer {path} not aligned ({error})":
+        "Puntatore istruzioni {path} non allineato ({error})",
+    "Startup self-alignment reported no success and no error; verify with `nexgen doctor`":
+        "L'auto-allineamento all'avvio non ha detto né sì né no; verifica con `nexgen doctor`",
+    "local-model: adapter not relinked ({error})":
+        "local-model: adapter non ricollegato ({error})",
+    "Infra auto-commit failed; the Git inspection below decides whether the cycle can proceed":
+        "Auto-commit infra fallito; l'ispezione Git qui sotto decide se il ciclo può andare avanti",
+    "The remotes file {path} is unreadable ({error}); pushes would silently fall back to 'origin'.":
+        "Il file remotes {path} non si legge ({error}); i push ricadrebbero su 'origin' in silenzio.",
+    "The remotes file {path} does not contain a map; pushes would silently fall back to 'origin'.":
+        "Il file remotes {path} non contiene una mappa; i push ricadrebbero su 'origin' in silenzio.",
+    "Fix the YAML syntax of remotes.yaml.":
+        "Sistema la sintassi YAML di remotes.yaml.",
+    "Fix the structure of remotes.yaml (authoritative_remote, mirrors).":
+        "Sistema la struttura di remotes.yaml (authoritative_remote, mirrors).",
+    "Remotes declaration readable":
+        "Dichiarazione remotes leggibile",
+    "(last cycle completed with {count} warnings)":
+        "(ultimo ciclo completato con {count} avvisi)",
+    "the installer for '{name}' ran but left no new copy to claim: keeping the previous version":
+        "l'installer di '{name}' è andato ma non ha lasciato copie nuove da prendere: tengo la versione precedente",
+    "Third-party skills materialized at an older pin than the manifest: {skills}.":
+        "Skill terze materializzate a un pin più vecchio del manifest: {skills}.",
+    "Run 'agent-sync apply' (skills-sync) to fetch the declared pins.":
+        "Lancia 'agent-sync apply' (skills-sync) per scaricare i pin dichiarati.",
+    "Third-party skills with no recorded pin (freshness unknown until the next sync): {skills}.":
+        "Skill terze senza pin registrato (freschezza ignota fino al prossimo sync): {skills}.",
+    "Run 'agent-sync apply' (skills-sync) once to record the materialized pins.":
+        "Lancia una volta 'agent-sync apply' (skills-sync) per registrare i pin materializzati.",
+    "All pinned third-party skills match the manifest":
+        "Tutte le skill terze pinnate corrispondono al manifest",
+    "Skill '{name}' removed with its library entry for {target}":
+        "Skill '{name}' rimossa insieme alla sua entry di libreria per {target}",
+    "the 'servers:' block is flow-style with entries; expand it to block style by hand, then rerun.":
+        "il blocco 'servers:' è flow-style con entry; espandilo a block style a mano e rilancia.",
+    "No drift in the probed domains (see 'not checked here' below for the rest).":
+        "Nessun drift nei domini sondati (vedi 'non controllato qui' sotto per il resto).",
+    (
+        "MCP reachability, upstream versions and secrets drift: doctor-only, "
+        "they need the network or live credentials a plan never touches."
+    ):
+        (
+            "Raggiungibilità MCP, versioni upstream e drift segreti: solo doctor, "
+            "servono rete o credenziali live che un plan non tocca mai."
+        ),
+    (
+        "Resetting the engine is only half the recovery: generated configs and views "
+        "may already be half-new. Re-run provisioning from the restored tree afterwards:\n"
+        "  python3 {entry} apply\n"
+        "  agent-doctor --summary"
+    ):
+        (
+            "Resettare il motore è metà del recupero: config generate e viste "
+            "potrebbero essere già mezze nuove. Rilancia il provisioning dall'albero ripristinato:\n"
+            "  python3 {entry} apply\n"
+            "  agent-doctor --summary"
+        ),
 }

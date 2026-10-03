@@ -233,3 +233,146 @@ def test_doctor_reports_quarantine_branch(tmp_path: Path) -> None:
     _git(repo, "branch", "-D", "quarantine/diverged-20260822-120000")
     outcome_after = check_quarantine_branches(repo)
     assert outcome_after.severity == Severity.OK
+
+
+def test_quarantine_refuses_reset_when_switch_back_fails(tmp_path: Path, monkeypatch) -> None:
+    """A failed switch back must stop before reset: resetting on the
+    quarantine branch would destroy the work just preserved."""
+    import nexgen_core.git_ops as git_ops
+
+    remote = tmp_path / "remote.git"
+    subprocess.run(["git", "init", "--bare", "-b", "main", str(remote)], check=True)
+    clone = tmp_path / "clone"
+    subprocess.run(["git", "clone", str(remote), str(clone)], check=True)
+    _git(clone, "config", "user.email", "test@example.com")
+    _git(clone, "config", "user.name", "Test")
+    (clone / "f.txt").write_text("base\n", encoding="utf-8")
+    _git(clone, "add", "-A")
+    _git(clone, "commit", "-m", "base")
+    _git(clone, "push", "origin", "main")
+
+    real_run_git = git_ops.run_git
+
+    def failing_switch_back(repo_dir, *args, **kwargs):
+        if tuple(args) == ("switch", "main"):
+            return subprocess.CompletedProcess(args, 1, "", "fatal: cannot switch: blocked")
+        return real_run_git(repo_dir, *args, **kwargs)
+
+    monkeypatch.setattr(git_ops, "run_git", failing_switch_back)
+    _git(clone, "fetch", "origin", "main")
+    local_head = _git(clone, "rev-parse", "HEAD").stdout.strip()
+    ok, q_branch, msg = git_ops.quarantine_diverged_commits(clone, remote="origin", branch="main")
+    assert ok is False
+    assert q_branch.startswith("quarantine/diverged-")
+    # The preserved work is still on the quarantine branch, not reset away.
+    assert _git(clone, "rev-parse", q_branch).stdout.strip() == local_head
+
+
+def test_quarantine_refuses_wrong_head_branch(tmp_path: Path) -> None:
+    """Quarantine realigns `branch`: running it while HEAD is elsewhere
+    must refuse instead of resetting a branch nobody named."""
+    import nexgen_core.git_ops as git_ops
+
+    repo = tmp_path / "vault"
+    repo.mkdir()
+    _git(repo, "init", "-b", "main")
+    _git(repo, "config", "user.email", "test@example.com")
+    _git(repo, "config", "user.name", "Test")
+    (repo / "f.txt").write_text("x\n", encoding="utf-8")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-m", "init")
+    _git(repo, "checkout", "-b", "feature")
+    ok, q_branch, _msg = git_ops.quarantine_diverged_commits(repo, remote="origin", branch="main")
+    assert ok is False
+    assert q_branch == ""
+
+
+def test_is_infra_file_ignores_substring_traps() -> None:
+    from nexgen_core.git_ops import is_infra_file
+
+    assert is_infra_file("03-INFRA/mcp/manifest.yaml") is True
+    assert is_infra_file("03-INFRA/agent-universal-layer/skills/x/SKILL.md") is True
+    assert is_infra_file("vault/AGENTS.md") is True
+    assert is_infra_file("docs/mcp/note.md") is False
+    assert is_infra_file("backup/AGENTS.md.bak") is False
+    assert is_infra_file("notes/03-INFRA/draft.md") is False
+    assert is_infra_file("04-NOW/nota.md") is False
+
+
+def test_uncommitted_files_survive_rename_spaces_unicode(tmp_path: Path) -> None:
+    repo = tmp_path / "vault"
+    repo.mkdir()
+    _git(repo, "init", "-b", "main")
+    _git(repo, "config", "user.email", "test@example.com")
+    _git(repo, "config", "user.name", "Test")
+    (repo / "plain.txt").write_text("a", encoding="utf-8")
+    (repo / "sp ace.txt").write_text("b", encoding="utf-8")
+    (repo / "unicodè.txt").write_text("c", encoding="utf-8")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-m", "init")
+    (repo / "plain.txt").write_text("a2", encoding="utf-8")
+    (repo / "sp ace.txt").write_text("b2", encoding="utf-8")
+    _git(repo, "mv", "unicodè.txt", "renamed.txt")
+    (repo / "renamed.txt").write_text("c2", encoding="utf-8")
+
+    dirty = get_uncommitted_files(repo)
+    assert "plain.txt" in dirty
+    assert "sp ace.txt" in dirty
+    assert "renamed.txt" in dirty
+    assert not any("->" in entry for entry in dirty)
+    assert _git(repo, "add", "--", *dirty).returncode == 0
+
+
+def test_mirror_failure_is_reported_not_silent(tmp_path: Path) -> None:
+    """A dead mirror must appear in the message, and the primary must never
+    be pushed twice when listed among mirrors."""
+    remote = tmp_path / "remote.git"
+    subprocess.run(["git", "init", "--bare", "-b", "main", str(remote)], check=True)
+    clone = tmp_path / "clone"
+    subprocess.run(["git", "clone", str(remote), str(clone)], check=True)
+    _git(clone, "config", "user.email", "test@example.com")
+    _git(clone, "config", "user.name", "Test")
+    (clone / "f.txt").write_text("base\n", encoding="utf-8")
+    _git(clone, "add", "-A")
+    _git(clone, "commit", "-m", "base")
+    _git(clone, "push", "origin", "main")
+    (clone / "f.txt").write_text("x\n", encoding="utf-8")
+    _git(clone, "add", "-A")
+    _git(clone, "commit", "-m", "work")
+
+    from nexgen_core.git_ops import publish_changes
+    from nexgen_core.i18n import set_language
+
+    set_language("en")
+    try:
+        ok, msg = publish_changes(
+            clone, branch="main", remote="origin",
+            mirrors=["origin", "file:///nonexistent-mirror.git"],
+            commit_msg="sync",
+        )
+    finally:
+        set_language(None)
+    assert ok is True
+    assert "Published successfully" in msg
+    assert "nonexistent-mirror" in msg
+
+
+def test_untracked_infra_files_are_listed_not_committed(tmp_path: Path) -> None:
+    from nexgen_core.git_ops import get_untracked_infra_files
+
+    repo = tmp_path / "vault"
+    repo.mkdir()
+    _git(repo, "init", "-b", "main")
+    _git(repo, "config", "user.email", "test@example.com")
+    _git(repo, "config", "user.name", "Test")
+    (repo / "README.md").write_text("# v\n", encoding="utf-8")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-m", "init")
+    infra = repo / "03-INFRA" / "new-skill.yaml"
+    infra.parent.mkdir(parents=True)
+    infra.write_text("x: 1\n", encoding="utf-8")
+    (repo / "scratch.md").write_text("tmp\n", encoding="utf-8")
+
+    found = get_untracked_infra_files(repo)
+    assert "03-INFRA/new-skill.yaml" in found
+    assert "scratch.md" not in found
