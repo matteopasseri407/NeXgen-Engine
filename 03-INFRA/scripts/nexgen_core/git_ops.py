@@ -63,6 +63,9 @@ INFRA_PATH_PREFIXES = (
     "00-START-HERE.md",
 )
 
+# Private callers can require this contract without depending on a release label.
+PATH_SCOPED_COMMITS = True
+
 
 def is_infra_file(filepath: str) -> bool:
     """True if filepath is a known infrastructure, configuration, or instruction file.
@@ -459,9 +462,13 @@ def publish_changes(
                 return False, t("git add failed: {error}", error=add_res.stderr)
 
         # Check whether there's anything staged to commit
-        staged_check = run_git(repo_dir, "diff", "--cached", "--quiet")
-        if staged_check.returncode != 0:
-            c_res = run_git(repo_dir, "commit", "-m", commit_msg)
+        paths = ["--", *files_to_commit] if files_to_commit else []
+        staged_check = run_git(repo_dir, "diff", "--cached", "--quiet", *paths)
+        if staged_check.returncode not in (0, 1):
+            return False, t("Could not inspect staged changes: {error}", error=staged_check.stderr)
+        if staged_check.returncode == 1:
+            commit_args = ["--only", *paths] if files_to_commit else []
+            c_res = run_git(repo_dir, "commit", "-m", commit_msg, *commit_args)
             if c_res.returncode != 0:
                 return False, t("git commit failed: {error}", error=c_res.stderr)
             committed = True
@@ -510,6 +517,14 @@ def publish_changes(
                 return False, ff_msg
             published = True
         else:
+            if files_to_commit:
+                # An explicit-file caller did not authorize committing,
+                # stashing, rebasing or quarantining another writer's work.
+                return False, t(
+                    "{remote}/{branch} moved during publication. The selected commit stays local; "
+                    "resolve the divergence before retrying. Other staged work is unchanged.",
+                    remote=remote, branch=branch,
+                )
             # Divergence. Auto-commit any remaining infra files before rebase attempt
             auto_commit_infra_files(repo_dir)
             dirty = get_uncommitted_files(repo_dir)
