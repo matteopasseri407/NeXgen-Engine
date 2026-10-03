@@ -16,7 +16,7 @@ import urllib.request
 from dataclasses import asdict
 from pathlib import Path
 
-from .config import LaneConfig, default_engine_root
+from .config import LaneConfig
 from .engine import (LaneResult)
 from .patch import PatchError, apply_proposal, format_gate, list_proposals, propose_patch
 from .relay import RELAY_CLIS, RelayError, available_clis, run_relay

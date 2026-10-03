@@ -13,7 +13,7 @@ SCRIPTS_DIR = Path(__file__).resolve().parent
 if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
-from nexgen_core.tools.vault_map import main
+from nexgen_core.tools.vault_map import main  # noqa: E402 - sys.path shim for cloned checkout
 
 if __name__ == "__main__":
     sys.exit(main())

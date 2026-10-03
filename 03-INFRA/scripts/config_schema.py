@@ -17,7 +17,7 @@ SCRIPTS_DIR = Path(__file__).resolve().parent
 if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
-from nexgen_core.config import (
+from nexgen_core.config import (  # noqa: E402 - sys.path shim for cloned checkout
     ConfigError,
     load_council_config,
     load_mcp_manifest,

@@ -21,10 +21,10 @@ SCRIPTS_DIR = Path(__file__).resolve().parents[1]
 if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
-from nexgen_core.config import load_mcp_manifest
-from nexgen_core.i18n import t
-from nexgen_core.jsonc import parse_jsonc
-from nexgen_core.paths import (
+from nexgen_core.config import load_mcp_manifest  # noqa: E402 - sys.path shim for cloned checkout
+from nexgen_core.i18n import t  # noqa: E402 - sys.path shim for cloned checkout
+from nexgen_core.jsonc import parse_jsonc  # noqa: E402 - sys.path shim for cloned checkout
+from nexgen_core.paths import (  # noqa: E402 - sys.path shim for cloned checkout
     antigravity_config,
     antigravity_configs,
     claude_config,
@@ -32,7 +32,7 @@ from nexgen_core.paths import (
     opencode_config_candidates,
     resolve_home,
 )
-from nexgen_core.renderer import McpRenderer
+from nexgen_core.renderer import McpRenderer  # noqa: E402 - sys.path shim for cloned checkout
 
 HOME = resolve_home()
 # CLIs whose writer can recreate the file from scratch (--reset is only safe

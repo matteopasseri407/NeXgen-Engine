@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import Callable
 
-from .config import LaneConfig, default_engine_root
+from .config import LaneConfig
 from .jobs import JobError, job_close, job_research
 from .llm import LLM, LLMError
 from .tools import ToolRegistry

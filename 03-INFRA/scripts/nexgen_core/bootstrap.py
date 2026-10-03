@@ -30,7 +30,7 @@ SCRIPTS_DIR = Path(__file__).resolve().parents[1]
 if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
-from nexgen_core.first_run import (
+from nexgen_core.first_run import (  # noqa: E402 - sys.path shim for cloned checkout
     align_now,
     commit_setup,
     remaining_problems,
@@ -38,8 +38,8 @@ from nexgen_core.first_run import (
     write_remotes,
     write_user_profile,
 )
-from nexgen_core.i18n import t
-from nexgen_core.paths import resolve_home
+from nexgen_core.i18n import t  # noqa: E402 - sys.path shim for cloned checkout
+from nexgen_core.paths import resolve_home  # noqa: E402 - sys.path shim for cloned checkout
 
 #: The Python version below which the engine won't start.
 MINIMUM_PYTHON = (3, 11)

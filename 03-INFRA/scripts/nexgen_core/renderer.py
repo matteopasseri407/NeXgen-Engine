@@ -23,15 +23,15 @@ SCRIPTS_DIR = Path(__file__).resolve().parents[1]
 if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
-from nexgen_core.config import expand_inline_templates, expand_placeholders, load_mcp_manifest
-from nexgen_core.paths import (
+from nexgen_core.config import expand_inline_templates, expand_placeholders, load_mcp_manifest  # noqa: E402 - sys.path shim for cloned checkout
+from nexgen_core.paths import (  # noqa: E402 - sys.path shim for cloned checkout
     opencode_config_path,
     resolve_engine_root,
     resolve_home,
     resolve_vault_data,
 )
 
-from nexgen_core.mcp_render import IS_WINDOWS
+from nexgen_core.mcp_render import IS_WINDOWS  # noqa: E402 - sys.path shim for cloned checkout
 
 
 class McpRenderer:

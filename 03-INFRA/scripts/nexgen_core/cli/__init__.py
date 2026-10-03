@@ -19,9 +19,9 @@ SCRIPTS_DIR = Path(__file__).resolve().parents[2]
 if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
-from nexgen_core import __version__
-from nexgen_core.cli import engine, local_cmds, module_cmds, skill_cmds, stack_cmds, tool_cmds, vault_cmds
-from nexgen_core.i18n import set_language, t
+from nexgen_core import __version__  # noqa: E402 - sys.path shim for cloned checkout
+from nexgen_core.cli import engine, local_cmds, module_cmds, skill_cmds, stack_cmds, tool_cmds, vault_cmds  # noqa: E402 - sys.path shim for cloned checkout
+from nexgen_core.i18n import set_language, t  # noqa: E402 - sys.path shim for cloned checkout
 
 #: The verb groups, in the order they appear in the help text.
 GROUPS = (engine, vault_cmds, skill_cmds, stack_cmds, module_cmds, tool_cmds, local_cmds)
