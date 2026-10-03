@@ -79,7 +79,7 @@ def run_graph(
     tools.refusals.clear()
     app = build_graph(llm, tools, cfg)
     final = app.invoke({"task": task, "canaries": [str(c) for c in canaries]})
-    receipts = [{"tool": call.name, "args": call.args, "ok": call.ok} for call in tools.calls]
+    receipts = [call.receipt() for call in tools.calls]
     answer = final.get("answer", "")
     collected = final.get("collected", "")
     problems = verify_answer(answer, receipts, collected)

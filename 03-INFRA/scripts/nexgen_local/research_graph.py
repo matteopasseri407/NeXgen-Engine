@@ -94,7 +94,8 @@ def _hydrate_registry(tools: ToolRegistry, receipts: list[dict[str, Any]], refus
     A continued interaction starts with an empty registry; without this,
     a stageless action like ``draft_mail`` (no tool call of its own) would
     leave ``state.receipts`` empty and the menu would restart from zero.
-    Refusal texts are restored too: the empty-vs-error taxonomy needs them.
+    Explicit statuses are restored too. Refusal display texts support only
+    checkpoints saved before statuses were added.
     """
     from .tools import ToolCall
 
@@ -105,6 +106,7 @@ def _hydrate_registry(tools: ToolRegistry, receipts: list[dict[str, Any]], refus
                 args=dict(receipt.get("args", {}) or {}),
                 ok=bool(receipt.get("ok", False)),
                 chars=0,
+                status=receipt.get("status"),
             )
         )
     tools.refusals.extend(refusals)
@@ -250,7 +252,7 @@ def _node_act(ctx_factory, state: ResearchState) -> dict[str, Any]:
     # The registry accumulates within one operation exactly like run_steps;
     # only the calls made by THIS node extend the persisted receipts.
     update["receipts"] = state.get("receipts", []) + [
-        {"tool": call.name, "args": call.args, "ok": call.ok} for call in ctx.tools.calls[already:]
+        call.receipt() for call in ctx.tools.calls[already:]
     ]
     update["refusals"] = state.get("refusals", []) + list(ctx.tools.refusals[refused_before:])
     reads_log = list(state.get("reads_log", []))

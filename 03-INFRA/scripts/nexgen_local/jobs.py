@@ -20,7 +20,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Any
 
-from .source_selection import (empty_result, existing_file, longest_term, sanitize_content, terms)
+from .source_selection import (existing_file, longest_term, sanitize_content, terms)
 from .evidence import (engine_sentence, retrieval_outcome, verify_answer)
 from nexgen_core.files import write_private_text
 
@@ -81,7 +81,7 @@ class JobResult:
 
 
 def _receipts(tools: ToolRegistry) -> list[dict[str, Any]]:
-    return [{"tool": call.name, "args": call.args, "ok": call.ok} for call in tools.calls]
+    return [call.receipt() for call in tools.calls]
 
 
 def _sources(tools: ToolRegistry) -> list[str]:
@@ -108,62 +108,62 @@ def job_research(llm: LLM, tools: ToolRegistry, cfg: LaneConfig, topic: str) -> 
     words = terms(topic)[:4] or [topic[:40]]
     query = " ".join(words)
 
-    vault_output = tools.search_vault(query)
-    vault_paths: list[str] = [] if empty_result(vault_output) else vault_output.splitlines()[:MAX_SOURCES]
+    vault_output = tools.call_result("search_vault", {"query": query})
+    vault_paths: list[str] = [] if not vault_output.usable else vault_output.text.splitlines()[:MAX_SOURCES]
     excerpts: list[str] = []
     for path in vault_paths:
-        text = tools.read_vault(path)
-        if not empty_result(text):
-            excerpts.append(f"[{path}]\n{sanitize_content(text)[:MAX_EXCERPT]}")
+        text = tools.call_result("read_vault", {"path": path})
+        if text.usable:
+            excerpts.append(f"[{path}]\n{sanitize_content(text.text)[:MAX_EXCERPT]}")
 
-    web_output = tools.web_search(query)
-    if empty_result(web_output):
+    web_output = tools.call_result("web_search", {"query": query})
+    if not web_output.usable:
         alternative = longest_term(words)
         if alternative and alternative.casefold() != query.casefold():
-            web_output = tools.web_search(alternative)
-    web_block = sanitize_content(web_output) if not empty_result(web_output) else "(nessun risultato web)"
+            web_output = tools.call_result("web_search", {"query": alternative})
+    web_block = sanitize_content(web_output.text) if web_output.usable else "(nessun risultato web)"
 
-    mail_output = tools.search_mail(query)
-    mail_ids = [] if empty_result(mail_output) else [
-        line.split("|")[0].strip() for line in mail_output.splitlines() if line.strip()
+    mail_output = tools.call_result("search_mail", {"query": query})
+    mail_ids = [] if not mail_output.usable else [
+        line.split("|")[0].strip() for line in mail_output.text.splitlines() if line.strip()
     ]
     mail_excerpts: list[str] = []
     for mid in [mid for mid in mail_ids if mid][:MAX_SOURCES]:
-        text = tools.read_mail(mid)
-        if not empty_result(text):
-            mail_excerpts.append(sanitize_content(text)[:MAX_EXCERPT])
+        text = tools.call_result("read_mail", {"id": mid})
+        if text.usable:
+            mail_excerpts.append(sanitize_content(text.text)[:MAX_EXCERPT])
 
-    drive_output = tools.search_drive(query)
-    drive_ids = [] if empty_result(drive_output) else [
-        line.split("|")[0].strip() for line in drive_output.splitlines() if line.strip()
+    drive_output = tools.call_result("search_drive", {"query": query})
+    drive_ids = [] if not drive_output.usable else [
+        line.split("|")[0].strip() for line in drive_output.text.splitlines() if line.strip()
     ]
     drive_excerpts: list[str] = []
     for fid in [fid for fid in drive_ids if fid][:MAX_SOURCES]:
-        text = tools.read_drive(fid)
-        if not empty_result(text):
-            drive_excerpts.append(sanitize_content(text)[:MAX_EXCERPT])
+        text = tools.call_result("read_drive", {"id": fid})
+        if text.usable:
+            drive_excerpts.append(sanitize_content(text.text)[:MAX_EXCERPT])
 
-    calendar_output = tools.search_calendar(query)
-    calendar_ids = [] if empty_result(calendar_output) else [
-        line.split("|")[0].strip() for line in calendar_output.splitlines() if line.strip()
+    calendar_output = tools.call_result("search_calendar", {"query": query})
+    calendar_ids = [] if not calendar_output.usable else [
+        line.split("|")[0].strip() for line in calendar_output.text.splitlines() if line.strip()
     ]
     calendar_excerpts: list[str] = []
     for eid in [eid for eid in calendar_ids if eid][:MAX_SOURCES]:
-        text = tools.read_calendar(eid)
-        if not empty_result(text):
-            calendar_excerpts.append(sanitize_content(text)[:MAX_EXCERPT])
+        text = tools.call_result("read_calendar", {"id": eid})
+        if text.usable:
+            calendar_excerpts.append(sanitize_content(text.text)[:MAX_EXCERPT])
 
-    outlook_output = tools.search_outlook(query)
-    outlook_ids = [] if empty_result(outlook_output) else [
-        line.split("|")[0].strip() for line in outlook_output.splitlines() if line.strip()
+    outlook_output = tools.call_result("search_outlook", {"query": query})
+    outlook_ids = [] if not outlook_output.usable else [
+        line.split("|")[0].strip() for line in outlook_output.text.splitlines() if line.strip()
     ]
     outlook_excerpts: list[str] = []
     for mid in [mid for mid in outlook_ids if mid][:MAX_SOURCES]:
-        text = tools.read_outlook(mid)
-        if not empty_result(text):
-            outlook_excerpts.append(sanitize_content(text)[:MAX_EXCERPT])
+        text = tools.call_result("read_outlook", {"id": mid})
+        if text.usable:
+            outlook_excerpts.append(sanitize_content(text.text)[:MAX_EXCERPT])
 
-    if not excerpts and empty_result(web_output) and not mail_excerpts and not drive_excerpts and not calendar_excerpts and not outlook_excerpts:
+    if not excerpts and not web_output.usable and not mail_excerpts and not drive_excerpts and not calendar_excerpts and not outlook_excerpts:
         # Nothing usable on either side: describe the void deterministically
         # instead of asking the model to synthesise from it. A partial result
         # (one side usable) still goes to the model with the gaps shown.
@@ -192,7 +192,7 @@ def job_research(llm: LLM, tools: ToolRegistry, cfg: LaneConfig, topic: str) -> 
     answer = llm.text(RESEARCH_PROMPT, user)
     receipts = _receipts(tools)
     collected = "\n\n".join(
-        excerpts + mail_excerpts + drive_excerpts + calendar_excerpts + outlook_excerpts + ([web_block] if not empty_result(web_output) else [])
+        excerpts + mail_excerpts + drive_excerpts + calendar_excerpts + outlook_excerpts + ([web_block] if web_output.usable else [])
     )
     problems = verify_answer(answer, receipts, collected)
     return JobResult(
@@ -249,10 +249,10 @@ def job_close(llm: LLM, tools: ToolRegistry, cfg: LaneConfig, session_path: str,
     tools.calls.clear()
     tools.refusals.clear()
     dest = pinned_path(root, rel)
-    text = tools.read_vault(dest) if kind == "vault" else tools.read_repo(dest)
-    if empty_result(text):
+    text = tools.call_result("read_vault", {"path": dest}) if kind == "vault" else tools.call_result("read_repo", {"path": dest})
+    if not text.usable:
         raise JobError(f"file sessione non leggibile: {rel}")
-    raw = llm.json(CLOSE_PROMPT, sanitize_content(text))
+    raw = llm.json(CLOSE_PROMPT, sanitize_content(text.text))
     if not isinstance(raw, dict):
         raise JobError("il modello non ha prodotto un JSON valido per la chiusura")
     draft = _render_draft(raw, rel)

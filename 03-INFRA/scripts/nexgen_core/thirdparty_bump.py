@@ -23,6 +23,7 @@ if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
 from nexgen_core.i18n import t  # noqa: E402
+from nexgen_core.files import atomic_write_text as _atomic_write  # noqa: E402
 from nexgen_core.paths import (  # noqa: E402
     mcp_manifest,
     resolve_engine_root,
@@ -218,23 +219,6 @@ def _replace_in_entries(text: str, carriers: list[tuple[str, str | None]],
         replaced += 1
         text = text[:start] + block + text[end:]
     return text, replaced
-
-
-def _atomic_write(path: Path, content: str) -> None:
-    """Writes through a temp file plus rename: a failure mid-write can
-    never leave a truncated manifest behind."""
-    import os
-
-    tmp = path.with_name(f"{path.name}.tmp-{os.getpid()}")
-    try:
-        tmp.write_text(content, encoding="utf-8")
-        os.replace(tmp, path)
-    except OSError:
-        try:
-            tmp.unlink()
-        except OSError:
-            pass
-        raise
 
 
 def apply_plan(
@@ -689,7 +673,7 @@ def _record_applied(state_dir: Path, raisable: list[dict]) -> None:
     entries = [e for e in entries if isinstance(e, dict) and _at(e) > cutoff]
     try:
         sidecar.parent.mkdir(parents=True, exist_ok=True)
-        sidecar.write_text(json.dumps({"applied": entries}, indent=2) + "\n", encoding="utf-8")
+        _atomic_write(sidecar, json.dumps({"applied": entries}, indent=2) + "\n")
     except (OSError, ValueError):
         pass
 

@@ -12,6 +12,12 @@ of any engine release.
 
 ### Fixed
 
+- Local retrieval uses explicit tool outcomes across lane, steps, jobs and
+  LangGraph. Valid source text beginning with parentheses is retained; empty
+  results and errors stay distinct regardless of display language. Audit
+  failures leave no successful receipt, and resumed sessions retain status.
+- Third-party pin updates reuse the shared atomic writer, preserving existing
+  permissions and temporary files owned by other calls.
 - Vault publication with explicit file paths commits only those paths and
   preserves other staged edits. Remote divergence stops that publication
   without stashing, committing or rebasing another writer's work.
