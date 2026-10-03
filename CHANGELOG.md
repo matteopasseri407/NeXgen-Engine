@@ -12,6 +12,9 @@ of any engine release.
 
 ### Fixed
 
+- Atomic writes retry transient metadata and temporary-cleanup denials within
+  a bounded deadline. Unknown existing permissions stop publication instead
+  of silently replacing the original file.
 - Test fixtures discard inherited config/state overrides before creating their
   own temporary paths. Windows assertions follow native launcher names and
   access semantics, and local CLI help avoids initializing asyncio/networking.
