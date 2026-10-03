@@ -90,6 +90,17 @@ def test_release_chore_does_not_launder_history(tmp_path: Path) -> None:
     assert ok is False
 
 
+def test_allowed_release_chore_and_remote_only_integration(tmp_path: Path) -> None:
+    lg = _load_guard()
+    repo = _repo_with_lanes(tmp_path)
+    _git(repo, "checkout", "-qb", "release/v9", "developer")
+    _git(repo, "commit", "--allow-empty", "-m", "release: notes for v9")
+    assert lg.check_ref(repo, "release/v9")[0]
+    clone = tmp_path / "clone"
+    subprocess.run(["git", "clone", "--branch", "release/v9", str(repo), str(clone)], check=True, capture_output=True)
+    assert lg.check_ref(clone, "release/v9")[0]
+
+
 def test_release_must_descend_from_developer(tmp_path: Path) -> None:
     lg = _load_guard()
     repo = _repo_with_lanes(tmp_path)
@@ -108,7 +119,7 @@ def test_unguarded_rungs_are_ignored(tmp_path: Path) -> None:
     lg = _load_guard()
     assert lg.guarded_ref("main") is True
     assert lg.guarded_ref("release/v2.3.10") is True
-    assert lg.guarded_ref("developer") is False
+    assert lg.guarded_ref("developer") is True
     assert lg.guarded_ref("dev/engine") is False
 
 
@@ -134,3 +145,36 @@ def test_engine_lane_ok_on_lane_branch_and_missing_checkout(tmp_path: Path) -> N
     assert outcome is not None
     assert outcome.severity == Severity.OK
     assert check_engine_lane(tmp_path / "nope") is None
+
+
+def test_developer_accepts_lane_merge_but_refuses_direct_commit(tmp_path):
+    from nexgen_core.lanes import check_ref
+    repo = _repo_with_lanes(tmp_path)
+    base = _git(repo, "rev-parse", "developer").stdout.strip()
+    _git(repo, "checkout", "-qb", "dev/x", "developer")
+    _git(repo, "commit", "--allow-empty", "-m", "lane change")
+    _git(repo, "checkout", "developer")
+    _git(repo, "merge", "--no-ff", "dev/x", "-m", "merge lane")
+    assert check_ref(repo, "developer", base=base)[0]
+    _git(repo, "commit", "--allow-empty", "-m", "direct fix")
+    assert not check_ref(repo, "developer", base=base)[0]
+
+
+def test_pr_checks_synthetic_merge_and_release_history(tmp_path):
+    from nexgen_core.lanes import check_ref
+    repo = _repo_with_lanes(tmp_path)
+    base = _git(repo, "rev-parse", "developer").stdout.strip()
+    _git(repo, "checkout", "-qb", "dev/x", "developer")
+    _git(repo, "commit", "--allow-empty", "-m", "lane change")
+    _git(repo, "checkout", "-qb", "pr-merge", "developer")
+    _git(repo, "merge", "--no-ff", "dev/x", "-m", "synthetic merge")
+    assert check_ref(repo, "developer", tip="HEAD", base=base)[0]
+    assert not check_ref(repo, "release/v9", tip="HEAD")[0]
+
+
+def test_missing_integration_ref_is_unknown_in_doctor(tmp_path):
+    repo = _repo_with_lanes(tmp_path)
+    _git(repo, 'checkout', '-qb', 'release/unknown')
+    _git(repo, 'branch', '-D', 'developer')
+    outcome = check_engine_lane(repo)
+    assert outcome.severity == Severity.UNDETERMINED

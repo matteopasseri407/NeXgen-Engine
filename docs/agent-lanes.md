@@ -11,30 +11,34 @@ into 60 breakages. The fix is structural, not disciplinary:
 
 - durable `dev/<agent>` lanes (no 400 throwaway branches),
 - one integration point (`developer`),
-- machines enforce it (CI blocks, doctor warns) so nobody has to remember.
+- CI checks integration history and doctor reports misplaced work.
 
 ## The gates
 
-### CI: `lane-guard` (blocking)
+### CI: `lane-guard`
 
-Runs on every push to `main` and `release/*`. It fails the push when:
+Runs on pushes and pull requests. PRs check the target branch against its
+base commit using the proposed merge snapshot. Pushes use the previous tip.
 
-1. the tip does not descend from `developer`
-   (`git merge-base --is-ancestor developer <ref>`), or
-2. any non-merge commit in `developer..<ref>` is not a `release:` chore
-   (`^(release:|Release v|chore\(release\))`).
+- `main` is frozen: advancing it fails the check.
+- `developer` must advance through merges; direct first-parent commits fail.
+- `release/*` must descend from `developer`, and additional non-merge
+  commits must have a release-chore subject (`release:`, `Release v`, or
+  `chore(release)`). Remote-tracking refs work in fresh CI clones.
+- A `dev/*` lane is allowed to contain ordinary development commits.
 
-A red `lane-guard` means: move the commits to your lane and merge
-lane → `developer` instead. The script is `03-INFRA/scripts/lane_guard.py`
-(stdlib only); the same check runs anywhere with
-`python3 03-INFRA/scripts/lane_guard.py --ref <branch>`.
+A missing required ref fails the check. The implementation lives in
+`nexgen_core/lanes.py`; `03-INFRA/scripts/lane_guard.py` is its entry point.
+For a local integration check, pass the previous tip with `--base`.
+CI reports a failed job; branch protection determines whether GitHub blocks
+merging. It does not reject a Git push that has already reached the server.
 
-### Doctor: engine-lane watch (warning, hourly via guard)
+### Doctor: engine-lane watch
 
-`nexgen doctor` reports WARN when the engine checkout sits on
-`main`/`release/*` with uncommitted changes or commits ahead of
-`developer`: that work belongs on a `dev/<agent>` lane. Warnings never
-block; they expire the moment the work moves.
+`nexgen doctor` reuses the lane check. Dirty work on guarded branches produces
+a warning; missing refs produce an undetermined result. It never rewrites
+branches or moves files. Run doctor explicitly; the normal guard cycle does
+not schedule this contributor check.
 
 ## Merge rhythm (lean, no PR bureaucracy)
 
@@ -48,6 +52,6 @@ block; they expire the moment the work moves.
 
 ## When CI is red on your merge
 
-Red on `developer` blocks everyone downstream. Revert the merge
-(`git revert -m 1 <merge>` on `developer`), fix on your lane, merge again.
-A reverted merge is routine, not a failure.
+Do the repair on your lane. If a merge must be reverted, make the revert on
+the lane, test it, then merge the lane into `developer`. Never repair red CI
+with a direct integration-branch commit.

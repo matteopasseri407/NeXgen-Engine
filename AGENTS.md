@@ -24,10 +24,16 @@ No forks, no per-fix branches, no direct commits to integration or release.
 5. NEVER commit directly on `developer`, `main`, or `release/*` — not even
    "a trivial fix". Trivial fixes ride your lane like everything else.
 
-## Forbidden (blocked by CI, warned by doctor within the hour)
+## Forbidden (checked by CI and by `nexgen doctor`)
 
 - Non-merge commits on `release/*` that are not `release:` chores.
 - A `release/*` tip that does not descend from `developer`.
 - Uncommitted work sitting on `main`/`release/*` (move it to your lane).
+
+Before integrating, run `python 03-INFRA/scripts/check_engine.py`.
+Module ownership and regression expectations: `CONTRIBUTING.md`.
+
+Use a separate Git worktree when another session shares this checkout.
+A branch alone does not isolate files from another writer.
 
 Full rationale: `docs/agent-lanes.md`.

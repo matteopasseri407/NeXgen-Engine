@@ -20,8 +20,11 @@ import time
 from dataclasses import dataclass, field
 from typing import Any
 
-from .config import LaneConfig, secure_artifact
-from .engine import _empty, _existing_file, _longest, engine_sentence, retrieval_outcome, sanitize_content, terms, verify_answer
+from .source_selection import (empty_result, existing_file, longest_term, sanitize_content, terms)
+from .evidence import (engine_sentence, retrieval_outcome, verify_answer)
+from nexgen_core.files import write_private_text
+
+from .config import LaneConfig
 from .llm import LLM
 from .tools import ToolRegistry, audit_event
 
@@ -106,61 +109,61 @@ def job_research(llm: LLM, tools: ToolRegistry, cfg: LaneConfig, topic: str) -> 
     query = " ".join(words)
 
     vault_output = tools.search_vault(query)
-    vault_paths: list[str] = [] if _empty(vault_output) else vault_output.splitlines()[:MAX_SOURCES]
+    vault_paths: list[str] = [] if empty_result(vault_output) else vault_output.splitlines()[:MAX_SOURCES]
     excerpts: list[str] = []
     for path in vault_paths:
         text = tools.read_vault(path)
-        if not _empty(text):
+        if not empty_result(text):
             excerpts.append(f"[{path}]\n{sanitize_content(text)[:MAX_EXCERPT]}")
 
     web_output = tools.web_search(query)
-    if _empty(web_output):
-        alternative = _longest(words)
+    if empty_result(web_output):
+        alternative = longest_term(words)
         if alternative and alternative.casefold() != query.casefold():
             web_output = tools.web_search(alternative)
-    web_block = sanitize_content(web_output) if not _empty(web_output) else "(nessun risultato web)"
+    web_block = sanitize_content(web_output) if not empty_result(web_output) else "(nessun risultato web)"
 
     mail_output = tools.search_mail(query)
-    mail_ids = [] if _empty(mail_output) else [
+    mail_ids = [] if empty_result(mail_output) else [
         line.split("|")[0].strip() for line in mail_output.splitlines() if line.strip()
     ]
     mail_excerpts: list[str] = []
     for mid in [mid for mid in mail_ids if mid][:MAX_SOURCES]:
         text = tools.read_mail(mid)
-        if not _empty(text):
+        if not empty_result(text):
             mail_excerpts.append(sanitize_content(text)[:MAX_EXCERPT])
 
     drive_output = tools.search_drive(query)
-    drive_ids = [] if _empty(drive_output) else [
+    drive_ids = [] if empty_result(drive_output) else [
         line.split("|")[0].strip() for line in drive_output.splitlines() if line.strip()
     ]
     drive_excerpts: list[str] = []
     for fid in [fid for fid in drive_ids if fid][:MAX_SOURCES]:
         text = tools.read_drive(fid)
-        if not _empty(text):
+        if not empty_result(text):
             drive_excerpts.append(sanitize_content(text)[:MAX_EXCERPT])
 
     calendar_output = tools.search_calendar(query)
-    calendar_ids = [] if _empty(calendar_output) else [
+    calendar_ids = [] if empty_result(calendar_output) else [
         line.split("|")[0].strip() for line in calendar_output.splitlines() if line.strip()
     ]
     calendar_excerpts: list[str] = []
     for eid in [eid for eid in calendar_ids if eid][:MAX_SOURCES]:
         text = tools.read_calendar(eid)
-        if not _empty(text):
+        if not empty_result(text):
             calendar_excerpts.append(sanitize_content(text)[:MAX_EXCERPT])
 
     outlook_output = tools.search_outlook(query)
-    outlook_ids = [] if _empty(outlook_output) else [
+    outlook_ids = [] if empty_result(outlook_output) else [
         line.split("|")[0].strip() for line in outlook_output.splitlines() if line.strip()
     ]
     outlook_excerpts: list[str] = []
     for mid in [mid for mid in outlook_ids if mid][:MAX_SOURCES]:
         text = tools.read_outlook(mid)
-        if not _empty(text):
+        if not empty_result(text):
             outlook_excerpts.append(sanitize_content(text)[:MAX_EXCERPT])
 
-    if not excerpts and _empty(web_output) and not mail_excerpts and not drive_excerpts and not calendar_excerpts and not outlook_excerpts:
+    if not excerpts and empty_result(web_output) and not mail_excerpts and not drive_excerpts and not calendar_excerpts and not outlook_excerpts:
         # Nothing usable on either side: describe the void deterministically
         # instead of asking the model to synthesise from it. A partial result
         # (one side usable) still goes to the model with the gaps shown.
@@ -189,7 +192,7 @@ def job_research(llm: LLM, tools: ToolRegistry, cfg: LaneConfig, topic: str) -> 
     answer = llm.text(RESEARCH_PROMPT, user)
     receipts = _receipts(tools)
     collected = "\n\n".join(
-        excerpts + mail_excerpts + drive_excerpts + calendar_excerpts + outlook_excerpts + ([web_block] if not _empty(web_output) else [])
+        excerpts + mail_excerpts + drive_excerpts + calendar_excerpts + outlook_excerpts + ([web_block] if not empty_result(web_output) else [])
     )
     problems = verify_answer(answer, receipts, collected)
     return JobResult(
@@ -235,9 +238,9 @@ def _render_draft(data: dict[str, Any], session_path: str) -> str:
 
 def job_close(llm: LLM, tools: ToolRegistry, cfg: LaneConfig, session_path: str, *, save: bool = False) -> JobResult:
     """Read a session text, extract durable outcomes, render a draft."""
-    from .engine import _pinned
+    from .source_selection import pinned_path
 
-    found = _existing_file(cfg, session_path)
+    found = existing_file(cfg, session_path)
     if not found:
         raise JobError("file sessione fuori dalle radici consentite o inesistente")
     kind, rel, root = found
@@ -245,9 +248,9 @@ def job_close(llm: LLM, tools: ToolRegistry, cfg: LaneConfig, session_path: str,
         raise JobError("il file sessione deve essere testo, non PDF")
     tools.calls.clear()
     tools.refusals.clear()
-    dest = _pinned(root, rel)
+    dest = pinned_path(root, rel)
     text = tools.read_vault(dest) if kind == "vault" else tools.read_repo(dest)
-    if _empty(text):
+    if empty_result(text):
         raise JobError(f"file sessione non leggibile: {rel}")
     raw = llm.json(CLOSE_PROMPT, sanitize_content(text))
     if not isinstance(raw, dict):
@@ -257,20 +260,17 @@ def job_close(llm: LLM, tools: ToolRegistry, cfg: LaneConfig, session_path: str,
     if save:
         import secrets
 
-        cfg.drafts_dir.mkdir(parents=True, exist_ok=True)
         # Unique name, exclusive creation: two closes in the same second
         # must never overwrite each other (same class as proposal ids).
         for _ in range(5):
             target = cfg.drafts_dir / f"{time.strftime('%Y%m%d-%H%M%S')}-{secrets.token_hex(4)}-close.md"
             try:
-                with target.open("x", encoding="utf-8") as handle:
-                    handle.write(draft)
+                write_private_text(target, draft, exclusive=True)
                 break
             except FileExistsError:
                 continue
         else:
             raise JobError("collisione nome bozza, riprova")
-        secure_artifact(cfg.drafts_dir, target)
         draft_path = str(target)
         audit_event(cfg, "close_draft", {"session": rel, "draft": draft_path}, ok=True, chars=len(draft))
     return JobResult(

@@ -11,36 +11,13 @@ import os
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from nexgen_core.files import secure_artifact as secure_artifact
+
 #: Default Ollama tag. Never hardcoded into behaviour, only into the fallback.
 DEFAULT_MODEL = "gemma4-12b-openclaw:latest"
 
 #: Parts that may never be read, whatever root is allowed.
 EXCLUDED_PARTS = frozenset({"99-SECRETS", ".git", "node_modules", ".venv"})
-
-
-def secure_artifact(directory: Path, path: Path | None = None) -> None:
-    """Private permissions on lane artifacts: dir 0700, file 0600.
-
-    Drafts, proposals and checkpoints carry the same bodies (mail subjects,
-    file contents), so they share the research checkpoint treatment. The
-    directory is created on every platform; chmod stays POSIX-only and
-    best-effort, like the research lane.
-    """
-    try:
-        directory.mkdir(parents=True, exist_ok=True)
-    except OSError:
-        return
-    if os.name == "nt":
-        return
-    try:
-        os.chmod(directory, 0o700)
-    except OSError:
-        pass
-    if path is not None:
-        try:
-            os.chmod(path, 0o600)
-        except OSError:
-            pass
 
 
 def default_engine_root() -> Path:

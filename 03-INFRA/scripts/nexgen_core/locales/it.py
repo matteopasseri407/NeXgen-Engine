@@ -929,4 +929,22 @@ MESSAGES: dict[str, str] = {
     # --- Fondamenta: path/file/config blindati --------------------------------
     "Refusing to overwrite unreadable file {path}: {exc}":
         "Mi rifiuto di sovrascrivere il file illeggibile {path}: {exc}",
+    'Skill materialization failed; runtime configuration was not regenerated.':
+        'Installazione delle skill fallita. Le configurazioni dei runtime non sono state rigenerate.',
+    'Could not open lock {path}: {error}':
+        'Impossibile aprire il lock {path}: {error}',
+    'Cannot verify the existing skill library: {path}':
+        'Impossibile verificare la libreria skill esistente: {path}',
+    'Could not check the engine lane: missing ref {ref}':
+        'Impossibile verificare la corsia del motore: manca il riferimento {ref}.',
+    "Fetch the engine repository's remote branches and run doctor again.":
+        'Scarica i riferimenti remoti del repository del motore e riesegui doctor.',
+    'Move the work to your dev/<agent> lane and verify it before integrating.':
+        'Sposta il lavoro nella tua corsia dev/<agent> e verificalo prima di integrarlo.',
+    'Lock timeout must be finite.':
+        'Il timeout del lock deve essere un numero finito.',
+    'Shell hook: cannot update {path}.':
+        'Hook della shell: impossibile aggiornare {path}.',
+    'Shell hook: unrecognized managed block in {path}; preserved.':
+        'Hook della shell: blocco gestito non riconosciuto in {path}, conservato. Rimuovilo manualmente dopo averlo controllato.',
 }

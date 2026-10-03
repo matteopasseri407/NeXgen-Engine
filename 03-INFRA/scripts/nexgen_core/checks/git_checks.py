@@ -255,30 +255,36 @@ def check_engine_lane(engine_root: Path) -> CheckOutcome | None:
             message=t("The engine checkout is on a detached HEAD; lane work belongs on a dev/<agent> branch."),
             action=t("Check out your dev/<agent> lane before committing."),
         )
-    guarded = branch == "main" or branch.startswith("release/")
-    if not guarded:
+    from nexgen_core.lanes import check_ref, guarded_ref, resolve_revision
+
+    if not guarded_ref(branch):
         return CheckOutcome(
-            id="git.engine_lane",
-            severity=Severity.OK,
+            id="git.engine_lane", severity=Severity.OK,
             message=t("Engine checkout on lane branch '{branch}'", branch=branch),
         )
     dirty = get_uncommitted_files(repo)
-    ahead = run_git(repo, "rev-list", "--count", f"developer..{branch}").stdout.strip()
-    ahead_count = int(ahead) if ahead.isdigit() else 0
-    if not dirty and ahead_count == 0:
+    # A missing integration ref is unknown, never proof of alignment.
+    required = "developer" if branch.startswith("release/") else f"origin/{branch}"
+    if resolve_revision(repo, required) is None:
         return CheckOutcome(
-            id="git.engine_lane",
-            severity=Severity.OK,
+            id="git.engine_lane", severity=Severity.WARN if dirty else Severity.UNDETERMINED,
+            message=(t("Engine work on '{branch}' belongs on a dev/<agent> lane ({what}).", branch=branch, what=t("{count} uncommitted files", count=len(dirty)))
+                     if dirty else t("Could not check the engine lane: missing ref {ref}", ref=required)),
+            detail=t("{count} uncommitted files", count=len(dirty)) if dirty else "",
+            action=(t("Move the work to your dev/<agent> lane and verify it before integrating.")
+                    if dirty else t("Fetch the engine repository's remote branches and run doctor again.")),
+        )
+    ok, problems = check_ref(repo, branch)
+    if not dirty and ok:
+        return CheckOutcome(
+            id="git.engine_lane", severity=Severity.OK,
             message=t("Engine checkout on '{branch}', clean and aligned", branch=branch),
         )
-    parts = []
+    detail = "; ".join(problems)
     if dirty:
-        parts.append(t("{count} uncommitted files", count=len(dirty)))
-    if ahead_count:
-        parts.append(t("{count} commits ahead of developer", count=ahead_count))
+        detail = t("{count} uncommitted files", count=len(dirty)) + ("; " + detail if detail else "")
     return CheckOutcome(
-        id="git.engine_lane",
-        severity=Severity.WARN,
-        message=t("Engine work on '{branch}' belongs on a dev/<agent> lane ({what}).", branch=branch, what="; ".join(parts)),
-        action=t("Move it: git checkout -b dev/<agent> developer, cherry-pick or merge, then merge lane into developer."),
+        id="git.engine_lane", severity=Severity.WARN,
+        message=t("Engine work on '{branch}' belongs on a dev/<agent> lane ({what}).", branch=branch, what=detail),
+        action=t("Move the work to your dev/<agent> lane and verify it before integrating."),
     )

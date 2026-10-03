@@ -25,8 +25,9 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import Any, Iterable, TypedDict
 
+from .source_selection import (pinned_path)
 from .config import LaneConfig
-from .engine import _pinned, route_task
+from .engine import (route_task)
 from .llm import LLM
 from .steps import (
     MAX_STEPS,
@@ -166,27 +167,12 @@ def _secure_storage(directory: Path, session_file: Path | None) -> None:
     bodies, so they get the same treatment as council sessions.
     The directory is created on every platform; only chmod is POSIX-only.
     """
-    import os as _os
+    from nexgen_core.files import secure_artifact
 
-    try:
-        directory.mkdir(parents=True, exist_ok=True)
-    except OSError:
-        pass
-    if _os.name == "nt":
-        # No POSIX modes on Windows: the directory above is still created,
-        # otherwise the first persistent search fails with
-        # "unable to open database file".
-        return
-    try:
-        _os.chmod(directory, 0o700)
-    except OSError:
-        pass
+    secure_artifact(directory)
     if session_file is not None:
         for path in directory.glob(session_file.stem + ".sqlite*"):
-            try:
-                _os.chmod(path, 0o600)
-            except OSError:
-                continue
+            secure_artifact(directory, path)
 
 
 class _Ctx:
@@ -502,7 +488,7 @@ def research_task(
         initial = _initial_research_state(session_id, task, route, max_steps, canary_list)
         if named_path and str(route.get("root") or ""):
             loop = _loop_from_persisted(initial["loop"])
-            loop.named_path = _pinned(str(route.get("root")), named_path)
+            loop.named_path = pinned_path(str(route.get("root")), named_path)
             initial["loop"] = _loop_to_persisted(loop)
         created: ResearchState | None = initial
     else:

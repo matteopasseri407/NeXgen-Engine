@@ -127,19 +127,18 @@ jobs:
         run: python3 03-INFRA/scripts/ruff_baseline_check.py
 
   lane-guard:
-    # Agent-lane contract, machine-enforced: release rungs advance from
-    # developer by merge, plus release: chores. A direct fix commit fails
-    # here instead of landing silently. Runs on pushes to guarded rungs;
-    # PRs are covered by the same script run locally before merging.
+    # Check the actual push range or synthetic PR merge, including developer.
     runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/heads/release/') || github.ref == 'refs/heads/main'
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           fetch-depth: 0
 
       - name: Lane contract check
-        run: python3 03-INFRA/scripts/lane_guard.py --ref "${{ github.ref_name }}"
+        env:
+          LANE_REF: ${{ github.base_ref || github.ref_name }}
+          LANE_BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: python3 03-INFRA/scripts/lane_guard.py --ref "$LANE_REF" --tip HEAD --base "$LANE_BASE"
 
   shellcheck:
     runs-on: ubuntu-latest

@@ -14,42 +14,62 @@ broken link, clear bug with an obvious one-line fix), a PR alone is fine.
 
 ## Dev setup
 
-- Python 3.11+ with `pyyaml` (`pip install pyyaml`), or 3.10 with `tomli`
-  too.
-- The regression suite lives at
-  `03-INFRA/agent-universal-layer/tests/`; run it with `python3 -m pytest`
-  (from the repo root or from that directory — `pyproject.toml` points
-  `testpaths` at it either way). It's sandboxed and never touches your real
-  `$HOME`.
-- `bash install.sh --check` runs the same preflight the installer runs —
-  useful to confirm your environment has what the project expects. In
-  `--check` mode it writes nothing at all.
-
-### Working on the engine while running it
-
-If you already use this engine on the machine you develop on, run the checkout
-under its own home:
+Use Python 3.11 or newer and install the development dependencies:
 
 ```sh
-export NEXGEN_HOME="$HOME/nexgen-dev"
-python3 03-INFRA/scripts/nexgen_core/cli/__init__.py sync
+python -m venv .venv
+# Activate .venv using your shell's activation command.
+python -m pip install -e '.[dev]'
+python 03-INFRA/scripts/check_engine.py
 ```
 
-`NEXGEN_HOME` moves everything the engine writes — the commands it installs,
-the runtime configurations it generates, the skill library, the scheduled
-units, its own state — into that directory. Your real setup keeps its
-commands, its connectors and its memories, and the two never meet. Point
-`AGENT_VAULT_DATA` at a throwaway vault too if you would rather not read your
-real one.
+The last command runs the committed Ruff baseline gate and the full pytest
+suite. It stops on the first failing gate and never invokes sync or release.
+For a bounded change, pass the relevant test file first; run the full command
+before integration. Fix new lint findings rather than regenerating the baseline.
 
-Without `NEXGEN_HOME` the engine works against your actual home, which is what
-an installed engine is supposed to do. There is no dry-run flag standing in
-for this: a run that writes somewhere else is easier to trust than a run that
-promises not to write.
+### Finding the right module
 
-A test enforces it. `test_nexgen_takeover.py` fails if any module reads the
-home directory itself instead of asking for it, because one forgotten call is
-all it takes for a development checkout to overwrite a working installation.
+| Behavior | Owner | Closest tests in `03-INFRA/agent-universal-layer/tests/` |
+| --- | --- | --- |
+| Atomic writes, backups, private artifacts | `nexgen_core/files.py` | `test_nexgen_foundations.py`, `test_nexgen_quality_regressions.py` |
+| Sync phase ordering and failure status | `nexgen_core/guard.py` | `test_nexgen_phase3.py`, `test_nexgen_quality_regressions.py` |
+| Skill fetch, replacement and pins | `nexgen_core/skill_sources.py` | `test_nexgen_lazy_skills.py`, `test_nexgen_quality_regressions.py` |
+| Host locking | `nexgen_core/lock.py` | `test_nexgen_lock.py` |
+| Source paths, text sanitization, search terms | `nexgen_local/source_selection.py` | `test_nexgen_local.py`, `test_nexgen_local_steps.py` |
+| Response claims and successful read receipts | `nexgen_local/evidence.py` | `test_nexgen_local_steps.py`, `test_nexgen_local_research.py` |
+| Routing and answer pipeline | `nexgen_local/engine.py` | `test_nexgen_local.py` |
+| Model requests and deadlines | `nexgen_local/llm.py` | `test_nexgen_llm_deadlines.py` |
+| Council process lifecycle and relay checkpoints | `03-INFRA/agent-universal-layer/council/` | `test_nexgen_council_*.py` |
+| Contributor lanes | `nexgen_core/lanes.py` | `test_nexgen_lanes.py` |
+
+Check the actual filenames before selecting a test. Graph modules drive the
+existing decision functions; they do not hold a second implementation.
+Import helpers from their owner. `engine.py` retains compatibility exports
+for older callers, but new consumers should use the owning module.
+
+For a bug, first add a test that fails for the reported behavior. Check the
+failure path as well as success: a failed write must preserve the old bytes,
+a failed replacement must restore the active source, and an operational
+model error must not cause an unrequested retry. Re-run the relevant tests
+after the fix, inspect the diff, then run the complete gate before merging.
+Record any untested platform or live provider; a synthetic endpoint proves
+the driver's behavior, not a provider's production availability.
+
+### Working beside an installed engine
+
+Follow the durable lane contract in [AGENTS.md](AGENTS.md). If another session
+uses the same checkout, create a separate Git worktree. Switching branches
+in a shared directory does not isolate the two sessions' files.
+
+Prefer the regression suite's synthetic fixtures for runtime changes. Tests
+redirect the affected paths and disable host mutations. A manual sync is a
+live write operation unless you deliberately isolate it: `NEXGEN_HOME`
+changes the default home, but `CODEX_HOME`, `XDG_CONFIG_HOME`,
+`AGENT_STATE_DIR` and `AGENT_VAULT_DATA` can still select explicit locations.
+Use disposable locations for all of them and set
+`NEXGEN_DISABLE_HOST_MUTATIONS=1` before a manual experiment. Never point a
+development sync at an installed configuration to see what happens.
 
 ### Before tagging a release
 
@@ -89,12 +109,10 @@ don't work around the gate.
 ## Scope guardrails worth knowing before you start
 
 - **Notes vs. infra have separate write paths.** If your change touches
-  how the vault is written to, read `03-INFRA/vault-write-architecture.md`
-  first — "one door per kind of thing" is a deliberate design constraint,
-  not an accident to route around.
-- **Cross-platform is part of "done."** A change to `agent_sync.py` or the
-  shell scripts needs both OS dialects (`.sh`/`.ps1`) covered, or an
-  explicit, documented reason why not. See the "Definition of done
+  how the vault is written to, preserve the documented write boundary in
+  `README.md` and test the real MCP commit path.
+- **Cross-platform is part of "done."** A runtime change needs the Linux and Windows test gates, or an explicit
+  documented limit. Put shared behavior in Python; keep shell launchers thin. See the "Definition of done
   cross-platform" rule in
   `03-INFRA/agent-universal-layer/instructions/AGENTS.md`.
 - **Don't hand-edit generated files.** `render.py`, `agent_sync.py`, and
@@ -103,9 +121,10 @@ don't work around the gate.
 
 ## Publishing
 
-Only the maintainer publishes to this repository's `main` branch. As a
-contributor, open a normal pull request from your fork; the maintainer merges
-only after the required CI checks and signing requirements are satisfied.
+Target `developer` for integration, following `AGENTS.md`. `main` is frozen
+history. Release branches advance from `developer` only at release time;
+passing tests does not authorize a release. The maintainer integrates only
+after the required CI checks and signing requirements are satisfied.
 
 ## License
 

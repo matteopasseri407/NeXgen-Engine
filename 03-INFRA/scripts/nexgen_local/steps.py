@@ -31,22 +31,10 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Iterable
 
+from .source_selection import (empty_result, existing_file, pinned_path, sanitize_content, terms)
+from .evidence import (engine_sentence, retrieval_outcome, verify_answer)
 from .config import LaneConfig
-from .engine import (
-    ANSWER_PROMPT,
-    _empty,
-    _existing_file,
-    _pinned,
-    answer_task,
-    check_canary,
-    engine_sentence,
-    retrieval_outcome,
-    route_task,
-    sanitize_content,
-    sources_from_receipts,
-    terms,
-    verify_answer,
-)
+from .engine import (ANSWER_PROMPT, answer_task, check_canary, route_task, sources_from_receipts)
 from .llm import LLM, LLMError
 from .tools import ToolError, ToolRegistry, audit_event
 
@@ -422,7 +410,7 @@ def _same_file(cfg: LaneConfig, left: str, right: str) -> bool:
         return False
     if left == right:
         return True
-    found_left, found_right = _existing_file(cfg, left), _existing_file(cfg, right)
+    found_left, found_right = existing_file(cfg, left), existing_file(cfg, right)
     return found_left is not None and found_left == found_right
 
 
@@ -438,7 +426,7 @@ def validate_action(cfg: LaneConfig, state: LoopState, menu: list[Candidate], ac
         # path risolto e il modello l'originale (case, \\?\, short names).
         if arg not in allowed and not any(_same_file(cfg, arg, cand) for cand in allowed):
             return "percorso non tra i candidati del passo"
-        if not _existing_file(cfg, arg):
+        if not existing_file(cfg, arg):
             return "percorso inesistente o fuori dalle radici"
         return None
     if action in ("read_mail", "read_drive", "read_calendar", "read_outlook"):
@@ -600,7 +588,7 @@ def _execute(llm: LLM, tools: ToolRegistry, state: LoopState, action: str, arg: 
     if action == "search_vault":
         output = tools.search_vault(arg, require_all=True)
         state.tried_queries.append(arg)
-        hits = [] if _empty(output) else [line.strip() for line in output.splitlines() if line.strip()]
+        hits = [] if empty_result(output) else [line.strip() for line in output.splitlines() if line.strip()]
         state.hits = hits
         state.empty_streak = 0 if hits else state.empty_streak + 1
         state.content_seen.append(sanitize_content(output))
@@ -608,15 +596,15 @@ def _execute(llm: LLM, tools: ToolRegistry, state: LoopState, action: str, arg: 
     elif action == "search_web":
         output = tools.web_search(arg)
         state.tried_queries.append(arg)
-        state.empty_streak = 0 if not _empty(output) else state.empty_streak + 1
-        if not _empty(output):
+        state.empty_streak = 0 if not empty_result(output) else state.empty_streak + 1
+        if not empty_result(output):
             state.web.append(f"[web: {arg}]\n{sanitize_content(output)}")
         state.content_seen.append(sanitize_content(output))
         state.observations.append(_observe("search_web", arg, output))
     elif action == "search_mail":
         output = tools.search_mail(arg)
         state.tried_queries.append(arg)
-        ids = [] if _empty(output) else [line.split("|")[0].strip() for line in output.splitlines() if line.strip()]
+        ids = [] if empty_result(output) else [line.split("|")[0].strip() for line in output.splitlines() if line.strip()]
         state.mail_ids = [mid for mid in ids if mid]
         state.empty_streak = 0 if state.mail_ids else state.empty_streak + 1
         state.content_seen.append(sanitize_content(output))
@@ -624,7 +612,7 @@ def _execute(llm: LLM, tools: ToolRegistry, state: LoopState, action: str, arg: 
     elif action == "search_drive":
         output = tools.search_drive(arg)
         state.tried_queries.append(arg)
-        ids = [] if _empty(output) else [line.split("|")[0].strip() for line in output.splitlines() if line.strip()]
+        ids = [] if empty_result(output) else [line.split("|")[0].strip() for line in output.splitlines() if line.strip()]
         state.drive_ids = [fid for fid in ids if fid]
         state.empty_streak = 0 if state.drive_ids else state.empty_streak + 1
         state.content_seen.append(sanitize_content(output))
@@ -632,7 +620,7 @@ def _execute(llm: LLM, tools: ToolRegistry, state: LoopState, action: str, arg: 
     elif action == "search_outlook":
         output = tools.search_outlook(arg)
         state.tried_queries.append(arg)
-        ids = [] if _empty(output) else [line.split("|")[0].strip() for line in output.splitlines() if line.strip()]
+        ids = [] if empty_result(output) else [line.split("|")[0].strip() for line in output.splitlines() if line.strip()]
         state.outlook_ids = [mid for mid in ids if mid]
         state.empty_streak = 0 if state.outlook_ids else state.empty_streak + 1
         state.content_seen.append(sanitize_content(output))
@@ -640,24 +628,24 @@ def _execute(llm: LLM, tools: ToolRegistry, state: LoopState, action: str, arg: 
     elif action == "search_calendar":
         output = tools.search_calendar(arg)
         state.tried_queries.append(arg)
-        ids = [] if _empty(output) else [line.split("|")[0].strip() for line in output.splitlines() if line.strip()]
+        ids = [] if empty_result(output) else [line.split("|")[0].strip() for line in output.splitlines() if line.strip()]
         state.calendar_ids = [eid for eid in ids if eid]
         state.empty_streak = 0 if state.calendar_ids else state.empty_streak + 1
         state.content_seen.append(sanitize_content(output))
         state.observations.append(_observe("search_calendar", arg, output))
     elif action == "read_file":
-        found = _existing_file(tools.cfg, arg)
+        found = existing_file(tools.cfg, arg)
         if not found:
             raise ToolError(f"percorso non piu' raggiungibile: {arg}")
         kind, rel, root = found
-        dest = _pinned(root, rel)
+        dest = pinned_path(root, rel)
         if kind == "vault":
             output = tools.read_vault(dest)
         elif kind == "repo":
             output = tools.read_repo(dest)
         else:
             output = tools.read_pdf(dest)
-        if not _empty(output):
+        if not empty_result(output):
             state.reads.append(f"[{dest}]\n{sanitize_content(output)}")
             state.tried_paths.append(dest)
             state.empty_streak = 0
@@ -666,7 +654,7 @@ def _execute(llm: LLM, tools: ToolRegistry, state: LoopState, action: str, arg: 
         state.observations.append(_observe("read_file", rel, output))
     elif action in ("read_mail", "read_drive"):
         output = tools.read_mail(arg) if action == "read_mail" else tools.read_drive(arg)
-        if not _empty(output):
+        if not empty_result(output):
             store = state.mail if action == "read_mail" else state.drive
             store.append(sanitize_content(output))
             state.empty_streak = 0
@@ -679,7 +667,7 @@ def _execute(llm: LLM, tools: ToolRegistry, state: LoopState, action: str, arg: 
         state.observations.append(_observe(action, arg, output))
     elif action == "read_outlook":
         output = tools.read_outlook(arg)
-        if not _empty(output):
+        if not empty_result(output):
             state.outlook.append(sanitize_content(output))
             state.empty_streak = 0
             state.last_read = dict(tools.last_coverage)
@@ -689,7 +677,7 @@ def _execute(llm: LLM, tools: ToolRegistry, state: LoopState, action: str, arg: 
         state.observations.append(_observe("read_outlook", arg, output))
     elif action == "read_calendar":
         output = tools.read_calendar(arg)
-        if not _empty(output):
+        if not empty_result(output):
             state.calendar.append(sanitize_content(output))
             state.empty_streak = 0
             state.last_read = dict(tools.last_coverage)
@@ -705,7 +693,7 @@ def _execute(llm: LLM, tools: ToolRegistry, state: LoopState, action: str, arg: 
         args = dict(last.get("args", {}))
         args["offset"] = int(last.get("offset", 0)) + tools.cfg.read_chars
         output = tools.call(tool, args)
-        if _empty(output):
+        if empty_result(output):
             # The source shrank mid-read: no chunk, no spiral. The loop
             # rebuilds the menu from here (answer is offered again).
             state.last_read = {}
@@ -996,7 +984,7 @@ def run_steps(
     if named_path and str(route.get("root") or ""):
         # Keep the owning root: with several repo roots a relative menu entry
         # would resolve to the first root instead of the requested one.
-        named_path = _pinned(str(route.get("root")), named_path)
+        named_path = pinned_path(str(route.get("root")), named_path)
     state = LoopState(
         task=task,
         route=str(route.get("source") or "none"),

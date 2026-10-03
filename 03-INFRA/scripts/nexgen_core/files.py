@@ -12,8 +12,10 @@ to it, keeping only its own naming/retention choice as parameters.
 from __future__ import annotations
 
 import contextlib
+import glob
 import os
 import re
+import tempfile
 import time
 from pathlib import Path
 
@@ -25,7 +27,7 @@ from nexgen_core.i18n import t
 _RETRY_BUDGET_SECONDS = 0.8
 
 
-def atomic_write_text(path: Path, text: str, *, preserve_mode: bool = True) -> None:
+def atomic_write_text(path: Path, text: str, *, preserve_mode: bool = True, exclusive: bool = False) -> None:
     """Write-then-rename: a crash mid-write never leaves a truncated file.
 
     Carries the permission bits across the rename (a config rewritten
@@ -36,15 +38,13 @@ def atomic_write_text(path: Path, text: str, *, preserve_mode: bool = True) -> N
     from antivirus/indexing), which was previously only the scheduler's
     writer behavior.
 
-    Crash-safe for real: the temp file is fsynced before the rename and
-    the directory after it, so a power loss cannot publish an empty file.
+    The complete temporary file is fsynced before publication; directory
+    fsync is best-effort where the filesystem supports it. Exclusive
+    creation publishes with a hard link and refuses an existing target.
     The temp name is unique per process, thread and call (never just the
     PID): two writers in one process, or a stale tmp from a crashed run,
     cannot silently clobber each other.
     """
-    import secrets
-    import threading
-
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     old_mode = None
@@ -53,53 +53,58 @@ def atomic_write_text(path: Path, text: str, *, preserve_mode: bool = True) -> N
             old_mode = path.stat().st_mode & 0o777
         except OSError:
             pass
-    token = f"{os.getpid()}-{threading.get_ident()}-{secrets.token_hex(4)}"
-    tmp = path.with_name(f"{path.name}.{token}.tmp")
-    # Best effort: drop OUR OWN stale tmps from crashed runs, never fail.
-    # Only files older than a few minutes: a fresh tmp belongs to a live
-    # writer (possibly another thread of this same process), and sweeping
-    # it would manufacture the exact clobbering this unique name prevents.
-    cutoff = time.time() - 300
-    for stale in path.parent.glob(f"{path.name}.*.tmp"):
-        if stale == tmp:
-            continue
-        try:
-            if stale.stat().st_mtime < cutoff:
-                stale.unlink()
-        except OSError:
-            continue
-    with open(tmp, "w", encoding="utf-8") as handle:
-        handle.write(text)
-        handle.flush()
-        try:
+    # mkstemp creates an exclusive, private file. Only this call's temporary
+    # file belongs to us; a filename glob cannot establish ownership.
+    fd, name = tempfile.mkstemp(prefix=f"{path.name}.", suffix=".tmp", dir=path.parent)
+    tmp = Path(name)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            if old_mode is not None:
+                os.chmod(tmp, old_mode)
+            handle.write(text)
+            handle.flush()
             os.fsync(handle.fileno())
-        except OSError:
-            pass
-    if old_mode is not None:
-        try:
-            os.chmod(tmp, old_mode)
-        except OSError:
-            pass
-    delay = 0.05
-    while True:
-        try:
-            os.replace(tmp, path)
+        delay = 0.05
+        while True:
             try:
-                dir_fd = os.open(path.parent, os.O_RDONLY)
-            except OSError:
-                return
+                if exclusive:
+                    os.link(tmp, path)
+                else:
+                    os.replace(tmp, path)
+                break
+            except PermissionError:
+                if delay >= _RETRY_BUDGET_SECONDS:
+                    raise
+                time.sleep(delay)
+                delay *= 2
+        # Some filesystems (and Windows) do not support directory fsync.
+        with contextlib.suppress(OSError):
+            dir_fd = os.open(path.parent, os.O_RDONLY)
             try:
                 os.fsync(dir_fd)
-            except OSError:
-                pass
             finally:
                 os.close(dir_fd)
-            return
-        except PermissionError:
-            if delay >= _RETRY_BUDGET_SECONDS:
-                raise
-            time.sleep(delay)
-            delay *= 2
+    finally:
+        tmp.unlink(missing_ok=True)
+
+
+def secure_artifact(directory: Path, path: Path | None = None) -> None:
+    """Establish privacy before writing: 0700 directory, 0600 file on POSIX.
+
+    Permission failures surface. Windows uses the profile's inherited ACL;
+    POSIX chmod cannot establish a Windows access-control policy.
+    """
+    directory.mkdir(parents=True, exist_ok=True, mode=0o700)
+    if os.name != "nt":
+        os.chmod(directory, 0o700)
+        if path is not None:
+            os.chmod(path, 0o600)
+
+
+def write_private_text(path: Path, text: str, *, exclusive: bool = False) -> None:
+    """Publish complete private bytes, optionally refusing an ID collision."""
+    secure_artifact(path.parent)
+    atomic_write_text(path, text, preserve_mode=False, exclusive=exclusive)
 
 
 def _safe_tag(tag: str | None) -> str | None:
@@ -119,8 +124,8 @@ def backup_file(path: Path, *, tag: str | None = None, keep: int | None = None) 
 
     `tag` names the reason (`permissions`, `instructions`, ...), producing
     `<name>.pre-<tag>-<timestamp>.bak`; without it, `<name>.bak-<timestamp>`.
-    The stamp carries seconds plus PID, so two backups in the same second
-    never overwrite each other. `keep` rotates: only that many newest
+    An exclusive filename keeps simultaneous backups distinct. `keep`
+    rotates: only that many newest
     backups survive (the MCP renderer keeps 3); without it backups
     accumulate and their cleanup stays the user's (see `docs/uninstall.md`).
     """
@@ -129,11 +134,17 @@ def backup_file(path: Path, *, tag: str | None = None, keep: int | None = None) 
     path = Path(path)
     if not path.is_file():
         return None
-    stamp = f"{time.strftime('%Y%m%d-%H%M%S')}-{os.getpid()}"
+    stamp = f"{time.strftime('%Y%m%d-%H%M%S')}-{time.time_ns()}"
     safe = _safe_tag(tag)
-    stem = f"{path.name}.pre-{safe}-{stamp}.bak" if safe else f"{path.name}.bak-{stamp}"
-    backup_path = path.with_name(stem)
-    shutil.copy2(path, backup_path)
+    stem = f"{path.name}.pre-{safe}-{stamp}" if safe else f"{path.name}.bak-{stamp}"
+    fd, name = tempfile.mkstemp(prefix=stem + "-", suffix=".bak", dir=path.parent)
+    os.close(fd)
+    backup_path = Path(name)
+    try:
+        shutil.copy2(path, backup_path)
+    except BaseException:
+        backup_path.unlink(missing_ok=True)
+        raise
     if keep is not None:
         _prune_backups(path, safe, keep)
     return backup_path
@@ -144,9 +155,9 @@ def _prune_backups(path: Path, safe_tag: str | None, keep: int) -> None:
     content is safely on disk: pruning before a write that then fails
     would delete history and deliver nothing."""
     if safe_tag:
-        matches = sorted(path.parent.glob(f"{path.name}.pre-{safe_tag}-*.bak"))
+        matches = sorted(path.parent.glob(f"{glob.escape(path.name)}.pre-{safe_tag}-*.bak"))
     else:
-        matches = sorted(path.parent.glob(f"{path.name}.bak-*"))
+        matches = sorted(path.parent.glob(f"{glob.escape(path.name)}.bak-*"))
     for old in matches[: max(len(matches) - keep, 0)]:
         old.unlink(missing_ok=True)
 

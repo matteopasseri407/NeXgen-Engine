@@ -17,7 +17,7 @@ from dataclasses import asdict
 from pathlib import Path
 
 from .config import LaneConfig, default_engine_root
-from .engine import LaneResult
+from .engine import (LaneResult)
 from .patch import PatchError, apply_proposal, format_gate, list_proposals, propose_patch
 from .relay import RELAY_CLIS, RelayError, available_clis, run_relay
 from .tools import ToolError, ToolRegistry, audit_writable
@@ -92,7 +92,7 @@ def cmd_run(args: argparse.Namespace) -> int:
         print(f"nexgen-local: {exc}", file=sys.stderr)
         return 2
     tools = ToolRegistry(cfg)
-    from .jobs import detect_job, job_close, job_research
+    from .jobs import detect_job
 
     try:
         job = detect_job(args.question)
@@ -128,14 +128,14 @@ def _cmd_run_research(args: argparse.Namespace, llm, tools, cfg) -> int:
 
 
 def _cmd_run_close(args: argparse.Namespace, llm, tools, cfg) -> int:
-    from .engine import PATH_RE, _existing_file, _pinned
-    from .jobs import job_close
+    from .source_selection import PATH_RE, existing_file, pinned_path
+    from .jobs import JobError, job_close
 
     target = ""
     for match in PATH_RE.findall(args.question):
-        found = _existing_file(cfg, match)
+        found = existing_file(cfg, match)
         if found:
-            target = _pinned(found[2], found[1])
+            target = pinned_path(found[2], found[1])
             break
     if not target:
         print(
@@ -144,7 +144,11 @@ def _cmd_run_close(args: argparse.Namespace, llm, tools, cfg) -> int:
         )
         return 2
     print("[lane] mestiere: close", file=sys.stderr)
-    result = job_close(llm, tools, cfg, target)
+    try:
+        result = job_close(llm, tools, cfg, target)
+    except JobError as exc:
+        print(f"nexgen-local: {exc}", file=sys.stderr)
+        return 2
     if args.json:
         print(json.dumps(asdict(result), ensure_ascii=False, indent=2))
         return 1 if result.problems else 0

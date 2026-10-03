@@ -23,6 +23,7 @@ from pathlib import Path
 import yaml
 
 from nexgen_core.beat import Heartbeat
+from nexgen_core.errors import AlignmentError
 from nexgen_core.config import load_mcp_manifest, load_skills_manifest
 from nexgen_core.git_ops import (
     GitState,
@@ -593,6 +594,8 @@ class GuardRunner:
         mat = SkillMaterializer(vault_data=self.vault_data, engine_root=self.engine_root, home=self.home)
         _skill_changes, skill_actions = mat.materialize(apply=True)
         actions.extend(skill_actions)
+        if any(action.startswith("[ERROR]") for action in skill_actions):
+            raise AlignmentError(t("Skill materialization failed; runtime configuration was not regenerated."))
 
     def _phase_mcp(self, actions: list[str], skip_mcp: bool) -> None:
         """MCP configuration rendering for the CLIs."""

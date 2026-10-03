@@ -9,18 +9,9 @@ from __future__ import annotations
 
 from typing import Any, Iterable, TypedDict
 
+from .evidence import (engine_sentence, retrieval_outcome, verify_answer)
 from .config import LaneConfig
-from .engine import (
-    LaneResult,
-    answer_task,
-    check_canary,
-    engine_sentence,
-    retrieval_outcome,
-    retrieve,
-    route_task,
-    sources_from_receipts,
-    verify_answer,
-)
+from .engine import (LaneResult, answer_task, check_canary, retrieve, route_task, sources_from_receipts)
 from .llm import LLM
 from .tools import ToolRegistry
 

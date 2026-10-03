@@ -12,6 +12,21 @@ of any engine release.
 
 ### Fixed
 
+- Atomic writes clean up only their own temporary file; backups cannot collide
+  within a process. Failed skill replacement restores the previous directory
+  or symlink, and unchanged linked libraries cannot certify a new pin.
+- Guard stops on skill materialization errors. Lock I/O failures remain errors
+  even in guard mode, rather than being reported as harmless contention.
+- Local model deadlines cancel the native async request, including continuous
+  streams. Decision fallback retains the decision model and rejects truncation;
+  operational failures never trigger a second model call.
+- Drafts and proposals use one atomic private writer for creation and updates.
+  ID collisions and failed writes preserve the previously reviewed artifact.
+- Shell-hook installation honors an explicit home and reports write failures;
+  removal preserves surrounding user blocks and removes the complete managed block.
+- Lane checks cover PR snapshots and direct developer commits, resolve remote
+  integration refs, and inspect release subjects separately from commit hashes.
+
 - Council saves terminal relay failures before stopping, so resume cannot
   repeat a known failed call. Concurrent resumes of one session are refused.
 - Timeouts and cancellation terminate the seat's owned process group on POSIX.
@@ -68,6 +83,13 @@ of any engine release.
   unreadable files refuse overwrite, manifests fail closed on typos in
   preflight/doctor, remedies count only on explicit success, and the JSONC
   surgeon survives comments, duplicates and thousand-line headers.
+
+### Development
+
+- Source selection and response evidence are separate modules with compatibility
+  exports in the local engine. Consumers use the owning module's public helpers.
+- `check_engine.py` runs the existing lint gate and tests with one command.
+  Contributor guidance maps behaviors to modules and regression tests.
 
 ### Tested
 

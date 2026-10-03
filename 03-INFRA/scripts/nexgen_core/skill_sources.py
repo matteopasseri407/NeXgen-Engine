@@ -24,6 +24,7 @@ if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
 from nexgen_core.i18n import t  # noqa: E402
+from nexgen_core.files import atomic_write_text  # noqa: E402
 from nexgen_core.paths import resolve_home, resolve_state_dir  # noqa: E402
 
 
@@ -252,9 +253,7 @@ class SkillFetcher:
         current[name] = version
         try:
             path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(
-                json.dumps(current, indent=2, sort_keys=True) + "\n", encoding="utf-8"
-            )
+            atomic_write_text(path, json.dumps(current, indent=2, sort_keys=True) + "\n")
         except OSError:
             pass
 
@@ -283,16 +282,19 @@ class SkillFetcher:
                 # while the version is recorded as new (false-green pin).
                 try:
                     backup = next_backup_path(lib_dest)
-                    # next_backup_path needs a real path: never a symlink.
-                    if lib_dest.is_symlink():
-                        lib_dest.unlink()
-                    else:
-                        lib_dest.rename(backup)
+                    # Rename the link itself, never its target. It is recoverable
+                    # exactly like a directory if publishing the replacement fails.
+                    lib_dest.rename(backup)
                 except OSError:
                     return False
                 try:
                     shutil.move(str(candidate), str(lib_dest))
                 except (OSError, shutil.Error):
+                    if lib_dest.is_symlink() or lib_dest.is_file():
+                        lib_dest.unlink()
+                    elif lib_dest.is_dir():
+                        shutil.rmtree(lib_dest)
+                    backup.rename(lib_dest)
                     return False
                 return True
             lib_dest.parent.mkdir(parents=True, exist_ok=True)
@@ -304,7 +306,7 @@ class SkillFetcher:
         """Content hash per file, or None when the tree doesn't exist."""
         import hashlib
 
-        if not root.is_dir() or root.is_symlink():
+        if not root.is_dir():
             return None
         out: dict[str, str] = {}
         try:
@@ -333,6 +335,8 @@ class SkillFetcher:
                 name=entry.name,
             )
         before = self._tree_fingerprint(lib_dest)
+        if lib_dest.exists() and before is None:
+            return False, "[ERROR] " + t("Cannot verify the existing skill library: {path}", path=lib_dest)
         try:
             result = subprocess.run(
                 list(entry.install), capture_output=True, text=True, check=False,
@@ -365,7 +369,8 @@ class SkillFetcher:
             # genuinely materialized.
             self._record_installed_version(entry.name, entry.version or "")
             return True, t("Installed skill '{name}' at version {version}", name=entry.name, version=entry.version)
-        if before is None or self._tree_fingerprint(lib_dest) != before:
+        after = self._tree_fingerprint(lib_dest)
+        if after is not None and (before is None or after != before):
             # No candidate in any discovery dir, but the library content
             # changed under the installer: an in-place writer. Accept it.
             self._record_installed_version(entry.name, entry.version or "")
