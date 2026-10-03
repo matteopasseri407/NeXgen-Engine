@@ -10,6 +10,8 @@ of any engine release.
 
 ## [Unreleased]
 
+## [2.3.10] - 2026-10-03
+
 ### Fixed
 
 - Council saves terminal relay failures before stopping, so resume cannot
