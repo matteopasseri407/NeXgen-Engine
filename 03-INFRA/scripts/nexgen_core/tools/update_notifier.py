@@ -751,7 +751,8 @@ def _write_if_different(path: Path, content: str) -> bool | None:
     """True when written, False when already correct, None on error.
 
     None and False both read falsy, so callers must check identity
-    (`is None`) before deciding a lane is installed.
+    (`is None`) before deciding a lane is installed. Single owner for the
+    write itself is `nexgen_core.files.atomic_write_text`.
     """
     try:
         if path.is_file() and path.read_text(encoding="utf-8") == content:
@@ -759,8 +760,9 @@ def _write_if_different(path: Path, content: str) -> bool | None:
     except OSError:
         pass
     try:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(content, encoding="utf-8")
+        from nexgen_core.files import atomic_write_text
+
+        atomic_write_text(path, content)
         return True
     except OSError:
         return None
@@ -859,7 +861,13 @@ def _ensure_windows_boot_check(home: str) -> list[str]:
 
 
 def _write_text_if_different(path_str: str, content: str) -> bool | None:
-    """String-path twin of _write_if_different for the Windows lane."""
+    """String-path twin of _write_if_different for the Windows lane.
+
+    Stays on `os`/`str` paths on purpose (no pathlib): the Windows lane is
+    exercised on Linux with `os.name` mocked to `nt`, where `Path` would
+    become an uninstallable `WindowsPath`. Atomic via temp+rename, same
+    crash safety as `files.atomic_write_text`.
+    """
     try:
         with open(path_str, encoding="utf-8") as handle:
             if handle.read() == content:
@@ -867,11 +875,27 @@ def _write_text_if_different(path_str: str, content: str) -> bool | None:
     except OSError:
         pass
     try:
+        import tempfile
+
         parent = os.path.dirname(path_str)
         if parent:
             os.makedirs(parent, exist_ok=True)
-        with open(path_str, "w", encoding="utf-8") as handle:
-            handle.write(content)
+        fd, tmp_name = tempfile.mkstemp(prefix="nexgen-vbs.", suffix=".tmp", dir=parent or None)
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as handle:
+                handle.write(content)
+                handle.flush()
+                try:
+                    os.fsync(handle.fileno())
+                except OSError:
+                    pass
+            os.replace(tmp_name, path_str)
+        except BaseException:
+            try:
+                os.unlink(tmp_name)
+            except OSError:
+                pass
+            raise
         return True
     except OSError:
         return None

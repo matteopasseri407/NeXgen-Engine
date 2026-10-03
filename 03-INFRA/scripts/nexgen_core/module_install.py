@@ -235,10 +235,9 @@ def _write_if_different(path: Path, content: str, dry_run: bool) -> bool:
         return False
     if dry_run:
         return True
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(f"{path.name}.tmp-{os.getpid()}")
-    tmp.write_text(content, encoding="utf-8")
-    os.replace(tmp, path)
+    from nexgen_core.files import atomic_write_text
+
+    atomic_write_text(path, content)
     return True
 
 
