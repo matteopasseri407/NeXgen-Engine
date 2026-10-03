@@ -32,6 +32,10 @@ No forks, no per-fix branches, no direct commits to integration or release.
 
 Before integrating, run `python 03-INFRA/scripts/check_engine.py`.
 Module ownership and regression expectations: `CONTRIBUTING.md`.
+Read the affected owner's callers and tests before editing. Shared behavior
+has one owner; loop and graph drivers import that implementation. Preserve
+existing entry points when moving code, and verify resumed state when its
+data contract changes. Maintainer work does not need an external-contributor issue.
 
 Use a separate Git worktree when another session shares this checkout.
 A branch alone does not isolate files from another writer.

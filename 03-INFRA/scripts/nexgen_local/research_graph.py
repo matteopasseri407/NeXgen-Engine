@@ -1,7 +1,7 @@
 """Persistent research loop: the steps operations, checkpointed per session.
 
 ``run_steps`` forgets everything when it returns. This module runs the SAME
-operations (``steps.decide_step`` / ``steps._execute`` / ``steps.finish_answer``:
+operations (``steps.decide_step`` / ``step_actions.execute_action`` / ``steps.finish_answer``:
 one implementation, never a third execution cycle) under a LangGraph that
 persists the loop state to SQLite after every node, so "apri il secondo",
 "continua la lettura" and "riprendi il confronto" continue where the
@@ -13,8 +13,7 @@ stay outside: this module stages proposals through the same propose paths
 the loop uses and never calls any apply/confirm, so a resumed session
 cannot double-apply. Authorization remains the engine's job, in the gates.
 
-langgraph is optional (the ``[local]`` extra, same as the loop) and is
-imported lazily.
+LangGraph is a core dependency, imported lazily when research is invoked.
 """
 from __future__ import annotations
 
@@ -29,18 +28,17 @@ from .source_selection import (pinned_path)
 from .config import LaneConfig
 from .engine import (route_task)
 from .llm import LLM
-from .steps import (
+from .step_state import (
     MAX_STEPS,
     REPLY_INTENT_RE,
     UPLOAD_INTENT_RE,
     Decision,
     LoopState,
     StepResult,
-    _execute,
-    build_menu,
-    decide_step,
-    finish_answer,
 )
+from .step_policy import build_menu
+from .step_actions import execute_action
+from .steps import decide_step, finish_answer
 from .tools import ToolError, ToolRegistry
 
 SESSION_TTL_DAYS = 30
@@ -231,7 +229,7 @@ def _node_act(ctx_factory, state: ResearchState) -> dict[str, Any]:
     already = len(ctx.tools.calls)
     refused_before = len(ctx.tools.refusals)
     try:
-        _execute(ctx.llm, ctx.tools, loop, action, arg)
+        execute_action(ctx.llm, ctx.tools, loop, action, arg)
     except ToolError as exc:
         result.decisions[-1].ok = False
         result.decisions[-1].detail = str(exc)

@@ -7,10 +7,16 @@ limitations" in `README.md`) even when it's well built.
 
 ## Before you write code
 
-For anything bigger than a small fix, open an issue first describing the
+For an external contribution bigger than a small fix, open an issue describing the
 problem and your proposed approach. This saves you from building something
 that doesn't fit the project's direction. For a small, obvious fix (typo,
 broken link, clear bug with an obvious one-line fix), a PR alone is fine.
+
+For AI-assisted maintainer work, start with [AGENTS.md](AGENTS.md), then the
+owner table below. An authorized maintenance task uses the maintainer's durable
+lane and isolated worktree; it does not require a new issue or a per-fix branch.
+Read the affected callers and tests before editing. Change the owner, keep
+compatibility at the existing boundary, and integrate after verification.
 
 ## Dev setup
 
@@ -41,6 +47,10 @@ before integration. Fix new lint findings rather than regenerating the baseline.
 | Tool outcomes, audit receipts and resume compatibility | `nexgen_local/tools.py` | `test_nexgen_tool_outcomes.py`, `test_nexgen_local_research.py` |
 | Response claims and successful read receipts | `nexgen_local/evidence.py` | `test_nexgen_local_steps.py`, `test_nexgen_local_research.py` |
 | Routing and answer pipeline | `nexgen_local/engine.py` | `test_nexgen_local.py` |
+| Loop state, budgets and checkpoint fields | `nexgen_local/step_state.py` | `test_nexgen_local_step_boundaries.py`, `test_nexgen_local_research.py` |
+| Closed menus, argument provenance and decision prompt | `nexgen_local/step_policy.py` | `test_nexgen_local_steps.py`, `test_nexgen_local_step_boundaries.py` |
+| Audited loop actions and staged proposals | `nexgen_local/step_actions.py` | `test_nexgen_local_steps.py`, `test_nexgen_local_step_boundaries.py` |
+| Model decisions, bounded repairs and final loop answer | `nexgen_local/steps.py` | `test_nexgen_local_steps.py`, `test_nexgen_tool_outcomes.py` |
 | Model requests and deadlines | `nexgen_local/llm.py` | `test_nexgen_llm_deadlines.py` |
 | Council process lifecycle and relay checkpoints | `03-INFRA/agent-universal-layer/council/` | `test_nexgen_council_*.py` |
 | Vault publication and selected files | `nexgen_core/git_ops.py` | `test_nexgen_scoped_publish.py` |
@@ -60,6 +70,14 @@ Serialize receipts with `ToolCall.receipt()` so research checkpoints retain
 status when resumed. Text-only methods remain available for CLI/MCP callers;
 refusal-text interpretation is limited to older checkpoints without status.
 Pin updates use `nexgen_core/files.py` rather than a second atomic writer.
+
+The plain loop and persistent research import the same state, policy and
+actions. `step_policy.py` chooses admissible actions without model or tool
+execution. `step_actions.py` executes admitted actions and stages proposals;
+send/upload approval remains in the existing gates. `steps.py` coordinates
+model decisions and answers. Its older imports remain aliases for compatibility;
+new consumers import state, policy and actions directly from their owners.
+Changing state fields requires checking persisted research compatibility.
 
 For a bug, first add a test that fails for the reported behavior. Check the
 failure path as well as success: a failed write must preserve the old bytes,
