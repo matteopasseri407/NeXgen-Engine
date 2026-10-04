@@ -40,6 +40,7 @@ SUPPORTED_CLIS = ("opencode", "agy", "codex", "claude", "ollama")
 # This guarantees stateless execution without loading workspace skills or reading historical memory.
 
 DEFAULT_SEAT_TIMEOUT_SECONDS = 300.0
+MAX_SEAT_OUTPUT_BYTES = 8 * 1024 * 1024
 RETRYABLE_SEAT_ERROR_KINDS = frozenset({
     "empty_response",
     "invocation",
@@ -366,22 +367,74 @@ def _read_chunks(stream, activity: threading.Event):
     yield decoder.decode(b"", final=True)
 
 
-def _drain_lines(stream, line_queue: queue.Queue[str | None], activity: threading.Event) -> None:
+class _OutputCapture:
+    """One byte budget for both pipes, with bounded backpressure and wakeup."""
+
+    def __init__(self):
+        self.lines: queue.Queue[str | None] = queue.Queue(maxsize=256)
+        self.exceeded = threading.Event()
+        self.cancelled = threading.Event()
+        self._lock = threading.Lock()
+        self._bytes = 0
+
+    def consume(self, text: str) -> bool:
+        with self._lock:
+            self._bytes += len(text.encode("utf-8"))
+            if self._bytes <= MAX_SEAT_OUTPUT_BYTES and not self.cancelled.is_set():
+                return True
+            if self._bytes > MAX_SEAT_OUTPUT_BYTES:
+                self.exceeded.set()
+            self.cancelled.set()
+        try:
+            self.lines.put_nowait(None)
+        except queue.Full:
+            pass  # the consumer already has a line available and checks exceeded
+        return False
+
+    def put(self, line: str | None) -> None:
+        while not self.cancelled.is_set():
+            try:
+                self.lines.put(line, timeout=0.1)
+                return
+            except queue.Full:
+                continue
+
+
+def _output_limit(model: str) -> SeatRunError:
+    return SeatRunError(f"[council] seat '{model}' exceeded the output limit; no verdict for this round.", "output_limit")
+
+
+def _read_output_file(path: Path, model: str) -> str:
+    try:
+        with path.open("rb") as stream:
+            raw = stream.read(MAX_SEAT_OUTPUT_BYTES + 1)
+        if len(raw) > MAX_SEAT_OUTPUT_BYTES:
+            raise _output_limit(model)
+        return raw.decode("utf-8")
+    except (OSError, UnicodeError) as exc:
+        raise SeatRunError(f"[council] seat '{model}' result file is unreadable ({type(exc).__name__}).", "invalid_output") from exc
+
+
+def _drain_lines(stream, capture: _OutputCapture, activity: threading.Event) -> None:
     pending = ""
     try:
         for chunk in _read_chunks(stream, activity):
+            if not capture.consume(chunk):
+                return
             pending += chunk
             while "\n" in pending:
                 line, _, pending = pending.partition("\n")
-                line_queue.put(line + "\n")
+                capture.put(line + "\n")
         if pending:
-            line_queue.put(pending)
+            capture.put(pending)
     finally:
-        line_queue.put(None)
+        capture.put(None)
 
 
-def _drain_text(stream, sink: list[str], activity: threading.Event) -> None:
+def _drain_text(stream, sink: list[str], activity: threading.Event, capture: _OutputCapture) -> None:
     for chunk in _read_chunks(stream, activity):
+        if not capture.consume(chunk):
+            return
         sink.append(chunk)
 
 
@@ -630,6 +683,9 @@ def run_seat(
     registry_epoch = _proc_registry_epoch()
     invocation = _build_seat_command(seat, prompt, session_dir)
     stdin_writer: threading.Thread | None = None
+    stdout_reader: threading.Thread | None = None
+    stderr_reader: threading.Thread | None = None
+    capture: _OutputCapture | None = None
     proc_token = ""
     try:
         try:
@@ -672,19 +728,22 @@ def run_seat(
             )
             stdin_writer.start()
 
-        line_queue: queue.Queue[str | None] = queue.Queue()
+        capture = _OutputCapture()
+        line_queue = capture.lines
         stderr_lines: list[str] = []
         activity = threading.Event()
-        stdout_reader = threading.Thread(target=_drain_lines, args=(proc.stdout, line_queue, activity), daemon=True)
-        stderr_reader = threading.Thread(target=_drain_text, args=(proc.stderr, stderr_lines, activity), daemon=True)
+        stdout_reader = threading.Thread(target=_drain_lines, args=(proc.stdout, capture, activity), daemon=True)
+        stderr_reader = threading.Thread(target=_drain_text, args=(proc.stderr, stderr_lines, activity, capture), daemon=True)
         stdout_reader.start()
         stderr_reader.start()
 
-        text_chunks = []
+        text_output = io.StringIO()
         usage = {}
         deadline = time.monotonic() + resolved_timeout_seconds
 
         while True:
+            if capture.exceeded.is_set():
+                raise _output_limit(model)
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 _force_stop_process_tree(proc)
@@ -704,6 +763,8 @@ def run_seat(
                 line = line_queue.get(timeout=remaining)
             except queue.Empty:
                 continue
+            if capture.exceeded.is_set():
+                raise _output_limit(model)
             if line is None:
                 break
             if cli == "opencode":
@@ -723,7 +784,7 @@ def run_seat(
                 if not isinstance(part, dict):
                     continue
                 if event.get("type") == "text" and isinstance(part.get("text"), str):
-                    text_chunks.append(part["text"])
+                    text_output.write(part["text"])
                 if event.get("type") == "step_finish":
                     # Sum across steps: a step_finish carries the step's own
                     # tokens/cost, not the running total. Tokens may arrive
@@ -738,10 +799,10 @@ def run_seat(
                 # Claude emits one JSON object; agy/codex/ollama emit plain
                 # text. For codex the authoritative answer arrives later from
                 # output_file; stdout is used only for liveness diagnostics.
-                text_chunks.append(line)
+                text_output.write(line)
 
-        stdout_reader.join(timeout=5)
-        stderr_reader.join(timeout=5)
+        if capture.exceeded.is_set():
+            raise _output_limit(model)
         # The streaming loop above is bounded by the seat timeout, but
         # proc.wait() here is not: a seat that closed its stdout (EOF) while
         # still running -- explicit fd close, or a child that inherited the
@@ -768,8 +829,19 @@ def run_seat(
         # truncated file on disk (2026-08-15 council-7, Opus 5).
         remaining = deadline - time.monotonic()
         _POST_EOF_GRACE = 10.0
+        wait_deadline = time.monotonic() + max(remaining, _POST_EOF_GRACE)
         try:
-            returncode = proc.wait(timeout=max(remaining, _POST_EOF_GRACE))
+            while True:
+                if capture.exceeded.is_set():
+                    raise _output_limit(model)
+                wait_remaining = wait_deadline - time.monotonic()
+                if wait_remaining <= 0:
+                    raise subprocess.TimeoutExpired(invocation.argv, _POST_EOF_GRACE)
+                try:
+                    returncode = proc.wait(timeout=min(wait_remaining, 0.1))
+                    break
+                except subprocess.TimeoutExpired:
+                    continue
         except subprocess.TimeoutExpired:
             hung = True
             _force_stop_process_tree(proc)
@@ -783,6 +855,13 @@ def run_seat(
                 returncode = proc.wait(timeout=10)
             except subprocess.TimeoutExpired:
                 returncode = None  # unkillable; sentinel outside the int space
+        if returncode is not None:
+            _force_stop_process_tree(proc)
+        reader_deadline = time.monotonic() + 5
+        for reader in (stdout_reader, stderr_reader):
+            reader.join(timeout=max(0.0, reader_deadline - time.monotonic()))
+        if capture.exceeded.is_set():
+            raise _output_limit(model)
         if hung:
             # The seat was killed, but its complete stdout answer may have
             # arrived before it hung (it closed stdout and lingered in
@@ -794,12 +873,14 @@ def run_seat(
             # Opus 5).
             if invocation.output_file is not None and invocation.output_file.is_file():
                 try:
-                    output_text = invocation.output_file.read_text(encoding="utf-8")
-                except (OSError, UnicodeDecodeError):
+                    output_text = _read_output_file(invocation.output_file, model)
+                except SeatRunError as exc:
+                    if exc.kind == "output_limit":
+                        raise
                     output_text = ""
                 if output_text.strip():
                     return output_text, usage
-            if text_chunks and invocation.output_file is None:
+            if text_output.tell() and invocation.output_file is None:
                 # stdout IS the answer only for CLIs without an output file
                 # (opencode/agy/ollama). codex writes the answer to
                 # output_file; its stdout is liveness noise ("codex
@@ -808,7 +889,7 @@ def run_seat(
                 # (2026-08-15 council-8, Opus 5).
                 if cli == "claude":
                     try:
-                        return _parse_claude_result("".join(text_chunks), model)
+                        return _parse_claude_result(text_output.getvalue(), model)
                     except SeatRunError:
                         # Output that does not parse as a claude verdict is
                         # not a usable answer from a hung seat: fall through
@@ -816,7 +897,7 @@ def run_seat(
                         # council-7, Opus 5).
                         pass
                 else:
-                    return "".join(text_chunks), usage
+                    return text_output.getvalue(), usage
             if returncode is None:
                 raise SeatRunError(
                     f"[council] seat '{model}' hung after closing its output and could not be "
@@ -832,25 +913,29 @@ def run_seat(
             raise SeatRunError(f"[council] the seat did not respond (exit {returncode}):\n{''.join(stderr_lines)}", "process_error")
 
         if invocation.output_file is not None:
-            output_text = invocation.output_file.read_text(encoding="utf-8") if invocation.output_file.is_file() else ""
+            output_text = _read_output_file(invocation.output_file, model) if invocation.output_file.is_file() else ""
             if not output_text.strip():
                 raise SeatRunError("[council] the seat responded but with no usable text (empty output).", "empty_response")
             return output_text, usage
 
-        if not text_chunks:
+        if not text_output.tell():
             raise SeatRunError("[council] the seat responded but with no usable text (empty output).", "empty_response")
         if cli == "claude":
-            return _parse_claude_result("".join(text_chunks), model)
-        return "".join(text_chunks), usage
+            return _parse_claude_result(text_output.getvalue(), model)
+        return text_output.getvalue(), usage
     finally:
+        if capture is not None:
+            capture.cancelled.set()
         # Release only this seat's token: the legacy single slot is no
         # longer touched here on purpose (parallel seats overlap).
         if proc_token:
             if proc.poll() is None or getattr(proc, "_council_process_group", None) is not None:
                 _force_stop_process_tree(proc)
             _release_proc(proc_token)
-        if stdin_writer is not None:
-            stdin_writer.join(timeout=5)
+        cleanup_deadline = time.monotonic() + 5
+        for worker in (stdin_writer, stdout_reader, stderr_reader):
+            if worker is not None:
+                worker.join(timeout=max(0.0, cleanup_deadline - time.monotonic()))
         if invocation.output_file is not None:
             invocation.output_file.unlink(missing_ok=True)
         if invocation.input_file is not None:

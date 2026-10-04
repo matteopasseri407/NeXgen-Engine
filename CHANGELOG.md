@@ -19,6 +19,9 @@ of any engine release.
   and Vault grooming share owned subprocess cleanup.
 - Council sanitizes provider error diagnostics before they reach console,
   transcripts or relay checkpoints. Session files use private atomic writes.
+- Council bounds combined stdout/stderr capture and final result-file reads
+  to 8 MiB. Output overflow and unreadable result files fail without automatic
+  retries; bounded queues stop reader threads from accumulating unlimited lines.
 - Automatic infrastructure commits preserve unrelated staged work.
 - GitHub skill updates validate the declared source in a separate checkout
   before replacing the usable cache. Failed acquisition preserves old bytes;

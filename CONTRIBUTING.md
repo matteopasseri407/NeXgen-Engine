@@ -89,6 +89,10 @@ pipe writes, and limits received bytes to 8 MiB per exchange. Provisioning has
 its own deadlines. A timed-out tool call has an unknown outcome and is never
 automatically retried. Only matching JSON-RPC responses complete a request;
 notifications and replies to other requests do not.
+Council captures at most 8 MiB across stdout and stderr per invocation and
+reads at most 8 MiB from the authoritative result file. Overflow wakes the
+watchdog even when stdout is silent. `output_limit` and `invalid_output` are
+terminal failures; they must not trigger automatic retries or a fallback seat.
 
 The plain loop and persistent research import the same state, policy and
 actions. `step_policy.py` chooses admissible actions without model or tool

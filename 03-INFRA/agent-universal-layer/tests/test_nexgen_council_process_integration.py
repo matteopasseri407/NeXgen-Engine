@@ -109,6 +109,50 @@ def test_timeout_detects_activity_without_a_newline(fake_provider, tmp_path, str
     assert session._live_procs_snapshot() == []
 
 
+@pytest.mark.parametrize("stream", ["stdout", "stderr"])
+def test_oversized_provider_output_fails_without_retry(fake_provider, tmp_path, monkeypatch, stream):
+    monkeypatch.setattr(seat_process, "MAX_SEAT_OUTPUT_BYTES", 4096, raising=False)
+    seat = fake_provider(f"import sys\nsys.{stream}.write('x'*6000+'\\n')\nsys.{stream}.flush()\nprint('VERDICT: APPROVE')\n")
+    with pytest.raises(SeatRunError) as error:
+        run_seat(seat, "", tmp_path, 5)
+    assert error.value.kind == "output_limit"
+    assert not seat_process._is_retryable_seat_error(error.value)
+    assert session._live_procs_snapshot() == []
+
+
+def test_stderr_overflow_interrupts_silent_stdout(fake_provider, tmp_path, monkeypatch):
+    monkeypatch.setattr(seat_process, "MAX_SEAT_OUTPUT_BYTES", 4096, raising=False)
+    seat = fake_provider("import sys, time\nsys.stderr.write('x'*6000)\nsys.stderr.flush()\ntime.sleep(30)\n")
+    with pytest.raises(SeatRunError) as error:
+        run_seat(seat, "", tmp_path, 1)
+    assert error.value.kind == "output_limit"
+    assert session._live_procs_snapshot() == []
+
+
+def test_late_stderr_overflow_cannot_approve_after_stdout_eof(fake_provider, tmp_path, monkeypatch):
+    monkeypatch.setattr(seat_process, "MAX_SEAT_OUTPUT_BYTES", 4096, raising=False)
+    seat = fake_provider("import sys, os, time\nprint('VERDICT: APPROVE', flush=True)\nos.close(sys.stdout.fileno())\ntime.sleep(5.2)\nsys.stderr.write('x'*6000)\nsys.stderr.flush()\n")
+    with pytest.raises(SeatRunError) as error:
+        run_seat(seat, "", tmp_path, 10)
+    assert error.value.kind == "output_limit"
+
+
+@pytest.mark.parametrize("data,kind", [(b"x" * 6000, "output_limit"), (b"\xff", "invalid_output")], ids=["too-large", "invalid-utf8"])
+def test_codex_result_file_is_bounded_and_decode_errors_classified(fake_provider, tmp_path, monkeypatch, data, kind):
+    from dataclasses import replace
+    output = tmp_path / "result.txt"
+    monkeypatch.setattr(seat_process, "MAX_SEAT_OUTPUT_BYTES", 4096, raising=False)
+    seat = fake_provider(f"from pathlib import Path\nPath({str(output)!r}).write_bytes({data!r})\n", cli="codex")
+    invocation = seat_process._build_seat_command(seat, "", tmp_path)
+    monkeypatch.setattr(seat_process, "_build_seat_command", lambda *_: replace(invocation, output_file=output))
+    with pytest.raises(SeatRunError) as error:
+        run_seat(seat, "", tmp_path, 5)
+    assert error.value.kind == kind
+    assert not seat_process._is_retryable_seat_error(error.value)
+    assert not output.exists()
+    assert session._live_procs_snapshot() == []
+
+
 @pytest.mark.parametrize("noise", [
     "[]", "null", '{"type":"text","part":[]}',
     '{"type":"text","part":{"text":5}}',
