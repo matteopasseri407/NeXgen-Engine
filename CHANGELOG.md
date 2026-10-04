@@ -10,6 +10,8 @@ of any engine release.
 
 ## [Unreleased]
 
+## [2.3.10] - 2026-10-04
+
 ### Fixed
 
 - Patch application retains its directory lock alongside proposal ownership.
