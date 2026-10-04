@@ -311,3 +311,34 @@ def test_a_real_cycle_under_a_sandbox_home_touches_nothing_outside_it(tmp_path, 
             f"un ciclo in sandbox ha scritto {path}: è la macchina di qualcun altro"
         )
     assert path.read_text(encoding="utf-8") == "non toccare\n"
+
+
+def test_windows_stale_ps1_bin_shims_are_removed_but_custom_scripts_survive(tmp_path):
+    """Su Windows i vecchi shim `.ps1` in `~/.local/bin` ombreggiano i `.cmd`.
+
+    Prima della v2.3.0 l'installer scriveva stub PowerShell che inoltravano
+    ai gemelli nel checkout (`$Target = '...03-INFRA/scripts/<nome>.ps1'`
+    più `& $Target @args`). I gemelli non esistono più, quindi in PowerShell
+    ogni comando gestito si rompe mentre il `.cmd` accanto è sano. La
+    sincronizzazione deve rimuovere solo gli stub con quel pattern e non
+    toccare mai uno script vero come un `agent-now.ps1` personalizzato.
+    """
+    from nexgen_core.shims import install_shims
+
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    stale = bin_dir / "nexgen-update.ps1"
+    stale.write_text(
+        "$ErrorActionPreference = 'Stop'\n\n"
+        "$Target = 'C:\\eng\\03-INFRA\\scripts\\nexgen-update.ps1'\n\n"
+        "& $Target @args\n",
+        encoding="utf-8",
+    )
+    custom = bin_dir / "agent-now.ps1"
+    custom.write_text("# script personale, deve sopravvivere\n", encoding="utf-8")
+
+    installed = install_shims(scripts_dir=SCRIPTS_DIR, bin_dir=bin_dir, home=tmp_path)
+
+    assert not stale.exists(), "lo stub stale punta a un gemello cancellato nella 2.3.0"
+    assert custom.read_text(encoding="utf-8") == "# script personale, deve sopravvivere\n"
+    assert any("nexgen-update" in entry for entry in installed)
