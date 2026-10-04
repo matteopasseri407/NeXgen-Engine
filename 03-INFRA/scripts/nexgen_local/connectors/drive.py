@@ -73,7 +73,7 @@ def search_files(query: str, max_results: int = 5, http: HttpFn | None = None) -
     if not query:
         raise ConnectorError("(query vuota)")
     call = http or _default_http
-    safe = query.replace("'", "\\'")
+    safe = query.replace("\\", "\\\\").replace("'", "\\'")
     q = f"trashed = false and (name contains '{safe}' or fullText contains '{safe}')"
     params = urllib.parse.urlencode(
         {"q": q, "fields": _FIELDS, "pageSize": max(1, min(int(max_results), 20)), "orderBy": "modifiedTime desc"}

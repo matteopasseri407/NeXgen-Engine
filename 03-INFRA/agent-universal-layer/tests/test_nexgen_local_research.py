@@ -415,5 +415,5 @@ def test_secure_storage_creates_dir_on_windows_branch(tmp_path: Path) -> None:
         f"_secure_storage(Path({str(target)!r}), None); "
         f"sys.exit(0 if Path({str(target)!r}).is_dir() else 1)"
     )
-    proc = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, timeout=60)
+    proc = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, timeout=60, cwd=tmp_path)
     assert proc.returncode == 0, f"dir non creata nel ramo nt: {proc.stderr[-500:]}"

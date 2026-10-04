@@ -224,7 +224,7 @@ def _replace_in_entries(text: str, carriers: list[tuple[str, str | None]],
 def apply_plan(
     raisable: list[dict], vault_data: Path, *, sync: bool = True,
     home: Path | None = None,
-) -> tuple[int, list[str]]:
+) -> tuple[int, list[str], list[dict]]:
     """Rewrites the pins atomically, revalidates, and materializes.
 
     Callers hold the bump lock around this call (see bump_batch and
@@ -237,11 +237,11 @@ def apply_plan(
     try:
         skills_text = skills_path.read_text(encoding="utf-8")
     except OSError as exc:
-        return 0, [f"[ERROR] cannot read {skills_path}: {exc}"]
+        return 0, [f"[ERROR] cannot read {skills_path}: {exc}"], []
     try:
         mcp_text = mcp_path.read_text(encoding="utf-8") if mcp_path.is_file() else ""
     except OSError as exc:
-        return 0, [f"[ERROR] cannot read {mcp_path}: {exc}"]
+        return 0, [f"[ERROR] cannot read {mcp_path}: {exc}"], []
 
     try:
         from nexgen_core.config import load_mcp_manifest, load_skills_manifest

@@ -166,8 +166,9 @@ def _collect_skill_pins(skills_raw: dict[str, dict]) -> list[tuple[str, str, str
             specs = _npm_spec_tokens(tokens)
             for spec in specs:
                 match = NPM_SPEC_RE.match(spec)
-                pkg, ver = match.group("name"), match.group("version")
-                _add(f"skill '{name}' (npm {pkg})", "npm-version", ver, pkg)
+                if match:
+                    pkg, ver = match.group("name"), match.group("version")
+                    _add(f"skill '{name}' (npm {pkg})", "npm-version", ver, pkg)
             if not specs and entry.get("version"):
                 # pip/uvx/shell installers carry no npm token: without this
                 # entry the pin would rot forever with nobody watching.
@@ -201,8 +202,9 @@ def _collect_mcp_pins(mcp_raw: dict[str, dict]) -> list[tuple[str, str, str, str
             continue
         for spec in _npm_spec_tokens(tokens[1:]):
             match = NPM_SPEC_RE.match(spec)
-            pkg, ver = match.group("name"), match.group("version")
-            pins.append((f"MCP server '{name}' (npm {pkg})", "npm-version", ver, pkg))
+            if match:
+                pkg, ver = match.group("name"), match.group("version")
+                pins.append((f"MCP server '{name}' (npm {pkg})", "npm-version", ver, pkg))
     return pins
 
 

@@ -73,7 +73,6 @@ STOPWORDS = frozenset(
         "dove",
         "quando",
         "senza",
-        "una",
         "dillo",
         "dimmelo",
         "trova",

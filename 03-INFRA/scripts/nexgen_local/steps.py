@@ -327,6 +327,7 @@ def run_steps(
     )
     result = StepResult(task=task)
     escalated = False
+    step_started = time.time()
     while state.step < max_steps:
         state.step += 1
         step_started = time.time()

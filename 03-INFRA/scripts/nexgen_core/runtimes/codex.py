@@ -15,6 +15,7 @@ CLI that runs without network access, by design.
 """
 from __future__ import annotations
 
+import json
 import re
 import shutil
 import tomllib
@@ -157,11 +158,10 @@ class CodexRuntime(Runtime):
         current: dict = {}
         if hooks_path.is_file():
             try:
-                import json
                 loaded = json.loads(hooks_path.read_text(encoding="utf-8"))
                 if isinstance(loaded, dict):
                     current = loaded
-            except (OSError, ValueError, json.JSONDecodeError):
+            except (OSError, ValueError):
                 current = {}
 
         # Codex schema strictly permits only "description" and "hooks" at top level.
@@ -215,7 +215,6 @@ class CodexRuntime(Runtime):
 
         if changed:
             self.backup(hooks_path)
-            import json
             self.atomic_write(hooks_path, json.dumps(current, indent=2) + "\n")
             return (
                 f"codex: event sink written in {hooks_path} "

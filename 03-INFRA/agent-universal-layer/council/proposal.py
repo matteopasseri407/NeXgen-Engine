@@ -20,6 +20,7 @@ import os
 import socket
 import sys
 from pathlib import Path
+from typing import NoReturn
 
 #: Shared human-gate text: the single-seat gate (sys.exit) and the relay
 #: gate (RelayError, the graph cannot exit mid-node) print the same policy.
@@ -217,7 +218,7 @@ def _print_static_seat_menu(seats: dict) -> bool:
 
 def _require_human_single_selection(
     args: argparse.Namespace, config: dict, seats: dict, default_routing_role: str | None,
-) -> None:
+) -> NoReturn:
     """Single-seat gate: exits after printing the menu. Relay's twin raises
     RelayError instead (the graph cannot exit mid-node); both share the
     message constants below so agents don't read two policies."""

@@ -68,7 +68,8 @@ class ClaudeRuntime(Runtime):
             return None
         if not data:
             return None
-        mode = (data.get("permissions") or {}).get("defaultMode")
+        perms = data.get("permissions")
+        mode = perms.get("defaultMode") if isinstance(perms, dict) else None
         return _CLAUDE_TO_POSTURE.get(mode)
 
     def apply_posture(self, home: Path, posture: str) -> str | None:

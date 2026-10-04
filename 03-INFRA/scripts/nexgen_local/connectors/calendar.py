@@ -61,12 +61,14 @@ def list_events(
     """
     call = http or _default_http
     params: dict[str, str] = {
-        "timeMin": time_min,
-        "timeMax": time_max,
         "singleEvents": "true",
         "orderBy": "startTime",
         "maxResults": str(max(1, min(int(max_results), 50))),
     }
+    if str(time_min or "").strip():
+        params["timeMin"] = str(time_min).strip()
+    if str(time_max or "").strip():
+        params["timeMax"] = str(time_max).strip()
     if str(q or "").strip():
         params["q"] = str(q).strip()
     query = urllib.parse.urlencode(params)

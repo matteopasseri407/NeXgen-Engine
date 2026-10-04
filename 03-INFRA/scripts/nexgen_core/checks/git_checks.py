@@ -83,7 +83,7 @@ def check_git_alignment(vault_data: Path, expected_branch: str | None = None) ->
     elif res.state == GitState.BEHIND:
         def remedy() -> bool:
             from nexgen_core.git_ops import fast_forward_merge
-            ok, _ = fast_forward_merge(vault_data, auth_remote, expected_branch)
+            ok, _ = fast_forward_merge(vault_data, auth_remote, branch)
             return ok
 
         return CheckOutcome(

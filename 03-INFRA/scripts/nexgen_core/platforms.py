@@ -70,7 +70,7 @@ RUNTIMES: tuple[Support, ...] = (
         "complete",
         "instructions, MCP connectors, skills, and a Council seat; the seat was "
         "unblocked on 2026-08-22 with a stateless invocation (agy --model ... "
-        "--disable-slash-commands --new-project --sandbox -p <prompt>) verified live "
+        "--disable-slash-commands --new-project --sandbox, prompt on stdin) verified live "
         "with a nonce prompt",
     ),
 )

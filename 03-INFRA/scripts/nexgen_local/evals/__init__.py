@@ -63,7 +63,7 @@ class FakeMailRegistry(ToolRegistry):
     def search_mail(self, query: str) -> str:
         return self._record("search_mail", {"query": query}, self._hits)
 
-    def read_mail(self, mid: str) -> str:
+    def read_mail(self, mid: str, offset: int = 0) -> str:
         if mid.strip() != "m1":
             return self._refuse("read_mail", {"id": mid}, "(rifiutato: id non tra i risultati)")
         return self._record("read_mail", {"id": mid}, self._read)
@@ -82,7 +82,7 @@ class FakeOutlookRegistry(ToolRegistry):
     def search_outlook(self, query: str) -> str:
         return self._record("search_outlook", {"query": query}, self._hits)
 
-    def read_outlook(self, mid: str) -> str:
+    def read_outlook(self, mid: str, offset: int = 0) -> str:
         if mid.strip() != "o9":
             return self._refuse("read_outlook", {"id": mid}, "(rifiutato: id non tra i risultati)")
         return self._record("read_outlook", {"id": mid}, self._read)
@@ -101,7 +101,7 @@ class FakeDriveRegistry(ToolRegistry):
     def search_drive(self, query: str) -> str:
         return self._record("search_drive", {"query": query}, self._hits)
 
-    def read_drive(self, file_id: str) -> str:
+    def read_drive(self, file_id: str, offset: int = 0) -> str:
         if file_id.strip() != "d1":
             return self._refuse("read_drive", {"id": file_id}, "(rifiutato: id non tra i risultati)")
         # Same receipt shape as the real tool: id plus human name, so the
@@ -122,7 +122,7 @@ class FakeCalendarRegistry(ToolRegistry):
     def search_calendar(self, query: str) -> str:
         return self._record("search_calendar", {"query": query}, self._hits)
 
-    def read_calendar(self, event_id: str) -> str:
+    def read_calendar(self, event_id: str, offset: int = 0) -> str:
         if event_id.strip() != "e1":
             return self._refuse("read_calendar", {"id": event_id}, "(rifiutato: id non tra i risultati)")
         return self._record("read_calendar", {"id": event_id}, self._read)
