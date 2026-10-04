@@ -86,12 +86,32 @@ def _posix_only_chmod(path: Path, mode: int) -> None:
         pass
 
 
+#: Bearer tokens owned by this machine's own services. Stripped from every
+#: relayed child including `claude`: the seat prompt is told never to use
+#: tools, but a prompt-injected relay must not find real credentials in its
+#: environment either. Vendor auth survives (ANTHROPIC_API_KEY, login state
+#: via HOME) because only our own application namespace is removed.
+_REDACTED_APP_ENV = ("N8N_MCP_TOKEN", "VAULT_LIBRARY_TOKEN")
+
+_REDACTED_APP_ENV_SUFFIXES = ("_MCP_TOKEN",)
+
+
+def _strip_app_tokens(env: dict[str, str]) -> dict[str, str]:
+    return {
+        name: value for name, value in env.items()
+        if name not in _REDACTED_APP_ENV
+        and not name.endswith(_REDACTED_APP_ENV_SUFFIXES)
+    }
+
+
 def _isolated_env(cli: str, workdir: Path) -> dict[str, str]:
     if cli == "claude":
         # --tools "" already makes every tool, MCP included, uninvocable by
-        # construction (verified in the Council), so no env isolation is
-        # needed or applied here.
-        return dict(os.environ)
+        # construction (verified in the Council), so no allowlist isolation is
+        # applied here: the CLI keeps its own auth (API key or login). Our
+        # own application bearer tokens are still stripped: nothing in the
+        # relay contract needs them downstream.
+        return _strip_app_tokens(dict(os.environ))
     env = {name: os.environ[name] for name in ENV_ALLOWLIST if name in os.environ}
     if cli == "codex":
         home = workdir / "codex-home"
@@ -127,6 +147,30 @@ def _isolated_env(cli: str, workdir: Path) -> dict[str, str]:
         )
         env["XDG_CONFIG_HOME"] = str(config_home)
     return env
+
+
+def _read_attach(cfg: LaneConfig, path: str, *, confined: bool) -> str:
+    """Read an attachment refusing symlink swaps between check and read.
+
+    `Path.resolve()` + `_inside_roots` validates the target, but a symlink
+    swapped in after the check would redirect the read. Opening with
+    `O_NOFOLLOW` fails when the final component is itself a symlink, and the
+    post-read re-resolve refuses a directory-component swap that happened
+    mid-read. Best effort on platforms without `O_NOFOLLOW`.
+    """
+    nofollow = getattr(os, "O_NOFOLLOW", 0)
+    try:
+        fd = os.open(path, os.O_RDONLY | nofollow)
+    except OSError as exc:
+        raise RelayError(f"allegato non leggibile: {exc}") from exc
+    try:
+        with os.fdopen(fd, "r", encoding="utf-8", errors="replace") as handle:
+            text = handle.read()
+    except OSError as exc:
+        raise RelayError(f"allegato non leggibile: {exc}") from exc
+    if confined and not _inside_roots(cfg, path):
+        raise RelayError(f"allegato fuori dalle radici consentite dopo la lettura: {path}")
+    return text
 
 
 def _inside_roots(cfg: LaneConfig, path: str) -> bool:
@@ -215,7 +259,9 @@ def run_relay(
                 "(usa --allow-outside-attach per forzare, consapevolmente)"
             )
         try:
-            text = Path(attach).read_text(errors="replace")
+            text = _read_attach(cfg, attach, confined=not allow_outside_attach)
+        except RelayError:
+            raise
         except OSError as exc:
             raise RelayError(f"allegato non leggibile: {exc}") from exc
         if len(text) > MAX_ATTACH:
