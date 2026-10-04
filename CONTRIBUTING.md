@@ -93,6 +93,10 @@ Council captures at most 8 MiB across stdout and stderr per invocation and
 reads at most 8 MiB from the authoritative result file. Overflow wakes the
 watchdog even when stdout is silent. `output_limit` and `invalid_output` are
 terminal failures; they must not trigger automatic retries or a fallback seat.
+Engine updater commands use the same process owner, with a 120-second Git
+budget and a 600-second command budget. Failures after mutation begins retain
+the previous commit and manual recovery instructions. Do not infer rollback
+from a failed command; verify the actual ref before describing the outcome.
 
 The plain loop and persistent research import the same state, policy and
 actions. `step_policy.py` chooses admissible actions without model or tool

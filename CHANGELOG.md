@@ -32,6 +32,9 @@ of any engine release.
   Dotted connector names remain single keys, and recovery backups are unique.
 - Engine updates reject a release missing its command entry before moving the
   installed checkout. Mechanical pin writes use the shared atomic writer.
+- Engine update commands have deadlines and share subprocess cleanup.
+  Operational errors after a merge begins retain manual recovery instructions;
+  a moved ref is reported accurately rather than called a successful rollback.
 - Local CLI and MCP startup work from an unpackaged source checkout.
 - Google and Outlook persist rotated refresh tokens with atomic private writes;
   publication or permission failures preserve the previous token file.
