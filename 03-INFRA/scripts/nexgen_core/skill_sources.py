@@ -26,6 +26,7 @@ if str(SCRIPTS_DIR) not in sys.path:
 
 from nexgen_core.i18n import t  # noqa: E402
 from nexgen_core.files import atomic_write_text  # noqa: E402
+from nexgen_core.lock import HostLock  # noqa: E402
 from nexgen_core.paths import resolve_home, resolve_state_dir  # noqa: E402
 
 
@@ -262,23 +263,32 @@ class SkillFetcher:
     def _installed_versions(self) -> dict[str, str]:
         """Which version of each installer-owned skill is materialized here."""
         path = self._installed_versions_file()
-        if not path.is_file():
-            return {}
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
-            return {str(k): str(v) for k, v in data.items()} if isinstance(data, dict) else {}
-        except (OSError, ValueError):
+            if not isinstance(data, dict) or not all(isinstance(value, str) for value in data.values()):
+                raise ValueError("skill version record must map names to version strings")
+            return data
+        except FileNotFoundError:
             return {}
+        except (OSError, ValueError) as exc:
+            raise OSError(t("Cannot read skill version record at {path} ({error}).",
+                            path=path, error=type(exc).__name__)) from exc
 
     def _record_installed_version(self, name: str, version: str) -> None:
-        path = self._installed_versions_file()
-        current = self._installed_versions()
-        current[name] = version
+        """Persist a pin or raise a diagnostic safe for sync and doctor."""
         try:
-            path.parent.mkdir(parents=True, exist_ok=True)
-            atomic_write_text(path, json.dumps(current, indent=2, sort_keys=True) + "\n")
-        except OSError:
-            pass
+            path = self._installed_versions_file()
+            # A distinct lock avoids nesting the global sync lock. Atomic
+            # rename protects readers; serialization protects other writers.
+            with HostLock(lock_path=path.with_suffix(".lock"), timeout=5, command_name="skill-pin-record"):
+                current = self._installed_versions()
+                current[name] = version
+                atomic_write_text(path, json.dumps(current, indent=2, sort_keys=True) + "\n")
+        except OSError as exc:
+            raise OSError(t(
+                "Skill '{name}' pin could not be recorded ({error}); update is incomplete.",
+                name=name, error=type(exc).__name__,
+            )) from exc
 
     def claim_from_discovery(
         self, name: str, lib_dest: Path, discovery_dirs: tuple[Path, ...]
@@ -349,7 +359,11 @@ class SkillFetcher:
         self, entry: SkillEntry, lib_dest: Path, discovery_dirs: tuple[Path, ...]
     ) -> tuple[bool, str | None]:
         """Runs a third-party installer, but only when the pin actually moved."""
-        recorded = self._installed_versions().get(entry.name)
+        try:
+            recorded = self._installed_versions().get(entry.name)
+        except OSError as exc:
+            return False, "[ERROR] " + t("Cannot verify the recorded pin for skill '{name}' ({error}).",
+                                        name=entry.name, error=type(exc).__name__)
         if recorded == entry.version and lib_dest.is_dir():
             return True, None
         if not entry.install:
@@ -386,17 +400,14 @@ class SkillFetcher:
                 "the installer for '{name}' ran but left nothing the engine could find",
                 name=entry.name,
             )
-        if claimed:
-            # New bytes moved into the library (or the candidate matched
-            # the library byte for byte and was deduplicated): the pin is
-            # genuinely materialized.
-            self._record_installed_version(entry.name, entry.version or "")
-            return True, t("Installed skill '{name}' at version {version}", name=entry.name, version=entry.version)
         after = self._tree_fingerprint(lib_dest)
-        if after is not None and (before is None or after != before):
-            # No candidate in any discovery dir, but the library content
-            # changed under the installer: an in-place writer. Accept it.
-            self._record_installed_version(entry.name, entry.version or "")
+        if claimed or (after is not None and (before is None or after != before)):
+            # One completion path owns both claimed and in-place installs.
+            # New bytes without a durable pin are an incomplete update.
+            try:
+                self._record_installed_version(entry.name, entry.version or "")
+            except OSError as exc:
+                return False, "[ERROR] " + str(exc)
             return True, t("Installed skill '{name}' at version {version}", name=entry.name, version=entry.version)
         # The installer exited 0 but left no observable new bytes, while
         # the library still holds the old version: recording the new

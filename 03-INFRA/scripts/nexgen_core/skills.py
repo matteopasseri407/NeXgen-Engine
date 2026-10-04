@@ -334,7 +334,11 @@ class SkillMaterializer:
                     # Record the materialized pin even when the link was
                     # already current: without this the doctor cannot tell a
                     # fresh pin from a failed fetch that left stale bytes.
-                    self.fetcher._record_installed_version(name, entry.commit or "")
+                    try:
+                        self.fetcher._record_installed_version(name, entry.commit or "")
+                    except OSError as exc:
+                        actions.append("[ERROR] " + str(exc))
+                        continue
 
             elif entry.origin == "installer" and apply:
                 installed, note = self.fetcher.install_third_party(entry, lib_dest, self.discovery_dirs)

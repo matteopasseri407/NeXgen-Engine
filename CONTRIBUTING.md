@@ -41,7 +41,7 @@ before integration. Fix new lint findings rather than regenerating the baseline.
 | Atomic writes, backups, private artifacts | `nexgen_core/files.py` | `test_nexgen_foundations.py`, `test_nexgen_quality_regressions.py` |
 | Third-party pin updates and rollback | `nexgen_core/thirdparty_bump.py` | `test_nexgen_bump.py`, `test_nexgen_bump_file_contract.py` |
 | Sync phase ordering and failure status | `nexgen_core/guard.py` | `test_nexgen_phase3.py`, `test_nexgen_quality_regressions.py` |
-| Skill fetch, replacement and pins | `nexgen_core/skill_sources.py` | `test_nexgen_skill_fetch.py`, `test_nexgen_lazy_skills.py`, `test_nexgen_quality_regressions.py` |
+| Skill fetch, replacement and pins | `nexgen_core/skill_sources.py` | `test_nexgen_skill_fetch.py`, `test_nexgen_skill_versions.py`, `test_nexgen_lazy_skills.py`, `test_nexgen_quality_regressions.py` |
 | Host locking | `nexgen_core/lock.py` | `test_nexgen_lock.py` |
 | Source checkout version fallback | `nexgen_local/version.py` | `test_nexgen_command_surface.py`, `test_nexgen_local_mcp.py` |
 | Local CLI dispatch and shared config/LLM adapters | `nexgen_local/cli.py`, `nexgen_local/cmds/base.py`; domain commands in `cmds/` | `test_nexgen_command_surface.py`, `test_nexgen_local_steps.py` |
@@ -82,6 +82,11 @@ Council artefacts and recovery snapshots use this owner too; `backup_file`
 accepts an already-read text snapshot without generating a second filename policy.
 MCP dialects share `McpRenderer.unmounted_server_names` for mount decisions.
 Skill fetch and placement share `github_skill_source` for repository boundaries.
+Skill version records must be readable maps of names to version strings.
+An invalid record is preserved and reported by doctor. A failed pin write
+fails the sync; changed bytes alone cannot certify a completed update.
+The record's own host lock serializes its read and write, preserving pins
+from concurrent writers without nesting the global sync lock.
 Council, lazy MCP and Vault grooming share `nexgen_core/processes.py` for
 terminating owned subprocess trees. Pass only a process group created by the
 caller. Lazy MCP applies manifest startup/tool deadlines to RPC I/O, including

@@ -288,7 +288,15 @@ def check_skills_pin_freshness(vault_data: Path, home: Path) -> CheckOutcome:
         mat.materialize(apply=True)
         return True
 
-    recorded = SkillFetcher(home=home)._installed_versions()
+    try:
+        recorded = SkillFetcher(home=home)._installed_versions()
+    except OSError:
+        return CheckOutcome(
+            id="skills.pin_freshness",
+            severity=Severity.BROKEN,
+            message=t("The skill version record cannot be read or is invalid."),
+            action=t("Inspect and repair installed-skill-versions.json before syncing skills."),
+        )
     stale: list[str] = []
     unknown: list[str] = []
     for name, entry in mat.load_manifest().items():

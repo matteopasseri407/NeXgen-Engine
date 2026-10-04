@@ -12,6 +12,10 @@ of any engine release.
 
 ### Fixed
 
+- Skill sync reports failed version record writes instead of certifying an
+  incomplete update. Invalid records are preserved and reported by doctor;
+  serialized writes preserve the pins recorded by concurrent updates.
+
 - Lazy MCP honors declared RPC deadlines for blocked pipes and open HTTP
   streams, correlates responses by request ID and bounds received output.
   Negotiated modern protocol settings survive into tool calls, and tools
