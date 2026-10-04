@@ -36,8 +36,9 @@ from session import (
 
 SUPPORTED_CLIS = ("opencode", "agy", "codex", "claude", "ollama")
 
-# agy: invoked via `agy --model <model> --disable-slash-commands --new-project --sandbox -p <prompt>`.
-# This guarantees stateless execution without loading workspace skills or reading historical memory.
+# agy: print mode reads the brief from stdin, outside the process argv.
+# Fresh-project and sandbox flags request the vendor's isolation posture;
+# tool and MCP restrictions remain asymmetric (see _build_seat_command).
 
 DEFAULT_SEAT_TIMEOUT_SECONDS = 300.0
 MAX_SEAT_OUTPUT_BYTES = 8 * 1024 * 1024
@@ -145,8 +146,7 @@ def _effort_forwarding(seat: dict) -> tuple[list[str], str]:
     - codex: -c model_reasoning_effort=<v> verbatim.
     - opencode: --variant <v> verbatim (provider-specific, no fixed enum to
       validate against here -- see the long comment in _build_seat_command).
-    - agy: no reasoning-effort CLI flag exists at all (verified via
-      `agy --help`): never a flag, always the caveat on the label.
+    - agy: --effort <v> verbatim (low|medium|high|xhigh|max, per `agy --help`).
     - ollama: --think only documents low/medium/high (`ollama run --help`).
       xhigh/max (valid claude/codex tiers) are downmapped to --think high
       rather than dropped, with the label saying so. Anything else ollama
@@ -166,7 +166,7 @@ def _effort_forwarding(seat: dict) -> tuple[list[str], str]:
     if cli == "opencode":
         return ["--variant", str(effort)], label
     if cli == "agy":
-        if effort in ("low", "medium", "high"):
+        if effort in ("low", "medium", "high", "xhigh", "max"):
             return ["--effort", str(effort)], label
         return [], f"{label} (not applied: value not supported by agy)"
     if cli == "ollama":
@@ -478,11 +478,9 @@ def _build_seat_command(seat: dict, prompt: str, session_dir: Path) -> SeatInvoc
       "run_command" tool specifically ("no network access... unless added
       explicitly by the user") — again shell/terminal-command scoped, not a
       documented MCP block. No ``--no-mcp``/``--tools`` equivalent flag
-      exists in ``agy --help``. Live verification of whether this also
-      blocks the CLI's own MCP tool calls was not possible during this
-      review (Antigravity subscription quota was exhausted on every model
-      tried); treat this CLI as prompt-only until someone confirms
-      otherwise live.
+      exists in ``agy --help``. The prompt travels on stdin with no
+      positional prompt (verified live 2026-10-04: print mode consumes
+      stdin, so the brief never appears in the process table).
     - ``opencode``: no CLI-level tool/MCP block exists at all. ``--pure``
       disables external *plugins*, a different subsystem from MCP servers.
       ``OPENCODE_CONFIG``/``OPENCODE_CONFIG_CONTENT`` were tested and found

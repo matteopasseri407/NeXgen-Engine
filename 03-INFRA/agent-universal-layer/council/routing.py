@@ -406,11 +406,9 @@ def seat_capabilities(seats: dict[str, dict[str, Any]]) -> dict[str, SeatCapabil
             capabilities[name] = _probe_codex_inventory(seat)
             continue
         if cli == "agy":
-            # agy seats were blocked outright until 2026-08-22 (see
-            # seat_process._build_seat_command); now the stateless invocation
-            # works. The model inventory probe (`agy models`) is slow on the
-            # free tier and would time out here, so presence is checked via
-            # --help and model selection is trusted to the explicit --model.
+            # Presence is checked via --help and model selection is trusted
+            # to the explicit --model: the inventory probe (`agy models`) is
+            # not used on this path.
             if cli not in cli_probe_cache:
                 cli_probe_cache[cli] = _run_probe(["agy", "--help"])
             successful, output = cli_probe_cache[cli]

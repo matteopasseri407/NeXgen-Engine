@@ -273,8 +273,8 @@ effort label, so the two can't drift apart:
 - `ollama`: `--think` only documents `low`/`medium`/`high`. `xhigh` and
   `max` are downmapped to `--think high`, with the printed label saying so.
   Any other value is dropped with no flag, and the label says that too.
-- `agy`: `--effort` accepts `low`/`medium`/`high`, forwarded verbatim.
-  Any other value (`xhigh`, `max`, `none`) is dropped with no flag, and the
+- `agy`: `--effort` accepts `low`/`medium`/`high`/`xhigh`/`max`,
+  forwarded verbatim. Any other value is dropped with no flag, and the
   label says that too.
 
 ## Session handling
@@ -349,17 +349,18 @@ council clean --all           # removes every kept session now
   the CLI accepted the exact `--model` selection and returned the same
   canonical model through `modelUsage`, with tools disabled and session
   persistence off. `ollama` seats have not yet been verified live.
-- **`agy` (Antigravity) is fully supported as a Council seat** (verified live on 2026-08-22):
-  invoked via `agy --model <model> --disable-slash-commands --new-project --sandbox [--effort <level>] -p <prompt>`,
-  ensuring stateless text-in/text-out execution without loading local workspace skills, historical memory databases,
-  or unisolated environment tokens.
+- **`agy` (Antigravity) has a Council adapter**:
+  invoked via `agy --print --model <model> --disable-slash-commands --new-project --sandbox [--effort <level>]` with the prompt on stdin.
+  The adapter requests a fresh project and strips application tokens.
+  Sandbox flags do not prove that MCP tools are disabled; the CLI isolation limits remain vendor-specific.
+  Regression tests verify transport and effort forwarding. They do not certify live availability of each model or isolation on every host.
 - Automated regression tests cover the control flow for all four modes,
   session cleanup, relay fallback, all supported vendor CLIs, and the Linux
   launcher. They use fake seats, so they do not replace live checks of
   each vendor CLI.
 - The Windows launcher has portable regression tests and runs natively under the unified Python core.
-- Large prompts use stdin for Codex, a protected temporary attachment
-  for OpenCode, and protected stdin for Claude and Ollama. Antigravity receives
-  the prompt directly via `-p` under the sandboxed invocation.
+- Large prompts use stdin for Codex, Claude, Ollama and Antigravity, and
+  a protected temporary attachment for OpenCode. The attachment is created
+  inside the private session tree and removed after the seat exits.
 - Seats via CLI are slow (minutes, not seconds): this is for brainstorming,
   challenging, and review, not a quick question mid-task.
