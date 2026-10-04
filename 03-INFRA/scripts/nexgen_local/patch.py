@@ -289,7 +289,7 @@ def apply_proposal(
     """
     if not yes:
         raise PatchError("applicazione rifiutata: serve --yes esplicito")
-    with proposal_lock(cfg.proposals_dir, proposal_id, PatchError):
+    with proposal_lock(cfg.proposals_dir, proposal_id, PatchError, serialize_directory=True):
         return _apply_proposal(cfg, proposal_id, verify=verify)
 
 

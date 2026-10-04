@@ -119,6 +119,11 @@ Patch, mail, calendar, upload and workflow gates share `proposals.py` for
 proposal ids, a per-proposal host lock and durable attempt recording. They
 reload and validate under the lock. After the intent receipt, `attempted_at`
 is saved before the mutating call; a failed record prevents execution. A
+patch approval also holds the directory's stable `.apply.lock` until outcome
+storage finishes, so two different proposal ids cannot race the same file.
+The competing approval refuses before recording an attempt; it can be
+reviewed again after the active patch finishes, with its base hash rechecked.
+This also coordinates with earlier patch gates using that lock. A
 saved attempt without `applied_at` is uncertain, including a crash, transport
 failure or final-save failure. Repeating that proposal id refuses. Verify the
 real outcome before preparing a new proposal; an attempt alone does not prove

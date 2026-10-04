@@ -11,7 +11,7 @@ import hashlib
 import json
 import secrets
 import time
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 from pathlib import Path
 from typing import Callable, Protocol
 
@@ -82,23 +82,28 @@ def proposal_status(proposal: AttemptedProposal, completed: str, pending: str = 
 
 
 @contextmanager
-def proposal_lock(directory: Path, proposal_id: str, error: type[Exception]):
-    """Hold ownership before loading the proposal and until outcome storage."""
+def proposal_lock(
+    directory: Path, proposal_id: str, error: type[Exception], *, serialize_directory: bool = False,
+):
+    """Own the proposal; patch gates also serialize their shared file writes."""
     if not valid_proposal_id(proposal_id):
         raise error(f"id proposta non valido: {proposal_id}")
-    lock = HostLock(directory / f"{proposal_id}.lock", timeout=0, command_name="nexgen-local approve")
-    try:
-        secure_artifact(directory)
-        lock.acquire()
-    except LockTimeoutError as exc:
-        raise error("proposta in uso: attendi la fine dell'altra esecuzione") from exc
-    except OSError as exc:
-        raise error(f"lock della proposta non accessibile ({type(exc).__name__})") from exc
-    try:
-        secure_artifact(directory, lock.lock_path)
+    paths = [directory / f"{proposal_id}.lock"]
+    if serialize_directory:
+        # Preserve the earlier patch gate's stable lock, including coexistence
+        # with older callers. Different ids can still target the same file.
+        paths.insert(0, directory / ".apply.lock")
+    with ExitStack() as locks:
+        try:
+            secure_artifact(directory)
+            for path in paths:
+                locks.enter_context(HostLock(path, timeout=0, command_name="nexgen-local approve"))
+                secure_artifact(directory, path)
+        except LockTimeoutError as exc:
+            raise error("proposta in uso: attendi la fine dell'altra esecuzione") from exc
+        except OSError as exc:
+            raise error(f"lock della proposta non accessibile ({type(exc).__name__})") from exc
         yield
-    finally:
-        lock.release()
     # The inode remains stable even after completion or interruption.
 
 

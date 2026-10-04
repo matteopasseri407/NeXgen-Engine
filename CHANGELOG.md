@@ -12,6 +12,10 @@ of any engine release.
 
 ### Fixed
 
+- Patch application retains its directory lock alongside proposal ownership.
+  Concurrent approvals of different ids cannot modify the same file before
+  either operation finishes validation and outcome storage.
+
 - Skill sync reports failed version record writes instead of certifying an
   incomplete update. Invalid records are preserved and reported by doctor;
   serialized writes preserve the pins recorded by concurrent updates.

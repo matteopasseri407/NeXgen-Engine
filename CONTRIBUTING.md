@@ -121,7 +121,11 @@ model or tool calls. An explicit escalation must persist its terminal status.
 Router JSON field types are validated before paths or keywords are used;
 malformed forms use deterministic routing without another model request.
 Every mutating proposal gate holds `proposals.proposal_lock` before loading
-the artifact through final storage. After validation and the intent receipt,
+the artifact through final storage. Patch apply additionally holds the stable
+directory `.apply.lock`: distinct proposal ids can target the same file, so
+their validation, mutation and outcome storage must not overlap. A refusal
+to acquire either lock releases any earlier acquisition without consuming
+the proposal. After validation and the intent receipt,
 `record_attempt` persists `attempted_at` before calling the provider or Git.
 A prior attempt with no saved completion is uncertain and cannot be replayed,
 including after an exception or interruption. Check its real outcome before
