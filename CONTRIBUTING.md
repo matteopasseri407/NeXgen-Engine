@@ -57,6 +57,7 @@ before integration. Fix new lint findings rather than regenerating the baseline.
 | Model decisions, bounded repairs and final loop answer | `nexgen_local/steps.py` | `test_nexgen_local_steps.py`, `test_nexgen_tool_outcomes.py` |
 | Model requests and deadlines | `nexgen_local/llm.py` | `test_nexgen_llm_deadlines.py` |
 | Persistent research ownership, continuation and expiry | `nexgen_local/research_graph.py`; locking in `nexgen_core/lock.py` | `test_nexgen_local_research.py` |
+| Proposal ids, exclusive approval and durable attempts | `nexgen_local/proposals.py`; domain checks in patch/mail/calendar/upload/workflow gates | `test_nexgen_proposal_execution.py`, `test_nexgen_local_patch.py`, `test_nexgen_local_compose.py`, `test_nexgen_local_calendars.py`, `test_nexgen_local_drive_mcp.py`, `test_nexgen_local_workflows.py` |
 | Council process lifecycle and relay checkpoints | `03-INFRA/agent-universal-layer/council/` | `test_nexgen_council_*.py` |
 | Owned subprocess cleanup and Windows launch adapters | `nexgen_core/processes.py` | `test_nexgen_council_process_integration.py`, `test_nexgen_mcp_transport.py`, `test_vault_groom.py` |
 | Vault publication and selected files | `nexgen_core/git_ops.py` | `test_nexgen_scoped_publish.py` |
@@ -117,6 +118,17 @@ never delete a lock file to clean up a session. A busy session refuses before
 model or tool calls. An explicit escalation must persist its terminal status.
 Router JSON field types are validated before paths or keywords are used;
 malformed forms use deterministic routing without another model request.
+Every mutating proposal gate holds `proposals.proposal_lock` before loading
+the artifact through final storage. After validation and the intent receipt,
+`record_attempt` persists `attempted_at` before calling the provider or Git.
+A prior attempt with no saved completion is uncertain and cannot be replayed,
+including after an exception or interruption. Check its real outcome before
+preparing a new proposal; never clear the attempt field to retry.
+`applied_at` remains evidence of a returned and saved completion; an attempt
+alone must not be described as success or as ready for approval.
+Older artifacts omit `attempted_at` and load with its empty default. Proposal
+ids belong to `proposals.py`; the imports in `patch.py` remain compatibility
+aliases. Drive proposal creation and updates use the private atomic writer.
 
 `cmds/base.py` owns the local CLI configuration and model adapter, including
 the compatibility boundary for older callers that patch `cli._config` or

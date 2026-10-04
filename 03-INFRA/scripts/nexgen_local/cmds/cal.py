@@ -7,6 +7,7 @@ import sys
 from dataclasses import asdict
 
 from . import base as _base
+from ..proposals import proposal_status
 from ..tools import ToolError
 
 
@@ -47,7 +48,7 @@ def cmd_cals(args: argparse.Namespace) -> int:
         print("nessuna proposta")
         return 0
     for item in items:
-        state = "applicata" if item.applied_at else "da approvare"
+        state = proposal_status(item, "applicata")
         print(f"  {item.id}  {state:<15} {item.kind}  {item.summary or item.event_id}")
     return 0
 

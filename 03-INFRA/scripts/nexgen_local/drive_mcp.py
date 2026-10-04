@@ -15,13 +15,14 @@ import json
 import mimetypes
 import time
 from dataclasses import asdict, dataclass
+from nexgen_core.files import write_private_text
 from pathlib import Path
 from typing import Any
 
 from .config import LaneConfig
 from .connectors import ConnectorError
 from .connectors import drive as drive_conn
-from .patch import new_proposal_id
+from .proposals import new_proposal_id, valid_proposal_id, proposal_lock, record_attempt
 from .tools import ToolError, audit_event
 
 
@@ -41,6 +42,7 @@ class UploadProposal:
     created_at: str
     applied_at: str = ""
     drive_id: str = ""
+    attempted_at: str = ""
 
 
 def _sha(data: bytes) -> str:
@@ -48,25 +50,20 @@ def _sha(data: bytes) -> str:
 
 
 def _save(cfg: LaneConfig, proposal: UploadProposal) -> None:
-    cfg.uploads_dir.mkdir(parents=True, exist_ok=True)
     target = cfg.uploads_dir / f"{proposal.id}.json"
-    target.write_text(json.dumps(asdict(proposal), ensure_ascii=False, indent=1), encoding="utf-8")
+    write_private_text(target, json.dumps(asdict(proposal), ensure_ascii=False, indent=1))
 
 
 def _create(cfg: LaneConfig, proposal: UploadProposal) -> None:
     """Store a new proposal without ever overwriting an existing one (see patch._create)."""
-    cfg.uploads_dir.mkdir(parents=True, exist_ok=True)
     target = cfg.uploads_dir / f"{proposal.id}.json"
     try:
-        with target.open("x", encoding="utf-8") as handle:
-            handle.write(json.dumps(asdict(proposal), ensure_ascii=False, indent=1))
+        write_private_text(target, json.dumps(asdict(proposal), ensure_ascii=False, indent=1), exclusive=True)
     except FileExistsError as exc:
         raise DriveGateError(f"collisione id proposta, riprova: {proposal.id}") from exc
 
 
 def load_proposal(cfg: LaneConfig, proposal_id: str) -> UploadProposal:
-    from .patch import valid_proposal_id
-
     if not valid_proposal_id(proposal_id or ""):
         raise DriveGateError(f"id proposta non valido: {proposal_id}")
     target = cfg.uploads_dir / f"{proposal_id}.json"
@@ -148,6 +145,11 @@ def confirm_upload(cfg: LaneConfig, proposal_id: str, confirm: bool) -> dict[str
     """Execute a staged upload once, only on explicit confirm."""
     if not confirm:
         raise DriveGateError("caricamento rifiutato: serve confirm esplicito")
+    with proposal_lock(cfg.uploads_dir, proposal_id, DriveGateError):
+        return _confirm_upload(cfg, proposal_id)
+
+
+def _confirm_upload(cfg: LaneConfig, proposal_id: str) -> dict[str, Any]:
     proposal = load_proposal(cfg, proposal_id)
     if proposal.applied_at:
         raise DriveGateError("proposta gia' caricata")
@@ -164,6 +166,7 @@ def confirm_upload(cfg: LaneConfig, proposal_id: str, confirm: bool) -> dict[str
         ok=True,
         chars=proposal.size,
     )
+    record_attempt(proposal, lambda: _save(cfg, proposal), DriveGateError)
     try:
         sent = drive_conn.upload_file(data, proposal.name, proposal.mime, proposal.folder_id)
     except ConnectorError as exc:

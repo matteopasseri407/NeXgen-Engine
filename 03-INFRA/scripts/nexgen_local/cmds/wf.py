@@ -7,6 +7,7 @@ import sys
 from dataclasses import asdict
 
 from . import base as _base
+from ..proposals import proposal_status
 from ..tools import ToolError
 
 
@@ -44,7 +45,7 @@ def cmd_wfs(args: argparse.Namespace) -> int:
         return 0
     print("consentiti: " + (", ".join(sorted(allowed)) or "(nessuno)"))
     for item in list_wf_proposals(cfg):
-        state = "eseguita" if item.applied_at else "da approvare"
+        state = proposal_status(item, "eseguita")
         print(f"  {item.id}  {state:<15} {item.workflow}")
     return 0
 

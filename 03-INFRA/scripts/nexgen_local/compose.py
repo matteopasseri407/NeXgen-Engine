@@ -26,7 +26,7 @@ from .connectors import ConnectorError
 from .connectors import gmail as gmail_conn
 from .connectors import outlook as outlook_conn
 from .llm import LLM
-from .patch import new_proposal_id, valid_proposal_id
+from .proposals import new_proposal_id, valid_proposal_id, proposal_lock, record_attempt
 from .tools import ToolError, audit_event
 
 MAX_BODY_CHARS = 20_000
@@ -64,6 +64,7 @@ class MailProposal:
     created_at: str = ""
     applied_at: str = ""
     sent_id: str = ""
+    attempted_at: str = ""
 
 
 def _save(cfg: LaneConfig, proposal: MailProposal) -> None:
@@ -265,6 +266,11 @@ def apply_mail(cfg: LaneConfig, proposal_id: str, *, yes: bool) -> dict[str, Any
     """
     if not yes:
         raise MailError("invio rifiutato: serve --yes esplicito")
+    with proposal_lock(cfg.mails_dir, proposal_id, MailError):
+        return _apply_mail(cfg, proposal_id)
+
+
+def _apply_mail(cfg: LaneConfig, proposal_id: str) -> dict[str, Any]:
     proposal = load_proposal(cfg, proposal_id)
     if proposal.applied_at:
         raise MailError("proposta gia' inviata")
@@ -278,6 +284,7 @@ def apply_mail(cfg: LaneConfig, proposal_id: str, *, yes: bool) -> dict[str, Any
         ok=True,
         chars=len(proposal.body),
     )
+    record_attempt(proposal, lambda: _save(cfg, proposal), MailError)
     try:
         backend = _BACKENDS.get(proposal.provider, gmail_conn)
         if proposal.kind == "reply":

@@ -26,7 +26,7 @@ from typing import Any, Callable
 from nexgen_core.files import write_private_text
 
 from .config import LaneConfig
-from .patch import new_proposal_id, valid_proposal_id
+from .proposals import new_proposal_id, valid_proposal_id, proposal_lock, record_attempt
 from .tools import ToolError, audit_event
 
 
@@ -63,6 +63,7 @@ class WorkflowProposal:
     created_at: str = ""
     applied_at: str = ""
     outcome: str = ""
+    attempted_at: str = ""
 
 
 def allowlist_path() -> Path:
@@ -170,6 +171,11 @@ def confirm_run(cfg: LaneConfig, proposal_id: str, confirm: bool, http: HttpFn |
     """POST the staged params to the allowlisted webhook, once, on confirm."""
     if not confirm:
         raise WorkflowError("esecuzione rifiutata: serve confirm esplicito")
+    with proposal_lock(cfg.workflows_dir, proposal_id, WorkflowError):
+        return _confirm_run(cfg, proposal_id, http)
+
+
+def _confirm_run(cfg: LaneConfig, proposal_id: str, http: HttpFn | None) -> dict[str, Any]:
     proposal = load_proposal(cfg, proposal_id)
     if proposal.applied_at:
         raise WorkflowError("proposta gia' eseguita")
@@ -180,6 +186,7 @@ def confirm_run(cfg: LaneConfig, proposal_id: str, confirm: bool, http: HttpFn |
     if entry.get("secret"):
         headers["X-Nexgen-Secret"] = str(entry["secret"])
     audit_event(cfg, "run_workflow", {"proposal": proposal.id, "phase": "intent"}, ok=True, chars=0)
+    record_attempt(proposal, lambda: _save(cfg, proposal), WorkflowError)
     call = http or _default_http
     try:
         result = call(str(entry["webhook_url"]), json.dumps(proposal.params).encode("utf-8"), headers, 120)

@@ -1,0 +1,78 @@
+"""Shared proposal identity and exclusive, durable mutation attempts.
+
+Approval, destination checks and receipts belong to each domain gate.
+This owner prevents simultaneous use and replay of an uncertain attempt.
+An attempt is not evidence that the provider completed the operation.
+"""
+from __future__ import annotations
+
+import re
+import secrets
+import time
+from contextlib import contextmanager
+from pathlib import Path
+from typing import Callable, Protocol
+
+from nexgen_core.files import secure_artifact
+from nexgen_core.lock import HostLock, LockTimeoutError
+
+
+PROPOSAL_ID_RE = re.compile(r"\d{8}-\d{6}-[0-9a-f]{8}")
+
+
+def valid_proposal_id(proposal_id: str) -> bool:
+    return bool(PROPOSAL_ID_RE.fullmatch(str(proposal_id or "")))
+
+
+def new_proposal_id() -> str:
+    """Sortable ids with randomness; creation still refuses collisions."""
+    return f"{time.strftime('%Y%m%d-%H%M%S')}-{secrets.token_hex(4)}"
+
+
+class AttemptedProposal(Protocol):
+    attempted_at: str
+    applied_at: str
+
+
+def proposal_status(proposal: AttemptedProposal, completed: str, pending: str = "da approvare") -> str:
+    if proposal.applied_at:
+        return completed
+    return "esito da verificare" if proposal.attempted_at else pending
+
+
+@contextmanager
+def proposal_lock(directory: Path, proposal_id: str, error: type[Exception]):
+    """Hold ownership before loading the proposal and until outcome storage."""
+    if not valid_proposal_id(proposal_id):
+        raise error(f"id proposta non valido: {proposal_id}")
+    lock = HostLock(directory / f"{proposal_id}.lock", timeout=0, command_name="nexgen-local approve")
+    try:
+        secure_artifact(directory)
+        lock.acquire()
+    except LockTimeoutError as exc:
+        raise error("proposta in uso: attendi la fine dell'altra esecuzione") from exc
+    except OSError as exc:
+        raise error(f"lock della proposta non accessibile ({type(exc).__name__})") from exc
+    try:
+        secure_artifact(directory, lock.lock_path)
+        yield
+    finally:
+        lock.release()
+    # The inode remains stable even after completion or interruption.
+
+
+def record_attempt(proposal: AttemptedProposal, save: Callable[[], None], error: type[Exception]) -> None:
+    """Write before mutation; a saved attempt permanently prevents replay.
+
+    Call under proposal_lock, after domain validation and the intent receipt.
+    If final storage or transport fails, an empty applied_at cannot prove the
+    operation did not happen. The operator must verify the outcome before
+    preparing another proposal; repeating this id is never safe.
+    """
+    if proposal.attempted_at:
+        raise error("tentativo gia' avviato: verifica l'esito prima di preparare una nuova proposta")
+    proposal.attempted_at = time.strftime("%Y-%m-%dT%H:%M:%S%z")
+    try:
+        save()
+    except OSError as exc:
+        raise error(f"tentativo non registrato, operazione non avviata ({type(exc).__name__})") from exc

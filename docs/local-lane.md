@@ -115,6 +115,18 @@ application before the file is touched. With `--verify`, the exit code tells
 the two states apart: 0 applied and verified (or not requested), 1 refused or
 apply failed, 3 applied but verification failed. The model never writes.
 
+Patch, mail, calendar, upload and workflow gates share `proposals.py` for
+proposal ids, a per-proposal host lock and durable attempt recording. They
+reload and validate under the lock. After the intent receipt, `attempted_at`
+is saved before the mutating call; a failed record prevents execution. A
+saved attempt without `applied_at` is uncertain, including a crash, transport
+failure or final-save failure. Repeating that proposal id refuses. Verify the
+real outcome before preparing a new proposal; an attempt alone does not prove
+completion. Lists show uncertain attempts as `esito da verificare`.
+Older artifacts without the field load as not yet attempted. Successful
+completion still saves the provider id and outcome receipt. Drive artifacts
+use the same private atomic writer as the other gates.
+
 ## Relay (F4 v0)
 
 ```bash

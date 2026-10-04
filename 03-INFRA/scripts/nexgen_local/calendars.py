@@ -18,7 +18,7 @@ from nexgen_core.files import write_private_text
 from .config import LaneConfig
 from .connectors import ConnectorError
 from .connectors import calendar as calendar_conn
-from .patch import new_proposal_id, valid_proposal_id
+from .proposals import new_proposal_id, valid_proposal_id, proposal_lock, record_attempt
 from .tools import ToolError, audit_event
 
 
@@ -40,6 +40,7 @@ class CalendarProposal:
     created_at: str = ""
     applied_at: str = ""
     done_id: str = ""
+    attempted_at: str = ""
 
 
 def _save(cfg: LaneConfig, proposal: CalendarProposal) -> None:
@@ -180,6 +181,11 @@ def apply_proposal(cfg: LaneConfig, proposal_id: str, *, yes: bool) -> dict[str,
     """Execute exactly the approved proposal, once, with explicit --yes."""
     if not yes:
         raise CalendarError("applicazione rifiutata: serve --yes esplicito")
+    with proposal_lock(cfg.calendars_dir, proposal_id, CalendarError):
+        return _apply_proposal(cfg, proposal_id)
+
+
+def _apply_proposal(cfg: LaneConfig, proposal_id: str) -> dict[str, Any]:
     proposal = load_proposal(cfg, proposal_id)
     if proposal.applied_at:
         raise CalendarError("proposta gia' applicata")
@@ -190,6 +196,7 @@ def apply_proposal(cfg: LaneConfig, proposal_id: str, *, yes: bool) -> dict[str,
         ok=True,
         chars=0,
     )
+    record_attempt(proposal, lambda: _save(cfg, proposal), CalendarError)
     try:
         if proposal.kind == "create":
             done = calendar_conn.create_event(
