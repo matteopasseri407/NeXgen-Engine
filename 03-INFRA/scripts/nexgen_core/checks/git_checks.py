@@ -255,12 +255,20 @@ def check_engine_lane(engine_root: Path) -> CheckOutcome | None:
             message=t("The engine checkout is on a detached HEAD; lane work belongs on a dev/<agent> branch."),
             action=t("Check out your dev/<agent> lane before committing."),
         )
-    from nexgen_core.lanes import check_ref, guarded_ref, resolve_revision
+    from nexgen_core.lanes import LANE_BRANCH_RE, check_ref, guarded_ref, resolve_revision
 
     if not guarded_ref(branch):
+        if LANE_BRANCH_RE.match(branch) is not None:
+            return CheckOutcome(
+                id="git.engine_lane", severity=Severity.OK,
+                message=t("Engine checkout on lane branch '{branch}'", branch=branch),
+            )
+        dirty = get_uncommitted_files(repo)
         return CheckOutcome(
-            id="git.engine_lane", severity=Severity.OK,
-            message=t("Engine checkout on lane branch '{branch}'", branch=branch),
+            id="git.engine_lane", severity=Severity.WARN,
+            message=t("Engine checkout on '{branch}': work belongs on a dev/<agent> lane.", branch=branch),
+            detail=t("{count} uncommitted files", count=len(dirty)) if dirty else "",
+            action=t("Move the work to your dev/<agent> lane and verify it before integrating."),
         )
     dirty = get_uncommitted_files(repo)
     # A missing integration ref is unknown, never proof of alignment.

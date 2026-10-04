@@ -123,6 +123,42 @@ def test_unguarded_rungs_are_ignored(tmp_path: Path) -> None:
     assert lg.guarded_ref("dev/engine") is False
 
 
+def test_non_lane_branch_is_rejected(tmp_path: Path) -> None:
+    lg = _load_guard()
+    repo = _repo_with_lanes(tmp_path)
+    _git(repo, "checkout", "-qb", "feat/some-fix", "developer")
+    (repo / "g.txt").write_text("c", encoding="utf-8")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-m", "some fix")
+    ok, problems = lg.check_ref(repo, "feat/some-fix")
+    assert ok is False
+    assert any("dev/<agent>" in problem for problem in problems)
+
+
+def test_dev_lane_branch_passes_guard(tmp_path: Path) -> None:
+    lg = _load_guard()
+    repo = _repo_with_lanes(tmp_path)
+    _git(repo, "checkout", "-qb", "dev/engine", "developer")
+    (repo / "g.txt").write_text("c", encoding="utf-8")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-m", "lane work")
+    ok, problems = lg.check_ref(repo, "dev/engine")
+    assert ok is True, problems
+
+
+def test_engine_lane_warns_on_non_lane_branch(tmp_path: Path) -> None:
+    repo = _repo_with_lanes(tmp_path)
+    engine_root = repo / "03-INFRA"
+    engine_root.mkdir()
+    _git(repo, "checkout", "-qb", "fix/quick-thing", "developer")
+    (repo / "dirty.txt").write_text("wip", encoding="utf-8")
+    _git(repo, "add", "-A")
+    outcome = check_engine_lane(engine_root)
+    assert outcome is not None
+    assert outcome.severity == Severity.WARN
+    assert "dev/<agent>" in outcome.message
+
+
 def test_engine_lane_warns_on_guarded_rung_with_work(tmp_path: Path) -> None:
     repo = _repo_with_lanes(tmp_path)
     engine_root = repo / "03-INFRA"

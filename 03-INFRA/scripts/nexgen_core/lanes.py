@@ -11,6 +11,11 @@ from pathlib import Path
 RELEASE_CHORE_RE = re.compile(r"^(release:|Release v|chore\(release\))")
 INTEGRATION_REF = "developer"
 
+#: The only working branches agents may commit on. Anything else (feat/*,
+#: fix/*, draft/*, per-fix throwaways) is rejected by the guard: one durable
+#: lane per agent, no branch casino.
+LANE_BRANCH_RE = re.compile(r"^dev/[A-Za-z0-9][A-Za-z0-9._-]*$")
+
 
 def _git(repo: Path, *args: str) -> subprocess.CompletedProcess[str]:
     return subprocess.run(["git", "-C", str(repo), *args], capture_output=True, text=True, check=False)
@@ -40,7 +45,12 @@ def check_ref(
 ) -> tuple[bool, list[str]]:
     """Check a snapshot, never rewrite it. Developer requires a known base."""
     if not guarded_ref(ref):
-        return True, []
+        if LANE_BRANCH_RE.match(ref) is not None:
+            return True, []
+        return False, [
+            f"branch '{ref}' is not a dev/<agent> lane; "
+            "work on your dev/<agent> lane instead (no feat/*, fix/*, draft/*, per-fix branches)"
+        ]
     target = resolve_revision(repo, tip or ref)
     if target is None:
         return False, [f"could not resolve {tip or ref}"]

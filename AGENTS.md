@@ -16,8 +16,13 @@ No forks, no per-fix branches, no direct commits to integration or release.
 ## Rules
 
 1. Work on your `dev/<agent>` lane. If it does not exist, cut it from
-   `developer` (`git checkout -b dev/<agent> developer`).
-2. Commit on your lane whenever tests are green. Push the lane when useful.
+   `developer` (`git checkout -b dev/<agent> developer`). Never create
+   `feat/*`, `fix/*`, `draft/*`, or any other branch: your lane is the only
+   branch you ever commit on. If another session shares the checkout, use a
+   separate worktree of your lane, not a new branch.
+2. Commit on your lane whenever tests are green. Squash session work into one
+   commit at end of work — or one commit per topic at most. Do not push trails
+   of micro-commits. Push the lane when useful.
 3. Merge lane → `developer` at end of session, only with the lane's test
    gate green. One merge per session, not per fix.
 4. `developer` → `release/*` happens at version bumps only.
@@ -26,6 +31,8 @@ No forks, no per-fix branches, no direct commits to integration or release.
 
 ## Forbidden (checked by CI and by `nexgen doctor`)
 
+- Working branches outside `dev/<agent>` (`feat/*`, `fix/*`, `draft/*`,
+  per-fix throwaways). The lane guard fails them; move the work to your lane.
 - Non-merge commits on `release/*` that are not `release:` chores.
 - A `release/*` tip that does not descend from `developer`.
 - Uncommitted work sitting on `main`/`release/*` (move it to your lane).

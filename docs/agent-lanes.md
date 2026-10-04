@@ -28,7 +28,9 @@ that base cannot be resolved.
 - `release/*` must descend from `developer`, and additional non-merge
   commits must have a release-chore subject (`release:`, `Release v`, or
   `chore(release)`). Remote-tracking refs work in fresh CI clones.
-- A `dev/*` lane is allowed to contain ordinary development commits.
+- A `dev/<agent>` lane is allowed to contain ordinary development commits.
+- Any other branch (`feat/*`, `fix/*`, `draft/*`, per-fix throwaways) fails
+  the check outright: move the work to your `dev/<agent>` lane.
 
 A missing required ref fails the check. The implementation lives in
 `nexgen_core/lanes.py`; `03-INFRA/scripts/lane_guard.py` is its entry point.
@@ -45,8 +47,9 @@ not schedule this contributor check.
 
 ## Merge rhythm (lean, no PR bureaucracy)
 
-- During a session: commit freely on your lane (green tests).
-- End of session: `git checkout developer && git pull --ff-only &&
+- During a session: work on your lane, commit when tests are green. End of
+  session: squash into one commit — or one per topic at most — never a trail
+  of micro-commits. Then `git checkout developer && git pull --ff-only &&
   git merge --no-ff dev/<agent> -m "merge dev/<agent>: <what>"`.
 - Version time (maintainer): `developer` → `release/x.y.z`.
 - Conflicts on the lane merge: resolve on the lane, re-run the lane gate,
