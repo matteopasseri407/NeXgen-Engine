@@ -14,6 +14,7 @@ import stat
 import sys
 from pathlib import Path
 
+from nexgen_core.files import atomic_write_text
 from nexgen_core.paths import resolve_home
 
 #: The real command.
@@ -137,7 +138,9 @@ def install_shims(
         if not (launcher.is_file() and launcher.read_text(encoding="utf-8") == content):
             if launcher.is_symlink():
                 launcher.unlink()
-            launcher.write_text(content, encoding="utf-8")
+            # Atomic: a crash mid-write must not leave a truncated launcher
+            # on PATH (a half launcher breaks every command using it).
+            atomic_write_text(launcher, content)
         ensure_executable(launcher)
         installed.append(str(launcher))
 

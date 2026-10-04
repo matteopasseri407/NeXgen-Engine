@@ -587,8 +587,30 @@ def publish_changes(
             seen.add(mirror)
             m_res = run_git(repo_dir, "push", mirror, branch)
             if m_res.returncode != 0:
-                # Retry with force-with-lease after a fetch
+                # A plain push failed: the mirror may just be behind (safe
+                # to overwrite) or diverged with commits pushed directly to
+                # it (backup-only work that a force push would destroy).
+                # Fetch first (ref update only, never touches work), then
+                # count mirror-only commits before deciding.
                 run_git(repo_dir, "fetch", "--prune", mirror, branch)
+                uniq = run_git(repo_dir, "rev-list", "--count", f"{branch}..{mirror}/{branch}")
+                try:
+                    mirror_only = int((uniq.stdout or "").strip())
+                except ValueError:
+                    mirror_only = -1
+                if mirror_only > 0:
+                    mirror_notes.append(t(
+                        "mirror {mirror} diverged with {count} unique commit(s); NOT overwritten "
+                        "(primary is safe) -- merge them by hand, then retry",
+                        mirror=mirror, count=mirror_only,
+                    ))
+                    continue
+                if mirror_only < 0:
+                    mirror_notes.append(t(
+                        "mirror {mirror} not updated (could not inspect divergence); primary is safe, retry later",
+                        mirror=mirror,
+                    ))
+                    continue
                 m_res = run_git(repo_dir, "push", "--force-with-lease", mirror, branch)
             if m_res.returncode != 0:
                 detail = (m_res.stderr or "").strip().splitlines()

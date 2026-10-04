@@ -346,6 +346,23 @@ def install_scheduled_task(
     if startup_dir:
         startup_vbs = Path(startup_dir) / "Microsoft" / "Windows" / "Start Menu" / "Programs" / "Startup" / "KnowledgeVault Agent Sync.vbs"
         startup_vbs.parent.mkdir(parents=True, exist_ok=True)
+        if startup_vbs.is_file():
+            try:
+                existing = startup_vbs.read_bytes()
+                wanted = Path(wrapper_path).read_bytes()
+            except OSError:
+                existing, wanted = b"", b""
+            if existing and existing != wanted:
+                # Never silently destroy a foreign logon script: keep the
+                # first pre-existing content recoverable next to it.
+                backup = startup_vbs.with_name(startup_vbs.name + ".pre-nexgen.bak")
+                if not backup.is_file():
+                    try:
+                        shutil.copy2(startup_vbs, backup)
+                        log(f"startup: kept foreign logon script as {backup}")
+                    except OSError as exc:
+                        log(f"startup: cannot back up foreign logon script ({exc}); skipping fallback")
+                        return heartbeat_ok
         shutil.copy2(wrapper_path, startup_vbs)
         log(f"startup: fallback logon installed {startup_vbs}")
         return heartbeat_ok

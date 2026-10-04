@@ -547,6 +547,11 @@ def main(
             file=sys.stderr,
         )
         print(
+            "Safe to run: the pre-upgrade checks refused a dirty tree, so the reset "
+            "discards only updater-generated files (untracked files are untouched).",
+            file=sys.stderr,
+        )
+        print(
             t(
                 "Resetting the engine is only half the recovery: generated configs and views "
                 "may already be half-new. Re-run provisioning from the restored tree afterwards:\n"
