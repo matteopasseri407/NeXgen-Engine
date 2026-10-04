@@ -20,6 +20,8 @@ pytestmark = pytest.mark.skipif(os.name != "posix", reason="fake CLI are POSIX s
 CLAUDE_FAKE = """DIR=$(dirname "$0")
 printf '%s\\n' "$@" > "$DIR/args.txt"
 cat > "$DIR/stdin.txt"
+printf 'N8N_MCP_TOKEN=%s\\n' "${N8N_MCP_TOKEN:-}" > "$DIR/env.txt"
+printf 'VAULT_LIBRARY_TOKEN=%s\\n' "${VAULT_LIBRARY_TOKEN:-}" >> "$DIR/env.txt"
 printf '{"result":"risposta finta claude"}\\n'
 """
 
@@ -77,6 +79,8 @@ def _audit_lines(cfg: LaneConfig) -> list[dict]:
 
 def test_claude_relay_parses_json_and_keeps_tools_uninvocable(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     bin_dir = _fake_bin(tmp_path, "claude", CLAUDE_FAKE, monkeypatch)
+    monkeypatch.setenv("N8N_MCP_TOKEN", "test-token-must-not-reach-child")
+    monkeypatch.setenv("VAULT_LIBRARY_TOKEN", "test-token-must-not-reach-child")
     cfg = _cfg(tmp_path)
     result = run_relay(cfg, "claude", "claude-opus-5", "Qual e' la capitale dell'Umbria?")
     assert result.answer == "risposta finta claude"
@@ -87,23 +91,31 @@ def test_claude_relay_parses_json_and_keeps_tools_uninvocable(tmp_path: Path, mo
     stdin = (bin_dir / "stdin.txt").read_text(encoding="utf-8")
     assert "Qual e' la capitale dell'Umbria?" in stdin
     assert "sandbox di sola lettura" in stdin
+    env_seen = (bin_dir / "env.txt").read_text(encoding="utf-8")
+    assert "test-token-must-not-reach-child" not in env_seen
     assert _audit_lines(cfg)[0]["tool"] == "relay"
 
 
 def test_codex_relay_isolates_home_and_uses_read_only(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     bin_dir = _fake_bin(tmp_path, "codex", CODEX_FAKE, monkeypatch)
+    # Sandboxed CODEX_HOME without auth.json: nothing to copy.
+    staged_home = tmp_path / "staged-codex-home"
+    staged_home.mkdir()
+    monkeypatch.setenv("CODEX_HOME", str(staged_home))
     cfg = _cfg(tmp_path)
     result = run_relay(cfg, "codex", "gpt-6-astra", "Riassumi in una riga.")
     assert result.answer == "risposta finta codex"
     args = (bin_dir / "args.txt").read_text(encoding="utf-8")
     assert "-s" in args and "read-only" in args
     isolated = (bin_dir / "codex_home.txt").read_text(encoding="utf-8").strip()
-    real_home = os.environ.get("CODEX_HOME") or str(Path.home() / ".codex")
-    assert isolated and isolated != real_home
+    assert isolated and isolated != str(staged_home)
     assert Path(isolated).name == "codex-home"
-    real_auth = Path(real_home) / "auth.json"
-    copied = (bin_dir / "auth_copied.txt").read_text(encoding="utf-8").strip()
-    assert copied == ("yes" if real_auth.is_file() else "no")
+    assert (bin_dir / "auth_copied.txt").read_text(encoding="utf-8").strip() == "no"
+    # Same sandbox with an auth.json present: copied into the isolated home.
+    (staged_home / "auth.json").write_text('{"access":"test"}', encoding="utf-8")
+    result = run_relay(cfg, "codex", "gpt-6-astra", "Riassumi in una riga.")
+    assert result.answer == "risposta finta codex"
+    assert (bin_dir / "auth_copied.txt").read_text(encoding="utf-8").strip() == "yes"
 
 
 def test_opencode_relay_strips_progress_and_attaches_prompt(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

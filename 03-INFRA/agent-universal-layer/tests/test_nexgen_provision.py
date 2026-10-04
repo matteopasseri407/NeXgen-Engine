@@ -10,15 +10,16 @@ import json
 import shutil
 import subprocess
 import sys
-import tempfile
 from pathlib import Path
 
 import pytest
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
+_scripts = str(Path(__file__).resolve().parents[2] / "scripts")
+if _scripts not in sys.path:
+    sys.path.insert(0, _scripts)
 
-from nexgen_core import provision
-from nexgen_core.provision import (
+from nexgen_core import provision  # noqa: E402 - sys.path shim for cloned checkout
+from nexgen_core.provision import (  # noqa: E402 - sys.path shim for cloned checkout
     ensure_deps,
     report_unsatisfied_deps,
     workspace_path,
@@ -38,33 +39,33 @@ def _git_repo_with_commit(tmp: Path, filename: str = "hello.txt", content: str =
     return repo.as_uri(), rev
 
 
-def test_npx_pin_mandatory():
-    ctx, err = ensure_deps({"kind": "npx", "spec": "firecrawl-mcp"}, tempfile.mkdtemp(), server="srv")
+def test_npx_pin_mandatory(tmp_path):
+    ctx, err = ensure_deps({"kind": "npx", "spec": "firecrawl-mcp"}, tmp_path / "ws", server="srv")
     assert err is not None and "Pin rule" in err
 
 
-def test_npx_ok_needs_node():
+def test_npx_ok_needs_node(tmp_path):
     if not shutil.which("node"):
         pytest.skip("node is not on this machine; the check cannot be exercised")
-    ctx, err = ensure_deps({"kind": "npx", "spec": "firecrawl-mcp@3.24.0"}, tempfile.mkdtemp(), server="srv")
+    ctx, err = ensure_deps({"kind": "npx", "spec": "firecrawl-mcp@3.24.0"}, tmp_path / "ws", server="srv")
     assert err is None
     assert ctx == {}
 
 
-def test_git_pin_mandatory():
-    ctx, err = ensure_deps({"kind": "git", "repo": "https://example.com/r.git"}, tempfile.mkdtemp(), server="srv")
+def test_git_pin_mandatory(tmp_path):
+    ctx, err = ensure_deps({"kind": "git", "repo": "https://example.com/r.git"}, tmp_path / "ws", server="srv")
     assert err is not None and "rev" in err
 
 
-def test_git_rev_must_be_commit():
+def test_git_rev_must_be_commit(tmp_path):
     ctx, err = ensure_deps(
-        {"kind": "git", "repo": "https://example.com/r.git", "rev": "main"}, tempfile.mkdtemp(), server="srv",
+        {"kind": "git", "repo": "https://example.com/r.git", "rev": "main"}, tmp_path / "ws", server="srv",
     )
     assert err is not None and "not a commit" in err
 
 
-def test_unknown_kind_refused():
-    ctx, err = ensure_deps({"kind": "pip", "spec": "x"}, tempfile.mkdtemp(), server="srv")
+def test_unknown_kind_refused(tmp_path):
+    ctx, err = ensure_deps({"kind": "pip", "spec": "x"}, tmp_path / "ws", server="srv")
     assert err is not None and "not one of the supported kinds" in err
 
 

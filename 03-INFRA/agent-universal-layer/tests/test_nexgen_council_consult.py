@@ -225,7 +225,7 @@ def test_best_effort_cleanup_stops_all_and_removes_dir(tmp_path: Path, clean_reg
     assert not victim.exists()
 
 
-def test_completed_opinion_is_visible_while_another_seat_is_running(tmp_path, monkeypatch, capsys):
+def test_completed_opinion_is_visible_while_another_seat_is_running(tmp_path, monkeypatch, capsys, clean_registry):
     import consult
     written, release = threading.Event(), threading.Event()
     real_write = consult._write_transcript
@@ -255,7 +255,7 @@ def test_completed_opinion_is_visible_while_another_seat_is_running(tmp_path, mo
 
 
 @pytest.mark.parametrize("rebuttal", [False, True])
-def test_unexpected_exception_cancels_other_seats(tmp_path, monkeypatch, rebuttal):
+def test_unexpected_exception_cancels_other_seats(tmp_path, monkeypatch, rebuttal, clean_registry):
     import consult
     entered, release = threading.Event(), threading.Event()
     cancellations = []
