@@ -2,7 +2,8 @@
 
 `developer` is the only development branch.
 A release merges `developer` into `main`, then tags the verified merge.
-Existing `dev/*` and `release/*` branches preserve history and are retired.
+Remove retired remote branches only after their tips are included in `main`.
+Their commits remain in the release history.
 Do not create another branch for a fix or release.
 
 ## Verification and concurrent work

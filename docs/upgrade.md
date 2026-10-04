@@ -1,22 +1,13 @@
 # Upgrading the engine
 
-The install documented in `README.md`/`INIT.md` is a single `git clone` into
-one folder (e.g. `~/KnowledgeVault`). That one clone plays both roles at
-once: it is the engine code you run (`03-INFRA/`, the scripts, the docs) and
-the data root where your own notes, `99-INDEX/USER-PROFILE.md`, and
-manifests live. There is no separate "engine-only" clone by default —
-everything below matches that single-clone topology, because that is what
-the documented install actually produces.
+This guide covers Git installations.
+If you installed the package with `uv` or `pipx`, update it through that package manager.
+`nexgen update` requires an engine Git checkout.
 
-The codebase does contain the plumbing for a second, more advanced
-topology: `AGENT_ENGINE_ROOT`/`AGENT_VAULT_DATA` let you split the engine
-into its own clone separate from your data root. `nexgen update` (see
-below) understands both topologies on its own — it is a future "cutover"
-path the engine is being built toward, not something `INIT.md` sets up for
-you today. If you followed the documented install and never set those
-variables, the engine and data clone are simply the same clone, and none of
-the split-clone mechanics described below (the `99-INDEX/ENGINE-PIN.txt`
-pin) apply to you.
+A single clone, such as `~/KnowledgeVault`, can hold both engine code and private data.
+A split installation keeps them in separate clones, selected by `AGENT_ENGINE_ROOT` and `AGENT_VAULT_DATA`.
+The updater supports both arrangements.
+The split installation records its engine version in `99-INDEX/ENGINE-PIN.txt`.
 
 ## Why track your version at all
 
@@ -31,9 +22,9 @@ you're actually running; move it only when you choose to.
 `nexgen upgrades` (equivalent to `nexgen update --check`) checks this for
 you on **both** topologies: it fetches `origin`'s tags (read-only) and
 reports whether a released tag newer than your `VERSION` file exists.
-Nothing is ever updated automatically; it only tells you the choice exists.
-This is a separate command from `nexgen doctor`, which does not check for
-engine upgrades at all.
+Check mode leaves the installed version unchanged.
+The scheduled heartbeat separately attempts unattended updates within the patch-release ceiling.
+`nexgen doctor` checks alignment; use the upgrade command to check for a newer release.
 
 To check by hand instead:
 

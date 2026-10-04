@@ -2,7 +2,9 @@
 
 ## Reporting a vulnerability
 
-Open a private security advisory on GitHub (Security tab of this repo) or email the address on the maintainer's GitHub profile. (A security advisory is just a private draft report that only the maintainer can see until it's fixed, not a public post — GitHub's Security tab walks you through creating one, no special account setup beyond having a GitHub account.) Do not open a public issue for anything that could expose a real credential or an active exploit path. A regular bug that doesn't touch secrets or code execution is fine as a normal issue.
+Open a private security advisory through this repository's Security tab, or email the address on the maintainer's GitHub profile.
+Use a private report for exposed credentials or an active exploit path.
+Other bugs can be reported in a public issue.
 
 ## What must never be committed
 
@@ -24,7 +26,7 @@ If you think you've already committed one of these, treat it as a leak: rotate t
 
 The engine ships one shared secret-detection module
 (`03-INFRA/agent-universal-layer/leak-scan/leak_scan.py`), but it backs two
-unrelated gates — don't conflate them:
+gates with different scopes:
 
 - **Council's egress/output scan is an end-user protection, always on.**
   Every `council.py` call scans the outgoing brief (and the text a seat sends
@@ -54,12 +56,8 @@ signature (`git verify-commit`). Release tags are signed with `git tag -s` on a
 maintainer machine and verified with `git verify-tag`; both OpenPGP and SSH
 signature formats are accepted.
 
-From `v0.98.0` onward the rule is enforced rather than stated: `release.yml`
-refuses to publish a tag that is not an annotated object carrying a signature
-block, so an unsigned release cannot reach the Releases page. It checks for the
-signature's presence and not its cryptographic validity, because the public key
-is deliberately not present on the CI runner; verification belongs where the key
-is, on a maintainer or auditor machine.
+From `v0.98.0` onward, `release.yml` requires an annotated tag containing a signature block.
+It checks the presence of the signature; cryptographic verification runs on a maintainer or auditor machine with the public key.
 
 Earlier tags are not a uniform baseline, and this section previously claimed
 they were. Verify before you trust one:
@@ -73,5 +71,4 @@ they were. Verify before you trust one:
   was found on 2026-08-06.
 - Everything else from `v0.3.1` onward is signed.
 
-An unsigned tag past `v0.3.0` is a process bug, not a style choice. Twelve of
-them were, and the check that now blocks them is the fix.
+Unsigned tags after `v0.3.0` violate the release policy.

@@ -1,13 +1,9 @@
 # Architecture contract
 
-What the agent layer must do, stated as behaviour rather than as the code that
-currently does it. Written to be the input to a rewrite: the functions below are
-the ones to keep, the implementation is not.
+This document defines the behaviour each component must preserve when its implementation changes.
+It also records design constraints and debt to check during a refactor.
 
-Anything that reads like an apology for the current design is deliberate. The
-debt is named at the end so a rewrite does not inherit it by accident.
-
-Symbol index into the current code: `codebase-map.md` (generated from code-intel).
+See [codebase-map.md](codebase-map.md) for the current module and symbol index.
 
 ---
 
@@ -86,9 +82,8 @@ defaulting to the smallest, because a machine that changes its own behaviour
 overnight changed it without anyone choosing that. Speaks only when it cannot
 do the work, and a failed attempt must name the recovery, not the check.
 
-*Truth in advertising:* signature enforcement belongs to the release process.
-A client that warns and continues on an unverifiable signature is not enforcing
-anything, and documentation must not claim otherwise.
+Signature enforcement belongs to the release process.
+The client currently warns on an unverifiable signature and continues; this remains a gap against the contract above.
 
 ### The dependency watch
 Looks upstream for every pinned third-party thing the layer declares: code
@@ -174,34 +169,22 @@ Grouped by what the user is actually asking for.
 
 ---
 
-## 5. The debt a rewrite must not inherit
+## 5. Lessons from earlier implementations
 
-Named specifically, because each one cost real time this week.
+These failures shaped the contracts above.
+They describe earlier implementations; check the current code and backlog before treating one as an open defect.
 
-1. **Two hand-maintained twins.** The Linux and Windows implementations of the
-   judge are separate files kept in step by hand. They drifted: two checks
-   existed on one platform only, in the very component whose job is noticing
-   drift. Either generate both from one description, or make one of them thin
-   enough that it cannot drift.
-2. **A 1300-line shell script with embedded interpreters.** The judge shells
-   out to inline programs to read its own configuration. It is not testable in
-   pieces and not readable in one pass.
-3. **Output functions whose meaning depends on flags.** After adding one flag,
-   the same reporting call means "print" or "count silently" depending on two
-   globals. Reporting should be data the caller emits, and formatting a
-   decision made once at the edge.
-4. **Tests that pin the census instead of the invariant.** "Exactly two
-   scheduled tasks", "the output contains a checkmark". Every legitimate
-   extension broke them, which trains people to loosen tests rather than trust
-   them. Assert the rule: every task runs from the state directory; failures
-   are never suppressed.
-5. **Defaults changed without a compatibility window.** Changing what a command
-   prints by default is a contract change and ripples through everything that
-   reads it.
-6. **Documentation that promises more than the code does.** A public file
-   claimed release signing was enforced client-side when it warns and
-   continues. A verifiable claim that is false discredits the true ones beside
-   it.
-7. **No forward compatibility in the config readers.** Fixed for one of the two
-   manifests; the other still rejects an unknown key outright, which stops
-   every machine on the older release until someone intervenes by hand.
+1. **Duplicated platform logic:** separate Linux and Windows doctor implementations drifted.
+   The shared Python core now owns diagnostics; platform launchers forward arguments.
+2. **Logic embedded in shell:** a large doctor script mixed shell and inline interpreters.
+   Keep checks in modules that can be tested independently.
+3. **Reporting controlled by globals:** the same call printed or silently counted depending on flags.
+   Return structured outcomes and choose formatting at the command boundary.
+4. **Tests tied to implementation details:** fixed task counts and exact output strings blocked valid changes.
+   Test observable rules, such as task paths and failure reporting.
+5. **Changed defaults without compatibility:** consumers depended on a command's old output.
+   Treat output changes as contract changes.
+6. **Unsupported security claims:** documentation claimed client-side signature enforcement while the client warned and continued.
+   Verify security claims against both the release workflow and the updater.
+7. **Readers that rejected new configuration:** an unknown key could stop an older consumer.
+   Preserve the forward-compatibility rule in invariant 8.
