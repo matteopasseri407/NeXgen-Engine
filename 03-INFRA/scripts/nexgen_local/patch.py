@@ -12,6 +12,7 @@ outcome after; a failed verification is a distinct state, not a success.
 """
 from __future__ import annotations
 
+import contextlib
 import difflib
 import hashlib
 import json
@@ -22,8 +23,10 @@ import tempfile
 import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
+from typing import Iterator
 
 from nexgen_core.files import write_private_text
+from nexgen_core.lock import HostLock, LockTimeoutError
 
 from .config import LaneConfig
 from .llm import LLM
@@ -66,6 +69,42 @@ class Proposal:
 
 def _sha(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8", errors="replace")).hexdigest()
+
+
+def content_sha(*parts: str) -> str:
+    """Integrity fingerprint over approval-visible fields, bound at propose time.
+
+    Each gate hashes exactly what its approval screen shows; the apply path
+    recomputes it from the loaded proposal and refuses on mismatch, so an
+    edit to the proposal JSON between approval and --yes cannot silently
+    change what is sent. NUL-separated so ("ab", "c") != ("a", "bc").
+    """
+    digest = hashlib.sha256()
+    for part in parts:
+        digest.update(b"\x00")
+        digest.update(str(part).encode("utf-8", errors="replace"))
+    return digest.hexdigest()
+
+
+@contextlib.contextmanager
+def exclusive_apply(directory: Path | str, error_cls: type[Exception]) -> Iterator[None]:
+    """Serialize one gate's apply path across processes; fail fast on contention.
+
+    Closes the check(applied_at)-then-send race between two concurrent --yes
+    runs. Crash-safe by construction: flock releases with the process, so no
+    stale claim can block a later retry. The crash-after-send case is covered
+    instead by the sending_at marker each gate stores in its proposal: a
+    leftover marker refuses the retry with a verify-on-provider message.
+    """
+    lock = HostLock(Path(directory) / ".apply.lock", timeout=0, command_name="nexgen-local apply")
+    try:
+        lock.acquire()
+    except LockTimeoutError as exc:
+        raise error_cls("un'altra applicazione e' in corso su questa macchina, riprova tra poco") from exc
+    try:
+        yield
+    finally:
+        lock.release()
 
 
 def _read_text_bytes(path: Path) -> str:
@@ -303,6 +342,12 @@ def apply_proposal(
     """
     if not yes:
         raise PatchError("applicazione rifiutata: serve --yes esplicito")
+    with exclusive_apply(cfg.proposals_dir, PatchError):
+        return _apply_proposal_locked(cfg, proposal_id, verify=verify)
+
+
+def _apply_proposal_locked(cfg: LaneConfig, proposal_id: str, verify: str | None = None) -> dict:
+    """Apply body, serialized by exclusive_apply (see apply_proposal)."""
     proposal = load_proposal(cfg, proposal_id)
     if proposal.applied_at:
         raise PatchError("proposta gia' applicata")

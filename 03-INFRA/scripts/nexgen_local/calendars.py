@@ -8,6 +8,7 @@ gate validates them. Audit intent before, outcome after.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import time
 from dataclasses import asdict, dataclass
@@ -18,7 +19,7 @@ from nexgen_core.files import write_private_text
 from .config import LaneConfig
 from .connectors import ConnectorError
 from .connectors import calendar as calendar_conn
-from .patch import new_proposal_id, valid_proposal_id
+from .patch import content_sha, exclusive_apply, new_proposal_id, valid_proposal_id
 from .tools import ToolError, audit_event
 
 
@@ -40,6 +41,17 @@ class CalendarProposal:
     created_at: str = ""
     applied_at: str = ""
     done_id: str = ""
+    #: Integrity fingerprint over the approval-visible fields (see patch.content_sha).
+    content_sha: str = ""
+    #: Set when an apply starts; a leftover marker refuses the retry.
+    sending_at: str = ""
+
+
+def _proposal_sha(proposal: CalendarProposal) -> str:
+    return content_sha(
+        proposal.kind, proposal.calendar_id, proposal.summary, proposal.start,
+        proposal.end, proposal.description, proposal.location, proposal.event_id,
+    )
 
 
 def _save(cfg: LaneConfig, proposal: CalendarProposal) -> None:
@@ -117,6 +129,7 @@ def propose_event(
         event_id="",
         created_at=time.strftime("%Y-%m-%dT%H:%M:%S%z"),
     )
+    proposal.content_sha = _proposal_sha(proposal)
     _store_new(cfg, proposal)
     audit_event(cfg, "propose_calendar", {"kind": "create", "summary": summary}, ok=True, chars=len(summary))
     return proposal
@@ -143,6 +156,7 @@ def propose_delete(cfg: LaneConfig, calendar_id: str = "primary", event_id: str 
         event_id=event_id,
         created_at=time.strftime("%Y-%m-%dT%H:%M:%S%z"),
     )
+    proposal.content_sha = _proposal_sha(proposal)
     _store_new(cfg, proposal)
     audit_event(cfg, "propose_calendar", {"kind": "delete", "event": event_id}, ok=True, chars=0)
     return proposal
@@ -180,9 +194,29 @@ def apply_proposal(cfg: LaneConfig, proposal_id: str, *, yes: bool) -> dict[str,
     """Execute exactly the approved proposal, once, with explicit --yes."""
     if not yes:
         raise CalendarError("applicazione rifiutata: serve --yes esplicito")
+    with exclusive_apply(cfg.calendars_dir, CalendarError):
+        return _apply_proposal_locked(cfg, proposal_id)
+
+
+def _apply_proposal_locked(cfg: LaneConfig, proposal_id: str) -> dict[str, Any]:
+    """Execute body, serialized by exclusive_apply (see apply_proposal)."""
     proposal = load_proposal(cfg, proposal_id)
     if proposal.applied_at:
         raise CalendarError("proposta gia' applicata")
+    if proposal.sending_at:
+        raise CalendarError(
+            "applicazione gia' tentata: verifica sul calendario se e' stata creata "
+            f"(tentativo alle {proposal.sending_at}), non riprovare alla cieca"
+        )
+    if not proposal.content_sha:
+        raise CalendarError("proposta in formato precedente al vincolo di integrita': riproponi")
+    if proposal.content_sha != _proposal_sha(proposal):
+        raise CalendarError("contenuto cambiato dopo la proposta: riproponi e riapprova")
+    proposal.sending_at = time.strftime("%Y-%m-%dT%H:%M:%S%z")
+    try:
+        _save(cfg, proposal)
+    except OSError as exc:
+        raise CalendarError(f"impossibile marcare il tentativo: {exc}") from exc
     audit_event(
         cfg,
         "apply_calendar",
@@ -206,8 +240,13 @@ def apply_proposal(cfg: LaneConfig, proposal_id: str, *, yes: bool) -> dict[str,
             done = calendar_conn.delete_event(proposal.calendar_id, proposal.event_id)
     except ConnectorError as exc:
         audit_event(cfg, "apply_calendar", {"proposal": proposal.id, "phase": "result"}, ok=False, chars=0)
+        # The provider refused: definitely not applied, so the retry stays open.
+        proposal.sending_at = ""
+        with contextlib.suppress(OSError):
+            _save(cfg, proposal)
         raise CalendarError(f"applicazione fallita: {exc.refusal}") from exc
     proposal.applied_at = time.strftime("%Y-%m-%dT%H:%M:%S%z")
+    proposal.sending_at = ""
     proposal.done_id = str(done.get("id", ""))
     try:
         _save(cfg, proposal)

@@ -10,6 +10,7 @@ outcome (provider id) after.
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
 import mimetypes
@@ -21,7 +22,7 @@ from typing import Any
 from .config import LaneConfig
 from .connectors import ConnectorError
 from .connectors import drive as drive_conn
-from .patch import new_proposal_id
+from .patch import content_sha, exclusive_apply, new_proposal_id
 from .tools import ToolError, audit_event
 
 
@@ -41,6 +42,14 @@ class UploadProposal:
     created_at: str
     applied_at: str = ""
     drive_id: str = ""
+    #: Integrity fingerprint over name + mime + folder (see patch.content_sha).
+    meta_sha: str = ""
+    #: Set when an upload starts; a leftover marker refuses the retry.
+    sending_at: str = ""
+
+
+def _meta_sha(proposal: UploadProposal) -> str:
+    return content_sha(proposal.name, proposal.mime, proposal.folder_id)
 
 
 def _sha(data: bytes) -> str:
@@ -124,6 +133,7 @@ def stage_upload(cfg: LaneConfig, local_path: str, name: str = "", folder_id: st
         folder_id=str(folder_id or "").strip(),
         created_at=time.strftime("%Y-%m-%dT%H:%M:%S%z"),
     )
+    proposal.meta_sha = _meta_sha(proposal)
     for _ in range(5):
         proposal.id = new_proposal_id()
         try:
@@ -148,15 +158,40 @@ def confirm_upload(cfg: LaneConfig, proposal_id: str, confirm: bool) -> dict[str
     """Execute a staged upload once, only on explicit confirm."""
     if not confirm:
         raise DriveGateError("caricamento rifiutato: serve confirm esplicito")
+    with exclusive_apply(cfg.uploads_dir, DriveGateError):
+        return _confirm_upload_locked(cfg, proposal_id)
+
+
+def _confirm_upload_locked(cfg: LaneConfig, proposal_id: str) -> dict[str, Any]:
+    """Execute body, serialized by exclusive_apply (see confirm_upload)."""
     proposal = load_proposal(cfg, proposal_id)
     if proposal.applied_at:
         raise DriveGateError("proposta gia' caricata")
+    if proposal.sending_at:
+        raise DriveGateError(
+            "caricamento gia' tentato: verifica su Drive se e' arrivato "
+            f"(tentativo alle {proposal.sending_at}), non riprovare alla cieca"
+        )
+    if not proposal.meta_sha:
+        raise DriveGateError("proposta in formato precedente al vincolo di integrita': riproponi")
+    if proposal.meta_sha != _meta_sha(proposal):
+        raise DriveGateError("nome o cartella cambiati dopo la proposta: riproponi e riapprova")
+    # Re-resolve confinement now: the staged path is plain JSON, and the file
+    # (or a symlink swapped in) may have moved outside the roots since stage.
+    target = _confined_file(cfg, proposal.local_path)
+    if str(target) != proposal.local_path:
+        raise DriveGateError("file spostato dopo la proposta: riproponi")
     try:
-        data = Path(proposal.local_path).read_bytes()
+        data = target.read_bytes()
     except OSError as exc:
         raise DriveGateError(f"file non piu' leggibile: {exc}") from exc
     if _sha(data) != proposal.sha:
         raise DriveGateError("file cambiato dopo la proposta: riproponi")
+    proposal.sending_at = time.strftime("%Y-%m-%dT%H:%M:%S%z")
+    try:
+        _save(cfg, proposal)
+    except OSError as exc:
+        raise DriveGateError(f"impossibile marcare il tentativo: {exc}") from exc
     audit_event(
         cfg,
         "drive_upload",
@@ -168,8 +203,13 @@ def confirm_upload(cfg: LaneConfig, proposal_id: str, confirm: bool) -> dict[str
         sent = drive_conn.upload_file(data, proposal.name, proposal.mime, proposal.folder_id)
     except ConnectorError as exc:
         audit_event(cfg, "drive_upload", {"proposal": proposal.id, "phase": "result"}, ok=False, chars=proposal.size)
+        # The provider refused: definitely not uploaded, so the retry stays open.
+        proposal.sending_at = ""
+        with contextlib.suppress(OSError):
+            _save(cfg, proposal)
         raise DriveGateError(f"caricamento fallito: {exc.refusal}") from exc
     proposal.applied_at = time.strftime("%Y-%m-%dT%H:%M:%S%z")
+    proposal.sending_at = ""
     proposal.drive_id = str(sent.get("id", ""))
     try:
         _save(cfg, proposal)

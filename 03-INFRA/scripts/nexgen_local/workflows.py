@@ -13,6 +13,7 @@ an explicitly confirming caller) names the workflow and approves the run.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import time
@@ -26,7 +27,7 @@ from typing import Any, Callable
 from nexgen_core.files import write_private_text
 
 from .config import LaneConfig
-from .patch import new_proposal_id, valid_proposal_id
+from .patch import content_sha, exclusive_apply, new_proposal_id, valid_proposal_id
 from .tools import ToolError, audit_event
 
 
@@ -63,6 +64,17 @@ class WorkflowProposal:
     created_at: str = ""
     applied_at: str = ""
     outcome: str = ""
+    #: Integrity fingerprint over workflow + params (see patch.content_sha).
+    content_sha: str = ""
+    #: Set when a run starts; a leftover marker refuses the retry.
+    sending_at: str = ""
+
+
+def _proposal_sha(proposal: WorkflowProposal) -> str:
+    return content_sha(
+        proposal.workflow,
+        json.dumps(proposal.params, ensure_ascii=False, sort_keys=True),
+    )
 
 
 def allowlist_path() -> Path:
@@ -140,6 +152,7 @@ def propose_run(cfg: LaneConfig, workflow: str, params: dict[str, Any] | None = 
         params=dict(params or {}),
         created_at=time.strftime("%Y-%m-%dT%H:%M:%S%z"),
     )
+    proposal.content_sha = _proposal_sha(proposal)
     for _ in range(5):
         proposal.id = new_proposal_id()
         try:
@@ -170,12 +183,32 @@ def confirm_run(cfg: LaneConfig, proposal_id: str, confirm: bool, http: HttpFn |
     """POST the staged params to the allowlisted webhook, once, on confirm."""
     if not confirm:
         raise WorkflowError("esecuzione rifiutata: serve confirm esplicito")
+    with exclusive_apply(cfg.workflows_dir, WorkflowError):
+        return _confirm_run_locked(cfg, proposal_id, http=http)
+
+
+def _confirm_run_locked(cfg: LaneConfig, proposal_id: str, http: HttpFn | None = None) -> dict[str, Any]:
+    """POST body, serialized by exclusive_apply (see confirm_run)."""
     proposal = load_proposal(cfg, proposal_id)
     if proposal.applied_at:
         raise WorkflowError("proposta gia' eseguita")
+    if proposal.sending_at:
+        raise WorkflowError(
+            "esecuzione gia' tentata: verifica su n8n se e' partita "
+            f"(tentativo alle {proposal.sending_at}), non riprovare alla cieca"
+        )
+    if not proposal.content_sha:
+        raise WorkflowError("proposta in formato precedente al vincolo di integrita': riproponi")
+    if proposal.content_sha != _proposal_sha(proposal):
+        raise WorkflowError("params cambiati dopo la proposta: riproponi e riapprova")
     entry = load_allowlist().get(proposal.workflow)
     if not isinstance(entry, dict) or not str(entry.get("webhook_url", "")).startswith("http"):
         raise WorkflowError(f"workflow non piu' consentito: {proposal.workflow}")
+    proposal.sending_at = time.strftime("%Y-%m-%dT%H:%M:%S%z")
+    try:
+        _save(cfg, proposal)
+    except OSError as exc:
+        raise WorkflowError(f"impossibile marcare il tentativo: {exc}") from exc
     headers = {"Content-Type": "application/json"}
     if entry.get("secret"):
         headers["X-Nexgen-Secret"] = str(entry["secret"])
@@ -190,8 +223,13 @@ def confirm_run(cfg: LaneConfig, proposal_id: str, confirm: bool, http: HttpFn |
         raise WorkflowError(f"esecuzione fallita: {exc}") from exc
     if result.status not in (200, 201, 202):
         audit_event(cfg, "run_workflow", {"proposal": proposal.id, "phase": "result"}, ok=False, chars=0)
+        # The webhook refused: not run, so the retry stays open.
+        proposal.sending_at = ""
+        with contextlib.suppress(OSError):
+            _save(cfg, proposal)
         raise WorkflowError(f"esecuzione fallita: HTTP {result.status}")
     proposal.applied_at = time.strftime("%Y-%m-%dT%H:%M:%S%z")
+    proposal.sending_at = ""
     proposal.outcome = result.body.decode("utf-8", errors="replace")[:2000]
     try:
         _save(cfg, proposal)
