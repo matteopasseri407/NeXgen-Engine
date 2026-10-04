@@ -1,9 +1,9 @@
-# NeXgen Engine — versione italiana
+# NeXgen Engine, versione italiana
 
 <p align="center">
   <picture>
     <source srcset="assets/nexgen-architecture-banner.webp" type="image/webp">
-    <img src="assets/nexgen-architecture-banner.png" alt="NeXgen Engine — AI Operating Layer" width="100%" loading="eager">
+    <img src="assets/nexgen-architecture-banner.png" alt="NeXgen Engine, AI Operating Layer" width="100%" loading="eager">
   </picture>
 </p>
 
@@ -18,17 +18,19 @@
   <a href="README.md">🇬🇧 Read in English</a> · <a href="#guida-rapida">Guida rapida</a> · <a href="docs/architecture-contract.md">Architettura</a>
 </p>
 
-**Un solo repo Git che configura ogni CLI di coding AI su ogni macchina — e ne verifica il risultato.**
+**Configura le CLI di coding AI da una sola sorgente Git e verifica il risultato.**
 
-NeXgen Engine è un control layer deterministico che mantiene identici istruzioni, configurazione degli strumenti, segreti e memoria versionata tra Claude Code, Codex, OpenCode e Antigravity.
+NeXgen Engine genera le configurazioni di Claude Code, Codex, OpenCode e Antigravity da un KnowledgeVault privato.
+Il Vault contiene istruzioni condivise, manifest MCP e skill, segreti cifrati e memoria in Markdown.
 
-Le configurazioni delle CLI divergono da macchina a macchina. NeXgen tiene un'unica sorgente di verità in Git, la compila nei formati nativi di ogni assistente e ne verifica il risultato con controlli automatici che bocciano invece di far finta che vada tutto bene.
+Ogni CLI riceve il proprio formato nativo, mentre le impostazioni specifiche della macchina restano locali.
+Il sync applica la configurazione; doctor controlla gli scostamenti e segnala ciò che non riesce a verificare.
 
 ---
 
-## I Tre Piani Architetturali
+## Le tre parti
 
-NeXgen organizza il lavoro degli agenti in tre piani separati:
+Il motore tiene separate tre fonti di configurazione:
 
 1. **Comportamento (Behavior):** Regole operative universali, prompt e guardrail immutabili definiti in `AGENTS.md` e collegati a ogni runtime.
 2. **Configurazione (Configuration):** Manifest astratti di connettori MCP e skill, compilati in modo deterministico nei formati delle varie CLI tramite `nexgen sync`.
@@ -38,27 +40,38 @@ NeXgen organizza il lavoro degli agenti in tre piani separati:
 
 ## Cosa fa
 
-* **Core unico in Python (`nexgen_core`):** gira nativo su Linux e Windows, senza gemelli shell. Suite automatizzata in CI.
+* **Core unico in Python (`nexgen_core`):** gira su Linux e Windows ed è verificato dalla suite CI.
 * **Moduli deterministici:** catalogo di 9 moduli (`memory`, `semantic-rag`, `firecrawl`, `ocr`, `n8n`, `browser`, `council`, `local-lane`, `sync`) gestito con `nexgen modules list` e `nexgen modules set`.
-* **Lane locale governata (opzionale):** i modelli locali piccoli lavorano in sola lettura tramite `nexgen-local` — query costruite dal motore, ricevute su audit fail-closed e suite trappole bloccante: una sola injection o confabulazione boccia. Le proposte di patch passano da un cancello a fatti macchina (`nexgen-local propose` / `apply`). La ricerca multi-interazione conserva fonti, ricevute e proposte tra sessioni (`nexgen-local explore --session-id new`); i dialoghi di aggiornamento mostrano il logo del motore e nessuna icona fissa viene installata. Vedi `docs/local-lane.md` e `docs/upgrade.md`.
-* **Segreti:** cifratura asimmetrica `age` (`99-SECRETS/secrets.yaml.age`) su chiavi locali (`0600`), slot OAuth isolati per host, `secrets.env` materializzato per shell e servizi. Niente passphrase da ricordare o digitare.
+* **Modelli locali, opzionali:** `nexgen-local` costruisce query in sola lettura e registra le fonti di ogni risposta.
+  Il gate di valutazione fallisce se la suite trappole rileva un'injection o una risposta senza riscontro.
+  Le proposte di patch richiedono approvazione tramite `nexgen-local propose` / `apply`.
+  La ricerca conserva fonti, ricevute e proposte tra sessioni con `nexgen-local explore --session-id new`.
+  Vedi [local-lane.md](docs/local-lane.md).
+* **Segreti:** cifratura asimmetrica `age` (`99-SECRETS/secrets.yaml.age`) su chiavi locali (`0600`), slot OAuth isolati per host e `secrets.env` generato per shell e servizi.
+  Non serve una passphrase.
 * **Shell operatore:** dashboard `nexgen info` e REPL interattiva `nexgen shell`, così la gestione ordinaria non richiede mai una CLI AI aperta.
 * **Quattro runtime:** Claude Code, Codex, OpenCode (nativo V2: istruzioni, `plugins`/`permissions`, viste skill) e Antigravity, ognuno nel suo dialetto, seggi Council inclusi.
-* **Diagnostica che boccia (`nexgen doctor`):** controlli automatici su allineamento Git, manifest, igiene dei link, token e permessi. Un controllo che non può verificare dichiara esito indeterminato invece di passare.
+* **Diagnostica (`nexgen doctor`):** controlli automatici su allineamento Git, manifest, link, token e permessi.
+  Un controllo che non riesce a verificare dichiara un esito indeterminato.
 
 ---
 
-## Guida Rapida
+## Guida rapida
 
-### Opzione A — Installato (consigliata)
+### Opzione A, installazione
 
 ```bash
-uv tool install nexgen-engine   # oppure: pipx install nexgen-engine
+uv tool install git+https://github.com/matteopasseri407/NeXgen-Engine   # oppure: pipx install git+https://github.com/matteopasseri407/NeXgen-Engine
 nexgen info
 nexgen doctor
 ```
 
-### Opzione B — Clonato
+Il motore si installa da questo repository.
+Le release includono un archivio sorgente, una wheel e `SHA256SUMS` per verificare i download.
+La pubblicazione su PyPI e Homebrew è un canale separato, ancora da attivare, descritto in [release-packages.md](docs/release-packages.md).
+Le installazioni come pacchetto si aggiornano tramite il gestore usato per installarle.
+
+### Opzione B, clone
 
 ```bash
 git clone https://github.com/matteopasseri407/NeXgen-Engine.git ~/KnowledgeVault
@@ -66,27 +79,32 @@ cd ~/KnowledgeVault
 bash install.sh --check          # Windows PowerShell: .\install.ps1 -Check
 ```
 
+Per i clone Git, `nexgen update` richiede conferma; il heartbeat pianificato può applicare aggiornamenti patch senza intervento.
+Vedi [upgrade.md](docs/upgrade.md) per requisiti e recupero.
+
 ### 1. Inizializzazione
 
-Già eseguita dall'installer. Verifica:
+L'installer ha già eseguito l'inizializzazione.
+Verifica:
 
 ```bash
 nexgen sync
 nexgen doctor --verbose
 ```
 
-### 2. Configurazione Guidata
+### 2. Configurazione guidata
 
-Apri `INIT.md` e incolla il testo nella tua CLI preferita (Claude Code, Codex, OpenCode o Antigravity). L'agente configurerà il profilo e i moduli desiderati.
+Apri `INIT.md` e incolla il testo nella tua CLI preferita, Claude Code, Codex, OpenCode o Antigravity.
+L'assistente guiderà la scelta del profilo e dei moduli.
 
-### 3. Allineamento e Verifica
+### 3. Allineamento e verifica
 
 ```bash
 nexgen sync
 nexgen doctor
 ```
 
-### 4. Gestione da Terminale
+### 4. Gestione da terminale
 
 ```bash
 nexgen info
@@ -95,6 +113,13 @@ nexgen shell
 
 ---
 
+## Sviluppo
+
+Lo sviluppo usa `developer`; le release arrivano su `main` tramite pull request verificata.
+Il [contratto Git](docs/agent-lanes.md) descrive il lavoro concorrente e il riallineamento automatico con `main`.
+Proprietari dei moduli e test richiesti sono in [CONTRIBUTING.md](CONTRIBUTING.md).
+
 ## Licenza
 
-PolyForm Noncommercial License 1.0.0. Gratuito per qualsiasi uso non commerciale, studio e deployment self-hosted. Consulta il file `LICENSE` per il testo completo. Per uso commerciale vedi `COMMERCIAL.md`.
+Il repository usa PolyForm Noncommercial License 1.0.0.
+Consulta [LICENSE](LICENSE) per i termini e [COMMERCIAL.md](COMMERCIAL.md) per l'uso commerciale.

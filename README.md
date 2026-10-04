@@ -16,20 +16,22 @@
 </p>
 
 <p align="center">
-  <a href="README.it.md">🇮🇹 Leggi in italiano</a> · <a href="#quick-start">Quick Start</a> · <a href="#why-nexgen-vs-alternatives">Why NeXgen?</a> · <a href="docs/architecture-contract.md">Architecture</a> · <a href="CHANGELOG.md">Changelog</a>
+  <a href="README.it.md">🇮🇹 Leggi in italiano</a> · <a href="#quick-start">Quick Start</a> · <a href="#how-it-compares">Why NeXgen?</a> · <a href="docs/architecture-contract.md">Architecture</a> · <a href="CHANGELOG.md">Changelog</a>
 </p>
 
-**One Git repo that configures every AI coding CLI on every machine — and checks the result.**
+**Configure your AI coding CLIs from one Git source, then check the result.**
 
-NeXgen Engine is a deterministic control layer that keeps instructions, tool configuration, secrets, and version-controlled memory identical across Claude Code, Codex, OpenCode, and Antigravity.
+NeXgen Engine generates configuration for Claude Code, Codex, OpenCode, and Antigravity from a private KnowledgeVault.
+The Vault holds shared instructions, MCP and skill manifests, encrypted secrets, and Markdown memory.
 
-Agent CLI configurations drift across machines. NeXgen keeps a single source of truth in Git, compiles it into each assistant's native format, and verifies the outcome with automated diagnostics that fail instead of passing silently.
+Each CLI receives its native format, while machine-specific settings stay local.
+The sync command applies the configuration; doctor checks for drift and reports anything it cannot verify.
 
 ---
 
 ## Demo
 
-> Visual proof beats architecture diagrams. The two commands below are the whole product: see the state, fix the drift.
+Inspect the environment and manage it from the terminal:
 
 ```bash
 nexgen info    # visual dashboard: engine version, runtimes aligned, vault hygiene, secrets
@@ -42,14 +44,14 @@ nexgen doctor  # fail-closed checks: git alignment, MCP reachability, link hygie
     <source srcset="assets/nexgen-info-demo.webp" type="image/webp">
     <img src="assets/nexgen-info-demo.png" alt="nexgen info dashboard on Windows: Host, Vault, Planes & Runtimes, Modules and Security & Diagnostics at a glance" width="100%">
   </picture>
-  <br><em><code>nexgen info</code> on Windows — Host, Vault (344 notes), Planes & Runtimes, Modules and Security & Diagnostics at a glance. Run <code>nexgen doctor</code> for full diagnosis.</em>
+  <br><em><code>nexgen info</code> on Windows, showing host, Vault, runtimes, modules, and diagnostics. Run <code>nexgen doctor</code> for the full report.</em>
 </p>
 
 ---
 
 ## The Three Planes
 
-NeXgen structures agent operations into three decoupled planes:
+The engine keeps three sources of configuration separate:
 
 1. **Behavior:** Universal operating policies, prompts, and invariant guardrails defined in `AGENTS.md` and symlinked into every runtime.
 2. **Configuration:** Abstract MCP manifests and skills compiled deterministically into each CLI's native configuration format via `nexgen sync`.
@@ -77,21 +79,9 @@ OpenCode · Antigravity    Per-Host OAuth Slots          Link Hygiene Map
 
 ## How it compares
 
-Small syncers copy one MCP server fast. NeXgen covers the full layer when several CLIs on several machines must share instructions, MCP, skills, secrets and memory without drift.
-
-| Capability | NeXgen Engine | AgentSync | mcp-sync | mcps-manager | dotfiles-ai |
-|---|---|---|---|---|---|
-| **MCP sync** | manifest `yaml` → native, 4 CLIs | symlink | auto-discover | bundle | — |
-| **AGENTS.md / instructions** | canonical `AGENTS.md` + CAS | symlink | — | — | template |
-| **Skills** | lazy catalog + `deps:` | yes | — | — | — |
-| **Memory vault (Markdown+Git)** | CAS + `update_section` + `vault-map` | — | — | — | — |
-| **Secrets `age` Zero-Passphrase** | multi-recipient `0600` + per-host OAuth | — | — | — | — |
-| **Doctor diagnostics** | fail-closed checks (see CI) | — | — | — | — |
-| **Windows native** | verified + CI + native shims | community | Python | Node | community |
-| **Tests** | automated suite (see CI) | partial | — | — | — |
-| **License** | PolyForm Noncommercial 1.0.0 | MIT | MIT | MIT | MIT |
-
-*Capabilities as of Sep 2026 — corrections welcome. If you only need a lightweight MCP copy between two CLIs, a small syncer is the faster path. If you want zero drift across instructions, MCP, skills, secrets and memory with a doctor that fails closed, NeXgen covers all five in one place.*
+NeXgen generates native CLI settings from shared manifests and checks whether the result matches them.
+Its scope includes instructions, MCP connectors, skills, secrets, and Markdown memory.
+The [sync contract](docs/sync-contract.md) describes what it manages, what it preserves, and how it reports failures.
 
 ---
 
@@ -99,7 +89,11 @@ Small syncers copy one MCP server fast. NeXgen covers the full layer when severa
 
 * **Single Python core (`nexgen_core`):** runs natively on Linux and Windows, no shell twins. Automated suite in CI.
 * **Deterministic modules:** 9-module catalog (`memory`, `semantic-rag`, `firecrawl`, `ocr`, `n8n`, `browser`, `council`, `local-lane`, `sync`) managed with `nexgen modules list` and `nexgen modules set`.
-* **Governed local lane (optional):** small local models run read-only through `nexgen-local` — engine-built queries, fail-closed audit receipts, and a blocking trap suite that fails on a single injection or confabulation. Patch proposals are gated by a machine-facts-only approval screen (`nexgen-local propose` / `apply`). Multi-interaction research keeps sources, receipts and staged proposals across sessions (`nexgen-local explore --session-id new`); update dialogs show the engine logo, and no fixed icon is installed anywhere. See `docs/local-lane.md` and `docs/upgrade.md`.
+* **Local models (optional):** `nexgen-local` builds read-only queries and records the sources used by each answer.
+  Its evaluation gate fails on any injection or unsupported answer in the trap suite.
+  Patch proposals require approval through `nexgen-local propose` / `apply`.
+  Research sessions preserve sources, receipts, and staged proposals with `nexgen-local explore --session-id new`.
+  See [local-lane.md](docs/local-lane.md).
 * **Secrets store:** asymmetric `age` encryption (`99-SECRETS/secrets.yaml.age`) on machine-local keys (`0600`), isolated per-host OAuth slots, materialized `secrets.env` for shells and systemd services. No passphrase to remember or type.
 * **Operator shell:** `nexgen info` status dashboard and `nexgen shell` interactive REPL, so routine management never needs an AI assistant open.
 * **Four runtimes:** Claude Code, Codex, OpenCode (native V2: scope-file instructions, `plugins`/`permissions`, skill views) and Antigravity, each rendered in its own dialect, Council seats included.
@@ -118,13 +112,12 @@ nexgen info
 nexgen doctor
 ```
 
-Once the maintainer registers a PyPI token or the Homebrew tap (see
-`docs/release-packages.md`), `uv tool install nexgen-engine` and
-`brew install matteopasseri407/nexgen/nexgen` become the shorter paths;
-every release also ships an sdist, a wheel and `SHA256SUMS` as release
-assets, so any installer can verify what it downloads.
+Releases include a source archive, a wheel, and `SHA256SUMS` for download verification.
+PyPI and Homebrew publication are separate, pending distribution channels, documented in [release-packages.md](docs/release-packages.md).
 
-Updates via `nexgen update` (with confirmation) and via the scheduled `guard` task that runs at login + every 30 min.
+Package installations are updated through the package manager that installed them.
+For Git checkouts, `nexgen update` asks for confirmation; the scheduled heartbeat can apply patch releases unattended.
+See [upgrade.md](docs/upgrade.md) for requirements and recovery.
 
 ### Option B — Cloned (recommended for hacking the engine)
 
@@ -136,7 +129,8 @@ bash install.sh --check          # Windows PowerShell: .\install.ps1 -Check
 
 ### 1. Bootstrap
 
-Already done by the installer. Verify:
+The installer has already completed the bootstrap.
+Verify:
 
 ```bash
 nexgen sync
@@ -145,7 +139,8 @@ nexgen doctor --verbose
 
 ### 2. Configure your environment
 
-Open `INIT.md` and paste its contents into your preferred agent CLI (Claude Code, Codex, OpenCode, or Antigravity). The agent will guide you through profile selection and module setup.
+Open `INIT.md` and paste its contents into your preferred agent CLI, Claude Code, Codex, OpenCode, or Antigravity.
+The assistant will guide profile selection and module setup.
 
 ### 3. Align and verify (anytime)
 
@@ -187,9 +182,9 @@ nexgen shell
 
 ## Architecture Boundaries
 
-* **No Lock-In:** All memories and configuration are stored as human-readable Markdown and YAML in Git.
-* **Deterministic Write Paths:** Knowledge notes are modified exclusively via CAS hash verification to prevent race conditions.
-* **Non-Invasive Execution:** The engine manages configuration as code above runtime execution; it does not intercept real-time model token streams.
+* **Readable data:** memory and configuration use Markdown and YAML in Git.
+* **Concurrent note updates:** the Vault MCP checks the note or section hash before writing, so it refuses a stale replacement.
+* **Runtime boundary:** configuration sync manages CLI settings; it does not intercept model responses. Council separately invokes CLI seats and captures their output.
 
 See `docs/architecture-contract.md` and `docs/sync-contract.md` for the full contracts.
 
@@ -198,13 +193,23 @@ See `docs/architecture-contract.md` and `docs/sync-contract.md` for the full con
 ## FAQ
 
 **Can I use this commercially?**
-PolyForm Noncommercial 1.0.0 allows free noncommercial use, modification, and self-hosted deployments. Commercial use requires a separate agreement — see `COMMERCIAL.md` and `LICENSE`. The Python packaging and CLI tooling are intended to stay MIT-compatible; the engine's orchestration layer is noncommercial by design.
+The repository uses PolyForm Noncommercial 1.0.0.
+See [LICENSE](LICENSE) for its terms and [COMMERCIAL.md](COMMERCIAL.md) for commercial use.
 
 **How is this different from dotfiles?**
-Dotfiles sync files. NeXgen syncs *semantics*: one `AGENTS.md`, one MCP manifest, one skills manifest — compiled to each CLI's native dialect (JSON/TOML/YAML, different paths on Linux vs Windows), with drift detection and fail-closed guardrails. A symlink farm cannot do that.
+NeXgen reads one instruction source and shared MCP and skill manifests, then generates each CLI's native configuration.
+It handles different formats and paths on Linux and Windows, and checks the generated result for drift.
 
 **Do I need all four CLIs?**
-No. Install only what you use — `nexgen doctor` warns (not fails) for absent CLIs. Adding a runtime later is one `nexgen sync`.
+No.
+Install the CLIs you use; `nexgen doctor` reports absent CLIs as warnings.
+After adding a runtime, run `nexgen sync`.
+
+## Development
+
+Development uses `developer`; releases reach `main` through a verified pull request.
+The [branch contract](docs/agent-lanes.md) covers concurrent work and automatic alignment with `main`.
+See [CONTRIBUTING.md](CONTRIBUTING.md) for module ownership and test requirements.
 
 ---
 
