@@ -127,7 +127,12 @@ function main() {
 
   const command = raw && raw.toolCall && raw.toolCall.args && raw.toolCall.args.CommandLine;
   if (typeof command !== "string") {
-    process.stdout.write(JSON.stringify({ decision: "allow" }));
+    // Fail closed: an unexpected PreToolUse shape (different tool, version
+    // drift) must not silently allow what no guardrail body ever saw.
+    process.stdout.write(JSON.stringify({
+      decision: "ask",
+      reason: "nexgen-guardrail: PreToolUse input has no CommandLine string; asking instead of allowing unchecked",
+    }));
     return;
   }
 
