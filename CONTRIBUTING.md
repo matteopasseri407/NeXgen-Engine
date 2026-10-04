@@ -61,6 +61,8 @@ before integration. Fix new lint findings rather than regenerating the baseline.
 | Council process lifecycle and relay checkpoints | `03-INFRA/agent-universal-layer/council/` | `test_nexgen_council_*.py` |
 | Owned subprocess cleanup and Windows launch adapters | `nexgen_core/processes.py` | `test_nexgen_council_process_integration.py`, `test_nexgen_mcp_transport.py`, `test_vault_groom.py` |
 | Vault publication and selected files | `nexgen_core/git_ops.py` | `test_nexgen_scoped_publish.py` |
+| Standalone Vault MCP indexing and note publication | `deploy/vault-mcp/src/vault_mcp_server/vault.py` | `test_deploy_vault_mcp.py` |
+| OCR path gates and bounded image reads | `deploy/ocr/mcp/vault_ocr_mcp.py` | `test_deploy_ocr_mcp.py` |
 | MCP mount policy and private connector preservation | `nexgen_core/renderer.py`; dialect writers in `mcp_render/` | `test_nexgen_mcp_preservation.py`, `test_nexgen_phase2.py`, `test_nexgen_lazy_mcp.py` |
 | Lazy MCP deadlines, framing and reply correlation | `03-INFRA/agent-universal-layer/mcp/lazy-mcp.py` | `test_nexgen_mcp_transport.py`, `test_nexgen_lazy_mcp.py` |
 | Released Engine update and mechanical pin | `nexgen_core/updater.py` | `test_nexgen_update_command.py` |

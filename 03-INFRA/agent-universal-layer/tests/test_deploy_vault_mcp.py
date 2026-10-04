@@ -98,6 +98,18 @@ def test_new_note_is_private_during_publication(tmp_path):
     assert stat.S_IMODE(target.stat().st_mode) == 0o600
 
 
+@pytest.mark.skipif(os.name == "nt", reason="POSIX permissions")
+def test_note_replacement_preserves_existing_reader_permissions(tmp_path):
+    import stat
+    settings = _settings(tmp_path)
+    target = settings.vault_root / "note.md"
+    target.write_text("old")
+    target.chmod(0o640)
+    VaultService(settings)._write_note_file(target, "new", already_validated=True)
+    assert target.read_text() == "new"
+    assert stat.S_IMODE(target.stat().st_mode) == 0o640
+
+
 def test_the_read_index_excludes_99_secrets_by_default(tmp_path: Path):
     settings = _settings(tmp_path)
     assert settings.exclude_path_prefixes == ("99-SECRETS",)
