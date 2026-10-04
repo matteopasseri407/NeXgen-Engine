@@ -178,7 +178,7 @@ nexgen shell
 | Claude Code | **complete** | instructions, MCP connectors, skills, guardrails |
 | Codex | **complete** | instructions, MCP connectors, skills |
 | OpenCode | **complete** | scope-file instructions, MCP connectors, native plugins/permissions, skills, and a Council seat |
-| Antigravity | **complete** | instructions, MCP connectors, skills, and a Council seat; the seat was unblocked on 2026-08-22 with a stateless invocation (agy --model ... --disable-slash-commands --new-project --sandbox -p <prompt>) verified live with a nonce prompt |
+| Antigravity | **complete** | instructions, MCP connectors, skills, and a Council seat; the seat was unblocked on 2026-08-22 with a stateless invocation (agy --model ... --disable-slash-commands --new-project --sandbox, prompt on stdin) verified live with a nonce prompt |
 
 <!-- platform-status:end -->
 
