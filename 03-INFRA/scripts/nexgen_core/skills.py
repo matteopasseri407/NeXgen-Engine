@@ -31,6 +31,7 @@ from nexgen_core.config import (  # noqa: E402
     load_skills_manifest,
 )
 from nexgen_core.i18n import t  # noqa: E402
+from nexgen_core.marks import safe_mark as _safe_mark  # noqa: E402
 from nexgen_core.paths import resolve_engine_root, resolve_home, resolve_vault_data, skills_manifest  # noqa: E402
 from nexgen_core.skill_sources import (  # noqa: E402
     COMMIT_SHA_RE,
@@ -334,7 +335,11 @@ class SkillMaterializer:
                     # Record the materialized pin even when the link was
                     # already current: without this the doctor cannot tell a
                     # fresh pin from a failed fetch that left stale bytes.
-                    self.fetcher._record_installed_version(name, entry.commit or "")
+                    try:
+                        self.fetcher._record_installed_version(name, entry.commit or "")
+                    except OSError as exc:
+                        actions.append("[ERROR] " + str(exc))
+                        continue
 
             elif entry.origin == "installer" and apply:
                 installed, note = self.fetcher.install_third_party(entry, lib_dest, self.discovery_dirs)
@@ -478,13 +483,6 @@ class SkillMaterializer:
             shutil.move(str(entry), str(destination))
             actions.append(t("{prefix}: quarantined outside the discovery roots", prefix=prefix))
         return actions
-
-
-def _safe_mark(mark: str, stream=sys.stdout) -> str:
-    """Backward-compat wrapper: single implementation lives in nexgen_core.marks."""
-    from nexgen_core.marks import safe_mark
-
-    return safe_mark(mark, stream)
 
 
 def main(argv: list[str] | None = None) -> int:

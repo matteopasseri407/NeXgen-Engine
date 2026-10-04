@@ -68,10 +68,9 @@ RUNTIMES: tuple[Support, ...] = (
     Support(
         "Antigravity",
         "complete",
-        "instructions, MCP connectors, skills, and a Council seat; the seat was "
-        "unblocked on 2026-08-22 with a stateless invocation (agy --model ... "
-        "--disable-slash-commands --new-project --sandbox, prompt on stdin) verified live "
-        "with a nonce prompt",
+        "instructions, MCP connectors, skills, and a Council seat; the Council "
+        "adapter uses agy --print --model ... --disable-slash-commands --new-project "
+        "--sandbox with the prompt on stdin; vendor isolation limits are documented in docs/council.md",
     ),
 )
 

@@ -8,7 +8,6 @@ gate validates them. Audit intent before, outcome after.
 
 from __future__ import annotations
 
-import contextlib
 import json
 import time
 from dataclasses import asdict, dataclass
@@ -19,7 +18,8 @@ from nexgen_core.files import write_private_text
 from .config import LaneConfig
 from .connectors import ConnectorError
 from .connectors import calendar as calendar_conn
-from .patch import content_sha, exclusive_apply, new_proposal_id, valid_proposal_id
+from .proposals import (content_sha, read_proposal_data, new_proposal_id, valid_proposal_id,
+                        proposal_lock, record_attempt, refuse_prior_attempt, validate_content)
 from .tools import ToolError, audit_event
 
 
@@ -41,10 +41,8 @@ class CalendarProposal:
     created_at: str = ""
     applied_at: str = ""
     done_id: str = ""
-    #: Integrity fingerprint over the approval-visible fields (see patch.content_sha).
+    attempted_at: str = ""
     content_sha: str = ""
-    #: Set when an apply starts; a leftover marker refuses the retry.
-    sending_at: str = ""
 
 
 def _proposal_sha(proposal: CalendarProposal) -> str:
@@ -52,6 +50,7 @@ def _proposal_sha(proposal: CalendarProposal) -> str:
         proposal.kind, proposal.calendar_id, proposal.summary, proposal.start,
         proposal.end, proposal.description, proposal.location, proposal.event_id,
     )
+
 
 
 def _save(cfg: LaneConfig, proposal: CalendarProposal) -> None:
@@ -74,7 +73,7 @@ def load_proposal(cfg: LaneConfig, proposal_id: str) -> CalendarProposal:
     target = cfg.calendars_dir / f"{proposal_id}.json"
     if not target.is_file():
         raise CalendarError(f"proposta inesistente: {proposal_id}")
-    return CalendarProposal(**json.loads(target.read_text(encoding="utf-8")))
+    return CalendarProposal(**read_proposal_data(target, proposal_id, CalendarError))
 
 
 def list_proposals(cfg: LaneConfig) -> list[CalendarProposal]:
@@ -83,8 +82,8 @@ def list_proposals(cfg: LaneConfig) -> list[CalendarProposal]:
     proposals = []
     for path in sorted(cfg.calendars_dir.glob("*.json"), reverse=True):
         try:
-            proposals.append(CalendarProposal(**json.loads(path.read_text(encoding="utf-8"))))
-        except (OSError, TypeError, ValueError):
+            proposals.append(CalendarProposal(**read_proposal_data(path, path.stem, CalendarError)))
+        except (OSError, TypeError, ValueError, CalendarError):
             continue
     return proposals
 
@@ -194,29 +193,21 @@ def apply_proposal(cfg: LaneConfig, proposal_id: str, *, yes: bool) -> dict[str,
     """Execute exactly the approved proposal, once, with explicit --yes."""
     if not yes:
         raise CalendarError("applicazione rifiutata: serve --yes esplicito")
-    with exclusive_apply(cfg.calendars_dir, CalendarError):
-        return _apply_proposal_locked(cfg, proposal_id)
+    with proposal_lock(cfg.calendars_dir, proposal_id, CalendarError):
+        return _apply_proposal(cfg, proposal_id)
 
 
-def _apply_proposal_locked(cfg: LaneConfig, proposal_id: str) -> dict[str, Any]:
-    """Execute body, serialized by exclusive_apply (see apply_proposal)."""
+def _apply_proposal(cfg: LaneConfig, proposal_id: str) -> dict[str, Any]:
     proposal = load_proposal(cfg, proposal_id)
     if proposal.applied_at:
         raise CalendarError("proposta gia' applicata")
-    if proposal.sending_at:
-        raise CalendarError(
-            "applicazione gia' tentata: verifica sul calendario se e' stata creata "
-            f"(tentativo alle {proposal.sending_at}), non riprovare alla cieca"
-        )
-    if not proposal.content_sha:
-        raise CalendarError("proposta in formato precedente al vincolo di integrita': riproponi")
-    if proposal.content_sha != _proposal_sha(proposal):
-        raise CalendarError("contenuto cambiato dopo la proposta: riproponi e riapprova")
-    proposal.sending_at = time.strftime("%Y-%m-%dT%H:%M:%S%z")
-    try:
-        _save(cfg, proposal)
-    except OSError as exc:
-        raise CalendarError(f"impossibile marcare il tentativo: {exc}") from exc
+    refuse_prior_attempt(proposal, CalendarError)
+    validate_content(proposal.content_sha, CalendarError,
+        proposal.kind, proposal.calendar_id, proposal.summary, proposal.start,
+        proposal.end, proposal.description, proposal.location, proposal.event_id,
+    )
+    if proposal.kind not in ("create", "delete"):
+        raise CalendarError("tipo di proposta non supportato")
     audit_event(
         cfg,
         "apply_calendar",
@@ -224,6 +215,7 @@ def _apply_proposal_locked(cfg: LaneConfig, proposal_id: str) -> dict[str, Any]:
         ok=True,
         chars=0,
     )
+    record_attempt(proposal, lambda: _save(cfg, proposal), CalendarError)
     try:
         if proposal.kind == "create":
             done = calendar_conn.create_event(
@@ -240,13 +232,8 @@ def _apply_proposal_locked(cfg: LaneConfig, proposal_id: str) -> dict[str, Any]:
             done = calendar_conn.delete_event(proposal.calendar_id, proposal.event_id)
     except ConnectorError as exc:
         audit_event(cfg, "apply_calendar", {"proposal": proposal.id, "phase": "result"}, ok=False, chars=0)
-        # The provider refused: definitely not applied, so the retry stays open.
-        proposal.sending_at = ""
-        with contextlib.suppress(OSError):
-            _save(cfg, proposal)
         raise CalendarError(f"applicazione fallita: {exc.refusal}") from exc
     proposal.applied_at = time.strftime("%Y-%m-%dT%H:%M:%S%z")
-    proposal.sending_at = ""
     proposal.done_id = str(done.get("id", ""))
     try:
         _save(cfg, proposal)

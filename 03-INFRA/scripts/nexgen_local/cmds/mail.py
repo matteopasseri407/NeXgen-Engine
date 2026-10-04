@@ -8,6 +8,7 @@ from dataclasses import asdict
 
 from . import base as _base
 from ..tools import ToolError
+from ..proposals import proposal_status
 
 
 _config = _base.command_config
@@ -55,7 +56,7 @@ def cmd_mails(args: argparse.Namespace) -> int:
         print("nessuna bozza")
         return 0
     for item in items:
-        state = "inviata" if item.applied_at else "da approvare"
+        state = proposal_status(item, "inviata")
         print(f"  {item.id}  {state:<15} {item.to}  {item.subject}")
     return 0
 

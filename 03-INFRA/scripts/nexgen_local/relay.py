@@ -19,6 +19,7 @@ import json
 import os
 import re
 import shutil
+import stat
 import subprocess
 import tempfile
 import time
@@ -160,12 +161,14 @@ def _read_attach(cfg: LaneConfig, path: str, *, confined: bool) -> str:
     """
     nofollow = getattr(os, "O_NOFOLLOW", 0)
     try:
-        fd = os.open(path, os.O_RDONLY | nofollow)
+        fd = os.open(path, os.O_RDONLY | nofollow | getattr(os, "O_NONBLOCK", 0))
     except OSError as exc:
         raise RelayError(f"allegato non leggibile: {exc}") from exc
     try:
         with os.fdopen(fd, "r", encoding="utf-8", errors="replace") as handle:
-            text = handle.read()
+            if not stat.S_ISREG(os.fstat(fd).st_mode):
+                raise RelayError("l'allegato deve essere un file regolare")
+            text = handle.read(MAX_ATTACH + 1)
     except OSError as exc:
         raise RelayError(f"allegato non leggibile: {exc}") from exc
     if confined and not _inside_roots(cfg, path):

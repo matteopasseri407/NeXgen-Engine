@@ -128,14 +128,7 @@ class RelayQuarantine:
 def _dedupe_strings(items: list[str]) -> list[str]:
     """Order-preserving dedupe for plain strings (seat names). Not the same
     as routing._dedupe, which dedupes RoutingCandidate tuples."""
-    seen = set()
-    out = []
-    for item in items:
-        if item in seen:
-            continue
-        seen.add(item)
-        out.append(item)
-    return out
+    return list(dict.fromkeys(items))
 
 
 def _parse_inline_sequence(spec: str) -> list[RelayStage]:

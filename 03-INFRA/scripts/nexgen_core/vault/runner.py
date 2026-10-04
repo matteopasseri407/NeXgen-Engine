@@ -14,15 +14,14 @@ pass is actually read-only.
 """
 from __future__ import annotations
 
-import os
 import shutil
-import signal
 import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
 
 from nexgen_core.errors import NexgenError
+from nexgen_core.processes import force_stop_process_tree
 from typing import ClassVar
 
 DEFAULT_TIMEOUT_SECONDS = 20 * 60
@@ -51,15 +50,7 @@ class RunnerUnknownError(RunnerError):
 
 
 def _kill_process_group(proc: subprocess.Popen) -> None:
-    try:
-        if sys.platform == "win32":
-            proc.kill()
-        elif hasattr(os, "killpg") and hasattr(signal, "SIGKILL"):
-            os.killpg(proc.pid, signal.SIGKILL)
-        else:
-            proc.kill()
-    except (ProcessLookupError, PermissionError, OSError):
-        pass
+    force_stop_process_tree(proc, process_group=proc.pid if sys.platform != "win32" else None)
 
 
 def _run_streaming(
@@ -163,20 +154,13 @@ class CodexRunner(Runner):
 class AgyRunner(Runner):
     name = "agy"
 
-    DEFAULT_AGY_MODEL = "gemini-3.8-flash-high"
-
-    def __init__(self, *, model: str, vault: Path, timeout: int = DEFAULT_TIMEOUT_SECONDS) -> None:
-        effective_model = self.DEFAULT_AGY_MODEL if model == "claude-sonnet-5" else model
-        super().__init__(model=effective_model, vault=vault, timeout=timeout)
-
     def run_readonly(self, prompt: str) -> RunResult:
-        # Stdin, not -p: Antigravity's print mode consumes stdin with no
-        # positional prompt, and argv is visible in the process table.
-        cmd = ["agy", "--model", self.model, "--sandbox", "--new-project"]
+        # Print mode consumes stdin; the private prompt stays out of argv.
+        cmd = ["agy", "--print", "--model", self.model, "--mode", "plan", "--sandbox", "--new-project"]
         return _run_streaming(cmd, cwd=self.vault, input_text=prompt, timeout=self.timeout)
 
     def run_write(self, prompt: str, workdir: Path) -> RunResult:
-        cmd = ["agy", "--model", self.model, "--mode", "accept-edits", "--new-project"]
+        cmd = ["agy", "--print", "--model", self.model, "--mode", "accept-edits", "--new-project"]
         return _run_streaming(cmd, cwd=workdir, input_text=prompt, timeout=self.timeout)
 
 

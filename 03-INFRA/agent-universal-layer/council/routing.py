@@ -18,6 +18,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from nexgen_core.processes import windows_command_argv as _windows_command_argv
+
 LEGACY_HEADING = "### Ranking per ruoli reali"
 LEGACY_END_HEADING = "### Motivazioni concise"
 GOVERNOR_HEADING = "### Proposta di routing per ruolo"
@@ -35,18 +37,6 @@ CHANNEL_TO_CLI = {
     "local": "ollama",
 }
 PROBE_TIMEOUT_SECONDS = 10
-
-
-def _windows_command_argv(argv: list[str]) -> list[str]:
-    """Resolve npm command shims and invoke .cmd/.bat through cmd.exe."""
-    if os.name != "nt" or not argv:
-        return list(argv)
-    executable = shutil.which(argv[0])
-    if not executable:
-        return list(argv)
-    if executable.casefold().endswith((".cmd", ".bat")):
-        return ["cmd.exe", "/d", "/s", "/c", executable, *argv[1:]]
-    return [executable, *argv[1:]]
 
 
 class RoutingContractError(ValueError):

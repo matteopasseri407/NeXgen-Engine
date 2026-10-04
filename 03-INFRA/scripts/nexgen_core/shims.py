@@ -136,8 +136,6 @@ def install_shims(
         launcher = target_bin / f"{name}{suffix}"
         content = _render(name, prefix, entry, windows)
         if not (launcher.is_file() and launcher.read_text(encoding="utf-8") == content):
-            if launcher.is_symlink():
-                launcher.unlink()
             # Atomic: a crash mid-write must not leave a truncated launcher
             # on PATH (a half launcher breaks every command using it).
             atomic_write_text(launcher, content)

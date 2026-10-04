@@ -13,8 +13,8 @@ that doesn't fit the project's direction. For a small, obvious fix (typo,
 broken link, clear bug with an obvious one-line fix), a PR alone is fine.
 
 For AI-assisted maintainer work, start with [AGENTS.md](AGENTS.md), then the
-owner table below. An authorized maintenance task uses the maintainer's durable
-lane and isolated worktree; it does not require a new issue or a per-fix branch.
+owner table below. An authorized maintenance task uses `developer` and an isolated
+worktree; it does not require a new issue or a per-fix branch.
 Read the affected callers and tests before editing. Change the owner, keep
 compatibility at the existing boundary, and integrate after verification.
 
@@ -41,7 +41,7 @@ before integration. Fix new lint findings rather than regenerating the baseline.
 | Atomic writes, backups, private artifacts | `nexgen_core/files.py` | `test_nexgen_foundations.py`, `test_nexgen_quality_regressions.py` |
 | Third-party pin updates and rollback | `nexgen_core/thirdparty_bump.py` | `test_nexgen_bump.py`, `test_nexgen_bump_file_contract.py` |
 | Sync phase ordering and failure status | `nexgen_core/guard.py` | `test_nexgen_phase3.py`, `test_nexgen_quality_regressions.py` |
-| Skill fetch, replacement and pins | `nexgen_core/skill_sources.py` | `test_nexgen_skill_fetch.py`, `test_nexgen_lazy_skills.py`, `test_nexgen_quality_regressions.py` |
+| Skill fetch, replacement and pins | `nexgen_core/skill_sources.py` | `test_nexgen_skill_fetch.py`, `test_nexgen_skill_versions.py`, `test_nexgen_lazy_skills.py`, `test_nexgen_quality_regressions.py` |
 | Host locking | `nexgen_core/lock.py` | `test_nexgen_lock.py` |
 | Source checkout version fallback | `nexgen_local/version.py` | `test_nexgen_command_surface.py`, `test_nexgen_local_mcp.py` |
 | Local CLI dispatch and shared config/LLM adapters | `nexgen_local/cli.py`, `nexgen_local/cmds/base.py`; domain commands in `cmds/` | `test_nexgen_command_surface.py`, `test_nexgen_local_steps.py` |
@@ -56,9 +56,15 @@ before integration. Fix new lint findings rather than regenerating the baseline.
 | Audited loop actions and staged proposals | `nexgen_local/step_actions.py` | `test_nexgen_local_steps.py`, `test_nexgen_local_step_boundaries.py` |
 | Model decisions, bounded repairs and final loop answer | `nexgen_local/steps.py` | `test_nexgen_local_steps.py`, `test_nexgen_tool_outcomes.py` |
 | Model requests and deadlines | `nexgen_local/llm.py` | `test_nexgen_llm_deadlines.py` |
+| Persistent research ownership, continuation and expiry | `nexgen_local/research_graph.py`; locking in `nexgen_core/lock.py` | `test_nexgen_local_research.py` |
+| Proposal ids, exclusive approval and durable attempts | `nexgen_local/proposals.py`; domain checks in patch/mail/calendar/upload/workflow gates | `test_nexgen_proposal_execution.py`, `test_nexgen_local_patch.py`, `test_nexgen_local_compose.py`, `test_nexgen_local_calendars.py`, `test_nexgen_local_drive_mcp.py`, `test_nexgen_local_workflows.py` |
 | Council process lifecycle and relay checkpoints | `03-INFRA/agent-universal-layer/council/` | `test_nexgen_council_*.py` |
+| Owned subprocess cleanup and Windows launch adapters | `nexgen_core/processes.py` | `test_nexgen_council_process_integration.py`, `test_nexgen_mcp_transport.py`, `test_vault_groom.py` |
 | Vault publication and selected files | `nexgen_core/git_ops.py` | `test_nexgen_scoped_publish.py` |
+| Standalone Vault MCP indexing and note publication | `deploy/vault-mcp/src/vault_mcp_server/vault.py` | `test_deploy_vault_mcp.py` |
+| OCR path gates and bounded image reads | `deploy/ocr/mcp/vault_ocr_mcp.py` | `test_deploy_ocr_mcp.py` |
 | MCP mount policy and private connector preservation | `nexgen_core/renderer.py`; dialect writers in `mcp_render/` | `test_nexgen_mcp_preservation.py`, `test_nexgen_phase2.py`, `test_nexgen_lazy_mcp.py` |
+| Lazy MCP deadlines, framing and reply correlation | `03-INFRA/agent-universal-layer/mcp/lazy-mcp.py` | `test_nexgen_mcp_transport.py`, `test_nexgen_lazy_mcp.py` |
 | Released Engine update and mechanical pin | `nexgen_core/updater.py` | `test_nexgen_update_command.py` |
 | Contributor lanes | `nexgen_core/lanes.py` | `test_nexgen_lanes.py` |
 
@@ -80,6 +86,26 @@ Council artefacts and recovery snapshots use this owner too; `backup_file`
 accepts an already-read text snapshot without generating a second filename policy.
 MCP dialects share `McpRenderer.unmounted_server_names` for mount decisions.
 Skill fetch and placement share `github_skill_source` for repository boundaries.
+Skill version records must be readable maps of names to version strings.
+An invalid record is preserved and reported by doctor. A failed pin write
+fails the sync; changed bytes alone cannot certify a completed update.
+The record's own host lock serializes its read and write, preserving pins
+from concurrent writers without nesting the global sync lock.
+Council, lazy MCP and Vault grooming share `nexgen_core/processes.py` for
+terminating owned subprocess trees. Pass only a process group created by the
+caller. Lazy MCP applies manifest startup/tool deadlines to RPC I/O, including
+pipe writes, and limits received bytes to 8 MiB per exchange. Provisioning has
+its own deadlines. A timed-out tool call has an unknown outcome and is never
+automatically retried. Only matching JSON-RPC responses complete a request;
+notifications and replies to other requests do not.
+Council captures at most 8 MiB across stdout and stderr per invocation and
+reads at most 8 MiB from the authoritative result file. Overflow wakes the
+watchdog even when stdout is silent. `output_limit` and `invalid_output` are
+terminal failures; they must not trigger automatic retries or a fallback seat.
+Engine updater commands use the same process owner, with a 120-second Git
+budget and a 600-second command budget. Failures after mutation begins retain
+the previous commit and manual recovery instructions. Do not infer rollback
+from a failed command; verify the actual ref before describing the outcome.
 
 The plain loop and persistent research import the same state, policy and
 actions. `step_policy.py` chooses admissible actions without model or tool
@@ -88,6 +114,38 @@ send/upload approval remains in the existing gates. `steps.py` coordinates
 model decisions and answers. Its older imports remain aliases for compatibility;
 new consumers import state, policy and actions directly from their owners.
 Changing state fields requires checking persisted research compatibility.
+Research holds its per-session lock across routing, checkpoint inspection,
+execution and saver closure. Expiry uses the same lock and rechecks age;
+never delete a lock file to clean up a session. A busy session refuses before
+model or tool calls. An explicit escalation must persist its terminal status.
+Router JSON field types are validated before paths or keywords are used;
+malformed forms use deterministic routing without another model request.
+Every mutating proposal gate holds `proposals.proposal_lock` before loading
+the artifact through final storage. Patch apply additionally holds the stable
+directory `.apply.lock`: distinct proposal ids can target the same file, so
+their validation, mutation and outcome storage must not overlap. A refusal
+to acquire either lock releases any earlier acquisition without consuming
+the proposal. After validation and the intent receipt,
+`record_attempt` persists `attempted_at` before calling the provider or Git.
+A prior attempt with no saved completion is uncertain and cannot be replayed,
+including after an exception or interruption. Check its real outcome before
+preparing a new proposal; never clear the attempt field to retry.
+`applied_at` remains evidence of a returned and saved completion; an attempt
+alone must not be described as success or as ready for approval.
+Older artifacts omit `attempted_at` and load with its empty default. Proposal
+ids belong to `proposals.py`; the imports in `patch.py` remain compatibility
+aliases. Drive proposal creation and updates use the private atomic writer.
+The older `sending_at` marker is read as `attempted_at`, including in lists.
+Mail, calendar, upload metadata and workflow parameters are bound at staging
+with a versioned fingerprint. Missing fingerprints require a fresh proposal;
+old unambiguous fingerprints remain readable. Fingerprints detect changed
+fields; they are not signatures against a writer controlling the whole JSON.
+The artifact id must match the locked filename before loading any gate.
+Changing an id must never redirect the durable attempt into a different file.
+Council relay execution and cleanup share `session.session_run_lock`, held
+through removal. Its lock file lives outside the deletable session tree and
+is never removed. Older in-tree locks are also honored. Windows may preserve
+an older session when its open legacy lock prevents removal.
 
 `cmds/base.py` owns the local CLI configuration and model adapter, including
 the compatibility boundary for older callers that patch `cli._config` or
@@ -110,7 +168,7 @@ the driver's behavior, not a provider's production availability.
 
 ### Working beside an installed engine
 
-Follow the durable lane contract in [AGENTS.md](AGENTS.md). If another session
+Follow the developer/main contract in [AGENTS.md](AGENTS.md). If another session
 uses the same checkout, create a separate Git worktree. Switching branches
 in a shared directory does not isolate the two sessions' files.
 
@@ -175,10 +233,11 @@ don't work around the gate.
 
 ## Publishing
 
-Target `developer` for integration, following `AGENTS.md`. `main` is frozen
-history. Release branches advance from `developer` only at release time;
-passing tests does not authorize a release. The maintainer integrates only
-after the required CI checks and signing requirements are satisfied.
+Commit development on `developer`, following `AGENTS.md`.
+Publish an authorized release through a pull request from `developer` to `main`.
+Keep both branches after the merge.
+The maintainer merges only after the required CI checks and signing requirements
+are satisfied, then creates the signed release tag on the verified merge.
 
 ## License
 

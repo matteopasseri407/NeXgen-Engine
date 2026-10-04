@@ -62,15 +62,13 @@ def test_a3_a7_skills_no_traceback_and_safe_usage(tmp_path: Path, capsys):
     assert "Traceback" not in err
 
 
-def test_a4_upgrades_command(capsys):
+def test_a4_upgrades_command(tmp_path, monkeypatch):
     """A4: agent-sync upgrades e check_updates() funzionano senza eccezioni."""
-    updater = EngineUpdater()
-    try:
-        has_up, curr, latest = updater.check_updates()
-    except Exception as exc:  # rete assente o remote irraggiungibile: non e' un fallimento del codice
-        pytest.skip(f" upgrades live non verificabile senza rete: {exc}")
-    assert isinstance(has_up, bool)
-    assert curr.startswith("v") or curr == "unknown"
+    import nexgen_core.updater as updater_module
+    monkeypatch.setattr(updater_module, "resolve_repositories", lambda env: (tmp_path, tmp_path))
+    monkeypatch.setattr(updater_module, "_current_version", lambda repo: "1.0.0")
+    monkeypatch.setattr(updater_module, "_released_tags", lambda repo: ["v1.1.0"])
+    assert EngineUpdater().check_updates() == (True, "v1.0.0", "v1.1.0")
 
 
 def test_a6_doctor_summary_output(tmp_path: Path, capsys):
@@ -294,4 +292,3 @@ skills:
         "l'errore deve dire di QUALE skill sta parlando"
     )
     assert changes == 0, "niente è stato materializzato, quindi non ci sono modifiche"
-

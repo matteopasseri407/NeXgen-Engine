@@ -119,11 +119,13 @@ Council is a local subprocess orchestrator, not an MCP server or an MCP wrapper 
 
 Council does not require a routing service. With only `seats.yaml`, it presents the declared local allowlist and waits for the user to choose. When the private data plane enables `routing`, Council also reads the declared decision document. The public engine never writes that document and no external workflow writes `seats.yaml`. The in-memory resolver understands the versioned JSON contract, the per-role tables emitted by the public Model Routing Governor, and the older flat table. Governor candidates keep model identity and CLI together, so the same model on two quota lanes does not collapse into one. A legacy candidate without a CLI fails closed when it maps to more than one CLI. Council probes the local CLI where possible and presents the document's fallback order as a proposal, never as an automatic invocation. Claude seats enter the proposal when the CLI supports explicit model and effort selection. Each Claude invocation then checks the returned `modelUsage` value against the declared model and stops on a fallback or missing proof. A human must explicitly choose `--seat` or `--sequence`. Missing zero-retention is a visible warning, not an eligibility gate. An unavailable or unverified candidate is skipped with an explanation, and no candidate means a visible stop rather than a guessed substitute.
 
-`agy` (Antigravity) is a fully supported seat: stateless invocation via `agy --model <model> --disable-slash-commands --new-project --sandbox` with the brief on stdin (never in argv), verified live including a multi-vendor relay run. This does not affect `agy` as a caller of Council (a human working in Antigravity shelling out to `council` is unaffected by anything in this section).
+`agy` (Antigravity) has a Council adapter using `agy --print --model <model> --disable-slash-commands --new-project --sandbox`, with the brief on stdin. Transport, model availability and tool isolation are separate checks; the adapter does not guarantee that the vendor has disabled MCP tools. Isolation limits live in `docs/council.md`.
 
 ## Council resumable relay
 
-The sequential relay runs two ways over one set of stage operations (`relay._select_stage_candidate` / `relay._invoke_stage_candidate`): ephemeral (in-memory loop, session removed unless kept) and resumable (`council relay --resumable`, resume with `--resume SESSION`). The resumable path persists progression only — brief hash, approved sequence, data-checked completed records, current step, attempts, quarantine deadlines, call count — as LangGraph checkpoints in SQLite inside the kept session directory. It is working state, not a second memory: TTL cleanup removes checkpoints with the session, and ephemeral modes are untouched. A checkpoint with an invoked-but-uncompleted attempt means the provider may already have responded: resume declares the uncertainty and refuses a silent re-invocation unless `--allow-uncertain-rerun` is passed, so quota is never spent twice without an explicit decision. The graph dependency is optional (`pip install 'nexgen-engine[council]'`, no Ollama); brainstorm, challenge and parallel seats stay on the ephemeral path until measured otherwise.
+The sequential relay runs two ways over one set of stage operations (`relay._select_stage_candidate` / `relay._invoke_stage_candidate`): ephemeral (in-memory loop, session removed unless kept) and resumable (`council relay --resumable`, resume with `--resume SESSION`). The resumable path persists progression only — brief hash, approved sequence, data-checked completed records, current step, attempts, quarantine deadlines, call count — as LangGraph checkpoints in SQLite inside the kept session directory. It is working state, not a second memory: TTL cleanup removes checkpoints with the session, and ephemeral modes are untouched. A checkpoint with an invoked-but-uncompleted attempt means the provider may already have responded: resume declares the uncertainty and refuses a silent re-invocation unless `--allow-uncertain-rerun` is passed, so quota is never spent twice without an explicit decision. Graph and checkpoint dependencies are included in the base package; provider endpoints and accounts remain separate configuration. brainstorm, challenge and parallel seats stay on the ephemeral path until measured otherwise.
+
+Relay execution and cleanup share `session.session_run_lock`. Its stable file lives outside the deletable tree, and cleanup holds ownership through removal. Older in-tree locks are honored; Windows can preserve an old session if an open legacy lock prevents deletion.
 
 ## Council independent consult
 
@@ -139,6 +141,18 @@ The sequential relay runs two ways over one set of stage operations (`relay._sel
 - **`vault-lifecycle-audit.py`** — read-only heat-map for vault grooming candidates.
 
 Full guardian map: `03-INFRA/agent-guardians-map.md`.
+
+## Development and publication
+
+The maintainer commits development on `developer` and releases through a PR
+from `developer` to `main`.
+The previous agent and release branches are retired; existing history remains.
+`nexgen_core/lanes.py` owns the CI and doctor branch checks.
+The `sync-developer` GitHub workflow requests an atomic merge of `main` back
+into `developer` after each main update, stopping on conflicts.
+Automatic branch deletion stays disabled so releasing preserves `developer`.
+Concurrent sessions use isolated worktrees and one integrator commits on
+`developer`; no new published development branch is required.
 
 ## Cross-platform definition of done
 

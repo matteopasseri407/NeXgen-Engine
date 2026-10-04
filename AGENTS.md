@@ -1,50 +1,27 @@
-# Agent lanes — the single branch contract for AI agents
+# One development branch
 
-You are an AI agent working in this repo. There is exactly one workflow.
-No forks, no per-fix branches, no direct commits to integration or release.
+Work on `developer`. Publish releases by merging `developer` into `main`.
+Do not create `dev/*`, `feat/*`, `fix/*`, `draft/*`, or `release/*` branches.
+Existing branches preserve history; they are retired development lanes.
+Do not delete another session's branch or rewrite published history.
 
-## The map (4 rungs, no more)
+Commit signed changes on `developer` after the relevant tests pass.
+Run `python 03-INFRA/scripts/check_engine.py` before pushing or releasing.
+Keep one commit per topic and preserve unrelated work.
+Never commit development directly on `main`.
 
-- `main` — history. Never commit here, never merge here.
-- `developer` — integration. Everything lands here first.
-- `dev/<agent>` — durable lanes, one per agent (`dev/engine`, `dev/council`).
-  A lane lives as long as the agent's area does. Never delete another
-  agent's lane, never commit on it.
-- `release/*` — releases only. Advances from `developer` at version time,
-  by merge. Nothing else ever lands here.
+Use an isolated worktree when another session shares the checkout.
+A detached worktree may hold uncommitted review work; one integrator applies
+and commits the verified result on `developer`.
+A branch in a shared directory does not isolate files from another writer.
 
-## Rules
+The `sync-developer` workflow merges `main` back into `developer` whenever
+`main` advances. Conflicts fail the workflow; neither branch is force-pushed.
+Keep automatic branch deletion disabled so a release preserves `developer`.
 
-1. Work on your `dev/<agent>` lane. If it does not exist, cut it from
-   `developer` (`git checkout -b dev/<agent> developer`). Never create
-   `feat/*`, `fix/*`, `draft/*`, or any other branch: your lane is the only
-   branch you ever commit on. If another session shares the checkout, use a
-   separate worktree of your lane, not a new branch.
-2. Commit on your lane whenever tests are green. Squash session work into one
-   commit at end of work — or one commit per topic at most. Do not push trails
-   of micro-commits. Push the lane when useful.
-3. Merge lane → `developer` at end of session, only with the lane's test
-   gate green. One merge per session, not per fix.
-4. `developer` → `release/*` happens at version bumps only.
-5. NEVER commit directly on `developer`, `main`, or `release/*` — not even
-   "a trivial fix". Trivial fixes ride your lane like everything else.
+Read module owners, callers and tests in `CONTRIBUTING.md` before editing.
+Shared behavior has one owner; drivers import it. Preserve existing entry
+points and verify resumed state when changing its data contract.
+Authorized maintainer work does not require an external-contributor issue.
 
-## Forbidden (checked by CI and by `nexgen doctor`)
-
-- Working branches outside `dev/<agent>` (`feat/*`, `fix/*`, `draft/*`,
-  per-fix throwaways). The lane guard fails them; move the work to your lane.
-- Non-merge commits on `release/*` that are not `release:` chores.
-- A `release/*` tip that does not descend from `developer`.
-- Uncommitted work sitting on `main`/`release/*` (move it to your lane).
-
-Before integrating, run `python 03-INFRA/scripts/check_engine.py`.
-Module ownership and regression expectations: `CONTRIBUTING.md`.
-Read the affected owner's callers and tests before editing. Shared behavior
-has one owner; loop and graph drivers import that implementation. Preserve
-existing entry points when moving code, and verify resumed state when its
-data contract changes. Maintainer work does not need an external-contributor issue.
-
-Use a separate Git worktree when another session shares this checkout.
-A branch alone does not isolate files from another writer.
-
-Full rationale: `docs/agent-lanes.md`.
+Details and enforcement: `docs/agent-lanes.md`.

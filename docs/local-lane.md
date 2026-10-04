@@ -1,6 +1,10 @@
 # The local lane
 
-Status: **v0, read-only, optional**. Ships in the `nexgen-engine[local]` extra.
+The lane ships with `nexgen-engine`, including LangChain/Ollama, LangGraph
+and SQLite checkpoint dependencies. The `[local]` extra remains an empty
+compatibility alias. A model endpoint and connector accounts are configured
+separately. Retrieval is read-only; mutations use staged proposals and
+explicit approval commands.
 
 ## The problem
 
@@ -15,14 +19,14 @@ the same traps but still invented an answer once when it skipped the tool.
 
 ## The decision
 
-Add an optional lane where **the engine decides and the model fills slots**:
+The lane follows one rule: **the engine decides and the model fills slots**.
 
 - The engine classifies the request, validates any path against real files,
   builds the search query, ranks results, repairs a single empty search, and
   reads the top hit. The model never chooses a tool freely.
-- Every tool is read-only by construction. There is no write tool, no shell
-  tool, no generic fetch: a capability that is not mounted cannot be
-  hallucinated into existence.
+- The model-facing retrieval tools are read-only. The bounded loop can also
+  stage mail and upload proposals, but cannot send or apply them. Mutating
+  commands verify the approved artifact and record intent before execution.
 - Every call is appended to a JSONL audit. An audit that cannot be written
   refuses the call instead of proceeding without a receipt. For the pen the
   order is explicit: the intent is recorded before the patch is applied, the
@@ -39,9 +43,25 @@ Add an optional lane where **the engine decides and the model fills slots**:
 LangGraph mounts the same helpers on an explicit three-node state machine
 (`route -> retrieve -> answer`, one conditional edge for "nothing to
 retrieve"). The contract lives in plain Python and is tested without the
-framework, so the driver stays replaceable. LangChain appears only here:
-the core engine remains one dependency (PyYAML), and the lane is not
-installed unless asked for.
+framework, so the driver stays replaceable. `llm.py` owns the LangChain
+adapter; `nexgen_core` has no LangChain or LangGraph imports. The orchestration
+dependencies belong to the installed engine package. The persistent research
+and Council relay graphs use SQLite checkpoints; the ephemeral loop and
+Council consult use Python and futures.
+
+The router validates field types before interpreting JSON: source must be a
+known name, keywords a list of strings, and path a string without NUL bytes.
+An invalid form uses deterministic routing without another model call.
+The generic JSON channel also serves patch proposals and extraction jobs;
+those consumers validate their own forms.
+
+Framework boundaries follow persistence needs. Research and resumable relay
+keep LangGraph; consult keeps its existing parallel executor, cancellation
+and progressive transcripts. The review-round runner follows one seat through
+successive critiques, so multi-seat consensus is not its stopping rule.
+Retrieval windows preserve source offsets and coverage; a text splitter alone
+does not provide that contract. Proposal artifacts and receipts remain owned
+by the engine, independently of model callbacks or graph checkpoints.
 
 ## Measured evidence (2026-09-25, 12 GB consumer GPU)
 
@@ -94,6 +114,28 @@ before the patch, the outcome after; an unwritable audit refuses the
 application before the file is touched. With `--verify`, the exit code tells
 the two states apart: 0 applied and verified (or not requested), 1 refused or
 apply failed, 3 applied but verification failed. The model never writes.
+
+Patch, mail, calendar, upload and workflow gates share `proposals.py` for
+proposal ids, a per-proposal host lock and durable attempt recording. They
+reload and validate under the lock. After the intent receipt, `attempted_at`
+is saved before the mutating call; a failed record prevents execution. A
+patch approval also holds the directory's stable `.apply.lock` until outcome
+storage finishes, so two different proposal ids cannot race the same file.
+The competing approval refuses before recording an attempt; it can be
+reviewed again after the active patch finishes, with its base hash rechecked.
+This also coordinates with earlier patch gates using that lock. A
+saved attempt without `applied_at` is uncertain, including a crash, transport
+failure or final-save failure. Repeating that proposal id refuses. Verify the
+real outcome before preparing a new proposal; an attempt alone does not prove
+completion. Lists show uncertain attempts as `esito da verificare`.
+Older `sending_at` records load as attempted and remain visible in lists.
+Mail, calendar, upload metadata and workflow parameters carry a fingerprint
+bound when staged. A changed field or a missing fingerprint requires a fresh
+proposal and approval. Existing unambiguous fingerprints remain supported.
+The fingerprint detects changes; it does not authenticate a JSON file against
+a writer who can replace both its fields and fingerprint. Successful completion
+still saves the provider id and outcome receipt. Drive artifacts use the same
+private atomic writer as the other gates.
 
 ## Relay (F4 v0)
 
@@ -153,10 +195,9 @@ with the lane's receipt and outcome contract. No MCP server, no new dependency.
 - Proposal ids are unique (timestamp plus randomness) in every gate, and
   creation never overwrites: a colliding id refuses instead of replacing the
   proposal shown for approval.
-- Reads are capped at 3.000 characters each: raising the context does not
-  raise what gets read. Long mail bodies and documents need read
-  continuation (offset-based, planned) and source-coverage accounting, not
-  just a bigger window. Known limit, next step after the profile split.
+- Reads default to 3,000 characters per window. Long bodies and documents
+  carry coverage and an offset for `continue_read`, described under
+  Persistent research. A larger model context does not increase this limit.
 - `/local` selects the governed profile (agent + model + denies); picking a
   local model with `/model` alone keeps the current agent and does NOT
   activate the profile. The profile is the unit, not the model.
@@ -278,6 +319,13 @@ through the same propose paths and never applies — it cannot double-apply,
 and authorization remains the engine's job in the gates. Checkpoints live
 under `research_dir` with directory 700 and sqlite 600, like council
 sessions: mail bodies must not rely on a protective parent directory.
+Each interaction owns a per-session host lock before routing or reading a
+checkpoint, through saver closure and private-permission cleanup. A concurrent
+interaction on the same id refuses before calling a model; other sessions
+remain independent. The age sweep acquires the same lock and rechecks age,
+preserving busy checkpoints. Lock files remain in place to preserve their
+identity for concurrent callers. A newly generated id that already exists
+refuses instead of overwriting its session.
 
 Each interaction gets a fresh step budget (the cap is per instruction, not
 per session lifetime) and fresh continuations; sources, receipts, staged
@@ -292,6 +340,8 @@ contract in the model context, not only in the receipts. The
 claim-check verdict travels in the summary too: a confabulating answer
 still answers, but the CLI warns on stderr and exits 1, and MCP appends
 the warning footer. Silence would be a lie the exit code tells.
+An explicit `escalate` decision persists `status=escalate` and
+`escalated=true`, without generating an answer.
 
 Reads are windowed, not silently capped: every source read carries declared
 coverage (`offset/total/truncated`), truncation names the exact resume
@@ -328,7 +378,7 @@ loop is plain Python (a single loop does not need a graph); every action
 leaves a receipt and the final answer passes the claim check. When the
 request asks to reply to a mail just read, or to upload a file just read,
 the menu prescribes the gated propose actions (`draft_mail`, `propose_upload`):
-the 12B drafts through LangChain structured output, the engine owns envelope
+the model drafts the body as text, the engine owns envelope
 and destination, and nothing leaves the machine without human approval.
 Answering instead of proposing would dodge the request, and so would
 escalating out of caution: on those steps the menu carries only the gated
@@ -431,9 +481,10 @@ case is bounded instead of hanging the loop forever.
 
 ## Non-goals
 
-No n8n mutation yet: it stays read-only plus draft, gated on the same
-machine-facts-only approval screen. Writes exist only as patch proposals
-applied by an explicit human command. The relay hands one bounded question
-to a read-only isolated CLI and shows the answer to the user; it never feeds
-it back into a mutating chain automatically. The lane is not an agent
-framework and the core never depends on it.
+The model cannot authorize a mutation. Patch application, mail send, calendar
+changes, Drive upload and allowlisted workflow execution stay behind their
+domain approval gates, with proposal validation and intent/outcome receipts.
+Research only stages proposals. A graph suspension does not replace those
+checks or make an external operation safe to replay after a crash.
+The relay hands a bounded question to an isolated CLI and shows the answer
+to the user. It does not feed that answer into a mutating chain automatically.

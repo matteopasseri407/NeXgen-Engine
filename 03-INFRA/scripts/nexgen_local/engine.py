@@ -19,7 +19,6 @@ from .tools import ToolRegistry, ToolResult
 from .source_selection import (
     PATH_RE,
     STOPWORDS as STOPWORDS,
-    empty_result as _empty,  # noqa: F401 - legacy text API only
     existing_file as _existing_file,
     longest_term as _longest,
     pinned_path as _pinned,  # noqa: F401 - legacy import compatibility
@@ -82,23 +81,37 @@ OUTLOOK_INTENT_RE = re.compile(
 
 def sanitize_route(route: dict[str, Any] | None, cfg: LaneConfig, task: str) -> dict[str, Any]:
     """Validate whatever the router said; never trust an unverified path."""
-    raw = route or {}
-    source = str(raw.get("source") or "").strip().lower()
+    if not isinstance(route, dict):
+        return fallback_route(task, cfg)
+    raw = route
+    source = raw.get("source")
+    raw_keywords = raw.get("keywords", [])
+    raw_path = raw.get("path", "")
+    # JSON syntax alone is not the routing contract. Do not coerce arbitrary
+    # values into paths or query words, or iterate a string as characters.
+    if (
+        not isinstance(source, str)
+        or source.strip().lower() not in ("vault", "pdf", "web", "repo", "mail", "drive", "calendar", "outlook", "none")
+        or not isinstance(raw_keywords, list)
+        or any(not isinstance(word, str) for word in raw_keywords)
+        or not isinstance(raw_path, str)
+        or "\x00" in raw_path
+    ):
+        return fallback_route(task, cfg)
+    source = source.strip().lower()
     keywords: list[str] = []
-    for item in [str(k).strip() for k in (raw.get("keywords") or []) if str(k).strip()]:
+    for item in [k.strip() for k in raw_keywords if k.strip()]:
         parts = [part for part in re.split(r"\s+", item) if part] or [item]
         for part in parts:
             if part.casefold() not in {existing.casefold() for existing in keywords}:
                 keywords.append(part)
     keywords = keywords[:6]
-    found = _existing_file(cfg, str(raw.get("path") or ""))
+    found = _existing_file(cfg, raw_path)
     if found:
         source, path, root = found
     else:
         path = ""
         root = ""
-    if source not in ("vault", "pdf", "web", "repo", "mail", "drive", "calendar", "outlook", "none"):
-        source = "none"
     if source == "pdf" and not path:
         source = "vault"
     if source == "repo" and not path:

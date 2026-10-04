@@ -12,8 +12,24 @@ of any engine release.
 
 ### Fixed
 
+- Patch application retains its directory lock alongside proposal ownership.
+  Concurrent approvals of different ids cannot modify the same file before
+  either operation finishes validation and outcome storage.
+
+- Skill sync reports failed version record writes instead of certifying an
+  incomplete update. Invalid records are preserved and reported by doctor;
+  serialized writes preserve the pins recorded by concurrent updates.
+
+- Lazy MCP honors declared RPC deadlines for blocked pipes and open HTTP
+  streams, correlates responses by request ID and bounds received output.
+  Negotiated modern protocol settings survive into tool calls, and tools
+  without optional descriptions no longer crash the index. Council, lazy MCP
+  and Vault grooming share owned subprocess cleanup.
 - Council sanitizes provider error diagnostics before they reach console,
   transcripts or relay checkpoints. Session files use private atomic writes.
+- Council bounds combined stdout/stderr capture and final result-file reads
+  to 8 MiB. Output overflow and unreadable result files fail without automatic
+  retries; bounded queues stop reader threads from accumulating unlimited lines.
 - Automatic infrastructure commits preserve unrelated staged work.
 - GitHub skill updates validate the declared source in a separate checkout
   before replacing the usable cache. Failed acquisition preserves old bytes;
@@ -24,6 +40,9 @@ of any engine release.
   Dotted connector names remain single keys, and recovery backups are unique.
 - Engine updates reject a release missing its command entry before moving the
   installed checkout. Mechanical pin writes use the shared atomic writer.
+- Engine update commands have deadlines and share subprocess cleanup.
+  Operational errors after a merge begins retain manual recovery instructions;
+  a moved ref is reported accurately rather than called a successful rollback.
 - Local CLI and MCP startup work from an unpackaged source checkout.
 - Google and Outlook persist rotated refresh tokens with atomic private writes;
   publication or permission failures preserve the previous token file.
@@ -114,9 +133,10 @@ of any engine release.
   staying local-only unnoticed. Liveness records the warning count, the
   doctor rejects unreadable remotes declarations, and every new user-facing
   string ships with its Italian translation.
-- Agent lanes are now the single enforced workflow: `AGENTS.md` names the
-  four rungs, CI `lane-guard` blocks direct commits on release rungs, and
-  the doctor warns on engine work outside a `dev/<agent>` lane.
+- Development uses one branch, `developer`; releases merge it into `main`.
+  The branch gate refuses direct development on `main` and retired lanes.
+  A GitHub workflow merges `main` back into `developer` when it advances,
+  stopping on conflicts without rewriting either branch.
 - Foundations hardened: vault/engine paths expand `~` and reject relative
   homes, OpenCode honors `XDG_CONFIG_HOME` with the documented precedence,
   atomic writes fsync with unique temps and never carry special mode bits,
@@ -133,6 +153,11 @@ of any engine release.
   quiet on fresh boot, and shim targets refuse quote-breaking paths.
 
 ### Development
+
+- Remove the unused Council TUI and an unreferenced archived review stub.
+  Terminal marks reuse the existing helper through compatible imports; relay
+  deduplication uses the standard library. Keep the runtime dialects, approval
+  gates, standalone service boundaries and existing command entry points.
 
 - The bounded loop separates shared state, menu/provenance policy and action
   execution from model coordination. Persistent research uses those same
@@ -271,8 +296,6 @@ of any engine release.
   reporting a quiet fake "no update"; the notifier surfaces it.
 - Generated launchers require Python 3.11+ with a clear message, on
   POSIX and Windows, instead of dying with a `SyntaxError` on old Pythons.
-
-## [2.3.3] - 2026-09-23
 
 ## [2.3.3] - 2026-09-23
 

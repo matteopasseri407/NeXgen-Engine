@@ -417,3 +417,121 @@ def test_secure_storage_creates_dir_on_windows_branch(tmp_path: Path) -> None:
     )
     proc = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, timeout=60, cwd=tmp_path)
     assert proc.returncode == 0, f"dir non creata nel ramo nt: {proc.stderr[-500:]}"
+
+
+def test_research_refuses_concurrent_same_session_before_model_call(tmp_path: Path) -> None:
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Event
+
+    cfg = _cfg(tmp_path)
+    first = research_task(ScriptedLLM(route={"source": "none"}), cfg, "Dimmi un saluto.")
+    entered, release = Event(), Event()
+
+    class BlockingLLM(ScriptedLLM):
+        def choose(self, *args):
+            entered.set()
+            assert release.wait(10), "test did not release the first interaction"
+            return {"action": "escalate", "arg": ""}
+
+    class UnusedLLM(ScriptedLLM):
+        json_calls = 0
+
+        def json(self, *args):
+            self.json_calls += 1
+            return {"source": "none"}
+
+        def choose(self, *args):
+            raise AssertionError("busy session called the decision model")
+
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        active = pool.submit(
+            research_task, BlockingLLM(route={"source": "none"}), cfg, "Continua.",
+            session_id=first["session_id"],
+        )
+        try:
+            assert entered.wait(10)
+            unused = UnusedLLM()
+            with pytest.raises(ResearchError, match="sessione.*in uso"):
+                research_task(unused, cfg, "Seconda istruzione.", session_id=first["session_id"])
+            assert unused.json_calls == 0
+            other = research_task(ScriptedLLM(route={"source": "none"}), cfg, "Sessione indipendente.")
+            assert other["session_id"] != first["session_id"]
+            assert not active.done(), "a different session must finish while the first is still running"
+        finally:
+            release.set()
+        assert active.result(timeout=10)["status"] == "escalate"
+
+    # The finished interaction releases ownership so this session can continue.
+    assert research_task(
+        ScriptedLLM(route={"source": "none"}), cfg, "Terza istruzione.",
+        session_id=first["session_id"],
+    )["session_id"] == first["session_id"]
+
+
+def test_ttl_sweep_preserves_busy_checkpoint(tmp_path: Path) -> None:
+    import os
+    import time
+    from nexgen_core.lock import HostLock
+    import nexgen_local.research_graph as rg
+
+    cfg = _cfg(tmp_path)
+    cfg.research_dir.mkdir()
+    busy = cfg.research_dir / "research-busy.sqlite"
+    idle = cfg.research_dir / "research-idle.sqlite"
+    for path in (busy, idle):
+        path.write_bytes(b"checkpoint")
+        old = time.time() - (rg.SESSION_TTL_DAYS + 1) * 86400
+        os.utime(path, (old, old))
+    lock_path = busy.with_suffix(".lock")
+    with HostLock(lock_path, timeout=0):
+        rg._sweep_old_sessions(cfg)
+        assert busy.read_bytes() == b"checkpoint", "sweep removed a checkpoint owned by another run"
+        assert not idle.exists(), "expired idle sessions should still be removed"
+    rg._sweep_old_sessions(cfg)
+    assert not busy.exists()
+    assert lock_path.exists(), "unlinking a lock inode breaks mutual exclusion for waiting callers"
+
+
+def test_new_research_id_collision_preserves_existing_session(tmp_path: Path, monkeypatch) -> None:
+    import nexgen_local.research_graph as rg
+
+    cfg = _cfg(tmp_path)
+    monkeypatch.setattr(rg, "_new_session_id", lambda: "collision")
+    research_task(ScriptedLLM(route={"source": "none"}), cfg, "Prima istruzione.")
+    checkpoint = cfg.research_dir / "research-collision.sqlite"
+    before = checkpoint.read_bytes()
+    with pytest.raises(ResearchError, match="esistente"):
+        research_task(ScriptedLLM(), cfg, "Non sovrascrivere la prima.")
+    assert checkpoint.read_bytes() == before
+
+
+def test_explicit_escalation_is_a_persisted_outcome(tmp_path: Path) -> None:
+    cfg = _cfg(tmp_path)
+    result = research_task(
+        ScriptedLLM(route={"source": "none"}, decisions=[{"action": "escalate", "arg": ""}]),
+        cfg, "Una richiesta ambigua.",
+    )
+    assert result["status"] == "escalate"
+    assert result["escalated"] is True
+    assert result["answer"] == ""
+
+
+def test_interrupted_research_releases_session_for_continuation(tmp_path: Path) -> None:
+    cfg = _cfg(tmp_path)
+    first = research_task(ScriptedLLM(route={"source": "none"}), cfg, "Prima istruzione.")
+
+    class InterruptedLLM(ScriptedLLM):
+        def choose(self, *args):
+            raise KeyboardInterrupt
+
+    with pytest.raises(KeyboardInterrupt):
+        research_task(
+            InterruptedLLM(route={"source": "none"}), cfg, "Seconda istruzione.",
+            session_id=first["session_id"],
+        )
+    third = research_task(
+        ScriptedLLM(route={"source": "none"}, decisions=[{"action": "escalate", "arg": ""}]),
+        cfg, "Terza istruzione.", session_id=first["session_id"],
+    )
+    assert third["session_id"] == first["session_id"]
+    assert third["status"] == "escalate"

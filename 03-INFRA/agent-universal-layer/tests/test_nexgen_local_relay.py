@@ -17,6 +17,38 @@ from nexgen_local.relay import MAX_OUTPUT, RelayError, available_clis, run_relay
 
 pytestmark = pytest.mark.skipif(os.name != "posix", reason="fake CLI are POSIX scripts")
 
+
+def test_attachment_read_is_bounded_before_prompt_truncation(tmp_path, monkeypatch):
+    import nexgen_local.relay as relay_module
+    target = tmp_path / "vault" / "attachment.txt"
+    target.parent.mkdir()
+    target.write_text("synthetic")
+    fdopen = relay_module.os.fdopen
+
+    class BoundedReader:
+        def __init__(self, handle):
+            self.handle = handle
+        def __enter__(self):
+            return self
+        def __exit__(self, *args):
+            self.handle.close()
+        def read(self, size=-1):
+            assert 0 <= size <= relay_module.MAX_ATTACH + 1
+            return self.handle.read(size)
+
+    monkeypatch.setattr(relay_module.os, "fdopen", lambda *a, **k: BoundedReader(fdopen(*a, **k)))
+    assert relay_module._read_attach(_cfg(tmp_path), str(target), confined=True) == "synthetic"
+
+
+def test_attachment_rejects_nonregular_file_without_waiting(tmp_path, monkeypatch):
+    import nexgen_local.relay as relay_module
+    target = tmp_path / "attachment.txt"
+    os.mkfifo(target)
+    real_open = os.open
+    monkeypatch.setattr(relay_module.os, "open", lambda path, flags: real_open(path, flags | os.O_NONBLOCK))
+    with pytest.raises(RelayError, match="regolare"):
+        relay_module._read_attach(_cfg(tmp_path), str(target), confined=True)
+
 CLAUDE_FAKE = """DIR=$(dirname "$0")
 printf '%s\\n' "$@" > "$DIR/args.txt"
 cat > "$DIR/stdin.txt"

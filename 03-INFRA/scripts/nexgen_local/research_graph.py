@@ -20,9 +20,13 @@ from __future__ import annotations
 import re
 import secrets
 import time
+from contextlib import contextmanager
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any, Iterable, TypedDict
+
+from nexgen_core.files import secure_artifact
+from nexgen_core.lock import HostLock, LockTimeoutError
 
 from .source_selection import (pinned_path)
 from .config import LaneConfig
@@ -86,6 +90,25 @@ def _new_session_id() -> str:
     return f"{time.strftime('%Y%m%d-%H%M%S')}-{secrets.token_hex(4)}"
 
 
+@contextmanager
+def _session_run_lock(session_file: Path):
+    """Own a session's entire read/modify/checkpoint cycle, including cleanup."""
+    secure_artifact(session_file.parent)
+    lock = HostLock(session_file.with_suffix(".lock"), timeout=0, command_name="nexgen-local research")
+    try:
+        lock.acquire()
+    except LockTimeoutError as exc:
+        raise ResearchError("sessione di ricerca in uso: attendi la fine dell'altra esecuzione") from exc
+    except OSError as exc:
+        raise ResearchError(f"lock della sessione non accessibile ({type(exc).__name__})") from exc
+    try:
+        secure_artifact(session_file.parent, lock.lock_path)
+        yield
+    finally:
+        lock.release()
+    # Never unlink a lock file: other callers may already hold its inode.
+
+
 def _hydrate_registry(tools: ToolRegistry, receipts: list[dict[str, Any]], refusals: list[str]) -> None:
     """Restore history into a fresh registry so menus see prior receipts.
 
@@ -109,7 +132,7 @@ def _hydrate_registry(tools: ToolRegistry, receipts: list[dict[str, Any]], refus
         )
     tools.refusals.extend(refusals)
 def _sweep_old_sessions(cfg: LaneConfig) -> None:
-    """Remove research sessions older than the TTL; cheap, best-effort."""
+    """Remove expired idle sessions, rechecking age while owning the session."""
     try:
         root = cfg.research_dir
         if not root.is_dir():
@@ -118,8 +141,10 @@ def _sweep_old_sessions(cfg: LaneConfig) -> None:
         for path in root.glob("research-*.sqlite"):
             try:
                 if path.stat().st_mtime < cutoff:
-                    path.unlink()
-            except OSError:
+                    with _session_run_lock(path):
+                        if path.stat().st_mtime < cutoff:
+                            path.unlink()
+            except (OSError, ResearchError):
                 continue
     except OSError:
         pass
@@ -167,8 +192,6 @@ def _secure_storage(directory: Path, session_file: Path | None) -> None:
     bodies, so they get the same treatment as council sessions.
     The directory is created on every platform; only chmod is POSIX-only.
     """
-    from nexgen_core.files import secure_artifact
-
     secure_artifact(directory)
     if session_file is not None:
         for path in directory.glob(session_file.stem + ".sqlite*"):
@@ -212,9 +235,10 @@ def _node_decide(ctx_factory, state: ResearchState) -> dict[str, Any]:
         "loop": _loop_to_persisted(loop),
         "used": int(state.get("used", 0)) + 1,
     }
-    if decided is None:
+    if decided is None or decided[0] == "escalate":
         update["stop"] = "escalate"
         update["escalated"] = True
+        update["pending"] = None
         return update
     update["pending"] = {"action": decided[0], "arg": decided[1]}
     return update
@@ -320,8 +344,6 @@ def build_research_app(ctx_factory) -> Any:
         pending = state.get("pending") or {}
         if pending.get("action") == "answer":
             return "finish"
-        if pending.get("action") == "escalate":
-            return "end_escalate"
         # Per-interaction budget, mirroring run_steps (6 steps run 6 actions):
         # the 6th decision still executes; only the 7th is capped.
         if int(state.get("used", 0)) > int(state.get("max_steps", MAX_STEPS)):
@@ -336,7 +358,7 @@ def build_research_app(ctx_factory) -> Any:
     builder.set_entry_point("decide")
     builder.add_conditional_edges(
         "decide", route_decide,
-        {"act": "act", "finish": "finish", "end": END, "end_escalate": END, "cap": "cap"},
+        {"act": "act", "finish": "finish", "end": END, "cap": "cap"},
     )
     builder.add_edge("act", "decide")
     builder.add_edge("finish", END)
@@ -478,55 +500,54 @@ def research_task(
     receipts and proposals). Only staging operations run here: nothing is
     ever applied or confirmed.
     """
-    _sweep_old_sessions(cfg)
-    tools = ToolRegistry(cfg)
-    canary_list = [str(c) for c in canaries]
-    if not session_id:
-        session_id = _new_session_id()
-        route = route_task(llm, cfg, task)
-        named_path = str(route.get("path") or "")
-        initial = _initial_research_state(session_id, task, route, max_steps, canary_list)
-        if named_path and str(route.get("root") or ""):
-            loop = _loop_from_persisted(initial["loop"])
-            loop.named_path = pinned_path(str(route.get("root")), named_path)
-            initial["loop"] = _loop_to_persisted(loop)
-        created: ResearchState | None = initial
-    else:
-        session_file = _session_file(cfg, session_id)
-        if not session_file.is_file():
-            raise ResearchError(f"sessione inesistente: {session_id}")
-        created = None
-
-    def ctx_factory(state: ResearchState) -> _Ctx:
-        return _Ctx(llm, tools, cfg, canary_list, StepResult(task=state.get("task", task)))
-
+    is_new = not session_id
+    session_id = session_id or _new_session_id()
     session_file = _session_file(cfg, session_id)
-    with _open_saver(session_file) as saver:
-        try:
-            app = build_research_app(ctx_factory).compile(checkpointer=saver)
-            thread = {"configurable": {"thread_id": session_id}}
-            if created is not None:
-                final = app.invoke(created, config=thread)
-            else:
-                snapshot = app.get_state(thread)
-                if not snapshot.values:
-                    # Crash before the first persist (kill during decide,
-                    # full disk): the file exists but holds no state. Start
-                    # this instruction fresh on the same session instead of
-                    # bricking the id until the TTL sweep.
-                    route = route_task(llm, cfg, task)
-                    created = _initial_research_state(session_id, task, route, max_steps, canary_list)
+    with _session_run_lock(session_file):
+        if is_new and session_file.exists():
+            raise ResearchError(f"sessione gia' esistente: {session_id}")
+        if not is_new and not session_file.is_file():
+            raise ResearchError(f"sessione inesistente: {session_id}")
+        _sweep_old_sessions(cfg)
+        tools = ToolRegistry(cfg)
+        canary_list = [str(c) for c in canaries]
+        created: ResearchState | None = None
+        if is_new:
+            route = route_task(llm, cfg, task)
+            created = _initial_research_state(session_id, task, route, max_steps, canary_list)
+            named_path = str(route.get("path") or "")
+            if named_path and str(route.get("root") or ""):
+                loop = _loop_from_persisted(created["loop"])
+                loop.named_path = pinned_path(str(route.get("root")), named_path)
+                created["loop"] = _loop_to_persisted(loop)
+
+        def ctx_factory(state: ResearchState) -> _Ctx:
+            return _Ctx(llm, tools, cfg, canary_list, StepResult(task=state.get("task", task)))
+
+        with _open_saver(session_file) as saver:
+            try:
+                app = build_research_app(ctx_factory).compile(checkpointer=saver)
+                thread = {"configurable": {"thread_id": session_id}}
+                if created is not None:
                     final = app.invoke(created, config=thread)
                 else:
-                    final = _continue_research(
-                        app, thread, snapshot, tools, llm, cfg, canary_list,
-                        session_id, task, max_steps,
-                    )
-        finally:
-            # Checkpoints may hold mail bodies: lock them down even when
-            # the run raised midway.
-            _secure_storage(cfg.research_dir, session_file)
-        summary = _summary(session_id, final)
-        if summary["answer"]:
-            summary["answer"] = summary["answer"] + "\n\n" + summary["status_block"]
-        return summary
+                    snapshot = app.get_state(thread)
+                    if not snapshot.values:
+                        # A file without a first checkpoint can restart this
+                        # instruction, under the same exclusive ownership.
+                        route = route_task(llm, cfg, task)
+                        created = _initial_research_state(session_id, task, route, max_steps, canary_list)
+                        final = app.invoke(created, config=thread)
+                    else:
+                        final = _continue_research(
+                            app, thread, snapshot, tools, llm, cfg, canary_list,
+                            session_id, task, max_steps,
+                        )
+            finally:
+                # Checkpoints may hold mail bodies: lock them down even when
+                # the run raised midway.
+                _secure_storage(cfg.research_dir, session_file)
+            summary = _summary(session_id, final)
+            if summary["answer"]:
+                summary["answer"] = summary["answer"] + "\n\n" + summary["status_block"]
+            return summary

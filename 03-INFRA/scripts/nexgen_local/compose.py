@@ -13,7 +13,6 @@ a browser opened by an unattended run, never a partial send.
 
 from __future__ import annotations
 
-import contextlib
 import json
 import re
 import time
@@ -27,7 +26,8 @@ from .connectors import ConnectorError
 from .connectors import gmail as gmail_conn
 from .connectors import outlook as outlook_conn
 from .llm import LLM
-from .patch import content_sha, exclusive_apply, new_proposal_id, valid_proposal_id
+from .proposals import (content_sha, read_proposal_data, new_proposal_id, valid_proposal_id,
+                        proposal_lock, record_attempt, refuse_prior_attempt, validate_content)
 from .tools import ToolError, audit_event
 
 MAX_BODY_CHARS = 20_000
@@ -65,12 +65,8 @@ class MailProposal:
     created_at: str = ""
     applied_at: str = ""
     sent_id: str = ""
-    #: Integrity fingerprint over the approval-visible fields, bound at
-    #: propose time and re-verified at apply (see patch.content_sha).
+    attempted_at: str = ""
     content_sha: str = ""
-    #: Set when a send starts; a leftover marker (crash after send) refuses
-    #: the retry with a verify-on-provider message instead of double-sending.
-    sending_at: str = ""
 
 
 def _proposal_sha(proposal: MailProposal) -> str:
@@ -78,6 +74,7 @@ def _proposal_sha(proposal: MailProposal) -> str:
         proposal.kind, proposal.provider, proposal.to, proposal.subject,
         proposal.in_reply_to, proposal.body,
     )
+
 
 
 def _save(cfg: LaneConfig, proposal: MailProposal) -> None:
@@ -96,8 +93,6 @@ def _create(cfg: LaneConfig, proposal: MailProposal) -> None:
 
 def _migrate(data: dict[str, Any]) -> dict[str, Any]:
     data.setdefault("provider", "gmail")  # proposals written before providers existed
-    data.setdefault("content_sha", "")
-    data.setdefault("sending_at", "")
     return data
 
 
@@ -107,7 +102,7 @@ def load_proposal(cfg: LaneConfig, proposal_id: str) -> MailProposal:
     target = cfg.mails_dir / f"{proposal_id}.json"
     if not target.is_file():
         raise MailError(f"proposta inesistente: {proposal_id}")
-    return MailProposal(**_migrate(json.loads(target.read_text(encoding="utf-8"))))
+    return MailProposal(**_migrate(read_proposal_data(target, proposal_id, MailError)))
 
 
 def list_proposals(cfg: LaneConfig) -> list[MailProposal]:
@@ -116,8 +111,8 @@ def list_proposals(cfg: LaneConfig) -> list[MailProposal]:
     proposals = []
     for path in sorted(cfg.mails_dir.glob("*.json"), reverse=True):
         try:
-            proposals.append(MailProposal(**_migrate(json.loads(path.read_text(encoding="utf-8")))))
-        except (OSError, TypeError, ValueError):
+            proposals.append(MailProposal(**_migrate(read_proposal_data(path, path.stem, MailError))))
+        except (OSError, TypeError, ValueError, MailError):
             continue
     return proposals
 
@@ -282,35 +277,27 @@ def apply_mail(cfg: LaneConfig, proposal_id: str, *, yes: bool) -> dict[str, Any
     """
     if not yes:
         raise MailError("invio rifiutato: serve --yes esplicito")
-    with exclusive_apply(cfg.mails_dir, MailError):
-        return _apply_mail_locked(cfg, proposal_id)
+    with proposal_lock(cfg.mails_dir, proposal_id, MailError):
+        return _apply_mail(cfg, proposal_id)
 
 
-def _apply_mail_locked(cfg: LaneConfig, proposal_id: str) -> dict[str, Any]:
-    """Send body, serialized by exclusive_apply (see apply_mail)."""
+def _apply_mail(cfg: LaneConfig, proposal_id: str) -> dict[str, Any]:
     proposal = load_proposal(cfg, proposal_id)
     if proposal.applied_at:
         raise MailError("proposta gia' inviata")
-    if proposal.sending_at:
-        raise MailError(
-            "invio gia' tentato: verifica sul provider se e' partito "
-            f"(tentativo alle {proposal.sending_at}), non riprovare alla cieca"
-        )
-    if not proposal.content_sha:
-        raise MailError("proposta in formato precedente al vincolo di integrita': riproponi")
-    if proposal.content_sha != _proposal_sha(proposal):
-        raise MailError("contenuto cambiato dopo la proposta: riproponi e riapprova")
+    refuse_prior_attempt(proposal, MailError)
+    validate_content(proposal.content_sha, MailError,
+        proposal.kind, proposal.provider, proposal.to, proposal.subject,
+        proposal.in_reply_to, proposal.body,
+    )
     if not proposal.body.strip():
         raise MailError("corpo vuoto, niente da inviare")
+
     backend = _BACKENDS.get(proposal.provider)
     if backend is None:
         raise MailError(f"provider non supportato: {proposal.provider}")
-
-    proposal.sending_at = time.strftime("%Y-%m-%dT%H:%M:%S%z")
-    try:
-        _save(cfg, proposal)
-    except OSError as exc:
-        raise MailError(f"impossibile marcare il tentativo di invio: {exc}") from exc
+    if proposal.kind not in ("send", "reply"):
+        raise MailError("tipo di proposta non supportato")
 
     audit_event(
         cfg,
@@ -319,6 +306,7 @@ def _apply_mail_locked(cfg: LaneConfig, proposal_id: str) -> dict[str, Any]:
         ok=True,
         chars=len(proposal.body),
     )
+    record_attempt(proposal, lambda: _save(cfg, proposal), MailError)
     try:
         if proposal.kind == "reply":
             # The original must still be there: no phantom replies.
@@ -334,10 +322,6 @@ def _apply_mail_locked(cfg: LaneConfig, proposal_id: str) -> dict[str, Any]:
             ok=False,
             chars=len(proposal.body),
         )
-        # The provider refused: definitely not sent, so the retry stays open.
-        proposal.sending_at = ""
-        with contextlib.suppress(OSError):
-            _save(cfg, proposal)
         raise MailError(f"invio fallito: {exc.refusal}") from exc
     except Exception as exc:  # noqa: BLE001 - a send that blows up is a refused outcome
         audit_event(
@@ -347,13 +331,10 @@ def _apply_mail_locked(cfg: LaneConfig, proposal_id: str) -> dict[str, Any]:
             ok=False,
             chars=len(proposal.body),
         )
-        # Unknown outcome (may have sent): the sending marker stays, so a
-        # blind retry refuses instead of double-sending.
         raise MailError(f"invio fallito: {exc}") from exc
 
     proposal.applied_at = time.strftime("%Y-%m-%dT%H:%M:%S%z")
     proposal.sent_id = str(sent.get("id", ""))
-    proposal.sending_at = ""
     try:
         _save(cfg, proposal)
         audit_event(

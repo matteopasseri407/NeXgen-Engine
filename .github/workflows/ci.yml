@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main, developer, "release/**", "dev/**"]
+    branches: ["**"]
   pull_request:
 
 # Default to read-only GITHUB_TOKEN permissions for every job in this
@@ -128,7 +128,7 @@ jobs:
         run: python3 03-INFRA/scripts/ruff_baseline_check.py
 
   lane-guard:
-    # Check the actual push range or synthetic PR merge, including developer.
+    # Check the development branch and release merge snapshot.
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0

@@ -1,4 +1,4 @@
-"""Unit tests for the agent-lane contract: guard script + doctor watch."""
+"""History, fresh-clone and doctor cases for the developer/main contract."""
 from __future__ import annotations
 
 import importlib.util
@@ -52,196 +52,75 @@ def _repo_with_lanes(tmp_path: Path) -> Path:
     return repo
 
 
-def test_direct_fix_on_release_is_blocked(tmp_path: Path) -> None:
+def test_unknown_refs_fail_closed(tmp_path):
     lg = _load_guard()
     repo = _repo_with_lanes(tmp_path)
-    _git(repo, "branch", "release/v9", "developer")
-    _git(repo, "checkout", "-q", "release/v9")
-    (repo / "f.txt").write_text("b", encoding="utf-8")
-    _git(repo, "commit", "-am", "fix council thing")
-    ok, problems = lg.check_ref(repo, "release/v9")
-    assert ok is False
-    assert any("fix council thing" in problem for problem in problems)
+    assert not lg.check_ref(repo, "developer", tip="missing", base="main")[0]
+    assert not lg.check_ref(repo, "developer", base="missing")[0]
+    assert lg.guarded_ref("main")
+    assert not lg.guarded_ref("developer")
 
 
-def test_release_cut_from_developer_passes(tmp_path: Path) -> None:
-    lg = _load_guard()
-    repo = _repo_with_lanes(tmp_path)
-    _git(repo, "checkout", "-qb", "dev/x", "developer")
-    (repo / "g.txt").write_text("c", encoding="utf-8")
-    _git(repo, "add", "-A")
-    _git(repo, "commit", "-m", "lane work")
-    _git(repo, "checkout", "-q", "developer")
-    _git(repo, "merge", "--no-ff", "dev/x", "-m", "merge dev/x")
-    _git(repo, "branch", "release/v9", "developer")
-    ok, problems = lg.check_ref(repo, "release/v9")
-    assert ok is True, problems
-
-
-def test_release_chore_does_not_launder_history(tmp_path: Path) -> None:
-    lg = _load_guard()
-    repo = _repo_with_lanes(tmp_path)
-    _git(repo, "branch", "release/v9", "developer")
-    _git(repo, "checkout", "-q", "release/v9")
-    (repo / "f.txt").write_text("b", encoding="utf-8")
-    _git(repo, "commit", "-am", "hotfix diretto")
-    _git(repo, "commit", "--allow-empty", "-m", "release: notes for v9")
-    ok, _problems = lg.check_ref(repo, "release/v9")
-    assert ok is False
-
-
-def test_allowed_release_chore_and_remote_only_integration(tmp_path: Path) -> None:
-    lg = _load_guard()
-    repo = _repo_with_lanes(tmp_path)
-    _git(repo, "checkout", "-qb", "release/v9", "developer")
-    _git(repo, "commit", "--allow-empty", "-m", "release: notes for v9")
-    assert lg.check_ref(repo, "release/v9")[0]
-    clone = tmp_path / "clone"
-    subprocess.run(["git", "clone", "--branch", "release/v9", str(repo), str(clone)], check=True, capture_output=True)
-    assert lg.check_ref(clone, "release/v9")[0]
-
-
-def test_release_must_descend_from_developer(tmp_path: Path) -> None:
-    lg = _load_guard()
-    repo = _repo_with_lanes(tmp_path)
-    _git(repo, "checkout", "-qb", "sideways", "main")
-    (repo / "z.txt").write_text("z", encoding="utf-8")
-    _git(repo, "add", "-A")
-    _git(repo, "commit", "-m", "sideways")
-    _git(repo, "branch", "-f", "developer", "sideways")
-    _git(repo, "branch", "release/v9", "main")
-    ok, problems = lg.check_ref(repo, "release/v9")
-    assert ok is False
-    assert any("descend" in problem for problem in problems)
-
-
-def test_unguarded_rungs_are_ignored(tmp_path: Path) -> None:
-    lg = _load_guard()
-    assert lg.guarded_ref("main") is True
-    assert lg.guarded_ref("release/v2.3.10") is True
-    assert lg.guarded_ref("developer") is True
-    assert lg.guarded_ref("dev/engine") is False
-
-
-def test_non_lane_branch_is_rejected(tmp_path: Path) -> None:
-    lg = _load_guard()
-    repo = _repo_with_lanes(tmp_path)
-    _git(repo, "checkout", "-qb", "feat/some-fix", "developer")
-    (repo / "g.txt").write_text("c", encoding="utf-8")
-    _git(repo, "add", "-A")
-    _git(repo, "commit", "-m", "some fix")
-    ok, problems = lg.check_ref(repo, "feat/some-fix")
-    assert ok is False
-    assert any("dev/<agent>" in problem for problem in problems)
-
-
-def test_dev_lane_branch_passes_guard(tmp_path: Path) -> None:
-    lg = _load_guard()
-    repo = _repo_with_lanes(tmp_path)
-    _git(repo, "checkout", "-qb", "dev/engine", "developer")
-    (repo / "g.txt").write_text("c", encoding="utf-8")
-    _git(repo, "add", "-A")
-    _git(repo, "commit", "-m", "lane work")
-    ok, problems = lg.check_ref(repo, "dev/engine")
-    assert ok is True, problems
-
-
-def test_engine_lane_warns_on_non_lane_branch(tmp_path: Path) -> None:
-    repo = _repo_with_lanes(tmp_path)
-    engine_root = repo / "03-INFRA"
-    engine_root.mkdir()
-    _git(repo, "checkout", "-qb", "fix/quick-thing", "developer")
-    (repo / "dirty.txt").write_text("wip", encoding="utf-8")
-    _git(repo, "add", "-A")
-    outcome = check_engine_lane(engine_root)
-    assert outcome is not None
-    assert outcome.severity == Severity.WARN
-    assert "dev/<agent>" in outcome.message
-
-
-def test_engine_lane_warns_on_guarded_rung_with_work(tmp_path: Path) -> None:
-    repo = _repo_with_lanes(tmp_path)
-    engine_root = repo / "03-INFRA"
-    engine_root.mkdir()
-    _git(repo, "checkout", "-q", "main")
-    (repo / "dirty.txt").write_text("wip", encoding="utf-8")
-    _git(repo, "add", "-A")
-    outcome = check_engine_lane(engine_root)
-    assert outcome is not None
-    assert outcome.severity == Severity.WARN
-    assert "dev/<agent>" in outcome.message
-
-
-def test_engine_lane_ok_on_lane_branch_and_missing_checkout(tmp_path: Path) -> None:
-    repo = _repo_with_lanes(tmp_path)
-    engine_root = repo / "03-INFRA"
-    engine_root.mkdir()
-    _git(repo, "checkout", "-qb", "dev/test")
-    outcome = check_engine_lane(engine_root)
-    assert outcome is not None
-    assert outcome.severity == Severity.OK
-    assert check_engine_lane(tmp_path / "nope") is None
-
-
-def test_developer_accepts_lane_merge_but_refuses_direct_commit(tmp_path):
-    from nexgen_core.lanes import check_ref
-    repo = _repo_with_lanes(tmp_path)
-    base = _git(repo, "rev-parse", "developer").stdout.strip()
-    _git(repo, "checkout", "-qb", "dev/x", "developer")
-    _git(repo, "commit", "--allow-empty", "-m", "lane change")
-    _git(repo, "checkout", "developer")
-    _git(repo, "merge", "--no-ff", "dev/x", "-m", "merge lane")
-    assert check_ref(repo, "developer", base=base)[0]
-    _git(repo, "commit", "--allow-empty", "-m", "direct fix")
-    assert not check_ref(repo, "developer", base=base)[0]
-
-
-def test_pr_checks_synthetic_merge_and_release_history(tmp_path):
-    from nexgen_core.lanes import check_ref
-    repo = _repo_with_lanes(tmp_path)
-    base = _git(repo, "rev-parse", "developer").stdout.strip()
-    _git(repo, "checkout", "-qb", "dev/x", "developer")
-    _git(repo, "commit", "--allow-empty", "-m", "lane change")
-    _git(repo, "checkout", "-qb", "pr-merge", "developer")
-    _git(repo, "merge", "--no-ff", "dev/x", "-m", "synthetic merge")
-    assert check_ref(repo, "developer", tip="HEAD", base=base)[0]
-    assert not check_ref(repo, "release/v9", tip="HEAD")[0]
-
-
-def test_missing_integration_ref_is_unknown_in_doctor(tmp_path):
-    repo = _repo_with_lanes(tmp_path)
-    _git(repo, 'checkout', '-qb', 'release/unknown')
-    _git(repo, 'branch', '-D', 'developer')
-    outcome = check_engine_lane(repo)
-    assert outcome.severity == Severity.UNDETERMINED
-
-
-def test_first_developer_push_checks_merges_from_published_base(tmp_path):
+def test_first_developer_push_requires_a_trusted_published_base(tmp_path):
     repo = _repo_with_lanes(tmp_path)
     _git(repo, "update-ref", "refs/remotes/origin/main", "main")
-    _git(repo, "checkout", "-qb", "dev/first", "developer")
-    _git(repo, "commit", "--allow-empty", "-m", "lane work")
     _git(repo, "checkout", "developer")
-    _git(repo, "merge", "--no-ff", "dev/first", "-m", "merge first lane")
-    command = [
-        sys.executable, str(SCRIPTS_DIR / "lane_guard.py"),
-        "--repo", str(repo), "--ref", "developer", "--tip", "HEAD",
-        "--base", "0" * 40, "--first-push-base", "origin/main",
-    ]
-    result = subprocess.run(command, capture_output=True, text=True)
-    assert result.returncode == 0, result.stderr
-    _git(repo, "commit", "--allow-empty", "-m", "direct fix")
-    result = subprocess.run(command, capture_output=True, text=True)
-    assert result.returncode == 1
-    assert "direct commit on developer" in result.stderr
+    _git(repo, "commit", "--allow-empty", "-m", "development")
+    lg = _load_guard()
+    assert not lg.check_ref(repo, "developer", base="0" * 40)[0]
+    assert not lg.check_ref(repo, "developer", base="0" * 40, first_push_base="missing")[0]
+    assert lg.check_ref(repo, "developer", base="0" * 40, first_push_base="origin/main")[0]
 
 
 def test_first_push_base_cannot_override_an_existing_tip(tmp_path):
-    from nexgen_core.lanes import check_ref
     repo = _repo_with_lanes(tmp_path)
-    base = _git(repo, "rev-parse", "developer").stdout.strip()
     _git(repo, "checkout", "developer")
-    _git(repo, "commit", "--allow-empty", "-m", "direct fix")
-    assert not check_ref(repo, "developer", base="0" * 40)[0]
-    assert not check_ref(repo, "developer", base="0" * 40, first_push_base="missing")[0]
-    assert not check_ref(repo, "developer", base=base, first_push_base="HEAD")[0]
+    _git(repo, "commit", "--allow-empty", "-m", "published development")
+    base = _git(repo, "rev-parse", "HEAD").stdout.strip()
+    _git(repo, "checkout", "main")
+    lg = _load_guard()
+    assert not lg.check_ref(repo, "developer", tip="main", base=base, first_push_base="main")[0]
+
+
+def test_main_merge_from_an_unintegrated_branch_is_refused(tmp_path):
+    repo = _repo_with_lanes(tmp_path)
+    _git(repo, "update-ref", "refs/remotes/origin/main", "main")
+    _git(repo, "checkout", "-b", "outside")
+    _git(repo, "commit", "--allow-empty", "-m", "unintegrated work")
+    _git(repo, "checkout", "main")
+    _git(repo, "merge", "--no-ff", "outside", "-m", "release: misleading label")
+    assert not _load_guard().check_ref(repo, "main")[0]
+
+
+def test_main_direct_release_chore_is_still_refused(tmp_path):
+    repo = _repo_with_lanes(tmp_path)
+    _git(repo, "update-ref", "refs/remotes/origin/main", "main")
+    _git(repo, "commit", "--allow-empty", "-m", "release: misleading direct commit")
+    assert not _load_guard().check_ref(repo, "main")[0]
+
+
+def test_remote_only_developer_ref_works_in_ci_clone(tmp_path):
+    repo = _repo_with_lanes(tmp_path)
+    _git(repo, "checkout", "developer")
+    _git(repo, "commit", "--allow-empty", "-m", "release: ready")
+    _git(repo, "checkout", "main")
+    _git(repo, "merge", "--no-ff", "developer", "-m", "release merge")
+    clone = tmp_path / "clone"
+    subprocess.run(["git", "clone", str(repo), str(clone)], check=True, capture_output=True)
+    previous = _git(repo, "rev-parse", "main^").stdout.strip()
+    assert _load_guard().check_ref(clone, "main", base=previous)[0]
+
+
+def test_doctor_warns_on_retired_branch_and_detached_work(tmp_path):
+    repo = _repo_with_lanes(tmp_path)
+    _git(repo, "checkout", "-b", "dev/old")
+    assert check_engine_lane(repo).severity == Severity.WARN
+    _git(repo, "checkout", "--detach")
+    assert check_engine_lane(repo).severity == Severity.WARN
+    assert check_engine_lane(tmp_path / "absent") is None
+
+
+def test_doctor_reports_missing_remote_as_unknown(tmp_path):
+    repo = _repo_with_lanes(tmp_path)
+    _git(repo, "checkout", "developer")
+    assert check_engine_lane(repo).severity == Severity.UNDETERMINED

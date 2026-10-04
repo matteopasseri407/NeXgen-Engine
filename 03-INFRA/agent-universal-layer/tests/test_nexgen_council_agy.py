@@ -23,6 +23,7 @@ def test_agy_build_seat_command(tmp_path: Path) -> None:
     invocation = _build_seat_command(seat, "Test prompt text", tmp_path)
     assert invocation.argv == [
         "agy",
+        "--print",
         "--model",
         "gemini-3.7-flash-high",
         "--disable-slash-commands",
@@ -50,6 +51,8 @@ def test_agy_effort_forwarding() -> None:
     seat_xhigh = {"cli": "agy", "reasoning_effort": "xhigh"}
     args_xhigh, _ = _effort_forwarding(seat_xhigh)
     assert args_xhigh == ["--effort", "xhigh"]
+    args_max, _ = _effort_forwarding({"cli": "agy", "reasoning_effort": "max"})
+    assert args_max == ["--effort", "max"]
 
 
 def test_agy_seat_allowed_in_proposal(capsys) -> None:

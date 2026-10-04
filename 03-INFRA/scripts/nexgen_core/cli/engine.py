@@ -13,6 +13,7 @@ from pathlib import Path
 import yaml
 
 from nexgen_core.i18n import t
+from nexgen_core.marks import safe_mark as _safe_mark
 from nexgen_core.paths import (
     remotes_config,
     resolve_engine_root,
@@ -113,13 +114,6 @@ def register(sub) -> None:
 
     p = sub.add_parser("bootstrap-alerts", help=t("Diagnose and alert only on failures (internal use)"))
     p.set_defaults(func=cmd_bootstrap_alerts)
-
-
-def _safe_mark(mark: str, stream=sys.stdout) -> str:
-    """Backward-compat wrapper: single implementation lives in nexgen_core.marks."""
-    from nexgen_core.marks import safe_mark
-
-    return safe_mark(mark, stream)
 
 
 def _action_mark(act: str) -> tuple[str, str]:

@@ -31,9 +31,8 @@ from typing import Any
 API_URL = os.environ.get("VAULT_OCR_API_URL", "http://127.0.0.1:33003").rstrip("/")
 MAX_LOCAL_BYTES = int(os.environ.get("VAULT_OCR_MAX_LOCAL_BYTES", "15728640"))
 #: Extensions this tool accepts. The tool contract is "local image": refusing
-#: non-image paths stops a model caller from pointing the tool at secrets,
-#: keys or token files (which never carry these suffixes) and exfiltrating
-#: them through the OCR server into conversation context.
+#: non-image paths enforces the image tool's input contract. Extensions
+#: and names are heuristics, not proof that a file contains no credentials.
 IMAGE_SUFFIXES = frozenset({".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp", ".tif", ".tiff", ".pdf"})
 #: Sensitive names that are never readable through this tool, whatever their
 #: extension. Denylist (not allowlist) because this standalone script has no
@@ -208,7 +207,7 @@ def read_local_image(path: Path) -> bytes:
 
 
 def confined_image(raw: object) -> Path:
-    """Enforce the tool contract: a real (non-symlink) image file, no secrets.
+    """Require an image filename and refuse known sensitive locations.
 
     Model callers pass image_path; without a gate any readable file (token
     stores, private keys, 99-SECRETS) could be sent to the OCR HTTP server
@@ -219,13 +218,14 @@ def confined_image(raw: object) -> Path:
         raise FileNotFoundError(f"image_path not found (symlinks refused): {path}")
     if path.suffix.lower() not in IMAGE_SUFFIXES:
         raise ValueError(f"image_path is not an image ({path.suffix or 'no suffix'}): {path.name}")
-    lowered = path.name.lower()
+    resolved = path.resolve()
+    lowered = resolved.stem.lower()
     if (
-        any(sensitive in lowered for sensitive in _SENSITIVE_NAMES)
-        or any(part.lower() in _SENSITIVE_PARTS for part in path.parts)
+        any(lowered == sensitive or any(lowered.startswith(sensitive + delimiter) for delimiter in ("-", "_", ".")) for sensitive in _SENSITIVE_NAMES)
+        or any(part.lower() in _SENSITIVE_PARTS for part in (*path.parts, *resolved.parts))
     ):
         raise ValueError(f"image_path looks sensitive, refused: {path.name}")
-    return path
+    return resolved
 
 
 def safe_multipart_filename(name: str) -> str:

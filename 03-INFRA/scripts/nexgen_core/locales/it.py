@@ -965,4 +965,19 @@ MESSAGES: dict[str, str] = {
         "systemd: non c'è ancora né ~/.local/bin/agent-sync né ~/.local/bin/nexgen; timer non armato (si riprova al prossimo giro quando c'è uno shim)",
     "systemd: systemctl not found — files written but the timers are NOT enabled":
         "systemd: systemctl non trovato — file scritti ma i timer NON sono attivi",
+    "Cannot read skill version record at {path} ({error}).":
+        "Impossibile leggere il registro delle versioni skill in {path} ({error}).",
+    "Skill '{name}' pin could not be recorded ({error}); update is incomplete.":
+        "La versione della skill '{name}' non è stata salvata ({error}); aggiornamento incompleto.",
+    "Cannot verify the recorded pin for skill '{name}' ({error}).":
+        "Impossibile verificare la versione salvata della skill '{name}' ({error}).",
+    "The skill version record cannot be read or is invalid.":
+        "Il registro delle versioni skill è illeggibile o non valido.",
+    "Inspect and repair installed-skill-versions.json before syncing skills.":
+        "Controlla e correggi installed-skill-versions.json prima del sync delle skill.",
+    "Engine development belongs on developer (current branch: {branch}).": "Lo sviluppo dell'Engine va su developer (ramo attuale: {branch}).",
+    "Move the work to developer and run the engine test gate.": "Porta il lavoro su developer ed esegui il gate dei test dell'Engine.",
+    "Engine checkout on developer; development commits and local edits are allowed.": "Checkout dell'Engine su developer; commit di sviluppo e modifiche locali sono consentiti.",
+    "Engine branch check failed: {detail}": "Controllo del ramo Engine fallito: {detail}",
+
 }

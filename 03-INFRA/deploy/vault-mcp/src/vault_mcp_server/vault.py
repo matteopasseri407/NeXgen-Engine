@@ -1091,12 +1091,27 @@ class VaultService:
         # write, and a crash leaves the old content plus an orphan tmp file
         # instead of a truncated note. os.replace on a symlinked target
         # replaces the link itself, never its destination.
-        tmp_path = target_path.with_name(f".{target_path.name}.{os.getpid()}.tmp")
-        with open(tmp_path, "w", encoding="utf-8") as handle:
-            handle.write(normalized)
-            handle.flush()
-            os.fsync(handle.fileno())
-        os.replace(tmp_path, target_path)
+        # This service ships as a standalone container, without nexgen_core.
+        # mkstemp exclusively creates a unique private inode; a predictable
+        # PID name could follow a stale symlink and overwrite another file.
+        old_mode = None
+        if os.name != "nt":
+            try:
+                old_mode = target_path.stat().st_mode & 0o777
+            except FileNotFoundError:
+                pass
+        fd, name = tempfile.mkstemp(prefix=f".{target_path.name}.", suffix=".tmp", dir=target_path.parent)
+        tmp_path = Path(name)
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as handle:
+                handle.write(normalized)
+                handle.flush()
+                os.fsync(handle.fileno())
+            if old_mode is not None:
+                os.chmod(tmp_path, old_mode)
+            os.replace(tmp_path, target_path)
+        finally:
+            tmp_path.unlink(missing_ok=True)
 
     def _ensure_git_clean(self) -> None:
         status = self._run_git(["status", "--porcelain"], check=True)

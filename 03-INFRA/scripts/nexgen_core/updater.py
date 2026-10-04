@@ -38,11 +38,14 @@ from nexgen_core.errors import NexgenError  # noqa: E402
 from nexgen_core.files import atomic_write_text  # noqa: E402
 from nexgen_core.i18n import t  # noqa: E402
 from nexgen_core.paths import resolve_home  # noqa: E402
+from nexgen_core.processes import force_stop_process_tree  # noqa: E402
 
 SEMVER = re.compile(r"^v?(\d+)\.(\d+)\.(\d+)$")
 CHANGELOG_HEADING = re.compile(r"^## \[(\d+\.\d+\.\d+)\].*$", re.MULTILINE)
 BAD_SIGNATURE_STATES = {"B", "R", "X", "Y"}
 UNVERIFIED_SIGNATURE_STATES = {"E", "N"}
+GIT_TIMEOUT_SECONDS = 120.0
+COMMAND_TIMEOUT_SECONDS = 600.0
 
 
 class UpdateError(NexgenError, RuntimeError):
@@ -50,7 +53,7 @@ class UpdateError(NexgenError, RuntimeError):
 
 
 class PostMergeError(UpdateError):
-    """The engine ref moved, but provisioning or verification failed."""
+    """An update mutation began and recovery needs the previous engine ref."""
 
     def __init__(self, message: str, *, previous_head: str, engine_repo: Path):
         super().__init__(message)
@@ -82,13 +85,39 @@ def _run(
     check: bool = True,
     capture: bool = True,
 ) -> subprocess.CompletedProcess[str]:
-    result = subprocess.run(
-        list(args),
-        cwd=str(cwd),
-        check=False,
-        text=True,
-        capture_output=capture,
-    )
+    timeout = GIT_TIMEOUT_SECONDS if args and args[0] == "git" else COMMAND_TIMEOUT_SECONDS
+    try:
+        proc = subprocess.Popen(
+            list(args), cwd=str(cwd), text=True, encoding="utf-8", errors="replace",
+            stdout=subprocess.PIPE if capture else None,
+            stderr=subprocess.PIPE if capture else None,
+            start_new_session=os.name == "posix",
+        )
+    except OSError as exc:
+        raise UpdateError(f"cannot launch update command ({type(exc).__name__})") from exc
+    group = proc.pid if os.name == "posix" else None
+    try:
+        try:
+            out, err = proc.communicate(timeout=timeout)
+        except subprocess.TimeoutExpired as exc:
+            stopped = force_stop_process_tree(proc, process_group=group)
+            if stopped:
+                group = None
+            try:
+                proc.communicate(timeout=1)
+            except subprocess.TimeoutExpired:
+                stopped = False
+            suffix = "" if stopped else "; process cleanup not confirmed"
+            raise UpdateError(f"update command timeout after {timeout:g}s{suffix}; outcome may be unknown") from exc
+        result = subprocess.CompletedProcess(list(args), proc.returncode, out, err)
+    except OSError as exc:
+        raise UpdateError(f"update command I/O failed ({type(exc).__name__})") from exc
+    except BaseException:  # interrupted updater must not leave its command running
+        force_stop_process_tree(proc, process_group=group)
+        raise
+    finally:
+        if group is not None or proc.poll() is None:
+            force_stop_process_tree(proc, process_group=group)
     if check and result.returncode != 0:
         detail = (result.stderr or result.stdout or "command failed").strip()
         raise UpdateError(f"{' '.join(args)}: {detail}")
@@ -365,6 +394,32 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _report_post_merge_error(exc: PostMergeError, pin_file: Path | None) -> int:
+    print(f"nexgen-update: ERROR: {exc}", file=sys.stderr)
+    print(
+        "The updater will not roll back automatically. After reviewing the failure, the recoverable rollback is:\n"
+        f"  git -C {exc.engine_repo} reset --hard {exc.previous_head}",
+        file=sys.stderr,
+    )
+    print(
+        t(
+            "Resetting the engine is only half the recovery: generated configs and views "
+            "may already be half-new. Re-run provisioning from the restored tree afterwards:\n"
+            "  python3 {entry} apply\n"
+            "  agent-doctor --summary",
+            entry=f"{exc.engine_repo}/03-INFRA/scripts/nexgen_core/cli/__init__.py",
+        ),
+        file=sys.stderr,
+    )
+    if pin_file:
+        print(
+            "If 99-INDEX/ENGINE-PIN.txt moved, realign it to the same commit "
+            "through vault-push before running agent-sync again.",
+            file=sys.stderr,
+        )
+    return 1
+
+
 def main(
     argv: Sequence[str] | None = None,
     *,
@@ -376,6 +431,7 @@ def main(
     previous_head = ""
     engine_repo: Path | None = None
     pin_file: Path | None = None
+    mutation_started = False
     try:
         engine_repo, data_repo = resolve_repositories(env)
         entry = _tree_entry(engine_repo)
@@ -464,10 +520,21 @@ def main(
         if pre_doctor_rc != 0 and pre_fail == 0:
             raise UpdateError("pre-upgrade doctor returned an inconsistent result")
         previous_head = _git(engine_repo, "rev-parse", "HEAD").stdout.strip()
+        mutation_started = True
         merge = _git(engine_repo, "merge", merge_mode, target, check=False)
         if merge.returncode != 0:
             _git(engine_repo, "merge", "--abort", check=False)
+            ref_moved = _git(engine_repo, "rev-parse", "HEAD").stdout.strip() != previous_head
             detail = (merge.stderr or merge.stdout or "merge failed").strip()
+            if ref_moved:
+                raise PostMergeError(
+                    f"merge {merge_mode} {target} failed after the engine ref moved: {detail}",
+                    previous_head=previous_head, engine_repo=engine_repo,
+                )
+            _assert_clean(engine_repo, label="engine after failed merge")
+            if _git(engine_repo, "rev-parse", "--quiet", "--verify", "MERGE_HEAD", check=False).returncode == 0:
+                raise UpdateError("failed merge cleanup left an active merge")
+            mutation_started = False
             raise UpdateError(
                 f"merge {merge_mode} {target}: {detail}\n"
                 f"The merge was rolled back; {engine_repo} is still at {previous_head[:9]}."
@@ -540,36 +607,15 @@ def main(
         )
         return 0
     except PostMergeError as exc:
-        print(f"nexgen-update: ERROR: {exc}", file=sys.stderr)
-        print(
-            "The updater will not roll back automatically. After reviewing the failure, the recoverable rollback is:\n"
-            f"  git -C {exc.engine_repo} reset --hard {exc.previous_head}",
-            file=sys.stderr,
-        )
-        print(
-            "Safe to run: the pre-upgrade checks refused a dirty tree, so the reset "
-            "discards only updater-generated files (untracked files are untouched).",
-            file=sys.stderr,
-        )
-        print(
-            t(
-                "Resetting the engine is only half the recovery: generated configs and views "
-                "may already be half-new. Re-run provisioning from the restored tree afterwards:\n"
-                "  python3 {entry} apply\n"
-                "  agent-doctor --summary",
-                entry=f"{exc.engine_repo}/03-INFRA/scripts/nexgen_core/cli/__init__.py",
-            ),
-            file=sys.stderr,
-        )
-        if pin_file:
-            print(
-                "If 99-INDEX/ENGINE-PIN.txt moved, realign it to the same commit "
-                "through vault-push before running agent-sync again.",
-                file=sys.stderr,
-            )
-        return 1
-    except UpdateError as exc:
-        print(f"nexgen-update: ERROR: {exc}", file=sys.stderr)
+        return _report_post_merge_error(exc, pin_file)
+    except (UpdateError, OSError, UnicodeError, subprocess.SubprocessError) as exc:
+        safe_error = exc if isinstance(exc, UpdateError) else UpdateError(f"update operation failed ({type(exc).__name__})")
+        if mutation_started and previous_head and engine_repo is not None:
+            return _report_post_merge_error(PostMergeError(
+                f"update interrupted after merge was started: {safe_error}",
+                previous_head=previous_head, engine_repo=engine_repo,
+            ), pin_file)
+        print(f"nexgen-update: ERROR: {safe_error}", file=sys.stderr)
         return 1
 
 

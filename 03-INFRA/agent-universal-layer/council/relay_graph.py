@@ -28,13 +28,13 @@ from __future__ import annotations
 import hashlib
 import json
 import sys
-from contextlib import contextmanager
+from contextlib import contextmanager, ExitStack
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, TypedDict
 
 from proposal import _seat_quota_pool
-from nexgen_core.lock import HostLock, LockTimeoutError
+from nexgen_core.lock import LockTimeoutError
 from relay import (
     RelayError,
     RelayQuarantine,
@@ -52,6 +52,7 @@ from session import (
     _set_active_session,
     _write_private_text,
     new_session_dir,
+    session_run_lock,
 )
 
 CHECKPOINT_NAME = "relay-checkpoints.sqlite"
@@ -61,18 +62,15 @@ IDENTITY_NAME = "relay-identity.json"
 @contextmanager
 def _session_run_lock(session_dir: Path):
     """One caller may inspect and advance a relay session at a time."""
-    lock = HostLock(session_dir / "relay-run.lock", timeout=0, command_name="council relay")
-    try:
-        lock.acquire()
-    except LockTimeoutError as exc:
-        raise RelayError(
-            f"[council] session {session_dir.name} is already running; wait for that invocation to finish.",
-            kind="session_busy",
-        ) from exc
-    try:
+    with ExitStack() as stack:
+        try:
+            stack.enter_context(session_run_lock(session_dir))
+        except LockTimeoutError as exc:
+            raise RelayError(
+                f"[council] session {session_dir.name} is already running; wait for that invocation to finish.",
+                kind="session_busy",
+            ) from exc
         yield
-    finally:
-        lock.release()
 
 
 class RelayGraphState(TypedDict, total=False):

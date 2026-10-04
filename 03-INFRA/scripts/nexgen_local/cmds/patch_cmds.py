@@ -8,6 +8,7 @@ from dataclasses import asdict
 
 from . import base as _base
 from ..patch import PatchError, apply_proposal, format_gate, list_proposals, propose_patch
+from ..proposals import proposal_status
 from ..tools import ToolError
 
 
@@ -45,7 +46,7 @@ def cmd_proposals(args: argparse.Namespace) -> int:
         print("nessuna proposta")
         return 0
     for item in items:
-        state = "applicata" if item.applied_at else ("pronta" if item.dry_run else "dry-run fallito")
+        state = proposal_status(item, "applicata", "pronta" if item.dry_run else "dry-run fallito")
         print(f"  {item.id}  {state:<15} {item.file}")
     return 0
 

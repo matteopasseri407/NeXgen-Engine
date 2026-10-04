@@ -344,26 +344,20 @@ def install_scheduled_task(
 
     startup_dir = os.environ.get("APPDATA")
     if startup_dir:
+        from nexgen_core.files import atomic_write_text, backup_file
         startup_vbs = Path(startup_dir) / "Microsoft" / "Windows" / "Start Menu" / "Programs" / "Startup" / "KnowledgeVault Agent Sync.vbs"
         startup_vbs.parent.mkdir(parents=True, exist_ok=True)
-        if startup_vbs.is_file():
-            try:
+        try:
+            if startup_vbs.exists() or startup_vbs.is_symlink():
                 existing = startup_vbs.read_bytes()
-                wanted = Path(wrapper_path).read_bytes()
-            except OSError:
-                existing, wanted = b"", b""
-            if existing and existing != wanted:
-                # Never silently destroy a foreign logon script: keep the
-                # first pre-existing content recoverable next to it.
-                backup = startup_vbs.with_name(startup_vbs.name + ".pre-nexgen.bak")
-                if not backup.is_file():
-                    try:
-                        shutil.copy2(startup_vbs, backup)
-                        log(f"startup: kept foreign logon script as {backup}")
-                    except OSError as exc:
-                        log(f"startup: cannot back up foreign logon script ({exc}); skipping fallback")
-                        return heartbeat_ok
-        shutil.copy2(wrapper_path, startup_vbs)
+                if existing == content.encode("utf-8"):
+                    return heartbeat_ok
+                backup = backup_file(startup_vbs, tag="startup")
+                log(f"startup: kept previous logon script as {backup}")
+            atomic_write_text(startup_vbs, content)
+        except OSError as exc:
+            log(f"startup: cannot safely publish fallback ({type(exc).__name__}); previous script preserved")
+            return heartbeat_ok
         log(f"startup: fallback logon installed {startup_vbs}")
         return heartbeat_ok
     log("scheduled-task: no logon coverage (schtasks denied and APPDATA unset)")

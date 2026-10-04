@@ -349,10 +349,11 @@ council clean --all           # removes every kept session now
   the CLI accepted the exact `--model` selection and returned the same
   canonical model through `modelUsage`, with tools disabled and session
   persistence off. `ollama` seats have not yet been verified live.
-- **`agy` (Antigravity) is fully supported as a Council seat** (verified live on 2026-08-22, stdin transport confirmed 2026-10-04):
-  invoked via `agy --model <model> --disable-slash-commands --new-project --sandbox [--effort <level>]` with the prompt on stdin,
-  ensuring stateless text-in/text-out execution without loading local workspace skills, historical memory databases,
-  or unisolated environment tokens.
+- **`agy` (Antigravity) has a Council adapter**:
+  invoked via `agy --print --model <model> --disable-slash-commands --new-project --sandbox [--effort <level>]` with the prompt on stdin.
+  The adapter requests a fresh project and strips application tokens.
+  Sandbox flags do not prove that MCP tools are disabled; the CLI isolation limits remain vendor-specific.
+  Regression tests verify transport and effort forwarding. They do not certify live availability of each model or isolation on every host.
 - Automated regression tests cover the control flow for all four modes,
   session cleanup, relay fallback, all supported vendor CLIs, and the Linux
   launcher. They use fake seats, so they do not replace live checks of
