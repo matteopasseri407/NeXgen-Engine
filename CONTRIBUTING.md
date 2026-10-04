@@ -56,6 +56,7 @@ before integration. Fix new lint findings rather than regenerating the baseline.
 | Audited loop actions and staged proposals | `nexgen_local/step_actions.py` | `test_nexgen_local_steps.py`, `test_nexgen_local_step_boundaries.py` |
 | Model decisions, bounded repairs and final loop answer | `nexgen_local/steps.py` | `test_nexgen_local_steps.py`, `test_nexgen_tool_outcomes.py` |
 | Model requests and deadlines | `nexgen_local/llm.py` | `test_nexgen_llm_deadlines.py` |
+| Persistent research ownership, continuation and expiry | `nexgen_local/research_graph.py`; locking in `nexgen_core/lock.py` | `test_nexgen_local_research.py` |
 | Council process lifecycle and relay checkpoints | `03-INFRA/agent-universal-layer/council/` | `test_nexgen_council_*.py` |
 | Owned subprocess cleanup and Windows launch adapters | `nexgen_core/processes.py` | `test_nexgen_council_process_integration.py`, `test_nexgen_mcp_transport.py`, `test_vault_groom.py` |
 | Vault publication and selected files | `nexgen_core/git_ops.py` | `test_nexgen_scoped_publish.py` |
@@ -110,6 +111,12 @@ send/upload approval remains in the existing gates. `steps.py` coordinates
 model decisions and answers. Its older imports remain aliases for compatibility;
 new consumers import state, policy and actions directly from their owners.
 Changing state fields requires checking persisted research compatibility.
+Research holds its per-session lock across routing, checkpoint inspection,
+execution and saver closure. Expiry uses the same lock and rechecks age;
+never delete a lock file to clean up a session. A busy session refuses before
+model or tool calls. An explicit escalation must persist its terminal status.
+Router JSON field types are validated before paths or keywords are used;
+malformed forms use deterministic routing without another model request.
 
 `cmds/base.py` owns the local CLI configuration and model adapter, including
 the compatibility boundary for older callers that patch `cli._config` or
