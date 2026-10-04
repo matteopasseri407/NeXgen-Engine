@@ -111,6 +111,25 @@ def _render(name: str, prefix: list[str], entry: Path, windows: bool) -> str:
     return template.format(note=note, entry=str(entry), prefix=prefix_str)
 
 
+def _is_stale_windows_ps1_shim(text: str) -> bool:
+    """True when `text` looks like a pre-v2.3.0 PowerShell bin shim.
+
+    Those stubs were three lines forwarding to a checkout twin that no
+    longer exists (`$Target = '...03-INFRA/scripts/<name>.ps1'` plus
+    `& $Target @args`). Real scripts such as a custom `agent-now.ps1`
+    never contain that forwarding pattern and must be preserved.
+    Unreadable bytes are never classified here; callers skip them.
+    """
+    lowered = text.lower()
+    return (
+        "$target" in lowered
+        and "03-infra" in lowered
+        and "scripts" in lowered
+        and ".ps1" in lowered
+        and "& $target" in lowered
+    )
+
+
 def install_shims(
     scripts_dir: Path | None = None,
     bin_dir: Path | None = None,
@@ -121,6 +140,13 @@ def install_shims(
     It's idempotent: regenerating changes nothing if the content already
     matches, which is why the guard cycle can call it every round to
     silently repair a deleted or broken command.
+
+    On Windows the canonical launchers are `.cmd` files. Pre-v2.3.0
+    installs also left `<name>.ps1` stubs in the same directory pointing
+    at checkout twins deleted in v2.3.0; PowerShell resolves those before
+    the `.cmd` with the same stem, so every managed command breaks. Those
+    stale stubs are removed when their content matches the old forwarding
+    pattern. Anything else named `.ps1` is left alone.
     """
     home_dir = resolve_home(home)
     target_bin = bin_dir or (home_dir / ".local" / "bin")
@@ -141,5 +167,19 @@ def install_shims(
             atomic_write_text(launcher, content)
         ensure_executable(launcher)
         installed.append(str(launcher))
+
+    for name in [PRIMARY, *sorted(LEGACY_ALIASES)]:
+        stale = target_bin / f"{name}.ps1"
+        try:
+            if not stale.is_file():
+                continue
+            try:
+                text = stale.read_text(encoding="utf-8")
+            except (OSError, UnicodeDecodeError):
+                continue
+            if _is_stale_windows_ps1_shim(text):
+                stale.unlink()
+        except OSError:
+            continue
 
     return installed
