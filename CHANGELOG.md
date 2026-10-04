@@ -10,6 +10,18 @@ of any engine release.
 
 ## [Unreleased]
 
+## [2.3.11] - 2026-10-04
+
+### Fixed
+
+- Windows: remove stale `.ps1` bin shims shadowing the canonical `.cmd`
+  launchers. Pre-v2.3.0 installs left `<name>.ps1` stubs forwarding to
+  checkout twins deleted in v2.3.0, and PowerShell resolves those before
+  the `.cmd` with the same stem, so every managed command broke after the
+  update. `install_shims` now removes only stubs matching the old
+  forwarding pattern and preserves real scripts such as a custom
+  `agent-now.ps1`.
+
 ## [2.3.10] - 2026-10-04
 
 ### Fixed
