@@ -42,10 +42,14 @@ def test_agy_effort_forwarding() -> None:
     assert args == ["--effort", "high"]
     assert label == ", effort high"
 
-    seat_invalid = {"cli": "agy", "reasoning_effort": "xhigh"}
+    seat_invalid = {"cli": "agy", "reasoning_effort": "turbo"}
     args_inv, label_inv = _effort_forwarding(seat_invalid)
     assert args_inv == []
     assert "not applied" in label_inv
+
+    seat_xhigh = {"cli": "agy", "reasoning_effort": "xhigh"}
+    args_xhigh, _ = _effort_forwarding(seat_xhigh)
+    assert args_xhigh == ["--effort", "xhigh"]
 
 
 def test_agy_seat_allowed_in_proposal(capsys) -> None:
