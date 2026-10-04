@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import sys
 import urllib.request
 from contextlib import asynccontextmanager
 from hmac import compare_digest
@@ -111,21 +112,16 @@ class McpSecurityMiddleware:
         if not parsed.scheme or not parsed.netloc:
             return False
 
-        host_candidates = {
-            headers.get("host", ""),
-            headers.get("x-forwarded-host", ""),
-        }
-        host_candidates = {value for value in host_candidates if value}
-
-        expected_origins = {f"https://{host}" for host in host_candidates}
-        expected_origins.update(f"http://{host}" for host in host_candidates)
-
-        forwarded_proto = headers.get("x-forwarded-proto")
-        forwarded_host = headers.get("x-forwarded-host")
-        if forwarded_proto and forwarded_host:
-            expected_origins.add(f"{forwarded_proto}://{forwarded_host}")
-
-        return origin in expected_origins
+        # Mint expected origins from the Host header only. X-Forwarded-Host
+        # is client-controlled input to any proxy that forwards it
+        # unsanitized: letting it mint a matching origin would let a direct
+        # client pass this layer by sending a matching Host+Origin pair
+        # through such a proxy. Deployments behind a prefixing proxy declare
+        # their public origin in ALLOWED_ORIGINS instead.
+        host = headers.get("host", "")
+        if not host:
+            return False
+        return origin in (f"https://{host}", f"http://{host}")
 
 
 def _call_semantic(settings: Settings, query: str, limit: int) -> dict[str, Any]:
@@ -289,6 +285,8 @@ def create_app() -> Any:
     mcp, vault = create_server(settings)
 
     async def homepage(_: Request) -> JSONResponse:
+        # Liveness only: never disclose the absolute vault path or index
+        # statistics on an unauthenticated surface.
         return JSONResponse(
             {
                 "name": "markdown-vault-git-backed" if settings.write_enabled else "markdown-vault-readonly",
@@ -296,8 +294,6 @@ def create_app() -> Any:
                 "transport": "streamable-http",
                 "mcp_path": settings.mcp_path,
                 "health_path": settings.health_path,
-                "vault_root": str(settings.vault_root),
-                "note_count": vault.note_count(),
                 "read_only": not settings.write_enabled,
                 "write_enabled": settings.write_enabled,
                 "authentication": "bearer" if settings.vault_token else "none",
@@ -305,14 +301,9 @@ def create_app() -> Any:
         )
 
     async def health(_: Request) -> JSONResponse:
-        return JSONResponse(
-            {
-                "status": "ok",
-                "version": __version__,
-                "note_count": vault.note_count(),
-                "mcp_path": settings.mcp_path,
-            }
-        )
+        # No vault walk here: note_count() on every scrape is both a cost
+        # and an unauthenticated disclosure. Orchestrators need up/down only.
+        return JSONResponse({"status": "ok", "version": __version__})
 
     @asynccontextmanager
     async def lifespan(_: Starlette):
@@ -362,11 +353,23 @@ def create_app() -> Any:
 
 def main() -> None:
     settings = Settings.from_env()
+    if not settings.vault_token:
+        # The bearer check is skipped entirely without a token: say so loudly
+        # instead of serving an open vault quietly. Compose requires the
+        # token; this path is bare-metal runs without one.
+        print(
+            "WARNING: VAULT_TOKEN is unset -- this server accepts unauthenticated "
+            "requests. Set VAULT_TOKEN unless this is a loopback dev instance.",
+            file=sys.stderr,
+        )
     uvicorn.run(
         create_app(),
         host=settings.host,
         port=settings.port,
         log_level="info",
         proxy_headers=True,
-        forwarded_allow_ips="*",
+        # Only trust forwarding headers from the local host. "*" would let
+        # any direct client spoof X-Forwarded-Host/Proto (log poisoning and
+        # origin-layer confusion); same-host proxies still work.
+        forwarded_allow_ips="127.0.0.1",
     )

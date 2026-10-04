@@ -27,6 +27,7 @@ from nexgen_core.files import write_private_text
 from .config import LaneConfig
 from .llm import LLM
 from .proposals import (
+    read_proposal_data,
     PROPOSAL_ID_RE as PROPOSAL_ID_RE,
     new_proposal_id as new_proposal_id,
     valid_proposal_id as valid_proposal_id,
@@ -187,7 +188,7 @@ def load_proposal(cfg: LaneConfig, proposal_id: str) -> Proposal:
     target = cfg.proposals_dir / f"{proposal_id}.json"
     if not target.is_file():
         raise PatchError(f"proposta inesistente: {proposal_id}")
-    return Proposal(**json.loads(target.read_text(encoding="utf-8")))
+    return Proposal(**read_proposal_data(target, proposal_id, PatchError))
 
 
 def list_proposals(cfg: LaneConfig) -> list[Proposal]:
@@ -196,8 +197,8 @@ def list_proposals(cfg: LaneConfig) -> list[Proposal]:
     proposals = []
     for path in sorted(cfg.proposals_dir.glob("*.json"), reverse=True):
         try:
-            proposals.append(Proposal(**json.loads(path.read_text(encoding="utf-8"))))
-        except (OSError, TypeError, ValueError):
+            proposals.append(Proposal(**read_proposal_data(path, path.stem, PatchError)))
+        except (OSError, TypeError, ValueError, PatchError):
             continue
     return proposals
 

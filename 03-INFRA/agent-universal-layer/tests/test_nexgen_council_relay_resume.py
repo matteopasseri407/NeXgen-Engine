@@ -23,6 +23,52 @@ import relay  # noqa: E402
 import relay_graph  # noqa: E402
 import session  # noqa: E402
 from relay import RelayError, RelayQuarantine, RelayRecord, RelayStage  # noqa: E402
+
+
+def test_cleanup_holds_relay_ownership_until_removal(tmp_path, monkeypatch):
+    sessions = tmp_path / "sessions"
+    target = sessions / "synthetic"
+    target.mkdir(parents=True)
+    monkeypatch.setattr(session, "SESSIONS_DIR", sessions)
+
+    def remove(path):
+        with pytest.raises(RelayError, match="already running"):
+            with relay_graph._session_run_lock(path):
+                pass
+
+    monkeypatch.setattr(session.shutil, "rmtree", remove)
+    assert session._cleanup_sessions(0, remove_all=True) == 1
+
+
+def test_cleanup_preserves_busy_relay_and_reuses_stable_lock(tmp_path, monkeypatch):
+    sessions = tmp_path / "sessions"
+    target = sessions / "synthetic"
+    target.mkdir(parents=True)
+    monkeypatch.setattr(session, "SESSIONS_DIR", sessions)
+    with relay_graph._session_run_lock(target):
+        assert session._cleanup_sessions(0, remove_all=True) == 0
+        assert target.exists()
+    lock_path = tmp_path / "session-locks" / "synthetic.lock"
+    assert lock_path.exists()
+    assert session._cleanup_sessions(0, remove_all=True) == 1
+    assert lock_path.exists()
+    assert not target.exists()
+
+
+def test_cleanup_honors_active_older_relay_lock(tmp_path, monkeypatch):
+    from nexgen_core.lock import HostLock
+    sessions = tmp_path / "sessions"
+    target = sessions / "synthetic"
+    target.mkdir(parents=True)
+    monkeypatch.setattr(session, "SESSIONS_DIR", sessions)
+    lock = HostLock(target / "relay-run.lock", timeout=0)
+    lock.acquire()
+    try:
+        assert session._cleanup_sessions(0, remove_all=True) == 0
+        assert target.exists()
+    finally:
+        lock.release()
+
 from relay_graph import (  # noqa: E402
     _initial_state,
     _uncertain_pending,

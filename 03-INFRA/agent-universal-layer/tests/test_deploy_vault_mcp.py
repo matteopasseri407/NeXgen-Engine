@@ -56,6 +56,48 @@ def test_the_compose_image_tag_tracks_the_server_version():
     )
 
 
+@pytest.mark.skipif(os.name == "nt", reason="symlinks require privileges")
+def test_note_writer_never_follows_a_stale_predictable_temp_symlink(tmp_path):
+    settings = _settings(tmp_path)
+    target = settings.vault_root / "note.md"
+    target.write_text("old")
+    outside = tmp_path / "outside.md"
+    outside.write_text("untouched")
+    stale = target.with_name(f".{target.name}.{os.getpid()}.tmp")
+    stale.symlink_to(outside)
+    VaultService(settings)._write_note_file(target, "new", already_validated=True)
+    assert outside.read_text() == "untouched"
+    assert target.read_text() == "new"
+    assert stale.is_symlink()
+
+
+def test_note_writer_cleans_only_its_temp_after_failed_rename(tmp_path, monkeypatch):
+    settings = _settings(tmp_path)
+    target = settings.vault_root / "note.md"
+    target.write_text("old")
+    other = settings.vault_root / ".another-writer.tmp"
+    other.write_text("untouched")
+
+    def fail(*args):
+        raise OSError("synthetic rename failure")
+
+    monkeypatch.setattr(os, "replace", fail)
+    with pytest.raises(OSError):
+        VaultService(settings)._write_note_file(target, "new", already_validated=True)
+    assert target.read_text() == "old"
+    assert other.read_text() == "untouched"
+    assert set(settings.vault_root.iterdir()) == {target, other}
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX permissions")
+def test_new_note_is_private_during_publication(tmp_path):
+    import stat
+    settings = _settings(tmp_path)
+    target = settings.vault_root / "note.md"
+    VaultService(settings)._write_note_file(target, "new", already_validated=True)
+    assert stat.S_IMODE(target.stat().st_mode) == 0o600
+
+
 def test_the_read_index_excludes_99_secrets_by_default(tmp_path: Path):
     settings = _settings(tmp_path)
     assert settings.exclude_path_prefixes == ("99-SECRETS",)

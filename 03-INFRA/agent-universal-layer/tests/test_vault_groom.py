@@ -376,6 +376,30 @@ def test_claude_runner_never_allows_push(tmp_path, monkeypatch):
     assert captured["cwd"] == tmp_path / "clone"
 
 
+@pytest.mark.parametrize("write", [False, True])
+def test_agy_groom_keeps_print_mode_scope_and_explicit_model(tmp_path, monkeypatch, write):
+    import nexgen_core.vault.runner as runner_module
+
+    captured = {}
+    def capture(cmd, **kwargs):
+        captured.update(cmd=cmd, **kwargs)
+        return RunResult("synthetic", 0)
+
+    monkeypatch.setattr(runner_module, "_run_streaming", capture)
+    active = runner_module.AgyRunner(model="claude-sonnet-5", vault=tmp_path)
+    if write:
+        active.run_write("synthetic private prompt", tmp_path / "clone")
+    else:
+        active.run_readonly("synthetic private prompt")
+    argv = captured["cmd"]
+    assert "--print" in argv
+    assert argv[argv.index("--mode") + 1] == ("accept-edits" if write else "plan")
+    assert argv[argv.index("--model") + 1] == "claude-sonnet-5"
+    assert "synthetic private prompt" not in argv
+    assert captured["input_text"] == "synthetic private prompt"
+    assert captured["cwd"] == (tmp_path / "clone" if write else tmp_path)
+
+
 # --- the timeout kills the whole process group, not just the parent -------
 
 

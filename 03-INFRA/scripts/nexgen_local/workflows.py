@@ -26,7 +26,8 @@ from typing import Any, Callable
 from nexgen_core.files import write_private_text
 
 from .config import LaneConfig
-from .proposals import new_proposal_id, valid_proposal_id, proposal_lock, record_attempt
+from .proposals import (content_sha, read_proposal_data, new_proposal_id, valid_proposal_id,
+                        proposal_lock, record_attempt, refuse_prior_attempt, validate_content)
 from .tools import ToolError, audit_event
 
 
@@ -64,6 +65,15 @@ class WorkflowProposal:
     applied_at: str = ""
     outcome: str = ""
     attempted_at: str = ""
+    content_sha: str = ""
+
+
+def _proposal_sha(proposal: WorkflowProposal) -> str:
+    return content_sha(
+        proposal.workflow,
+        json.dumps(proposal.params, ensure_ascii=False, sort_keys=True),
+    )
+
 
 
 def allowlist_path() -> Path:
@@ -108,7 +118,7 @@ def load_proposal(cfg: LaneConfig, proposal_id: str) -> WorkflowProposal:
     target = cfg.workflows_dir / f"{proposal_id}.json"
     if not target.is_file():
         raise WorkflowError(f"proposta inesistente: {proposal_id}")
-    return WorkflowProposal(**json.loads(target.read_text(encoding="utf-8")))
+    return WorkflowProposal(**read_proposal_data(target, proposal_id, WorkflowError))
 
 
 def list_proposals(cfg: LaneConfig) -> list[WorkflowProposal]:
@@ -117,8 +127,8 @@ def list_proposals(cfg: LaneConfig) -> list[WorkflowProposal]:
     proposals = []
     for path in sorted(cfg.workflows_dir.glob("*.json"), reverse=True):
         try:
-            proposals.append(WorkflowProposal(**json.loads(path.read_text(encoding="utf-8"))))
-        except (OSError, TypeError, ValueError):
+            proposals.append(WorkflowProposal(**read_proposal_data(path, path.stem, WorkflowError)))
+        except (OSError, TypeError, ValueError, WorkflowError):
             continue
     return proposals
 
@@ -141,6 +151,7 @@ def propose_run(cfg: LaneConfig, workflow: str, params: dict[str, Any] | None = 
         params=dict(params or {}),
         created_at=time.strftime("%Y-%m-%dT%H:%M:%S%z"),
     )
+    proposal.content_sha = _proposal_sha(proposal)
     for _ in range(5):
         proposal.id = new_proposal_id()
         try:
@@ -179,6 +190,11 @@ def _confirm_run(cfg: LaneConfig, proposal_id: str, http: HttpFn | None) -> dict
     proposal = load_proposal(cfg, proposal_id)
     if proposal.applied_at:
         raise WorkflowError("proposta gia' eseguita")
+    refuse_prior_attempt(proposal, WorkflowError)
+    validate_content(proposal.content_sha, WorkflowError,
+        proposal.workflow,
+        json.dumps(proposal.params, ensure_ascii=False, sort_keys=True),
+    )
     entry = load_allowlist().get(proposal.workflow)
     if not isinstance(entry, dict) or not str(entry.get("webhook_url", "")).startswith("http"):
         raise WorkflowError(f"workflow non piu' consentito: {proposal.workflow}")

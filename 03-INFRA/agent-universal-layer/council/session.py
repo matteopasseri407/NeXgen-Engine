@@ -17,10 +17,12 @@ import subprocess
 import sys
 import threading
 import time
+from contextlib import contextmanager, ExitStack
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
-from nexgen_core.files import write_private_text
+from nexgen_core.files import write_private_text, secure_artifact
+from nexgen_core.lock import HostLock, LockTimeoutError
 from nexgen_core.processes import force_stop_process_tree
 
 ENGINE_ROOT = Path(__file__).resolve().parent
@@ -79,6 +81,28 @@ def _secure_session_tree(session_dir: Path) -> None:
     _set_private_mode(session_dir, 0o700)
 
 
+@contextmanager
+def session_run_lock(session_dir: Path):
+    """Keep one stable lock outside the tree that cleanup may remove.
+
+    Also honor older runs' in-tree lock when present. If an OS refuses to
+    remove that open legacy file, cleanup preserves the session.
+    """
+    lock_dir = session_dir.parent.parent / "session-locks"
+    secure_artifact(lock_dir)
+    lock = HostLock(lock_dir / f"{session_dir.name}.lock", timeout=0, command_name="council session")
+    with ExitStack() as stack:
+        lock.acquire()
+        stack.callback(lock.release)
+        secure_artifact(lock_dir, lock.lock_path)
+        legacy_path = session_dir / "relay-run.lock"
+        if legacy_path.exists():
+            legacy = HostLock(legacy_path, timeout=0, command_name="council session")
+            legacy.acquire()
+            stack.callback(legacy.release)
+        yield
+
+
 def _cleanup_sessions(ttl_days: int, *, remove_all: bool = False, announce: bool = False) -> int:
     if not SESSIONS_DIR.is_dir():
         return 0
@@ -87,15 +111,17 @@ def _cleanup_sessions(ttl_days: int, *, remove_all: bool = False, announce: bool
     for session_dir in sorted(SESSIONS_DIR.iterdir()):
         if not session_dir.is_dir():
             continue
-        if not remove_all:
-            try:
-                mtime = datetime.fromtimestamp(session_dir.stat().st_mtime, tz=UTC)
-            except OSError:
-                continue
-            if mtime >= cutoff:
-                continue
         try:
-            shutil.rmtree(session_dir)
+            with session_run_lock(session_dir):
+                if not remove_all:
+                    mtime = datetime.fromtimestamp(session_dir.stat().st_mtime, tz=UTC)
+                    if mtime >= cutoff:
+                        continue
+                shutil.rmtree(session_dir)
+        except LockTimeoutError:
+            if announce:
+                print(f"[council] keeping {session_dir.name}: session is running")
+            continue
         except OSError as exc:
             if announce:
                 print(f"[council] cannot remove {session_dir.name}: {exc}")

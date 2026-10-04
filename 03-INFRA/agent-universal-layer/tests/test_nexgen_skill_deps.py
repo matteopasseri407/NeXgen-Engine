@@ -7,14 +7,17 @@ materializza, il doctor le verifica offline-safe.
 """
 from __future__ import annotations
 
+import shutil
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
+_scripts = str(Path(__file__).resolve().parents[2] / "scripts")
+if _scripts not in sys.path:
+    sys.path.insert(0, _scripts)
 
-from nexgen_core.checks.skill_checks import check_skill_deps
-from nexgen_core.report import Severity
-from nexgen_core.skills import SkillMaterializer as SkillManager
+from nexgen_core.checks.skill_checks import check_skill_deps  # noqa: E402 - sys.path shim for cloned checkout
+from nexgen_core.report import Severity  # noqa: E402 - sys.path shim for cloned checkout
+from nexgen_core.skills import SkillMaterializer as SkillManager  # noqa: E402 - sys.path shim for cloned checkout
 
 SKILLS_MANIFEST = """
 schema_version: 1
@@ -102,10 +105,12 @@ def test_check_skill_deps_offline(tmp_path: Path):
     manifest = m.vault_data / "03-INFRA" / "agent-universal-layer" / "skills" / "skills.manifest.yaml"
     out = check_skill_deps(manifest, tmp_path / "state")
     assert out.id == "skills.deps"
-    # npx pin: ok se node esiste; git pin: workspace non provisionato -> WARN
-    if Path("/usr/bin/node").exists() or any(p.name == "node" for p in []):
-        pass
-    assert out.severity in (Severity.WARN, Severity.OK)
+    # npx pin: ok se node esiste; git pin: workspace non provisionato -> WARN.
+    # Senza node le deps non sono verificabili: WARN obbligatorio, mai OK pulito.
+    if Path("/usr/bin/node").exists() or shutil.which("node"):
+        assert out.severity in (Severity.WARN, Severity.OK)
+    else:
+        assert out.severity == Severity.WARN
     if out.severity == Severity.WARN:
         assert "upstream-git" in out.message
 

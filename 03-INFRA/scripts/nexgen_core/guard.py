@@ -26,6 +26,7 @@ import yaml
 from nexgen_core.beat import Heartbeat
 from nexgen_core.errors import AlignmentError
 from nexgen_core.config import load_mcp_manifest, load_skills_manifest
+from nexgen_core.files import atomic_write_text
 from nexgen_core.git_ops import (
     GitState,
     auto_commit_infra_files,
@@ -162,10 +163,10 @@ class GuardRunner:
                         path=claude_md, error=exc,
                     ))
                 else:
-                    claude_md.write_text(content, encoding="utf-8")
+                    atomic_write_text(claude_md, content)
                     actions.append(t("Updated instruction pointer {path}", path=claude_md))
             else:
-                claude_md.write_text(content, encoding="utf-8")
+                atomic_write_text(claude_md, content)
                 actions.append(t("Updated instruction pointer {path}", path=claude_md))
 
         # The other three CLIs read the canonical file directly. Aligning
@@ -297,7 +298,7 @@ class GuardRunner:
 
             with contextlib.suppress(OSError):
                 backup_file(candidate, tag="instructions")
-            candidate.write_text(body, encoding="utf-8")
+            atomic_write_text(candidate, body)
         except OSError:
             return None
         return t("opencode dead 'instructions' entries removed")
@@ -340,7 +341,7 @@ class GuardRunner:
         for name, content in wrappers.items():
             target = local_bin / name
             if not target.is_file() or target.read_text(encoding="utf-8", errors="replace") != content:
-                target.write_text(content, encoding="utf-8")
+                atomic_write_text(target, content)
                 actions.append(t("local-model: installed wrapper {name}", name=name))
         return actions
 

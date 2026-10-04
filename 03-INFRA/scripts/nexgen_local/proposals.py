@@ -7,6 +7,8 @@ An attempt is not evidence that the provider completed the operation.
 from __future__ import annotations
 
 import re
+import hashlib
+import json
 import secrets
 import time
 from contextlib import contextmanager
@@ -32,6 +34,45 @@ def new_proposal_id() -> str:
 class AttemptedProposal(Protocol):
     attempted_at: str
     applied_at: str
+
+
+def migrate_attempt(data: dict) -> dict:
+    """Read the previous sending marker without reopening uncertain work."""
+    legacy = data.pop("sending_at", "")
+    if legacy:
+        data["attempted_at"] = data.get("attempted_at") or legacy
+    return data
+
+
+def read_proposal_data(path: Path, proposal_id: str, error: type[Exception]) -> dict:
+    """The locked filename and stored id must name the same artifact."""
+    data = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(data, dict) or data.get("id") != proposal_id:
+        raise error("identita della proposta incoerente con il file: riproponi")
+    return migrate_attempt(data)
+
+
+def content_sha(*parts: str) -> str:
+    """Bind approval fields using an unambiguous, versioned encoding."""
+    encoded = json.dumps(parts, ensure_ascii=True, separators=(",", ":")).encode("utf-8")
+    return "v1:" + hashlib.sha256(encoded).hexdigest()
+
+
+def validate_content(saved: str, error: type[Exception], *parts: str) -> None:
+    if not isinstance(saved, str) or not saved:
+        raise error("proposta senza vincolo di integrita': riproponi e riapprova")
+    expected = content_sha(*parts)
+    if not saved.startswith("v1:") and all(isinstance(p, str) and "\x00" not in p for p in parts):
+        # Read the previous NUL-delimited encoding only where its boundaries
+        # are unambiguous. New proposals always use the versioned format.
+        expected = hashlib.sha256(b"".join(b"\x00" + p.encode("utf-8") for p in parts)).hexdigest()
+    if saved != expected:
+        raise error("contenuto cambiato dopo la proposta: riproponi e riapprova")
+
+
+def refuse_prior_attempt(proposal: AttemptedProposal, error: type[Exception]) -> None:
+    if proposal.attempted_at:
+        raise error("tentativo gia' avviato: verifica l'esito prima di preparare una nuova proposta")
 
 
 def proposal_status(proposal: AttemptedProposal, completed: str, pending: str = "da approvare") -> str:
@@ -69,8 +110,7 @@ def record_attempt(proposal: AttemptedProposal, save: Callable[[], None], error:
     operation did not happen. The operator must verify the outcome before
     preparing another proposal; repeating this id is never safe.
     """
-    if proposal.attempted_at:
-        raise error("tentativo gia' avviato: verifica l'esito prima di preparare una nuova proposta")
+    refuse_prior_attempt(proposal, error)
     proposal.attempted_at = time.strftime("%Y-%m-%dT%H:%M:%S%z")
     try:
         save()

@@ -18,7 +18,8 @@ from nexgen_core.files import write_private_text
 from .config import LaneConfig
 from .connectors import ConnectorError
 from .connectors import calendar as calendar_conn
-from .proposals import new_proposal_id, valid_proposal_id, proposal_lock, record_attempt
+from .proposals import (content_sha, read_proposal_data, new_proposal_id, valid_proposal_id,
+                        proposal_lock, record_attempt, refuse_prior_attempt, validate_content)
 from .tools import ToolError, audit_event
 
 
@@ -41,6 +42,15 @@ class CalendarProposal:
     applied_at: str = ""
     done_id: str = ""
     attempted_at: str = ""
+    content_sha: str = ""
+
+
+def _proposal_sha(proposal: CalendarProposal) -> str:
+    return content_sha(
+        proposal.kind, proposal.calendar_id, proposal.summary, proposal.start,
+        proposal.end, proposal.description, proposal.location, proposal.event_id,
+    )
+
 
 
 def _save(cfg: LaneConfig, proposal: CalendarProposal) -> None:
@@ -63,7 +73,7 @@ def load_proposal(cfg: LaneConfig, proposal_id: str) -> CalendarProposal:
     target = cfg.calendars_dir / f"{proposal_id}.json"
     if not target.is_file():
         raise CalendarError(f"proposta inesistente: {proposal_id}")
-    return CalendarProposal(**json.loads(target.read_text(encoding="utf-8")))
+    return CalendarProposal(**read_proposal_data(target, proposal_id, CalendarError))
 
 
 def list_proposals(cfg: LaneConfig) -> list[CalendarProposal]:
@@ -72,8 +82,8 @@ def list_proposals(cfg: LaneConfig) -> list[CalendarProposal]:
     proposals = []
     for path in sorted(cfg.calendars_dir.glob("*.json"), reverse=True):
         try:
-            proposals.append(CalendarProposal(**json.loads(path.read_text(encoding="utf-8"))))
-        except (OSError, TypeError, ValueError):
+            proposals.append(CalendarProposal(**read_proposal_data(path, path.stem, CalendarError)))
+        except (OSError, TypeError, ValueError, CalendarError):
             continue
     return proposals
 
@@ -118,6 +128,7 @@ def propose_event(
         event_id="",
         created_at=time.strftime("%Y-%m-%dT%H:%M:%S%z"),
     )
+    proposal.content_sha = _proposal_sha(proposal)
     _store_new(cfg, proposal)
     audit_event(cfg, "propose_calendar", {"kind": "create", "summary": summary}, ok=True, chars=len(summary))
     return proposal
@@ -144,6 +155,7 @@ def propose_delete(cfg: LaneConfig, calendar_id: str = "primary", event_id: str 
         event_id=event_id,
         created_at=time.strftime("%Y-%m-%dT%H:%M:%S%z"),
     )
+    proposal.content_sha = _proposal_sha(proposal)
     _store_new(cfg, proposal)
     audit_event(cfg, "propose_calendar", {"kind": "delete", "event": event_id}, ok=True, chars=0)
     return proposal
@@ -189,6 +201,13 @@ def _apply_proposal(cfg: LaneConfig, proposal_id: str) -> dict[str, Any]:
     proposal = load_proposal(cfg, proposal_id)
     if proposal.applied_at:
         raise CalendarError("proposta gia' applicata")
+    refuse_prior_attempt(proposal, CalendarError)
+    validate_content(proposal.content_sha, CalendarError,
+        proposal.kind, proposal.calendar_id, proposal.summary, proposal.start,
+        proposal.end, proposal.description, proposal.location, proposal.event_id,
+    )
+    if proposal.kind not in ("create", "delete"):
+        raise CalendarError("tipo di proposta non supportato")
     audit_event(
         cfg,
         "apply_calendar",

@@ -532,15 +532,17 @@ def _build_seat_command(seat: dict, prompt: str, session_dir: Path) -> SeatInvoc
         )
     if cli == "agy":
         argv = [
-            "agy", "--model", model,
+            "agy", "--print", "--model", model,
             "--disable-slash-commands", "--new-project", "--sandbox",
         ]
         extra_argv, _label = _effort_forwarding(seat)
         argv.extend(extra_argv)
-        argv.extend(["-p", prompt])
+        # The prompt travels on stdin, never in argv: argv is visible in the
+        # process table, and Antigravity's print mode consumes stdin when no
+        # positional prompt is supplied. Same rule as every other seat.
         return SeatInvocation(
             argv,
-            None,
+            prompt,
             None,
             None,
             env=_isolated_seat_env(cli, session_dir),
@@ -573,12 +575,9 @@ def _build_seat_command(seat: dict, prompt: str, session_dir: Path) -> SeatInvoc
         os.close(fd)
         output_file = Path(tmp_name)
         # --skip-git-repo-check: codex exec refuses to start when its CWD is
-        # not a git repo / trusted directory, and the seat subprocess inherits
-        # whatever directory the user happened to run council from -- often
-        # not one (found on the first real multi-vendor run, 2026-07-13). The
-        # flag makes startup deterministic regardless of caller CWD. Safe here
-        # because the seat is read-only sandboxed and consumes only the piped
-        # prompt, never the surrounding directory.
+        # not a git repo / trusted directory. The seat runs with cwd below in
+        # the private session dir (never a repo), so the flag makes startup
+        # deterministic. Safe here because the seat is read-only sandboxed.
         argv = ["codex", "exec", "-", "-m", model, "--skip-git-repo-check"]
         # See _effort_forwarding: single source shared with _effort_label.
         extra_argv, _label = _effort_forwarding(seat)
@@ -590,6 +589,9 @@ def _build_seat_command(seat: dict, prompt: str, session_dir: Path) -> SeatInvoc
             output_file,
             None,
             env=_isolated_seat_env(cli, session_dir),
+            # Confined CWD: with -s read-only the seat may still READ, so it
+            # must not inherit the operator's checkout. Same as opencode.
+            cwd=session_dir,
         )
     if cli == "ollama":
         # --think <low|medium|high> is ollama's real reasoning-effort control

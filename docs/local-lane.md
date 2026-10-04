@@ -123,9 +123,14 @@ saved attempt without `applied_at` is uncertain, including a crash, transport
 failure or final-save failure. Repeating that proposal id refuses. Verify the
 real outcome before preparing a new proposal; an attempt alone does not prove
 completion. Lists show uncertain attempts as `esito da verificare`.
-Older artifacts without the field load as not yet attempted. Successful
-completion still saves the provider id and outcome receipt. Drive artifacts
-use the same private atomic writer as the other gates.
+Older `sending_at` records load as attempted and remain visible in lists.
+Mail, calendar, upload metadata and workflow parameters carry a fingerprint
+bound when staged. A changed field or a missing fingerprint requires a fresh
+proposal and approval. Existing unambiguous fingerprints remain supported.
+The fingerprint detects changes; it does not authenticate a JSON file against
+a writer who can replace both its fields and fingerprint. Successful completion
+still saves the provider id and outcome receipt. Drive artifacts use the same
+private atomic writer as the other gates.
 
 ## Relay (F4 v0)
 

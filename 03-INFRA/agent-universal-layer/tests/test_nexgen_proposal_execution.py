@@ -76,6 +76,10 @@ def gate(request, tmp_path, monkeypatch):
         h.restore = lambda: target.write_bytes(b"old\n")
         def run(yes=True):
             return mod.apply_proposal(cfg, pid, yes=yes)
+    if kind in ("mail", "calendar", "workflow"):
+        proposal.content_sha = mod._proposal_sha(proposal)
+    elif kind == "upload":
+        proposal.meta_sha = mod._meta_sha(proposal)
     mod._save(cfg, proposal)
     h.module, h.error, h.run = mod, error, run
     h.cfg, h.pid, h.proposal = cfg, pid, proposal
@@ -140,6 +144,94 @@ def test_missing_approval_does_not_consume_proposal(gate):
     assert not gate.calls
     gate.run()
     assert len(gate.calls) == 1
+
+
+@pytest.mark.parametrize("gate", ["mail", "calendar", "upload"], indirect=True)
+def test_accepted_effect_with_connector_error_refuses_second_attempt(gate):
+    from nexgen_local.connectors import ConnectorError
+
+    def lost_reply():
+        raise ConnectorError("synthetic reply lost after acceptance")
+
+    gate.effect = lost_reply
+    with pytest.raises(gate.error):
+        gate.run()
+    gate.effect = lambda: None
+    with pytest.raises(gate.error, match="verifica"):
+        gate.run()
+    assert len(gate.calls) == 1
+
+
+@pytest.mark.parametrize("gate", ["workflow"], indirect=True)
+def test_webhook_failure_after_acceptance_does_not_reopen_proposal(gate):
+    def http(*args):
+        gate.calls.append(1)
+        return gate.module.HttpResult(500, b"synthetic accepted then failed")
+
+    for _ in range(2):
+        with pytest.raises(gate.error):
+            gate.module.confirm_run(gate.cfg, gate.pid, True, http=http)
+    assert len(gate.calls) == 1
+
+
+@pytest.mark.parametrize("gate", ["mail", "calendar", "upload", "workflow"], indirect=True)
+def test_old_sending_marker_is_displayed_and_refused_as_uncertain(gate):
+    import json
+    from nexgen_local.proposals import proposal_status
+
+    directory = getattr(gate.cfg, {"mail": "mails_dir", "calendar": "calendars_dir", "upload": "uploads_dir", "workflow": "workflows_dir"}[gate.kind])
+    artifact = directory / f"{gate.pid}.json"
+    data = json.loads(artifact.read_text())
+    data.pop("attempted_at")
+    data["sending_at"] = "synthetic earlier attempt"
+    artifact.write_text(json.dumps(data))
+    loaded = gate.module.load_proposal(gate.cfg, gate.pid)
+    assert proposal_status(loaded, "complete") == "esito da verificare"
+    with pytest.raises(gate.error, match="verifica"):
+        gate.run()
+    assert not gate.calls
+
+
+@pytest.mark.parametrize("gate", ["mail", "calendar", "upload", "workflow"], indirect=True)
+def test_changed_approval_fields_refuse_before_attempt(gate):
+    import json
+
+    directory = getattr(gate.cfg, {"mail": "mails_dir", "calendar": "calendars_dir", "upload": "uploads_dir", "workflow": "workflows_dir"}[gate.kind])
+    artifact = directory / f"{gate.pid}.json"
+    data = json.loads(artifact.read_text())
+    field = {"mail": "to", "calendar": "calendar_id", "upload": "folder_id", "workflow": "workflow"}[gate.kind]
+    data[field] = "synthetic changed destination"
+    artifact.write_text(json.dumps(data))
+    with pytest.raises(gate.error, match="contenuto cambiato"):
+        gate.run()
+    assert not gate.calls
+    assert not gate.module.load_proposal(gate.cfg, gate.pid).attempted_at
+
+
+def test_fingerprint_cannot_move_nul_between_approval_fields():
+    from nexgen_local.proposals import content_sha, validate_content
+    assert content_sha("a\x00b", "c") != content_sha("a", "b\x00c")
+    old = hashlib.sha256(b"\x00a\x00b\x00c").hexdigest()
+    with pytest.raises(ValueError):
+        validate_content(old, ValueError, "a", "b\x00c")
+
+
+def test_artifact_identity_cannot_redirect_attempt_storage(gate):
+    import json
+    directory = getattr(gate.cfg, {"mail": "mails_dir", "calendar": "calendars_dir", "upload": "uploads_dir", "workflow": "workflows_dir", "patch": "proposals_dir"}[gate.kind])
+    artifact = directory / f"{gate.pid}.json"
+    data = json.loads(artifact.read_text())
+    data["id"] = "20261004-123000-eeeeeeee"
+    artifact.write_text(json.dumps(data))
+    with pytest.raises(gate.error, match="identita"):
+        gate.run()
+    assert not gate.calls
+
+
+def test_old_unambiguous_fingerprints_still_validate():
+    from nexgen_local.proposals import validate_content
+    old = hashlib.sha256(b"\x00a\x00b").hexdigest()
+    validate_content(old, ValueError, "a", "b")
 
 
 def test_failed_attempt_record_refuses_before_effect(gate, monkeypatch):

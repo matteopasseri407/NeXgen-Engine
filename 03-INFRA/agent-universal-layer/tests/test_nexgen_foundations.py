@@ -14,6 +14,82 @@ if str(SCRIPTS_DIR) not in sys.path:
 pytestmark = pytest.mark.filterwarnings("ignore")
 
 
+@pytest.mark.skipif(os.name == "nt", reason="symlinks require privileges")
+def test_failed_launcher_publication_preserves_old_link(tmp_path, monkeypatch):
+    from nexgen_core import files, shims
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    old = tmp_path / "old-launcher"
+    old.write_text("old launcher")
+    launcher = bin_dir / "nexgen"
+    launcher.symlink_to(old)
+
+    def fail(*args):
+        raise OSError("synthetic publication failure")
+
+    monkeypatch.setattr(files.os, "replace", fail)
+    with pytest.raises(OSError):
+        shims.install_shims(bin_dir=bin_dir, home=tmp_path)
+    assert launcher.is_symlink()
+    assert launcher.read_text() == "old launcher"
+    assert old.read_text() == "old launcher"
+
+
+@pytest.fixture
+def startup_install(tmp_path, monkeypatch):
+    import subprocess
+    from types import SimpleNamespace
+    from nexgen_core import scheduler
+
+    home = tmp_path / "home"
+    shim = home / ".local" / "bin" / "agent-sync.cmd"
+    shim.parent.mkdir(parents=True)
+    shim.write_text("synthetic launcher")
+    appdata = tmp_path / "appdata"
+    target = appdata / "Microsoft/Windows/Start Menu/Programs/Startup/KnowledgeVault Agent Sync.vbs"
+    target.parent.mkdir(parents=True)
+    target.write_text("foreign script")
+    monkeypatch.setenv("APPDATA", str(appdata))
+    monkeypatch.setattr(scheduler, "_host_mutations_disabled", lambda: False)
+    monkeypatch.setattr(scheduler, "_scheduled_task_invokes_wrapper", lambda *a: False)
+    monkeypatch.setattr(scheduler, "_run_external", lambda args, **k: subprocess.CompletedProcess(args, int("KnowledgeVault Agent Sync Logon" in args), "", ""))
+    messages = []
+    def run():
+        return scheduler.install_scheduled_task(home=home, engine_root=tmp_path / "engine", vault_data=tmp_path / "vault", vault=tmp_path / "vault", branch="main", log=messages.append)
+    return SimpleNamespace(run=run, target=target, messages=messages, scheduler=scheduler)
+
+
+def test_unreadable_foreign_startup_is_never_overwritten(startup_install, monkeypatch):
+    read = Path.read_bytes
+    def fail_target(path):
+        if path == startup_install.target:
+            raise PermissionError("synthetic denial")
+        return read(path)
+    monkeypatch.setattr(Path, "read_bytes", fail_target)
+    startup_install.run()
+    assert startup_install.target.read_text() == "foreign script"
+
+
+def test_failed_startup_replacement_preserves_foreign_content(startup_install, monkeypatch):
+    from nexgen_core import files
+    replace = files.os.replace
+    def fail_target(source, target):
+        if Path(target) == startup_install.target:
+            raise OSError("synthetic publication failure")
+        return replace(source, target)
+    monkeypatch.setattr(files.os, "replace", fail_target)
+    startup_install.run()
+    assert startup_install.target.read_text() == "foreign script"
+
+
+def test_each_foreign_startup_version_has_a_distinct_backup(startup_install):
+    startup_install.run()
+    startup_install.target.write_text("second foreign version")
+    startup_install.run()
+    backups = list(startup_install.target.parent.glob("*.bak"))
+    assert {p.read_text() for p in backups} == {"foreign script", "second foreign version"}
+
+
 def test_vault_env_expands_tilde(tmp_path: Path, monkeypatch) -> None:
     from nexgen_core.paths import resolve_vault_data
 

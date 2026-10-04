@@ -14,7 +14,27 @@ import sys
 import time
 from pathlib import Path
 
+import pytest
+
 LAZY_MCP = Path(__file__).resolve().parents[2] / "agent-universal-layer" / "mcp" / "lazy-mcp.py"
+
+
+@pytest.fixture(autouse=True)
+def _clean_test_imports():
+    """Undo this file's sys.path / sys.modules additions after every test.
+
+    Several tests load lazy-mcp.py under synthetic module names and append
+    the scripts dir to sys.path; leaking either makes later tests resolve
+    the wrong module depending on execution order.
+    """
+    before_path = sys.path[:]
+    names = ("lazy_mcp_under_test", "lazy_mcp_under_test_ctx", "lazy_mcp_withdrawn")
+    before_modules = {name: sys.modules[name] for name in names if name in sys.modules}
+    yield
+    sys.path[:] = before_path
+    for name in names:
+        sys.modules.pop(name, None)
+    sys.modules.update(before_modules)
 
 FAKE_SERVER = r"""
 import json, sys

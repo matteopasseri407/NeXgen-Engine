@@ -124,16 +124,17 @@ class ClaudeRunner(Runner):
     ]
 
     def run_readonly(self, prompt: str) -> RunResult:
-        cmd = ["claude", "-p", prompt, "--model", self.model, "--allowedTools", *self.READ_TOOLS]
-        return _run_streaming(cmd, cwd=self.vault, input_text=None, timeout=self.timeout)
+        # The prompt travels on stdin, never in argv (visible in ps).
+        cmd = ["claude", "-p", "--model", self.model, "--allowedTools", *self.READ_TOOLS]
+        return _run_streaming(cmd, cwd=self.vault, input_text=prompt, timeout=self.timeout)
 
     def run_write(self, prompt: str, workdir: Path) -> RunResult:
         cmd = [
-            "claude", "-p", prompt, "--model", self.model,
+            "claude", "-p", "--model", self.model,
             "--allowedTools", *self.WRITE_TOOLS,
             "--disallowedTools", "Bash(git push:*)",
         ]
-        return _run_streaming(cmd, cwd=workdir, input_text=None, timeout=self.timeout)
+        return _run_streaming(cmd, cwd=workdir, input_text=prompt, timeout=self.timeout)
 
 
 class CodexRunner(Runner):
@@ -154,12 +155,13 @@ class AgyRunner(Runner):
     name = "agy"
 
     def run_readonly(self, prompt: str) -> RunResult:
-        cmd = ["agy", "--print", "--model", self.model, "--mode", "plan", "--sandbox", "--prompt", prompt]
-        return _run_streaming(cmd, cwd=self.vault, input_text=None, timeout=self.timeout)
+        # Print mode consumes stdin; the private prompt stays out of argv.
+        cmd = ["agy", "--print", "--model", self.model, "--mode", "plan", "--sandbox", "--new-project"]
+        return _run_streaming(cmd, cwd=self.vault, input_text=prompt, timeout=self.timeout)
 
     def run_write(self, prompt: str, workdir: Path) -> RunResult:
-        cmd = ["agy", "--print", "--model", self.model, "--mode", "accept-edits", "--prompt", prompt]
-        return _run_streaming(cmd, cwd=workdir, input_text=None, timeout=self.timeout)
+        cmd = ["agy", "--print", "--model", self.model, "--mode", "accept-edits", "--new-project"]
+        return _run_streaming(cmd, cwd=workdir, input_text=prompt, timeout=self.timeout)
 
 
 _RUNNERS: dict[str, type[Runner]] = {

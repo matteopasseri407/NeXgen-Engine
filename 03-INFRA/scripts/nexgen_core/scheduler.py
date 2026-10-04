@@ -344,9 +344,20 @@ def install_scheduled_task(
 
     startup_dir = os.environ.get("APPDATA")
     if startup_dir:
+        from nexgen_core.files import atomic_write_text, backup_file
         startup_vbs = Path(startup_dir) / "Microsoft" / "Windows" / "Start Menu" / "Programs" / "Startup" / "KnowledgeVault Agent Sync.vbs"
         startup_vbs.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(wrapper_path, startup_vbs)
+        try:
+            if startup_vbs.exists() or startup_vbs.is_symlink():
+                existing = startup_vbs.read_bytes()
+                if existing == content.encode("utf-8"):
+                    return heartbeat_ok
+                backup = backup_file(startup_vbs, tag="startup")
+                log(f"startup: kept previous logon script as {backup}")
+            atomic_write_text(startup_vbs, content)
+        except OSError as exc:
+            log(f"startup: cannot safely publish fallback ({type(exc).__name__}); previous script preserved")
+            return heartbeat_ok
         log(f"startup: fallback logon installed {startup_vbs}")
         return heartbeat_ok
     log("scheduled-task: no logon coverage (schtasks denied and APPDATA unset)")

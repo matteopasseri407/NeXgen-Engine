@@ -30,6 +30,16 @@ from typing import Any
 
 API_URL = os.environ.get("VAULT_OCR_API_URL", "http://127.0.0.1:33003").rstrip("/")
 MAX_LOCAL_BYTES = int(os.environ.get("VAULT_OCR_MAX_LOCAL_BYTES", "15728640"))
+#: Extensions this tool accepts. The tool contract is "local image": refusing
+#: non-image paths enforces the image tool's input contract. Extensions
+#: and names are heuristics, not proof that a file contains no credentials.
+IMAGE_SUFFIXES = frozenset({".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp", ".tif", ".tiff", ".pdf"})
+#: Sensitive names that are never readable through this tool, whatever their
+#: extension. Denylist (not allowlist) because this standalone script has no
+#: config source for allowed roots; the extension gate above is the primary
+#: boundary, this is the safety net for renamed secrets.
+_SENSITIVE_NAMES = ("token", "secret", "auth", "passwd", "shadow", "id_rsa", "id_ed25519", "credentials")
+_SENSITIVE_PARTS = frozenset({".ssh", ".gnupg", "99-secrets"})
 # Mirrors the API's own VAULT_OCR_TOKEN (see ../api/app.py:require_ocr_token).
 # Empty by default: the API accepts unauthenticated requests unless an
 # operator sets a token on both sides, so this client stays a no-op until
@@ -172,14 +182,50 @@ def request_json(url: str, timeout: int = 20) -> dict[str, Any]:
 
 
 def read_local_image(path: Path) -> bytes:
-    """Checks size via stat() before touching file content: a naive
-    read_bytes()-then-check lets a 10GB file (or /dev/zero) get fully loaded
-    into RAM before the limit is even consulted, OOM-killing the MCP
-    process. stat() is O(1) regardless of file size."""
+    """Bounded, symlink-refusing read: stat() first, then at most limit+1 bytes.
+
+    The +1 byte detects a file grown or swapped in between without ever
+    buffering an unbounded body (a naive read_bytes()-then-check loads a
+    10GB file or /dev/zero into RAM first, OOM-killing the MCP process).
+    """
     size = path.stat().st_size
     if size > MAX_LOCAL_BYTES:
         raise ValueError(f"image too large: {size} bytes > {MAX_LOCAL_BYTES}")
-    return path.read_bytes()
+    nofollow = getattr(os, "O_NOFOLLOW", 0)
+    try:
+        fd = os.open(path, os.O_RDONLY | nofollow)
+    except OSError as exc:
+        raise ValueError(f"image_path not readable: {exc}") from exc
+    try:
+        with os.fdopen(fd, "rb") as handle:
+            data = handle.read(MAX_LOCAL_BYTES + 1)
+    except OSError as exc:
+        raise ValueError(f"image_path not readable: {exc}") from exc
+    if len(data) > MAX_LOCAL_BYTES:
+        raise ValueError(f"image grew past the limit while reading (> {MAX_LOCAL_BYTES} bytes)")
+    return data
+
+
+def confined_image(raw: object) -> Path:
+    """Require an image filename and refuse known sensitive locations.
+
+    Model callers pass image_path; without a gate any readable file (token
+    stores, private keys, 99-SECRETS) could be sent to the OCR HTTP server
+    and its bytes returned into conversation context.
+    """
+    path = Path(str(raw or "")).expanduser()
+    if not path.is_file() or path.is_symlink():
+        raise FileNotFoundError(f"image_path not found (symlinks refused): {path}")
+    if path.suffix.lower() not in IMAGE_SUFFIXES:
+        raise ValueError(f"image_path is not an image ({path.suffix or 'no suffix'}): {path.name}")
+    resolved = path.resolve()
+    lowered = resolved.stem.lower()
+    if (
+        any(lowered == sensitive or any(lowered.startswith(sensitive + delimiter) for delimiter in ("-", "_", ".")) for sensitive in _SENSITIVE_NAMES)
+        or any(part.lower() in _SENSITIVE_PARTS for part in (*path.parts, *resolved.parts))
+    ):
+        raise ValueError(f"image_path looks sensitive, refused: {path.name}")
+    return resolved
 
 
 def safe_multipart_filename(name: str) -> str:
@@ -231,11 +277,9 @@ def multipart_request(path: Path, data: bytes, min_confidence: float, timeout: i
 
 
 def extract_image(args: dict[str, Any]) -> dict[str, Any]:
-    path = Path(str(args.get("image_path", ""))).expanduser()
+    path = confined_image(args.get("image_path", ""))
     min_conf = float(args.get("min_confidence", 0.0) or 0.0)
     include_lines = bool(args.get("include_lines", False))
-    if not path.is_file():
-        raise FileNotFoundError(f"image_path not found: {path}")
     data = read_local_image(path)
     digest = hashlib.sha256(data).hexdigest()
     payload = multipart_request(path, data, min_conf)
@@ -271,7 +315,11 @@ def extract_batch(args: dict[str, Any]) -> dict[str, Any]:
     min_conf = float(args.get("min_confidence", 0.0) or 0.0)
     chunks = []
     for item in paths:
-        path = Path(str(item)).expanduser()
+        try:
+            path = confined_image(item)
+        except (FileNotFoundError, ValueError) as exc:
+            chunks.append(f"## {item}\n\nERROR: {exc}")
+            continue
         try:
             data = read_local_image(path)
             payload = multipart_request(path, data, min_conf)

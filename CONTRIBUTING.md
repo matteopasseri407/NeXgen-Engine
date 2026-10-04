@@ -129,6 +129,17 @@ alone must not be described as success or as ready for approval.
 Older artifacts omit `attempted_at` and load with its empty default. Proposal
 ids belong to `proposals.py`; the imports in `patch.py` remain compatibility
 aliases. Drive proposal creation and updates use the private atomic writer.
+The older `sending_at` marker is read as `attempted_at`, including in lists.
+Mail, calendar, upload metadata and workflow parameters are bound at staging
+with a versioned fingerprint. Missing fingerprints require a fresh proposal;
+old unambiguous fingerprints remain readable. Fingerprints detect changed
+fields; they are not signatures against a writer controlling the whole JSON.
+The artifact id must match the locked filename before loading any gate.
+Changing an id must never redirect the durable attempt into a different file.
+Council relay execution and cleanup share `session.session_run_lock`, held
+through removal. Its lock file lives outside the deletable session tree and
+is never removed. Older in-tree locks are also honored. Windows may preserve
+an older session when its open legacy lock prevents removal.
 
 `cmds/base.py` owns the local CLI configuration and model adapter, including
 the compatibility boundary for older callers that patch `cli._config` or
