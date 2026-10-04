@@ -33,7 +33,7 @@ def render(renderer, write: bool = False) -> tuple[bool, str]:
         raw_existing = cfg_file.read_text(encoding="utf-8")
         try:
             existing = parse_jsonc(raw_existing) if cfg_file.suffix == ".jsonc" else json.loads(raw_existing)
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - render fallback, never raises
             raise ValueError(f"Could not parse {cfg_file}: invalid JSON/JSONC ({exc})")
 
     raw_mcp = existing.get("mcp", {})

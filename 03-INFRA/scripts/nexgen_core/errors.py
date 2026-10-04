@@ -17,3 +17,7 @@ from __future__ import annotations
 class NexgenError(Exception):
     """Root of every deliberate engine failure. Never raised directly:
     raise the specific subclass that says what went wrong."""
+
+
+class AlignmentError(NexgenError):
+    """A required materialization phase failed; subsequent writes must stop."""

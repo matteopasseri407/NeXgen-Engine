@@ -16,7 +16,7 @@ import subprocess
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from .config import LaneConfig
 
@@ -26,20 +26,16 @@ MIN_TERM = 2
 #: Files larger than this are skipped by search instead of read whole.
 MAX_SEARCH_BYTES = 1_000_000
 
-#: Refusal texts that mean "the backend worked, there is just nothing here".
-#: Everything else in parentheses is a failure: unreachable root, missing
-#: dependency, failed command, refused path. For personal sources this
-#: distinction is load-bearing: "no mail found" and "account disconnected"
-#: must never share an outcome.
+#: Legacy checkpoints did not persist an explicit status. These markers
+#: interpret only their refusal history; fresh operations declare status.
 _EMPTY_REFUSALS = ("nessun risultato", "nessun testo estraibile")
 
 
 def refusal_kind(text: str) -> str:
     """Classify a tool output: "ok", "empty", or "error".
 
-    Success will never depend on printed text elsewhere (see ``RunResult``);
-    this classifies the recorded refusal strings so the engine can tell an
-    empty search from a broken backend.
+    Compatibility for old checkpoints' refusal history, never retrieved
+    source content. New operations and drivers use explicit ToolStatus.
     """
     low = str(text or "").strip().casefold()
     if not low.startswith("("):
@@ -53,12 +49,35 @@ class ToolError(RuntimeError):
     """The call was refused (confinement, audit, missing dependency)."""
 
 
+ToolStatus = Literal["ok", "empty", "error"]
+
+
+@dataclass(frozen=True)
+class ToolResult:
+    """An operation's outcome, independent of the source or display text."""
+
+    text: str
+    status: ToolStatus
+
+    @property
+    def usable(self) -> bool:
+        return self.status == "ok" and bool(self.text.strip())
+
+
 @dataclass
 class ToolCall:
     name: str
     args: dict[str, Any]
     ok: bool
     chars: int
+    # None is accepted only for receipts restored from older sessions.
+    status: ToolStatus | None = None
+
+    def receipt(self) -> dict[str, Any]:
+        result = {"tool": self.name, "args": self.args, "ok": self.ok}
+        if self.status is not None:
+            result["status"] = self.status
+        return result
 
 
 @dataclass
@@ -78,7 +97,9 @@ class RunResult:
         return self.rc == 0
 
 
-def audit_event(cfg: LaneConfig, name: str, args: dict[str, Any], ok: bool, chars: int) -> None:
+def audit_event(
+    cfg: LaneConfig, name: str, args: dict[str, Any], ok: bool, chars: int, *, status: ToolStatus | None = None,
+) -> None:
     """Append one JSONL receipt. Raises when the audit cannot be written."""
     entry = {
         "ts": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
@@ -87,6 +108,8 @@ def audit_event(cfg: LaneConfig, name: str, args: dict[str, Any], ok: bool, char
         "ok": ok,
         "chars": chars,
     }
+    if status is not None:
+        entry["status"] = status
     try:
         cfg.audit_path.parent.mkdir(parents=True, exist_ok=True)
         with cfg.audit_path.open("a", encoding="utf-8") as handle:
@@ -101,9 +124,8 @@ class ToolRegistry:
     def __init__(self, cfg: LaneConfig) -> None:
         self.cfg = cfg
         self.calls: list[ToolCall] = []
-        #: Every "(...)" output recorded, in order: the engine needs the texts
-        #: to tell "backend worked, nothing found" from "backend failed".
-        #: Cleared together with ``calls`` before each run.
+        #: Display texts for unsuccessful operations, retained for old
+        #: checkpoint compatibility. Fresh decisions use `calls[].status`.
         self.refusals: list[str] = []
         #: Coverage of the latest source read: tool, args, offset, total
         #: chars and whether it was truncated. The loop's ``continue_read``
@@ -113,22 +135,37 @@ class ToolRegistry:
 
     # ------------------------------------------------------------------ audit
 
-    def _audit(self, name: str, args: dict[str, Any], ok: bool, chars: int) -> None:
-        audit_event(self.cfg, name, args, ok, chars)
+    def _audit(self, name: str, args: dict[str, Any], ok: bool, chars: int, *, status: ToolStatus) -> None:
+        audit_event(self.cfg, name, args, ok, chars, status=status)
 
-    def _record(self, name: str, args: dict[str, Any], output: str) -> str:
-        self.calls.append(ToolCall(name=name, args=args, ok=not output.startswith("("), chars=len(output)))
-        if output.startswith("("):
+    def _record(self, name: str, args: dict[str, Any], output: str, *, status: ToolStatus = "ok") -> str:
+        if status not in ("ok", "empty", "error"):
+            raise ToolError(f"stato del tool non valido: {status}")
+        if status == "ok" and not output.strip():
+            status = "empty"
+        ok = status == "ok"
+        self._audit(name, args, ok=ok, chars=len(output), status=status)
+        self.calls.append(ToolCall(name=name, args=args, ok=ok, chars=len(output), status=status))
+        if not ok:
             self.refusals.append(output)
-        self._audit(name, args, ok=not output.startswith("("), chars=len(output))
         return output
 
-    def _refuse(self, name: str, args: dict[str, Any], message: str) -> str:
+    def _refuse(self, name: str, args: dict[str, Any], message: str, *, status: ToolStatus = "error") -> str:
         """A refusal is an event too: it leaves a receipt, or it never happened."""
-        self.calls.append(ToolCall(name=name, args=args, ok=False, chars=0))
-        self.refusals.append(message)
-        self._audit(name, args, ok=False, chars=0)
-        return message
+        return self._record(name, args, message, status=status)
+
+    def call_result(self, name: str, args: dict[str, Any]) -> ToolResult:
+        """Structured dispatch using the existing text API and its fresh receipt.
+
+        Internal drivers use this boundary; CLI and MCP text callers keep
+        ``call`` and the named methods. No result is inferred from content.
+        A missing receipt is a contract failure, not an implicit success.
+        """
+        before = len(self.calls)
+        text = self.call(name, args)
+        if len(self.calls) != before + 1 or self.calls[-1].status is None:
+            raise ToolError(f"ricevuta del tool assente o priva di stato: {name}")
+        return ToolResult(text, self.calls[-1].status)
 
     # ----------------------------------------------------------- confinement
 
@@ -161,9 +198,9 @@ class ToolRegistry:
         try:
             data = path.read_bytes()
         except OSError as exc:
-            return f"(lettura fallita: {exc})"
+            raise ToolError(f"(lettura fallita: {exc})") from exc
         if b"\x00" in data[:4096]:
-            return "(file binario, non leggibile come testo)"
+            raise ToolError("(file binario, non leggibile come testo)")
         return data.decode("utf-8", errors="replace")
 
     def _cap(self, text: str) -> str:
@@ -241,22 +278,26 @@ class ToolRegistry:
             scored.append((bonus, count, rel))
         scored.sort(key=lambda item: (item[0], item[1], item[2]), reverse=True)
         if not scored:
-            return self._record("search_vault", {"query": query}, "(nessun risultato)")
+            return self._record("search_vault", {"query": query}, "(nessun risultato)", status="empty")
         return self._record(
             "search_vault", {"query": query}, "\n".join(rel for _, _, rel in scored[: self.cfg.max_results])
         )
 
     def read_vault(self, path: str, offset: int = 0) -> str:
-        target = self._resolve(path, (self.cfg.vault_root,))
-        if target is None:
-            return self._refuse("read_vault", {"path": path}, "(rifiutato: percorso fuori perimetro o inesistente)")
-        return self._windowed("read_vault", {"path": path}, self._read_text(target), offset)
+        return self._read_file("read_vault", path, (self.cfg.vault_root,), offset)
 
     def read_repo(self, path: str, offset: int = 0) -> str:
-        target = self._resolve(path, self.cfg.repo_roots)
+        return self._read_file("read_repo", path, self.cfg.repo_roots, offset)
+
+    def _read_file(self, name: str, path: str, roots: tuple[Path, ...], offset: int) -> str:
+        target = self._resolve(path, roots)
         if target is None:
-            return self._refuse("read_repo", {"path": path}, "(rifiutato: percorso fuori perimetro o inesistente)")
-        return self._windowed("read_repo", {"path": path}, self._read_text(target), offset)
+            return self._refuse(name, {"path": path}, "(rifiutato: percorso fuori perimetro o inesistente)")
+        try:
+            text = self._read_text(target)
+        except ToolError as exc:
+            return self._refuse(name, {"path": path}, str(exc))
+        return self._windowed(name, {"path": path}, text, offset)
 
     def read_pdf(self, path: str, offset: int = 0) -> str:
         target = self._resolve(path, (self.cfg.vault_root, *self.cfg.repo_roots))
@@ -272,7 +313,7 @@ class ToolRegistry:
             return self._refuse("read_pdf", {"path": path}, f"(pdftotext fallito: {detail})")
         output = run.out.strip()
         if not output:
-            return self._refuse("read_pdf", {"path": path}, "(nessun testo estraibile)")
+            return self._refuse("read_pdf", {"path": path}, "(nessun testo estraibile)", status="empty")
         return self._windowed("read_pdf", {"path": path}, output, offset)
 
     def web_search(self, query: str) -> str:
@@ -287,7 +328,7 @@ class ToolRegistry:
             return self._refuse("web_search", {"query": query}, f"(ricerca web fallita: {detail})")
         output = run.out.strip()
         if not output:
-            return self._record("web_search", {"query": query}, "(nessun risultato)")
+            return self._record("web_search", {"query": query}, "(nessun risultato)", status="empty")
         if len(output) > self.cfg.read_chars:
             output = output[: self.cfg.read_chars] + "\n[...troncato]"
         return self._record("web_search", {"query": query}, output)
@@ -350,7 +391,7 @@ class ToolRegistry:
         except ConnectorError as exc:
             return self._refuse("search_mail", {"query": query}, exc.refusal)
         if not hits:
-            return self._record("search_mail", {"query": query}, "(nessun risultato)")
+            return self._record("search_mail", {"query": query}, "(nessun risultato)", status="empty")
         lines: list[str] = []
         for hit in hits[: self.cfg.max_results]:
             try:
@@ -404,7 +445,7 @@ class ToolRegistry:
         except ConnectorError as exc:
             return self._refuse("search_drive", {"query": query}, exc.refusal)
         if not hits:
-            return self._record("search_drive", {"query": query}, "(nessun risultato)")
+            return self._record("search_drive", {"query": query}, "(nessun risultato)", status="empty")
         lines = [
             f"{hit['id']} | {hit.get('name', '')} | {hit.get('mimeType', '')} | {hit.get('modifiedTime', '')}"
             for hit in hits[: self.cfg.max_results]
@@ -521,7 +562,7 @@ class ToolRegistry:
             if not words or any(w in f"{item.get('summary', '')} {item.get('description', '')} {item.get('location', '')}".casefold() for w in words)
         ]
         if not matching:
-            return self._record("search_calendar", {"query": query}, "(nessun risultato)")
+            return self._record("search_calendar", {"query": query}, "(nessun risultato)", status="empty")
         return self._record(
             "search_calendar", {"query": query},
             "\n".join(calendar_conn.describe_event(item) for item in matching[: self.cfg.max_results]),
@@ -566,7 +607,7 @@ class ToolRegistry:
         except ConnectorError as exc:
             return self._refuse("search_outlook", {"query": query}, exc.refusal)
         if not hits:
-            return self._record("search_outlook", {"query": query}, "(nessun risultato)")
+            return self._record("search_outlook", {"query": query}, "(nessun risultato)", status="empty")
         lines: list[str] = []
         for hit in hits[: self.cfg.max_results]:
             try:
@@ -641,7 +682,7 @@ class ToolRegistry:
                 return 0
 
         table = {
-            "search_vault": lambda a: self.search_vault(str(a.get("query", ""))),
+            "search_vault": lambda a: self.search_vault(str(a.get("query", "")), require_all=a.get("require_all") is True),
             "read_vault": lambda a: self.read_vault(str(a.get("path", "")), _offset(a)),
             "read_repo": lambda a: self.read_repo(str(a.get("path", "")), _offset(a)),
             "read_pdf": lambda a: self.read_pdf(str(a.get("path", "")), _offset(a)),
@@ -657,7 +698,7 @@ class ToolRegistry:
             "engine_status": lambda a: self.engine_status(),
         }
         if name not in table:
-            return f"(strumento sconosciuto: {name})"
+            return self._refuse(name, args, f"(strumento sconosciuto: {name})")
         return table[name](args)
 
 

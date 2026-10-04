@@ -23,6 +23,7 @@ if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
 from nexgen_core.i18n import t  # noqa: E402
+from nexgen_core.files import atomic_write_text as _atomic_write  # noqa: E402
 from nexgen_core.paths import (  # noqa: E402
     mcp_manifest,
     resolve_engine_root,
@@ -220,27 +221,10 @@ def _replace_in_entries(text: str, carriers: list[tuple[str, str | None]],
     return text, replaced
 
 
-def _atomic_write(path: Path, content: str) -> None:
-    """Writes through a temp file plus rename: a failure mid-write can
-    never leave a truncated manifest behind."""
-    import os
-
-    tmp = path.with_name(f"{path.name}.tmp-{os.getpid()}")
-    try:
-        tmp.write_text(content, encoding="utf-8")
-        os.replace(tmp, path)
-    except OSError:
-        try:
-            tmp.unlink()
-        except OSError:
-            pass
-        raise
-
-
 def apply_plan(
     raisable: list[dict], vault_data: Path, *, sync: bool = True,
     home: Path | None = None,
-) -> tuple[int, list[str]]:
+) -> tuple[int, list[str], list[dict]]:
     """Rewrites the pins atomically, revalidates, and materializes.
 
     Callers hold the bump lock around this call (see bump_batch and
@@ -253,18 +237,18 @@ def apply_plan(
     try:
         skills_text = skills_path.read_text(encoding="utf-8")
     except OSError as exc:
-        return 0, [f"[ERROR] cannot read {skills_path}: {exc}"]
+        return 0, [f"[ERROR] cannot read {skills_path}: {exc}"], []
     try:
         mcp_text = mcp_path.read_text(encoding="utf-8") if mcp_path.is_file() else ""
     except OSError as exc:
-        return 0, [f"[ERROR] cannot read {mcp_path}: {exc}"]
+        return 0, [f"[ERROR] cannot read {mcp_path}: {exc}"], []
 
     try:
         from nexgen_core.config import load_mcp_manifest, load_skills_manifest
 
         skills_raw = load_skills_manifest(skills_path).get("skills", {})
         mcp_raw = load_mcp_manifest(mcp_path).get("servers", {}) if mcp_path.is_file() else {}
-    except Exception:
+    except Exception:  # noqa: BLE001 - bump failure is reported, never raises
         skills_raw, mcp_raw = {}, {}
 
     def _approved(change: tuple, name: str, field: str | None) -> bool:
@@ -495,7 +479,7 @@ def apply_plan(
             sync_notes = _rematerialize(vault_data, home,
                                         any(w == "skills" for _, w, _, _, _ in planned),
                                         any(w == "mcp" for _, w, _, _, _ in planned))
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - bump failure is reported, never raises
             sync_notes = [f"[ERROR] materialization failed ({exc})"]
         failed = [n for n in sync_notes if n.startswith("[ERROR]")]
         notes.extend(sync_notes)
@@ -605,8 +589,14 @@ def bump_batch(
     try:
         with HostLock(lock_path=resolved_state / "third-party-bump.lock",
                       timeout=30, command_name="third-party-bump"):
-            bumps, notes, _moved = apply_plan(raisable, resolved_vault, sync=sync,
+            bumps, notes, moved = apply_plan(raisable, resolved_vault, sync=sync,
                                           home=resolved_home)
+            if moved:
+                # Same finalization as the silent path: without the commit
+                # the next updater stops on a dirty tree, and without the
+                # record the shell lane never announces the interactive bump.
+                _commit_manifests(resolved_vault, moved, auto=False)
+                _record_applied(resolved_state, moved)
     except LockTimeoutError:
         print(t("Another bump is already running, retry in a minute."))
         return EXIT_BUSY_MANUAL
@@ -617,13 +607,13 @@ def bump_batch(
 
 
 def _short_name(what: str) -> str:
-    import re
+    """Backward-compat wrapper: single implementation in nexgen_core.thirdparty_names."""
+    from nexgen_core.thirdparty_names import short_name
 
-    match = re.match(r"^(?:skill|MCP server) '([^']+)'", str(what or ""))
-    return match.group(1) if match else str(what or "")
+    return short_name(what)
 
 
-def _commit_manifests(vault_data: Path, raisable: list[dict]) -> bool:
+def _commit_manifests(vault_data: Path, raisable: list[dict], *, auto: bool = True) -> bool:
     """Commits exactly the two manifests, never pushes.
 
     The pin bump is mechanical and traceable; the message names the pins
@@ -646,10 +636,10 @@ def _commit_manifests(vault_data: Path, raisable: list[dict]) -> bool:
         # are never swept into this mechanical commit.
         if _run(vault_data, "add", "--", *[str(p) for p in paths]).returncode != 0:
             return False
-        result = _run(vault_data, "commit", "-m", f"chore(pins): guardian auto-bump {label}",
+        result = _run(vault_data, "commit", "-m", f"chore(pins): guardian {'auto-' if auto else ''}bump {label}",
                       "--", *[str(p) for p in paths])
         return result.returncode == 0
-    except Exception:
+    except Exception:  # noqa: BLE001 - bump failure is reported, never raises
         return False
 
 
@@ -683,7 +673,7 @@ def _record_applied(state_dir: Path, raisable: list[dict]) -> None:
     entries = [e for e in entries if isinstance(e, dict) and _at(e) > cutoff]
     try:
         sidecar.parent.mkdir(parents=True, exist_ok=True)
-        sidecar.write_text(json.dumps({"applied": entries}, indent=2) + "\n", encoding="utf-8")
+        _atomic_write(sidecar, json.dumps({"applied": entries}, indent=2) + "\n")
     except (OSError, ValueError):
         pass
 
@@ -723,5 +713,5 @@ def auto_apply(
             return {"ok": True, "applied": 0, "busy": True}
         return {"ok": not errors, "applied": bumps,
                 "error": "; ".join(errors) if errors else None}
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - bump failure is reported, never raises
         return {"ok": False, "error": str(exc)}

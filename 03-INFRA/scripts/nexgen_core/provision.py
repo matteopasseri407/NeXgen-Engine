@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import os
 import shlex
 import shutil
@@ -43,6 +44,8 @@ from nexgen_core.config import load_mcp_manifest
 from nexgen_core.errors import NexgenError
 from nexgen_core.i18n import t
 from nexgen_core.paths import mcp_manifest, resolve_state_dir
+
+logger = logging.getLogger(__name__)
 
 #: Subfolder of the machine-local state dir that holds provisioned workspaces.
 DEPS_DIRNAME = "deps"
@@ -80,15 +83,27 @@ def _workspace_root(state_dir: Path) -> Path:
     return root
 
 
+def _canonical_build(deps: dict[str, Any]) -> list[Any]:
+    build = deps.get("build") or []
+    return list(build) if isinstance(build, list) else [build]
+
+
 def workspace_path(deps: dict[str, Any], state_dir: Path) -> Path:
     """Deterministic workspace path for a git dep: state_dir/deps/<hash>.
 
-    Hash covers repo and rev, so a pin change provisions a fresh workspace
-    instead of mutating an existing one in place.
+    Hash covers repo, rev, subdir and build: changing any of them
+    provisions a fresh workspace instead of silently reusing a build made
+    from different sources or steps. (Hashing repo+rev only meant a subdir
+    or build change with the same rev kept serving the old bytes.)
     """
     repo = str(deps.get("repo") or "").strip()
     rev = str(deps.get("rev") or "").strip()
-    digest = hashlib.sha256(f"{repo}|{rev}".encode()).hexdigest()[:16]
+    subdir = str(deps.get("subdir") or "").strip().strip("/")
+    try:
+        build_key = json.dumps(_canonical_build(deps), sort_keys=True, default=str)
+    except (TypeError, ValueError):
+        build_key = str(deps.get("build"))
+    digest = hashlib.sha256(f"{repo}|{rev}|{subdir}|{build_key}".encode()).hexdigest()[:16]
     return _workspace_root(state_dir) / digest
 
 
@@ -116,9 +131,14 @@ def _validate_pins(deps: dict[str, Any], server: str) -> None:
             raise ProvisionError(
                 t("server '{server}' declares a git dependency without both 'repo' and 'rev'. Pin rule: a commit is mandatory.", server=server)
             )
-        if len(rev) < 7 or "/" in rev or ".." in rev:
+        # Same bar as skill pins (COMMIT_SHA_RE): a branch, tag or short
+        # prefix moves under your feet or may resolve ambiguously on fetch.
+        # `git fetch origin <rev>` happily serves 'latest12', so the length
+        # check alone certified mobile pins as immutable.
+        import re as _re
+        if not _re.fullmatch(r"[0-9a-fA-F]{40}", rev):
             raise ProvisionError(
-                t("server '{server}' declares git rev '{rev}', which is not a commit. Pin rule: an immutable commit hash is mandatory.", server=server, rev=rev)
+                t("server '{server}' declares git rev '{rev}', which is not a commit. Pin rule: an immutable full commit hash (40 hex) is mandatory.", server=server, rev=rev)
             )
 
 
@@ -146,12 +166,22 @@ def _run_workspace(clone: Path, deps: dict[str, Any]) -> Path:
 
 
 def _verified(deps: dict[str, Any], state_dir: Path) -> dict[str, str] | None:
-    """Cheap, offline-safe verification of a git dep: marker with matching rev."""
+    """Cheap, offline-safe verification of a git dep: marker must match rev AND build inputs."""
     clone = workspace_path(deps, state_dir)
     data = _read_marker(clone)
-    if data and data.get("repo") == deps.get("repo") and data.get("rev") == deps.get("rev"):
-        return {"DEPS_WORKSPACE": str(_run_workspace(clone, deps))}
-    return None
+    if not data:
+        return None
+    if data.get("repo") != deps.get("repo") or data.get("rev") != deps.get("rev"):
+        return None
+    want_subdir = str(deps.get("subdir") or "").strip().strip("/")
+    # Old markers predate subdir/build tracking: treat absent as empty, so
+    # unchanged pins keep verifying while any declared subdir/build forces
+    # a re-provision against the stale workspace.
+    if str(data.get("subdir") or "").strip().strip("/") != want_subdir:
+        return None
+    if list(data.get("build") or []) != _canonical_build(deps):
+        return None
+    return {"DEPS_WORKSPACE": str(_run_workspace(clone, deps))}
 
 
 def _run_build(build: list[Any], workspace: Path, server: str) -> None:
@@ -263,7 +293,12 @@ def _provision_git(deps: dict[str, Any], state_dir: Path, server: str) -> dict[s
             build = deps.get("build") or []
             if build:
                 _run_build(build, workspace, server)
-            (clone / MARKER).write_text(json.dumps({"repo": repo, "rev": rev}), encoding="utf-8")
+            (clone / MARKER).write_text(json.dumps({
+                "repo": repo,
+                "rev": rev,
+                "subdir": str(deps.get("subdir") or "").strip().strip("/"),
+                "build": _canonical_build(deps),
+            }), encoding="utf-8")
             if final.exists():
                 shutil.rmtree(final, ignore_errors=True)
             os.replace(clone, final)
@@ -305,7 +340,8 @@ def report_unsatisfied_deps(vault_data: Path, state_dir: Path | None = None) -> 
     path = mcp_manifest(vault_data)
     try:
         data = load_mcp_manifest(path)
-    except Exception:
+    except Exception as exc:  # noqa: BLE001 - unreadable manifest means no report, never a doctor crash
+        logger.debug("ignoring unreadable MCP manifest %s (%s)", path, type(exc).__name__)
         return []
     problems: list[str] = []
     for name, srv in (data.get("servers") or {}).items():

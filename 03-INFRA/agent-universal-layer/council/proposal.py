@@ -5,13 +5,27 @@ The private decision document (see routing.py) owns *which model family
 fits a role*. This module owns turning that into a host-local menu: which
 declared seats can actually run it right now, given what is installed and
 what the seat's own CLI reports.
+
+Layout contract (read before importing): this directory runs as scripts,
+not as a package — launched via nexgen_core/tools/council.py, which
+subprocesses council.py. Bare `from proposal import …` / `from relay import`
+is intentional so both the launcher layout and the installed layout work.
+Underscore names are cross-file internals, not public API: new callers use
+the cmd_*/run_* entry points, never a private.
 """
 from __future__ import annotations
 
 import argparse
 import os
+import socket
 import sys
 from pathlib import Path
+from typing import NoReturn
+
+#: Shared human-gate text: the single-seat gate (sys.exit) and the relay
+#: gate (RelayError, the graph cannot exit mid-node) print the same policy.
+HUMAN_CHOICE_REQUIRED = "[council] human choice required:"
+NO_ELIGIBLE_SEAT = "[council] no eligible seat to select: fix the mapping, CLI, or policy shown above."
 
 ENGINE_ROOT = Path(__file__).resolve().parent
 SCRIPTS_DIR = ENGINE_ROOT.parent.parent / "scripts"
@@ -23,7 +37,7 @@ from config_schema import ConfigValidationError, load_council_config
 from routing import (
     RoutingContractError,
     _matches,
-    _probe_codex_seat,
+    _probe_codex_inventory,
     is_pay_per_use,
     load_routing_plan,
     resolve_role_candidates,
@@ -133,23 +147,25 @@ def _proposal_lines_for_role(plan, seats: dict, capabilities: dict, role: str) -
 
     lines = [f"  {role}:"]
     if candidates:
-        for index, name in enumerate(candidates, 1):
+        for name in candidates:
             seat = seats[name]
+            rank, candidate = next((i, c) for i, c in enumerate(plan.roles[role]) if _matches(seat, c))
+            slot = candidate.slot or ("prescelto" if rank == 0 else f"rimpiazzo {rank}")
             effort_label = _effort_label(seat)
             retention = (
                 "zero-retention verified"
                 if seat.get("zero_retention", False)
                 else "WARNING: no verified zero-retention"
             )
-            cost = _seat_cost(plan, name, seat)
-            pay_note = f", WARNING: pay-per-use ({cost or 'price not stated'})" if _seat_is_pay_per_use(seat, cost) else ""
+            cost = candidate.cost
+            pay_note = _seat_spend_note(seat, cost)
             lines.append(
-                f"    {index}. {name}: {seat['model']} via {seat['cli']}{effort_label}, {retention}{pay_note}."
+                f"    {slot}. {name}: {seat['model']} via {seat['cli']}{effort_label}, {retention}{pay_note}."
             )
     else:
-        lines.append("    No compatible local seat.")
+        lines.append("    BLOCKED: No compatible local seat.")
     if diagnostics:
-        lines.append("    Excluded: " + "; ".join(diagnostics[:4]) + ".")
+        lines.extend(f"    Excluded: {detail}." for detail in diagnostics)
     return lines, bool(candidates)
 
 
@@ -160,13 +176,29 @@ def _print_routing_proposal(
     plan = _routing_context_or_exit(config)
     capabilities = seat_capabilities(seats)
     has_candidates = False
-    print(f"[council] proposal for {title}. No model was called.")
+    print(f"[council] proposal for {title} on host {socket.gethostname()}. No model was called.")
     for role in roles:
         lines, role_has_candidates = _proposal_lines_for_role(plan, seats, capabilities, str(role))
         has_candidates = has_candidates or role_has_candidates
         for line in lines:
             print(line)
+    if not roles or any(role.casefold() != "privacy" for role in roles):
+        for line in _routing_seat_diagnostics(plan, seats, capabilities):
+            print(line)
     return has_candidates
+
+
+def _routing_seat_diagnostics(plan, seats: dict, capabilities: dict) -> list[str]:
+    """Declared seats absent from every role stay visible as manual choices."""
+    lines = []
+    for name, seat in seats.items():
+        if any(_matches(seat, candidate) for candidates in plan.roles.values() for candidate in candidates):
+            continue
+        capability = capabilities[name]
+        status = "available" if capability.available else f"UNAVAILABLE: {capability.reason}"
+        note = _seat_spend_note(seat, _seat_cost(plan, name, seat))
+        lines.append(f"  Manual only, outside all routing roles: {name} ({seat['model']}){note}; {status}.")
+    return lines
 
 
 def _print_static_seat_menu(seats: dict) -> bool:
@@ -186,7 +218,10 @@ def _print_static_seat_menu(seats: dict) -> bool:
 
 def _require_human_single_selection(
     args: argparse.Namespace, config: dict, seats: dict, default_routing_role: str | None,
-) -> None:
+) -> NoReturn:
+    """Single-seat gate: exits after printing the menu. Relay's twin raises
+    RelayError instead (the graph cannot exit mid-node); both share the
+    message constants below so agents don't read two policies."""
     role = _routing_role_for_mode(args, config, default_routing_role)
     if _routing_enabled(config):
         if role:
@@ -198,11 +233,8 @@ def _require_human_single_selection(
     else:
         has_candidates = _print_static_seat_menu(seats)
     if has_candidates:
-        sys.exit(
-            "[council] human choice required: rerun with --seat NAME. "
-            "--routing-role only narrows the proposal, it does not start a seat."
-        )
-    sys.exit("[council] no eligible seat to select: fix the mapping, CLI, or policy shown above.")
+        sys.exit(HUMAN_CHOICE_REQUIRED + " rerun with --seat NAME. --routing-role only narrows the proposal, it does not start a seat.")
+    sys.exit(NO_ELIGIBLE_SEAT)
 
 
 def _seat_quota_pool(seat: dict) -> str:
@@ -215,32 +247,24 @@ def _seat_quota_pool(seat: dict) -> str:
 
 
 def _warn_if_explicit_codex_seat_not_default(seat_name: str, seat: dict) -> None:
-    """An explicit --seat bypasses the routing probe by design (the human
-    decided). But for a codex seat that bypass can silently hide a stale
-    default: if the seat's model/effort no longer match Codex's own
-    config.toml, every call is forwarded with an explicit -m instead of
-    riding the CLI default the human may still believe is active. Only
-    codex is probed here (a local config.toml read); other CLIs would need
-    a subprocess probe, too costly for this non-blocking, informational
-    path."""
+    """Warn if local Codex metadata cannot verify an explicit model/effort.
+
+    An explicit model need not be the CLI default: a supported entry in its
+    models cache also verifies it. This read does not consume model quota.
+    """
     if seat.get("cli") != "codex":
         return
-    capability = _probe_codex_seat(seat)
+    capability = _probe_codex_inventory(seat)
     if capability.available:
         return
     print(
-        f"[council] warning: seat '{seat_name}' is not the current default of the codex CLI "
+        f"[council] warning: seat '{seat_name}' could not be verified in local Codex metadata "
         f"({capability.reason}); it will be forwarded explicitly with -m."
     )
 
 
 def _seat_cost(plan, seat_name: str, seat: dict) -> str | None:
-    """The raw Costo cell of the first candidate matching this seat, if any.
-
-    Used for the pay-per-use warning and confirmation gate. A seat without a
-    matching candidate in the routing document has no stated cost, so no
-    gate applies: there is nothing to confirm.
-    """
+    """Stated routing price, if any. Paid pools still need consent without it."""
     if not hasattr(plan, "roles"):
         return None
     for candidates in plan.roles.values():
@@ -267,6 +291,14 @@ def _seat_is_pay_per_use(seat: dict, cost: str | None) -> bool:
     return channel == "zen" or is_pay_per_use(cost)
 
 
+def _seat_spend_note(seat: dict, cost: str | None) -> str:
+    if seat_channel(seat) == "go":
+        return ", WARNING: consumes prepaid quota (Go)"
+    if _seat_is_pay_per_use(seat, cost):
+        return f", WARNING: pay-per-use ({cost or 'price not stated'})"
+    return ""
+
+
 def _confirm_pay_per_use(seat_name: str, seat: dict, cost: str | None) -> None:
     """Real-money gate: a pay-per-use seat is never invoked without the human
     confirming it, because the call spends actual money on a per-use channel.
@@ -287,6 +319,15 @@ def _confirm_pay_per_use(seat_name: str, seat: dict, cost: str | None) -> None:
         sys.exit(f"[council] STOP: pay-per-use seat '{seat_name}' not confirmed.")
 
 
+def _confirm_seat_call(seat_name: str, seat: dict, config: dict | None = None) -> None:
+    """One price lookup and consent rule for every Council invocation."""
+    plan = _routing_context_or_exit(config) if config and _routing_enabled(config) else None
+    cost = _seat_cost(plan, seat_name, seat)
+    if seat_channel(seat) == "go":
+        print(f"[council] seat '{seat_name}'{_seat_spend_note(seat, cost)}.", file=sys.stderr)
+    _confirm_pay_per_use(seat_name, seat, cost)
+
+
 def _check_seat_allowed(
     seat_name: str,
     seat: dict,
@@ -300,10 +341,7 @@ def _check_seat_allowed(
     if _routing_enabled(config):
         plan = _routing_context_or_exit(config)
         _refuse_seat_outside_role(seat_name, args, config, plan, default_routing_role)
-        cost = _seat_cost(plan, seat_name, seat)
-    else:
-        cost = None
-    _confirm_pay_per_use(seat_name, seat, cost)
+    _confirm_seat_call(seat_name, seat, config)
 
 
 def _refuse_seat_outside_role(
@@ -313,13 +351,10 @@ def _refuse_seat_outside_role(
     plan,
     default_routing_role: str | None,
 ) -> None:
-    """Refuses an explicit seat the routing proposal excluded for this role.
+    """Enforce requested/configured roles; mode suggestions stay advisory.
 
-    The proposal is advisory, but invoking past it must never be silent:
-    a seat outside the role's candidates skips the cost confirmation by
-    construction (no stated cost to confirm), so it stops here instead,
-    naming the eligible seats. Dropping --routing-role still runs the seat
-    through the static menu: the override stays possible, never quiet.
+    Explicit seats outside a suggested role are announced. The independent
+    payment gate still applies, even when the document has no matching price.
     """
     seats = config.get("seats") or {}
     role = _routing_role_for_mode(args, config, default_routing_role)
@@ -330,16 +365,24 @@ def _refuse_seat_outside_role(
     except RoutingContractError as exc:
         sys.exit(f"[council] STOP: role '{role}' cannot be verified ({exc}).")
     if seat_name not in candidates:
+        configured_role = ((config.get("routing") or {}).get("mode_defaults") or {}).get(getattr(args, "mode", None))
+        if not getattr(args, "routing_role", None) and not configured_role and role.casefold() != "privacy":
+            print(f"[council] WARNING: explicit seat '{seat_name}' is outside the suggested role '{role}'.",
+                  file=sys.stderr)
+            return
         eligible = ", ".join(candidates) if candidates else "none"
         sys.exit(
             f"[council] STOP: seat '{seat_name}' is not a candidate for role '{role}'. "
-            f"Eligible: {eligible}. Rerun naming one of them, or drop --routing-role "
-            "to choose outside the proposal."
+            f"Eligible: {eligible}. Choose an eligible seat or explicitly change the requested/configured role."
         )
 
 
-def resolve_seat(args: argparse.Namespace, *, default_routing_role: str | None = None) -> tuple[str, dict]:
-    config = load_config()
+def resolve_seat(
+    args: argparse.Namespace, *, default_routing_role: str | None = None,
+    config: dict | None = None,
+) -> tuple[str, dict]:
+    if config is None:
+        config = load_config()
     seats = config["seats"]
     if not seats:
         sys.exit(f"[council] {SEATS_PATH} is empty: inert expansion, nothing to do.")

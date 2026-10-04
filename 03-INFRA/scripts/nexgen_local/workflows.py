@@ -23,8 +23,11 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Callable
 
+from nexgen_core.files import write_private_text
+
 from .config import LaneConfig
-from .patch import _PROPOSAL_ID_RE, new_proposal_id
+from .proposals import (content_sha, read_proposal_data, new_proposal_id, valid_proposal_id,
+                        proposal_lock, record_attempt, refuse_prior_attempt, validate_content)
 from .tools import ToolError, audit_event
 
 
@@ -61,6 +64,16 @@ class WorkflowProposal:
     created_at: str = ""
     applied_at: str = ""
     outcome: str = ""
+    attempted_at: str = ""
+    content_sha: str = ""
+
+
+def _proposal_sha(proposal: WorkflowProposal) -> str:
+    return content_sha(
+        proposal.workflow,
+        json.dumps(proposal.params, ensure_ascii=False, sort_keys=True),
+    )
+
 
 
 def allowlist_path() -> Path:
@@ -86,29 +99,26 @@ def load_allowlist() -> dict[str, Any]:
 
 
 def _save(cfg: LaneConfig, proposal: WorkflowProposal) -> None:
-    cfg.workflows_dir.mkdir(parents=True, exist_ok=True)
     target = cfg.workflows_dir / f"{proposal.id}.json"
-    target.write_text(json.dumps(asdict(proposal), ensure_ascii=False, indent=1), encoding="utf-8")
+    write_private_text(target, json.dumps(asdict(proposal), ensure_ascii=False, indent=1))
 
 
 def _create(cfg: LaneConfig, proposal: WorkflowProposal) -> None:
     """Store a new proposal without ever overwriting an existing one (see patch._create)."""
-    cfg.workflows_dir.mkdir(parents=True, exist_ok=True)
     target = cfg.workflows_dir / f"{proposal.id}.json"
     try:
-        with target.open("x", encoding="utf-8") as handle:
-            handle.write(json.dumps(asdict(proposal), ensure_ascii=False, indent=1))
+        write_private_text(target, json.dumps(asdict(proposal), ensure_ascii=False, indent=1), exclusive=True)
     except FileExistsError as exc:
         raise WorkflowError(f"collisione id proposta, riprova: {proposal.id}") from exc
 
 
 def load_proposal(cfg: LaneConfig, proposal_id: str) -> WorkflowProposal:
-    if not _PROPOSAL_ID_RE.fullmatch(str(proposal_id or "")):
+    if not valid_proposal_id(proposal_id or ""):
         raise WorkflowError(f"id proposta non valido: {proposal_id}")
     target = cfg.workflows_dir / f"{proposal_id}.json"
     if not target.is_file():
         raise WorkflowError(f"proposta inesistente: {proposal_id}")
-    return WorkflowProposal(**json.loads(target.read_text(encoding="utf-8")))
+    return WorkflowProposal(**read_proposal_data(target, proposal_id, WorkflowError))
 
 
 def list_proposals(cfg: LaneConfig) -> list[WorkflowProposal]:
@@ -117,8 +127,8 @@ def list_proposals(cfg: LaneConfig) -> list[WorkflowProposal]:
     proposals = []
     for path in sorted(cfg.workflows_dir.glob("*.json"), reverse=True):
         try:
-            proposals.append(WorkflowProposal(**json.loads(path.read_text(encoding="utf-8"))))
-        except (OSError, TypeError, ValueError):
+            proposals.append(WorkflowProposal(**read_proposal_data(path, path.stem, WorkflowError)))
+        except (OSError, TypeError, ValueError, WorkflowError):
             continue
     return proposals
 
@@ -141,6 +151,7 @@ def propose_run(cfg: LaneConfig, workflow: str, params: dict[str, Any] | None = 
         params=dict(params or {}),
         created_at=time.strftime("%Y-%m-%dT%H:%M:%S%z"),
     )
+    proposal.content_sha = _proposal_sha(proposal)
     for _ in range(5):
         proposal.id = new_proposal_id()
         try:
@@ -171,9 +182,19 @@ def confirm_run(cfg: LaneConfig, proposal_id: str, confirm: bool, http: HttpFn |
     """POST the staged params to the allowlisted webhook, once, on confirm."""
     if not confirm:
         raise WorkflowError("esecuzione rifiutata: serve confirm esplicito")
+    with proposal_lock(cfg.workflows_dir, proposal_id, WorkflowError):
+        return _confirm_run(cfg, proposal_id, http)
+
+
+def _confirm_run(cfg: LaneConfig, proposal_id: str, http: HttpFn | None) -> dict[str, Any]:
     proposal = load_proposal(cfg, proposal_id)
     if proposal.applied_at:
         raise WorkflowError("proposta gia' eseguita")
+    refuse_prior_attempt(proposal, WorkflowError)
+    validate_content(proposal.content_sha, WorkflowError,
+        proposal.workflow,
+        json.dumps(proposal.params, ensure_ascii=False, sort_keys=True),
+    )
     entry = load_allowlist().get(proposal.workflow)
     if not isinstance(entry, dict) or not str(entry.get("webhook_url", "")).startswith("http"):
         raise WorkflowError(f"workflow non piu' consentito: {proposal.workflow}")
@@ -181,6 +202,7 @@ def confirm_run(cfg: LaneConfig, proposal_id: str, confirm: bool, http: HttpFn |
     if entry.get("secret"):
         headers["X-Nexgen-Secret"] = str(entry["secret"])
     audit_event(cfg, "run_workflow", {"proposal": proposal.id, "phase": "intent"}, ok=True, chars=0)
+    record_attempt(proposal, lambda: _save(cfg, proposal), WorkflowError)
     call = http or _default_http
     try:
         result = call(str(entry["webhook_url"]), json.dumps(proposal.params).encode("utf-8"), headers, 120)

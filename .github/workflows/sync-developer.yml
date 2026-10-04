@@ -1,0 +1,28 @@
+name: sync-developer
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: sync-developer
+  cancel-in-progress: false
+
+jobs:
+  merge-main:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: "3.x"
+      - run: pip install pyyaml
+      - name: Merge main into developer without rewriting either branch
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+        run: python3 03-INFRA/scripts/lane_guard.py --sync-developer "$REPOSITORY"

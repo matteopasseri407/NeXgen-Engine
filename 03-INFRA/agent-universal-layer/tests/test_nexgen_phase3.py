@@ -195,3 +195,112 @@ def test_guard_phases_run_in_order_without_writes_in_preflight(tmp_path: Path, m
     assert not (home / ".config" / "opencode" / "AGENTS.md").exists()
     assert not (home / ".config" / "opencode" / "opencode.jsonc").exists()
     assert not (home / ".config" / "opencode" / "opencode.json").exists()
+
+
+def test_guard_failure_keeps_partial_actions(tmp_path: Path, monkeypatch) -> None:
+    """A mid-cycle abort must report what was already written: an empty
+    action list on failure hides a partial transaction."""
+    from nexgen_core.guard import GuardRunner
+
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    home = tmp_path / "home"
+    runner = GuardRunner(vault_data=vault, home=home)
+
+    def boom(*_a, **_k):
+        raise RuntimeError("mcp exploded")
+
+    monkeypatch.setattr(runner, "_phase_git", lambda *a: None)
+    monkeypatch.setattr(runner, "_phase_preflight", lambda *a: None)
+    monkeypatch.setattr(runner, "_phase_skills", lambda actions: actions.append("skill synked"))
+    monkeypatch.setattr(runner, "_phase_mcp", boom)
+    res = runner.run(mode=GuardMode.APPLY)
+    assert res.success is False
+    assert res.exit_code == 1
+    assert "skill synked" in res.actions_taken
+
+
+def test_guard_success_with_warnings_says_so(tmp_path: Path, monkeypatch) -> None:
+    """WARN-continue phases must not end in 'completed successfully'."""
+    from nexgen_core.guard import GuardMode, GuardRunner
+
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    home = tmp_path / "home"
+    runner = GuardRunner(vault_data=vault, home=home)
+    monkeypatch.setattr(runner, "_phase_git", lambda *a: None)
+    monkeypatch.setattr(runner, "_phase_preflight", lambda *a: None)
+    monkeypatch.setattr(runner, "_phase_skills", lambda actions: None)
+    monkeypatch.setattr(runner, "_phase_mcp", lambda actions, skip: None)
+    monkeypatch.setattr(runner, "_phase_permissions", lambda actions: actions.append("[WARN] posture skipped"))
+    monkeypatch.setattr(runner, "_phase_instructions", lambda actions: None)
+    monkeypatch.setattr(runner, "_phase_launchers", lambda actions: None)
+    monkeypatch.setattr(runner, "_phase_scheduler", lambda actions, branch: None)
+    monkeypatch.setattr(runner, "_phase_modules", lambda actions: None)
+    monkeypatch.setattr(runner, "_phase_liveness", lambda *a: None)
+    res = runner.run(mode=GuardMode.APPLY)
+    assert res.success is True
+    assert "warn" in res.message.lower() or "avvis" in res.message.lower()
+
+
+def test_pull_validates_and_defers_regeneration(tmp_path: Path, monkeypatch) -> None:
+    """Pull keeps its no-regeneration contract but validates the pulled
+    content and says apply is next."""
+    from nexgen_core.guard import GuardMode, GuardRunner
+
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    home = tmp_path / "home"
+    runner = GuardRunner(vault_data=vault, home=home)
+    monkeypatch.setattr(runner, "_phase_git", lambda *a: None)
+    monkeypatch.setattr(runner, "_phase_preflight", lambda *a: None)
+    res = runner.run(mode=GuardMode.PULL)
+    assert res.success is True
+    assert "apply" in res.message.lower()
+
+
+def test_liveness_records_warning_count(tmp_path: Path) -> None:
+    """A cycle that completed with warnings stays distinguishable from a
+    clean one, in a format old readers still parse."""
+    from nexgen_core.beat import Heartbeat
+
+    beat = Heartbeat(state_dir=tmp_path / "state")
+    beat.record_liveness(warnings=3)
+    assert beat.recorded_warnings() == 3
+    ok, msg = beat.check_liveness()
+    assert ok is True
+    assert "3" in msg and ("warn" in msg.lower() or "avvis" in msg.lower())
+    # First line still a bare float for previous releases.
+    float(beat.liveness_file.read_text(encoding="utf-8").splitlines()[0])
+
+
+def test_corrupt_liveness_alerts_instead_of_silence(tmp_path: Path, monkeypatch) -> None:
+    """A corrupt liveness file blinds self-monitoring: it must alert (debounced)."""
+    from nexgen_core.beat import Heartbeat
+
+    beat = Heartbeat(state_dir=tmp_path / "state")
+    beat.state_dir.mkdir(parents=True, exist_ok=True)
+    beat.liveness_file.write_text("not-a-float\n", encoding="utf-8")
+    sent: list[str] = []
+    monkeypatch.setattr(beat.megaphone, "send_alert", lambda **kw: sent.append(kw.get("alert_key", "")) or True)
+    ok, msg = beat.check_liveness()
+    assert ok is False
+    assert sent == ["guard_liveness_corrupt"]
+
+
+def test_boot_suppresses_stale_alert(tmp_path: Path, monkeypatch) -> None:
+    """Fresh boot with an old liveness file: no stale alert, startup message."""
+    import time
+
+    import nexgen_core.beat as beat_mod
+    from nexgen_core.beat import Heartbeat
+
+    beat = Heartbeat(state_dir=tmp_path / "state")
+    beat.state_dir.mkdir(parents=True, exist_ok=True)
+    beat.liveness_file.write_text(f"{time.time() - 5 * 3600}\n2.3.9\n", encoding="utf-8")
+    monkeypatch.setattr(beat_mod, "_just_booted", lambda _grace: True)
+    sent: list[str] = []
+    monkeypatch.setattr(beat.megaphone, "send_alert", lambda **kw: sent.append("x") or True)
+    ok, msg = beat.check_liveness()
+    assert ok is True and sent == []
+    assert "just started" in msg or "appena partita" in msg

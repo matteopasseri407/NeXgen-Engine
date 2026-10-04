@@ -32,7 +32,7 @@ SCRIPTS_DIR = Path(__file__).resolve().parents[1]
 if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
-from nexgen_core.i18n import t
+from nexgen_core.i18n import t  # noqa: E402 - sys.path shim for cloned checkout
 
 #: The line in the shipped template that exists only to instruct an agent.
 #: Once the installer has filled the profile itself, it is a leftover.

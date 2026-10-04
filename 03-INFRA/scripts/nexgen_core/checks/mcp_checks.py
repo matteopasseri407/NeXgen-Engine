@@ -34,14 +34,14 @@ def check_mcp_manifest(manifest_path: Path) -> CheckOutcome:
         )
 
     try:
-        data = load_mcp_manifest(manifest_path)
+        data = load_mcp_manifest(manifest_path, strict=True)
         server_count = len(data.get("servers", {}))
         return CheckOutcome(
             id="mcp.manifest_valid",
             severity=Severity.OK,
             message=t("MCP manifest valid with {count} servers declared", count=server_count),
         )
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - check failure is reported, never raises
         return CheckOutcome(
             id="mcp.manifest_valid",
             severity=Severity.BROKEN,
@@ -113,14 +113,14 @@ def _expected_and_rendered(renderer: McpRenderer, cli: str, path: Path) -> tuple
     """
     try:
         expected = set(renderer.load_resolved_servers(cli).keys())
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - check failure is reported, never raises
         return f"template: the manifest cannot be rendered for {cli} ({exc})", set(), set()
     if not path.is_file():
         return f"{cli} (never launched: {path} is missing)", expected, set()
     spec = _CLI_RENDER_SPECS[cli]
     try:
         rendered = spec.reader(path)
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - check failure is reported, never raises
         return f"{cli} (unreadable config: {exc})", expected, set()
     return None, expected, rendered
 
@@ -222,7 +222,7 @@ def check_mcp_deps(manifest_path: Path, state_dir: Path) -> CheckOutcome:
     """
     try:
         data = load_mcp_manifest(manifest_path)
-    except Exception:
+    except Exception:  # noqa: BLE001 - check failure is reported, never raises
         return CheckOutcome(
             id="mcp.deps",
             severity=Severity.UNDETERMINED,
@@ -266,7 +266,7 @@ def _orphans_allowlist(manifest_path: Path) -> set[str]:
     """
     try:
         data = load_mcp_manifest(manifest_path)
-    except Exception:
+    except Exception:  # noqa: BLE001 - check failure is reported, never raises
         return set()
     raw = data.get("raw") or {}
     entries = raw.get("orphans_allowlist")

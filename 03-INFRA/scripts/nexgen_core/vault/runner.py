@@ -14,15 +14,14 @@ pass is actually read-only.
 """
 from __future__ import annotations
 
-import os
 import shutil
-import signal
 import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
 
 from nexgen_core.errors import NexgenError
+from nexgen_core.processes import force_stop_process_tree
 from typing import ClassVar
 
 DEFAULT_TIMEOUT_SECONDS = 20 * 60
@@ -51,15 +50,7 @@ class RunnerUnknownError(RunnerError):
 
 
 def _kill_process_group(proc: subprocess.Popen) -> None:
-    try:
-        if sys.platform == "win32":
-            proc.kill()
-        elif hasattr(os, "killpg") and hasattr(signal, "SIGKILL"):
-            os.killpg(proc.pid, signal.SIGKILL)
-        else:
-            proc.kill()
-    except (ProcessLookupError, PermissionError, OSError):
-        pass
+    force_stop_process_tree(proc, process_group=proc.pid if sys.platform != "win32" else None)
 
 
 def _run_streaming(
@@ -133,16 +124,17 @@ class ClaudeRunner(Runner):
     ]
 
     def run_readonly(self, prompt: str) -> RunResult:
-        cmd = ["claude", "-p", prompt, "--model", self.model, "--allowedTools", *self.READ_TOOLS]
-        return _run_streaming(cmd, cwd=self.vault, input_text=None, timeout=self.timeout)
+        # The prompt travels on stdin, never in argv (visible in ps).
+        cmd = ["claude", "-p", "--model", self.model, "--allowedTools", *self.READ_TOOLS]
+        return _run_streaming(cmd, cwd=self.vault, input_text=prompt, timeout=self.timeout)
 
     def run_write(self, prompt: str, workdir: Path) -> RunResult:
         cmd = [
-            "claude", "-p", prompt, "--model", self.model,
+            "claude", "-p", "--model", self.model,
             "--allowedTools", *self.WRITE_TOOLS,
             "--disallowedTools", "Bash(git push:*)",
         ]
-        return _run_streaming(cmd, cwd=workdir, input_text=None, timeout=self.timeout)
+        return _run_streaming(cmd, cwd=workdir, input_text=prompt, timeout=self.timeout)
 
 
 class CodexRunner(Runner):
@@ -163,12 +155,13 @@ class AgyRunner(Runner):
     name = "agy"
 
     def run_readonly(self, prompt: str) -> RunResult:
-        cmd = ["agy", "--print", "--model", self.model, "--mode", "plan", "--sandbox", "--prompt", prompt]
-        return _run_streaming(cmd, cwd=self.vault, input_text=None, timeout=self.timeout)
+        # Print mode consumes stdin; the private prompt stays out of argv.
+        cmd = ["agy", "--print", "--model", self.model, "--mode", "plan", "--sandbox", "--new-project"]
+        return _run_streaming(cmd, cwd=self.vault, input_text=prompt, timeout=self.timeout)
 
     def run_write(self, prompt: str, workdir: Path) -> RunResult:
-        cmd = ["agy", "--print", "--model", self.model, "--mode", "accept-edits", "--prompt", prompt]
-        return _run_streaming(cmd, cwd=workdir, input_text=None, timeout=self.timeout)
+        cmd = ["agy", "--print", "--model", self.model, "--mode", "accept-edits", "--new-project"]
+        return _run_streaming(cmd, cwd=workdir, input_text=prompt, timeout=self.timeout)
 
 
 _RUNNERS: dict[str, type[Runner]] = {

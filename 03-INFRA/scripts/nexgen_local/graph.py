@@ -9,18 +9,9 @@ from __future__ import annotations
 
 from typing import Any, Iterable, TypedDict
 
+from .evidence import (engine_sentence, retrieval_outcome, verify_answer)
 from .config import LaneConfig
-from .engine import (
-    LaneResult,
-    answer_task,
-    check_canary,
-    engine_sentence,
-    retrieval_outcome,
-    retrieve,
-    route_task,
-    sources_from_receipts,
-    verify_answer,
-)
+from .engine import (LaneResult, answer_task, check_canary, retrieve, route_task, sources_from_receipts)
 from .llm import LLM
 from .tools import ToolRegistry
 
@@ -88,7 +79,7 @@ def run_graph(
     tools.refusals.clear()
     app = build_graph(llm, tools, cfg)
     final = app.invoke({"task": task, "canaries": [str(c) for c in canaries]})
-    receipts = [{"tool": call.name, "args": call.args, "ok": call.ok} for call in tools.calls]
+    receipts = [call.receipt() for call in tools.calls]
     answer = final.get("answer", "")
     collected = final.get("collected", "")
     problems = verify_answer(answer, receipts, collected)

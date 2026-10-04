@@ -7,7 +7,10 @@ non i seggi.
 
 from __future__ import annotations
 
+import concurrent.futures
+import json
 import sys
+import threading
 from pathlib import Path
 
 import pytest
@@ -20,6 +23,52 @@ import relay  # noqa: E402
 import relay_graph  # noqa: E402
 import session  # noqa: E402
 from relay import RelayError, RelayQuarantine, RelayRecord, RelayStage  # noqa: E402
+
+
+def test_cleanup_holds_relay_ownership_until_removal(tmp_path, monkeypatch):
+    sessions = tmp_path / "sessions"
+    target = sessions / "synthetic"
+    target.mkdir(parents=True)
+    monkeypatch.setattr(session, "SESSIONS_DIR", sessions)
+
+    def remove(path):
+        with pytest.raises(RelayError, match="already running"):
+            with relay_graph._session_run_lock(path):
+                pass
+
+    monkeypatch.setattr(session.shutil, "rmtree", remove)
+    assert session._cleanup_sessions(0, remove_all=True) == 1
+
+
+def test_cleanup_preserves_busy_relay_and_reuses_stable_lock(tmp_path, monkeypatch):
+    sessions = tmp_path / "sessions"
+    target = sessions / "synthetic"
+    target.mkdir(parents=True)
+    monkeypatch.setattr(session, "SESSIONS_DIR", sessions)
+    with relay_graph._session_run_lock(target):
+        assert session._cleanup_sessions(0, remove_all=True) == 0
+        assert target.exists()
+    lock_path = tmp_path / "session-locks" / "synthetic.lock"
+    assert lock_path.exists()
+    assert session._cleanup_sessions(0, remove_all=True) == 1
+    assert lock_path.exists()
+    assert not target.exists()
+
+
+def test_cleanup_honors_active_older_relay_lock(tmp_path, monkeypatch):
+    from nexgen_core.lock import HostLock
+    sessions = tmp_path / "sessions"
+    target = sessions / "synthetic"
+    target.mkdir(parents=True)
+    monkeypatch.setattr(session, "SESSIONS_DIR", sessions)
+    lock = HostLock(target / "relay-run.lock", timeout=0)
+    lock.acquire()
+    try:
+        assert session._cleanup_sessions(0, remove_all=True) == 0
+        assert target.exists()
+    finally:
+        lock.release()
+
 from relay_graph import (  # noqa: E402
     _initial_state,
     _uncertain_pending,
@@ -225,12 +274,17 @@ def test_quota_with_no_fallback_refuses(tmp_path: Path, runner: FakeRunner, monk
     assert str(exc.value) == str(exc2.value)
 
 
-def test_reject_stops_and_writes_verdict(tmp_path: Path, runner: FakeRunner) -> None:
+@pytest.mark.parametrize("heading", ["", "# ", "###### "])
+def test_reject_stops_and_writes_verdict(tmp_path: Path, runner: FakeRunner, monkeypatch, heading) -> None:
     """REJECT al primo stadio: il secondo non parte mai, verdetto scritto."""
     seats, (brief, stages) = _seats(), _brief_stages()
     graph_dir = tmp_path / "graph"
     graph_dir.mkdir()
     runner.script = [("ok", "REJECT", "pericoloso")]
+    def with_heading(*args):
+        response, usage = runner(*args)
+        return response.replace("VERDICT:", heading + "VERDICT:"), usage
+    monkeypatch.setattr(relay, "run_seat", with_heading)
     final = _run_app(graph_dir, seats, _initial_state(brief, stages, 5, False, None), "r")
     assert runner.calls == ["fake/a"]
     assert final["stop_reason"] == "rejected"
@@ -238,16 +292,18 @@ def test_reject_stops_and_writes_verdict(tmp_path: Path, runner: FakeRunner) -> 
     assert "verdict=REJECT" in verdict
 
 
+@pytest.mark.parametrize("after_write", [False, True])
 def test_uncertain_rerun_refused_then_allowed(
-    tmp_path: Path, runner: FakeRunner, monkeypatch: pytest.MonkeyPatch, sandbox: Path
+    tmp_path: Path, runner: FakeRunner, monkeypatch: pytest.MonkeyPatch, sandbox: Path, after_write
 ) -> None:
     """Crash dopo la risposta, prima del salvataggio: prima dichiara, poi (con flag) riesegue."""
     import relay as relay_module
 
     _patch_loaders(monkeypatch)
-    session_name = _start_crashing(monkeypatch, runner, sandbox, relay_module)
+    session_name = _start_crashing(monkeypatch, runner, sandbox, relay_module, after_write=after_write)
     session_dir = sandbox / session_name
     assert (session_dir / "relay-checkpoints.sqlite").is_file()
+    assert (session_dir / "01-sa-relay-r1.md").is_file() == after_write
     # Senza flag: rifiuto senza invocare.
     before = list(runner.calls)
     with pytest.raises(RelayError) as exc:
@@ -280,6 +336,142 @@ def test_uncertain_rerun_refused_then_allowed(
     assert summary["status"] == "completed"
     assert summary["completed"] == 2
     assert runner.calls == before + ["fake/a", "fake/c"]
+    assert summary["calls_made"] == 3
+
+
+@pytest.mark.parametrize("allow_uncertain_rerun", [False, True])
+def test_fatal_outcome_is_saved_and_never_reinvoked(
+    runner: FakeRunner, monkeypatch: pytest.MonkeyPatch, sandbox: Path,
+    allow_uncertain_rerun: bool,
+) -> None:
+    """A known failure survives reopening SQLite and cannot spend quota again."""
+    _patch_loaders(monkeypatch)
+    runner.script = [("fatal",)]
+    with pytest.raises(RelayError) as initial:
+        start_resumable_relay(
+            question="domanda?", context=None, diff=None,
+            sequence_spec="r1=sa|sb,r2=sc", max_seats=5,
+            continue_on_reject=False, invocation_timeout=None,
+        )
+    assert initial.value.kind == "seat_failed"
+    session_dir = next(sandbox.iterdir())
+    state = _read_state(session_dir, session_dir.name).values
+    assert state["stop_reason"] == "failed"
+    assert state["pending"] is None
+    assert state["calls_made"] == 1
+    assert state["trace"][-1]["outcome"] == "failed"
+    with pytest.raises(RelayError) as resumed:
+        resume_relay_session(
+            session_ref=session_dir.name, question="domanda?", context=None,
+            diff=None, sequence_spec="r1=sa|sb,r2=sc", max_seats=5,
+            continue_on_reject=False, invocation_timeout=None,
+            allow_uncertain_rerun=allow_uncertain_rerun,
+        )
+    assert resumed.value.kind == "seat_failed"
+    assert str(resumed.value) == str(initial.value)
+    assert runner.calls == ["fake/a"]
+
+
+@pytest.mark.parametrize("identity", [[], None, "invalid", 7])
+def test_invalid_identity_refuses_without_provider_call(
+    runner: FakeRunner, monkeypatch: pytest.MonkeyPatch, sandbox: Path, identity,
+) -> None:
+    _patch_loaders(monkeypatch)
+    session_dir = sandbox / "malformed"
+    session_dir.mkdir()
+    (session_dir / relay_graph.IDENTITY_NAME).write_text(json.dumps(identity), encoding="utf-8")
+    with pytest.raises(RelayError) as error:
+        resume_relay_session(
+            session_ref="malformed", question="domanda?", context=None, diff=None,
+            sequence_spec="r1=sa|sb,r2=sc", max_seats=5,
+            continue_on_reject=False, invocation_timeout=None,
+        )
+    assert error.value.kind == "session_missing"
+    assert runner.calls == []
+
+
+def test_simultaneous_resume_refuses_second_caller(
+    runner: FakeRunner, monkeypatch: pytest.MonkeyPatch, sandbox: Path,
+) -> None:
+    _patch_loaders(monkeypatch)
+    session_name = _start_crashing(monkeypatch, runner, sandbox, relay)
+    entered, release = threading.Event(), threading.Event()
+    entry_lock = threading.Lock()
+    original_runner = relay.run_seat
+
+    def blocked_runner(*args, **kwargs):
+        with entry_lock:
+            first_call = not entered.is_set()
+            entered.set()
+        if first_call:
+            assert release.wait(timeout=10)
+        return original_runner(*args, **kwargs)
+
+    monkeypatch.setattr(relay, "run_seat", blocked_runner)
+    arguments = dict(
+        session_ref=session_name, question="domanda?", context=None, diff=None,
+        sequence_spec="r1=sa|sb,r2=sc", max_seats=5, continue_on_reject=False,
+        invocation_timeout=None, allow_uncertain_rerun=True,
+    )
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+        first = pool.submit(resume_relay_session, **arguments)
+        try:
+            assert entered.wait(timeout=10)
+            with pytest.raises(RelayError) as error:
+                resume_relay_session(**arguments)
+            assert error.value.kind == "session_busy"
+        finally:
+            release.set()
+        assert first.result(timeout=10)["status"] == "completed"
+    assert runner.calls == ["fake/a", "fake/a", "fake/c"]
+
+
+@pytest.mark.parametrize("timeout", [0, "invalid"])
+def test_relay_invalid_later_timeout_refuses_before_any_call(
+    runner: FakeRunner, monkeypatch: pytest.MonkeyPatch, sandbox: Path, timeout,
+) -> None:
+    import proposal
+    _patch_loaders(monkeypatch)
+    seats = _seats()
+    seats["sc"]["timeout_seconds"] = timeout
+    monkeypatch.setattr(proposal, "load_config", lambda: {"seats": seats})
+    with pytest.raises(RelayError) as error:
+        start_resumable_relay(
+            question="domanda?", context=None, diff=None,
+            sequence_spec="r1=sa|sb,r2=sc", max_seats=5,
+            continue_on_reject=False, invocation_timeout=None,
+        )
+    assert error.value.kind == "invalid_timeout"
+    assert runner.calls == []
+
+
+def test_all_approved_fallbacks_fit_the_graph_budget(
+    runner: FakeRunner, monkeypatch: pytest.MonkeyPatch, sandbox: Path,
+) -> None:
+    """The maximum stage count can exhaust every approved fallback."""
+    import proposal
+    _patch_loaders(monkeypatch)
+    seats = {
+        f"s{idx}": {"cli": "opencode", "model": f"fake/{idx}", "quota_pool": f"pool-{idx}"}
+        for idx in range(15)
+    }
+    monkeypatch.setattr(proposal, "load_config", lambda: {"seats": seats})
+    sequence = ",".join(f"r{idx}=s{idx * 3}|s{idx * 3 + 1}|s{idx * 3 + 2}" for idx in range(5))
+    runner.script = [("retryable",), ("retryable",), ("ok", "APPROVE", "done")] * 5
+    arguments = dict(
+        question="domanda?", context=None, diff=None, sequence_spec=sequence,
+        max_seats=5, continue_on_reject=False, invocation_timeout=None,
+    )
+    summary = start_resumable_relay(**arguments)
+    assert summary["status"] == "completed"
+    assert summary["completed"] == 5
+    assert summary["calls_made"] == 15
+    assert runner.calls == [f"fake/{idx}" for idx in range(15)]
+    # Reopening a fully exhausted sequence must not spend another call.
+    before = list(runner.calls)
+    resumed = resume_relay_session(session_ref=summary["session_dir"], **arguments)
+    assert resumed["status"] == "completed"
+    assert runner.calls == before
 
 
 def _patch_loaders(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -292,7 +484,7 @@ def _patch_loaders(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(session, "egress_gate", lambda brief: None)
 
 
-def _start_crashing(monkeypatch, runner: FakeRunner, sandbox: Path, relay_module) -> str:
+def _start_crashing(monkeypatch, runner: FakeRunner, sandbox: Path, relay_module, after_write=False) -> str:
     """Avvia un run che muore dopo la prima risposta, prima del commit."""
 
     real_write = relay_module._write_private_text
@@ -301,6 +493,8 @@ def _start_crashing(monkeypatch, runner: FakeRunner, sandbox: Path, relay_module
     def flaky_write(path: Path, text: str) -> None:
         if state["fail_once"] and path.name.endswith("-relay-r1.md"):
             state["fail_once"] = False
+            if after_write:
+                real_write(path, text)
             raise SimulatedCrash("morte dopo la risposta")
         return real_write(path, text)
 
@@ -322,6 +516,7 @@ def _start_crashing(monkeypatch, runner: FakeRunner, sandbox: Path, relay_module
     # Il checkpoint ha il marker invocato senza record: incertezza rilevabile.
     snapshot = _read_state(sandbox / names[0], names[0])
     assert _uncertain_pending(snapshot.values) is not None
+    assert snapshot.values["calls_made"] == 1
     monkeypatch.setattr(relay_module, "_write_private_text", real_write)
     return names[0]
 

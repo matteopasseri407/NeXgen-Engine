@@ -15,13 +15,15 @@ import json
 import mimetypes
 import time
 from dataclasses import asdict, dataclass
+from nexgen_core.files import write_private_text
 from pathlib import Path
 from typing import Any
 
 from .config import LaneConfig
 from .connectors import ConnectorError
 from .connectors import drive as drive_conn
-from .patch import new_proposal_id
+from .proposals import (content_sha, read_proposal_data, new_proposal_id, valid_proposal_id,
+                        proposal_lock, record_attempt, refuse_prior_attempt, validate_content)
 from .tools import ToolError, audit_event
 
 
@@ -41,6 +43,13 @@ class UploadProposal:
     created_at: str
     applied_at: str = ""
     drive_id: str = ""
+    attempted_at: str = ""
+    meta_sha: str = ""
+
+
+def _meta_sha(proposal: UploadProposal) -> str:
+    return content_sha(proposal.name, proposal.mime, proposal.folder_id)
+
 
 
 def _sha(data: bytes) -> str:
@@ -48,31 +57,26 @@ def _sha(data: bytes) -> str:
 
 
 def _save(cfg: LaneConfig, proposal: UploadProposal) -> None:
-    cfg.uploads_dir.mkdir(parents=True, exist_ok=True)
     target = cfg.uploads_dir / f"{proposal.id}.json"
-    target.write_text(json.dumps(asdict(proposal), ensure_ascii=False, indent=1), encoding="utf-8")
+    write_private_text(target, json.dumps(asdict(proposal), ensure_ascii=False, indent=1))
 
 
 def _create(cfg: LaneConfig, proposal: UploadProposal) -> None:
     """Store a new proposal without ever overwriting an existing one (see patch._create)."""
-    cfg.uploads_dir.mkdir(parents=True, exist_ok=True)
     target = cfg.uploads_dir / f"{proposal.id}.json"
     try:
-        with target.open("x", encoding="utf-8") as handle:
-            handle.write(json.dumps(asdict(proposal), ensure_ascii=False, indent=1))
+        write_private_text(target, json.dumps(asdict(proposal), ensure_ascii=False, indent=1), exclusive=True)
     except FileExistsError as exc:
         raise DriveGateError(f"collisione id proposta, riprova: {proposal.id}") from exc
 
 
 def load_proposal(cfg: LaneConfig, proposal_id: str) -> UploadProposal:
-    from .patch import _PROPOSAL_ID_RE
-
-    if not _PROPOSAL_ID_RE.fullmatch(str(proposal_id or "")):
+    if not valid_proposal_id(proposal_id or ""):
         raise DriveGateError(f"id proposta non valido: {proposal_id}")
     target = cfg.uploads_dir / f"{proposal_id}.json"
     if not target.is_file():
         raise DriveGateError(f"proposta inesistente: {proposal_id}")
-    return UploadProposal(**json.loads(target.read_text(encoding="utf-8")))
+    return UploadProposal(**read_proposal_data(target, proposal_id, DriveGateError))
 
 
 def _confined_file(cfg: LaneConfig, local_path: str) -> Path:
@@ -124,6 +128,7 @@ def stage_upload(cfg: LaneConfig, local_path: str, name: str = "", folder_id: st
         folder_id=str(folder_id or "").strip(),
         created_at=time.strftime("%Y-%m-%dT%H:%M:%S%z"),
     )
+    proposal.meta_sha = _meta_sha(proposal)
     for _ in range(5):
         proposal.id = new_proposal_id()
         try:
@@ -148,11 +153,23 @@ def confirm_upload(cfg: LaneConfig, proposal_id: str, confirm: bool) -> dict[str
     """Execute a staged upload once, only on explicit confirm."""
     if not confirm:
         raise DriveGateError("caricamento rifiutato: serve confirm esplicito")
+    with proposal_lock(cfg.uploads_dir, proposal_id, DriveGateError):
+        return _confirm_upload(cfg, proposal_id)
+
+
+def _confirm_upload(cfg: LaneConfig, proposal_id: str) -> dict[str, Any]:
     proposal = load_proposal(cfg, proposal_id)
     if proposal.applied_at:
         raise DriveGateError("proposta gia' caricata")
+    refuse_prior_attempt(proposal, DriveGateError)
+    validate_content(proposal.meta_sha, DriveGateError,
+        proposal.name, proposal.mime, proposal.folder_id
+    )
+    target = _confined_file(cfg, proposal.local_path)
+    if str(target) != proposal.local_path:
+        raise DriveGateError("file spostato dopo la proposta: riproponi")
     try:
-        data = Path(proposal.local_path).read_bytes()
+        data = target.read_bytes()
     except OSError as exc:
         raise DriveGateError(f"file non piu' leggibile: {exc}") from exc
     if _sha(data) != proposal.sha:
@@ -164,6 +181,7 @@ def confirm_upload(cfg: LaneConfig, proposal_id: str, confirm: bool) -> dict[str
         ok=True,
         chars=proposal.size,
     )
+    record_attempt(proposal, lambda: _save(cfg, proposal), DriveGateError)
     try:
         sent = drive_conn.upload_file(data, proposal.name, proposal.mime, proposal.folder_id)
     except ConnectorError as exc:

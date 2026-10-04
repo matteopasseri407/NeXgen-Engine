@@ -185,15 +185,12 @@ def test_unknown_runtime_hook_is_refused(tmp_path: Path) -> None:
 
 
 @pytest.mark.skipif(not sys.platform.startswith("linux"), reason="unit systemd solo su Linux")
-def test_install_writes_shim_and_unit(tmp_path: Path) -> None:
+def test_install_writes_shim_and_unit(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     source = _module_source(tmp_path)
     module = load_catalog(_desktop_catalog(tmp_path, source))["demo"]
     home = tmp_path / "home"
-    os.environ["NEXGEN_DISABLE_HOST_MUTATIONS"] = "1"
-    try:
-        actions = install_module(module, home=home)
-    finally:
-        os.environ.pop("NEXGEN_DISABLE_HOST_MUTATIONS", None)
+    monkeypatch.setenv("NEXGEN_DISABLE_HOST_MUTATIONS", "1")
+    actions = install_module(module, home=home)
 
     shim = shim_path(home / ".local" / "bin", "demo")
     unit = home / ".config" / "systemd" / "user" / "demo.service"
@@ -203,22 +200,19 @@ def test_install_writes_shim_and_unit(tmp_path: Path) -> None:
     assert len(actions) == 2
 
 
-def test_install_is_idempotent(tmp_path: Path) -> None:
+def test_install_is_idempotent(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Il ciclo di guardia lo chiama a ripetizione: il secondo giro non deve fare nulla."""
     source = _module_source(tmp_path)
     module = load_catalog(_desktop_catalog(tmp_path, source))["demo"]
     home = tmp_path / "home"
-    os.environ["NEXGEN_DISABLE_HOST_MUTATIONS"] = "1"
-    try:
-        first = install_module(module, home=home)
-        second = install_module(module, home=home)
-    finally:
-        os.environ.pop("NEXGEN_DISABLE_HOST_MUTATIONS", None)
+    monkeypatch.setenv("NEXGEN_DISABLE_HOST_MUTATIONS", "1")
+    first = install_module(module, home=home)
+    second = install_module(module, home=home)
     assert first and not second
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="i symlink richiedono privilegi su Windows")
-def test_a_stale_symlink_shim_is_replaced(tmp_path: Path) -> None:
+def test_a_stale_symlink_shim_is_replaced(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Un symlink lasciato da un'installazione precedente punta alla versione vecchia."""
     source = _module_source(tmp_path)
     module = load_catalog(_desktop_catalog(tmp_path, source))["demo"]
@@ -228,11 +222,8 @@ def test_a_stale_symlink_shim_is_replaced(tmp_path: Path) -> None:
     stale = shim_path(bin_dir, "demo")
     stale.symlink_to("/usr/bin/false")
 
-    os.environ["NEXGEN_DISABLE_HOST_MUTATIONS"] = "1"
-    try:
-        install_module(module, home=home)
-    finally:
-        os.environ.pop("NEXGEN_DISABLE_HOST_MUTATIONS", None)
+    monkeypatch.setenv("NEXGEN_DISABLE_HOST_MUTATIONS", "1")
+    install_module(module, home=home)
     assert not stale.is_symlink()
     assert "demo-entry" in stale.read_text()
 
@@ -269,16 +260,13 @@ def test_an_undeclared_module_is_never_installed(tmp_path: Path) -> None:
     assert not (home / ".local" / "bin").exists()
 
 
-def test_a_declared_module_is_installed(tmp_path: Path) -> None:
+def test_a_declared_module_is_installed(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     source = _module_source(tmp_path)
     catalog = load_catalog(_desktop_catalog(tmp_path, source))
     states = derive_state(catalog, {"demo": "local"}, env={})
     home = tmp_path / "home"
-    os.environ["NEXGEN_DISABLE_HOST_MUTATIONS"] = "1"
-    try:
-        actions = install_declared_modules(states, home=home)
-    finally:
-        os.environ.pop("NEXGEN_DISABLE_HOST_MUTATIONS", None)
+    monkeypatch.setenv("NEXGEN_DISABLE_HOST_MUTATIONS", "1")
+    actions = install_declared_modules(states, home=home)
     assert actions
     assert shim_path(home / ".local" / "bin", "demo").is_file()
 
@@ -466,7 +454,7 @@ def test_the_engine_catalog_stays_shared() -> None:
     vocabolario nuovo non deve cambiare cosa facevano."""
     for module in load_catalog(ENGINE).values():
         assert module.scope == "shared"
-def test_a_host_scoped_declaration_does_not_reach_other_machines(tmp_path: Path) -> None:
+def test_a_host_scoped_declaration_does_not_reach_other_machines(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     vault = _state(tmp_path, """
         schema_version: 2
         modules: {}
@@ -480,37 +468,31 @@ def test_a_host_scoped_declaration_does_not_reach_other_machines(tmp_path: Path)
 # --- togliere un modulo deve togliere qualcosa ---------------------------
 
 
-def _installed_demo(tmp_path: Path):
+def _installed_demo(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     source = _module_source(tmp_path)
     module = load_catalog(_desktop_catalog(tmp_path, source))["demo"]
     home = tmp_path / "home"
-    os.environ["NEXGEN_DISABLE_HOST_MUTATIONS"] = "1"
-    try:
-        install_module(module, home=home)
-    finally:
-        os.environ.pop("NEXGEN_DISABLE_HOST_MUTATIONS", None)
+    monkeypatch.setenv("NEXGEN_DISABLE_HOST_MUTATIONS", "1")
+    install_module(module, home=home)
     return module, home
 
 
 @pytest.mark.skipif(not sys.platform.startswith("linux"), reason="unit systemd solo su Linux")
-def test_uninstall_removes_shim_and_unit(tmp_path: Path) -> None:
-    module, home = _installed_demo(tmp_path)
+def test_uninstall_removes_shim_and_unit(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    module, home = _installed_demo(tmp_path, monkeypatch)
     shim = shim_path(home / ".local" / "bin", "demo")
     unit = home / ".config" / "systemd" / "user" / "demo.service"
     assert shim.is_file() and unit.is_file()
 
-    os.environ["NEXGEN_DISABLE_HOST_MUTATIONS"] = "1"
-    try:
-        actions = uninstall_module(module, home=home)
-    finally:
-        os.environ.pop("NEXGEN_DISABLE_HOST_MUTATIONS", None)
+    monkeypatch.setenv("NEXGEN_DISABLE_HOST_MUTATIONS", "1")
+    actions = uninstall_module(module, home=home)
     assert not shim.exists() and not unit.exists()
     assert len(actions) == 2
 
 
-def test_uninstall_never_deletes_a_command_it_did_not_write(tmp_path: Path) -> None:
+def test_uninstall_never_deletes_a_command_it_did_not_write(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Un comando che l'utente ha messo a mano con lo stesso nome non e' nostro."""
-    module, home = _installed_demo(tmp_path)
+    module, home = _installed_demo(tmp_path, monkeypatch)
     shim = shim_path(home / ".local" / "bin", "demo")
     shim.write_text("#!/bin/sh\n# roba mia, scritta a mano\nexit 0\n", encoding="utf-8")
 
@@ -519,42 +501,36 @@ def test_uninstall_never_deletes_a_command_it_did_not_write(tmp_path: Path) -> N
     assert any("left 'demo' alone" in a for a in actions)
 
 
-def test_a_shim_we_wrote_carries_its_marker(tmp_path: Path) -> None:
-    _module, home = _installed_demo(tmp_path)
+def test_a_shim_we_wrote_carries_its_marker(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    _module, home = _installed_demo(tmp_path, monkeypatch)
     body = shim_path(home / ".local" / "bin", "demo").read_text()
     assert SHIM_MARKER.format(module="demo") in body
 
 
-def test_declaring_a_module_absent_uninstalls_it(tmp_path: Path) -> None:
+def test_declaring_a_module_absent_uninstalls_it(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """'Togli e metti moduli' deve essere vero, non una figura retorica."""
     source = _module_source(tmp_path)
     catalog = load_catalog(_desktop_catalog(tmp_path, source))
     home = tmp_path / "home"
-    os.environ["NEXGEN_DISABLE_HOST_MUTATIONS"] = "1"
-    try:
-        install_declared_modules(derive_state(catalog, {"demo": "local"}, env={}), home=home)
-        assert shim_path(home / ".local" / "bin", "demo").is_file()
+    monkeypatch.setenv("NEXGEN_DISABLE_HOST_MUTATIONS", "1")
+    install_declared_modules(derive_state(catalog, {"demo": "local"}, env={}), home=home)
+    assert shim_path(home / ".local" / "bin", "demo").is_file()
 
-        install_declared_modules(derive_state(catalog, {"demo": "absent"}, env={}), home=home)
-    finally:
-        os.environ.pop("NEXGEN_DISABLE_HOST_MUTATIONS", None)
+    install_declared_modules(derive_state(catalog, {"demo": "absent"}, env={}), home=home)
     assert not shim_path(home / ".local" / "bin", "demo").exists()
 
 
-def test_uninstalling_twice_is_quiet(tmp_path: Path) -> None:
+def test_uninstalling_twice_is_quiet(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Il guard gira ogni mezz'ora: un modulo gia' rimosso non deve fare rumore."""
-    module, home = _installed_demo(tmp_path)
-    os.environ["NEXGEN_DISABLE_HOST_MUTATIONS"] = "1"
-    try:
-        first = uninstall_module(module, home=home)
-        second = uninstall_module(module, home=home)
-    finally:
-        os.environ.pop("NEXGEN_DISABLE_HOST_MUTATIONS", None)
+    module, home = _installed_demo(tmp_path, monkeypatch)
+    monkeypatch.setenv("NEXGEN_DISABLE_HOST_MUTATIONS", "1")
+    first = uninstall_module(module, home=home)
+    second = uninstall_module(module, home=home)
     assert first and not second
 
 
-def test_uninstall_dry_run_removes_nothing(tmp_path: Path) -> None:
-    module, home = _installed_demo(tmp_path)
+def test_uninstall_dry_run_removes_nothing(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    module, home = _installed_demo(tmp_path, monkeypatch)
     actions = uninstall_module(module, home=home, dry_run=True)
     assert actions
     assert shim_path(home / ".local" / "bin", "demo").is_file()
@@ -696,3 +672,133 @@ def test_the_reason_of_a_failure_beats_the_last_line() -> None:
     assert "Qwen3-ASR is NOT loaded" in _health_detail(uscita, "boh")
     assert _health_detail("", "boh") == "boh"
     assert _health_detail("solo una riga\n", "boh") == "solo una riga"
+
+
+def test_transient_env_gates_keep_module_instead_of_uninstalling(tmp_path: Path) -> None:
+    """Declared local but gates missing = thin environment, not a removal.
+
+    The guard must keep shims/units in place instead of demolishing and
+    rebuilding them every other cycle (the flap that makes commands appear
+    and vanish).
+    """
+    from nexgen_core.modules import ModuleState
+
+    source = _module_source(tmp_path)
+    (source / "bin").mkdir(parents=True, exist_ok=True)
+    (source / "bin" / "demo-entry").write_text("#!/bin/sh\n", encoding="utf-8")
+    root = _catalog(tmp_path, f"""
+        schema_version: 2
+        modules:
+          demo:
+            label: Demo
+            kind: feature
+            states: [absent, local]
+            source: "{source.as_posix()}"
+            env_gates: [DEMO_TOKEN_THAT_IS_ABSENT]
+            provides:
+              shims:
+                demo: "{source.as_posix()}/bin/demo-entry"
+            requires:
+              binaries: [sh]
+        """)
+    from nexgen_core.modules import load_catalog
+
+    module = load_catalog(root)["demo"]
+    home = tmp_path / "home"
+    # install first with gates satisfied (env override via declared state)
+    states = [ModuleState(module, "local", "state-file", declared="local")]
+    first = install_declared_modules(states, home=home, log=lambda _m: None)
+    assert first, "expected an install on the first pass"
+    # now the transient case: demoted for missing gates, declared=local kept
+    transient = [ModuleState(module, "absent", "env-gates", note="x", declared="local")]
+    logged: list[str] = []
+    second = install_declared_modules(transient, home=home, log=logged.append)
+    assert second == []
+    assert any("kept as-is" in line for line in logged)
+    assert (home / ".local" / "bin" / ("demo.cmd" if os.name == "nt" else "demo")).is_file(), "shim demolished on transient env"
+
+
+def test_one_bad_module_does_not_abort_siblings(tmp_path: Path) -> None:
+    """An unreadable source in one module must not block the others."""
+    source_ok = _module_source(tmp_path)
+    (source_ok / "bin").mkdir(parents=True, exist_ok=True)
+    (source_ok / "bin" / "demo-entry").write_text("#!/bin/sh\n", encoding="utf-8")
+    root = _catalog(tmp_path, f"""
+        schema_version: 2
+        modules:
+          good:
+            label: Good
+            kind: feature
+            states: [absent, local]
+            source: "{source_ok.as_posix()}"
+            provides:
+              shims:
+                good: "{source_ok.as_posix()}/bin/demo-entry"
+            requires:
+              binaries: [sh]
+          bad:
+            label: Bad
+            kind: feature
+            states: [absent, local]
+            source: "/nonexistent-source-dir"
+            provides:
+              shims:
+                bad: "/nonexistent-source-dir/bin/x"
+            requires:
+              binaries: [sh]
+        """)
+    from nexgen_core.modules import load_catalog
+
+    catalog = load_catalog(root)
+    home = tmp_path / "home2"
+    logged: list[str] = []
+    states = [ModuleState(catalog["good"], "local", "state-file"),
+              ModuleState(catalog["bad"], "local", "state-file")]
+    install_declared_modules(states, home=home, log=logged.append)
+    assert (home / ".local" / "bin" / ("good.cmd" if os.name == "nt" else "good")).is_file()
+
+
+def test_unsafe_shim_target_is_refused(tmp_path: Path) -> None:
+    from nexgen_core.module_install import _shim_target
+
+    import pytest as _pytest
+
+    with _pytest.raises(ValueError):
+        _shim_target(__import__("pathlib").Path('/tmp/evil"x'))
+
+
+def test_systemd_units_respect_host_mutation_freeze(tmp_path: Path, monkeypatch) -> None:
+    """With mutations disabled nothing is written and nothing is enabled."""
+    from nexgen_core import scheduler as _sched
+
+    monkeypatch.setenv("NEXGEN_DISABLE_HOST_MUTATIONS", "1")
+    home = tmp_path / "home"
+    assert _sched.install_systemd_units(
+        home=home,
+        engine_root=tmp_path / "eng",
+        vault_data=tmp_path / "vault",
+        vault=tmp_path / "vault",
+        log=lambda _m: None,
+    ) is True
+    assert not (home / ".config" / "systemd").exists()
+
+
+def test_systemd_without_systemctl_reports_not_enabled(tmp_path: Path, monkeypatch) -> None:
+    """systemctl absent = files written, enabled=False (never a green lie)."""
+    from nexgen_core import scheduler as _sched
+
+    monkeypatch.delenv("NEXGEN_DISABLE_HOST_MUTATIONS", raising=False)
+    monkeypatch.setattr(_sched, "_resolve_cmd", lambda _name: None)
+    home = tmp_path / "home"
+    (home / ".local" / "bin" / "nexgen").parent.mkdir(parents=True)
+    (home / ".local" / "bin" / "nexgen").write_text("#!/bin/sh\n", encoding="utf-8")
+    logged: list[str] = []
+    ok = _sched.install_systemd_units(
+        home=home,
+        engine_root=tmp_path / "eng",
+        vault_data=tmp_path / "vault",
+        vault=tmp_path / "vault",
+        log=logged.append,
+    )
+    assert ok is False
+    assert any("NOT enabled" in line for line in logged)

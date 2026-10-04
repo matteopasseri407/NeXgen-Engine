@@ -13,13 +13,13 @@ with the exact one-time step. Silent refresh only.
 from __future__ import annotations
 
 import json
-import os
 import time
 import urllib.parse
 import urllib.request
-from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
+
+from . import token_store
 
 TOKEN_URL = "https://oauth2.googleapis.com/token"
 
@@ -44,25 +44,18 @@ class NeedsLogin(AuthError):
     """No tokens on this machine: the human runs the one-time login first."""
 
 
-@dataclass
-class HttpResult:
-    status: int
-    body: bytes
+# Canonical HTTP helper lives in token_store; re-exported here because
+# gmail/drive/calendar import it from .auth.
+HttpResult = token_store.HttpResult
+HttpFn = token_store.HttpFn
 
 
-def _default_http(req: urllib.request.Request, timeout: int) -> HttpResult:
-    try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            return HttpResult(resp.status, resp.read())
-    except urllib.error.HTTPError as exc:
-        return HttpResult(exc.code, exc.read()[:2000])
-
-
-HttpFn = Callable[[urllib.request.Request, int], HttpResult]
+def _default_http(req, timeout: int) -> HttpResult:
+    return token_store.default_http(req, timeout)
 
 
 def token_dir() -> Path:
-    return Path(os.environ.get("WORKSPACE_MCP_TOKEN_DIR") or str(Path.home() / ".config" / "nexgen-workspace-mcp"))
+    return token_store.resolve_token_dir("WORKSPACE_MCP_TOKEN_DIR", "nexgen-workspace-mcp")
 
 
 def token_file() -> Path:
@@ -71,34 +64,11 @@ def token_file() -> Path:
 
 def status() -> tuple[bool, str]:
     """Doctor helper: configured or not, without touching the network."""
-    path = token_file()
-    if not path.is_file():
-        return False, f"nessun token in {path} (serve il login una tantum)"
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return False, f"token illeggibili in {path}"
-    if not isinstance(data, dict) or not data.get("refresh_token"):
-        return False, f"token incompleti in {path}"
-    return True, str(path)
+    return token_store.token_status(token_file(), "serve il login una tantum")
 
 
 def _machine_env(name: str) -> str:
-    value = os.environ.get(name)
-    if value:
-        return value
-    env_file = token_dir() / "env"
-    if env_file.is_file():
-        try:
-            for raw in env_file.read_text(encoding="utf-8").splitlines():
-                line = raw.strip()
-                if line and not line.startswith("#") and "=" in line:
-                    key, _, val = line.partition("=")
-                    if key.strip() == name:
-                        return val.strip()
-        except OSError:
-            pass
-    return ""
+    return token_store.machine_env(token_dir(), name)
 
 
 def client_id() -> str:
@@ -110,24 +80,11 @@ def client_secret() -> str:
 
 
 def load_tokens() -> dict[str, Any] | None:
-    path = token_file()
-    if not path.is_file():
-        return None
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return None
-    return data if isinstance(data, dict) and data.get("refresh_token") else None
+    return token_store.load_tokens_from(token_file())
 
 
 def save_tokens(data: dict[str, Any]) -> None:
-    directory = token_dir()
-    directory.mkdir(parents=True, exist_ok=True)
-    token_file().write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    try:
-        os.chmod(token_file(), 0o600)
-    except OSError:
-        pass
+    token_store.save_tokens_to(token_dir(), token_file(), data)
 
 
 def refresh_tokens(tokens: dict[str, Any], http: HttpFn | None = None) -> dict[str, Any]:
@@ -150,14 +107,9 @@ def refresh_tokens(tokens: dict[str, Any], http: HttpFn | None = None) -> dict[s
         raise AuthError(f"(accesso rifiutato dal provider: HTTP {result.status})")
     try:
         payload = json.loads(result.body.decode("utf-8", errors="replace"))
-        access = str(payload["access_token"])
+        updated = token_store.refreshed_tokens(tokens, payload)
     except (ValueError, KeyError) as exc:
         raise AuthError("(accesso rifiutato dal provider: risposta illeggibile)") from exc
-    updated = {
-        **tokens,
-        "access_token": access,
-        "expires_at": int(time.time()) + int(payload.get("expires_in", 3600)),
-    }
     save_tokens(updated)
     return updated
 

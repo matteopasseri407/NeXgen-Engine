@@ -16,8 +16,9 @@ Rules:
 - Never trigger an interactive login on your own: without tokens the
   connectors fail closed with a message that names the one-time login step.
   The human does that step, never an unattended run.
-- Every failure is a refusal string in parentheses, so ``refusal_kind``
-  classifies it as empty or error and the engine picks ABSENCE vs ERROR.
+- Every failure supplies a display message to ``ToolRegistry._refuse``, which
+  records an explicit error status. Empty searches declare empty status;
+  the engine picks ABSENCE vs ERROR without interpreting the message.
 """
 
 from .auth import AuthError, ConnectorError, NeedsLogin

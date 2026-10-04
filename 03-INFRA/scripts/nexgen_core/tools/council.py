@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-"""Launcher for AI Council — NeXgen Engine v2."""
+"""Launcher for AI Council — NeXgen Engine v2 (not the implementation).
+
+The logic lives in 03-INFRA/agent-universal-layer/council/council.py;
+this module only subprocesses it so `nexgen council` works installed
+or cloned. Do not add logic here: agents citing this file as the
+implementation will describe a 34-line forwarder as the orchestrator."""
 from __future__ import annotations
 
 import subprocess
@@ -11,7 +16,7 @@ from nexgen_core.paths import resolve_engine_root
 
 
 def main(argv: list[str] | None = None) -> int:
-    """Forwards the invocation to the canonical council.py module."""
+    """Forwards the invocation to agent-universal-layer/council/council.py."""
     if argv is None:
         argv = sys.argv[1:]
 

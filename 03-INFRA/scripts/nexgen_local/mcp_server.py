@@ -8,20 +8,16 @@ from __future__ import annotations
 
 from typing import Callable
 
-from .config import LaneConfig, default_engine_root
+from .config import LaneConfig
 from .jobs import JobError, job_close, job_research
 from .llm import LLM, LLMError
 from .tools import ToolRegistry
 
 
 def _version() -> str:
-    try:
-        from importlib.metadata import version
+    from .version import engine_version
 
-        return version("nexgen-engine")
-    except Exception:  # noqa: BLE001 - cloned checkout without packaging
-        version_file = default_engine_root() / "VERSION"
-        return version_file.read_text().strip() if version_file.is_file() else "sconosciuta"
+    return engine_version()
 
 
 def _footer(receipts: list[dict]) -> str:

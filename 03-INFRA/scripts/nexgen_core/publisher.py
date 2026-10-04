@@ -18,13 +18,13 @@ SCRIPTS_DIR = Path(__file__).resolve().parents[1]
 if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
-from nexgen_core.git_ops import (
+from nexgen_core.git_ops import (  # noqa: E402 - sys.path shim for cloned checkout
     get_current_branch,
     publish_changes,
     resolve_remotes,
 )
-from nexgen_core.lock import HostLock
-from nexgen_core.paths import resolve_vault_data
+from nexgen_core.lock import HostLock  # noqa: E402 - sys.path shim for cloned checkout
+from nexgen_core.paths import resolve_vault_data  # noqa: E402 - sys.path shim for cloned checkout
 
 
 class Publisher:

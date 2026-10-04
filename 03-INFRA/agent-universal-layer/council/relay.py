@@ -14,13 +14,14 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from proposal import (
+    HUMAN_CHOICE_REQUIRED,
+    NO_ELIGIBLE_SEAT,
     SEATS_PATH,
-    _confirm_pay_per_use,
+    _confirm_seat_call,
     _print_routing_proposal,
     _print_static_seat_menu,
     _routing_context_or_exit,
     _routing_enabled,
-    _seat_cost,
     _seat_quota_pool,
     _warn_no_zero_retention,
 )
@@ -124,15 +125,10 @@ class RelayQuarantine:
         return datetime.fromtimestamp(min(future), tz=UTC).isoformat(timespec="seconds")
 
 
-def _dedupe_keep_order(items: list[str]) -> list[str]:
-    seen = set()
-    out = []
-    for item in items:
-        if item in seen:
-            continue
-        seen.add(item)
-        out.append(item)
-    return out
+def _dedupe_strings(items: list[str]) -> list[str]:
+    """Order-preserving dedupe for plain strings (seat names). Not the same
+    as routing._dedupe, which dedupes RoutingCandidate tuples."""
+    return list(dict.fromkeys(items))
 
 
 def _parse_inline_sequence(spec: str) -> list[RelayStage]:
@@ -148,7 +144,7 @@ def _parse_inline_sequence(spec: str) -> list[RelayStage]:
         candidates = [s.strip() for s in seats_part.split("|") if s.strip()]
         if not role or not candidates:
             raise RelayError("[council] invalid inline relay sequence: role and seat are required.", kind="invalid_sequence")
-        stages.append(RelayStage(role=role, candidates=_dedupe_keep_order(candidates)))
+        stages.append(RelayStage(role=role, candidates=_dedupe_strings(candidates)))
     return stages
 
 
@@ -173,11 +169,11 @@ def _relay_stage_from_yaml(item) -> RelayStage:
         candidates.extend(str(s).strip() for s in fallback if str(s).strip())
     if not role or not candidates:
         raise RelayError("[council] invalid relay sequence: every stage must have role and seat/seats.", kind="invalid_sequence")
-    return RelayStage(role=role, candidates=_dedupe_keep_order(candidates))
+    return RelayStage(role=role, candidates=_dedupe_strings(candidates))
 
 
-def _validate_relay_seat(seat_name: str, seats: dict) -> dict:
-    """Structural sanity only: the seat must exist and use a supported CLI.
+def _validate_relay_seat(seat_name: str, seats: dict, invocation_timeout: float | None = None) -> dict:
+    """Validate the selected seat's CLI and effective timeout before calls.
 
     The agy execution block is checked per candidate in _run_relay_stage, so
     a declared fallback can still run. Retention metadata never removes a
@@ -188,10 +184,17 @@ def _validate_relay_seat(seat_name: str, seats: dict) -> dict:
     seat = seats[seat_name]
     if seat.get("cli") not in SUPPORTED_CLIS:
         raise RelayError(f"[council] unsupported CLI in the relay sequence: {seat.get('cli')}.", kind="unsupported_cli")
+    try:
+        _resolve_timeout_seconds(seat, invocation_timeout)
+    except ValueError as exc:
+        raise RelayError(f"[council] invalid timeout for seat '{seat_name}': {exc}.", kind="invalid_timeout") from exc
     return seat
 
 
 def _require_human_relay_selection(args, config: dict, seats: dict) -> None:
+    """Relay twin of proposal._require_human_single_selection: raises
+    RelayError instead of sys.exit (the graph cannot exit mid-node).
+    Message text is shared so there is one policy to quote."""
     if _routing_enabled(config):
         routing = config.get("routing") or {}
         roles = [str(role) for role in routing.get("relay_roles") or []]
@@ -206,14 +209,11 @@ def _require_human_relay_selection(args, config: dict, seats: dict) -> None:
         # the contract. CLI turns it into the same exit; the graph refuses
         # interactive selection and demands an explicit sequence instead.
         raise RelayError(
-            "[council] human choice required: rerun relay with --sequence "
+            HUMAN_CHOICE_REQUIRED + " rerun relay with --sequence "
             "role=seat|fallback,... or with the explicit name of a sequence.",
             kind="human_choice_required",
         )
-    raise RelayError(
-        "[council] no eligible seat to select: fix the mapping, CLI, or policy shown above.",
-        kind="human_choice_required",
-    )
+    raise RelayError(NO_ELIGIBLE_SEAT, kind="human_choice_required")
 
 
 def _load_relay_sequence(args, config: dict, seats: dict) -> list[RelayStage]:
@@ -242,7 +242,7 @@ def _load_relay_sequence(args, config: dict, seats: dict) -> list[RelayStage]:
         )
     for stage in stages:
         for seat_name in stage.candidates:
-            _validate_relay_seat(seat_name, seats)
+            _validate_relay_seat(seat_name, seats, getattr(args, "timeout_seconds", None))
     return stages
 
 
@@ -350,8 +350,7 @@ def _invoke_stage_candidate(
     timeout_seconds = _resolve_timeout_seconds(seat, invocation_timeout)
 
     _warn_no_zero_retention(chosen_name, seat)
-    plan = _routing_context_or_exit(config) if config and _routing_enabled(config) else None
-    _confirm_pay_per_use(chosen_name, seat, _seat_cost(plan, chosen_name, seat))
+    _confirm_seat_call(chosen_name, seat, config)
 
     print(
         f"[council] relay {idx:02d} — role: {stage.role} — "

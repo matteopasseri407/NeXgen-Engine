@@ -19,12 +19,15 @@ import time
 from dataclasses import asdict, dataclass
 from typing import Any
 
+from nexgen_core.files import write_private_text
+
 from .config import LaneConfig
 from .connectors import ConnectorError
 from .connectors import gmail as gmail_conn
 from .connectors import outlook as outlook_conn
 from .llm import LLM
-from .patch import _PROPOSAL_ID_RE, new_proposal_id
+from .proposals import (content_sha, read_proposal_data, new_proposal_id, valid_proposal_id,
+                        proposal_lock, record_attempt, refuse_prior_attempt, validate_content)
 from .tools import ToolError, audit_event
 
 MAX_BODY_CHARS = 20_000
@@ -62,21 +65,28 @@ class MailProposal:
     created_at: str = ""
     applied_at: str = ""
     sent_id: str = ""
+    attempted_at: str = ""
+    content_sha: str = ""
+
+
+def _proposal_sha(proposal: MailProposal) -> str:
+    return content_sha(
+        proposal.kind, proposal.provider, proposal.to, proposal.subject,
+        proposal.in_reply_to, proposal.body,
+    )
+
 
 
 def _save(cfg: LaneConfig, proposal: MailProposal) -> None:
-    cfg.mails_dir.mkdir(parents=True, exist_ok=True)
     target = cfg.mails_dir / f"{proposal.id}.json"
-    target.write_text(json.dumps(asdict(proposal), ensure_ascii=False, indent=1), encoding="utf-8")
+    write_private_text(target, json.dumps(asdict(proposal), ensure_ascii=False, indent=1))
 
 
 def _create(cfg: LaneConfig, proposal: MailProposal) -> None:
     """Store a new draft without ever overwriting an existing one (see patch._create)."""
-    cfg.mails_dir.mkdir(parents=True, exist_ok=True)
     target = cfg.mails_dir / f"{proposal.id}.json"
     try:
-        with target.open("x", encoding="utf-8") as handle:
-            handle.write(json.dumps(asdict(proposal), ensure_ascii=False, indent=1))
+        write_private_text(target, json.dumps(asdict(proposal), ensure_ascii=False, indent=1), exclusive=True)
     except FileExistsError as exc:
         raise MailError(f"collisione id proposta, riprova: {proposal.id}") from exc
 
@@ -87,12 +97,12 @@ def _migrate(data: dict[str, Any]) -> dict[str, Any]:
 
 
 def load_proposal(cfg: LaneConfig, proposal_id: str) -> MailProposal:
-    if not _PROPOSAL_ID_RE.fullmatch(str(proposal_id or "")):
+    if not valid_proposal_id(proposal_id or ""):
         raise MailError(f"id proposta non valido: {proposal_id}")
     target = cfg.mails_dir / f"{proposal_id}.json"
     if not target.is_file():
         raise MailError(f"proposta inesistente: {proposal_id}")
-    return MailProposal(**_migrate(json.loads(target.read_text(encoding="utf-8"))))
+    return MailProposal(**_migrate(read_proposal_data(target, proposal_id, MailError)))
 
 
 def list_proposals(cfg: LaneConfig) -> list[MailProposal]:
@@ -101,8 +111,8 @@ def list_proposals(cfg: LaneConfig) -> list[MailProposal]:
     proposals = []
     for path in sorted(cfg.mails_dir.glob("*.json"), reverse=True):
         try:
-            proposals.append(MailProposal(**_migrate(json.loads(path.read_text(encoding="utf-8")))))
-        except (OSError, TypeError, ValueError):
+            proposals.append(MailProposal(**_migrate(read_proposal_data(path, path.stem, MailError))))
+        except (OSError, TypeError, ValueError, MailError):
             continue
     return proposals
 
@@ -205,6 +215,7 @@ def propose_mail_from_context(
         model_text="bozza del modello, da approvare riga per riga",
         created_at=time.strftime("%Y-%m-%dT%H:%M:%S%z"),
     )
+    proposal.content_sha = _proposal_sha(proposal)
     for _ in range(5):
         proposal.id = new_proposal_id()
         try:
@@ -266,11 +277,27 @@ def apply_mail(cfg: LaneConfig, proposal_id: str, *, yes: bool) -> dict[str, Any
     """
     if not yes:
         raise MailError("invio rifiutato: serve --yes esplicito")
+    with proposal_lock(cfg.mails_dir, proposal_id, MailError):
+        return _apply_mail(cfg, proposal_id)
+
+
+def _apply_mail(cfg: LaneConfig, proposal_id: str) -> dict[str, Any]:
     proposal = load_proposal(cfg, proposal_id)
     if proposal.applied_at:
         raise MailError("proposta gia' inviata")
+    refuse_prior_attempt(proposal, MailError)
+    validate_content(proposal.content_sha, MailError,
+        proposal.kind, proposal.provider, proposal.to, proposal.subject,
+        proposal.in_reply_to, proposal.body,
+    )
     if not proposal.body.strip():
         raise MailError("corpo vuoto, niente da inviare")
+
+    backend = _BACKENDS.get(proposal.provider)
+    if backend is None:
+        raise MailError(f"provider non supportato: {proposal.provider}")
+    if proposal.kind not in ("send", "reply"):
+        raise MailError("tipo di proposta non supportato")
 
     audit_event(
         cfg,
@@ -279,8 +306,8 @@ def apply_mail(cfg: LaneConfig, proposal_id: str, *, yes: bool) -> dict[str, Any
         ok=True,
         chars=len(proposal.body),
     )
+    record_attempt(proposal, lambda: _save(cfg, proposal), MailError)
     try:
-        backend = _BACKENDS.get(proposal.provider, gmail_conn)
         if proposal.kind == "reply":
             # The original must still be there: no phantom replies.
             backend.get_message(proposal.in_reply_to)

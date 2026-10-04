@@ -11,6 +11,7 @@ import re
 import sys
 from pathlib import Path
 
+from proposal import _confirm_seat_call
 from seat_process import SeatRunError, run_seat
 from session import _write_private_text, redact_generated_output
 
@@ -71,9 +72,21 @@ def extract_verdict(text: str) -> str:
     # and silently defeat the relay's REJECT-stop. A QUOTED verdict as the
     # last line ("> VERDICT: REJECT") keeps its quote prefix after the strip
     # and still reads as absent, which is the spoof this parser exists for.
+    last_line = re.sub(r"^#{1,6}\s+", "", last_line)
     last_line = last_line.strip("*_` ").rstrip(".!").rstrip("*_` ")
     match = VERDICT_RE.match(last_line)
     return match.group(1).upper() if match else "(absent)"
+
+
+def reject_stop_message(stage_idx: int, role: str, remaining: int) -> str:
+    """Single owner for the REJECT-stop line: the ephemeral loop and the
+    resumable graph print the same policy text. Two format sites drifted
+    before; agents quoted them as two policies."""
+    return (
+        f"[council] stage {stage_idx} ({role}): VERDICT: REJECT — "
+        f"stopping the relay, skipping the remaining {remaining} stages "
+        "(use --continue-on-reject to run them anyway)."
+    )
 
 
 def _print_usage_recap(seat_name: str, usage: dict) -> None:
@@ -97,11 +110,15 @@ def run_rounds(
     seat_name: str, seat: dict, session_dir: Path, mode_label: str, brief: str,
     role_prompt_initial: str, role_prompt_continue: str | None, rounds: int,
     timeout_seconds: float,
+    config: dict | None = None,
 ) -> tuple[list[str], list[str]]:
     responses: list[str] = []
     verdicts: list[str] = []
     prompt = role_prompt_initial.replace("{brief}", brief)
     for r in range(1, rounds + 1):
+        # resolve_seat already collected consent for the first invocation.
+        if r > 1:
+            _confirm_seat_call(seat_name, seat, config)
         print(f"[council] round {r}/{rounds} — seat: {seat_name} ({seat['model']})")
         try:
             response, usage = run_seat(seat, prompt, session_dir, timeout_seconds)

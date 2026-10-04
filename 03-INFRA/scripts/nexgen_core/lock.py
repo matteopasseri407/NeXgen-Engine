@@ -5,10 +5,17 @@ Preserves the operational contract:
 - Configurable timeout (default 30 seconds via AGENT_SYNC_LOCK_TIMEOUT_SECONDS).
 - Contention on 'guard': clean exit with code 0 (another operation is already running).
 - Contention on manual operations ('apply', 'publish', 'vault-push'): exit with code 75.
+
+Scope limit: this is a HOST lock, and the state dir must live on local
+storage. On a network share (NFS/SMB) POSIX locks can be client-local, so
+two hosts could both believe they hold it. Never point the state dir at a
+share; the vault itself syncs through git, not through shared files.
 """
 from __future__ import annotations
 
 import contextlib
+import errno
+import math
 import os
 import sys
 import time
@@ -31,6 +38,11 @@ class LockTimeoutError(NexgenError, TimeoutError):
         self.lock_path = lock_path
         self.is_guard = is_guard
         self.exit_code = EXIT_BUSY_GUARD if is_guard else EXIT_BUSY_MANUAL
+
+
+class LockIOError(NexgenError, OSError):
+    """The lock is inaccessible, rather than held by another process."""
+    exit_code = 1
 
 
 class HostLock:
@@ -56,13 +68,19 @@ class HostLock:
         if timeout is None:
             env_timeout = os.environ.get("AGENT_SYNC_LOCK_TIMEOUT_SECONDS")
             try:
-                self.timeout = float(env_timeout) if env_timeout else DEFAULT_TIMEOUT_SECONDS
+                parsed = float(env_timeout) if env_timeout else DEFAULT_TIMEOUT_SECONDS
             except (TypeError, ValueError):
                 # A non-numeric value must never crash the command: fall back
                 # to the default instead of dying in float().
-                self.timeout = DEFAULT_TIMEOUT_SECONDS
+                parsed = DEFAULT_TIMEOUT_SECONDS
+            # NaN never satisfies `elapsed >= timeout` (infinite poll);
+            # infinite waits forever; both come from a misconfigured env,
+            # never from intent. Negative/zero stays: try once, fail fast.
+            self.timeout = DEFAULT_TIMEOUT_SECONDS if not math.isfinite(parsed) else parsed
         else:
             self.timeout = float(timeout)
+            if not math.isfinite(self.timeout):
+                raise ValueError(t("Lock timeout must be finite."))
 
         self.is_guard = is_guard
         self.command_name = command_name
@@ -70,8 +88,13 @@ class HostLock:
 
     def acquire(self) -> bool:
         """Tries to acquire the lock within the timeout."""
-        self.lock_path.parent.mkdir(parents=True, exist_ok=True)
-        start_time = time.time()
+        try:
+            self.lock_path.parent.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            raise LockIOError(
+                t("Could not prepare the lock directory '{path}' ({error}).", path=self.lock_path.parent, error=exc),
+            ) from exc
+        start_time = time.monotonic()
 
         while True:
             try:
@@ -90,13 +113,14 @@ class HostLock:
                 else:
                     os.close(self._fd)
                     self._fd = None
-            except OSError:
+            except OSError as exc:
                 if self._fd is not None:
                     with contextlib.suppress(OSError):
                         os.close(self._fd)
                     self._fd = None
+                raise LockIOError(t("Could not open lock {path}: {error}", path=self.lock_path, error=exc)) from exc
 
-            elapsed = time.time() - start_time
+            elapsed = time.monotonic() - start_time
             if elapsed >= self.timeout:
                 msg = t(
                     "Could not acquire lock '{lock_path}' after {timeout:.1f}s "
@@ -129,15 +153,19 @@ class HostLock:
                         os.lseek(fd, 0, os.SEEK_SET)
                 msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
                 return True
-            except (OSError, PermissionError):
-                return False
+            except OSError as exc:
+                if exc.errno in (errno.EACCES, errno.EAGAIN, errno.EDEADLK):
+                    return False
+                raise
         else:
             import fcntl
             try:
                 fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
                 return True
-            except (OSError, BlockingIOError):
-                return False
+            except OSError as exc:
+                if exc.errno in (errno.EACCES, errno.EAGAIN):
+                    return False
+                raise
 
     def _unlock(self, fd: int) -> None:
         """OS-dependent unlock."""

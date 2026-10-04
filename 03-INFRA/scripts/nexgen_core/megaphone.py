@@ -40,7 +40,8 @@ class Megaphone:
             return {}
         try:
             return json.loads(self.state_file.read_text(encoding="utf-8"))
-        except Exception:
+        except (OSError, ValueError) as exc:  # noqa: BLE001 - corrupt state resets debounce, never crashes alerts
+            logger.debug("ignoring corrupt megaphone state %s (%s)", self.state_file, type(exc).__name__)
             return {}
 
     def _save_state(self, state: dict[str, Any]) -> None:
@@ -64,6 +65,11 @@ class Megaphone:
 
     def send_alert(self, title: str, message: str, action: str | None = None, alert_key: str | None = None) -> bool:
         """Sends an alert through whichever channel can carry it.
+
+        Returns True when the alert was delivered OR deliberately suppressed
+        by debounce (both mean "handled, do not retry"): only an undelivered
+        alert with no channel at all returns False. Callers must not read
+        True as proof of delivery to a phone screen.
 
         The order is deliberate: a messaging bot and a webhook reach someone
         who is not at the machine, so they go first. The desktop comes last as
@@ -116,7 +122,8 @@ class Megaphone:
         try:
             with urllib.request.urlopen(req, timeout=10) as resp:
                 return resp.status == 200
-        except Exception:
+        except Exception as exc:  # noqa: BLE001 - transport failure falls back to webhook/desktop, never raises
+            logger.debug("telegram send failed (%s)", type(exc).__name__)
             return False
 
     def _send_webhook(self, url: str, data: dict[str, Any]) -> bool:
@@ -125,5 +132,6 @@ class Megaphone:
         try:
             with urllib.request.urlopen(req, timeout=10) as resp:
                 return resp.status in (200, 201, 204)
-        except Exception:
+        except Exception as exc:  # noqa: BLE001 - transport failure falls back to desktop, never raises
+            logger.debug("webhook send failed (%s)", type(exc).__name__)
             return False

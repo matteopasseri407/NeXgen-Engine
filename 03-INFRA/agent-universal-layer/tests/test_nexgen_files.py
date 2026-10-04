@@ -5,6 +5,8 @@ import os
 import sys
 from pathlib import Path
 
+import pytest
+
 SCRIPTS_DIR = Path(__file__).resolve().parents[2] / "scripts"
 if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
@@ -23,7 +25,7 @@ def test_atomic_write_creates_parents_and_replaces(tmp_path: Path):
 
 def test_atomic_write_preserves_mode(tmp_path: Path):
     if os.name == "nt":
-        return  # mode bits are a POSIX concept; the writer still works
+        pytest.skip("mode bits are a POSIX concept; the writer still works")
     target = tmp_path / "secret.env"
     target.write_text("x", encoding="utf-8")
     os.chmod(target, 0o600)

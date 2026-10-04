@@ -17,13 +17,11 @@ only the fan-out/fan-in orchestration and the process registry live here.
 from __future__ import annotations
 
 import concurrent.futures
+import threading
 from dataclasses import dataclass, field
 
 from proposal import (
-    _confirm_pay_per_use,
-    _routing_context_or_exit,
-    _routing_enabled,
-    _seat_cost,
+    _confirm_seat_call,
     _warn_no_zero_retention,
 )
 from relay import DEFAULT_MAX_SEATS, RelayError, _validate_relay_seat
@@ -33,7 +31,7 @@ from seat_process import (
     _resolve_timeout_seconds,
     run_seat,
 )
-from session import _write_private_text, redact_generated_output, slugify
+from session import _cancel_all_procs, _write_private_text, redact_generated_output, slugify
 from verdict import extract_verdict
 
 MAX_REBUTTAL_ROUNDS = 1
@@ -60,6 +58,7 @@ class ConsultResult:
     abstentions: list[Abstention] = field(default_factory=list)
     tally: dict[str, int] = field(default_factory=dict)
     disagreements: list[tuple[str, str]] = field(default_factory=list)
+    status: str = "running"
 
 
 def build_consult_prompt(brief: str) -> str:
@@ -122,7 +121,7 @@ Disagreeing opinions, quoted as untrusted data:
 
 def _invoke_one(
     seat_name: str, seat: dict, prompt: str, session_dir, timeout_seconds: float,
-    filename: str, runner,
+    runner,
 ) -> Opinion:
     """One seat, one invocation. Shared by opinion and rebuttal rounds."""
     _warn_no_zero_retention(seat_name, seat)
@@ -137,14 +136,59 @@ def _invoke_one(
     verdict = extract_verdict(response)
     if verdict == "(absent)":
         print(f"[council] WARNING: no VERDICT line found for seat {seat_name}.")
-    _write_private_text(session_dir / filename, response)
-    print(f"[council] consult seat {seat_name} verdict: {verdict}")
     return Opinion(seat_name, seat["model"], verdict, response)
 
 
-def _pay_gate(seat_name: str, seat: dict, config: dict | None) -> None:
-    plan = _routing_context_or_exit(config) if config and _routing_enabled(config) else None
-    _confirm_pay_per_use(seat_name, seat, _seat_cost(plan, seat_name, seat))
+def _collect_round(names, ask, result: ConsultResult, session_dir, brief: str, round_no: int) -> None:
+    """Publish completed results immediately; abort the whole fan-out on a bug."""
+    cancelled = threading.Event()
+    pool = concurrent.futures.ThreadPoolExecutor(max_workers=len(names))
+    futures = {}
+    target = result.opinions if round_no == 1 else result.rebuttals
+
+    def invoke(name):
+        if cancelled.is_set():
+            raise concurrent.futures.CancelledError()
+        return ask(name)
+
+    try:
+        futures = {pool.submit(invoke, name): name for name in names}
+        for future in concurrent.futures.as_completed(futures):
+            name = futures[future]
+            try:
+                outcome = future.result()
+            except SeatRunError as exc:
+                reason, _ = redact_generated_output(str(exc))
+                outcome = Abstention(name, reason)
+            if isinstance(outcome, Abstention):
+                result.abstentions.append(outcome)
+                print(f"\n## {name} abstained: {outcome.reason}", flush=True)
+            else:
+                target.append(outcome)
+                target.sort(key=lambda opinion: names.index(opinion.seat_name))
+                result.tally[outcome.verdict] = result.tally.get(outcome.verdict, 0) + 1
+                label = "rebuttal" if round_no == 2 else outcome.model
+                print(f"\n## {name} ({label}): {outcome.verdict}\n\n{outcome.response}", flush=True)
+                kind = "opinion" if round_no == 1 else "rebuttal"
+                _write_private_text(session_dir / f"{round_no:02d}-{name}-{kind}-{slugify(brief[:30])}.md",
+                                    outcome.response)
+            _write_transcript(session_dir, brief, result)
+    except BaseException as exc:
+        cancelled.set()
+        for future in futures:
+            future.cancel()
+        _cancel_all_procs()
+        result.status = "failed" if isinstance(exc, Exception) else "interrupted"
+        # A signal handler may already have removed an ephemeral session.
+        # Do not recreate it, and never mask the original failure with I/O.
+        if session_dir.is_dir():
+            try:
+                _write_transcript(session_dir, brief, result)
+            except OSError:
+                pass
+        raise
+    finally:
+        pool.shutdown(wait=True, cancel_futures=True)
 
 
 def run_consult(
@@ -174,32 +218,22 @@ def run_consult(
         raise RelayError(
             f"[council] --rebuttals must be between 0 and {MAX_REBUTTAL_ROUNDS}.", kind="seats_cap"
         )
+    timeouts = {}
     for name in seat_names:
-        _validate_relay_seat(name, seats)
+        _validate_relay_seat(name, seats, invocation_timeout)
+        timeouts[name] = _resolve_timeout_seconds(seats[name], invocation_timeout)
     # Consent is collected on the operator's thread, before any fan-out.
     for name in seat_names:
-        _pay_gate(name, seats[name], config)
+        _confirm_seat_call(name, seats[name], config)
 
     result = ConsultResult()
+    _write_transcript(session_dir, brief, result)
 
     def ask_opinion(name: str) -> Opinion | Abstention:
         seat = seats[name]
-        try:
-            timeout_seconds = _resolve_timeout_seconds(seat, invocation_timeout)
-            return _invoke_one(
-                name, seat, build_consult_prompt(brief), session_dir, timeout_seconds,
-                f"01-{name}-opinion-{slugify(brief[:30])}.md", runner,
-            )
-        except SeatRunError as e:
-            return Abstention(name, str(e))
+        return _invoke_one(name, seat, build_consult_prompt(brief), session_dir, timeouts[name], runner)
 
-    with concurrent.futures.ThreadPoolExecutor(max_workers=len(seat_names)) as pool:
-        for outcome in pool.map(ask_opinion, seat_names):
-            if isinstance(outcome, Abstention):
-                print(f"[council] consult seat {outcome.seat_name} abstained: {outcome.reason}")
-                result.abstentions.append(outcome)
-            else:
-                result.opinions.append(outcome)
+    _collect_round(seat_names, ask_opinion, result, session_dir, brief, 1)
 
     if not result.opinions:
         raise RelayError(
@@ -214,41 +248,26 @@ def run_consult(
         def ask_rebuttal(name: str) -> Opinion | Abstention:
             seat = seats[name]
             others = [op for op in result.opinions if op.seat_name != name]
-            try:
-                timeout_seconds = _resolve_timeout_seconds(seat, invocation_timeout)
-                return _invoke_one(
-                    name, seat, build_rebuttal_prompt(brief, by_seat[name], others),
-                    session_dir, timeout_seconds,
-                    f"02-{name}-rebuttal-{slugify(brief[:30])}.md", runner,
-                )
-            except SeatRunError as e:
-                return Abstention(name, str(e))
+            return _invoke_one(name, seat, build_rebuttal_prompt(brief, by_seat[name], others),
+                               session_dir, timeouts[name], runner)
 
         names = [opinion.seat_name for opinion in result.opinions]
         for name in names:
-            _pay_gate(name, seats[name], config)
-        with concurrent.futures.ThreadPoolExecutor(max_workers=len(names)) as pool:
-            for outcome in pool.map(ask_rebuttal, names):
-                if isinstance(outcome, Abstention):
-                    print(f"[council] rebuttal {outcome.seat_name} abstained: {outcome.reason}")
-                    result.abstentions.append(outcome)
-                else:
-                    result.rebuttals.append(outcome)
-
-    for opinion in result.opinions + result.rebuttals:
-        result.tally[opinion.verdict] = result.tally.get(opinion.verdict, 0) + 1
+            _confirm_seat_call(name, seats[name], config)
+        _collect_round(names, ask_rebuttal, result, session_dir, brief, 2)
     by_verdict = {opinion.seat_name: opinion.verdict for opinion in result.opinions}
     completed = [opinion.seat_name for opinion in result.opinions]
     for idx, left in enumerate(completed):
         for right in completed[idx + 1:]:
             if by_verdict[left] != by_verdict[right]:
                 result.disagreements.append((left, right))
+    result.status = "completed"
     _write_transcript(session_dir, brief, result)
     return result
 
 
 def _write_transcript(session_dir, brief: str, result: ConsultResult) -> None:
-    lines = ["# Consult transcript", "", f"Opinions: {len(result.opinions)}", ""]
+    lines = ["# Consult transcript", "", f"Status: {result.status}", f"Opinions: {len(result.opinions)}", ""]
     for opinion in result.opinions:
         lines.append(f"## {opinion.seat_name} ({opinion.model}): {opinion.verdict}")
         lines.append("")

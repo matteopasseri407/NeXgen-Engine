@@ -132,6 +132,40 @@ def test_sanitize_drops_invented_path(tmp_path: Path) -> None:
     assert route["keywords"] == ["BDO", "Italia"]
 
 
+@pytest.mark.parametrize("raw", [
+    {"source": "vault", "keywords": 7},
+    {"source": "vault", "keywords": True},
+    {"source": "vault", "keywords": "airone blu"},
+    {"source": "vault", "keywords": {"airone": "blu"}},
+    {"source": "vault", "keywords": ["airone", 7]},
+    {"source": "vault", "keywords": [{"query": "airone"}]},
+    {"source": ["vault"]},
+    {"source": "invented"},
+    {"source": "vault", "path": ["nota.md"]},
+    {"source": "vault", "path": "nota\x00.md"},
+    {},
+])
+def test_invalid_router_fields_use_deterministic_fallback(tmp_path: Path, raw) -> None:
+    cfg = _cfg(tmp_path)
+    llm = FakeLLM()
+    llm.route = raw
+    task = "Riassumi la nota sul progetto Airone Blu."
+    assert route_task(llm, cfg, task) == fallback_route(task, cfg)
+    assert llm.json_calls == 1, "invalid forms must not cause another model invocation"
+
+
+def test_invalid_router_form_does_not_abort_retrieval(tmp_path: Path) -> None:
+    cfg = _cfg(tmp_path)
+    _write(cfg.vault_root / "airone-blu.md", "Airone Blu: stato pronto.\n")
+    result = run_lane(
+        FakeLLM(route={"source": "vault", "keywords": 7}, answers=["Pronto, airone-blu.md."]),
+        ToolRegistry(cfg), cfg, "Riassumi la nota sul progetto Airone Blu.",
+    )
+    assert result.route["fallback"]
+    assert any(receipt["tool"] == "read_vault" and receipt["ok"] for receipt in result.receipts)
+    assert not result.problems
+
+
 def test_explicit_path_beats_the_router(tmp_path: Path) -> None:
     cfg = _cfg(tmp_path)
     _write(cfg.vault_root / "04-NOW" / "focus.md", "lavoro\n")
@@ -725,7 +759,7 @@ def test_json_truncation_degrades_to_none(tmp_path: Path) -> None:
     llm = ChatOllamaLLM.__new__(ChatOllamaLLM)
 
     class _FakeModel:
-        def invoke(self, messages):
+        async def ainvoke(self, messages, config=None):
             class _Msg:
                 content = '{"source": "va'
                 response_metadata = {"done_reason": "length"}

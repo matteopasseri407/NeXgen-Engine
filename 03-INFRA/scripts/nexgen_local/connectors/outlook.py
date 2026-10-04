@@ -10,39 +10,30 @@ own machine-local store. No tokens means NeedsLogin, never a browser.
 from __future__ import annotations
 
 import json
-import os
 import time
-import urllib.error
 import urllib.parse
 import urllib.request
-from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 from . import AuthError, ConnectorError, NeedsLogin
+from . import token_store as _store
 
 GRAPH = "https://graph.microsoft.com/v1.0"
 
 
-@dataclass
-class HttpResult:
-    status: int
-    body: bytes
+# Single HTTP implementation lives in token_store; kept here as aliases so
+# existing `outlook.HttpResult` imports keep working.
+HttpResult = _store.HttpResult
+HttpFn = _store.HttpFn
 
 
-def _default_http(req: urllib.request.Request, timeout: int) -> HttpResult:
-    try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            return HttpResult(resp.status, resp.read())
-    except urllib.error.HTTPError as exc:
-        return HttpResult(exc.code, exc.read()[:2000])
-
-
-HttpFn = Callable[[urllib.request.Request, int], HttpResult]
+def _default_http(req, timeout: int) -> HttpResult:
+    return _store.default_http(req, timeout)
 
 
 def token_dir() -> Path:
-    return Path(os.environ.get("OUTLOOK_TOKEN_DIR") or str(Path.home() / ".config" / "nexgen-outlook"))
+    return _store.resolve_token_dir("OUTLOOK_TOKEN_DIR", "nexgen-outlook")
 
 
 def token_file() -> Path:
@@ -51,34 +42,11 @@ def token_file() -> Path:
 
 def status() -> tuple[bool, str]:
     """Doctor helper: configured or not, without touching the network."""
-    path = token_file()
-    if not path.is_file():
-        return False, f"nessun token in {path} (registrazione Azure + login una tantum)"
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return False, f"token illeggibili in {path}"
-    if not isinstance(data, dict) or not data.get("refresh_token"):
-        return False, f"token incompleti in {path}"
-    return True, str(path)
+    return _store.token_status(token_file(), "registrazione Azure + login una tantum")
 
 
 def _machine_env(name: str) -> str:
-    value = os.environ.get(name)
-    if value:
-        return value
-    env_file = token_dir() / "env"
-    if env_file.is_file():
-        try:
-            for raw in env_file.read_text(encoding="utf-8").splitlines():
-                line = raw.strip()
-                if line and not line.startswith("#") and "=" in line:
-                    key, _, val = line.partition("=")
-                    if key.strip() == name:
-                        return val.strip()
-        except OSError:
-            pass
-    return ""
+    return _store.machine_env(token_dir(), name)
 
 
 def client_id() -> str:
@@ -98,23 +66,11 @@ def token_url() -> str:
 
 
 def load_tokens() -> dict[str, Any] | None:
-    path = token_file()
-    if not path.is_file():
-        return None
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return None
-    return data if isinstance(data, dict) and data.get("refresh_token") else None
+    return _store.load_tokens_from(token_file())
 
 
 def save_tokens(data: dict[str, Any]) -> None:
-    token_dir().mkdir(parents=True, exist_ok=True)
-    token_file().write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    try:
-        os.chmod(token_file(), 0o600)
-    except OSError:
-        pass
+    _store.save_tokens_to(token_dir(), token_file(), data)
 
 
 def refresh_tokens(tokens: dict[str, Any], http: HttpFn | None = None) -> dict[str, Any]:
@@ -137,14 +93,9 @@ def refresh_tokens(tokens: dict[str, Any], http: HttpFn | None = None) -> dict[s
         raise AuthError(f"(accesso rifiutato dal provider: HTTP {result.status})")
     try:
         payload = json.loads(result.body.decode("utf-8", errors="replace"))
-        access = str(payload["access_token"])
+        updated = _store.refreshed_tokens(tokens, payload)
     except (ValueError, KeyError) as exc:
         raise AuthError("(accesso rifiutato dal provider: risposta illeggibile)") from exc
-    updated = {
-        **tokens,
-        "access_token": access,
-        "expires_at": int(time.time()) + int(payload.get("expires_in", 3600)),
-    }
     save_tokens(updated)
     return updated
 

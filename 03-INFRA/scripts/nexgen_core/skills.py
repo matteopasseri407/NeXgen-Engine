@@ -31,12 +31,14 @@ from nexgen_core.config import (  # noqa: E402
     load_skills_manifest,
 )
 from nexgen_core.i18n import t  # noqa: E402
+from nexgen_core.marks import safe_mark as _safe_mark  # noqa: E402
 from nexgen_core.paths import resolve_engine_root, resolve_home, resolve_vault_data, skills_manifest  # noqa: E402
 from nexgen_core.skill_sources import (  # noqa: E402
     COMMIT_SHA_RE,
     SkillEntry,
     SkillFetcher,
     clone_url as clone_url,
+    github_skill_source,
     is_safe_skill_name,
     make_link_or_copy,
     same_tree_content,
@@ -213,7 +215,7 @@ class SkillMaterializer:
                     try:
                         from nexgen_core.provision import validate_deps
                         validate_deps(entry.deps, name)
-                    except Exception as exc:
+                    except Exception as exc:  # noqa: BLE001 - skill error is reported, never raises
                         problems.append(str(exc))
             if entry.origin in ("vault", "engine"):
                 src = entry.source_path
@@ -247,8 +249,27 @@ class SkillMaterializer:
             for candidate in sorted(directory.iterdir()):
                 name = candidate.name
                 lib_source = self.library_dir / name
-                if not lib_source.is_dir():
-                    continue  # non è nostra: si segnala altrove, non si tocca
+                if not lib_source.is_dir() and not lib_source.is_symlink():
+                    # No library entry at all: a dangling view-symlink that
+                    # still points at the library path is ours and safe to
+                    # take back (its target is already gone). Anything else
+                    # (a real folder, a foreign link) may hold someone's
+                    # work: reported by the orphans check, never touched.
+                    if candidate.is_symlink():
+                        try:
+                            raw_target = Path(os.readlink(candidate))
+                            target = raw_target if raw_target.is_absolute() else candidate.parent / raw_target
+                            points_at_library = target.resolve() == lib_source.resolve()
+                        except OSError:
+                            continue
+                        if points_at_library:
+                            try:
+                                candidate.unlink()
+                            except OSError:
+                                continue
+                            actions.append(t("Skill '{name}' removed with its library entry for {target}",
+                                             name=name, target=self._target_of(directory) or directory.name))
+                    continue
                 entry = skills.get(name)
                 if entry is None:
                     wanted = False
@@ -307,23 +328,18 @@ class SkillMaterializer:
                         actions.append(problem)
 
                 if clone_success and apply:
-                    # The manifest can point at a subfolder of the repo. The
-                    # boundary needs checking: a `path` that traverses
-                    # upward would link something outside the clone.
-                    source = cache_dir
-                    if entry.path:
-                        candidate = (cache_dir / entry.path).resolve()
-                        if not candidate.is_relative_to(cache_dir.resolve()):
-                            actions.append("[ERROR] " + t(
-                                "github skill '{name}': path '{path}' "
-                                "escapes the cloned repository, skipping the entry",
-                                name=name, path=entry.path,
-                            ))
-                            continue
-                        source = candidate
+                    source = github_skill_source(cache_dir, entry)
                     if make_link_or_copy(source, lib_dest):
                         changes += 1
                         actions.append(t("Linked github skill '{name}' into the library", name=name))
+                    # Record the materialized pin even when the link was
+                    # already current: without this the doctor cannot tell a
+                    # fresh pin from a failed fetch that left stale bytes.
+                    try:
+                        self.fetcher._record_installed_version(name, entry.commit or "")
+                    except OSError as exc:
+                        actions.append("[ERROR] " + str(exc))
+                        continue
 
             elif entry.origin == "installer" and apply:
                 installed, note = self.fetcher.install_third_party(entry, lib_dest, self.discovery_dirs)
@@ -469,14 +485,6 @@ class SkillMaterializer:
         return actions
 
 
-def _safe_mark(mark: str, stream=sys.stdout) -> str:
-    try:
-        mark.encode(getattr(stream, "encoding", None) or "utf-8")
-        return mark
-    except (UnicodeEncodeError, TypeError):
-        return "[OK]" if mark == "✓" else "[X]"
-
-
 def main(argv: list[str] | None = None) -> int:
     """Entrypoint for `skills-sync` and `agent-skill`."""
     if argv is None:
@@ -616,4 +624,3 @@ def _missing_skill_hint(mat: SkillMaterializer, name: str) -> str:
 
 if __name__ == "__main__":
     sys.exit(main())
-

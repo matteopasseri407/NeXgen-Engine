@@ -28,7 +28,7 @@ def check_skills_manifest(manifest_path: Path) -> CheckOutcome:
             severity=Severity.OK,
             message=t("Skills manifest valid with {count} skills declared", count=skill_count),
         )
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - check failure is reported, never raises
         return CheckOutcome(
             id="skills.manifest_valid",
             severity=Severity.BROKEN,
@@ -159,7 +159,7 @@ def _skills_orphans_allowlist(vault_data: Path) -> set[str]:
         return set()
     try:
         data = load_skills_manifest(path)
-    except Exception:
+    except Exception:  # noqa: BLE001 - check failure is reported, never raises
         return set()
     entries = (data.get("raw") or {}).get("orphans_allowlist")
     if not isinstance(entries, list):
@@ -270,6 +270,73 @@ def check_skills_manifest_semantics(vault_data: Path, home: Path) -> CheckOutcom
     )
 
 
+def check_skills_pin_freshness(vault_data: Path, home: Path) -> CheckOutcome:
+    """The library must hold the manifest's pin, not a stale fetch's bytes.
+
+    A failed github clone or installer leaves the previous version in the
+    library while the manifest moved on; the presence check above still sees
+    SKILL.md and reports green. The materializer records every successfully
+    materialized pin, so a mismatch here names the stale skill instead.
+    WARN, never a block: the old version still works, it is just not the
+    declared one. `--fix` re-materializes.
+    """
+    from nexgen_core.skill_sources import SkillFetcher
+
+    mat = SkillMaterializer(vault_data=vault_data, home=home)
+
+    def remedy() -> bool:
+        mat.materialize(apply=True)
+        return True
+
+    try:
+        recorded = SkillFetcher(home=home)._installed_versions()
+    except OSError:
+        return CheckOutcome(
+            id="skills.pin_freshness",
+            severity=Severity.BROKEN,
+            message=t("The skill version record cannot be read or is invalid."),
+            action=t("Inspect and repair installed-skill-versions.json before syncing skills."),
+        )
+    stale: list[str] = []
+    unknown: list[str] = []
+    for name, entry in mat.load_manifest().items():
+        if entry.origin == "github":
+            pin = entry.commit or ""
+        elif entry.origin == "installer":
+            pin = entry.version or ""
+        else:
+            continue
+        if not pin:
+            continue
+        seen = recorded.get(name)
+        if seen is None:
+            unknown.append(name)
+        elif seen != pin:
+            stale.append(f"{name} (manifest {pin[:12]}, materialized {seen[:12]})")
+
+    if stale:
+        return CheckOutcome(
+            id="skills.pin_freshness",
+            severity=Severity.WARN,
+            message=t("Third-party skills materialized at an older pin than the manifest: {skills}.", skills=", ".join(sorted(stale))),
+            action=t("Run 'agent-sync apply' (skills-sync) to fetch the declared pins."),
+            remedy=remedy,
+        )
+    if unknown:
+        return CheckOutcome(
+            id="skills.pin_freshness",
+            severity=Severity.WARN,
+            message=t("Third-party skills with no recorded pin (freshness unknown until the next sync): {skills}.", skills=", ".join(sorted(unknown))),
+            action=t("Run 'agent-sync apply' (skills-sync) once to record the materialized pins."),
+            remedy=remedy,
+        )
+    return CheckOutcome(
+        id="skills.pin_freshness",
+        severity=Severity.OK,
+        message=t("All pinned third-party skills match the manifest"),
+    )
+
+
 def check_skill_deps(manifest_path: Path, state_dir: Path) -> CheckOutcome:
     """Offline-safe check of the deps declared by skills (e.g. upstream ones).
 
@@ -284,7 +351,7 @@ def check_skill_deps(manifest_path: Path, state_dir: Path) -> CheckOutcome:
 
     try:
         data = load_skills_manifest(manifest_path)
-    except Exception:
+    except Exception:  # noqa: BLE001 - check failure is reported, never raises
         return CheckOutcome(
             id="skills.deps",
             severity=Severity.UNDETERMINED,

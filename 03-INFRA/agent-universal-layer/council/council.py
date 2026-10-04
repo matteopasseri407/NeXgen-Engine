@@ -11,11 +11,22 @@ work lives in sibling modules in this directory -- ``seat_process`` (spawn/
 stream/timeout one seat), ``session`` (session lifecycle, private files,
 shutdown handlers, egress/output privacy gates), ``proposal`` (config/routing
 loading and the human-facing proposal), ``relay`` (sequential multi-seat
-relay), and ``verdict`` (brief construction, round running, VERDICT parsing).
+relay, ephemeral loop), ``relay_graph`` (resumable relay on LangGraph,
+same leaves as relay: _select_stage_candidate/_invoke_stage_candidate),
+and ``verdict`` (brief construction, round running, VERDICT parsing).
+
+Layout contract: this directory runs as scripts via the launcher
+(nexgen_core/tools/council.py → subprocess council.py). Bare
+`from proposal import …` is intentional for both layouts. Underscore
+names are cross-file internals, not API. Routing decisions: role-based
+via routing.resolve_role_candidates, single-seat via proposal.resolve_seat,
+consult bypasses routing (relay._validate_relay_seat) — three correct
+answers by mode, see each cmd_*.
 """
 from __future__ import annotations
 
 import argparse
+import socket
 import sys
 from pathlib import Path
 
@@ -23,11 +34,17 @@ from pathlib import Path
 # not leave Python cache files next to the user's data on an error path.
 sys.dont_write_bytecode = True
 
-ENGINE_ROOT = Path(__file__).resolve().parent
+#: This directory (council sources + prompts/), misnamed for history.
+#: Repo-root resolution lives in nexgen_core.paths; the installed-layout
+#: fallback lives in nexgen_core/tools/council.py. Do not add a third.
+COUNCIL_DIR = Path(__file__).resolve().parent
+ENGINE_ROOT = COUNCIL_DIR
 
 from proposal import (
     SEATS_PATH,
     _print_routing_proposal,
+    _proposal_lines_for_role,
+    _routing_seat_diagnostics,
     _print_static_seat_menu,
     _routing_context_or_exit,
     _routing_enabled,
@@ -41,10 +58,9 @@ from relay import (
     _run_relay_stage,
     write_relay_verdict,
 )
-from routing import resolve_role_candidates, seat_capabilities
+from routing import seat_capabilities
 from seat_process import (
     DEFAULT_SEAT_TIMEOUT_SECONDS,
-    _effort_label,
     _format_timeout_seconds,
     _resolve_timeout_seconds,
     _timeout_seconds_argument,
@@ -70,7 +86,8 @@ def _run_mode(
     role_initial_name: str, role_continue_name: str | None, rounds: int,
     default_routing_role: str,
 ) -> None:
-    seat_name, seat = resolve_seat(args, default_routing_role=default_routing_role)
+    config = load_config()
+    seat_name, seat = resolve_seat(args, default_routing_role=default_routing_role, config=config)
     egress_gate(brief)
     timeout_seconds = _resolve_timeout_seconds(seat, getattr(args, "timeout_seconds", None))
 
@@ -95,7 +112,7 @@ def _run_mode(
 
         responses, verdicts = run_rounds(
             seat_name, seat, session_dir, mode, brief, role_initial, role_continue, rounds,
-            timeout_seconds,
+            timeout_seconds, config=config,
         )
 
         write_verdict(session_dir, seat_name, seat, mode, verdicts, responses[-1])
@@ -178,11 +195,9 @@ def _cmd_relay_ephemeral(args: argparse.Namespace) -> None:
             )
             records.append(record)
             if record.verdict == "REJECT" and not continue_on_reject and idx < len(stages):
-                print(
-                    f"[council] stage {idx} ({record.role}): VERDICT: REJECT — "
-                    f"stopping the relay, skipping the remaining {len(stages) - idx} stages "
-                    "(use --continue-on-reject to run them anyway)."
-                )
+                from verdict import reject_stop_message
+
+                print(reject_stop_message(idx, record.role, len(stages) - idx))
                 break
 
         write_relay_verdict(session_dir, records)
@@ -282,21 +297,7 @@ def cmd_consult(args: argparse.Namespace) -> None:
             print(f"[council] tally: {tally or '(none)'}")
             if result.disagreements:
                 print("[council] disagreements: " + ", ".join(f"{a} vs {b}" for a, b in result.disagreements))
-            # Opinions are the product: print them BEFORE cleanup, or a
-            # default (non-kept) session deletes the reasoning unshown.
-            for opinion in result.opinions:
-                print()
-                print(f"## {opinion.seat_name} ({opinion.model}): {opinion.verdict}")
-                print()
-                print(opinion.response)
-            for rebuttal in result.rebuttals:
-                print()
-                print(f"## {rebuttal.seat_name} rebuttal: {rebuttal.verdict}")
-                print()
-                print(rebuttal.response)
-            for abstention in result.abstentions:
-                print()
-                print(f"## {abstention.seat_name} abstained: {abstention.reason}")
+            # run_consult already flushed each result as it completed.
             if keep_session:
                 print(f"[council] file: {session_dir / 'consult.md'}")
         finally:
@@ -322,26 +323,13 @@ def cmd_routing_status(args: argparse.Namespace) -> None:
     plan = _routing_context_or_exit(config)
     capabilities = seat_capabilities(seats)
     print(f"[council] routing document: {plan.source}")
+    print(f"[council] host: {socket.gethostname()}")
     for role in plan.roles:
-        if not plan.roles[role]:
-            print(f"  {role}: UNASSIGNED, explicitly unassigned by the routing document")
-            continue
-        candidates, diagnostics = resolve_role_candidates(plan, seats, capabilities, role)
-        if candidates:
-            rendered = []
-            for name in candidates:
-                seat = seats[name]
-                effort_label = _effort_label(seat)
-                retention = (
-                    ""
-                    if seat.get("zero_retention", False)
-                    else ", WARNING: no verified zero-retention"
-                )
-                rendered.append(f"{name} ({seat['model']}{effort_label}{retention})")
-            print(f"  {role}: " + " -> ".join(rendered))
-        else:
-            detail = "; ".join(diagnostics[:4]) or "no compatible seat"
-            print(f"  {role}: BLOCKED, {detail}")
+        lines, _ = _proposal_lines_for_role(plan, seats, capabilities, role)
+        for line in lines:
+            print(line)
+    for line in _routing_seat_diagnostics(plan, seats, capabilities):
+        print(line)
 
 
 def cmd_propose(args: argparse.Namespace) -> None:

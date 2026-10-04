@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import re
 import subprocess
 import time
@@ -33,6 +34,8 @@ from pathlib import Path
 from nexgen_core.config import ConfigError, load_mcp_manifest, load_skills_manifest
 from nexgen_core.paths import mcp_manifest, resolve_state_dir, resolve_vault_data, skills_manifest
 
+logger = logging.getLogger(__name__)
+
 GIT_LS_REMOTE_TIMEOUT_SECONDS = 8
 NPM_REGISTRY_TIMEOUT_SECONDS = 6
 REPORT_FILE_NAME = "third-party-upgrades.md"
@@ -44,7 +47,7 @@ NPM_SPEC_RE = re.compile(r"^(?P<name>(?:@[\w.-]+/)?[\w.-]+)@(?P<version>\d[\w.+-
 
 @dataclass
 class PinFinding:
-    kind: str  # "git-commit" | "npm-version"
+    kind: str  # "git-commit" | "npm-version" | "manual-version"
     what: str
     pinned: str
     upstream: str | None
@@ -90,7 +93,8 @@ def _git_ls_remote_head(repo: str) -> str | None:
         from nexgen_core.skill_sources import clone_url
 
         target = clone_url(repo)
-    except Exception:
+    except Exception as exc:  # noqa: BLE001 - clone_url is total; defensive fallback keeps the check offline-safe
+        logger.debug("clone_url failed (%s)", type(exc).__name__)
         target = repo
     try:
         result = subprocess.run(
@@ -159,10 +163,18 @@ def _collect_skill_pins(skills_raw: dict[str, dict]) -> list[tuple[str, str, str
         if entry.get("origin") == "installer":
             install = entry.get("install")
             tokens = [str(t) for t in install] if isinstance(install, list) else []
-            for spec in _npm_spec_tokens(tokens):
+            specs = _npm_spec_tokens(tokens)
+            for spec in specs:
                 match = NPM_SPEC_RE.match(spec)
-                pkg, ver = match.group("name"), match.group("version")
-                _add(f"skill '{name}' (npm {pkg})", "npm-version", ver, pkg)
+                if match:
+                    pkg, ver = match.group("name"), match.group("version")
+                    _add(f"skill '{name}' (npm {pkg})", "npm-version", ver, pkg)
+            if not specs and entry.get("version"):
+                # pip/uvx/shell installers carry no npm token: without this
+                # entry the pin would rot forever with nobody watching.
+                # Surfaced as manually-watched (no upstream resolver), so at
+                # least the report names it instead of silently ignoring it.
+                _add(f"skill '{name}' (installer)", "manual-version", str(entry.get("version")), name)
         deps = entry.get("deps")
         if isinstance(deps, dict):
             kind = str(deps.get("kind") or "").strip()
@@ -190,8 +202,9 @@ def _collect_mcp_pins(mcp_raw: dict[str, dict]) -> list[tuple[str, str, str, str
             continue
         for spec in _npm_spec_tokens(tokens[1:]):
             match = NPM_SPEC_RE.match(spec)
-            pkg, ver = match.group("name"), match.group("version")
-            pins.append((f"MCP server '{name}' (npm {pkg})", "npm-version", ver, pkg))
+            if match:
+                pkg, ver = match.group("name"), match.group("version")
+                pins.append((f"MCP server '{name}' (npm {pkg})", "npm-version", ver, pkg))
     return pins
 
 
@@ -202,7 +215,9 @@ def _write_report(path: Path, findings: list[PinFinding]) -> None:
          lambda f: f"- {f.what}: pinned `{f.pinned}` -> upstream `{f.upstream}`"),
         ("Up to date", [f for f in findings if f.upstream is not None and not f.stale],
          lambda f: f"- {f.what}: `{f.pinned}`"),
-        ("Could not be checked this run", [f for f in findings if f.upstream is None],
+        ("Manually watched (no upstream check)", [f for f in findings if f.kind == "manual-version"],
+         lambda f: f"- {f.what}: pinned `{f.pinned}` (no resolver covers this installer: check upstream by hand)"),
+        ("Could not be checked this run", [f for f in findings if f.upstream is None and f.kind != "manual-version"],
          lambda f: f"- {f.what}: pinned `{f.pinned}`"),
     ]
     intro = (
@@ -258,6 +273,9 @@ def run_depwatch(
     pins = _collect_skill_pins(skills_raw) + _collect_mcp_pins(mcp_raw)
     findings: list[PinFinding] = []
     for what, kind, pinned, key in pins:
+        if kind == "manual-version":
+            findings.append(PinFinding(kind=kind, what=what, pinned=pinned, upstream=None, stale=False))
+            continue
         upstream = git_check(key) if kind == "git-commit" else npm_check(key)
         stale = _is_stale(kind, pinned, upstream)
         findings.append(PinFinding(kind=kind, what=what, pinned=pinned, upstream=upstream, stale=stale))

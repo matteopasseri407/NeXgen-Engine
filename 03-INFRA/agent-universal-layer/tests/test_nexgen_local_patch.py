@@ -8,7 +8,9 @@ from __future__ import annotations
 
 import argparse
 import subprocess
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from threading import Event
 
 import pytest
 
@@ -51,6 +53,57 @@ class PatchLLM:
 
     def text(self, system: str, user: str) -> str:
         return ""
+
+
+def test_distinct_proposals_cannot_mutate_the_same_file_concurrently(tmp_path: Path, monkeypatch) -> None:
+    from nexgen_local import patch
+
+    repo = _git_repo(tmp_path)
+    cfg = _cfg(tmp_path, repo)
+    before = "".join(f"line {i:02d}\n" for i in range(30))
+    target = repo / "target.txt"
+    target.write_text(before, encoding="utf-8")
+    first = propose_patch(PatchLLM({"old": "line 01", "new": "FIRST edit"}), cfg, "target.txt", "first")
+    second = propose_patch(PatchLLM({"old": "line 28", "new": "SECOND edit"}), cfg, "target.txt", "second")
+    entered, release = Event(), Event()
+    run_git = patch._run_git
+
+    def pause_first(root, args):
+        if "apply" in args and "--check" not in args and "FIRST edit" in Path(args[-1]).read_text():
+            entered.set()
+            assert release.wait(10)
+        return run_git(root, args)
+
+    monkeypatch.setattr(patch, "_run_git", pause_first)
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        active = pool.submit(apply_proposal, cfg, first.id, yes=True)
+        try:
+            assert entered.wait(10)
+            with pytest.raises(PatchError, match="in uso"):
+                apply_proposal(cfg, second.id, yes=True)
+            assert not load_proposal(cfg, second.id).attempted_at
+        finally:
+            release.set()
+        assert active.result(timeout=10)["applied"] is True
+    assert target.read_text(encoding="utf-8") == before.replace("line 01", "FIRST edit")
+    with pytest.raises(PatchError, match="stantia"):
+        apply_proposal(cfg, second.id, yes=True)
+    assert not load_proposal(cfg, second.id).attempted_at
+
+
+def test_busy_proposal_releases_the_patch_directory_lock(tmp_path: Path) -> None:
+    from nexgen_local.proposals import proposal_lock
+
+    repo = _git_repo(tmp_path)
+    cfg = _cfg(tmp_path, repo)
+    (repo / "target.txt").write_text("old\n", encoding="utf-8")
+    llm = PatchLLM({"old": "old", "new": "new"})
+    first = propose_patch(llm, cfg, "target.txt", "first")
+    second = propose_patch(llm, cfg, "target.txt", "second")
+    with proposal_lock(cfg.proposals_dir, first.id, PatchError):
+        with pytest.raises(PatchError, match="in uso"):
+            apply_proposal(cfg, first.id, yes=True)
+        assert apply_proposal(cfg, second.id, yes=True)["applied"] is True
 
 
 def test_propose_and_apply_happy_path(tmp_path: Path) -> None:

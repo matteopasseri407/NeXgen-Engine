@@ -15,6 +15,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -24,6 +25,8 @@ if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
 from nexgen_core.i18n import t  # noqa: E402
+from nexgen_core.files import atomic_write_text  # noqa: E402
+from nexgen_core.lock import HostLock  # noqa: E402
 from nexgen_core.paths import resolve_home, resolve_state_dir  # noqa: E402
 
 
@@ -151,6 +154,18 @@ def clone_url(repo: str) -> str:
     return repo
 
 
+def github_skill_source(cache_dir: Path, entry: SkillEntry) -> Path:
+    """Resolve a declared skill within its verified repository boundary."""
+    root = cache_dir.resolve()
+    source = (cache_dir / (entry.path or "")).resolve()
+    skill = source / "SKILL.md"
+    if not source.is_relative_to(root) or not skill.resolve().is_relative_to(root):
+        raise ValueError(t("github skill '{name}': source escapes the cloned repository", name=entry.name))
+    if not skill.is_file():
+        raise ValueError(t("github skill '{name}': missing SKILL.md at the declared path", name=entry.name))
+    return source
+
+
 class SkillFetcher:
     """Brings third-party skill bytes to the library door. Placement
     (library links, native views, index) stays the materializer's job:
@@ -161,11 +176,10 @@ class SkillFetcher:
         self.home = resolve_home(home)
 
     def ensure_github_checkout(self, cache_dir: Path, entry: SkillEntry) -> tuple[bool, str | None]:
-        """Brings the local cache exactly to the declared commit.
+        """Verify a pin off to the side, then replace the usable cache.
 
-        An existing cache isn't enough: if the manifest bumps the pin, the
-        old copy needs updating. First we check where the cache actually
-        is, and only fetch the new commit if it diverges.
+        Acquisition failures leave the previous bytes and views intact.
+        Local edits are preserved and reported, never certified by HEAD alone.
         """
         env = {**os.environ, **GIT_NONINTERACTIVE_ENV}
 
@@ -178,35 +192,69 @@ class SkillFetcher:
             )
 
         try:
+            if not COMMIT_SHA_RE.fullmatch(entry.commit or ""):
+                raise ValueError(t("github skill '{name}': a full commit pin is required", name=entry.name))
+            if cache_dir.is_symlink():
+                raise ValueError(t("github skill '{name}': cache is a foreign symlink; preserved", name=entry.name))
+            clean_cache = False
             if cache_dir.is_dir():
                 head = git("rev-parse", "HEAD", cwd=cache_dir)
-                if head.returncode == 0 and head.stdout.strip().lower() == entry.commit.lower():
-                    return True, None
-                fetched = git("fetch", "--quiet", "origin", entry.commit, cwd=cache_dir)
-                if fetched.returncode != 0:
-                    git("fetch", "--quiet", "--all", cwd=cache_dir)
-            else:
-                cache_dir.parent.mkdir(parents=True, exist_ok=True)
-                res = git("clone", "--quiet", clone_url(entry.repo or ""), str(cache_dir))
+                if head.returncode == 0:
+                    dirty = git("status", "--porcelain", "--untracked-files=all", cwd=cache_dir)
+                    if dirty.returncode or dirty.stdout.strip():
+                        raise ValueError(t("github skill '{name}': cache has local changes; preserved", name=entry.name))
+                    clean_cache = True
+                    origin = git("remote", "get-url", "origin", cwd=cache_dir)
+                    if (head.stdout.strip().lower() == (entry.commit or "").lower()
+                            and origin.returncode == 0 and origin.stdout.strip() == clone_url(entry.repo or "")):
+                        github_skill_source(cache_dir, entry)
+                        return True, None
+
+            cache_dir.parent.mkdir(parents=True, exist_ok=True)
+            with tempfile.TemporaryDirectory(prefix=f"{cache_dir.name}.incoming-", dir=cache_dir.parent) as tmp:
+                incoming = Path(tmp) / "checkout"
+                res = git("clone", "--quiet", "--", clone_url(entry.repo or ""), str(incoming))
                 if res.returncode != 0:
                     return False, "[ERROR] " + t(
                         "github skill '{name}': cloning {repo} failed: {error}",
                         name=entry.name, repo=entry.repo, error=res.stderr.strip(),
                     )
-
-            res = git("checkout", "--quiet", "--detach", entry.commit, cwd=cache_dir)
-            if res.returncode != 0:
-                return False, "[ERROR] " + t(
-                    "github skill '{name}': commit {commit} is not reachable in the repository: {error}",
-                    name=entry.name, commit=entry.commit, error=res.stderr.strip(),
-                )
+                res = git("checkout", "--quiet", "--detach", entry.commit or "", cwd=incoming)
+                if res.returncode:
+                    git("fetch", "--quiet", "origin", entry.commit or "", cwd=incoming)
+                    res = git("checkout", "--quiet", "--detach", entry.commit or "", cwd=incoming)
+                if res.returncode != 0:
+                    return False, "[ERROR] " + t(
+                        "github skill '{name}': commit {commit} is not reachable in the repository: {error}",
+                        name=entry.name, commit=entry.commit, error=res.stderr.strip(),
+                    )
+                github_skill_source(incoming, entry)
+                backup = next_backup_path(cache_dir) if cache_dir.exists() else None
+                if backup is not None:
+                    cache_dir.rename(backup)
+                try:
+                    incoming.rename(cache_dir)
+                except OSError:
+                    if backup is not None:
+                        backup.rename(cache_dir)
+                    raise
+                # Clean Git caches are reproducible from their pin. Preserve
+                # an unknown/corrupt directory instead of deleting user bytes.
+                if backup is not None and clean_cache:
+                    try:
+                        shutil.rmtree(backup)
+                    except OSError:
+                        return True, "[WARNING] " + t(
+                            "github skill '{name}': updated; old cache cleanup failed at {path}",
+                            name=entry.name, path=backup,
+                        )
             return True, None
         except subprocess.TimeoutExpired:
             return False, "[ERROR] " + t(
                 "github skill '{name}': {repo} did not respond within {timeout}s, retrying next cycle",
                 name=entry.name, repo=entry.repo, timeout=GIT_CLONE_TIMEOUT_SECONDS,
             )
-        except OSError as exc:
+        except (OSError, ValueError) as exc:
             return False, "[ERROR] " + t("github skill '{name}': {error}", name=entry.name, error=exc)
 
     def _installed_versions_file(self) -> Path:
@@ -215,25 +263,32 @@ class SkillFetcher:
     def _installed_versions(self) -> dict[str, str]:
         """Which version of each installer-owned skill is materialized here."""
         path = self._installed_versions_file()
-        if not path.is_file():
-            return {}
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
-            return {str(k): str(v) for k, v in data.items()} if isinstance(data, dict) else {}
-        except (OSError, ValueError):
+            if not isinstance(data, dict) or not all(isinstance(value, str) for value in data.values()):
+                raise ValueError("skill version record must map names to version strings")
+            return data
+        except FileNotFoundError:
             return {}
+        except (OSError, ValueError) as exc:
+            raise OSError(t("Cannot read skill version record at {path} ({error}).",
+                            path=path, error=type(exc).__name__)) from exc
 
     def _record_installed_version(self, name: str, version: str) -> None:
-        path = self._installed_versions_file()
-        current = self._installed_versions()
-        current[name] = version
+        """Persist a pin or raise a diagnostic safe for sync and doctor."""
         try:
-            path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(
-                json.dumps(current, indent=2, sort_keys=True) + "\n", encoding="utf-8"
-            )
-        except OSError:
-            pass
+            path = self._installed_versions_file()
+            # A distinct lock avoids nesting the global sync lock. Atomic
+            # rename protects readers; serialization protects other writers.
+            with HostLock(lock_path=path.with_suffix(".lock"), timeout=5, command_name="skill-pin-record"):
+                current = self._installed_versions()
+                current[name] = version
+                atomic_write_text(path, json.dumps(current, indent=2, sort_keys=True) + "\n")
+        except OSError as exc:
+            raise OSError(t(
+                "Skill '{name}' pin could not be recorded ({error}); update is incomplete.",
+                name=name, error=type(exc).__name__,
+            )) from exc
 
     def claim_from_discovery(
         self, name: str, lib_dest: Path, discovery_dirs: tuple[Path, ...]
@@ -255,17 +310,60 @@ class SkillFetcher:
                 if same_tree_content(candidate, lib_dest):
                     shutil.rmtree(candidate, ignore_errors=True)
                     return True
-                continue
+                # New bytes arrived but the library holds different ones:
+                # set the old aside instead of silently keeping stale bytes
+                # while the version is recorded as new (false-green pin).
+                try:
+                    backup = next_backup_path(lib_dest)
+                    # Rename the link itself, never its target. It is recoverable
+                    # exactly like a directory if publishing the replacement fails.
+                    lib_dest.rename(backup)
+                except OSError:
+                    return False
+                try:
+                    shutil.move(str(candidate), str(lib_dest))
+                except (OSError, shutil.Error):
+                    if lib_dest.is_symlink() or lib_dest.is_file():
+                        lib_dest.unlink()
+                    elif lib_dest.is_dir():
+                        shutil.rmtree(lib_dest)
+                    backup.rename(lib_dest)
+                    return False
+                return True
             lib_dest.parent.mkdir(parents=True, exist_ok=True)
             shutil.move(str(candidate), str(lib_dest))
             return True
         return False
 
+    def _tree_fingerprint(self, root: Path) -> dict[str, str] | None:
+        """Content hash per file, or None when the tree doesn't exist."""
+        import hashlib
+
+        if not root.is_dir():
+            return None
+        out: dict[str, str] = {}
+        try:
+            for path in sorted(root.rglob("*")):
+                if not path.is_file() or path.is_symlink():
+                    continue
+                try:
+                    digest = hashlib.sha256(path.read_bytes()).hexdigest()
+                except OSError:
+                    return None
+                out[str(path.relative_to(root))] = digest
+        except OSError:
+            return None
+        return out
+
     def install_third_party(
         self, entry: SkillEntry, lib_dest: Path, discovery_dirs: tuple[Path, ...]
     ) -> tuple[bool, str | None]:
         """Runs a third-party installer, but only when the pin actually moved."""
-        recorded = self._installed_versions().get(entry.name)
+        try:
+            recorded = self._installed_versions().get(entry.name)
+        except OSError as exc:
+            return False, "[ERROR] " + t("Cannot verify the recorded pin for skill '{name}' ({error}).",
+                                        name=entry.name, error=type(exc).__name__)
         if recorded == entry.version and lib_dest.is_dir():
             return True, None
         if not entry.install:
@@ -273,6 +371,9 @@ class SkillFetcher:
                 "skill '{name}' is installed by its own installer but declares no install command",
                 name=entry.name,
             )
+        before = self._tree_fingerprint(lib_dest)
+        if lib_dest.exists() and before is None:
+            return False, "[ERROR] " + t("Cannot verify the existing skill library: {path}", path=lib_dest)
         try:
             result = subprocess.run(
                 list(entry.install), capture_output=True, text=True, check=False,
@@ -293,11 +394,25 @@ class SkillFetcher:
                 name=entry.name, reason=detail[-1] if detail else "no detail",
             )
 
-        self.claim_from_discovery(entry.name, lib_dest, discovery_dirs)
+        claimed = self.claim_from_discovery(entry.name, lib_dest, discovery_dirs)
         if not lib_dest.is_dir():
             return False, "[ERROR] " + t(
                 "the installer for '{name}' ran but left nothing the engine could find",
                 name=entry.name,
             )
-        self._record_installed_version(entry.name, entry.version or "")
-        return True, t("Installed skill '{name}' at version {version}", name=entry.name, version=entry.version)
+        after = self._tree_fingerprint(lib_dest)
+        if claimed or (after is not None and (before is None or after != before)):
+            # One completion path owns both claimed and in-place installs.
+            # New bytes without a durable pin are an incomplete update.
+            try:
+                self._record_installed_version(entry.name, entry.version or "")
+            except OSError as exc:
+                return False, "[ERROR] " + str(exc)
+            return True, t("Installed skill '{name}' at version {version}", name=entry.name, version=entry.version)
+        # The installer exited 0 but left no observable new bytes, while
+        # the library still holds the old version: recording the new
+        # version would declare the pin current on stale bytes.
+        return False, "[ERROR] " + t(
+            "the installer for '{name}' ran but left no new copy to claim: keeping the previous version",
+            name=entry.name,
+        )

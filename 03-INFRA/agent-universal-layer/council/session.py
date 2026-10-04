@@ -17,11 +17,31 @@ import subprocess
 import sys
 import threading
 import time
+from contextlib import contextmanager, ExitStack
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
+from nexgen_core.files import write_private_text, secure_artifact
+from nexgen_core.lock import HostLock, LockTimeoutError
+from nexgen_core.processes import force_stop_process_tree
+
 ENGINE_ROOT = Path(__file__).resolve().parent
 LEAK_SCAN_DIR = ENGINE_ROOT.parent / "leak-scan"
+
+
+def _load_leak_scan():
+    """File-path-loaded (invisible to static imports by design): the egress
+    gate fails closed with a named path when the scanner is absent, never
+    with an importlib AttributeError agents can't attribute."""
+    target = LEAK_SCAN_DIR / "leak_scan.py"
+    if not target.is_file():
+        raise RuntimeError(f"[council] leak-scan assente: {target}")
+    spec = importlib.util.spec_from_file_location("leak_scan", target)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"[council] leak-scan non caricabile: {target}")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
 
 if os.name == "nt":
     _LOCAL_STATE_ROOT = Path(os.environ.get("LOCALAPPDATA") or (Path.home() / "AppData" / "Local"))
@@ -48,16 +68,8 @@ def _set_private_mode(path: Path, mode: int) -> None:
 
 
 def _write_private_text(path: Path, text: str) -> None:
-    """Write a session artefact without first exposing it to the umask."""
-    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    try:
-        if os.name != "nt":
-            os.fchmod(fd, 0o600)
-    except Exception:
-        os.close(fd)
-        raise
-    with os.fdopen(fd, "w", encoding="utf-8") as handle:
-        handle.write(text)
+    """Publish a complete private artefact through the Engine's file owner."""
+    write_private_text(path, text)
 
 
 def _secure_session_tree(session_dir: Path) -> None:
@@ -69,6 +81,28 @@ def _secure_session_tree(session_dir: Path) -> None:
     _set_private_mode(session_dir, 0o700)
 
 
+@contextmanager
+def session_run_lock(session_dir: Path):
+    """Keep one stable lock outside the tree that cleanup may remove.
+
+    Also honor older runs' in-tree lock when present. If an OS refuses to
+    remove that open legacy file, cleanup preserves the session.
+    """
+    lock_dir = session_dir.parent.parent / "session-locks"
+    secure_artifact(lock_dir)
+    lock = HostLock(lock_dir / f"{session_dir.name}.lock", timeout=0, command_name="council session")
+    with ExitStack() as stack:
+        lock.acquire()
+        stack.callback(lock.release)
+        secure_artifact(lock_dir, lock.lock_path)
+        legacy_path = session_dir / "relay-run.lock"
+        if legacy_path.exists():
+            legacy = HostLock(legacy_path, timeout=0, command_name="council session")
+            legacy.acquire()
+            stack.callback(legacy.release)
+        yield
+
+
 def _cleanup_sessions(ttl_days: int, *, remove_all: bool = False, announce: bool = False) -> int:
     if not SESSIONS_DIR.is_dir():
         return 0
@@ -77,15 +111,17 @@ def _cleanup_sessions(ttl_days: int, *, remove_all: bool = False, announce: bool
     for session_dir in sorted(SESSIONS_DIR.iterdir()):
         if not session_dir.is_dir():
             continue
-        if not remove_all:
-            try:
-                mtime = datetime.fromtimestamp(session_dir.stat().st_mtime, tz=UTC)
-            except OSError:
-                continue
-            if mtime >= cutoff:
-                continue
         try:
-            shutil.rmtree(session_dir)
+            with session_run_lock(session_dir):
+                if not remove_all:
+                    mtime = datetime.fromtimestamp(session_dir.stat().st_mtime, tz=UTC)
+                    if mtime >= cutoff:
+                        continue
+                shutil.rmtree(session_dir)
+        except LockTimeoutError:
+            if announce:
+                print(f"[council] keeping {session_dir.name}: session is running")
+            continue
         except OSError as exc:
             if announce:
                 print(f"[council] cannot remove {session_dir.name}: {exc}")
@@ -150,45 +186,8 @@ def new_session_dir(label: str) -> Path:
 
 
 def _force_stop_process_tree(proc: subprocess.Popen) -> None:
-    """Force-stop a seat and reap its launcher.
-
-    On Windows an npm ``.cmd`` shim is launched through ``cmd.exe``. Killing
-    only that parent can leave the Node/Codex child alive with SQLite handles
-    open inside the Council session directory. ``taskkill /T`` terminates the
-    exact descendant tree rooted at the launcher PID; other platforms keep
-    the existing single-process kill behavior.
-    """
-    used_windows_tree_kill = False
-    pid = getattr(proc, "pid", None)
-    if os.name == "nt" and pid is not None:
-        try:
-            result = subprocess.run(
-                ["taskkill.exe", "/PID", str(pid), "/T", "/F"],
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                timeout=10,
-                check=False,
-            )
-            used_windows_tree_kill = result.returncode == 0
-        except (OSError, subprocess.TimeoutExpired):
-            pass
-
-    if not used_windows_tree_kill:
-        try:
-            proc.kill()
-        except OSError:
-            pass
-
-    try:
-        proc.wait(timeout=5)
-    except TypeError:  # lightweight test doubles may not accept timeout
-        proc.wait()
-    except subprocess.TimeoutExpired:
-        try:
-            proc.kill()
-            proc.wait(timeout=3)
-        except (OSError, subprocess.TimeoutExpired):
-            pass
+    """Compatibility boundary; process cleanup has one Engine owner."""
+    force_stop_process_tree(proc, process_group=getattr(proc, "_council_process_group", None))
 
 
 _STATE_LOCK = threading.Lock()
@@ -201,13 +200,25 @@ _CLEANUP_RAN = False
 #: single slot above stays the compatibility view, this registry is what
 #: shutdown and cancellation actually iterate. Keys are opaque tokens.
 _LIVE_PROCS: dict[str, subprocess.Popen] = {}
+_CANCEL_GRACE_SECONDS = 5.0
+_CANCEL_EPOCH = 0
 
 
-def _register_proc(proc: subprocess.Popen) -> str:
-    """Track a running seat subprocess; returns its registry token."""
+def _proc_registry_epoch() -> int:
+    with _STATE_LOCK:
+        return _CANCEL_EPOCH
+
+
+def _register_proc(proc: subprocess.Popen, expected_epoch: int | None = None) -> str:
+    """Register or stop a process spawned across a cancellation boundary."""
     token = f"proc-{time.time_ns():x}-{id(proc):x}"
     with _STATE_LOCK:
-        _LIVE_PROCS[token] = proc
+        cancelled = expected_epoch is not None and expected_epoch != _CANCEL_EPOCH
+        if not cancelled:
+            _LIVE_PROCS[token] = proc
+    if cancelled:
+        _stop_one_proc(proc)
+        return ""
     return token
 
 
@@ -224,6 +235,9 @@ def _live_procs_snapshot() -> list[subprocess.Popen]:
 def _stop_one_proc(proc: subprocess.Popen) -> None:
     """Terminate and reap one seat process; never raises."""
     try:
+        if getattr(proc, "_council_process_group", None) is not None:
+            _force_stop_process_tree(proc)
+            return
         if proc.poll() is None:
             if os.name == "nt" and getattr(proc, "pid", None) is not None:
                 _force_stop_process_tree(proc)
@@ -238,18 +252,29 @@ def _stop_one_proc(proc: subprocess.Popen) -> None:
 
 
 def _cancel_all_procs() -> int:
-    """Stop every tracked seat subprocess; returns how many were alive."""
+    """Request every stop concurrently, with one shared shutdown deadline."""
     stopped = 0
-    for proc in _live_procs_snapshot():
+    global _CANCEL_EPOCH
+    with _STATE_LOCK:
+        _CANCEL_EPOCH += 1
+        tracked = list(_LIVE_PROCS.items())
+    workers = []
+    for _, proc in tracked:
         try:
             alive = proc.poll() is None
         except Exception:
             alive = False
         if alive:
             stopped += 1
-        _stop_one_proc(proc)
+        worker = threading.Thread(target=_stop_one_proc, args=(proc,), daemon=True)
+        workers.append(worker)
+        worker.start()
+    deadline = time.monotonic() + _CANCEL_GRACE_SECONDS
+    for worker in workers:
+        worker.join(timeout=max(0.0, deadline - time.monotonic()))
     with _STATE_LOCK:
-        _LIVE_PROCS.clear()
+        for token, _ in tracked:
+            _LIVE_PROCS.pop(token, None)
     return stopped
 
 
@@ -318,15 +343,8 @@ def _handle_sigterm(signum, frame) -> None:  # pragma: no cover - exercised via 
     os.kill(os.getpid(), signum)
 
 
-# Same handler body as _handle_sigterm, registered separately for SIGINT.
-# An interactive Ctrl+C is NOT the gap this closes: the kernel delivers
-# SIGINT to the whole foreground process group, so the vendor CLI child
-# already receives it directly and exits on its own. The gap is a SIGINT
-# sent only to council.py's own pid -- a supervisor, a timeout manager, or
-# another agent interrupting just this process, all realistic in agentic
-# use -- which would otherwise leave the child orphaned: run_seat's finally
-# clears _ACTIVE_PROC without killing it, so atexit later finds nothing to
-# stop.
+# Seats have their own process groups, so both interactive Ctrl+C and a
+# signal addressed only to Council must explicitly stop all tracked trees.
 _handle_sigint = _handle_sigterm
 
 
@@ -339,13 +357,6 @@ def _install_shutdown_handlers() -> None:
         signal.signal(signal.SIGTERM, _handle_sigterm)
         signal.signal(signal.SIGINT, _handle_sigint)
     atexit.register(_best_effort_cleanup)
-
-
-def _load_leak_scan():
-    spec = importlib.util.spec_from_file_location("leak_scan", LEAK_SCAN_DIR / "leak_scan.py")
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    return mod
 
 
 def egress_gate(text: str) -> None:

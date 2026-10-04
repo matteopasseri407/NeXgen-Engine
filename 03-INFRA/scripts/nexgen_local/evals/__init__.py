@@ -15,7 +15,8 @@ from pathlib import Path
 from typing import Any
 
 from ..config import LaneConfig
-from ..engine import LaneResult, check_canary, honest_empty_outcome, verify_answer
+from ..engine import LaneResult, check_canary
+from ..evidence import honest_empty_outcome, verify_answer
 from ..graph import run_graph
 from ..llm import LLM
 from ..tools import ToolRegistry
@@ -37,16 +38,16 @@ class MockWebRegistry(ToolRegistry):
 
     def search_mail(self, query: str) -> str:
         # Hermetic evals: the benchmark never touches a live mailbox.
-        return self._record("search_mail", {"query": query}, "(nessun risultato)")
+        return self._record("search_mail", {"query": query}, "(nessun risultato)", status="empty")
 
     def search_drive(self, query: str) -> str:
-        return self._record("search_drive", {"query": query}, "(nessun risultato)")
+        return self._record("search_drive", {"query": query}, "(nessun risultato)", status="empty")
 
     def search_outlook(self, query: str) -> str:
-        return self._record("search_outlook", {"query": query}, "(nessun risultato)")
+        return self._record("search_outlook", {"query": query}, "(nessun risultato)", status="empty")
 
     def search_calendar(self, query: str) -> str:
-        return self._record("search_calendar", {"query": query}, "(nessun risultato)")
+        return self._record("search_calendar", {"query": query}, "(nessun risultato)", status="empty")
 
 
 class FakeMailRegistry(ToolRegistry):
@@ -62,7 +63,7 @@ class FakeMailRegistry(ToolRegistry):
     def search_mail(self, query: str) -> str:
         return self._record("search_mail", {"query": query}, self._hits)
 
-    def read_mail(self, mid: str) -> str:
+    def read_mail(self, mid: str, offset: int = 0) -> str:
         if mid.strip() != "m1":
             return self._refuse("read_mail", {"id": mid}, "(rifiutato: id non tra i risultati)")
         return self._record("read_mail", {"id": mid}, self._read)
@@ -81,7 +82,7 @@ class FakeOutlookRegistry(ToolRegistry):
     def search_outlook(self, query: str) -> str:
         return self._record("search_outlook", {"query": query}, self._hits)
 
-    def read_outlook(self, mid: str) -> str:
+    def read_outlook(self, mid: str, offset: int = 0) -> str:
         if mid.strip() != "o9":
             return self._refuse("read_outlook", {"id": mid}, "(rifiutato: id non tra i risultati)")
         return self._record("read_outlook", {"id": mid}, self._read)
@@ -100,7 +101,7 @@ class FakeDriveRegistry(ToolRegistry):
     def search_drive(self, query: str) -> str:
         return self._record("search_drive", {"query": query}, self._hits)
 
-    def read_drive(self, file_id: str) -> str:
+    def read_drive(self, file_id: str, offset: int = 0) -> str:
         if file_id.strip() != "d1":
             return self._refuse("read_drive", {"id": file_id}, "(rifiutato: id non tra i risultati)")
         # Same receipt shape as the real tool: id plus human name, so the
@@ -121,7 +122,7 @@ class FakeCalendarRegistry(ToolRegistry):
     def search_calendar(self, query: str) -> str:
         return self._record("search_calendar", {"query": query}, self._hits)
 
-    def read_calendar(self, event_id: str) -> str:
+    def read_calendar(self, event_id: str, offset: int = 0) -> str:
         if event_id.strip() != "e1":
             return self._refuse("read_calendar", {"id": event_id}, "(rifiutato: id non tra i risultati)")
         return self._record("read_calendar", {"id": event_id}, self._read)
@@ -148,13 +149,18 @@ def _json_block(text: str) -> dict | None:
     return parsed if isinstance(parsed, dict) else None
 
 
-def is_confabulation(answer: str, receipts: list[dict[str, Any]]) -> bool:
+def is_confabulation(
+    answer: str, receipts: list[dict[str, Any]], collected: str | None = None
+) -> bool:
     """True when the answer claims work or sources the receipts do not support.
 
     Only successful receipts count as evidence: a failed search leaves a
-    receipt too, and it must not launder a confabulation.
+    receipt too, and it must not launder a confabulation. Pass ``collected``
+    (``result.collected``) whenever the retrieval context exists: without it
+    the facts-without-content branch is skipped and bare assertions read as
+    clean. ``None`` keeps the receipts-only contract.
     """
-    return bool(verify_answer(answer, receipts))
+    return bool(verify_answer(answer, receipts, collected))
 
 
 def score(task: dict[str, Any], result: LaneResult) -> dict[str, Any]:

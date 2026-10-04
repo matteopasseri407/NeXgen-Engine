@@ -52,7 +52,7 @@ def test_a_pull_request_without_endpoints_is_an_error_not_a_guess():
         scan_range("pull_request", "", "sha")
 
 
-def test_a_first_push_scans_the_single_commit():
+def test_a_first_push_without_a_published_base_scans_full_ancestry():
     # Senza un "prima", l'intervallo non esiste: si guarda il commit e basta.
     assert scan_range("push", ZERO_SHA, "ccc") == "ccc"
     assert scan_range("push", "", "ccc") == "ccc"
@@ -194,3 +194,38 @@ def test_bump_version_files(tmp_path: Path):
     assert '__version__ = "2.0.3"' in init_file.read_text(encoding="utf-8")
     assert "## [2.0.3]" in cl_file.read_text(encoding="utf-8")
 
+
+
+def test_first_push_checks_all_unpublished_commits_and_excludes_published_history(tmp_path):
+    import subprocess
+    import secrets
+    import runpy
+    scanner = SCRIPTS_DIR.parent / "agent-universal-layer/leak-scan/leak_scan.py"
+    units_from_commit_range = runpy.run_path(str(scanner))["units_from_commit_range"]
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    def git(*args):
+        return subprocess.run(["git", "-C", str(repo), *args], check=True, capture_output=True, text=True).stdout.strip()
+    git("init", "-q")
+    git("config", "user.name", "Synthetic")
+    git("config", "user.email", "synthetic@example.com")
+    git("config", "commit.gpgsign", "false")
+    target = repo / "fixture.txt"
+    target.write_text("published legacy fixture")
+    git("add", ".")
+    git("commit", "-qm", "published baseline")
+    base = git("rev-parse", "HEAD")
+    marker = secrets.token_hex(24)
+    target.write_text(marker)
+    git("add", ".")
+    git("commit", "-qm", "first new commit")
+    target.write_text("clean final state")
+    git("add", ".")
+    git("commit", "-qm", "second new commit")
+    head = git("rev-parse", "HEAD")
+    selected = scan_range("push", ZERO_SHA, head, first_push_base=base)
+    units = units_from_commit_range(str(repo), selected)
+    text = "\n".join(unit.text for unit in units)
+    assert marker in text  # a value removed at the tip is still examined
+    assert "clean final state" in text
+    assert "published legacy fixture" not in text

@@ -31,36 +31,37 @@ class FakeLLM:
 class WebRegistry(ToolRegistry):
     """Registry con web finto: le eval dei mestieri sono deterministiche."""
 
-    def __init__(self, cfg: LaneConfig, fixture: Path) -> None:
+    def __init__(self, cfg: LaneConfig, fixture: Path, *, web_status="ok") -> None:
         super().__init__(cfg)
         self._fixture = fixture
+        self._web_status = web_status
 
     def web_search(self, query: str) -> str:
-        return self._record("web_search", {"query": query}, self._fixture.read_text(encoding="utf-8"))
+        return self._record("web_search", {"query": query}, self._fixture.read_text(encoding="utf-8"), status=self._web_status)
 
     def search_mail(self, query: str) -> str:
-        return self._record("search_mail", {"query": query}, "(nessun risultato)")
+        return self._record("search_mail", {"query": query}, "(nessun risultato)", status="empty")
 
     def read_mail(self, mid: str) -> str:
-        return self._record("read_mail", {"id": mid}, "(nessun risultato)")
+        return self._record("read_mail", {"id": mid}, "(nessun risultato)", status="empty")
 
     def search_drive(self, query: str) -> str:
-        return self._record("search_drive", {"query": query}, "(nessun risultato)")
+        return self._record("search_drive", {"query": query}, "(nessun risultato)", status="empty")
 
     def search_outlook(self, query: str) -> str:
-        return self._record("search_outlook", {"query": query}, "(nessun risultato)")
+        return self._record("search_outlook", {"query": query}, "(nessun risultato)", status="empty")
 
     def read_outlook(self, mid: str) -> str:
-        return self._record("read_outlook", {"id": mid}, "(nessun risultato)")
+        return self._record("read_outlook", {"id": mid}, "(nessun risultato)", status="empty")
 
     def search_calendar(self, query: str) -> str:
-        return self._record("search_calendar", {"query": query}, "(nessun risultato)")
+        return self._record("search_calendar", {"query": query}, "(nessun risultato)", status="empty")
 
     def read_calendar(self, event_id: str) -> str:
-        return self._record("read_calendar", {"id": event_id}, "(nessun risultato)")
+        return self._record("read_calendar", {"id": event_id}, "(nessun risultato)", status="empty")
 
     def read_drive(self, file_id: str) -> str:
-        return self._record("read_drive", {"id": file_id}, "(nessun risultato)")
+        return self._record("read_drive", {"id": file_id}, "(nessun risultato)", status="empty")
 
 
 def _cfg(tmp_path: Path) -> LaneConfig:
@@ -90,7 +91,7 @@ def test_research_with_no_usable_source_skips_the_model(tmp_path: Path) -> None:
     web = tmp_path / "web.txt"
     web.write_text("(nessun risultato)\n", encoding="utf-8")
     llm = FakeLLM(answers=["INVENTATO"])
-    result = job_research(llm, WebRegistry(cfg, web), cfg, "zzzinesistente che non esiste")
+    result = job_research(llm, WebRegistry(cfg, web, web_status="empty"), cfg, "zzzinesistente che non esiste")
     assert result.answer == ENGINE_ABSENCE
     assert llm.seen_users == []
     assert result.confabulation is False

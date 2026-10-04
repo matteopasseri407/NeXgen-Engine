@@ -95,6 +95,43 @@ def _env(engine: Path, data: Path | None = None) -> dict[str, str]:
     }
 
 
+def test_release_without_command_entry_is_refused_before_engine_moves(tmp_path, monkeypatch):
+    origin, engine = _upgrade_fixture(tmp_path)
+    entry = "03-INFRA/scripts/nexgen_core/cli/__init__.py"
+    _git(origin, "rm", entry)
+    _git(origin, "commit", "-m", "broken release tree")
+    _git(origin, "tag", "-d", "v0.2.0")
+    _git(origin, "tag", "v0.2.0")
+    updater = _load_updater()
+    monkeypatch.setattr(updater, "_signature_state", lambda *args: "G")
+    before = _git(engine, "rev-parse", "HEAD").stdout
+    assert updater.main(["--yes"], environ=_env(engine)) == 1
+    assert _git(engine, "rev-parse", "HEAD").stdout == before
+
+
+def test_pin_write_failure_preserves_previous_pin_and_skips_publication(tmp_path, monkeypatch):
+    from nexgen_core import files
+    updater = _load_updater()
+    pin = tmp_path / "ENGINE-PIN.txt"
+    pin.write_text("previous-pin\n")
+    calls = []
+    def run(args, **kwargs):
+        calls.append(args)
+        return subprocess.CompletedProcess(args, 0, "", "")
+
+    monkeypatch.setattr(updater, "_run", run)
+
+    def replace(*args):
+        raise OSError("synthetic failed rename")
+
+    monkeypatch.setattr(files.os, "replace", replace)
+    with pytest.raises(updater.UpdateError):
+        updater._commit_split_pin(pin_file=pin, target_head="new-pin", target="v0.2.0",
+                                  data_repo=tmp_path, entry=["synthetic-cli"])
+    assert pin.read_text() == "previous-pin\n"
+    assert calls == []
+
+
 def _bare_env(engine: Path, home: Path) -> dict[str, str]:
     env = {
         key: value
@@ -188,7 +225,7 @@ def test_yes_merges_release_without_detaching_head(tmp_path, capsys):
     assert (engine / "VERSION").read_text(encoding="utf-8").strip() == "0.2.0"
     assert _git(engine, "symbolic-ref", "--short", "HEAD").stdout.strip() == "main"
     output = capsys.readouterr().out
-    assert "v0.2.0 installed and verified" in output
+    assert "v0.2.0 installed: doctor reports no failures" in output
 
 
 def test_declined_confirmation_moves_nothing(tmp_path, capsys):
@@ -445,7 +482,7 @@ def test_post_merge_steps_never_touch_PATH(tmp_path, capsys, monkeypatch):
 
     assert result == 0
     assert (engine / "VERSION").read_text(encoding="utf-8").strip() == "0.2.0"
-    assert "installed and verified" in capsys.readouterr().out
+    assert "doctor reports no failures" in capsys.readouterr().out
 
 
 def test_split_pin_is_committed_before_provisioning(tmp_path, capsys, monkeypatch):
@@ -488,7 +525,7 @@ def test_split_pin_is_committed_before_provisioning(tmp_path, capsys, monkeypatc
     assert _git(data, "status", "--porcelain").stdout == ""
     output = capsys.readouterr().out
     assert "update 99-INDEX/ENGINE-PIN.txt through vault-push" in output
-    assert "installed and verified" in output
+    assert "doctor reports no failures" in output
 
 
 def test_failed_split_pin_publish_stops_before_provisioning(tmp_path, capsys, monkeypatch):
@@ -559,6 +596,123 @@ def test_failed_provisioning_does_not_auto_rollback(tmp_path, capsys, monkeypatc
     assert (engine / "VERSION").read_text(encoding="utf-8").strip() == "0.2.0"
     error = capsys.readouterr().err
     assert "agent-sync apply failed" in error
+    assert f"git -C {engine} reset --hard {previous}" in error
+
+
+@pytest.mark.parametrize("failure", ["apply", "doctor"])
+def test_operational_exception_after_merge_keeps_recovery_instructions(tmp_path, capsys, monkeypatch, failure):
+    updater = _load_updater()
+    _origin, engine = _upgrade_fixture(tmp_path)
+    previous = _git(engine, "rev-parse", "HEAD").stdout.strip()
+    entry = _tree_entry(engine)
+    real_run = updater._run
+    doctors = 0
+
+    def failing_command(args, **kwargs):
+        nonlocal doctors
+        if args == entry + ["doctor", "--summary"]:
+            doctors += 1
+            if failure == "doctor" and doctors == 2:
+                raise OSError("synthetic private payload")
+        if failure == "apply" and args == entry + ["apply"]:
+            raise OSError("synthetic private payload")
+        return real_run(args, **kwargs)
+
+    monkeypatch.setattr(updater, "_run", failing_command)
+    assert updater.main(["--yes"], environ=_env(engine)) == 1
+    assert (engine / "VERSION").read_text().strip() == "0.2.0"
+    error = capsys.readouterr().err
+    assert f"git -C {engine} reset --hard {previous}" in error
+    assert "synthetic private payload" not in error
+
+
+def test_command_launch_failure_is_an_update_error(tmp_path, monkeypatch):
+    updater = _load_updater()
+
+    def unavailable(*args, **kwargs):
+        raise OSError("synthetic private payload")
+
+    monkeypatch.setattr(updater.subprocess, "Popen", unavailable)
+    with pytest.raises(updater.UpdateError) as error:
+        updater._run([sys.executable, "-c", "pass"], cwd=tmp_path)
+    assert "OSError" in str(error.value)
+    assert "synthetic private payload" not in str(error.value)
+
+
+def test_merge_failure_after_ref_moved_does_not_claim_rollback(tmp_path, capsys, monkeypatch):
+    updater = _load_updater()
+    _, engine = _upgrade_fixture(tmp_path)
+    previous = _git(engine, "rev-parse", "HEAD").stdout.strip()
+    real_run = updater._run
+
+    def failure_after_merge(args, **kwargs):
+        result = real_run(args, **kwargs)
+        if "merge" in args and "--no-edit" in args:
+            return subprocess.CompletedProcess(args, 1, result.stdout, "synthetic post-merge failure")
+        return result
+
+    monkeypatch.setattr(updater, "_run", failure_after_merge)
+    assert updater.main(["--yes"], environ=_env(engine)) == 1
+    assert (engine / "VERSION").read_text().strip() == "0.2.0"
+    error = capsys.readouterr().err
+    assert "was rolled back" not in error
+    assert f"git -C {engine} reset --hard {previous}" in error
+
+
+def test_live_silent_update_command_obeys_deadline_and_is_reaped(tmp_path, monkeypatch):
+    from concurrent.futures import ThreadPoolExecutor, TimeoutError
+    updater = _load_updater()
+    monkeypatch.setattr(updater, "COMMAND_TIMEOUT_SECONDS", 0.15, raising=False)
+    real_popen = subprocess.Popen
+    launched = []
+
+    def tracked(args, **kwargs):
+        proc = real_popen(args, **kwargs)
+        if args[0] == sys.executable:
+            launched.append(proc)
+        return proc
+
+    monkeypatch.setattr(updater.subprocess, "Popen", tracked)
+    pool = ThreadPoolExecutor(max_workers=1)
+    future = pool.submit(updater._run, [sys.executable, "-c", "import time; time.sleep(30)"], cwd=tmp_path)
+    try:
+        with pytest.raises(updater.UpdateError, match="timeout"):
+            try:
+                future.result(timeout=1.5)
+            except TimeoutError:
+                pytest.fail("updater command stayed alive beyond its deadline")
+        assert launched[0].returncode is not None
+    finally:
+        for proc in launched:
+            if proc.poll() is None:
+                proc.kill()
+            proc.wait(timeout=3)
+        pool.shutdown(wait=True)
+
+
+def test_failed_abort_keeps_recovery_instructions_when_ref_is_unchanged(tmp_path, capsys, monkeypatch):
+    updater = _load_updater()
+    _, engine = _upgrade_fixture(tmp_path)
+    _git(engine, "config", "user.name", "nexgen merge test")
+    _git(engine, "config", "user.email", "nexgen-merge-test@localhost")
+    changelog = engine / "CHANGELOG.md"
+    changelog.write_text("Local conflicting changelog.\n", encoding="utf-8")
+    _git(engine, "add", "CHANGELOG.md")
+    _git(engine, "commit", "-m", "local conflicting edit")
+    previous = _git(engine, "rev-parse", "HEAD").stdout.strip()
+    real_run = updater._run
+
+    def failed_abort(args, **kwargs):
+        if args[-2:] == ["merge", "--abort"]:
+            return subprocess.CompletedProcess(args, 1, "", "synthetic failed abort")
+        return real_run(args, **kwargs)
+
+    monkeypatch.setattr(updater, "_run", failed_abort)
+    assert updater.main(["--yes"], environ=_env(engine)) == 1
+    assert _git(engine, "rev-parse", "HEAD").stdout.strip() == previous
+    assert "<<<<<<<" in changelog.read_text(encoding="utf-8")
+    error = capsys.readouterr().err
+    assert "was rolled back" not in error
     assert f"git -C {engine} reset --hard {previous}" in error
 
 
@@ -697,5 +851,4 @@ def test_doctor_with_undetermined_checks_does_not_block_update(tmp_path, capsys,
 
     assert result == 0
     output = capsys.readouterr().out
-    assert "installed and verified" in output
-
+    assert "doctor reports no failures" in output

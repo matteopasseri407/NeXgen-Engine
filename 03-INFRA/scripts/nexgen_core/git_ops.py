@@ -8,6 +8,7 @@ Non-negotiable safety rules:
 """
 from __future__ import annotations
 
+import logging
 import os
 import subprocess
 from dataclasses import dataclass, field
@@ -17,6 +18,8 @@ from pathlib import Path
 import yaml
 
 from nexgen_core.i18n import t
+
+logger = logging.getLogger(__name__)
 
 
 class GitState(str, Enum):
@@ -63,11 +66,27 @@ INFRA_PATH_PREFIXES = (
     "00-START-HERE.md",
 )
 
+# Private callers can require this contract without depending on a release label.
+PATH_SCOPED_COMMITS = True
+
 
 def is_infra_file(filepath: str) -> bool:
-    """True if filepath is a known infrastructure, configuration, or instruction file."""
-    norm = filepath.replace("\\", "/")
-    return any(norm.startswith(p) or f"/{p}" in norm for p in INFRA_PATH_PREFIXES)
+    """True if filepath is a known infrastructure, configuration, or instruction file.
+
+    Matched on real path structure, not substrings: ``docs/mcp/note.md``
+    or ``backup/AGENTS.md.bak`` are user files that merely contain an infra
+    token, and auto-committing them would publish work the user never chose
+    to commit. Directories match only at the repository root; the three
+    pointer files match by exact basename anywhere.
+    """
+    norm = filepath.replace("\\", "/").lstrip("./")
+    for prefix in INFRA_PATH_PREFIXES:
+        if prefix.endswith("/"):
+            if norm == prefix.rstrip("/") or norm.startswith(prefix):
+                return True
+        elif Path(norm).name == prefix:
+            return True
+    return False
 
 
 def auto_commit_infra_files(
@@ -83,7 +102,7 @@ def auto_commit_infra_files(
     add_res = run_git(repo_dir, "add", "--", *infra_dirty)
     if add_res.returncode != 0:
         return False, []
-    c_res = run_git(repo_dir, "commit", "-m", commit_msg)
+    c_res = run_git(repo_dir, "commit", "-m", commit_msg, "--only", "--", *infra_dirty)
     if c_res.returncode != 0:
         return False, []
     return True, infra_dirty
@@ -104,9 +123,22 @@ def quarantine_diverged_commits(
 
     Returns: (success, quarantine_branch_name, message)
     """
+    import secrets
     import time
     timestamp = time.strftime("%Y%m%d-%H%M%S")
-    q_branch = f"quarantine/diverged-{timestamp}"
+    # Second-resolution stamps collide on rapid retry: the random suffix
+    # makes the branch creation fail-closed instead of reusing a branch
+    # that already holds someone else's quarantine.
+    q_branch = f"quarantine/diverged-{timestamp}-{secrets.token_hex(3)}"
+
+    # The quarantine only makes sense on the branch we were asked to
+    # realign: resetting any other branch would move work nobody named.
+    current = run_git(repo_dir, "symbolic-ref", "--quiet", "--short", "HEAD")
+    if current.returncode != 0 or current.stdout.strip() != branch:
+        return False, "", t(
+            "Refusing to quarantine: HEAD is on '{found}', not '{expected}'",
+            found=current.stdout.strip() or "detached HEAD", expected=branch,
+        )
 
     # 1. Create quarantine branch at current HEAD
     b_res = run_git(repo_dir, "branch", q_branch)
@@ -125,14 +157,30 @@ def quarantine_diverged_commits(
     dirty = get_uncommitted_files(repo_dir)
     if dirty:
         add_res = run_git(repo_dir, "add", "--", *dirty)
+        if add_res.returncode != 0:
+            run_git(repo_dir, "switch", branch)
+            return False, q_branch, t(
+                "Created {q_branch}, but could not stage uncommitted changes before realignment: {error}",
+                q_branch=q_branch, error=add_res.stderr.strip(),
+            )
         c_res = run_git(repo_dir, "commit", "-m", "quarantine: preserve uncommitted changes before realignment")
-        if add_res.returncode != 0 or c_res.returncode != 0:
+        if c_res.returncode != 0:
             run_git(repo_dir, "switch", branch)
             return False, q_branch, t(
                 "Created {q_branch}, but could not preserve uncommitted changes before realignment",
                 q_branch=q_branch,
             )
-    run_git(repo_dir, "switch", branch)
+    sw_back = run_git(repo_dir, "switch", branch)
+    if sw_back.returncode != 0:
+        # The work is safe on the quarantine branch (committed above, or
+        # there was nothing dirty to lose): report the failure and STOP.
+        # Resetting here would run on the quarantine branch and destroy
+        # exactly what was just preserved.
+        return False, q_branch, t(
+            "Work preserved on {q_branch}, but could not switch back to {branch}: {error}. "
+            "No reset was performed; switch back by hand and retry.",
+            q_branch=q_branch, branch=branch, error=sw_back.stderr.strip(),
+        )
 
     # 3. Hard reset local branch to remote/branch
     r_res = run_git(repo_dir, "reset", "--hard", f"{remote}/{branch}")
@@ -187,8 +235,8 @@ def resolve_remotes(vault_data: Path) -> tuple[str, list[str]]:
                 raw_mirrors = data.get("mirrors", [])
                 if isinstance(raw_mirrors, list):
                     mirrors = [str(m) for m in raw_mirrors if str(m).strip()]
-        except Exception:
-            pass
+        except (OSError, ValueError, yaml.YAMLError) as exc:  # noqa: BLE001 - corrupt remotes.yaml falls back to origin
+            logger.debug("ignoring unreadable remotes.yaml %s (%s)", remotes_file, type(exc).__name__)
 
     # Override from environment variables
     if env_remote:
@@ -220,20 +268,53 @@ def get_current_branch(repo_dir: Path) -> str:
     return ""
 
 
+def get_untracked_infra_files(repo_dir: Path) -> list[str]:
+    """New files nobody staged that live under infra paths.
+
+    Tracked-only accounting keeps scratch files out of the cycle, but a new
+    file under ``03-INFRA/`` is almost certainly intentional config — and
+    today it is never committed, never pushed, while every report says the
+    machine is aligned. Listed (not auto-committed): publishing unknown
+    files on its own would be worse than asking.
+    """
+    r = run_git(repo_dir, "ls-files", "--others", "--exclude-standard", "-z")
+    if r.returncode != 0 or not r.stdout:
+        return []
+    return sorted(
+        path for path in r.stdout.split("\0")
+        if path and is_infra_file(path)
+    )
+
+
 def get_uncommitted_files(repo_dir: Path) -> list[str]:
     """The tracked files with changes not yet committed.
 
     Untracked files are deliberately left out: a new file nobody has staged
     yet is not work at risk, and treating it as such would block the cycle
     over every scratch file left in the folder.
+    Parsed NUL-separated (``-z``): spaces, quotes, non-ASCII and renames
+    (``R  new<NUL>old``) survive verbatim instead of arriving as one
+    ``"old -> new"`` string no git command accepts.
     """
-    r = run_git(repo_dir, "status", "--porcelain", "--untracked-files=no")
-    if r.returncode != 0 or not r.stdout.strip():
+    r = run_git(repo_dir, "status", "--porcelain=v1", "-z", "--untracked-files=no")
+    if r.returncode != 0 or not r.stdout:
         return []
     files: list[str] = []
-    for line in r.stdout.splitlines():
-        if len(line) > 3:
-            files.append(line[3:].strip())
+    chunks = r.stdout.split("\0")
+    index = 0
+    while index < len(chunks):
+        entry = chunks[index]
+        index += 1
+        if len(entry) <= 3:
+            continue
+        status, path = entry[:2], entry[3:]
+        if status[0] == "R" or status[1] == "R":
+            # Rename entry is followed by the source path; the worktree path
+            # (what `git add --` wants) is the first one.
+            if index < len(chunks) and chunks[index]:
+                index += 1
+        if path:
+            files.append(path)
     return files
 
 
@@ -250,6 +331,10 @@ def check_conflicts_or_rebase(repo_dir: Path) -> str | None:
         return t("a git rebase is in progress in the vault: run 'git rebase --abort' before continuing")
     if (git_dir / "MERGE_HEAD").exists():
         return t("a git merge is in progress in the vault: run 'git merge --abort' before continuing")
+    if (git_dir / "CHERRY_PICK_HEAD").exists():
+        return t("a git cherry-pick is in progress in the vault: resolve it before continuing")
+    if (git_dir / "REVERT_HEAD").exists():
+        return t("a git revert is in progress in the vault: resolve it before continuing")
     return None
 
 
@@ -380,9 +465,13 @@ def publish_changes(
                 return False, t("git add failed: {error}", error=add_res.stderr)
 
         # Check whether there's anything staged to commit
-        staged_check = run_git(repo_dir, "diff", "--cached", "--quiet")
-        if staged_check.returncode != 0:
-            c_res = run_git(repo_dir, "commit", "-m", commit_msg)
+        paths = ["--", *files_to_commit] if files_to_commit else []
+        staged_check = run_git(repo_dir, "diff", "--cached", "--quiet", *paths)
+        if staged_check.returncode not in (0, 1):
+            return False, t("Could not inspect staged changes: {error}", error=staged_check.stderr)
+        if staged_check.returncode == 1:
+            commit_args = ["--only", *paths] if files_to_commit else []
+            c_res = run_git(repo_dir, "commit", "-m", commit_msg, *commit_args)
             if c_res.returncode != 0:
                 return False, t("git commit failed: {error}", error=c_res.stderr)
             committed = True
@@ -402,9 +491,20 @@ def publish_changes(
             )
         return False, t("Could not reach {remote} for publishing", remote=remote)
 
-    lh = run_git(repo_dir, "rev-parse", branch).stdout.strip()
-    rh = run_git(repo_dir, "rev-parse", f"{remote}/{branch}").stdout.strip()
-    mb = run_git(repo_dir, "merge-base", branch, f"{remote}/{branch}").stdout.strip()
+    lh_r = run_git(repo_dir, "rev-parse", branch)
+    rh_r = run_git(repo_dir, "rev-parse", f"{remote}/{branch}")
+    mb_r = run_git(repo_dir, "merge-base", branch, f"{remote}/{branch}")
+    if lh_r.returncode != 0 or rh_r.returncode != 0 or mb_r.returncode != 0:
+        # No unchecked string comparisons: an empty ref would fall through
+        # to the divergence branch and rebase onto a ref that does not
+        # exist (first push, deleted remote, shallow clone).
+        if committed:
+            return False, t(
+                "{remote} unreachable or without branch {branch}: the commit stays local, publish it later with 'vault-push'",
+                remote=remote, branch=branch,
+            )
+        return False, t("Could not resolve {remote}/{branch} for publishing", remote=remote, branch=branch)
+    lh, rh, mb = lh_r.stdout.strip(), rh_r.stdout.strip(), mb_r.stdout.strip()
 
     if lh != rh:
         if mb == rh:
@@ -420,41 +520,110 @@ def publish_changes(
                 return False, ff_msg
             published = True
         else:
+            if files_to_commit:
+                # An explicit-file caller did not authorize committing,
+                # stashing, rebasing or quarantining another writer's work.
+                return False, t(
+                    "{remote}/{branch} moved during publication. The selected commit stays local; "
+                    "resolve the divergence before retrying. Other staged work is unchanged.",
+                    remote=remote, branch=branch,
+                )
             # Divergence. Auto-commit any remaining infra files before rebase attempt
             auto_commit_infra_files(repo_dir)
             dirty = get_uncommitted_files(repo_dir)
             stashed = False
             if dirty:
+                stash_before = run_git(repo_dir, "stash", "list", "--format=%H").stdout
                 stash_res = run_git(repo_dir, "stash", "push", "-m", "nexgen-sync-auto-stash")
-                stashed = (stash_res.returncode == 0 and "No local changes to save" not in stash_res.stdout)
+                # A stash entry either appeared or it did not: message
+                # sniffing ("No local changes...") breaks across locales
+                # and git versions, and a wrong True pops someone else's stash.
+                stash_after = run_git(repo_dir, "stash", "list", "--format=%H").stdout
+                stashed = stash_res.returncode == 0 and stash_after.strip() != stash_before.strip()
 
             rebase_res = run_git(repo_dir, "rebase", f"{remote}/{branch}")
             if rebase_res.returncode == 0:
                 if stashed:
-                    run_git(repo_dir, "stash", "pop")
+                    pop_res = run_git(repo_dir, "stash", "pop")
+                    if pop_res.returncode != 0:
+                        return False, t(
+                            "Rebase succeeded but restoring the stashed changes failed: resolve the conflict, then push with 'vault-push'. "
+                            "Nothing was pushed; the work is in 'git stash list'."
+                        )
                 p_res = run_git(repo_dir, "push", remote, branch)
                 if p_res.returncode != 0:
                     return False, t("Push after rebase failed: {error}", error=p_res.stderr)
                 published = True
             else:
-                run_git(repo_dir, "rebase", "--abort")
+                abort_res = run_git(repo_dir, "rebase", "--abort")
+                if abort_res.returncode != 0:
+                    if stashed:
+                        run_git(repo_dir, "stash", "pop")
+                    return False, t(
+                        "Rebase failed and could not be aborted cleanly: resolve the state by hand "
+                        "('git rebase --abort', 'git stash list'), then retry. Nothing was pushed."
+                    )
                 if stashed:
-                    run_git(repo_dir, "stash", "pop")
+                    pop_res = run_git(repo_dir, "stash", "pop")
+                    if pop_res.returncode != 0:
+                        return False, t(
+                            "Rebase aborted and stashed changes could not be restored: resolve the conflict, "
+                            "then push with 'vault-push'. Nothing was pushed; the work is in 'git stash list'."
+                        )
                 # Isolate diverged commits to quarantine
                 q_ok, _q_branch, q_msg = quarantine_diverged_commits(repo_dir, remote=remote, branch=branch)
                 if q_ok:
                     return True, q_msg
                 return False, t("Data has diverged from {remote}, automatic rebase did not succeed", remote=remote)
 
-    # Mirror update (best effort)
+    # Mirror update (best effort, but reported: a silent mirror failure
+    # means the backup drifts for weeks until someone diffs it by hand).
+    mirror_notes: list[str] = []
     if mirrors:
+        seen: set[str] = set()
         for mirror in mirrors:
+            if mirror in seen or mirror == remote:
+                continue
+            seen.add(mirror)
             m_res = run_git(repo_dir, "push", mirror, branch)
             if m_res.returncode != 0:
-                # Retry with force-with-lease after a fetch
+                # A plain push failed: the mirror may just be behind (safe
+                # to overwrite) or diverged with commits pushed directly to
+                # it (backup-only work that a force push would destroy).
+                # Fetch first (ref update only, never touches work), then
+                # count mirror-only commits before deciding.
                 run_git(repo_dir, "fetch", "--prune", mirror, branch)
-                run_git(repo_dir, "push", "--force-with-lease", mirror, branch)
+                uniq = run_git(repo_dir, "rev-list", "--count", f"{branch}..{mirror}/{branch}")
+                try:
+                    mirror_only = int((uniq.stdout or "").strip())
+                except ValueError:
+                    mirror_only = -1
+                if mirror_only > 0:
+                    mirror_notes.append(t(
+                        "mirror {mirror} diverged with {count} unique commit(s); NOT overwritten "
+                        "(primary is safe) -- merge them by hand, then retry",
+                        mirror=mirror, count=mirror_only,
+                    ))
+                    continue
+                if mirror_only < 0:
+                    mirror_notes.append(t(
+                        "mirror {mirror} not updated (could not inspect divergence); primary is safe, retry later",
+                        mirror=mirror,
+                    ))
+                    continue
+                m_res = run_git(repo_dir, "push", "--force-with-lease", mirror, branch)
+            if m_res.returncode != 0:
+                detail = (m_res.stderr or "").strip().splitlines()
+                mirror_notes.append(t(
+                    "mirror {mirror} not updated ({error}); primary is safe, retry the mirror later",
+                    mirror=mirror, error=detail[-1] if detail else f"exit {m_res.returncode}",
+                ))
 
     if committed or published:
-        return True, t("Published successfully")
+        base = t("Published successfully")
+        if mirror_notes:
+            return True, base + ": " + "; ".join(mirror_notes)
+        return True, base
+    if mirror_notes:
+        return True, "; ".join(mirror_notes)
     return True, t("Nothing to publish")

@@ -217,7 +217,7 @@ def add_server(
 
     try:
         data = load_mcp_manifest(path)  # type: ignore[arg-type]
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - render error is reported, never raises
         return 2, t("cannot read the manifest ({error}); fix it before adding", error=exc)
 
     if name in (data.get("servers") or {}):

@@ -44,7 +44,9 @@ class ClaudeRuntime(Runtime):
             return None
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError) as exc:
+        except (OSError, ValueError) as exc:
+            # ValueError covers both malformed JSON and undecodable bytes
+            # (UnicodeDecodeError): either way the file is unsafe to modify.
             raise GuardrailError(f"claude: {path} is not valid JSON ({exc})") from exc
         if not isinstance(data, dict):
             raise GuardrailError(f"claude: the root of {path} is not an object")
@@ -66,7 +68,8 @@ class ClaudeRuntime(Runtime):
             return None
         if not data:
             return None
-        mode = (data.get("permissions") or {}).get("defaultMode")
+        perms = data.get("permissions")
+        mode = perms.get("defaultMode") if isinstance(perms, dict) else None
         return _CLAUDE_TO_POSTURE.get(mode)
 
     def apply_posture(self, home: Path, posture: str) -> str | None:
@@ -107,13 +110,34 @@ class ClaudeRuntime(Runtime):
         entries = hooks.setdefault("PreToolUse", [])
         if not isinstance(entries, list):
             raise GuardrailError("claude: settings.hooks.PreToolUse is not a list")
+        # Match on the full spec, not the command alone: an entry with our
+        # command but a stale timeout/matcher would otherwise be kept
+        # forever ("already registered" over a hook that no longer matches),
+        # while a mere quoting difference would duplicate and double-fire.
+        wanted = {"type": "command", "command": command, "timeout": 5}
+        spec_updated = False
+        for matcher in entries:
+            if not isinstance(matcher, dict):
+                continue
+            for h in matcher.get("hooks", []):
+                if isinstance(h, dict) and h.get("command") == command and h != wanted:
+                    h.clear()
+                    h.update(wanted)
+                    spec_updated = True
         already_registered = any(
-            h.get("command") == command
+            h == wanted
             for matcher in entries if isinstance(matcher, dict)
             for h in matcher.get("hooks", [])
         )
-        if already_registered:
+        if already_registered and not spec_updated:
             return f"claude: guardrail body updated in {dst}" if deployed else None
+        if spec_updated:
+            # A stale timeout/matcher with our command: repair the spec and
+            # persist it, instead of reporting "already registered" forever.
+            path = self._settings_path(home)
+            self.backup(path)
+            self.atomic_write(path, json.dumps(data, indent=2) + "\n")
+            return f"claude: guardrail hook spec updated in {path}"
 
         entries.append({
             "matcher": "Bash",

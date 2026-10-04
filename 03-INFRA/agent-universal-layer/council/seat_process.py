@@ -3,12 +3,14 @@
 Builds the per-CLI argv/stdin/env for a seat invocation, isolates the
 environment codex/agy/opencode run under (no application bearer tokens, and
 for codex/opencode no on-disk MCP manifest), and streams the subprocess's
-output with a deadline that distinguishes "never produced a line" (likely
-quota exhaustion) from "started, then hung mid-response".
+output with a deadline that distinguishes a silent client from a client
+that produced bytes but did not finish, even without a newline.
 """
 from __future__ import annotations
 
 import argparse
+import codecs
+import io
 import json
 import math
 import os
@@ -24,18 +26,22 @@ from routing import _windows_command_argv
 from session import (
     _force_stop_process_tree,
     _private_mkdir,
+    _proc_registry_epoch,
     _register_proc,
     _release_proc,
     _set_private_mode,
     _write_private_text,
+    redact_generated_output,
 )
 
 SUPPORTED_CLIS = ("opencode", "agy", "codex", "claude", "ollama")
 
-# agy: invoked via `agy --model <model> --disable-slash-commands --new-project --sandbox -p <prompt>`.
-# This guarantees stateless execution without loading workspace skills or reading historical memory.
+# agy: print mode reads the brief from stdin, outside the process argv.
+# Fresh-project and sandbox flags request the vendor's isolation posture;
+# tool and MCP restrictions remain asymmetric (see _build_seat_command).
 
 DEFAULT_SEAT_TIMEOUT_SECONDS = 300.0
+MAX_SEAT_OUTPUT_BYTES = 8 * 1024 * 1024
 RETRYABLE_SEAT_ERROR_KINDS = frozenset({
     "empty_response",
     "invocation",
@@ -52,6 +58,9 @@ OPENCODE_ATTACHED_PROMPT = (
 
 class SeatRunError(RuntimeError):
     def __init__(self, message: str, kind: str = "error") -> None:
+        # Diagnostics are provider output too. Sanitize before console,
+        # consultation transcripts or LangGraph checkpoints can retain them.
+        message, _ = redact_generated_output(message)
         super().__init__(message)
         self.kind = kind
 
@@ -74,6 +83,18 @@ class SeatInvocation:
 
 def _is_retryable_seat_error(error: SeatRunError) -> bool:
     return error.kind in RETRYABLE_SEAT_ERROR_KINDS
+
+
+def _usage_amount(value: object) -> float:
+    if isinstance(value, dict):
+        total = value.get("total")
+        if isinstance(total, (int, float)) and not isinstance(total, bool) and math.isfinite(total):
+            values = [total]
+        else:
+            values = value.values()
+    else:
+        values = [value]
+    return sum(v for v in values if isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v))
 
 
 def _parse_timeout_seconds(value: object) -> float:
@@ -125,8 +146,7 @@ def _effort_forwarding(seat: dict) -> tuple[list[str], str]:
     - codex: -c model_reasoning_effort=<v> verbatim.
     - opencode: --variant <v> verbatim (provider-specific, no fixed enum to
       validate against here -- see the long comment in _build_seat_command).
-    - agy: no reasoning-effort CLI flag exists at all (verified via
-      `agy --help`): never a flag, always the caveat on the label.
+    - agy: --effort <v> verbatim (low|medium|high|xhigh|max, per `agy --help`).
     - ollama: --think only documents low/medium/high (`ollama run --help`).
       xhigh/max (valid claude/codex tiers) are downmapped to --think high
       rather than dropped, with the label saying so. Anything else ollama
@@ -146,7 +166,7 @@ def _effort_forwarding(seat: dict) -> tuple[list[str], str]:
     if cli == "opencode":
         return ["--variant", str(effort)], label
     if cli == "agy":
-        if effort in ("low", "medium", "high"):
+        if effort in ("low", "medium", "high", "xhigh", "max"):
             return ["--effort", str(effort)], label
         return [], f"{label} (not applied: value not supported by agy)"
     if cli == "ollama":
@@ -331,15 +351,91 @@ def _feed_stdin(stream, prompt: str) -> None:
             pass
 
 
-def _drain_lines(stream, line_queue: queue.Queue[str | None]) -> None:
-    for line in stream:
-        line_queue.put(line)
-    line_queue.put(None)
+def _read_chunks(stream, activity: threading.Event):
+    """Observe bytes immediately; keep UTF-8 and universal newline semantics."""
+    buffered = getattr(stream, "buffer", None)
+    if buffered is None or not hasattr(buffered, "read1"):
+        for chunk in stream:
+            if chunk:
+                activity.set()
+                yield chunk
+        return
+    decoder = io.IncrementalNewlineDecoder(codecs.getincrementaldecoder("utf-8")("replace"), True)
+    while data := buffered.read1(4096):
+        activity.set()
+        yield decoder.decode(data)
+    yield decoder.decode(b"", final=True)
 
 
-def _drain_text(stream, sink: list[str]) -> None:
-    for line in stream:
-        sink.append(line)
+class _OutputCapture:
+    """One byte budget for both pipes, with bounded backpressure and wakeup."""
+
+    def __init__(self):
+        self.lines: queue.Queue[str | None] = queue.Queue(maxsize=256)
+        self.exceeded = threading.Event()
+        self.cancelled = threading.Event()
+        self._lock = threading.Lock()
+        self._bytes = 0
+
+    def consume(self, text: str) -> bool:
+        with self._lock:
+            self._bytes += len(text.encode("utf-8"))
+            if self._bytes <= MAX_SEAT_OUTPUT_BYTES and not self.cancelled.is_set():
+                return True
+            if self._bytes > MAX_SEAT_OUTPUT_BYTES:
+                self.exceeded.set()
+            self.cancelled.set()
+        try:
+            self.lines.put_nowait(None)
+        except queue.Full:
+            pass  # the consumer already has a line available and checks exceeded
+        return False
+
+    def put(self, line: str | None) -> None:
+        while not self.cancelled.is_set():
+            try:
+                self.lines.put(line, timeout=0.1)
+                return
+            except queue.Full:
+                continue
+
+
+def _output_limit(model: str) -> SeatRunError:
+    return SeatRunError(f"[council] seat '{model}' exceeded the output limit; no verdict for this round.", "output_limit")
+
+
+def _read_output_file(path: Path, model: str) -> str:
+    try:
+        with path.open("rb") as stream:
+            raw = stream.read(MAX_SEAT_OUTPUT_BYTES + 1)
+        if len(raw) > MAX_SEAT_OUTPUT_BYTES:
+            raise _output_limit(model)
+        return raw.decode("utf-8")
+    except (OSError, UnicodeError) as exc:
+        raise SeatRunError(f"[council] seat '{model}' result file is unreadable ({type(exc).__name__}).", "invalid_output") from exc
+
+
+def _drain_lines(stream, capture: _OutputCapture, activity: threading.Event) -> None:
+    pending = ""
+    try:
+        for chunk in _read_chunks(stream, activity):
+            if not capture.consume(chunk):
+                return
+            pending += chunk
+            while "\n" in pending:
+                line, _, pending = pending.partition("\n")
+                capture.put(line + "\n")
+        if pending:
+            capture.put(pending)
+    finally:
+        capture.put(None)
+
+
+def _drain_text(stream, sink: list[str], activity: threading.Event, capture: _OutputCapture) -> None:
+    for chunk in _read_chunks(stream, activity):
+        if not capture.consume(chunk):
+            return
+        sink.append(chunk)
 
 
 def _build_seat_command(seat: dict, prompt: str, session_dir: Path) -> SeatInvocation:
@@ -382,11 +478,9 @@ def _build_seat_command(seat: dict, prompt: str, session_dir: Path) -> SeatInvoc
       "run_command" tool specifically ("no network access... unless added
       explicitly by the user") — again shell/terminal-command scoped, not a
       documented MCP block. No ``--no-mcp``/``--tools`` equivalent flag
-      exists in ``agy --help``. Live verification of whether this also
-      blocks the CLI's own MCP tool calls was not possible during this
-      review (Antigravity subscription quota was exhausted on every model
-      tried); treat this CLI as prompt-only until someone confirms
-      otherwise live.
+      exists in ``agy --help``. The prompt travels on stdin with no
+      positional prompt (verified live 2026-10-04: print mode consumes
+      stdin, so the brief never appears in the process table).
     - ``opencode``: no CLI-level tool/MCP block exists at all. ``--pure``
       disables external *plugins*, a different subsystem from MCP servers.
       ``OPENCODE_CONFIG``/``OPENCODE_CONFIG_CONTENT`` were tested and found
@@ -436,15 +530,17 @@ def _build_seat_command(seat: dict, prompt: str, session_dir: Path) -> SeatInvoc
         )
     if cli == "agy":
         argv = [
-            "agy", "--model", model,
+            "agy", "--print", "--model", model,
             "--disable-slash-commands", "--new-project", "--sandbox",
         ]
         extra_argv, _label = _effort_forwarding(seat)
         argv.extend(extra_argv)
-        argv.extend(["-p", prompt])
+        # The prompt travels on stdin, never in argv: argv is visible in the
+        # process table, and Antigravity's print mode consumes stdin when no
+        # positional prompt is supplied. Same rule as every other seat.
         return SeatInvocation(
             argv,
-            None,
+            prompt,
             None,
             None,
             env=_isolated_seat_env(cli, session_dir),
@@ -477,12 +573,9 @@ def _build_seat_command(seat: dict, prompt: str, session_dir: Path) -> SeatInvoc
         os.close(fd)
         output_file = Path(tmp_name)
         # --skip-git-repo-check: codex exec refuses to start when its CWD is
-        # not a git repo / trusted directory, and the seat subprocess inherits
-        # whatever directory the user happened to run council from -- often
-        # not one (found on the first real multi-vendor run, 2026-07-13). The
-        # flag makes startup deterministic regardless of caller CWD. Safe here
-        # because the seat is read-only sandboxed and consumes only the piped
-        # prompt, never the surrounding directory.
+        # not a git repo / trusted directory. The seat runs with cwd below in
+        # the private session dir (never a repo), so the flag makes startup
+        # deterministic. Safe here because the seat is read-only sandboxed.
         argv = ["codex", "exec", "-", "-m", model, "--skip-git-repo-check"]
         # See _effort_forwarding: single source shared with _effort_label.
         extra_argv, _label = _effort_forwarding(seat)
@@ -494,6 +587,9 @@ def _build_seat_command(seat: dict, prompt: str, session_dir: Path) -> SeatInvoc
             output_file,
             None,
             env=_isolated_seat_env(cli, session_dir),
+            # Confined CWD: with -s read-only the seat may still READ, so it
+            # must not inherit the operator's checkout. Same as opencode.
+            cwd=session_dir,
         )
     if cli == "ollama":
         # --think <low|medium|high> is ollama's real reasoning-effort control
@@ -584,8 +680,12 @@ def run_seat(
     except ValueError as exc:
         raise SeatRunError(f"[council] invalid timeout for seat '{model}': {exc}.", "invalid_timeout") from exc
     timeout_label = _format_timeout_seconds(resolved_timeout_seconds)
+    registry_epoch = _proc_registry_epoch()
     invocation = _build_seat_command(seat, prompt, session_dir)
     stdin_writer: threading.Thread | None = None
+    stdout_reader: threading.Thread | None = None
+    stderr_reader: threading.Thread | None = None
+    capture: _OutputCapture | None = None
     proc_token = ""
     try:
         try:
@@ -605,13 +705,20 @@ def run_seat(
                 # agy, opencode). See _isolated_seat_env.
                 env=invocation.env,
                 cwd=invocation.cwd,
+                start_new_session=os.name == "posix",
             )
         except OSError as e:
             raise SeatRunError(f"[council] unable to invoke the seat: {e}", "invocation")
+        if os.name == "posix":
+            # This group belongs only to this invocation, including children
+            # that keep pipes open after their launcher exits.
+            proc._council_process_group = getattr(proc, "pid", None)
         # Registry token, not the single slot: parallel seats overlap, and
         # each release must free only its own process (one slot evicted the
         # other and a finish cleared both).
-        proc_token = _register_proc(proc)
+        proc_token = _register_proc(proc, registry_epoch)
+        if not proc_token:
+            raise SeatRunError(f"[council] seat '{model}' cancelled during invocation.", "cancelled")
 
         if invocation.stdin_text is not None:
             stdin_writer = threading.Thread(
@@ -621,27 +728,29 @@ def run_seat(
             )
             stdin_writer.start()
 
-        line_queue: queue.Queue[str | None] = queue.Queue()
+        capture = _OutputCapture()
+        line_queue = capture.lines
         stderr_lines: list[str] = []
-        stdout_reader = threading.Thread(target=_drain_lines, args=(proc.stdout, line_queue), daemon=True)
-        stderr_reader = threading.Thread(target=_drain_text, args=(proc.stderr, stderr_lines), daemon=True)
+        activity = threading.Event()
+        stdout_reader = threading.Thread(target=_drain_lines, args=(proc.stdout, capture, activity), daemon=True)
+        stderr_reader = threading.Thread(target=_drain_text, args=(proc.stderr, stderr_lines, activity, capture), daemon=True)
         stdout_reader.start()
         stderr_reader.start()
 
-        text_chunks = []
+        text_output = io.StringIO()
         usage = {}
-        got_any_line = False
         deadline = time.monotonic() + resolved_timeout_seconds
 
         while True:
+            if capture.exceeded.is_set():
+                raise _output_limit(model)
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 _force_stop_process_tree(proc)
-                if not got_any_line:
+                if not activity.is_set():
                     raise SeatRunError(
                         f"[council] seat '{model}' did not respond within {timeout_label}s "
-                        "without producing any output: likely subscription quota exhausted or a "
-                        "provider-side block (no diagnosable error from the client). Verify manually "
+                        "without producing any output: the client did not provide a diagnosable cause. Verify manually "
                         "before retrying.",
                         "no_output_timeout",
                     )
@@ -654,9 +763,10 @@ def run_seat(
                 line = line_queue.get(timeout=remaining)
             except queue.Empty:
                 continue
+            if capture.exceeded.is_set():
+                raise _output_limit(model)
             if line is None:
                 break
-            got_any_line = True
             if cli == "opencode":
                 stripped = line.strip()
                 if not stripped:
@@ -665,38 +775,34 @@ def run_seat(
                     event = json.loads(stripped)
                 except json.JSONDecodeError:
                     continue
+                if not isinstance(event, dict):
+                    continue
                 if event.get("type") == "error":
                     _force_stop_process_tree(proc)
                     raise SeatRunError(f"[council] error from seat: {event.get('error')}", "seat_error")
                 part = event.get("part") or {}
-                if event.get("type") == "text" and "text" in part:
-                    text_chunks.append(part["text"])
+                if not isinstance(part, dict):
+                    continue
+                if event.get("type") == "text" and isinstance(part.get("text"), str):
+                    text_output.write(part["text"])
                 if event.get("type") == "step_finish":
                     # Sum across steps: a step_finish carries the step's own
                     # tokens/cost, not the running total. Tokens may arrive
                     # as an int or as a breakdown dict ({input, output,
                     # total}) depending on the provider: normalize before
                     # summing (live bug found by the kimi seat, 2026-08-22).
-                    raw_tokens = part.get("tokens")
-                    if isinstance(raw_tokens, dict):
-                        raw_tokens = raw_tokens.get("total") or sum(v for v in raw_tokens.values() if isinstance(v, (int, float)))
-                    part_tokens = raw_tokens or 0
-                    raw_cost = part.get("cost")
-                    if isinstance(raw_cost, dict):
-                        raw_cost = raw_cost.get("total") or sum(v for v in raw_cost.values() if isinstance(v, (int, float)))
-                    part_cost = raw_cost or 0.0
                     usage = {
-                        "tokens": (usage.get("tokens") or 0) + part_tokens,
-                        "cost": (usage.get("cost") or 0.0) + part_cost,
+                        "tokens": usage.get("tokens", 0) + _usage_amount(part.get("tokens")),
+                        "cost": usage.get("cost", 0) + _usage_amount(part.get("cost")),
                     }
             else:
                 # Claude emits one JSON object; agy/codex/ollama emit plain
                 # text. For codex the authoritative answer arrives later from
                 # output_file; stdout is used only for liveness diagnostics.
-                text_chunks.append(line)
+                text_output.write(line)
 
-        stdout_reader.join(timeout=5)
-        stderr_reader.join(timeout=5)
+        if capture.exceeded.is_set():
+            raise _output_limit(model)
         # The streaming loop above is bounded by the seat timeout, but
         # proc.wait() here is not: a seat that closed its stdout (EOF) while
         # still running -- explicit fd close, or a child that inherited the
@@ -723,8 +829,19 @@ def run_seat(
         # truncated file on disk (2026-08-15 council-7, Opus 5).
         remaining = deadline - time.monotonic()
         _POST_EOF_GRACE = 10.0
+        wait_deadline = time.monotonic() + max(remaining, _POST_EOF_GRACE)
         try:
-            returncode = proc.wait(timeout=max(remaining, _POST_EOF_GRACE))
+            while True:
+                if capture.exceeded.is_set():
+                    raise _output_limit(model)
+                wait_remaining = wait_deadline - time.monotonic()
+                if wait_remaining <= 0:
+                    raise subprocess.TimeoutExpired(invocation.argv, _POST_EOF_GRACE)
+                try:
+                    returncode = proc.wait(timeout=min(wait_remaining, 0.1))
+                    break
+                except subprocess.TimeoutExpired:
+                    continue
         except subprocess.TimeoutExpired:
             hung = True
             _force_stop_process_tree(proc)
@@ -738,6 +855,13 @@ def run_seat(
                 returncode = proc.wait(timeout=10)
             except subprocess.TimeoutExpired:
                 returncode = None  # unkillable; sentinel outside the int space
+        if returncode is not None:
+            _force_stop_process_tree(proc)
+        reader_deadline = time.monotonic() + 5
+        for reader in (stdout_reader, stderr_reader):
+            reader.join(timeout=max(0.0, reader_deadline - time.monotonic()))
+        if capture.exceeded.is_set():
+            raise _output_limit(model)
         if hung:
             # The seat was killed, but its complete stdout answer may have
             # arrived before it hung (it closed stdout and lingered in
@@ -749,12 +873,14 @@ def run_seat(
             # Opus 5).
             if invocation.output_file is not None and invocation.output_file.is_file():
                 try:
-                    output_text = invocation.output_file.read_text(encoding="utf-8")
-                except (OSError, UnicodeDecodeError):
+                    output_text = _read_output_file(invocation.output_file, model)
+                except SeatRunError as exc:
+                    if exc.kind == "output_limit":
+                        raise
                     output_text = ""
                 if output_text.strip():
                     return output_text, usage
-            if text_chunks and invocation.output_file is None:
+            if text_output.tell() and invocation.output_file is None:
                 # stdout IS the answer only for CLIs without an output file
                 # (opencode/agy/ollama). codex writes the answer to
                 # output_file; its stdout is liveness noise ("codex
@@ -763,7 +889,7 @@ def run_seat(
                 # (2026-08-15 council-8, Opus 5).
                 if cli == "claude":
                     try:
-                        return _parse_claude_result("".join(text_chunks), model)
+                        return _parse_claude_result(text_output.getvalue(), model)
                     except SeatRunError:
                         # Output that does not parse as a claude verdict is
                         # not a usable answer from a hung seat: fall through
@@ -771,7 +897,7 @@ def run_seat(
                         # council-7, Opus 5).
                         pass
                 else:
-                    return "".join(text_chunks), usage
+                    return text_output.getvalue(), usage
             if returncode is None:
                 raise SeatRunError(
                     f"[council] seat '{model}' hung after closing its output and could not be "
@@ -787,23 +913,29 @@ def run_seat(
             raise SeatRunError(f"[council] the seat did not respond (exit {returncode}):\n{''.join(stderr_lines)}", "process_error")
 
         if invocation.output_file is not None:
-            output_text = invocation.output_file.read_text(encoding="utf-8") if invocation.output_file.is_file() else ""
+            output_text = _read_output_file(invocation.output_file, model) if invocation.output_file.is_file() else ""
             if not output_text.strip():
                 raise SeatRunError("[council] the seat responded but with no usable text (empty output).", "empty_response")
             return output_text, usage
 
-        if not text_chunks:
+        if not text_output.tell():
             raise SeatRunError("[council] the seat responded but with no usable text (empty output).", "empty_response")
         if cli == "claude":
-            return _parse_claude_result("".join(text_chunks), model)
-        return "".join(text_chunks), usage
+            return _parse_claude_result(text_output.getvalue(), model)
+        return text_output.getvalue(), usage
     finally:
+        if capture is not None:
+            capture.cancelled.set()
         # Release only this seat's token: the legacy single slot is no
         # longer touched here on purpose (parallel seats overlap).
         if proc_token:
+            if proc.poll() is None or getattr(proc, "_council_process_group", None) is not None:
+                _force_stop_process_tree(proc)
             _release_proc(proc_token)
-        if stdin_writer is not None:
-            stdin_writer.join(timeout=5)
+        cleanup_deadline = time.monotonic() + 5
+        for worker in (stdin_writer, stdout_reader, stderr_reader):
+            if worker is not None:
+                worker.join(timeout=max(0.0, cleanup_deadline - time.monotonic()))
         if invocation.output_file is not None:
             invocation.output_file.unlink(missing_ok=True)
         if invocation.input_file is not None:

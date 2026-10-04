@@ -13,6 +13,7 @@ from pathlib import Path
 import yaml
 
 from nexgen_core.i18n import t
+from nexgen_core.marks import safe_mark as _safe_mark
 from nexgen_core.paths import (
     remotes_config,
     resolve_engine_root,
@@ -115,14 +116,6 @@ def register(sub) -> None:
     p.set_defaults(func=cmd_bootstrap_alerts)
 
 
-def _safe_mark(mark: str, stream=sys.stdout) -> str:
-    try:
-        mark.encode(getattr(stream, "encoding", None) or "utf-8")
-        return mark
-    except (UnicodeEncodeError, TypeError):
-        return "[OK]" if mark == "✓" else "[X]" if mark == "✗" else "[!]"
-
-
 def _action_mark(act: str) -> tuple[str, str]:
     """The mark and the text for one action line, from its own prefix."""
     if act.startswith(("[ERROR]", "[ERRORE]")):
@@ -168,7 +161,7 @@ def cmd_plan(args) -> int:
             for action in plan.planned_actions:
                 print(f"  → {action}")
         else:
-            print(t("No drift: apply would change nothing."))
+            print(t("No drift in the probed domains (see 'not checked here' below for the rest)."))
         for line in plan.in_sync:
             print(t("  aligned: {line}", line=line))
         for line in plan.not_checked:

@@ -887,3 +887,14 @@ def test_draft_body_sees_every_collected_source(tmp_path: Path) -> None:
     assert llm.text_users, "il corpo deve passare dal modello"
     assert "fattura" in llm.text_users[0]
     assert "Contratto" in llm.text_users[0] or "clausole" in llm.text_users[0]
+
+
+def test_run_steps_zero_max_steps_does_not_crash(tmp_path: Path) -> None:
+    cfg = _cfg(tmp_path)
+    llm = ScriptedLLM()
+    tools = ToolRegistry(cfg)
+    res = run_steps(llm, tools, cfg, "compito vuoto", max_steps=0)
+    assert res.escalated is True
+    assert res.steps == 0
+    assert len(res.decisions) == 1
+    assert res.decisions[0].detail == "cap"

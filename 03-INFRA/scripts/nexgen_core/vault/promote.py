@@ -16,6 +16,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+from nexgen_core.files import atomic_write_text
 from nexgen_core.vault.coverage import BACKLOG_NOTE
 from nexgen_core.vault.git_utils import git
 
@@ -91,7 +92,8 @@ def append_backlog_line(vault: Path, record: dict) -> tuple[str, bool]:
     if existing and not existing.endswith("\n"):
         existing += "\n"
     note_path.parent.mkdir(parents=True, exist_ok=True)
-    note_path.write_text(existing + line, encoding="utf-8")
+    # Atomic: a crash mid-write must not truncate the vault's history note.
+    atomic_write_text(note_path, existing + line)
     return line, True
 
 
@@ -100,7 +102,9 @@ def commit_backlog(vault: Path, timestamp: str) -> str | None:
     status = git(vault, "status", "--porcelain", "--", BACKLOG_NOTE)
     if not status.strip():
         return None
-    git(vault, "commit", "-m", f"chore(groom): record run {timestamp}")
+    # Pathspec-scoped: a bare `git commit` would sweep in any other file the
+    # user already staged, mixing their work into the groom record commit.
+    git(vault, "commit", "--only", "-m", f"chore(groom): record run {timestamp}", "--", BACKLOG_NOTE)
     return git(vault, "rev-parse", "HEAD").strip()
 
 

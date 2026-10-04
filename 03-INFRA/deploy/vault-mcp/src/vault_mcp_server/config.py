@@ -124,7 +124,7 @@ class Settings:
             git_author_name=os.getenv("VAULT_GIT_AUTHOR_NAME", "Vault MCP").strip() or "Vault MCP",
             git_author_email=os.getenv("VAULT_GIT_AUTHOR_EMAIL", "vault-mcp@localhost").strip()
             or "vault-mcp@localhost",
-            host=os.getenv("MCP_HOST", "0.0.0.0"),
+            host=os.getenv("MCP_HOST", "127.0.0.1"),
             port=_get_int("MCP_PORT", 8080),
             mcp_path=_normalize_route(os.getenv("MCP_PATH", "/mcp")),
             health_path=_normalize_route(os.getenv("HEALTH_PATH", "/healthz")),

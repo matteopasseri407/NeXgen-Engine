@@ -33,6 +33,8 @@ Contract with the advisory reviews (Kimi, Opus 5):
 from __future__ import annotations
 
 import json
+import math
+import queue
 import os
 import re
 import signal
@@ -74,6 +76,36 @@ HINT_KEYS = ("readOnlyHint", "destructiveHint", "idempotentHint", "openWorldHint
 #: `resultType` is required on every result by 2026-07-28. Older clients pass
 #: unknown result fields through, so the same envelope serves both eras.
 RESULT_TYPE = "complete"
+MAX_REPLY_BYTES = 8 * 1024 * 1024
+TRANSPORT_ERROR = -32000
+
+
+class _TransportError(RuntimeError):
+    """A safe diagnostic, never the raw peer payload or exception message."""
+
+
+def _process_helpers():
+    scripts = str(Path(__file__).resolve().parents[2] / "scripts")
+    if scripts not in sys.path:
+        sys.path.insert(0, scripts)
+    from nexgen_core.processes import force_stop_process_tree, windows_command_argv
+    return force_stop_process_tree, windows_command_argv
+
+
+def _matching_reply(raw: bytes, rid: int) -> dict[str, Any] | None:
+    try:
+        reply = json.loads(raw)
+    except (ValueError, UnicodeError) as exc:
+        raise _TransportError("invalid JSON response") from exc
+    if not isinstance(reply, dict) or reply.get("jsonrpc") != "2.0":
+        raise _TransportError("invalid JSON-RPC response")
+    if "method" in reply or type(reply.get("id")) is not type(rid) or reply["id"] != rid:
+        return None  # notification, reverse request, or reply to another request
+    if ("result" in reply) == ("error" in reply):
+        raise _TransportError("response needs exactly one result or error")
+    if not isinstance(reply.get("result", reply.get("error")), dict):
+        raise _TransportError("response result or error must be an object")
+    return reply
 
 
 def _env_default(name: str, default: str = "") -> str:
@@ -237,6 +269,10 @@ class _ServerHandle:
         self.active_calls = 0
         self._init_done = False
         self._rid = 600
+        self._rpc_lock = threading.RLock()
+        self._modern_protocol = False
+        self._transport_failed = False
+        self._io_worker: threading.Thread | None = None
 
     def is_mutating(self, tool: str) -> bool:
         return not (self.readonly_server or tool in self.readonly_tools)
@@ -281,6 +317,8 @@ class _ServerHandle:
     def _start_stdio(self) -> None:
         if self.proc and self.proc.poll() is None:
             return
+        if self.proc is not None:
+            self.stop()  # descendants may still own pipes after their parent exits
         ctx = self._provision()
         if "error" in ctx:
             raise RuntimeError(ctx["error"])
@@ -296,92 +334,222 @@ class _ServerHandle:
             "stdin": subprocess.PIPE,
             "stdout": subprocess.PIPE,
             "stderr": subprocess.DEVNULL,
-            "text": True,
+            "text": False,
             "env": env,
         }
         if not is_win:
             kwargs["start_new_session"] = True
-        self.proc = subprocess.Popen(cmd, **kwargs)
+        _, command_argv = _process_helpers()
+        self.proc = subprocess.Popen(command_argv(cmd), **kwargs)
+        self._process_group = self.proc.pid if not is_win else None
         # A respawned process has not been initialized: the handshake state
         # belongs to the process, not to the handle.
         self._init_done = False
+        self._modern_protocol = False
+
+    def _request_params(self, method: str, params: dict[str, Any]) -> dict[str, Any]:
+        if not self._modern_protocol or method == "initialize":
+            return params
+        meta = params.get("_meta")
+        return {**params, "_meta": {
+            **(meta if isinstance(meta, dict) else {}),
+            "io.modelcontextprotocol/protocolVersion": PROTOCOL_VERSION,
+            "io.modelcontextprotocol/clientCapabilities": {},
+        }}
+
+    def _timeout(self, method: str) -> float:
+        key = "tool" if method == "tools/call" else "startup"
+        timeouts = self.spec.get("timeouts") or {}
+        value = timeouts.get(key, 90) if isinstance(timeouts, dict) else None
+        if isinstance(value, bool):
+            raise _TransportError("invalid declared timeout")
+        try:
+            timeout = float(value)
+        except (TypeError, ValueError) as exc:
+            raise _TransportError("invalid declared timeout") from exc
+        if not math.isfinite(timeout) or timeout <= 0:
+            raise _TransportError("invalid declared timeout")
+        return timeout
+
+    def _error(self, message: str) -> dict[str, Any]:
+        return {"error": {"code": TRANSPORT_ERROR, "message": f"{self.name}: {message}"}}
+
+    def _exchange(self, operation, timeout: float, *, stdio: bool) -> dict[str, Any]:
+        """Bound all pipe/socket I/O, including a blocked stdin write.
+
+        The worker never starts a process after cancellation. Provisioning
+        retains its own bounded contract; this deadline starts with RPC I/O.
+        No tool call is retried when its outcome becomes unknown.
+        """
+        cancelled = threading.Event()
+        deadline = time.monotonic() + timeout
+        completed: queue.Queue[dict[str, Any]] = queue.Queue(maxsize=1)
+
+        def run():
+            try:
+                result = operation(cancelled, deadline)
+            except _TransportError as exc:
+                result = self._error(str(exc))
+            except urllib.error.HTTPError as exc:
+                result = self._error(f"HTTP {exc.code}")
+            except TimeoutError:
+                result = self._error("RPC timeout; operation outcome may be unknown")
+            except Exception as exc:  # transport boundary, raw diagnostics may carry secrets
+                result = self._error(f"transport failed ({type(exc).__name__})")
+            completed.put(result)
+
+        worker = threading.Thread(target=run, daemon=True)
+        if stdio:
+            self._io_worker = worker
+        worker.start()
+        try:
+            result = completed.get(timeout=max(0.0, deadline - time.monotonic()))
+        except queue.Empty:
+            cancelled.set()
+            if stdio:
+                self.stop()
+            worker.join(timeout=0.2)
+            if stdio and not worker.is_alive():
+                self._close_pipes()
+            return self._error("RPC timeout; operation outcome may be unknown")
+        except BaseException:  # cancellation must also stop in-flight pipe I/O
+            cancelled.set()
+            if stdio:
+                self.stop()
+            worker.join(timeout=0.2)
+            raise
+        finally:
+            self.last_use = time.time()
+        if stdio and result.get("error", {}).get("code") == TRANSPORT_ERROR:
+            self.stop()  # malformed/partial transport cannot poison the next request
+        worker.join(timeout=0.2)
+        if stdio:
+            self._io_worker = None
+            if result.get("error", {}).get("code") == TRANSPORT_ERROR and not worker.is_alive():
+                self._close_pipes()
+        return result
 
     def _rpc_stdio(self, method: str, params: dict[str, Any], rid: int) -> dict[str, Any]:
         try:
+            timeout = self._timeout(method)
             self._start_stdio()
-        except Exception as exc:
-            return {"error": {"code": -32603, "message": f"failed to start {self.name}: {exc}"}}
-        payload = json.dumps({"jsonrpc": "2.0", "id": rid, "method": method, "params": params}) + "\n"
-        assert self.proc and self.proc.stdin
-        try:
-            self.proc.stdin.write(payload)
-            self.proc.stdin.flush()
-        except (BrokenPipeError, OSError) as exc:
-            return {"error": {"code": -32603, "message": f"{self.name} stdin error: {exc}"}}
-        deadline = time.time() + 90
-        buf = ""
-        while time.time() < deadline:
-            if self.proc.poll() is not None:
-                return {"error": {"code": -32603, "message": f"{self.name} process exited with code {self.proc.poll()}"}}
-            line = self.proc.stdout.readline() if self.proc.stdout else ""
-            if not line:
-                time.sleep(0.05)
-                continue
-            buf = line.strip()
-            if buf:
-                break
-        self.last_use = time.time()
-        try:
-            return json.loads(buf)
-        except Exception:
-            return {"error": {"code": -32603, "message": f"invalid response from {self.name}: {buf[:200]}"}}
+            params = self._request_params(method, params)
+            payload = (json.dumps({"jsonrpc": "2.0", "id": rid, "method": method, "params": params}) + "\n").encode("utf-8")
+        except _TransportError as exc:
+            return self._error(str(exc))
+        except Exception as exc:  # launch/serialization boundary, no raw environment values
+            return self._error(f"failed to start request ({type(exc).__name__})")
+        proc = self.proc
+        assert proc and proc.stdin and proc.stdout
+
+        def exchange(cancelled, deadline):
+            proc.stdin.write(payload)
+            proc.stdin.flush()
+            received = 0
+            while not cancelled.is_set() and time.monotonic() < deadline:
+                line = proc.stdout.readline(MAX_REPLY_BYTES + 1)
+                if not line:
+                    raise _TransportError("process output closed before a matching response")
+                received += len(line)
+                if received > MAX_REPLY_BYTES:
+                    raise _TransportError("response exceeds output limit")
+                if not line.strip():
+                    continue
+                reply = _matching_reply(line, rid)
+                if reply is not None:
+                    return reply
+            raise _TransportError("RPC timeout; operation outcome may be unknown")
+
+        return self._exchange(exchange, timeout, stdio=True)
 
     def _rpc_http(self, method: str, params: dict[str, Any], rid: int) -> dict[str, Any]:
-        url = self.spec["url"]
-        body = json.dumps({"jsonrpc": "2.0", "id": rid, "method": method, "params": params}).encode()
-        req = urllib.request.Request(url, data=body, headers={
-            "Content-Type": "application/json", "Accept": SSE_ACCEPT,
-        })
-        auth = self.spec.get("auth") or {}
-        auth_env = auth.get("env") if isinstance(auth, dict) else None
-        if auth_env and os.environ.get(auth_env):
-            req.add_header("Authorization", f"Bearer {os.environ[auth_env]}")
         try:
-            with urllib.request.urlopen(req, timeout=90) as resp:
-                raw = resp.read().decode()
-        except urllib.error.HTTPError as exc:
-            return {"error": {"code": exc.code, "message": f"{self.name}: HTTP {exc.code}"}}
-        except (urllib.error.URLError, OSError, TimeoutError) as exc:
-            return {"error": {"code": -32603, "message": f"{self.name} connection error: {exc}"}}
-        for line in raw.splitlines():
-            if line.startswith("data:"):
-                raw = line[5:].strip()
-                break
-        self.last_use = time.time()
-        try:
-            return json.loads(raw)
-        except Exception:
-            return {"error": {"code": -32603, "message": f"invalid response from {self.name}"}}
+            timeout = self._timeout(method)
+            params = self._request_params(method, params)
+            body = json.dumps({"jsonrpc": "2.0", "id": rid, "method": method, "params": params}).encode()
+            req = urllib.request.Request(self.spec["url"], data=body, headers={
+                "Content-Type": "application/json", "Accept": SSE_ACCEPT,
+            })
+            auth = self.spec.get("auth") or {}
+            auth_env = auth.get("env") if isinstance(auth, dict) else None
+            if auth_env and os.environ.get(auth_env):
+                req.add_header("Authorization", f"Bearer {os.environ[auth_env]}")
+        except _TransportError as exc:
+            return self._error(str(exc))
+        except Exception as exc:  # configuration boundary, URLs/headers stay private
+            return self._error(f"invalid HTTP request ({type(exc).__name__})")
+
+        def exchange(cancelled, deadline):
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                sse = "text/event-stream" in resp.headers.get("Content-Type", "").lower()
+                pending = bytearray()
+                event: list[bytes] = []
+                received = 0
+                while not cancelled.is_set() and time.monotonic() < deadline:
+                    # read1 returns available bytes rather than waiting for
+                    # EOF or a full buffer on an open SSE connection.
+                    chunk = resp.read1(65536)
+                    received += len(chunk)
+                    if received > MAX_REPLY_BYTES:
+                        raise _TransportError("response exceeds output limit")
+                    pending.extend(chunk)
+                    if sse:
+                        while b"\n" in pending:
+                            line, _, rest = pending.partition(b"\n")
+                            pending = bytearray(rest)
+                            line = line.rstrip(b"\r")
+                            if line.startswith(b"data:"):
+                                event.append(line[5:].lstrip(b" "))
+                            elif not line and event:
+                                reply = _matching_reply(b"\n".join(event), rid)
+                                event.clear()
+                                if reply is not None:
+                                    return reply
+                            if cancelled.is_set() or time.monotonic() >= deadline:
+                                raise _TransportError("RPC timeout; operation outcome may be unknown")
+                    if not chunk:
+                        if sse:
+                            if event:
+                                reply = _matching_reply(b"\n".join(event), rid)
+                                if reply is not None:
+                                    return reply
+                            raise _TransportError("HTTP stream closed before a matching response")
+                        reply = _matching_reply(bytes(pending), rid)
+                        if reply is None:
+                            raise _TransportError("HTTP response ID does not match request")
+                        return reply
+            raise _TransportError("RPC timeout; operation outcome may be unknown")
+
+        return self._exchange(exchange, timeout, stdio=False)
 
     def rpc(self, method: str, params: dict[str, Any], rid: int) -> dict[str, Any]:
-        if self.spec.get("url"):
-            return self._rpc_http(method, params, rid)
-        return self._rpc_stdio(method, params, rid)
+        with self._rpc_lock:
+            if self.spec.get("url"):
+                reply = self._rpc_http(method, params, rid)
+            else:
+                reply = self._rpc_stdio(method, params, rid)
+            self._transport_failed = reply.get("error", {}).get("code") == TRANSPORT_ERROR
+            return reply
 
     def _next_rid(self) -> int:
         self._rid += 1
         return self._rid
 
-    def _notify_stdio(self, method: str, params: dict[str, Any]) -> None:
-        """Fire-and-forget notification: no response is expected or read."""
-        if not self.proc or not self.proc.stdin:
-            return
-        payload = json.dumps({"jsonrpc": "2.0", "method": method, "params": params}) + "\n"
-        try:
-            self.proc.stdin.write(payload)
-            self.proc.stdin.flush()
-        except (BrokenPipeError, OSError):
-            pass
+    def _notify_stdio(self, method: str, params: dict[str, Any]) -> bool:
+        """Bound notification writes too, without waiting for a reply."""
+        proc = self.proc
+        if not proc or not proc.stdin:
+            return False
+        payload = (json.dumps({"jsonrpc": "2.0", "method": method, "params": params}) + "\n").encode()
+
+        def send(cancelled, deadline):
+            proc.stdin.write(payload)
+            proc.stdin.flush()
+            return {}
+
+        reply = self._exchange(send, self._timeout(method), stdio=True)
+        self._transport_failed = reply.get("error", {}).get("code") == TRANSPORT_ERROR
+        return "error" not in reply
 
     def _initialize_stdio(self) -> bool:
         """Open the MCP handshake with a legacy stdio server.
@@ -403,11 +571,16 @@ class _ServerHandle:
         }, self._next_rid())
         if "error" in resp or "result" not in resp:
             return False
-        self._notify_stdio("notifications/initialized", {})
+        if not self._notify_stdio("notifications/initialized", {}):
+            return False
         self._init_done = True
         return True
 
     def tools_list(self) -> list[dict[str, Any]]:
+        with self._rpc_lock:
+            return self._tools_list()
+
+    def _tools_list(self) -> list[dict[str, Any]]:
         if self.index is not None and time.time() - self.index_at < INDEX_TTL:
             return self.index
         # The first frame on a connection decides its protocol era
@@ -420,11 +593,15 @@ class _ServerHandle:
         # included); the envelope is tried only on a fresh spawn, for a
         # modern-only server.
         resp = self.rpc("tools/list", {}, 900 + zlib.crc32(self.name.encode()) % 100)
+        if resp.get("error", {}).get("code") == TRANSPORT_ERROR:
+            return []
         if ("error" in resp or "result" not in resp) and not self.spec.get("url"):
             # Handshake server (mcp SDK 1.x, custom servers): it refuses the
             # list until `initialize` has been honoured.
             if self._initialize_stdio():
                 resp = self.rpc("tools/list", {}, 900 + zlib.crc32(self.name.encode()) % 100)
+            if self._transport_failed:
+                return []
         if "error" in resp or "result" not in resp:
             # Modern-only server: respawn so the epoch-defining first frame is
             # a complete 2026-07-28 envelope. Both keys are required;
@@ -435,7 +612,16 @@ class _ServerHandle:
                 "io.modelcontextprotocol/clientCapabilities": {},
             }}
             resp = self.rpc("tools/list", modern, 900 + zlib.crc32(self.name.encode()) % 100)
-        tools = (resp.get("result") or {}).get("tools", [])
+            if "result" in resp:
+                self._modern_protocol = True
+        if "error" in resp or "result" not in resp:
+            # Error or malformed reply: report no tools WITHOUT caching.
+            # Caching the failure would wedge the server as "tool not found"
+            # for INDEX_TTL even after it recovers.
+            return []
+        tools = (resp.get("result") or {}).get("tools")
+        if not isinstance(tools, list) or any(not isinstance(tool, dict) for tool in tools):
+            return []  # malformed indexes are not cached as successful emptiness
         self.index = tools
         self.index_at = time.time()
         return tools
@@ -443,18 +629,34 @@ class _ServerHandle:
     def idle(self) -> bool:
         return bool(self.proc and self.proc.poll() is None and time.time() - self.last_use > IDLE_MS / 1000)
 
-    def stop(self) -> None:
-        if self.proc and self.proc.poll() is None:
+    def stop_if_idle(self) -> None:
+        # Index/load handshakes are RPCs too. The sweeper must not kill them
+        # just because Waiter.call's activity counter is zero.
+        if self._rpc_lock.acquire(blocking=False):
             try:
-                if sys.platform == "win32":
-                    self.proc.terminate()
-                else:
-                    os.killpg(self.proc.pid, signal.SIGKILL)
-            except (OSError, ProcessLookupError, AttributeError):
-                try:
-                    self.proc.kill()
-                except (OSError, ProcessLookupError):
-                    pass
+                if self.idle():
+                    self.stop()
+            finally:
+                self._rpc_lock.release()
+
+    def stop(self) -> None:
+        if self.proc is not None:
+            force_stop, _ = _process_helpers()
+            force_stop(self.proc, process_group=getattr(self, "_process_group", None))
+            self._process_group = None
+            self._init_done = False
+            if self._io_worker is None or not self._io_worker.is_alive():
+                self._close_pipes()
+
+    def _close_pipes(self) -> None:
+        if self.proc is not None:
+            for stream in (self.proc.stdin, self.proc.stdout, self.proc.stderr):
+                if stream is not None:
+                    try:
+                        stream.close()
+                    except OSError:
+                        pass
+
 
 
 class Waiter:
@@ -464,17 +666,38 @@ class Waiter:
         self.handles: dict[str, _ServerHandle] = {}
         self.loaded: set[tuple[str, str]] = set()
         self._rid = 1000
-        self._lock = threading.Lock()
+        self._lock = threading.RLock()
+        self._shutdown = threading.Event()
         self._sweeper = threading.Thread(target=self._sweep_loop, daemon=True)
         self._sweeper.start()
 
     def _sweep_loop(self) -> None:
-        while True:
-            time.sleep(30)
+        while not self._shutdown.wait(30):
             with self._lock:
                 for name, handle in list(self.handles.items()):
-                    if handle.active_calls == 0 and handle.idle():
-                        handle.stop()
+                    if handle.active_calls == 0:
+                        handle.stop_if_idle()
+
+    def shutdown(self) -> None:
+        """Request all owned process stops before waiting for any one server."""
+        self._shutdown.set()
+        with self._lock:
+            handles = list(self.handles.values())
+        workers = []
+
+        def stop(handle):
+            try:
+                handle.stop()
+            except Exception as exc:  # cleanup boundary, do not leak config/URLs
+                print(f"[lazy-mcp] cleanup failed for {handle.name} ({type(exc).__name__})", file=sys.stderr)
+
+        for handle in handles:
+            worker = threading.Thread(target=stop, args=(handle,), daemon=True)
+            worker.start()
+            workers.append(worker)
+        deadline = time.monotonic() + 5.0
+        for worker in workers:
+            worker.join(timeout=max(0.0, deadline - time.monotonic()))
 
     def _audit(self, server: str, tool: str, action: str, confirmed: bool = False) -> None:
         try:
@@ -493,6 +716,20 @@ class Waiter:
             if h is None:
                 h = _ServerHandle(name, spec)
                 self.handles[name] = h
+                return h
+            if h.spec != spec:
+                # Manifest changed under a live waiter (command/args/env/
+                # url/readonly/deps): the old handle would serve the stale
+                # config until process exit. Swap it; the old proc dies.
+                try:
+                    h.stop()
+                except Exception:
+                    pass
+                h = _ServerHandle(name, spec)
+                self.handles[name] = h
+                # A dropped spec may have renamed the tool surface: prior
+                # loads could authorize args against a stale schema.
+                self.loaded = {(s, t) for (s, t) in self.loaded if s != name}
             return h
 
     def index(self) -> dict[str, Any]:
@@ -504,7 +741,7 @@ class Waiter:
             tools = handle.tools_list()
             entries = []
             for t in tools:
-                desc = (t.get("description") or "").splitlines()[0][:100]
+                desc = (t.get("description") or "").split("\n", 1)[0][:100]
                 entry: dict[str, Any] = {"name": t.get("name", ""), "hint": desc}
                 annotations = t.get("annotations")
                 if isinstance(annotations, dict):
@@ -517,7 +754,7 @@ class Waiter:
                         entry["annotations"] = hints
                 entries.append(entry)
                 estimated += len(t.get("name", "")) // 4 + len(desc) // 4 + 2
-            result["servers"][name] = {"mutating": handle.readonly_server is False or bool(handle.readonly_tools), "tools": entries}
+            result["servers"][name] = {"mutating": not handle.readonly_server, "tools": entries}
         # Budget enforcement: over budget the index degrades to names only
         # (server granularity), so a bordello of servers cannot blow the
         # bootstrap with descriptions.
@@ -746,22 +983,32 @@ def _handle(req: dict[str, Any]) -> None:
 
 
 def main() -> int:
-    if FRAMING == "headers":
-        for line in sys.stdin:
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                req = json.loads(line)
-            except Exception:
-                continue
-            _handle(req)
-    return 0
+    previous = {}
+
+    def interrupted(signum, _frame):
+        raise SystemExit(128 + signum)
+
+    if threading.current_thread() is threading.main_thread():
+        for signum in (signal.SIGTERM, getattr(signal, "SIGBREAK", signal.SIGTERM)):
+            if signum not in previous:
+                previous[signum] = signal.signal(signum, interrupted)
+    try:
+        if FRAMING == "headers":
+            for line in sys.stdin:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    req = json.loads(line)
+                except (ValueError, UnicodeError):
+                    continue
+                _handle(req)
+        return 0
+    finally:
+        WAITER.shutdown()
+        for signum, handler in previous.items():
+            signal.signal(signum, handler)
 
 
 if __name__ == "__main__":
-    try:
-        sys.exit(main())
-    finally:
-        for handle in WAITER.handles.values():
-            handle.stop()
+    sys.exit(main())
