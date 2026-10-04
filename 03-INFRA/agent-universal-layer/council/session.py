@@ -21,6 +21,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from nexgen_core.files import write_private_text
+from nexgen_core.lock import HostLock, LockTimeoutError
 
 ENGINE_ROOT = Path(__file__).resolve().parent
 LEAK_SCAN_DIR = ENGINE_ROOT.parent / "leak-scan"
@@ -78,6 +79,31 @@ def _secure_session_tree(session_dir: Path) -> None:
     _set_private_mode(session_dir, 0o700)
 
 
+def _session_run_locked(session_dir: Path) -> bool:
+    """True when another process currently holds this session's run lock.
+
+    The relay run lock lives inside the deletable tree, so the TTL sweep
+    must consult it before rmtree: otherwise cleanup can wipe a resumable
+    session (checkpoints, transcripts, the lock itself) out from under a
+    holder that is resuming it right now.
+    """
+    lock_file = session_dir / "relay-run.lock"
+    if not lock_file.is_file():
+        return False
+    try:
+        lock = HostLock(lock_file, timeout=0, command_name="council clean")
+    except (OSError, ValueError):
+        return False
+    try:
+        lock.acquire()
+    except LockTimeoutError:
+        return True
+    except OSError:
+        return False
+    lock.release()
+    return False
+
+
 def _cleanup_sessions(ttl_days: int, *, remove_all: bool = False, announce: bool = False) -> int:
     if not SESSIONS_DIR.is_dir():
         return 0
@@ -93,6 +119,10 @@ def _cleanup_sessions(ttl_days: int, *, remove_all: bool = False, announce: bool
                 continue
             if mtime >= cutoff:
                 continue
+        if _session_run_locked(session_dir):
+            if announce:
+                print(f"[council] keeping {session_dir.name}: session is running")
+            continue
         try:
             shutil.rmtree(session_dir)
         except OSError as exc:

@@ -30,10 +30,8 @@ def test_agy_build_seat_command(tmp_path: Path) -> None:
         "--sandbox",
         "--effort",
         "high",
-        "-p",
-        "Test prompt text",
     ]
-    assert invocation.stdin_text is None
+    assert invocation.stdin_text == "Test prompt text"
     assert invocation.output_file is None
     assert "PATH" in invocation.env
 
