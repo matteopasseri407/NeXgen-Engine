@@ -584,11 +584,14 @@ def bump_batch(
         print(t("Nothing moved."))
         return 0
 
-    from nexgen_core.lock import EXIT_BUSY_MANUAL, HostLock, LockTimeoutError  # noqa: E402
+    from nexgen_core.lock import EXIT_BUSY_MANUAL, HostLock, LockTimeoutError, host_mutation  # noqa: E402
 
     try:
+        # The bump rewrites manifests and re-materializes skills, which is
+        # exactly what a guard cycle does: it takes the host lock too.
         with HostLock(lock_path=resolved_state / "third-party-bump.lock",
-                      timeout=30, command_name="third-party-bump"):
+                      timeout=30, command_name="third-party-bump"), \
+                host_mutation("third-party-bump", state_dir=resolved_state, timeout=30):
             bumps, notes, moved = apply_plan(raisable, resolved_vault, sync=sync,
                                           home=resolved_home)
             if moved:
@@ -698,11 +701,12 @@ def auto_apply(
         resolved_home = resolve_home(home)
         resolved_vault = resolve_vault_data(resolved_home, override=vault_data)
         resolved_state = resolve_state_dir(resolved_home, override=state_dir)
-        from nexgen_core.lock import HostLock, LockTimeoutError  # noqa: E402
+        from nexgen_core.lock import HostLock, LockTimeoutError, host_mutation  # noqa: E402
 
         try:
             with HostLock(lock_path=resolved_state / "third-party-bump.lock",
-                          timeout=30, command_name="third-party-bump"):
+                          timeout=30, command_name="third-party-bump"), \
+                    host_mutation("third-party-bump", state_dir=resolved_state, timeout=30):
                 bumps, notes, moved = apply_plan(auto, resolved_vault, sync=sync,
                                                  home=resolved_home)
                 errors = [n for n in notes if n.startswith("[ERROR]")]

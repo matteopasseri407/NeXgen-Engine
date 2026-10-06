@@ -64,6 +64,7 @@ from nexgen_core.checks.skill_checks import (  # noqa: E402 - sys.path shim for 
 )
 from nexgen_core.checks.takeover_checks import check_engine_version_recorded  # noqa: E402 - sys.path shim for cloned checkout
 from nexgen_core.i18n import t  # noqa: E402 - sys.path shim for cloned checkout
+from nexgen_core.lock import LockTimeoutError, host_mutation  # noqa: E402 - sys.path shim for cloned checkout
 from nexgen_core.paths import (  # noqa: E402 - sys.path shim for cloned checkout
     resolve_engine_root,
     resolve_home,
@@ -71,6 +72,9 @@ from nexgen_core.paths import (  # noqa: E402 - sys.path shim for cloned checkou
     resolve_vault_data,
 )
 from nexgen_core.report import CheckOutcome, Report, Severity  # noqa: E402 - sys.path shim for cloned checkout
+
+#: How long `doctor --fix` waits for the host lock before giving up on remedies.
+REMEDY_LOCK_WAIT_SECONDS = 10.0
 
 
 class Doctor:
@@ -91,6 +95,34 @@ class Doctor:
 
     def run_diagnostics(self, apply_remedies: bool = False) -> Report:
         """Runs every registered check (read-only by default).
+
+        With ``apply_remedies`` the whole run happens under the host lock: a
+        remedy rewrites generated configs and the skill library, which is what
+        a guard cycle does, and the two used to be free to interleave. If the
+        lock stays busy the checks still run, read-only, and say that the
+        remedies were skipped, instead of waiting behind a long cycle.
+        """
+        if not apply_remedies:
+            return self._diagnose(False)
+        lock = host_mutation("doctor-fix", state_dir=self.state_dir, timeout=REMEDY_LOCK_WAIT_SECONDS)
+        try:
+            lock.acquire()
+        except LockTimeoutError:
+            report = self._diagnose(False)
+            report.add(CheckOutcome(
+                id="doctor.fix.skipped",
+                severity=Severity.WARN,
+                message=t("Automatic remedies were skipped: another sync is running on this machine."),
+                action=t("Wait for it to finish, then run 'nexgen doctor --fix' again."),
+            ))
+            return report
+        try:
+            return self._diagnose(True)
+        finally:
+            lock.release()
+
+    def _diagnose(self, apply_remedies: bool) -> Report:
+        """The checks themselves (read-only unless ``apply_remedies``).
 
         Each check runs isolated: a check that raises becomes a finding of its
         own and the report goes on. The doctor exists to describe a damaged

@@ -499,7 +499,7 @@ def test_a_release_signed_by_a_stranger_is_refused_in_every_mode(tmp_path, keyri
 
     result = updater.main(flags, environ=_env(engine), input_fn=_no_prompt)
 
-    assert result == 1
+    assert result == updater.EXIT_REFUSED
     assert _git(engine, "rev-parse", "HEAD").stdout.strip() == before
     assert "not signed by a trusted release key" in capsys.readouterr().err
 

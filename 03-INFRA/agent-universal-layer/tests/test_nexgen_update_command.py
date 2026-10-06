@@ -92,6 +92,9 @@ def _env(engine: Path, data: Path | None = None) -> dict[str, str]:
         **os.environ,
         "AGENT_ENGINE_ROOT": str(engine / "03-INFRA"),
         "AGENT_VAULT_DATA": str(data or engine),
+        # The updater takes the host lock in the state directory it is given.
+        # Without this a test would lock the developer's real one.
+        "AGENT_STATE_DIR": str(engine.parent / "state"),
     }
 
 
@@ -137,7 +140,10 @@ def _bare_env(engine: Path, home: Path) -> dict[str, str]:
         for key, value in os.environ.items()
         if key not in {"AGENT_VAULT_DATA", "KNOWLEDGE_VAULT_PATH", "USERPROFILE"}
     }
-    env.update({"AGENT_ENGINE_ROOT": str(engine / "03-INFRA"), "HOME": str(home)})
+    env.update({
+        "AGENT_ENGINE_ROOT": str(engine / "03-INFRA"), "HOME": str(home),
+        "AGENT_STATE_DIR": str(engine.parent / "state"),
+    })
     return env
 
 
@@ -325,8 +331,9 @@ def test_wrong_or_foreign_release_signature_is_rejected(tmp_path, capsys, monkey
     before = _git(engine, "rev-parse", "HEAD").stdout.strip()
     monkeypatch.setattr(updater, "verify_release_tag", lambda *_a, **_k: updater.TagVerdict(status, "synthetic"))
 
-    assert updater.main(["--yes"], environ=_env(engine)) == 1
-    assert updater.main(["--check"], environ=_env(engine)) == 1
+    # 70, not the generic 1: the heartbeat turns it into an alert.
+    assert updater.main(["--yes"], environ=_env(engine)) == updater.EXIT_REFUSED == 70
+    assert updater.main(["--check"], environ=_env(engine)) == updater.EXIT_REFUSED
 
     assert _git(engine, "rev-parse", "HEAD").stdout.strip() == before
     assert "not signed by a trusted release key" in capsys.readouterr().err

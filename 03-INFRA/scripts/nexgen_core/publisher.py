@@ -23,7 +23,7 @@ from nexgen_core.git_ops import (  # noqa: E402 - sys.path shim for cloned check
     publish_changes,
     resolve_remotes,
 )
-from nexgen_core.lock import HostLock  # noqa: E402 - sys.path shim for cloned checkout
+from nexgen_core.lock import host_mutation  # noqa: E402 - sys.path shim for cloned checkout
 from nexgen_core.paths import resolve_vault_data  # noqa: E402 - sys.path shim for cloned checkout
 
 
@@ -41,7 +41,7 @@ class Publisher:
         timeout: float = 30.0
     ) -> tuple[int, str]:
         """Runs the full publication flow under lock."""
-        with HostLock(timeout=timeout, command_name="vault-push"):
+        with host_mutation("vault-push", timeout=timeout):
             auth_remote, mirrors = resolve_remotes(self.vault_data)
             # Same precedence as the checks: whoever forces the branch via
             # the environment variable also forces it for publishing.

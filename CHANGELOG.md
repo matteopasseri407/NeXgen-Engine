@@ -10,6 +10,43 @@ of any engine release.
 
 ## [Unreleased]
 
+### Security
+
+- `nexgen update` now verifies the release **tag** against signers pinned in
+  the copy that is already installed (`03-INFRA/agent-universal-layer/trust/`),
+  never against the release being installed. Before, it read the signature of
+  the commit a tag points at with whatever keys the machine happened to hold,
+  and only warned when it could not verify; for a release that is a GitHub merge
+  commit it verified GitHub. A wrong or unpinned signature is refused in every
+  mode; an unverifiable release warns interactively and is refused with
+  `--unattended`. Both OpenPGP and SSH signatures are supported, in a throwaway
+  keyring. See SECURITY.md.
+- The leak-scan recognizes GitHub fine-grained and server tokens, Anthropic and
+  OpenAI keys, age secret keys, Hugging Face, npm and Google API keys.
+
+### Fixed
+
+- The systemd units no longer grow: the guard builds the `PATH` it writes from
+  the home and deduplicates it, instead of prepending the same two directories
+  to a value it had itself written every 30 minutes. Both units also get a
+  `TimeoutStartSec`, which systemd leaves off for `Type=oneshot`, so a wedged run
+  is killed instead of holding the host lock forever.
+- One host lock for every path that changes the machine. The guard, `vault push`,
+  the unattended upgrade (around its merge), the pin bump and `doctor --fix` now
+  take the same lock; `AGENT_SYNC_LOCK_FILE` moves it for all of them, and
+  `XDG_STATE_HOME` no longer makes the guard and `vault push` lock different files.
+- An unattended update that fails after the merge is undone (engine, pin,
+  generated configs), remembered as rejected, and reported with exit code 71
+  (72 if the rollback itself fails) which the heartbeat turns into an alert.
+- `vault push` exits non-zero, naming the quarantine branch, when a diverged
+  commit was moved aside instead of reporting success.
+- `doctor` runs every check isolated: a crash or a corrupt manifest becomes a
+  finding naming the check instead of ending the report.
+- Writing through a symlink keeps the link (dotfile managers); `.sync/` and other
+  hidden directories are no longer classified as infrastructure; `agent-chrome
+  --heal` kills the stuck browser on Linux (`pkill` was given the profile pattern
+  as an option).
+
 ## [2.3.11] - 2026-10-04
 
 ### Fixed

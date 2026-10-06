@@ -40,7 +40,7 @@ from nexgen_core.git_ops import (
 )
 from nexgen_core.i18n import t
 from nexgen_core.jsonc import parse_jsonc, set_jsonc_top_level_value
-from nexgen_core.lock import HostLock, LockTimeoutError
+from nexgen_core.lock import LockTimeoutError, host_mutation
 from nexgen_core.paths import (
     resolve_engine_root,
     resolve_home,
@@ -435,10 +435,8 @@ class GuardRunner:
         actions: list[str] = []
 
         try:
-            with HostLock(
-                lock_path=self.state_dir / "agent-sync.lock",
-                is_guard=is_guard,
-                command_name=f"agent-sync-{mode.value}",
+            with host_mutation(
+                f"agent-sync-{mode.value}", state_dir=self.state_dir, is_guard=is_guard,
             ):
                 auth_remote, _ = resolve_remotes(self.vault_data)
                 branch = get_current_branch(self.vault_data) or "main"

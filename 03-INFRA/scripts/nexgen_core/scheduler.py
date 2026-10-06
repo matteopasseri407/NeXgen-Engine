@@ -26,6 +26,14 @@ from pathlib import Path
 IS_WINDOWS = sys.platform == "win32"
 HOST_MUTATIONS_DISABLED_ENV = "NEXGEN_DISABLE_HOST_MUTATIONS"
 
+# systemd turns the start timeout off for Type=oneshot unless it is set, so a
+# wedged run was never killed: it kept the host lock, and every later cycle
+# found the lock busy and exited 0 without doing anything. The guard's limit
+# stays under its 30-minute interval so two cycles can never overlap; the
+# heartbeat is longer because it also carries the unattended upgrade.
+GUARD_TIMEOUT_START = "25min"
+HEARTBEAT_TIMEOUT_START = "40min"
+
 _SYSTEMD_TIMER = """[Unit]
 Description=agent-sync guard every 30 minutes and shortly after login
 
@@ -129,6 +137,7 @@ def _systemd_service_content(home: Path, engine_root: Path, vault_data: Path, va
         "",
         "[Service]",
         "Type=oneshot",
+        f"TimeoutStartSec={GUARD_TIMEOUT_START}",
     ]
     default_engine_root = (vault / "03-INFRA").resolve()
     if engine_root.resolve() != default_engine_root:
@@ -147,6 +156,7 @@ def _systemd_heartbeat_content(home: Path, engine_root: Path, vault_data: Path, 
         "",
         "[Service]",
         "Type=oneshot",
+        f"TimeoutStartSec={HEARTBEAT_TIMEOUT_START}",
     ]
     default_engine_root = (vault / "03-INFRA").resolve()
     if engine_root.resolve() != default_engine_root:

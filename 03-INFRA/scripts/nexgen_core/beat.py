@@ -30,7 +30,12 @@ from nexgen_core.paths import (
     resolve_state_dir,
     resolve_vault_data,
 )
-from nexgen_core.updater import EngineUpdater
+from nexgen_core.updater import (
+    EXIT_REFUSED as UPDATE_EXIT_REFUSED,
+    EXIT_ROLLBACK_FAILED as UPDATE_EXIT_ROLLBACK_FAILED,
+    EXIT_ROLLED_BACK as UPDATE_EXIT_ROLLED_BACK,
+    EngineUpdater,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -231,11 +236,44 @@ class Heartbeat:
                 **os.environ,
                 "AGENT_ENGINE_ROOT": str(self.engine_root),
                 "AGENT_VAULT_DATA": str(self.vault_data),
+                # The updater takes the host lock and keeps its rejected-release
+                # memory in this install's state directory, not the process's.
+                "AGENT_STATE_DIR": str(self.state_dir),
             }
             exit_code = EngineUpdater.main(["--unattended"], environ=environ)
+            self._alert_on_update_outcome(exit_code)
             return {"ok": exit_code == 0, "exit_code": exit_code}
         except Exception as exc:  # noqa: BLE001 - failure is returned, never raises
             return {"ok": False, "error": str(exc)}
+
+    def _alert_on_update_outcome(self, exit_code: int) -> None:
+        """Tells the person about the three update outcomes that need them.
+
+        Other non-zero codes are the quiet kind (a release that cannot be
+        verified, a busy lock, a jump the ceiling declines): they come back
+        every hour by design and would only train people to ignore the alert.
+        """
+        if exit_code == UPDATE_EXIT_REFUSED:
+            title = t("An update was refused")
+            message = t("A new release is not signed by a key this install trusts, so nothing was installed.")
+            action = t("Run 'nexgen-update --check' and look at the release before doing anything else.")
+            key = "update_refused"
+        elif exit_code == UPDATE_EXIT_ROLLED_BACK:
+            title = t("An automatic update failed and was undone")
+            message = t("The machine is back on the version that worked. That release is skipped until you update by hand.")
+            action = t("Run 'nexgen-update' interactively to see why it failed.")
+            key = "update_rolled_back"
+        elif exit_code == UPDATE_EXIT_ROLLBACK_FAILED:
+            title = t("An automatic update failed and could not be undone")
+            message = t("The engine may be half-updated. It was left as it is.")
+            action = t("Run 'nexgen doctor --summary' and follow the recovery printed by 'nexgen-update'.")
+            key = "update_rollback_failed"
+        else:
+            return
+        try:
+            self.megaphone.send_alert(title=title, message=message, action=action, alert_key=key)
+        except Exception as exc:  # noqa: BLE001 - an alert that fails must not fail the beat
+            logger.debug("update alert not sent (%s)", type(exc).__name__)
 
     def run_beat(self) -> dict[str, Any]:
         """Runs the full heartbeat cycle: the liveness question, then the two

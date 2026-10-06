@@ -76,14 +76,20 @@ runs regularly without holding the guard's lock.
 
 ### The self-upgrader
 Takes a released upgrade without asking and says nothing about it. Refuses on a
-dirty tree, refuses a bad signature, and only considers a tag that exists as a
-published release. Has a ceiling on how large a jump it may take unattended,
-defaulting to the smallest, because a machine that changes its own behaviour
-overnight changed it without anyone choosing that. Speaks only when it cannot
-do the work, and a failed attempt must name the recovery, not the check.
+dirty tree, and only considers a tag that exists as a published release. Has a
+ceiling on how large a jump it may take unattended, defaulting to the smallest,
+because a machine that changes its own behaviour overnight changed it without
+anyone choosing that. Speaks only when it cannot do the work, and a failed
+attempt must name the recovery, not the check.
 
-Signature enforcement belongs to the release process.
-The client currently warns on an unverifiable signature and continues; this remains a gap against the contract above.
+It verifies the release tag against the signers pinned in the copy that is
+already installed (SECURITY.md, "What an installed copy verifies"). A wrong
+signature, or one by a key that is not pinned, is refused in every mode; a
+release that cannot be verified at all is refused when nobody is there to read
+the warning. The merge happens under the host lock, and an unattended update
+that fails after the engine moved is undone on the spot and remembered as
+rejected, so it is neither left half-applied nor retried every hour. The
+interactive command never undoes anything by itself: a person is there to look.
 
 ### The dependency watch
 Looks upstream for every pinned third-party thing the layer declares: code

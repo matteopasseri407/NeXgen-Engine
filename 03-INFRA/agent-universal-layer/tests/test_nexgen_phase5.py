@@ -219,7 +219,10 @@ def _upgrade_fixture(tmp_path: Path, first: str, second: str) -> tuple[Path, Pat
 
 
 def _env(engine: Path) -> dict[str, str]:
-    return {**os.environ, "AGENT_ENGINE_ROOT": str(engine / "03-INFRA"), "AGENT_VAULT_DATA": str(engine)}
+    return {
+        **os.environ, "AGENT_ENGINE_ROOT": str(engine / "03-INFRA"), "AGENT_VAULT_DATA": str(engine),
+        "AGENT_STATE_DIR": str(engine.parent / "state"),  # never the developer's real lock
+    }
 
 
 def _load_updater():
