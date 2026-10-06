@@ -186,6 +186,15 @@ of any engine release.
   for it among the things that were off) and that every command the engine generated points at an
   engine that still exists (`host.launchers`).
 - The lint baseline was regenerated to lock in the findings fixed so far (47 -> 28 groups, none added).
+- The Google connectors no longer ship the author's OAuth client id as a default. Every install
+  would have logged in through one person's Google Cloud project (his consent screen, quota and
+  revocation switch). The client is now the user's own (`WORKSPACE_GOOGLE_CLIENT_ID`, environment or the
+  machine-local `env` file); without it a refresh says exactly what to set, and `doctor` reports the lane
+  as unconfigured. The leak-scan allowlist entries that exempted that id are gone, and a test fails the
+  build if a Google client id is committed again.
+- `doctor` compares the Vault's copy of the leak-scan patterns with the engine's
+  (`security.leak_patterns_twin`): the two had drifted once, leaving the maintainer's push gate weaker
+  than CI's.
 
 ## [2.3.11] - 2026-10-04
 

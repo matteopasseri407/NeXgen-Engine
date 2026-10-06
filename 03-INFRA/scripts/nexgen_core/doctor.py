@@ -50,6 +50,7 @@ from nexgen_core.checks.mcp_checks import (  # noqa: E402 - sys.path shim for cl
 from nexgen_core.checks.module_checks import check_modules_catalog, check_modules_ready  # noqa: E402 - sys.path shim for cloned checkout
 from nexgen_core.checks.reachability_checks import check_mcp_reachability  # noqa: E402 - sys.path shim for cloned checkout
 from nexgen_core.checks.security_checks import (  # noqa: E402 - sys.path shim for cloned checkout
+    check_leak_patterns_twin,
     check_required_rules,
     check_secrets_materialized,
     check_tokens_in_env,
@@ -218,6 +219,7 @@ class Doctor:
             run("bootstrap.rules_guard", lambda: check_required_rules(vault, self.engine_root))
             run("env.tokens_in_env", lambda: check_tokens_in_env(vault))
             run("security.secrets_materialized", lambda: check_secrets_materialized(home, vault))
+            run("security.leak_patterns_twin", lambda: check_leak_patterns_twin(vault, self.engine_root))
 
             # 7. Canonical instructions and bootstrap hygiene
             run("instructions.canonical_present", lambda: check_canonical_instructions_present(vault))

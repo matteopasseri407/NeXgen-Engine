@@ -1042,4 +1042,12 @@ MESSAGES: dict[str, str] = {
         "Esegui 'nexgen init' dall'engine che vuoi usare: riscrive tutti i launcher.",
     'Every engine command points at an engine that exists ({count} checked)':
         "Ogni comando dell'engine punta a un engine che esiste ({count} controllati)",
+    'The leak-scan pattern copies could not be compared: {error}':
+        'Non è stato possibile confrontare le copie dei pattern anti-leak: {error}',
+    "The Vault's leak-scan patterns match the engine's":
+        "I pattern anti-leak del Vault coincidono con quelli dell'engine",
+    "The Vault's copy of the leak-scan patterns differs from the engine's, so its push gate may be weaker than CI's.":
+        "La copia dei pattern anti-leak nel Vault è diversa da quella dell'engine: il suo cancello di push può essere più debole di quello della CI.",
+    'Copy {source} over {twin}, then commit it in the Vault.':
+        'Copia {source} sopra {twin}, poi fai il commit nel Vault.',
 }

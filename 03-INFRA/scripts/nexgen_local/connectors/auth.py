@@ -7,7 +7,8 @@ machine-local 0600 ``env`` file next to the tokens. Overrides via
 ``WORKSPACE_MCP_TOKEN_DIR``.
 
 Never opens a browser: without a refresh token this raises ``NeedsLogin``
-with the exact one-time step. Silent refresh only.
+with the exact one-time step. Silent refresh only. The OAuth client is yours: nothing here
+ships a default one (see ``client_id``).
 """
 
 from __future__ import annotations
@@ -22,11 +23,6 @@ from typing import Any
 from . import token_store
 
 TOKEN_URL = "https://oauth2.googleapis.com/token"
-
-#: Public identifier of the Google Cloud OAuth client (project
-#: ``my-n8n-calendar-sync``). Not a secret; overridable per machine.
-DEFAULT_CLIENT_ID = "684887243833-d5ufr6sb9boq08figiq51eapsfqu412e.apps.googleusercontent.com"
-
 
 class ConnectorError(RuntimeError):
     """A connector failure, carrying the lane refusal string."""
@@ -64,7 +60,10 @@ def token_file() -> Path:
 
 def status() -> tuple[bool, str]:
     """Doctor helper: configured or not, without touching the network."""
-    return token_store.token_status(token_file(), "serve il login una tantum")
+    ok, detail = token_store.token_status(token_file(), "serve il login una tantum")
+    if ok and not client_id():
+        return False, "manca WORKSPACE_GOOGLE_CLIENT_ID (il tuo client OAuth: nessun client condiviso e' incluso)"
+    return ok, detail
 
 
 def _machine_env(name: str) -> str:
@@ -72,7 +71,11 @@ def _machine_env(name: str) -> str:
 
 
 def client_id() -> str:
-    return _machine_env("WORKSPACE_GOOGLE_CLIENT_ID") or DEFAULT_CLIENT_ID
+    """Your own Google OAuth client. There is deliberately no default: a client id shipped in a public
+    repository would route every install's login through its author's Google Cloud project (his consent
+    screen, his quota, his revocation switch). Create one in your own project and set
+    ``WORKSPACE_GOOGLE_CLIENT_ID`` (environment or the machine-local ``env`` file)."""
+    return _machine_env("WORKSPACE_GOOGLE_CLIENT_ID")
 
 
 def client_secret() -> str:
@@ -89,6 +92,11 @@ def save_tokens(data: dict[str, Any]) -> None:
 
 def refresh_tokens(tokens: dict[str, Any], http: HttpFn | None = None) -> dict[str, Any]:
     """Exchange the refresh token for a fresh access token; persists it."""
+    if not client_id():
+        raise AuthError(
+            "(manca il client OAuth Google: crea il tuo nel tuo progetto Google Cloud e imposta "
+            "WORKSPACE_GOOGLE_CLIENT_ID, nell'ambiente o nel file env accanto ai token)"
+        )
     fields = {
         "client_id": client_id(),
         "grant_type": "refresh_token",

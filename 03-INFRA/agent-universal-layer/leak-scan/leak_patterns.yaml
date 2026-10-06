@@ -123,13 +123,6 @@ leak_allow:
   # Scadenza finta lontana nei test dei connettori (tokens.json fasullo):
   # valore letterale unico, non un id reale.
   - '^9999999999$'
-  # Client ID OAuth Google (apps.googleusercontent.com): identificatore
-  # pubblico per disegno (finisce negli URL di login), non un segreto.
-  # Il client SECRET non ha questa forma e resta proibito.
-  - "[0-9]+-[A-Za-z0-9_-]+\\.apps\\.googleusercontent\\.com"
-  # Numero di progetto GCP dentro quel client ID (auth.py): stesso
-  # identificatore pubblico, flagged a parte dal pattern numerico.
-  - '^684887243833$'
   # Una data di calendario: "sette o piu' cifre" la prende, ma un timbro
   # AAAAMMGG non e' un segreto.
   - \b20\d{2}(?:0[1-9]|1[0-2])(?:0[1-9]|[12]\d|3[01])\b

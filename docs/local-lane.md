@@ -194,7 +194,9 @@ with the lane's receipt and outcome contract. No MCP server, no new dependency.
   `drive_mcp.py`, workflows in `workflows.py`).
 - Auth reuses `~/.config/nexgen-workspace-mcp/tokens.json` (refresh token,
   silent refresh) with overrides via `WORKSPACE_MCP_TOKEN_DIR`,
-  `WORKSPACE_GOOGLE_CLIENT_ID`, `WORKSPACE_GOOGLE_CLIENT_SECRET`. Outlook has
+  `WORKSPACE_GOOGLE_CLIENT_ID`, `WORKSPACE_GOOGLE_CLIENT_SECRET`. The OAuth client is
+  yours: create one in your own Google Cloud project and set its id there; the engine
+  ships none, so no install logs in through someone else's project. Outlook has
   its own store (`~/.config/nexgen-outlook/`, overrides `OUTLOOK_TOKEN_DIR`,
   `OUTLOOK_CLIENT_ID`, `OUTLOOK_TENANT_ID`, `OUTLOOK_CLIENT_SECRET`) and needs
   an Entra app registration first — that interactive step is the owner's, the
