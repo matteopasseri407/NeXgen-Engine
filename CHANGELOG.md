@@ -181,6 +181,11 @@ of any engine release.
 - `bootstrap.render` looked up `sys.stdout` when it was defined instead of when it was called, which
   made `test_init_local_on_a_second_run_fills_nothing_again` fail whenever it ran after a test that
   replaced stdout.
+- `doctor` checks two things everything else depends on: that the guard and heartbeat timers are
+  enabled and running (`host.timers`; written-but-off timers left a machine untended with the alarm
+  for it among the things that were off) and that every command the engine generated points at an
+  engine that still exists (`host.launchers`).
+- The lint baseline was regenerated to lock in the findings fixed so far (47 -> 28 groups, none added).
 
 ## [2.3.11] - 2026-10-04
 

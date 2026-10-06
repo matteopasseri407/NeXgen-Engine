@@ -66,6 +66,7 @@ from nexgen_core.checks.skill_checks import (  # noqa: E402 - sys.path shim for 
     check_skills_pin_freshness,
 )
 from nexgen_core.checks.guardrail_checks import check_guardrail_consulted  # noqa: E402 - sys.path shim for cloned checkout
+from nexgen_core.checks.host_checks import check_launchers, check_timers_armed  # noqa: E402 - sys.path shim for cloned checkout
 from nexgen_core.checks.runtime_checks import check_engine_runtime  # noqa: E402 - sys.path shim for cloned checkout
 from nexgen_core.checks.takeover_checks import (  # noqa: E402 - sys.path shim for cloned checkout
     check_engine_version_recorded,
@@ -167,6 +168,8 @@ class Doctor:
         run("env.vault_path", lambda: check_vault_path(vault))
         run("env.runtime", lambda: check_engine_runtime(home, self.engine_root))
         run("guardrail.consulted", lambda: check_guardrail_consulted(home))
+        run("host.timers", check_timers_armed)
+        run("host.launchers", lambda: check_launchers(home))
 
         # 1b. Which engine last completed a cycle here: the per-machine
         # answer to "are all my machines migrated?".

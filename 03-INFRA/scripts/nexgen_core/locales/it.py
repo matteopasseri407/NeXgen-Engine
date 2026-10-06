@@ -1024,4 +1024,22 @@ MESSAGES: dict[str, str] = {
         "Il Vault ha un remote che è il repository pubblico dell'engine: {remotes}",
     "Point it at your own private repository ('git remote set-url <name> <url>') or remove it ('git remote remove <name>'). Publishing is refused until then.":
         "Puntalo al tuo repository privato ('git remote set-url <nome> <url>') oppure toglilo ('git remote remove <nome>'). Fino ad allora la pubblicazione è rifiutata.",
+    'Scheduled-task state is checked on Linux/systemd only; not checked here.':
+        'Lo stato delle attività pianificate si controlla solo su Linux/systemd; qui non è stato controllato.',
+    'systemd is not available here (or host changes are disabled): the timers were not checked.':
+        'systemd non è disponibile qui (o le modifiche alla macchina sono disattivate): i timer non sono stati controllati.',
+    "The guard's timers are not running, so nothing tends this machine: {units}":
+        'I timer della guardia non girano, quindi nessuno si occupa di questa macchina: {units}',
+    "Run 'nexgen guard' once to write and enable them. On a machine with no login session, also: loginctl enable-linger $USER.":
+        "Esegui 'nexgen guard' una volta per scriverli e attivarli. Su una macchina senza sessione di login anche: loginctl enable-linger $USER.",
+    'The guard and heartbeat timers are enabled and running':
+        'I timer della guardia e del battito sono attivi e in funzione',
+    'No engine launchers found in {dir}; not checked.':
+        "Nessun launcher dell'engine trovato in {dir}; non controllato.",
+    'Some engine commands point at an engine that is no longer there: {commands}':
+        "Alcuni comandi dell'engine puntano a un engine che non c'è più: {commands}",
+    "Run 'nexgen init' from the engine you want to use: it rewrites every launcher.":
+        "Esegui 'nexgen init' dall'engine che vuoi usare: riscrive tutti i launcher.",
+    'Every engine command points at an engine that exists ({count} checked)':
+        "Ogni comando dell'engine punta a un engine che esiste ({count} controllati)",
 }
