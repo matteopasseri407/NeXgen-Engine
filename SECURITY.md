@@ -57,7 +57,7 @@ maintainer machine and verified with `git verify-tag`; both OpenPGP and SSH
 signature formats are accepted.
 
 From `v0.98.0` onward, `release.yml` requires an annotated tag containing a signature block.
-It checks the presence of the signature; cryptographic verification runs on a maintainer or auditor machine with the public key.
+It checks the presence of the signature, not who made it. Cryptographic verification happens where the keys are: on installed copies when they update (see below), and on a maintainer or auditor machine.
 
 Earlier tags are not a uniform baseline, and this section previously claimed
 they were. Verify before you trust one:
@@ -72,3 +72,48 @@ they were. Verify before you trust one:
 - Everything else from `v0.3.1` onward is signed.
 
 Unsigned tags after `v0.3.0` violate the release policy.
+
+### What an installed copy verifies
+
+`nexgen-update` verifies the **tag object** of the release it is about to
+install, not the commit the tag points at (for a release that commit is a merge
+made by GitHub, whose signature says nothing about the maintainer). The check
+is made against the signers pinned in `03-INFRA/agent-universal-layer/trust/`
+**of the copy that is already installed**, never of the release being
+installed: a release cannot vouch for itself. OpenPGP checks run in a throwaway
+keyring holding only the pinned keys, so the machine's own keyring is neither
+trusted nor changed.
+
+| Outcome | Meaning | Interactive | `--unattended` |
+| --- | --- | --- | --- |
+| verified | signed by a pinned key | installs | installs |
+| bad | the signature does not match the tag, or its key is revoked | refused | refused |
+| untrusted | a valid signature, by a key the install does not pin | refused | refused |
+| unverifiable | unsigned or lightweight tag, no anchor installed yet, `gpg`/`ssh-keygen` missing, pinned key expired | warns, you decide | refused |
+
+`--check` reports the same verdict and refuses `bad` and `untrusted` too.
+
+Pinned signers today (the keys that signed the `v2.x` releases):
+
+- OpenPGP `5D06 1CE9 626C 9CC8 BD88  761F 4399 A81E 895E B96F`
+- OpenPGP `6CD1 92BE 0A78 7F77 867F  3B9F 9115 22B8 F02F FA88`
+- SSH `SHA256:zCkqYfvAjmrD+kCDQ9Jp0plP8fV89mM+GfavKOmGvsA`
+
+What this does **not** cover, stated plainly:
+
+- A copy installed before `trust/` existed has no anchor. The update that first
+  brings `trust/` is still judged by the updater that was installed, which only
+  warned. The guarantee starts with the update after it.
+- A compromised maintainer key or maintainer machine. The anchor decides whose
+  signature counts; it cannot tell whether the signer was coerced or breached.
+- `release.yml` still only checks that a tag *carries* a signature block. Before
+  publishing, run
+  `python3 03-INFRA/scripts/nexgen_core/release_trust.py vX.Y.Z --trust-dir <trust/ of the previous release>`:
+  it exits non-zero if installed copies would refuse the tag.
+
+Changing a signer takes two releases: ship the new key in a release signed by a
+key that is already pinned, and only then sign with the new one. A release
+signed by a key no installed copy pins is refused by every machine, unattended
+or not. Keys also expire (the pinned OpenPGP ones in 2028): extend or replace them in a
+release made well before that date, because a copy that never received the
+extended key sees the signature as expired and treats it as unverifiable.

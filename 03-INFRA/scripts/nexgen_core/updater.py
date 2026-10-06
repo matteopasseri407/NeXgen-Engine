@@ -14,10 +14,15 @@ ceiling defaults to the smallest possible jump -- a patch release, same major
 and minor -- because a machine that changes its own behaviour overnight
 changed it without anyone choosing that. A minor or major release is refused
 with the interactive command to run by hand; the interactive path itself is
-unchanged and still has no ceiling. Truth in advertising: the bad-signature
-check below is real rejection (a provably invalid signature stops the update),
-but an *unverifiable* signature only prints a warning and continues -- that is
-not enforcement, and nothing here or in `--help` claims otherwise.
+unchanged and still has no ceiling.
+
+The release tag is verified against the trust anchor shipped in the *installed*
+tree (see ``release_trust``). A signature that is wrong or made by a key the
+install does not pin stops the update in every mode. A release that cannot be
+verified at all (no signature, no anchor, no gpg) is shown with a warning and
+left to the person at the prompt, but ``--unattended`` refuses it: nobody is
+there to read the warning, and an unattended update is exactly the path a
+stolen push token would use.
 """
 from __future__ import annotations
 
@@ -39,11 +44,10 @@ from nexgen_core.files import atomic_write_text  # noqa: E402
 from nexgen_core.i18n import t  # noqa: E402
 from nexgen_core.paths import resolve_home  # noqa: E402
 from nexgen_core.processes import force_stop_process_tree  # noqa: E402
+from nexgen_core.release_trust import BAD, UNTRUSTED, TagVerdict, verify_release_tag  # noqa: E402
 
 SEMVER = re.compile(r"^v?(\d+)\.(\d+)\.(\d+)$")
 CHANGELOG_HEADING = re.compile(r"^## \[(\d+\.\d+\.\d+)\].*$", re.MULTILINE)
-BAD_SIGNATURE_STATES = {"B", "R", "X", "Y"}
-UNVERIFIED_SIGNATURE_STATES = {"E", "N"}
 GIT_TIMEOUT_SECONDS = 120.0
 COMMAND_TIMEOUT_SECONDS = 600.0
 
@@ -325,11 +329,22 @@ def _commit_split_pin(
     _assert_clean(data_repo, label="data")
 
 
-def _signature_state(engine_repo: Path, target: str) -> str:
-    state = _git(engine_repo, "log", "-1", "--format=%G?", target).stdout.strip() or "N"
-    if state in BAD_SIGNATURE_STATES:
-        raise UpdateError(f"release commit for {target} has an invalid or expired signature (state {state})")
-    return state
+def _release_verdict(engine_repo: Path, target: str) -> TagVerdict:
+    """Verifies the release tag against the anchor in the installed tree.
+
+    A wrong or foreign signature is refused here, in every mode and for
+    ``--check`` too: reporting "update available" for a release that no
+    installed copy would accept is worse than saying so. What to do about a
+    release that cannot be verified at all is the caller's policy.
+    """
+    verdict = verify_release_tag(engine_repo, target)
+    if verdict.status in (BAD, UNTRUSTED):
+        raise UpdateError(
+            f"release {target} is not signed by a trusted release key: {verdict.detail}. "
+            "Nothing was installed. If this is a legitimate release, the maintainer has to publish "
+            "it with a key the installed copies pin (see SECURITY.md, 'Release signatures')"
+        )
+    return verdict
 
 
 def _doctor(entry: list[str], *, data_repo: Path) -> tuple[int | None, int]:
@@ -472,19 +487,25 @@ def main(
 
         print("\nRelease notes:\n")
         print(_changelog_between(engine_repo, current, target))
-        signature = _signature_state(engine_repo, target)
-        if signature in UNVERIFIED_SIGNATURE_STATES:
+        verdict = _release_verdict(engine_repo, target)
+        if verdict.ok:
+            print(f"\nRelease signature: verified ({verdict.detail}).")
+        else:
             print(
-                f"\nWARNING: this Git installation could not verify the release "
-                f"commit signature for {target} (state {signature}).",
+                f"\nWARNING: the signature of {target} could not be verified: {verdict.detail}.",
                 file=sys.stderr,
             )
-        else:
-            print(f"\nRelease commit signature state: {signature}.")
 
         if args.check:
             print("\nCheck only. No installed files or branch were changed.")
             return 0
+
+        if args.unattended and not verdict.ok:
+            raise UpdateError(
+                f"unattended update refuses {target}: its signature could not be verified "
+                f"({verdict.detail}); recover by running 'nexgen-update --target {target.removeprefix('v')}' "
+                "interactively once you have checked the release"
+            )
 
         _assert_attached_branch(engine_repo)
         _assert_clean(engine_repo, label="engine")
