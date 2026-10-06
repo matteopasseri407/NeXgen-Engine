@@ -132,7 +132,7 @@ def verify(python: Path, *, run: Runner = subprocess.run) -> list[str]:
         "    except (ImportError, ValueError):\n        return False\n"
         "print(','.join(m for m in mods if not has(m)))\n"
     )
-    proc = run([str(python), "-c", code], capture_output=True, text=True, timeout=STEP_TIMEOUT_SECONDS, check=False)
+    proc = run([str(python), "-c", code], capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=STEP_TIMEOUT_SECONDS, check=False)
     if proc.returncode != 0:
         raise RuntimeProvisionError(f"the provisioned interpreter does not run: {_tail(proc)}")
     return [m for m in proc.stdout.strip().split(",") if m]
@@ -160,7 +160,7 @@ def ensure_runtime(
         runtime_dir.parent.mkdir(parents=True, exist_ok=True)
         log(f"runtime: creating {runtime_dir}")
         made = run([base_python or sys.executable, "-m", "venv", "--clear", str(runtime_dir)],
-                   capture_output=True, text=True, timeout=STEP_TIMEOUT_SECONDS, check=False)
+                   capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=STEP_TIMEOUT_SECONDS, check=False)
         if made.returncode != 0:
             raise RuntimeProvisionError(
                 f"could not create the engine environment ({_tail(made)}). "
@@ -173,7 +173,7 @@ def ensure_runtime(
     installed = run(
         [str(python), "-m", "pip", "install", "--disable-pip-version-check", "--timeout", "30", "--retries", "2",
          *dependencies],
-        capture_output=True, text=True, timeout=PIP_TIMEOUT_SECONDS, check=False,
+        capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=PIP_TIMEOUT_SECONDS, check=False,
     )
     if installed.returncode != 0:
         raise RuntimeProvisionError(

@@ -160,7 +160,7 @@ def build_sync_plan(
     """Computes the plan. Read-only and network-free by construction."""
     home_dir = resolve_home(home)
     vault = resolve_vault_data(home_dir, vault_data)
-    resolve_engine_root(home_dir, engine_root)
+    engine = resolve_engine_root(home_dir, engine_root)
 
     plan = SyncPlan(
         engine_version=__version__,
@@ -173,7 +173,7 @@ def build_sync_plan(
         plan.branch = get_current_branch(vault)
         head = subprocess.run(
             ["git", "-C", str(vault), "rev-parse", "--short", "HEAD"],
-            capture_output=True, text=True, timeout=30, check=False,
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30, check=False,
         )
         if head.returncode == 0:
             plan.commit = head.stdout.strip()
@@ -194,7 +194,7 @@ def build_sync_plan(
         check_cli_instruction_pointers,
         check_opencode_instructions,
     )
-    from nexgen_core.checks.mcp_checks import check_mcp_configs_rendered, check_mcp_orphans
+    from nexgen_core.checks.mcp_checks import check_mcp_configs_rendered, check_mcp_content_drift, check_mcp_orphans
     from nexgen_core.checks.skill_checks import (
         check_engine_starter_views,
         check_skill_library_symlinks,
@@ -205,6 +205,7 @@ def build_sync_plan(
 
     probes: list[tuple[str, object]] = [
         ("mcp", lambda: check_mcp_configs_rendered(vault, home_dir)),
+        ("mcp", lambda: check_mcp_content_drift(vault, home_dir, engine)),
         ("mcp", lambda: check_mcp_orphans(vault, home_dir)),
         ("skills", lambda: check_skills_not_materialized(vault, home_dir)),
         ("skills", lambda: check_skills_pin_freshness(vault, home_dir)),

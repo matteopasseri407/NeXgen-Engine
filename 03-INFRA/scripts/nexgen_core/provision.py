@@ -193,7 +193,7 @@ def _run_build(build: list[Any], workspace: Path, server: str) -> None:
             raise ProvisionError(
                 t("build step '{cmd}' for server '{server}' needs '{bin}' on the machine.", cmd=" ".join(argv), server=server, bin=argv[0])
             )
-        proc = subprocess.run(argv, cwd=workspace, capture_output=True, text=True, timeout=600)
+        proc = subprocess.run(argv, cwd=workspace, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=600)
         if proc.returncode != 0:
             tail = (proc.stderr or proc.stdout).strip().splitlines()[-5:]
             raise ProvisionError(
@@ -266,23 +266,23 @@ def _provision_git(deps: dict[str, Any], state_dir: Path, server: str) -> dict[s
             if not shutil.which("git"):
                 raise ProvisionError(t("server '{server}' declares a git dependency but git is not on the machine.", server=server))
             proc = subprocess.run(
-                git + ["init", "-q"], cwd=clone, capture_output=True, text=True, timeout=60,
+                git + ["init", "-q"], cwd=clone, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60,
             )
             if proc.returncode != 0:
                 raise ProvisionError(t("git init failed for server '{server}': {err}", server=server, err=(proc.stderr or "").strip()))
             proc = subprocess.run(
-                git + ["remote", "add", "origin", repo], cwd=clone, capture_output=True, text=True, timeout=60,
+                git + ["remote", "add", "origin", repo], cwd=clone, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60,
             )
             if proc.returncode != 0:
                 raise ProvisionError(t("git remote add failed for server '{server}': {err}", server=server, err=(proc.stderr or "").strip()))
             proc = subprocess.run(
-                git + ["fetch", "--depth", "1", "origin", rev], cwd=clone, capture_output=True, text=True, timeout=600,
+                git + ["fetch", "--depth", "1", "origin", rev], cwd=clone, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=600,
             )
             if proc.returncode != 0:
                 raise ProvisionError(
                     t("could not fetch rev '{rev}' of '{repo}' for server '{server}': {err}", rev=rev, repo=repo, server=server, err=(proc.stderr or "").strip().splitlines()[-1])
                 )
-            proc = subprocess.run(git + ["checkout", "-q", "FETCH_HEAD"], cwd=clone, capture_output=True, text=True, timeout=60)
+            proc = subprocess.run(git + ["checkout", "-q", "FETCH_HEAD"], cwd=clone, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60)
             if proc.returncode != 0:
                 raise ProvisionError(t("git checkout failed for server '{server}': {err}", server=server, err=(proc.stderr or "").strip()))
             workspace = _run_workspace(clone, deps)

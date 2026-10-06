@@ -264,7 +264,7 @@ def commit_setup(vault_root: Path, paths: list[Path]) -> tuple[bool, str]:
     def git(*args: str) -> subprocess.CompletedProcess:
         return subprocess.run(
             ["git", "-C", str(vault_root), *args],
-            capture_output=True, text=True, timeout=60, check=False,
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60, check=False,
         )
 
     relative = [str(p.relative_to(vault_root)) for p in tracked]
@@ -298,7 +298,7 @@ def align_now(timeout: float = 900.0) -> tuple[bool, str]:
     try:
         result = subprocess.run(
             [sys.executable, str(entry), "sync", "apply"],
-            capture_output=True, text=True, timeout=timeout, check=False,
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=timeout, check=False,
         )
     except (subprocess.TimeoutExpired, OSError) as exc:
         return False, t("Alignment could not be run: {error}", error=exc)
@@ -318,7 +318,7 @@ def _git_remotes(vault_root: Path) -> list[str]:
         return []
     result = subprocess.run(
         ["git", "-C", str(vault_root), "remote"],
-        capture_output=True, text=True, timeout=30, check=False,
+        capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30, check=False,
     )
     return [line.strip() for line in result.stdout.splitlines() if line.strip()]
 

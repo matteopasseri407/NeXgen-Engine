@@ -174,7 +174,7 @@ def _preflight() -> int:
 
     tags = subprocess.run(
         ["git", "-C", str(repo), "tag", "--list", "--sort=-v:refname"],
-        capture_output=True, text=True, check=False, timeout=30,
+        capture_output=True, text=True, encoding="utf-8", errors="replace", check=False, timeout=30,
     ).stdout.split()
     if tags:
         newest = tags[0]
@@ -208,7 +208,7 @@ def _preflight() -> int:
 
     leaked = subprocess.run(
         ["git", "-C", str(repo), "grep", "-l", PRIVATE_MARKER],
-        capture_output=True, text=True, check=False, timeout=60,
+        capture_output=True, text=True, encoding="utf-8", errors="replace", check=False, timeout=60,
     ).stdout.split()
     if leaked:
         problems.append("private maintainer tooling reached the public tree: " + ", ".join(leaked))
@@ -217,7 +217,7 @@ def _preflight() -> int:
 
     baseline = subprocess.run(
         [sys.executable, str(repo / "03-INFRA" / "scripts" / "ruff_baseline_check.py")],
-        capture_output=True, text=True, check=False, timeout=300,
+        capture_output=True, text=True, encoding="utf-8", errors="replace", check=False, timeout=300,
     )
     if baseline.returncode != 0:
         problems.append("the lint gate does not pass; fix the findings rather than regenerating it")

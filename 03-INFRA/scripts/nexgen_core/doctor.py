@@ -39,7 +39,9 @@ from nexgen_core.checks.instructions_checks import (  # noqa: E402 - sys.path sh
     check_opencode_instructions,
 )
 from nexgen_core.checks.mcp_checks import (  # noqa: E402 - sys.path shim for cloned checkout
+    check_mcp_commands,
     check_mcp_configs_rendered,
+    check_mcp_content_drift,
     check_mcp_deps,
     check_mcp_manifest,
     check_mcp_orphans,
@@ -181,6 +183,8 @@ class Doctor:
             # 3. MCP checks
             run("mcp.manifest", lambda: check_mcp_manifest(manifest_mcp))
             run("mcp.rendered_configs", lambda: check_mcp_configs_rendered(vault, home))
+            run("mcp.rendered_content", lambda: check_mcp_content_drift(vault, home, self.engine_root))
+            run("mcp.commands", lambda: check_mcp_commands(vault, home))
             run("mcp.orphans", lambda: check_mcp_orphans(vault, home))
             run("mcp.reachability", lambda: check_mcp_reachability(vault, home))
             run("mcp.deps", lambda: check_mcp_deps(manifest_mcp, state))

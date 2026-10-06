@@ -262,7 +262,7 @@ class ToolRegistry:
             try:
                 if resolved.stat().st_size > MAX_SEARCH_BYTES:
                     continue
-                text = resolved.read_text(errors="replace").casefold()
+                text = resolved.read_text(encoding="utf-8", errors="replace").casefold()
             except OSError:
                 continue
             # The action loop searches with require_all: a generic word must
@@ -654,7 +654,8 @@ class ToolRegistry:
         root = default_engine_root()
         lines = [f"engine_root: {root}"]
         version_file = root / "VERSION"
-        lines.append(f"version: {version_file.read_text().strip() if version_file.is_file() else 'sconosciuta'}")
+        version = version_file.read_text(encoding="utf-8").strip() if version_file.is_file() else "sconosciuta"
+        lines.append(f"version: {version}")
         if shutil.which("git") and (root / ".git").exists():
             run = self._run(["git", "-C", str(root), "rev-parse", "--short", "HEAD"], timeout=15)
             head = run.out.strip() if run.ok else ""
@@ -667,7 +668,7 @@ class ToolRegistry:
     @staticmethod
     def _run(cmd: list[str], timeout: int) -> RunResult:
         try:
-            proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+            proc = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=timeout)
             return RunResult(proc.returncode, proc.stdout, proc.stderr)
         except (OSError, subprocess.SubprocessError) as exc:
             return RunResult(1, "", str(exc))

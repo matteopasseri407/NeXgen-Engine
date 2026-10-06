@@ -105,6 +105,23 @@ of any engine release.
   hidden directories are no longer classified as infrastructure; `agent-chrome
   --heal` kills the stuck browser on Linux (`pkill` was given the profile pattern
   as an option).
+- The per-CLI configuration writers no longer lose or rewrite what is not theirs:
+  Codex gets the manifest's timeouts for stdio servers too (they were only written
+  for HTTP ones, so Playwright ran on Codex's 10 s start-up default); `~/.claude.json`
+  is rewritten only when its servers actually change (Claude Code saves it in its own
+  format, and the engine rewrote it, backed it up and raced the CLI's own saves every
+  cycle for a whitespace difference); a real file at one of Antigravity's fan-out paths
+  is backed up and its servers carried into the canonical file instead of being
+  deleted, and the link is published atomically; a commented `opencode.json` is read
+  like the `.jsonc` one instead of aborting the render.
+- `doctor` and `nexgen plan` now say when `apply` would change what a CLI launches, not
+  only when a server name is missing (`mcp.rendered_content`; the renderer's own preview
+  produces the answer, so the two cannot disagree), and flag a stdio server whose
+  program is not installed (`mcp.commands`).
+- Every text read, write and captured subprocess output names its encoding. Windows with
+  a non-UTF-8 code page decoded git's UTF-8 output (accented note names) as mojibake,
+  and a byte the code page has no character for aborted the read. A scan test fails the
+  build on a new call without one.
 
 ## [2.3.11] - 2026-10-04
 

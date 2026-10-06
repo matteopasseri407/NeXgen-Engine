@@ -147,7 +147,7 @@ def _write_if_different(path: Path, content: str) -> bool | None:
 
 def _run_quiet(argv: list[str], timeout: int = 60) -> tuple[int, str]:
     try:
-        proc = subprocess.run(argv, capture_output=True, text=True, check=False, timeout=timeout)
+        proc = subprocess.run(argv, capture_output=True, text=True, encoding="utf-8", errors="replace", check=False, timeout=timeout)
         return proc.returncode, (proc.stdout or "") + (proc.stderr or "")
     except (OSError, subprocess.TimeoutExpired) as exc:
         return 1, str(exc)
@@ -494,7 +494,7 @@ def _publish_inventory() -> None:
             return
         proc = subprocess.run(
             [sys.executable, str(script), "--write", "--push"],
-            capture_output=True, text=True, check=False, timeout=280,
+            capture_output=True, text=True, encoding="utf-8", errors="replace", check=False, timeout=280,
         )
         if proc.returncode:
             print(f"[boot] inventario Governor non pubblicato (uscita {proc.returncode}). "
@@ -528,7 +528,7 @@ def _notify_passive_windows(message: str) -> None:
         probe = subprocess.run(
             ["powershell", "-NoProfile", "-Command",
              "Get-Module -ListAvailable -Name BurntToast | Select-Object -First 1"],
-            capture_output=True, text=True, check=False, timeout=30,
+            capture_output=True, text=True, encoding="utf-8", errors="replace", check=False, timeout=30,
         )
         if "BurntToast" not in (probe.stdout or ""):
             return

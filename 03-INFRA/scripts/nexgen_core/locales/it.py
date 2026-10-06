@@ -998,5 +998,20 @@ MESSAGES: dict[str, str] = {
     "Move the work to developer and run the engine test gate.": "Porta il lavoro su developer ed esegui il gate dei test dell'Engine.",
     "Engine checkout on developer; development commits and local edits are allowed.": "Checkout dell'Engine su developer; commit di sviluppo e modifiche locali sono consentiti.",
     "Engine branch check failed: {detail}": "Controllo del ramo Engine fallito: {detail}",
-
+    'settings outside the server list':
+        "impostazioni fuori dall'elenco dei server",
+    'Some CLI configurations no longer match what the manifest would write: {parts}':
+        'Alcune configurazioni delle CLI non coincidono più con quello che il manifest scriverebbe: {parts}',
+    "Run 'agent-sync apply' to regenerate them (the guard cycle does it on its own too).":
+        "Esegui 'agent-sync apply' per rigenerarle (lo fa da solo anche il ciclo di guardia).",
+    'Could not compare these CLI configurations with the manifest: {parts}':
+        'Impossibile confrontare queste configurazioni delle CLI con il manifest: {parts}',
+    'Every CLI configuration matches what the manifest would write':
+        'Ogni configurazione delle CLI coincide con quello che il manifest scriverebbe',
+    'Some MCP servers point at a program that is not installed here: {parts}':
+        'Alcuni server MCP puntano a un programma non installato su questa macchina: {parts}',
+    'Install the missing program, or disable the server in the manifest on this machine.':
+        'Installa il programma mancante, oppure disattiva il server nel manifest su questa macchina.',
+    'Every stdio MCP server has a program to start':
+        'Ogni server MCP locale ha un programma da avviare',
 }

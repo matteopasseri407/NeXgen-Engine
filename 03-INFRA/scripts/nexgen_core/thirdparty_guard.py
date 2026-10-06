@@ -76,7 +76,7 @@ class GuardFinding:
 def _run_git(args: list[str], cwd: Path) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         ["git", *args], cwd=str(cwd),
-        capture_output=True, text=True, check=False,
+        capture_output=True, text=True, encoding="utf-8", errors="replace", check=False,
         timeout=GIT_TIMEOUT_SECONDS,
     )
 

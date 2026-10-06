@@ -91,6 +91,30 @@ def atomic_write_text(path: Path, text: str, *, preserve_mode: bool = True, excl
         _retry_permission_error(lambda: tmp.unlink(missing_ok=True))
 
 
+def publish_symlink(link: Path, target: Path) -> None:
+    """Make `link` point at `target` without ever leaving it missing.
+
+    The link is built under a unique name beside the destination and renamed
+    over it, so a failure (no symlink privilege on Windows, a full disk)
+    leaves whatever was at `link` exactly as it was. Unlinking first and
+    linking afterwards left a window with nothing there, and no way back
+    when the second step failed. Raises OSError; the caller decides the
+    fallback (a copy).
+    """
+    link = Path(link)
+    link.parent.mkdir(parents=True, exist_ok=True)
+    fd, name = tempfile.mkstemp(prefix=f"{link.name}.", suffix=".lnk", dir=link.parent)
+    os.close(fd)
+    tmp = Path(name)
+    tmp.unlink()
+    try:
+        tmp.symlink_to(target)
+        _retry_permission_error(lambda: os.replace(tmp, link))
+    finally:
+        with contextlib.suppress(OSError):
+            tmp.unlink(missing_ok=True)
+
+
 def secure_artifact(directory: Path, path: Path | None = None) -> None:
     """Establish privacy before writing: 0700 directory, 0600 file on POSIX.
 

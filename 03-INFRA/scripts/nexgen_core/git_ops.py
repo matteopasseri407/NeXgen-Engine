@@ -215,7 +215,7 @@ def run_git(repo_dir: Path, *args: str, timeout: int = 30) -> subprocess.Complet
         return subprocess.run(
             ["git", "-C", str(repo_dir), *args],
             capture_output=True,
-            text=True,
+            text=True, encoding="utf-8", errors="replace",
             timeout=timeout,
             check=False,
         )

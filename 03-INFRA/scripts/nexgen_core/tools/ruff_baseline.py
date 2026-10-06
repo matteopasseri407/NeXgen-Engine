@@ -99,7 +99,7 @@ def run_ruff() -> list[dict]:
         [*ruff_cmd, "check", TARGET_NAME, "--output-format=json"],
         cwd=REPO_ROOT,
         capture_output=True,
-        text=True,
+        text=True, encoding="utf-8", errors="replace",
         check=False,
     )
     # ruff exits 0 when clean, 1 when it found lint violations. Anything

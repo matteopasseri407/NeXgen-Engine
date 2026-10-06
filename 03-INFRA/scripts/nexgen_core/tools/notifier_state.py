@@ -131,7 +131,7 @@ def _resolve_newest_tag(engine_repo: str, timeout: int = 20, _local: bool = Fals
     try:
         proc = subprocess.run(
             ["git", "-C", engine_repo, "ls-remote", "--tags", "--refs", "origin"],
-            capture_output=True, text=True, check=False, timeout=timeout,
+            capture_output=True, text=True, encoding="utf-8", errors="replace", check=False, timeout=timeout,
         )
     except (OSError, subprocess.TimeoutExpired):
         return None
@@ -167,7 +167,7 @@ def refresh_update_cache(engine_repo: str | None = None, timeout: int = 20) -> d
             engine_root = resolve_engine_root()
             probe = subprocess.run(
                 ["git", "-C", str(engine_root), "rev-parse", "--show-toplevel"],
-                capture_output=True, text=True, check=False, timeout=timeout,
+                capture_output=True, text=True, encoding="utf-8", errors="replace", check=False, timeout=timeout,
             )
             if probe.returncode != 0:
                 return result

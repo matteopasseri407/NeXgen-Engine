@@ -118,7 +118,7 @@ def run_publish(vault: Path, engine_scripts: Path) -> subprocess.CompletedProces
         cwd=str(vault),
         env=env,
         capture_output=True,
-        text=True,
+        text=True, encoding="utf-8", errors="replace",
         timeout=PUBLISH_TIMEOUT_SECONDS,
         check=False,
     )

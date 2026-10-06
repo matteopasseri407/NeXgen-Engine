@@ -49,6 +49,9 @@ class McpRenderer:
         self.engine_root = resolve_engine_root(self.home, engine_root)
 
         self.manifest_path = self.vault_data / "03-INFRA" / "agent-universal-layer" / "mcp" / "manifest.yaml"
+        #: While not None, writes are collected here instead of performed
+        #: (see :meth:`pending_changes`).
+        self._pending: dict[Path, str] | None = None
         self.path_placeholders = {
             "AGENT_ENGINE_ROOT": str(self.engine_root),
             "AGENT_VAULT_DATA": str(self.vault_data),
@@ -277,6 +280,28 @@ class McpRenderer:
         results["codex"] = ok_codex
         return results
 
+    @property
+    def previewing(self) -> bool:
+        """True inside :meth:`pending_changes`: nothing may touch the disk."""
+        return self._pending is not None
+
+    def pending_changes(self, cli_target: str) -> dict[Path, str]:
+        """The files `render_<cli>(write=True)` would change right now, with their new text.
+
+        Nothing is written. It runs the real renderer with its writer
+        swapped for a collector, so a diagnostic that asks "would apply
+        change anything?" can never disagree with apply itself, which is
+        what a second, hand-written comparison of the two would eventually
+        do. Raises what the renderer raises (an unreadable config, a
+        manifest it cannot resolve).
+        """
+        self._pending = {}
+        try:
+            getattr(self, f"render_{cli_target}")(write=True)
+            return dict(self._pending)
+        finally:
+            self._pending = None
+
     def _backup_and_write(self, path: Path, content: str) -> None:
         """Makes a .bak-<timestamp> backup and writes the new content atomically.
 
@@ -286,6 +311,15 @@ class McpRenderer:
         `nexgen_core.files`; the last-3 rotation stays this writer's policy.
         """
         from nexgen_core.files import write_text_if_changed
+
+        if self._pending is not None:
+            try:
+                unchanged = Path(path).read_text(encoding="utf-8") == content
+            except (OSError, UnicodeDecodeError):
+                unchanged = False
+            if not unchanged:
+                self._pending[Path(path)] = content
+            return
 
         # Rendered configs may carry bearer tokens in env blocks: keep the
         # historical 0600 on POSIX (Windows has no equivalent bit here).

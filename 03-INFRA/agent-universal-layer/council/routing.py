@@ -315,7 +315,7 @@ def _run_probe(argv: list[str]) -> tuple[bool, str]:
         result = subprocess.run(
             _windows_command_argv(argv),
             capture_output=True,
-            text=True,
+            text=True, encoding="utf-8", errors="replace",
             timeout=PROBE_TIMEOUT_SECONDS,
             check=False,
         )

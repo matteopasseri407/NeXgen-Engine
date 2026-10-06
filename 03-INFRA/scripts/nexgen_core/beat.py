@@ -306,7 +306,7 @@ class Heartbeat:
 
             probe = subprocess.run(
                 ["git", "-C", str(self.engine_root), "rev-parse", "--show-toplevel"],
-                capture_output=True, text=True, check=False, timeout=20,
+                capture_output=True, text=True, encoding="utf-8", errors="replace", check=False, timeout=20,
             )
             if probe.returncode == 0 and probe.stdout.strip():
                 refresh_update_cache(probe.stdout.strip())

@@ -170,7 +170,7 @@ def _systemd_heartbeat_content(home: Path, engine_root: Path, vault_data: Path, 
 
 def _run_external(args: Sequence[str], *, timeout: int = 30) -> subprocess.CompletedProcess:
     try:
-        return subprocess.run(list(args), timeout=timeout, capture_output=True, text=True, check=False)
+        return subprocess.run(list(args), timeout=timeout, capture_output=True, text=True, encoding="utf-8", errors="replace", check=False)
     except subprocess.TimeoutExpired as exc:
         stdout = exc.stdout if isinstance(exc.stdout, str) else (exc.stdout or b"").decode("utf-8", "replace")
         return subprocess.CompletedProcess(list(args), 1, stdout, f"timed out after {timeout}s")
