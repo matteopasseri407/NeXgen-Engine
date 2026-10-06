@@ -210,8 +210,13 @@ def _sym(char: str, fallback: str, stream: object) -> str:
         return fallback
 
 
-def render(findings: list[Finding], title: str, stream=sys.stdout) -> int:
-    """Prints a block of outcomes and returns how many requirements are missing."""
+def render(findings: list[Finding], title: str, stream=None) -> int:
+    """Prints a block of outcomes and returns how many requirements are missing.
+
+    The default stream is looked up when called: bound at import it kept pointing at whatever
+    `sys.stdout` was then, and failed with "I/O operation on closed file" once that was replaced.
+    """
+    stream = stream if stream is not None else sys.stdout
     c = _colour(stream)
     ok_sym = _sym("✓", "[OK]", stream)
     err_sym = _sym("✗", "[X]", stream)

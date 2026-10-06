@@ -92,6 +92,27 @@ Configuration: `AGENT_VAULT_DATA` (vault root), `NEXGEN_LOCAL_MODEL`
 `--repo` roots for read-only repository access. Defaults are documented in
 `nexgen_local/config.py`.
 
+## Running the lane on a frontier model (opt-in)
+
+The lane talks to a model through three verbs (fill a JSON form, answer in text, choose from a closed
+menu) and nothing else, so what backs them is a choice, not an architecture. By default it is the local
+Ollama pair. Set `NEXGEN_LANE_MODEL=<provider>:<model>` (for example `anthropic:claude-sonnet-5-5`) and the
+same lane runs on that model through LangChain's `init_chat_model`; unset it and nothing changes.
+
+```bash
+pip install "nexgen-engine[frontier]"      # langchain + the Anthropic and OpenAI packages
+export ANTHROPIC_API_KEY=...               # the provider's own variable; the engine never stores it
+NEXGEN_LANE_MODEL=anthropic:claude-sonnet-5-5 nexgen local ask "..."
+```
+
+What this changes about privacy, plainly: **the content the lane reads (mail, notes, files) is sent to that
+provider.** That is the whole point of the local lane being local, so it is opt-in per process, never a
+default. A request whose text carries something shaped like a credential (a provider token, a private key
+block) is refused before it leaves the machine; that is a safety net, not a policy.
+
+`ChatModelLLM.usage` reports the token counts the provider returned (calls, input, output, total), the same
+way for every provider, so a run can say what it cost.
+
 ## Propose and apply (the pen, gated)
 
 ```bash

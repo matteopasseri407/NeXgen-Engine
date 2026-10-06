@@ -77,7 +77,187 @@ def _close_runtime(runner, transport=None) -> None:
         runner.close()
 
 
-class ChatOllamaLLM:
+class _ChatModelLLM:
+    """The lane's three verbs over LangChain chat models, whatever backs them.
+
+    A subclass builds `_json_model` (routing forms), `_text_model` (answers) and `_decision_model`
+    (the bounded loop's closed menu). Everything else, the deadlines that cancel a stalled request,
+    the fail-closed handling of truncated or empty output, the token receipts, lives here once.
+    """
+
+    def _check_outbound(self, messages) -> None:
+        """Hook: refuse a request before it leaves the machine. A local model has nothing to refuse."""
+
+    def _structured_decision(self, schema: dict):
+        """The decision model constrained to `schema`, raw reply kept so truncation is visible."""
+        return self._decision_model.with_structured_output(schema, include_raw=True)
+
+    def _plain_json_decision(self):
+        """The decision model asked for plain JSON, for a driver without structured output."""
+        return self._decision_model
+
+    def close(self) -> None:
+        """Release this adapter's connections and loop; safe to call twice."""
+        if hasattr(self, "_finalizer"):
+            with self._invoke_lock:
+                self._finalizer()
+        elif hasattr(self, "_runner"):
+            self._runner.close()
+
+    def _invoke(self, model, messages, timeout: float):
+        """The synchronous LLM contract drives a cancellable async request."""
+        import asyncio
+
+        self._check_outbound(messages)
+
+        # Also supports injected backends without constructing a real client.
+        if not hasattr(self, "_runner"):
+            self._runner = asyncio.Runner()
+            self._invoke_lock = threading.Lock()
+        deadline = time.monotonic() + timeout
+        if not self._invoke_lock.acquire(timeout=max(0, timeout)):
+            raise TimeoutError("model deadline expired while waiting for another call")
+        try:
+            async def call():
+                async with asyncio.timeout(max(0, deadline - time.monotonic())):
+                    return await model.ainvoke(messages)
+            try:
+                result = self._runner.run(call())
+            except TimeoutError as exc:
+                raise TimeoutError(f"tempo massimo del modello superato ({timeout:g}s)") from exc
+            self._record_usage(result)
+            return result
+        finally:
+            self._invoke_lock.release()
+
+    def _record_usage(self, result) -> None:
+        """Adds the token counts a reply carries (`usage_metadata`, provider-neutral) to the receipts.
+
+        A frontier model is billed per token and a local one is not, but both report them the same
+        way through LangChain, so the lane can say what a run cost without knowing the provider.
+        """
+        message = result.get("raw") if isinstance(result, dict) and "raw" in result else result
+        meta = getattr(message, "usage_metadata", None)
+        if not isinstance(meta, dict):
+            return
+        totals = self.__dict__.setdefault("_usage", {"calls": 0, "input_tokens": 0, "output_tokens": 0, "total_tokens": 0})
+        totals["calls"] += 1
+        for key in ("input_tokens", "output_tokens", "total_tokens"):
+            value = meta.get(key)
+            if isinstance(value, int):
+                totals[key] += value
+
+    @property
+    def usage(self) -> dict[str, int]:
+        """Token receipts so far: calls, input, output, total."""
+        return dict(self.__dict__.get("_usage") or {"calls": 0, "input_tokens": 0, "output_tokens": 0, "total_tokens": 0})
+
+    @staticmethod
+    def _messages(system: str, user: str):
+        from langchain_core.messages import HumanMessage, SystemMessage
+
+        return [SystemMessage(content=system), HumanMessage(content=user)]
+
+    @staticmethod
+    def _content(message) -> str:
+        content = getattr(message, "content", "")
+        if isinstance(content, str):
+            return content
+        return json.dumps(content, ensure_ascii=False)
+
+    @staticmethod
+    def _done_reason(message) -> str:
+        """How generation ended: "stop", "length" (budget exhausted), ...
+
+        Each provider names it differently (Ollama `done_reason`, Anthropic `stop_reason`, OpenAI
+        `finish_reason`) and spells a spent budget differently (`length`, `max_tokens`); callers
+        only ever ask "was it truncated", so those collapse to "length".
+        """
+        meta = getattr(message, "response_metadata", {}) or {}
+        reason = str(meta.get("done_reason") or meta.get("stop_reason") or meta.get("finish_reason") or "stop")
+        return "length" if reason.lower() in {"length", "max_tokens", "model_length"} else reason
+
+    @classmethod
+    def _checked_text(cls, message, *, what: str) -> str:
+        """Prose out of a generation, fail-closed on truncation or void.
+
+        The output bound (num_predict) covers thinking AND response: a
+        budget eaten by the think channel returns done_reason="length"
+        with empty content. Returning that as answer="" would be a silent
+        success with exit 0, so truncation and empty both raise into the
+        lane's typed error channel instead.
+        """
+        text = cls._content(message)
+        if cls._done_reason(message) == "length":
+            raise LLMError(f"{what} troncata dal budget di generazione (done_reason=length)")
+        if not text.strip():
+            raise LLMError(f"{what} vuota dal modello")
+        return text
+
+    def json(self, system: str, user: str) -> dict | None:
+        try:
+            message = self._invoke(self._json_model, self._messages(system, user), JSON_TIMEOUT_SECONDS)
+        except Exception as exc:  # noqa: BLE001 - surface a typed error upward
+            raise LLMError(f"chiamata al modello fallita: {exc}") from exc
+        if self._done_reason(message) == "length":
+            # Truncated form, same as unparseable: every caller degrades
+            # gracefully (fallback route, refused proposal), the router
+            # never aborts the lane.
+            return None
+        return _json_block(self._content(message))
+
+    def text(self, system: str, user: str) -> str:
+        try:
+            message = self._invoke(self._text_model, self._messages(system, user), TEXT_TIMEOUT_SECONDS)
+        except Exception as exc:  # noqa: BLE001
+            raise LLMError(f"chiamata al modello fallita: {exc}") from exc
+        return self._checked_text(message, what="risposta del modello")
+
+    def choose(self, system: str, user: str, actions: list[str]) -> dict | None:
+        """Forced-schema decision for the bounded loop: one action from the menu."""
+        schema = {
+            "title": "LaneDecision",
+            "type": "object",
+            "properties": {
+                "action": {"type": "string", "enum": list(actions)},
+                "arg": {"type": "string", "description": "query o percorso, vuoto se non serve"},
+                "why": {"type": "string", "description": "una riga"},
+            },
+            "required": ["action"],
+        }
+        deadline = time.monotonic() + DECISION_TIMEOUT_SECONDS
+        try:
+            structured = self._structured_decision(schema)
+            result = self._invoke(structured, self._messages(system, user), DECISION_TIMEOUT_SECONDS)
+        except Exception as exc:  # noqa: BLE001 - LLM failure falls back, never raises
+            # Old driver without json_schema support: degrade to the plain
+            # JSON channel and validate the menu locally, instead of failing
+            # every decision into escalation. A timeout is not a missing
+            # feature — it surfaces as a typed error, never a silent retry
+            # that would double the hang.
+            if not isinstance(exc, NotImplementedError):
+                raise LLMError(f"decisione del modello fallita: {exc}") from exc
+            try:
+                fallback = self._invoke(self._plain_json_decision(), self._messages(system, user), deadline - time.monotonic())
+            except Exception as fallback_exc:  # noqa: BLE001
+                raise LLMError(f"decisione del modello fallita: {fallback_exc}") from fallback_exc
+            if self._done_reason(fallback) == "length":
+                return None
+            parsed = _json_block(self._content(fallback))
+            if isinstance(parsed, dict) and parsed.get("action") in actions:
+                return parsed
+            return None
+        if isinstance(result, dict) and "raw" in result:
+            if self._done_reason(result["raw"]) == "length":
+                return None
+            result = result.get("parsed")
+        if not isinstance(result, dict):
+            dump = getattr(result, "model_dump", None)
+            result = dump() if callable(dump) else None
+        return result if isinstance(result, dict) and result.get("action") in actions else None
+
+
+class ChatOllamaLLM(_ChatModelLLM):
     """Synchronous contract backed by cancellable LangChain/Ollama requests."""
 
     def __init__(self, cfg: LaneConfig) -> None:
@@ -153,130 +333,77 @@ class ChatOllamaLLM:
             self._text_model = ChatOllama(**answer_common)
             self._decision_model = ChatOllama(**decision_common)
 
-    def close(self) -> None:
-        """Release this adapter's connections and loop; safe to call twice."""
-        if hasattr(self, "_finalizer"):
-            with self._invoke_lock:
-                self._finalizer()
-        elif hasattr(self, "_runner"):
-            self._runner.close()
+    def _structured_decision(self, schema: dict):
+        return self._decision_model.with_structured_output(schema, method="json_schema", include_raw=True)
 
-    def _invoke(self, model, messages, timeout: float):
-        """The synchronous LLM contract drives a cancellable async request."""
+    def _plain_json_decision(self):
+        return self._decision_model.bind(format="json")
+
+
+class ChatModelLLM(_ChatModelLLM):
+    """The same contract over any provider LangChain can talk to: a frontier model through its API.
+
+    `spec` is LangChain's `provider:model` (`anthropic:claude-sonnet-5-5`, `openai:...`), resolved by
+    `init_chat_model`. The provider's own package (`langchain-anthropic`, `langchain-openai`) is an
+    optional extra, loaded only here, so a machine that runs the lane on a local model never needs it.
+    All three channels use the same model; their temperatures and output budgets differ the way the
+    local ones do.
+    """
+
+    def __init__(self, cfg: LaneConfig, spec: str, *, model_factory=None) -> None:
         import asyncio
 
-        # Also supports injected backends without constructing a real client.
-        if not hasattr(self, "_runner"):
-            self._runner = asyncio.Runner()
-            self._invoke_lock = threading.Lock()
-        deadline = time.monotonic() + timeout
-        if not self._invoke_lock.acquire(timeout=max(0, timeout)):
-            raise TimeoutError("model deadline expired while waiting for another call")
-        try:
-            async def call():
-                async with asyncio.timeout(max(0, deadline - time.monotonic())):
-                    return await model.ainvoke(messages)
-            try:
-                return self._runner.run(call())
-            except TimeoutError as exc:
-                raise TimeoutError(f"tempo massimo del modello superato ({timeout:g}s)") from exc
-        finally:
-            self._invoke_lock.release()
+        provider, _, model = spec.partition(":")
+        if not provider or not model:
+            raise LLMError(f"modello non valido '{spec}': serve <provider>:<modello>, per esempio anthropic:claude-sonnet-5-5")
+        factory = model_factory or self._init_chat_model
+        self.spec = spec
+        self._runner = asyncio.Runner()
+        self._invoke_lock = threading.Lock()
+        self._finalizer = weakref.finalize(self, _close_runtime, self._runner, None)
+        common = {"timeout": TEXT_TIMEOUT_SECONDS}
+        self._json_model = factory(spec, temperature=0.0, max_tokens=512, **common)
+        self._text_model = factory(spec, temperature=cfg.temperature, max_tokens=2048, **common)
+        self._decision_model = factory(spec, temperature=0.0, max_tokens=256, **common)
 
-    @staticmethod
-    def _messages(system: str, user: str):
-        from langchain_core.messages import HumanMessage, SystemMessage
+    def _check_outbound(self, messages) -> None:
+        """What the lane reads (mail, notes, files) goes to a third party here, so a credential in it must not.
 
-        return [SystemMessage(content=system), HumanMessage(content=user)]
-
-    @staticmethod
-    def _content(message) -> str:
-        content = getattr(message, "content", "")
-        if isinstance(content, str):
-            return content
-        return json.dumps(content, ensure_ascii=False)
-
-    @staticmethod
-    def _done_reason(message) -> str:
-        """How generation ended: "stop", "length" (budget exhausted), ..."""
-        meta = getattr(message, "response_metadata", {}) or {}
-        return str(meta.get("done_reason") or "stop")
-
-    @classmethod
-    def _checked_text(cls, message, *, what: str) -> str:
-        """Prose out of a generation, fail-closed on truncation or void.
-
-        The output bound (num_predict) covers thinking AND response: a
-        budget eaten by the think channel returns done_reason="length"
-        with empty content. Returning that as answer="" would be a silent
-        success with exit 0, so truncation and empty both raise into the
-        lane's typed error channel instead.
+        The shape check is the safety net, not the policy: choosing a frontier model is what decides that
+        the content may leave. A prompt carrying a provider token or a private key block is refused whole.
         """
-        text = cls._content(message)
-        if cls._done_reason(message) == "length":
-            raise LLMError(f"{what} troncata dal budget di generazione (done_reason=length)")
-        if not text.strip():
-            raise LLMError(f"{what} vuota dal modello")
-        return text
+        from nexgen_core import secret_shapes
 
-    def json(self, system: str, user: str) -> dict | None:
-        try:
-            message = self._invoke(self._json_model, self._messages(system, user), JSON_TIMEOUT_SECONDS)
-        except Exception as exc:  # noqa: BLE001 - surface a typed error upward
-            raise LLMError(f"chiamata al modello fallita: {exc}") from exc
-        if self._done_reason(message) == "length":
-            # Truncated form, same as unparseable: every caller degrades
-            # gracefully (fallback route, refused proposal), the router
-            # never aborts the lane.
-            return None
-        return _json_block(self._content(message))
+        for message in messages:
+            text = getattr(message, "content", "")
+            text = text if isinstance(text, str) else json.dumps(text, ensure_ascii=False)
+            if secret_shapes.PEM_BLOCK.search(text) or secret_shapes.PROVIDER_TOKEN.search(text):
+                raise LLMError(
+                    "richiesta non inviata a un modello esterno: contiene qualcosa che ha la forma di una credenziale"
+                )
 
-    def text(self, system: str, user: str) -> str:
+    @staticmethod
+    def _init_chat_model(spec: str, **kwargs):
         try:
-            message = self._invoke(self._text_model, self._messages(system, user), TEXT_TIMEOUT_SECONDS)
-        except Exception as exc:  # noqa: BLE001
-            raise LLMError(f"chiamata al modello fallita: {exc}") from exc
-        return self._checked_text(message, what="risposta del modello")
+            from langchain.chat_models import init_chat_model
+        except ImportError as exc:
+            raise LLMError(
+                "driver mancante per un modello esterno: installa il pacchetto 'langchain' e quello del provider "
+                "(per esempio langchain-anthropic), oppure usa un modello locale"
+            ) from exc
+        try:
+            return init_chat_model(spec, **kwargs)
+        except ImportError as exc:
+            raise LLMError(f"manca il pacchetto del provider per '{spec}': {exc}") from exc
 
-    def choose(self, system: str, user: str, actions: list[str]) -> dict | None:
-        """Forced-schema decision for the bounded loop: one action from the menu."""
-        schema = {
-            "title": "LaneDecision",
-            "type": "object",
-            "properties": {
-                "action": {"type": "string", "enum": list(actions)},
-                "arg": {"type": "string", "description": "query o percorso, vuoto se non serve"},
-                "why": {"type": "string", "description": "una riga"},
-            },
-            "required": ["action"],
-        }
-        deadline = time.monotonic() + DECISION_TIMEOUT_SECONDS
-        try:
-            structured = self._decision_model.with_structured_output(schema, method="json_schema", include_raw=True)
-            result = self._invoke(structured, self._messages(system, user), DECISION_TIMEOUT_SECONDS)
-        except Exception as exc:  # noqa: BLE001 - LLM failure falls back, never raises
-            # Old driver without json_schema support: degrade to the plain
-            # JSON channel and validate the menu locally, instead of failing
-            # every decision into escalation. A timeout is not a missing
-            # feature — it surfaces as a typed error, never a silent retry
-            # that would double the hang.
-            if not isinstance(exc, NotImplementedError):
-                raise LLMError(f"decisione del modello fallita: {exc}") from exc
-            try:
-                fallback = self._invoke(self._decision_model.bind(format="json"), self._messages(system, user), deadline - time.monotonic())
-            except Exception as fallback_exc:  # noqa: BLE001
-                raise LLMError(f"decisione del modello fallita: {fallback_exc}") from fallback_exc
-            if self._done_reason(fallback) == "length":
-                return None
-            parsed = _json_block(self._content(fallback))
-            if isinstance(parsed, dict) and parsed.get("action") in actions:
-                return parsed
-            return None
-        if isinstance(result, dict) and "raw" in result:
-            if self._done_reason(result["raw"]) == "length":
-                return None
-            result = result.get("parsed")
-        if not isinstance(result, dict):
-            dump = getattr(result, "model_dump", None)
-            result = dump() if callable(dump) else None
-        return result if isinstance(result, dict) and result.get("action") in actions else None
+
+#: Env var that switches the lane to a frontier model: `provider:model`. Unset = the local Ollama pair.
+LANE_MODEL_ENV = "NEXGEN_LANE_MODEL"
+
+
+def build_llm(cfg: LaneConfig) -> LLM:
+    """The model the lane runs on: a frontier model when `NEXGEN_LANE_MODEL` names one, else the local pair."""
+    spec = (os.environ.get(LANE_MODEL_ENV) or "").strip()
+    if spec:
+        return ChatModelLLM(cfg, spec)
+    return ChatOllamaLLM(cfg)

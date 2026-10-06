@@ -319,3 +319,15 @@ def test_init_local_on_a_second_run_fills_nothing_again(tmp_path, monkeypatch, c
     profile = (vault / "99-INDEX" / "USER-PROFILE.md").read_text(encoding="utf-8")
     assert "- **profile**: `MINIMAL`" in profile
     assert "[MINIMAL | MULTI]" not in profile
+
+
+def test_render_writes_to_the_stdout_of_the_moment_not_the_one_at_import(monkeypatch, capsys):
+    """Bound at import, the default stream was a closed capture once something replaced sys.stdout."""
+    import io
+
+    from nexgen_core import bootstrap
+
+    replaced = io.StringIO()
+    monkeypatch.setattr(sys, "stdout", replaced)
+    bootstrap.render([bootstrap.Finding("python", True)], "Prerequisites")
+    assert "python" in replaced.getvalue()

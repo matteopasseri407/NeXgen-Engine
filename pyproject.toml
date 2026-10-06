@@ -35,6 +35,10 @@ dev = ["pytest>=8.0", "ruff>=0.6"]
 # so these install nothing extra.
 local = []
 council = []
+# Run the lane on a frontier model instead of the local pair: `NEXGEN_LANE_MODEL=anthropic:<model>`
+# (or `openai:<model>`). The provider packages stay out of a default install: a machine that only
+# uses local models never loads them. See docs/local-lane.md.
+frontier = ["langchain>=1.0,<2", "langchain-anthropic>=1.0,<2", "langchain-openai>=1.0,<2"]
 
 [project.urls]
 Homepage = "https://github.com/matteopasseri407/NeXgen-Engine"

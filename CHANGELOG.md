@@ -173,6 +173,14 @@ of any engine release.
   shared between machines, the dependency-watch reports, the debounce ledger, the skill index, the
   first-run configuration and the deployed hook scripts (which used a predictable staging name). A scan
   test fails the build on a new direct `write_text`.
+- The lane can run on a frontier model: `NEXGEN_LANE_MODEL=<provider>:<model>` (extra `frontier`)
+  swaps the local Ollama pair for any LangChain chat model behind the same three-verb contract, with
+  provider-neutral truncation detection, token receipts (`usage`) and a refusal to send a request that
+  carries a credential. The Ollama adapter shares the same base now; unset, nothing changes. See
+  docs/local-lane.md for what it means for privacy.
+- `bootstrap.render` looked up `sys.stdout` when it was defined instead of when it was called, which
+  made `test_init_local_on_a_second_run_fills_nothing_again` fail whenever it ran after a test that
+  replaced stdout.
 
 ## [2.3.11] - 2026-10-04
 
