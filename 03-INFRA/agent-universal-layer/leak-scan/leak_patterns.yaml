@@ -55,7 +55,17 @@ leak_hard:
   # due. L'header nudo non e' scritto qui apposta, questo file passa dalle
   # regole che definisce.
   - '-----BEGIN (?:(?:RSA|DSA|EC|OPENSSH|PGP|ENCRYPTED) )?PRIVATE KEY-----'  # chiave privata (incl. PKCS#8)
-  - 'gh[po]_[A-Za-z0-9]{36}'                              # GitHub token (ghp_/gho_)
+  - 'gh[pousr]_[A-Za-z0-9]{36}'                           # GitHub token (ghp_/gho_/ghu_/ghs_/ghr_)
+  # Provider keys that carry '-' or '_' inside the body. The generic 'sk-' form
+  # above stops at the first separator, so these slipped through (audit,
+  # 2026-10-06, measured on synthetic tokens in three contexts each).
+  - 'github_pat_[A-Za-z0-9_]{22,}'                        # GitHub fine-grained token
+  - 'sk-ant-[A-Za-z0-9_-]{20,}'                           # Anthropic API key
+  - 'sk-(?:proj|svcacct|admin)-[A-Za-z0-9_-]{20,}'        # OpenAI project / service-account / admin key
+  - 'AGE-SECRET-KEY-1[A-Z0-9]{50,}'                       # age identity (the engine's own secret store)
+  - '\bhf_[A-Za-z0-9]{30,}\b'                             # Hugging Face token
+  - '\bnpm_[A-Za-z0-9]{36}\b'                             # npm access token
+  - 'AIza[0-9A-Za-z_-]{35}'                               # Google API key
   - 'sk-[A-Za-z0-9]{20,}'                                 # stile API key OpenAI/Anthropic
   - '(sk|pk)_(live|test)_[A-Za-z0-9]{16,}'                # stile chiave Stripe (con underscore)
   - 'eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}'  # JWT (header.payload.firma)

@@ -257,6 +257,7 @@ MESSAGES: dict[str, str] = {
     'Created {q_branch}, but reset to {remote}/{branch} failed: {error}': 'Creato {q_branch}, ma il reset su {remote}/{branch} è fallito: {error}',
     'Created {q_branch}, but could not switch to it: {error}': 'Creato {q_branch}, ma non è stato possibile spostarcisi: {error}',
     'Created {q_branch}, but could not preserve uncommitted changes before realignment': 'Creato {q_branch}, ma non è stato possibile salvare le modifiche non committate prima del riallineamento',
+    "Not published: {detail} Reconcile the quarantine branch ('nexgen vault quarantine --diff <branch>'), then publish again.": "Non pubblicato: {detail} Riconcilia il branch di quarantena ('nexgen vault quarantine --diff <branch>'), poi pubblica di nuovo.",
     "Diverged local commits moved to quarantine branch '{q_branch}'. Local branch reset to {remote}/{branch}.": "I commit locali divergenti sono stati spostati nel branch di quarantena '{q_branch}'. Branch locale reimpostato su {remote}/{branch}.",
     'Realigned with {remote}/{branch} via rebase': 'Riallineato con {remote}/{branch} tramite rebase',
     'Error during divergence resolution: {reason}': 'Errore durante la risoluzione della divergenza: {reason}',

@@ -98,10 +98,14 @@ def resolve_state_dir(home: Path | None = None, override: Path | None = None) ->
     """Where the machine-local state lives (locks, timestamps, debounce).
 
     Precedence: explicit argument, `AGENT_STATE_DIR`, `XDG_STATE_HOME`,
-    finally `~/.local/state`. `XDG_STATE_HOME` applies only when no explicit
-    home is in play: an explicit `home` (sandbox, tests) or `NEXGEN_HOME`
-    keeps state under that home, otherwise two writers would lock two
-    different files believing each one is alone.
+    finally `~/.local/state`. `XDG_STATE_HOME` applies when the home in play is
+    the real one, whether the caller left it implicit or passed it along: a
+    sandbox `home` or `NEXGEN_HOME` keeps state under that home. Telling the
+    two apart by "was a home passed" instead made the guard and `HostLock()`
+    resolve different lock files on a machine with XDG_STATE_HOME set, so two
+    writers each believed they were alone. A relative value is ignored, as the
+    XDG specification requires: honoring it anchors state at the working
+    directory.
     """
     if override is not None:
         return Path(override).expanduser()
@@ -109,8 +113,10 @@ def resolve_state_dir(home: Path | None = None, override: Path | None = None) ->
     if env:
         return Path(env).expanduser()
     xdg = os.environ.get("XDG_STATE_HOME")
-    if xdg and home is None and not os.environ.get("NEXGEN_HOME"):
-        return Path(xdg).expanduser()
+    if xdg and not os.environ.get("NEXGEN_HOME") and (home is None or Path(home) == Path.home()):
+        candidate = Path(xdg).expanduser()
+        if candidate.is_absolute():
+            return candidate
     return resolve_home(home).joinpath(*STATE_SUBPATH)
 
 

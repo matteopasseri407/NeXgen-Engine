@@ -79,7 +79,12 @@ def is_infra_file(filepath: str) -> bool:
     to commit. Directories match only at the repository root; the three
     pointer files match by exact basename anywhere.
     """
-    norm = filepath.replace("\\", "/").lstrip("./")
+    norm = filepath.replace("\\", "/")
+    # A leading "./" is a spelling, not a character set: lstrip("./") also ate
+    # the dot of ".sync/" or ".hooks/" and made hidden directories look like
+    # the infrastructure directories the guard commits on its own.
+    while norm.startswith("./"):
+        norm = norm[2:]
     for prefix in INFRA_PATH_PREFIXES:
         if prefix.endswith("/"):
             if norm == prefix.rstrip("/") or norm.startswith(prefix):
@@ -573,7 +578,15 @@ def publish_changes(
                 # Isolate diverged commits to quarantine
                 q_ok, _q_branch, q_msg = quarantine_diverged_commits(repo_dir, remote=remote, branch=branch)
                 if q_ok:
-                    return True, q_msg
+                    # The work is safe, but it is no longer on the branch and it
+                    # was not published. Reporting success here told a caller
+                    # (an agent closing a session, a script checking the exit
+                    # code) that a note had reached the remote when it had not.
+                    return False, t(
+                        "Not published: {detail} Reconcile the quarantine branch "
+                        "('nexgen vault quarantine --diff <branch>'), then publish again.",
+                        detail=q_msg,
+                    )
                 return False, t("Data has diverged from {remote}, automatic rebase did not succeed", remote=remote)
 
     # Mirror update (best effort, but reported: a silent mirror failure

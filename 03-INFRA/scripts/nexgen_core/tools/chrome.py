@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import contextlib
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -128,6 +129,18 @@ def launch_chrome(extra_args: list[str] | None = None) -> int:
         return 1
 
 
+def _profile_pattern(profile: str) -> str:
+    """The `pkill -f` pattern that names this debug profile and nothing else.
+
+    pkill reads its pattern as a regular expression, and a pattern starting
+    with `--` is read as an option unless a `--` precedes it (exit 2, which
+    `check=False` hid: the hung browser was never stopped). The path is
+    escaped so a dot or a plus in it matches itself.
+    """
+    escaped = re.sub(r"([.\[\](){}*+?|^$\\])", r"\\\1", profile)
+    return f"--user-data-dir={escaped}"
+
+
 def heal_chrome(extra_args: list[str] | None = None) -> int:
     """Restarts Chrome if the process stayed open without responding on CDP."""
     if is_cdp_up():
@@ -167,7 +180,7 @@ def heal_chrome(extra_args: list[str] | None = None) -> int:
         # Ask first, insist later: a Chrome killed outright loses the open
         # tabs, and closing them isn't what we were asked to do.
         with contextlib.suppress(OSError):
-            subprocess.run(["pkill", "-f", f"--user-data-dir={profile_str}"], capture_output=True, check=False)
+            subprocess.run(["pkill", "-f", "--", _profile_pattern(profile_str)], capture_output=True, check=False)
         for _ in range(int(GRACEFUL_SHUTDOWN_SECONDS * 2)):
             if singleton_owner_pid(profile) is None:
                 break
@@ -175,7 +188,7 @@ def heal_chrome(extra_args: list[str] | None = None) -> int:
         else:
             with contextlib.suppress(OSError):
                 subprocess.run(
-                    ["pkill", "-9", "-f", f"--user-data-dir={profile_str}"],
+                    ["pkill", "-9", "-f", "--", _profile_pattern(profile_str)],
                     capture_output=True, check=False,
                 )
 

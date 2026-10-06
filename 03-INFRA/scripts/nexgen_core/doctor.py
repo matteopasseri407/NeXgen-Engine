@@ -70,7 +70,7 @@ from nexgen_core.paths import (  # noqa: E402 - sys.path shim for cloned checkou
     resolve_state_dir,
     resolve_vault_data,
 )
-from nexgen_core.report import Report  # noqa: E402 - sys.path shim for cloned checkout
+from nexgen_core.report import CheckOutcome, Report, Severity  # noqa: E402 - sys.path shim for cloned checkout
 
 
 class Doctor:
@@ -90,84 +90,94 @@ class Doctor:
         self.engine_root = resolve_engine_root(self.home, engine_root)
 
     def run_diagnostics(self, apply_remedies: bool = False) -> Report:
-        """Runs every registered check (read-only by default)."""
+        """Runs every registered check (read-only by default).
+
+        Each check runs isolated: a check that raises becomes a finding of its
+        own and the report goes on. The doctor exists to describe a damaged
+        machine, so a damaged file must never be able to end it before it
+        has said anything (a corrupt manifest used to stop it with no report,
+        and the alert that depends on it with it).
+        """
         report = Report()
 
+        def run(check_id: str, produce) -> None:
+            try:
+                produced = produce()
+            except Exception as exc:  # noqa: BLE001 - the doctor must survive the damage it diagnoses
+                report.add(CheckOutcome(
+                    id=f"{check_id}.crashed",
+                    severity=Severity.BROKEN,
+                    message=t(
+                        "The check '{check}' could not run: {error}",
+                        check=check_id, error=f"{type(exc).__name__}: {exc}",
+                    ),
+                    action=t("Run 'nexgen doctor --json' and look at this check; the rest of the report is still valid."),
+                ))
+                return
+            for outcome in (produced if isinstance(produced, list) else [produced]):
+                if outcome is not None:
+                    report.add(outcome, apply_remedy=apply_remedies)
+
+        vault, home, state = self.vault_data, self.home, self.state_dir
+        manifest_mcp = vault / "03-INFRA" / "agent-universal-layer" / "mcp" / "manifest.yaml"
+        manifest_skills = vault / "03-INFRA" / "agent-universal-layer" / "skills" / "skills.manifest.yaml"
+
         # 1. Environment and directory checks
-        report.add(check_state_dir(self.state_dir), apply_remedy=apply_remedies)
-        report.add(check_vault_path(self.vault_data), apply_remedy=apply_remedies)
+        run("env.state_dir", lambda: check_state_dir(state))
+        run("env.vault_path", lambda: check_vault_path(vault))
 
         # 1b. Which engine last completed a cycle here: the per-machine
         # answer to "are all my machines migrated?".
-        report.add(check_engine_version_recorded(self.state_dir), apply_remedy=apply_remedies)
+        run("takeover.engine_version", lambda: check_engine_version_recorded(state))
 
-        # 2. Git checks (if the Vault exists)
-        if self.vault_data.is_dir():
-            report.add(check_git_alignment(self.vault_data), apply_remedy=apply_remedies)
-            remotes = check_remotes_config(self.vault_data)
-            if remotes is not None:
-                report.add(remotes, apply_remedy=apply_remedies)
-            lane = check_engine_lane(self.engine_root)
-            if lane is not None:
-                report.add(lane, apply_remedy=apply_remedies)
-            report.add(check_quarantine_branches(self.vault_data), apply_remedy=apply_remedies)
-            for outcome in check_mirror_alignment(self.vault_data):
-                report.add(outcome, apply_remedy=apply_remedies)
+        if vault.is_dir():
+            # 2. Git checks
+            run("git.alignment", lambda: check_git_alignment(vault))
+            run("git.remotes_config", lambda: check_remotes_config(vault))
+            run("git.engine_lane", lambda: check_engine_lane(self.engine_root))
+            run("git.quarantine", lambda: check_quarantine_branches(vault))
+            run("git.mirror_alignment", lambda: check_mirror_alignment(vault))
 
             # 3. MCP checks
-            manifest_mcp = self.vault_data / "03-INFRA" / "agent-universal-layer" / "mcp" / "manifest.yaml"
-            report.add(check_mcp_manifest(manifest_mcp), apply_remedy=apply_remedies)
-            report.add(check_mcp_configs_rendered(self.vault_data, self.home), apply_remedy=apply_remedies)
-            report.add(check_mcp_orphans(self.vault_data, self.home), apply_remedy=apply_remedies)
-            for outcome in check_mcp_reachability(self.vault_data, self.home):
-                report.add(outcome, apply_remedy=apply_remedies)
-            report.add(check_mcp_deps(manifest_mcp, self.state_dir), apply_remedy=apply_remedies)
-            report.add(check_modules_catalog(self.engine_root, self.vault_data), apply_remedy=apply_remedies)
+            run("mcp.manifest", lambda: check_mcp_manifest(manifest_mcp))
+            run("mcp.rendered_configs", lambda: check_mcp_configs_rendered(vault, home))
+            run("mcp.orphans", lambda: check_mcp_orphans(vault, home))
+            run("mcp.reachability", lambda: check_mcp_reachability(vault, home))
+            run("mcp.deps", lambda: check_mcp_deps(manifest_mcp, state))
+            run("modules.catalog", lambda: check_modules_catalog(self.engine_root, vault))
             # Installed is not working: a module says so itself, and only the
             # doctor asks, never the guard cycle.
-            for outcome in check_modules_ready(self.engine_root, self.vault_data):
-                report.add(outcome, apply_remedy=apply_remedies)
+            run("modules.ready", lambda: check_modules_ready(self.engine_root, vault))
 
             # 4. Skill checks
-            manifest_skills = self.vault_data / "03-INFRA" / "agent-universal-layer" / "skills" / "skills.manifest.yaml"
-            report.add(check_skills_manifest(manifest_skills), apply_remedy=apply_remedies)
-            report.add(check_skill_deps(manifest_skills, self.state_dir), apply_remedy=apply_remedies)
-            report.add(check_skill_library_and_index(self.vault_data, self.home), apply_remedy=apply_remedies)
-            report.add(check_skill_library_symlinks(self.home), apply_remedy=apply_remedies)
-            report.add(check_skills_not_materialized(self.vault_data, self.home), apply_remedy=apply_remedies)
-            report.add(check_skills_pin_freshness(self.vault_data, self.home), apply_remedy=apply_remedies)
-            report.add(check_skills_out_of_manifest(self.vault_data, self.home), apply_remedy=apply_remedies)
-            report.add(check_engine_starter_views(self.vault_data, self.home), apply_remedy=apply_remedies)
-            semantics = check_skills_manifest_semantics(self.vault_data, self.home)
-            if semantics is not None:
-                report.add(semantics, apply_remedy=apply_remedies)
+            run("skills.manifest", lambda: check_skills_manifest(manifest_skills))
+            run("skills.deps", lambda: check_skill_deps(manifest_skills, state))
+            run("skills.library_and_index", lambda: check_skill_library_and_index(vault, home))
+            run("skills.library_symlinks", lambda: check_skill_library_symlinks(home))
+            run("skills.not_materialized", lambda: check_skills_not_materialized(vault, home))
+            run("skills.pin_freshness", lambda: check_skills_pin_freshness(vault, home))
+            run("skills.out_of_manifest", lambda: check_skills_out_of_manifest(vault, home))
+            run("skills.engine_starter_views", lambda: check_engine_starter_views(vault, home))
+            run("skills.manifest_semantics", lambda: check_skills_manifest_semantics(vault, home))
 
             # 5. Identity checks
-            report.add(check_agent_self(self.vault_data), apply_remedy=apply_remedies)
-            report.add(check_agent_self_metadata(self.vault_data), apply_remedy=apply_remedies)
-            report.add(check_native_memory_boundary(self.home), apply_remedy=apply_remedies)
+            run("identity.agent_self", lambda: check_agent_self(vault))
+            run("identity.agent_self_metadata", lambda: check_agent_self_metadata(vault))
+            run("identity.native_memory_boundary", lambda: check_native_memory_boundary(home))
 
             # 6. Bootstrap and env-secret checks (ported from the release)
-            report.add(check_required_rules(self.vault_data, self.engine_root), apply_remedy=apply_remedies)
-            report.add(check_tokens_in_env(self.vault_data), apply_remedy=apply_remedies)
-            report.add(check_secrets_materialized(self.home, self.vault_data), apply_remedy=apply_remedies)
+            run("bootstrap.rules_guard", lambda: check_required_rules(vault, self.engine_root))
+            run("env.tokens_in_env", lambda: check_tokens_in_env(vault))
+            run("security.secrets_materialized", lambda: check_secrets_materialized(home, vault))
 
             # 7. Canonical instructions and bootstrap hygiene
-            report.add(check_canonical_instructions_present(self.vault_data), apply_remedy=apply_remedies)
-            report.add(check_claude_pointer(self.vault_data, self.home), apply_remedy=apply_remedies)
-            for outcome in check_cli_instruction_pointers(self.vault_data, self.home):
-                report.add(outcome, apply_remedy=apply_remedies)
-            opencode_outcome = check_opencode_instructions(self.vault_data, self.home)
-            if opencode_outcome is not None:
-                report.add(opencode_outcome, apply_remedy=apply_remedies)
-            for hygiene_check in (
-                check_bootstrap_size_budget,
-                check_bootstrap_notes_size,
-                check_bootstrap_pointer_integrity,
-            ):
-                outcome = hygiene_check(self.vault_data)
-                if outcome is not None:
-                    report.add(outcome, apply_remedy=apply_remedies)
+            run("instructions.canonical_present", lambda: check_canonical_instructions_present(vault))
+            run("instructions.claude_pointer", lambda: check_claude_pointer(vault, home))
+            run("instructions.cli_pointers", lambda: check_cli_instruction_pointers(vault, home))
+            run("instructions.opencode", lambda: check_opencode_instructions(vault, home))
+            run("instructions.bootstrap_size_budget", lambda: check_bootstrap_size_budget(vault))
+            run("instructions.bootstrap_notes_size", lambda: check_bootstrap_notes_size(vault))
+            run("instructions.bootstrap_pointer_integrity", lambda: check_bootstrap_pointer_integrity(vault))
 
         return report
 

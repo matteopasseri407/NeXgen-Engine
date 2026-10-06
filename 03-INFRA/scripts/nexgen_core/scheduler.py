@@ -79,11 +79,29 @@ def _systemd_env_line(key: str, value: str) -> str:
 
 
 def _scheduler_path(home: Path) -> str:
-    return os.pathsep.join([
+    """The PATH a unit declares: the home launchers first, then what the
+    caller sees, each directory once.
+
+    The guard runs with the PATH its own unit declares, so without the
+    deduplication every cycle prepended the same two directories to a value it
+    had itself written: the unit grew 51 bytes per cycle and was rewritten and
+    reloaded every time. Now the unit is a fixed point of its own environment,
+    and a unit that already grew collapses on its next write.
+    """
+    entries = [
         str(home / ".local" / "bin"),
         str(home / ".opencode" / "bin"),
-        os.environ.get("PATH", os.defpath),
-    ])
+        *os.environ.get("PATH", os.defpath).split(os.pathsep),
+    ]
+    seen: set[str] = set()
+    unique: list[str] = []
+    for entry in entries:
+        key = os.path.normcase(entry)
+        if not entry or key in seen:
+            continue
+        seen.add(key)
+        unique.append(entry)
+    return os.pathsep.join(unique)
 
 
 def _guard_shim(home: Path) -> str:

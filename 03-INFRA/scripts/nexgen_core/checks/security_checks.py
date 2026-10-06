@@ -95,7 +95,14 @@ def check_tokens_in_env(vault_data: Path) -> CheckOutcome:
             message=t("MCP manifest missing, could not check the tokens."),
         )
 
-    data = load_mcp_manifest(manifest_path)
+    try:
+        data = load_mcp_manifest(manifest_path)
+    except Exception as exc:  # noqa: BLE001 - mcp.manifest_valid owns reporting a broken manifest
+        return CheckOutcome(
+            id="env.tokens_in_env",
+            severity=Severity.UNDETERMINED,
+            message=t("The MCP manifest could not be read, so the tokens were not checked ({error}).", error=type(exc).__name__),
+        )
     missing: list[str] = []
     for name, srv in data.get("servers", {}).items():
         if srv.get("transport") != "http" and not srv.get("url"):

@@ -182,9 +182,17 @@ def write_text_if_changed(
     True when it wrote.
     """
     path = Path(path)
-    if path.is_file():
+    # Editing a file means editing the file a symlink points to. Replacing the
+    # link itself silently detached a dotfiles-managed config (~/.bashrc into a
+    # dotfiles repository) from the place its owner keeps it. The backup stays
+    # beside the link, so it never lands inside someone's dotfiles repository.
+    try:
+        target = path.resolve() if path.is_symlink() else path
+    except RuntimeError as exc:  # symlink loop
+        raise OSError(t("Refusing to write through a symlink loop at {path}", path=path)) from exc
+    if target.is_file():
         try:
-            if path.read_text(encoding="utf-8") == text:
+            if target.read_text(encoding="utf-8") == text:
                 return False
         except UnicodeDecodeError as exc:
             # The file exists but cannot be read as text: overwriting it
@@ -196,7 +204,7 @@ def write_text_if_changed(
             # but with the original already backed up. Let it surface there.
             pass
     backup_file(path, tag=tag)
-    atomic_write_text(path, text)
+    atomic_write_text(target, text)
     if keep is not None:
         _prune_backups(path, _safe_tag(tag), keep)
     return True
