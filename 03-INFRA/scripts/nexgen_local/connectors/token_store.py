@@ -39,7 +39,15 @@ HttpFn = Callable[[urllib.request.Request, int], HttpResult]
 
 
 def resolve_token_dir(env_name: str, default_subdir: str) -> Path:
-    return Path(os.environ.get(env_name) or str(Path.home() / ".config" / default_subdir))
+    """Where a connector keeps its tokens: `env_name`, else `<home>/.config/<default_subdir>`.
+
+    `<home>` is the engine's home (`NEXGEN_HOME` when set), not the process's: a checkout run
+    in a sandbox home beside a working installation must not read, refresh and rewrite the
+    working installation's login tokens.
+    """
+    from nexgen_core.paths import resolve_home
+
+    return Path(os.environ.get(env_name) or str(resolve_home() / ".config" / default_subdir))
 
 
 def machine_env(token_dir: Path, name: str) -> str:

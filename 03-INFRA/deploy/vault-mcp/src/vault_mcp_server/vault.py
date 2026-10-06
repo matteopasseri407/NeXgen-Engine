@@ -1113,9 +1113,23 @@ class VaultService:
         finally:
             tmp_path.unlink(missing_ok=True)
 
+    @staticmethod
+    def _is_orphan_temp(entry: str) -> bool:
+        """An untracked `.<note>.<random>.tmp`: what `_write_note_file` leaves if the process dies
+        between creating its temporary file and renaming it. It is never committed, so it showed up
+        as an uncommitted change and every later write was refused until someone removed it by hand."""
+        if not entry.startswith("?? "):
+            return False
+        name = entry[3:].rsplit("/", 1)[-1]
+        return name.startswith(".") and name.endswith(".tmp")
+
     def _ensure_git_clean(self) -> None:
-        status = self._run_git(["status", "--porcelain"], check=True)
-        if status.strip():
+        # -z: NUL-separated and unquoted, so a path with spaces or accents is one entry.
+        status = self._run_git_raw(["status", "--porcelain", "-z"])
+        if status.returncode != 0:
+            raise RuntimeError(status.stderr.strip() or "git status failed")
+        entries = [entry for entry in status.stdout.split("\0") if entry]
+        if any(not self._is_orphan_temp(entry) for entry in entries):
             raise RuntimeError(
                 "Vault Git working tree has uncommitted changes. "
                 "Refusing MCP write until it is clean."

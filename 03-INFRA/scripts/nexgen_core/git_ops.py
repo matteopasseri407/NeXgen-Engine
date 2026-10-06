@@ -10,7 +10,9 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import subprocess
+from urllib.parse import urlsplit
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
@@ -221,6 +223,60 @@ def run_git(repo_dir: Path, *args: str, timeout: int = 30) -> subprocess.Complet
         )
     except (OSError, subprocess.TimeoutExpired) as exc:
         return subprocess.CompletedProcess(["git", *args], 1, "", str(exc))
+
+
+#: The engine's own public repository. The vault holds private notes; it must never be published
+#: to it. Forks add their own through NEXGEN_ENGINE_UPSTREAMS (comma-separated `host/owner/name`).
+ENGINE_UPSTREAMS = ("github.com/matteopasseri407/nexgen-engine",)
+
+_SCP_URL = re.compile(r"^(?:[^@/\s]+@)?(?P<host>[^:/\s]+):(?P<path>.+)$")
+
+
+def normalize_remote_url(url: str) -> str:
+    """`host/owner/name`, lower-case, without scheme, credentials, port or `.git`.
+
+    The same repository is spelled `https://github.com/o/r.git`, `git@github.com:o/r` and
+    `ssh://git@github.com:22/o/r/`; a comparison on the raw string recognises one of them.
+    """
+    text = url.strip()
+    if "://" in text:
+        parts = urlsplit(text)
+        host, path = parts.hostname or "", parts.path
+    else:
+        scp = _SCP_URL.match(text)
+        if scp is None:
+            return text.lower()
+        host, path = scp.group("host"), scp.group("path")
+    path = path.strip("/")
+    path = path.removesuffix(".git").rstrip("/")
+    return f"{host}/{path}".lower()
+
+
+def _engine_upstreams() -> set[str]:
+    extra = os.environ.get("NEXGEN_ENGINE_UPSTREAMS", "")
+    return {normalize_remote_url(u) for u in (*ENGINE_UPSTREAMS, *extra.split(",")) if u.strip()}
+
+
+def engine_upstream_remotes(repo_dir: Path, names: list[str] | None = None) -> list[tuple[str, str]]:
+    """(remote, url) for each remote of `repo_dir` (all of them unless `names`) that is the engine's repository.
+
+    Both the fetch and the push address count: a remote whose push address was pointed
+    somewhere else on purpose still names where the vault could be published.
+    """
+    listed = run_git(repo_dir, "remote")
+    remotes = [line.strip() for line in listed.stdout.splitlines() if line.strip()] if listed.returncode == 0 else []
+    if names is not None:
+        remotes = [r for r in remotes if r in names]
+    engine = _engine_upstreams()
+    found: list[tuple[str, str]] = []
+    for name in remotes:
+        for flag in ((), ("--push",)):
+            res = run_git(repo_dir, "remote", "get-url", *flag, name)
+            url = res.stdout.strip()
+            if res.returncode == 0 and url and normalize_remote_url(url) in engine:
+                found.append((name, url))
+                break
+    return found
 
 
 def resolve_remotes(vault_data: Path) -> tuple[str, list[str]]:
@@ -485,6 +541,16 @@ def publish_changes(
         if committed:
             return True, t("Local commit done (Local-Only mode: no remote to update)")
         return True, t("Nothing to commit (Local-Only mode: no remote to update)")
+
+    # The vault is private and the engine's repository is public: no push, whatever the remotes
+    # file or the environment says. The commit above is already safe locally.
+    leaks = engine_upstream_remotes(repo_dir, [remote, *(mirrors or [])])
+    if leaks:
+        return False, t(
+            "Refusing to publish: {remote} is the engine's public repository ({url}), and the vault is private. "
+            "The commit stays local; point the remote at your own private repository.",
+            remote=leaks[0][0], url=leaks[0][1],
+        )
 
     # Fetch and verify before pushing
     fetch_res = run_git(repo_dir, "fetch", "--prune", remote, branch)

@@ -106,10 +106,15 @@ What this does **not** cover, stated plainly:
   warned. The guarantee starts with the update after it.
 - A compromised maintainer key or maintainer machine. The anchor decides whose
   signature counts; it cannot tell whether the signer was coerced or breached.
-- `release.yml` still only checks that a tag *carries* a signature block. Before
-  publishing, run
-  `python3 03-INFRA/scripts/nexgen_core/release_trust.py vX.Y.Z --trust-dir <trust/ of the previous release>`:
-  it exits non-zero if installed copies would refuse the tag.
+- `release.yml` verifies the tag with the same code the updater runs (`release_trust.py`),
+  against the trust anchor of the previous release, and refuses a tag whose commit is not on
+  `main` or has no successful CI run. The first release after `trust/` appeared has no such
+  predecessor and is verified against its own tree, which the workflow log says is
+  self-attested. Before pushing a tag you can run
+  `python3 03-INFRA/scripts/nexgen_core/release_trust.py vX.Y.Z --trust-dir <trust/ of the previous release>`
+  yourself: it exits non-zero if installed copies would refuse the tag.
+- PyPI publication still uses a long-lived API token when `PYPI_API_TOKEN` is set. Trusted
+  publishing (OIDC) needs the publisher registered on pypi.org first and is not enabled.
 
 Changing a signer takes two releases: ship the new key in a release signed by a
 key that is already pinned, and only then sign with the new one. A release

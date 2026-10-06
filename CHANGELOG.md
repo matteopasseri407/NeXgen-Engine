@@ -140,6 +140,30 @@ of any engine release.
 - `@playwright/mcp`'s pinned version, kept inside the wrapper, is declared in the manifest
   (`wraps`) so dependency watch reports it, and a test keeps the two equal. What the wrapper
   changes in npm's cache is documented in `docs/what-gets-written.md`.
+- vault-mcp refuses to start with `VAULT_WRITE_ENABLED=true` and no `VAULT_TOKEN` (the README
+  always said a write-enabled server never runs open; only the compose file enforced it). A bearer
+  with a non-ASCII character is a 401 instead of a crash in vault-mcp and in the OCR API. A
+  temporary file left by a crashed write no longer makes every later write fail with "uncommitted
+  changes". The OCR API runs recognition off the event loop (it froze `/health` and every other
+  request for the seconds a page takes) and one at a time.
+- The Council deletes the per-seat directory holding a copy of your Codex credentials as soon as
+  the seat ends, instead of leaving it for the session's cleanup (days under `--keep-session`,
+  or after a crash).
+- The grooming pass labelled read-only may run only the two read-only scripts its prompt names,
+  not any `python3`.
+- `deploy/backup-restore.sh` stops the containers that mount a volume while it copies it and
+  starts them again (also on failure), because a database copied while it is written can restore
+  as a corrupt one (`BACKUP_HOT=1` opts out); a restore refuses while a container still uses the
+  volume; the archive name no longer travels inside the shell command the helper container runs.
+- `release.yml` verifies the tag with the same code the updater runs, against the previous
+  release's trust anchor, and refuses a tag that is not on `main` or whose commit has no
+  successful CI run; `build` and `twine` are pinned instead of "latest".
+- The vault is never published to the engine's public repository: `vault push` refuses when the
+  authoritative remote or a mirror resolves to it (any spelling of the address, fetch or push
+  side; forks declare theirs in `NEXGEN_ENGINE_UPSTREAMS`), and `doctor` reports it
+  (`git.vault_remote_privacy`).
+- `NEXGEN_HOME` now also moves the connectors' login tokens and the Council's sessions; a
+  checkout run in a sandbox home read and rewrote the working installation's tokens.
 
 ## [2.3.11] - 2026-10-04
 

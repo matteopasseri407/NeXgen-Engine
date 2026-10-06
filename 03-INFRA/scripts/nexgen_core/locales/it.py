@@ -1016,4 +1016,12 @@ MESSAGES: dict[str, str] = {
         'Ogni server MCP locale ha un programma da avviare',
     'Could not record the choice in {path}: {error}':
         'Impossibile salvare la scelta in {path}: {error}',
+    "Refusing to publish: {remote} is the engine's public repository ({url}), and the vault is private. The commit stays local; point the remote at your own private repository.":
+        "Pubblicazione rifiutata: {remote} è il repository pubblico dell'engine ({url}) e il vault è privato. Il commit resta locale; punta il remote al tuo repository privato.",
+    "No remote of the Vault points at the engine's public repository":
+        "Nessun remote del Vault punta al repository pubblico dell'engine",
+    "The Vault has a remote that is the engine's public repository: {remotes}":
+        "Il Vault ha un remote che è il repository pubblico dell'engine: {remotes}",
+    "Point it at your own private repository ('git remote set-url <name> <url>') or remove it ('git remote remove <name>'). Publishing is refused until then.":
+        "Puntalo al tuo repository privato ('git remote set-url <nome> <url>') oppure toglilo ('git remote remove <nome>'). Fino ad allora la pubblicazione è rifiutata.",
 }

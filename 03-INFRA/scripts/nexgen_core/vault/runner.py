@@ -105,8 +105,14 @@ class Runner:
 class ClaudeRunner(Runner):
     name = "claude"
 
+    # The read-only pass runs in the real vault, so it may run exactly the two read-only scripts
+    # its prompt names and nothing else. A bare `Bash(python3:*)` let it run any Python, which can
+    # write anywhere, and made the "read-only" label a statement about intent, not a limit.
     READ_TOOLS: ClassVar[list[str]] = [
-        "Read", "Grep", "Glob", "Bash(python3:*)",
+        "Read", "Grep", "Glob",
+        "Bash(python3 03-INFRA/scripts/vault-lifecycle-audit.py:*)",
+        "Bash(python3 03-INFRA/scripts/vault-map.py:*)",
+        "Bash(vault-map:*)",
         "mcp__vault-library__semantic_search", "mcp__vault-library__search_notes",
         "mcp__vault-library__read_note", "mcp__vault-library__recent_activity",
         "mcp__vault-library__list_related", "mcp__vault-library__get_start_here",

@@ -23,6 +23,7 @@ from nexgen_core.checks.git_checks import (  # noqa: E402 - sys.path shim for cl
     check_mirror_alignment,
     check_quarantine_branches,
     check_remotes_config,
+    check_vault_remote_privacy,
 )
 from nexgen_core.checks.identity_checks import (  # noqa: E402 - sys.path shim for cloned checkout
     check_agent_self,
@@ -176,6 +177,7 @@ class Doctor:
             # 2. Git checks
             run("git.alignment", lambda: check_git_alignment(vault))
             run("git.remotes_config", lambda: check_remotes_config(vault))
+            run("git.vault_remote_privacy", lambda: check_vault_remote_privacy(vault))
             run("git.engine_lane", lambda: check_engine_lane(self.engine_root))
             run("git.quarantine", lambda: check_quarantine_branches(vault))
             run("git.mirror_alignment", lambda: check_mirror_alignment(vault))
