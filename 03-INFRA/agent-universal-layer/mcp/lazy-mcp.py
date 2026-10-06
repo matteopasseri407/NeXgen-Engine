@@ -22,16 +22,27 @@ Contract with the advisory reviews (Kimi, Opus 5):
   per session, never baked);
 - `lazy_load` is the explicit schema-delivery step BEFORE any `lazy_call`:
   the model writes arguments only after having seen the full definition;
-- loading is an availability gate, not a safety gate: servers marked
-  `mutating: true` refuse `lazy_call` without `confirm: true`, and every
-  action is appended to an audit log;
+- loading is an availability gate, not a safety gate. `lazy_call` forwards
+  only what the manifest declares read-only; anything else goes through
+  `lazy_mutate`, a separate tool, so a CLI that asks the person before it runs
+  a tool can approve reads and still ask about writes (one tool for both made
+  that all-or-nothing). `confirm: true` on `lazy_mutate` is the model
+  acknowledging the call, not a person's approval: the person's approval is the
+  CLI's own prompt for that tool, which a bypass posture removes by design.
+  Every action is appended to an audit log;
 - the index budget is enforced: over LAZY_MCP_INDEX_MAX_TOKENS the index
   degrades to server granularity (names only) instead of growing forever;
 - spawned servers die after LAZY_MCP_IDLE_MS of silence: a bordello of MCP
-  servers must not mean a bordello of resident processes.
+  servers must not mean a bordello of resident processes;
+- requests are served concurrently (one slow call must not freeze a ping or a
+  call to another server; one server's calls stay serial, as its pipe is);
+- a child server does not inherit the secrets in the proxy's environment, and
+  what it prints on stderr is kept (redacted) and shown when it fails, instead
+  of the proxy answering "tool not found" and the cause being thrown away.
 """
 from __future__ import annotations
 
+import collections
 import json
 import math
 import queue
@@ -63,7 +74,29 @@ SERVER_CAPABILITIES: dict[str, Any] = {"tools": {"listChanged": False}}
 INDEX_MAX_TOKENS = int(os.environ.get("LAZY_MCP_INDEX_MAX_TOKENS", "4000"))
 INDEX_TTL = int(os.environ.get("LAZY_MCP_INDEX_TTL", "300"))
 IDLE_MS = int(os.environ.get("LAZY_MCP_IDLE_MS", "600000"))
-LOG_PATH = os.environ.get("LAZY_MCP_LOG") or str(Path.home() / ".local" / "state" / "lazy-mcp-audit.jsonl")
+MAX_CONCURRENT_REQUESTS = int(os.environ.get("LAZY_MCP_MAX_CONCURRENCY", "32"))
+STDERR_KEEP_LINES = 40
+STDERR_SHOWN_CHARS = 600
+
+
+def _state_dir() -> Path:
+    """The engine's state directory: one resolver, so the audit log and the provisioning state follow
+    NEXGEN_HOME and XDG_STATE_HOME like everything else. Falls back to the historical location when
+    the engine package is not importable from here."""
+    for scripts in (Path(__file__).resolve().parents[2] / "scripts",):
+        if str(scripts) not in sys.path:
+            sys.path.insert(0, str(scripts))
+    try:
+        from nexgen_core.paths import resolve_state_dir
+
+        return resolve_state_dir()
+    except Exception:  # noqa: BLE001 - the proxy must still start without the engine package
+        return Path(os.environ.get("AGENT_STATE_DIR") or os.environ.get("XDG_STATE_HOME")
+                    or str(Path.home() / ".local" / "state"))
+
+
+def _log_path() -> str:
+    return os.environ.get("LAZY_MCP_LOG") or str(_state_dir() / "lazy-mcp-audit.jsonl")
 SSE_ACCEPT = "application/json, text/event-stream"
 LIST_TTL_MS = 60000
 LIST_CACHE_SCOPE = "private"
@@ -249,6 +282,62 @@ def _lazy_servers() -> dict[str, dict[str, Any]]:
     return out
 
 
+#: What a child server may inherit. The proxy's own environment holds every token the user's shell
+#: exports; a server that needs one declares it (`env: {NAME: "${NAME}"}` in the manifest entry) instead
+#: of getting all of them. The list is what runtimes need to start at all (`npx`, `node`, python,
+#: docker, a proxy) plus the engine's own variables; the MCP SDK's default is stricter still.
+_INHERITED_EXACT = frozenset({
+    "PATH", "HOME", "USER", "LOGNAME", "SHELL", "TERM", "LANG", "LANGUAGE", "TZ", "TMPDIR", "TMP", "TEMP",
+    "PWD", "DISPLAY", "WAYLAND_DISPLAY", "DBUS_SESSION_BUS_ADDRESS", "VIRTUAL_ENV", "PYTHONPATH",
+    "PYTHONIOENCODING", "PYTHONUTF8", "NODE_PATH", "NODE_OPTIONS", "NODE_EXTRA_CA_CERTS", "SSL_CERT_FILE",
+    "SSL_CERT_DIR", "REQUESTS_CA_BUNDLE", "CURL_CA_BUNDLE", "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY",
+    "NO_PROXY", "DOCKER_HOST", "COLORTERM", "LD_LIBRARY_PATH",
+    # Windows
+    "SYSTEMROOT", "SYSTEMDRIVE", "WINDIR", "COMSPEC", "PATHEXT", "USERPROFILE", "USERNAME", "USERDOMAIN",
+    "APPDATA", "LOCALAPPDATA", "PROGRAMDATA", "PROGRAMFILES", "PROGRAMFILES(X86)", "PROGRAMW6432",
+    "COMMONPROGRAMFILES", "HOMEDRIVE", "HOMEPATH", "ALLUSERSPROFILE", "PUBLIC", "COMPUTERNAME", "OS",
+    "NUMBER_OF_PROCESSORS", "PROCESSOR_ARCHITECTURE",
+})
+_INHERITED_PREFIXES = (
+    "LC_", "XDG_", "NEXGEN_", "AGENT_", "KNOWLEDGE_VAULT_", "NPM_CONFIG_", "NODE_", "NVM_", "VOLTA_", "UV_",
+    "PIPX_", "PYTHON", "LAZY_MCP_",
+)
+#: A name that looks like a secret is never inherited, even under an allowed prefix.
+_SECRET_NAME = re.compile(
+    r"(?:^|_)(?:TOKEN|SECRET|PASSWORD|PASSWD|PASSPHRASE|CREDENTIALS?|API_?KEY|PRIVATE_?KEY|ACCESS_?KEY|AUTH|COOKIE)(?:_|$)"
+    r"|_KEY$|_PAT$",
+    re.IGNORECASE,
+)
+
+
+def _is_secret_name(name: str) -> bool:
+    return bool(_SECRET_NAME.search(name))
+
+
+def _child_environment(declared: dict[str, str] | None = None) -> dict[str, str]:
+    """The environment a child server starts with: the allowed part of the proxy's own, then what the
+    manifest entry declared (declared means wanted, so a secret named there is passed on purpose)."""
+    inherited = {
+        name: value for name, value in os.environ.items()
+        if (name.upper() in _INHERITED_EXACT or name.upper().startswith(_INHERITED_PREFIXES))
+        and not _is_secret_name(name)
+    }
+    inherited.update(declared or {})
+    return inherited
+
+
+def _redact(text: str, env: dict[str, str]) -> str:
+    """Hides, in text a child printed, the values of the secrets this proxy handed it, and the usual shapes."""
+    for name, value in env.items():
+        if _is_secret_name(name) and len(value) >= 6:
+            text = text.replace(value, "[redacted]")
+    # Only a value that looks like a secret (a long run of token characters), so "invalid token: expired"
+    # keeps the part that says what is wrong.
+    text = re.sub(r"(?i)\b(bearer)\s+[A-Za-z0-9._~+/=-]{8,}", r"\1 [redacted]", text)
+    text = re.sub(r"(?i)\b(token|apikey|api_key|password|secret)\b(\s*[=:]\s*)[A-Za-z0-9._~+/=-]{12,}", r"\1\2[redacted]", text)
+    return re.sub(r"\b(?:sk-[A-Za-z0-9_-]{16,}|gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|AIza[0-9A-Za-z_-]{30,})\b", "[redacted]", text)
+
+
 class _ServerHandle:
     """One live connection to a lazy server (stdio subprocess or HTTP)."""
 
@@ -273,6 +362,13 @@ class _ServerHandle:
         self._modern_protocol = False
         self._transport_failed = False
         self._io_worker: threading.Thread | None = None
+        #: The last thing the server's stderr said, and why the last request failed. Both used to be
+        #: thrown away (stderr went to DEVNULL), which turned "the server crashed on an import" into
+        #: "tool not found" with nothing to say why.
+        self._stderr_lines: collections.deque[str] = collections.deque(maxlen=STDERR_KEEP_LINES)
+        self._stderr_lock = threading.Lock()
+        self._child_env: dict[str, str] = {}
+        self.last_error: str | None = None
 
     def is_mutating(self, tool: str) -> bool:
         return not (self.readonly_server or tool in self.readonly_tools)
@@ -306,9 +402,7 @@ class _ServerHandle:
             from nexgen_core.provision import ensure_deps
         except Exception as exc:
             return {"error": f"{self.name}: provisioning unavailable ({exc}); manifest 'deps' cannot be honoured"}
-        state_dir = Path(os.environ.get("AGENT_STATE_DIR")
-                         or os.environ.get("XDG_STATE_HOME")
-                         or str(Path.home() / ".local" / "state"))
+        state_dir = _state_dir()
         ctx, error = ensure_deps(deps, state_dir, install=True, server=self.name)
         if error:
             return {"error": f"{self.name}: {error}"}
@@ -323,17 +417,19 @@ class _ServerHandle:
         if "error" in ctx:
             raise RuntimeError(ctx["error"])
         cmd = [self.spec["command"]] + list(self.spec.get("args", []))
-        env = dict(os.environ)
-        if self.spec.get("env"):
-            env.update(self.spec["env"])
+        declared = {str(k): str(v) for k, v in (self.spec.get("env") or {}).items()}
         if ctx:
             cmd = [_expand_placeholders(c, ctx) for c in cmd]
+            declared = {k: _expand_placeholders(v, ctx) for k, v in declared.items()}
+        env = _child_environment(declared)
+        if ctx:
             env = {k: _expand_placeholders(v, ctx) for k, v in env.items()}
+        self._child_env = env
         is_win = sys.platform == "win32"
         kwargs: dict[str, Any] = {
             "stdin": subprocess.PIPE,
             "stdout": subprocess.PIPE,
-            "stderr": subprocess.DEVNULL,
+            "stderr": subprocess.PIPE,
             "text": False,
             "env": env,
         }
@@ -342,10 +438,33 @@ class _ServerHandle:
         _, command_argv = _process_helpers()
         self.proc = subprocess.Popen(command_argv(cmd), **kwargs)
         self._process_group = self.proc.pid if not is_win else None
+        with self._stderr_lock:
+            self._stderr_lines.clear()
+        threading.Thread(target=self._drain_stderr, args=(self.proc.stderr,), daemon=True).start()
         # A respawned process has not been initialized: the handshake state
         # belongs to the process, not to the handle.
         self._init_done = False
         self._modern_protocol = False
+
+    def _drain_stderr(self, stream) -> None:
+        """Keeps the tail of the child's stderr. A full pipe would block the server, so it is always read."""
+        try:
+            for raw in iter(lambda: stream.readline(4096), b""):
+                text = raw.decode("utf-8", "replace").rstrip()
+                if text:
+                    with self._stderr_lock:
+                        self._stderr_lines.append(text)
+        except (OSError, ValueError):
+            pass  # the pipe was closed under us: the process is gone
+
+    def stderr_tail(self) -> str:
+        """What the server last said on stderr, redacted and short enough to put in an error."""
+        with self._stderr_lock:
+            lines = list(self._stderr_lines)
+        if not lines:
+            return ""
+        text = _redact(" | ".join(lines[-6:]), self._child_env)
+        return text[-STDERR_SHOWN_CHARS:]
 
     def _request_params(self, method: str, params: dict[str, Any]) -> dict[str, Any]:
         if not self._modern_protocol or method == "initialize":
@@ -529,6 +648,17 @@ class _ServerHandle:
             else:
                 reply = self._rpc_stdio(method, params, rid)
             self._transport_failed = reply.get("error", {}).get("code") == TRANSPORT_ERROR
+            if self._transport_failed:
+                # Give the child a moment to finish printing why it is dying, then say it.
+                if not self.spec.get("url"):
+                    time.sleep(0.15)
+                tail = self.stderr_tail()
+                error = reply["error"]
+                if tail:
+                    error["message"] = f"{error['message']} | server stderr: {tail}"
+                self.last_error = error["message"]
+            elif "result" in reply:
+                self.last_error = None
             return reply
 
     def _next_rid(self) -> int:
@@ -701,7 +831,7 @@ class Waiter:
 
     def _audit(self, server: str, tool: str, action: str, confirmed: bool = False) -> None:
         try:
-            with open(LOG_PATH, "a", encoding="utf-8") as fh:
+            with open(_log_path(), "a", encoding="utf-8") as fh:
                 fh.write(json.dumps({
                     "ts": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
                     "server": server, "tool": tool, "action": action,
@@ -755,6 +885,9 @@ class Waiter:
                 entries.append(entry)
                 estimated += len(t.get("name", "")) // 4 + len(desc) // 4 + 2
             result["servers"][name] = {"mutating": not handle.readonly_server, "tools": entries}
+            if not entries and handle.last_error:
+                # An empty list used to be all there was, and "no tools" read as "nothing to offer".
+                result["servers"][name]["error"] = handle.last_error
         # Budget enforcement: over budget the index degrades to names only
         # (server granularity), so a bordello of servers cannot blow the
         # bootstrap with descriptions.
@@ -769,29 +902,42 @@ class Waiter:
         if server not in servers:
             return {"error": f"unknown lazy server: {server}"}
         handle = self._handle(server, servers[server])
-        for t in handle.tools_list():
+        tools = handle.tools_list()
+        for t in tools:
             if t.get("name") == tool:
                 self._audit(server, tool, "load")
                 with self._lock:
                     self.loaded.add((server, tool))
                 return {"tool": t}
+        if not tools and handle.last_error:
+            # The server never answered: that is not "tool not found", and the cause is the useful part.
+            return {"error": f"server '{server}' is unavailable: {handle.last_error}"}
         return {"error": f"tool '{tool}' not found on {server}"}
 
-    def call(self, server: str, tool: str, arguments: dict[str, Any], confirm: bool = False) -> dict[str, Any]:
+    def call(
+        self, server: str, tool: str, arguments: dict[str, Any], confirm: bool = False, *, via: str = "lazy_call",
+    ) -> dict[str, Any]:
         servers = _lazy_servers()
         if server not in servers:
             return {"error": f"unknown lazy server: {server}"}
         handle = self._handle(server, servers[server])
         with self._lock:
             was_loaded = (server, tool) in self.loaded
-        if handle.is_mutating(tool) and not confirm:
-            self._audit(server, tool, "refused", confirmed=False)
-            return {"error": (
-                f"'{tool}' on '{server}' is not explicitly read-only and requires "
-                "confirmation: call again with \"confirm\": true after reviewing "
-                "the arguments. (Read-only status is granted per server or tool "
-                "in the manifest; the default is fail-closed.)"
-            )}
+        if handle.is_mutating(tool):
+            if via != "lazy_mutate":
+                # A tool the manifest does not declare read-only goes through its own tool, so the CLI's
+                # permission for lazy_call can be granted for reads without granting every write.
+                self._audit(server, tool, "refused", confirmed=False)
+                return {"error": (
+                    f"'{tool}' on '{server}' is not explicitly read-only and requires "
+                    "confirmation: call lazy_mutate with \"confirm\": true after reviewing "
+                    "the arguments. (Read-only status is granted per server or tool "
+                    "in the manifest; the default is fail-closed. lazy_mutate is the tool "
+                    "your CLI asks the person about.)"
+                )}
+            if not confirm:
+                self._audit(server, tool, "refused", confirmed=False)
+                return {"error": f"'{tool}' on '{server}' changes state: call again with \"confirm\": true."}
         with self._lock:
             handle.active_calls += 1
         try:
@@ -846,7 +992,27 @@ def _meta_tools() -> list[dict[str, Any]]:
         },
         {
             "name": "lazy_call",
-            "description": "Forward a call to a lazy server. Servers marked mutating refuse without \"confirm\": true. Always lazy_load first, and confirm explicitly when the call changes state.",
+            "description": "Forward a call to a lazy server's READ-ONLY tool (the ones the manifest declares read-only). Refuses anything else: those go through lazy_mutate. Always lazy_load first.",
+            "annotations": {
+                "readOnlyHint": True,
+                "destructiveHint": False,
+                "idempotentHint": True,
+                "openWorldHint": True,
+            },
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "server": {"type": "string"},
+                    "tool": {"type": "string"},
+                    "arguments": {"type": "object", "description": "Arguments per the loaded schema"},
+                },
+                "required": ["server", "tool", "arguments"],
+                "additionalProperties": False,
+            },
+        },
+        {
+            "name": "lazy_mutate",
+            "description": "Forward a call that may change state, to a lazy server's tool the manifest does not declare read-only. Needs \"confirm\": true after you reviewed the arguments. This is the tool your CLI asks the person about: do not route writes around it.",
             "annotations": {
                 "readOnlyHint": False,
                 "destructiveHint": True,
@@ -859,9 +1025,9 @@ def _meta_tools() -> list[dict[str, Any]]:
                     "server": {"type": "string"},
                     "tool": {"type": "string"},
                     "arguments": {"type": "object", "description": "Arguments per the loaded schema"},
-                    "confirm": {"type": "boolean", "description": "Required for mutating servers"},
+                    "confirm": {"type": "boolean", "description": "Must be true"},
                 },
-                "required": ["server", "tool", "arguments"],
+                "required": ["server", "tool", "arguments", "confirm"],
                 "additionalProperties": False,
             },
         },
@@ -872,8 +1038,8 @@ INSTRUCTIONS = (
     "lazy-mcp is the universal on-demand loader for the MCP servers declared "
     "lazy in the manifest. Workflow: 1) lazy_list to see what exists; "
     "2) lazy_load(server, tool) to bring the full schema into context; "
-    "3) lazy_call to forward the invocation. Mutating servers require "
-    "confirm: true. Every action is audited."
+    "3) lazy_call to forward a read-only tool, or lazy_mutate (with "
+    "confirm: true) for one that may change state. Every action is audited."
 )
 
 
@@ -884,6 +1050,17 @@ def _requested_protocol(req: dict[str, Any]) -> str | None:
         if isinstance(v, str) and v:
             return v
     return None
+
+
+_OUT_LOCK = threading.Lock()
+
+
+def _emit(message: dict[str, Any]) -> None:
+    """Replies come from several threads now; one line must never interleave with another."""
+    line = json.dumps(message) + "\n"
+    with _OUT_LOCK:
+        sys.stdout.write(line)
+        sys.stdout.flush()
 
 
 def _result(req_id: Any, value: dict[str, Any], *, ttl_ms: int | None = None,
@@ -897,16 +1074,14 @@ def _result(req_id: Any, value: dict[str, Any], *, ttl_ms: int | None = None,
     if ttl_ms is not None:
         payload.setdefault("ttlMs", ttl_ms)
         payload.setdefault("cacheScope", cache_scope or "private")
-    sys.stdout.write(json.dumps({"jsonrpc": "2.0", "id": req_id, "result": payload}) + "\n")
-    sys.stdout.flush()
+    _emit({"jsonrpc": "2.0", "id": req_id, "result": payload})
 
 
 def _error(req_id: Any, code: int, message: str, data: Any = None) -> None:
     err: dict[str, Any] = {"code": code, "message": message}
     if data is not None:
         err["data"] = data
-    sys.stdout.write(json.dumps({"jsonrpc": "2.0", "id": req_id, "error": err}) + "\n")
-    sys.stdout.flush()
+    _emit({"jsonrpc": "2.0", "id": req_id, "error": err})
 
 
 def _handle(req: dict[str, Any]) -> None:
@@ -960,10 +1135,10 @@ def _handle(req: dict[str, Any]) -> None:
                 return
             _result(req_id, {"content": [{"type": "text", "text": json.dumps(res["tool"], ensure_ascii=False)}]})
             return
-        if name == "lazy_call":
+        if name in ("lazy_call", "lazy_mutate"):
             res = WAITER.call(
                 str(args.get("server", "")), str(args.get("tool", "")),
-                args.get("arguments") or {}, bool(args.get("confirm", False)),
+                args.get("arguments") or {}, bool(args.get("confirm", False)), via=name,
             )
             if isinstance(res, dict) and "error" in res:
                 msg = res["error"] if isinstance(res["error"], str) else res["error"].get("message", "error")
@@ -980,6 +1155,40 @@ def _handle(req: dict[str, Any]) -> None:
         _result(req_id, {"isError": True, "content": [{"type": "text", "text": f"unknown tool: {name}"}]})
         return
     _error(req_id, -32601, f"method not found: {method}")
+
+
+_SLOTS = threading.BoundedSemaphore(MAX_CONCURRENT_REQUESTS)
+
+
+def _guarded(req: Any) -> None:
+    """Handles one request; whatever goes wrong becomes an answer, never silence (a client waiting on a
+    reply that a dead thread will never send waits for ever)."""
+    try:
+        _handle(req)
+    except Exception as exc:  # noqa: BLE001 - the loop must survive any single request
+        req_id = req.get("id") if isinstance(req, dict) else None
+        if req_id is not None:
+            _error(req_id, -32603, f"internal error ({type(exc).__name__})")
+
+
+def _dispatch(req: dict[str, Any]) -> None:
+    """Runs a tool call on its own thread. Before, the reader handled each request in turn: a six-second
+    call to one server held a ping and a call to another server for six seconds, and a 600-second n8n
+    timeout would have frozen every server behind it for ten minutes. A server's own calls stay serial
+    (its pipe is), so only unrelated work overlaps. Threads are daemons so a stuck call cannot keep the
+    process alive after the client has gone."""
+    if not _SLOTS.acquire(blocking=False):
+        if req.get("id") is not None:
+            _error(req["id"], -32000, f"too many requests in flight (limit {MAX_CONCURRENT_REQUESTS})")
+        return
+
+    def run() -> None:
+        try:
+            _guarded(req)
+        finally:
+            _SLOTS.release()
+
+    threading.Thread(target=run, daemon=True, name="lazy-mcp-request").start()
 
 
 def main() -> int:
@@ -1002,7 +1211,10 @@ def main() -> int:
                     req = json.loads(line)
                 except (ValueError, UnicodeError):
                     continue
-                _handle(req)
+                if isinstance(req, dict) and req.get("method") == "tools/call":
+                    _dispatch(req)
+                else:
+                    _guarded(req)
         return 0
     finally:
         WAITER.shutdown()

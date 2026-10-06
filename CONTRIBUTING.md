@@ -64,7 +64,7 @@ before integration. Fix new lint findings rather than regenerating the baseline.
 | Standalone Vault MCP indexing and note publication | `deploy/vault-mcp/src/vault_mcp_server/vault.py` | `test_deploy_vault_mcp.py` |
 | OCR path gates and bounded image reads | `deploy/ocr/mcp/vault_ocr_mcp.py` | `test_deploy_ocr_mcp.py` |
 | MCP mount policy and private connector preservation | `nexgen_core/renderer.py`; dialect writers in `mcp_render/` | `test_nexgen_mcp_preservation.py`, `test_nexgen_phase2.py`, `test_nexgen_lazy_mcp.py` |
-| Lazy MCP deadlines, framing and reply correlation | `03-INFRA/agent-universal-layer/mcp/lazy-mcp.py` | `test_nexgen_mcp_transport.py`, `test_nexgen_lazy_mcp.py` |
+| Lazy MCP deadlines, framing and reply correlation, concurrency, child environment, read/write split | `03-INFRA/agent-universal-layer/mcp/lazy-mcp.py` (see [lazy-mcp.md](docs/lazy-mcp.md)) | `test_nexgen_mcp_transport.py`, `test_nexgen_lazy_mcp.py`, `test_nexgen_lazy_mcp_serving.py` |
 | Released Engine update and mechanical pin | `nexgen_core/updater.py` | `test_nexgen_update_command.py` |
 | Contributor lanes | `nexgen_core/lanes.py` | `test_nexgen_lanes.py` |
 

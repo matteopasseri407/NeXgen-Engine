@@ -84,6 +84,19 @@ of any engine release.
   hook could not be exercised against a live OpenCode 2.0.24 from here, so every adapter now
   records each consultation and `doctor` reports a guardrail that has never been consulted
   (`guardrail.consulted.<cli>`, undetermined) instead of a green registration.
+- lazy-mcp serves requests concurrently. It read one line at a time and handled each in turn, so
+  a six-second call to one server held a `ping` and a call to another server for six seconds, and
+  a 600-second n8n tool timeout would have frozen every server behind it for ten minutes. One
+  server's own calls stay serial. See docs/lazy-mcp.md.
+- lazy-mcp says why a server is not working. It threw the child's stderr away, so a `drive` server
+  that died on an import error was reported as "tool not found on drive". The tail of stderr is
+  kept, redacted, and shown in `lazy_list` and `lazy_load`.
+- A lazy stdio server no longer inherits every secret in the proxy's environment: it gets what a
+  runtime needs plus what its manifest entry declares in `env:`.
+- `lazy_call` forwards only tools the manifest declares read-only; everything else goes through a
+  new `lazy_mutate` tool (with `confirm: true`), so a CLI's permission for reads is no longer a
+  permission for writes. `confirm: true` is the model's acknowledgement, not a person's approval.
+- The audit log and provisioning state of lazy-mcp follow `NEXGEN_HOME` and `XDG_STATE_HOME`.
 - `vault push` exits non-zero, naming the quarantine branch, when a diverged
   commit was moved aside instead of reporting success.
 - `doctor` runs every check isolated: a crash or a corrupt manifest becomes a
