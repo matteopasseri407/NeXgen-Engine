@@ -68,6 +68,22 @@ of any engine release.
 - The guard no longer reads every file in `~/.local/bin` twice per cycle to find out
   which launchers changed (829 MB on a machine with three large CLIs); `install_shims`
   reports what it rewrote.
+- The Claude guardrail fails closed. The hook was the guardrail body registered directly, and
+  Claude treats any exit code but 2, and any timeout, as a non-blocking error, so a body that
+  crashed, was missing or hung let every command through under `bypassPermissions`, the one
+  posture where it is the only brake. An engine adapter now runs the body in a subprocess and
+  turns every abnormal outcome into `ask` (`deny` under bypass), exiting 2 if it fails itself;
+  an older registration is migrated in place. The three adapters share one core, deploy
+  atomically (a truncated adapter is a hook that does not start), and had no test that ran
+  them: all three are now executed with node, including every way the guardrail can break.
+- The OpenCode guardrail no longer depends on an `allow` rule being asked about. Its plugin
+  hook is only called for actions OpenCode is about to ask about, so `bypass` (which wrote
+  `shell: allow`) left the plugin registered and unreachable. With the plugin installed,
+  `bypass` is rendered as `shell: ask` and the plugin answers for the person. The plugin also
+  recognises the shell action under both its V1 name (`bash`) and its V2 name (`shell`). The
+  hook could not be exercised against a live OpenCode 2.0.24 from here, so every adapter now
+  records each consultation and `doctor` reports a guardrail that has never been consulted
+  (`guardrail.consulted.<cli>`, undetermined) instead of a green registration.
 - `vault push` exits non-zero, naming the quarantine branch, when a diverged
   commit was moved aside instead of reporting success.
 - `doctor` runs every check isolated: a crash or a corrupt manifest becomes a

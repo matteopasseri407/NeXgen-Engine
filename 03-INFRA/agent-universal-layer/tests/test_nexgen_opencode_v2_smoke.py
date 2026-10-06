@@ -133,6 +133,7 @@ def test_smoke_posture_and_guardrail_use_native_keys(tmp_path: Path, monkeypatch
     hooks_dir = tmp_path / "hooks"
     hooks_dir.mkdir()
     (hooks_dir / "opencode-guardrail-plugin.mjs").write_text("// adapter\n", encoding="utf-8")
+    (hooks_dir / "nexgen-guardrail-core.mjs").write_text("// core\n", encoding="utf-8")
     assert rt.install_guardrail(home, hook_source, hooks_dir) is not None
     data = json.loads(cfg.read_text(encoding="utf-8"))
     assert "plugin" not in data

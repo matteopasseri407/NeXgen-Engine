@@ -13,10 +13,18 @@ responsibility, never the caller's.
 """
 from __future__ import annotations
 
+import json
+
 from abc import ABC, abstractmethod
 from pathlib import Path
 
 from nexgen_core.errors import NexgenError
+
+#: The shared JavaScript core every guardrail adapter imports, and the sidecar that
+#: tells an adapter which body to run. Both live next to the adapter in the CLI's config
+#: directory (see agent-universal-layer/hooks/nexgen-guardrail-core.mjs).
+GUARDRAIL_CORE_NAME = "nexgen-guardrail-core.mjs"
+GUARDRAIL_SIDECAR_NAME = "nexgen-guardrail.config.json"
 
 #: Neutral vocabulary of the three posture levels this engine knows about.
 #: An adapter without a verified rendering for one of these values silently
@@ -137,9 +145,85 @@ class Runtime(ABC):
     def deploy_bytes(dst: Path, body: bytes) -> bool:
         """Copies `body` to `dst` only if different (idempotence: a guard
         that runs every few minutes must not rewrite an identical file on
-        every cycle). Returns True if it wrote."""
+        every cycle). Returns True if it wrote.
+
+        Written atomically: a hook adapter cut off halfway is a script that
+        does not parse, and a hook that fails to start is one the CLI treats
+        as a non-blocking error: the guardrail would be off until the next cycle.
+        """
+        import os
+
         if dst.exists() and dst.read_bytes() == body:
             return False
         dst.parent.mkdir(parents=True, exist_ok=True)
-        dst.write_bytes(body)
+        staging = dst.with_name(f"{dst.name}.nexgen-tmp")
+        staging.write_bytes(body)
+        os.replace(staging, dst)
         return True
+
+    # ---- guardrail support shared by every adapter ---------------------
+
+    @staticmethod
+    def guardrail_audit_file(home: Path, cli: str) -> Path:
+        """Where an adapter records that the guardrail was consulted (machine state)."""
+        from nexgen_core.paths import resolve_state_dir
+
+        return resolve_state_dir(home) / "guardrail" / f"{cli}.json"
+
+    def deploy_guardrail_core(self, directory: Path, engine_hooks_dir: Path) -> bool:
+        source = engine_hooks_dir / GUARDRAIL_CORE_NAME
+        if not source.is_file():
+            raise GuardrailError(f"{self.name}: missing engine guardrail core ({source})")
+        return self.deploy_bytes(directory / GUARDRAIL_CORE_NAME, source.read_bytes())
+
+    def write_guardrail_sidecar(
+        self,
+        path: Path,
+        *,
+        body: Path,
+        home: Path,
+        timeout: int = 5,
+        strict: bool | None = None,
+        auto_allow: bool | None = None,
+    ) -> bool:
+        """Writes the sidecar the adapter reads on every call. Flags that are not passed keep the
+        value the sidecar already has: the posture (which decides them) is applied after the
+        guardrail, in a separate call, and must not be undone by the next guardrail install."""
+        existing = self.read_guardrail_sidecar(path)
+        content = json.dumps(
+            {
+                "hooks": [{"file": str(body), "timeout": timeout}],
+                "strict": bool(existing.get("strict")) if strict is None else strict,
+                "autoAllow": bool(existing.get("autoAllow")) if auto_allow is None else auto_allow,
+                "auditFile": str(self.guardrail_audit_file(home, self.name)),
+            },
+            indent=2,
+        ) + "\n"
+        if path.is_file() and path.read_text(encoding="utf-8") == content:
+            return False
+        self.atomic_write(path, content)
+        return True
+
+    @staticmethod
+    def read_guardrail_sidecar(path: Path) -> dict:
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return {}
+        return data if isinstance(data, dict) else {}
+
+    def set_guardrail_flags(self, path: Path, **flags: bool) -> bool:
+        """Changes only the named flags of an existing sidecar; no sidecar, no guardrail, nothing to do."""
+        current = self.read_guardrail_sidecar(path)
+        if not current:
+            return False
+        updated = {**current, **flags}
+        if updated == current:
+            return False
+        self.atomic_write(path, json.dumps(updated, indent=2) + "\n")
+        return True
+
+    def guardrail_sidecar(self, home: Path) -> Path | None:
+        """Where this CLI's adapter reads its sidecar, or None if this CLI has no guardrail hookup."""
+        del home
+        return None

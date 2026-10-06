@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any
 
 from nexgen_core.paths import antigravity_hooks, antigravity_settings
-from nexgen_core.runtimes.base import GuardrailError, Runtime
+from nexgen_core.runtimes.base import GUARDRAIL_SIDECAR_NAME, GuardrailError, Runtime
 
 _IS_WINDOWS = platform.system() == "Windows"
 
@@ -81,12 +81,18 @@ class AntigravityRuntime(Runtime):
         data = self._load_json(path, label="settings.json")
         if data is None:
             return None  # Antigravity never launched here: no posture to apply
+        # Under bypass the guardrail is the only brake, so a guardrail that breaks must block
+        # instead of asking (an ask may be skipped by the very posture that needs it).
+        self.set_guardrail_flags(self.guardrail_sidecar(home), strict=posture == "bypass")
         if all(data.get(k) == v for k, v in desired.items()):
             return None
         data.update(desired)
         self.backup(path)
         self.atomic_write(path, json.dumps(data, indent=2) + "\n")
         return f"antigravity: posture '{posture}' applied in {path}"
+
+    def guardrail_sidecar(self, home: Path) -> Path | None:
+        return self._hooks_path(home).parent / GUARDRAIL_SIDECAR_NAME
 
     def install_guardrail(self, home: Path, hook_source: Path, engine_hooks_dir: Path) -> str | None:
         if not self._settings_path(home).is_file():
@@ -102,17 +108,15 @@ class AntigravityRuntime(Runtime):
             raise GuardrailError(f"antigravity: missing engine adapter ({adapter_src})")
         adapter_dst = adapter_dir / _ADAPTER_NAME
         adapter_changed = self.deploy_bytes(adapter_dst, adapter_src.read_bytes())
+        adapter_changed |= self.deploy_guardrail_core(adapter_dir, engine_hooks_dir)
 
-        sidecar_path = adapter_dir / "nexgen-guardrail.config.json"
+        sidecar_path = adapter_dir / GUARDRAIL_SIDECAR_NAME
         # Antigravity's external hook timeout kills the WHOLE command; the
         # adapter already applies its own per-body timeout via subprocess,
         # so the buffer here keeps the external kill from firing before the
         # internal one gets its chance.
         timeout = 5
-        sidecar_content = json.dumps({"hooks": [{"file": str(body_dst), "timeout": timeout}]}, indent=2) + "\n"
-        sidecar_changed = not sidecar_path.is_file() or sidecar_path.read_text(encoding="utf-8") != sidecar_content
-        if sidecar_changed:
-            self.atomic_write(sidecar_path, sidecar_content)
+        sidecar_changed = self.write_guardrail_sidecar(sidecar_path, body=body_dst, home=home, timeout=timeout)
 
         desired_entry = {
             "enabled": True,

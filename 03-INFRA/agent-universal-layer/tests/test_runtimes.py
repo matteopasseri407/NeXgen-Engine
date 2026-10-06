@@ -9,6 +9,7 @@ installato su chi esegue i test, non dalla logica sotto test.
 from __future__ import annotations
 
 import json
+import shutil
 import sys
 from pathlib import Path
 
@@ -25,6 +26,15 @@ from nexgen_core.runtimes.base import GuardrailError
 from nexgen_core.runtimes.claude import ClaudeRuntime
 from nexgen_core.runtimes.codex import CodexRuntime
 from nexgen_core.runtimes.opencode import OpenCodeRuntime
+
+REAL_HOOKS = Path(__file__).resolve().parents[1] / "hooks"
+
+
+def _real_hooks(tmp_path: Path) -> Path:
+    """A copy of the hook files that ship, standing in for the engine's hooks folder."""
+    target = tmp_path / "engine-hooks"
+    shutil.copytree(REAL_HOOKS, target)
+    return target
 
 
 @pytest.fixture(autouse=True)
@@ -104,19 +114,26 @@ def test_claude_install_guardrail_registers_hook_and_preserves_other_events(tmp_
     hook_source = tmp_path / "guardrail-catastrophic.mjs"
     hook_source.write_text("// policy body\n", encoding="utf-8")
 
+    engine_hooks = _real_hooks(tmp_path)
     rt = ClaudeRuntime()
-    action = rt.install_guardrail(home, hook_source, tmp_path / "unused-engine-hooks")
+    action = rt.install_guardrail(home, hook_source, engine_hooks)
     assert action is not None
-    assert (claude_dir / "guardrail-catastrophic.mjs").read_text(encoding="utf-8") == "// policy body\n"
+    body_dst = claude_dir / "nexgen-guardrail-hooks" / "guardrail-catastrophic.mjs"
+    assert body_dst.read_text(encoding="utf-8") == "// policy body\n"
 
     data = json.loads(settings.read_text(encoding="utf-8"))
     assert data["hooks"]["SessionStart"]  # evento estraneo sopravvive intatto
     pretool = data["hooks"]["PreToolUse"]
     assert pretool[0]["matcher"] == "Bash"
-    assert "guardrail-catastrophic.mjs" in pretool[0]["hooks"][0]["command"]
+    # The hook is the adapter, which fails closed; the body is what the adapter runs.
+    assert pretool[0]["hooks"][0]["command"] == f'node "{claude_dir / "claude-guardrail-adapter.mjs"}"'
+    assert pretool[0]["hooks"][0]["timeout"] == 10
+    sidecar = json.loads((claude_dir / "nexgen-guardrail.config.json").read_text(encoding="utf-8"))
+    assert sidecar["hooks"] == [{"file": str(body_dst), "timeout": 5}] and sidecar["auditFile"].endswith("claude.json")
+    assert (claude_dir / "nexgen-guardrail-core.mjs").is_file()
 
     # Idempotenza: una seconda chiamata non aggiunge una seconda voce.
-    again = rt.install_guardrail(home, hook_source, tmp_path / "unused-engine-hooks")
+    again = rt.install_guardrail(home, hook_source, engine_hooks)
     assert again is None
     data2 = json.loads(settings.read_text(encoding="utf-8"))
     assert len(data2["hooks"]["PreToolUse"]) == 1
@@ -279,6 +296,7 @@ def test_opencode_install_guardrail_registers_plugin_and_preserves_others(tmp_pa
     engine_hooks_dir = tmp_path / "engine-hooks"
     engine_hooks_dir.mkdir()
     (engine_hooks_dir / "opencode-guardrail-plugin.mjs").write_text("// adapter\n", encoding="utf-8")
+    (engine_hooks_dir / "nexgen-guardrail-core.mjs").write_text("// core\n", encoding="utf-8")
 
     rt = OpenCodeRuntime()
     action = rt.install_guardrail(home, hook_source, engine_hooks_dir)
@@ -347,6 +365,7 @@ def test_antigravity_install_guardrail_preserves_foreign_hooks_json_keys(tmp_pat
     engine_hooks_dir = tmp_path / "engine-hooks"
     engine_hooks_dir.mkdir()
     (engine_hooks_dir / "antigravity-guardrail-adapter.mjs").write_text("// adapter\n", encoding="utf-8")
+    (engine_hooks_dir / "nexgen-guardrail-core.mjs").write_text("// core\n", encoding="utf-8")
 
     rt = AntigravityRuntime()
     action = rt.install_guardrail(home, hook_source, engine_hooks_dir)
@@ -436,7 +455,7 @@ def test_guard_apply_runtime_permissions_end_to_end(tmp_path: Path):
     settings.write_text(json.dumps({"permissions": {}}), encoding="utf-8")
 
     engine_root = tmp_path / "engine" / "03-INFRA"
-    (engine_root / "agent-universal-layer" / "hooks").mkdir(parents=True)
+    shutil.copytree(REAL_HOOKS, engine_root / "agent-universal-layer" / "hooks")  # the adapters that ship
 
     runner = GuardRunner(vault_data=vault, engine_root=engine_root, home=home)
     actions = runner.apply_runtime_permissions()

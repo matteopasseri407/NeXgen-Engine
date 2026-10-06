@@ -26,7 +26,7 @@ from typing import Any
 
 from nexgen_core.jsonc import parse_jsonc, set_jsonc_top_level_value
 from nexgen_core.paths import opencode_config_path
-from nexgen_core.runtimes.base import GuardrailError, Runtime
+from nexgen_core.runtimes.base import GUARDRAIL_CORE_NAME, GUARDRAIL_SIDECAR_NAME, GuardrailError, Runtime
 
 _IS_WINDOWS = sys.platform == "win32"
 
@@ -46,6 +46,18 @@ _POSTURE_RENDER = {
         {"action": "shell", "resource": "*", "effect": "ask"},
     ],
 }
+
+#: Bypass as the engine renders it when the guardrail plugin is installed. `permission.ask`
+#: is only called when OpenCode is about to ASK, so a shell rule that says `allow` never
+#: reaches the plugin: the guardrail would be registered and unreachable, with nothing to
+#: say so. With `ask`, every shell command reaches the plugin, which answers `allow` for
+#: what the guardrail body permits (no prompt, as bypass means) and `ask` or `deny` for the
+#: rest. If OpenCode ever stopped calling the hook, the failure is visible (every command
+#: prompts) instead of silent.
+_MEDIATED_BYPASS = [
+    {"action": "edit", "resource": "*", "effect": "allow"},
+    {"action": "shell", "resource": "*", "effect": "ask"},
+]
 
 #: Legacy V1 dimensions and their V2 action names. Only these dimensions
 #: are migrated: every other `permission.*` key (webfetch, doom_loop, ...)
@@ -111,6 +123,13 @@ class OpenCodeRuntime(Runtime):
         if not isinstance(rules, list):
             return None
         have = {(r.get("action"), r.get("resource"), r.get("effect")) for r in rules if isinstance(r, dict)}
+        # A mediated bypass writes shell as `ask` and lets the plugin answer (see
+        # _mediated); on disk the rules are those of accept-edits, and only the sidecar
+        # says the plugin answers for the person.
+        if self.read_guardrail_sidecar(self.guardrail_sidecar(home)).get("autoAllow") and all(
+            (r["action"], r["resource"], r["effect"]) in have for r in _MEDIATED_BYPASS
+        ):
+            return "bypass"
         for posture, desired in _POSTURE_RENDER.items():
             if all((r["action"], r["resource"], r["effect"]) in have for r in desired):
                 return posture
@@ -129,6 +148,19 @@ class OpenCodeRuntime(Runtime):
         if rules is not None and not isinstance(rules, list):
             raise GuardrailError(f"opencode: {path.name}: 'permissions' is not an array")
         rules = list(rules or [])
+        mediated = posture == "bypass" and self._mediated(home)
+        if mediated:
+            desired = [dict(rule) for rule in _MEDIATED_BYPASS]
+            for rule in rules:
+                # The `allow` an earlier cycle wrote for this pair would keep the plugin unreachable.
+                if isinstance(rule, dict) and (rule.get("action"), rule.get("resource"), rule.get("effect")) == (
+                    "shell", "*", "allow",
+                ):
+                    rule["effect"] = "ask"
+                    changed = True
+        # The plugin answers for the person only under a mediated bypass; elsewhere the person
+        # asked to be asked. Under bypass a broken guardrail must block rather than ask.
+        self.set_guardrail_flags(self.guardrail_sidecar(home), autoAllow=mediated, strict=posture == "bypass")
         claimed = {(r.get("action"), r.get("resource")) for r in rules if isinstance(r, dict)}
         for rule in desired:
             if (rule["action"], rule["resource"]) in claimed:
@@ -215,6 +247,19 @@ class OpenCodeRuntime(Runtime):
             updated = json.dumps(data, indent=2) + "\n"
         self.atomic_write(path, updated)
 
+    def guardrail_sidecar(self, home: Path) -> Path | None:
+        return self._config_path(home).parent / GUARDRAIL_SIDECAR_NAME
+
+    def _mediated(self, home: Path) -> bool:
+        """The guardrail plugin is deployed with everything it needs, so it can answer for the person."""
+        plugin_dir = self._config_path(home).parent
+        sidecar = self.read_guardrail_sidecar(plugin_dir / GUARDRAIL_SIDECAR_NAME)
+        return (
+            bool(sidecar.get("hooks"))
+            and (plugin_dir / _ADAPTER_NAME).is_file()
+            and (plugin_dir / GUARDRAIL_CORE_NAME).is_file()
+        )
+
     def install_guardrail(self, home: Path, hook_source: Path, engine_hooks_dir: Path) -> str | None:
         config_path = self._config_path(home)
         if not config_path.is_file():
@@ -231,15 +276,14 @@ class OpenCodeRuntime(Runtime):
             raise GuardrailError(f"opencode: missing engine adapter ({adapter_src})")
         adapter_dst = plugin_dir / _ADAPTER_NAME
         adapter_changed = self.deploy_bytes(adapter_dst, adapter_src.read_bytes())
+        adapter_changed |= self.deploy_guardrail_core(plugin_dir, engine_hooks_dir)
 
         # 3) Sidecar: which body to run and with what timeout, read fresh
         #    by the adapter on every call (no OpenCode restart needed to
         #    pick up a changed manifest).
-        sidecar_path = plugin_dir / "nexgen-guardrail.config.json"
-        sidecar_content = json.dumps({"hooks": [{"file": str(body_dst), "timeout": 5}]}, indent=2) + "\n"
-        sidecar_changed = not sidecar_path.is_file() or sidecar_path.read_text(encoding="utf-8") != sidecar_content
-        if sidecar_changed:
-            self.atomic_write(sidecar_path, sidecar_content)
+        sidecar_changed = self.write_guardrail_sidecar(
+            plugin_dir / GUARDRAIL_SIDECAR_NAME, body=body_dst, home=home,
+        )
 
         # 4) Registration in the "plugin" array -- append and dedup, every
         #    other plugin the user has stays exactly as it was.
