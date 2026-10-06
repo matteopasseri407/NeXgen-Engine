@@ -169,12 +169,12 @@ def test_skill_failure_is_a_failed_cycle_but_no_longer_stops_the_rest(tmp_path, 
         "nexgen_core.guard.SkillMaterializer.materialize", lambda *_a, **_k: (0, ["[ERROR] failed skill"])
     )
     ran = []
-    for name in ("mcp", "permissions", "instructions", "launchers", "scheduler", "modules"):
+    for name in ("mcp", "permissions", "instructions", "launchers", "scheduler", "modules", "runtime"):
         monkeypatch.setattr(runner, f"_phase_{name}", lambda *_a, _n=name: ran.append(_n))
     result = runner.run(GuardMode.APPLY)
     assert not result.success
     assert result.exit_code != 0
-    assert ran == ["mcp", "permissions", "instructions", "launchers", "scheduler", "modules"]
+    assert ran == ["mcp", "permissions", "instructions", "launchers", "scheduler", "modules", "runtime"]
     assert "[ERROR] failed skill" in result.actions_taken
     assert runner.heartbeat.recorded_failed_phases() == ["skills"]
 

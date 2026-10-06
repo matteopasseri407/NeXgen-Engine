@@ -16,7 +16,7 @@ from nexgen_core.checks.takeover_checks import check_last_cycle_phases
 from nexgen_core.guard import GuardMode, GuardRunner
 from nexgen_core.report import Severity
 
-PHASES = ("skills", "mcp", "permissions", "instructions", "launchers", "scheduler", "modules")
+PHASES = ("skills", "mcp", "permissions", "instructions", "launchers", "scheduler", "modules", "runtime")
 
 
 def _runner(tmp_path: Path, monkeypatch) -> tuple[GuardRunner, list[str]]:
@@ -71,7 +71,7 @@ def test_several_failures_are_all_reported(tmp_path, monkeypatch):
 
     assert runner.heartbeat.recorded_failed_phases() == ["skills", "launchers"]
     assert "skills, launchers" in result.message
-    assert ran == ["mcp", "permissions", "instructions", "scheduler", "modules"]
+    assert ran == ["mcp", "permissions", "instructions", "scheduler", "modules", "runtime"]
 
 
 def test_the_guardrail_phase_runs_even_when_skills_cannot_be_fetched(tmp_path, monkeypatch):

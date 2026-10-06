@@ -39,7 +39,7 @@ from nexgen_core.first_run import (  # noqa: E402 - sys.path shim for cloned che
     write_user_profile,
 )
 from nexgen_core.i18n import t  # noqa: E402 - sys.path shim for cloned checkout
-from nexgen_core.paths import resolve_home  # noqa: E402 - sys.path shim for cloned checkout
+from nexgen_core.paths import installed_as_package, resolve_home  # noqa: E402 - sys.path shim for cloned checkout
 
 #: The Python version below which the engine won't start.
 MINIMUM_PYTHON = (3, 11)
@@ -242,7 +242,19 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--root", default=None, help=t("Vault root (default: the repository folder)"))
     args = parser.parse_args(argv)
 
-    root = Path(args.root) if args.root else Path(__file__).resolve().parents[3]
+    if args.root:
+        root = Path(args.root)
+    elif installed_as_package():
+        # The default root is the repository folder. An installed package has none: the
+        # path computed from this file points inside the tool's virtual environment, and
+        # the scaffold used to be written there (even with --check, which did not exist).
+        print(t(
+            "This engine is installed as a package, so there is no repository folder to use as the vault. "
+            "Pass --root PATH (for example ~/KnowledgeVault)."
+        ), file=sys.stderr)
+        return 2
+    else:
+        root = Path(__file__).resolve().parents[3]
     c = _colour(sys.stdout)
 
     print(f"{c['bold']}{c['cyan']}" + t("NeXgen Engine · first run") + c['reset'])

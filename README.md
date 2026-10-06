@@ -115,6 +115,10 @@ nexgen doctor
 Releases include a source archive, a wheel, and `SHA256SUMS` for download verification.
 PyPI and Homebrew publication are separate, pending distribution channels, documented in [release-packages.md](docs/release-packages.md).
 
+A package install carries the whole engine (the Council, the MCP proxy, the hooks, the
+templates), not only the commands, and leaves the launchers to the package manager.
+It has no repository folder, so create the vault with `nexgen init --root ~/KnowledgeVault`.
+
 Package installations are updated through the package manager that installed them.
 For Git checkouts, `nexgen update` asks for confirmation; the scheduled heartbeat can apply patch releases unattended.
 See [upgrade.md](docs/upgrade.md) for requirements and recovery.

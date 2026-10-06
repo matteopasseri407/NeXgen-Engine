@@ -117,6 +117,20 @@ yourself to try that release again. The exit codes it uses are `70` (refused for
 its signature), `71` (failed and was undone) and `72` (failed and could not be
 undone, with the manual recovery printed).
 
+### The engine's own Python environment
+
+LangGraph, LangChain and `mcp` are core dependencies (the Council's resumable relay, the
+local lane and the MCP servers run on them), and the system `python3` usually has none of
+them. For a checkout the guard therefore provisions an environment of its own,
+`~/.local/share/nexgen-engine/runtime` (outside every git tree, so it never makes the
+checkout dirty), from the dependency list in `pyproject.toml`. The launchers use it as
+soon as it has been provisioned and verified, and fall back to any suitable Python until
+then, so the guard and the doctor still need nothing but PyYAML. `nexgen runtime check`
+says whether the interpreter you are running can import everything, `nexgen runtime
+ensure` creates or repairs the environment by hand, and `nexgen doctor` reports a missing
+library as broken with that command. A package install is its own environment and is only
+verified.
+
 The manual sequence below remains the recovery path for MINIMAL installs and
 for the one bootstrap upgrade from a version that predates the command.
 

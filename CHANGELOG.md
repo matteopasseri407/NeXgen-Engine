@@ -48,6 +48,26 @@ of any engine release.
 - The `[WARN]`/`[ERROR]` marker on a sync note is written and read in one module
   (`action_notes`); a test refuses a hand-written prefix anywhere else.
 - The liveness record is written atomically.
+- The engine's own Python environment. LangGraph, LangChain and `mcp` are core
+  dependencies, but the launchers started whatever `python3` was on PATH, which had
+  none of them: the Council's resumable relay answered "missing dependency" and the
+  `drive` MCP server came up with no tools, with every check green. The guard now
+  provisions an environment from the `pyproject.toml` dependency list under
+  `~/.local/share/nexgen-engine/runtime`, the launchers use it once verified (a file
+  test, no interpreter started to decide), `nexgen runtime check|ensure` drives it by
+  hand, and `doctor` reports a missing library as broken (`env.runtime`).
+- The wheel carries the engine layer (Council, lazy-mcp, hooks, manifests, skills,
+  leak-scan, templates) as `nexgen_core/_engine`, and `resolve_engine_root` finds it
+  when there is no checkout. A build without the layer now fails instead of shipping a
+  wheel with the commands and none of what they run.
+- A package install (pipx, uv) keeps its own launchers: the guard used to replace them
+  with ones that start the system `python3`, which breaks the tool on the first cycle.
+- `nexgen init --check` runs a check instead of the real installation, and a package
+  install refuses to scaffold the vault inside its own virtual environment (pass
+  `--root`).
+- The guard no longer reads every file in `~/.local/bin` twice per cycle to find out
+  which launchers changed (829 MB on a machine with three large CLIs); `install_shims`
+  reports what it rewrote.
 - `vault push` exits non-zero, naming the quarantine branch, when a diverged
   commit was moved aside instead of reporting success.
 - `doctor` runs every check isolated: a crash or a corrupt manifest becomes a

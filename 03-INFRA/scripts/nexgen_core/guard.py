@@ -56,22 +56,6 @@ from nexgen_core.skills import SkillMaterializer
 logger = logging.getLogger(__name__)
 
 
-def _launcher_fingerprints(home: Path) -> dict[str, str]:
-    """Content hash of every launcher, to tell what actually changed."""
-    import hashlib
-
-    bin_dir = home / ".local" / "bin"
-    if not bin_dir.is_dir():
-        return {}
-    out: dict[str, str] = {}
-    for entry in bin_dir.iterdir():
-        try:
-            out[entry.name] = hashlib.sha256(entry.read_bytes()).hexdigest()[:16]
-        except OSError:
-            continue
-    return out
-
-
 def _same_file(a: str, b: Path) -> bool:
     """True if both name the same file, whatever the spelling (absolute or ~)."""
     try:
@@ -535,6 +519,8 @@ class GuardRunner:
             ("launchers", lambda: self._phase_launchers(actions)),
             ("scheduler", lambda: self._phase_scheduler(actions, branch)),
             ("modules", lambda: self._phase_modules(actions)),
+            # Last: it may spend minutes on pip, and the safety phases above do not wait for it.
+            ("runtime", lambda: self._phase_runtime(actions)),
         )
         failed: list[str] = []
         for name, run_phase in phases:
@@ -674,9 +660,11 @@ class GuardRunner:
         try:
             from nexgen_core.shims import install_shims
 
-            before = _launcher_fingerprints(self.home)
-            install_shims(home=self.home)
-            repaired = sorted(_launcher_fingerprints(self.home).items() - before.items())
+            # install_shims says what it rewrote. This used to hash every file in
+            # ~/.local/bin before and after (829 MB read, twice, every 30 minutes
+            # on a machine with three large CLIs there) to work out the same thing.
+            repaired: list[str] = []
+            install_shims(home=self.home, changed=repaired)
             if repaired:
                 actions.append(t("Commands realigned ({count})", count=len(repaired)))
         except Exception as exc:  # noqa: BLE001 - phase failure is recorded, never raises
@@ -729,6 +717,35 @@ class GuardRunner:
                 actions.append(t("Modules realigned ({count})", count=len(module_actions)))
         except Exception as exc:  # noqa: BLE001 - phase failure is recorded, never raises
             actions.append(WARN + t("Modules not realigned: {error}", error=exc))
+
+    def _phase_runtime(self, actions: list[str]) -> None:
+        """The engine's own Python environment: provisioned from the checkout's
+        dependency list, or, for a package install, only verified.
+
+        Skipped where host mutations are disabled (sandboxes and tests): it creates a
+        virtual environment and downloads packages.
+        """
+        from nexgen_core import runtime
+        from nexgen_core.paths import installed_as_package, resolve_runtime_dir
+        from nexgen_core.scheduler import host_mutations_disabled
+
+        if installed_as_package():
+            missing = runtime.missing_imports()
+            if missing:
+                raise runtime.RuntimeProvisionError(
+                    t("The package environment cannot import: {modules}. Reinstall the engine.", modules=", ".join(missing))
+                )
+            return
+        if host_mutations_disabled():
+            actions.append(t("Engine environment not provisioned (host mutations are disabled)"))
+            return
+        checkout = self.engine_root.parent
+        if not (checkout / "pyproject.toml").is_file():
+            actions.append(WARN + t("Engine environment not provisioned: no pyproject.toml next to {path}", path=self.engine_root))
+            return
+        result = runtime.ensure_runtime(resolve_runtime_dir(self.home), checkout, log=actions.append)
+        if result.changed:
+            actions.append(t("Engine environment provisioned ({detail})", detail=result.detail))
 
     def _phase_liveness(
         self, actions: list[str], is_guard: bool, mode: GuardMode, failed: list[str] | None = None,

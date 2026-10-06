@@ -207,9 +207,13 @@ def _resolve_cmd(name: str) -> str | None:
     return None
 
 
-def _host_mutations_disabled() -> bool:
+def host_mutations_disabled() -> bool:
+    """True under NEXGEN_DISABLE_HOST_MUTATIONS: sandboxes, tests and dry runs."""
     value = os.environ.get(HOST_MUTATIONS_DISABLED_ENV, "").strip().lower()
     return value in {"1", "true", "yes", "on"}
+
+
+_host_mutations_disabled = host_mutations_disabled  # the name this module's callers used
 
 
 def install_systemd_units(

@@ -62,6 +62,7 @@ from nexgen_core.checks.skill_checks import (  # noqa: E402 - sys.path shim for 
     check_skills_out_of_manifest,
     check_skills_pin_freshness,
 )
+from nexgen_core.checks.runtime_checks import check_engine_runtime  # noqa: E402 - sys.path shim for cloned checkout
 from nexgen_core.checks.takeover_checks import (  # noqa: E402 - sys.path shim for cloned checkout
     check_engine_version_recorded,
     check_last_cycle_phases,
@@ -160,6 +161,7 @@ class Doctor:
         # 1. Environment and directory checks
         run("env.state_dir", lambda: check_state_dir(state))
         run("env.vault_path", lambda: check_vault_path(vault))
+        run("env.runtime", lambda: check_engine_runtime(home, self.engine_root))
 
         # 1b. Which engine last completed a cycle here: the per-machine
         # answer to "are all my machines migrated?".
