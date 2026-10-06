@@ -18,6 +18,7 @@ import logging
 import os
 import subprocess
 import time
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
@@ -80,7 +81,7 @@ class Heartbeat:
         self.megaphone = Megaphone(state_dir=self.state_dir)
         self.liveness_file = self.state_dir / LIVENESS_FILE_NAME
 
-    def record_liveness(self, warnings: int = 0) -> None:
+    def record_liveness(self, warnings: int = 0, failed_phases: Sequence[str] = ()) -> None:
         """Records the successful completion of a Guard cycle, and by whom.
 
         The version is written alongside the timestamp because otherwise
@@ -93,14 +94,30 @@ class Heartbeat:
         version reading this file keeps working: it reads the first line and
         ignores the rest. The warning count rides a third line for the same
         reason: a cycle that completed with degraded phases is still a
-        completed cycle, but the monitor should say so.
+        completed cycle, but the monitor should say so. The phases that failed
+        ride a fourth line, only when there are any: the guard now runs every
+        phase even after one fails, so reaching the end no longer means every
+        phase worked, and "alive" and "healthy" are different answers.
         """
         from nexgen_core import __version__
+        from nexgen_core.files import atomic_write_text
 
         self.state_dir.mkdir(parents=True, exist_ok=True)
-        self.liveness_file.write_text(
-            f"{time.time()}\n{__version__}\nWARN={int(warnings)}\n", encoding="utf-8"
-        )
+        text = f"{time.time()}\n{__version__}\nWARN={int(warnings)}\n"
+        if failed_phases:
+            text += "FAIL=" + ",".join(failed_phases) + "\n"
+        atomic_write_text(self.liveness_file, text)
+
+    def recorded_failed_phases(self) -> list[str]:
+        """Phases that failed in the last recorded cycle (empty when none or unrecorded)."""
+        try:
+            lines = self.liveness_file.read_text(encoding="utf-8").splitlines()
+        except OSError:
+            return []
+        for line in lines[2:]:
+            if line.strip().startswith("FAIL="):
+                return [p for p in line.strip().split("=", 1)[1].split(",") if p]
+        return []
 
     def recorded_warnings(self) -> int | None:
         """Warning count of the last recorded cycle, None when unrecorded."""
@@ -160,6 +177,9 @@ class Heartbeat:
             warns = self.recorded_warnings()
             if warns:
                 msg += " " + t("(last cycle completed with {count} warnings)", count=warns)
+            failed = self.recorded_failed_phases()
+            if failed:
+                msg += " " + t("(last cycle: these phases failed: {phases})", phases=", ".join(failed))
             return True, msg
         except Exception as exc:  # noqa: BLE001 - failure is returned, never raises
             # A corrupt liveness file blinds self-monitoring: alert once

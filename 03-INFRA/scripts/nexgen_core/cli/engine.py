@@ -12,6 +12,7 @@ from pathlib import Path
 
 import yaml
 
+from nexgen_core.action_notes import is_error, is_warning  # noqa: E402 - sys.path shim for cloned checkout
 from nexgen_core.i18n import t
 from nexgen_core.marks import safe_mark as _safe_mark
 from nexgen_core.paths import (
@@ -118,9 +119,9 @@ def register(sub) -> None:
 
 def _action_mark(act: str) -> tuple[str, str]:
     """The mark and the text for one action line, from its own prefix."""
-    if act.startswith(("[ERROR]", "[ERRORE]")):
+    if is_error(act):
         return _safe_mark("✗"), act.split("] ", 1)[-1]
-    if act.startswith(("[WARN]", "[AVVISO]")):
+    if is_warning(act):
         return _safe_mark("!"), act.split("] ", 1)[-1]
     return _safe_mark("✓"), act
 

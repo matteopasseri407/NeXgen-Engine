@@ -20,4 +20,5 @@ class NexgenError(Exception):
 
 
 class AlignmentError(NexgenError):
-    """A required materialization phase failed; subsequent writes must stop."""
+    """A materialization phase failed. The guard records it as a failed phase and
+    still runs the others: none depends on what another wrote."""

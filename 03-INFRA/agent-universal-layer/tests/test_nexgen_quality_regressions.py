@@ -156,7 +156,10 @@ def test_lock_io_failure_is_not_guard_contention(tmp_path):
     assert getattr(error.value, "exit_code", 1) != 0
 
 
-def test_skill_failure_stops_guard_before_runtime_writes(tmp_path, monkeypatch):
+def test_skill_failure_is_a_failed_cycle_but_no_longer_stops_the_rest(tmp_path, monkeypatch):
+    """A skill whose fetch fails used to stop the MCP render, the permission posture
+    and the guardrail behind it. The cycle is still a failure and says which phase,
+    but the other phases ran (see test_nexgen_guard_phases for every phase)."""
     vault = tmp_path / "vault"
     vault.mkdir()
     runner = GuardRunner(vault_data=vault, home=tmp_path / "home")
@@ -165,14 +168,15 @@ def test_skill_failure_stops_guard_before_runtime_writes(tmp_path, monkeypatch):
     monkeypatch.setattr(
         "nexgen_core.guard.SkillMaterializer.materialize", lambda *_a, **_k: (0, ["[ERROR] failed skill"])
     )
-    called = []
-    monkeypatch.setattr(runner, "_phase_mcp", lambda *_: called.append("mcp"))
+    ran = []
+    for name in ("mcp", "permissions", "instructions", "launchers", "scheduler", "modules"):
+        monkeypatch.setattr(runner, f"_phase_{name}", lambda *_a, _n=name: ran.append(_n))
     result = runner.run(GuardMode.APPLY)
     assert not result.success
     assert result.exit_code != 0
-    assert not called
+    assert ran == ["mcp", "permissions", "instructions", "launchers", "scheduler", "modules"]
     assert "[ERROR] failed skill" in result.actions_taken
-    assert not runner.heartbeat.liveness_file.exists()
+    assert runner.heartbeat.recorded_failed_phases() == ["skills"]
 
 
 @pytest.mark.parametrize(

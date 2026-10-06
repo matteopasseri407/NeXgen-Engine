@@ -11,6 +11,7 @@ from __future__ import annotations
 import shutil
 from pathlib import Path
 
+from nexgen_core.action_notes import WARN  # noqa: E402 - sys.path shim for cloned checkout
 from nexgen_core.runtimes.antigravity import AntigravityRuntime
 from nexgen_core.runtimes.base import GuardrailError, Runtime
 from nexgen_core.runtimes.claude import ClaudeRuntime
@@ -58,7 +59,7 @@ def apply_all(
             try:
                 result = runtime.install_guardrail(home, guardrail_source, engine_hooks_dir)
             except GuardrailError as exc:
-                actions.append(f"[WARN] {runtime.name}: guardrail installation refused ({exc})")
+                actions.append(f"{WARN}{runtime.name}: guardrail installation refused ({exc})")
                 guardrail_ok = False
             else:
                 if result:
@@ -72,7 +73,7 @@ def apply_all(
             except (OSError, ValueError, TypeError, GuardrailError) as exc:
                 # Same isolation as guardrail/posture above: one corrupt CLI
                 # config must warn for its own CLI, never abort the rest.
-                actions.append(f"[WARN] {runtime.name}: event sink installation failed ({exc})")
+                actions.append(f"{WARN}{runtime.name}: event sink installation failed ({exc})")
 
         desired_posture = posture.get(runtime.name)
         if not desired_posture:
@@ -82,20 +83,20 @@ def apply_all(
             # would let the user believe in a least-privilege that was
             # never applied. Warn once per cycle, apply nothing.
             actions.append(
-                f"[WARN] {runtime.name}: posture '{desired_posture}' has no verified "
+                f"{WARN}{runtime.name}: posture '{desired_posture}' has no verified "
                 f"rendering on this CLI -- nothing applied"
             )
             continue
         if not guardrail_ok:
             actions.append(
-                f"[WARN] {runtime.name}: posture '{desired_posture}' NOT applied -- "
+                f"{WARN}{runtime.name}: posture '{desired_posture}' NOT applied -- "
                 "its declared guardrail did not install correctly"
             )
             continue
         try:
             result = runtime.apply_posture(home, desired_posture)
         except GuardrailError as exc:
-            actions.append(f"[WARN] {runtime.name}: posture application refused ({exc})")
+            actions.append(f"{WARN}{runtime.name}: posture application refused ({exc})")
         else:
             if result:
                 actions.append(result)
@@ -105,7 +106,7 @@ def apply_all(
             # Every registered hook above spawns `node`: without it on the
             # PATH the CLIs hold dead registrations behind a green guard.
             actions.append(
-                "[WARN] hooks registered but `node` is not on PATH: "
+                WARN + "hooks registered but `node` is not on PATH: "
                 "guardrail and event-sink hooks will never fire until it is installed"
             )
 

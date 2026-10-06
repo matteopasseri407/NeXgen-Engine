@@ -24,6 +24,7 @@ SCRIPTS_DIR = Path(__file__).resolve().parents[1]
 if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
+from nexgen_core.action_notes import ERROR, is_error  # noqa: E402 - sys.path shim for cloned checkout
 from nexgen_core.config import (  # noqa: E402
     SKILL_EXPOSURES,
     SKILL_ORIGINS,
@@ -314,7 +315,7 @@ class SkillMaterializer:
             elif entry.origin == "github" and entry.repo and entry.commit:
                 cache_dir = self.home / ".agents" / "cache" / "github-skills" / name
                 if not COMMIT_SHA_RE.match(entry.commit):
-                    actions.append("[ERROR] " + t(
+                    actions.append(ERROR + t(
                         "github skill '{name}': pin '{commit}' is not a full "
                         "40-character commit, skipping the entry",
                         name=name, commit=entry.commit,
@@ -338,7 +339,7 @@ class SkillMaterializer:
                     try:
                         self.fetcher._record_installed_version(name, entry.commit or "")
                     except OSError as exc:
-                        actions.append("[ERROR] " + str(exc))
+                        actions.append(ERROR + str(exc))
                         continue
 
             elif entry.origin == "installer" and apply:
@@ -513,9 +514,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if cmd in ("apply", "sync") or flag_apply:
         changes, actions = mat.materialize(apply=True)
-        failed = [a for a in actions if a.startswith("[ERROR]")]
+        failed = [a for a in actions if is_error(a)]
         for act in actions:
-            print(f"  {err_mark if act.startswith('[ERROR]') else ok_mark} {act}")
+            print(f"  {err_mark if is_error(act) else ok_mark} {act}")
         if flag_migrate:
             for act in mat.migrate_legacy(apply=True):
                 print(f"  {ok_mark} {act}")

@@ -62,7 +62,10 @@ from nexgen_core.checks.skill_checks import (  # noqa: E402 - sys.path shim for 
     check_skills_out_of_manifest,
     check_skills_pin_freshness,
 )
-from nexgen_core.checks.takeover_checks import check_engine_version_recorded  # noqa: E402 - sys.path shim for cloned checkout
+from nexgen_core.checks.takeover_checks import (  # noqa: E402 - sys.path shim for cloned checkout
+    check_engine_version_recorded,
+    check_last_cycle_phases,
+)
 from nexgen_core.i18n import t  # noqa: E402 - sys.path shim for cloned checkout
 from nexgen_core.lock import LockTimeoutError, host_mutation  # noqa: E402 - sys.path shim for cloned checkout
 from nexgen_core.paths import (  # noqa: E402 - sys.path shim for cloned checkout
@@ -161,6 +164,7 @@ class Doctor:
         # 1b. Which engine last completed a cycle here: the per-machine
         # answer to "are all my machines migrated?".
         run("takeover.engine_version", lambda: check_engine_version_recorded(state))
+        run("guard.last_cycle", lambda: check_last_cycle_phases(state))
 
         if vault.is_dir():
             # 2. Git checks

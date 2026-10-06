@@ -38,6 +38,16 @@ of any engine release.
 - An unattended update that fails after the merge is undone (engine, pin,
   generated configs), remembered as rejected, and reported with exit code 71
   (72 if the rollback itself fails) which the heartbeat turns into an alert.
+- The guard cycle runs every phase, each isolated. A skill whose GitHub fetch
+  timed out used to stop the MCP render, the permission posture and the guardrail
+  hook behind it, every 30 minutes, for as long as the network stayed down. The
+  cycle is still a failure when a phase fails (non-zero exit, so the unit alerts),
+  the liveness record names the phases that failed, and `doctor` reports them
+  (`guard.last_cycle`). A crash in the permissions phase is a failed phase, not a
+  warning. A `[WARNING]` from a skill is now counted like any other warning.
+- The `[WARN]`/`[ERROR]` marker on a sync note is written and read in one module
+  (`action_notes`); a test refuses a hand-written prefix anywhere else.
+- The liveness record is written atomically.
 - `vault push` exits non-zero, naming the quarantine branch, when a diverged
   commit was moved aside instead of reporting success.
 - `doctor` runs every check isolated: a crash or a corrupt manifest becomes a

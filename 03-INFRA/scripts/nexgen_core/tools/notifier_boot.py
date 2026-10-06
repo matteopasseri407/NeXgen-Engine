@@ -8,6 +8,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+from nexgen_core.action_notes import WARN  # noqa: E402 - sys.path shim for cloned checkout
 from nexgen_core.i18n import t
 from nexgen_core.paths import resolve_home
 
@@ -209,7 +210,7 @@ def _ensure_windows_boot_check(home: str) -> list[str]:
     vbs = os.path.join(state_dir, "nexgen-update-check-hidden.vbs")
     wrote = _write_text_if_different(vbs, _windows_vbs_content(exec_cmd))
     if wrote is None and not os.path.isfile(vbs):
-        return ["[WARN] wrapper not writable, logon task skipped (nothing points at thin air)"]
+        return [WARN + "wrapper not writable, logon task skipped (nothing points at thin air)"]
     if wrote:
         notes.append(f"[autostart] hidden wrapper updated: {vbs}")
     if _windows_task_runs_notifier(vbs):
@@ -232,7 +233,7 @@ def _ensure_windows_boot_check(home: str) -> list[str]:
         shutil.copy2(vbs, dest)
         notes.append(f"[autostart] logon fallback installed: {dest}")
     except OSError as exc:
-        notes.append(f"[WARN] logon task failed ({out.strip()}) and Startup fallback failed ({exc})")
+        notes.append(f"{WARN}logon task failed ({out.strip()}) and Startup fallback failed ({exc})")
     return notes
 
 
@@ -330,9 +331,9 @@ WantedBy=timers.target
         missing = [str(p) for p, w in ((service_file, wrote_service), (timer_file, wrote_timer))
                    if w is None and not p.is_file()]
         if missing:
-            notes.append(f"[WARN] boot entries not writable ({', '.join(missing)}), timer skipped")
+            notes.append(f"{WARN}boot entries not writable ({', '.join(missing)}), timer skipped")
             return notes
-        notes.append("[WARN] boot entries could not be verified, enabling anyway")
+        notes.append(WARN + "boot entries could not be verified, enabling anyway")
     changed = bool(changed or wrote_service or wrote_timer)
     if changed:
         notes.append(f"[autostart] boot entries written under {home}")
@@ -347,7 +348,7 @@ WantedBy=timers.target
         if rc == 0:
             notes.append("[autostart] boot timer enabled")
         else:
-            notes.append(f"[WARN] timer not enabled ({out.strip()}); headless machines need `loginctl enable-linger $USER`")
+            notes.append(f"{WARN}timer not enabled ({out.strip()}); headless machines need `loginctl enable-linger $USER`")
     elif not notes:
         notes.append("[autostart] boot timer already enabled")
     return notes
@@ -364,7 +365,7 @@ def ensure_boot_check(home: Path | str | None = None) -> list[str]:
         resolved = resolve_home(home if home is None or isinstance(home, Path) else Path(home))
         return _ensure_posix_boot_check(resolved)
     except Exception as exc:  # noqa: BLE001 - notifier never fails the shell
-        return [f"[WARN] boot check not ensured ({exc})"]
+        return [f"{WARN}boot check not ensured ({exc})"]
 
 
 def ensure_shell_hook(home: Path | None = None) -> list[str]:
@@ -383,9 +384,9 @@ def ensure_shell_hook(home: Path | None = None) -> list[str]:
         rc = cmd_install_shell_hook(home=resolved)
         if rc == 0:
             return ["[shell-hook] installed for this machine's shells"]
-        return ["[WARN] shell hook installation returned an error"]
+        return [WARN + "shell hook installation returned an error"]
     except Exception as exc:  # noqa: BLE001 - notifier never fails the shell
-        return [f"[WARN] shell hook not ensured ({exc})"]
+        return [f"{WARN}shell hook not ensured ({exc})"]
 
 
 def cmd_install_autostart(remove: bool = False) -> int:
@@ -405,7 +406,7 @@ def _remove_autostart(home: Path) -> int:
         print("[autostart] logon task removed" if rc == 0 else "[autostart] no logon task present")
         leftover = not _remove_windows_fallback(os.fspath(home))
         if leftover:
-            print("[WARN] Startup fallback copy could not be removed, delete it by hand")
+            print(WARN + "Startup fallback copy could not be removed, delete it by hand")
         return 0
     removed = []
     for path in (home / ".config" / "autostart" / "nexgen-update-check.desktop",

@@ -52,3 +52,27 @@ def check_engine_version_recorded(state_dir: Path) -> CheckOutcome:
         ),
         action=t("Normal right after an update; it lines up on the next cycle."),
     )
+
+
+def check_last_cycle_phases(state_dir: Path) -> CheckOutcome:
+    """Whether every phase of the last completed guard cycle worked.
+
+    The guard runs all its phases even when one fails, so a cycle that reaches
+    the end is no proof that skills, MCP, permissions and the rest are
+    aligned. The failed ones are in the liveness record.
+    """
+    from nexgen_core.beat import Heartbeat
+
+    failed = Heartbeat(state_dir=state_dir).recorded_failed_phases()
+    if not failed:
+        return CheckOutcome(
+            id="guard.last_cycle",
+            severity=Severity.OK,
+            message=t("The last guard cycle completed every phase."),
+        )
+    return CheckOutcome(
+        id="guard.last_cycle",
+        severity=Severity.BROKEN,
+        message=t("The last guard cycle could not complete these phases: {phases}.", phases=", ".join(failed)),
+        action=t("Run 'nexgen sync apply' and read the lines marked [ERROR] to see why."),
+    )

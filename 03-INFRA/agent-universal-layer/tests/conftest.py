@@ -36,6 +36,11 @@ def isolated_runtime_overrides(monkeypatch):
         "KNOWLEDGE_VAULT_PATH", "AGENT_SYNC_LOCK_FILE", "APPDATA", "LOCALAPPDATA",
     ):
         monkeypatch.delenv(key, raising=False)
+    # Safe by default. Only tests built around a sandbox used to set this, so any
+    # other test that ran the scheduler phase (a guard cycle with a tmp home, for
+    # instance) reached the real `systemctl --user` of whoever ran the suite. A test
+    # that really wants host mutations has to ask for them.
+    monkeypatch.setenv("NEXGEN_DISABLE_HOST_MUTATIONS", "1")
 
 
 @dataclass
