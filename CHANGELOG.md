@@ -107,7 +107,7 @@ of any engine release.
   as an option).
 - The per-CLI configuration writers no longer lose or rewrite what is not theirs:
   Codex gets the manifest's timeouts for stdio servers too (they were only written
-  for HTTP ones, so Playwright ran on Codex's 10 s start-up default); `~/.claude.json`
+  for HTTP ones, so `vault-ocr`, `drive` and `lane` ran on Codex's 10 s start-up default); `~/.claude.json`
   is rewritten only when its servers actually change (Claude Code saves it in its own
   format, and the engine rewrote it, backed it up and raced the CLI's own saves every
   cycle for a whitespace difference); a real file at one of Antigravity's fan-out paths
@@ -122,6 +122,24 @@ of any engine release.
   a non-UTF-8 code page decoded git's UTF-8 output (accented note names) as mojibake,
   and a byte the code page has no character for aborted the read. A scan test fails the
   build on a new call without one.
+- The event-sink hook is installed only when a module you declared needs it (the voice
+  cockpit does), and the guard removes it, and the copy it deployed, when none does. It
+  used to be registered for every machine with a permission policy and could never be taken
+  back, so each tool call of each session started a Node process to emit an event nobody
+  listened for. Codex and Antigravity registered its path unquoted, which split at a space
+  in the home directory; they are quoted now and an older registration is rewritten in place.
+  The OpenCode plugin's database fallback used `require` in an ES module, failed silently,
+  and announced finished turns with no text.
+- `nexgen tool update-notifier --install-shell-hook --remove` and `--install-autostart --remove`
+  stay removed: the guard re-ensured both every cycle, so the removal lasted until the next one.
+  The choice is recorded per shell in the machine-local state directory and lifted by the matching
+  install. A PowerShell profile is no longer created on machines without PowerShell.
+- Text spliced into a PowerShell script (notifications, the Chrome-profile kill) is quoted with
+  one helper that also doubles the typographic single quotes PowerShell reads as quotes; an
+  Italian apostrophe in a notification body ended the string.
+- `@playwright/mcp`'s pinned version, kept inside the wrapper, is declared in the manifest
+  (`wraps`) so dependency watch reports it, and a test keeps the two equal. What the wrapper
+  changes in npm's cache is documented in `docs/what-gets-written.md`.
 
 ## [2.3.11] - 2026-10-04
 

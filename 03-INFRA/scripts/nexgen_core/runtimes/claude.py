@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any
 
 from nexgen_core.paths import claude_settings
-from nexgen_core.runtimes.base import GUARDRAIL_SIDECAR_NAME, GuardrailError, Runtime
+from nexgen_core.runtimes.base import EVENT_SINK_NAME, GUARDRAIL_SIDECAR_NAME, GuardrailError, Runtime
 
 _ADAPTER_NAME = "claude-guardrail-adapter.mjs"
 #: The body gets 5 s; the hook gets 10, so the adapter answers (and says why) before Claude kills it.
@@ -175,6 +175,21 @@ class ClaudeRuntime(Runtime):
         self.backup(path)
         self.atomic_write(path, json.dumps(data, indent=2) + "\n")
         return f"claude: guardrail hook registered in {path}"
+
+    def remove_event_sink(self, home: Path) -> str | None:
+        data = self._load_settings(home)
+        if data is None:
+            return None
+        hooks = data.get("hooks")
+        changed = isinstance(hooks, dict) and self.strip_event_sink_hooks(hooks)
+        if changed:
+            path = self._settings_path(home)
+            self.backup(path)
+            self.atomic_write(path, json.dumps(data, indent=2) + "\n")
+        removed = self.remove_deployed(home / ".claude" / EVENT_SINK_NAME)
+        if changed or removed:
+            return f"claude: event sink removed from {self._settings_path(home)} (no declared module needs it)"
+        return None
 
     def install_event_sink(self, home: Path, sink_source: Path) -> str | None:
         data = self._load_settings(home)

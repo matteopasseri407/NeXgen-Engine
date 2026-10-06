@@ -1014,4 +1014,6 @@ MESSAGES: dict[str, str] = {
         'Installa il programma mancante, oppure disattiva il server nel manifest su questa macchina.',
     'Every stdio MCP server has a program to start':
         'Ogni server MCP locale ha un programma da avviare',
+    'Could not record the choice in {path}: {error}':
+        'Impossibile salvare la scelta in {path}: {error}',
 }

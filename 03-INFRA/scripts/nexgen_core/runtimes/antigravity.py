@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any
 
 from nexgen_core.paths import antigravity_hooks, antigravity_settings
-from nexgen_core.runtimes.base import GUARDRAIL_SIDECAR_NAME, GuardrailError, Runtime
+from nexgen_core.runtimes.base import EVENT_SINK_NAME, GUARDRAIL_SIDECAR_NAME, GuardrailError, Runtime
 
 _IS_WINDOWS = platform.system() == "Windows"
 
@@ -142,6 +142,20 @@ class AntigravityRuntime(Runtime):
             return f"antigravity: guardrail body/adapter updated in {adapter_dir}"
         return None
 
+    def remove_event_sink(self, home: Path) -> str | None:
+        hooks_path = self._hooks_path(home)
+        current = self._load_json(hooks_path, label="hooks.json")
+        changed = False
+        if current and "nexgen-event-sink" in current:
+            del current["nexgen-event-sink"]
+            self.backup(hooks_path)
+            self.atomic_write(hooks_path, json.dumps(current, indent=2) + "\n")
+            changed = True
+        removed = self.remove_deployed(hooks_path.parent / EVENT_SINK_NAME)
+        if changed or removed:
+            return f"antigravity: event sink removed from {hooks_path} (no declared module needs it)"
+        return None
+
     def install_event_sink(self, home: Path, sink_source: Path) -> str | None:
         if not self._settings_path(home).is_file():
             return None
@@ -150,8 +164,9 @@ class AntigravityRuntime(Runtime):
         dst = adapter_dir / sink_source.name
         deployed = self.deploy_bytes(dst, sink_source.read_bytes())
 
-        command_done = f"node {dst.as_posix()} on_done antigravity"
-        command_step = f"node {dst.as_posix()} on_step antigravity"
+        # Quoted: a home directory with a space (common on Windows) split an unquoted path in two.
+        command_done = f'node "{dst.as_posix()}" on_done antigravity'
+        command_step = f'node "{dst.as_posix()}" on_step antigravity'
 
         desired_entry = {
             "enabled": True,

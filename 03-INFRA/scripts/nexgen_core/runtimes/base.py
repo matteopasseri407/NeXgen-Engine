@@ -26,6 +26,10 @@ from nexgen_core.errors import NexgenError
 GUARDRAIL_CORE_NAME = "nexgen-guardrail-core.mjs"
 GUARDRAIL_SIDECAR_NAME = "nexgen-guardrail.config.json"
 
+#: The event-sink hook's file name: how its registrations are recognised for removal. Nothing
+#: else is ever removed, whatever else the user has registered on the same events.
+EVENT_SINK_NAME = "nexgen-event-sink.mjs"
+
 #: Neutral vocabulary of the three posture levels this engine knows about.
 #: An adapter without a verified rendering for one of these values silently
 #: ignores it (apply_posture returns None) -- guessing at an unverified
@@ -106,6 +110,56 @@ class Runtime(ABC):
         Default implementation returns None if not supported by the runtime."""
         del home, sink_source
         return None
+
+    def remove_event_sink(self, home: Path) -> str | None:
+        """Takes back what `install_event_sink` registered, and nothing else.
+
+        The hook starts a Node process on every tool call of every session to emit an event that
+        only a voice cockpit listens for, so a machine without one pays for it on each step. The
+        guard removes it from machines whose declared modules do not need it.
+        Returns an action line when it changed something."""
+        del home
+        return None
+
+    @staticmethod
+    def strip_event_sink_hooks(hooks: dict, events: tuple[str, ...] = ("Stop", "PreToolUse")) -> bool:
+        """Drops the sink's hook items from `{event: [{matcher?, hooks: [...]}]}`; True if it dropped any.
+
+        A group left with no hooks goes with them, and an event left with no groups; groups that
+        also hold someone else's hooks keep those exactly as they were.
+        """
+        changed = False
+        for event in events:
+            groups = hooks.get(event)
+            if not isinstance(groups, list):
+                continue
+            kept = []
+            for group in groups:
+                inner = group.get("hooks") if isinstance(group, dict) else None
+                if not isinstance(inner, list):
+                    kept.append(group)
+                    continue
+                remaining = [h for h in inner if not (isinstance(h, dict) and EVENT_SINK_NAME in str(h.get("command", "")))]
+                if len(remaining) == len(inner):
+                    kept.append(group)
+                    continue
+                changed = True
+                if remaining:
+                    kept.append({**group, "hooks": remaining})
+            if kept:
+                hooks[event] = kept
+            else:
+                del hooks[event]
+        return changed
+
+    @staticmethod
+    def remove_deployed(path: Path) -> bool:
+        """Deletes a file the engine deployed; True if it was there."""
+        try:
+            path.unlink()
+        except FileNotFoundError:
+            return False
+        return True
 
     def install_guardrail(self, home: Path, hook_source: Path, engine_hooks_dir: Path) -> str | None:
         """Registers the pre-execution hook whose POLICY lives in

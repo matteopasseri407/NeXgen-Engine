@@ -35,8 +35,13 @@ def apply_all(
     posture: dict[str, str] | None = None,
     guardrail_source: Path | None = None,
     event_sink_source: Path | None = None,
+    remove_event_sink: bool = False,
 ) -> list[str]:
     """Applies posture + guardrail hook to every installed CLI.
+
+    The event sink is the odd one out: it follows the modules a machine declared, not the
+    permission policy. `event_sink_source` installs it; `remove_event_sink` takes back what an
+    earlier cycle registered (no declared module needs it, and it costs a Node start per tool call).
 
     Order per CLI, non-negotiable: guardrail FIRST, posture AFTER. A
     posture that removes prompts must never reach disk if its declared
@@ -65,15 +70,19 @@ def apply_all(
                 if result:
                     actions.append(result)
 
-        if event_sink_source is not None:
+        if event_sink_source is not None or remove_event_sink:
             try:
-                sink_result = runtime.install_event_sink(home, event_sink_source)
+                if event_sink_source is not None:
+                    sink_result = runtime.install_event_sink(home, event_sink_source)
+                else:
+                    sink_result = runtime.remove_event_sink(home)
                 if sink_result:
                     actions.append(sink_result)
             except (OSError, ValueError, TypeError, GuardrailError) as exc:
                 # Same isolation as guardrail/posture above: one corrupt CLI
                 # config must warn for its own CLI, never abort the rest.
-                actions.append(f"{WARN}{runtime.name}: event sink installation failed ({exc})")
+                what = "installation" if event_sink_source is not None else "removal"
+                actions.append(f"{WARN}{runtime.name}: event sink {what} failed ({exc})")
 
         desired_posture = posture.get(runtime.name)
         if not desired_posture:

@@ -90,8 +90,8 @@ def render(renderer, write: bool = False) -> tuple[bool, str]:
             args_json = json.dumps(srv.get("args", []))
             lines.append(f"args = {args_json}")
         # The timeouts the manifest declares apply to both kinds of server. Only the http branch
-        # wrote them, so a stdio server (playwright: 30 s to start, 120 s per tool) ran on Codex's
-        # defaults (10 s to start), and the manifest comment claiming "Codex renders its native
+        # wrote them, so a stdio server (vault-ocr, drive and lane: 30 s to start, up to 300 s per tool)
+        # ran on Codex's defaults (10 s to start), and the manifest comment claiming "Codex renders its native
         # timeout fields" was true for half the servers. They go before the env sub-table: a key
         # after a `[table]` header belongs to that table.
         timeouts = srv.get("timeouts", {})

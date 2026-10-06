@@ -192,15 +192,20 @@ def _collect_skill_pins(skills_raw: dict[str, dict]) -> list[tuple[str, str, str
 
 
 def _collect_mcp_pins(mcp_raw: dict[str, dict]) -> list[tuple[str, str, str, str]]:
-    """(label, kind, pin, key) for every MCP server invoked via npx."""
+    """(label, kind, pin, key) for every MCP server invoked via npx, or wrapping a pinned package."""
     pins: list[tuple[str, str, str, str]] = []
     for name, srv in mcp_raw.items():
         if not isinstance(srv, dict):
             continue
         tokens = _command_tokens(srv)
-        if not tokens or tokens[0].lower() not in ("npx", "npx.cmd"):
+        # `wraps`: packages a launcher script pins itself (the Playwright wrapper), which the
+        # command line therefore does not show.
+        wrapped = srv.get("wraps")
+        wrapped_specs = _npm_spec_tokens([str(w) for w in wrapped]) if isinstance(wrapped, list) else []
+        is_npx = bool(tokens) and tokens[0].lower() in ("npx", "npx.cmd")
+        if not is_npx and not wrapped_specs:
             continue
-        for spec in _npm_spec_tokens(tokens[1:]):
+        for spec in (_npm_spec_tokens(tokens[1:]) if is_npx else []) + wrapped_specs:
             match = NPM_SPEC_RE.match(spec)
             if match:
                 pkg, ver = match.group("name"), match.group("version")

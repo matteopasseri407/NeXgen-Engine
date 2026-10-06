@@ -26,7 +26,7 @@ from typing import Any
 
 from nexgen_core.jsonc import parse_jsonc, set_jsonc_top_level_value
 from nexgen_core.paths import opencode_config_path
-from nexgen_core.runtimes.base import GUARDRAIL_CORE_NAME, GUARDRAIL_SIDECAR_NAME, GuardrailError, Runtime
+from nexgen_core.runtimes.base import EVENT_SINK_NAME, GUARDRAIL_CORE_NAME, GUARDRAIL_SIDECAR_NAME, GuardrailError, Runtime
 
 _IS_WINDOWS = sys.platform == "win32"
 
@@ -105,7 +105,8 @@ class OpenCodeRuntime(Runtime):
             return None
         raw = path.read_text(encoding="utf-8")
         try:
-            data = parse_jsonc(raw) if path.suffix == ".jsonc" else json.loads(raw)
+            # OpenCode reads opencode.json with the same comment-tolerant parser as .jsonc.
+            data = parse_jsonc(raw) if raw.strip() else {}
         except (json.JSONDecodeError, ValueError) as exc:
             raise GuardrailError(f"opencode: {path.name} is not valid JSON/JSONC ({exc})") from exc
         if not isinstance(data, dict):
@@ -215,12 +216,10 @@ class OpenCodeRuntime(Runtime):
     def _write_key(self, path: Path, key: str, value: Any) -> None:
         raw = path.read_text(encoding="utf-8") if path.is_file() else "{}\n"
         self.backup(path)
-        if path.suffix == ".jsonc":
+        if raw.strip():
             updated = set_jsonc_top_level_value(raw, key, value)
         else:
-            data = json.loads(raw) if raw.strip() else {}
-            data[key] = value
-            updated = json.dumps(data, indent=2) + "\n"
+            updated = json.dumps({key: value}, indent=2) + "\n"
         self.atomic_write(path, updated)
 
     @staticmethod
@@ -229,7 +228,7 @@ class OpenCodeRuntime(Runtime):
             return False
         try:
             raw = path.read_text(encoding="utf-8")
-            data = parse_jsonc(raw) if path.suffix == ".jsonc" else json.loads(raw or "{}")
+            data = parse_jsonc(raw) if raw.strip() else {}
         except (OSError, ValueError):
             return False
         return isinstance(data, dict) and key in data
@@ -239,12 +238,7 @@ class OpenCodeRuntime(Runtime):
 
         raw = path.read_text(encoding="utf-8") if path.is_file() else "{}\n"
         self.backup(path)
-        if path.suffix == ".jsonc":
-            updated = remove_jsonc_top_level_value(raw, key)
-        else:
-            data = json.loads(raw) if raw.strip() else {}
-            data.pop(key, None)
-            updated = json.dumps(data, indent=2) + "\n"
+        updated = remove_jsonc_top_level_value(raw, key) if raw.strip() else raw
         self.atomic_write(path, updated)
 
     def guardrail_sidecar(self, home: Path) -> Path | None:
@@ -330,6 +324,24 @@ class OpenCodeRuntime(Runtime):
         if legacy_present or self._raw_has_key(config_path, "plugin"):
             self._delete_key(config_path, "plugin")
         return True
+
+    def remove_event_sink(self, home: Path) -> str | None:
+        config_path = self._config_path(home)
+        config = self._load(config_path)
+        changed = False
+        if config is not None:
+            for key in ("plugins", "plugin"):
+                values = config.get(key)
+                if not isinstance(values, list):
+                    continue
+                kept = [p for p in values if not (isinstance(p, str) and EVENT_SINK_NAME in p)]
+                if len(kept) != len(values):
+                    self._write_key(config_path, key, kept)
+                    changed = True
+        removed = self.remove_deployed(config_path.parent / EVENT_SINK_NAME)
+        if changed or removed:
+            return f"opencode: event sink removed from {config_path} (no declared module needs it)"
+        return None
 
     def install_event_sink(self, home: Path, sink_source: Path) -> str | None:
         config_path = self._config_path(home)

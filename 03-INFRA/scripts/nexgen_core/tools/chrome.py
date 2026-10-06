@@ -163,13 +163,17 @@ def heal_chrome(extra_args: list[str] | None = None) -> int:
     # Terminate any Chrome processes associated with the debug profile
     if sys.platform == "win32":
         try:
-            escaped_profile = profile_str.replace("'", "''")
+            from nexgen_core.processes import powershell_literal
+
+            # `.Contains` is an exact substring test; `-like` would read `[` or `*` in the path as wildcards.
             subprocess.run(
                 [
                     "powershell",
                     "-NoProfile",
                     "-Command",
-                    f"Get-CimInstance Win32_Process | Where-Object {{ $_.CommandLine -like '*{escaped_profile}*' }} | ForEach-Object {{ Stop-Process -Id $_.ProcessId -Force }}",
+                    "Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -and "
+                    f"$_.CommandLine.Contains({powershell_literal(profile_str)}) }} | "
+                    "ForEach-Object { Stop-Process -Id $_.ProcessId -Force }",
                 ],
                 capture_output=True,
                 check=False,

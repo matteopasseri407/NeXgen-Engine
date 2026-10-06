@@ -8,6 +8,20 @@ import subprocess
 import time
 
 
+#: PowerShell reads all of these as a single quote, not just the ASCII apostrophe.
+_POWERSHELL_QUOTES = "'\u2018\u2019\u201a\u201b"
+
+
+def powershell_literal(text: str) -> str:
+    """`text` as a PowerShell single-quoted string, safe to splice into a script.
+
+    Doubling only the ASCII apostrophe let a typographic one end the string early: an Italian
+    "l\u2019aggiornamento" in a notification body broke the script, and with text from outside
+    (a commit subject, a path) that is injection, not just a lost toast.
+    """
+    return "'" + "".join(ch * 2 if ch in _POWERSHELL_QUOTES else ch for ch in text) + "'"
+
+
 def windows_command_argv(argv: list[str]) -> list[str]:
     """Resolve npm command shims and invoke .cmd/.bat through cmd.exe."""
     if os.name != "nt" or not argv:
