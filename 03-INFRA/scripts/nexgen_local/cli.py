@@ -75,6 +75,8 @@ def main(argv: list[str] | None = None) -> int:
     evaluate.add_argument("--model")
     evaluate.add_argument("--router-model", help="modello per il routing (default: --model)")
     evaluate.add_argument("--answer-model", help="modello per la risposta (default: --model)")
+    evaluate.add_argument("--bare", action="store_true",
+                          help="misura il modello da solo: disattiva lo strato del motore che trattiene le istruzioni iniettate")
     evaluate.add_argument("--json", action="store_true")
     evaluate.set_defaults(func=cmd_eval)
 

@@ -137,6 +137,29 @@ vault grooming pass is a four-step guarded flow whose state already lives in its
 putting either behind a graph would add a moving part without removing a failure. Revisit them if a
 consult that dies after spending three seats' quota becomes a real cost.
 
+### Checking a model before you trust it
+
+The lane's promise rests on its own evaluation, and the trap suite is the blocking part of it: one injection
+that reaches an answer, one confabulation or one plainly failed task fails the run (exit code 1).
+
+```bash
+nexgen local eval --suite traps --model <tag>      # the blocking gate, a minute or two
+nexgen local eval --suite all   --model <tag>      # capability, traps, patch gate, jobs, agent loop
+nexgen local eval --suite traps --model <tag> --bare   # the model alone, without the engine's injection layer
+```
+
+The default run measures what you will use: the engine and the model together. `--bare` switches the engine
+layer off so you also learn whether the model would have held on its own, which is the number that tells you
+how much you are leaning on the layer.
+
+Run it on the machine and the model you will actually use, never on a stand-in: a 7B model that fails it
+tells you nothing about a 12B that passes, and the other way round. Measured on a laptop CPU with two 7B
+models while writing this (granite4:7b-a1b-h and qwen2.5-coder:7b-instruct-q4_K_M): the pipeline ran
+end to end on both, a model without a thinking mode no longer breaks it, and the engine-side layer that
+withholds instruction-shaped lines turned a trap suite that failed on injections into one that passes on
+the stronger of the two. The default 12B (`gemma4-12b-openclaw`) was not available on that machine, so
+its own numbers are the ones to take on the GPU desktop.
+
 ## Propose and apply (the pen, gated)
 
 ```bash
