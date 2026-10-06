@@ -40,6 +40,7 @@ try:
 except ImportError:  # pragma: no cover - the waiter imports with a fallback
     NPM_SPEC_RE = __import__("re").compile(r"^(?P<name>(?:@[\w.-]+/)?[\w.-]+)@(?P<version>\d[\w.+-]*)$")
 
+from nexgen_core.files import atomic_write_text
 from nexgen_core.config import load_mcp_manifest
 from nexgen_core.errors import NexgenError
 from nexgen_core.i18n import t
@@ -293,12 +294,12 @@ def _provision_git(deps: dict[str, Any], state_dir: Path, server: str) -> dict[s
             build = deps.get("build") or []
             if build:
                 _run_build(build, workspace, server)
-            (clone / MARKER).write_text(json.dumps({
+            atomic_write_text(clone / MARKER, json.dumps({
                 "repo": repo,
                 "rev": rev,
                 "subdir": str(deps.get("subdir") or "").strip().strip("/"),
                 "build": _canonical_build(deps),
-            }), encoding="utf-8")
+            }))
             if final.exists():
                 shutil.rmtree(final, ignore_errors=True)
             os.replace(clone, final)

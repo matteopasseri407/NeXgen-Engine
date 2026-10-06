@@ -12,6 +12,7 @@ from pathlib import Path
 
 import yaml
 
+from nexgen_core.files import atomic_write_text
 from nexgen_core.action_notes import is_error, is_warning  # noqa: E402 - sys.path shim for cloned checkout
 from nexgen_core.i18n import t
 from nexgen_core.marks import safe_mark as _safe_mark
@@ -304,7 +305,7 @@ def _set_authoritative_remote(vault_data: Path, remote: str) -> int:
     )
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(body, encoding="utf-8")
+        atomic_write_text(path, body)
     except OSError as exc:
         print(t("Could not write {path}: {error}", path=path, error=exc), file=sys.stderr)
         return 1

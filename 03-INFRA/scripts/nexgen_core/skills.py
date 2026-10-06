@@ -24,6 +24,7 @@ SCRIPTS_DIR = Path(__file__).resolve().parents[1]
 if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
+from nexgen_core.files import atomic_write_text  # noqa: E402 - sys.path shim for cloned checkout
 from nexgen_core.action_notes import ERROR, is_error  # noqa: E402 - sys.path shim for cloned checkout
 from nexgen_core.config import (  # noqa: E402
     SKILL_EXPOSURES,
@@ -405,7 +406,7 @@ class SkillMaterializer:
             lines.append(f"| `{name}` | `{s.origin}` | `{s.exposure}` | {desc} |")
 
         lines.append("")
-        index_file.write_text("\n".join(lines), encoding="utf-8")
+        atomic_write_text(index_file, "\n".join(lines))
         return index_file
 
     def migrate_legacy(self, apply: bool = True) -> list[str]:

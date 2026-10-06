@@ -27,6 +27,7 @@ from typing import Any, Sequence
 
 import yaml
 
+from nexgen_core.files import atomic_write_text
 from nexgen_core.config import ConfigError, _load_yaml
 from nexgen_core.i18n import t
 from nexgen_core.paths import resolve_vault_data
@@ -521,7 +522,7 @@ def write_state_file(
     )
     body = yaml.safe_dump(raw, sort_keys=True, allow_unicode=True, default_flow_style=False)
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(header + body, encoding="utf-8")
+    atomic_write_text(path, header + body)
     return path
 
 

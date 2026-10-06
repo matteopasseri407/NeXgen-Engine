@@ -205,14 +205,11 @@ class Runtime(ABC):
         does not parse, and a hook that fails to start is one the CLI treats
         as a non-blocking error: the guardrail would be off until the next cycle.
         """
-        import os
+        from nexgen_core.files import atomic_write_bytes
 
         if dst.exists() and dst.read_bytes() == body:
             return False
-        dst.parent.mkdir(parents=True, exist_ok=True)
-        staging = dst.with_name(f"{dst.name}.nexgen-tmp")
-        staging.write_bytes(body)
-        os.replace(staging, dst)
+        atomic_write_bytes(dst, body)
         return True
 
     # ---- guardrail support shared by every adapter ---------------------

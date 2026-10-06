@@ -129,10 +129,7 @@ def write_quarantine_marker(clone: Path, reason: str, timestamp: str) -> None:
     if not clone_path.is_dir():
         return
     marker = clone_path / QUARANTINE_MARKER_NAME
-    marker.write_text(
-        json.dumps({"quarantined_at": timestamp, "reason": reason}, indent=2) + "\n",
-        encoding="utf-8",
-    )
+    atomic_write_text(marker, json.dumps({"quarantined_at": timestamp, "reason": reason}, indent=2) + "\n")
 
 
 def print_quarantine_summary(clone: Path, reason: str, *, output=print) -> None:

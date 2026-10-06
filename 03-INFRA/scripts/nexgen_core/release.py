@@ -14,6 +14,7 @@ import argparse
 import re
 import sys
 from pathlib import Path
+from nexgen_core.files import atomic_write_text
 
 SCRIPTS_DIR = Path(__file__).resolve().parents[1]
 if str(SCRIPTS_DIR) not in sys.path:
@@ -112,7 +113,7 @@ def bump_version_files(repo_path: Path, new_version: str, notes: str = "") -> li
 
     # 1. VERSION
     version_file = repo_path / "VERSION"
-    version_file.write_text(f"{new_version}\n", encoding="utf-8")
+    atomic_write_text(version_file, f"{new_version}\n")
     modified.append(version_file)
 
     # 2. nexgen_core/__init__.py
@@ -121,7 +122,7 @@ def bump_version_files(repo_path: Path, new_version: str, notes: str = "") -> li
         content = init_file.read_text(encoding="utf-8")
         updated = re.sub(r'__version__\s*=\s*"[^"]+"', f'__version__ = "{new_version}"', content)
         if updated != content:
-            init_file.write_text(updated, encoding="utf-8")
+            atomic_write_text(init_file, updated)
             modified.append(init_file)
 
     # 3. CHANGELOG.md
@@ -139,7 +140,7 @@ def bump_version_files(repo_path: Path, new_version: str, notes: str = "") -> li
                 if first_h2 != -1:
                     inserted_notes = f"\n\n### Changed\n\n- {notes}\n" if notes else "\n\n### Fixed\n\n- Maintenance and bug fixes.\n"
                     content = content[:first_h2] + f"{version_header}{inserted_notes}\n" + content[first_h2:]
-            changelog_file.write_text(content, encoding="utf-8")
+            atomic_write_text(changelog_file, content)
             modified.append(changelog_file)
 
     return modified

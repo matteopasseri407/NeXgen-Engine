@@ -164,6 +164,15 @@ of any engine release.
   (`git.vault_remote_privacy`).
 - `NEXGEN_HOME` now also moves the connectors' login tokens and the Council's sessions; a
   checkout run in a sandbox home read and rewrote the working installation's tokens.
+- One definition of what a secret looks like (`nexgen_core.secret_shapes`): the connector manifest
+  guard, lazy-mcp's stderr redaction and vault-mcp's search snippets each carried their own list, each
+  knowing different providers (a GitHub fine-grained token, an Anthropic key, a Hugging Face or npm
+  token were refused by one and printed by another). One corpus of synthetic credentials is now run
+  through all of them and through the commit-time leak gate.
+- Every file the engine owns is written through the one atomic writer, including the module state
+  shared between machines, the dependency-watch reports, the debounce ledger, the skill index, the
+  first-run configuration and the deployed hook scripts (which used a predictable staging name). A scan
+  test fails the build on a new direct `write_text`.
 
 ## [2.3.11] - 2026-10-04
 

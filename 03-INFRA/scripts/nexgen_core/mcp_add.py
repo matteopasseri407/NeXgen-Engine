@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import re
 
+from nexgen_core import secret_shapes
 from nexgen_core.config import RUNTIME_TARGETS, load_mcp_manifest
 from nexgen_core.i18n import t
 from nexgen_core.paths import resolve_home, resolve_vault_data
@@ -30,22 +31,11 @@ from nexgen_core.paths import resolve_home, resolve_vault_data
 #: escapes this is exactly the shape that means something else in YAML.
 SERVER_NAME_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,63}")
 
-#: Values that are credentials wearing plain strings. The manifest must
-#: carry `${VAR}` references, never these.
-SECRET_VALUE_RE = re.compile(
-    r"(\b(sk-[A-Za-z0-9_-]{16,})"          # OpenAI-style keys
-    r"|(\bghp_[A-Za-z0-9]{20,})"           # GitHub PATs
-    r"|(\bAKIA[0-9A-Z]{12,})"              # AWS access keys
-    r"|(\b[A-Fa-f0-9]{40,}\b)"             # long hex runs
-    r"|(\b[A-Za-z0-9+/_-]{43,}={0,2}\b))"  # long base64-ish runs
-)
-
-#: An environment-variable NAME that itself names a secret: `PASSWORD=abc`
-#: is a credential in plain text no matter how innocent the value looks.
-SENSITIVE_NAME_RE = re.compile(
-    r"(?i)(token|secret|password|passwd|pwd|api[_-]?key|access[_-]?key|"
-    r"private[_-]?key|client[_-]?secret|credential|auth)"
-)
+#: Values that are credentials wearing plain strings, and names that announce a secret: the
+#: definitions live in `nexgen_core.secret_shapes`, shared with every other place that has to
+#: refuse, hide or withhold one. The manifest must carry `${VAR}` references, never these.
+SECRET_VALUE_RE = secret_shapes.SECRET_VALUE
+SENSITIVE_NAME_RE = secret_shapes.SENSITIVE_NAME_SUBSTRING
 
 #: A real environment-variable name, for references the renderer will
 #: actually resolve.

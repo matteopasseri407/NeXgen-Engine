@@ -42,7 +42,9 @@ def _retry_permission_error(operation):
             delay *= 2
 
 
-def atomic_write_text(path: Path, text: str, *, preserve_mode: bool = True, exclusive: bool = False) -> None:
+def atomic_write_text(
+    path: Path, text: str, *, preserve_mode: bool = True, exclusive: bool = False, newline: str | None = None
+) -> None:
     """Write-then-rename: a crash mid-write never leaves a truncated file.
 
     Carries the permission bits across the rename (a config rewritten
@@ -60,6 +62,17 @@ def atomic_write_text(path: Path, text: str, *, preserve_mode: bool = True, excl
     PID): two writers in one process, or a stale tmp from a crashed run,
     cannot silently clobber each other.
     """
+    _atomic_publish(path, text, binary=False, preserve_mode=preserve_mode, exclusive=exclusive, newline=newline)
+
+
+def atomic_write_bytes(path: Path, data: bytes, *, preserve_mode: bool = True) -> None:
+    """`atomic_write_text` for content that must reach the disk byte for byte (a script, a binary)."""
+    _atomic_publish(path, data, binary=True, preserve_mode=preserve_mode, exclusive=False, newline=None)
+
+
+def _atomic_publish(
+    path: Path, payload: str | bytes, *, binary: bool, preserve_mode: bool, exclusive: bool, newline: str | None
+) -> None:
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     old_mode = None
@@ -73,10 +86,11 @@ def atomic_write_text(path: Path, text: str, *, preserve_mode: bool = True, excl
     fd, name = tempfile.mkstemp(prefix=f"{path.name}.", suffix=".tmp", dir=path.parent)
     tmp = Path(name)
     try:
-        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+        opened = os.fdopen(fd, "wb") if binary else os.fdopen(fd, "w", encoding="utf-8", newline=newline)
+        with opened as handle:
             if old_mode is not None:
                 os.chmod(tmp, old_mode)
-            handle.write(text)
+            handle.write(payload)
             handle.flush()
             os.fsync(handle.fileno())
         _retry_permission_error(lambda: os.link(tmp, path) if exclusive else os.replace(tmp, path))

@@ -33,6 +33,14 @@ passes its tests.
    machine in minutes; code arrives with a release. Therefore every consumer of
    a declarative file must tolerate a key or value it does not understand by
    skipping that entry loudly, never by rejecting the document.
+9. **One writer, one definition of a secret, one reader of the host.** A file the
+   engine owns is written through `nexgen_core.files` (atomic, mode-preserving,
+   backed up where it matters); a scan test fails the build on a direct
+   `write_text`. What a credential looks like is defined in
+   `nexgen_core.secret_shapes`, and one corpus of synthetic credentials is
+   run through every consumer of it. Everything that changes the machine takes
+   the same host lock, and a diagnostic that asks "would apply change this?"
+   asks the renderer itself in preview rather than re-deriving the answer.
 
 ---
 

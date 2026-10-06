@@ -31,6 +31,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from nexgen_core.files import atomic_write_text
 from nexgen_core.config import ConfigError, load_mcp_manifest, load_skills_manifest
 from nexgen_core.paths import mcp_manifest, resolve_state_dir, resolve_vault_data, skills_manifest
 
@@ -237,7 +238,7 @@ def _write_report(path: Path, findings: list[PinFinding]) -> None:
         lines.append(f"## {heading}")
         lines.extend(fmt(row) for row in rows)
         lines.append("")
-    path.write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
+    atomic_write_text(path, "\n".join(lines).rstrip() + "\n")
 
 
 def run_depwatch(
@@ -314,6 +315,6 @@ def _write_status_sidecar(state_dir: Path, findings: list[PinFinding]) -> None:
         }
         sidecar = state_dir / "nexgen" / STATUS_FILE_NAME
         sidecar.parent.mkdir(parents=True, exist_ok=True)
-        sidecar.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+        atomic_write_text(sidecar, json.dumps(payload, indent=2) + "\n")
     except OSError:
         pass

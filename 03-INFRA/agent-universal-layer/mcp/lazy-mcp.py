@@ -302,16 +302,19 @@ _INHERITED_PREFIXES = (
     "LC_", "XDG_", "NEXGEN_", "AGENT_", "KNOWLEDGE_VAULT_", "NPM_CONFIG_", "NODE_", "NVM_", "VOLTA_", "UV_",
     "PIPX_", "PYTHON", "LAZY_MCP_",
 )
-#: A name that looks like a secret is never inherited, even under an allowed prefix.
-_SECRET_NAME = re.compile(
-    r"(?:^|_)(?:TOKEN|SECRET|PASSWORD|PASSWD|PASSPHRASE|CREDENTIALS?|API_?KEY|PRIVATE_?KEY|ACCESS_?KEY|AUTH|COOKIE)(?:_|$)"
-    r"|_KEY$|_PAT$",
-    re.IGNORECASE,
-)
+def _secret_shapes():
+    """The shared definition of what a secret looks like (see nexgen_core.secret_shapes)."""
+    scripts = str(Path(__file__).resolve().parents[2] / "scripts")
+    if scripts not in sys.path:
+        sys.path.insert(0, scripts)
+    from nexgen_core import secret_shapes
+
+    return secret_shapes
 
 
 def _is_secret_name(name: str) -> bool:
-    return bool(_SECRET_NAME.search(name))
+    """A name that looks like a secret is never inherited, even under an allowed prefix."""
+    return _secret_shapes().is_secret_name(name)
 
 
 def _child_environment(declared: dict[str, str] | None = None) -> dict[str, str]:
@@ -331,11 +334,7 @@ def _redact(text: str, env: dict[str, str]) -> str:
     for name, value in env.items():
         if _is_secret_name(name) and len(value) >= 6:
             text = text.replace(value, "[redacted]")
-    # Only a value that looks like a secret (a long run of token characters), so "invalid token: expired"
-    # keeps the part that says what is wrong.
-    text = re.sub(r"(?i)\b(bearer)\s+[A-Za-z0-9._~+/=-]{8,}", r"\1 [redacted]", text)
-    text = re.sub(r"(?i)\b(token|apikey|api_key|password|secret)\b(\s*[=:]\s*)[A-Za-z0-9._~+/=-]{12,}", r"\1\2[redacted]", text)
-    return re.sub(r"\b(?:sk-[A-Za-z0-9_-]{16,}|gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|AIza[0-9A-Za-z_-]{30,})\b", "[redacted]", text)
+    return _secret_shapes().redact(text)
 
 
 class _ServerHandle:

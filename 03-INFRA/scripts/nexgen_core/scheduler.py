@@ -360,12 +360,12 @@ def install_scheduled_task(
 
     if _scheduled_task_invokes_wrapper(f"{task_name} Logon", wrapper_path):
         log(f"scheduled-task: '{task_name} Logon' already active; no rewrite")
-        logon_marker.write_text(_content_hash, encoding="utf-8")
+        _atomic_write_text(logon_marker, _content_hash)
         return heartbeat_ok
     if _previous_hash != _content_hash:
         r = _run_external(logon, timeout=60)
         if r.returncode == 0:
-            logon_marker.write_text(_content_hash, encoding="utf-8")
+            _atomic_write_text(logon_marker, _content_hash)
             log(f"scheduled-task: '{task_name} Logon' installed via schtasks.exe")
             return heartbeat_ok
         # No marker on failure: the next cycle must retry instead of

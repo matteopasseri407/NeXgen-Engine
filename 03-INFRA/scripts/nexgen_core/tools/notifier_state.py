@@ -11,6 +11,7 @@ import sys
 import time
 from pathlib import Path
 
+from nexgen_core.files import atomic_write_text
 from nexgen_core.paths import resolve_home, resolve_state_dir
 
 THROTTLE_HOURS = 12
@@ -69,10 +70,7 @@ def _record_prompt_time(latest: str) -> None:
     try:
         legacy = resolve_home() / ".config" / "nexgen" / "last_update_check.json"
         legacy.parent.mkdir(parents=True, exist_ok=True)
-        legacy.write_text(
-            json.dumps({"timestamp": time.time(), "latest": latest}, indent=2) + "\n",
-            encoding="utf-8",
-        )
+        atomic_write_text(legacy, json.dumps({"timestamp": time.time(), "latest": latest}, indent=2) + "\n")
     except OSError:
         pass
     _write_state({"dismissed": {"version": latest, "day": _today()}})

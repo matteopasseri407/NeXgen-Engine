@@ -311,6 +311,25 @@ _REDACT_PATTERNS = (
     re.compile(r"(?i)\bbearer\s+\S+"),
     re.compile(r"-----BEGIN [A-Z0-9 ]+-----.*?-----END [A-Z0-9 ]+-----", re.DOTALL),
     re.compile(r"\bAGE-SECRET-KEY-[A-Z0-9]{20,}\b"),
+    # MIRROR of nexgen_core.secret_shapes.PROVIDER_TOKEN: this container ships without the engine
+    # package. test_nexgen_secret_shapes.py holds both to one corpus, so a provider added there and
+    # forgotten here fails the build instead of showing up in a search snippet.
+    re.compile(
+        r"(?<![A-Za-z0-9])(?:"
+        r"AKIA[0-9A-Z]{12,}"
+        r"|gh[pousr]_[A-Za-z0-9]{20,}"
+        r"|github_pat_[A-Za-z0-9_]{20,}"
+        r"|sk-ant-[A-Za-z0-9_-]{20,}"
+        r"|sk-(?:proj|svcacct|admin)-[A-Za-z0-9_-]{20,}"
+        r"|sk-[A-Za-z0-9_-]{16,}"
+        r"|AGE-SECRET-KEY-1[A-Z0-9]{20,}"
+        r"|hf_[A-Za-z0-9]{30,}"
+        r"|npm_[A-Za-z0-9]{36}"
+        r"|AIza[0-9A-Za-z_-]{30,}"
+        r"|(?:sk|pk)_(?:live|test)_[A-Za-z0-9]{16,}"
+        r"|eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}"
+        r")"
+    ),
     re.compile(r"\b[A-Fa-f0-9]{40,}\b"),
     re.compile(r"\b[A-Za-z0-9+/_-]{43,}={0,2}\b"),
 )
