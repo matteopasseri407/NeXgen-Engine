@@ -113,6 +113,30 @@ block) is refused before it leaves the machine; that is a safety net, not a poli
 `ChatModelLLM.usage` reports the token counts the provider returned (calls, input, output, total), the same
 way for every provider, so a run can say what it cost.
 
+### Where LangChain and LangGraph apply, and where they do not
+
+Two different things, and they answer different questions.
+
+**LangChain is the model layer.** It exists so that the lane's three verbs do not care which model answers.
+It now covers both ends: `ChatOllamaLLM` for the local pair (which is where it earns its keep: forced JSON
+schema, bounded generation, cancellable requests, the fail-closed handling of truncated output) and
+`ChatModelLLM` for any hosted model reachable with an API key. What it cannot do is drive a *subscription*
+CLI: the Council's seats and the vault grooming runner reach their frontier models through `claude`, `codex`,
+`agy` or `opencode` precisely because those are flat-rate, and no LangChain class speaks to them. Replacing
+them with API calls would trade a fixed cost for a per-token one and would be a step backwards for the
+Council's stated policy ("never a new pay-per-use API opened just for this"). So the frontier side stays on
+the CLIs, and LangChain is the way in for the cases where there is no CLI or the lane itself should run
+hosted.
+
+**LangGraph is the orchestration layer**, and it earns its place only where a run has state worth
+surviving a crash or a human gate worth waiting at. It is used for exactly that today: the lane's routing
+graph, the persistent research sessions (SQLite checkpoints), and the Council's resumable relay, which drives
+frontier seats and records an invoked-but-unanswered call as an uncertainty instead of silently spending
+quota twice. The Council's parallel `consult` is ephemeral on purpose (hard budgets, no resume), and the
+vault grooming pass is a four-step guarded flow whose state already lives in its plan record and clone;
+putting either behind a graph would add a moving part without removing a failure. Revisit them if a
+consult that dies after spending three seats' quota becomes a real cost.
+
 ## Propose and apply (the pen, gated)
 
 ```bash

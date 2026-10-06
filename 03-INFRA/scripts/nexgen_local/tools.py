@@ -26,6 +26,19 @@ MIN_TERM = 2
 #: Files larger than this are skipped by search instead of read whole.
 MAX_SEARCH_BYTES = 1_000_000
 
+#: Names of files that hold credentials wherever they sit. A repository root is allowed, but a deploy
+#: checkout keeps its real `.env` (service tokens) inside it, and a key file is a key file in any folder.
+_SENSITIVE_NAME = re.compile(
+    r"(?i)^(?:\.env(?:\..*)?|\.netrc|\.npmrc|\.pypirc|\.git-credentials|tokens?\.json|credentials?(?:\..*)?"
+    r"|secrets?\..*|id_(?:rsa|dsa|ecdsa|ed25519)(?:\.pub)?|.*\.(?:pem|key|p12|pfx|age|kdbx|gpg|asc))$"
+)
+
+
+def is_sensitive_name(name: str) -> bool:
+    """A file name that says it holds a credential. `.env.example` is documentation, not a credential."""
+    return bool(_SENSITIVE_NAME.match(name)) and not name.lower().endswith((".example", ".sample", ".template", ".pub"))
+
+
 #: Legacy checkpoints did not persist an explicit status. These markers
 #: interpret only their refusal history; fresh operations declare status.
 _EMPTY_REFUSALS = ("nessun risultato", "nessun testo estraibile")
@@ -185,6 +198,8 @@ class ToolRegistry:
             except OSError:
                 continue
             if any(part in self.cfg.excluded_parts for part in resolved.parts):
+                continue
+            if is_sensitive_name(resolved.name):
                 continue
             for root in roots:
                 try:

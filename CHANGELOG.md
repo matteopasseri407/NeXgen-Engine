@@ -195,6 +195,21 @@ of any engine release.
 - `doctor` compares the Vault's copy of the leak-scan patterns with the engine's
   (`security.leak_patterns_twin`): the two had drifted once, leaving the maintainer's push gate weaker
   than CI's.
+- The local lane works with a model that has no thinking mode. The answer channel always asked Ollama
+  for thinking, and Ollama answers HTTP 400 "does not support thinking" to that on models without it
+  (measured on granite4 and qwen2.5-coder), so pointing `NEXGEN_LOCAL_MODEL` at such a model made every
+  question fail. The lane asks the model what it can do first, and retries once without thinking if an
+  older Ollama cannot tell it.
+- The lane's audit trail, proposals, drafts and research sessions follow `NEXGEN_HOME` like the rest of the
+  engine's state (they used the process's real home), the lane finds the vault through the one resolver
+  (`KNOWLEDGE_VAULT_PATH` was ignored; so was a `~` in the variable, in the Council's seats lookup), and the
+  workflow allowlist moves with it. A scan test fails the build on a new `Path.home()`.
+- The lane refuses to read credential files (`.env`, key and token files) from the repository roots it may
+  read; their `.example` templates stay readable. A deploy checkout keeps its real `.env` inside the repo.
+- A stalled local model costs one deadline in the lane's decision loop, not two: it swallowed every model
+  error, timeouts included, and asked again, so a model that hung held the loop for twice its deadline.
+  Timeouts (the engine's and the HTTP client's) are a distinct error now; a malformed answer still earns
+  its one repair.
 
 ## [2.3.11] - 2026-10-04
 

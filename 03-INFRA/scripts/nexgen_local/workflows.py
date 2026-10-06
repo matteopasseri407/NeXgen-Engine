@@ -80,7 +80,9 @@ def allowlist_path() -> Path:
     configured = os.environ.get("NEXGEN_WORKFLOWS_ALLOWLIST")
     if configured:
         return Path(configured).expanduser()
-    return Path.home() / ".config" / "nexgen-workflows" / "allowlist.json"
+    from nexgen_core.paths import resolve_home
+
+    return resolve_home() / ".config" / "nexgen-workflows" / "allowlist.json"
 
 
 def load_allowlist() -> dict[str, Any]:

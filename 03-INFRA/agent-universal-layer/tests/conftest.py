@@ -26,6 +26,17 @@ REAL_SCRIPTS = REAL_VAULT / "03-INFRA" / "scripts"
 
 SENTINEL_NAME = ".b1-sandbox-sentinel"
 
+@pytest.fixture(autouse=True)
+def no_ollama_probe(request, monkeypatch):
+    """The lane's capability probe talks to whatever OLLAMA_HOST points at: never from a test, unless the test is about the probe."""
+    if request.module.__name__.endswith("test_nexgen_llm_thinking"):
+        return
+    try:
+        import nexgen_local.llm as llm_module
+    except ImportError:
+        return
+    monkeypatch.setattr(llm_module, "_ollama_capabilities", lambda host, tag, timeout=3.0: None)
+
 
 @pytest.fixture(autouse=True)
 def isolated_runtime_overrides(monkeypatch):

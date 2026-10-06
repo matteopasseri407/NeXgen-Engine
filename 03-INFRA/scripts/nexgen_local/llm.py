@@ -25,6 +25,28 @@ class LLMError(NexgenError, RuntimeError):
     """The model could not be reached or its driver is missing."""
 
 
+class LLMTimeout(LLMError):
+    """The model did not answer within its deadline.
+
+    Kept apart from a bad answer on purpose: a malformed reply is worth one repair, a stalled model is
+    not worth a second wait of the same length.
+    """
+
+
+def _is_timeout(exc: BaseException) -> bool:
+    """A deadline of ours (asyncio) or of the HTTP client (httpx names its own, not the builtin)."""
+    if isinstance(exc, TimeoutError):
+        return True
+    import httpx
+
+    return isinstance(exc, httpx.TimeoutException)
+
+
+def _failure(exc: Exception, what: str) -> LLMError:
+    """The typed error for a failed call: a timeout is told apart from every other failure."""
+    return (LLMTimeout if _is_timeout(exc) else LLMError)(f"{what}: {exc}")
+
+
 class LLM(Protocol):
     """What the lane needs from a model. Tests implement this with a fake."""
 
@@ -67,6 +89,23 @@ DECISION_NUM_CTX = 16384
 JSON_TIMEOUT_SECONDS = 180
 TEXT_TIMEOUT_SECONDS = 600
 DECISION_TIMEOUT_SECONDS = 180
+
+
+def _ollama_capabilities(host: str, tag: str, timeout: float = 3.0) -> frozenset[str] | None:
+    """What the model at `tag` can do, as Ollama reports it (`completion`, `tools`, `thinking`, ...).
+
+    None when it cannot be learned (an older Ollama without the field, the server down): the caller then
+    keeps its default and the call-time fallback in `text()` covers the rest.
+    """
+    import httpx
+
+    try:
+        reply = httpx.post(f"{host.rstrip('/')}/api/show", json={"model": tag}, timeout=timeout)
+        reply.raise_for_status()
+        caps = reply.json().get("capabilities")
+    except (httpx.HTTPError, ValueError, OSError):
+        return None
+    return frozenset(str(c) for c in caps) if isinstance(caps, list) else None
 
 
 def _close_runtime(runner, transport=None) -> None:
@@ -198,7 +237,7 @@ class _ChatModelLLM:
         try:
             message = self._invoke(self._json_model, self._messages(system, user), JSON_TIMEOUT_SECONDS)
         except Exception as exc:  # noqa: BLE001 - surface a typed error upward
-            raise LLMError(f"chiamata al modello fallita: {exc}") from exc
+            raise _failure(exc, "chiamata al modello fallita") from exc
         if self._done_reason(message) == "length":
             # Truncated form, same as unparseable: every caller degrades
             # gracefully (fallback route, refused proposal), the router
@@ -210,8 +249,22 @@ class _ChatModelLLM:
         try:
             message = self._invoke(self._text_model, self._messages(system, user), TEXT_TIMEOUT_SECONDS)
         except Exception as exc:  # noqa: BLE001
-            raise LLMError(f"chiamata al modello fallita: {exc}") from exc
+            retry = self._without_thinking(exc)
+            if retry is None:
+                raise _failure(exc, "chiamata al modello fallita") from exc
+            try:
+                message = self._invoke(retry, self._messages(system, user), TEXT_TIMEOUT_SECONDS)
+            except Exception as second:  # noqa: BLE001
+                raise _failure(second, "chiamata al modello fallita") from second
         return self._checked_text(message, what="risposta del modello")
+
+    def _without_thinking(self, error: Exception):
+        """The same answer model without thinking, when the provider says it has none; None otherwise.
+
+        A backstop for an Ollama too old to report capabilities. The replacement is kept, so the
+        refusal costs one request, not one per call.
+        """
+        return None
 
     def choose(self, system: str, user: str, actions: list[str]) -> dict | None:
         """Forced-schema decision for the bounded loop: one action from the menu."""
@@ -236,11 +289,11 @@ class _ChatModelLLM:
             # feature — it surfaces as a typed error, never a silent retry
             # that would double the hang.
             if not isinstance(exc, NotImplementedError):
-                raise LLMError(f"decisione del modello fallita: {exc}") from exc
+                raise _failure(exc, "decisione del modello fallita") from exc
             try:
                 fallback = self._invoke(self._plain_json_decision(), self._messages(system, user), deadline - time.monotonic())
             except Exception as fallback_exc:  # noqa: BLE001
-                raise LLMError(f"decisione del modello fallita: {fallback_exc}") from fallback_exc
+                raise _failure(fallback_exc, "decisione del modello fallita") from fallback_exc
             if self._done_reason(fallback) == "length":
                 return None
             parsed = _json_block(self._content(fallback))
@@ -322,8 +375,15 @@ class ChatOllamaLLM(_ChatModelLLM):
         try:
             self._json_model = ChatOllama(format="json", reasoning=False, **router_common)
             # Prosa con pensiero (bozze, risposte): niente schema forzato qui,
-            # il CoT aiuta e non rompe nulla. Misurato sul golden set.
-            self._text_model = ChatOllama(reasoning=True, **answer_common)
+            # il CoT aiuta e non rompe nulla. Misurato sul golden set. Solo se il
+            # modello sa pensare: Ollama risponde 400 "does not support thinking" a
+            # reasoning=True su un modello che non lo ha (granite, qwen2.5-coder, molti
+            # 12B), e prima di questo controllo ogni modello senza thinking rendeva
+            # inutilizzabile l'intera lane.
+            capabilities = _ollama_capabilities(host, cfg.answer_tag)
+            thinks = capabilities is None or "thinking" in capabilities
+            self._text_model = ChatOllama(reasoning=True if thinks else None, **answer_common)
+            self._answer_common = answer_common
             # Decisioni SENZA pensiero: il canale e' uno schema forzato
             # (json_schema) e il think ci va a cazzotti — misurato: 12/16
             # e p95 decisione da 5s a 170s. Scelta secca, niente rimuginii.
@@ -338,6 +398,14 @@ class ChatOllamaLLM(_ChatModelLLM):
 
     def _plain_json_decision(self):
         return self._decision_model.bind(format="json")
+
+    def _without_thinking(self, error: Exception):
+        if "does not support thinking" not in str(error) or not hasattr(self, "_answer_common"):
+            return None
+        from langchain_ollama import ChatOllama
+
+        self._text_model = ChatOllama(**self._answer_common)
+        return self._text_model
 
 
 class ChatModelLLM(_ChatModelLLM):
