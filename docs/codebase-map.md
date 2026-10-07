@@ -2,7 +2,7 @@
 
 > Generated from code-intel `repo_map` on 2026-10-04 (460 files discovered, 271 processed, 5790 nodes, 13980 edges, 9077 calls resolved). Regenerate after structural refactors. This file is an index into the code; the behaviour contract lives in `architecture-contract.md`.
 
-Python outlines below were refreshed from the current source AST after wave reconciliation. Dependency graph counts above and the caller ranking below describe the original code-intel snapshot.
+Python outlines below were refreshed from the current source AST after the v2.4.0 bugfix release. Dependency graph counts above and the caller ranking below describe the original code-intel snapshot.
 
 One line per file: path plus its top-level definitions as `name (kind, line)`.
 
@@ -29,7 +29,7 @@ Engine core: single Python package, native Linux+Windows.
 - `03-INFRA/scripts/nexgen_core/checks/takeover_checks.py` — `check_engine_version_recorded` (function, 18), `check_last_cycle_phases` (function, 57)
 - `03-INFRA/scripts/nexgen_core/checks/host_checks.py` — `_systemctl` (function, 19), `check_timers_armed` (function, 28), `_engine_launchers` (function, 60), `check_launchers` (function, 76)
 - `03-INFRA/scripts/nexgen_core/cli/__init__.py` — `build_parser` (function, 30), `_run_cli` (function, 51), `main` (function, 77)
-- `03-INFRA/scripts/nexgen_core/cli/engine.py` — `_all` (function, 27), `register` (function, 32), `_action_mark` (function, 128), `cmd_sync` (function, 137), `cmd_plan` (function, 155), `cmd_init` (function, 183), `cmd_runtime` (function, 197), `cmd_import` (function, 223), `cmd_doctor` (function, 238), `cmd_update` (function, 251), `cmd_upgrades` (function, 257), `cmd_config` (function, 263), `_set_authoritative_remote` (function, 281), `cmd_heartbeat` (function, 321), `cmd_notify_failure` (function, 330), `cmd_bootstrap_alerts` (function, 349), `cmd_inventory` (function, 365), `_bootstrap_targets` (function, 412), `_instruction_state` (function, 421), `_native_memory_report` (function, 465), `cmd_info` (function, 514), `cmd_shell` (function, 526)
+- `03-INFRA/scripts/nexgen_core/cli/engine.py` — `_all` (function, 27), `register` (function, 32), `_action_mark` (function, 129), `cmd_sync` (function, 138), `cmd_plan` (function, 156), `cmd_init` (function, 184), `cmd_runtime` (function, 198), `cmd_import` (function, 224), `cmd_doctor` (function, 239), `cmd_update` (function, 252), `cmd_upgrades` (function, 258), `cmd_config` (function, 264), `_set_authoritative_remote` (function, 282), `cmd_heartbeat` (function, 322), `cmd_notify_failure` (function, 331), `cmd_bootstrap_alerts` (function, 350), `cmd_inventory` (function, 366), `_bootstrap_targets` (function, 413), `_instruction_state` (function, 422), `_native_memory_report` (function, 466), `cmd_info` (function, 515), `cmd_shell` (function, 527)
 - `03-INFRA/scripts/nexgen_core/cli/local_cmds.py` — `dispatch` (function, 17), `_cmd_local` (function, 30), `register` (function, 34)
 - `03-INFRA/scripts/nexgen_core/cli/module_cmds.py` — `register` (function, 28), `cmd_list` (function, 65), `_vault` (function, 85), `cmd_add` (function, 92), `cmd_remove` (function, 108), `cmd_set` (function, 119)
 - `03-INFRA/scripts/nexgen_core/cli/skill_cmds.py` — `register` (function, 11), `_usage` (function, 54), `_forward` (function, 59)
@@ -38,7 +38,7 @@ Engine core: single Python package, native Linux+Windows.
 - `03-INFRA/scripts/nexgen_core/cli/vault_cmds.py` — `_all` (function, 12), `register` (function, 17), `_usage` (function, 61), `cmd_push` (function, 66), `cmd_groom` (function, 74), `cmd_map` (function, 83), `cmd_lifecycle` (function, 99), `cmd_quarantine` (function, 113)
 - `03-INFRA/scripts/nexgen_core/config.py` — `ConfigError` (class, 31), `_load_yaml` (function, 35), `expand_placeholders` (function, 57), `TemplateError` (class, 89), `expand_inline_templates` (function, 93), `_expand_if_blocks` (function, 129), `_split_if_block` (function, 153), `load_mcp_manifest` (function, 186), `load_skills_manifest` (function, 253), `load_council_config` (function, 295)
 - `03-INFRA/scripts/nexgen_core/depwatch.py` — `PinFinding` (class, 50), `DepwatchResult` (class, 59), `_is_stale` (function, 65), `_git_ls_remote_head` (function, 85), `_npm_latest_version` (function, 113), `_npm_spec_tokens` (function, 125), `_command_tokens` (function, 129), `_collect_skill_pins` (function, 139), `_collect_mcp_pins` (function, 195), `_write_report` (function, 217), `run_depwatch` (function, 244), `_write_status_sidecar` (function, 299)
-- `03-INFRA/scripts/nexgen_core/doctor.py` — `Doctor` (class, 92), `main` (function, 240)
+- `03-INFRA/scripts/nexgen_core/doctor.py` — `Doctor` (class, 93), `main` (function, 242)
 - `03-INFRA/scripts/nexgen_core/entrypoints.py` — `_alias` (function, 17)
 - `03-INFRA/scripts/nexgen_core/errors.py` — `NexgenError` (class, 17), `AlignmentError` (class, 22)
 - `03-INFRA/scripts/nexgen_core/files.py` — `_retry_permission_error` (function, 30), `atomic_write_text` (function, 45), `atomic_write_bytes` (function, 68), `_atomic_publish` (function, 73), `publish_symlink` (function, 108), `secure_artifact` (function, 132), `write_private_text` (function, 145), `_safe_tag` (function, 151), `backup_file` (function, 159), `_prune_backups` (function, 200), `write_text_if_changed` (function, 212)
@@ -63,7 +63,7 @@ Engine core: single Python package, native Linux+Windows.
 - `03-INFRA/scripts/nexgen_core/paths.py` — `resolve_home` (function, 48), `resolve_vault_data` (function, 76), `resolve_engine_root` (function, 92), `bundled_engine_root` (function, 112), `installed_as_package` (function, 118), `resolve_runtime_dir` (function, 128), `resolve_state_dir` (function, 147), `canonical_instructions` (function, 173), `mcp_manifest` (function, 179), `skills_manifest` (function, 185), `remotes_config` (function, 191), `opencode_config_dir` (function, 206), `opencode_config_candidates` (function, 220), `opencode_config_path` (function, 241), `opencode_agents_file` (function, 250), `opencode_skills_dir` (function, 261), `claude_config` (function, 266), `claude_settings` (function, 272), `codex_home` (function, 278), `codex_config` (function, 292), `antigravity_config` (function, 304), `antigravity_configs` (function, 314), `antigravity_settings` (function, 323), `antigravity_hooks` (function, 328)
 - `03-INFRA/scripts/nexgen_core/plan.py` — `SyncPlan` (class, 46), `_git_probe` (function, 78), `_probe` (function, 139), `build_sync_plan` (function, 155), `_missing_config_actions` (function, 257)
 - `03-INFRA/scripts/nexgen_core/platforms.py` — `Support` (class, 26), `render_markdown` (function, 81), `main` (function, 91)
-- `03-INFRA/scripts/nexgen_core/provision.py` — `ProvisionError` (class, 67), `validate_deps` (function, 71), `_workspace_root` (function, 81), `_canonical_build` (function, 87), `workspace_path` (function, 92), `_validate_kind` (function, 111), `_validate_pins` (function, 120), `_check_node` (function, 146), `_read_marker` (function, 152), `_run_workspace` (function, 163), `_verified` (function, 169), `_run_build` (function, 188), `_ProvisionLock` (class, 205), `_provision_git` (function, 255), `ensure_deps` (function, 309), `report_unsatisfied_deps` (function, 338)
+- `03-INFRA/scripts/nexgen_core/provision.py` — `ProvisionError` (class, 67), `validate_deps` (function, 71), `_workspace_root` (function, 81), `_canonical_build` (function, 87), `workspace_path` (function, 92), `_validate_kind` (function, 111), `_validate_pins` (function, 120), `_check_node` (function, 146), `_read_marker` (function, 152), `_run_workspace` (function, 163), `_verified` (function, 169), `_run` (function, 188), `_run_build` (function, 200), `_ProvisionLock` (class, 217), `_provision_git` (function, 267), `ensure_deps` (function, 315), `report_unsatisfied_deps` (function, 344)
 - `03-INFRA/scripts/nexgen_core/publisher.py` — `Publisher` (class, 30), `main` (function, 68)
 - `03-INFRA/scripts/nexgen_core/release.py` — `is_semver` (function, 37), `version_matches_tag` (function, 42), `scan_range` (function, 56), `newer_version` (function, 73), `compute_next_version` (function, 82), `bump_version_files` (function, 106), `_preflight` (function, 158), `main` (function, 241)
 - `03-INFRA/scripts/nexgen_core/release_trust.py` — `TrustAnchorError` (class, 68), `TagVerdict` (class, 73), `TrustAnchor` (class, 84), `load_trust_anchor` (function, 90), `classify_gpg_status` (function, 124), `classify_ssh_result` (function, 167), `_exec` (function, 183), `_git` (function, 190), `_hermetic_env` (function, 194), `_gnupg_scratch_base` (function, 206), `_verify_openpgp` (function, 213), `_verify_ssh` (function, 250), `verify_release_tag` (function, 269), `main` (function, 299)
@@ -92,7 +92,7 @@ Engine core: single Python package, native Linux+Windows.
 - `03-INFRA/scripts/nexgen_core/tools/firecrawl.py` — `FirecrawlClient` (class, 21), `_format_results` (function, 94), `main` (function, 112)
 - `03-INFRA/scripts/nexgen_core/tools/firecrawl_health.py` — `read_cached_success` (function, 21), `extract_urls` (function, 32), `is_expected_result` (function, 47), `write_success` (function, 55), `probe` (function, 63), `parse_args` (function, 88), `main` (function, 103)
 - `03-INFRA/scripts/nexgen_core/tools/info.py` — `_supports_color` (function, 26), `_c` (function, 37), `get_engine_info` (function, 64), `_mix` (function, 172), `_extension_lines` (function, 176), `_mcp_notes` (function, 228), `_skill_notes` (function, 249), `render_info` (function, 263)
-- `03-INFRA/scripts/nexgen_core/tools/notifier_boot.py` — `_append_once` (function, 42), `_posix_shell_targets` (function, 57), `_powershell_profile` (function, 78), `_shell_targets` (function, 82), `_optout_file` (function, 102), `_opted_out` (function, 106), `_set_opted_out` (function, 121), `cmd_install_shell_hook` (function, 139), `_apply_shell_hooks` (function, 152), `_nexgen_cmd` (function, 189), `_write_if_different` (function, 196), `_run_quiet` (function, 217), `_windows_vbs_content` (function, 228), `_windows_task_runs_notifier` (function, 239), `_windows_startup_copy` (function, 250), `_remove_windows_fallback` (function, 256), `_ensure_windows_boot_check` (function, 269), `_write_text_if_different` (function, 309), `_ensure_posix_boot_check` (function, 350), `ensure_boot_check` (function, 426), `ensure_shell_hook` (function, 444), `cmd_install_autostart` (function, 465), `_remove_autostart` (function, 477), `cmd_boot` (function, 500), `_boot_inventory` (function, 524), `_publish_inventory` (function, 552), `_notify_passive` (function, 583), `_notify_passive_windows` (function, 598)
+- `03-INFRA/scripts/nexgen_core/tools/notifier_boot.py` — `_append_once` (function, 42), `_posix_shell_targets` (function, 57), `_powershell_profile` (function, 78), `_shell_targets` (function, 82), `_optout_file` (function, 102), `_opted_out` (function, 106), `_set_opted_out` (function, 121), `cmd_install_shell_hook` (function, 139), `_apply_shell_hooks` (function, 152), `_nexgen_cmd` (function, 189), `_write_if_different` (function, 196), `_run_quiet` (function, 217), `_windows_vbs_content` (function, 228), `_windows_task_runs_notifier` (function, 239), `_windows_startup_copy` (function, 250), `_remove_windows_fallback` (function, 256), `_ensure_windows_boot_check` (function, 269), `_write_text_if_different` (function, 309), `_ensure_posix_boot_check` (function, 350), `ensure_boot_check` (function, 426), `ensure_shell_hook` (function, 450), `cmd_install_autostart` (function, 471), `_remove_autostart` (function, 483), `cmd_boot` (function, 506), `_boot_inventory` (function, 530), `_publish_inventory` (function, 558), `_notify_passive` (function, 589), `_notify_passive_windows` (function, 604)
 - `03-INFRA/scripts/nexgen_core/tools/notifier_prompt.py` — `_call_logo_path` (function, 21), `_call_prompt_user` (function, 34), `_logo_path` (function, 47), `_prompt_linux` (function, 64), `_prompt_windows` (function, 98), `_prompt_user` (function, 118), `_notify_success` (function, 124), `_run_update` (function, 153), `_notes_hint` (function, 161), `cmd_check` (function, 165), `_check_skills_gui` (function, 191), `cmd_shell_check` (function, 234), `_shell_check` (function, 245), `_shell_check_engine` (function, 255), `_shell_check_skills` (function, 278)
 - `03-INFRA/scripts/nexgen_core/tools/notifier_skills.py` — `_applied_file` (function, 14), `_short_skill_name` (function, 18), `_take_fresh_applied` (function, 25), `_confirm_skills_shown` (function, 62), `_held_once_daily` (function, 68), `_skills_notice` (function, 100), `_batch_once_daily` (function, 117)
 - `03-INFRA/scripts/nexgen_core/tools/notifier_state.py` — `_state_file` (function, 27), `_today` (function, 31), `_read_state` (function, 35), `_write_state` (function, 43), `_is_throttled` (function, 55), `_record_prompt_time` (function, 69), `_dismissed_today` (function, 79), `_skills_report_file` (function, 88), `_skills_dismissed` (function, 92), `_record_skills_dismissal` (function, 101), `_newest_tag_ls_remote` (function, 105), `_resolve_newest_tag` (function, 116), `refresh_update_cache` (function, 155), `_tag_newer` (function, 197), `_spawn_background_refresh` (function, 208), `_cache_fresh` (function, 238), `_cache_usable` (function, 245)
@@ -117,13 +117,13 @@ Engine core: single Python package, native Linux+Windows.
 - `03-INFRA/scripts/nexgen_core/vault/runner.py` — `RunResult` (class, 31), `RunnerError` (class, 36), `RunnerNotFoundError` (class, 40), `RunnerUnsupportedError` (class, 44), `RunnerUnknownError` (class, 48), `_kill_process_group` (function, 52), `_run_streaming` (function, 56), `Runner` (class, 86), `ClaudeRunner` (class, 105), `CodexRunner` (class, 146), `AgyRunner` (class, 160), `get_runner` (function, 196)
 - `03-INFRA/scripts/nexgen_core/processes.py` — `powershell_literal` (function, 15), `windows_command_argv` (function, 25), `force_stop_process_tree` (function, 37)
 - `03-INFRA/scripts/nexgen_core/secret_shapes.py` — `is_secret_name` (function, 70), `looks_like_secret_value` (function, 74), `redact` (function, 78)
-- `03-INFRA/scripts/nexgen_core/mcp_check.py` — `CliResult` (class, 32), `_Session` (class, 40), `_spawn_env` (function, 99), `check_gateway` (function, 103), `DirectResult` (class, 154), `_estimate_tokens` (function, 163), `_http_tools` (function, 168), `check_direct` (function, 213), `verify_servers` (function, 243), `main_direct` (function, 286), `main` (function, 315)
+- `03-INFRA/scripts/nexgen_core/mcp_check.py` — `CliResult` (class, 32), `_Session` (class, 43), `_spawn_env` (function, 102), `check_gateway` (function, 106), `DirectResult` (class, 159), `_estimate_tokens` (function, 168), `_http_tools` (function, 173), `check_direct` (function, 218), `verify_servers` (function, 248), `main_direct` (function, 293), `main` (function, 322)
 - `03-INFRA/scripts/nexgen_core/mcp_placement.py` — `Placement` (class, 41), `_is_active_legacy` (function, 50), `_oauth_only` (function, 54), `place` (function, 62), `plan` (function, 86), `problems` (function, 91), `gateway_servers_for` (function, 121)
 - `03-INFRA/scripts/nexgen_core/mcp_plan.py` — `build` (function, 19), `render` (function, 48), `main` (function, 78)
-- `03-INFRA/scripts/nexgen_core/mcp_trials.py` — `_path` (function, 27), `_load` (function, 31), `_save` (function, 44), `active` (function, 48), `active_entries` (function, 54), `overlay` (function, 59), `start` (function, 67), `drop` (function, 81), `purge_expired` (function, 90), `time_left` (function, 100), `cmd_try` (function, 108), `cmd_trials` (function, 129), `cmd_drop` (function, 141), `cmd_promote` (function, 147)
+- `03-INFRA/scripts/nexgen_core/mcp_trials.py` — `_path` (function, 28), `_load` (function, 32), `_save` (function, 45), `active` (function, 49), `active_entries` (function, 55), `overlay` (function, 60), `start` (function, 68), `drop` (function, 82), `purge_expired` (function, 91), `time_left` (function, 101), `cmd_try` (function, 109), `cmd_trials` (function, 136), `cmd_drop` (function, 148), `cmd_promote` (function, 154)
 - `03-INFRA/scripts/nexgen_core/extensions.py` — `mcp_provenance` (function, 39), `_mcp_pin` (function, 53), `_cells` (function, 69), `_summarize_where` (function, 73), `_why_off` (function, 81), `_read_json` (function, 87), `_Upstream` (class, 95), `_load_servers` (function, 139), `mcp_rows` (function, 151), `_skill_pin` (function, 180), `_engine_copy` (function, 197), `skill_rows` (function, 210), `collect` (function, 244), `counts` (function, 262), `updates` (function, 269), `age_text` (function, 280)
 - `03-INFRA/scripts/nexgen_core/skill_adopt.py` — `Candidate` (class, 35), `Outcome` (class, 43), `shipped_skills` (function, 49), `candidates` (function, 56), `describe_difference` (function, 70), `_retarget` (function, 93), `adopt` (function, 105), `main` (function, 176)
-- `03-INFRA/scripts/nexgen_core/deposit_env.py` — `deposit_path` (function, 23), `read_deposit` (function, 27)
+- `03-INFRA/scripts/nexgen_core/deposit_env.py` — `deposit_path` (function, 25), `read_deposit` (function, 29)
 - `03-INFRA/scripts/nexgen_core/manifest_text.py` — `entry_span` (function, 11)
 
 
@@ -201,9 +201,11 @@ MCP proxies and bridges (lazy waiter, HTTP bridge, Playwright).
 
 Runtime guardrail adapters and event sink.
 
-- `03-INFRA/agent-universal-layer/hooks/antigravity-guardrail-adapter.mjs` — `loadConfiguredHooks` (function, 36), `readStdin` (function, 57), `consultGuardrailBody` (function, 69), `main` (function, 100)
-- `03-INFRA/agent-universal-layer/hooks/nexgen-event-sink.mjs` — `isVocal` (function, 51), `socketReady` (function, 55), `payloadLine` (function, 59), `stripThinking` (function, 72), `extractFromRow` (function, 91), `lastAssistantText` (function, 133), `extractProse` (function, 171), `send` (function, 196), `getOpencodeReplyFromDb` (function, 211), `main` (function, 325)
-- `03-INFRA/agent-universal-layer/hooks/opencode-guardrail-plugin.mjs` — `loadConfiguredHooks` (function, 37), `consultGuardrailBody` (function, 65)
+- `03-INFRA/agent-universal-layer/hooks/antigravity-guardrail-adapter.mjs` — `readStdin` (function, 30), `emit` (function, 39), `main` (function, 43)
+- `03-INFRA/agent-universal-layer/hooks/claude-guardrail-adapter.mjs` — `readStdin` (function, 21), `emit` (function, 29), `main` (function, 42)
+- `03-INFRA/agent-universal-layer/hooks/nexgen-event-sink.mjs` — `isVocal` (function, 56), `socketReady` (function, 60), `payloadLine` (function, 64), `stripThinking` (function, 77), `extractFromRow` (function, 96), `lastAssistantText` (function, 138), `extractProse` (function, 176), `send` (function, 201), `getOpencodeReplyFromDb` (function, 216), `main` (function, 330)
+- `03-INFRA/agent-universal-layer/hooks/nexgen-guardrail-core.mjs` — `loadSidecar` (function, 22), `closed` (function, 54), `nodeBinary` (function, 63), `consultGuardrailBody` (function, 67), `worstOf` (function, 96), `recordAudit` (function, 111)
+- `03-INFRA/agent-universal-layer/hooks/opencode-guardrail-plugin.mjs` — `commandOfPermission` (function, 37), `commandOfShell` (function, 45), `judge` (function, 53)
 
 ## 03-INFRA/agent-universal-layer/leak-scan
 
@@ -237,22 +239,22 @@ Top-level script shims.
 | 173 | `t` | `03-INFRA/scripts/nexgen_core/i18n.py:118` |
 | 161 | `resolve` | `03-INFRA/scripts/nexgen_core/tools/vault_map.py:127` |
 | 121 | `run` | `03-INFRA/agent-universal-layer/tests/test_nexgen_council_seat_registry.py:135` |
-| 80 | `ToolRegistry` | `03-INFRA/scripts/nexgen_local/tools.py:121` |
-| 65 | `replace` | `03-INFRA/agent-universal-layer/tests/test_nexgen_update_command.py:124` |
+| 80 | `ToolRegistry` | `03-INFRA/scripts/nexgen_local/tools.py:134` |
+| 65 | `replace` | `03-INFRA/agent-universal-layer/tests/test_nexgen_update_command.py:126` |
 | 57 | `main` | `03-INFRA/agent-universal-layer/council/council.py:402` |
-| 47 | `resolve_home` | `03-INFRA/scripts/nexgen_core/paths.py:39` |
+| 47 | `resolve_home` | `03-INFRA/scripts/nexgen_core/paths.py:48` |
 | 45 | `CheckOutcome` | `03-INFRA/scripts/nexgen_core/report.py:33` |
-| 43 | `_record` | `03-INFRA/scripts/nexgen_local/tools.py:141` |
+| 43 | `_record` | `03-INFRA/scripts/nexgen_local/tools.py:154` |
 | 38 | `search` | `03-INFRA/scripts/nexgen_core/tools/firecrawl.py:73` |
 | 36 | `_cfg` | `03-INFRA/agent-universal-layer/tests/test_nexgen_local_steps.py:38` |
 | 35 | `add` | `03-INFRA/scripts/nexgen_core/report.py:68` |
-| 35 | `LaneConfig` | `03-INFRA/scripts/nexgen_local/config.py:38` |
-| 33 | `resolve_vault_data` | `03-INFRA/scripts/nexgen_core/paths.py:67` |
+| 35 | `LaneConfig` | `03-INFRA/scripts/nexgen_local/config.py:49` |
+| 33 | `resolve_vault_data` | `03-INFRA/scripts/nexgen_core/paths.py:76` |
 | 32 | `write` | `03-INFRA/agent-universal-layer/tests/test_nexgen_council_seat_registry.py:28` |
 | 31 | `_load_updater` | `03-INFRA/agent-universal-layer/tests/test_nexgen_update_command.py:16` |
-| 30 | `run_steps` | `03-INFRA/scripts/nexgen_local/steps.py:303` |
-| 29 | `load_catalog` | `03-INFRA/scripts/nexgen_core/modules.py:292` |
-| 29 | `materialize` | `03-INFRA/scripts/nexgen_core/skills.py:293` |
+| 30 | `run_steps` | `03-INFRA/scripts/nexgen_local/steps.py:306` |
+| 29 | `load_catalog` | `03-INFRA/scripts/nexgen_core/modules.py:293` |
+| 29 | `materialize` | `03-INFRA/scripts/nexgen_core/skills.py:296` |
 | 28 | `_upgrade_fixture` | `03-INFRA/agent-universal-layer/tests/test_nexgen_update_command.py:77` |
 
 ## Regenerating
