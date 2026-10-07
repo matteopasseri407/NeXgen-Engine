@@ -305,6 +305,34 @@ def check_mcp_content_drift(vault_data: Path, home: Path, engine_root: Path | No
     )
 
 
+def check_mcp_placement(vault_data: Path) -> CheckOutcome | None:
+    """Is every CLI's gateway mounted where servers are routed behind it, and every `exposure` one we know?
+
+    The static half of "the gateway works": it reads only the manifest. `nexgen mcp check` is the live half
+    (it starts the gateway and its backends). Returns None where there is no manifest.
+    """
+    from nexgen_core import mcp_placement
+
+    manifest = vault_data / "03-INFRA" / "agent-universal-layer" / "mcp" / "manifest.yaml"
+    if not manifest.is_file():
+        return None
+    try:
+        servers = load_mcp_manifest(manifest).get("servers", {})
+    except Exception as exc:  # noqa: BLE001 - check failure is reported, never raises
+        return CheckOutcome(id="mcp.placement", severity=Severity.UNDETERMINED,
+                            message=t("The MCP manifest could not be read, so placement was not checked: {error}", error=exc))
+    found = mcp_placement.problems(servers)
+    if found:
+        return CheckOutcome(
+            id="mcp.placement",
+            severity=Severity.BROKEN,
+            message=t("The MCP placement is incoherent: {problems}", problems="; ".join(found)),
+            action=t("Run 'nexgen mcp plan' to see it per CLI, then fix the manifest."),
+        )
+    return CheckOutcome(id="mcp.placement", severity=Severity.OK,
+                        message=t("Every CLI's gateway is mounted where servers are routed behind it"))
+
+
 def _command_resolves(command: str, home: Path) -> bool:
     """Whether a CLI could actually start this command: on PATH, or a file that exists."""
     if not command:

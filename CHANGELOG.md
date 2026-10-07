@@ -218,6 +218,17 @@ of any engine release.
   still confabulates on the web one), and a rephrased injection can get through, so the model itself must
   still pass `nexgen local eval --suite traps`; `--bare` runs the suite with the layer off to measure the
   model alone.
+- Where an MCP server lives is one rule now (`nexgen_core/mcp_placement.py`), asked by the renderer, by the
+  gateway and by the new `nexgen mcp plan`. The gateway used to serve every `lazy: true` server to every
+  CLI, ignoring `targets`, `enabled` and `lazy_targets`, and without knowing which CLI it was in: a server
+  mounted directly in a CLI was also in that CLI's gateway, and one restricted to two CLIs was still offered
+  to the other two. Each CLI's gateway is now told its CLI (`LAZY_MCP_CLI`) and serves exactly what the plan
+  routes behind it; until the next guard cycle rewrites an older config it keeps the old behaviour.
+- `exposure: eager | lazy` declares a server's place once (the same vocabulary skills use); the older
+  `tier`, `lazy` and `lazy_targets` keep working when it is absent, and `nexgen mcp add` writes both.
+  `nexgen mcp plan` prints the table per CLI with the reason and what changes for the gateway;
+  `nexgen mcp check` starts each CLI's gateway as that CLI would and compares what it serves with the plan,
+  naming any backend that cannot start; `doctor` reports an incoherent plan (`mcp.placement`).
 
 ## [2.3.11] - 2026-10-04
 

@@ -1050,4 +1050,46 @@ MESSAGES: dict[str, str] = {
         "La copia dei pattern anti-leak nel Vault è diversa da quella dell'engine: il suo cancello di push può essere più debole di quello della CI.",
     'Copy {source} over {twin}, then commit it in the Vault.':
         'Copia {source} sopra {twin}, poi fai il commit nel Vault.',
+    'The MCP manifest could not be read, so placement was not checked: {error}':
+        'Il manifest MCP non si legge, quindi la disposizione non è stata controllata: {error}',
+    'The MCP placement is incoherent: {problems}':
+        'La disposizione degli MCP è incoerente: {problems}',
+    "Run 'nexgen mcp plan' to see it per CLI, then fix the manifest.":
+        "Esegui 'nexgen mcp plan' per vederla per CLI, poi correggi il manifest.",
+    "Every CLI's gateway is mounted where servers are routed behind it":
+        'Il gateway di ogni CLI è montato dove ci sono server instradati dietro di lui',
+    'why':
+        'perché',
+    'needs {env}':
+        'serve {env}',
+    'Served by the gateway, per CLI:':
+        'Serviti dal gateway, per CLI:',
+    'Compared with how the gateway served before it knew its CLI:':
+        'Rispetto a come serviva il gateway prima di sapere la sua CLI:',
+    'no longer served: {names}':
+        'non più serviti: {names}',
+    'newly served: {names}':
+        'ora serviti: {names}',
+    'Incoherent:':
+        'Incoerente:',
+    'No MCP manifest at {path}':
+        'Nessun manifest MCP in {path}',
+    'no answer to {method} within {seconds:g}s':
+        'nessuna risposta a {method} entro {seconds:g}s',
+    'the process ended before answering {method}':
+        'il processo è terminato prima di rispondere a {method}',
+    'the gateway is not mounted in {cli}, but {names} are routed behind it':
+        'il gateway non è montato in {cli}, ma {names} sono instradati dietro di lui',
+    'the gateway does not offer {tools}':
+        'il gateway non offre {tools}',
+    'the gateway thinks it serves {other}, not {cli}':
+        'il gateway crede di servire {other}, non {cli}',
+    'the rendered gateway entry does not carry {var}={cli}':
+        'la voce del gateway scritta non porta {var}={cli}',
+    '{name} should be behind the gateway in {cli} and is not listed':
+        '{name} dovrebbe stare dietro il gateway in {cli} e non è elencato',
+    '{name} is served in {cli} but the plan does not route it there':
+        '{name} è servito in {cli} ma il piano non lo instrada lì',
+    'gateway served {count} server(s) in {seconds}s: {names}':
+        'il gateway ha servito {count} server in {seconds}s: {names}',
 }

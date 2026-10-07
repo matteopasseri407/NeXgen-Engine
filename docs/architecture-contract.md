@@ -40,7 +40,9 @@ passes its tests.
    `nexgen_core.secret_shapes`, and one corpus of synthetic credentials is
    run through every consumer of it. Everything that changes the machine takes
    the same host lock, and a diagnostic that asks "would apply change this?"
-   asks the renderer itself in preview rather than re-deriving the answer.
+   asks the renderer itself in preview rather than re-deriving the answer. Where an MCP server
+   lives (mounted directly, behind the gateway, or absent) is likewise one function that the
+   renderer, the gateway and `nexgen mcp plan` all call.
 
 ---
 

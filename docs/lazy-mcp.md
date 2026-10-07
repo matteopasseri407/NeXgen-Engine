@@ -5,6 +5,37 @@ server, `lazy-mcp`, stands in front of them: it lists their tools, loads one too
 definition when the model asks, and forwards the call. The CLI pays for four meta-tools
 instead of the schemas of every server.
 
+## Which CLI gets what
+
+Where a server lives is one rule (`nexgen_core/mcp_placement.py`), asked by the renderer, by the gateway and
+by `nexgen mcp plan` alike. A server is, per CLI, mounted **directly**, served by the **gateway**, or **absent**.
+Declare it once:
+
+```yaml
+servers:
+  vault-library: { exposure: eager, ... }   # mounted directly in every CLI listed in targets
+  github:        { exposure: lazy,  ... }   # behind the gateway in every CLI listed in targets
+```
+
+`targets` is always the allow-list of CLIs and `enabled: false` always switches a server off. A manifest that
+does not declare `exposure` keeps working through the older knobs (`tier`, `lazy`, `lazy_targets`). Each CLI's
+copy of the gateway is told which CLI it is in (`LAZY_MCP_CLI`, written by the renderer) and serves exactly
+what the plan routes behind it there: a server mounted directly in a CLI is not also in that CLI's gateway, and
+one restricted to two CLIs is not offered by the other two. A gateway that was never told its CLI (a config
+written before this) serves every lazy server until the next guard cycle rewrites it.
+
+```bash
+nexgen mcp plan     # the table: server x CLI, direct / gateway / -, and why; what changed for the gateway; what is incoherent
+nexgen mcp check    # starts each CLI's gateway as that CLI would, lists what it serves, names any backend that cannot start
+```
+
+`nexgen doctor` reports an incoherent plan statically (`mcp.placement`); `check` is the live half and starts the
+backends, so it is a command you run, not part of `doctor`.
+
+What stops the gateway's children: a CLI that goes away closes the gateway's input, and the gateway and its
+backends exit with it (tested). A gateway killed outright (the OOM killer, `kill -9`) cannot clean up after
+itself and leaves its backends running until they are stopped by hand.
+
 ## The four tools
 
 | Tool | What it does |

@@ -143,6 +143,9 @@ def build_entry(
     # (the tier gate's default) would be a command that reports success and
     # mounts nothing. Opting OUT of mounting is explicit: --lazy.
     entry["tier"] = "core"
+    # Declared outright (the one rule: mcp_placement). The older keys below stay, so an engine that
+    # predates `exposure` still places the entry the same way.
+    entry["exposure"] = "lazy" if lazy else "eager"
     if url:
         entry["transport"] = "http"
         entry["url"] = url

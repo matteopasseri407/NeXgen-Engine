@@ -93,6 +93,15 @@ def register(sub) -> None:
     a = msub.add_parser("list", help=t("Read-only: the servers per CLI as they would render now"))
     a.set_defaults(func=cmd_mcp_list)
 
+    a = msub.add_parser("plan", help=t("Read-only: which server is mounted directly, behind the gateway, or absent, per CLI, and why"))
+    a.add_argument("--json", action="store_true", help=t("Machine-readable output"))
+    a.set_defaults(func=cmd_mcp_plan)
+
+    a = msub.add_parser("check", help=t("Start each CLI's gateway as that CLI would and compare what it serves with the plan (starts the backends)"))
+    a.add_argument("--cli", choices=("claude", "codex", "antigravity", "opencode"), help=t("Only this CLI"))
+    a.add_argument("--timeout", type=float, default=90.0, help=t("Seconds to wait for the gateway's index (backends are started to build it)"))
+    a.set_defaults(func=cmd_mcp_check)
+
     # The council isn't a tool: it's its own top-level verb. The runner is
     # the launcher in nexgen_core/tools/council.py, which subprocesses
     # agent-universal-layer/council/council.py where the logic lives.
@@ -222,6 +231,19 @@ def cmd_mcp_add(args) -> int:
     )
     print(message)
     return code
+
+
+def cmd_mcp_plan(args) -> int:
+    from nexgen_core import mcp_plan
+
+    return mcp_plan.main(as_json=getattr(args, "json", False))
+
+
+def cmd_mcp_check(args) -> int:
+    from nexgen_core import mcp_check
+
+    clis = (args.cli,) if getattr(args, "cli", None) else mcp_check.CLIS
+    return mcp_check.main(clis, timeout=getattr(args, "timeout", 90.0))
 
 
 def cmd_mcp_list(args) -> int:
