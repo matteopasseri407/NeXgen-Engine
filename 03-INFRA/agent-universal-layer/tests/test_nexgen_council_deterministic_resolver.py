@@ -325,3 +325,38 @@ def test_cli_auto_select_resilient_fallback_and_strict(sample_plan, sample_seats
     assert res_strict.seat_name is None
     assert res_strict.degraded is False
     assert "satisfying policy constraints" in res_strict.refusal_reason
+
+def test_fallback_never_relaxes_zdr(sample_plan):
+    """Fallback must NEVER select a non-ZDR seat when ZDR is required."""
+    non_zdr_seats = {
+        "s1": {"vendor": "v1", "cli": "c1", "model": "m1", "zero_retention": False},
+        "s2": {"vendor": "v2", "cli": "c2", "model": "m2", "zero_retention": False},
+    }
+    snapshot = HostSnapshot(
+        host_name="test-host",
+        capabilities={"s1": SeatCapability(True, "ok"), "s2": SeatCapability(True, "ok")},
+        timestamp=1000.0,
+        unhealthy_seats={},
+    )
+    policy = ResolvePolicy(zero_retention_required=True, allow_role_fallback=True)
+    res = resolve(sample_plan, snapshot, non_zdr_seats, "NonExistentRole", policy)
+    assert res.seat_name is None
+    assert "rejected by policy constraints" in res.refusal_reason
+
+
+def test_fallback_never_relaxes_author_vendor(sample_plan):
+    """Fallback must NEVER select a seat matching author_vendor."""
+    author_seats = {
+        "s1": {"vendor": "anthropic", "cli": "c1", "model": "m1", "zero_retention": False},
+        "s2": {"vendor": "anthropic", "cli": "c2", "model": "m2", "zero_retention": False},
+    }
+    snapshot = HostSnapshot(
+        host_name="test-host",
+        capabilities={"s1": SeatCapability(True, "ok"), "s2": SeatCapability(True, "ok")},
+        timestamp=1000.0,
+        unhealthy_seats={},
+    )
+    policy = ResolvePolicy(author_vendor="anthropic", allow_role_fallback=True)
+    res = resolve(sample_plan, snapshot, author_seats, "NonExistentRole", policy)
+    assert res.seat_name is None
+    assert "rejected by policy constraints" in res.refusal_reason

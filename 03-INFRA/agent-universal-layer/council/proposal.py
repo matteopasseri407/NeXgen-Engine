@@ -393,11 +393,14 @@ def _auto_select_best_seat(
 ) -> tuple[str, bool, str | None]:
     role = _routing_role_for_mode(args, config, default_routing_role)
     snapshot = probe_host(seats)
+    import os
     strict = bool(getattr(args, "strict", False))
+    is_interactive = sys.stdout.isatty() and not os.environ.get("CI")
+    allow_fallback = (not strict) if is_interactive else bool(getattr(args, "allow_degraded", False))
     policy = ResolvePolicy(
         author_vendor=getattr(args, "author_vendor", None),
         zero_retention_required=bool(getattr(args, "zero_retention", False)),
-        allow_role_fallback=not strict,
+        allow_role_fallback=allow_fallback,
     )
     plan = _routing_context_or_exit(config) if _routing_enabled(config) else RoutingPlan("", {})
     result = resolve(plan, snapshot, seats, role or "L-Arch", policy)

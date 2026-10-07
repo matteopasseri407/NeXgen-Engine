@@ -413,6 +413,10 @@ def _add_common_args(parser: argparse.ArgumentParser, *, include_seat: bool = Tr
         help="fail-closed: do not allow fallback outside Governor approved candidates",
     )
     parser.add_argument(
+        "--allow-degraded", action="store_true",
+        help="permit fallback outside Governor approved candidates even in non-interactive/CI environments",
+    )
+    parser.add_argument(
         "--keep-session", action="store_true",
         help="keep local artefacts for debugging, otherwise removed at the end",
     )
