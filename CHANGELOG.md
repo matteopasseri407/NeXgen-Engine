@@ -27,6 +27,13 @@ of any engine release.
 
 ### Changed
 
+- The Playwright launcher moves from `@playwright/mcp` 0.0.78 to 0.0.83. Each of its five patches was traced to the defect
+  it fixes and checked against 0.0.83 before being kept: the file-chooser, download, new-tab and web-app-window patches
+  address code upstream still has unchanged, and 0.0.83 on its own still grabs the native file chooser on a click (the
+  patched one does not, and uploads a file straight onto the input). The context-disposal guard is re-fitted to
+  upstream's rewritten shutdown code; the harm it prevents could not be reproduced on a throwaway headless Chrome with
+  either version, so it stays as a protective guard rather than a proven fix. The launcher passes `--no-webmcp`, which
+  keeps a page from registering tools for the agent: 0.0.78 had no such thing and the shared Chrome holds logged-in apps.
 - The Playwright launcher's pin is declared once, by the `browser` module, which reads it from the script. The `wraps`
   field in the MCP manifest is gone: a number in a manifest could be rewritten by `nexgen mcp bump` without ever changing
   the one the launcher uses, and a manifest that still has `wraps` is simply no longer read for it.

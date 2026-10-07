@@ -45,7 +45,7 @@ function sleepSync(ms) {
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 }
 
-const VERSION = '0.0.78';
+const VERSION = '0.0.83';
 const MARKER = 'agent-human-file-chooser-patch-v1';
 const DOWNLOAD_MARKER = 'agent-preserve-shared-downloads-patch-v1';
 const NEW_TAB_FOCUS_MARKER = 'agent-focus-new-tab-patch-v1';
@@ -78,14 +78,19 @@ const upstreamUploadTool = `    uploadFile = defineTabTool({
         const modalState = tab2.modalStates().find((state) => state.type === "fileChooser");
         if (!modalState)
           throw new Error("No file chooser visible");
-        if (params2.paths)
-          await Promise.all(params2.paths.map((filePath) => response2.resolveClientFilename(filePath)));
-        response2.addCode(\`await fileChooser.setFiles(\${JSON.stringify(params2.paths)})\`);
+        const paths = params2.paths ? await Promise.all(params2.paths.map((filePath) => response2.resolveClientFilename(filePath))) : void 0;
+        response2.addCode(\`await fileChooser.setFiles(\${JSON.stringify(paths)})\`);
         tab2.clearModalState(modalState);
-        await tab2.waitForCompletion(async () => {
-          if (params2.paths)
-            await modalState.fileChooser.setFiles(params2.paths);
-        });
+        try {
+          await tab2.waitForCompletion(async () => {
+            if (paths)
+              await modalState.fileChooser.setFiles(paths);
+          });
+        } catch (e) {
+          tab2.setModalState(modalState);
+          response2.addError(e instanceof Error ? e.message : String(e));
+          return;
+        }
       },
       clearsModalState: "fileChooser"
     });`;
@@ -104,11 +109,11 @@ const directUploadTool = `    uploadFile = defineTabTool({
       handle: async (tab2, params2, response2) => {
         response2.setIncludeSnapshot();
         const { locator: locator2, resolved } = await tab2.targetLocator(params2);
-        await Promise.all(params2.paths.map((filePath) => response2.resolveClientFilename(filePath)));
+        const paths = await Promise.all(params2.paths.map((filePath) => response2.resolveClientFilename(filePath)));
         await tab2.waitForCompletion(async () => {
-          await locator2.setInputFiles(params2.paths, tab2.actionTimeoutOptions);
+          await locator2.setInputFiles(paths, tab2.actionTimeoutOptions);
         });
-        response2.addCode(\`await page.\${resolved}.setInputFiles(\${JSON.stringify(params2.paths)});\`);
+        response2.addCode(\`await page.\${resolved}.setInputFiles(\${JSON.stringify(paths)});\`);
       }
     });`;
 
@@ -126,7 +131,7 @@ const nativeDownloadBehavior = `        /* ${DOWNLOAD_MARKER}: a CDP-attached sh
 const upstreamNewTab = `      async newTab() {
         const browserContext = await this.ensureBrowserContext();
         const page = await browserContext.newPage();
-        this._currentTab = this._tabs.find((t) => t.page === page);
+        this._setCurrentTab(this._tabs.find((t) => t.page === page));
         return this._currentTab;
       }`;
 
@@ -134,23 +139,20 @@ const focusedNewTab = `      async newTab() {
         const browserContext = await this.ensureBrowserContext();
         const page = await browserContext.newPage();
         await page.bringToFront(); // ${NEW_TAB_FOCUS_MARKER}: keep pointer actions unblocked on a shared Chrome.
-        this._currentTab = this._tabs.find((t) => t.page === page);
+        this._setCurrentTab(this._tabs.find((t) => t.page === page));
         return this._currentTab;
       }`;
 
-const cdpDisposalBackendAnchor = 'const browserContext = backend.browserContext;';
-const cdpDisposalReset = '        sharedBrowserPromise = void 0;';
-const cdpDisposalBrowserClose = `        await browserContext.browser()?.close().catch(() => {
-        });`;
-const guardedCdpDisposal = `${cdpDisposalReset}
-        if (config.browser.cdpEndpoint) {
-          /* ${CDP_DISPOSAL_MARKER}: an attached personal Chrome owns this context. */
-          return;
-        }
-        await browserContext.close().catch(() => {
-        });
-        await browserContext.browser()?.close().catch(() => {
-        });`;
+// The last client going away closes the context it was handed and then the browser. Right for a
+// browser this server started; fatal for a personal Chrome attached with --cdp-endpoint.
+const upstreamCdpDisposal = `            testDebug3("close browser");
+            await browserContext.close().catch(() => {
+            });`;
+const guardedCdpDisposal = `            if (config.browser.cdpEndpoint) {
+              /* ${CDP_DISPOSAL_MARKER}: an attached personal Chrome owns this context. */
+              return;
+            }
+${upstreamCdpDisposal}`;
 
 const appWindowHelpers = `      /* ${APP_WINDOW_MARKER}: an installed web app is the human's application
          window, not a spare browser tab. Chromium exposes both as plain "page"
@@ -189,11 +191,11 @@ const appWindowHelpers = `      /* ${APP_WINDOW_MARKER}: an installed web app is
           return;
         if (!await this.__agentIsAppWindow(current.page))
           return;
-        this._currentTab = void 0;
+        this._setCurrentTab(void 0);
         for (const tab2 of this._tabs) {
           if (state.explicit.has(tab2) || await this.__agentIsAppWindow(tab2.page))
             continue;
-          this._currentTab = tab2;
+          this._setCurrentTab(tab2);
           break;
         }
         /* Still nothing? ensureTab() opens a real tab, which is the point. */
@@ -235,7 +237,8 @@ const upstreamSelectTab = `      async selectTab(index) {
         if (!tab2)
           throw new Error(\`Tab \${index} not found\`);
         await tab2.page.bringToFront();
-        this._currentTab = tab2;
+        await tab2.updateWebMCPTools();
+        this._setCurrentTab(tab2);
         return tab2;
       }
 `;
@@ -245,7 +248,8 @@ const guardedSelectTab = `      async selectTab(index) {
         if (!tab2)
           throw new Error(\`Tab \${index} not found\`);
         await tab2.page.bringToFront();
-        this._currentTab = tab2;
+        await tab2.updateWebMCPTools();
+        this._setCurrentTab(tab2);
         this.__agentWindowState().explicit.add(tab2); // ${APP_WINDOW_MARKER}
         return tab2;
       }
@@ -419,21 +423,9 @@ function patchCdpDisposal(source, bundle) {
     return source;
   }
 
-  const backendAt = source.indexOf(cdpDisposalBackendAnchor);
-  if (backendAt < 0 || source.indexOf(cdpDisposalBackendAnchor, backendAt + 1) >= 0)
+  if (occurrences(source, upstreamCdpDisposal) !== 1)
     throw new Error(`Unsupported Playwright disposal bundle at ${bundle}. Refusing an unsafe partial patch.`);
-  const resetAt = source.indexOf(cdpDisposalReset, backendAt);
-  const browserCloseAt = source.indexOf(cdpDisposalBrowserClose, resetAt);
-  if (resetAt < 0 || browserCloseAt < resetAt)
-    throw new Error(`Unsupported Playwright CDP disposal block at ${bundle}. Refusing an unsafe partial patch.`);
-
-  const upstreamDisposal = source.slice(resetAt, browserCloseAt + cdpDisposalBrowserClose.length);
-  if (occurrences(upstreamDisposal, 'await browserContext.close().catch(() => {') !== 1
-      || occurrences(upstreamDisposal, 'await browserContext.browser()?.close().catch(() => {') !== 1)
-    throw new Error(`Unexpected Playwright CDP disposal block at ${bundle}. Refusing an unsafe partial patch.`);
-
-  return source.slice(0, resetAt) + guardedCdpDisposal
-    + source.slice(browserCloseAt + cdpDisposalBrowserClose.length);
+  return source.replace(upstreamCdpDisposal, guardedCdpDisposal);
 }
 
 function patchedSource(source, bundle) {
@@ -548,7 +540,13 @@ function main() {
     throw new Error('No patched Playwright MCP bundle is available.');
   if (patched.length)
     console.error(`playwright-human-safe: patched ${patched.length} cached @playwright/mcp bundle(s).`);
-  const child = spawn(process.execPath, [launch.cli, ...process.argv.slice(2)], {
+  // 0.0.83 can expose tools a web page registers about itself (WebMCP) to the agent. The shared Chrome
+  // holds the human's logged-in apps, and 0.0.78, which this wrapper was written against, had no such
+  // thing: keep it off unless the caller says otherwise.
+  const forwarded = process.argv.slice(2);
+  if (!forwarded.includes('--no-webmcp'))
+    forwarded.push('--no-webmcp');
+  const child = spawn(process.execPath, [launch.cli, ...forwarded], {
     stdio: 'inherit',
     env: withNodeOnPath(),
   });
