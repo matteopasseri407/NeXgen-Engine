@@ -64,6 +64,13 @@ def test_a_rolling_release_can_ask_to_be_compared_by_minor_only(tmp_path):
     ({**DOCKER, "pinned_in": "/etc/hosts"}, "must stay inside"),
     ({**DOCKER, "pinned_in": "../outside.yml"}, "must stay inside"),
     ({**DOCKER, "pinned_in": "~/secrets.env"}, "must stay inside"),
+    # the same rule on every platform: a Windows spelling is refused on Linux and a POSIX one on Windows
+    ({**DOCKER, "pinned_in": "C:\\Windows\\system32\\x.yml"}, "must stay inside"),
+    ({**DOCKER, "pinned_in": "C:relative.yml"}, "must stay inside"),
+    ({**DOCKER, "pinned_in": "\\\\server\\share\\x.yml"}, "must stay inside"),
+    ({**DOCKER, "pinned_in": "..\\outside.yml"}, "must stay inside"),
+    ({**DOCKER, "pinned_in": "deploy/../../outside.yml"}, "must stay inside"),
+    ({**DOCKER, "pinned_in": "\\etc\\hosts"}, "must stay inside"),
     ({k: v for k, v in NPM.items() if k != "pattern"}, "needs 'package' and 'pattern'"),
     ({**NPM, "pattern": "const VERSION = (["}, "not a valid regex"),
     ({**NPM, "pattern": "const VERSION = '.*';"}, "needs a group"),

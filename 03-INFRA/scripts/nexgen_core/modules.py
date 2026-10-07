@@ -23,7 +23,7 @@ import os
 import re
 import socket
 from dataclasses import dataclass, field
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any, Sequence
 
 import yaml
@@ -155,6 +155,19 @@ def _str_tuple(value: Any, path: Path, mid: str, field_name: str) -> tuple[str, 
     return tuple(str(v) for v in value)
 
 
+def _stays_inside(declared: str) -> bool:
+    """Whether a path a catalog declares is relative and never climbs out of its owner.
+
+    Judged by both path flavors at once: the catalog is shared between machines, and a spelling the
+    host's own flavor does not call absolute (``/etc/hosts`` on Windows, ``C:\\x`` on Linux) is still
+    one the other flavor would resolve outside the engine.
+    """
+    posix, windows = PurePosixPath(declared), PureWindowsPath(declared)
+    if declared.startswith(("~", "/", "\\")) or windows.drive or windows.root or posix.is_absolute():
+        return False
+    return ".." not in posix.parts and ".." not in windows.parts
+
+
 def _parse_upstream(spec: Any, path: Path, mid: str) -> tuple[ModuleUpstream, ...]:
     if not spec:
         return ()
@@ -174,8 +187,7 @@ def _parse_upstream(spec: Any, path: Path, mid: str) -> tuple[ModuleUpstream, ..
                 raise ConfigError(f"{where} is missing '{required}'")
         if values["kind"] not in UPSTREAM_KINDS:
             raise ConfigError(f"{where} has unknown kind '{values['kind']}'; expected one of {list(UPSTREAM_KINDS)}")
-        located = Path(values["pinned_in"])
-        if located.is_absolute() or ".." in located.parts or values["pinned_in"].startswith("~"):
+        if not _stays_inside(values["pinned_in"]):
             raise ConfigError(f"{where}: 'pinned_in' must stay inside the engine or the module, got '{values['pinned_in']}'")
         source, _, argument = values["latest"].partition(":")
         if source not in UPSTREAM_LATEST_SOURCES or not argument:
