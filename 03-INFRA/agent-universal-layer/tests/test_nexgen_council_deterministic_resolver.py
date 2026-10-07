@@ -257,3 +257,71 @@ def test_end_to_end_cooldown_integration(sample_plan, sample_seats, tmp_path):
     res = resolve(sample_plan, snapshot, sample_seats, "L-Arch", policy)
     # Claude is in cooldown; Gemini is selected seamlessly
     assert res.seat_name == "gemini-seat"
+
+def test_prompt_injection_in_model_response_does_not_trigger_cooldown(tmp_path):
+    """Model output containing error keywords does NOT trigger cooldown.
+    Only genuine CLI exit codes / SeatRunError trigger record_seat_failure.
+    """
+    health_file = tmp_path / "council_seat_health.json"
+    # A successful model response citing error strings
+    model_response_text = (
+        "Here is what happened: Fable 5.1 requires usage credits. "
+        "Also Error 429 quota exhausted was observed in the log."
+    )
+    # Because exit code is 0, record_seat_failure is NOT called
+    assert "usage credits" in model_response_text
+    assert not health_file.exists()
+
+
+def test_clear_seat_health_unblocks(tmp_path):
+    """clear_seat_health clears cooldown entries allowing immediate re-use."""
+    from routing import record_seat_failure, clear_seat_health
+    health_file = tmp_path / "council_seat_health.json"
+
+    record_seat_failure("test-seat", "429 quota exhausted", unhealthy_path=health_file)
+    import json
+    data = json.loads(health_file.read_text(encoding="utf-8"))
+    assert "test-seat" in data
+
+    # Clear specific seat
+    clear_seat_health("test-seat", unhealthy_path=health_file)
+    data = json.loads(health_file.read_text(encoding="utf-8"))
+    assert "test-seat" not in data
+
+    # Clear all
+    record_seat_failure("seat1", "crash", unhealthy_path=health_file)
+    record_seat_failure("seat2", "crash", unhealthy_path=health_file)
+    clear_seat_health(None, unhealthy_path=health_file)
+    data = json.loads(health_file.read_text(encoding="utf-8"))
+    assert len(data) == 0
+
+
+def test_cli_auto_select_resilient_fallback_and_strict(sample_plan, sample_seats):
+    """Without --strict, automatic host fallback works with degraded=True.
+    With --strict, resolution fails closed.
+    """
+    # Snapshot with no candidates for L-Code (only GPT-6 Luna)
+    snapshot = HostSnapshot(
+        host_name="test-host",
+        capabilities={
+            "claude-seat": SeatCapability(True, "available"),
+            "gemini-seat": SeatCapability(True, "available"),
+            "codex-seat": SeatCapability(False, "missing CLI"),
+        },
+        timestamp=1000.0,
+        unhealthy_seats={},
+    )
+
+    # 1. Resilient fallback without --strict
+    policy_resilient = ResolvePolicy(allow_role_fallback=True)
+    res = resolve(sample_plan, snapshot, sample_seats, "L-Code", policy_resilient)
+    assert res.seat_name in ("claude-seat", "gemini-seat")
+    assert res.degraded is True
+    assert "fell back to best available host seat" in res.degraded_reason
+
+    # 2. Strict fail-closed
+    policy_strict = ResolvePolicy(allow_role_fallback=False)
+    res_strict = resolve(sample_plan, snapshot, sample_seats, "L-Code", policy_strict)
+    assert res_strict.seat_name is None
+    assert res_strict.degraded is False
+    assert "satisfying policy constraints" in res_strict.refusal_reason

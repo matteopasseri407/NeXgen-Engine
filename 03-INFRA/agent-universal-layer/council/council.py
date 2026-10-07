@@ -81,6 +81,14 @@ from verdict import build_brief, run_rounds, write_verdict
 DEFAULT_MAX_ROUNDS = 3
 
 
+def cmd_reset_health(args: argparse.Namespace) -> None:
+    from routing import clear_seat_health
+    seat_name = getattr(args, "seat", None)
+    clear_seat_health(seat_name)
+    target = f"seat '{seat_name}'" if seat_name else "all seats"
+    print(f"[council] cooldown cleared for {target}.")
+
+
 def _run_mode(
     args: argparse.Namespace, mode: str, label: str, brief: str,
     role_initial_name: str, role_continue_name: str | None, rounds: int,
@@ -488,6 +496,10 @@ def main() -> int:
     clean.add_argument("--ttl-days", type=int, default=DEFAULT_TTL_DAYS, help=f"default: {DEFAULT_TTL_DAYS}")
     clean.add_argument("--all", action="store_true", help="removes every session, ignores the TTL")
     clean.set_defaults(func=cmd_clean)
+
+    reset_health = sub.add_parser("reset-health", help="clears active error cooldowns for all seats or a specific seat")
+    reset_health.add_argument("--seat", metavar="NAME", help="seat to unblock (default: unblocks all)")
+    reset_health.set_defaults(func=cmd_reset_health)
 
     contract = sub.add_parser("contract", help="checks the vendor CLIs still accept the flags a seat passes them (no model is invoked)")
     contract.set_defaults(func=cmd_contract)

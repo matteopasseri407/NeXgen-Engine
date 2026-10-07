@@ -681,6 +681,29 @@ def record_seat_failure(
     return kind, ttl
 
 
+def clear_seat_health(
+    seat_name: str | None = None,
+    *,
+    unhealthy_path: Path | None = None,
+) -> None:
+    """Manually clear or unblock seat cooldowns."""
+    from nexgen_core.files import atomic_write_text
+
+    health_file = unhealthy_path or (Path.home() / ".cache" / "nexgen" / "council_seat_health.json")
+    if not health_file.is_file():
+        return
+    try:
+        if not seat_name:
+            atomic_write_text(health_file, "{}")
+            return
+        data = json.loads(health_file.read_text(encoding="utf-8"))
+        if seat_name in data:
+            del data[seat_name]
+            atomic_write_text(health_file, json.dumps(data, indent=2))
+    except Exception:
+        pass
+
+
 def resolve(
     plan: RoutingPlan,
     snapshot: HostSnapshot,

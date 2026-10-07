@@ -123,6 +123,8 @@ def run_rounds(
         try:
             response, usage = run_seat(seat, prompt, session_dir, timeout_seconds)
         except SeatRunError as e:
+            from routing import record_seat_failure
+            record_seat_failure(seat_name, str(e))
             sys.exit(str(e))
         # Audit FINDING B (2026-07-12): this gate used to be wired only into
         # _run_relay_stage. brainstorm/challenge/code-review wrote the raw
