@@ -212,6 +212,16 @@ def _extension_lines(ext: dict[str, Any], show_all: bool) -> list[str]:
         out.append(f"  {C_DIM}{t('outside the manifest (kept, never deleted): {names}', names=', '.join(ext['skills_outside_manifest']))}{C_RESET}")
     out.append("")
 
+    modules = ext.get("modules", [])
+    if modules:
+        out.append(f"  {C_EMERALD}{C_BOLD}{t('THIRD-PARTY INSIDE MODULES')}{C_RESET}  {C_SLATE}{len(modules)}{C_RESET}")
+        width = max(len(r["name"]) for r in modules)
+        for r in modules:
+            out.append(f"  {C_SLATE}•{C_RESET} {r['name'].ljust(width)}  {C_DIM}{r['component']}  {r['pinned']}{C_RESET}")
+            for note in _module_notes(r):
+                out.append(f"      {C_YELLOW}↳ {note}{C_RESET}")
+        out.append("")
+
     moved = extensions.updates(ext)
     age = extensions.age_text(ext.get("upstream_checked_at"))
     if moved:
@@ -232,12 +242,7 @@ def _mcp_notes(r: dict[str, Any]) -> list[str]:
     notes = []
     update = r["update"]
     if update.get("state") == "stale":
-        if update.get("pin_kind") == "docker-image":
-            # The engine's shipped default, not what any one server runs: say so instead of "you have".
-            line = t("upstream {new} available (the engine's default image is {old}; the server running it may differ)",
-                     new=update.get("upstream") or "?", old=update.get("pinned") or "?")
-        else:
-            line = t("upstream {new} available (pinned {old})", new=update.get("upstream") or "?", old=update.get("pinned") or "?")
+        line = t("upstream {new} available (pinned {old})", new=update.get("upstream") or "?", old=update.get("pinned") or "?")
         if update.get("verdict") == "held":
             line += " — " + t("held: {why}", why=update.get("plain") or t("read the changelog first"))
         elif update.get("verdict") == "ready":
@@ -253,6 +258,24 @@ def _mcp_notes(r: dict[str, Any]) -> list[str]:
         notes.append(t("only {count} tools exposed", count=r["only_tools"]))
     if r["where"] == "off" and r["why_off"]:
         notes.append(t("not mounted anywhere: {why}", why=_WHY_OFF.get(r["why_off"], lambda: r["why_off"])()))
+    return notes
+
+
+def _module_notes(r: dict[str, Any]) -> list[str]:
+    notes = []
+    update = r["update"]
+    if update.get("state") == "stale":
+        if r["kind"] == "docker-image":
+            # The engine's shipped default, not what any one server runs: say so instead of "you have".
+            line = t("upstream {new} available (the engine's default image is {old}; the server running it may differ)",
+                     new=update.get("upstream") or "?", old=update.get("pinned") or "?")
+        else:
+            line = t("upstream {new} available (pinned {old})", new=update.get("upstream") or "?", old=update.get("pinned") or "?")
+        if update.get("verdict") == "held":
+            line += " — " + t("held: {why}", why=update.get("plain") or t("read the changelog first"))
+        notes.append(line)
+    if update.get("deprecated"):
+        notes.append(t("its publisher withdrew support for this version: {why}", why=update["deprecated"]))
     return notes
 
 

@@ -1138,6 +1138,7 @@ MESSAGES: dict[str, str] = {
     "off": "spento",
     "trial": "in prova",
     "CONNECTORS (MCP)": "CONNETTORI (MCP)",
+    "THIRD-PARTY INSIDE MODULES": "COMPONENTI DI TERZI NEI MODULI",
     "SKILLS": "SKILL",
     "upstream {new} available (pinned {old})": "a monte c'è la {new} (tu hai la {old})",
     "held: {why}": "ferma: {why}",

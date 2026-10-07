@@ -4,10 +4,11 @@ Watches upstream everything third-party that the layer declares pinned:
 ``origin: github`` skills pinned to a commit, ``origin: installer`` skills
 pinned to a version (read from the ``install`` command), ``origin:
 upstream`` skills pinned via their ``deps:`` block (``npx`` spec or ``git``
-repo+rev), MCP servers invoked via ``npx package@version``, and the Docker
-image the engine ships for a server that is a program rather than a package
-(n8n). It also reports a pinned version its publisher has withdrawn support
-for: "nothing newer exists" is not the same as "all good". It produces a
+repo+rev), MCP servers invoked via ``npx package@version``, and the third-party
+components a module declares it carries (``upstream:`` in the module catalog:
+the n8n and Firecrawl images, the Playwright version inside its launcher). It
+also reports a pinned version its publisher has withdrawn support for:
+"nothing newer exists" is not the same as "all good". It produces a
 list and stops there: applying an upstream update changes a behavior
 nobody chose.
 
@@ -36,6 +37,7 @@ from pathlib import Path
 
 from nexgen_core.files import atomic_write_text
 from nexgen_core.config import ConfigError, load_mcp_manifest, load_skills_manifest
+from nexgen_core.modules import ModuleUpstream, external_paths, load_catalog, load_state_file
 from nexgen_core.paths import mcp_manifest, resolve_engine_root, resolve_state_dir, resolve_vault_data, skills_manifest
 
 logger = logging.getLogger(__name__)
@@ -44,13 +46,6 @@ GIT_LS_REMOTE_TIMEOUT_SECONDS = 8
 NPM_REGISTRY_TIMEOUT_SECONDS = 6
 REPORT_FILE_NAME = "third-party-upgrades.md"
 STATUS_FILE_NAME = "third-party-status.json"
-
-#: Docker images the engine ships a default for, each mapped to the MCP server it backs and the npm
-#: package that carries the same version number (n8n publishes both with one release number).
-COMPOSE_IMAGES: dict[str, tuple[str, str]] = {"n8nio/n8n": ("n8n-mcp", "n8n")}
-_COMPOSE_IMAGE_RE = re.compile(
-    r"^\s*image:\s*(?:\$\{[A-Z0-9_]+:-)?(?P<image>[\w./-]+):(?P<version>\d[\w.+-]*)\}?\s*$", re.MULTILINE,
-)
 
 #: An npm-style `package@version` token, scoped or not; `@latest` or a range is not a pin.
 NPM_SPEC_RE = re.compile(r"^(?P<name>(?:@[\w.-]+/)?[\w.-]+)@(?P<version>\d[\w.+-]*)$")
@@ -74,12 +69,13 @@ class DepwatchResult:
     wrote: bool = False
 
 
-def _is_stale(kind: str, pinned: str, upstream: str | None) -> bool:
+def _is_stale(kind: str, pinned: str, upstream: str | None, compare: str = "patch") -> bool:
     """True when upstream actually moved past the pin.
 
     Commits have no ordering here, so any reachable difference counts.
     Versions compare properly: a pin ahead of the registry (vendor
-    installer faster than npm) is current, not stale.
+    installer faster than npm) is current, not stale. ``compare="minor"`` is for a rolling
+    release whose patch number is a build counter: only a newer minor line is news.
     """
     if upstream is None:
         return False
@@ -89,8 +85,9 @@ def _is_stale(kind: str, pinned: str, upstream: str | None) -> bool:
             mine = re.match(r"(\d+)\.(\d+)\.(\d+)", old.group("version"))
             theirs = re.match(r"(\d+)\.(\d+)\.(\d+)", new.group("version"))
             if mine and theirs:
-                return (tuple(int(g) for g in theirs.groups())
-                        > tuple(int(g) for g in mine.groups()))
+                keep = 2 if compare == "minor" else 3
+                return (tuple(int(g) for g in theirs.groups())[:keep]
+                        > tuple(int(g) for g in mine.groups())[:keep])
     return upstream.strip().lower() != pinned.strip().lower()
 
 
@@ -132,6 +129,37 @@ def _npm_latest_version(package: str) -> str | None:
         return None
     version = data.get("version") if isinstance(data, dict) else None
     return str(version) if version else None
+
+
+_STRICT_TAG_RE = re.compile(r"^v?(\d+)\.(\d+)\.(\d+)$")
+
+
+def _git_latest_tag(repo: str) -> str | None:
+    """The highest plain ``X.Y.Z`` tag of a GitHub repository, or None if unreachable right now."""
+    try:
+        from nexgen_core.skill_sources import clone_url
+
+        target = clone_url(repo)
+    except Exception as exc:  # noqa: BLE001 - clone_url is total; defensive fallback keeps the check offline-safe
+        logger.debug("clone_url failed (%s)", type(exc).__name__)
+        target = repo
+    try:
+        result = subprocess.run(
+            ["git", "ls-remote", "--tags", "--refs", target],
+            stdin=subprocess.DEVNULL, capture_output=True, text=True, encoding="utf-8", errors="replace", check=False,
+            timeout=GIT_LS_REMOTE_TIMEOUT_SECONDS,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if result.returncode != 0:
+        return None
+    best: tuple[int, int, int] | None = None
+    for line in result.stdout.splitlines():
+        match = _STRICT_TAG_RE.match(line.rpartition("refs/tags/")[2].strip())
+        if match:
+            version = tuple(int(g) for g in match.groups())
+            best = version if best is None or version > best else best
+    return ".".join(str(n) for n in best) if best else None
 
 
 def _npm_deprecation(package: str, version: str) -> str | None:
@@ -221,20 +249,20 @@ def _collect_skill_pins(skills_raw: dict[str, dict]) -> list[tuple[str, str, str
 
 
 def _collect_mcp_pins(mcp_raw: dict[str, dict]) -> list[tuple[str, str, str, str]]:
-    """(label, kind, pin, key) for every MCP server invoked via npx, or wrapping a pinned package."""
+    """(label, kind, pin, key) for every MCP server invoked via npx.
+
+    A launcher script that pins its own package (the Playwright wrapper) is not read from here:
+    its version is declared once, by the module that ships it. Rewriting a number in a manifest
+    cannot change the one inside the script, so a second declaration could only drift.
+    """
     pins: list[tuple[str, str, str, str]] = []
     for name, srv in mcp_raw.items():
         if not isinstance(srv, dict):
             continue
         tokens = _command_tokens(srv)
-        # `wraps`: packages a launcher script pins itself (the Playwright wrapper), which the
-        # command line therefore does not show.
-        wrapped = srv.get("wraps")
-        wrapped_specs = _npm_spec_tokens([str(w) for w in wrapped]) if isinstance(wrapped, list) else []
-        is_npx = bool(tokens) and tokens[0].lower() in ("npx", "npx.cmd")
-        if not is_npx and not wrapped_specs:
+        if not tokens or tokens[0].lower() not in ("npx", "npx.cmd"):
             continue
-        for spec in (_npm_spec_tokens(tokens[1:]) if is_npx else []) + wrapped_specs:
+        for spec in _npm_spec_tokens(tokens[1:]):
             match = NPM_SPEC_RE.match(spec)
             if match:
                 pkg, ver = match.group("name"), match.group("version")
@@ -242,23 +270,74 @@ def _collect_mcp_pins(mcp_raw: dict[str, dict]) -> list[tuple[str, str, str, str
     return pins
 
 
-def _collect_compose_pins(engine_root: Path, mcp_raw: dict[str, dict]) -> list[tuple[str, str, str, str]]:
-    """(label, kind, pin, key) for the Docker image the engine ships for a declared server.
+@dataclass(frozen=True)
+class _ModulePin:
+    """One third-party component of a module that this machine switched on."""
 
-    This is the engine's DEFAULT: the host that actually runs the image may override it, which is
-    why the label says so. Nothing is rewritten from here; a program is replaced where it runs.
+    label: str
+    kind: str  # "docker-image" | "npm-version"
+    pinned: str
+    latest: str  # "npm:<package>" | "git-tags:<owner/repo>"
+    compare: str
+    package: str = ""
+
+
+def _module_pin_version(base: Path, upstream: ModuleUpstream) -> str | None:
+    """The version a module's component is pinned to, read from the file that holds the pin.
+
+    None when the file is gone, escapes its owner through a link, or no longer has the shape the
+    declaration describes: a pin that cannot be read is not watched, and a test of the catalog
+    shipped with the engine fails first.
     """
-    compose = engine_root / "deploy" / "n8n" / "docker-compose.yml"
     try:
-        text = compose.read_text(encoding="utf-8")
-    except OSError:
+        root = base.resolve()
+        file = (base / upstream.pinned_in).resolve()
+        file.relative_to(root)
+        text = file.read_text(encoding="utf-8")
+    except (OSError, ValueError):
+        return None
+    if upstream.kind == "docker":
+        wrapped = r"(?:\$\{[A-Za-z0-9_]+:-)?"
+        pattern = rf"(?m)^\s*image:\s*{wrapped}{re.escape(upstream.image)}:(\d[\w.+-]*)\}}?\s*$"
+    else:
+        pattern = upstream.pattern
+    found = re.search(pattern, text)
+    return found.group(1) if found else None
+
+
+def _collect_module_pins(engine_root: Path, vault_data: Path) -> list[_ModulePin]:
+    """The components of every module this machine declared on (local or remote).
+
+    Declared, not merely gated: a heartbeat started without a service's token would otherwise
+    see the module vanish and the finding with it, then reappear, and the notice would flicker.
+    A module nobody switched on is nobody's concern here.
+    """
+    try:
+        catalog = load_catalog(engine_root, external=external_paths(vault_data))
+        declared = load_state_file(vault_data)
+    except Exception as exc:  # noqa: BLE001 - no readable catalog just means no module pins
+        logger.debug("module catalog not readable (%s)", type(exc).__name__)
         return []
-    pins: list[tuple[str, str, str, str]] = []
-    for match in _COMPOSE_IMAGE_RE.finditer(text):
-        server, package = COMPOSE_IMAGES.get(match.group("image"), ("", ""))
-        if server and server in mcp_raw:
-            label = f"MCP server '{server}' (docker {match.group('image')}, the engine's default image)"
-            pins.append((label, "docker-image", match.group("version"), package))
+    pins: list[_ModulePin] = []
+    for module_id, module in catalog.items():
+        if declared.get(module_id) not in ("local", "remote"):
+            continue
+        base = module.source_path or engine_root
+        for upstream in module.upstream:
+            pinned = _module_pin_version(base, upstream)
+            if pinned is None:
+                continue
+            if upstream.kind == "docker":
+                what = f"{upstream.image}, the engine's default image"
+                package = ""
+            else:
+                what = upstream.package
+                package = upstream.package
+            pins.append(_ModulePin(
+                label=f"module '{module_id}' ({upstream.kind} {what})",
+                kind="docker-image" if upstream.kind == "docker" else "npm-version",
+                pinned=pinned, latest=upstream.latest, compare=upstream.compare, package=package,
+            ))
     return pins
 
 
@@ -298,6 +377,7 @@ def run_depwatch(
     git_ls_remote: Callable[[str], str | None] | None = None,
     npm_latest_version: Callable[[str], str | None] | None = None,
     npm_deprecation: Callable[[str, str], str | None] | None = None,
+    git_latest_tag: Callable[[str], str | None] | None = None,
 ) -> DepwatchResult:
     """Inspects every declared pin upstream and writes the list, without ever
     applying or notifying anything. If no check reaches upstream (offline, or
@@ -309,6 +389,7 @@ def run_depwatch(
     git_check = git_ls_remote or _git_ls_remote_head
     npm_check = npm_latest_version or _npm_latest_version
     deprecation_check = npm_deprecation or _npm_deprecation
+    tag_check = git_latest_tag or _git_latest_tag
     resolved_vault = resolve_vault_data(override=vault_data)
     resolved_state = resolve_state_dir(override=state_dir)
 
@@ -329,12 +410,11 @@ def run_depwatch(
             mcp_raw = {}
 
     try:
-        engine_root = resolve_engine_root()
-    except Exception:  # noqa: BLE001 - no engine tree to read (a bare install) just means no image pin
-        engine_root = None
+        module_pins = _collect_module_pins(resolve_engine_root(), resolved_vault)
+    except Exception as exc:  # noqa: BLE001 - no engine tree to read (a bare install) just means no module pins
+        logger.debug("module pins not collected (%s)", type(exc).__name__)
+        module_pins = []
     pins = _collect_skill_pins(skills_raw) + _collect_mcp_pins(mcp_raw)
-    if engine_root is not None:
-        pins += _collect_compose_pins(engine_root, mcp_raw)
     findings: list[PinFinding] = []
     for what, kind, pinned, key in pins:
         if kind == "manual-version":
@@ -345,6 +425,14 @@ def run_depwatch(
         # Asked only when the registry answered at all, and only for a package a person pinned.
         deprecated = deprecation_check(key, pinned) if kind == "npm-version" and upstream is not None else None
         findings.append(PinFinding(kind=kind, what=what, pinned=pinned, upstream=upstream, stale=stale, deprecated=deprecated))
+    for mp in module_pins:
+        source, _, argument = mp.latest.partition(":")
+        newest = tag_check(argument) if source == "git-tags" else npm_check(argument)
+        deprecated = deprecation_check(mp.package, mp.pinned) if mp.package and newest is not None else None
+        findings.append(PinFinding(
+            kind=mp.kind, what=mp.label, pinned=mp.pinned, upstream=newest,
+            stale=_is_stale(mp.kind, mp.pinned, newest, mp.compare), deprecated=deprecated,
+        ))
 
     if not any(f.upstream is not None for f in findings):
         # Nothing pinned, or upstream isn't responding right now: offline is not an incident, stay quiet.

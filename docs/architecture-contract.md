@@ -111,9 +111,14 @@ incident.
 
 It also says when the publisher has withdrawn support for the exact version
 pinned (npm `deprecated`): "nothing newer exists" is not the same as "all good".
-And it compares the Docker image the engine ships for n8n, a program rather than
-a package, with n8n's release. That one is only reported: a program is replaced
-on the host that runs it, and that host may pin something else.
+And it watches what a module declares it carries (`upstream:` in the module
+catalog): a program shipped as a Docker image (n8n, the Firecrawl backend), or a
+version pinned inside a launcher script (Playwright). A module says which file
+holds the pin and where the newest release is read, so the watch does not have to
+know any of that. These are only reported, and the guardian holds every one: a
+program is replaced where it runs, that host may pin something else, and the
+Playwright launcher patches the files of one exact version, so even a patch jump
+is not a "small touch-up".
 
 ### The skill materializer
 Turns one declaration into the views each runtime can actually see. Four

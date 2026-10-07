@@ -54,9 +54,9 @@ servers:
     command: node
     args: ["${AGENT_ENGINE_ROOT}/agent-universal-layer/mcp/playwright-human-safe.mjs", "--cdp-endpoint", "http://localhost:9222"]
     # The wrapper pins and patches this exact upstream version itself (VERSION in the .mjs), so the
-    # command line carries no `npx pkg@version` for dependency watch to see. Declared here so the
-    # pin is visible to it; a test keeps this equal to the wrapper's constant.
-    wraps: ["@playwright/mcp@0.0.78"]
+    # command line carries no `npx pkg@version`. That pin is declared once, by the `browser` module
+    # (`upstream:` in modules/modules.yaml), which reads it from the script: a number in this
+    # manifest could be rewritten by the bump without ever changing the one the wrapper uses.
     targets: [claude, codex, antigravity, opencode]
     windows:
       args: ["${AGENT_ENGINE_ROOT}\\agent-universal-layer\\mcp\\playwright-human-safe.mjs", "--cdp-endpoint", "http://localhost:9222"]

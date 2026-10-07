@@ -48,7 +48,8 @@ def test_where_a_server_came_from(entry, expected):
 @pytest.mark.parametrize("entry, expected", [
     ({"command": "npx", "args": ["-y", "firecrawl-mcp@3.25.3"]}, ("firecrawl-mcp@3.25.3", "pinned")),
     ({"command": "npx", "args": ["-y", "@supabase/mcp-server-supabase"]}, ("@supabase/mcp-server-supabase", "unpinned")),
-    ({"command": "node", "args": ["x.mjs"], "wraps": ["@playwright/mcp@0.0.40"]}, ("@playwright/mcp@0.0.40", "pinned")),
+    # a launcher that pins its own package carries no pin here: its module declares it (`upstream:`)
+    ({"command": "node", "args": ["x.mjs"]}, ("", "none")),
     ({"command": "python3", "args": ["x.py"]}, ("", "none")),
     ({"url": "https://mcp.example.com/"}, ("", "none")),
 ])
