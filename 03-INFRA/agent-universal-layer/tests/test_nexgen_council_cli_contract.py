@@ -38,6 +38,10 @@ def test_every_supported_cli_says_where_its_flags_are_listed():
     assert set(cli_contract.HELP_ARGV) == set(SUPPORTED_CLIS)
 
 
+def test_opencode_is_only_ever_asked_for_its_help_in_standalone_mode():
+    assert "--standalone" in cli_contract.HELP_ARGV["opencode"]
+
+
 @pytest.mark.parametrize("cli", SUPPORTED_CLIS)
 def test_the_flags_come_from_the_command_a_seat_really_runs(cli):
     flags = cli_contract.flags_passed(cli)

@@ -23,7 +23,8 @@ HELP_ARGV: dict[str, list[str]] = {
     "codex": ["codex", "exec", "--help"],
     "claude": ["claude", "--help"],
     "agy": ["agy", "--help"],
-    "opencode": ["opencode", "run", "--help"],
+    # Never an opencode command without --standalone: without it `run` talks to the background service.
+    "opencode": ["opencode", "run", "--standalone", "--help"],
     "ollama": ["ollama", "run", "--help"],
 }
 
