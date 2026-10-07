@@ -10,6 +10,8 @@ of any engine release.
 
 ## [Unreleased]
 
+## [2.5.0] - 2026-10-08
+
 ### Security
 
 - The n8n image the engine ships moves from 2.35.3 to 2.42.4. n8n published a batch of advisories on 2026-09-30, most of
