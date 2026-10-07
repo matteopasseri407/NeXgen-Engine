@@ -220,7 +220,8 @@ def test_a_child_server_does_not_inherit_the_proxys_secrets(waiter):
     names = set(json.loads(w.text(w.ask(1, "lazy_call", server="probe", tool="env", arguments={}))))
 
     assert not names & {"GITHUB_TOKEN", "OPENAI_API_KEY", "AWS_SECRET_ACCESS_KEY", "MY_PASSWORD", "NEXGEN_SOMETHING_TOKEN"}
-    assert {"PATH", "HOME"} <= names  # what a runtime needs to start at all
+    # What a runtime needs to start at all; Windows has no HOME, its home is USERPROFILE.
+    assert {"PATH", "USERPROFILE" if os.name == "nt" else "HOME"} <= names
     assert "HARMLESS_SETTING" not in names  # not on the list: a server that needs it declares it
 
 

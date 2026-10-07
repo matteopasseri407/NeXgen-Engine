@@ -236,7 +236,8 @@ def test_install_shims_reports_only_what_it_rewrote(tmp_path):
     shims.install_shims(bin_dir=bin_dir, home=tmp_path, changed=second)
     assert second == []  # nothing to hash, nothing to read: the guard asked this by reading every file
 
-    victim = next(p for p in bin_dir.iterdir() if p.name == "nexgen")
+    victim = bin_dir / ("nexgen.cmd" if sys.platform == "win32" else "nexgen")  # Windows launchers are .cmd files
+    assert victim.is_file()
     victim.write_text("tampered\n", encoding="utf-8")
     third: list[str] = []
     shims.install_shims(bin_dir=bin_dir, home=tmp_path, changed=third)

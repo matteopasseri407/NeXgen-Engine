@@ -21,7 +21,9 @@ from nexgen_core import release_trust as rt
 from nexgen_core.release_trust import BAD, UNTRUSTED, UNVERIFIABLE, VERIFIED
 from test_nexgen_update_command import _env, _load_updater, _write_release
 
-GPG = shutil.which("gpg")
+# Not on Windows: the only gpg there is Git for Windows' MSYS build, which fails to create a key under a
+# native Windows home (17 setup errors in the release CI). Release signatures are verified where gpg is native.
+GPG = None if os.name == "nt" else shutil.which("gpg")
 SSH_KEYGEN = shutil.which("ssh-keygen")
 
 needs_gpg = pytest.mark.skipif(GPG is None, reason="gpg is not installed")
