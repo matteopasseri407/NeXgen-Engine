@@ -26,6 +26,10 @@ of any engine release.
 
 ### Fixed
 
+- `release.py` starts again as a script. An import placed ahead of its own `sys.path` shim worked as a library and
+  failed as `python3 03-INFRA/scripts/nexgen_core/release.py`, which is how the CI leak-scan step and the release
+  workflow run it (the release one after the tag is signed). A test now starts every script the workflows name the way a
+  runner does, with nothing installed.
 - The systemd units no longer grow: the guard builds the `PATH` it writes from
   the home and deduplicates it, instead of prepending the same two directories
   to a value it had itself written every 30 minutes. Both units also get a

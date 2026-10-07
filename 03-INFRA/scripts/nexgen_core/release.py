@@ -14,11 +14,13 @@ import argparse
 import re
 import sys
 from pathlib import Path
-from nexgen_core.files import atomic_write_text
 
 SCRIPTS_DIR = Path(__file__).resolve().parents[1]
 if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
+
+# After the path shim: the CI and the release workflow run this file as a script, where `nexgen_core` is not installed.
+from nexgen_core.files import atomic_write_text  # noqa: E402
 
 #: Anchored semver, with optional prerelease and build. Anchored is the
 #: whole point: without anchors, "almost a version" passes as a version.
