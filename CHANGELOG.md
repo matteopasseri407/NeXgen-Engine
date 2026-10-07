@@ -10,6 +10,13 @@ of any engine release.
 
 ## [Unreleased]
 
+### Added
+
+- `nexgen council contract` checks, without invoking any model, that each installed vendor CLI (codex, claude, agy,
+  opencode, ollama) still lists the flags a Council seat is started with, reading them from the same builder the seats use.
+  A flag that disappears from a CLI's `--help` used to show up only as a seat failing in the middle of a round, after it had
+  spent subscription quota. It is the Council module's health command, so `nexgen doctor` runs it.
+
 ### Fixed
 
 - Every helper process the lazy-mcp gateway can reach now declares its stdin. The gateway's own stdin is the protocol

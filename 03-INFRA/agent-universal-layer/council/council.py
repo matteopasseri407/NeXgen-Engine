@@ -315,6 +315,19 @@ def cmd_clean(args: argparse.Namespace) -> None:
     print(f"[council] cleanup complete: {removed} session(s) removed.")
 
 
+def cmd_contract(args: argparse.Namespace) -> None:
+    """Checks, without invoking any model, that each installed vendor CLI still lists the flags a seat passes it."""
+    import cli_contract  # here, not at the top: it needs nexgen_core on sys.path, which `proposal` does first
+
+    problems = 0
+    for result in cli_contract.check_all():
+        tag = {"ok": "[ OK ]", "absent": "[skip]"}.get(result.status, "[FAIL]")
+        print(f"{tag} {result.cli}: {result.detail}")
+        problems += result.status in ("drift", "unprobed")
+    if problems:
+        sys.exit(1)
+
+
 def cmd_routing_status(args: argparse.Namespace) -> None:
     config = load_config()
     seats = config["seats"]
@@ -470,6 +483,9 @@ def main() -> int:
     clean.add_argument("--ttl-days", type=int, default=DEFAULT_TTL_DAYS, help=f"default: {DEFAULT_TTL_DAYS}")
     clean.add_argument("--all", action="store_true", help="removes every session, ignores the TTL")
     clean.set_defaults(func=cmd_clean)
+
+    contract = sub.add_parser("contract", help="checks the vendor CLIs still accept the flags a seat passes them (no model is invoked)")
+    contract.set_defaults(func=cmd_contract)
 
     routing_status = sub.add_parser("routing-status", help="shows the candidates proposed and verified on this host")
     routing_status.set_defaults(func=cmd_routing_status)

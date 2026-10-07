@@ -59,6 +59,7 @@ before integration. Fix new lint findings rather than regenerating the baseline.
 | Persistent research ownership, continuation and expiry | `nexgen_local/research_graph.py`; locking in `nexgen_core/lock.py` | `test_nexgen_local_research.py` |
 | Proposal ids, exclusive approval and durable attempts | `nexgen_local/proposals.py`; domain checks in patch/mail/calendar/upload/workflow gates | `test_nexgen_proposal_execution.py`, `test_nexgen_local_patch.py`, `test_nexgen_local_compose.py`, `test_nexgen_local_calendars.py`, `test_nexgen_local_drive_mcp.py`, `test_nexgen_local_workflows.py` |
 | Council process lifecycle and relay checkpoints | `03-INFRA/agent-universal-layer/council/` | `test_nexgen_council_*.py` |
+| Council seat flags against the installed vendor CLIs (`nexgen council contract`) | `council/cli_contract.py`; the flags come from `_build_seat_command` in `council/seat_process.py` | `test_nexgen_council_cli_contract.py` |
 | Owned subprocess cleanup and Windows launch adapters | `nexgen_core/processes.py` | `test_nexgen_council_process_integration.py`, `test_nexgen_mcp_transport.py`, `test_vault_groom.py` |
 | Vault publication and selected files | `nexgen_core/git_ops.py` | `test_nexgen_scoped_publish.py` |
 | Standalone Vault MCP indexing and note publication | `deploy/vault-mcp/src/vault_mcp_server/vault.py` | `test_deploy_vault_mcp.py` |

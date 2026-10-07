@@ -128,6 +128,7 @@ modules:
     mcp_servers: []
     stack: null
     depends_on: [memory]
+    health: "nexgen council contract"
 
   local-lane:
     label: "Governed local lane (read-only, optional)"
