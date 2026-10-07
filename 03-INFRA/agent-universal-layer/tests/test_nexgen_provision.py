@@ -184,3 +184,30 @@ def test_run_build_handles_quoted_arguments(tmp_path: Path):
     _run_build([cmd], tmp_path, "test-server")
     assert out_file.read_text(encoding="utf-8") == "hello world with spaces"
 
+
+
+def test_a_helper_process_never_inherits_the_callers_stdin():
+    """The waiter provisions on a request thread while its main thread blocks reading the MCP stream.
+    A child holding that same handle wedged on Windows (git waits behind the pending read: the
+    release CI hung 24 minutes in test_git_dep_provisioned_at_spawn) and, anywhere, could swallow
+    protocol bytes. The caller here keeps its stdin pipe OPEN, as the MCP client does, and the
+    helper's child must see end-of-file at once instead of waiting for it."""
+    code = (
+        "import sys; sys.path.insert(0, sys.argv[1])\n"
+        "from pathlib import Path\n"
+        "from nexgen_core.provision import _run\n"
+        "out = _run([sys.executable, '-c', 'import sys; print(repr(sys.stdin.read()))'], Path.cwd(), 30)\n"
+        "print(out.stdout.strip())\n"
+    )
+    caller = subprocess.Popen(
+        [sys.executable, "-c", code, _scripts],
+        stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+    )
+    try:
+        caller.wait(timeout=60)  # stdin stays open: an inheriting child would block here
+        assert caller.stdout.read().strip() == "''", caller.stderr.read()
+    finally:
+        if caller.poll() is None:
+            caller.kill()
+        for stream in (caller.stdin, caller.stdout, caller.stderr):
+            stream.close()

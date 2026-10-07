@@ -35,6 +35,7 @@ def _unit_path(unit_text: str) -> str:
     return match.group(1)
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="the systemd unit is Linux-only; Windows paths are escaped in it")
 @pytest.mark.parametrize("builder", ["_systemd_service_content", "_systemd_heartbeat_content"])
 def test_systemd_unit_is_a_fixed_point_of_its_own_environment(tmp_path, monkeypatch, builder):
     """The guard runs with the PATH its own unit declares. Writing the unit
@@ -53,6 +54,7 @@ def test_systemd_unit_is_a_fixed_point_of_its_own_environment(tmp_path, monkeypa
         assert build(home, engine, vault, vault) == first
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="the systemd unit is Linux-only; Windows paths are escaped in it")
 def test_an_already_bloated_unit_path_collapses_to_unique_entries(tmp_path, monkeypatch):
     """Machines already carrying the repeated entries repair themselves."""
     from nexgen_core import scheduler
