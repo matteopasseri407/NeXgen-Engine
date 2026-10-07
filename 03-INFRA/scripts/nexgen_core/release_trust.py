@@ -197,12 +197,25 @@ def _hermetic_env(**extra: str) -> dict[str, str]:
     return {**os.environ, "LC_ALL": "C", "LANGUAGE": "C", **extra}
 
 
+#: gpg starts its agent with a unix socket inside GNUPGHOME, and a socket path is limited to about 108 bytes. Past that gpg
+#: cannot start the agent and every verification would come back "unverifiable", which on an unattended update means the
+#: release is refused for a reason that has nothing to do with it. A long TMPDIR (a container, a CI workspace, a test) does it.
+_GNUPG_BASE_LIMIT = 48
+
+
+def _gnupg_scratch_base() -> str:
+    base = tempfile.gettempdir()
+    if os.name != "nt" and len(base) > _GNUPG_BASE_LIMIT and os.path.isdir("/tmp") and os.access("/tmp", os.W_OK):
+        return "/tmp"
+    return base
+
+
 def _verify_openpgp(repo: Path, ref: str, anchor: TrustAnchor) -> TagVerdict:
     gpg = shutil.which("gpg")
     if not gpg or anchor.openpgp_keys is None:
         return TagVerdict(UNVERIFIABLE, "gpg is not installed, so an OpenPGP signature cannot be checked")
     gpg_path = Path(gpg).as_posix()
-    with tempfile.TemporaryDirectory(prefix="nexgen-trust-", ignore_cleanup_errors=True) as home:
+    with tempfile.TemporaryDirectory(prefix="nexgen-trust-", dir=_gnupg_scratch_base(), ignore_cleanup_errors=True) as home:
         env = _hermetic_env(GNUPGHOME=home)
         try:
             imported = _exec(

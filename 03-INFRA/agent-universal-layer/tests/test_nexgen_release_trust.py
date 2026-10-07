@@ -349,13 +349,14 @@ def test_unsigned_lightweight_and_anchorless_releases_are_unverifiable(tmp_path,
 
 @needs_gpg
 @pytest.mark.parametrize("outcome", [VERIFIED, UNTRUSTED])
-def test_verification_removes_its_throwaway_keyring(tmp_path, keyring, client_keyring, monkeypatch, outcome):
+def test_verification_removes_its_throwaway_keyring(tmp_path, keyring, client_keyring, monkeypatch, outcome, request):
     """Runs hourly, so whatever it creates must not accumulate: no leftover
     directory, and no gpg daemon still holding one. (A daemon outliving its
     directory has not been seen on Linux with gpg 2.4.8, where it exits on its
     own; the check is for platforms where that is not guaranteed.)"""
-    scratch = tmp_path / "scratch-tmp"
-    scratch.mkdir()
+    # A short path on purpose: gpg's agent socket lives in this directory (see the long-path test below).
+    scratch = Path(tempfile.mkdtemp(prefix="nx", dir="/tmp" if os.name != "nt" else None))
+    request.addfinalizer(lambda: shutil.rmtree(scratch, ignore_errors=True))
     monkeypatch.setattr(tempfile, "tempdir", str(scratch))
     repo = _make_repo(tmp_path / "repo")
     keyring.sign_tag(repo, "v1.0.0", keyring.fingerprints["stranger" if outcome == UNTRUSTED else "maintainer"])
@@ -569,3 +570,19 @@ def test_real_ssh_signed_release_verifies_against_the_shipped_anchor():
         pytest.skip("v2.1.6 is not in this checkout")
     verdict = rt.verify_release_tag(REAL_VAULT, "v2.1.6")
     assert verdict.status == VERIFIED, verdict
+
+
+@needs_gpg
+@pytest.mark.skipif(os.name == "nt", reason="unix socket path limit")
+def test_a_long_temp_directory_does_not_make_a_good_signature_unverifiable(tmp_path, keyring, client_keyring, monkeypatch):
+    """A socket path is limited to ~108 bytes and gpg's agent socket lives inside the throwaway home: under a long
+    TMPDIR (a container, a workspace) verification used to come back "unverifiable" for a perfectly good tag."""
+    long_tmp = tmp_path / ("a-deeply-nested-temporary-directory-" * 3)
+    long_tmp.mkdir()
+    assert len(str(long_tmp)) > 100
+    monkeypatch.setattr(tempfile, "tempdir", str(long_tmp))
+    repo = _make_repo(tmp_path / "repo")
+    keyring.sign_tag(repo, "v1.0.0", keyring.fingerprints["maintainer"])
+    anchor = _write_anchor(tmp_path / "anchor", ring=keyring, openpgp=(keyring.fingerprints["maintainer"],))
+    assert rt.verify_release_tag(repo, "v1.0.0", trust_dir=anchor).status == VERIFIED
+    assert list(long_tmp.iterdir()) == []

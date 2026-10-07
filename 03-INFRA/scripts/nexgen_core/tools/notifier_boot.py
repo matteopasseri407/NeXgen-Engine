@@ -430,7 +430,13 @@ def ensure_boot_check(home: Path | str | None = None) -> list[str]:
         if os.name == "nt":
             base = (os.fspath(home) if home is not None
                     else (os.environ.get("NEXGEN_HOME") or os.path.expanduser("~")))
-            if "autostart" in _opted_out(Path(base)):
+            try:
+                declined = "autostart" in _opted_out(Path(base))
+            except NotImplementedError:
+                # The Windows lane is exercised on POSIX with os.name mocked, where Python 3.11 refuses to build a
+                # WindowsPath. With no readable record the answer is "not opted out", as in `_opted_out` itself.
+                declined = False
+            if declined:
                 return []
             return _ensure_windows_boot_check(base)
         resolved = resolve_home(home if home is None or isinstance(home, Path) else Path(home))

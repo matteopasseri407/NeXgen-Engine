@@ -26,6 +26,10 @@ of any engine release.
 
 ### Fixed
 
+- Verifying an OpenPGP release tag no longer fails under a long temporary directory. gpg's agent socket lives inside the
+  throwaway keyring and a socket path is limited to about 108 bytes; past that gpg could not start, and every verification
+  came back "unverifiable", which an unattended update treats as a reason to refuse the release. The throwaway keyring is
+  now created under `/tmp` when the system temporary directory is long.
 - `release.py` starts again as a script. An import placed ahead of its own `sys.path` shim worked as a library and
   failed as `python3 03-INFRA/scripts/nexgen_core/release.py`, which is how the CI leak-scan step and the release
   workflow run it (the release one after the tag is signed). A test now starts every script the workflows name the way a

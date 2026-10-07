@@ -41,4 +41,6 @@ def test_a_workflow_script_starts_with_nothing_installed(script, tmp_path):
         pytest.skip("nexgen_core is installed in this interpreter, which would hide the very import error this looks for")
     env = {"PATH": os.environ["PATH"], "HOME": str(tmp_path), "LANG": "C"}
     proc = subprocess.run([sys.executable, str(path), "--help"], cwd=tmp_path, env=env, capture_output=True, text=True, timeout=60)
-    assert "ModuleNotFoundError" not in proc.stderr and "ImportError" not in proc.stderr, proc.stderr[-600:]
+    # Only the engine's own package matters here: a script may legitimately need a third-party library the job installs first.
+    own = re.search(r"No module named '(nexgen_core|nexgen_local)\b", proc.stderr) or "cannot import name" in proc.stderr
+    assert not own, proc.stderr[-600:]
