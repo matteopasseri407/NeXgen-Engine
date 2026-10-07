@@ -414,7 +414,20 @@ jobs:
 
       - name: Install test dependencies
         run: |
-          sudo apt-get update -q && sudo apt-get install -y -q poppler-utils
+          # The runner's mirror has hung on a security index twice, and the job's own 15-minute cap then
+          # cancelled the whole run. Every apt call is bounded and retried, and a mirror that stays
+          # down fails the step in minutes with its own error.
+          APT_OPTS=(-o Acquire::Retries=3 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20)
+          for attempt in 1 2 3; do
+            if sudo timeout 120 apt-get "${APT_OPTS[@]}" update -q && sudo timeout 180 apt-get "${APT_OPTS[@]}" install -y -q poppler-utils; then
+              break
+            fi
+            if [ "$attempt" = 3 ]; then
+              echo "apt could not install poppler-utils after 3 attempts" >&2
+              exit 1
+            fi
+            sleep 10
+          done
           pip install pytest pyyaml 'langgraph>=1.0,<2' 'langgraph-checkpoint-sqlite>=3,<4' 'langchain-ollama>=1.0,<2'
 
       - name: Engine regression suite
