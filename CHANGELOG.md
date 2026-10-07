@@ -41,6 +41,13 @@ of any engine release.
 
 ### Changed
 
+- The Council chooses its own seat when none is named. A pure resolver (no I/O, an audit trail of every candidate) takes
+  the governor's verified candidates for the role on this host, refuses a seat of the author's vendor (cross-vendor
+  review) and, with `--zero-retention`, one without a verified zero-retention guarantee. A seat that fails is put in a
+  cooldown by cause: billing 30 days, authentication an hour, unknown model a day, quota five minutes, anything else a
+  minute. `nexgen council reset-health [--seat NAME]` lifts it. Going outside the governor's candidates needs a person at
+  a terminal, or `--allow-degraded` in CI; `--strict` forbids it. The verdict records `quorum_status` and the reason, in
+  the note and in a machine-readable `verdict.json`.
 - The Playwright launcher moves from `@playwright/mcp` 0.0.78 to 0.0.83. Each of its five patches was traced to the defect
   it fixes and checked against 0.0.83 before being kept: the file-chooser, download, new-tab and web-app-window patches
   address code upstream still has unchanged, and 0.0.83 on its own still grabs the native file chooser on a click (the
