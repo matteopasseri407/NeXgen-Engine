@@ -109,6 +109,12 @@ alters behaviour nobody chose. Never notifies. Being offline writes nothing and
 reports nothing: a workstation is offline all the time and that is not an
 incident.
 
+It also says when the publisher has withdrawn support for the exact version
+pinned (npm `deprecated`): "nothing newer exists" is not the same as "all good".
+And it compares the Docker image the engine ships for n8n, a program rather than
+a package, with n8n's release. That one is only reported: a program is replaced
+on the host that runs it, and that host may pin something else.
+
 ### The skill materializer
 Turns one declaration into the views each runtime can actually see. Four
 origins, and the distinction is about *who owns the bytes*:

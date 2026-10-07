@@ -316,6 +316,11 @@ def judge_finding(
         return judge_github_skill(finding.what, key, finding.pinned, finding.upstream, scope)
     if finding.kind == "npm-version":
         return judge_npm_package(finding.what, finding.pinned, finding.upstream)
+    if finding.kind == "docker-image":
+        verdict = GuardFinding(what=finding.what, pinned=finding.pinned, upstream=finding.upstream)
+        verdict.reasons.append("a Docker image: replaced on the host that runs it, never rewritten from here")
+        verdict.plain = "È il programma stesso (immagine Docker): si aggiorna sul server, dopo il backup dei dati. Qui lo segnalo soltanto."
+        return verdict
     verdict = GuardFinding(what=finding.what, pinned=finding.pinned,
                            upstream=finding.upstream)
     verdict.reasons.append(f"unknown pin kind '{finding.kind}'")

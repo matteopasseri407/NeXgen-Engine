@@ -4,7 +4,10 @@ Watches upstream everything third-party that the layer declares pinned:
 ``origin: github`` skills pinned to a commit, ``origin: installer`` skills
 pinned to a version (read from the ``install`` command), ``origin:
 upstream`` skills pinned via their ``deps:`` block (``npx`` spec or ``git``
-repo+rev), MCP servers invoked via ``npx package@version``. It produces a
+repo+rev), MCP servers invoked via ``npx package@version``, and the Docker
+image the engine ships for a server that is a program rather than a package
+(n8n). It also reports a pinned version its publisher has withdrawn support
+for: "nothing newer exists" is not the same as "all good". It produces a
 list and stops there: applying an upstream update changes a behavior
 nobody chose.
 
@@ -33,7 +36,7 @@ from pathlib import Path
 
 from nexgen_core.files import atomic_write_text
 from nexgen_core.config import ConfigError, load_mcp_manifest, load_skills_manifest
-from nexgen_core.paths import mcp_manifest, resolve_state_dir, resolve_vault_data, skills_manifest
+from nexgen_core.paths import mcp_manifest, resolve_engine_root, resolve_state_dir, resolve_vault_data, skills_manifest
 
 logger = logging.getLogger(__name__)
 
@@ -42,17 +45,26 @@ NPM_REGISTRY_TIMEOUT_SECONDS = 6
 REPORT_FILE_NAME = "third-party-upgrades.md"
 STATUS_FILE_NAME = "third-party-status.json"
 
+#: Docker images the engine ships a default for, each mapped to the MCP server it backs and the npm
+#: package that carries the same version number (n8n publishes both with one release number).
+COMPOSE_IMAGES: dict[str, tuple[str, str]] = {"n8nio/n8n": ("n8n-mcp", "n8n")}
+_COMPOSE_IMAGE_RE = re.compile(
+    r"^\s*image:\s*(?:\$\{[A-Z0-9_]+:-)?(?P<image>[\w./-]+):(?P<version>\d[\w.+-]*)\}?\s*$", re.MULTILINE,
+)
+
 #: An npm-style `package@version` token, scoped or not; `@latest` or a range is not a pin.
 NPM_SPEC_RE = re.compile(r"^(?P<name>(?:@[\w.-]+/)?[\w.-]+)@(?P<version>\d[\w.+-]*)$")
 
 
 @dataclass
 class PinFinding:
-    kind: str  # "git-commit" | "npm-version" | "manual-version"
+    kind: str  # "git-commit" | "npm-version" | "docker-image" | "manual-version"
     what: str
     pinned: str
     upstream: str | None
     stale: bool
+    #: What the publisher says about this exact version being withdrawn, if it does.
+    deprecated: str | None = None
 
 
 @dataclass
@@ -71,7 +83,7 @@ def _is_stale(kind: str, pinned: str, upstream: str | None) -> bool:
     """
     if upstream is None:
         return False
-    if kind == "npm-version":
+    if kind in ("npm-version", "docker-image"):
         old, new = NPM_SPEC_RE.match(f"x@{pinned.strip()}"), NPM_SPEC_RE.match(f"x@{upstream.strip()}")
         if old and new:
             mine = re.match(r"(\d+)\.(\d+)\.(\d+)", old.group("version"))
@@ -120,6 +132,22 @@ def _npm_latest_version(package: str) -> str | None:
         return None
     version = data.get("version") if isinstance(data, dict) else None
     return str(version) if version else None
+
+
+def _npm_deprecation(package: str, version: str) -> str | None:
+    """The publisher's own words if this exact version is withdrawn (npm `deprecated`), else None.
+
+    Offline, unreachable and "not deprecated" all read as None: the watch never invents a warning.
+    """
+    name = urllib.parse.quote(package, safe="@")
+    url = f"https://registry.npmjs.org/{name}/{urllib.parse.quote(version)}"
+    try:
+        with urllib.request.urlopen(url, timeout=NPM_REGISTRY_TIMEOUT_SECONDS) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+    except (urllib.error.URLError, OSError, ValueError, TimeoutError):
+        return None
+    notice = data.get("deprecated") if isinstance(data, dict) else None
+    return str(notice).strip()[:200] or None if isinstance(notice, str) else None
 
 
 def _npm_spec_tokens(tokens: list[str]) -> list[str]:
@@ -214,6 +242,26 @@ def _collect_mcp_pins(mcp_raw: dict[str, dict]) -> list[tuple[str, str, str, str
     return pins
 
 
+def _collect_compose_pins(engine_root: Path, mcp_raw: dict[str, dict]) -> list[tuple[str, str, str, str]]:
+    """(label, kind, pin, key) for the Docker image the engine ships for a declared server.
+
+    This is the engine's DEFAULT: the host that actually runs the image may override it, which is
+    why the label says so. Nothing is rewritten from here; a program is replaced where it runs.
+    """
+    compose = engine_root / "deploy" / "n8n" / "docker-compose.yml"
+    try:
+        text = compose.read_text(encoding="utf-8")
+    except OSError:
+        return []
+    pins: list[tuple[str, str, str, str]] = []
+    for match in _COMPOSE_IMAGE_RE.finditer(text):
+        server, package = COMPOSE_IMAGES.get(match.group("image"), ("", ""))
+        if server and server in mcp_raw:
+            label = f"MCP server '{server}' (docker {match.group('image')}, the engine's default image)"
+            pins.append((label, "docker-image", match.group("version"), package))
+    return pins
+
+
 def _write_report(path: Path, findings: list[PinFinding]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     sections = [
@@ -221,6 +269,8 @@ def _write_report(path: Path, findings: list[PinFinding]) -> None:
          lambda f: f"- {f.what}: pinned `{f.pinned}` -> upstream `{f.upstream}`"),
         ("Up to date", [f for f in findings if f.upstream is not None and not f.stale],
          lambda f: f"- {f.what}: `{f.pinned}`"),
+        ("Deprecated upstream", [f for f in findings if f.deprecated],
+         lambda f: f"- {f.what}: pinned `{f.pinned}`, the publisher says: {f.deprecated}"),
         ("Manually watched (no upstream check)", [f for f in findings if f.kind == "manual-version"],
          lambda f: f"- {f.what}: pinned `{f.pinned}` (no resolver covers this installer: check upstream by hand)"),
         ("Could not be checked this run", [f for f in findings if f.upstream is None and f.kind != "manual-version"],
@@ -247,6 +297,7 @@ def run_depwatch(
     state_dir: Path | None = None,
     git_ls_remote: Callable[[str], str | None] | None = None,
     npm_latest_version: Callable[[str], str | None] | None = None,
+    npm_deprecation: Callable[[str, str], str | None] | None = None,
 ) -> DepwatchResult:
     """Inspects every declared pin upstream and writes the list, without ever
     applying or notifying anything. If no check reaches upstream (offline, or
@@ -257,6 +308,7 @@ def run_depwatch(
     """
     git_check = git_ls_remote or _git_ls_remote_head
     npm_check = npm_latest_version or _npm_latest_version
+    deprecation_check = npm_deprecation or _npm_deprecation
     resolved_vault = resolve_vault_data(override=vault_data)
     resolved_state = resolve_state_dir(override=state_dir)
 
@@ -276,7 +328,13 @@ def run_depwatch(
         except ConfigError:
             mcp_raw = {}
 
+    try:
+        engine_root = resolve_engine_root()
+    except Exception:  # noqa: BLE001 - no engine tree to read (a bare install) just means no image pin
+        engine_root = None
     pins = _collect_skill_pins(skills_raw) + _collect_mcp_pins(mcp_raw)
+    if engine_root is not None:
+        pins += _collect_compose_pins(engine_root, mcp_raw)
     findings: list[PinFinding] = []
     for what, kind, pinned, key in pins:
         if kind == "manual-version":
@@ -284,7 +342,9 @@ def run_depwatch(
             continue
         upstream = git_check(key) if kind == "git-commit" else npm_check(key)
         stale = _is_stale(kind, pinned, upstream)
-        findings.append(PinFinding(kind=kind, what=what, pinned=pinned, upstream=upstream, stale=stale))
+        # Asked only when the registry answered at all, and only for a package a person pinned.
+        deprecated = deprecation_check(key, pinned) if kind == "npm-version" and upstream is not None else None
+        findings.append(PinFinding(kind=kind, what=what, pinned=pinned, upstream=upstream, stale=stale, deprecated=deprecated))
 
     if not any(f.upstream is not None for f in findings):
         # Nothing pinned, or upstream isn't responding right now: offline is not an incident, stay quiet.
@@ -314,7 +374,8 @@ def _write_status_sidecar(state_dir: Path, findings: list[PinFinding]) -> None:
             "report": REPORT_FILE_NAME,
             # Every pin with what upstream said, so `nexgen info` can show it without the network.
             "pins": [
-                {"what": f.what, "kind": f.kind, "pinned": f.pinned, "upstream": f.upstream, "stale": f.stale}
+                {"what": f.what, "kind": f.kind, "pinned": f.pinned, "upstream": f.upstream, "stale": f.stale,
+                 **({"deprecated": f.deprecated} if f.deprecated else {})}
                 for f in findings
             ],
         }

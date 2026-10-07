@@ -1159,6 +1159,11 @@ MESSAGES: dict[str, str] = {
     "outside the manifest (kept, never deleted): {names}": "fuori dal manifest (tenute, mai cancellate): {names}",
     "Newer upstream versions exist for third-party items: {count} (checked {age} ago).":
         "Ci sono versioni più nuove per cose di terzi: {count} (controllato {age} fa).",
+    "upstream {new} available (the engine's default image is {old}; the server running it may differ)":
+        "a monte c'è la {new} (l'immagine predefinita del motore è la {old}; quella che gira sul server può essere diversa)",
+    "its publisher withdrew support for this version: {why}":
+        "chi lo pubblica ha smesso di supportare questa versione: {why}",
+    "Support withdrawn by the publisher: {names}": "Supporto ritirato da chi li pubblica: {names}",
     "no CLI is in its targets": "nessuna CLI è tra quelle a cui è destinato",
     "switched off in the manifest": "spento nel manifest",
     "neither core nor switched on": "non è essenziale e non è acceso",

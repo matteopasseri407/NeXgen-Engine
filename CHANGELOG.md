@@ -16,6 +16,9 @@ of any engine release.
   opencode, ollama) still lists the flags a Council seat is started with, reading them from the same builder the seats use.
   A flag that disappears from a CLI's `--help` used to show up only as a seat failing in the middle of a round, after it had
   spent subscription quota. It is the Council module's health command, so `nexgen doctor` runs it.
+- The dependency watch reports a pinned version its publisher has withdrawn support for (npm `deprecated`), which "nothing
+  newer exists" used to hide: `nexgen info` names it under the server or skill, and the report has its own section. It also
+  watches the Docker image the engine ships for n8n against n8n's release, report only.
 
 ### Fixed
 

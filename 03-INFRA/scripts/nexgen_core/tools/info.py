@@ -221,6 +221,9 @@ def _extension_lines(ext: dict[str, Any], show_all: bool) -> list[str]:
         out.append(f"  {C_DIM}{t('Upstream versions not checked on this machine yet: the hourly watch will, or run nexgen skills bump.')}{C_RESET}")
     else:
         out.append(f"  {C_DIM}{t('Third-party pins are current (checked {age} ago).', age=age or '?')}{C_RESET}")
+    withdrawn = extensions.deprecations(ext)
+    if withdrawn:
+        out.append(f"  {C_YELLOW}{t('Support withdrawn by the publisher: {names}', names=', '.join(d['name'] for d in withdrawn))}{C_RESET}")
     out.append("")
     return out
 
@@ -229,12 +232,19 @@ def _mcp_notes(r: dict[str, Any]) -> list[str]:
     notes = []
     update = r["update"]
     if update.get("state") == "stale":
-        line = t("upstream {new} available (pinned {old})", new=update.get("upstream") or "?", old=update.get("pinned") or "?")
+        if update.get("pin_kind") == "docker-image":
+            # The engine's shipped default, not what any one server runs: say so instead of "you have".
+            line = t("upstream {new} available (the engine's default image is {old}; the server running it may differ)",
+                     new=update.get("upstream") or "?", old=update.get("pinned") or "?")
+        else:
+            line = t("upstream {new} available (pinned {old})", new=update.get("upstream") or "?", old=update.get("pinned") or "?")
         if update.get("verdict") == "held":
             line += " — " + t("held: {why}", why=update.get("plain") or t("read the changelog first"))
         elif update.get("verdict") == "ready":
             line += " — " + t("cleared, ready to raise")
         notes.append(line)
+    if update.get("deprecated"):
+        notes.append(t("its publisher withdrew support for this version: {why}", why=update["deprecated"]))
     if r["pin_state"] == "unpinned":
         notes.append(t("not pinned: runs whatever the registry serves today, and nothing watches it"))
     if r["hidden_tools"]:
@@ -251,6 +261,8 @@ def _skill_notes(r: dict[str, Any]) -> list[str]:
     update = r["update"]
     if update.get("state") == "stale":
         notes.append(t("upstream {new} available (pinned {old})", new=update.get("upstream") or "?", old=update.get("pinned") or "?"))
+    if update.get("deprecated"):
+        notes.append(t("its publisher withdrew support for this version: {why}", why=update["deprecated"]))
     if r["engine_copy"] == "differs":
         notes.append(t("your Vault's copy differs from the engine's, and the copy is what runs"))
     elif r["engine_copy"] == "same":

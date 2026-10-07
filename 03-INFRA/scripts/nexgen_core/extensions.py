@@ -117,22 +117,30 @@ class _Upstream:
     def _key(what: str) -> tuple[str, str]:
         return ("mcp" if what.startswith("MCP server") else "skill", short_name(what))
 
+    def has(self, kind: str, name: str) -> bool:
+        """Whether the watch found anything for this item, however the manifest pins it (or doesn't)."""
+        return bool(self._pins.get((kind, name)))
+
     def lookup(self, kind: str, name: str) -> dict[str, Any]:
         pins = self._pins.get((kind, name), [])
         verdict = self._verdicts.get((kind, name))
+        withdrawn = next((p["deprecated"] for p in pins if p.get("deprecated")), None)
+        extra = {"deprecated": withdrawn} if withdrawn else {}
         stale = next((p for p in pins if p.get("stale")), None)
         if stale is not None:
             out: dict[str, Any] = {
                 "state": "stale",
                 "pinned": stale.get("pinned") or (verdict or {}).get("pinned"),
                 "upstream": stale.get("upstream") or (verdict or {}).get("upstream"),
+                "pin_kind": stale.get("kind") or "",
+                **extra,
             }
             if verdict:
                 out["verdict"] = {"auto": "ready", "batch": "ready", "hold": "held"}[verdict["tier"]]
                 out["plain"] = verdict.get("plain") or ""
             return out
         if any(p.get("upstream") for p in pins):
-            return {"state": "current"}
+            return {"state": "current", **extra}
         return {"state": "unknown"}
 
 
@@ -171,7 +179,7 @@ def mcp_rows(servers: dict[str, dict[str, Any]], upstream: _Upstream) -> list[di
             "pin_state": pin_state,
             "hidden_tools": len(denied) if isinstance(denied, list) else 0,
             "only_tools": len(allowed) if isinstance(allowed, list) else 0,
-            "update": upstream.lookup("mcp", name) if pin_state == "pinned" else {"state": "n/a"},
+            "update": upstream.lookup("mcp", name) if pin_state == "pinned" or upstream.has("mcp", name) else {"state": "n/a"},
         }
         rows.append(row)
     return rows
@@ -274,6 +282,16 @@ def updates(data: dict[str, Any]) -> list[dict[str, Any]]:
             update = row["update"]
             if update.get("state") == "stale":
                 out.append({"kind": kind, "name": row["name"], **update})
+    return out
+
+
+def deprecations(data: dict[str, Any]) -> list[dict[str, Any]]:
+    """Every pinned item whose publisher has withdrawn support for the version in use, newer version or not."""
+    out = []
+    for kind, rows in (("mcp", data["mcp"]), ("skill", data["skills"])):
+        for row in rows:
+            if row["update"].get("deprecated"):
+                out.append({"kind": kind, "name": row["name"], "why": row["update"]["deprecated"]})
     return out
 
 
