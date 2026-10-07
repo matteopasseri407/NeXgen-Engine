@@ -1092,4 +1092,40 @@ MESSAGES: dict[str, str] = {
         '{name} è servito in {cli} ma il piano non lo instrada lì',
     'gateway served {count} server(s) in {seconds}s: {names}':
         'il gateway ha servito {count} server in {seconds}s: {names}',
+    '--eager and --lazy contradict each other: pick one (lazy is the default)':
+        '--eager e --lazy si contraddicono: scegline uno (lazy è il predefinito)',
+    'a trial lasts between a moment and {max:g} hours, not {hours:g}':
+        'una prova dura da un attimo a {max:g} ore, non {hours:g}',
+    "'{name}' is already in the manifest: a trial would only shadow it":
+        "'{name}' è già nel manifest: una prova lo coprirebbe soltanto",
+    "{name} is on trial for {hours:g}h on this machine only: it is served by the gateway (no CLI config is touched, nothing syncs) and disappears by itself. Keep it with 'nexgen mcp promote {name}', end it with 'nexgen mcp drop {name}'.":
+        "{name} è in prova per {hours:g}h solo su questa macchina: lo serve il gateway (nessuna config delle CLI viene toccata, niente si sincronizza) e sparisce da solo. Tienilo con 'nexgen mcp promote {name}', chiudilo con 'nexgen mcp drop {name}'.",
+    'No MCP servers on trial.':
+        'Nessun server MCP in prova.',
+    '{left} left':
+        '{left} rimasti',
+    '{name}: trial ended.':
+        '{name}: prova terminata.',
+    '{name} is not on trial here.':
+        '{name} non è in prova qui.',
+    '{name} is not on trial here (it may have expired).':
+        '{name} non è in prova qui (può essere scaduto).',
+    'trial, {left} left, this machine only':
+        'prova, {left} rimasti, solo questa macchina',
+    'MCP trials that ran out were removed: {names}':
+        'Prove MCP scadute e rimosse: {names}',
+    'MCP trials could not be tidied: {error}':
+        'Non è stato possibile ripulire le prove MCP: {error}',
+    'No MCP servers on trial':
+        'Nessun server MCP in prova',
+    'MCP servers on trial on this machine, not synced: {names}':
+        'Server MCP in prova su questa macchina, non sincronizzati: {names}',
+    "Keep one with 'nexgen mcp promote <name>' or end it with 'nexgen mcp drop <name>'; they end by themselves anyway.":
+        "Tienine uno con 'nexgen mcp promote <nome>' o chiudilo con 'nexgen mcp drop <nome>'; finiscono comunque da soli.",
+    'needs {var} in the environment':
+        "serve {var} nell'ambiente",
+    '{tools} tools, about {tokens} tokens of definitions loaded up front':
+        '{tools} strumenti, circa {tokens} token di definizioni caricati subito',
+    '{tools} tools, ~{tokens} tokens, {seconds}s':
+        '{tools} strumenti, ~{tokens} token, {seconds}s',
 }

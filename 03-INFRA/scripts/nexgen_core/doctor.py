@@ -43,6 +43,7 @@ from nexgen_core.checks.mcp_checks import (  # noqa: E402 - sys.path shim for cl
     check_mcp_commands,
     check_mcp_configs_rendered,
     check_mcp_placement,
+    check_mcp_trials,
     check_mcp_content_drift,
     check_mcp_deps,
     check_mcp_manifest,
@@ -191,6 +192,7 @@ class Doctor:
             run("mcp.manifest", lambda: check_mcp_manifest(manifest_mcp))
             run("mcp.rendered_configs", lambda: check_mcp_configs_rendered(vault, home))
             run("mcp.placement", lambda: check_mcp_placement(vault))
+            run("mcp.trials", check_mcp_trials)
             run("mcp.rendered_content", lambda: check_mcp_content_drift(vault, home, self.engine_root))
             run("mcp.commands", lambda: check_mcp_commands(vault, home))
             run("mcp.orphans", lambda: check_mcp_orphans(vault, home))

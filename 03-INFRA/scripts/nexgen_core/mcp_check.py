@@ -13,6 +13,8 @@ from __future__ import annotations
 import json
 import os
 import queue
+import urllib.error
+import urllib.request
 import subprocess
 import threading
 import time
@@ -103,11 +105,13 @@ def check_gateway(renderer, cli: str, *, timeout: float = 90.0) -> CliResult:
     result = CliResult(cli)
     started = time.monotonic()
     entry = renderer.load_resolved_servers(cli).get(GATEWAY)
+    from nexgen_core import mcp_trials
     from nexgen_core.config import load_mcp_manifest
 
-    expected = gateway_servers_for(load_mcp_manifest(renderer.manifest_path).get("servers", {}), cli)
+    # Trials are served too (this machine only), so they are part of what the gateway must offer.
+    manifest_servers = mcp_trials.overlay(load_mcp_manifest(renderer.manifest_path).get("servers", {}))
+    expected = gateway_servers_for(manifest_servers, cli)
     # Servers whose environment gate is closed in this shell are withheld by the gateway too.
-    manifest_servers = load_mcp_manifest(renderer.manifest_path).get("servers", {})
     expected = {n for n in expected if not (manifest_servers[n].get("require_env") and not os.environ.get(manifest_servers[n]["require_env"]))}
     if entry is None:
         if expected:
@@ -146,6 +150,125 @@ def check_gateway(renderer, cli: str, *, timeout: float = 90.0) -> CliResult:
     result.seconds = round(time.monotonic() - started, 1)
     result.ok = not result.problems
     return result
+
+
+@dataclass
+class DirectResult:
+    server: str
+    ok: bool = True
+    tools: int = 0
+    tokens: int = 0
+    seconds: float = 0.0
+    problem: str = ""
+
+
+def _estimate_tokens(tools: list[dict[str, Any]]) -> int:
+    """What the tool definitions weigh in a prompt: about four characters a token, which is close enough to compare servers."""
+    return len(json.dumps(tools, ensure_ascii=False)) // 4
+
+
+def _http_tools(entry: dict[str, Any], timeout: float) -> list[dict[str, Any]]:
+    """tools/list from a streamable-HTTP server: JSON or event-stream replies, a session id if it hands one out."""
+    headers = {"Content-Type": "application/json", "Accept": "application/json, text/event-stream"}
+    auth = entry.get("auth")
+    var = auth.get("env") if isinstance(auth, dict) else None
+    if var:
+        token = os.environ.get(var)
+        if not token:
+            raise RuntimeError(t("needs {var} in the environment", var=var))
+        headers["Authorization"] = f"Bearer {token}"
+
+    def post(payload: dict[str, Any]) -> tuple[dict[str, Any], dict[str, str]]:
+        request = urllib.request.Request(entry["url"], data=json.dumps(payload).encode("utf-8"), headers=headers, method="POST")
+        try:
+            with urllib.request.urlopen(request, timeout=timeout) as reply:  # noqa: S310 - the user's own configured URL
+                body = reply.read().decode("utf-8", errors="replace")
+                kind = reply.headers.get("Content-Type", "")
+                sid = reply.headers.get("Mcp-Session-Id")
+        except urllib.error.HTTPError as exc:
+            raise RuntimeError(f"HTTP {exc.code}") from exc
+        except (urllib.error.URLError, OSError) as exc:
+            raise RuntimeError(str(getattr(exc, "reason", exc))) from exc
+        if "text/event-stream" in kind:
+            lines = [ln[5:].strip() for ln in body.splitlines() if ln.startswith("data:")]
+            body = lines[-1] if lines else "{}"
+        message = json.loads(body) if body.strip() else {}
+        return message, ({"Mcp-Session-Id": sid} if sid else {})
+
+    _, extra = post({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {
+        "protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "nexgen-mcp-check", "version": "1"}}})
+    headers.update(extra)
+    tools: list[dict[str, Any]] = []
+    cursor = None
+    for page in range(2, 12):
+        message, _ = post({"jsonrpc": "2.0", "id": page, "method": "tools/list", "params": {"cursor": cursor} if cursor else {}})
+        if "error" in message:
+            raise RuntimeError(str(message["error"].get("message", message["error"])))
+        result = message.get("result") or {}
+        tools.extend(result.get("tools", []))
+        cursor = result.get("nextCursor")
+        if not cursor:
+            break
+    return tools
+
+
+def check_direct(renderer, cli: str, name: str, *, timeout: float = 60.0) -> DirectResult:
+    """One directly mounted server, started or called the way `cli` would: how many tools, how heavy, how long."""
+    entry = renderer.load_resolved_servers(cli)[name]
+    result = DirectResult(name)
+    started = time.monotonic()
+    session = None
+    try:
+        if entry.get("transport") == "http" or entry.get("url"):
+            tools = _http_tools(entry, timeout)
+        else:
+            session = _Session([entry.get("command", ""), *entry.get("args", [])], _spawn_env(entry.get("env") or {}))
+            session.handshake(timeout)
+            tools = []
+            cursor = None
+            for _ in range(10):
+                reply = session.request("tools/list", {"cursor": cursor} if cursor else None, timeout)
+                tools.extend(reply.get("tools", []))
+                cursor = reply.get("nextCursor")
+                if not cursor:
+                    break
+        result.tools, result.tokens = len(tools), _estimate_tokens(tools)
+    except (TimeoutError, RuntimeError, OSError, ValueError) as exc:
+        result.ok, result.problem = False, str(exc)
+    finally:
+        if session is not None:
+            session.close()
+    result.seconds = round(time.monotonic() - started, 1)
+    return result
+
+
+def main_direct(clis: tuple[str, ...] = CLIS, *, timeout: float = 60.0) -> int:
+    """Every directly mounted server, once: what each costs a CLI that loads its tools up front."""
+    from nexgen_core.renderer import McpRenderer
+
+    renderer = McpRenderer()
+    if not renderer.manifest_path.is_file():
+        print(t("No MCP manifest at {path}", path=renderer.manifest_path))
+        return 1
+    measured: dict[str, DirectResult] = {}
+    failed = False
+    for cli in clis:
+        for name in sorted(renderer.load_resolved_servers(cli)):
+            if name == GATEWAY or name in measured:
+                continue
+            measured[name] = check_direct(renderer, cli, name, timeout=timeout)
+    for cli in clis:
+        names = [n for n in sorted(renderer.load_resolved_servers(cli)) if n in measured and measured[n].ok]
+        tools = sum(measured[n].tools for n in names)
+        tokens = sum(measured[n].tokens for n in names)
+        print(f"{cli}: " + t("{tools} tools, about {tokens} tokens of definitions loaded up front", tools=tools, tokens=tokens))
+    for name, outcome in sorted(measured.items()):
+        if outcome.ok:
+            print(f"  OK   {name}: " + t("{tools} tools, ~{tokens} tokens, {seconds}s", tools=outcome.tools, tokens=outcome.tokens, seconds=outcome.seconds))
+        else:
+            failed = True
+            print(f"  FAIL {name}: {outcome.problem}")
+    return 1 if failed else 0
 
 
 def main(clis: tuple[str, ...] = CLIS, *, timeout: float = 90.0) -> int:

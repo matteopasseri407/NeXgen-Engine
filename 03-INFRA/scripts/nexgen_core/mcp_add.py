@@ -135,7 +135,7 @@ def build_entry(
         ))
     if readonly and not lazy:
         raise ValueError(t(
-            "--readonly only means something behind the lazy proxy; add --lazy",
+            "--readonly only means something behind the gateway (the default), not with --eager",
         ))
 
     entry: dict = {}
@@ -179,21 +179,19 @@ def add_server(
     url: str | None = None,
     auth_env: str | None = None,
     env_pairs: list[str] | None = None,
-    lazy: bool = False,
+    lazy: bool = True,
     readonly: bool = False,
     dry_run: bool = False,
     home=None,
     vault_data=None,
 ) -> tuple[int, str]:
-    """Adds one server to the manifest: validated, atomic, roll-backed.
+    """Adds one server to the manifest: validated, atomic, roll-backed. Lazy (behind the gateway) unless `lazy=False`.
 
     Returns (exit code, message). Nothing is rendered here on purpose: the
     manifest is the canonical source, and the next `nexgen sync apply` (or
     the guard cycle) regenerates the CLIs from it — the same rule that keeps
     hand edits and adopted stubs honest.
     """
-    from nexgen_core.renderer_cli import _emit_manifest_stub, insert_server_stubs
-
     try:
         targets = parse_targets(targets_raw)
         env = _parse_env(env_pairs)
@@ -204,15 +202,22 @@ def add_server(
     except ValueError as exc:
         return 2, str(exc)
 
+    return insert_entry(name, entry, dry_run=dry_run, home=home, vault_data=vault_data, targets=targets)
+
+
+def insert_entry(
+    name: str, entry: dict, *, dry_run: bool = False, home=None, vault_data=None, targets: list[str] | None = None,
+) -> tuple[int, str]:
+    """Writes an already-validated entry into the manifest: atomic, with a backup, refusing a name that is taken."""
+    from nexgen_core.renderer_cli import _emit_manifest_stub, insert_server_stubs
+
     home_dir = resolve_home(home)
     vault = resolve_vault_data(home_dir, vault_data)
     path = _manifest_path(vault)
-
     try:
         data = load_mcp_manifest(path)  # type: ignore[arg-type]
     except Exception as exc:  # noqa: BLE001 - render error is reported, never raises
         return 2, t("cannot read the manifest ({error}); fix it before adding", error=exc)
-
     if name in (data.get("servers") or {}):
         return 2, t("'{name}' is already declared in the manifest: edit it by hand.", name=name)
     if name in (data.get("retired_servers") or []):
@@ -220,16 +225,15 @@ def add_server(
             "'{name}' is retired: remove it from retired_servers first if you really mean to bring it back.",
             name=name,
         )
-
     stub = _emit_manifest_stub(name, entry)
     if dry_run:
         return 0, t("dry run (nothing written). Stub to add under 'servers:':\n{stub}", stub=stub)
-
     ok, message, _backup = insert_server_stubs(path, [stub])  # type: ignore[arg-type]
     if not ok:
         return 2, message
+    shown = targets if targets is not None else entry.get("targets") or []
     return 0, t(
         "{name} added to the manifest for {targets}. Backup: {backup}. "
         "Run 'nexgen sync apply' to render it to the CLIs, then commit.",
-        name=name, targets=", ".join(targets), backup=_backup,
+        name=name, targets=", ".join(shown), backup=_backup,
     )

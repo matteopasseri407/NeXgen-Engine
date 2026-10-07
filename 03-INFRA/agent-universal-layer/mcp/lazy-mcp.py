@@ -205,7 +205,26 @@ def _expand_templates(text: str) -> str:
     # entry unusable instead of spawning literal {{ }} text.
 
 
+def _with_trials(data: dict[str, Any]) -> dict[str, Any]:
+    """The manifest plus the servers on trial on this machine (never synced, they expire by themselves)."""
+    scripts = str(Path(__file__).resolve().parents[2] / "scripts")
+    if scripts not in sys.path:
+        sys.path.insert(0, scripts)
+    try:
+        from nexgen_core import mcp_trials
+
+        servers = mcp_trials.overlay(dict(data.get("servers") or {}))
+    except Exception as exc:  # noqa: BLE001 - a broken trial file must never take the gateway down
+        print(f"[lazy-mcp] trials ignored ({type(exc).__name__})", file=sys.stderr)
+        return data
+    return {**data, "servers": servers}
+
+
 def _resolve_manifest() -> dict[str, Any]:
+    return _with_trials(_read_manifest())
+
+
+def _read_manifest() -> dict[str, Any]:
     vault = Path(os.environ.get("AGENT_VAULT_DATA") or os.environ.get("KNOWLEDGE_VAULT_PATH")
                  or str(Path.home() / "KnowledgeVault"))
     path = vault / "03-INFRA" / "agent-universal-layer" / "mcp" / "manifest.yaml"

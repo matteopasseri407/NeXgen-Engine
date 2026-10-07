@@ -51,6 +51,14 @@ def _is_active_legacy(srv: dict[str, Any]) -> bool:
     return str(srv.get("tier", "")).strip().lower() == "core" or srv.get("enabled", False) is True
 
 
+def _oauth_only(srv: dict[str, Any]) -> bool:
+    """An HTTP server that asks for OAuth and gives the gateway no bearer token to send."""
+    is_http = srv.get("transport") == "http" or bool(srv.get("url"))
+    auth = srv.get("auth")
+    has_bearer = isinstance(auth, dict) and bool(auth.get("env"))
+    return is_http and bool(srv.get("oauth")) and not has_bearer
+
+
 def place(srv: dict[str, Any], cli: str) -> Placement:
     """Where `srv` lives for `cli`. Environment gates (`require_env`) are the caller's: they depend on the shell."""
     targets = srv.get("targets") or list(CLIS)
@@ -94,6 +102,16 @@ def problems(servers: dict[str, dict[str, Any]], clis: tuple[str, ...] = CLIS) -
             if placement.why.startswith("unknown exposure"):
                 found.append(f"{name}: {placement.why} (expected one of {', '.join(EXPOSURES)}); not mounted in {cli}")
                 break
+    for name, srv in servers.items():
+        if not isinstance(srv, dict) or not _oauth_only(srv):
+            continue
+        behind = [cli for cli in clis if place(srv, cli).kind == GATEWAY_KIND]
+        if behind:
+            found.append(
+                f"{name}: a server that authenticates with OAuth cannot do it behind the gateway (which can only send a bearer "
+                f"token read from an environment variable), so every call fails with 401 while its tool list still looks healthy "
+                f"({', '.join(behind)}); give it `auth.env`, or mount it where the CLI handles OAuth itself (exposure: eager)"
+            )
     gateway_srv = servers.get(GATEWAY)
     if isinstance(gateway_srv, dict) and gateway_srv.get("exposure") == "lazy":
         found.append(f"{GATEWAY}: the gateway cannot be behind itself; use exposure: eager")

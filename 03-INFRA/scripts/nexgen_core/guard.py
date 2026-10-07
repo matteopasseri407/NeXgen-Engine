@@ -657,6 +657,14 @@ class GuardRunner:
             actions.append(t("MCP configurations not regenerated (explicitly requested)"))
             return
         try:
+            from nexgen_core import mcp_trials
+
+            expired = mcp_trials.purge_expired()
+            if expired:
+                actions.append(t("MCP trials that ran out were removed: {names}", names=", ".join(expired)))
+        except Exception as exc:  # noqa: BLE001 - housekeeping must never stop the render
+            actions.append(WARN + t("MCP trials could not be tidied: {error}", error=exc))
+        try:
             rend = McpRenderer(vault_data=self.vault_data, engine_root=self.engine_root, home=self.home)
             results = rend.render_all(write=True)
         except Exception as exc:  # noqa: BLE001 - phase failure is recorded, never raises

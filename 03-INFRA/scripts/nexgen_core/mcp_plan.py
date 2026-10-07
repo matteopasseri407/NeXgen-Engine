@@ -18,7 +18,9 @@ _SYMBOL = {DIRECT: "direct", GATEWAY_KIND: "gateway", "absent": "-"}
 
 def build(manifest_path) -> dict[str, Any]:
     """The plan as data: rows per server, the gateway's served set per CLI, what would change, what is incoherent."""
-    servers = load_mcp_manifest(manifest_path).get("servers", {})
+    from nexgen_core import mcp_trials
+
+    servers = mcp_trials.overlay(load_mcp_manifest(manifest_path).get("servers", {}))
     rows = []
     for name, srv in servers.items():
         placements = {cli: place(srv, cli) for cli in CLIS}
@@ -29,6 +31,7 @@ def build(manifest_path) -> dict[str, Any]:
             "cells": {cli: p.kind for cli, p in placements.items()},
             "why": sorted(reasons),
             "needs_env": env if env and not os.environ.get(env) else None,
+            "trial": mcp_trials.time_left({"expires": srv["_trial_expires"]}) if "_trial_expires" in srv else None,
         })
     gateway = {cli: sorted(gateway_servers_for(servers, cli)) for cli in CLIS}
     # What the gateway served before it knew its CLI: every `lazy: true` server, to everyone.
@@ -49,6 +52,8 @@ def render(plan: dict[str, Any]) -> str:
     for r in plan["rows"]:
         cells = "  ".join(_SYMBOL[r["cells"][cli]].ljust(11) for cli in CLIS)
         note = "; ".join(r["why"]) + (f"  [{t('needs {env}', env=r['needs_env'])}]" if r["needs_env"] else "")
+        if r["trial"]:
+            note += f"  [{t('trial, {left} left, this machine only', left=r['trial'])}]"
         lines.append("  " + r["server"].ljust(width) + "  " + cells + "  " + note)
     lines.append("")
     lines.append(t("Served by the gateway, per CLI:"))

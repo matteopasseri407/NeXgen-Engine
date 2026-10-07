@@ -160,3 +160,78 @@ def test_when_the_cli_goes_away_the_gateway_and_its_backends_go_with_it(setup, t
     finally:
         if proc.poll() is None:
             proc.kill()
+
+
+# --- the directly mounted servers: what they cost a CLI that loads them up front --------------------------
+
+def _http_server(tools):
+    import threading
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+    seen = {"auth": [], "sessions": []}
+
+    class Handler(BaseHTTPRequestHandler):
+        def log_message(self, *_):
+            pass
+
+        def do_POST(self):
+            body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+            seen["auth"].append(self.headers.get("Authorization"))
+            seen["sessions"].append(self.headers.get("Mcp-Session-Id"))
+            if body["method"] == "initialize":
+                result, extra = {"protocolVersion": "2025-06-18", "capabilities": {}}, {"Mcp-Session-Id": "s1"}
+            else:
+                result, extra = {"tools": tools}, {}
+            payload = "event: message\ndata: " + json.dumps({"jsonrpc": "2.0", "id": body["id"], "result": result}) + "\n\n"
+            self.send_response(200)
+            self.send_header("Content-Type", "text/event-stream")
+            for key, value in extra.items():
+                self.send_header(key, value)
+            self.end_headers()
+            self.wfile.write(payload.encode())
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    return server, seen
+
+
+def test_a_direct_stdio_server_is_measured(setup):
+    renderer, _ = setup
+    manifest = yaml.safe_load(renderer.manifest_path.read_text())
+    manifest["servers"]["good"]["exposure"] = "eager"
+    renderer.manifest_path.write_text(yaml.safe_dump(manifest), encoding="utf-8")
+    outcome = mcp_check.check_direct(renderer, "codex", "good", timeout=30)
+    assert outcome.ok, outcome.problem
+    assert outcome.tools == 1 and outcome.tokens > 0
+
+
+def test_a_direct_http_server_is_measured_with_its_bearer_and_session(setup, monkeypatch):
+    renderer, _ = setup
+    tools = [{"name": f"t{i}", "description": "d" * 80, "inputSchema": {"type": "object"}} for i in range(5)]
+    server, seen = _http_server(tools)
+    try:
+        manifest = yaml.safe_load(renderer.manifest_path.read_text())
+        manifest["servers"]["remote"] = {"exposure": "eager", "transport": "http", "url": f"http://127.0.0.1:{server.server_port}/mcp",
+                                         "auth": {"type": "bearer", "env": "REMOTE_TOKEN"}}
+        renderer.manifest_path.write_text(yaml.safe_dump(manifest), encoding="utf-8")
+        missing = mcp_check.check_direct(renderer, "claude", "remote", timeout=10)
+        assert missing.ok is False and "REMOTE_TOKEN" in missing.problem
+        monkeypatch.setenv("REMOTE_TOKEN", "t0ken")
+        outcome = mcp_check.check_direct(renderer, "claude", "remote", timeout=10)
+        assert outcome.ok, outcome.problem
+        assert outcome.tools == 5 and outcome.tokens > 50
+        assert set(seen["auth"]) == {"Bearer t0ken"}
+        assert seen["sessions"][-1] == "s1"
+    finally:
+        server.shutdown()
+
+
+def test_the_direct_summary_totals_what_each_cli_loads_up_front(setup, capsys, monkeypatch):
+    renderer, _ = setup
+    manifest = yaml.safe_load(renderer.manifest_path.read_text())
+    manifest["servers"]["good"]["exposure"] = "eager"
+    renderer.manifest_path.write_text(yaml.safe_dump(manifest), encoding="utf-8")
+    monkeypatch.setattr("nexgen_core.renderer.McpRenderer", lambda *a, **k: renderer)
+    assert mcp_check.main_direct(("claude", "codex"), timeout=30) == 0
+    out = capsys.readouterr().out
+    assert "claude: 1" in out and "codex: 1" in out and "OK   good" in out

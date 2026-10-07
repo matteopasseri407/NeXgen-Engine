@@ -229,6 +229,16 @@ of any engine release.
   `nexgen mcp plan` prints the table per CLI with the reason and what changes for the gateway;
   `nexgen mcp check` starts each CLI's gateway as that CLI would and compares what it serves with the plan,
   naming any backend that cannot start; `doctor` reports an incoherent plan (`mcp.placement`).
+- A new MCP server is added behind the gateway for every CLI by default (`nexgen mcp add`, `--targets` defaults
+  to `all`, `--eager` is the explicit exception; an empty `--targets` is still an error).
+- `nexgen mcp try | trials | promote | drop`: try a server on this machine only, served by the gateway, never
+  written to the Vault manifest or to a CLI configuration, gone by itself after 24 hours (a week at most); `promote`
+  writes it into the manifest, `doctor` reminds you while one runs, the guard tidies the record.
+- `nexgen mcp plan` and `doctor` flag an OAuth-only HTTP server placed behind the gateway: the gateway can only send
+  a bearer token from an environment variable, so such a server lists its tools and fails every call with 401.
+  Measured on Google's hosted Gmail server through the gateway.
+- `nexgen mcp check --direct` measures every directly mounted server (tools, about how many tokens of definitions,
+  how long it takes) and totals what each CLI loads up front.
 
 ## [2.3.11] - 2026-10-04
 

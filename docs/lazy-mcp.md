@@ -36,6 +36,41 @@ What stops the gateway's children: a CLI that goes away closes the gateway's inp
 backends exit with it (tested). A gateway killed outright (the OOM killer, `kill -9`) cannot clean up after
 itself and leaves its backends running until they are stopped by hand.
 
+## Adding a server, and trying one first
+
+`nexgen mcp add` puts a new server **behind the gateway, for every CLI**: that is the default, and the manifest is
+what every machine syncs. `--eager` is the explicit exception, for the few servers that must always be mounted
+(each costs every CLI that loads tools up front its full definition; `nexgen mcp check --direct` prints what).
+
+To look at a server without committing it:
+
+```bash
+nexgen mcp try spike --command npx --args=-y --args=some-mcp@1.2.3 --for 4   # this machine only, 4 hours
+nexgen mcp trials                                                            # what is on trial and how long is left
+nexgen mcp promote spike                                                     # keep it: written into the manifest, syncs
+nexgen mcp drop spike                                                        # or end it now
+```
+
+A trial is kept in this machine's state directory, never in the Vault, so it does not sync; it is served by the
+gateway like any lazy server, so it is never written into a CLI's configuration; and it stops being offered when
+its time is up (24 hours unless told otherwise, a week at most) with nothing to restart. The guard cycle tidies the
+record, and `doctor` reminds you while one is running. It is validated like a manifest entry, credentials included.
+
+## What cannot go behind the gateway
+
+The gateway can authenticate to an HTTP server with a bearer token read from an environment variable
+(`auth.env`) and nothing else. A server that wants OAuth (Google's hosted Gmail and Calendar servers are the
+example) lists its tools without credentials but answers every call with `401`, so its tool list looks healthy
+and it does not work. `nexgen mcp plan` and `doctor` call this out; such a server has to be mounted where the CLI
+handles OAuth itself, or replaced by one that uses a token the engine can hold (`workspace-mcp` reads the
+engine's own Google token store).
+
+## What a server costs
+
+`nexgen mcp check --direct` connects to each directly mounted server and prints its tools and the weight of its
+definitions (about four characters a token), then the total each CLI loads at start. On a CLI that defers tool
+definitions natively that is not what a session pays; on one that does not, it is paid every time.
+
 ## The four tools
 
 | Tool | What it does |

@@ -305,6 +305,22 @@ def check_mcp_content_drift(vault_data: Path, home: Path, engine_root: Path | No
     )
 
 
+def check_mcp_trials() -> CheckOutcome:
+    """Servers on trial here: fine for a day, a leftover if they are still around."""
+    from nexgen_core import mcp_trials
+
+    running = mcp_trials.active()
+    if not running:
+        return CheckOutcome(id="mcp.trials", severity=Severity.OK, message=t("No MCP servers on trial"))
+    names = ", ".join(f"{name} ({mcp_trials.time_left(info)} left)" for name, info in sorted(running.items()))
+    return CheckOutcome(
+        id="mcp.trials",
+        severity=Severity.WARN,
+        message=t("MCP servers on trial on this machine, not synced: {names}", names=names),
+        action=t("Keep one with 'nexgen mcp promote <name>' or end it with 'nexgen mcp drop <name>'; they end by themselves anyway."),
+    )
+
+
 def check_mcp_placement(vault_data: Path) -> CheckOutcome | None:
     """Is every CLI's gateway mounted where servers are routed behind it, and every `exposure` one we know?
 
