@@ -1152,8 +1152,10 @@ MESSAGES: dict[str, str] = {
         "la copia nel tuo Vault è diversa da quella del motore, e quella che gira è la tua copia",
     "declared but not materialized on this machine yet": "dichiarata ma non ancora installata su questa macchina",
     "could not read the installed connectors and skills": "non sono riuscito a leggere i connettori e le skill installati",
-    "{count} more, yours or unchanged core ones: nexgen info --all":
-        "altre {count}, tue o del motore senza modifiche: nexgen info --all",
+    "{count} more (yours, or core ones that follow the engine): nexgen info --all":
+        "altre {count} (tue, o del motore che lo seguono): nexgen info --all",
+    "a frozen copy in your Vault, identical to the engine's today: nexgen skills adopt":
+        "una copia ferma nel tuo Vault, oggi uguale a quella del motore: nexgen skills adopt",
     "outside the manifest (kept, never deleted): {names}": "fuori dal manifest (tenute, mai cancellate): {names}",
     "Newer upstream versions exist for third-party items: {count} (checked {age} ago).":
         "Ci sono versioni più nuove per cose di terzi: {count} (controllato {age} fa).",
@@ -1172,4 +1174,39 @@ MESSAGES: dict[str, str] = {
         "la versione nuova non funziona: ogni versione è tornata com'era e le configurazioni sono state rigenerate",
     "{name}: the gateway does not offer it": "{name}: il gateway non lo offre",
     "{name}: it starts but lists no tools": "{name}: parte ma non mostra nessuno strumento",
+    # --- Le skill del motore: seguire il motore invece di tenere copie ferme ---
+    "differs in {files}; the engine's text has {added} lines yours lacks and yours has {removed} the engine's lacks":
+        "è diversa in {files}; il testo del motore ha {added} righe che la tua non ha, la tua ne ha {removed} che il motore non ha",
+    "Nothing to do: no skill in your Vault is a copy of one the engine ships.":
+        "Niente da fare: nel tuo Vault nessuna skill è una copia di una che il motore porta con sé.",
+    "Skills the engine ships and your Vault keeps its own copy of (the copy runs, so it does not follow engine updates):":
+        "Skill che il motore porta con sé e di cui il tuo Vault tiene una copia (gira la copia, quindi non segue gli aggiornamenti del motore):",
+    "nexgen skills adopt --all  follows the engine for the identical ones; name a skill (with --force) for one that differs.":
+        "nexgen skills adopt --all  fa seguire il motore a quelle identiche; per una diversa nominala e aggiungi --force.",
+    "Name skills or use --all, not both.": "Nomina le skill oppure usa --all, non tutte e due.",
+    "Commit and publish with 'nexgen vault push' so the other machines follow too.":
+        "Salva e pubblica con 'nexgen vault push' così le altre macchine ti seguono.",
+    "identical to the engine's": "uguale a quella del motore",
+    "not a skill the engine ships, or already followed from the engine":
+        "non è una skill del motore, oppure segue già il motore",
+    "would follow the engine (your copy kept in a backup folder)":
+        "seguirebbe il motore (la tua copia resta in una cartella di backup)",
+    "cannot back up the manifest, nothing written": "non riesco a fare il backup del manifest, non ho scritto niente",
+    "the manifest no longer validates ({problems}); put back as it was":
+        "il manifest non è più valido ({problems}); l'ho rimesso com'era",
+    "follows the engine now; your copy is in {where}": "ora segue il motore; la tua copia è in {where}",
+    "could not find a single `origin: vault` line in its manifest entry: edit it by hand":
+        "non trovo una sola riga `origin: vault` nella sua voce del manifest: modificala a mano",
+    "Left alone: look first, then --force if the engine's is the one you want.":
+        "Lasciata stare: guardala prima, poi --force se vuoi quella del motore.",
+    "follows the engine now; its old copy could not be moved away ({error})":
+        "ora segue il motore; non sono riuscito a spostare la vecchia copia ({error})",
+    "identical to the engine's: {names}": "uguali a quelle del motore: {names}",
+    "different from the engine's: {names}": "diverse da quelle del motore: {names}",
+    "Skills the engine ships are kept as copies in the Vault, so engine updates do not reach them ({parts}).":
+        "Alcune skill del motore sono tenute come copie nel Vault, quindi gli aggiornamenti del motore non le raggiungono ({parts}).",
+    "Run 'nexgen skills adopt --all' (identical ones) and look at the others with 'nexgen skills adopt'.":
+        "Lancia 'nexgen skills adopt --all' (per quelle uguali) e guarda le altre con 'nexgen skills adopt'.",
+    "No skill the engine ships is kept as a frozen copy in the Vault":
+        "Nessuna skill del motore è tenuta come copia ferma nel Vault",
 }

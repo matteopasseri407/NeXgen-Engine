@@ -190,6 +190,22 @@ def _env_default(name: str, default: str = "") -> str:
     return default if value is None else value
 
 
+def _deposit_env():
+    """The shared reader of the secrets deposit's materialized file (see nexgen_core.deposit_env)."""
+    scripts = str(Path(__file__).resolve().parents[2] / "scripts")
+    if scripts not in sys.path:
+        sys.path.insert(0, scripts)
+    from nexgen_core import deposit_env
+
+    return deposit_env
+
+
+def _declared_value(name: str) -> str:
+    """A credential a manifest entry declares it needs: the process, then the machine's session, then the deposit."""
+    value = _env_default(name)
+    return value or _deposit_env().read_deposit().get(name, "")
+
+
 def _expand_placeholders(text: str, ctx: dict[str, str]) -> str:
     def repl(match):
         name, default = match.group(1), ""
@@ -355,9 +371,19 @@ def _missing_credentials(srv: dict[str, Any]) -> list[str]:
                 needed.append(match.group(1))
     seen: list[str] = []
     for name in needed:
-        if name not in seen and not _env_default(name):
+        if name not in seen and not _declared_value(name):
             seen.append(name)
     return seen
+
+
+def _expand_env_value(value: str, ctx: dict[str, str]) -> str:
+    """An `env` value of a server entry. A plain `${NAME}` is the credential the entry says it needs: it is looked
+    up everywhere a credential can live. Anything composed (`prefix-${NAME}`) only sees the process and the session."""
+    text = _expand_templates(value)
+    match = _PURE_REFERENCE.match(text.strip())
+    if match and match.group(1) not in ctx:
+        return _declared_value(match.group(1))
+    return _expand_placeholders(text, ctx)
 
 
 def _prepare_entry(name: str, srv: dict[str, Any], ctx: dict[str, str]) -> dict[str, Any] | None:
@@ -390,7 +416,7 @@ def _prepare_entry(name: str, srv: dict[str, Any], ctx: dict[str, str]) -> dict[
         if entry.get("url"):
             entry["url"] = _expand_placeholders(_expand_templates(str(entry["url"])), load_ctx)
         if isinstance(entry.get("env"), dict):
-            entry["env"] = {k: _expand_placeholders(_expand_templates(str(v)), load_ctx) for k, v in entry["env"].items()}
+            entry["env"] = {k: _expand_env_value(str(v), load_ctx) for k, v in entry["env"].items()}
     except Exception as exc:
         # Fail closed per entry: this server is withdrawn from the
         # index with the reason on stderr, instead of spawning literal
@@ -739,7 +765,7 @@ class _ServerHandle:
             auth = self.spec.get("auth") or {}
             auth_env = auth.get("env") if isinstance(auth, dict) else None
             if auth_env:
-                token = _env_default(auth_env)
+                token = _declared_value(auth_env)
                 if not token:
                     return self._error(f"missing credential: {auth_env} is not set in this session's environment")
                 req.add_header("Authorization", f"Bearer {token}")

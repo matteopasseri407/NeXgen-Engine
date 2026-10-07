@@ -24,6 +24,7 @@ if str(SCRIPTS_DIR) not in sys.path:
 
 from nexgen_core.action_notes import ERROR, is_error  # noqa: E402 - sys.path shim for cloned checkout
 from nexgen_core.i18n import t  # noqa: E402
+from nexgen_core.manifest_text import entry_span as _entry_span  # noqa: E402
 from nexgen_core.files import atomic_write_text as _atomic_write  # noqa: E402
 from nexgen_core.paths import (  # noqa: E402
     mcp_manifest,
@@ -154,28 +155,6 @@ def _restore(path: Path, backup: Path) -> bool:
         return True
     except OSError:
         return False
-
-
-def _entry_span(text: str, name: str) -> tuple[int, int] | None:
-    """(start, end) offsets of the `  name:` block, or None.
-
-    Manifest entries are two-space-indented maps with deeper-indented
-    bodies; the block runs until a blank line, a less-indented line, or
-    the next entry. Anything outside the approved carriers' blocks
-    (comments, held entries) is never rewritten.
-    """
-    import re
-
-    match = re.search(rf"^  {re.escape(name)}:\s*\n", text, re.MULTILINE)
-    if not match:
-        return None
-    end = match.end()
-    for line in text[end:].splitlines(keepends=True):
-        if line.strip() == "" or line.startswith("    ") or re.match(r"^  #", line):
-            end += len(line)
-        else:
-            break
-    return match.start(), end
 
 
 def _replace_in_entries(text: str, carriers: list[tuple[str, str | None]],

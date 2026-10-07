@@ -32,11 +32,10 @@ brackets the CLIs it is limited to), the version it is pinned to, and notes unde
 - why a server is mounted nowhere.
 
 For a skill: its origin and pin, whether upstream moved, whether it is declared but not installed here, and, for a core
-skill with a Vault copy, whether the copy differs from the engine's. A differing copy is what runs, so it does not
-follow the engine's updates: either it is yours on purpose (a local addition) or it is an old copy; set the entry's
-`origin: engine` to follow the engine instead.
+skill with a Vault copy, whether the copy differs from the engine's. The copy is what runs, so it does not follow the
+engine's updates: identical today, stale after the next release. `nexgen skills adopt` hands it back (see below).
 
-Skills that are yours, or core and unchanged, are summarized by count; `nexgen info --all` lists them. `nexgen info --json`
+Skills that are simply yours are summarized by count; `nexgen info --all` lists them. `nexgen info --json`
 carries the same data under `extensions`.
 
 ## Updating
@@ -48,3 +47,19 @@ For MCP servers it does one thing more before it keeps the change: it starts eac
 the CLIs would, and checks it lists tools. If one does not work, every pin goes back where it was and the CLIs'
 configurations are regenerated from the old ones; nothing is committed. Behind the gateway, a server that is only
 missing a credential in this session is not counted against the update.
+
+## Skills the engine ships
+
+Older installs copied the engine's starter skills into the Vault and declared the copies `origin: vault`. A copy is
+frozen the day it is made: the next release fixes the skill, the copy keeps the old text, and it is the copy that every
+CLI runs. `origin: engine` links the engine's own folder instead, so `nexgen update` is the only step.
+
+`nexgen skills adopt` lists the copies and says which are identical to the engine's and which differ.
+`nexgen skills adopt --all` switches the identical ones: it changes the entry's `origin` line (nothing else in the
+manifest, comments included), moves the Vault's copy to a backup folder under the machine's state directory, and
+re-links. A copy that differs is left alone, because it may hold something you wrote; look at what differs, then name it
+with `--force` if the engine's text is the one you want. `nexgen doctor` warns while any such copy exists, and
+`doctor --fix` adopts the identical ones. Publish the result with `nexgen vault push` so the other machines follow.
+
+A skill you want to keep your own way stays `origin: vault` and is simply yours: it is not touched and no longer
+flagged once it does not share a name with a skill the engine ships. Rename it to say so.

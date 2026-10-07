@@ -184,8 +184,9 @@ def test_info_names_the_unpinned_server_and_the_drifted_core_skill(machine):
     assert "2 tools hidden" in text
     assert "neither core nor switched on" in text
     assert "drifted" in text and "differs from the engine's" in text
-    # Skills that are yours or unchanged core ones stay out of the way unless asked for.
-    assert "my-own" not in text and "same-as-engine" not in text
+    # A frozen copy is listed either way (it will not follow the engine); skills that are simply yours are not.
+    assert "same-as-engine" in text and "nexgen skills adopt" in text
+    assert "my-own" not in text
     everything = "\n".join(info_mod._extension_lines(_collect(machine), show_all=True))
     assert "my-own" in everything and "same-as-engine" in everything
 

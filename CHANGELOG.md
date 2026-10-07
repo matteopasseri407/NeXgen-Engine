@@ -260,6 +260,19 @@ of any engine release.
   whose pin moved, exactly as the CLIs would, and checks it lists tools; if one does not work, every pin goes back,
   the CLIs' configurations are regenerated from the old ones, and nothing is committed. The pin was already revalidated
   as text and the install checked; this adds "the new version actually runs".
+- `nexgen skills adopt` hands the skills the engine ships back to the engine. Older installs copied them into the
+  Vault as `origin: vault`; the copy is what every CLI runs, so a release's fix never reached it and nothing said so.
+  `adopt --all` switches the copies identical to the engine's (only the entry's `origin` line changes, comments and every
+  other entry stay byte for byte; the old copy moves to a backup folder under the state directory, nothing is deleted),
+  a copy that differs is described and left alone unless named with `--force`. `doctor` reports the frozen copies
+  (`skills.engine_copies`, a warning) and `doctor --fix` adopts the identical ones; `info` lists them.
+- A server's credential is found where the secrets deposit put it. `nexgen-secrets materialize` writes
+  `~/.config/nexgen/secrets.env`, but nothing loads it into a CLI started from a launcher, so a token that was safely
+  stored never reached Vercel, Supabase or GitHub behind the gateway ("not found"). The gateway now reads it for the
+  credentials an entry names (a plain `${NAME}` in `env`, `auth.env`, `require_env`) after the process and
+  `environment.d`, and for nothing else; a file owned by someone else or writable by others is ignored, and so is one
+  with an unterminated quote. One reader (`nexgen_core/deposit_env.py`) serves the gateway and `doctor`, which accepts a
+  deposit token for a server behind the gateway and still wants the real environment for a directly mounted one.
 
 ## [2.3.11] - 2026-10-04
 

@@ -197,7 +197,7 @@ def _extension_lines(ext: dict[str, Any], show_all: bool) -> list[str]:
     out.append("")
 
     out.append(f"  {C_EMERALD}{C_BOLD}{t('SKILLS')}{C_RESET}  {C_SLATE}{len(skills)} · {_mix(extensions.counts(skills))}{C_RESET}")
-    shown = [r for r in skills if show_all or r["provenance"] == "third-party" or r["engine_copy"] == "differs"
+    shown = [r for r in skills if show_all or r["provenance"] == "third-party" or r["engine_copy"] is not None
              or not r["in_library"] or r["update"].get("state") == "stale"]
     if shown:
         width = max(len(r["name"]) for r in shown)
@@ -207,7 +207,7 @@ def _extension_lines(ext: dict[str, Any], show_all: bool) -> list[str]:
                 out.append(f"      {C_YELLOW}↳ {note}{C_RESET}")
     hidden = len(skills) - len(shown)
     if hidden > 0:
-        out.append(f"  {C_DIM}{t('{count} more, yours or unchanged core ones: nexgen info --all', count=hidden)}{C_RESET}")
+        out.append(f"  {C_DIM}{t('{count} more (yours, or core ones that follow the engine): nexgen info --all', count=hidden)}{C_RESET}")
     if ext.get("skills_outside_manifest"):
         out.append(f"  {C_DIM}{t('outside the manifest (kept, never deleted): {names}', names=', '.join(ext['skills_outside_manifest']))}{C_RESET}")
     out.append("")
@@ -253,6 +253,8 @@ def _skill_notes(r: dict[str, Any]) -> list[str]:
         notes.append(t("upstream {new} available (pinned {old})", new=update.get("upstream") or "?", old=update.get("pinned") or "?"))
     if r["engine_copy"] == "differs":
         notes.append(t("your Vault's copy differs from the engine's, and the copy is what runs"))
+    elif r["engine_copy"] == "same":
+        notes.append(t("a frozen copy in your Vault, identical to the engine's today: nexgen skills adopt"))
     if not r["in_library"]:
         notes.append(t("declared but not materialized on this machine yet"))
     return notes

@@ -99,6 +99,13 @@ reason a server that works in a terminal is missing in an app. For the variables
 others) the gateway falls back to the machine's `~/.config/environment.d/*.conf`, so a token provisioned there
 reaches it however the CLI was started.
 
+The secrets deposit has the same gap: `nexgen-secrets materialize` writes `~/.config/nexgen/secrets.env`, which no
+shell or service loads. After the process and `environment.d`, the gateway reads that file for the credentials an entry
+names, and only those: a plain `${NAME}` in `env`, `auth.env` (the bearer token of an HTTP server) and `require_env`.
+A composed value (`prefix-${NAME}`) never sees it. The file is ignored when it is not yours, when others can write it,
+or when a quote in it is left open. A server mounted directly in a CLI is not helped: the CLI itself has to be started
+with the variable, which is one more reason to leave a server behind the gateway unless it must always be there.
+
 ## The four tools
 
 | Tool | What it does |

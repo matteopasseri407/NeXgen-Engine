@@ -5,7 +5,9 @@ import os
 from pathlib import Path
 
 from nexgen_core.config import load_mcp_manifest
+from nexgen_core.deposit_env import read_deposit
 from nexgen_core.i18n import t
+from nexgen_core.mcp_placement import CLIS, DIRECT, place
 from nexgen_core.report import CheckOutcome, Severity
 
 
@@ -117,8 +119,14 @@ def check_tokens_in_env(vault_data: Path) -> CheckOutcome:
         req_env = srv.get("require_env")
         if req_env and not os.environ.get(req_env):
             continue
-        if not os.environ.get(env_name):
-            missing.append(f"{name} (requires {env_name})")
+        if os.environ.get(env_name):
+            continue
+        # Behind the gateway the gateway itself finds the token in the secrets deposit's materialized file, whatever
+        # launched the CLI. A server mounted directly in a CLI needs the real environment: the CLI passes it on.
+        behind_gateway = all(place(srv, cli).kind != DIRECT for cli in CLIS)
+        if behind_gateway and read_deposit().get(env_name):
+            continue
+        missing.append(f"{name} (requires {env_name})")
 
     if missing:
         return CheckOutcome(

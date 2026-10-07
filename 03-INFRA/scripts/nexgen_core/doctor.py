@@ -59,6 +59,7 @@ from nexgen_core.checks.security_checks import (  # noqa: E402 - sys.path shim f
 )
 from nexgen_core.checks.skill_checks import (  # noqa: E402 - sys.path shim for cloned checkout
     check_engine_starter_views,
+    check_skill_engine_copies,
     check_skill_deps,
     check_skill_library_and_index,
     check_skill_library_symlinks,
@@ -212,6 +213,7 @@ class Doctor:
             run("skills.pin_freshness", lambda: check_skills_pin_freshness(vault, home))
             run("skills.out_of_manifest", lambda: check_skills_out_of_manifest(vault, home))
             run("skills.engine_starter_views", lambda: check_engine_starter_views(vault, home))
+            run("skills.engine_copies", lambda: check_skill_engine_copies(vault, home, self.engine_root))
             run("skills.manifest_semantics", lambda: check_skills_manifest_semantics(vault, home))
 
             # 5. Identity checks
