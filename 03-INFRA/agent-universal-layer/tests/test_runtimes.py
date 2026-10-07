@@ -288,35 +288,75 @@ def test_opencode_apply_posture_never_overrides_an_explicit_user_deny(tmp_path: 
     assert {"action": "edit", "resource": "*", "effect": "allow"} in data["permissions"]
 
 
-def test_opencode_install_guardrail_registers_plugin_and_preserves_others(tmp_path: Path):
-    home = tmp_path / "home"
-    config = _write_opencode_config(home)
-    hook_source = tmp_path / "guardrail-catastrophic.mjs"
-    hook_source.write_text("// policy\n", encoding="utf-8")
+def _engine_hooks(tmp_path: Path) -> Path:
     engine_hooks_dir = tmp_path / "engine-hooks"
     engine_hooks_dir.mkdir()
     (engine_hooks_dir / "opencode-guardrail-plugin.mjs").write_text("// adapter\n", encoding="utf-8")
     (engine_hooks_dir / "nexgen-guardrail-core.mjs").write_text("// core\n", encoding="utf-8")
+    return engine_hooks_dir
+
+
+def test_opencode_install_guardrail_deploys_a_plugin_directory_and_registers_nothing(tmp_path: Path):
+    """OpenCode 2.0.24 loads every directory under `plugins/` by itself and refuses a plugin registered as a file."""
+    home = tmp_path / "home"
+    config = _write_opencode_config(home)
+    before = json.loads(config.read_text(encoding="utf-8"))
+    hook_source = tmp_path / "guardrail-catastrophic.mjs"
+    hook_source.write_text("// policy\n", encoding="utf-8")
+    engine_hooks_dir = _engine_hooks(tmp_path)
 
     rt = OpenCodeRuntime()
     action = rt.install_guardrail(home, hook_source, engine_hooks_dir)
-    assert action is not None
+    assert action is None or "plugin" in action
 
     data = json.loads(config.read_text(encoding="utf-8"))
-    assert "plugin" not in data  # legacy key migrated, never rewritten
-    assert "some-other-plugin" in data["plugins"]
-    assert any("opencode-guardrail-plugin.mjs" in p for p in data["plugins"] if isinstance(p, str))
+    registered = [p for key in ("plugin", "plugins") for p in data.get(key, []) if isinstance(p, str)]
+    assert not any("guardrail" in p for p in registered), "nothing is registered by path: that is what OpenCode refused"
+    assert data.get("plugin") == before.get("plugin"), "the person's own plugins are left exactly as they were"
 
-    plugin_dir = config.parent
-    assert (plugin_dir / "opencode-guardrail-plugin.mjs").read_text(encoding="utf-8") == "// adapter\n"
-    body_dst = plugin_dir / "nexgen-guardrail-hooks" / "guardrail-catastrophic.mjs"
+    plugin_dir = config.parent / "plugins" / "nexgen-guardrail"
+    assert (plugin_dir / "index.mjs").read_text(encoding="utf-8") == "// adapter\n"
+    assert (plugin_dir / "nexgen-guardrail-core.mjs").read_text(encoding="utf-8") == "// core\n"
+    body_dst = plugin_dir / "hooks" / "guardrail-catastrophic.mjs"
     assert body_dst.read_text(encoding="utf-8") == "// policy\n"
     sidecar = json.loads((plugin_dir / "nexgen-guardrail.config.json").read_text(encoding="utf-8"))
     assert sidecar["hooks"][0]["file"] == str(body_dst)
+    assert rt.guardrail_sidecar(home) == plugin_dir / "nexgen-guardrail.config.json"
 
     # Idempotenza
-    again = rt.install_guardrail(home, hook_source, engine_hooks_dir)
-    assert again is None
+    assert rt.install_guardrail(home, hook_source, engine_hooks_dir) is None
+
+
+def test_opencode_install_guardrail_takes_back_what_an_earlier_engine_registered_by_path(tmp_path: Path):
+    home = tmp_path / "home"
+    config = _write_opencode_config(home)
+    config_dir = config.parent
+    data = json.loads(config.read_text(encoding="utf-8"))
+    data["plugins"] = [
+        (config_dir / "opencode-guardrail-plugin.mjs").as_uri(),
+        (config_dir / "nexgen-guardrail-plugin.mjs").as_uri(),
+        "keep-me",
+        (config_dir / "nexgen-event-sink.mjs").as_uri(),
+    ]
+    config.write_text(json.dumps(data), encoding="utf-8")
+    for name in ("opencode-guardrail-plugin.mjs", "nexgen-guardrail-plugin.mjs", "nexgen-guardrail-core.mjs", "nexgen-guardrail.config.json"):
+        (config_dir / name).write_text("old", encoding="utf-8")
+    (config_dir / "nexgen-guardrail-hooks").mkdir()
+    (config_dir / "nexgen-guardrail-hooks" / "body.mjs").write_text("old", encoding="utf-8")
+    (config_dir / "mine.mjs").write_text("the person's own", encoding="utf-8")
+    hook_source = tmp_path / "guardrail-catastrophic.mjs"
+    hook_source.write_text("// policy\n", encoding="utf-8")
+
+    action = OpenCodeRuntime().install_guardrail(home, hook_source, _engine_hooks(tmp_path))
+
+    assert action is not None and "never loaded" in action
+    plugins = json.loads(config.read_text(encoding="utf-8"))["plugins"]
+    assert plugins == ["keep-me", (config_dir / "nexgen-event-sink.mjs").as_uri()]
+    for name in ("opencode-guardrail-plugin.mjs", "nexgen-guardrail-plugin.mjs", "nexgen-guardrail-core.mjs", "nexgen-guardrail.config.json"):
+        assert not (config_dir / name).exists()
+    assert not (config_dir / "nexgen-guardrail-hooks").exists()
+    assert (config_dir / "mine.mjs").read_text(encoding="utf-8") == "the person's own"
+    assert (config_dir / "plugins" / "nexgen-guardrail" / "index.mjs").is_file()
 
 
 def test_opencode_is_installed_regression_config_written_by_own_renderer(tmp_path: Path):

@@ -12,6 +12,20 @@ of any engine release.
 
 ### Security
 
+- The OpenCode guardrail works again, on OpenCode 2.0.24. It was installed, registered and never consulted: OpenCode now
+  refuses a plugin registered as a file ("configured plugin path must be a directory"), and it no longer calls the hook the
+  adapter used (`permission.ask`), so under the bypass posture (`shell: allow`) no shell command on OpenCode was checked
+  against the catastrophic-command policy. `nexgen doctor` reported it as "never consulted" and it was read as "nobody ran a
+  command yet". The plugin is now a directory OpenCode loads by itself (`<config>/plugins/nexgen-guardrail/`, nothing
+  registered in the config) built on the V2 contract: `shell.hook("create.before")` vetoes a denied command whatever the
+  rules say, `permission.hook("evaluate")` answers the request. Checked against the real binary: a force-push is refused with
+  the policy's own reason and recorded as consulted, a harmless command runs without a prompt. Found while running OpenCode
+  for the first time in the test suite's history: a test now starts the real binary in an isolated home (skipped where there
+  is none). A second defect only the real binary showed: inside OpenCode (a compiled bun program) `process.execPath` is
+  OpenCode itself, so the shared core launched the policy as a second OpenCode and every command failed closed; the core now
+  runs the policy with `node`. The first run of this version takes back the old file registration and the files an earlier
+  engine deployed (by name, nothing else). The OpenCode event sink for the voice cockpit has the same old shape and is not
+  loaded by 2.0.24 either; it is not fixed here.
 - `nexgen update` now verifies the release **tag** against signers pinned in
   the copy that is already installed (`03-INFRA/agent-universal-layer/trust/`),
   never against the release being installed. Before, it read the signature of

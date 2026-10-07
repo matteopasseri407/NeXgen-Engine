@@ -55,9 +55,18 @@ export function closed(reason, strict) {
   return { decision: strict ? "deny" : "ask", reason: `nexgen-guardrail: ${reason}` };
 }
 
+// The body is a Node script. Under Node, `process.execPath` is Node; under OpenCode, which is a
+// compiled bun binary, it is OpenCode itself, and spawning it with a script path starts a second
+// OpenCode that fails trying to enter the script as a folder. So: the running Node when this is
+// Node, otherwise the `node` on PATH (and if there is none, the spawn fails and the guardrail
+// answers closed, which is visible).
+export function nodeBinary(execPath = process.execPath) {
+  return /(^|[\\/])node(\.exe)?$/i.test(execPath) ? execPath : "node";
+}
+
 export function consultGuardrailBody(hook, payloadText, strict) {
   try {
-    const result = spawnSync(process.execPath, [hook.file], {
+    const result = spawnSync(nodeBinary(), [hook.file], {
       input: payloadText,
       encoding: "utf8",
       timeout: Math.max(1, Number(hook.timeout) || 5) * 1000,

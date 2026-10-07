@@ -76,7 +76,7 @@ Engine core: single Python package, native Linux+Windows.
 - `03-INFRA/scripts/nexgen_core/runtimes/base.py` — `GuardrailError` (class, 40), `Runtime` (class, 53)
 - `03-INFRA/scripts/nexgen_core/runtimes/claude.py` — `ClaudeRuntime` (class, 29)
 - `03-INFRA/scripts/nexgen_core/runtimes/codex.py` — `_root_table_end` (function, 30), `_set_root_string` (function, 39), `_profile_shadow_keys` (function, 61), `CodexRuntime` (class, 86)
-- `03-INFRA/scripts/nexgen_core/runtimes/opencode.py` — `OpenCodeRuntime` (class, 77)
+- `03-INFRA/scripts/nexgen_core/runtimes/opencode.py` — `OpenCodeRuntime` (class, 83)
 - `03-INFRA/scripts/nexgen_core/scheduler.py` — `_systemd_env_line` (function, 82), `_scheduler_path` (function, 89), `_guard_shim` (function, 115), `_heartbeat_shim` (function, 126), `_systemd_service_content` (function, 132), `_systemd_heartbeat_content` (function, 152), `_run_external` (function, 171), `_atomic_write_text` (function, 179), `_write_if_different` (function, 185), `_resolve_cmd` (function, 201), `host_mutations_disabled` (function, 210), `install_systemd_units` (function, 219), `_scheduled_task_invokes_wrapper` (function, 274), `install_scheduled_task` (function, 281), `install_scheduler` (function, 399)
 - `03-INFRA/scripts/nexgen_core/shims.py` — `ensure_executable` (function, 111), `_render` (function, 117), `_is_stale_windows_ps1_shim` (function, 128), `install_shims` (function, 147)
 - `03-INFRA/scripts/nexgen_core/skill_sources.py` — `SkillEntry` (class, 35), `is_safe_skill_name` (function, 74), `same_tree_content` (function, 79), `next_backup_path` (function, 93), `make_link_or_copy` (function, 104), `clone_url` (function, 141), `github_skill_source` (function, 158), `SkillFetcher` (class, 170)

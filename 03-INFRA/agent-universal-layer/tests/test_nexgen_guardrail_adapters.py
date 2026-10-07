@@ -239,67 +239,114 @@ def test_antigravity_missing_core_still_answers_deny(tmp_path):
 
 
 # ------------------------------------------------------------------ OpenCode
+#
+# The plugin is the V2 shape OpenCode 2.0.24 accepts: a default export `{ id, setup(ctx) }` (a bare function,
+# the V1 shape, is refused at load), with the two hooks `ctx.shell.hook("create.before")` and
+# `ctx.permission.hook("evaluate")`. Both facts, and the event shapes below, were observed live with the real binary.
 
 
-def opencode_status(tmp_path: Path, body: str | None, request: dict, **sidecar) -> str | None:
-    """Loads the plugin the way OpenCode does, fires permission.ask, returns what it set (None: untouched)."""
+def opencode_fire(tmp_path: Path, body: str | None, command: str = "ls", effect: str = "ask", **sidecar) -> dict:
+    """Loads the plugin the way OpenCode V2 does, fires both hooks for one shell command, returns what they did."""
     adapter = deploy(tmp_path, "opencode-guardrail-plugin.mjs", body, **sidecar)
     driver = tmp_path / "driver.mjs"
     driver.write_text(
-        f'import plugin from {json.dumps(adapter.as_uri())};\n'
-        "const hooks = await plugin({ directory: '/work' });\n"
-        f"const input = {json.dumps(request)};\n"
-        "const output = { status: 'ask' };\n"
-        "await hooks['permission.ask'](input, output);\n"
-        "console.log(JSON.stringify(output.status));\n", encoding="utf-8")
+        f"import plugin from {json.dumps(adapter.as_uri())};\n"
+        "const hooks = {};\n"
+        "const ctx = {\n"
+        "  shell: { hook: async (name, fn) => { hooks['shell.' + name] = fn; } },\n"
+        "  permission: { hook: async (name, fn) => { hooks['permission.' + name] = fn; } },\n"
+        "};\n"
+        "await plugin.setup(ctx);\n"
+        "let shellError = null;\n"
+        f"try {{ await hooks['shell.create.before']({{ command: {json.dumps(command)}, cwd: '/work', timeout: 1, shell: '/bin/bash', env: {{}} }}); }}\n"
+        "catch (error) { shellError = String(error.message); }\n"
+        f"const event = {{ action: 'shell', resources: [{json.dumps(command)}], effect: {json.dumps(effect)}, sessionID: 's1', metadata: {{}} }};\n"
+        "await hooks['permission.evaluate'](event);\n"
+        "console.log(JSON.stringify({ hooks: Object.keys(hooks).sort(), shellError, effect: event.effect, message: event.message ?? null }));\n",
+        encoding="utf-8")
     done = subprocess.run([NODE, str(driver)], capture_output=True, text=True, timeout=60, check=False)
     assert done.returncode == 0, done.stderr
     return json.loads(done.stdout)
 
 
-V1_REQUEST = {"type": "bash", "metadata": {"command": "ls"}, "sessionID": "s1"}
-V2_REQUEST = {"type": "shell", "metadata": {"command": "ls"}, "sessionID": "s1"}
+def test_opencode_plugin_is_a_v2_definition_with_both_hooks(tmp_path):
+    fired = opencode_fire(tmp_path, "allow.mjs")
+    assert fired["hooks"] == ["permission.evaluate", "shell.create.before"]
+    again = tmp_path / "again"
+    again.mkdir()
+    adapter = deploy(again, "opencode-guardrail-plugin.mjs", "allow.mjs")
+    probe = tmp_path / "shape.mjs"
+    probe.write_text(
+        f"import plugin from {json.dumps(adapter.as_uri())};\n"
+        "console.log(JSON.stringify({ type: typeof plugin, id: plugin.id, setup: typeof plugin.setup }));\n", encoding="utf-8")
+    shape = json.loads(subprocess.run([NODE, str(probe)], capture_output=True, text=True, timeout=60, check=True).stdout)
+    assert shape == {"type": "object", "id": "nexgen-guardrail", "setup": "function"}, "a bare function is the V1 shape and is not loaded"
 
 
-@pytest.mark.parametrize("request_", [V1_REQUEST, V2_REQUEST])
-def test_opencode_plugin_recognises_a_shell_request_under_either_name(tmp_path, request_):
-    """It filtered on type === "bash" while the V2 action is called "shell"."""
-    assert opencode_status(tmp_path, "deny.mjs", request_) == "deny"
+@pytest.mark.parametrize("effect", ["ask", "allow"])
+def test_opencode_a_denied_command_is_stopped_under_any_posture(tmp_path, effect):
+    fired = opencode_fire(tmp_path, "deny.mjs", effect=effect)
+    assert fired["shellError"] and "rm -rf is not allowed" in fired["shellError"], "the veto does not depend on the rules"
+    assert fired["effect"] == "deny" and "rm -rf is not allowed" in fired["message"]
 
 
-def test_opencode_plugin_ignores_requests_that_are_not_commands(tmp_path):
-    assert opencode_status(tmp_path, "deny.mjs", {"type": "read", "metadata": {"filePath": "/x"}}) == "ask"  # untouched
+def test_opencode_plugin_ignores_what_is_not_a_shell_command(tmp_path):
+    adapter = deploy(tmp_path, "opencode-guardrail-plugin.mjs", "deny.mjs")
+    driver = tmp_path / "driver.mjs"
+    driver.write_text(
+        f"import plugin from {json.dumps(adapter.as_uri())};\n"
+        "const hooks = {};\n"
+        "await plugin.setup({ shell: { hook: async (n, f) => { hooks[n] = f; } }, permission: { hook: async (n, f) => { hooks[n] = f; } } });\n"
+        "const read = { action: 'read', resources: ['/x'], effect: 'ask' };\n"
+        "await hooks['evaluate'](read);\n"
+        "let thrown = false; try { await hooks['create.before']({ cwd: '/w' }); } catch { thrown = true; }\n"
+        "console.log(JSON.stringify({ effect: read.effect, thrown }));\n", encoding="utf-8")
+    done = json.loads(subprocess.run([NODE, str(driver)], capture_output=True, text=True, timeout=60, check=True).stdout)
+    assert done == {"effect": "ask", "thrown": False}
 
 
 def test_opencode_allow_answers_only_when_the_engine_opted_the_posture_in(tmp_path):
     """Under an `ask` posture the person asked to be asked: an allow from the body must not remove the prompt."""
-    assert opencode_status(tmp_path, "allow.mjs", V2_REQUEST) == "ask"
+    assert opencode_fire(tmp_path, "allow.mjs")["effect"] == "ask"
     second = tmp_path / "mediated"
     second.mkdir()
-    assert opencode_status(second, "allow.mjs", V2_REQUEST, autoAllow=True) == "allow"
+    fired = opencode_fire(second, "allow.mjs", autoAllow=True)
+    assert fired["effect"] == "allow" and fired["shellError"] is None
+    third = tmp_path / "already-allowed"
+    third.mkdir()
+    assert opencode_fire(third, "allow.mjs", effect="allow")["effect"] == "allow"
 
 
 def test_opencode_never_auto_allows_what_the_body_denies_or_questions(tmp_path):
-    for i, (body, expected) in enumerate((("deny.mjs", "deny"), ("ask.mjs", "ask"), ("crash.mjs", "ask"))):
+    for i, (body, effect) in enumerate((("deny.mjs", "deny"), ("ask.mjs", "ask"), ("crash.mjs", "ask"))):
         sub = tmp_path / str(i)
         sub.mkdir()
-        assert opencode_status(sub, body, V2_REQUEST, autoAllow=True) == expected
+        fired = opencode_fire(sub, body, autoAllow=True)
+        assert fired["effect"] == effect
+        # `ask` is the permission system's business: only a deny stops the command at creation.
+        assert (fired["shellError"] is not None) == (effect == "deny")
+
+
+def test_opencode_a_question_never_loosens_an_allow(tmp_path):
+    assert opencode_fire(tmp_path, "ask.mjs", effect="allow")["effect"] == "ask"
 
 
 def test_opencode_broken_guardrail_denies_where_it_is_the_only_brake(tmp_path):
-    assert opencode_status(tmp_path, "crash.mjs", V2_REQUEST, autoAllow=True, strict=True) == "deny"
+    fired = opencode_fire(tmp_path, "crash.mjs", autoAllow=True, strict=True)
+    assert fired["effect"] == "deny" and fired["shellError"]
 
 
 def test_opencode_corrupt_sidecar_is_not_read_as_no_guardrail(tmp_path):
-    adapter = deploy(tmp_path, "opencode-guardrail-plugin.mjs", "allow.mjs")
+    adapter = deploy(tmp_path, "opencode-guardrail-plugin.mjs", "allow.mjs", autoAllow=True)
     (adapter.parent / "nexgen-guardrail.config.json").write_text("{broken", encoding="utf-8")
-    driver = tmp_path / "driver.mjs"
+    driver = tmp_path / "driver2.mjs"
     driver.write_text(
-        f'import plugin from {json.dumps(adapter.as_uri())};\n'
-        "const hooks = await plugin({ directory: '/w' });\n"
-        "const output = { status: 'ask' };\n"
-        f"await hooks['permission.ask']({json.dumps(V2_REQUEST)}, output);\n"
-        "console.log(JSON.stringify(output.status));\n", encoding="utf-8")
+        f"import plugin from {json.dumps(adapter.as_uri())};\n"
+        "const hooks = {};\n"
+        "await plugin.setup({ shell: { hook: async (n, f) => { hooks[n] = f; } }, permission: { hook: async (n, f) => { hooks[n] = f; } } });\n"
+        "const event = { action: 'shell', resources: ['ls'], effect: 'ask' };\n"
+        "await hooks['evaluate'](event);\n"
+        "console.log(JSON.stringify(event.effect));\n", encoding="utf-8")
     done = subprocess.run([NODE, str(driver)], capture_output=True, text=True, timeout=60, check=False)
     assert json.loads(done.stdout) == "ask"  # not "allow", and not left to chance
 
@@ -307,12 +354,43 @@ def test_opencode_corrupt_sidecar_is_not_read_as_no_guardrail(tmp_path):
 def test_opencode_missing_core_fails_closed_per_command_and_the_plugin_still_loads(tmp_path):
     adapter = deploy(tmp_path, "opencode-guardrail-plugin.mjs", "allow.mjs", autoAllow=True)
     (adapter.parent / "nexgen-guardrail-core.mjs").unlink()
-    driver = tmp_path / "driver.mjs"
+    driver = tmp_path / "driver3.mjs"
     driver.write_text(
-        f'import plugin from {json.dumps(adapter.as_uri())};\n'
-        "const hooks = await plugin({ directory: '/w' });\n"
-        "const output = { status: 'ask' };\n"
-        f"await hooks['permission.ask']({json.dumps(V2_REQUEST)}, output);\n"
-        "console.log(JSON.stringify(output.status));\n", encoding="utf-8")
+        f"import plugin from {json.dumps(adapter.as_uri())};\n"
+        "const hooks = {};\n"
+        "await plugin.setup({ shell: { hook: async (n, f) => { hooks[n] = f; } }, permission: { hook: async (n, f) => { hooks[n] = f; } } });\n"
+        "const event = { action: 'shell', resources: ['ls'], effect: 'ask' };\n"
+        "await hooks['evaluate'](event);\n"
+        "console.log(JSON.stringify(event.effect));\n", encoding="utf-8")
     done = subprocess.run([NODE, str(driver)], capture_output=True, text=True, timeout=60, check=False)
     assert done.returncode == 0 and json.loads(done.stdout) == "ask"
+
+
+def test_opencode_every_command_is_recorded_as_a_consultation(tmp_path):
+    """The doctor reads this record to tell a guardrail that works from one that is installed and never called."""
+    audit = tmp_path / "audit" / "opencode.json"
+    opencode_fire(tmp_path, "allow.mjs", auditFile=str(audit))
+    first = json.loads(audit.read_text(encoding="utf-8"))
+    assert first["cli"] == "opencode" and first["count"] == 1 and first["last"] == "allow"
+    second = tmp_path / "second"
+    second.mkdir()
+    opencode_fire(second, "deny.mjs", auditFile=str(audit))
+    assert json.loads(audit.read_text(encoding="utf-8"))["count"] == 2
+
+
+def test_the_body_is_run_by_node_even_when_the_host_is_not_node(tmp_path):
+    """OpenCode is a compiled bun binary: there `process.execPath` is OpenCode, and spawning it with the body's path
+    started a second OpenCode that died on "not a directory". Found only by running the real binary."""
+    shutil.copy2(HOOKS / "nexgen-guardrail-core.mjs", tmp_path / "core.mjs")
+    driver = tmp_path / "which.mjs"
+    driver.write_text(
+        "import { nodeBinary } from './core.mjs';\n"
+        "console.log(JSON.stringify([\n"
+        "  nodeBinary('/srv/tools/.opencode/bin/opencode'),\n"
+        "  nodeBinary('/usr/bin/node'),\n"
+        "  nodeBinary('C:\\\\Program Files\\\\nodejs\\\\node.exe'),\n"
+        "  nodeBinary('/opt/nodejs/bin/nodejs-wrapper'),\n"
+        "  nodeBinary('/srv/tools/.bun/bin/bun'),\n"
+        "]));\n", encoding="utf-8")
+    out = json.loads(subprocess.run([NODE, str(driver)], capture_output=True, text=True, timeout=60, check=True).stdout)
+    assert out == ["node", "/usr/bin/node", "C:\\Program Files\\nodejs\\node.exe", "node", "node"]
