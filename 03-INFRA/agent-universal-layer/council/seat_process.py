@@ -148,8 +148,9 @@ def _effort_forwarding(seat: dict) -> tuple[list[str], str]:
     Per-CLI semantics:
     - claude: --effort <v> verbatim.
     - codex: -c model_reasoning_effort=<v> verbatim.
-    - opencode: --variant <v> verbatim (provider-specific, no fixed enum to
-      validate against here -- see the long comment in _build_seat_command).
+    - opencode: no flag. OpenCode 2 dropped --variant (the command is refused with
+      its usage text); the variant is written into the model, provider/model#<v>, by
+      _opencode_model_argument. Provider-specific, no fixed enum to validate against.
     - agy: --effort <v> verbatim (low|medium|high|xhigh|max, per `agy --help`).
     - ollama: --think only documents low/medium/high (`ollama run --help`).
       xhigh/max (valid claude/codex tiers) are downmapped to --think high
@@ -168,7 +169,7 @@ def _effort_forwarding(seat: dict) -> tuple[list[str], str]:
     if cli == "codex":
         return ["-c", f'model_reasoning_effort="{effort}"'], label
     if cli == "opencode":
-        return ["--variant", str(effort)], label
+        return [], label
     if cli == "agy":
         if effort in ("low", "medium", "high", "xhigh", "max"):
             return ["--effort", str(effort)], label
@@ -180,6 +181,20 @@ def _effort_forwarding(seat: dict) -> tuple[list[str], str]:
             return ["--think", "high"], f"{label} (mapped to high for ollama)"
         return [], f"{label} (not applied: value not supported by ollama)"
     return [], label
+
+
+def _opencode_model_argument(seat: dict) -> str:
+    """The model as OpenCode 2 wants it with a reasoning effort: ``provider/model#variant``.
+
+    Its `run --help` says "Model to use in the format provider/model#variant", and the real binary
+    accepts that form while refusing the old ``--variant`` flag. A model that already names a
+    variant keeps it: two would be a different request than the seat declared.
+    """
+    model = str(seat["model"])
+    effort = seat.get("reasoning_effort")
+    if not effort or effort == "none" or "#" in model:
+        return model
+    return f"{model}#{effort}"
 
 
 def _effort_label(seat: dict) -> str:
@@ -512,20 +527,17 @@ def _build_seat_command(seat: dict, prompt: str, session_dir: Path) -> SeatInvoc
     model = seat["model"]
     if cli == "opencode":
         input_file = _write_transport_file(session_dir, prompt)
+        # --standalone: a private server. Without it OpenCode 2 `run` talks to the background service,
+        # where the empty config directory below is not the one in force and the person's own
+        # OpenCode (its servers, its credentials) is what answers.
         argv = [
-            "opencode", "run", OPENCODE_ATTACHED_PROMPT,
-            "-m", model, "--format", "json", "--file", str(input_file),
+            "opencode", "run", OPENCODE_ATTACHED_PROMPT, "--standalone",
+            "-m", _opencode_model_argument(seat), "--format", "json", "--file", str(input_file),
         ]
-        # --variant is opencode's real reasoning-effort control (verified via
-        # `opencode run --help`: "model variant (provider-specific reasoning
-        # effort, e.g., high, max, minimal)"), same concept as claude's
-        # --effort above. Forwarded as-is: unlike ollama's --think, opencode
-        # documents this as provider-specific with no fixed enum this script
-        # could validate against, so an unrecognized value is the target
-        # provider's problem to reject, not something to filter here. See
-        # _effort_forwarding: single source shared with _effort_label.
-        extra_argv, _label = _effort_forwarding(seat)
-        argv.extend(extra_argv)
+        # The reasoning effort travels inside the model name (provider/model#variant): OpenCode 2 has no
+        # --variant flag. Provider-specific with no fixed enum, so an unrecognized value is the target
+        # provider's problem to reject, not something to filter here. See _effort_forwarding: the label
+        # shown to the person comes from the same place.
         env, scratch = _isolated_seat_env(cli, session_dir)
         return SeatInvocation(
             argv,

@@ -47,8 +47,13 @@ def test_the_flags_come_from_the_command_a_seat_really_runs(cli):
     flags = cli_contract.flags_passed(cli)
     assert flags
     assert all(flag.startswith("-") for flag in flags)
-    # the effort flag is part of what a seat is started with, so it is part of the contract
-    assert any(flag in flags for flag in ("--effort", "-c", "--variant", "--think"))
+    if cli == "opencode":
+        # OpenCode 2 has no effort flag (the effort rides in the model name); what its contract must
+        # hold is the mode that keeps the seat off the person's own OpenCode
+        assert "--standalone" in flags and "--variant" not in flags
+    else:
+        # the effort flag is part of what a seat is started with, so it is part of the contract
+        assert any(flag in flags for flag in ("--effort", "-c", "--think"))
 
 
 def test_reading_the_flags_leaves_the_codex_credentials_alone(tmp_path, monkeypatch):

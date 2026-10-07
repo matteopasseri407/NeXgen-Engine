@@ -54,6 +54,11 @@ of any engine release.
 
 ### Fixed
 
+- A Council seat on OpenCode 2 works again. OpenCode 2 has no `--variant` flag, so every opencode seat with a reasoning
+  effort was refused with the command's usage text, and without `--standalone` `run` talks to the background service
+  instead of a private server, which leaves the seat's empty config directory (its isolation from the person's servers
+  and credentials) out of force. The seat now runs `--standalone` and writes the effort into the model name
+  (`provider/model#variant`), the form the real binary accepts. Found by `nexgen council contract` on its first run.
 - Every helper process the lazy-mcp gateway can reach now declares its stdin. The gateway's own stdin is the protocol
   stream, and a helper that inherits it can block behind a pending read (the Windows hang fixed in 2.4.0). Four launches
   still inherited it (the upstream check, the skill clone and installer, the Windows process-tree kill), and a test now
