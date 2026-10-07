@@ -111,8 +111,6 @@ def check_gateway(renderer, cli: str, *, timeout: float = 90.0) -> CliResult:
     # Trials are served too (this machine only), so they are part of what the gateway must offer.
     manifest_servers = mcp_trials.overlay(load_mcp_manifest(renderer.manifest_path).get("servers", {}))
     expected = gateway_servers_for(manifest_servers, cli)
-    # Servers whose environment gate is closed in this shell are withheld by the gateway too.
-    expected = {n for n in expected if not (manifest_servers[n].get("require_env") and not os.environ.get(manifest_servers[n]["require_env"]))}
     if entry is None:
         if expected:
             result.ok = False

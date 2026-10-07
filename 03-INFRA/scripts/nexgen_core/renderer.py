@@ -179,10 +179,34 @@ class McpRenderer:
             if name == GATEWAY:
                 # The gateway serves exactly what the plan routes behind it for THIS CLI, so it has to know which.
                 entry["env"] = {**(entry.get("env") if isinstance(entry.get("env"), dict) else {}), GATEWAY_CLI_ENV: cli_target}
+            elif entry.get("tools_deny") or entry.get("tools_allow"):
+                entry = self._trimmed_entry(name, entry, raw_servers.get(GATEWAY), cli_target)
 
             resolved[name] = entry
 
         return resolved
+
+    def _trimmed_entry(self, name: str, entry: dict[str, Any], gateway: dict[str, Any] | None, cli_target: str) -> dict[str, Any]:
+        """A directly mounted server that hides some of its tools is mounted through `mcp-trim.py`.
+
+        Same filter for every CLI (the alternative is four dialects, one of which does not exist), same
+        tool names, so permissions written against them still mean the same thing.
+        """
+        interpreter = (gateway or {}).get("command") or "python3"
+        script = self.engine_root / "agent-universal-layer" / "mcp" / "mcp-trim.py"
+        trimmed: dict[str, Any] = {
+            "transport": "stdio",
+            "command": self._normalize_windows_shim(str(interpreter)) if IS_WINDOWS else str(interpreter),
+            "args": [str(script), name],
+            "env": {"AGENT_VAULT_DATA": str(self.vault_data), GATEWAY_CLI_ENV: cli_target},
+            "tools_deny": entry.get("tools_deny") or [],
+        }
+        for key in ("timeouts", "targets", "tier", "exposure", "enabled"):
+            if key in entry:
+                trimmed[key] = entry[key]
+        if entry.get("tools_allow"):
+            trimmed["tools_allow"] = entry["tools_allow"]
+        return trimmed
 
     def unmounted_server_names(self, mounted: dict, cli_target: str) -> set[str]:
         """Names to remove, shared by JSON and TOML dialects.

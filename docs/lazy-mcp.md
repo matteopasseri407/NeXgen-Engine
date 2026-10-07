@@ -71,6 +71,34 @@ engine's own Google token store).
 definitions (about four characters a token), then the total each CLI loads at start. On a CLI that defers tool
 definitions natively that is not what a session pays; on one that does not, it is paid every time.
 
+## Hiding tools you never use
+
+A manifest entry can name tools to hide (`tools_deny`) or the only ones to keep (`tools_allow`):
+
+```yaml
+servers:
+  n8n-mcp:
+    exposure: eager
+    tools_deny: [add_data_table_column, delete_data_table_column, rename_data_table]
+```
+
+The rule is the same on every CLI. Behind the gateway, the gateway filters. A server mounted directly in a CLI is
+started through `mcp-trim.py` instead, a stdio filter between the CLI and the server: it forwards everything, drops
+the hidden tools from `tools/list` and answers a call to one with an error (`-32602`). The model never sees a
+hidden tool's definition, so it never pays for it, and cannot call it by guessing the name. `nexgen mcp check
+--direct` measures the result.
+
+## When a server is not available
+
+The gateway tells you why. A server whose entry declares `${VAR}` and finds it empty is reported as "needs VAR in
+this session's environment"; an HTTP server declared with a bearer variable that is empty is reported as a missing
+credential. Both show up in `lazy_list` (`unavailable`) and in the error of a call, not as "tool not found".
+
+A CLI launched from a desktop launcher or an IDE does not inherit the exports of your shell, which is the usual
+reason a server that works in a terminal is missing in an app. For the variables a server's entry declares (and no
+others) the gateway falls back to the machine's `~/.config/environment.d/*.conf`, so a token provisioned there
+reaches it however the CLI was started.
+
 ## The four tools
 
 | Tool | What it does |

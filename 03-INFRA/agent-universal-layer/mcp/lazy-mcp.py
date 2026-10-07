@@ -141,8 +141,53 @@ def _matching_reply(raw: bytes, rid: int) -> dict[str, Any] | None:
     return reply
 
 
+_MACHINE_ENV_CACHE: tuple[tuple, dict[str, str]] = ((), {})
+
+
+def _machine_environment() -> dict[str, str]:
+    """The variables this user's machine declares for every session: `~/.config/environment.d/*.conf`.
+
+    A CLI inherits them only if it was started from the graphical session; started over SSH, from a service or
+    from some other launcher it does not, and then a server that needs one of its tokens silently went missing
+    ("Vercel is not there"). The gateway resolves the variables a manifest entry *declares* from here when the
+    process does not have them, so what a server can reach no longer depends on how the CLI happened to be
+    launched. POSIX only: Windows keeps user variables in the registry, which every process inherits.
+    """
+    global _MACHINE_ENV_CACHE
+    if os.name == "nt":
+        return {}
+    base = os.environ.get("XDG_CONFIG_HOME") or str(Path.home() / ".config")
+    files = sorted(Path(base, "environment.d").glob("*.conf")) if Path(base, "environment.d").is_dir() else []
+    try:
+        signature = tuple((str(f), f.stat().st_mtime_ns) for f in files)
+    except OSError:
+        return {}
+    if signature == _MACHINE_ENV_CACHE[0]:
+        return _MACHINE_ENV_CACHE[1]
+    values: dict[str, str] = {}
+    for path in files:
+        try:
+            lines = path.read_text(encoding="utf-8").splitlines()
+        except OSError:
+            continue
+        for raw in lines:
+            line = raw.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, _, value = line.partition("=")
+            value = value.strip()
+            if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
+                value = value[1:-1]
+            values[key.strip()] = value
+    _MACHINE_ENV_CACHE = (signature, values)
+    return values
+
+
 def _env_default(name: str, default: str = "") -> str:
-    return os.environ.get(name, default)
+    value = os.environ.get(name)
+    if value is None:
+        value = _machine_environment().get(name)
+    return default if value is None else value
 
 
 def _expand_placeholders(text: str, ctx: dict[str, str]) -> str:
@@ -282,56 +327,99 @@ def _served_by_gateway(srv: dict[str, Any], cli: str, placement) -> bool:
     return bool(srv.get("lazy")) or srv.get("exposure") == "lazy"
 
 
+_PURE_REFERENCE = re.compile(r"^\$\{([A-Za-z_][A-Za-z0-9_]*)(?::-)?\}$")
+
+
+def _server_context() -> dict[str, str]:
+    vault_data = os.environ.get("AGENT_VAULT_DATA") or os.environ.get("KNOWLEDGE_VAULT_PATH") or str(Path.home() / "KnowledgeVault")
+    return {"AGENT_ENGINE_ROOT": _resolve_engine_root(), "AGENT_VAULT_DATA": vault_data, "KNOWLEDGE_VAULT_PATH": vault_data}
+
+
+def _missing_credentials(srv: dict[str, Any]) -> list[str]:
+    """The variables this entry needs and this session does not have.
+
+    What counts: `require_env` (the manifest's own gate), a bearer token it declares (`auth.env`), and any
+    `env` entry that is a plain reference to a secret-looking variable. A missing one used to make a server
+    vanish from the index, or fail with a bare 401, with nothing saying why.
+    """
+    needed: list[str] = []
+    if srv.get("require_env"):
+        needed.append(str(srv["require_env"]))
+    auth = srv.get("auth")
+    if isinstance(auth, dict) and auth.get("env"):
+        needed.append(str(auth["env"]))
+    if isinstance(srv.get("env"), dict):
+        for value in srv["env"].values():
+            match = _PURE_REFERENCE.match(str(value).strip())
+            if match and _is_secret_name(match.group(1)):
+                needed.append(match.group(1))
+    seen: list[str] = []
+    for name in needed:
+        if name not in seen and not _env_default(name):
+            seen.append(name)
+    return seen
+
+
+def _prepare_entry(name: str, srv: dict[str, Any], ctx: dict[str, str]) -> dict[str, Any] | None:
+    """A manifest entry ready to spawn: platform override applied, placeholders and templates expanded.
+
+    Carries `_unavailable` (why it cannot work in this session) instead of being dropped, so the index can say
+    "needs VERCEL_API_TOKEN" rather than leave the server out in silence. None when the entry is unusable.
+    """
+    entry = {k: v for k, v in srv.items()}
+    if sys.platform == "win32" and "windows" in entry:
+        win_override = entry.pop("windows")
+        if isinstance(win_override, dict):
+            entry.update(win_override)
+    entry.setdefault("readonly", False)
+    entry.setdefault("readonly_tools", [])
+    missing = _missing_credentials(entry)
+    if missing:
+        entry["_unavailable"] = "needs " + ", ".join(missing) + " in this session's environment"
+    # DEPS_WORKSPACE is a SELF-PRESERVING token here: its real value is
+    # known only at spawn time, after provisioning. Expanding it now to
+    # anything else (including '') would destroy the token before the
+    # spawn can substitute the provisioned workspace.
+    load_ctx = dict(ctx)
+    load_ctx["DEPS_WORKSPACE"] = "${DEPS_WORKSPACE}"
+    try:
+        if entry.get("command"):
+            entry["command"] = _expand_placeholders(_expand_templates(str(entry["command"])), load_ctx)
+        if isinstance(entry.get("args"), list):
+            entry["args"] = [_expand_placeholders(_expand_templates(str(a)), load_ctx) for a in entry["args"]]
+        if entry.get("url"):
+            entry["url"] = _expand_placeholders(_expand_templates(str(entry["url"])), load_ctx)
+        if isinstance(entry.get("env"), dict):
+            entry["env"] = {k: _expand_placeholders(_expand_templates(str(v)), load_ctx) for k, v in entry["env"].items()}
+    except Exception as exc:
+        # Fail closed per entry: this server is withdrawn from the
+        # index with the reason on stderr, instead of spawning literal
+        # {{ }} text or taking the whole index down with it.
+        print(f"[lazy-mcp] server '{name}' withdrawn: inline template error ({exc})", file=sys.stderr)
+        return None
+    return entry
+
+
 def _lazy_servers() -> dict[str, dict[str, Any]]:
-    """The servers behind this gateway for the CLI it serves (placeholders expanded, env gates applied)."""
+    """The servers behind this gateway for the CLI it serves (placeholders expanded; `_unavailable` says why one cannot work)."""
     data = _resolve_manifest()
     cli = served_cli()
     placement = _placement_module() if cli else None
-    engine_root = _resolve_engine_root()
-    vault_data = os.environ.get("AGENT_VAULT_DATA") or os.environ.get("KNOWLEDGE_VAULT_PATH") or str(Path.home() / "KnowledgeVault")
-    ctx = {
-        "AGENT_ENGINE_ROOT": engine_root,
-        "AGENT_VAULT_DATA": vault_data,
-        "KNOWLEDGE_VAULT_PATH": vault_data,
-    }
-    is_win = sys.platform == "win32"
+    ctx = _server_context()
     out: dict[str, dict[str, Any]] = {}
     for name, srv in (data.get("servers") or {}).items():
         if not isinstance(srv, dict) or name == "lazy-mcp" or not _served_by_gateway(srv, cli, placement):
             continue
-        req = srv.get("require_env")
-        if req and not os.environ.get(req):
-            continue
-        entry = {k: v for k, v in srv.items()}
-        if is_win and "windows" in entry:
-            win_override = entry.pop("windows")
-            if isinstance(win_override, dict):
-                entry.update(win_override)
-        entry.setdefault("readonly", False)
-        entry.setdefault("readonly_tools", [])
-        # DEPS_WORKSPACE is a SELF-PRESERVING token here: its real value is
-        # known only at spawn time, after provisioning. Expanding it now to
-        # anything else (including '') would destroy the token before the
-        # spawn can substitute the provisioned workspace.
-        load_ctx = dict(ctx)
-        load_ctx["DEPS_WORKSPACE"] = "${DEPS_WORKSPACE}"
-        try:
-            if entry.get("command"):
-                entry["command"] = _expand_placeholders(_expand_templates(str(entry["command"])), load_ctx)
-            if isinstance(entry.get("args"), list):
-                entry["args"] = [_expand_placeholders(_expand_templates(str(a)), load_ctx) for a in entry["args"]]
-            if entry.get("url"):
-                entry["url"] = _expand_placeholders(_expand_templates(str(entry["url"])), load_ctx)
-            if isinstance(entry.get("env"), dict):
-                entry["env"] = {k: _expand_placeholders(_expand_templates(str(v)), load_ctx) for k, v in entry["env"].items()}
-        except Exception as exc:
-            # Fail closed per entry: this server is withdrawn from the
-            # index with the reason on stderr, instead of spawning literal
-            # {{ }} text or taking the whole index down with it.
-            print(f"[lazy-mcp] server '{name}' withdrawn: inline template error ({exc})", file=sys.stderr)
-            continue
-        out[name] = entry
+        entry = _prepare_entry(name, srv, ctx)
+        if entry is not None:
+            out[name] = entry
     return out
+
+
+def served_entry(name: str) -> dict[str, Any] | None:
+    """One server's entry regardless of where the plan places it (the trimming shim serves a server mounted directly)."""
+    srv = (_resolve_manifest().get("servers") or {}).get(name)
+    return _prepare_entry(name, srv, _server_context()) if isinstance(srv, dict) else None
 
 
 #: What a child server may inherit. The proxy's own environment holds every token the user's shell
@@ -406,6 +494,9 @@ class _ServerHandle:
         # (`readonly_tools: [...]`). Anything else requires confirmation.
         self.readonly_server = bool(spec.get("readonly"))
         self.readonly_tools = set(spec.get("readonly_tools") or [])
+        #: Tools the manifest hides (`tools_deny`) or restricts to (`tools_allow`): never listed, never callable.
+        self.tools_deny = set(spec.get("tools_deny") or [])
+        self.tools_allow = set(spec.get("tools_allow") or [])
         self.active_calls = 0
         self._init_done = False
         self._rid = 600
@@ -420,6 +511,11 @@ class _ServerHandle:
         self._stderr_lock = threading.Lock()
         self._child_env: dict[str, str] = {}
         self.last_error: str | None = None
+
+    def visible(self, tool: str) -> bool:
+        if tool in self.tools_deny:
+            return False
+        return not self.tools_allow or tool in self.tools_allow
 
     def is_mutating(self, tool: str) -> bool:
         return not (self.readonly_server or tool in self.readonly_tools)
@@ -642,8 +738,11 @@ class _ServerHandle:
             })
             auth = self.spec.get("auth") or {}
             auth_env = auth.get("env") if isinstance(auth, dict) else None
-            if auth_env and os.environ.get(auth_env):
-                req.add_header("Authorization", f"Bearer {os.environ[auth_env]}")
+            if auth_env:
+                token = _env_default(auth_env)
+                if not token:
+                    return self._error(f"missing credential: {auth_env} is not set in this session's environment")
+                req.add_header("Authorization", f"Bearer {token}")
         except _TransportError as exc:
             return self._error(str(exc))
         except Exception as exc:  # configuration boundary, URLs/headers stay private
@@ -918,8 +1017,13 @@ class Waiter:
         result: dict[str, Any] = {"servers": {}, "budget_tokens": INDEX_MAX_TOKENS, "cli": served_cli() or None}
         estimated = 0
         for name in sorted(servers):
+            if servers[name].get("_unavailable"):
+                # Not started: it cannot work in this session, and the reason is the useful part.
+                result["servers"][name] = {"mutating": True, "tools": [], "error": servers[name]["_unavailable"],
+                                           "unavailable": True}
+                continue
             handle = self._handle(name, servers[name])
-            tools = handle.tools_list()
+            tools = [t for t in handle.tools_list() if handle.visible(t.get("name", ""))]
             entries = []
             for t in tools:
                 desc = (t.get("description") or "").split("\n", 1)[0][:100]
@@ -952,8 +1056,10 @@ class Waiter:
         servers = _lazy_servers()
         if server not in servers:
             return {"error": f"unknown lazy server: {server}"}
+        if servers[server].get("_unavailable"):
+            return {"error": f"server '{server}' is unavailable: {servers[server]['_unavailable']}"}
         handle = self._handle(server, servers[server])
-        tools = handle.tools_list()
+        tools = [t for t in handle.tools_list() if handle.visible(t.get("name", ""))]
         for t in tools:
             if t.get("name") == tool:
                 self._audit(server, tool, "load")
@@ -971,7 +1077,12 @@ class Waiter:
         servers = _lazy_servers()
         if server not in servers:
             return {"error": f"unknown lazy server: {server}"}
+        if servers[server].get("_unavailable"):
+            return {"error": f"server '{server}' is unavailable: {servers[server]['_unavailable']}"}
         handle = self._handle(server, servers[server])
+        if not handle.visible(tool):
+            self._audit(server, tool, "refused", confirmed=False)
+            return {"error": f"tool '{tool}' on '{server}' is hidden by the manifest (tools_deny / tools_allow)"}
         with self._lock:
             was_loaded = (server, tool) in self.loaded
         if handle.is_mutating(tool):

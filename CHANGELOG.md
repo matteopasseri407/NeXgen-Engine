@@ -239,6 +239,15 @@ of any engine release.
   Measured on Google's hosted Gmail server through the gateway.
 - `nexgen mcp check --direct` measures every directly mounted server (tools, about how many tokens of definitions,
   how long it takes) and totals what each CLI loads up front.
+- `tools_deny` / `tools_allow` on a manifest server hide tools you will never use, identically on every CLI. A
+  directly mounted server with one is started through `mcp-trim.py`, a thin stdio filter; a gateway-served one is
+  filtered by the gateway from the same fields. A hidden tool is not listed and a call to it is refused, so the
+  model never pays for its definition. The shim closes its server when the CLI closes the pipe.
+- The gateway says why a server is not available instead of "tool not found": a server that needs a variable
+  names it ("needs X in this session's environment"), and an HTTP server with no bearer token says the credential
+  is missing. For the variables a server's manifest entry declares, and only those, the gateway also reads the
+  machine's `environment.d`, because a CLI started from a desktop launcher does not inherit the shell's exports.
+  `lazy_list` carries the reason as `error` / `unavailable`.
 
 ## [2.3.11] - 2026-10-04
 
