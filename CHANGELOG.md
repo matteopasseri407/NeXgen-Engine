@@ -10,6 +10,8 @@ of any engine release.
 
 ## [Unreleased]
 
+## [2.4.0] - 2026-10-07
+
 ### Security
 
 - The OpenCode guardrail works again, on OpenCode 2.0.24. It was installed, registered and never consulted: OpenCode now
