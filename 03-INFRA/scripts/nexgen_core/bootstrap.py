@@ -126,9 +126,18 @@ def preflight() -> list[Finding]:
     return found
 
 
+TEMPLATE_URL = "https://github.com/matteopasseri407/NeXgen-Engine.git"
+
+
 def scaffold(root: Path, write: bool) -> list[Finding]:
-    """The folders and files a vault must have."""
+    """The folders and files a vault must have.
+
+    A folder that lacks the template files is not a vault yet, and nothing is created in it: the folders would only
+    make it non-empty and block the `git clone` of the template that it needs next.
+    """
     found: list[Finding] = []
+    template_missing = [name for name in SCAFFOLD_FILES if not (root / name).is_file()]
+    write = write and not template_missing
     for name in SCAFFOLD_DIRS:
         target = root / name
         if target.is_dir():
@@ -141,10 +150,13 @@ def scaffold(root: Path, write: bool) -> list[Finding]:
         else:
             found.append(Finding(f"{name}/", False, True, t("rerun without --check to create it")))
 
+    nothing_there = len(template_missing) == len(SCAFFOLD_FILES)
     for name in SCAFFOLD_FILES:
         found.append(Finding(
             name, (root / name).is_file(), True,
-            t("the clone looks incomplete: double-check you cloned the whole repository"),
+            t("this folder is not a vault yet: clone the template into it first: git clone {url} {root}", url=TEMPLATE_URL, root=root)
+            if nothing_there
+            else t("the clone looks incomplete: double-check you cloned the whole repository"),
         ))
     return found
 

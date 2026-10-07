@@ -1209,4 +1209,11 @@ MESSAGES: dict[str, str] = {
         "Lancia 'nexgen skills adopt --all' (per quelle uguali) e guarda le altre con 'nexgen skills adopt'.",
     "No skill the engine ships is kept as a frozen copy in the Vault":
         "Nessuna skill del motore è tenuta come copia ferma nel Vault",
+    # --- Primo avvio da pacchetto e gateway nel manifest ---------------------------
+    "this folder is not a vault yet: clone the template into it first: git clone {url} {root}":
+        "questa cartella non è ancora un Vault: prima clonaci dentro il modello: git clone {url} {root}",
+    "The gateway ({gateway}) was not in the manifest, so it was added too: nothing behind it is reachable without it.":
+        "Il gateway ({gateway}) non era nel manifest, quindi l'ho aggiunto anch'esso: senza, niente di ciò che ci sta dietro è raggiungibile.",
+    "The gateway ({gateway}) is not in your manifest, and a trial is served by it. Adding any server with 'nexgen mcp add' puts it in; or copy the {gateway} entry from the shipped template.":
+        "Il gateway ({gateway}) non è nel tuo manifest e una prova passa da lì. Aggiungere un server qualsiasi con 'nexgen mcp add' lo mette; oppure copia la voce {gateway} dal modello fornito.",
 }

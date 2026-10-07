@@ -26,6 +26,13 @@ of any engine release.
 
 ### Fixed
 
+- A new vault can add a server lazily. The shipped `mcp/manifest.yaml` had no `lazy-mcp` entry, so a first `nexgen mcp add`
+  (lazy by default) routed the server behind a gateway nobody mounted: `doctor` went red and the server was unreachable.
+  The template now carries the gateway, and `mcp add` / `mcp promote` add it to a manifest made from an older template
+  (an eager add does not); `mcp try` says so instead of starting a trial nothing can serve.
+- `nexgen init --root` on a folder that is not a vault yet writes nothing and gives the exact command (`git clone` of the
+  template, which doubles as one). It used to create the sub-folders and then stop, leaving a folder the clone then refused.
+  The README no longer says a package install can create the vault from nothing; it cannot, and now says what works.
 - Verifying an OpenPGP release tag no longer fails under a long temporary directory. gpg's agent socket lives inside the
   throwaway keyring and a socket path is limited to about 108 bytes; past that gpg could not start, and every verification
   came back "unverifiable", which an unattended update treats as a reason to refuse the release. The throwaway keyring is

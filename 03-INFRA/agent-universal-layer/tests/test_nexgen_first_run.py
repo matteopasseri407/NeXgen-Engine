@@ -331,3 +331,41 @@ def test_render_writes_to_the_stdout_of_the_moment_not_the_one_at_import(monkeyp
     monkeypatch.setattr(sys, "stdout", replaced)
     bootstrap.render([bootstrap.Finding("python", True)], "Prerequisites")
     assert "python" in replaced.getvalue()
+
+
+def test_a_folder_that_is_not_a_vault_yet_is_left_exactly_as_it_was(tmp_path, capsys):
+    """Creating the folders first made the folder non-empty and blocked the `git clone` of the template it needs next."""
+    from nexgen_core import bootstrap
+
+    root = tmp_path / "KnowledgeVault"
+    root.mkdir()
+    findings = bootstrap.scaffold(root, write=True)
+    assert list(root.iterdir()) == [], "nothing is created in a folder that lacks the template"
+    remedies = " ".join(f.remedy for f in findings if not f.ok)
+    assert bootstrap.TEMPLATE_URL in remedies and str(root) in remedies
+
+
+def test_a_half_cloned_vault_keeps_the_old_message_and_is_still_not_written_to(tmp_path):
+    from nexgen_core import bootstrap
+
+    root = _full_scaffold(tmp_path)
+    (root / "INIT.md").unlink()
+    findings = bootstrap.scaffold(root, write=True)
+    missing = [f for f in findings if not f.ok]
+    assert [f.label for f in missing] == ["INIT.md"]
+    from nexgen_core.i18n import t
+
+    assert missing[0].remedy == t("the clone looks incomplete: double-check you cloned the whole repository")
+    assert bootstrap.TEMPLATE_URL not in missing[0].remedy
+
+
+def test_a_complete_vault_still_gets_its_missing_folders(tmp_path):
+    from nexgen_core import bootstrap
+
+    root = _full_scaffold(tmp_path)
+    for leftover in (root / "04-NOW").glob("*"):
+        leftover.unlink()
+    (root / "04-NOW").rmdir()
+    findings = bootstrap.scaffold(root, write=True)
+    assert all(f.ok for f in findings)
+    assert (root / "04-NOW").is_dir()

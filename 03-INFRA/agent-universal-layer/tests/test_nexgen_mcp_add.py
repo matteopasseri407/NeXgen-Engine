@@ -262,3 +262,63 @@ def test_empty_targets_is_an_error_not_all(sandbox):
     )
     assert code == 2
     assert "--targets" in message
+
+
+# --- the gateway has to be there for anything behind it -------------------------------------------------------------
+
+import yaml  # noqa: E402
+
+from nexgen_core.mcp_placement import GATEWAY, problems  # noqa: E402
+
+
+def _without_gateway(sandbox) -> None:
+    path = _manifest_path(sandbox)
+    data = yaml.safe_load(path.read_text(encoding="utf-8"))
+    data["servers"].pop(GATEWAY, None)
+    path.write_text(yaml.safe_dump(data), encoding="utf-8")
+
+
+def test_a_lazy_add_to_a_manifest_without_the_gateway_adds_the_gateway_too(sandbox):
+    _without_gateway(sandbox)
+    code, message = add_server("demo", "all", command="npx", args=["-y", "demo-mcp@1.0.0"],
+                               home=sandbox.home, vault_data=sandbox.vault)
+    assert code == 0, message
+    assert GATEWAY in message, "the person is told why a second entry appeared"
+    servers = load_mcp_manifest(_manifest_path(sandbox))["servers"]
+    assert GATEWAY in servers and "demo" in servers
+    assert servers[GATEWAY]["exposure"] == "eager" and servers[GATEWAY]["targets"] == ["claude", "codex", "antigravity", "opencode"]
+    assert problems(servers) == [], "what was added is reachable, not routed to a gateway nobody mounts"
+
+
+def test_a_manifest_that_has_the_gateway_does_not_get_a_second_one(sandbox):
+    _without_gateway(sandbox)
+    add_server("first", "all", command="npx", args=["-y", "a@1.0.0"], home=sandbox.home, vault_data=sandbox.vault)
+    before = _manifest_path(sandbox).read_text(encoding="utf-8").count(f'"{GATEWAY}":')
+    code, message = add_server("second", "all", command="npx", args=["-y", "b@1.0.0"], home=sandbox.home, vault_data=sandbox.vault)
+    assert code == 0 and GATEWAY not in message
+    assert _manifest_path(sandbox).read_text(encoding="utf-8").count(f'"{GATEWAY}":') == before == 1
+
+
+def test_an_eager_add_does_not_drag_the_gateway_in(sandbox):
+    _without_gateway(sandbox)
+    code, _ = add_server("direct", "codex", command="npx", args=["-y", "d@1.0.0"], lazy=False,
+                         home=sandbox.home, vault_data=sandbox.vault)
+    assert code == 0
+    assert GATEWAY not in load_mcp_manifest(_manifest_path(sandbox))["servers"]
+
+
+def test_a_dry_run_shows_the_gateway_it_would_add_and_writes_nothing(sandbox):
+    _without_gateway(sandbox)
+    before = _manifest_path(sandbox).read_text(encoding="utf-8")
+    code, message = add_server("demo", "all", command="npx", args=["-y", "demo-mcp@1.0.0"], dry_run=True,
+                               home=sandbox.home, vault_data=sandbox.vault)
+    assert code == 0 and GATEWAY in message and "demo" in message
+    assert _manifest_path(sandbox).read_text(encoding="utf-8") == before
+
+
+def test_the_shipped_template_carries_the_gateway_so_a_new_vault_can_add_lazily(tmp_path):
+    """A fresh user's first `mcp add` must leave a coherent plan. The template is what a new vault starts from."""
+    template = Path(__file__).resolve().parents[1] / "mcp" / "manifest.yaml"
+    servers = load_mcp_manifest(template)["servers"]
+    assert GATEWAY in servers and servers[GATEWAY]["tier"] == "core"
+    assert problems(servers) == []

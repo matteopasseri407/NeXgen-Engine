@@ -17,6 +17,7 @@ from typing import Any
 
 from nexgen_core.files import write_private_text
 from nexgen_core.i18n import t
+from nexgen_core.mcp_placement import GATEWAY
 from nexgen_core.paths import resolve_state_dir
 
 DEFAULT_HOURS = 24.0
@@ -116,6 +117,12 @@ def cmd_try(name: str, *, targets_raw: str | None, command: str | None, args: li
                             auth_env=auth_env, env=_parse_env(env_pairs), lazy=True, readonly=readonly)
         path = _manifest_path(resolve_vault_data())
         names = set(load_mcp_manifest(path).get("servers", {})) if path.is_file() else set()
+        if GATEWAY not in names:
+            return 2, t(
+                "The gateway ({gateway}) is not in your manifest, and a trial is served by it. Adding any server with "
+                "'nexgen mcp add' puts it in; or copy the {gateway} entry from the shipped template.",
+                gateway=GATEWAY,
+            )
         expires = start(name, entry, hours, manifest_names=names)
     except ValueError as exc:
         return 2, str(exc)

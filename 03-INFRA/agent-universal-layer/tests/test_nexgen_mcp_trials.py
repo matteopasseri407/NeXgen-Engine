@@ -233,3 +233,12 @@ def test_an_oauth_only_http_server_behind_the_gateway_is_called_out():
     assert mp.problems({**servers, "google": with_bearer}) == []
     eager = {**oauth_http, "exposure": "eager"}
     assert mp.problems({**servers, "google": eager}) == []
+
+
+def test_a_trial_is_refused_when_there_is_no_gateway_to_serve_it(env):
+    data = yaml.safe_load(env.read_text(encoding="utf-8"))
+    data["servers"].pop("lazy-mcp")
+    env.write_text(yaml.safe_dump(data), encoding="utf-8")
+    code, message = try_server()
+    assert code == 2 and "lazy-mcp" in message
+    assert not mcp_trials.active(), "nothing was started"

@@ -25,6 +25,7 @@ import re
 from nexgen_core import secret_shapes
 from nexgen_core.config import RUNTIME_TARGETS, load_mcp_manifest
 from nexgen_core.i18n import t
+from nexgen_core.mcp_placement import CLIS, GATEWAY, GATEWAY_KIND, place
 from nexgen_core.paths import resolve_home, resolve_vault_data
 
 #: Same shape the renderer accepts as a section name elsewhere; a name that
@@ -40,6 +41,18 @@ SENSITIVE_NAME_RE = secret_shapes.SENSITIVE_NAME_SUBSTRING
 #: A real environment-variable name, for references the renderer will
 #: actually resolve.
 ENV_NAME_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+
+#: The gateway as the shipped template declares it. A server routed behind it is unreachable without it, so adding one
+#: to a manifest that lacks it (one made from an older template) adds this too.
+GATEWAY_ENTRY = {
+    "exposure": "eager",
+    "tier": "core",
+    "transport": "stdio",
+    "command": "python3",
+    "args": ["${AGENT_ENGINE_ROOT}/agent-universal-layer/mcp/lazy-mcp.py"],
+    "env": {"AGENT_VAULT_DATA": "${AGENT_VAULT_DATA}"},
+    "targets": list(CLIS),
+}
 
 
 def _manifest_path(vault_data) -> object:
@@ -226,14 +239,22 @@ def insert_entry(
             name=name,
         )
     stub = _emit_manifest_stub(name, entry)
+    stubs = [stub]
+    behind_gateway = any(place(entry, cli).kind == GATEWAY_KIND for cli in CLIS)
+    adds_gateway = behind_gateway and GATEWAY not in (data.get("servers") or {}) and name != GATEWAY
+    if adds_gateway:
+        stubs.insert(0, _emit_manifest_stub(GATEWAY, GATEWAY_ENTRY))
     if dry_run:
-        return 0, t("dry run (nothing written). Stub to add under 'servers:':\n{stub}", stub=stub)
-    ok, message, _backup = insert_server_stubs(path, [stub])  # type: ignore[arg-type]
+        return 0, t("dry run (nothing written). Stub to add under 'servers:':\n{stub}", stub="\n".join(stubs))
+    ok, message, _backup = insert_server_stubs(path, stubs)  # type: ignore[arg-type]
     if not ok:
         return 2, message
     shown = targets if targets is not None else entry.get("targets") or []
-    return 0, t(
+    done = t(
         "{name} added to the manifest for {targets}. Backup: {backup}. "
         "Run 'nexgen sync apply' to render it to the CLIs, then commit.",
         name=name, targets=", ".join(shown), backup=_backup,
     )
+    if adds_gateway:
+        done += " " + t("The gateway ({gateway}) was not in the manifest, so it was added too: nothing behind it is reachable without it.", gateway=GATEWAY)
+    return 0, done

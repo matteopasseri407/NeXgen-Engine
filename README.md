@@ -117,7 +117,9 @@ PyPI and Homebrew publication are separate, pending distribution channels, docum
 
 A package install carries the whole engine (the Council, the MCP proxy, the hooks, the
 templates), not only the commands, and leaves the launchers to the package manager.
-It has no repository folder, so create the vault with `nexgen init --root ~/KnowledgeVault`.
+It has no repository folder, so the vault comes from the template repository, which doubles as one:
+`git clone https://github.com/matteopasseri407/NeXgen-Engine.git ~/KnowledgeVault`, then
+`nexgen init --local --root ~/KnowledgeVault` (`nexgen init --check --root ~/KnowledgeVault` first if you prefer to look).
 
 Package installations are updated through the package manager that installed them.
 For Git checkouts, `nexgen update` asks for confirmation; the scheduled heartbeat can apply patch releases unattended.
