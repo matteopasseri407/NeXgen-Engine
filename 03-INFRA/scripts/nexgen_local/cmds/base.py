@@ -26,9 +26,9 @@ def get_config(args: argparse.Namespace) -> LaneConfig:
 
 
 def make_llm(cfg: LaneConfig):
-    from ..llm import ChatOllamaLLM
+    from ..llm import build_llm
 
-    return ChatOllamaLLM(cfg)
+    return build_llm(cfg)
 
 
 def command_config(args: argparse.Namespace) -> LaneConfig:

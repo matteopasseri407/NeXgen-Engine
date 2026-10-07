@@ -22,7 +22,9 @@ SCRIPTS_DIR = Path(__file__).resolve().parents[1]
 if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
+from nexgen_core.action_notes import ERROR, is_error  # noqa: E402 - sys.path shim for cloned checkout
 from nexgen_core.i18n import t  # noqa: E402
+from nexgen_core.manifest_text import entry_span as _entry_span  # noqa: E402
 from nexgen_core.files import atomic_write_text as _atomic_write  # noqa: E402
 from nexgen_core.paths import (  # noqa: E402
     mcp_manifest,
@@ -155,28 +157,6 @@ def _restore(path: Path, backup: Path) -> bool:
         return False
 
 
-def _entry_span(text: str, name: str) -> tuple[int, int] | None:
-    """(start, end) offsets of the `  name:` block, or None.
-
-    Manifest entries are two-space-indented maps with deeper-indented
-    bodies; the block runs until a blank line, a less-indented line, or
-    the next entry. Anything outside the approved carriers' blocks
-    (comments, held entries) is never rewritten.
-    """
-    import re
-
-    match = re.search(rf"^  {re.escape(name)}:\s*\n", text, re.MULTILINE)
-    if not match:
-        return None
-    end = match.end()
-    for line in text[end:].splitlines(keepends=True):
-        if line.strip() == "" or line.startswith("    ") or re.match(r"^  #", line):
-            end += len(line)
-        else:
-            break
-    return match.start(), end
-
-
 def _replace_in_entries(text: str, carriers: list[tuple[str, str | None]],
                         old: str, new: str) -> tuple[str, int]:
     """Rewrites old to new on exactly the approved carriers' pin lines.
@@ -224,8 +204,12 @@ def _replace_in_entries(text: str, carriers: list[tuple[str, str | None]],
 def apply_plan(
     raisable: list[dict], vault_data: Path, *, sync: bool = True,
     home: Path | None = None,
+    verify: Callable[[list[str]], list[str]] | None = None,
 ) -> tuple[int, list[str], list[dict]]:
     """Rewrites the pins atomically, revalidates, and materializes.
+
+    `verify`, given the names of the MCP servers whose pin moved, tries them live and returns what failed; any
+    failure puts every pin back and regenerates the configurations from the old ones.
 
     Callers hold the bump lock around this call (see bump_batch and
     auto_apply): reads, planning and writes stay one critical section,
@@ -237,11 +221,11 @@ def apply_plan(
     try:
         skills_text = skills_path.read_text(encoding="utf-8")
     except OSError as exc:
-        return 0, [f"[ERROR] cannot read {skills_path}: {exc}"], []
+        return 0, [f"{ERROR}cannot read {skills_path}: {exc}"], []
     try:
         mcp_text = mcp_path.read_text(encoding="utf-8") if mcp_path.is_file() else ""
     except OSError as exc:
-        return 0, [f"[ERROR] cannot read {mcp_path}: {exc}"], []
+        return 0, [f"{ERROR}cannot read {mcp_path}: {exc}"], []
 
     try:
         from nexgen_core.config import load_mcp_manifest, load_skills_manifest
@@ -393,12 +377,12 @@ def apply_plan(
         if new_skills != skills_text:
             backup = _backup(skills_path)
             if backup is None:
-                return 0, ["[ERROR] " + t("cannot back up {path}, nothing written", path=skills_path)], {}
+                return 0, [ERROR + t("cannot back up {path}, nothing written", path=skills_path)], {}
             backups["skills"] = backup
         if new_mcp != mcp_text and mcp_path.is_file():
             backup = _backup(mcp_path)
             if backup is None:
-                return 0, ["[ERROR] " + t("cannot back up {path}, nothing written", path=mcp_path)], {}
+                return 0, [ERROR + t("cannot back up {path}, nothing written", path=mcp_path)], {}
             backups["mcp"] = backup
         try:
             # Atomic writes: temp file plus rename, so a failure (full
@@ -415,11 +399,11 @@ def apply_plan(
                     if "skills" in backups and not _restore(skills_path, backups["skills"]):
                         restore_notes.append(t("could not restore {path} from {backup}",
                                                path=skills_path, backup=backups["skills"]))
-                    return 0, (["[ERROR] " + t("write failed ({error}), manifests restored from backups",
+                    return 0, ([ERROR + t("write failed ({error}), manifests restored from backups",
                                                 error=exc)]
-                               + [f"[ERROR] {note}" for note in restore_notes]), {}
+                               + [f"{ERROR}{note}" for note in restore_notes]), {}
         except OSError as exc:
-            return 0, ["[ERROR] " + t("write failed ({error}), manifests untouched",
+            return 0, [ERROR + t("write failed ({error}), manifests untouched",
                                        error=exc)], {}
         problems = _revalidate(vault_data, home)
         if problems:
@@ -431,8 +415,8 @@ def apply_plan(
                                               backup=backup))
             restored = t("edits rolled back, manifests restored from {backups}",
                          backups=", ".join(str(b) for b in backups.values()))
-            return 0, ["[ERROR] " + restored, *problems,
-                       *(f"[ERROR] {note}" for note in restore_failures)], {}
+            return 0, [ERROR + restored, *problems,
+                       *(f"{ERROR}{note}" for note in restore_failures)], {}
         return 1, [t("Backups kept next to the manifests: {backups}",
                      backups=", ".join(str(b) for b in backups.values()))], backups
 
@@ -480,15 +464,31 @@ def apply_plan(
                                         any(w == "skills" for _, w, _, _, _ in planned),
                                         any(w == "mcp" for _, w, _, _, _ in planned))
         except Exception as exc:  # noqa: BLE001 - bump failure is reported, never raises
-            sync_notes = [f"[ERROR] materialization failed ({exc})"]
-        failed = [n for n in sync_notes if n.startswith("[ERROR]")]
+            sync_notes = [f"{ERROR}materialization failed ({exc})"]
+        failed = [n for n in sync_notes if is_error(n)]
         notes.extend(sync_notes)
         if failed:
             restore_failures = _rollback_pins()
             rolled = t("install failed, pins rolled back to retry next round")
-            return 0, [f"[ERROR] {note}" if note.startswith("[ERROR]") else note
+            return 0, [f"{ERROR}{note}" if is_error(note) else note
                        for note in failed] + [rolled] + [
-                f"[ERROR] {note}" for note in restore_failures], []
+                f"{ERROR}{note}" for note in restore_failures], []
+        servers = sorted({carrier[0] for (_k, where, _o, _n, _f), group in planned.items()
+                          if where == "mcp" and group.get("replaced") for carrier in group["carriers"]})
+        if verify is not None and servers:
+            try:
+                broken = verify(servers)
+            except Exception as exc:  # noqa: BLE001 - a check that cannot run cannot vouch for the update
+                broken = [t("could not try {names}: {error}", names=", ".join(servers), error=exc)]
+            if broken:
+                restore_failures = _rollback_pins()
+                try:
+                    _rematerialize(vault_data, home, any(w == "skills" for _, w, _, _, _ in planned), True)
+                except Exception as exc:  # noqa: BLE001 - reported below, never raised
+                    restore_failures.append(t("could not regenerate the configurations ({error})", error=exc))
+                return 0, [f"{ERROR}{problem}" for problem in broken] + [
+                    t("the new version did not work: every pin is back where it was and the configurations regenerated"),
+                ] + [f"{ERROR}{note}" for note in restore_failures], []
     return bumps, notes, moved
 
 
@@ -531,6 +531,20 @@ def _rematerialize(vault_data: Path, home: Path | None, skills: bool, mcp: bool)
     return notes
 
 
+def _live_verifier(home: Path, vault_data: Path) -> Callable[[list[str]], list[str]]:
+    """Tries the servers whose pin just moved, the way the CLIs would start them (network: npx fetches the new one)."""
+
+    def verify(names: list[str]) -> list[str]:
+        from nexgen_core.mcp_check import verify_servers
+        from nexgen_core.renderer import McpRenderer
+
+        print(t("Trying the new versions before keeping them: {names}", names=", ".join(names)))
+        renderer = McpRenderer(vault_data=vault_data, engine_root=resolve_engine_root(home), home=home)
+        return verify_servers(renderer, names)
+
+    return verify
+
+
 def bump_batch(
     *,
     home: Path | None = None,
@@ -538,6 +552,7 @@ def bump_batch(
     state_dir: Path | None = None,
     input_fn: Callable[[str], str] = input,
     sync: bool = True,
+    verify: Callable[[list[str]], list[str]] | None = None,
 ) -> int:
     """The one-yes command: shows every BATCH pin in plain words, moves
     them on a single yes, leaves HOLD items untouched. AUTO pins already
@@ -584,13 +599,18 @@ def bump_batch(
         print(t("Nothing moved."))
         return 0
 
-    from nexgen_core.lock import EXIT_BUSY_MANUAL, HostLock, LockTimeoutError  # noqa: E402
+    from nexgen_core.lock import EXIT_BUSY_MANUAL, HostLock, LockTimeoutError, host_mutation  # noqa: E402
 
     try:
+        # The bump rewrites manifests and re-materializes skills, which is
+        # exactly what a guard cycle does: it takes the host lock too.
         with HostLock(lock_path=resolved_state / "third-party-bump.lock",
-                      timeout=30, command_name="third-party-bump"):
-            bumps, notes, moved = apply_plan(raisable, resolved_vault, sync=sync,
-                                          home=resolved_home)
+                      timeout=30, command_name="third-party-bump"), \
+                host_mutation("third-party-bump", state_dir=resolved_state, timeout=30):
+            bumps, notes, moved = apply_plan(
+                raisable, resolved_vault, sync=sync, home=resolved_home,
+                verify=verify if verify is not None else (_live_verifier(resolved_home, resolved_vault) if sync else None),
+            )
             if moved:
                 # Same finalization as the silent path: without the commit
                 # the next updater stops on a dirty tree, and without the
@@ -600,9 +620,9 @@ def bump_batch(
     except LockTimeoutError:
         print(t("Another bump is already running, retry in a minute."))
         return EXIT_BUSY_MANUAL
-    failed = [n for n in notes if n.startswith("[ERROR]")]
+    failed = [n for n in notes if is_error(n)]
     for note in notes:
-        print(("  ✗ " if note.startswith("[ERROR]") else "  ✓ ") + note)
+        print(("  ✗ " if is_error(note) else "  ✓ ") + note)
     return 1 if failed else 0
 
 
@@ -698,14 +718,15 @@ def auto_apply(
         resolved_home = resolve_home(home)
         resolved_vault = resolve_vault_data(resolved_home, override=vault_data)
         resolved_state = resolve_state_dir(resolved_home, override=state_dir)
-        from nexgen_core.lock import HostLock, LockTimeoutError  # noqa: E402
+        from nexgen_core.lock import HostLock, LockTimeoutError, host_mutation  # noqa: E402
 
         try:
             with HostLock(lock_path=resolved_state / "third-party-bump.lock",
-                          timeout=30, command_name="third-party-bump"):
+                          timeout=30, command_name="third-party-bump"), \
+                    host_mutation("third-party-bump", state_dir=resolved_state, timeout=30):
                 bumps, notes, moved = apply_plan(auto, resolved_vault, sync=sync,
                                                  home=resolved_home)
-                errors = [n for n in notes if n.startswith("[ERROR]")]
+                errors = [n for n in notes if is_error(n)]
                 if moved:
                     _commit_manifests(resolved_vault, moved)
                     _record_applied(resolved_state, moved)

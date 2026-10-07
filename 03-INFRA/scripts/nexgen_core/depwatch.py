@@ -31,6 +31,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from nexgen_core.files import atomic_write_text
 from nexgen_core.config import ConfigError, load_mcp_manifest, load_skills_manifest
 from nexgen_core.paths import mcp_manifest, resolve_state_dir, resolve_vault_data, skills_manifest
 
@@ -99,7 +100,7 @@ def _git_ls_remote_head(repo: str) -> str | None:
     try:
         result = subprocess.run(
             ["git", "ls-remote", target, "HEAD"],
-            capture_output=True, text=True, check=False,
+            capture_output=True, text=True, encoding="utf-8", errors="replace", check=False,
             timeout=GIT_LS_REMOTE_TIMEOUT_SECONDS,
         )
     except (OSError, subprocess.TimeoutExpired):
@@ -192,15 +193,20 @@ def _collect_skill_pins(skills_raw: dict[str, dict]) -> list[tuple[str, str, str
 
 
 def _collect_mcp_pins(mcp_raw: dict[str, dict]) -> list[tuple[str, str, str, str]]:
-    """(label, kind, pin, key) for every MCP server invoked via npx."""
+    """(label, kind, pin, key) for every MCP server invoked via npx, or wrapping a pinned package."""
     pins: list[tuple[str, str, str, str]] = []
     for name, srv in mcp_raw.items():
         if not isinstance(srv, dict):
             continue
         tokens = _command_tokens(srv)
-        if not tokens or tokens[0].lower() not in ("npx", "npx.cmd"):
+        # `wraps`: packages a launcher script pins itself (the Playwright wrapper), which the
+        # command line therefore does not show.
+        wrapped = srv.get("wraps")
+        wrapped_specs = _npm_spec_tokens([str(w) for w in wrapped]) if isinstance(wrapped, list) else []
+        is_npx = bool(tokens) and tokens[0].lower() in ("npx", "npx.cmd")
+        if not is_npx and not wrapped_specs:
             continue
-        for spec in _npm_spec_tokens(tokens[1:]):
+        for spec in (_npm_spec_tokens(tokens[1:]) if is_npx else []) + wrapped_specs:
             match = NPM_SPEC_RE.match(spec)
             if match:
                 pkg, ver = match.group("name"), match.group("version")
@@ -232,7 +238,7 @@ def _write_report(path: Path, findings: list[PinFinding]) -> None:
         lines.append(f"## {heading}")
         lines.extend(fmt(row) for row in rows)
         lines.append("")
-    path.write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
+    atomic_write_text(path, "\n".join(lines).rstrip() + "\n")
 
 
 def run_depwatch(
@@ -306,9 +312,14 @@ def _write_status_sidecar(state_dir: Path, findings: list[PinFinding]) -> None:
             "stale": sorted(f.what for f in findings if f.stale),
             "fingerprint": fingerprint,
             "report": REPORT_FILE_NAME,
+            # Every pin with what upstream said, so `nexgen info` can show it without the network.
+            "pins": [
+                {"what": f.what, "kind": f.kind, "pinned": f.pinned, "upstream": f.upstream, "stale": f.stale}
+                for f in findings
+            ],
         }
         sidecar = state_dir / "nexgen" / STATUS_FILE_NAME
         sidecar.parent.mkdir(parents=True, exist_ok=True)
-        sidecar.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+        atomic_write_text(sidecar, json.dumps(payload, indent=2) + "\n")
     except OSError:
         pass

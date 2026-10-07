@@ -29,6 +29,7 @@ from nexgen_core.paths import resolve_state_dir
 EXIT_BUSY_MANUAL = 75
 EXIT_BUSY_GUARD = 0
 DEFAULT_TIMEOUT_SECONDS = 30.0
+LOCK_FILENAME = "agent-sync.lock"
 
 
 class LockTimeoutError(NexgenError, TimeoutError):
@@ -185,4 +186,37 @@ class HostLock:
 
     def __exit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
         self.release()
+
+
+def host_mutation(
+    command_name: str,
+    *,
+    state_dir: Path | str | None = None,
+    timeout: float | None = None,
+    is_guard: bool = False,
+) -> HostLock:
+    """The one lock every path that changes this machine's state goes through.
+
+    The guard, vault-push, the unattended upgrade, the pin bump and
+    `doctor --fix` each wrote to the same files (generated configs, the
+    skill library, the engine checkout) while only some of them took the lock,
+    so "one mutation per host" held for the guard and for nothing else.
+
+    `state_dir` is for a caller built around another home (tests, a second
+    profile); without it the machine's own state directory is used.
+    `AGENT_SYNC_LOCK_FILE`, when set, wins for every caller alike: an operator
+    who moves the lock moves it for all of them, not just for those that
+    happened to leave the path implicit.
+
+    Hold it only around the code that writes, never around a child process
+    that will ask for it again: the lock is not re-entrant across processes.
+    """
+    override = os.environ.get("AGENT_SYNC_LOCK_FILE")
+    if override:
+        path = Path(override)
+    elif state_dir is not None:
+        path = Path(state_dir) / LOCK_FILENAME
+    else:
+        path = resolve_state_dir() / LOCK_FILENAME
+    return HostLock(lock_path=path, timeout=timeout, is_guard=is_guard, command_name=command_name)
 

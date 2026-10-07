@@ -1,8 +1,9 @@
 """Claude Code adapter: posture in ~/.claude/settings.json + PreToolUse hook.
 
 Claude is the only CLI in this package that already natively speaks the
-same JSON the guardrail body expects on stdin/stdout: no intermediate
-adapter is needed, the body gets registered directly as the hook's command.
+same JSON the guardrail body expects on stdin/stdout, so its adapter translates
+nothing. It is there to fail closed: a body registered directly as the hook's command
+fails open (see agent-universal-layer/hooks/claude-guardrail-adapter.mjs).
 """
 from __future__ import annotations
 
@@ -12,7 +13,12 @@ from pathlib import Path
 from typing import Any
 
 from nexgen_core.paths import claude_settings
-from nexgen_core.runtimes.base import GuardrailError, Runtime
+from nexgen_core.runtimes.base import EVENT_SINK_NAME, GUARDRAIL_SIDECAR_NAME, GuardrailError, Runtime
+
+_ADAPTER_NAME = "claude-guardrail-adapter.mjs"
+#: The body gets 5 s; the hook gets 10, so the adapter answers (and says why) before Claude kills it.
+_BODY_TIMEOUT_SECONDS = 5
+_HOOK_TIMEOUT_SECONDS = 10
 
 #: Neutral vocabulary -> value that Claude understands (permissions.defaultMode).
 #: Verified in the field, not invented: the binary's exact spelling.
@@ -94,16 +100,34 @@ class ClaudeRuntime(Runtime):
         self.atomic_write(path, json.dumps(data, indent=2) + "\n")
         return f"claude: posture '{posture}' applied in {path}"
 
+    def guardrail_sidecar(self, home: Path) -> Path | None:
+        return home / ".claude" / GUARDRAIL_SIDECAR_NAME
+
     def install_guardrail(self, home: Path, hook_source: Path, engine_hooks_dir: Path) -> str | None:
-        del engine_hooks_dir  # Claude already speaks the body's native dialect
         data = self._load_settings(home)
         if data is None:
             return None
         claude_dir = home / ".claude"
-        dst = claude_dir / hook_source.name
-        deployed = self.deploy_bytes(dst, hook_source.read_bytes())
 
-        command = f'node "{dst}"'
+        # The body (private policy) and the engine's adapter. Claude speaks the body's own
+        # JSON, so the adapter translates nothing: it exists to fail CLOSED. A hook registered
+        # directly fails open, because Claude treats any exit code but 2, and any timeout,
+        # as a non-blocking error and runs the command anyway.
+        body_dst = claude_dir / "nexgen-guardrail-hooks" / hook_source.name
+        body_changed = self.deploy_bytes(body_dst, hook_source.read_bytes())
+        adapter_src = engine_hooks_dir / _ADAPTER_NAME
+        if not adapter_src.is_file():
+            raise GuardrailError(f"claude: missing engine adapter ({adapter_src})")
+        adapter_dst = claude_dir / _ADAPTER_NAME
+        adapter_changed = self.deploy_bytes(adapter_dst, adapter_src.read_bytes())
+        adapter_changed |= self.deploy_guardrail_core(claude_dir, engine_hooks_dir)
+        sidecar_changed = self.write_guardrail_sidecar(
+            claude_dir / GUARDRAIL_SIDECAR_NAME, body=body_dst, home=home, timeout=_BODY_TIMEOUT_SECONDS,
+        )
+
+        command = f'node "{adapter_dst}"'
+        # Before the adapter existed the body itself was the hook's command.
+        legacy_command = f'node "{claude_dir / hook_source.name}"'
         hooks = data.setdefault("hooks", {})
         if not isinstance(hooks, dict):
             raise GuardrailError("claude: settings.hooks is not an object")
@@ -114,13 +138,15 @@ class ClaudeRuntime(Runtime):
         # command but a stale timeout/matcher would otherwise be kept
         # forever ("already registered" over a hook that no longer matches),
         # while a mere quoting difference would duplicate and double-fire.
-        wanted = {"type": "command", "command": command, "timeout": 5}
+        # The timeout is the adapter's: longer than the body's own, so the adapter
+        # always answers before Claude would cut it off (which would let the command run).
+        wanted = {"type": "command", "command": command, "timeout": _HOOK_TIMEOUT_SECONDS}
         spec_updated = False
         for matcher in entries:
             if not isinstance(matcher, dict):
                 continue
             for h in matcher.get("hooks", []):
-                if isinstance(h, dict) and h.get("command") == command and h != wanted:
+                if isinstance(h, dict) and h.get("command") in (command, legacy_command) and h != wanted:
                     h.clear()
                     h.update(wanted)
                     spec_updated = True
@@ -130,10 +156,12 @@ class ClaudeRuntime(Runtime):
             for h in matcher.get("hooks", [])
         )
         if already_registered and not spec_updated:
-            return f"claude: guardrail body updated in {dst}" if deployed else None
+            if body_changed or adapter_changed or sidecar_changed:
+                return f"claude: guardrail body/adapter updated in {claude_dir}"
+            return None
         if spec_updated:
-            # A stale timeout/matcher with our command: repair the spec and
-            # persist it, instead of reporting "already registered" forever.
+            # A stale timeout/matcher, or the pre-adapter registration, with our command:
+            # repair the spec and persist it, instead of reporting "already registered" forever.
             path = self._settings_path(home)
             self.backup(path)
             self.atomic_write(path, json.dumps(data, indent=2) + "\n")
@@ -141,12 +169,27 @@ class ClaudeRuntime(Runtime):
 
         entries.append({
             "matcher": "Bash",
-            "hooks": [{"type": "command", "command": command, "timeout": 5}],
+            "hooks": [wanted],
         })
         path = self._settings_path(home)
         self.backup(path)
         self.atomic_write(path, json.dumps(data, indent=2) + "\n")
         return f"claude: guardrail hook registered in {path}"
+
+    def remove_event_sink(self, home: Path) -> str | None:
+        data = self._load_settings(home)
+        if data is None:
+            return None
+        hooks = data.get("hooks")
+        changed = isinstance(hooks, dict) and self.strip_event_sink_hooks(hooks)
+        if changed:
+            path = self._settings_path(home)
+            self.backup(path)
+            self.atomic_write(path, json.dumps(data, indent=2) + "\n")
+        removed = self.remove_deployed(home / ".claude" / EVENT_SINK_NAME)
+        if changed or removed:
+            return f"claude: event sink removed from {self._settings_path(home)} (no declared module needs it)"
+        return None
 
     def install_event_sink(self, home: Path, sink_source: Path) -> str | None:
         data = self._load_settings(home)

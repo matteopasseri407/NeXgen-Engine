@@ -1,0 +1,159 @@
+# The lazy MCP proxy (`lazy-mcp`)
+
+Servers the manifest marks `lazy: true` are not mounted in your CLIs. One small always-on
+server, `lazy-mcp`, stands in front of them: it lists their tools, loads one tool's full
+definition when the model asks, and forwards the call. The CLI pays for four meta-tools
+instead of the schemas of every server.
+
+## Which CLI gets what
+
+Where a server lives is one rule (`nexgen_core/mcp_placement.py`), asked by the renderer, by the gateway and
+by `nexgen mcp plan` alike. A server is, per CLI, mounted **directly**, served by the **gateway**, or **absent**.
+Declare it once:
+
+```yaml
+servers:
+  vault-library: { exposure: eager, ... }   # mounted directly in every CLI listed in targets
+  github:        { exposure: lazy,  ... }   # behind the gateway in every CLI listed in targets
+```
+
+`targets` is always the allow-list of CLIs and `enabled: false` always switches a server off. A manifest that
+does not declare `exposure` keeps working through the older knobs (`tier`, `lazy`, `lazy_targets`). Each CLI's
+copy of the gateway is told which CLI it is in (`LAZY_MCP_CLI`, written by the renderer) and serves exactly
+what the plan routes behind it there: a server mounted directly in a CLI is not also in that CLI's gateway, and
+one restricted to two CLIs is not offered by the other two. A gateway that was never told its CLI (a config
+written before this) serves every lazy server until the next guard cycle rewrites it.
+
+```bash
+nexgen mcp plan     # the table: server x CLI, direct / gateway / -, and why; what changed for the gateway; what is incoherent
+nexgen mcp check    # starts each CLI's gateway as that CLI would, lists what it serves, names any backend that cannot start
+```
+
+`nexgen doctor` reports an incoherent plan statically (`mcp.placement`); `check` is the live half and starts the
+backends, so it is a command you run, not part of `doctor`.
+
+What stops the gateway's children: a CLI that goes away closes the gateway's input, and the gateway and its
+backends exit with it (tested). A gateway killed outright (the OOM killer, `kill -9`) cannot clean up after
+itself and leaves its backends running until they are stopped by hand.
+
+## Adding a server, and trying one first
+
+`nexgen mcp add` puts a new server **behind the gateway, for every CLI**: that is the default, and the manifest is
+what every machine syncs. `--eager` is the explicit exception, for the few servers that must always be mounted
+(each costs every CLI that loads tools up front its full definition; `nexgen mcp check --direct` prints what).
+
+To look at a server without committing it:
+
+```bash
+nexgen mcp try spike --command npx --args=-y --args=some-mcp@1.2.3 --for 4   # this machine only, 4 hours
+nexgen mcp trials                                                            # what is on trial and how long is left
+nexgen mcp promote spike                                                     # keep it: written into the manifest, syncs
+nexgen mcp drop spike                                                        # or end it now
+```
+
+A trial is kept in this machine's state directory, never in the Vault, so it does not sync; it is served by the
+gateway like any lazy server, so it is never written into a CLI's configuration; and it stops being offered when
+its time is up (24 hours unless told otherwise, a week at most) with nothing to restart. The guard cycle tidies the
+record, and `doctor` reminds you while one is running. It is validated like a manifest entry, credentials included.
+
+## What cannot go behind the gateway
+
+The gateway can authenticate to an HTTP server with a bearer token read from an environment variable
+(`auth.env`) and nothing else. A server that wants OAuth (Google's hosted Gmail and Calendar servers are the
+example) lists its tools without credentials but answers every call with `401`, so its tool list looks healthy
+and it does not work. `nexgen mcp plan` and `doctor` call this out; such a server has to be mounted where the CLI
+handles OAuth itself, or replaced by one that uses a token the engine can hold (`workspace-mcp` reads the
+engine's own Google token store).
+
+## What a server costs
+
+`nexgen mcp check --direct` connects to each directly mounted server and prints its tools and the weight of its
+definitions (about four characters a token), then the total each CLI loads at start. On a CLI that defers tool
+definitions natively that is not what a session pays; on one that does not, it is paid every time.
+
+## Hiding tools you never use
+
+A manifest entry can name tools to hide (`tools_deny`) or the only ones to keep (`tools_allow`):
+
+```yaml
+servers:
+  n8n-mcp:
+    exposure: eager
+    tools_deny: [add_data_table_column, delete_data_table_column, rename_data_table]
+```
+
+The rule is the same on every CLI. Behind the gateway, the gateway filters. A server mounted directly in a CLI is
+started through `mcp-trim.py` instead, a stdio filter between the CLI and the server: it forwards everything, drops
+the hidden tools from `tools/list` and answers a call to one with an error (`-32602`). The model never sees a
+hidden tool's definition, so it never pays for it, and cannot call it by guessing the name. `nexgen mcp check
+--direct` measures the result.
+
+## When a server is not available
+
+The gateway tells you why. A server whose entry declares `${VAR}` and finds it empty is reported as "needs VAR in
+this session's environment"; an HTTP server declared with a bearer variable that is empty is reported as a missing
+credential. Both show up in `lazy_list` (`unavailable`) and in the error of a call, not as "tool not found".
+
+A CLI launched from a desktop launcher or an IDE does not inherit the exports of your shell, which is the usual
+reason a server that works in a terminal is missing in an app. For the variables a server's entry declares (and no
+others) the gateway falls back to the machine's `~/.config/environment.d/*.conf`, so a token provisioned there
+reaches it however the CLI was started.
+
+The secrets deposit has the same gap: `nexgen-secrets materialize` writes `~/.config/nexgen/secrets.env`, which no
+shell or service loads. After the process and `environment.d`, the gateway reads that file for the credentials an entry
+names, and only those: a plain `${NAME}` in `env`, `auth.env` (the bearer token of an HTTP server) and `require_env`.
+A composed value (`prefix-${NAME}`) never sees it. The file is ignored when it is not yours, when others can write it,
+or when a quote in it is left open. A server mounted directly in a CLI is not helped: the CLI itself has to be started
+with the variable, which is one more reason to leave a server behind the gateway unless it must always be there.
+
+## The four tools
+
+| Tool | What it does |
+| --- | --- |
+| `lazy_list` | The index: each server, its tool names, one-line hints. If a server could not be started, its entry carries `error` with why. |
+| `lazy_load` | One tool's full definition. Always before calling it. |
+| `lazy_call` | Forwards a call to a tool the manifest declares read-only (`readonly: true` on the server, or `readonly_tools: [...]`). Refuses anything else. |
+| `lazy_mutate` | Forwards a call to any other tool. Needs `"confirm": true`. |
+
+Reads and writes are separate tools so that your CLI's own permission can tell them apart:
+allow `lazy_call` and still be asked about `lazy_mutate`. Read-only is **never** inferred from a
+tool's name or from the server's own annotations (they come from a server you do not control):
+the manifest has to say it. `"confirm": true` is the model acknowledging that the call changes
+state; it is not your approval. Your approval is your CLI's prompt for `lazy_mutate`, which a
+bypass posture removes by design, so under bypass the audit log is the only record.
+
+Every load, call and refusal is appended to `~/.local/state/lazy-mcp-audit.jsonl` (under
+`NEXGEN_HOME` or `XDG_STATE_HOME` when set).
+
+## What a server is given
+
+A stdio server starts with a **filtered** environment: what a runtime needs to start (`PATH`,
+`HOME`, locale, temp dirs, proxy and certificate settings, `XDG_*`, `NODE_*`, `NPM_CONFIG_*`,
+`PYTHON*`, the engine's own `NEXGEN_*`/`AGENT_*`), minus anything whose name looks like a secret
+(`*TOKEN*`, `*SECRET*`, `*PASSWORD*`, `*API_KEY*`, `*_KEY`, and so on). The proxy's environment holds
+every token your shell exports, and a server used to get all of them.
+
+A server that needs one says so in its manifest entry, and only then does it receive it:
+
+```yaml
+servers:
+  my-server:
+    lazy: true
+    command: npx
+    args: ["-y", "my-mcp@1.2.3"]
+    env:
+      MY_SERVICE_TOKEN: "${MY_SERVICE_TOKEN}"
+```
+
+## When a server does not start
+
+A server that dies on startup (a missing import, a bad path) used to be reported as
+"tool not found", with whatever it printed thrown away. The last lines of its stderr are now kept
+and shown in the error, with the values of the secrets the proxy gave it and the usual token shapes
+replaced by `[redacted]`.
+
+## Concurrency
+
+Tool calls are served concurrently: a slow call to one server no longer holds up a `ping` or a
+call to another. One server's own calls stay serial (its pipe is a single stream). At most 32
+requests are in flight (`LAZY_MCP_MAX_CONCURRENCY`).

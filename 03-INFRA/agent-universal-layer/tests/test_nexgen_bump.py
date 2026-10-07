@@ -546,3 +546,86 @@ def test_restore_failure_is_reported_loudly(tmp_path: Path, monkeypatch):
         [_demo_one_item(), _demo_two_item()], vault, sync=False, home=tmp_path / "home")
     assert bumps == 0
     assert any("could not restore" in n for n in notes)
+
+
+MCP_OLD = "pkg@1.0.0"
+MCP_NEW = "pkg@1.1.0"
+
+
+def _vault_with_mcp_pin(tmp_path: Path) -> tuple[Path, Path]:
+    vault = _vault(tmp_path)
+    manifest = vault / "03-INFRA" / "agent-universal-layer" / "mcp" / "manifest.yaml"
+    manifest.write_text(
+        "schema_version: 1\nservers:\n  srv:\n    command: npx\n"
+        f'    args: ["-y", "{MCP_OLD}"]\n    targets: [claude]\n',
+        encoding="utf-8",
+    )
+    return vault, manifest
+
+
+def _mcp_item() -> dict:
+    return {
+        "what": "MCP server 'srv' (npm pkg)", "pinned": "1.0.0", "upstream": "1.1.0", "reasons": ["patch"], "plain": "piano",
+        "target": {"kind": "npm-version", "manifest": "mcp", "server": "srv", "package": "pkg"},
+    }
+
+
+def test_a_raised_mcp_pin_is_tried_before_it_is_kept(tmp_path: Path, monkeypatch):
+    import nexgen_core.thirdparty_bump as bump_mod
+
+    vault, manifest = _vault_with_mcp_pin(tmp_path)
+    monkeypatch.setattr(bump_mod, "_rematerialize", lambda *a, **k: [])
+    tried: list[list[str]] = []
+    bumps, _notes, moved = bump_mod.apply_plan(
+        [_mcp_item()], vault, sync=True, home=tmp_path / "home", verify=lambda names: tried.append(names) or [])
+    assert bumps == 1 and len(moved) == 1
+    assert tried == [["srv"]]
+    assert MCP_NEW in manifest.read_text(encoding="utf-8") and MCP_OLD not in manifest.read_text(encoding="utf-8")
+
+
+def test_a_server_that_does_not_work_after_the_bump_puts_every_pin_back(tmp_path: Path, monkeypatch):
+    import nexgen_core.thirdparty_bump as bump_mod
+    from nexgen_core.action_notes import is_error
+
+    vault, manifest = _vault_with_mcp_pin(tmp_path)
+    skills = vault / "03-INFRA" / "agent-universal-layer" / "skills" / "skills.manifest.yaml"
+    before = (manifest.read_text(encoding="utf-8"), skills.read_text(encoding="utf-8"))
+    calls: list[tuple] = []
+    monkeypatch.setattr(bump_mod, "_rematerialize", lambda vault_data, home, skills_flag, mcp_flag: calls.append((skills_flag, mcp_flag)) or [])
+
+    bumps, notes, moved = bump_mod.apply_plan(
+        [_mcp_item(), _demo_three_item()], vault, sync=True, home=tmp_path / "home",
+        verify=lambda names: ["srv: it did not start"])
+    assert bumps == 0 and moved == []
+    assert any(is_error(n) and "srv: it did not start" in n for n in notes)
+    assert (manifest.read_text(encoding="utf-8"), skills.read_text(encoding="utf-8")) == before
+    # Rendered once with the new pin, then again from the restored manifests so the CLIs go back too.
+    assert len(calls) == 2 and calls[1][1] is True
+
+
+def test_a_check_that_cannot_run_does_not_vouch_for_the_update(tmp_path: Path, monkeypatch):
+    import nexgen_core.thirdparty_bump as bump_mod
+
+    vault, manifest = _vault_with_mcp_pin(tmp_path)
+    monkeypatch.setattr(bump_mod, "_rematerialize", lambda *a, **k: [])
+
+    def broken_check(_names):
+        raise OSError("no network")
+
+    bumps, notes, _moved = bump_mod.apply_plan([_mcp_item()], vault, sync=True, home=tmp_path / "home", verify=broken_check)
+    assert bumps == 0
+    assert MCP_OLD in manifest.read_text(encoding="utf-8")
+    assert any("no network" in n for n in notes)
+
+
+def test_skills_alone_are_not_tried(tmp_path: Path, monkeypatch):
+    import nexgen_core.thirdparty_bump as bump_mod
+
+    vault = _vault(tmp_path)
+    monkeypatch.setattr(bump_mod, "_rematerialize", lambda *a, **k: [])
+
+    def must_not_run(_names):
+        raise AssertionError("no MCP server moved")
+
+    bumps, _notes, _moved = bump_mod.apply_plan([_demo_three_item()], vault, sync=True, home=tmp_path / "home", verify=must_not_run)
+    assert bumps == 1

@@ -33,6 +33,16 @@ passes its tests.
    machine in minutes; code arrives with a release. Therefore every consumer of
    a declarative file must tolerate a key or value it does not understand by
    skipping that entry loudly, never by rejecting the document.
+9. **One writer, one definition of a secret, one reader of the host.** A file the
+   engine owns is written through `nexgen_core.files` (atomic, mode-preserving,
+   backed up where it matters); a scan test fails the build on a direct
+   `write_text`. What a credential looks like is defined in
+   `nexgen_core.secret_shapes`, and one corpus of synthetic credentials is
+   run through every consumer of it. Everything that changes the machine takes
+   the same host lock, and a diagnostic that asks "would apply change this?"
+   asks the renderer itself in preview rather than re-deriving the answer. Where an MCP server
+   lives (mounted directly, behind the gateway, or absent) is likewise one function that the
+   renderer, the gateway and `nexgen mcp plan` all call.
 
 ---
 
@@ -76,14 +86,20 @@ runs regularly without holding the guard's lock.
 
 ### The self-upgrader
 Takes a released upgrade without asking and says nothing about it. Refuses on a
-dirty tree, refuses a bad signature, and only considers a tag that exists as a
-published release. Has a ceiling on how large a jump it may take unattended,
-defaulting to the smallest, because a machine that changes its own behaviour
-overnight changed it without anyone choosing that. Speaks only when it cannot
-do the work, and a failed attempt must name the recovery, not the check.
+dirty tree, and only considers a tag that exists as a published release. Has a
+ceiling on how large a jump it may take unattended, defaulting to the smallest,
+because a machine that changes its own behaviour overnight changed it without
+anyone choosing that. Speaks only when it cannot do the work, and a failed
+attempt must name the recovery, not the check.
 
-Signature enforcement belongs to the release process.
-The client currently warns on an unverifiable signature and continues; this remains a gap against the contract above.
+It verifies the release tag against the signers pinned in the copy that is
+already installed (SECURITY.md, "What an installed copy verifies"). A wrong
+signature, or one by a key that is not pinned, is refused in every mode; a
+release that cannot be verified at all is refused when nobody is there to read
+the warning. The merge happens under the host lock, and an unattended update
+that fails after the engine moved is undone on the spot and remembered as
+rejected, so it is neither left half-applied nor retried every hour. The
+interactive command never undoes anything by itself: a person is there to look.
 
 ### The dependency watch
 Looks upstream for every pinned third-party thing the layer declares: code

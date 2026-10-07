@@ -22,34 +22,37 @@ from __future__ import annotations
 
 import re
 
+from nexgen_core import secret_shapes
 from nexgen_core.config import RUNTIME_TARGETS, load_mcp_manifest
 from nexgen_core.i18n import t
+from nexgen_core.mcp_placement import CLIS, GATEWAY, GATEWAY_KIND, place
 from nexgen_core.paths import resolve_home, resolve_vault_data
 
 #: Same shape the renderer accepts as a section name elsewhere; a name that
 #: escapes this is exactly the shape that means something else in YAML.
 SERVER_NAME_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,63}")
 
-#: Values that are credentials wearing plain strings. The manifest must
-#: carry `${VAR}` references, never these.
-SECRET_VALUE_RE = re.compile(
-    r"(\b(sk-[A-Za-z0-9_-]{16,})"          # OpenAI-style keys
-    r"|(\bghp_[A-Za-z0-9]{20,})"           # GitHub PATs
-    r"|(\bAKIA[0-9A-Z]{12,})"              # AWS access keys
-    r"|(\b[A-Fa-f0-9]{40,}\b)"             # long hex runs
-    r"|(\b[A-Za-z0-9+/_-]{43,}={0,2}\b))"  # long base64-ish runs
-)
-
-#: An environment-variable NAME that itself names a secret: `PASSWORD=abc`
-#: is a credential in plain text no matter how innocent the value looks.
-SENSITIVE_NAME_RE = re.compile(
-    r"(?i)(token|secret|password|passwd|pwd|api[_-]?key|access[_-]?key|"
-    r"private[_-]?key|client[_-]?secret|credential|auth)"
-)
+#: Values that are credentials wearing plain strings, and names that announce a secret: the
+#: definitions live in `nexgen_core.secret_shapes`, shared with every other place that has to
+#: refuse, hide or withhold one. The manifest must carry `${VAR}` references, never these.
+SECRET_VALUE_RE = secret_shapes.SECRET_VALUE
+SENSITIVE_NAME_RE = secret_shapes.SENSITIVE_NAME_SUBSTRING
 
 #: A real environment-variable name, for references the renderer will
 #: actually resolve.
 ENV_NAME_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+
+#: The gateway as the shipped template declares it. A server routed behind it is unreachable without it, so adding one
+#: to a manifest that lacks it (one made from an older template) adds this too.
+GATEWAY_ENTRY = {
+    "exposure": "eager",
+    "tier": "core",
+    "transport": "stdio",
+    "command": "python3",
+    "args": ["${AGENT_ENGINE_ROOT}/agent-universal-layer/mcp/lazy-mcp.py"],
+    "env": {"AGENT_VAULT_DATA": "${AGENT_VAULT_DATA}"},
+    "targets": list(CLIS),
+}
 
 
 def _manifest_path(vault_data) -> object:
@@ -145,7 +148,7 @@ def build_entry(
         ))
     if readonly and not lazy:
         raise ValueError(t(
-            "--readonly only means something behind the lazy proxy; add --lazy",
+            "--readonly only means something behind the gateway (the default), not with --eager",
         ))
 
     entry: dict = {}
@@ -153,6 +156,9 @@ def build_entry(
     # (the tier gate's default) would be a command that reports success and
     # mounts nothing. Opting OUT of mounting is explicit: --lazy.
     entry["tier"] = "core"
+    # Declared outright (the one rule: mcp_placement). The older keys below stay, so an engine that
+    # predates `exposure` still places the entry the same way.
+    entry["exposure"] = "lazy" if lazy else "eager"
     if url:
         entry["transport"] = "http"
         entry["url"] = url
@@ -186,21 +192,19 @@ def add_server(
     url: str | None = None,
     auth_env: str | None = None,
     env_pairs: list[str] | None = None,
-    lazy: bool = False,
+    lazy: bool = True,
     readonly: bool = False,
     dry_run: bool = False,
     home=None,
     vault_data=None,
 ) -> tuple[int, str]:
-    """Adds one server to the manifest: validated, atomic, roll-backed.
+    """Adds one server to the manifest: validated, atomic, roll-backed. Lazy (behind the gateway) unless `lazy=False`.
 
     Returns (exit code, message). Nothing is rendered here on purpose: the
     manifest is the canonical source, and the next `nexgen sync apply` (or
     the guard cycle) regenerates the CLIs from it — the same rule that keeps
     hand edits and adopted stubs honest.
     """
-    from nexgen_core.renderer_cli import _emit_manifest_stub, insert_server_stubs
-
     try:
         targets = parse_targets(targets_raw)
         env = _parse_env(env_pairs)
@@ -211,15 +215,22 @@ def add_server(
     except ValueError as exc:
         return 2, str(exc)
 
+    return insert_entry(name, entry, dry_run=dry_run, home=home, vault_data=vault_data, targets=targets)
+
+
+def insert_entry(
+    name: str, entry: dict, *, dry_run: bool = False, home=None, vault_data=None, targets: list[str] | None = None,
+) -> tuple[int, str]:
+    """Writes an already-validated entry into the manifest: atomic, with a backup, refusing a name that is taken."""
+    from nexgen_core.renderer_cli import _emit_manifest_stub, insert_server_stubs
+
     home_dir = resolve_home(home)
     vault = resolve_vault_data(home_dir, vault_data)
     path = _manifest_path(vault)
-
     try:
         data = load_mcp_manifest(path)  # type: ignore[arg-type]
     except Exception as exc:  # noqa: BLE001 - render error is reported, never raises
         return 2, t("cannot read the manifest ({error}); fix it before adding", error=exc)
-
     if name in (data.get("servers") or {}):
         return 2, t("'{name}' is already declared in the manifest: edit it by hand.", name=name)
     if name in (data.get("retired_servers") or []):
@@ -227,16 +238,23 @@ def add_server(
             "'{name}' is retired: remove it from retired_servers first if you really mean to bring it back.",
             name=name,
         )
-
     stub = _emit_manifest_stub(name, entry)
+    stubs = [stub]
+    behind_gateway = any(place(entry, cli).kind == GATEWAY_KIND for cli in CLIS)
+    adds_gateway = behind_gateway and GATEWAY not in (data.get("servers") or {}) and name != GATEWAY
+    if adds_gateway:
+        stubs.insert(0, _emit_manifest_stub(GATEWAY, GATEWAY_ENTRY))
     if dry_run:
-        return 0, t("dry run (nothing written). Stub to add under 'servers:':\n{stub}", stub=stub)
-
-    ok, message, _backup = insert_server_stubs(path, [stub])  # type: ignore[arg-type]
+        return 0, t("dry run (nothing written). Stub to add under 'servers:':\n{stub}", stub="\n".join(stubs))
+    ok, message, _backup = insert_server_stubs(path, stubs)  # type: ignore[arg-type]
     if not ok:
         return 2, message
-    return 0, t(
+    shown = targets if targets is not None else entry.get("targets") or []
+    done = t(
         "{name} added to the manifest for {targets}. Backup: {backup}. "
         "Run 'nexgen sync apply' to render it to the CLIs, then commit.",
-        name=name, targets=", ".join(targets), backup=_backup,
+        name=name, targets=", ".join(shown), backup=_backup,
     )
+    if adds_gateway:
+        done += " " + t("The gateway ({gateway}) was not in the manifest, so it was added too: nothing behind it is reachable without it.", gateway=GATEWAY)
+    return 0, done

@@ -85,16 +85,22 @@ def render(renderer, write: bool = False) -> tuple[bool, str]:
             auth_env = srv.get("auth", {}).get("env") if isinstance(srv.get("auth"), dict) else None
             if auth_env:
                 lines.append(f'bearer_token_env_var = "{auth_env}"')
-            timeouts = srv.get("timeouts", {})
-            if isinstance(timeouts, dict):
-                if "startup" in timeouts:
-                    lines.append(f'startup_timeout_sec = {float(timeouts["startup"])}')
-                if "tool" in timeouts:
-                    lines.append(f'tool_timeout_sec = {float(timeouts["tool"])}')
         else:
             lines.append(f'command = {json.dumps(srv.get("command", ""))}')
             args_json = json.dumps(srv.get("args", []))
             lines.append(f"args = {args_json}")
+        # The timeouts the manifest declares apply to both kinds of server. Only the http branch
+        # wrote them, so a stdio server (vault-ocr, drive and lane: 30 s to start, up to 300 s per tool)
+        # ran on Codex's defaults (10 s to start), and the manifest comment claiming "Codex renders its native
+        # timeout fields" was true for half the servers. They go before the env sub-table: a key
+        # after a `[table]` header belongs to that table.
+        timeouts = srv.get("timeouts", {})
+        if isinstance(timeouts, dict):
+            if "startup" in timeouts:
+                lines.append(f'startup_timeout_sec = {float(timeouts["startup"])}')
+            if "tool" in timeouts:
+                lines.append(f'tool_timeout_sec = {float(timeouts["tool"])}')
+        if not (srv.get("transport") == "http" or srv.get("url")):
             env = srv.get("env", {})
             if env:
                 lines.append(f"[mcp_servers.{section}.env]")

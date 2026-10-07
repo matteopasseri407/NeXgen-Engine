@@ -118,7 +118,7 @@ def run_publish(vault: Path, engine_scripts: Path) -> subprocess.CompletedProces
         cwd=str(vault),
         env=env,
         capture_output=True,
-        text=True,
+        text=True, encoding="utf-8", errors="replace",
         timeout=PUBLISH_TIMEOUT_SECONDS,
         check=False,
     )
@@ -129,10 +129,7 @@ def write_quarantine_marker(clone: Path, reason: str, timestamp: str) -> None:
     if not clone_path.is_dir():
         return
     marker = clone_path / QUARANTINE_MARKER_NAME
-    marker.write_text(
-        json.dumps({"quarantined_at": timestamp, "reason": reason}, indent=2) + "\n",
-        encoding="utf-8",
-    )
+    atomic_write_text(marker, json.dumps({"quarantined_at": timestamp, "reason": reason}, indent=2) + "\n")
 
 
 def print_quarantine_summary(clone: Path, reason: str, *, output=print) -> None:

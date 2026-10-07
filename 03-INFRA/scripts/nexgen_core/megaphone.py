@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Any
 
 from nexgen_core import notify
+from nexgen_core.files import atomic_write_text
 from nexgen_core.i18n import t
 from nexgen_core.paths import resolve_state_dir
 
@@ -46,7 +47,7 @@ class Megaphone:
 
     def _save_state(self, state: dict[str, Any]) -> None:
         self.state_dir.mkdir(parents=True, exist_ok=True)
-        self.state_file.write_text(json.dumps(state, indent=2), encoding="utf-8")
+        atomic_write_text(self.state_file, json.dumps(state, indent=2))
 
     def should_notify(self, alert_key: str, debounce_hours: float = DEFAULT_DEBOUNCE_HOURS) -> bool:
         """Checks whether the alert should be sent, or is within its debounce window."""

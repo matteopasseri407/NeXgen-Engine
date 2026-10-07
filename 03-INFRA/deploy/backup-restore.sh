@@ -28,6 +28,13 @@
 # Env:
 #   BACKUP_DIR        where archives are written (default: ./backups)
 #   RETENTION_COUNT   archives kept per volume (default: 7)
+#   BACKUP_HOT=1      copy a volume while the containers using it keep running.
+#                     Off by default: a database file copied while it is being
+#                     written (n8n's SQLite, the NUQ queue's Postgres) can be an
+#                     archive that restores into a corrupt database, and nobody
+#                     finds out until the day it is needed. By default the
+#                     containers that mount the volume are stopped for the few
+#                     seconds the copy takes and started again, also on failure.
 #
 # Archive naming: <volume>_<UTC timestamp>.tar.gz, e.g.
 #   n8n-data_20260712T140502Z.tar.gz
@@ -63,6 +70,11 @@ require() {
   command -v "$1" >/dev/null 2>&1 || { echo "missing: $1" >&2; exit 1; }
 }
 
+# Running containers that mount the volume, one id per line.
+containers_using() {
+  docker ps -q --filter "volume=$1"
+}
+
 compose_file_for() {
   case "$1" in
     n8n) echo "$DEPLOY_DIR/n8n/docker-compose.yml" ;;
@@ -92,12 +104,35 @@ do_backup_one() {
   local stamp
   stamp="$(date -u +%Y%m%dT%H%M%SZ)"
   local archive_name="${volume}_${stamp}.tar.gz"
+
+  local running=()
+  if [ "${BACKUP_HOT:-0}" != "1" ]; then
+    local id
+    while IFS= read -r id; do
+      [ -n "$id" ] && running+=("$id")
+    done < <(containers_using "$volume")
+  fi
+  if [ "${#running[@]}" -gt 0 ]; then
+    echo "==> stopping ${#running[@]} container(s) using '$volume' for a consistent copy (BACKUP_HOT=1 to skip)"
+    docker stop "${running[@]}" >/dev/null
+  fi
+  # Started again whatever happens below: a failed backup must not leave the
+  # service down.
+  local status=0
   echo "==> backing up volume '$volume' -> $BACKUP_DIR/$archive_name"
   docker run --rm \
     -v "${volume}:/volume:ro" \
     -v "$BACKUP_DIR:/backup" \
     "$HELPER_IMAGE" \
-    tar czf "/backup/$archive_name" -C /volume .
+    tar czf "/backup/$archive_name" -C /volume . || status=$?
+  if [ "${#running[@]}" -gt 0 ]; then
+    docker start "${running[@]}" >/dev/null || echo "WARNING: could not restart: ${running[*]}" >&2
+  fi
+  if [ "$status" -ne 0 ]; then
+    rm -f -- "$BACKUP_DIR/$archive_name"
+    echo "backup of '$volume' failed (exit $status)" >&2
+    exit "$status"
+  fi
   # Tighten immediately after creation -- never leave a window where the
   # archive sits at whatever default mode the helper container's umask
   # produced (typically world-readable).
@@ -149,15 +184,25 @@ cmd_restore() {
   archive_base="$(basename "$archive")"
   echo "==> restoring $archive into volume '$volume'"
   echo "    this REPLACES the current content of '$volume'."
-  echo "    stop the stack that mounts this volume first (docker compose -f <stack>/docker-compose.yml down)."
+  # Not a reminder any more: emptying a volume under a running database is how
+  # a restore ends up as a corrupt one.
+  local running
+  running="$(containers_using "$volume" | tr '\n' ' ')"
+  if [ -n "${running// /}" ]; then
+    echo "refusing: containers are still using '$volume': $running" >&2
+    echo "stop the stack that mounts it first (docker compose -f <stack>/docker-compose.yml down)." >&2
+    exit 1
+  fi
   read -r -p "    type 'yes' to continue: " confirm
   [ "$confirm" = "yes" ] || { echo "aborted"; exit 1; }
   docker volume create "$volume" >/dev/null
+  # The archive name travels as an argument, not spliced into the shell
+  # command the container runs: a name with a quote or a space stays a name.
   docker run --rm \
     -v "${volume}:/volume" \
     -v "${archive_dir}:/backup:ro" \
     "$HELPER_IMAGE" \
-    sh -c "rm -rf /volume/* /volume/.[!.]* 2>/dev/null; tar xzf /backup/${archive_base} -C /volume"
+    sh -c 'rm -rf /volume/* /volume/.[!.]* 2>/dev/null; tar xzf "/backup/$1" -C /volume' _ "$archive_base"
   echo "==> restore done. Restart the stack: docker compose -f <stack>/docker-compose.yml up -d"
 }
 

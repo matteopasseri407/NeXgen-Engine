@@ -95,3 +95,6 @@ build/
 dist/
 __pycache__/
 *.py[co]
+
+# Build output: setup.py copies the engine layer here only inside build/lib.
+03-INFRA/scripts/nexgen_core/_engine/

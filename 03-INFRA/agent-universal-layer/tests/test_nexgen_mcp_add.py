@@ -46,10 +46,11 @@ def test_add_writes_a_valid_entry_with_backup(sandbox):
 
 
 def test_add_renders_only_on_the_declared_targets(sandbox):
+    """An eager server (the explicit exception) is rendered directly, and only where it was declared."""
     code, message = add_server(
         "filesystem", "codex,opencode",
         command="npx", args=["-y", "@modelcontextprotocol/server-filesystem", "/tmp/ws"],
-        home=sandbox.home, vault_data=sandbox.vault,
+        lazy=False, home=sandbox.home, vault_data=sandbox.vault,
     )
     assert code == 0, message
 
@@ -57,6 +58,26 @@ def test_add_renders_only_on_the_declared_targets(sandbox):
     assert "filesystem" in renderer.load_resolved_servers("codex")
     assert "filesystem" in renderer.load_resolved_servers("opencode")
     assert "filesystem" not in renderer.load_resolved_servers("claude")
+
+
+def test_add_is_behind_the_gateway_for_the_declared_targets_by_default(sandbox):
+    """The default is lazy: nothing is rendered into a CLI, the gateway of each declared CLI serves it."""
+    code, message = add_server(
+        "filesystem", "codex,opencode",
+        command="npx", args=["-y", "@modelcontextprotocol/server-filesystem", "/tmp/ws"],
+        home=sandbox.home, vault_data=sandbox.vault,
+    )
+    assert code == 0, message
+    renderer = McpRenderer(vault_data=sandbox.vault, home=sandbox.home)
+    for cli in ("claude", "codex", "antigravity", "opencode"):
+        assert "filesystem" not in renderer.load_resolved_servers(cli)
+    from nexgen_core.config import load_mcp_manifest
+    from nexgen_core.mcp_placement import gateway_servers_for
+
+    servers = load_mcp_manifest(renderer.manifest_path)["servers"]
+    assert "filesystem" in gateway_servers_for(servers, "codex")
+    assert "filesystem" in gateway_servers_for(servers, "opencode")
+    assert "filesystem" not in gateway_servers_for(servers, "claude")
 
 
 def test_dry_run_writes_nothing(sandbox):
@@ -147,11 +168,11 @@ def test_http_server_with_auth_env_and_readonly_gates(sandbox):
     assert entry["lazy"] is True and entry["readonly"] is True
 
 
-def test_readonly_without_lazy_is_meaningless_and_refused(sandbox):
+def test_readonly_on_an_eager_server_is_meaningless_and_refused(sandbox):
     code, message = add_server("remote", "claude", url="https://x.example.com/mcp",
-                               readonly=True, home=sandbox.home, vault_data=sandbox.vault)
+                               readonly=True, lazy=False, home=sandbox.home, vault_data=sandbox.vault)
     assert code == 2
-    assert "lazy" in message
+    assert "--readonly" in message
 
 
 def test_a_broken_write_is_rolled_back_to_the_original(sandbox, monkeypatch):
@@ -241,3 +262,63 @@ def test_empty_targets_is_an_error_not_all(sandbox):
     )
     assert code == 2
     assert "--targets" in message
+
+
+# --- the gateway has to be there for anything behind it -------------------------------------------------------------
+
+import yaml  # noqa: E402
+
+from nexgen_core.mcp_placement import GATEWAY, problems  # noqa: E402
+
+
+def _without_gateway(sandbox) -> None:
+    path = _manifest_path(sandbox)
+    data = yaml.safe_load(path.read_text(encoding="utf-8"))
+    data["servers"].pop(GATEWAY, None)
+    path.write_text(yaml.safe_dump(data), encoding="utf-8")
+
+
+def test_a_lazy_add_to_a_manifest_without_the_gateway_adds_the_gateway_too(sandbox):
+    _without_gateway(sandbox)
+    code, message = add_server("demo", "all", command="npx", args=["-y", "demo-mcp@1.0.0"],
+                               home=sandbox.home, vault_data=sandbox.vault)
+    assert code == 0, message
+    assert GATEWAY in message, "the person is told why a second entry appeared"
+    servers = load_mcp_manifest(_manifest_path(sandbox))["servers"]
+    assert GATEWAY in servers and "demo" in servers
+    assert servers[GATEWAY]["exposure"] == "eager" and servers[GATEWAY]["targets"] == ["claude", "codex", "antigravity", "opencode"]
+    assert problems(servers) == [], "what was added is reachable, not routed to a gateway nobody mounts"
+
+
+def test_a_manifest_that_has_the_gateway_does_not_get_a_second_one(sandbox):
+    _without_gateway(sandbox)
+    add_server("first", "all", command="npx", args=["-y", "a@1.0.0"], home=sandbox.home, vault_data=sandbox.vault)
+    before = _manifest_path(sandbox).read_text(encoding="utf-8").count(f'"{GATEWAY}":')
+    code, message = add_server("second", "all", command="npx", args=["-y", "b@1.0.0"], home=sandbox.home, vault_data=sandbox.vault)
+    assert code == 0 and GATEWAY not in message
+    assert _manifest_path(sandbox).read_text(encoding="utf-8").count(f'"{GATEWAY}":') == before == 1
+
+
+def test_an_eager_add_does_not_drag_the_gateway_in(sandbox):
+    _without_gateway(sandbox)
+    code, _ = add_server("direct", "codex", command="npx", args=["-y", "d@1.0.0"], lazy=False,
+                         home=sandbox.home, vault_data=sandbox.vault)
+    assert code == 0
+    assert GATEWAY not in load_mcp_manifest(_manifest_path(sandbox))["servers"]
+
+
+def test_a_dry_run_shows_the_gateway_it_would_add_and_writes_nothing(sandbox):
+    _without_gateway(sandbox)
+    before = _manifest_path(sandbox).read_text(encoding="utf-8")
+    code, message = add_server("demo", "all", command="npx", args=["-y", "demo-mcp@1.0.0"], dry_run=True,
+                               home=sandbox.home, vault_data=sandbox.vault)
+    assert code == 0 and GATEWAY in message and "demo" in message
+    assert _manifest_path(sandbox).read_text(encoding="utf-8") == before
+
+
+def test_the_shipped_template_carries_the_gateway_so_a_new_vault_can_add_lazily(tmp_path):
+    """A fresh user's first `mcp add` must leave a coherent plan. The template is what a new vault starts from."""
+    template = Path(__file__).resolve().parents[1] / "mcp" / "manifest.yaml"
+    servers = load_mcp_manifest(template)["servers"]
+    assert GATEWAY in servers and servers[GATEWAY]["tier"] == "core"
+    assert problems(servers) == []

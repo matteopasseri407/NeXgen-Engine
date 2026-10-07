@@ -31,6 +31,7 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from nexgen_core.files import atomic_write_text
 from nexgen_core.depwatch import PinFinding
 
 GIT_TIMEOUT_SECONDS = 120
@@ -76,7 +77,7 @@ class GuardFinding:
 def _run_git(args: list[str], cwd: Path) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         ["git", *args], cwd=str(cwd),
-        capture_output=True, text=True, check=False,
+        capture_output=True, text=True, encoding="utf-8", errors="replace", check=False,
         timeout=GIT_TIMEOUT_SECONDS,
     )
 
@@ -392,7 +393,7 @@ def run_guardian(
         }
         sidecar = Path(state_dir) / "nexgen" / "third-party-guard.json"
         sidecar.parent.mkdir(parents=True, exist_ok=True)
-        sidecar.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+        atomic_write_text(sidecar, json.dumps(payload, indent=2) + "\n")
         return {"ok": True, "auto": len(payload["auto"]),
                 "batch": len(payload["batch"]), "hold": len(payload["hold"])}
     except Exception as exc:  # noqa: BLE001 - guard failure is reported, never raises

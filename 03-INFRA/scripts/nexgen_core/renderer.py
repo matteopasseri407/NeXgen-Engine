@@ -32,6 +32,7 @@ from nexgen_core.paths import (  # noqa: E402 - sys.path shim for cloned checkou
 )
 
 from nexgen_core.mcp_render import IS_WINDOWS  # noqa: E402 - sys.path shim for cloned checkout
+from nexgen_core.mcp_placement import DIRECT, GATEWAY, GATEWAY_CLI_ENV, place  # noqa: E402 - sys.path shim for cloned checkout
 
 
 class McpRenderer:
@@ -49,6 +50,9 @@ class McpRenderer:
         self.engine_root = resolve_engine_root(self.home, engine_root)
 
         self.manifest_path = self.vault_data / "03-INFRA" / "agent-universal-layer" / "mcp" / "manifest.yaml"
+        #: While not None, writes are collected here instead of performed
+        #: (see :meth:`pending_changes`).
+        self._pending: dict[Path, str] | None = None
         self.path_placeholders = {
             "AGENT_ENGINE_ROOT": str(self.engine_root),
             "AGENT_VAULT_DATA": str(self.vault_data),
@@ -120,25 +124,9 @@ class McpRenderer:
         resolved: dict[str, dict[str, Any]] = {}
 
         for name, srv in raw_servers.items():
-            # Lazy contract: `tier: core` is always mounted; anything else
-            # (absent tier or `tier: optional`) is mounted only when the
-            # entry opts in with `enabled: true`. A registered-but-inert
-            # server costs nothing at bootstrap and is never a problem.
-            tier = str(srv.get("tier", "")).strip().lower()
-            if tier != "core" and not srv.get("enabled", False):
-                continue
-
-            # Lazy routing: a server declared `lazy: true` is served by the
-            # lazy-mcp proxy, not mounted directly in the CLIs listed in
-            # `lazy_targets` (default: all four). CLIs outside the list keep
-            # it direct (e.g. Claude, which defers schemas natively).
-            if srv.get("lazy"):
-                lazy_targets = srv.get("lazy_targets") or ["claude", "codex", "antigravity", "opencode"]
-                if cli_target in lazy_targets:
-                    continue
-
-            targets = srv.get("targets", ["claude", "codex", "antigravity", "opencode"])
-            if cli_target not in targets:
+            # One rule for where a server lives (mcp_placement): this CLI mounts it directly, or it is served
+            # by the gateway, or it is not here at all. Only the first is rendered into the CLI's config.
+            if place(srv, cli_target).kind != DIRECT:
                 continue
 
             # require_env check
@@ -188,9 +176,37 @@ class McpRenderer:
                     for k, v in entry["env"].items()
                 }
 
+            if name == GATEWAY:
+                # The gateway serves exactly what the plan routes behind it for THIS CLI, so it has to know which.
+                entry["env"] = {**(entry.get("env") if isinstance(entry.get("env"), dict) else {}), GATEWAY_CLI_ENV: cli_target}
+            elif entry.get("tools_deny") or entry.get("tools_allow"):
+                entry = self._trimmed_entry(name, entry, raw_servers.get(GATEWAY), cli_target)
+
             resolved[name] = entry
 
         return resolved
+
+    def _trimmed_entry(self, name: str, entry: dict[str, Any], gateway: dict[str, Any] | None, cli_target: str) -> dict[str, Any]:
+        """A directly mounted server that hides some of its tools is mounted through `mcp-trim.py`.
+
+        Same filter for every CLI (the alternative is four dialects, one of which does not exist), same
+        tool names, so permissions written against them still mean the same thing.
+        """
+        interpreter = (gateway or {}).get("command") or "python3"
+        script = self.engine_root / "agent-universal-layer" / "mcp" / "mcp-trim.py"
+        trimmed: dict[str, Any] = {
+            "transport": "stdio",
+            "command": self._normalize_windows_shim(str(interpreter)) if IS_WINDOWS else str(interpreter),
+            "args": [str(script), name],
+            "env": {"AGENT_VAULT_DATA": str(self.vault_data), GATEWAY_CLI_ENV: cli_target},
+            "tools_deny": entry.get("tools_deny") or [],
+        }
+        for key in ("timeouts", "targets", "tier", "exposure", "enabled"):
+            if key in entry:
+                trimmed[key] = entry[key]
+        if entry.get("tools_allow"):
+            trimmed["tools_allow"] = entry["tools_allow"]
+        return trimmed
 
     def unmounted_server_names(self, mounted: dict, cli_target: str) -> set[str]:
         """Names to remove, shared by JSON and TOML dialects.
@@ -210,11 +226,7 @@ class McpRenderer:
         for name, srv in data.get("servers", {}).items():
             if name in mounted:
                 continue
-            tier = str(srv.get("tier", "")).strip().lower()
-            lazy_targets = srv.get("lazy_targets") or ["claude", "codex", "antigravity", "opencode"]
-            routed_away = bool(srv.get("lazy")) and cli_target in lazy_targets
-            allowed_here = cli_target in srv.get("targets", ["claude", "codex", "antigravity", "opencode"])
-            would_mount = allowed_here and (tier == "core" or srv.get("enabled", False)) and not routed_away
+            would_mount = place(srv, cli_target).kind == DIRECT
             if srv.get("require_env") and would_mount:
                 continue
             unmounted.add(name)
@@ -236,11 +248,9 @@ class McpRenderer:
         data = load_mcp_manifest(self.manifest_path)
         out: list[str] = []
         for name, srv in data.get("servers", {}).items():
-            tier = str(srv.get("tier", "")).strip().lower()
-            if tier == "core" or srv.get("enabled", False):
-                continue
-            targets = srv.get("targets", ["claude", "codex", "antigravity", "opencode"])
-            if cli_target in targets:
+            # "Known to exist, not mounted": neither core nor enabled, or switched off while optional.
+            why = place(srv, cli_target).why
+            if why.startswith("inert") or (why == "disabled" and str(srv.get("tier", "")).strip().lower() != "core"):
                 out.append(name)
         return sorted(out)
 
@@ -277,6 +287,28 @@ class McpRenderer:
         results["codex"] = ok_codex
         return results
 
+    @property
+    def previewing(self) -> bool:
+        """True inside :meth:`pending_changes`: nothing may touch the disk."""
+        return self._pending is not None
+
+    def pending_changes(self, cli_target: str) -> dict[Path, str]:
+        """The files `render_<cli>(write=True)` would change right now, with their new text.
+
+        Nothing is written. It runs the real renderer with its writer
+        swapped for a collector, so a diagnostic that asks "would apply
+        change anything?" can never disagree with apply itself, which is
+        what a second, hand-written comparison of the two would eventually
+        do. Raises what the renderer raises (an unreadable config, a
+        manifest it cannot resolve).
+        """
+        self._pending = {}
+        try:
+            getattr(self, f"render_{cli_target}")(write=True)
+            return dict(self._pending)
+        finally:
+            self._pending = None
+
     def _backup_and_write(self, path: Path, content: str) -> None:
         """Makes a .bak-<timestamp> backup and writes the new content atomically.
 
@@ -286,6 +318,15 @@ class McpRenderer:
         `nexgen_core.files`; the last-3 rotation stays this writer's policy.
         """
         from nexgen_core.files import write_text_if_changed
+
+        if self._pending is not None:
+            try:
+                unchanged = Path(path).read_text(encoding="utf-8") == content
+            except (OSError, UnicodeDecodeError):
+                unchanged = False
+            if not unchanged:
+                self._pending[Path(path)] = content
+            return
 
         # Rendered configs may carry bearer tokens in env blocks: keep the
         # historical 0600 on POSIX (Windows has no equivalent bit here).

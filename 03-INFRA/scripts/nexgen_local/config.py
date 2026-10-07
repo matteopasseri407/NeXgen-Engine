@@ -12,12 +12,23 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from nexgen_core.files import secure_artifact as secure_artifact
+from nexgen_core.paths import resolve_home, resolve_vault_data
 
 #: Default Ollama tag. Never hardcoded into behaviour, only into the fallback.
 DEFAULT_MODEL = "gemma4-12b-openclaw:latest"
 
 #: Parts that may never be read, whatever root is allowed.
 EXCLUDED_PARTS = frozenset({"99-SECRETS", ".git", "node_modules", ".venv"})
+
+
+def lane_state_dir() -> Path:
+    """Where the lane keeps its audit log, proposals, drafts and research sessions.
+
+    Under the engine's home (`NEXGEN_HOME` when set), the same place every other piece of engine state
+    follows. These defaults used the process's real home, so a checkout run in a sandbox home beside a
+    working installation wrote its proposals and audit trail into the working installation's lane.
+    """
+    return resolve_home() / ".local/state/nexgen/local-lane"
 
 
 def default_engine_root() -> Path:
@@ -53,19 +64,19 @@ class LaneConfig:
     temperature: float = 0.0
     max_results: int = 5
     read_chars: int = 3000
-    audit_path: Path = field(default_factory=lambda: Path.home() / ".local/state/nexgen/local-lane/audit.jsonl")
+    audit_path: Path = field(default_factory=lambda: lane_state_dir() / "audit.jsonl")
     proposals_dir: Path = field(
-        default_factory=lambda: Path.home() / ".local/state/nexgen/local-lane/proposals"
+        default_factory=lambda: lane_state_dir() / "proposals"
     )
-    drafts_dir: Path = field(default_factory=lambda: Path.home() / ".local/state/nexgen/local-lane/drafts")
-    mails_dir: Path = field(default_factory=lambda: Path.home() / ".local/state/nexgen/local-lane/mails")
-    uploads_dir: Path = field(default_factory=lambda: Path.home() / ".local/state/nexgen/local-lane/uploads")
-    calendars_dir: Path = field(default_factory=lambda: Path.home() / ".local/state/nexgen/local-lane/calendars")
-    workflows_dir: Path = field(default_factory=lambda: Path.home() / ".local/state/nexgen/local-lane/workflows")
+    drafts_dir: Path = field(default_factory=lambda: lane_state_dir() / "drafts")
+    mails_dir: Path = field(default_factory=lambda: lane_state_dir() / "mails")
+    uploads_dir: Path = field(default_factory=lambda: lane_state_dir() / "uploads")
+    calendars_dir: Path = field(default_factory=lambda: lane_state_dir() / "calendars")
+    workflows_dir: Path = field(default_factory=lambda: lane_state_dir() / "workflows")
     #: Persistent research sessions (one sqlite each): sources, chunks read,
     #: coverage and staged proposals across interactions. Working state only,
     #: swept by age; never vault memory.
-    research_dir: Path = field(default_factory=lambda: Path.home() / ".local/state/nexgen/local-lane/research")
+    research_dir: Path = field(default_factory=lambda: lane_state_dir() / "research")
     firecrawl_cmd: str = "firecrawl-local"
     pdftotext_cmd: str = "pdftotext"
     max_steps: int = 4
@@ -90,16 +101,15 @@ class LaneConfig:
         router_model: str | None = None,
         answer_model: str | None = None,
     ) -> "LaneConfig":
-        vault_root = Path(
-            vault or os.environ.get("AGENT_VAULT_DATA") or (Path.home() / "KnowledgeVault")
-        ).expanduser().resolve()
+        # The one resolver: it also reads KNOWLEDGE_VAULT_PATH, which this lane ignored.
+        vault_root = resolve_vault_data(None, Path(vault) if vault else None).resolve()
         if repos:
             repo_roots = tuple(Path(p).expanduser().resolve() for p in repos)
         else:
             engine = default_engine_root()
             repo_roots = (engine,) if engine.is_dir() else ()
         audit_path = Path(
-            audit or os.environ.get("NEXGEN_LOCAL_AUDIT") or (Path.home() / ".local/state/nexgen/local-lane/audit.jsonl")
+            audit or os.environ.get("NEXGEN_LOCAL_AUDIT") or (lane_state_dir() / "audit.jsonl")
         ).expanduser().resolve()
         try:
             num_ctx = int(os.environ.get("NEXGEN_LOCAL_NUM_CTX") or 0) or 65536

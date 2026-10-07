@@ -39,7 +39,7 @@ from nexgen_core.first_run import (  # noqa: E402 - sys.path shim for cloned che
     write_user_profile,
 )
 from nexgen_core.i18n import t  # noqa: E402 - sys.path shim for cloned checkout
-from nexgen_core.paths import resolve_home  # noqa: E402 - sys.path shim for cloned checkout
+from nexgen_core.paths import installed_as_package, resolve_home  # noqa: E402 - sys.path shim for cloned checkout
 
 #: The Python version below which the engine won't start.
 MINIMUM_PYTHON = (3, 11)
@@ -126,9 +126,18 @@ def preflight() -> list[Finding]:
     return found
 
 
+TEMPLATE_URL = "https://github.com/matteopasseri407/NeXgen-Engine.git"
+
+
 def scaffold(root: Path, write: bool) -> list[Finding]:
-    """The folders and files a vault must have."""
+    """The folders and files a vault must have.
+
+    A folder that lacks the template files is not a vault yet, and nothing is created in it: the folders would only
+    make it non-empty and block the `git clone` of the template that it needs next.
+    """
     found: list[Finding] = []
+    template_missing = [name for name in SCAFFOLD_FILES if not (root / name).is_file()]
+    write = write and not template_missing
     for name in SCAFFOLD_DIRS:
         target = root / name
         if target.is_dir():
@@ -141,10 +150,13 @@ def scaffold(root: Path, write: bool) -> list[Finding]:
         else:
             found.append(Finding(f"{name}/", False, True, t("rerun without --check to create it")))
 
+    nothing_there = len(template_missing) == len(SCAFFOLD_FILES)
     for name in SCAFFOLD_FILES:
         found.append(Finding(
             name, (root / name).is_file(), True,
-            t("the clone looks incomplete: double-check you cloned the whole repository"),
+            t("this folder is not a vault yet: clone the template into it first: git clone {url} {root}", url=TEMPLATE_URL, root=root)
+            if nothing_there
+            else t("the clone looks incomplete: double-check you cloned the whole repository"),
         ))
     return found
 
@@ -210,8 +222,13 @@ def _sym(char: str, fallback: str, stream: object) -> str:
         return fallback
 
 
-def render(findings: list[Finding], title: str, stream=sys.stdout) -> int:
-    """Prints a block of outcomes and returns how many requirements are missing."""
+def render(findings: list[Finding], title: str, stream=None) -> int:
+    """Prints a block of outcomes and returns how many requirements are missing.
+
+    The default stream is looked up when called: bound at import it kept pointing at whatever
+    `sys.stdout` was then, and failed with "I/O operation on closed file" once that was replaced.
+    """
+    stream = stream if stream is not None else sys.stdout
     c = _colour(stream)
     ok_sym = _sym("✓", "[OK]", stream)
     err_sym = _sym("✗", "[X]", stream)
@@ -242,7 +259,19 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--root", default=None, help=t("Vault root (default: the repository folder)"))
     args = parser.parse_args(argv)
 
-    root = Path(args.root) if args.root else Path(__file__).resolve().parents[3]
+    if args.root:
+        root = Path(args.root)
+    elif installed_as_package():
+        # The default root is the repository folder. An installed package has none: the
+        # path computed from this file points inside the tool's virtual environment, and
+        # the scaffold used to be written there (even with --check, which did not exist).
+        print(t(
+            "This engine is installed as a package, so there is no repository folder to use as the vault. "
+            "Pass --root PATH (for example ~/KnowledgeVault)."
+        ), file=sys.stderr)
+        return 2
+    else:
+        root = Path(__file__).resolve().parents[3]
     c = _colour(sys.stdout)
 
     print(f"{c['bold']}{c['cyan']}" + t("NeXgen Engine · first run") + c['reset'])

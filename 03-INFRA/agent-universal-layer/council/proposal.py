@@ -48,11 +48,12 @@ from seat_process import _effort_label
 
 
 def _vault_data_root() -> Path:
-    """Same AGENT_ENGINE_ROOT/AGENT_VAULT_DATA pattern as agent_sync.py:
-    user data (which seats, which models) lives in the data plane, never in
-    the public engine, regardless of where the engine is installed."""
-    vault = Path(os.environ.get("KNOWLEDGE_VAULT_PATH") or str(Path.home() / "KnowledgeVault"))
-    return Path(os.environ.get("AGENT_VAULT_DATA") or str(vault))
+    """The data plane: user data (which seats, which models) lives there, never in the public engine,
+    wherever the engine is installed. The engine's one resolver, so `~` in the variable is expanded and
+    the precedence is the same as everywhere else."""
+    from nexgen_core.paths import resolve_vault_data
+
+    return resolve_vault_data()
 
 
 def _seats_path() -> Path:

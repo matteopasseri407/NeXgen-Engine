@@ -135,9 +135,9 @@ def build_server(
 
     cfg = cfg or LaneConfig.from_env()
     if llm_factory is None:
-        from .llm import ChatOllamaLLM
+        from .llm import build_llm
 
-        llm_factory = lambda: ChatOllamaLLM(cfg)  # noqa: E731
+        llm_factory = lambda: build_llm(cfg)  # noqa: E731
 
     server = MCPServer(
         name="nexgen-local-lane",

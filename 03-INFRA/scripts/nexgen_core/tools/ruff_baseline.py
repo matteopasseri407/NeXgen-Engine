@@ -35,6 +35,7 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
+from nexgen_core.files import atomic_write_text
 
 
 def _script_dir() -> Path:
@@ -99,7 +100,7 @@ def run_ruff() -> list[dict]:
         [*ruff_cmd, "check", TARGET_NAME, "--output-format=json"],
         cwd=REPO_ROOT,
         capture_output=True,
-        text=True,
+        text=True, encoding="utf-8", errors="replace",
         check=False,
     )
     # ruff exits 0 when clean, 1 when it found lint violations. Anything
@@ -148,7 +149,7 @@ def load_baseline(path: Path) -> dict[tuple[str, str], int]:
 
 def save_baseline(path: Path, counts: dict[tuple[str, str], int]) -> None:
     rows = [{"file": f, "code": c, "count": n} for (f, c), n in sorted(counts.items())]
-    path.write_text(json.dumps(rows, indent=2) + "\n", encoding="utf-8")
+    atomic_write_text(path, json.dumps(rows, indent=2) + "\n")
 
 
 def main(argv: list[str] | None = None) -> int:

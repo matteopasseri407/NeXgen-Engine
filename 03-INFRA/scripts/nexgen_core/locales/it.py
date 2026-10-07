@@ -221,7 +221,6 @@ MESSAGES: dict[str, str] = {
     'Data state: {status}': 'Stato dati: {status}',
     'Pull completed': 'Pull completato',
     'MCP configurations not regenerated (explicitly requested)': 'Configurazioni MCP non rigenerate (richiesto esplicitamente)',
-    'runtime-permissions: phase skipped due to an unexpected error ({error})': 'runtime-permissions: fase saltata per errore imprevisto ({error})',
     'Commands not realigned: {error}': 'Comandi non riallineati: {error}',
     'Startup self-alignment configured': "Auto-allineamento all'avvio configurato",
     'Self-alignment configuration did not succeed: {error}': 'Configurazione auto-allineamento non riuscita: {error}',
@@ -257,6 +256,26 @@ MESSAGES: dict[str, str] = {
     'Created {q_branch}, but reset to {remote}/{branch} failed: {error}': 'Creato {q_branch}, ma il reset su {remote}/{branch} è fallito: {error}',
     'Created {q_branch}, but could not switch to it: {error}': 'Creato {q_branch}, ma non è stato possibile spostarcisi: {error}',
     'Created {q_branch}, but could not preserve uncommitted changes before realignment': 'Creato {q_branch}, ma non è stato possibile salvare le modifiche non committate prima del riallineamento',
+    "An update was refused": "Un aggiornamento è stato rifiutato",
+    "A new release is not signed by a key this install trusts, so nothing was installed.": "Una nuova versione non è firmata da una chiave di cui questa installazione si fida, quindi non è stato installato nulla.",
+    "Run 'nexgen-update --check' and look at the release before doing anything else.": "Lancia 'nexgen-update --check' e guarda la versione prima di fare altro.",
+    "An automatic update failed and was undone": "Un aggiornamento automatico è fallito ed è stato annullato",
+    "The machine is back on the version that worked. That release is skipped until you update by hand.": "La macchina è tornata alla versione che funzionava. Quella versione viene saltata finché non aggiorni a mano.",
+    "Run 'nexgen-update' interactively to see why it failed.": "Lancia 'nexgen-update' di persona per vedere perché è fallito.",
+    "An automatic update failed and could not be undone": "Un aggiornamento automatico è fallito e non si è potuto annullare",
+    'The engine may be half-updated. It was left as it is.': "Il motore potrebbe essere aggiornato a metà. È stato lasciato com'era.",
+    "Run 'nexgen doctor --summary' and follow the recovery printed by 'nexgen-update'.": "Lancia 'nexgen doctor --summary' e segui il ripristino stampato da 'nexgen-update'.",
+    'Skill materialization failed (see the [ERROR] lines above).': 'La materializzazione delle skill è fallita (vedi le righe [ERROR] qui sopra).',
+    'MCP rendering failed ({error}): fix the CLI config and re-run': 'Il rendering MCP è fallito ({error}): correggi la config della CLI e rilancia',
+    "Phase '{phase}' failed: {error}": "La fase '{phase}' è fallita: {error}",
+    'Alignment ran every phase, but these failed: {phases} (see actions above)': "L'allineamento ha eseguito tutte le fasi, ma queste sono fallite: {phases} (vedi le azioni qui sopra)",
+    '(last cycle: these phases failed: {phases})': '(ultimo ciclo: queste fasi sono fallite: {phases})',
+    'The last guard cycle completed every phase.': "L'ultimo ciclo del guard ha completato tutte le fasi.",
+    'The last guard cycle could not complete these phases: {phases}.': "L'ultimo ciclo del guard non è riuscito a completare queste fasi: {phases}.",
+    "Run 'nexgen sync apply' and read the lines marked [ERROR] to see why.": "Lancia 'nexgen sync apply' e leggi le righe marcate [ERROR] per capire perché.",
+    "Automatic remedies were skipped: another sync is running on this machine.": "Le riparazioni automatiche sono state saltate: su questa macchina è in corso un'altra sincronizzazione.",
+    "Wait for it to finish, then run 'nexgen doctor --fix' again.": "Aspetta che finisca, poi rilancia 'nexgen doctor --fix'.",
+    "Not published: {detail} Reconcile the quarantine branch ('nexgen vault quarantine --diff <branch>'), then publish again.": "Non pubblicato: {detail} Riconcilia il branch di quarantena ('nexgen vault quarantine --diff <branch>'), poi pubblica di nuovo.",
     "Diverged local commits moved to quarantine branch '{q_branch}'. Local branch reset to {remote}/{branch}.": "I commit locali divergenti sono stati spostati nel branch di quarantena '{q_branch}'. Branch locale reimpostato su {remote}/{branch}.",
     'Realigned with {remote}/{branch} via rebase': 'Riallineato con {remote}/{branch} tramite rebase',
     'Error during divergence resolution: {reason}': 'Errore durante la risoluzione della divergenza: {reason}',
@@ -979,5 +998,222 @@ MESSAGES: dict[str, str] = {
     "Move the work to developer and run the engine test gate.": "Porta il lavoro su developer ed esegui il gate dei test dell'Engine.",
     "Engine checkout on developer; development commits and local edits are allowed.": "Checkout dell'Engine su developer; commit di sviluppo e modifiche locali sono consentiti.",
     "Engine branch check failed: {detail}": "Controllo del ramo Engine fallito: {detail}",
-
+    'settings outside the server list':
+        "impostazioni fuori dall'elenco dei server",
+    'Some CLI configurations no longer match what the manifest would write: {parts}':
+        'Alcune configurazioni delle CLI non coincidono più con quello che il manifest scriverebbe: {parts}',
+    "Run 'agent-sync apply' to regenerate them (the guard cycle does it on its own too).":
+        "Esegui 'agent-sync apply' per rigenerarle (lo fa da solo anche il ciclo di guardia).",
+    'Could not compare these CLI configurations with the manifest: {parts}':
+        'Impossibile confrontare queste configurazioni delle CLI con il manifest: {parts}',
+    'Every CLI configuration matches what the manifest would write':
+        'Ogni configurazione delle CLI coincide con quello che il manifest scriverebbe',
+    'Some MCP servers point at a program that is not installed here: {parts}':
+        'Alcuni server MCP puntano a un programma non installato su questa macchina: {parts}',
+    'Install the missing program, or disable the server in the manifest on this machine.':
+        'Installa il programma mancante, oppure disattiva il server nel manifest su questa macchina.',
+    'Every stdio MCP server has a program to start':
+        'Ogni server MCP locale ha un programma da avviare',
+    'Could not record the choice in {path}: {error}':
+        'Impossibile salvare la scelta in {path}: {error}',
+    "Refusing to publish: {remote} is the engine's public repository ({url}), and the vault is private. The commit stays local; point the remote at your own private repository.":
+        "Pubblicazione rifiutata: {remote} è il repository pubblico dell'engine ({url}) e il vault è privato. Il commit resta locale; punta il remote al tuo repository privato.",
+    "No remote of the Vault points at the engine's public repository":
+        "Nessun remote del Vault punta al repository pubblico dell'engine",
+    "The Vault has a remote that is the engine's public repository: {remotes}":
+        "Il Vault ha un remote che è il repository pubblico dell'engine: {remotes}",
+    "Point it at your own private repository ('git remote set-url <name> <url>') or remove it ('git remote remove <name>'). Publishing is refused until then.":
+        "Puntalo al tuo repository privato ('git remote set-url <nome> <url>') oppure toglilo ('git remote remove <nome>'). Fino ad allora la pubblicazione è rifiutata.",
+    'Scheduled-task state is checked on Linux/systemd only; not checked here.':
+        'Lo stato delle attività pianificate si controlla solo su Linux/systemd; qui non è stato controllato.',
+    'systemd is not available here (or host changes are disabled): the timers were not checked.':
+        'systemd non è disponibile qui (o le modifiche alla macchina sono disattivate): i timer non sono stati controllati.',
+    "The guard's timers are not running, so nothing tends this machine: {units}":
+        'I timer della guardia non girano, quindi nessuno si occupa di questa macchina: {units}',
+    "Run 'nexgen guard' once to write and enable them. On a machine with no login session, also: loginctl enable-linger $USER.":
+        "Esegui 'nexgen guard' una volta per scriverli e attivarli. Su una macchina senza sessione di login anche: loginctl enable-linger $USER.",
+    'The guard and heartbeat timers are enabled and running':
+        'I timer della guardia e del battito sono attivi e in funzione',
+    'No engine launchers found in {dir}; not checked.':
+        "Nessun launcher dell'engine trovato in {dir}; non controllato.",
+    'Some engine commands point at an engine that is no longer there: {commands}':
+        "Alcuni comandi dell'engine puntano a un engine che non c'è più: {commands}",
+    "Run 'nexgen init' from the engine you want to use: it rewrites every launcher.":
+        "Esegui 'nexgen init' dall'engine che vuoi usare: riscrive tutti i launcher.",
+    'Every engine command points at an engine that exists ({count} checked)':
+        "Ogni comando dell'engine punta a un engine che esiste ({count} controllati)",
+    'The leak-scan pattern copies could not be compared: {error}':
+        'Non è stato possibile confrontare le copie dei pattern anti-leak: {error}',
+    "The Vault's leak-scan patterns match the engine's":
+        "I pattern anti-leak del Vault coincidono con quelli dell'engine",
+    "The Vault's copy of the leak-scan patterns differs from the engine's, so its push gate may be weaker than CI's.":
+        "La copia dei pattern anti-leak nel Vault è diversa da quella dell'engine: il suo cancello di push può essere più debole di quello della CI.",
+    'Copy {source} over {twin}, then commit it in the Vault.':
+        'Copia {source} sopra {twin}, poi fai il commit nel Vault.',
+    'The MCP manifest could not be read, so placement was not checked: {error}':
+        'Il manifest MCP non si legge, quindi la disposizione non è stata controllata: {error}',
+    'The MCP placement is incoherent: {problems}':
+        'La disposizione degli MCP è incoerente: {problems}',
+    "Run 'nexgen mcp plan' to see it per CLI, then fix the manifest.":
+        "Esegui 'nexgen mcp plan' per vederla per CLI, poi correggi il manifest.",
+    "Every CLI's gateway is mounted where servers are routed behind it":
+        'Il gateway di ogni CLI è montato dove ci sono server instradati dietro di lui',
+    'why':
+        'perché',
+    'needs {env}':
+        'serve {env}',
+    'Served by the gateway, per CLI:':
+        'Serviti dal gateway, per CLI:',
+    'Compared with how the gateway served before it knew its CLI:':
+        'Rispetto a come serviva il gateway prima di sapere la sua CLI:',
+    'no longer served: {names}':
+        'non più serviti: {names}',
+    'newly served: {names}':
+        'ora serviti: {names}',
+    'Incoherent:':
+        'Incoerente:',
+    'No MCP manifest at {path}':
+        'Nessun manifest MCP in {path}',
+    'no answer to {method} within {seconds:g}s':
+        'nessuna risposta a {method} entro {seconds:g}s',
+    'the process ended before answering {method}':
+        'il processo è terminato prima di rispondere a {method}',
+    'the gateway is not mounted in {cli}, but {names} are routed behind it':
+        'il gateway non è montato in {cli}, ma {names} sono instradati dietro di lui',
+    'the gateway does not offer {tools}':
+        'il gateway non offre {tools}',
+    'the gateway thinks it serves {other}, not {cli}':
+        'il gateway crede di servire {other}, non {cli}',
+    'the rendered gateway entry does not carry {var}={cli}':
+        'la voce del gateway scritta non porta {var}={cli}',
+    '{name} should be behind the gateway in {cli} and is not listed':
+        '{name} dovrebbe stare dietro il gateway in {cli} e non è elencato',
+    '{name} is served in {cli} but the plan does not route it there':
+        '{name} è servito in {cli} ma il piano non lo instrada lì',
+    'gateway served {count} server(s) in {seconds}s: {names}':
+        'il gateway ha servito {count} server in {seconds}s: {names}',
+    '--eager and --lazy contradict each other: pick one (lazy is the default)':
+        '--eager e --lazy si contraddicono: scegline uno (lazy è il predefinito)',
+    'a trial lasts between a moment and {max:g} hours, not {hours:g}':
+        'una prova dura da un attimo a {max:g} ore, non {hours:g}',
+    "'{name}' is already in the manifest: a trial would only shadow it":
+        "'{name}' è già nel manifest: una prova lo coprirebbe soltanto",
+    "{name} is on trial for {hours:g}h on this machine only: it is served by the gateway (no CLI config is touched, nothing syncs) and disappears by itself. Keep it with 'nexgen mcp promote {name}', end it with 'nexgen mcp drop {name}'.":
+        "{name} è in prova per {hours:g}h solo su questa macchina: lo serve il gateway (nessuna config delle CLI viene toccata, niente si sincronizza) e sparisce da solo. Tienilo con 'nexgen mcp promote {name}', chiudilo con 'nexgen mcp drop {name}'.",
+    'No MCP servers on trial.':
+        'Nessun server MCP in prova.',
+    '{left} left':
+        '{left} rimasti',
+    '{name}: trial ended.':
+        '{name}: prova terminata.',
+    '{name} is not on trial here.':
+        '{name} non è in prova qui.',
+    '{name} is not on trial here (it may have expired).':
+        '{name} non è in prova qui (può essere scaduto).',
+    'trial, {left} left, this machine only':
+        'prova, {left} rimasti, solo questa macchina',
+    'MCP trials that ran out were removed: {names}':
+        'Prove MCP scadute e rimosse: {names}',
+    'MCP trials could not be tidied: {error}':
+        'Non è stato possibile ripulire le prove MCP: {error}',
+    'No MCP servers on trial':
+        'Nessun server MCP in prova',
+    'MCP servers on trial on this machine, not synced: {names}':
+        'Server MCP in prova su questa macchina, non sincronizzati: {names}',
+    "Keep one with 'nexgen mcp promote <name>' or end it with 'nexgen mcp drop <name>'; they end by themselves anyway.":
+        "Tienine uno con 'nexgen mcp promote <nome>' o chiudilo con 'nexgen mcp drop <nome>'; finiscono comunque da soli.",
+    'needs {var} in the environment':
+        "serve {var} nell'ambiente",
+    '{tools} tools, about {tokens} tokens of definitions loaded up front':
+        '{tools} strumenti, circa {tokens} token di definizioni caricati subito',
+    '{tools} tools, ~{tokens} tokens, {seconds}s':
+        '{tools} strumenti, ~{tokens} token, {seconds}s',
+    # --- Cosa c'è installato (nexgen info) e l'aggiornamento dei pin -------------
+    "core": "core",
+    "yours": "tuo",
+    "third-party": "di terzi",
+    "direct": "diretto",
+    "lazy": "lazy",
+    "mixed": "misto",
+    "off": "spento",
+    "trial": "in prova",
+    "CONNECTORS (MCP)": "CONNETTORI (MCP)",
+    "SKILLS": "SKILL",
+    "upstream {new} available (pinned {old})": "a monte c'è la {new} (tu hai la {old})",
+    "held: {why}": "ferma: {why}",
+    "read the changelog first": "prima leggi cosa è cambiato",
+    "cleared, ready to raise": "controllata, si può alzare",
+    "not pinned: runs whatever the registry serves today, and nothing watches it":
+        "non è bloccato a una versione: parte con quella che c'è oggi nel registro, e nessuno la controlla",
+    "{count} tools hidden": "{count} strumenti nascosti",
+    "only {count} tools exposed": "solo {count} strumenti esposti",
+    "not mounted anywhere: {why}": "non è montato da nessuna parte: {why}",
+    "your Vault's copy differs from the engine's, and the copy is what runs":
+        "la copia nel tuo Vault è diversa da quella del motore, e quella che gira è la tua copia",
+    "declared but not materialized on this machine yet": "dichiarata ma non ancora installata su questa macchina",
+    "could not read the installed connectors and skills": "non sono riuscito a leggere i connettori e le skill installati",
+    "{count} more (yours, or core ones that follow the engine): nexgen info --all":
+        "altre {count} (tue, o del motore che lo seguono): nexgen info --all",
+    "a frozen copy in your Vault, identical to the engine's today: nexgen skills adopt":
+        "una copia ferma nel tuo Vault, oggi uguale a quella del motore: nexgen skills adopt",
+    "outside the manifest (kept, never deleted): {names}": "fuori dal manifest (tenute, mai cancellate): {names}",
+    "Newer upstream versions exist for third-party items: {count} (checked {age} ago).":
+        "Ci sono versioni più nuove per cose di terzi: {count} (controllato {age} fa).",
+    "no CLI is in its targets": "nessuna CLI è tra quelle a cui è destinato",
+    "switched off in the manifest": "spento nel manifest",
+    "neither core nor switched on": "non è essenziale e non è acceso",
+    "nexgen skills bump  (or: nexgen mcp bump)  raises the ones the guardian cleared, tries each server and puts the old pin back if it fails.":
+        "nexgen skills bump  (o: nexgen mcp bump)  alza quelle che il guardiano ha controllato, prova ogni server e, se non parte, rimette la versione di prima.",
+    "Upstream versions not checked on this machine yet: the hourly watch will, or run nexgen skills bump.":
+        "Su questa macchina le versioni a monte non sono ancora state controllate: lo fa il controllo orario, oppure lancia nexgen skills bump.",
+    "Third-party pins are current (checked {age} ago).": "Le versioni di terzi sono aggiornate (controllato {age} fa).",
+    "Trying the new versions before keeping them: {names}": "Provo le versioni nuove prima di tenerle: {names}",
+    "could not try {names}: {error}": "non sono riuscito a provare {names}: {error}",
+    "could not regenerate the configurations ({error})": "non sono riuscito a rigenerare le configurazioni ({error})",
+    "the new version did not work: every pin is back where it was and the configurations regenerated":
+        "la versione nuova non funziona: ogni versione è tornata com'era e le configurazioni sono state rigenerate",
+    "{name}: the gateway does not offer it": "{name}: il gateway non lo offre",
+    "{name}: it starts but lists no tools": "{name}: parte ma non mostra nessuno strumento",
+    # --- Le skill del motore: seguire il motore invece di tenere copie ferme ---
+    "differs in {files}; the engine's text has {added} lines yours lacks and yours has {removed} the engine's lacks":
+        "è diversa in {files}; il testo del motore ha {added} righe che la tua non ha, la tua ne ha {removed} che il motore non ha",
+    "Nothing to do: no skill in your Vault is a copy of one the engine ships.":
+        "Niente da fare: nel tuo Vault nessuna skill è una copia di una che il motore porta con sé.",
+    "Skills the engine ships and your Vault keeps its own copy of (the copy runs, so it does not follow engine updates):":
+        "Skill che il motore porta con sé e di cui il tuo Vault tiene una copia (gira la copia, quindi non segue gli aggiornamenti del motore):",
+    "nexgen skills adopt --all  follows the engine for the identical ones; name a skill (with --force) for one that differs.":
+        "nexgen skills adopt --all  fa seguire il motore a quelle identiche; per una diversa nominala e aggiungi --force.",
+    "Name skills or use --all, not both.": "Nomina le skill oppure usa --all, non tutte e due.",
+    "Commit and publish with 'nexgen vault push' so the other machines follow too.":
+        "Salva e pubblica con 'nexgen vault push' così le altre macchine ti seguono.",
+    "identical to the engine's": "uguale a quella del motore",
+    "not a skill the engine ships, or already followed from the engine":
+        "non è una skill del motore, oppure segue già il motore",
+    "would follow the engine (your copy kept in a backup folder)":
+        "seguirebbe il motore (la tua copia resta in una cartella di backup)",
+    "cannot back up the manifest, nothing written": "non riesco a fare il backup del manifest, non ho scritto niente",
+    "the manifest no longer validates ({problems}); put back as it was":
+        "il manifest non è più valido ({problems}); l'ho rimesso com'era",
+    "follows the engine now; your copy is in {where}": "ora segue il motore; la tua copia è in {where}",
+    "could not find a single `origin: vault` line in its manifest entry: edit it by hand":
+        "non trovo una sola riga `origin: vault` nella sua voce del manifest: modificala a mano",
+    "Left alone: look first, then --force if the engine's is the one you want.":
+        "Lasciata stare: guardala prima, poi --force se vuoi quella del motore.",
+    "follows the engine now; its old copy could not be moved away ({error})":
+        "ora segue il motore; non sono riuscito a spostare la vecchia copia ({error})",
+    "identical to the engine's: {names}": "uguali a quelle del motore: {names}",
+    "different from the engine's: {names}": "diverse da quelle del motore: {names}",
+    "Skills the engine ships are kept as copies in the Vault, so engine updates do not reach them ({parts}).":
+        "Alcune skill del motore sono tenute come copie nel Vault, quindi gli aggiornamenti del motore non le raggiungono ({parts}).",
+    "Run 'nexgen skills adopt --all' (identical ones) and look at the others with 'nexgen skills adopt'.":
+        "Lancia 'nexgen skills adopt --all' (per quelle uguali) e guarda le altre con 'nexgen skills adopt'.",
+    "No skill the engine ships is kept as a frozen copy in the Vault":
+        "Nessuna skill del motore è tenuta come copia ferma nel Vault",
+    # --- Primo avvio da pacchetto e gateway nel manifest ---------------------------
+    "this folder is not a vault yet: clone the template into it first: git clone {url} {root}":
+        "questa cartella non è ancora un Vault: prima clonaci dentro il modello: git clone {url} {root}",
+    "The gateway ({gateway}) was not in the manifest, so it was added too: nothing behind it is reachable without it.":
+        "Il gateway ({gateway}) non era nel manifest, quindi l'ho aggiunto anch'esso: senza, niente di ciò che ci sta dietro è raggiungibile.",
+    "The gateway ({gateway}) is not in your manifest, and a trial is served by it. Adding any server with 'nexgen mcp add' puts it in; or copy the {gateway} entry from the shipped template.":
+        "Il gateway ({gateway}) non è nel tuo manifest e una prova passa da lì. Aggiungere un server qualsiasi con 'nexgen mcp add' lo mette; oppure copia la voce {gateway} dal modello fornito.",
 }

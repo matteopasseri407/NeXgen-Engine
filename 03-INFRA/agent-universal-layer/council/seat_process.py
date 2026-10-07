@@ -15,6 +15,7 @@ import json
 import math
 import os
 import queue
+import shutil
 import subprocess
 import tempfile
 import threading
@@ -79,6 +80,9 @@ class SeatInvocation:
     # _isolated_seat_env).
     env: dict[str, str] | None = None
     cwd: Path | None = None
+    # The per-seat directory `_isolated_seat_env` made (for codex it holds a copy of the real
+    # `auth.json`). Removed when the seat ends, whatever the outcome.
+    scratch: Path | None = None
 
 
 def _is_retryable_seat_error(error: SeatRunError) -> bool:
@@ -219,7 +223,7 @@ _ISOLATED_SEAT_ENV_ALLOWLIST = (
 )
 
 
-def _isolated_seat_env(cli: str, session_dir: Path) -> dict[str, str]:
+def _isolated_seat_env(cli: str, session_dir: Path) -> tuple[dict[str, str], Path]:
     """Minimal environment for a codex/agy/opencode seat (audit FINDING A,
     2026-07-12): the Popen that launches these three CLIs used to omit
     ``env=`` entirely, so the child inherited os.environ in full -- every
@@ -281,9 +285,11 @@ def _isolated_seat_env(cli: str, session_dir: Path) -> dict[str, str]:
          mitigated as far as verified, not claimed closed.
 
     The isolated directories live under ``session_dir`` (already private,
-    mode 0700 -- see ``new_session_dir``) and share its lifecycle: removed
-    with the rest of the session on the normal path, hardened to 0700/0600
-    alongside it when ``--keep-session`` is used.
+    mode 0700 -- see ``new_session_dir``). The returned directory holds a copy
+    of the real Codex credentials, so the caller removes it as soon as the seat
+    ends (``SeatInvocation.scratch``): left to the session's lifecycle it sat
+    on disk for the rest of the run, and for days under ``--keep-session`` or
+    after a crash.
     """
     env = {name: os.environ[name] for name in _ISOLATED_SEAT_ENV_ALLOWLIST if name in os.environ}
     isolation_dir = Path(tempfile.mkdtemp(prefix=f"council-env-{cli}-", dir=session_dir))
@@ -314,7 +320,7 @@ def _isolated_seat_env(cli: str, session_dir: Path) -> dict[str, str]:
     # agy: base allowlist only -- see the docstring above for what was
     # checked and why no directory isolation was applied.
 
-    return env
+    return env, isolation_dir
 
 
 def _write_transport_file(session_dir: Path, prompt: str) -> Path:
@@ -520,13 +526,15 @@ def _build_seat_command(seat: dict, prompt: str, session_dir: Path) -> SeatInvoc
         # _effort_forwarding: single source shared with _effort_label.
         extra_argv, _label = _effort_forwarding(seat)
         argv.extend(extra_argv)
+        env, scratch = _isolated_seat_env(cli, session_dir)
         return SeatInvocation(
             argv,
             None,
             None,
             input_file,
-            env=_isolated_seat_env(cli, session_dir),
+            env=env,
             cwd=session_dir,
+            scratch=scratch,
         )
     if cli == "agy":
         argv = [
@@ -538,12 +546,14 @@ def _build_seat_command(seat: dict, prompt: str, session_dir: Path) -> SeatInvoc
         # The prompt travels on stdin, never in argv: argv is visible in the
         # process table, and Antigravity's print mode consumes stdin when no
         # positional prompt is supplied. Same rule as every other seat.
+        env, scratch = _isolated_seat_env(cli, session_dir)
         return SeatInvocation(
             argv,
             prompt,
             None,
             None,
-            env=_isolated_seat_env(cli, session_dir),
+            env=env,
+            scratch=scratch,
         )
     if cli == "claude":
         # --tools "" already makes every tool, MCP included, uninvocable by
@@ -581,12 +591,14 @@ def _build_seat_command(seat: dict, prompt: str, session_dir: Path) -> SeatInvoc
         extra_argv, _label = _effort_forwarding(seat)
         argv.extend(extra_argv)
         argv.extend(["-s", "read-only", "-o", str(output_file)])
+        env, scratch = _isolated_seat_env(cli, session_dir)
         return SeatInvocation(
             argv,
             prompt,
             output_file,
             None,
-            env=_isolated_seat_env(cli, session_dir),
+            env=env,
+            scratch=scratch,
             # Confined CWD: with -s read-only the seat may still READ, so it
             # must not inherit the operator's checkout. Same as opencode.
             cwd=session_dir,
@@ -940,3 +952,5 @@ def run_seat(
             invocation.output_file.unlink(missing_ok=True)
         if invocation.input_file is not None:
             invocation.input_file.unlink(missing_ok=True)
+        if invocation.scratch is not None:
+            shutil.rmtree(invocation.scratch, ignore_errors=True)

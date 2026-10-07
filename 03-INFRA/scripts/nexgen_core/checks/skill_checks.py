@@ -244,6 +244,43 @@ def check_engine_starter_views(vault_data: Path, home: Path) -> CheckOutcome:
     )
 
 
+def check_skill_engine_copies(vault_data: Path, home: Path, engine_root: Path) -> CheckOutcome:
+    """A skill the engine ships must not live on as a frozen copy in the Vault.
+
+    The copy is what every CLI runs, so the engine's next fix never reaches it and nothing says so. Identical
+    copies are harmless today and wrong tomorrow: `--fix` hands them back to the engine. A copy that differs is
+    reported by name and never touched without a person looking (it may hold something they wrote).
+    """
+    from nexgen_core import skill_adopt
+
+    found = skill_adopt.candidates(vault_data, engine_root)
+    if not found:
+        return CheckOutcome(
+            id="skills.engine_copies",
+            severity=Severity.OK,
+            message=t("No skill the engine ships is kept as a frozen copy in the Vault"),
+        )
+    same = [c.name for c in found if c.status == skill_adopt.SAME]
+    changed = [c.name for c in found if c.status == skill_adopt.DIFFERS]
+
+    def remedy() -> bool:
+        outcomes = skill_adopt.adopt(None, home=home, vault_data=vault_data, engine_root=engine_root)
+        return bool(same) and all(o.adopted for o in outcomes if o.name in same)
+
+    parts = []
+    if same:
+        parts.append(t("identical to the engine's: {names}", names=", ".join(same)))
+    if changed:
+        parts.append(t("different from the engine's: {names}", names=", ".join(changed)))
+    return CheckOutcome(
+        id="skills.engine_copies",
+        severity=Severity.WARN,
+        message=t("Skills the engine ships are kept as copies in the Vault, so engine updates do not reach them ({parts}).", parts="; ".join(parts)),
+        action=t("Run 'nexgen skills adopt --all' (identical ones) and look at the others with 'nexgen skills adopt'."),
+        remedy=remedy if same else None,
+    )
+
+
 def check_skills_manifest_semantics(vault_data: Path, home: Path) -> CheckOutcome | None:
     """Semantic validation of the manifest (safe names, known origins,
     complete pins, source SKILL.md present): reuses

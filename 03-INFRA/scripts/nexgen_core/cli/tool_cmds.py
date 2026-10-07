@@ -77,21 +77,61 @@ def register(sub) -> None:
 
     a = msub.add_parser("add", help=t("Add one server to the manifest: validated, atomic, with backup"))
     a.add_argument("name", help=t("Server name in the manifest"))
-    a.add_argument("--targets", required=True,
-                   help=t("Comma-separated CLIs (claude,codex,antigravity,opencode) or 'all'"))
+    a.add_argument("--targets", default="all",
+                   help=t("Comma-separated CLIs (claude,codex,antigravity,opencode) or 'all' (the default)"))
     a.add_argument("--command", dest="server_command",
                    help=t("Stdio command (e.g. npx); mutually exclusive with --url"))
     a.add_argument("--args", action="append", help=t("One argument per flag; repeatable. Use --args=-value for values starting with a dash"))
     a.add_argument("--url", help=t("http(s) URL of a streamable-http server; mutually exclusive with --command"))
     a.add_argument("--auth-env", dest="auth_env", help=t("Name of the env var carrying the bearer token (the manifest never stores the token)"))
     a.add_argument("--env", action="append", help=t("Environment entry KEY=VALUE for a stdio server; values must be ${VAR} references when secret-shaped"))
-    a.add_argument("--lazy", action="store_true", help=t("Serve through the lazy proxy instead of mounting directly"))
+    a.add_argument("--lazy", action="store_true", help=t("Serve through the gateway (this is the default; accepted for older scripts)"))
+    a.add_argument("--eager", action="store_true", help=t("Mount it directly in every CLI instead: for the few servers that must always be there"))
     a.add_argument("--readonly", action="store_true", help=t("Allowlist every tool of this (lazy) server as read-only"))
     a.add_argument("--dry-run", dest="dry_run", action="store_true", help=t("Print the stub instead of writing"))
     a.set_defaults(func=cmd_mcp_add)
 
+    def _server_args(p):
+        p.add_argument("name", help=t("Server name"))
+        p.add_argument("--command", dest="server_command", help=t("Stdio command (e.g. npx); mutually exclusive with --url"))
+        p.add_argument("--args", action="append", help=t("One argument per flag; repeatable. Use --args=-value for values starting with a dash"))
+        p.add_argument("--url", help=t("http(s) URL of a streamable-http server; mutually exclusive with --command"))
+        p.add_argument("--auth-env", dest="auth_env", help=t("Name of the env var carrying the bearer token"))
+        p.add_argument("--env", action="append", help=t("Environment entry KEY=VALUE for a stdio server; secret-shaped values must be ${VAR} references"))
+        p.add_argument("--targets", default="all", help=t("Comma-separated CLIs or 'all' (the default)"))
+        p.add_argument("--readonly", action="store_true", help=t("Allowlist every tool of this server as read-only"))
+
+    a = msub.add_parser("try", help=t("Try a server on this machine only: served by the gateway, not synced, gone by itself after --for hours"))
+    _server_args(a)
+    a.add_argument("--for", dest="hours", type=float, default=24.0, help=t("How many hours the trial lasts (default 24, at most 168)"))
+    a.set_defaults(func=cmd_mcp_try)
+
+    a = msub.add_parser("trials", help=t("Read-only: the servers on trial here and how long they have left"))
+    a.set_defaults(func=lambda args: __import__("nexgen_core.mcp_trials", fromlist=["cmd_trials"]).cmd_trials())
+
+    a = msub.add_parser("promote", help=t("Keep a trial: write it into the manifest, where it syncs to every machine"))
+    a.add_argument("name")
+    a.set_defaults(func=cmd_mcp_promote)
+
+    a = msub.add_parser("drop", help=t("End a trial now"))
+    a.add_argument("name")
+    a.set_defaults(func=cmd_mcp_drop)
+
     a = msub.add_parser("list", help=t("Read-only: the servers per CLI as they would render now"))
     a.set_defaults(func=cmd_mcp_list)
+
+    a = msub.add_parser("bump", help=t("Raise guardian-vetted pins (the same command as `skills bump`), trying each server before keeping it"))
+    a.set_defaults(func=cmd_mcp_bump)
+
+    a = msub.add_parser("plan", help=t("Read-only: which server is mounted directly, behind the gateway, or absent, per CLI, and why"))
+    a.add_argument("--json", action="store_true", help=t("Machine-readable output"))
+    a.set_defaults(func=cmd_mcp_plan)
+
+    a = msub.add_parser("check", help=t("Start each CLI's gateway as that CLI would and compare what it serves with the plan (starts the backends)"))
+    a.add_argument("--cli", choices=("claude", "codex", "antigravity", "opencode"), help=t("Only this CLI"))
+    a.add_argument("--timeout", type=float, default=90.0, help=t("Seconds to wait for the gateway's index (backends are started to build it)"))
+    a.add_argument("--direct", action="store_true", help=t("Instead: measure the directly mounted servers (tools and weight of what a CLI loads up front)"))
+    a.set_defaults(func=cmd_mcp_check)
 
     # The council isn't a tool: it's its own top-level verb. The runner is
     # the launcher in nexgen_core/tools/council.py, which subprocesses
@@ -208,6 +248,10 @@ def cmd_council(args) -> int:
 def cmd_mcp_add(args) -> int:
     from nexgen_core.mcp_add import add_server
 
+    if getattr(args, "eager", False) and getattr(args, "lazy", False):
+        print(t("--eager and --lazy contradict each other: pick one (lazy is the default)"))
+        return 2
+
     code, message = add_server(
         args.name,
         args.targets,
@@ -216,12 +260,61 @@ def cmd_mcp_add(args) -> int:
         url=getattr(args, "url", None),
         auth_env=getattr(args, "auth_env", None),
         env_pairs=list(args.env or []),
-        lazy=getattr(args, "lazy", False),
+        lazy=not getattr(args, "eager", False),
         readonly=getattr(args, "readonly", False),
         dry_run=getattr(args, "dry_run", False),
     )
     print(message)
     return code
+
+
+def cmd_mcp_try(args) -> int:
+    from nexgen_core.mcp_trials import cmd_try
+
+    code, message = cmd_try(
+        args.name, targets_raw=args.targets, command=getattr(args, "server_command", None), args=list(args.args or []),
+        url=getattr(args, "url", None), auth_env=getattr(args, "auth_env", None), env_pairs=list(args.env or []),
+        readonly=getattr(args, "readonly", False), hours=args.hours,
+    )
+    print(message)
+    return code
+
+
+def cmd_mcp_promote(args) -> int:
+    from nexgen_core.mcp_trials import cmd_promote
+
+    code, message = cmd_promote(args.name)
+    print(message)
+    return code
+
+
+def cmd_mcp_drop(args) -> int:
+    from nexgen_core.mcp_trials import cmd_drop
+
+    code, message = cmd_drop(args.name)
+    print(message)
+    return code
+
+
+def cmd_mcp_bump(args) -> int:
+    from nexgen_core.thirdparty_bump import bump_batch
+
+    return bump_batch()
+
+
+def cmd_mcp_plan(args) -> int:
+    from nexgen_core import mcp_plan
+
+    return mcp_plan.main(as_json=getattr(args, "json", False))
+
+
+def cmd_mcp_check(args) -> int:
+    from nexgen_core import mcp_check
+
+    clis = (args.cli,) if getattr(args, "cli", None) else mcp_check.CLIS
+    if getattr(args, "direct", False):
+        return mcp_check.main_direct(clis, timeout=min(getattr(args, "timeout", 90.0), 60.0))
+    return mcp_check.main(clis, timeout=getattr(args, "timeout", 90.0))
 
 
 def cmd_mcp_list(args) -> int:

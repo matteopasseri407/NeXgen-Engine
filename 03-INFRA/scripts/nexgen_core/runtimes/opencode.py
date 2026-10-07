@@ -1,20 +1,22 @@
 """OpenCode adapter: posture in opencode.jsonc + native guardrail plugin.
 
-OpenCode doesn't speak Claude's JSON: its only hook with veto power is
-`permission.ask`, a JS callback loaded in-process, not a command launched
-in a separate process. The static adapter at
-agent-universal-layer/hooks/opencode-guardrail-plugin.mjs (already
-prepared, never touched here) translates that callback into the same
-stdin/stdout JSON the guardrail body already speaks for Claude -- one
-policy, three CLIs, never duplicated.
+OpenCode doesn't speak Claude's JSON: its guardrail hooks are JS callbacks loaded in-process,
+not commands launched in a separate process. The static adapter at
+agent-universal-layer/hooks/opencode-guardrail-plugin.mjs (already prepared, never touched
+here) translates those callbacks into the same stdin/stdout JSON the guardrail body already
+speaks for Claude -- one policy, three CLIs, never duplicated.
 
-V2 contract (verified against the official V2 docs and the installed
-2.0.12 binary, 2026-09-22): plugins register under the `plugins` key (the
-V1 `plugin` key is still normalized at runtime but is no longer written),
-posture is ordered `permissions` rules with `action`/`resource`/`effect`
-(the V1 `permission` object is migrated once, then dropped), and
-instructions load from the global `AGENTS.md` scope file, never from the
-`instructions` array (accepted but unresolved).
+V2 contract (checked against the installed 2.0.24 binary, live, 2026-10-07): a plugin is the
+default export `{ id, setup(ctx) }` of a DIRECTORY under `<config>/plugins/`, which OpenCode
+loads by itself -- nothing is registered in the config. Registering a plugin FILE under
+`plugins`, as this adapter did for 2.0.12, is refused at load ("configured plugin path must be
+a directory"), and the V1 hooks (`permission.ask`, `tool.execute.before`) are never called:
+the guardrail sat on disk, registered, and was never consulted. The hooks are now
+`ctx.shell.hook("create.before")` (a veto that runs whatever the rules say) and
+`ctx.permission.hook("evaluate")` (the answer to what the person would be asked).
+Posture is ordered `permissions` rules with `action`/`resource`/`effect` (the V1 `permission`
+object is migrated once, then dropped), and instructions load from the global `AGENTS.md`
+scope file, never from the `instructions` array (accepted but unresolved).
 """
 from __future__ import annotations
 
@@ -26,7 +28,7 @@ from typing import Any
 
 from nexgen_core.jsonc import parse_jsonc, set_jsonc_top_level_value
 from nexgen_core.paths import opencode_config_path
-from nexgen_core.runtimes.base import GuardrailError, Runtime
+from nexgen_core.runtimes.base import EVENT_SINK_NAME, GUARDRAIL_CORE_NAME, GUARDRAIL_SIDECAR_NAME, GuardrailError, Runtime
 
 _IS_WINDOWS = sys.platform == "win32"
 
@@ -47,6 +49,17 @@ _POSTURE_RENDER = {
     ],
 }
 
+#: Bypass as the engine renders it when the guardrail plugin is installed. The shell rule says
+#: `ask` and the plugin answers it: `allow` for what the guardrail body permits (no prompt, as
+#: bypass means), `deny` for the rest. The plugin also vetoes a denied command on its own
+#: (`shell.hook create.before`), so this is not what makes it safe; it is what makes a plugin
+#: that OpenCode stops calling visible: every command prompts, instead of nothing being checked
+#: while the rule says `allow`.
+_MEDIATED_BYPASS = [
+    {"action": "edit", "resource": "*", "effect": "allow"},
+    {"action": "shell", "resource": "*", "effect": "ask"},
+]
+
 #: Legacy V1 dimensions and their V2 action names. Only these dimensions
 #: are migrated: every other `permission.*` key (webfetch, doom_loop, ...)
 #: stays whatever the user set it to -- unless the user set it inside the
@@ -59,7 +72,12 @@ _LEGACY_PERMISSION_ACTIONS = {
     "webfetch": "webfetch",
 }
 
-_ADAPTER_NAME = "opencode-guardrail-plugin.mjs"
+_ADAPTER_NAME = "opencode-guardrail-plugin.mjs"  # the engine's source file; deployed as `index.mjs` of the plugin directory
+_PLUGIN_DIRNAME = "nexgen-guardrail"
+#: What earlier engines deployed into the config directory and registered by path. OpenCode 2.0.24 refuses a file
+#: registration, so these were never loaded; they are taken back (and only these, by these names).
+_LEGACY_ADAPTERS = ("opencode-guardrail-plugin.mjs", "nexgen-guardrail-plugin.mjs")
+_LEGACY_FILES = _LEGACY_ADAPTERS + (GUARDRAIL_CORE_NAME, GUARDRAIL_SIDECAR_NAME)
 
 
 class OpenCodeRuntime(Runtime):
@@ -93,7 +111,8 @@ class OpenCodeRuntime(Runtime):
             return None
         raw = path.read_text(encoding="utf-8")
         try:
-            data = parse_jsonc(raw) if path.suffix == ".jsonc" else json.loads(raw)
+            # OpenCode reads opencode.json with the same comment-tolerant parser as .jsonc.
+            data = parse_jsonc(raw) if raw.strip() else {}
         except (json.JSONDecodeError, ValueError) as exc:
             raise GuardrailError(f"opencode: {path.name} is not valid JSON/JSONC ({exc})") from exc
         if not isinstance(data, dict):
@@ -111,6 +130,13 @@ class OpenCodeRuntime(Runtime):
         if not isinstance(rules, list):
             return None
         have = {(r.get("action"), r.get("resource"), r.get("effect")) for r in rules if isinstance(r, dict)}
+        # A mediated bypass writes shell as `ask` and lets the plugin answer (see
+        # _mediated); on disk the rules are those of accept-edits, and only the sidecar
+        # says the plugin answers for the person.
+        if self.read_guardrail_sidecar(self.guardrail_sidecar(home)).get("autoAllow") and all(
+            (r["action"], r["resource"], r["effect"]) in have for r in _MEDIATED_BYPASS
+        ):
+            return "bypass"
         for posture, desired in _POSTURE_RENDER.items():
             if all((r["action"], r["resource"], r["effect"]) in have for r in desired):
                 return posture
@@ -129,6 +155,19 @@ class OpenCodeRuntime(Runtime):
         if rules is not None and not isinstance(rules, list):
             raise GuardrailError(f"opencode: {path.name}: 'permissions' is not an array")
         rules = list(rules or [])
+        mediated = posture == "bypass" and self._mediated(home)
+        if mediated:
+            desired = [dict(rule) for rule in _MEDIATED_BYPASS]
+            for rule in rules:
+                # The `allow` an earlier cycle wrote for this pair would keep the plugin unreachable.
+                if isinstance(rule, dict) and (rule.get("action"), rule.get("resource"), rule.get("effect")) == (
+                    "shell", "*", "allow",
+                ):
+                    rule["effect"] = "ask"
+                    changed = True
+        # The plugin answers for the person only under a mediated bypass; elsewhere the person
+        # asked to be asked. Under bypass a broken guardrail must block rather than ask.
+        self.set_guardrail_flags(self.guardrail_sidecar(home), autoAllow=mediated, strict=posture == "bypass")
         claimed = {(r.get("action"), r.get("resource")) for r in rules if isinstance(r, dict)}
         for rule in desired:
             if (rule["action"], rule["resource"]) in claimed:
@@ -183,12 +222,10 @@ class OpenCodeRuntime(Runtime):
     def _write_key(self, path: Path, key: str, value: Any) -> None:
         raw = path.read_text(encoding="utf-8") if path.is_file() else "{}\n"
         self.backup(path)
-        if path.suffix == ".jsonc":
+        if raw.strip():
             updated = set_jsonc_top_level_value(raw, key, value)
         else:
-            data = json.loads(raw) if raw.strip() else {}
-            data[key] = value
-            updated = json.dumps(data, indent=2) + "\n"
+            updated = json.dumps({key: value}, indent=2) + "\n"
         self.atomic_write(path, updated)
 
     @staticmethod
@@ -197,7 +234,7 @@ class OpenCodeRuntime(Runtime):
             return False
         try:
             raw = path.read_text(encoding="utf-8")
-            data = parse_jsonc(raw) if path.suffix == ".jsonc" else json.loads(raw or "{}")
+            data = parse_jsonc(raw) if raw.strip() else {}
         except (OSError, ValueError):
             return False
         return isinstance(data, dict) and key in data
@@ -207,51 +244,88 @@ class OpenCodeRuntime(Runtime):
 
         raw = path.read_text(encoding="utf-8") if path.is_file() else "{}\n"
         self.backup(path)
-        if path.suffix == ".jsonc":
-            updated = remove_jsonc_top_level_value(raw, key)
-        else:
-            data = json.loads(raw) if raw.strip() else {}
-            data.pop(key, None)
-            updated = json.dumps(data, indent=2) + "\n"
+        updated = remove_jsonc_top_level_value(raw, key) if raw.strip() else raw
         self.atomic_write(path, updated)
+
+    def _plugin_dir(self, home: Path) -> Path:
+        """Where the guardrail lives: a directory under OpenCode's own `plugins/`, which it loads by itself."""
+        return self._config_path(home).parent / "plugins" / _PLUGIN_DIRNAME
+
+    def guardrail_sidecar(self, home: Path) -> Path | None:
+        return self._plugin_dir(home) / GUARDRAIL_SIDECAR_NAME
+
+    def _mediated(self, home: Path) -> bool:
+        """The guardrail plugin is deployed with everything it needs, so it can answer for the person."""
+        plugin_dir = self._plugin_dir(home)
+        sidecar = self.read_guardrail_sidecar(plugin_dir / GUARDRAIL_SIDECAR_NAME)
+        return (
+            bool(sidecar.get("hooks"))
+            and (plugin_dir / "index.mjs").is_file()
+            and (plugin_dir / GUARDRAIL_CORE_NAME).is_file()
+        )
 
     def install_guardrail(self, home: Path, hook_source: Path, engine_hooks_dir: Path) -> str | None:
         config_path = self._config_path(home)
         if not config_path.is_file():
             return None  # OpenCode never launched here: no guardrail to install
-        plugin_dir = config_path.parent
+        plugin_dir = self._plugin_dir(home)
 
         # 1) Guardrail body (the policy, private to the Vault).
-        body_dst = plugin_dir / "nexgen-guardrail-hooks" / hook_source.name
+        body_dst = plugin_dir / "hooks" / hook_source.name
         body_changed = self.deploy_bytes(body_dst, hook_source.read_bytes())
 
-        # 2) Engine's static adapter (translates permission.ask -> stdin/stdout).
+        # 2) Engine's static adapter, as the entry file of the plugin directory.
         adapter_src = engine_hooks_dir / _ADAPTER_NAME
         if not adapter_src.is_file():
             raise GuardrailError(f"opencode: missing engine adapter ({adapter_src})")
-        adapter_dst = plugin_dir / _ADAPTER_NAME
-        adapter_changed = self.deploy_bytes(adapter_dst, adapter_src.read_bytes())
+        adapter_changed = self.deploy_bytes(plugin_dir / "index.mjs", adapter_src.read_bytes())
+        adapter_changed |= self.deploy_guardrail_core(plugin_dir, engine_hooks_dir)
 
         # 3) Sidecar: which body to run and with what timeout, read fresh
         #    by the adapter on every call (no OpenCode restart needed to
         #    pick up a changed manifest).
-        sidecar_path = plugin_dir / "nexgen-guardrail.config.json"
-        sidecar_content = json.dumps({"hooks": [{"file": str(body_dst), "timeout": 5}]}, indent=2) + "\n"
-        sidecar_changed = not sidecar_path.is_file() or sidecar_path.read_text(encoding="utf-8") != sidecar_content
-        if sidecar_changed:
-            self.atomic_write(sidecar_path, sidecar_content)
+        sidecar_changed = self.write_guardrail_sidecar(
+            plugin_dir / GUARDRAIL_SIDECAR_NAME, body=body_dst, home=home,
+        )
 
-        # 4) Registration in the "plugin" array -- append and dedup, every
-        #    other plugin the user has stays exactly as it was.
-        plugin_registered = self._register_plugin(config_path, adapter_dst)
+        # 4) Nothing is registered: OpenCode loads the directory by itself. What an earlier engine
+        #    registered by file path (never loaded) and deployed into the config directory goes.
+        retired = self._retire_legacy(config_path)
 
-        if plugin_registered:
-            return f"opencode: guardrail registered in {config_path}"
+        if retired:
+            return f"opencode: guardrail moved to the plugin directory {plugin_dir} (the old file registration never loaded)"
         if body_changed or adapter_changed or sidecar_changed:
             return f"opencode: guardrail body/adapter updated in {plugin_dir}"
         return None
 
+    def _retire_legacy(self, config_path: Path) -> bool:
+        """Takes back the file registrations and the files an earlier engine deployed for the guardrail.
+
+        Only entries naming the engine's own adapter files and only those files, by name: every other
+        plugin the user registered stays exactly as it was.
+        """
+        changed = False
+        config = self._load(config_path)
+        if config is not None:
+            for key in ("plugins", "plugin"):
+                values = config.get(key)
+                if not isinstance(values, list):
+                    continue
+                kept = [p for p in values if not (isinstance(p, str) and p.rstrip("/").rsplit("/", 1)[-1] in _LEGACY_ADAPTERS)]
+                if len(kept) != len(values):
+                    self._write_key(config_path, key, kept)
+                    changed = True
+        config_dir = config_path.parent
+        for name in _LEGACY_FILES:
+            changed |= self.remove_deployed(config_dir / name)
+        legacy_hooks = config_dir / "nexgen-guardrail-hooks"
+        if legacy_hooks.is_dir():
+            shutil.rmtree(legacy_hooks, ignore_errors=True)
+            changed = True
+        return changed
+
     def _register_plugin(self, config_path: Path, adapter_dst: Path) -> bool:
+        # Still used by the event sink only (a V1-shaped plugin that OpenCode 2.0.24 does not load either; see CHANGELOG).
         # V2 native key is `plugins`; the V1 `plugin` key is still honored
         # at runtime but no longer written. A machine carrying the legacy
         # key is migrated once: both lists merge, dedupe, land in `plugins`,
@@ -286,6 +360,24 @@ class OpenCodeRuntime(Runtime):
         if legacy_present or self._raw_has_key(config_path, "plugin"):
             self._delete_key(config_path, "plugin")
         return True
+
+    def remove_event_sink(self, home: Path) -> str | None:
+        config_path = self._config_path(home)
+        config = self._load(config_path)
+        changed = False
+        if config is not None:
+            for key in ("plugins", "plugin"):
+                values = config.get(key)
+                if not isinstance(values, list):
+                    continue
+                kept = [p for p in values if not (isinstance(p, str) and EVENT_SINK_NAME in p)]
+                if len(kept) != len(values):
+                    self._write_key(config_path, key, kept)
+                    changed = True
+        removed = self.remove_deployed(config_path.parent / EVENT_SINK_NAME)
+        if changed or removed:
+            return f"opencode: event sink removed from {config_path} (no declared module needs it)"
+        return None
 
     def install_event_sink(self, home: Path, sink_source: Path) -> str | None:
         config_path = self._config_path(home)

@@ -101,6 +101,36 @@ historical name that `nexgen sync` also answers to), compares the doctor
 before and after, and never stashes, resets, or rolls back user work on its
 own.
 
+Before it merges, it verifies the signature of the release tag against the
+signers pinned in the copy you already have installed (see SECURITY.md). A wrong
+signature, or one by a key that copy does not pin, stops the update in every
+mode. A release it cannot verify at all (no signature, or no `gpg` available)
+prints a warning and leaves the decision to you, except under `--unattended`,
+which refuses it. The merge itself waits for a running sync to finish instead of
+merging underneath it.
+
+`--unattended` is the one mode that undoes its own work: if the update fails
+after the engine moved, it goes back to the version that was working, restores
+the engine pin, remembers the release as rejected so the next heartbeat does not
+retry it every hour, and raises an alert. Run `nexgen update --target <version>`
+yourself to try that release again. The exit codes it uses are `70` (refused for
+its signature), `71` (failed and was undone) and `72` (failed and could not be
+undone, with the manual recovery printed).
+
+### The engine's own Python environment
+
+LangGraph, LangChain and `mcp` are core dependencies (the Council's resumable relay, the
+local lane and the MCP servers run on them), and the system `python3` usually has none of
+them. For a checkout the guard therefore provisions an environment of its own,
+`~/.local/share/nexgen-engine/runtime` (outside every git tree, so it never makes the
+checkout dirty), from the dependency list in `pyproject.toml`. The launchers use it as
+soon as it has been provisioned and verified, and fall back to any suitable Python until
+then, so the guard and the doctor still need nothing but PyYAML. `nexgen runtime check`
+says whether the interpreter you are running can import everything, `nexgen runtime
+ensure` creates or repairs the environment by hand, and `nexgen doctor` reports a missing
+library as broken with that command. A package install is its own environment and is only
+verified.
+
 The manual sequence below remains the recovery path for MINIMAL installs and
 for the one bootstrap upgrade from a version that predates the command.
 

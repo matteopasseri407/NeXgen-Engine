@@ -380,17 +380,37 @@ jobs:
     # Regression net for the engine (B1, 2026-07-08): sandboxed, never touches
     # the runner's real HOME. Canonical runner is `python -m pytest` (not
     # tests/run.sh, which is a thin Fedora-only convenience wrapper).
+    #
+    # Two legs: the newest Python, and the oldest one pyproject.toml promises
+    # (requires-python). Only the newest was ever tested, so the floor was a
+    # claim, not a fact. The newest leg keeps the bare name `engine-tests` on
+    # purpose: branch protection requires that exact check, and a plain matrix
+    # would rename it to "engine-tests (3.x)" and leave it forever pending.
+    name: ${{ matrix.label }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - python: "3.x"
+            label: engine-tests
+          - python: "3.11"
+            label: engine-tests (python 3.11 floor)
     runs-on: ubuntu-latest
     # The suite finishes in ~80s; a run past this window means a subprocess
     # wedged (a pwsh/git child holding a pipe open, a Read-Host with no
     # stdin). Fail with a captured log instead of hanging to the 6h default.
     timeout-minutes: 15
     steps:
+      # Full history: the release-trust tests verify this repository's real
+      # signed tags against the shipped trust anchor, and skip when the tags
+      # are not there. A shallow checkout would turn them into silent skips.
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 0
 
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
         with:
-          python-version: "3.x"
+          python-version: ${{ matrix.python }}
 
       - name: Install test dependencies
         run: |

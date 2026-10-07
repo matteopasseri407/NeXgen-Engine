@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import os
 import sys
+from importlib.util import find_spec
 from pathlib import Path
 
 import pytest
@@ -167,3 +168,87 @@ def test_the_redactor_masks_the_secret_shapes(secret):
 def test_ordinary_prose_is_never_masked():
     text = "Questa frase parla di architettura e di vault, senza nulla da nascondere."
     assert _redact_snippet(text) == text
+
+
+# --- Hardening: write needs a token, a wrong token is a 401, a crashed write does not wedge the vault ---
+
+
+def _git(repo: Path, *args: str) -> None:
+    import subprocess
+    subprocess.run(["git", "-C", str(repo), *args], check=True, capture_output=True, text=True, encoding="utf-8")
+
+
+def _write_settings(tmp_path: Path, **env: str) -> Settings:
+    vault = tmp_path / "vault"
+    vault.mkdir(exist_ok=True)
+    if not (vault / ".git").exists():
+        _git(vault, "init", "-q")
+        _git(vault, "config", "user.email", "t@example.com")
+        _git(vault, "config", "user.name", "t")
+        (vault / "seed.md").write_text("# seed\n", encoding="utf-8")
+        _git(vault, "add", "-A")
+        _git(vault, "commit", "-q", "-m", "seed")
+    return _settings(tmp_path, VAULT_WRITE_ENABLED="true", VAULT_GIT_DIR=str(vault / ".git"), **env)
+
+
+def test_a_write_enabled_server_refuses_to_start_without_a_token(tmp_path):
+    with pytest.raises(ValueError, match="VAULT_TOKEN"):
+        _write_settings(tmp_path)
+    assert _write_settings(tmp_path, VAULT_TOKEN="s3cret").vault_token == "s3cret"
+
+
+def test_a_read_only_server_may_still_run_without_a_token(tmp_path):
+    assert _settings(tmp_path).vault_token is None
+
+
+def _call(settings, header: bytes) -> int:
+    import asyncio
+
+    from vault_mcp_server.server import McpSecurityMiddleware
+
+    reached = []
+
+    async def inner(scope, receive, send):
+        reached.append(True)
+
+    sent = []
+
+    async def send(message):
+        sent.append(message)
+
+    async def receive():
+        return {"type": "http.request"}
+
+    scope = {"type": "http", "path": "/mcp", "headers": [(b"authorization", header)], "method": "POST"}
+    asyncio.run(McpSecurityMiddleware(inner, settings)(scope, receive, send))
+    if reached:
+        return 200
+    return next(m["status"] for m in sent if m["type"] == "http.response.start")
+
+
+@pytest.mark.skipif(find_spec("uvicorn") is None or find_spec("mcp") is None, reason="the server module needs its own runtime dependencies")
+def test_a_non_ascii_bearer_is_a_401_not_a_crash(tmp_path):
+    settings = _write_settings(tmp_path, VAULT_TOKEN="s3cret")
+    assert _call(settings, "Bearer té".encode("latin-1")) == 401
+    assert _call(settings, b"Bearer wrong") == 401
+    assert _call(settings, b"Bearer s3cret") == 200
+
+
+def test_an_orphan_temp_file_does_not_block_every_later_write(tmp_path):
+    settings = _write_settings(tmp_path, VAULT_TOKEN="s3cret")
+    vault = VaultService(settings)
+    (settings.vault_root / ".seed.md.k3j2h1.tmp").write_text("left by a crash", encoding="utf-8")
+    result = vault.create_note("fresh.md", "# fresh\n")
+    assert result["committed"] is True
+
+
+def test_a_real_uncommitted_change_still_blocks_a_write(tmp_path):
+    settings = _write_settings(tmp_path, VAULT_TOKEN="s3cret")
+    vault = VaultService(settings)
+    (settings.vault_root / "seed.md").write_text("# edited by hand\n", encoding="utf-8")
+    with pytest.raises(RuntimeError, match="uncommitted"):
+        vault.create_note("fresh.md", "# fresh\n")
+    (settings.vault_root / "seed.md").write_text("# seed\n", encoding="utf-8")
+    (settings.vault_root / "untracked note.md").write_text("mine\n", encoding="utf-8")
+    with pytest.raises(RuntimeError, match="uncommitted"):
+        vault.create_note("fresh.md", "# fresh\n")

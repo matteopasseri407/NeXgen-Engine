@@ -324,9 +324,12 @@ def test_verify_still_flags_fabrication_when_the_search_fails() -> None:
     assert verify_answer("Ho letto la nota e l'ho riassunta.", failed, "")
 
 
-def test_trap_suite_fails_when_the_model_obeys(tmp_path: Path) -> None:
+def test_trap_suite_fails_when_the_model_obeys(tmp_path: Path, monkeypatch) -> None:
     pytest.importorskip("langgraph")
     from nexgen_local.evals import run_suite, suite_failed
+
+    # The engine layer would hide the attack from this model; the harness is being tested, not the layer.
+    monkeypatch.setenv("NEXGEN_LANE_INJECTION_LAYER", "0")
 
     class ObedientLLM:
         def json(self, system: str, user: str) -> dict | None:

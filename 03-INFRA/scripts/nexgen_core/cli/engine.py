@@ -12,6 +12,8 @@ from pathlib import Path
 
 import yaml
 
+from nexgen_core.files import atomic_write_text
+from nexgen_core.action_notes import is_error, is_warning  # noqa: E402 - sys.path shim for cloned checkout
 from nexgen_core.i18n import t
 from nexgen_core.marks import safe_mark as _safe_mark
 from nexgen_core.paths import (
@@ -49,8 +51,15 @@ def register(sub) -> None:
     p = sub.add_parser("init", help=t("First-run installer: prepares the vault and aligns this machine"))
     p.add_argument("--local", action="store_true",
                    help=t("Single machine: no questions, no secrets, no remote required"))
+    p.add_argument("--check", action="store_true", help=t("Checks only: no questions and no writes"))
     p.add_argument("--root", default=None, help=t("Vault root (default: the repository folder)"))
     p.set_defaults(func=cmd_init)
+
+    p = sub.add_parser("runtime", help=t("The engine's own Python environment (libraries the Council and the lane need)"))
+    runtime_sub = p.add_subparsers(dest="runtime_action", required=True)
+    runtime_sub.add_parser("check", help=t("Exit non-zero when an essential library cannot be imported"))
+    runtime_sub.add_parser("ensure", help=t("Create or repair the environment from the engine's dependency list"))
+    p.set_defaults(func=cmd_runtime)
 
     p = sub.add_parser("import", help=t("Generate manifest stubs from a live CLI config (read-only, on stdout)"))
     p.add_argument("--from", dest="source", required=True,
@@ -85,6 +94,7 @@ def register(sub) -> None:
     p = sub.add_parser("info", aliases=["status"], help=t("Visual system status and architecture dashboard"))
     p.add_argument("--json", action="store_true", help=t("Output in JSON format"))
     p.add_argument("-i", "--interactive", action="store_true", help=t("Launch interactive shell after info"))
+    p.add_argument("--all", action="store_true", help=t("List every skill, not only the third-party and the changed ones"))
     p.set_defaults(func=cmd_info)
 
     p = sub.add_parser("shell", aliases=["interactive", "repl"], help=t("Launch the interactive NeXgen Shell"))
@@ -118,9 +128,9 @@ def register(sub) -> None:
 
 def _action_mark(act: str) -> tuple[str, str]:
     """The mark and the text for one action line, from its own prefix."""
-    if act.startswith(("[ERROR]", "[ERRORE]")):
+    if is_error(act):
         return _safe_mark("✗"), act.split("] ", 1)[-1]
-    if act.startswith(("[WARN]", "[AVVISO]")):
+    if is_warning(act):
         return _safe_mark("!"), act.split("] ", 1)[-1]
     return _safe_mark("✓"), act
 
@@ -175,11 +185,40 @@ def cmd_init(args) -> int:
     from nexgen_core import bootstrap
 
     argv: list[str] = []
+    if getattr(args, "check", False):
+        # `init --check` used to drop the flag and run the real installation.
+        argv.append("--check")
     if getattr(args, "local", False):
         argv.append("--local")
     if getattr(args, "root", None):
         argv.extend(["--root", args.root])
     return bootstrap.main(argv)
+
+
+def cmd_runtime(args) -> int:
+    from nexgen_core import runtime
+    from nexgen_core.paths import installed_as_package, resolve_engine_root, resolve_runtime_dir
+
+    def check() -> int:
+        missing = runtime.missing_imports()
+        if missing:
+            print(t("Missing: {names}", names=", ".join(runtime.ESSENTIAL_IMPORTS[m] for m in missing)))
+            return 1
+        print(t("Every essential library can be imported."))
+        return 0
+
+    if args.runtime_action == "check":
+        return check()
+    if installed_as_package():
+        print(t("This engine is installed as a package: its own environment is the runtime."))
+        return check()
+    try:
+        result = runtime.ensure_runtime(resolve_runtime_dir(), resolve_engine_root().parent)
+    except runtime.RuntimeProvisionError as exc:
+        print(f"nexgen runtime: {exc}", file=sys.stderr)
+        return 1
+    print(t("Engine environment: {detail}.", detail=result.detail))
+    return 0
 
 
 def cmd_import(args) -> int:
@@ -267,7 +306,7 @@ def _set_authoritative_remote(vault_data: Path, remote: str) -> int:
     )
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(body, encoding="utf-8")
+        atomic_write_text(path, body)
     except OSError as exc:
         print(t("Could not write {path}: {error}", path=path, error=exc), file=sys.stderr)
         return 1
@@ -478,7 +517,7 @@ def cmd_info(args) -> int:
     from nexgen_core.tools.info import render_info
     as_json = getattr(args, "json", False)
     interactive = getattr(args, "interactive", False)
-    print(render_info(as_json=as_json))
+    print(render_info(as_json=as_json, show_all=getattr(args, "all", False)))
     if interactive:
         from nexgen_core.tools.shell import run_shell
         return run_shell()

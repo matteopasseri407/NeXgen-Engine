@@ -14,18 +14,33 @@ ceiling defaults to the smallest possible jump -- a patch release, same major
 and minor -- because a machine that changes its own behaviour overnight
 changed it without anyone choosing that. A minor or major release is refused
 with the interactive command to run by hand; the interactive path itself is
-unchanged and still has no ceiling. Truth in advertising: the bad-signature
-check below is real rejection (a provably invalid signature stops the update),
-but an *unverifiable* signature only prints a warning and continues -- that is
-not enforcement, and nothing here or in `--help` claims otherwise.
+unchanged and still has no ceiling.
+
+The release tag is verified against the trust anchor shipped in the *installed*
+tree (see ``release_trust``). A signature that is wrong or made by a key the
+install does not pin stops the update in every mode. A release that cannot be
+verified at all (no signature, no anchor, no gpg) is shown with a warning and
+left to the person at the prompt, but ``--unattended`` refuses it: nobody is
+there to read the warning, and an unattended update is exactly the path a
+stolen push token would use.
+
+Two more rules apply to the merge itself. It happens under the host lock, the
+one every path that changes this machine takes, so it can no longer run in the
+middle of a guard cycle. And an *unattended* update that fails after the engine
+moved is undone on the spot (the interactive command still never rolls back on
+its own): the machine goes back to the version that worked, the release is
+remembered as rejected so the next beat does not retry it every hour, and the
+beat raises an alert from the exit code.
 """
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import re
 import subprocess
 import sys
+import time
 from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from typing import Any
@@ -37,19 +52,32 @@ if str(SCRIPTS_DIR) not in sys.path:
 from nexgen_core.errors import NexgenError  # noqa: E402
 from nexgen_core.files import atomic_write_text  # noqa: E402
 from nexgen_core.i18n import t  # noqa: E402
-from nexgen_core.paths import resolve_home  # noqa: E402
+from nexgen_core.lock import EXIT_BUSY_MANUAL, LockTimeoutError, host_mutation  # noqa: E402
+from nexgen_core.paths import resolve_home, resolve_state_dir  # noqa: E402
 from nexgen_core.processes import force_stop_process_tree  # noqa: E402
+from nexgen_core.release_trust import BAD, UNTRUSTED, TagVerdict, verify_release_tag  # noqa: E402
 
 SEMVER = re.compile(r"^v?(\d+)\.(\d+)\.(\d+)$")
 CHANGELOG_HEADING = re.compile(r"^## \[(\d+\.\d+\.\d+)\].*$", re.MULTILINE)
-BAD_SIGNATURE_STATES = {"B", "R", "X", "Y"}
-UNVERIFIED_SIGNATURE_STATES = {"E", "N"}
 GIT_TIMEOUT_SECONDS = 120.0
 COMMAND_TIMEOUT_SECONDS = 600.0
+#: How long the merge waits for a running guard cycle before giving up.
+UPDATE_LOCK_WAIT_SECONDS = 120.0
+#: Exit codes the heartbeat turns into alerts. 0 and 1 keep their old meaning.
+EXIT_REFUSED = 70
+EXIT_ROLLED_BACK = 71
+EXIT_ROLLBACK_FAILED = 72
+REJECTED_FILE = "update-rejected.json"
 
 
 class UpdateError(NexgenError, RuntimeError):
     """A safe, actionable update failure."""
+
+
+class UpdateRefused(UpdateError):
+    """The release signature is wrong, or made by a key this install does not pin."""
+
+    exit_code = EXIT_REFUSED
 
 
 class PostMergeError(UpdateError):
@@ -325,11 +353,125 @@ def _commit_split_pin(
     _assert_clean(data_repo, label="data")
 
 
-def _signature_state(engine_repo: Path, target: str) -> str:
-    state = _git(engine_repo, "log", "-1", "--format=%G?", target).stdout.strip() or "N"
-    if state in BAD_SIGNATURE_STATES:
-        raise UpdateError(f"release commit for {target} has an invalid or expired signature (state {state})")
-    return state
+def _release_verdict(engine_repo: Path, target: str) -> TagVerdict:
+    """Verifies the release tag against the anchor in the installed tree.
+
+    A wrong or foreign signature is refused here, in every mode and for
+    ``--check`` too: reporting "update available" for a release that no
+    installed copy would accept is worse than saying so. What to do about a
+    release that cannot be verified at all is the caller's policy.
+    """
+    verdict = verify_release_tag(engine_repo, target)
+    if verdict.status in (BAD, UNTRUSTED):
+        raise UpdateRefused(
+            f"release {target} is not signed by a trusted release key: {verdict.detail}. "
+            "Nothing was installed. If this is a legitimate release, the maintainer has to publish "
+            "it with a key the installed copies pin (see SECURITY.md, 'Release signatures')"
+        )
+    return verdict
+
+
+def _state_dir(env: Mapping[str, str]) -> Path:
+    """The machine state directory of the environment the updater was given.
+
+    Read from `env`, not from the process: the heartbeat (and the tests) hand
+    the updater a mapping built for one install, and the lock and the
+    rejected-release memory must live with that install, not with whatever the
+    process happens to inherit.
+    """
+    explicit = env.get("AGENT_STATE_DIR")
+    return resolve_state_dir(override=Path(explicit) if explicit else None)
+
+
+def _read_rejected(state_dir: Path) -> dict[str, Any]:
+    try:
+        data = json.loads((state_dir / REJECTED_FILE).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _record_rejected(state_dir: Path, target: str, reason: str) -> None:
+    try:
+        atomic_write_text(
+            state_dir / REJECTED_FILE,
+            json.dumps({"target": target, "reason": reason[:500], "at": time.time()}, indent=2) + "\n",
+        )
+    except OSError:
+        pass  # remembering is a courtesy; failing to would only mean one retry
+
+
+def _clear_rejected(state_dir: Path) -> None:
+    try:
+        (state_dir / REJECTED_FILE).unlink()
+    except OSError:
+        pass
+
+
+def _assert_mergeable(engine_repo: Path, data_repo: Path, target: str, *, split_topology: bool) -> None:
+    """The state the merge needs. Checked once early, for a clear refusal, and
+    again under the host lock, because a guard cycle may have run in between."""
+    _assert_attached_branch(engine_repo)
+    _assert_clean(engine_repo, label="engine")
+    if split_topology:
+        _assert_clean(data_repo, label="data")
+        _assert_fast_forward(engine_repo, target)
+    elif not _is_ancestor(engine_repo, target):
+        _assert_merge_identity(engine_repo)
+
+
+def _rollback_unattended(
+    exc: PostMergeError,
+    *,
+    entry: list[str],
+    data_repo: Path,
+    pin_file: Path | None,
+    state_dir: Path,
+    target: str,
+    current: str,
+) -> int:
+    """Undoes an unattended update that failed after the engine moved.
+
+    Interactive updates never do this: a person is there to look first. With
+    nobody there, leaving the engine half-upgraded meant the next beat read
+    "already at the requested version" and the machine ran on a tree that had
+    failed its own checks, with no alert.
+    """
+    print(f"nexgen-update: ERROR: {exc}", file=sys.stderr)
+    print(f"The unattended update to {target} failed; going back to v{current}.", file=sys.stderr)
+    try:
+        with host_mutation("nexgen-update-rollback", state_dir=state_dir, timeout=UPDATE_LOCK_WAIT_SECONDS):
+            _git(exc.engine_repo, "merge", "--abort", check=False)
+            _git(exc.engine_repo, "reset", "--hard", exc.previous_head)
+    except (LockTimeoutError, UpdateError, OSError) as rollback_exc:
+        print(
+            f"nexgen-update: the rollback itself failed ({type(rollback_exc).__name__}). "
+            f"The engine is left as it is. By hand:\n  git -C {exc.engine_repo} reset --hard {exc.previous_head}",
+            file=sys.stderr,
+        )
+        return EXIT_ROLLBACK_FAILED
+
+    notes: list[str] = []
+    if pin_file:
+        try:
+            _commit_split_pin(
+                pin_file=pin_file, target_head=exc.previous_head, target=f"v{current}",
+                data_repo=data_repo, entry=entry,
+            )
+        except UpdateError as pin_exc:
+            notes.append(f"the engine pin was not restored: {pin_exc}")
+    realigned = _run([*entry, "apply"], cwd=data_repo, check=False, capture=False)
+    if realigned.returncode != 0:
+        notes.append("agent-sync apply from the restored tree also failed")
+    _record_rejected(state_dir, target, str(exc))
+    for note in notes:
+        print(f"nexgen-update: WARNING: {note}", file=sys.stderr)
+    print(
+        f"Rolled back to v{current}. Unattended updates will skip {target}; "
+        f"review it and run 'nexgen-update --target {target.removeprefix('v')}' to try again.",
+        file=sys.stderr,
+    )
+    return EXIT_ROLLED_BACK
 
 
 def _doctor(entry: list[str], *, data_repo: Path) -> tuple[int | None, int]:
@@ -436,6 +578,7 @@ def main(
         engine_repo, data_repo = resolve_repositories(env)
         entry = _tree_entry(engine_repo)
         split_topology = data_repo != engine_repo
+        state_dir = _state_dir(env)
         current = _current_version(engine_repo)
         target = _target_tag(engine_repo, args.target)
         target_version = _assert_target_version(engine_repo, target)
@@ -469,30 +612,36 @@ def main(
 
         if args.unattended:
             _assert_within_unattended_ceiling(current, target)
+            if _read_rejected(state_dir).get("target") == target:
+                print(
+                    f"{target} was rolled back after a failed unattended update; unattended updates skip it. "
+                    f"Review it, then run 'nexgen-update --target {target.removeprefix('v')}' to try again."
+                )
+                return 0
 
         print("\nRelease notes:\n")
         print(_changelog_between(engine_repo, current, target))
-        signature = _signature_state(engine_repo, target)
-        if signature in UNVERIFIED_SIGNATURE_STATES:
+        verdict = _release_verdict(engine_repo, target)
+        if verdict.ok:
+            print(f"\nRelease signature: verified ({verdict.detail}).")
+        else:
             print(
-                f"\nWARNING: this Git installation could not verify the release "
-                f"commit signature for {target} (state {signature}).",
+                f"\nWARNING: the signature of {target} could not be verified: {verdict.detail}.",
                 file=sys.stderr,
             )
-        else:
-            print(f"\nRelease commit signature state: {signature}.")
 
         if args.check:
             print("\nCheck only. No installed files or branch were changed.")
             return 0
 
-        _assert_attached_branch(engine_repo)
-        _assert_clean(engine_repo, label="engine")
-        if split_topology:
-            _assert_clean(data_repo, label="data")
-            _assert_fast_forward(engine_repo, target)
-        elif not _is_ancestor(engine_repo, target):
-            _assert_merge_identity(engine_repo)
+        if args.unattended and not verdict.ok:
+            raise UpdateError(
+                f"unattended update refuses {target}: its signature could not be verified "
+                f"({verdict.detail}); recover by running 'nexgen-update --target {target.removeprefix('v')}' "
+                "interactively once you have checked the release"
+            )
+
+        _assert_mergeable(engine_repo, data_repo, target, split_topology=split_topology)
 
         pin_candidate = data_repo / "99-INDEX" / "ENGINE-PIN.txt"
         # In a split topology the pin is this machine's migration record:
@@ -519,26 +668,41 @@ def main(
             raise UpdateError("pre-upgrade doctor did not return a readable FAIL summary")
         if pre_doctor_rc != 0 and pre_fail == 0:
             raise UpdateError("pre-upgrade doctor returned an inconsistent result")
-        previous_head = _git(engine_repo, "rev-parse", "HEAD").stdout.strip()
-        mutation_started = True
-        merge = _git(engine_repo, "merge", merge_mode, target, check=False)
-        if merge.returncode != 0:
-            _git(engine_repo, "merge", "--abort", check=False)
-            ref_moved = _git(engine_repo, "rev-parse", "HEAD").stdout.strip() != previous_head
-            detail = (merge.stderr or merge.stdout or "merge failed").strip()
-            if ref_moved:
-                raise PostMergeError(
-                    f"merge {merge_mode} {target} failed after the engine ref moved: {detail}",
-                    previous_head=previous_head, engine_repo=engine_repo,
+        lock = host_mutation("nexgen-update", state_dir=state_dir, timeout=UPDATE_LOCK_WAIT_SECONDS)
+        try:
+            lock.acquire()
+        except LockTimeoutError:
+            if args.unattended:
+                print("Another sync is running on this machine; the unattended update is retried on the next beat.")
+                return 0
+            print("nexgen-update: another sync is running on this machine; retry in a minute.", file=sys.stderr)
+            return EXIT_BUSY_MANUAL
+        try:
+            # Whatever the guard did while we waited for the lock or for an
+            # answer at the prompt, the merge needs the state checked above.
+            _assert_mergeable(engine_repo, data_repo, target, split_topology=split_topology)
+            previous_head = _git(engine_repo, "rev-parse", "HEAD").stdout.strip()
+            mutation_started = True
+            merge = _git(engine_repo, "merge", merge_mode, target, check=False)
+            if merge.returncode != 0:
+                _git(engine_repo, "merge", "--abort", check=False)
+                ref_moved = _git(engine_repo, "rev-parse", "HEAD").stdout.strip() != previous_head
+                detail = (merge.stderr or merge.stdout or "merge failed").strip()
+                if ref_moved:
+                    raise PostMergeError(
+                        f"merge {merge_mode} {target} failed after the engine ref moved: {detail}",
+                        previous_head=previous_head, engine_repo=engine_repo,
+                    )
+                _assert_clean(engine_repo, label="engine after failed merge")
+                if _git(engine_repo, "rev-parse", "--quiet", "--verify", "MERGE_HEAD", check=False).returncode == 0:
+                    raise UpdateError("failed merge cleanup left an active merge")
+                mutation_started = False
+                raise UpdateError(
+                    f"merge {merge_mode} {target}: {detail}\n"
+                    f"The merge was rolled back; {engine_repo} is still at {previous_head[:9]}."
                 )
-            _assert_clean(engine_repo, label="engine after failed merge")
-            if _git(engine_repo, "rev-parse", "--quiet", "--verify", "MERGE_HEAD", check=False).returncode == 0:
-                raise UpdateError("failed merge cleanup left an active merge")
-            mutation_started = False
-            raise UpdateError(
-                f"merge {merge_mode} {target}: {detail}\n"
-                f"The merge was rolled back; {engine_repo} is still at {previous_head[:9]}."
-            )
+        finally:
+            lock.release()
         if merge.stdout:
             print(merge.stdout.rstrip())
 
@@ -593,6 +757,7 @@ def main(
                 previous_head=previous_head,
                 engine_repo=engine_repo,
             )
+        _clear_rejected(state_dir)
         if post_fail == 0:
             print(f"\nNeXgen Engine {target} installed: doctor reports no failures.")
             print("Warnings listed above (if any) are non-blocking: unprovisioned")
@@ -607,16 +772,27 @@ def main(
         )
         return 0
     except PostMergeError as exc:
+        if args.unattended:
+            return _rollback_unattended(
+                exc, entry=entry, data_repo=data_repo, pin_file=pin_file,
+                state_dir=state_dir, target=target, current=current,
+            )
         return _report_post_merge_error(exc, pin_file)
     except (UpdateError, OSError, UnicodeError, subprocess.SubprocessError) as exc:
         safe_error = exc if isinstance(exc, UpdateError) else UpdateError(f"update operation failed ({type(exc).__name__})")
         if mutation_started and previous_head and engine_repo is not None:
-            return _report_post_merge_error(PostMergeError(
+            interrupted = PostMergeError(
                 f"update interrupted after merge was started: {safe_error}",
                 previous_head=previous_head, engine_repo=engine_repo,
-            ), pin_file)
+            )
+            if args.unattended:
+                return _rollback_unattended(
+                    interrupted, entry=entry, data_repo=data_repo, pin_file=pin_file,
+                    state_dir=state_dir, target=target, current=current,
+                )
+            return _report_post_merge_error(interrupted, pin_file)
         print(f"nexgen-update: ERROR: {safe_error}", file=sys.stderr)
-        return 1
+        return exc.exit_code if isinstance(exc, UpdateRefused) else 1
 
 
 class EngineUpdater:

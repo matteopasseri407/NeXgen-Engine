@@ -26,6 +26,17 @@ REAL_SCRIPTS = REAL_VAULT / "03-INFRA" / "scripts"
 
 SENTINEL_NAME = ".b1-sandbox-sentinel"
 
+@pytest.fixture(autouse=True)
+def no_ollama_probe(request, monkeypatch):
+    """The lane's capability probe talks to whatever OLLAMA_HOST points at: never from a test, unless the test is about the probe."""
+    if request.module.__name__.endswith("test_nexgen_llm_thinking"):
+        return
+    try:
+        import nexgen_local.llm as llm_module
+    except ImportError:
+        return
+    monkeypatch.setattr(llm_module, "_ollama_capabilities", lambda host, tag, timeout=3.0: None)
+
 
 @pytest.fixture(autouse=True)
 def isolated_runtime_overrides(monkeypatch):
@@ -36,6 +47,11 @@ def isolated_runtime_overrides(monkeypatch):
         "KNOWLEDGE_VAULT_PATH", "AGENT_SYNC_LOCK_FILE", "APPDATA", "LOCALAPPDATA",
     ):
         monkeypatch.delenv(key, raising=False)
+    # Safe by default. Only tests built around a sandbox used to set this, so any
+    # other test that ran the scheduler phase (a guard cycle with a tmp home, for
+    # instance) reached the real `systemctl --user` of whoever ran the suite. A test
+    # that really wants host mutations has to ask for them.
+    monkeypatch.setenv("NEXGEN_DISABLE_HOST_MUTATIONS", "1")
 
 
 @dataclass
@@ -205,11 +221,9 @@ def _copy_engine_scripts(sandbox: Sandbox) -> None:
 
     shutil.copy2(FIXTURES / "manifest.yaml", sandbox.mcp_dir / "manifest.yaml")
     shutil.copy2(FIXTURES / "AGENTS.md", sandbox.ul / "instructions" / "AGENTS.md")
-    shutil.copy2(FIXTURES / "claude-vault-checkpoint.mjs", sandbox.ul / "hooks" / "claude-vault-checkpoint.mjs")
-    shutil.copy2(FIXTURES / "opencode-guardrail-plugin.mjs", sandbox.ul / "hooks" / "opencode-guardrail-plugin.mjs")
-    shutil.copy2(
-        FIXTURES / "antigravity-guardrail-adapter.mjs", sandbox.ul / "hooks" / "antigravity-guardrail-adapter.mjs"
-    )
+    # The real hook files, not frozen copies: the three that used to live in fixtures/ had drifted
+    # from the files they stood for, so the sandbox cycle never ran the adapters that ship.
+    shutil.copytree(REAL_UL / "hooks", sandbox.ul / "hooks", dirs_exist_ok=True)
     shutil.copy2(FIXTURES / "skills.manifest.yaml", sandbox.skills_dir / "skills.manifest.yaml")
     for skill_dir in (FIXTURES / "skills").iterdir():
         if skill_dir.is_dir():

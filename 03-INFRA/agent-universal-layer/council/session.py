@@ -43,10 +43,23 @@ def _load_leak_scan():
     spec.loader.exec_module(mod)
     return mod
 
-if os.name == "nt":
-    _LOCAL_STATE_ROOT = Path(os.environ.get("LOCALAPPDATA") or (Path.home() / "AppData" / "Local"))
-else:
-    _LOCAL_STATE_ROOT = Path.home() / ".local" / "state"
+def _local_state_root() -> Path:
+    """Where Council sessions live: the engine's home (`NEXGEN_HOME` when set), else the real one.
+
+    Sessions hold prompts, diffs and seat output. A checkout run in a sandbox home used to
+    write them into the working installation's state, and clean them up from there.
+    """
+    from nexgen_core.paths import resolve_home
+
+    sandboxed = bool(os.environ.get("NEXGEN_HOME"))
+    home = resolve_home()
+    if os.name == "nt":
+        local = None if sandboxed else os.environ.get("LOCALAPPDATA")
+        return Path(local) if local else home / "AppData" / "Local"
+    return home / ".local" / "state"
+
+
+_LOCAL_STATE_ROOT = _local_state_root()
 SESSIONS_DIR = _LOCAL_STATE_ROOT / "council" / "sessions"
 DEFAULT_TTL_DAYS = 7
 

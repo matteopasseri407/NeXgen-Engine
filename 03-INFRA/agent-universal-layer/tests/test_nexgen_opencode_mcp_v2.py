@@ -76,9 +76,12 @@ def test_opencode_v2_migrates_legacy_and_preserves_unmanaged_servers(tmp_path: P
     assert set(data["mcp"]) == {"servers"}
     servers = data["mcp"]["servers"]
     assert set(servers) == {"managed", "remote", "public", "keyed", "outside"}
+    # It hides a tool, so it is mounted through the one trimming shim, not as the server itself: same filter
+    # for every CLI. The permission rule below stays as a second line.
+    script = renderer.engine_root / "agent-universal-layer" / "mcp" / "mcp-trim.py"
     assert servers["managed"] == {
-        "type": "local", "command": ["python" if sys.platform == "win32" else "python3", "-m", "managed"],
-        "environment": {"DEMO": "value"},
+        "type": "local", "command": ["python" if sys.platform == "win32" else "python3", str(script), "managed"],
+        "environment": {"AGENT_VAULT_DATA": str(renderer.vault_data), "LAZY_MCP_CLI": "opencode"},
         "timeout": {"startup": 45000, "execution": 60000},
     }
     assert servers["remote"] == {

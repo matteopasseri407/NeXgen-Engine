@@ -24,6 +24,7 @@ SCRIPTS_DIR = Path(__file__).resolve().parents[1]
 if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
+from nexgen_core.action_notes import ERROR, WARN  # noqa: E402 - sys.path shim for cloned checkout
 from nexgen_core.i18n import t  # noqa: E402
 from nexgen_core.files import atomic_write_text  # noqa: E402
 from nexgen_core.lock import HostLock  # noqa: E402
@@ -187,7 +188,7 @@ class SkillFetcher:
             base = ["git"] + (["-C", str(cwd)] if cwd else [])
             return subprocess.run(
                 base + list(args),
-                capture_output=True, text=True, check=False,
+                capture_output=True, text=True, encoding="utf-8", errors="replace", check=False,
                 timeout=GIT_CLONE_TIMEOUT_SECONDS, env=env,
             )
 
@@ -215,7 +216,7 @@ class SkillFetcher:
                 incoming = Path(tmp) / "checkout"
                 res = git("clone", "--quiet", "--", clone_url(entry.repo or ""), str(incoming))
                 if res.returncode != 0:
-                    return False, "[ERROR] " + t(
+                    return False, ERROR + t(
                         "github skill '{name}': cloning {repo} failed: {error}",
                         name=entry.name, repo=entry.repo, error=res.stderr.strip(),
                     )
@@ -224,7 +225,7 @@ class SkillFetcher:
                     git("fetch", "--quiet", "origin", entry.commit or "", cwd=incoming)
                     res = git("checkout", "--quiet", "--detach", entry.commit or "", cwd=incoming)
                 if res.returncode != 0:
-                    return False, "[ERROR] " + t(
+                    return False, ERROR + t(
                         "github skill '{name}': commit {commit} is not reachable in the repository: {error}",
                         name=entry.name, commit=entry.commit, error=res.stderr.strip(),
                     )
@@ -244,18 +245,18 @@ class SkillFetcher:
                     try:
                         shutil.rmtree(backup)
                     except OSError:
-                        return True, "[WARNING] " + t(
+                        return True, WARN + t(
                             "github skill '{name}': updated; old cache cleanup failed at {path}",
                             name=entry.name, path=backup,
                         )
             return True, None
         except subprocess.TimeoutExpired:
-            return False, "[ERROR] " + t(
+            return False, ERROR + t(
                 "github skill '{name}': {repo} did not respond within {timeout}s, retrying next cycle",
                 name=entry.name, repo=entry.repo, timeout=GIT_CLONE_TIMEOUT_SECONDS,
             )
         except (OSError, ValueError) as exc:
-            return False, "[ERROR] " + t("github skill '{name}': {error}", name=entry.name, error=exc)
+            return False, ERROR + t("github skill '{name}': {error}", name=entry.name, error=exc)
 
     def _installed_versions_file(self) -> Path:
         return resolve_state_dir(self.home) / "installed-skill-versions.json"
@@ -362,41 +363,41 @@ class SkillFetcher:
         try:
             recorded = self._installed_versions().get(entry.name)
         except OSError as exc:
-            return False, "[ERROR] " + t("Cannot verify the recorded pin for skill '{name}' ({error}).",
+            return False, ERROR + t("Cannot verify the recorded pin for skill '{name}' ({error}).",
                                         name=entry.name, error=type(exc).__name__)
         if recorded == entry.version and lib_dest.is_dir():
             return True, None
         if not entry.install:
-            return False, "[ERROR] " + t(
+            return False, ERROR + t(
                 "skill '{name}' is installed by its own installer but declares no install command",
                 name=entry.name,
             )
         before = self._tree_fingerprint(lib_dest)
         if lib_dest.exists() and before is None:
-            return False, "[ERROR] " + t("Cannot verify the existing skill library: {path}", path=lib_dest)
+            return False, ERROR + t("Cannot verify the existing skill library: {path}", path=lib_dest)
         try:
             result = subprocess.run(
-                list(entry.install), capture_output=True, text=True, check=False,
+                list(entry.install), capture_output=True, text=True, encoding="utf-8", errors="replace", check=False,
                 timeout=INSTALLER_TIMEOUT_SECONDS,
                 env={**os.environ, **GIT_NONINTERACTIVE_ENV},
             )
         except subprocess.TimeoutExpired:
-            return False, "[ERROR] " + t(
+            return False, ERROR + t(
                 "the installer for '{name}' did not finish within {seconds}s",
                 name=entry.name, seconds=INSTALLER_TIMEOUT_SECONDS,
             )
         except OSError as exc:
-            return False, f"[ERROR] {exc}"
+            return False, f"{ERROR}{exc}"
         if result.returncode != 0:
             detail = (result.stderr or result.stdout).strip().splitlines()
-            return False, "[ERROR] " + t(
+            return False, ERROR + t(
                 "the installer for '{name}' failed: {reason}",
                 name=entry.name, reason=detail[-1] if detail else "no detail",
             )
 
         claimed = self.claim_from_discovery(entry.name, lib_dest, discovery_dirs)
         if not lib_dest.is_dir():
-            return False, "[ERROR] " + t(
+            return False, ERROR + t(
                 "the installer for '{name}' ran but left nothing the engine could find",
                 name=entry.name,
             )
@@ -407,12 +408,12 @@ class SkillFetcher:
             try:
                 self._record_installed_version(entry.name, entry.version or "")
             except OSError as exc:
-                return False, "[ERROR] " + str(exc)
+                return False, ERROR + str(exc)
             return True, t("Installed skill '{name}' at version {version}", name=entry.name, version=entry.version)
         # The installer exited 0 but left no observable new bytes, while
         # the library still holds the old version: recording the new
         # version would declare the pin current on stale bytes.
-        return False, "[ERROR] " + t(
+        return False, ERROR + t(
             "the installer for '{name}' ran but left no new copy to claim: keeping the previous version",
             name=entry.name,
         )

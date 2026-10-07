@@ -196,3 +196,43 @@ def test_no_socket_means_no_work(sink) -> None:
                           input='{"hook_event_name":"Stop"}', text=True, env=env,
                           timeout=15, capture_output=True, check=False)
     assert proc.returncode == 0
+
+
+def test_the_opencode_plugin_reads_the_reply_from_its_database_when_the_client_cannot(sink) -> None:
+    """OpenCode's idle event carries no text; the plugin falls back to the session database.
+
+    The fallback loaded `node:sqlite` with `require`, which an ES module does not have: the
+    ReferenceError was swallowed by the surrounding catch, the fallback returned an empty
+    string, and the cockpit announced a finished turn with nothing to say.
+    """
+    import sqlite3
+
+    version = subprocess.run(["node", "-p", "process.versions.node.split('.')[0]"],
+                             capture_output=True, text=True, encoding="utf-8", check=True).stdout.strip()
+    if int(version) < 22:
+        pytest.skip("node:sqlite needs Node 22")
+    home = Path(sink.dir) / "home"
+    db_path = home / ".local" / "share" / "opencode" / "opencode.db"
+    db_path.parent.mkdir(parents=True)
+    con = sqlite3.connect(db_path)
+    con.executescript(
+        "CREATE TABLE message (id TEXT, session_id TEXT, time_created INTEGER);"
+        "CREATE TABLE part (message_id TEXT, data TEXT, time_created INTEGER);"
+    )
+    con.execute("INSERT INTO message VALUES ('m1', 's1', 1)")
+    con.execute("INSERT INTO part VALUES ('m1', ?, 1)", (json.dumps({"type": "text", "text": "Dal database."}),))
+    con.commit()
+    con.close()
+    driver = Path(sink.dir) / "drive-db.mjs"
+    driver.write_text(
+        f'import plugin from "{SINK}";\n'
+        'const h = await plugin({});\n'
+        'await h.event({ event: { type: "session.idle", properties: { sessionID: "s1" } } });\n'
+        'await new Promise(r => setTimeout(r, 300));\n',
+        encoding="utf-8",
+    )
+    env = sink.env(session="voice-oc000002", cli="opencode")
+    env["HOME"] = env["USERPROFILE"] = str(home)
+    subprocess.run(["node", "--no-warnings", str(driver)], env=env, timeout=15, capture_output=True, check=False)
+    time.sleep(0.35)
+    assert [e["text"] for e in sink.events] == ["Dal database."]

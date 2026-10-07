@@ -1,0 +1,18 @@
+# Release signers pinned by this install.
+#
+# `nexgen-update` verifies the tag of the release it is about to install
+# against THIS file, as shipped in the copy that is already installed, never
+# against the release being installed. A release cannot vouch for itself.
+#
+# Changing a signer takes two releases: ship the new key here in a release
+# signed by a key that is already listed, and only then sign a release with
+# the new key. A release signed by a key that no installed copy lists is
+# refused by every machine, including unattended ones.
+#
+# Entries:
+#   openpgp <40-hex primary key fingerprint>   (key material: release-signing-keys.asc)
+#   ssh <key type> <base64 public key>
+# The keys that signed the v2.x releases:
+openpgp 5D061CE9626C9CC8BD88761F4399A81E895EB96F
+openpgp 6CD192BE0A787F77867F3B9F911522B8F02FFA88
+ssh ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIJI0QgCVCvqEoZe3UvTAn9vBV3KN3O/8iNrH4hjVR537

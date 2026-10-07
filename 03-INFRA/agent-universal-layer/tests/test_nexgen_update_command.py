@@ -92,6 +92,9 @@ def _env(engine: Path, data: Path | None = None) -> dict[str, str]:
         **os.environ,
         "AGENT_ENGINE_ROOT": str(engine / "03-INFRA"),
         "AGENT_VAULT_DATA": str(data or engine),
+        # The updater takes the host lock in the state directory it is given.
+        # Without this a test would lock the developer's real one.
+        "AGENT_STATE_DIR": str(engine.parent / "state"),
     }
 
 
@@ -103,7 +106,6 @@ def test_release_without_command_entry_is_refused_before_engine_moves(tmp_path, 
     _git(origin, "tag", "-d", "v0.2.0")
     _git(origin, "tag", "v0.2.0")
     updater = _load_updater()
-    monkeypatch.setattr(updater, "_signature_state", lambda *args: "G")
     before = _git(engine, "rev-parse", "HEAD").stdout
     assert updater.main(["--yes"], environ=_env(engine)) == 1
     assert _git(engine, "rev-parse", "HEAD").stdout == before
@@ -138,7 +140,10 @@ def _bare_env(engine: Path, home: Path) -> dict[str, str]:
         for key, value in os.environ.items()
         if key not in {"AGENT_VAULT_DATA", "KNOWLEDGE_VAULT_PATH", "USERPROFILE"}
     }
-    env.update({"AGENT_ENGINE_ROOT": str(engine / "03-INFRA"), "HOME": str(home)})
+    env.update({
+        "AGENT_ENGINE_ROOT": str(engine / "03-INFRA"), "HOME": str(home),
+        "AGENT_STATE_DIR": str(engine.parent / "state"),
+    })
     return env
 
 
@@ -316,44 +321,38 @@ def test_unknown_target_fails_closed(tmp_path, capsys):
     assert "not a released tag merged into origin/main" in capsys.readouterr().err
 
 
-def test_cryptographically_bad_release_signature_is_rejected(tmp_path, capsys, monkeypatch):
+@pytest.mark.parametrize("status", ["bad", "untrusted"])
+def test_wrong_or_foreign_release_signature_is_rejected(tmp_path, capsys, monkeypatch, status):
+    """Both a forged signature and a valid one by an unpinned key stop the
+    update, even interactively and even for --check. Real signatures for these
+    cases are in test_nexgen_release_trust; this pins the updater's policy."""
     updater = _load_updater()
     _origin, engine = _upgrade_fixture(tmp_path)
     before = _git(engine, "rev-parse", "HEAD").stdout.strip()
-    real_git = updater._git
+    monkeypatch.setattr(updater, "verify_release_tag", lambda *_a, **_k: updater.TagVerdict(status, "synthetic"))
 
-    def bad_signature(repo, *args, **kwargs):
-        if args == ("log", "-1", "--format=%G?", "v0.2.0"):
-            return subprocess.CompletedProcess(args, 0, "B\n", "")
-        return real_git(repo, *args, **kwargs)
+    # 70, not the generic 1: the heartbeat turns it into an alert.
+    assert updater.main(["--yes"], environ=_env(engine)) == updater.EXIT_REFUSED == 70
+    assert updater.main(["--check"], environ=_env(engine)) == updater.EXIT_REFUSED
 
-    monkeypatch.setattr(updater, "_git", bad_signature)
-
-    result = updater.main(["--yes"], environ=_env(engine))
-
-    assert result == 1
     assert _git(engine, "rev-parse", "HEAD").stdout.strip() == before
-    assert "invalid or expired signature" in capsys.readouterr().err
+    assert "not signed by a trusted release key" in capsys.readouterr().err
 
 
-def test_missing_local_public_key_warns_without_mislabeling_release(tmp_path, capsys, monkeypatch):
+def test_unverifiable_release_warns_interactively_without_mislabeling_it(tmp_path, capsys):
+    """The fixture's lightweight tag has no signature and the fixture ships no
+    trust anchor: that is "cannot verify", not "tampered", and the wording
+    must not accuse the release of being forged."""
     updater = _load_updater()
     _origin, engine = _upgrade_fixture(tmp_path)
-    real_git = updater._git
-
-    def unverifiable_signature(repo, *args, **kwargs):
-        if args == ("log", "-1", "--format=%G?", "v0.2.0"):
-            return subprocess.CompletedProcess(args, 0, "E\n", "")
-        return real_git(repo, *args, **kwargs)
-
-    monkeypatch.setattr(updater, "_git", unverifiable_signature)
 
     result = updater.main(["--check"], environ=_env(engine))
 
     assert result == 0
     error = capsys.readouterr().err
-    assert "could not verify the release commit signature" in error
-    assert "unsigned commit" not in error
+    assert "could not be verified" in error
+    assert "lightweight tag" in error
+    assert "forged" not in error and "not signed by a trusted" not in error
 
 
 def test_local_only_semver_tag_is_not_treated_as_a_release(tmp_path, capsys):

@@ -92,6 +92,74 @@ Configuration: `AGENT_VAULT_DATA` (vault root), `NEXGEN_LOCAL_MODEL`
 `--repo` roots for read-only repository access. Defaults are documented in
 `nexgen_local/config.py`.
 
+## Running the lane on a frontier model (opt-in)
+
+The lane talks to a model through three verbs (fill a JSON form, answer in text, choose from a closed
+menu) and nothing else, so what backs them is a choice, not an architecture. By default it is the local
+Ollama pair. Set `NEXGEN_LANE_MODEL=<provider>:<model>` (for example `anthropic:claude-sonnet-5-5`) and the
+same lane runs on that model through LangChain's `init_chat_model`; unset it and nothing changes.
+
+```bash
+pip install "nexgen-engine[frontier]"      # langchain + the Anthropic and OpenAI packages
+export ANTHROPIC_API_KEY=...               # the provider's own variable; the engine never stores it
+NEXGEN_LANE_MODEL=anthropic:claude-sonnet-5-5 nexgen local ask "..."
+```
+
+What this changes about privacy, plainly: **the content the lane reads (mail, notes, files) is sent to that
+provider.** That is the whole point of the local lane being local, so it is opt-in per process, never a
+default. A request whose text carries something shaped like a credential (a provider token, a private key
+block) is refused before it leaves the machine; that is a safety net, not a policy.
+
+`ChatModelLLM.usage` reports the token counts the provider returned (calls, input, output, total), the same
+way for every provider, so a run can say what it cost.
+
+### Where LangChain and LangGraph apply, and where they do not
+
+Two different things, and they answer different questions.
+
+**LangChain is the model layer.** It exists so that the lane's three verbs do not care which model answers.
+It now covers both ends: `ChatOllamaLLM` for the local pair (which is where it earns its keep: forced JSON
+schema, bounded generation, cancellable requests, the fail-closed handling of truncated output) and
+`ChatModelLLM` for any hosted model reachable with an API key. What it cannot do is drive a *subscription*
+CLI: the Council's seats and the vault grooming runner reach their frontier models through `claude`, `codex`,
+`agy` or `opencode` precisely because those are flat-rate, and no LangChain class speaks to them. Replacing
+them with API calls would trade a fixed cost for a per-token one and would be a step backwards for the
+Council's stated policy ("never a new pay-per-use API opened just for this"). So the frontier side stays on
+the CLIs, and LangChain is the way in for the cases where there is no CLI or the lane itself should run
+hosted.
+
+**LangGraph is the orchestration layer**, and it earns its place only where a run has state worth
+surviving a crash or a human gate worth waiting at. It is used for exactly that today: the lane's routing
+graph, the persistent research sessions (SQLite checkpoints), and the Council's resumable relay, which drives
+frontier seats and records an invoked-but-unanswered call as an uncertainty instead of silently spending
+quota twice. The Council's parallel `consult` is ephemeral on purpose (hard budgets, no resume), and the
+vault grooming pass is a four-step guarded flow whose state already lives in its plan record and clone;
+putting either behind a graph would add a moving part without removing a failure. Revisit them if a
+consult that dies after spending three seats' quota becomes a real cost.
+
+### Checking a model before you trust it
+
+The lane's promise rests on its own evaluation, and the trap suite is the blocking part of it: one injection
+that reaches an answer, one confabulation or one plainly failed task fails the run (exit code 1).
+
+```bash
+nexgen local eval --suite traps --model <tag>      # the blocking gate, a minute or two
+nexgen local eval --suite all   --model <tag>      # capability, traps, patch gate, jobs, agent loop
+nexgen local eval --suite traps --model <tag> --bare   # the model alone, without the engine's injection layer
+```
+
+The default run measures what you will use: the engine and the model together. `--bare` switches the engine
+layer off so you also learn whether the model would have held on its own, which is the number that tells you
+how much you are leaning on the layer.
+
+Run it on the machine and the model you will actually use, never on a stand-in: a 7B model that fails it
+tells you nothing about a 12B that passes, and the other way round. Measured on a laptop CPU with two 7B
+models while writing this (granite4:7b-a1b-h and qwen2.5-coder:7b-instruct-q4_K_M): the pipeline ran
+end to end on both, a model without a thinking mode no longer breaks it, and the engine-side layer that
+withholds instruction-shaped lines turned a trap suite that failed on injections into one that passes on
+the stronger of the two. The default 12B (`gemma4-12b-openclaw`) was not available on that machine, so
+its own numbers are the ones to take on the GPU desktop.
+
 ## Propose and apply (the pen, gated)
 
 ```bash
@@ -173,7 +241,9 @@ with the lane's receipt and outcome contract. No MCP server, no new dependency.
   `drive_mcp.py`, workflows in `workflows.py`).
 - Auth reuses `~/.config/nexgen-workspace-mcp/tokens.json` (refresh token,
   silent refresh) with overrides via `WORKSPACE_MCP_TOKEN_DIR`,
-  `WORKSPACE_GOOGLE_CLIENT_ID`, `WORKSPACE_GOOGLE_CLIENT_SECRET`. Outlook has
+  `WORKSPACE_GOOGLE_CLIENT_ID`, `WORKSPACE_GOOGLE_CLIENT_SECRET`. The OAuth client is
+  yours: create one in your own Google Cloud project and set its id there; the engine
+  ships none, so no install logs in through someone else's project. Outlook has
   its own store (`~/.config/nexgen-outlook/`, overrides `OUTLOOK_TOKEN_DIR`,
   `OUTLOOK_CLIENT_ID`, `OUTLOOK_TENANT_ID`, `OUTLOOK_CLIENT_SECRET`) and needs
   an Entra app registration first — that interactive step is the owner's, the

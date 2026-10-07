@@ -23,6 +23,7 @@ from pathlib import Path
 
 import yaml
 
+from nexgen_core.action_notes import ERROR, WARN, is_error, is_warning  # noqa: E402 - sys.path shim for cloned checkout
 from nexgen_core.beat import Heartbeat
 from nexgen_core.errors import AlignmentError
 from nexgen_core.config import load_mcp_manifest, load_skills_manifest
@@ -40,7 +41,7 @@ from nexgen_core.git_ops import (
 )
 from nexgen_core.i18n import t
 from nexgen_core.jsonc import parse_jsonc, set_jsonc_top_level_value
-from nexgen_core.lock import HostLock, LockTimeoutError
+from nexgen_core.lock import LockTimeoutError, host_mutation
 from nexgen_core.paths import (
     resolve_engine_root,
     resolve_home,
@@ -53,22 +54,6 @@ from nexgen_core.scheduler import install_scheduler
 from nexgen_core.skills import SkillMaterializer
 
 logger = logging.getLogger(__name__)
-
-
-def _launcher_fingerprints(home: Path) -> dict[str, str]:
-    """Content hash of every launcher, to tell what actually changed."""
-    import hashlib
-
-    bin_dir = home / ".local" / "bin"
-    if not bin_dir.is_dir():
-        return {}
-    out: dict[str, str] = {}
-    for entry in bin_dir.iterdir():
-        try:
-            out[entry.name] = hashlib.sha256(entry.read_bytes()).hexdigest()[:16]
-        except OSError:
-            continue
-    return out
 
 
 def _same_file(a: str, b: Path) -> bool:
@@ -158,7 +143,7 @@ class GuardRunner:
                 try:
                     backup_file(claude_md, tag="instructions")
                 except OSError as exc:
-                    actions.append("[WARN] " + t(
+                    actions.append(WARN + t(
                         "instruction pointer {path} left untouched: safety backup failed ({error})",
                         path=claude_md, error=exc,
                     ))
@@ -212,7 +197,7 @@ class GuardRunner:
                     try:
                         backup_file(target, tag="instructions")
                     except OSError as exc:
-                        return False, ("[WARN] " + t(
+                        return False, (WARN + t(
                             "instruction pointer {path} left untouched: safety backup failed ({error})",
                             path=target, error=exc,
                         ))
@@ -224,7 +209,7 @@ class GuardRunner:
                 shutil.copy2(canon, target)
             return True, None
         except OSError as exc:
-            return False, ("[WARN] " + t(
+            return False, (WARN + t(
                 "instruction pointer {path} not aligned ({error})", path=target, error=exc,
             ))
 
@@ -326,7 +311,7 @@ class GuardRunner:
         except OSError as exc:
             # An optional adapter must never fail the whole apply: on
             # Windows a locked .ps1 is routine, not corruption.
-            actions.append("[WARN] " + t("local-model: adapter not relinked ({error})", error=exc))
+            actions.append(WARN + t("local-model: adapter not relinked ({error})", error=exc))
             return actions
         try:
             runtime.symlink_to(src)
@@ -375,14 +360,24 @@ class GuardRunner:
         for that mechanism.
         """
         manifest_path = self.vault_data / "03-INFRA" / "agent-universal-layer" / "permissions" / "manifest.yaml"
+        engine_hooks_dir = self.engine_root / "agent-universal-layer" / "hooks"
+        event_sink_source = engine_hooks_dir / "nexgen-event-sink.mjs"
+        sink_wanted = self._event_sink_wanted()
+        sink_args = {
+            "event_sink_source": event_sink_source if sink_wanted and event_sink_source.is_file() else None,
+            "remove_event_sink": sink_wanted is False,
+        }
         if not manifest_path.is_file():
-            return []
+            # No permission policy here, but the event sink does not depend on one.
+            if sink_args["event_sink_source"] is None and not sink_args["remove_event_sink"]:
+                return []
+            return apply_runtimes(home=self.home, engine_hooks_dir=engine_hooks_dir, **sink_args)
         try:
             raw = yaml.safe_load(manifest_path.read_text(encoding="utf-8"))
         except (OSError, yaml.YAMLError) as exc:
-            return ["[WARN] " + t("runtime-permissions: could not read {path} ({error})", path=manifest_path, error=exc)]
+            return [WARN + t("runtime-permissions: could not read {path} ({error})", path=manifest_path, error=exc)]
         if not isinstance(raw, dict):
-            return ["[WARN] " + t("runtime-permissions: the root of {path} is not a map", path=manifest_path)]
+            return [WARN + t("runtime-permissions: the root of {path} is not a map", path=manifest_path)]
 
         posture = {
             cli: value
@@ -401,20 +396,40 @@ class GuardRunner:
             candidate = (manifest_path.parent / spec["file"]).resolve()
             if not str(candidate).startswith(str(manifest_path.parent.resolve())):
                 name = spec.get("name", spec["file"])
-                return ["[WARN] " + t("runtime-permissions: {name} escapes permissions/, guardrail rejected", name=name)]
+                return [WARN + t("runtime-permissions: {name} escapes permissions/, guardrail rejected", name=name)]
             if not candidate.is_file():
-                return ["[WARN] " + t("runtime-permissions: guardrail body missing ({path})", path=candidate)]
+                return [WARN + t("runtime-permissions: guardrail body missing ({path})", path=candidate)]
             guardrail_source = candidate
             break
 
-        engine_hooks_dir = self.engine_root / "agent-universal-layer" / "hooks"
-        event_sink_source = engine_hooks_dir / "nexgen-event-sink.mjs"
         return apply_runtimes(
             home=self.home,
             engine_hooks_dir=engine_hooks_dir,
             posture=posture,
             guardrail_source=guardrail_source,
-            event_sink_source=event_sink_source if event_sink_source.is_file() else None,
+            **sink_args,
+        )
+
+    def _event_sink_wanted(self) -> bool | None:
+        """Does a module this machine declared need the event-sink hook?
+
+        True/False when the module state says so; None when it cannot be read, in which case
+        the hook is left as it is: removing it because of a read error would turn a transient
+        fault into a lost integration. A module declared `local` but held back by missing env
+        gates (a timer without the user's tokens) still counts: that is the environment, not a
+        decision to remove it.
+        """
+        try:
+            from nexgen_core.modules import modules_state
+
+            states = modules_state(vault_data=self.vault_data, engine_root=self.engine_root)
+        except Exception as exc:  # noqa: BLE001 - an unreadable module state changes nothing
+            logger.debug("event sink left as it is: module state unreadable (%s)", type(exc).__name__)
+            return None
+        return any(
+            "event_sink" in state.module.provides.runtime_hooks
+            and "local" in (state.state, state.declared)
+            for state in states
         )
 
     def run(
@@ -435,10 +450,8 @@ class GuardRunner:
         actions: list[str] = []
 
         try:
-            with HostLock(
-                lock_path=self.state_dir / "agent-sync.lock",
-                is_guard=is_guard,
-                command_name=f"agent-sync-{mode.value}",
+            with host_mutation(
+                f"agent-sync-{mode.value}", state_dir=self.state_dir, is_guard=is_guard,
             ):
                 auth_remote, _ = resolve_remotes(self.vault_data)
                 branch = get_current_branch(self.vault_data) or "main"
@@ -467,16 +480,21 @@ class GuardRunner:
                 if abort is not None:
                     return abort
 
-                self._phase_skills(actions)
-                self._phase_mcp(actions, skip_mcp)
-                self._phase_permissions(actions)
-                self._phase_instructions(actions)
-                self._phase_launchers(actions)
-                self._phase_scheduler(actions, branch)
-                self._phase_modules(actions)
-                self._phase_liveness(actions, is_guard, mode)
+                failed = self._run_phases(actions, branch, skip_mcp)
+                self._phase_liveness(actions, is_guard, mode, failed)
 
-                if any(action.startswith(("[WARN]", "[AVVISO]")) for action in actions):
+                if failed:
+                    return GuardResult(
+                        success=False,
+                        mode=mode,
+                        message=t(
+                            "Alignment ran every phase, but these failed: {phases} (see actions above)",
+                            phases=", ".join(failed),
+                        ),
+                        exit_code=1,
+                        actions_taken=actions,
+                    )
+                if any(is_warning(action) for action in actions):
                     return GuardResult(
                         success=True,
                         mode=mode,
@@ -511,6 +529,38 @@ class GuardRunner:
                 actions_taken=actions,
             )
 
+    def _run_phases(self, actions: list[str], branch: str, skip_mcp: bool) -> list[str]:
+        """Runs every write phase, each isolated from the others; returns the names that failed.
+
+        They used to run as one chain, so a skill whose GitHub fetch timed out
+        stopped the MCP render, the permission posture and the guardrail hook
+        behind it, every 30 minutes, for as long as the network stayed down.
+        None of them reads what another wrote, and each writes its own domain
+        atomically, so there was no transaction to protect: only the safety
+        controls that went unapplied. The failure is still a failure (the
+        result is negative, the exit code non-zero, the doctor says which
+        phases), it just does not take the rest down with it.
+        """
+        phases = (
+            ("skills", lambda: self._phase_skills(actions)),
+            ("mcp", lambda: self._phase_mcp(actions, skip_mcp)),
+            ("permissions", lambda: self._phase_permissions(actions)),
+            ("instructions", lambda: self._phase_instructions(actions)),
+            ("launchers", lambda: self._phase_launchers(actions)),
+            ("scheduler", lambda: self._phase_scheduler(actions, branch)),
+            ("modules", lambda: self._phase_modules(actions)),
+            # Last: it may spend minutes on pip, and the safety phases above do not wait for it.
+            ("runtime", lambda: self._phase_runtime(actions)),
+        )
+        failed: list[str] = []
+        for name, run_phase in phases:
+            try:
+                run_phase()
+            except Exception as exc:  # noqa: BLE001 - one phase failing must not stop the others
+                failed.append(name)
+                actions.append(ERROR + t("Phase '{phase}' failed: {error}", phase=name, error=exc))
+        return failed
+
     def _phase_git(
         self,
         mode: GuardMode,
@@ -529,7 +579,7 @@ class GuardRunner:
             # inspect_git_state below will still block fail-closed on DIRTY,
             # but the message must name the real cause (commit failed), not
             # just "unsaved changes".
-            actions.append("[WARN] " + t("Infra auto-commit failed; the Git inspection below decides whether the cycle can proceed"))
+            actions.append(WARN + t("Infra auto-commit failed; the Git inspection below decides whether the cycle can proceed"))
         untracked_infra = get_untracked_infra_files(self.vault_data)
         if untracked_infra:
             actions.append(t(
@@ -598,8 +648,8 @@ class GuardRunner:
         mat = SkillMaterializer(vault_data=self.vault_data, engine_root=self.engine_root, home=self.home)
         _skill_changes, skill_actions = mat.materialize(apply=True)
         actions.extend(skill_actions)
-        if any(action.startswith("[ERROR]") for action in skill_actions):
-            raise AlignmentError(t("Skill materialization failed; runtime configuration was not regenerated."))
+        if any(is_error(action) for action in skill_actions):
+            raise AlignmentError(t("Skill materialization failed (see the [ERROR] lines above)."))
 
     def _phase_mcp(self, actions: list[str], skip_mcp: bool) -> None:
         """MCP configuration rendering for the CLIs."""
@@ -607,25 +657,32 @@ class GuardRunner:
             actions.append(t("MCP configurations not regenerated (explicitly requested)"))
             return
         try:
+            from nexgen_core import mcp_trials
+
+            expired = mcp_trials.purge_expired()
+            if expired:
+                actions.append(t("MCP trials that ran out were removed: {names}", names=", ".join(expired)))
+        except Exception as exc:  # noqa: BLE001 - housekeeping must never stop the render
+            actions.append(WARN + t("MCP trials could not be tidied: {error}", error=exc))
+        try:
             rend = McpRenderer(vault_data=self.vault_data, engine_root=self.engine_root, home=self.home)
             results = rend.render_all(write=True)
         except Exception as exc:  # noqa: BLE001 - phase failure is recorded, never raises
             # A corrupt live config aborts the cycle here: skills already
             # wrote above, so the message must say the transaction is
             # partial instead of dying with a bare traceback.
-            raise RuntimeError(t("MCP rendering failed after skills were synced ({error}): fix the CLI config and re-run", error=exc)) from exc
+            raise RuntimeError(t("MCP rendering failed ({error}): fix the CLI config and re-run", error=exc)) from exc
         actions.append(t("MCP configurations regenerated for every CLI"))
         failed = sorted(cli for cli, ok in results.items() if not ok)
         if failed:
-            actions.append("[WARN] " + t("MCP render reported no change applied for: {clis}", clis=", ".join(failed)))
+            actions.append(WARN + t("MCP render reported no change applied for: {clis}", clis=", ".join(failed)))
 
     def _phase_permissions(self, actions: list[str]) -> None:
         """Permission posture + guardrail hook per CLI."""
-        try:
-            perm_actions = self.apply_runtime_permissions()
-            actions.extend(perm_actions)
-        except Exception as exc:  # noqa: BLE001 - phase failure is recorded, never raises
-            actions.append("[WARN] " + t("runtime-permissions: phase skipped due to an unexpected error ({error})", error=exc))
+        # Not wrapped: an unexpected error here means the guardrail may not have
+        # been applied, which is a failed phase (run_phases records it), not a
+        # warning. Unreadable policy files are reported as warnings by the call.
+        actions.extend(self.apply_runtime_permissions())
 
     def _phase_instructions(self, actions: list[str]) -> None:
         """Instruction alignment, plus the Windows-only local-model adapter."""
@@ -641,13 +698,15 @@ class GuardRunner:
         try:
             from nexgen_core.shims import install_shims
 
-            before = _launcher_fingerprints(self.home)
-            install_shims(home=self.home)
-            repaired = sorted(_launcher_fingerprints(self.home).items() - before.items())
+            # install_shims says what it rewrote. This used to hash every file in
+            # ~/.local/bin before and after (829 MB read, twice, every 30 minutes
+            # on a machine with three large CLIs there) to work out the same thing.
+            repaired: list[str] = []
+            install_shims(home=self.home, changed=repaired)
             if repaired:
                 actions.append(t("Commands realigned ({count})", count=len(repaired)))
         except Exception as exc:  # noqa: BLE001 - phase failure is recorded, never raises
-            actions.append("[WARN] " + t("Commands not realigned: {error}", error=exc))
+            actions.append(WARN + t("Commands not realigned: {error}", error=exc))
 
     def _phase_scheduler(self, actions: list[str], branch: str) -> None:
         """Startup self-alignment installation (systemd / scheduled task),
@@ -665,16 +724,16 @@ class GuardRunner:
             if sched_ok:
                 actions.append(t("Startup self-alignment configured"))
             else:
-                actions.append("[WARN] " + t("Startup self-alignment reported no success and no error; verify with `nexgen doctor`"))
+                actions.append(WARN + t("Startup self-alignment reported no success and no error; verify with `nexgen doctor`"))
         except Exception as exc:  # noqa: BLE001 - phase failure is recorded, never raises
-            actions.append("[WARN] " + t("Self-alignment configuration did not succeed: {error}", error=exc))
+            actions.append(WARN + t("Self-alignment configuration did not succeed: {error}", error=exc))
         try:
             from nexgen_core.tools.update_notifier import ensure_boot_check, ensure_shell_hook
 
             actions.extend(ensure_shell_hook(self.home))
             actions.extend(ensure_boot_check(self.home))
         except Exception as exc:  # noqa: BLE001 - phase failure is recorded, never raises
-            actions.append("[WARN] " + t("Update notice lanes not ensured: {error}", error=exc))
+            actions.append(WARN + t("Update notice lanes not ensured: {error}", error=exc))
 
     def _phase_modules(self, actions: list[str]) -> None:
         """Modules this machine declared: their commands and units
@@ -695,12 +754,43 @@ class GuardRunner:
             if module_actions:
                 actions.append(t("Modules realigned ({count})", count=len(module_actions)))
         except Exception as exc:  # noqa: BLE001 - phase failure is recorded, never raises
-            actions.append("[WARN] " + t("Modules not realigned: {error}", error=exc))
+            actions.append(WARN + t("Modules not realigned: {error}", error=exc))
 
-    def _phase_liveness(self, actions: list[str], is_guard: bool, mode: GuardMode) -> None:
-        """Liveness registration for the heartbeat."""
+    def _phase_runtime(self, actions: list[str]) -> None:
+        """The engine's own Python environment: provisioned from the checkout's
+        dependency list, or, for a package install, only verified.
+
+        Skipped where host mutations are disabled (sandboxes and tests): it creates a
+        virtual environment and downloads packages.
+        """
+        from nexgen_core import runtime
+        from nexgen_core.paths import installed_as_package, resolve_runtime_dir
+        from nexgen_core.scheduler import host_mutations_disabled
+
+        if installed_as_package():
+            missing = runtime.missing_imports()
+            if missing:
+                raise runtime.RuntimeProvisionError(
+                    t("The package environment cannot import: {modules}. Reinstall the engine.", modules=", ".join(missing))
+                )
+            return
+        if host_mutations_disabled():
+            actions.append(t("Engine environment not provisioned (host mutations are disabled)"))
+            return
+        checkout = self.engine_root.parent
+        if not (checkout / "pyproject.toml").is_file():
+            actions.append(WARN + t("Engine environment not provisioned: no pyproject.toml next to {path}", path=self.engine_root))
+            return
+        result = runtime.ensure_runtime(resolve_runtime_dir(self.home), checkout, log=actions.append)
+        if result.changed:
+            actions.append(t("Engine environment provisioned ({detail})", detail=result.detail))
+
+    def _phase_liveness(
+        self, actions: list[str], is_guard: bool, mode: GuardMode, failed: list[str] | None = None,
+    ) -> None:
+        """Liveness registration for the heartbeat (with the phases that failed, if any)."""
         if is_guard or mode == GuardMode.APPLY:
-            warns = sum(1 for action in actions if action.startswith(("[WARN]", "[AVVISO]")))
-            self.heartbeat.record_liveness(warnings=warns)
+            warns = sum(1 for action in actions if is_warning(action))
+            self.heartbeat.record_liveness(warnings=warns, failed_phases=failed or ())
             actions.append(t("Liveness recorded successfully"))
             self._refresh_update_cache_best_effort()

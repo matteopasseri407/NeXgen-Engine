@@ -219,7 +219,10 @@ def _upgrade_fixture(tmp_path: Path, first: str, second: str) -> tuple[Path, Pat
 
 
 def _env(engine: Path) -> dict[str, str]:
-    return {**os.environ, "AGENT_ENGINE_ROOT": str(engine / "03-INFRA"), "AGENT_VAULT_DATA": str(engine)}
+    return {
+        **os.environ, "AGENT_ENGINE_ROOT": str(engine / "03-INFRA"), "AGENT_VAULT_DATA": str(engine),
+        "AGENT_STATE_DIR": str(engine.parent / "state"),  # never the developer's real lock
+    }
 
 
 def _load_updater():
@@ -254,9 +257,14 @@ def test_unattended_refuses_a_minor_jump(tmp_path: Path, capsys):
     assert "nexgen-update --target" in error
 
 
-def test_unattended_applies_a_patch_jump_without_prompting(tmp_path: Path):
+def test_unattended_applies_a_patch_jump_without_prompting(tmp_path: Path, monkeypatch):
     updater = _load_updater()
     _origin, engine = _upgrade_fixture(tmp_path, "0.1.0", "0.1.1")
+    # This test is about the ceiling and the missing prompt. The fixture
+    # tags are not signed, and unattended mode refuses an unverifiable
+    # release, so it is told the signature checked out. The signature policy
+    # itself is exercised with real signatures in test_nexgen_release_trust.
+    monkeypatch.setattr(updater, "_release_verdict", lambda *_a: updater.TagVerdict("verified", "test"))
 
     def must_not_prompt(_prompt: str) -> str:
         raise AssertionError("unattended mode must never ask for confirmation")

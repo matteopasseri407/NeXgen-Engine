@@ -311,6 +311,25 @@ _REDACT_PATTERNS = (
     re.compile(r"(?i)\bbearer\s+\S+"),
     re.compile(r"-----BEGIN [A-Z0-9 ]+-----.*?-----END [A-Z0-9 ]+-----", re.DOTALL),
     re.compile(r"\bAGE-SECRET-KEY-[A-Z0-9]{20,}\b"),
+    # MIRROR of nexgen_core.secret_shapes.PROVIDER_TOKEN: this container ships without the engine
+    # package. test_nexgen_secret_shapes.py holds both to one corpus, so a provider added there and
+    # forgotten here fails the build instead of showing up in a search snippet.
+    re.compile(
+        r"(?<![A-Za-z0-9])(?:"
+        r"AKIA[0-9A-Z]{12,}"
+        r"|gh[pousr]_[A-Za-z0-9]{20,}"
+        r"|github_pat_[A-Za-z0-9_]{20,}"
+        r"|sk-ant-[A-Za-z0-9_-]{20,}"
+        r"|sk-(?:proj|svcacct|admin)-[A-Za-z0-9_-]{20,}"
+        r"|sk-[A-Za-z0-9_-]{16,}"
+        r"|AGE-SECRET-KEY-1[A-Z0-9]{20,}"
+        r"|hf_[A-Za-z0-9]{30,}"
+        r"|npm_[A-Za-z0-9]{36}"
+        r"|AIza[0-9A-Za-z_-]{30,}"
+        r"|(?:sk|pk)_(?:live|test)_[A-Za-z0-9]{16,}"
+        r"|eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}"
+        r")"
+    ),
     re.compile(r"\b[A-Fa-f0-9]{40,}\b"),
     re.compile(r"\b[A-Za-z0-9+/_-]{43,}={0,2}\b"),
 )
@@ -1113,9 +1132,23 @@ class VaultService:
         finally:
             tmp_path.unlink(missing_ok=True)
 
+    @staticmethod
+    def _is_orphan_temp(entry: str) -> bool:
+        """An untracked `.<note>.<random>.tmp`: what `_write_note_file` leaves if the process dies
+        between creating its temporary file and renaming it. It is never committed, so it showed up
+        as an uncommitted change and every later write was refused until someone removed it by hand."""
+        if not entry.startswith("?? "):
+            return False
+        name = entry[3:].rsplit("/", 1)[-1]
+        return name.startswith(".") and name.endswith(".tmp")
+
     def _ensure_git_clean(self) -> None:
-        status = self._run_git(["status", "--porcelain"], check=True)
-        if status.strip():
+        # -z: NUL-separated and unquoted, so a path with spaces or accents is one entry.
+        status = self._run_git_raw(["status", "--porcelain", "-z"])
+        if status.returncode != 0:
+            raise RuntimeError(status.stderr.strip() or "git status failed")
+        entries = [entry for entry in status.stdout.split("\0") if entry]
+        if any(not self._is_orphan_temp(entry) for entry in entries):
             raise RuntimeError(
                 "Vault Git working tree has uncommitted changes. "
                 "Refusing MCP write until it is clean."
@@ -1186,7 +1219,7 @@ class VaultService:
         return subprocess.run(
             command,
             capture_output=True,
-            text=True,
+            text=True, encoding="utf-8", errors="replace",
             env=env,
             timeout=30,
         )

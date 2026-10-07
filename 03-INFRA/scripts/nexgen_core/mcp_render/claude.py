@@ -1,10 +1,10 @@
 """Claude Code MCP dialect (`mcpServers` in `~/.claude.json`)."""
 from __future__ import annotations
 
-import json
-from typing import Any
+import copy
 
 from nexgen_core.i18n import t
+from nexgen_core.mcp_render import load_json_object, write_json_config
 from nexgen_core.paths import claude_config
 
 
@@ -12,14 +12,12 @@ def render(renderer, write: bool = False) -> tuple[bool, str]:
     """Generates the MCP configuration for Claude Code (~/.claude.json)."""
     servers = renderer.load_resolved_servers("claude")
     cfg_file = claude_config(renderer.home)
-    existing: dict[str, Any] = {}
-    if cfg_file.is_file():
-        try:
-            existing = json.loads(cfg_file.read_text(encoding="utf-8"))
-        except Exception as exc:  # noqa: BLE001 - render fallback, never raises
-            raise ValueError(f"Could not parse {cfg_file}: invalid JSON ({exc})")
+    existing = load_json_object(cfg_file)
+    before = copy.deepcopy(existing)
 
     mcp_servers = existing.get("mcpServers", {})
+    if not isinstance(mcp_servers, dict):
+        raise ValueError(f"Could not render {cfg_file}: mcpServers must be an object")
     for retired in renderer.retired_server_names():
         mcp_servers.pop(retired, None)
     renderer._drop_unmounted(mcp_servers, servers, cli_target="claude")
@@ -42,5 +40,5 @@ def render(renderer, write: bool = False) -> tuple[bool, str]:
 
     existing["mcpServers"] = mcp_servers
     if write:
-        renderer._backup_and_write(cfg_file, json.dumps(existing, indent=2) + "\n")
+        write_json_config(renderer, cfg_file, before, existing)
     return True, t("Claude configuration updated")
