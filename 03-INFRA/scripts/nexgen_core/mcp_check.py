@@ -35,6 +35,9 @@ class CliResult:
     seconds: float = 0.0
     served: list[str] = field(default_factory=list)
     problems: list[str] = field(default_factory=list)
+    #: Served but unable to work in this session (a credential or variable it needs is not set): reported, but
+    #: not a fault in the server itself.
+    unavailable: set[str] = field(default_factory=set)
 
 
 class _Session:
@@ -138,6 +141,8 @@ def check_gateway(renderer, cli: str, *, timeout: float = 90.0) -> CliResult:
         for name in sorted(set(served) - expected):
             result.problems.append(t("{name} is served in {cli} but the plan does not route it there", name=name, cli=cli))
         for name, info in served.items():
+            if info.get("unavailable"):
+                result.unavailable.add(name)
             if info.get("error"):
                 result.problems.append(f"{name}: {info['error']}")
     except (TimeoutError, RuntimeError, OSError, ValueError) as exc:
@@ -273,6 +278,8 @@ def verify_servers(renderer, names: list[str], *, timeout: float = 120.0) -> lis
         if via not in gateways:
             gateways[via] = check_gateway(renderer, via, timeout=timeout)
         outcome_gw = gateways[via]
+        if name in outcome_gw.unavailable:
+            continue
         if not outcome_gw.problems and name in outcome_gw.served:
             continue
         own = [pr for pr in outcome_gw.problems if pr.startswith(f"{name}:") or f" {name} " in f" {pr} "]

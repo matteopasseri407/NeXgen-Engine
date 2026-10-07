@@ -265,3 +265,15 @@ def test_verify_starts_a_directly_mounted_server_on_its_own(setup, tmp_path):
 def test_verify_ignores_a_name_the_manifest_does_not_have(setup):
     renderer, _ = setup
     assert mcp_check.verify_servers(renderer, ["nothing-by-that-name"], timeout=5) == []
+
+
+def test_verify_does_not_blame_an_update_for_a_credential_the_session_lacks(setup, tmp_path, monkeypatch):
+    renderer, _ = setup
+    monkeypatch.delenv("NEEDY_TEST_TOKEN", raising=False)
+    _rewrite(renderer, tmp_path, {
+        "needy": {"exposure": "lazy", "command": sys.executable, "args": ["-c", GOOD],
+                  "env": {"PIDFILE": str(tmp_path / "n.pid"), "NEEDY_TEST_TOKEN": "${NEEDY_TEST_TOKEN}"}, "targets": ["codex"]},
+    })
+    plain = mcp_check.check_gateway(renderer, "codex", timeout=60)
+    assert "needy" in plain.unavailable
+    assert mcp_check.verify_servers(renderer, ["needy"], timeout=60) == []
