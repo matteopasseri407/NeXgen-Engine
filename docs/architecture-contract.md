@@ -109,6 +109,17 @@ alters behaviour nobody chose. Never notifies. Being offline writes nothing and
 reports nothing: a workstation is offline all the time and that is not an
 incident.
 
+It also says when the publisher has withdrawn support for the exact version
+pinned (npm `deprecated`): "nothing newer exists" is not the same as "all good".
+And it watches what a module declares it carries (`upstream:` in the module
+catalog): a program shipped as a Docker image (n8n, the Firecrawl backend), or a
+version pinned inside a launcher script (Playwright). A module says which file
+holds the pin and where the newest release is read, so the watch does not have to
+know any of that. These are only reported, and the guardian holds every one: a
+program is replaced where it runs, that host may pin something else, and the
+Playwright launcher patches the files of one exact version, so even a patch jump
+is not a "small touch-up".
+
 ### The skill materializer
 Turns one declaration into the views each runtime can actually see. Four
 origins, and the distinction is about *who owns the bytes*:

@@ -10,6 +10,69 @@ of any engine release.
 
 ## [Unreleased]
 
+## [2.5.0] - 2026-10-08
+
+### Security
+
+- The n8n image the engine ships moves from 2.35.3 to 2.42.4. n8n published a batch of advisories on 2026-09-30, most of
+  them high severity, fixed from 2.41.4 / 2.42.1: among them a shared-prototype mutation in the MCP workflow-validation
+  interpreter that allows an owner-account takeover, an unauthenticated OAuth-client persistence on the authorize
+  endpoint, code execution through the Git node, an HMAC bypass on Send-and-Wait and cross-project webhook execution.
+  The release notes between the two versions carry no breaking change. This only changes the default tag: an
+  installation that already runs n8n keeps what it runs until its host is upgraded (back up the database and the data
+  volume first, then pull and restart; the migrations run at boot and cannot be undone without the backup).
+- The Python MCP SDK floor moves from 2.0 to 2.2.0. Advisories published 2026-09-28 to 2026-10-05 (an OAuth client sending
+  credentials to a server-chosen authorization server, client transports following cross-origin redirects with their
+  headers, a client fetching server-chosen `$ref` URLs, never-reclaimed streamable-HTTP sessions) are fixed in 2.2.0, so a
+  fresh install can no longer resolve a version that has them. The machine's runtime already had 2.3.0.
+
+### Added
+
+- `nexgen council contract` checks, without invoking any model, that each installed vendor CLI (codex, claude, agy,
+  opencode, ollama) still lists the flags a Council seat is started with, reading them from the same builder the seats use.
+  A flag that disappears from a CLI's `--help` used to show up only as a seat failing in the middle of a round, after it had
+  spent subscription quota. It is the Council module's health command, so `nexgen doctor` runs it.
+- The dependency watch reports a pinned version its publisher has withdrawn support for (npm `deprecated`), which "nothing
+  newer exists" used to hide: `nexgen info` names it under the server or skill, and the report has its own section.
+- A module declares the third-party components it carries (`upstream:` in the module catalog): which file holds the pin and
+  where the newest release is read. The watch reads them, so the n8n image, the Firecrawl backend image and the version
+  inside the Playwright launcher are now reported by `nexgen info` and the hourly watch, for the modules a machine
+  switched on. Report only: the guardian holds every component, even a patch jump, because the launcher patches the files
+  of one exact Playwright version and a program is replaced where it runs. A rolling release whose patch number is a
+  build counter (the Firecrawl backend) is compared by minor line.
+
+### Changed
+
+- The Council chooses its own seat when none is named. A pure resolver (no I/O, an audit trail of every candidate) takes
+  the governor's verified candidates for the role on this host, refuses a seat of the author's vendor (cross-vendor
+  review) and, with `--zero-retention`, one without a verified zero-retention guarantee. A seat that fails is put in a
+  cooldown by cause: billing 30 days, authentication an hour, unknown model a day, quota five minutes, anything else a
+  minute. `nexgen council reset-health [--seat NAME]` lifts it. Going outside the governor's candidates needs a person at
+  a terminal, or `--allow-degraded` in CI; `--strict` forbids it. The verdict records `quorum_status` and the reason, in
+  the note and in a machine-readable `verdict.json`.
+- The Playwright launcher moves from `@playwright/mcp` 0.0.78 to 0.0.83. Each of its five patches was traced to the defect
+  it fixes and checked against 0.0.83 before being kept: the file-chooser, download, new-tab and web-app-window patches
+  address code upstream still has unchanged, and 0.0.83 on its own still grabs the native file chooser on a click (the
+  patched one does not, and uploads a file straight onto the input). The context-disposal guard is re-fitted to
+  upstream's rewritten shutdown code; the harm it prevents could not be reproduced on a throwaway headless Chrome with
+  either version, so it stays as a protective guard rather than a proven fix. The launcher passes `--no-webmcp`, which
+  keeps a page from registering tools for the agent: 0.0.78 had no such thing and the shared Chrome holds logged-in apps.
+- The Playwright launcher's pin is declared once, by the `browser` module, which reads it from the script. The `wraps`
+  field in the MCP manifest is gone: a number in a manifest could be rewritten by `nexgen mcp bump` without ever changing
+  the one the launcher uses, and a manifest that still has `wraps` is simply no longer read for it.
+
+### Fixed
+
+- A Council seat on OpenCode 2 works again. OpenCode 2 has no `--variant` flag, so every opencode seat with a reasoning
+  effort was refused with the command's usage text, and without `--standalone` `run` talks to the background service
+  instead of a private server, which leaves the seat's empty config directory (its isolation from the person's servers
+  and credentials) out of force. The seat now runs `--standalone` and writes the effort into the model name
+  (`provider/model#variant`), the form the real binary accepts. Found by `nexgen council contract` on its first run.
+- Every helper process the lazy-mcp gateway can reach now declares its stdin. The gateway's own stdin is the protocol
+  stream, and a helper that inherits it can block behind a pending read (the Windows hang fixed in 2.4.0). Four launches
+  still inherited it (the upstream check, the skill clone and installer, the Windows process-tree kill), and a test now
+  fails any new launch in a module the gateway imports that does not.
+
 ## [2.4.0] - 2026-10-07
 
 ### Security

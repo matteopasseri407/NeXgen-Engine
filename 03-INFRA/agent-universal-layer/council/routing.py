@@ -537,3 +537,350 @@ def resolve_role_candidates(
                 continue
             selected.append(name)
     return selected, diagnostics
+
+
+@dataclass(frozen=True)
+class HostSnapshot:
+    """Immutable snapshot of verified local host capabilities."""
+    host_name: str
+    capabilities: dict[str, SeatCapability]
+    timestamp: float = 0.0
+    unhealthy_seats: dict[str, float] = None  # seat_name -> cooldown_until_timestamp
+
+
+@dataclass(frozen=True)
+class ResolvePolicy:
+    """Policy rules constraining seat selection."""
+    author_vendor: str | None = None
+    zero_retention_required: bool = False
+    prioritize_flat: bool = True
+    allow_role_fallback: bool = False
+    min_quality_floor: float | None = None
+
+
+@dataclass(frozen=True)
+class CandidateEvaluation:
+    """Audit record for candidate evaluation in the resolver."""
+    seat_name: str
+    model: str
+    cli: str
+    vendor: str
+    cost: str | None
+    eligible: bool
+    rejection_reason: str | None = None
+
+
+@dataclass(frozen=True)
+class ResolveResult:
+    """Deterministic result of the pure resolver function."""
+    seat_name: str | None
+    seat: dict[str, Any] | None
+    role: str
+    degraded: bool
+    degraded_reason: str | None
+    refusal_reason: str | None
+    evaluations: tuple[CandidateEvaluation, ...]
+    fallback_candidates: tuple[str, ...] = ()
+
+
+def probe_host(
+    seats: dict[str, dict[str, Any]],
+    *,
+    host_name: str | None = None,
+    now: float | None = None,
+    unhealthy_path: Path | None = None,
+) -> HostSnapshot:
+    """Perform side-effecting host probes once and freeze into an immutable snapshot."""
+    import time
+    import socket
+    name = host_name or socket.gethostname()
+    t = now if now is not None else time.time()
+    caps = seat_capabilities(seats)
+    unhealthy: dict[str, float] = {}
+    health_file = unhealthy_path or (Path.home() / ".cache" / "nexgen" / "council_seat_health.json")
+    if health_file.is_file():
+        try:
+            raw = json.loads(health_file.read_text(encoding="utf-8"))
+            if isinstance(raw, dict):
+                unhealthy = {k: float(v) for k, v in raw.items() if float(v) > t}
+        except Exception:
+            pass
+    return HostSnapshot(
+        host_name=name,
+        capabilities=caps,
+        timestamp=t,
+        unhealthy_seats=unhealthy,
+    )
+
+
+RE_BILLING_REQUIRED = re.compile(
+    r"\b(?:usage\s+credits|billing|payment\s+required|insufficient\s+funds|credit\s+balance|credit\s+limit|manage\s+usage\s+credits)\b",
+    re.IGNORECASE,
+)
+RE_AUTH_FAILED = re.compile(
+    r"\b(?:401|403|unauthorized|authentication\s+failed|invalid\s+api\s+key|login\s+required|not\s+authenticated)\b",
+    re.IGNORECASE,
+)
+RE_MODEL_NOT_FOUND = re.compile(
+    r"\b(?:404|unknown\s+model|invalid\s+model|unrecognized\s+model|model\s+does\s+not\s+exist|model_not_found)\b",
+    re.IGNORECASE,
+)
+RE_QUOTA_EXHAUSTED = re.compile(
+    r"\b(?:429|quota\s+exhausted|rate\s+limit|too\s+many\s+requests|exceeded\s+your\s+current\s+quota)\b",
+    re.IGNORECASE,
+)
+
+
+def classify_error(error_text: str) -> tuple[str, int]:
+    """Classify error string with strict precedence and word boundaries.
+    Precedence order:
+      1. billing_required (permanent / 30 days until operator top-up)
+      2. auth_failed (1 hour)
+      3. model_not_found (24 hours)
+      4. quota_exhausted (5 minutes)
+      5. execution_error (1 minute)
+    """
+    if RE_BILLING_REQUIRED.search(error_text):
+        return "billing_required", 86400 * 30
+    if RE_AUTH_FAILED.search(error_text):
+        return "auth_failed", 3600
+    if RE_MODEL_NOT_FOUND.search(error_text):
+        return "model_not_found", 86400
+    if RE_QUOTA_EXHAUSTED.search(error_text):
+        return "quota_exhausted", 300
+    return "execution_error", 60
+
+
+def record_seat_failure(
+    seat_name: str,
+    error_text: str,
+    *,
+    now: float | None = None,
+    unhealthy_path: Path | None = None,
+) -> tuple[str, int]:
+    """Classify seat failure and record a time-bound cooldown TTL with atomic write."""
+    import time
+    from nexgen_core.files import atomic_write_text
+
+    t = now if now is not None else time.time()
+    kind, ttl = classify_error(error_text)
+
+    health_file = unhealthy_path or (Path.home() / ".cache" / "nexgen" / "council_seat_health.json")
+    try:
+        health_file.parent.mkdir(parents=True, exist_ok=True)
+        data = {}
+        if health_file.is_file():
+            try:
+                data = json.loads(health_file.read_text(encoding="utf-8"))
+            except Exception:
+                data = {}
+        data[seat_name] = t + ttl
+        atomic_write_text(health_file, json.dumps(data, indent=2))
+    except Exception:
+        pass
+    return kind, ttl
+
+
+def clear_seat_health(
+    seat_name: str | None = None,
+    *,
+    unhealthy_path: Path | None = None,
+) -> None:
+    """Manually clear or unblock seat cooldowns."""
+    from nexgen_core.files import atomic_write_text
+
+    health_file = unhealthy_path or (Path.home() / ".cache" / "nexgen" / "council_seat_health.json")
+    if not health_file.is_file():
+        return
+    try:
+        if not seat_name:
+            atomic_write_text(health_file, "{}")
+            return
+        data = json.loads(health_file.read_text(encoding="utf-8"))
+        if seat_name in data:
+            del data[seat_name]
+            atomic_write_text(health_file, json.dumps(data, indent=2))
+    except Exception:
+        pass
+
+
+def resolve(
+    plan: RoutingPlan,
+    snapshot: HostSnapshot,
+    seats: dict[str, dict[str, Any]],
+    role: str,
+    policy: ResolvePolicy | None = None,
+) -> ResolveResult:
+    """Pure, deterministic resolver function. No I/O, no network, no os.environ.
+    
+    Given:
+      - plan: the Governor's verified routing plan
+      - snapshot: the immutable snapshot of host capabilities
+      - seats: seats dictionary from seats.yaml
+      - role: requested role (e.g. "L-Arch", "L-Debug")
+      - policy: constraints (author_vendor, zero_retention_required, allow_role_fallback)
+      
+    Returns:
+      ResolveResult containing:
+      - selected seat (or None)
+      - degraded flag & reason
+      - refusal reason if rejected
+      - complete audit trail of all evaluated candidates.
+    """
+    pol = policy or ResolvePolicy()
+    unhealthy = snapshot.unhealthy_seats or {}
+    evaluations: list[CandidateEvaluation] = []
+    eligible_candidates: list[str] = []
+
+    # 1. Evaluate primary role candidates in Governor's order
+    role_candidates = plan.roles.get(role, ())
+    for candidate in role_candidates:
+        matched = [name for name, seat in seats.items() if _matches(seat, candidate)]
+        for name in matched:
+            seat = seats[name]
+            vendor = str(seat.get("vendor", "")).strip()
+            model = str(seat.get("model", ""))
+            cli = str(seat.get("cli", ""))
+            is_zero = bool(seat.get("zero_retention", False))
+
+            # Vendor diversity constraint
+            if pol.author_vendor and vendor.casefold() == pol.author_vendor.strip().casefold():
+                evaluations.append(CandidateEvaluation(
+                    seat_name=name, model=model, cli=cli, vendor=vendor,
+                    cost=candidate.cost, eligible=False,
+                    rejection_reason=f"matches author vendor '{pol.author_vendor}' (cross-vendor diversity violation)",
+                ))
+                continue
+
+            # Zero-retention fail-closed constraint
+            if pol.zero_retention_required and not is_zero:
+                evaluations.append(CandidateEvaluation(
+                    seat_name=name, model=model, cli=cli, vendor=vendor,
+                    cost=candidate.cost, eligible=False,
+                    rejection_reason="lacks verified zero-retention guarantee",
+                ))
+                continue
+
+            # Cooldown / health check
+            if unhealthy.get(name, 0.0) > snapshot.timestamp:
+                evaluations.append(CandidateEvaluation(
+                    seat_name=name, model=model, cli=cli, vendor=vendor,
+                    cost=candidate.cost, eligible=False,
+                    rejection_reason="in error cooldown following recent failure",
+                ))
+                continue
+
+            # Host capability check
+            cap = snapshot.capabilities.get(name, SeatCapability(False, "capability not computed"))
+            if not cap.available:
+                evaluations.append(CandidateEvaluation(
+                    seat_name=name, model=model, cli=cli, vendor=vendor,
+                    cost=candidate.cost, eligible=False,
+                    rejection_reason=f"unavailable on host: {cap.reason}",
+                ))
+                continue
+
+            # Fully eligible!
+            evaluations.append(CandidateEvaluation(
+                seat_name=name, model=model, cli=cli, vendor=vendor,
+                cost=candidate.cost, eligible=True, rejection_reason=None,
+            ))
+            if name not in eligible_candidates:
+                eligible_candidates.append(name)
+
+    if eligible_candidates:
+        chosen = eligible_candidates[0]
+        return ResolveResult(
+            seat_name=chosen,
+            seat=seats[chosen],
+            role=role,
+            degraded=False,
+            degraded_reason=None,
+            refusal_reason=None,
+            evaluations=tuple(evaluations),
+            fallback_candidates=tuple(eligible_candidates[1:]),
+        )
+
+    # 2. No eligible candidate in the Governor role's table
+    if not pol.allow_role_fallback:
+        refusal = (
+            f"No candidate for role '{role}' is available on host {snapshot.host_name} "
+            f"satisfying policy constraints"
+        )
+        return ResolveResult(
+            seat_name=None, seat=None, role=role,
+            degraded=False, degraded_reason=None, refusal_reason=refusal,
+            evaluations=tuple(evaluations), fallback_candidates=(),
+        )
+
+    # 3. Fallback path: search other available seats on this host
+    # STRICTLY REAPPLY ALL POLICY INVARIANTS: privacy, author_vendor, health
+    fallback_eligible: list[tuple[str, dict[str, Any]]] = []
+    for name, seat in seats.items():
+        if name in [e.seat_name for e in evaluations if not e.eligible]:
+            continue
+        vendor = str(seat.get("vendor", "")).strip()
+        model = str(seat.get("model", ""))
+        cli = str(seat.get("cli", ""))
+        is_zero = bool(seat.get("zero_retention", False))
+
+        if pol.author_vendor and vendor.casefold() == pol.author_vendor.strip().casefold():
+            evaluations.append(CandidateEvaluation(
+                seat_name=name, model=model, cli=cli, vendor=vendor, cost=None, eligible=False,
+                rejection_reason=f"matches author vendor '{pol.author_vendor}' during fallback",
+            ))
+            continue
+        if pol.zero_retention_required and not is_zero:
+            evaluations.append(CandidateEvaluation(
+                seat_name=name, model=model, cli=cli, vendor=vendor, cost=None, eligible=False,
+                rejection_reason="lacks verified zero-retention guarantee during fallback",
+            ))
+            continue
+        if unhealthy.get(name, 0.0) > snapshot.timestamp:
+            evaluations.append(CandidateEvaluation(
+                seat_name=name, model=model, cli=cli, vendor=vendor, cost=None, eligible=False,
+                rejection_reason="in error cooldown during fallback",
+            ))
+            continue
+        cap = snapshot.capabilities.get(name, SeatCapability(False, "capability not computed"))
+        if not cap.available:
+            continue
+        evaluations.append(CandidateEvaluation(
+            seat_name=name, model=model, cli=cli, vendor=vendor, cost=None, eligible=True,
+            rejection_reason=None,
+        ))
+        fallback_eligible.append((name, seat))
+
+    if not fallback_eligible:
+        refusal = (
+            f"Role '{role}' unassigned on host {snapshot.host_name} and all host fallbacks "
+            f"exhausted or rejected by policy constraints"
+        )
+        return ResolveResult(
+            seat_name=None, seat=None, role=role,
+            degraded=True, degraded_reason="Role unassigned; all host fallbacks rejected",
+            refusal_reason=refusal, evaluations=tuple(evaluations), fallback_candidates=(),
+        )
+
+    # Sort fallback candidates: flat/forfait first, priority cli order
+    def _fallback_sort(item: tuple[str, dict]) -> tuple[int, int, str]:
+        sname, s = item
+        cli_str = str(s.get("cli", ""))
+        ch = seat_channel(s)
+        tier = 0 if cli_str in ("claude", "codex", "agy", "ollama") and ch != "zen" else (1 if ch == "go" else 2)
+        cli_rank = {"claude": 0, "codex": 1, "agy": 2, "opencode": 3, "ollama": 4}.get(cli_str, 5)
+        return (tier, cli_rank, sname)
+
+    fallback_eligible.sort(key=_fallback_sort)
+    top_name = fallback_eligible[0][0]
+    other_names = tuple(name for name, _ in fallback_eligible[1:])
+    return ResolveResult(
+        seat_name=top_name,
+        seat=seats[top_name],
+        role=role,
+        degraded=True,
+        degraded_reason=f"Role '{role}' had no directly approved candidates on {snapshot.host_name}; fell back to best available host seat",
+        refusal_reason=None,
+        evaluations=tuple(evaluations),
+        fallback_candidates=other_names,
+    )

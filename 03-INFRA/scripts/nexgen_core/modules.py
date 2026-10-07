@@ -20,9 +20,10 @@ the same split as the rest of the layer.
 from __future__ import annotations
 
 import os
+import re
 import socket
 from dataclasses import dataclass, field
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any, Sequence
 
 import yaml
@@ -54,6 +55,12 @@ MODULE_SCOPES = ("host", "shared")
 # Integrations a module can ask the CLI runtimes for. Each name maps to a
 # method the runtime adapters already implement; a module never supplies code.
 RUNTIME_HOOKS = ("event_sink", "guardrail")
+
+#: How a third-party component of a module is pinned, and how the newest release is learned.
+UPSTREAM_KINDS = ("docker", "npm")
+UPSTREAM_COMPARE = ("patch", "minor")
+UPSTREAM_LATEST_SOURCES = ("npm", "git-tags")
+_UPSTREAM_KEYS = ("name", "kind", "pinned_in", "latest", "image", "package", "pattern", "compare")
 
 _PROVIDES_KEYS = ("shims", "systemd_units", "runtime_hooks", "config_files", "compose_file")
 _REQUIRES_KEYS = ("binaries", "devices", "groups", "paths", "gpu_mb", "setup")
@@ -115,12 +122,95 @@ class ModuleRequires:
         )
 
 
+@dataclass(frozen=True)
+class ModuleUpstream:
+    """A third-party component a module carries, and where its version is pinned.
+
+    A module says what it is made of, so the update machinery does not have to know that n8n
+    is a Docker image whose release number is n8n's npm version, or that Playwright's
+    version is a constant inside a launcher script. Declarative: it names a file to read and a
+    source to ask, and nothing here fetches or rewrites anything.
+    """
+
+    name: str
+    #: ``docker`` (the tag of ``image`` in ``pinned_in``) or ``npm`` (``pattern`` applied to ``pinned_in``).
+    kind: str
+    #: The file holding the pin, relative to the engine (or to the module's own source).
+    pinned_in: str
+    #: Where the newest release is read: ``npm:<package>`` or ``git-tags:<owner/repo>``.
+    latest: str
+    image: str = ""
+    package: str = ""
+    #: ``npm`` only: a regex whose first group is the pinned version.
+    pattern: str = ""
+    #: ``minor`` for a rolling release whose patch number is a build counter: only a new minor is news.
+    compare: str = "patch"
+
+
 def _str_tuple(value: Any, path: Path, mid: str, field_name: str) -> tuple[str, ...]:
     if value is None:
         return ()
     if not isinstance(value, list):
         raise ConfigError(f"{path}: module '{mid}' field '{field_name}' must be a list")
     return tuple(str(v) for v in value)
+
+
+def _stays_inside(declared: str) -> bool:
+    """Whether a path a catalog declares is relative and never climbs out of its owner.
+
+    Judged by both path flavors at once: the catalog is shared between machines, and a spelling the
+    host's own flavor does not call absolute (``/etc/hosts`` on Windows, ``C:\\x`` on Linux) is still
+    one the other flavor would resolve outside the engine.
+    """
+    posix, windows = PurePosixPath(declared), PureWindowsPath(declared)
+    if declared.startswith(("~", "/", "\\")) or windows.drive or windows.root or posix.is_absolute():
+        return False
+    return ".." not in posix.parts and ".." not in windows.parts
+
+
+def _parse_upstream(spec: Any, path: Path, mid: str) -> tuple[ModuleUpstream, ...]:
+    if not spec:
+        return ()
+    if not isinstance(spec, list):
+        raise ConfigError(f"{path}: module '{mid}' field 'upstream' must be a list")
+    parsed: list[ModuleUpstream] = []
+    for index, item in enumerate(spec):
+        where = f"{path}: module '{mid}' upstream #{index + 1}"
+        if not isinstance(item, dict):
+            raise ConfigError(f"{where} must be a map")
+        unknown = sorted(set(item) - set(_UPSTREAM_KEYS))
+        if unknown:
+            raise ConfigError(f"{where} declares unknown fields {unknown}")
+        values = {key: str(item.get(key) or "").strip() for key in _UPSTREAM_KEYS}
+        for required in ("name", "kind", "pinned_in", "latest"):
+            if not values[required]:
+                raise ConfigError(f"{where} is missing '{required}'")
+        if values["kind"] not in UPSTREAM_KINDS:
+            raise ConfigError(f"{where} has unknown kind '{values['kind']}'; expected one of {list(UPSTREAM_KINDS)}")
+        if not _stays_inside(values["pinned_in"]):
+            raise ConfigError(f"{where}: 'pinned_in' must stay inside the engine or the module, got '{values['pinned_in']}'")
+        source, _, argument = values["latest"].partition(":")
+        if source not in UPSTREAM_LATEST_SOURCES or not argument:
+            raise ConfigError(f"{where}: 'latest' must be one of {[f'{s}:<name>' for s in UPSTREAM_LATEST_SOURCES]}")
+        if values["compare"] and values["compare"] not in UPSTREAM_COMPARE:
+            raise ConfigError(f"{where}: 'compare' must be one of {list(UPSTREAM_COMPARE)}")
+        if values["kind"] == "docker" and not values["image"]:
+            raise ConfigError(f"{where} is a docker component and needs 'image'")
+        if values["kind"] == "npm":
+            if not values["package"] or not values["pattern"]:
+                raise ConfigError(f"{where} is an npm component and needs 'package' and 'pattern'")
+            try:
+                groups = re.compile(values["pattern"]).groups
+            except re.error as exc:
+                raise ConfigError(f"{where}: 'pattern' is not a valid regex ({exc})") from exc
+            if groups < 1:
+                raise ConfigError(f"{where}: 'pattern' needs a group around the version")
+        parsed.append(ModuleUpstream(
+            name=values["name"], kind=values["kind"], pinned_in=values["pinned_in"], latest=values["latest"],
+            image=values["image"], package=values["package"], pattern=values["pattern"],
+            compare=values["compare"] or "patch",
+        ))
+    return tuple(parsed)
 
 
 def _parse_provides(spec: Any, path: Path, mid: str) -> ModuleProvides:
@@ -189,6 +279,8 @@ class ModuleDef:
     health: str = ""
     provides: ModuleProvides = field(default_factory=ModuleProvides)
     requires: ModuleRequires = field(default_factory=ModuleRequires)
+    #: The third-party components inside it, watched upstream like skills and MCP servers.
+    upstream: tuple[ModuleUpstream, ...] = ()
 
     def supports(self, state: str) -> bool:
         return state in self.states
@@ -264,6 +356,7 @@ def _module_from_spec(
         health=health,
         provides=_parse_provides(spec.get("provides"), path, mid),
         requires=_parse_requires(spec.get("requires"), path, mid),
+        upstream=_parse_upstream(spec.get("upstream"), path, mid),
     )
 
 

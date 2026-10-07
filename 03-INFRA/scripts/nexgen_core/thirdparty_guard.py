@@ -299,6 +299,14 @@ def judge_finding(
         verdict.reasons.append("nothing moved or unreachable")
         verdict.plain = "Niente di nuovo: resta dov'è."
         return verdict
+    if finding.what.startswith("module "):
+        # A module's component is a program or a patched launcher, not a pin in a manifest: it is
+        # replaced where it runs, after trying it. Even a patch jump is held, because the Playwright
+        # wrapper edits that exact version's files and a "small touch-up" would stop it starting.
+        verdict = GuardFinding(what=finding.what, pinned=finding.pinned, upstream=finding.upstream)
+        verdict.reasons.append("a component of a module: replaced where it runs, after trying it, never rewritten from here")
+        verdict.plain = "È un componente di un modulo (un programma o un lanciatore con patch): si aggiorna a mano dopo averlo provato. Qui lo segnalo soltanto."
+        return verdict
     if finding.kind == "git-commit":
         match = re.match(r"^skill '([^']+)'", finding.what)
         name = match.group(1) if match else ""

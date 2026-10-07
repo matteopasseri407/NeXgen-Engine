@@ -53,12 +53,10 @@ def mcp_provenance(srv: dict[str, Any]) -> str:
 def _mcp_pin(srv: dict[str, Any]) -> tuple[str, str]:
     """(what it is pinned to, how that reads): `pinned`, `unpinned` (runs whatever the registry serves), or `none`."""
     tokens = _command_tokens(srv)
-    wrapped = srv.get("wraps")
-    wrapped_specs = _npm_spec_tokens([str(w) for w in wrapped]) if isinstance(wrapped, list) else []
     is_npx = bool(tokens) and tokens[0].lower() in ("npx", "npx.cmd")
     specs = _npm_spec_tokens(tokens[1:]) if is_npx else []
-    if specs or wrapped_specs:
-        return ", ".join(specs + wrapped_specs), "pinned"
+    if specs:
+        return ", ".join(specs), "pinned"
     if is_npx:
         package = next((tok for tok in tokens[1:] if not tok.startswith("-")), "")
         if package:
@@ -115,24 +113,35 @@ class _Upstream:
 
     @staticmethod
     def _key(what: str) -> tuple[str, str]:
-        return ("mcp" if what.startswith("MCP server") else "skill", short_name(what))
+        kind = "mcp" if what.startswith("MCP server") else "module" if what.startswith("module ") else "skill"
+        return (kind, short_name(what))
+
+    def names(self, kind: str) -> list[str]:
+        """Every item of this kind the watch has an answer for."""
+        return sorted({name for found, name in self._pins if found == kind})
 
     def lookup(self, kind: str, name: str) -> dict[str, Any]:
-        pins = self._pins.get((kind, name), [])
+        return self.describe(kind, name, self._pins.get((kind, name), []))
+
+    def describe(self, kind: str, name: str, pins: list[dict[str, Any]]) -> dict[str, Any]:
+        """What the watch said about these pins of one item (all of them, or one component)."""
         verdict = self._verdicts.get((kind, name))
+        withdrawn = next((p["deprecated"] for p in pins if p.get("deprecated")), None)
+        extra = {"deprecated": withdrawn} if withdrawn else {}
         stale = next((p for p in pins if p.get("stale")), None)
         if stale is not None:
             out: dict[str, Any] = {
                 "state": "stale",
                 "pinned": stale.get("pinned") or (verdict or {}).get("pinned"),
                 "upstream": stale.get("upstream") or (verdict or {}).get("upstream"),
+                **extra,
             }
             if verdict:
                 out["verdict"] = {"auto": "ready", "batch": "ready", "hold": "held"}[verdict["tier"]]
                 out["plain"] = verdict.get("plain") or ""
             return out
         if any(p.get("upstream") for p in pins):
-            return {"state": "current"}
+            return {"state": "current", **extra}
         return {"state": "unknown"}
 
 
@@ -252,11 +261,28 @@ def collect(*, home: Path | None = None, vault_data: Path | None = None, engine_
     skills, skills_error, outside = skill_rows(vault, engine, resolved_home, upstream)
     return {
         "mcp": mcp_rows(servers, upstream),
+        "modules": module_rows(upstream),
         "skills": skills,
         "skills_outside_manifest": outside,
         "errors": [e for e in (mcp_error, skills_error) if e],
         "upstream_checked_at": upstream.checked_at,
     }
+
+
+def module_rows(upstream: _Upstream) -> list[dict[str, Any]]:
+    """One row per third-party component of a module the watch has an answer for."""
+    rows = []
+    for name in upstream.names("module"):
+        for pin in upstream._pins[("module", name)]:
+            inside = re.search(r"\((.*)\)$", str(pin.get("what") or ""))
+            rows.append({
+                "name": name,
+                "component": inside.group(1) if inside else str(pin.get("what") or ""),
+                "kind": pin.get("kind") or "",
+                "pinned": pin.get("pinned") or "",
+                "update": upstream.describe("module", name, [pin]),
+            })
+    return rows
 
 
 def counts(items: list[dict[str, Any]]) -> dict[str, int]:
@@ -269,11 +295,21 @@ def counts(items: list[dict[str, Any]]) -> dict[str, int]:
 def updates(data: dict[str, Any]) -> list[dict[str, Any]]:
     """Every third-party item upstream has moved past: kind, name, from, to, and whether the guardian cleared it."""
     out = []
-    for kind, rows in (("mcp", data["mcp"]), ("skill", data["skills"])):
+    for kind, rows in (("mcp", data["mcp"]), ("module", data["modules"]), ("skill", data["skills"])):
         for row in rows:
             update = row["update"]
             if update.get("state") == "stale":
                 out.append({"kind": kind, "name": row["name"], **update})
+    return out
+
+
+def deprecations(data: dict[str, Any]) -> list[dict[str, Any]]:
+    """Every pinned item whose publisher has withdrawn support for the version in use, newer version or not."""
+    out = []
+    for kind, rows in (("mcp", data["mcp"]), ("module", data["modules"]), ("skill", data["skills"])):
+        for row in rows:
+            if row["update"].get("deprecated"):
+                out.append({"kind": kind, "name": row["name"], "why": row["update"]["deprecated"]})
     return out
 
 

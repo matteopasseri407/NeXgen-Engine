@@ -43,6 +43,10 @@ from routing import (
     resolve_role_candidates,
     seat_capabilities,
     seat_channel,
+    ResolvePolicy,
+    RoutingPlan,
+    probe_host,
+    resolve,
 )
 from seat_process import _effort_label
 
@@ -341,12 +345,13 @@ def _check_seat_allowed(
         config = load_config() if SEATS_PATH.is_file() else {}
     if _routing_enabled(config):
         plan = _routing_context_or_exit(config)
-        _refuse_seat_outside_role(seat_name, args, config, plan, default_routing_role)
+        _refuse_seat_outside_role(seat_name, seat, args, config, plan, default_routing_role)
     _confirm_seat_call(seat_name, seat, config)
 
 
 def _refuse_seat_outside_role(
     seat_name: str,
+    seat: dict,
     args: argparse.Namespace,
     config: dict,
     plan,
@@ -357,6 +362,8 @@ def _refuse_seat_outside_role(
     Explicit seats outside a suggested role are announced. The independent
     payment gate still applies, even when the document has no matching price.
     """
+    if seat.get("degraded"):
+        return
     seats = config.get("seats") or {}
     role = _routing_role_for_mode(args, config, default_routing_role)
     if not role:
@@ -378,6 +385,38 @@ def _refuse_seat_outside_role(
         )
 
 
+def _auto_select_best_seat(
+    args: argparse.Namespace,
+    config: dict,
+    seats: dict,
+    default_routing_role: str | None,
+) -> tuple[str, bool, str | None]:
+    role = _routing_role_for_mode(args, config, default_routing_role)
+    snapshot = probe_host(seats)
+    import os
+    strict = bool(getattr(args, "strict", False))
+    is_interactive = sys.stdout.isatty() and not os.environ.get("CI")
+    allow_fallback = (not strict) if is_interactive else bool(getattr(args, "allow_degraded", False))
+    policy = ResolvePolicy(
+        author_vendor=getattr(args, "author_vendor", None),
+        zero_retention_required=bool(getattr(args, "zero_retention", False)),
+        allow_role_fallback=allow_fallback,
+    )
+    plan = _routing_context_or_exit(config) if _routing_enabled(config) else RoutingPlan("", {})
+    result = resolve(plan, snapshot, seats, role or "L-Arch", policy)
+    if not result.seat_name:
+        sys.exit(f"[council] STOP: {result.refusal_reason}")
+    if result.degraded:
+        print(f"[council] WARNING: DEGRADED quorum: {result.degraded_reason}")
+    seat = result.seat
+    role_label = f"role '{role}'" if role else "task"
+    print(
+        f"[council] auto-selected best available seat for {role_label} on host {snapshot.host_name}: "
+        f"{result.seat_name} ({seat['model']} via {seat['cli']})"
+    )
+    return result.seat_name, result.degraded, result.degraded_reason
+
+
 def resolve_seat(
     args: argparse.Namespace, *, default_routing_role: str | None = None,
     config: dict | None = None,
@@ -388,11 +427,16 @@ def resolve_seat(
     if not seats:
         sys.exit(f"[council] {SEATS_PATH} is empty: inert expansion, nothing to do.")
     seat_name = getattr(args, "seat", None)
+    degraded = False
+    degraded_reason = None
     if not seat_name:
-        _require_human_single_selection(args, config, seats, default_routing_role)
+        seat_name, degraded, degraded_reason = _auto_select_best_seat(args, config, seats, default_routing_role)
     if seat_name not in seats:
         sys.exit(f"[council] unknown seat: {seat_name}. Available: {', '.join(seats)}")
-    seat = seats[seat_name]
+    seat = dict(seats[seat_name])
+    if degraded:
+        seat["degraded"] = True
+        seat["degraded_reason"] = degraded_reason
     _check_seat_allowed(seat_name, seat, args, config=config,
                         default_routing_role=default_routing_role)
     _warn_if_explicit_codex_seat_not_default(seat_name, seat)

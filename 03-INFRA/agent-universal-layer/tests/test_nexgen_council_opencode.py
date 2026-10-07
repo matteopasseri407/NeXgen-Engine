@@ -22,7 +22,45 @@ def test_opencode_build_seat_command_no_dir_flag(tmp_path: Path) -> None:
     assert "--dir" not in invocation.argv
     assert invocation.cwd == tmp_path
     assert invocation.argv[0:3] == ["opencode", "run", OPENCODE_ATTACHED_PROMPT]
-    assert invocation.argv[3:5] == ["-m", "opencode-go/muse-spark-1.2-contributor"]
+    assert invocation.argv[invocation.argv.index("-m") + 1] == "opencode-go/muse-spark-1.2-contributor"
+
+
+def _opencode_argv(tmp_path: Path, **seat_fields) -> list[str]:
+    seat = {"cli": "opencode", "model": "opencode-go/some-model", **seat_fields}
+    return _build_seat_command(seat, "Test prompt text", tmp_path).argv
+
+
+def test_an_opencode_seat_always_runs_in_standalone_mode(tmp_path: Path) -> None:
+    """Without --standalone, OpenCode 2 `run` talks to the background service: the seat's empty config
+    directory would not be the one in force, and the person's own OpenCode would be reached."""
+    argv = _opencode_argv(tmp_path)
+    assert argv.count("--standalone") == 1
+    assert argv.index("--standalone") < argv.index("-m")
+
+
+def test_opencode_takes_the_effort_inside_the_model_name_not_as_a_flag(tmp_path: Path) -> None:
+    """OpenCode 2 has no --variant: the command is refused with its usage text. The variant is written
+    provider/model#variant, which the real binary accepts (checked in an isolated home)."""
+    argv = _opencode_argv(tmp_path, reasoning_effort="high")
+    assert "--variant" not in argv
+    assert argv[argv.index("-m") + 1] == "opencode-go/some-model#high"
+
+
+def test_no_effort_leaves_the_model_name_alone(tmp_path: Path) -> None:
+    for fields in ({}, {"reasoning_effort": "none"}, {"reasoning_effort": ""}):
+        argv = _opencode_argv(tmp_path, **fields)
+        assert argv[argv.index("-m") + 1] == "opencode-go/some-model"
+
+
+def test_a_model_that_already_names_its_variant_is_not_given_a_second_one(tmp_path: Path) -> None:
+    argv = _opencode_argv(tmp_path, model="opencode-go/some-model#max", reasoning_effort="high")
+    assert argv[argv.index("-m") + 1] == "opencode-go/some-model#max"
+
+
+def test_the_effort_is_still_shown_to_the_person(tmp_path: Path) -> None:
+    from seat_process import _effort_label
+
+    assert _effort_label({"cli": "opencode", "model": "m", "reasoning_effort": "high"}) == ", effort high"
 
 
 def test_render_opencode_preserves_native_tool_choices(tmp_path: Path) -> None:

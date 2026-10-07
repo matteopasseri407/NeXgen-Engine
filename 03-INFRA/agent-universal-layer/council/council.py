@@ -81,6 +81,14 @@ from verdict import build_brief, run_rounds, write_verdict
 DEFAULT_MAX_ROUNDS = 3
 
 
+def cmd_reset_health(args: argparse.Namespace) -> None:
+    from routing import clear_seat_health
+    seat_name = getattr(args, "seat", None)
+    clear_seat_health(seat_name)
+    target = f"seat '{seat_name}'" if seat_name else "all seats"
+    print(f"[council] cooldown cleared for {target}.")
+
+
 def _run_mode(
     args: argparse.Namespace, mode: str, label: str, brief: str,
     role_initial_name: str, role_continue_name: str | None, rounds: int,
@@ -117,7 +125,8 @@ def _run_mode(
 
         write_verdict(session_dir, seat_name, seat, mode, verdicts, responses[-1])
 
-        print(f"[council] final verdict: {verdicts[-1]}")
+        degraded_suffix = f" (DEGRADED QUORUM: {seat['degraded_reason']})" if seat.get("degraded") else ""
+        print(f"[council] final verdict: {verdicts[-1]}{degraded_suffix}")
         if keep_session:
             print(f"[council] file: {session_dir / 'verdict.md'}")
         print()
@@ -315,6 +324,19 @@ def cmd_clean(args: argparse.Namespace) -> None:
     print(f"[council] cleanup complete: {removed} session(s) removed.")
 
 
+def cmd_contract(args: argparse.Namespace) -> None:
+    """Checks, without invoking any model, that each installed vendor CLI still lists the flags a seat passes it."""
+    import cli_contract  # here, not at the top: it needs nexgen_core on sys.path, which `proposal` does first
+
+    problems = 0
+    for result in cli_contract.check_all():
+        tag = {"ok": "[ OK ]", "absent": "[skip]"}.get(result.status, "[FAIL]")
+        print(f"{tag} {result.cli}: {result.detail}")
+        problems += result.status in ("drift", "unprobed")
+    if problems:
+        sys.exit(1)
+
+
 def cmd_routing_status(args: argparse.Namespace) -> None:
     config = load_config()
     seats = config["seats"]
@@ -386,6 +408,14 @@ def _add_common_args(parser: argparse.ArgumentParser, *, include_seat: bool = Tr
             "--routing-role", metavar="ROLE",
             help="document role to propose, e.g. L-Sys, does not start a seat without --seat",
         )
+    parser.add_argument(
+        "--strict", action="store_true",
+        help="fail-closed: do not allow fallback outside Governor approved candidates",
+    )
+    parser.add_argument(
+        "--allow-degraded", action="store_true",
+        help="permit fallback outside Governor approved candidates even in non-interactive/CI environments",
+    )
     parser.add_argument(
         "--keep-session", action="store_true",
         help="keep local artefacts for debugging, otherwise removed at the end",
@@ -470,6 +500,13 @@ def main() -> int:
     clean.add_argument("--ttl-days", type=int, default=DEFAULT_TTL_DAYS, help=f"default: {DEFAULT_TTL_DAYS}")
     clean.add_argument("--all", action="store_true", help="removes every session, ignores the TTL")
     clean.set_defaults(func=cmd_clean)
+
+    reset_health = sub.add_parser("reset-health", help="clears active error cooldowns for all seats or a specific seat")
+    reset_health.add_argument("--seat", metavar="NAME", help="seat to unblock (default: unblocks all)")
+    reset_health.set_defaults(func=cmd_reset_health)
+
+    contract = sub.add_parser("contract", help="checks the vendor CLIs still accept the flags a seat passes them (no model is invoked)")
+    contract.set_defaults(func=cmd_contract)
 
     routing_status = sub.add_parser("routing-status", help="shows the candidates proposed and verified on this host")
     routing_status.set_defaults(func=cmd_routing_status)
