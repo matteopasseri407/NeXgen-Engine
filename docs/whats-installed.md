@@ -46,5 +46,5 @@ words, and asks once. Updates that need a human look stay held and are never tou
 
 For MCP servers it does one thing more before it keeps the change: it starts each server whose pin moved, exactly as
 the CLIs would, and checks it lists tools. If one does not work, every pin goes back where it was and the CLIs'
-configurations are regenerated from the old ones; nothing is committed. A server that is only missing a credential is
-not counted against the update.
+configurations are regenerated from the old ones; nothing is committed. Behind the gateway, a server that is only
+missing a credential in this session is not counted against the update.
