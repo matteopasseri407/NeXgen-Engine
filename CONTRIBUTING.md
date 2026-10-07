@@ -100,7 +100,9 @@ Council, lazy MCP and Vault grooming share `nexgen_core/processes.py` for
 terminating owned subprocess trees. Pass only a process group created by the
 caller. Lazy MCP applies manifest startup/tool deadlines to RPC I/O, including
 pipe writes, and limits received bytes to 8 MiB per exchange. Provisioning has
-its own deadlines. A timed-out tool call has an unknown outcome and is never
+its own deadlines. A helper process the gateway can reach declares its stdin
+(`DEVNULL`): the gateway's own stdin is the protocol stream, and
+`test_nexgen_subprocess_stdin_contract.py` fails a launch that omits it. A timed-out tool call has an unknown outcome and is never
 automatically retried. Only matching JSON-RPC responses complete a request;
 notifications and replies to other requests do not.
 Council captures at most 8 MiB across stdout and stderr per invocation and

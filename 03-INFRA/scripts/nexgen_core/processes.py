@@ -59,7 +59,7 @@ def force_stop_process_tree(
             try:
                 result = subprocess.run(
                     ["taskkill.exe", "/PID", str(proc.pid), "/T", "/F"],
-                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                    stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                     timeout=min(3.0, remaining), check=False,
                 )
                 tree_killed = result.returncode == 0

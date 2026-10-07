@@ -10,6 +10,13 @@ of any engine release.
 
 ## [Unreleased]
 
+### Fixed
+
+- Every helper process the lazy-mcp gateway can reach now declares its stdin. The gateway's own stdin is the protocol
+  stream, and a helper that inherits it can block behind a pending read (the Windows hang fixed in 2.4.0). Four launches
+  still inherited it (the upstream check, the skill clone and installer, the Windows process-tree kill), and a test now
+  fails any new launch in a module the gateway imports that does not.
+
 ## [2.4.0] - 2026-10-07
 
 ### Security

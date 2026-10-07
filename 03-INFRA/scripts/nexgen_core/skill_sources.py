@@ -188,7 +188,7 @@ class SkillFetcher:
             base = ["git"] + (["-C", str(cwd)] if cwd else [])
             return subprocess.run(
                 base + list(args),
-                capture_output=True, text=True, encoding="utf-8", errors="replace", check=False,
+                stdin=subprocess.DEVNULL, capture_output=True, text=True, encoding="utf-8", errors="replace", check=False,
                 timeout=GIT_CLONE_TIMEOUT_SECONDS, env=env,
             )
 
@@ -377,7 +377,8 @@ class SkillFetcher:
             return False, ERROR + t("Cannot verify the existing skill library: {path}", path=lib_dest)
         try:
             result = subprocess.run(
-                list(entry.install), capture_output=True, text=True, encoding="utf-8", errors="replace", check=False,
+                list(entry.install), stdin=subprocess.DEVNULL,
+                capture_output=True, text=True, encoding="utf-8", errors="replace", check=False,
                 timeout=INSTALLER_TIMEOUT_SECONDS,
                 env={**os.environ, **GIT_NONINTERACTIVE_ENV},
             )
