@@ -312,6 +312,11 @@ def _write_status_sidecar(state_dir: Path, findings: list[PinFinding]) -> None:
             "stale": sorted(f.what for f in findings if f.stale),
             "fingerprint": fingerprint,
             "report": REPORT_FILE_NAME,
+            # Every pin with what upstream said, so `nexgen info` can show it without the network.
+            "pins": [
+                {"what": f.what, "kind": f.kind, "pinned": f.pinned, "upstream": f.upstream, "stale": f.stale}
+                for f in findings
+            ],
         }
         sidecar = state_dir / "nexgen" / STATUS_FILE_NAME
         sidecar.parent.mkdir(parents=True, exist_ok=True)

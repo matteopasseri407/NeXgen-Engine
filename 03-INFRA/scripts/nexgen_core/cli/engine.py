@@ -94,6 +94,7 @@ def register(sub) -> None:
     p = sub.add_parser("info", aliases=["status"], help=t("Visual system status and architecture dashboard"))
     p.add_argument("--json", action="store_true", help=t("Output in JSON format"))
     p.add_argument("-i", "--interactive", action="store_true", help=t("Launch interactive shell after info"))
+    p.add_argument("--all", action="store_true", help=t("List every skill, not only the third-party and the changed ones"))
     p.set_defaults(func=cmd_info)
 
     p = sub.add_parser("shell", aliases=["interactive", "repl"], help=t("Launch the interactive NeXgen Shell"))
@@ -516,7 +517,7 @@ def cmd_info(args) -> int:
     from nexgen_core.tools.info import render_info
     as_json = getattr(args, "json", False)
     interactive = getattr(args, "interactive", False)
-    print(render_info(as_json=as_json))
+    print(render_info(as_json=as_json, show_all=getattr(args, "all", False)))
     if interactive:
         from nexgen_core.tools.shell import run_shell
         return run_shell()

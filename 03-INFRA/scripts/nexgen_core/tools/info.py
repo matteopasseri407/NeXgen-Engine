@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any
 
 from nexgen_core import __version__
+from nexgen_core.i18n import t
 from nexgen_core.modules import modules_state
 from nexgen_core.paths import (
     resolve_engine_root,
@@ -122,6 +123,14 @@ def get_engine_info(vault_data: Path | None = None) -> dict[str, Any]:
         except OSError:
             pass
 
+    extensions: dict[str, Any] = {}
+    try:
+        from nexgen_core import extensions as ext
+
+        extensions = ext.collect(home=home, vault_data=vault, engine_root=engine_root)
+    except Exception:  # noqa: BLE001 - info tolerates unreadable state
+        extensions = {"errors": [t("could not read the installed connectors and skills")]}
+
     return {
         "version": __version__,
         "os": f"{platform.system()} {platform.machine()}",
@@ -134,10 +143,122 @@ def get_engine_info(vault_data: Path | None = None) -> dict[str, Any]:
         "secrets": secrets_status,
         "doctor": doctor_status,
         "notes_count": notes_count,
+        "extensions": extensions,
     }
 
 
-def render_info(as_json: bool = False, vault_data: Path | None = None) -> str:
+_PROVENANCE_LABEL = {
+    "engine": lambda: t("core"),
+    "yours": lambda: t("yours"),
+    "third-party": lambda: t("third-party"),
+}
+
+
+#: Why a server is mounted nowhere, in words (the placement rule's own reasons are for `nexgen mcp plan`).
+_WHY_OFF = {
+    "not in targets": lambda: t("no CLI is in its targets"),
+    "disabled": lambda: t("switched off in the manifest"),
+    "inert (not core, not enabled)": lambda: t("neither core nor switched on"),
+}
+
+_WHERE_LABEL = {
+    "direct": lambda: t("direct"),
+    "gateway": lambda: t("lazy"),
+    "mixed": lambda: t("mixed"),
+    "off": lambda: t("off"),
+}
+
+
+def _mix(counted: dict[str, int]) -> str:
+    return " · ".join(f"{n} {_PROVENANCE_LABEL[k]()}" for k, n in counted.items() if n)
+
+
+def _extension_lines(ext: dict[str, Any], show_all: bool) -> list[str]:
+    """The connectors and skills sections: what is installed, whose it is, what is pinned, what moved upstream."""
+    from nexgen_core import extensions
+
+    out: list[str] = []
+    mcp, skills = ext.get("mcp", []), ext.get("skills", [])
+    for error in ext.get("errors", []):
+        out.append(f"  {C_YELLOW}! {error}{C_RESET}")
+
+    out.append(f"  {C_EMERALD}{C_BOLD}{t('CONNECTORS (MCP)')}{C_RESET}  {C_SLATE}{len(mcp)} · {_mix(extensions.counts(mcp))}{C_RESET}")
+    if mcp:
+        width = max(len(r["name"]) for r in mcp)
+        for r in mcp:
+            where = _WHERE_LABEL[r["where"]]() if r["state"] != "trial" else t("trial")
+            pin = r["pin"] or ("" if r["pin_state"] == "none" else "?")
+            origin = _PROVENANCE_LABEL[r["provenance"]]()
+            limited = f" ({', '.join(r['clis'])})" if r["clis"] and len(r["clis"]) < len(r["placement"]) else ""
+            out.append(f"  {C_SLATE}•{C_RESET} {r['name'].ljust(width)}  {origin.ljust(11)} {where.ljust(8)} {C_DIM}{pin}{limited}{C_RESET}")
+            notes = _mcp_notes(r)
+            for note in notes:
+                out.append(f"      {C_YELLOW}↳ {note}{C_RESET}")
+    out.append("")
+
+    out.append(f"  {C_EMERALD}{C_BOLD}{t('SKILLS')}{C_RESET}  {C_SLATE}{len(skills)} · {_mix(extensions.counts(skills))}{C_RESET}")
+    shown = [r for r in skills if show_all or r["provenance"] == "third-party" or r["engine_copy"] == "differs"
+             or not r["in_library"] or r["update"].get("state") == "stale"]
+    if shown:
+        width = max(len(r["name"]) for r in shown)
+        for r in shown:
+            out.append(f"  {C_SLATE}•{C_RESET} {r['name'].ljust(width)}  {_PROVENANCE_LABEL[r['provenance']]().ljust(11)} {C_DIM}{r['pin']}{C_RESET}")
+            for note in _skill_notes(r):
+                out.append(f"      {C_YELLOW}↳ {note}{C_RESET}")
+    hidden = len(skills) - len(shown)
+    if hidden > 0:
+        out.append(f"  {C_DIM}{t('{count} more, yours or unchanged core ones: nexgen info --all', count=hidden)}{C_RESET}")
+    if ext.get("skills_outside_manifest"):
+        out.append(f"  {C_DIM}{t('outside the manifest (kept, never deleted): {names}', names=', '.join(ext['skills_outside_manifest']))}{C_RESET}")
+    out.append("")
+
+    moved = extensions.updates(ext)
+    age = extensions.age_text(ext.get("upstream_checked_at"))
+    if moved:
+        out.append(f"  {C_YELLOW}{t('Newer upstream versions exist for third-party items: {count} (checked {age} ago).', count=len(moved), age=age or '?')}{C_RESET}")
+        out.append(f"  {C_DIM}{t('nexgen skills bump  (or: nexgen mcp bump)  raises the ones the guardian cleared, tries each server and puts the old pin back if it fails.')}{C_RESET}")
+    elif age is None and any(r["update"].get("state") == "unknown" for r in mcp + skills):
+        out.append(f"  {C_DIM}{t('Upstream versions not checked on this machine yet: the hourly watch will, or run nexgen skills bump.')}{C_RESET}")
+    else:
+        out.append(f"  {C_DIM}{t('Third-party pins are current (checked {age} ago).', age=age or '?')}{C_RESET}")
+    out.append("")
+    return out
+
+
+def _mcp_notes(r: dict[str, Any]) -> list[str]:
+    notes = []
+    update = r["update"]
+    if update.get("state") == "stale":
+        line = t("upstream {new} available (pinned {old})", new=update.get("upstream") or "?", old=update.get("pinned") or "?")
+        if update.get("verdict") == "held":
+            line += " — " + t("held: {why}", why=update.get("plain") or t("read the changelog first"))
+        elif update.get("verdict") == "ready":
+            line += " — " + t("cleared, ready to raise")
+        notes.append(line)
+    if r["pin_state"] == "unpinned":
+        notes.append(t("not pinned: runs whatever the registry serves today, and nothing watches it"))
+    if r["hidden_tools"]:
+        notes.append(t("{count} tools hidden", count=r["hidden_tools"]))
+    if r["only_tools"]:
+        notes.append(t("only {count} tools exposed", count=r["only_tools"]))
+    if r["where"] == "off" and r["why_off"]:
+        notes.append(t("not mounted anywhere: {why}", why=_WHY_OFF.get(r["why_off"], lambda: r["why_off"])()))
+    return notes
+
+
+def _skill_notes(r: dict[str, Any]) -> list[str]:
+    notes = []
+    update = r["update"]
+    if update.get("state") == "stale":
+        notes.append(t("upstream {new} available (pinned {old})", new=update.get("upstream") or "?", old=update.get("pinned") or "?"))
+    if r["engine_copy"] == "differs":
+        notes.append(t("your Vault's copy differs from the engine's, and the copy is what runs"))
+    if not r["in_library"]:
+        notes.append(t("declared but not materialized on this machine yet"))
+    return notes
+
+
+def render_info(as_json: bool = False, vault_data: Path | None = None, show_all: bool = False) -> str:
     info = get_engine_info(vault_data)
     if as_json:
         return json.dumps(info, indent=2)
@@ -187,6 +308,8 @@ def render_info(as_json: bool = False, vault_data: Path | None = None) -> str:
     else:
         out.append(f"  {C_SLATE}• State:{C_RESET}         {C_SLATE}No modules declared yet (run 'nexgen modules list'){C_RESET}")
     out.append("")
+
+    out.extend(_extension_lines(info.get("extensions", {}), show_all))
 
     # Section 3: Security & Health
     out.append(f"  {C_EMERALD}{C_BOLD}SECURITY & DIAGNOSTICS{C_RESET}")

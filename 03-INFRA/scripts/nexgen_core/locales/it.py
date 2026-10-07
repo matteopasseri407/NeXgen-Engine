@@ -1128,4 +1128,48 @@ MESSAGES: dict[str, str] = {
         '{tools} strumenti, circa {tokens} token di definizioni caricati subito',
     '{tools} tools, ~{tokens} tokens, {seconds}s':
         '{tools} strumenti, ~{tokens} token, {seconds}s',
+    # --- Cosa c'è installato (nexgen info) e l'aggiornamento dei pin -------------
+    "core": "core",
+    "yours": "tuo",
+    "third-party": "di terzi",
+    "direct": "diretto",
+    "lazy": "lazy",
+    "mixed": "misto",
+    "off": "spento",
+    "trial": "in prova",
+    "CONNECTORS (MCP)": "CONNETTORI (MCP)",
+    "SKILLS": "SKILL",
+    "upstream {new} available (pinned {old})": "a monte c'è la {new} (tu hai la {old})",
+    "held: {why}": "ferma: {why}",
+    "read the changelog first": "prima leggi cosa è cambiato",
+    "cleared, ready to raise": "controllata, si può alzare",
+    "not pinned: runs whatever the registry serves today, and nothing watches it":
+        "non è bloccato a una versione: parte con quella che c'è oggi nel registro, e nessuno la controlla",
+    "{count} tools hidden": "{count} strumenti nascosti",
+    "only {count} tools exposed": "solo {count} strumenti esposti",
+    "not mounted anywhere: {why}": "non è montato da nessuna parte: {why}",
+    "your Vault's copy differs from the engine's, and the copy is what runs":
+        "la copia nel tuo Vault è diversa da quella del motore, e quella che gira è la tua copia",
+    "declared but not materialized on this machine yet": "dichiarata ma non ancora installata su questa macchina",
+    "could not read the installed connectors and skills": "non sono riuscito a leggere i connettori e le skill installati",
+    "{count} more, yours or unchanged core ones: nexgen info --all":
+        "altre {count}, tue o del motore senza modifiche: nexgen info --all",
+    "outside the manifest (kept, never deleted): {names}": "fuori dal manifest (tenute, mai cancellate): {names}",
+    "Newer upstream versions exist for third-party items: {count} (checked {age} ago).":
+        "Ci sono versioni più nuove per cose di terzi: {count} (controllato {age} fa).",
+    "no CLI is in its targets": "nessuna CLI è tra quelle a cui è destinato",
+    "switched off in the manifest": "spento nel manifest",
+    "neither core nor switched on": "non è essenziale e non è acceso",
+    "nexgen skills bump  (or: nexgen mcp bump)  raises the ones the guardian cleared, tries each server and puts the old pin back if it fails.":
+        "nexgen skills bump  (o: nexgen mcp bump)  alza quelle che il guardiano ha controllato, prova ogni server e, se non parte, rimette la versione di prima.",
+    "Upstream versions not checked on this machine yet: the hourly watch will, or run nexgen skills bump.":
+        "Su questa macchina le versioni a monte non sono ancora state controllate: lo fa il controllo orario, oppure lancia nexgen skills bump.",
+    "Third-party pins are current (checked {age} ago).": "Le versioni di terzi sono aggiornate (controllato {age} fa).",
+    "Trying the new versions before keeping them: {names}": "Provo le versioni nuove prima di tenerle: {names}",
+    "could not try {names}: {error}": "non sono riuscito a provare {names}: {error}",
+    "could not regenerate the configurations ({error})": "non sono riuscito a rigenerare le configurazioni ({error})",
+    "the new version did not work: every pin is back where it was and the configurations regenerated":
+        "la versione nuova non funziona: ogni versione è tornata com'era e le configurazioni sono state rigenerate",
+    "{name}: the gateway does not offer it": "{name}: il gateway non lo offre",
+    "{name}: it starts but lists no tools": "{name}: parte ma non mostra nessuno strumento",
 }

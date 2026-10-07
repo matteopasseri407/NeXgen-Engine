@@ -22,7 +22,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from nexgen_core.i18n import t
-from nexgen_core.mcp_placement import CLIS, GATEWAY, GATEWAY_CLI_ENV, gateway_servers_for
+from nexgen_core.mcp_placement import CLIS, DIRECT, GATEWAY, GATEWAY_CLI_ENV, GATEWAY_KIND, gateway_servers_for, place
 from nexgen_core.processes import force_stop_process_tree, windows_command_argv
 
 META_TOOLS = frozenset({"lazy_list", "lazy_load", "lazy_call", "lazy_mutate"})
@@ -238,6 +238,49 @@ def check_direct(renderer, cli: str, name: str, *, timeout: float = 60.0) -> Dir
             session.close()
     result.seconds = round(time.monotonic() - started, 1)
     return result
+
+
+def verify_servers(renderer, names: list[str], *, timeout: float = 120.0) -> list[str]:
+    """Does each named server start and list tools, the way a CLI would reach it? Returns what did not.
+
+    Used after a pin was raised, before it is kept: the new version has just been rendered, so this starts exactly
+    what the CLIs would start. A server mounted directly is started on its own; one behind the gateway is looked for
+    in the index of the first CLI that serves it. A server that is only missing a credential is not the update's
+    fault and is not reported.
+    """
+    from nexgen_core import mcp_trials
+    from nexgen_core.config import load_mcp_manifest
+
+    servers = mcp_trials.overlay(load_mcp_manifest(renderer.manifest_path).get("servers", {}))
+    problems: list[str] = []
+    gateways: dict[str, CliResult] = {}
+    for name in names:
+        srv = servers.get(name)
+        if not isinstance(srv, dict):
+            continue
+        placed = {cli: place(srv, cli).kind for cli in CLIS}
+        direct = next((cli for cli in CLIS if placed[cli] == DIRECT), None)
+        if direct is not None:
+            outcome = check_direct(renderer, direct, name, timeout=timeout)
+            if not outcome.ok:
+                problems.append(f"{name}: {outcome.problem}")
+            elif outcome.tools == 0:
+                problems.append(t("{name}: it starts but lists no tools", name=name))
+            continue
+        via = next((cli for cli in CLIS if placed[cli] == GATEWAY_KIND), None)
+        if via is None:
+            continue
+        if via not in gateways:
+            gateways[via] = check_gateway(renderer, via, timeout=timeout)
+        outcome_gw = gateways[via]
+        if not outcome_gw.problems and name in outcome_gw.served:
+            continue
+        own = [pr for pr in outcome_gw.problems if pr.startswith(f"{name}:") or f" {name} " in f" {pr} "]
+        if own:
+            problems.extend(own)
+        elif name not in outcome_gw.served and not outcome_gw.problems:
+            problems.append(t("{name}: the gateway does not offer it", name=name))
+    return problems
 
 
 def main_direct(clis: tuple[str, ...] = CLIS, *, timeout: float = 60.0) -> int:

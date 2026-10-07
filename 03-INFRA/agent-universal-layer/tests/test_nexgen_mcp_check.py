@@ -235,3 +235,33 @@ def test_the_direct_summary_totals_what_each_cli_loads_up_front(setup, capsys, m
     assert mcp_check.main_direct(("claude", "codex"), timeout=30) == 0
     out = capsys.readouterr().out
     assert "claude: 1" in out and "codex: 1" in out and "OK   good" in out
+
+
+def _rewrite(renderer, tmp_path, extra):
+    manifest = yaml.safe_load(renderer.manifest_path.read_text(encoding="utf-8"))
+    manifest["servers"].update(extra)
+    renderer.manifest_path.write_text(yaml.safe_dump(manifest), encoding="utf-8")
+
+
+def test_verify_passes_a_working_server_and_names_a_broken_one_behind_the_gateway(setup):
+    renderer, _ = setup
+    assert mcp_check.verify_servers(renderer, ["good"], timeout=60) == []
+    problems = mcp_check.verify_servers(renderer, ["broken"], timeout=60)
+    assert problems and problems[0].startswith("broken:") and "missing_dep" in problems[0]
+
+
+def test_verify_starts_a_directly_mounted_server_on_its_own(setup, tmp_path):
+    renderer, _ = setup
+    _rewrite(renderer, tmp_path, {
+        "direct-good": {"exposure": "eager", "command": sys.executable, "args": ["-c", GOOD],
+                        "env": {"PIDFILE": str(tmp_path / "d.pid")}, "targets": ["claude"]},
+        "direct-dead": {"exposure": "eager", "command": sys.executable, "args": ["-c", DYING], "targets": ["claude"]},
+    })
+    assert mcp_check.verify_servers(renderer, ["direct-good"], timeout=60) == []
+    problems = mcp_check.verify_servers(renderer, ["direct-dead"], timeout=60)
+    assert len(problems) == 1 and problems[0].startswith("direct-dead:")
+
+
+def test_verify_ignores_a_name_the_manifest_does_not_have(setup):
+    renderer, _ = setup
+    assert mcp_check.verify_servers(renderer, ["nothing-by-that-name"], timeout=5) == []

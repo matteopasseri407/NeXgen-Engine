@@ -66,6 +66,8 @@ before integration. Fix new lint findings rather than regenerating the baseline.
 | MCP mount policy and private connector preservation | `nexgen_core/renderer.py`; dialect writers in `mcp_render/` | `test_nexgen_mcp_preservation.py`, `test_nexgen_phase2.py`, `test_nexgen_lazy_mcp.py` |
 | Lazy MCP deadlines, framing and reply correlation, concurrency, child environment, read/write split | `03-INFRA/agent-universal-layer/mcp/lazy-mcp.py` (see [lazy-mcp.md](docs/lazy-mcp.md)) | `test_nexgen_mcp_transport.py`, `test_nexgen_lazy_mcp.py`, `test_nexgen_lazy_mcp_serving.py` |
 | Released Engine update and mechanical pin | `nexgen_core/updater.py` | `test_nexgen_update_command.py` |
+| Installed MCP servers and skills: provenance, pins, upstream state (`nexgen info`) | `nexgen_core/extensions.py`; the sections in `nexgen_core/tools/info.py` (see [whats-installed.md](docs/whats-installed.md)) | `test_nexgen_extensions.py` |
+| Raising third-party pins, trying each MCP server before keeping the change | `nexgen_core/thirdparty_bump.py`; `verify_servers` in `nexgen_core/mcp_check.py` | `test_nexgen_bump.py`, `test_nexgen_mcp_check.py` |
 | Contributor lanes | `nexgen_core/lanes.py` | `test_nexgen_lanes.py` |
 
 Check the actual filenames before selecting a test. Graph modules drive the

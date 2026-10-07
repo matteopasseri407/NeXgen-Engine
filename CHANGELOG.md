@@ -248,6 +248,18 @@ of any engine release.
   is missing. For the variables a server's manifest entry declares, and only those, the gateway also reads the
   machine's `environment.d`, because a CLI started from a desktop launcher does not inherit the shell's exports.
   `lazy_list` carries the reason as `error` / `unavailable`.
+- `nexgen info` lists the installed MCP servers and skills: whose each is (`core`: shipped with the engine and updated
+  with it; `yours`: in your Vault or on your disk; `third-party`: someone else's, watched upstream), what it is pinned
+  to, where a server is mounted, how many of its tools are hidden, and whether upstream has a newer version and whether
+  the guardian cleared it. It reads local files only (the dependency watch's last answer, which now also records every
+  pin's upstream version, not only the stale ones). It points out an `npx` server with no pinned version, which runs
+  whatever the registry serves and which nothing watches, and a core skill whose Vault copy differs from the engine's:
+  that copy is what runs, so it does not follow the engine's updates. `--all` lists every skill, `--json` carries the
+  data under `extensions`. See docs/whats-installed.md.
+- `nexgen mcp bump` is `nexgen skills bump` under the name people look for. Raising an MCP pin now starts each server
+  whose pin moved, exactly as the CLIs would, and checks it lists tools; if one does not work, every pin goes back,
+  the CLIs' configurations are regenerated from the old ones, and nothing is committed. The pin was already revalidated
+  as text and the install checked; this adds "the new version actually runs".
 
 ## [2.3.11] - 2026-10-04
 

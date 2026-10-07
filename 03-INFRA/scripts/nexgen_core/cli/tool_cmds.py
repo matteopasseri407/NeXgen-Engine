@@ -120,6 +120,9 @@ def register(sub) -> None:
     a = msub.add_parser("list", help=t("Read-only: the servers per CLI as they would render now"))
     a.set_defaults(func=cmd_mcp_list)
 
+    a = msub.add_parser("bump", help=t("Raise guardian-vetted pins (the same command as `skills bump`), trying each server before keeping it"))
+    a.set_defaults(func=cmd_mcp_bump)
+
     a = msub.add_parser("plan", help=t("Read-only: which server is mounted directly, behind the gateway, or absent, per CLI, and why"))
     a.add_argument("--json", action="store_true", help=t("Machine-readable output"))
     a.set_defaults(func=cmd_mcp_plan)
@@ -291,6 +294,12 @@ def cmd_mcp_drop(args) -> int:
     code, message = cmd_drop(args.name)
     print(message)
     return code
+
+
+def cmd_mcp_bump(args) -> int:
+    from nexgen_core.thirdparty_bump import bump_batch
+
+    return bump_batch()
 
 
 def cmd_mcp_plan(args) -> int:

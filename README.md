@@ -34,7 +34,7 @@ The sync command applies the configuration; doctor checks for drift and reports 
 Inspect the environment and manage it from the terminal:
 
 ```bash
-nexgen info    # visual dashboard: engine version, runtimes aligned, vault hygiene, secrets
+nexgen info    # visual dashboard: engine version, runtimes, modules, installed MCP servers and skills (core / yours / third-party, what moved upstream), secrets
 nexgen shell   # interactive REPL [1-7] — manage everything without opening an AI assistant
 nexgen doctor  # fail-closed checks: git alignment, MCP reachability, link hygiene, permissions
 ```

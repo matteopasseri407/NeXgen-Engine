@@ -225,8 +225,12 @@ def _replace_in_entries(text: str, carriers: list[tuple[str, str | None]],
 def apply_plan(
     raisable: list[dict], vault_data: Path, *, sync: bool = True,
     home: Path | None = None,
+    verify: Callable[[list[str]], list[str]] | None = None,
 ) -> tuple[int, list[str], list[dict]]:
     """Rewrites the pins atomically, revalidates, and materializes.
+
+    `verify`, given the names of the MCP servers whose pin moved, tries them live and returns what failed; any
+    failure puts every pin back and regenerates the configurations from the old ones.
 
     Callers hold the bump lock around this call (see bump_batch and
     auto_apply): reads, planning and writes stay one critical section,
@@ -490,6 +494,22 @@ def apply_plan(
             return 0, [f"{ERROR}{note}" if is_error(note) else note
                        for note in failed] + [rolled] + [
                 f"{ERROR}{note}" for note in restore_failures], []
+        servers = sorted({carrier[0] for (_k, where, _o, _n, _f), group in planned.items()
+                          if where == "mcp" and group.get("replaced") for carrier in group["carriers"]})
+        if verify is not None and servers:
+            try:
+                broken = verify(servers)
+            except Exception as exc:  # noqa: BLE001 - a check that cannot run cannot vouch for the update
+                broken = [t("could not try {names}: {error}", names=", ".join(servers), error=exc)]
+            if broken:
+                restore_failures = _rollback_pins()
+                try:
+                    _rematerialize(vault_data, home, any(w == "skills" for _, w, _, _, _ in planned), True)
+                except Exception as exc:  # noqa: BLE001 - reported below, never raised
+                    restore_failures.append(t("could not regenerate the configurations ({error})", error=exc))
+                return 0, [f"{ERROR}{problem}" for problem in broken] + [
+                    t("the new version did not work: every pin is back where it was and the configurations regenerated"),
+                ] + [f"{ERROR}{note}" for note in restore_failures], []
     return bumps, notes, moved
 
 
@@ -532,6 +552,20 @@ def _rematerialize(vault_data: Path, home: Path | None, skills: bool, mcp: bool)
     return notes
 
 
+def _live_verifier(home: Path, vault_data: Path) -> Callable[[list[str]], list[str]]:
+    """Tries the servers whose pin just moved, the way the CLIs would start them (network: npx fetches the new one)."""
+
+    def verify(names: list[str]) -> list[str]:
+        from nexgen_core.mcp_check import verify_servers
+        from nexgen_core.renderer import McpRenderer
+
+        print(t("Trying the new versions before keeping them: {names}", names=", ".join(names)))
+        renderer = McpRenderer(vault_data=vault_data, engine_root=resolve_engine_root(home), home=home)
+        return verify_servers(renderer, names)
+
+    return verify
+
+
 def bump_batch(
     *,
     home: Path | None = None,
@@ -539,6 +573,7 @@ def bump_batch(
     state_dir: Path | None = None,
     input_fn: Callable[[str], str] = input,
     sync: bool = True,
+    verify: Callable[[list[str]], list[str]] | None = None,
 ) -> int:
     """The one-yes command: shows every BATCH pin in plain words, moves
     them on a single yes, leaves HOLD items untouched. AUTO pins already
@@ -593,8 +628,10 @@ def bump_batch(
         with HostLock(lock_path=resolved_state / "third-party-bump.lock",
                       timeout=30, command_name="third-party-bump"), \
                 host_mutation("third-party-bump", state_dir=resolved_state, timeout=30):
-            bumps, notes, moved = apply_plan(raisable, resolved_vault, sync=sync,
-                                          home=resolved_home)
+            bumps, notes, moved = apply_plan(
+                raisable, resolved_vault, sync=sync, home=resolved_home,
+                verify=verify if verify is not None else (_live_verifier(resolved_home, resolved_vault) if sync else None),
+            )
             if moved:
                 # Same finalization as the silent path: without the commit
                 # the next updater stops on a dirty tree, and without the
