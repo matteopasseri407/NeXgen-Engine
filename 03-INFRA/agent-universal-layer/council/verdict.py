@@ -161,6 +161,8 @@ def write_verdict(session_dir: Path, seat_name: str, seat: dict, mode: str, verd
         f"Mode: {mode}",
         f"Rounds run: {len(verdicts)}",
     ]
+    if seat.get("degraded"):
+        lines.append(f"Quorum status: DEGRADED ({seat.get('degraded_reason', '')})")
     for i, v in enumerate(verdicts, 1):
         lines.append(f"Verdict round {i}: {v}")
     lines.append("")

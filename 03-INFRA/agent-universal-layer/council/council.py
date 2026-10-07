@@ -117,7 +117,8 @@ def _run_mode(
 
         write_verdict(session_dir, seat_name, seat, mode, verdicts, responses[-1])
 
-        print(f"[council] final verdict: {verdicts[-1]}")
+        degraded_suffix = f" (DEGRADED QUORUM: {seat['degraded_reason']})" if seat.get("degraded") else ""
+        print(f"[council] final verdict: {verdicts[-1]}{degraded_suffix}")
         if keep_session:
             print(f"[council] file: {session_dir / 'verdict.md'}")
         print()
@@ -399,6 +400,10 @@ def _add_common_args(parser: argparse.ArgumentParser, *, include_seat: bool = Tr
             "--routing-role", metavar="ROLE",
             help="document role to propose, e.g. L-Sys, does not start a seat without --seat",
         )
+    parser.add_argument(
+        "--strict", action="store_true",
+        help="fail-closed: do not allow fallback outside Governor approved candidates",
+    )
     parser.add_argument(
         "--keep-session", action="store_true",
         help="keep local artefacts for debugging, otherwise removed at the end",
