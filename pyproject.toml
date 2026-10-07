@@ -27,7 +27,7 @@ keywords = ["agents", "mcp", "automation", "knowledge-vault", "ai-agents", "clau
 # SQLite checkpoints) is core: every machine provisions it. Only the model
 # endpoint itself (your Ollama server, your opencode-attached model) is the
 # user's own business and never ships here.
-dependencies = ["PyYAML>=6.0,<7.0", "langgraph>=1.0,<2", "langchain-ollama>=1.0,<2", "httpx>=0.28,<1", "mcp>=2.0,<3", "langgraph-checkpoint-sqlite>=3,<4"]
+dependencies = ["PyYAML>=6.0,<7.0", "langgraph>=1.0,<2", "langchain-ollama>=1.0,<2", "httpx>=0.28,<1", "mcp>=2.2.0,<3", "langgraph-checkpoint-sqlite>=3,<4"]
 
 [project.optional-dependencies]
 dev = ["pytest>=8.0", "ruff>=0.6"]

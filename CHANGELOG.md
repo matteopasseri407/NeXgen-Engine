@@ -10,6 +10,20 @@ of any engine release.
 
 ## [Unreleased]
 
+### Security
+
+- The n8n image the engine ships moves from 2.35.3 to 2.42.4. n8n published a batch of advisories on 2026-09-30, most of
+  them high severity, fixed from 2.41.4 / 2.42.1: among them a shared-prototype mutation in the MCP workflow-validation
+  interpreter that allows an owner-account takeover, an unauthenticated OAuth-client persistence on the authorize
+  endpoint, code execution through the Git node, an HMAC bypass on Send-and-Wait and cross-project webhook execution.
+  The release notes between the two versions carry no breaking change. This only changes the default tag: an
+  installation that already runs n8n keeps what it runs until its host is upgraded (back up the database and the data
+  volume first, then pull and restart; the migrations run at boot and cannot be undone without the backup).
+- The Python MCP SDK floor moves from 2.0 to 2.2.0. Advisories published 2026-09-28 to 2026-10-05 (an OAuth client sending
+  credentials to a server-chosen authorization server, client transports following cross-origin redirects with their
+  headers, a client fetching server-chosen `$ref` URLs, never-reclaimed streamable-HTTP sessions) are fixed in 2.2.0, so a
+  fresh install can no longer resolve a version that has them. The machine's runtime already had 2.3.0.
+
 ### Added
 
 - `nexgen council contract` checks, without invoking any model, that each installed vendor CLI (codex, claude, agy,
