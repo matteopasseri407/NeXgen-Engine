@@ -128,6 +128,20 @@ class Runtime(ABC):
         A group left with no hooks goes with them, and an event left with no groups; groups that
         also hold someone else's hooks keep those exactly as they were.
         """
+        import shlex
+
+        def _is_sink_command(cmd: object) -> bool:
+            if not isinstance(cmd, str):
+                return False
+            text = cmd.strip()
+            try:
+                parts = shlex.split(text, posix=True)
+            except ValueError:
+                parts = text.split()
+            if not parts:
+                return False
+            return any(Path(p).name == EVENT_SINK_NAME for p in parts)
+
         changed = False
         for event in events:
             groups = hooks.get(event)
@@ -139,7 +153,7 @@ class Runtime(ABC):
                 if not isinstance(inner, list):
                     kept.append(group)
                     continue
-                remaining = [h for h in inner if not (isinstance(h, dict) and EVENT_SINK_NAME in str(h.get("command", "")))]
+                remaining = [h for h in inner if not (isinstance(h, dict) and _is_sink_command(h.get("command")))]
                 if len(remaining) == len(inner):
                     kept.append(group)
                     continue
@@ -184,7 +198,13 @@ class Runtime(ABC):
         nothing to preserve."""
         from nexgen_core.files import backup_file
 
-        return backup_file(path, tag="permissions")
+        return backup_file(path, tag="permissions", keep=3)
+
+    @staticmethod
+    def _is_safe_hook_filename(name: str) -> bool:
+        import re
+
+        return name not in (".", "..") and bool(re.fullmatch(r"[A-Za-z0-9._-]+", name))
 
     @staticmethod
     def atomic_write(path: Path, text: str) -> None:

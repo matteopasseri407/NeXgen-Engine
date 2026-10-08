@@ -41,9 +41,13 @@ def _run(argv: list[str]) -> subprocess.CompletedProcess[str]:
     fake_home = str(Path(tempfile.gettempdir()) / "nonexistent-home-for-tests")
     return subprocess.run(
         [sys.executable, str(entry), *argv],
-        capture_output=True, text=True, check=False, timeout=HELP_TIMEOUT_SECONDS,
+        capture_output=True, text=True, encoding="utf-8", errors="replace",
+        check=False, timeout=HELP_TIMEOUT_SECONDS,
         env={"PATH": "/usr/bin:/bin", "HOME": "/nonexistent-home-for-tests",
-             "USERPROFILE": fake_home},
+              "USERPROFILE": fake_home,
+              # The child must speak UTF-8 whatever the host code page is,
+              # or its accented help text is undecodable bytes here.
+              "PYTHONUTF8": "1"},
     )
 
 
@@ -171,3 +175,24 @@ def test_tool_subcommands_display_help_with_their_specific_options():
     assert res_map.returncode == 0
     assert "--check" in res_map.stdout or "--json" in res_map.stdout
 
+
+
+@pytest.mark.parametrize("singular,plural,subcommand", [
+    ("skill", "skills", "list"),
+    ("module", "modules", "list"),
+    ("tool", "tools", "now"),
+    ("stack", "stacks", "status"),
+])
+def test_singular_and_plural_cli_aliases_resolve_identically(singular: str, plural: str, subcommand: str):
+    """Sia la forma singolare sia la forma plurale devono risolvere lo stesso handler e rispondere."""
+    parser = build_parser()
+    args_sing = parser.parse_args([singular, subcommand])
+    args_plur = parser.parse_args([plural, subcommand])
+    assert args_sing.func.__code__ is args_plur.func.__code__
+
+    res_sing = _run([singular, "--help"])
+    res_plur = _run([plural, "--help"])
+    assert res_sing.returncode == 0
+    assert res_plur.returncode == 0
+    assert "Traceback" not in res_sing.stderr
+    assert "Traceback" not in res_plur.stderr

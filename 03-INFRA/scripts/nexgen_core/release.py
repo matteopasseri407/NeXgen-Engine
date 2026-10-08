@@ -74,7 +74,14 @@ def newer_version(left: str, right: str) -> bool:
     """True if `left` is newer than `right`, comparing numbers rather than text."""
     def parts(v: str) -> tuple[int, ...]:
         core = v.strip().lstrip("v").split("-", 1)[0].split("+", 1)[0]
-        return tuple(int(n) for n in core.split(".")[:3])
+        nums = []
+        for n in core.split(".")[:3]:
+            if not n.isdigit():
+                raise ValueError(f"non-semver tag {v!r}")
+            nums.append(int(n))
+        while len(nums) < 3:
+            nums.append(0)
+        return tuple(nums)
 
     return parts(left) > parts(right)
 
@@ -179,9 +186,15 @@ def _preflight() -> int:
         ["git", "-C", str(repo), "tag", "--list", "--sort=-v:refname"],
         capture_output=True, text=True, encoding="utf-8", errors="replace", check=False, timeout=30,
     ).stdout.split()
+    tags = [t for t in tags if is_semver(t.lstrip("v"))]
     if tags:
         newest = tags[0]
-        if not newer_version(version, newest):
+        try:
+            is_newer = newer_version(version, newest)
+        except ValueError:
+            is_newer = False
+            problems.append(f"cannot compare VERSION {version!r} with tag {newest!r}")
+        if not is_newer and not any("cannot compare" in p for p in problems):
             problems.append(
                 f"VERSION {version} is not newer than the newest tag {newest}: "
                 f"a release would name a version that already exists"

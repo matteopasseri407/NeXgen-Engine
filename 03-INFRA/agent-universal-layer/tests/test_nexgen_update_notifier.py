@@ -504,3 +504,38 @@ def test_hook_removal_preserves_user_blocks(tmp_path, monkeypatch, shell, relati
     target.write_text(content + block + content, encoding='utf-8')
     assert notifier.cmd_install_shell_hook(remove=True,shell=shell) == 0
     assert target.read_text(encoding='utf-8') == content + content
+
+
+def test_background_refresh_spawns_without_console_window_on_windows(tmp_path, monkeypatch):
+    """The shell-hook refresh must not flash a CMD window on Windows.
+
+    Regression: the detached spawn used DETACHED_PROCESS alone, which
+    hands the console child a brand-new visible window at every shell
+    startup with a stale cache.
+
+    Never patch os.name itself here: it is process-global and poisons
+    pathlib/pytest on POSIX. Patch only the reference this module sees.
+    """
+    _isolate(tmp_path, monkeypatch)
+    import types
+
+    from nexgen_core.tools import notifier_state
+    monkeypatch.setattr(
+        notifier_state, "os", types.SimpleNamespace(name="nt")
+    )
+    monkeypatch.setattr(notifier.shutil, "which", lambda _name: "C:\\bin\\nexgen.cmd")
+    calls = {}
+
+    def fake_popen(*args, **kwargs):
+        calls["kwargs"] = kwargs
+
+        class _Proc:
+            pass
+
+        return _Proc()
+
+    monkeypatch.setattr(notifier.subprocess, "Popen", fake_popen)
+    notifier._spawn_background_refresh()
+    flags = calls["kwargs"].get("creationflags", 0)
+    assert flags & getattr(notifier.subprocess, "DETACHED_PROCESS", 0x00000008)
+    assert flags & getattr(notifier.subprocess, "CREATE_NO_WINDOW", 0x08000000)

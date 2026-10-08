@@ -13,6 +13,7 @@ import subprocess
 import sys
 from pathlib import Path
 from typing import Any
+from nexgen_core.marks import safe_text
 
 from nexgen_core.paths import resolve_home
 from nexgen_core.tools.info import (
@@ -158,7 +159,7 @@ class NeXgenShell(cmd.Cmd):
     def do_info(self, arg: str) -> None:
         """Show visual system architecture and health dashboard."""
         as_json = "--json" in arg
-        print(render_info(as_json=as_json, vault_data=self.vault_data))
+        print(safe_text(render_info(as_json=as_json, vault_data=self.vault_data)))
 
     def do_status(self, arg: str) -> None:
         """Alias for info."""
@@ -247,14 +248,14 @@ class NeXgenShell(cmd.Cmd):
     def do_clear(self, arg: str) -> None:
         """Clear the terminal screen and reprint status header."""
         os.system("cls" if sys.platform == "win32" else "clear")
-        print(render_info(vault_data=self.vault_data))
-        print(render_menu())
+        print(safe_text(render_info(vault_data=self.vault_data)))
+        print(safe_text(render_menu()))
         print()
 
     def do_help(self, arg: str) -> None:
         """Display the selectable actions menu and usage help."""
         print()
-        print(render_menu())
+        print(safe_text(render_menu()))
         print(f"  {C_DIM}Tip: Enter a number [1-7, 0] or type command with arguments (e.g. 'doctor -v'){C_RESET}")
         print()
 
@@ -273,8 +274,8 @@ class NeXgenShell(cmd.Cmd):
 
 def run_shell(vault_data: Path | None = None) -> int:
     """Launches the interactive NeXgen Shell session."""
-    print(render_info(vault_data=vault_data))
-    print(render_menu())
+    print(safe_text(render_info(vault_data=vault_data)))
+    print(safe_text(render_menu()))
     print()
     try:
         shell = NeXgenShell(vault_data=vault_data)

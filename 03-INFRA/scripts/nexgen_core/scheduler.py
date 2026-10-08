@@ -183,19 +183,17 @@ def _atomic_write_text(path: Path, content: str) -> None:
 
 
 def _write_if_different(path: Path, content: str) -> bool:
+    from nexgen_core.files import write_text_if_changed
+
     if path.is_symlink():
+        try:
+            target = path.resolve(strict=True)
+        except OSError as exc:
+            raise OSError(f"refusing to write through a broken symlink at {path}: {exc}") from exc
         # A managed symlink farm points elsewhere on purpose: write through
         # the link instead of replacing it with a regular file.
-        path = path.resolve(strict=True)
-    if path.exists():
-        try:
-            if path.read_text(encoding="utf-8") == content:
-                return False
-        except (OSError, UnicodeDecodeError):
-            pass
-    path.parent.mkdir(parents=True, exist_ok=True)
-    _atomic_write_text(path, content)
-    return True
+        path = target
+    return write_text_if_changed(path, content)
 
 
 def _resolve_cmd(name: str) -> str | None:
@@ -376,24 +374,39 @@ def install_scheduled_task(
 
     startup_dir = os.environ.get("APPDATA")
     if startup_dir:
-        from nexgen_core.files import atomic_write_text, backup_file
-        startup_vbs = Path(startup_dir) / "Microsoft" / "Windows" / "Start Menu" / "Programs" / "Startup" / "KnowledgeVault Agent Sync.vbs"
-        startup_vbs.parent.mkdir(parents=True, exist_ok=True)
-        try:
-            if startup_vbs.exists() or startup_vbs.is_symlink():
-                existing = startup_vbs.read_bytes()
-                if existing == content.encode("utf-8"):
-                    return heartbeat_ok
-                backup = backup_file(startup_vbs, tag="startup")
-                log(f"startup: kept previous logon script as {backup}")
-            atomic_write_text(startup_vbs, content)
-        except OSError as exc:
-            log(f"startup: cannot safely publish fallback ({type(exc).__name__}); previous script preserved")
-            return heartbeat_ok
-        log(f"startup: fallback logon installed {startup_vbs}")
+        _install_startup_fallback(Path(startup_dir), content, heartbeat_ok, log)
         return heartbeat_ok
     log("scheduled-task: no logon coverage (schtasks denied and APPDATA unset)")
     return False
+
+
+#: How many previous Startup fallback scripts survive rotation.
+STARTUP_FALLBACK_KEEP = 3
+
+
+def _install_startup_fallback(startup_dir: Path, content: str, heartbeat_ok: bool, log) -> bool:
+    """Publishes the Startup-folder logon fallback, rotating its backups.
+
+    Writes only when the content changed; keeps the newest
+    STARTUP_FALLBACK_KEEP previous scripts so a version flap mid-update
+    cannot litter the Startup folder with one backup per guard cycle.
+    """
+    from nexgen_core.files import atomic_write_text, backup_file
+    startup_vbs = startup_dir / "Microsoft" / "Windows" / "Start Menu" / "Programs" / "Startup" / "KnowledgeVault Agent Sync.vbs"
+    startup_vbs.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        if startup_vbs.exists() or startup_vbs.is_symlink():
+            existing = startup_vbs.read_bytes()
+            if existing == content.encode("utf-8"):
+                return heartbeat_ok
+            backup = backup_file(startup_vbs, tag="startup", keep=STARTUP_FALLBACK_KEEP)
+            log(f"startup: kept previous logon script as {backup}")
+        atomic_write_text(startup_vbs, content)
+    except OSError as exc:
+        log(f"startup: cannot safely publish fallback ({type(exc).__name__}); previous script preserved")
+        return heartbeat_ok
+    log(f"startup: fallback logon installed {startup_vbs}")
+    return heartbeat_ok
 
 
 def install_scheduler(

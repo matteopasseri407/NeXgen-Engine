@@ -130,6 +130,10 @@ def quarantine_diverged_commits(
 
     Returns: (success, quarantine_branch_name, message)
     """
+    try:
+        assert_safe_git_refs(remote, branch)
+    except ValueError as exc:
+        return False, "", t("Refusing unsafe git ref: {error}", error=exc)
     import secrets
     import time
     timestamp = time.strftime("%Y%m%d-%H%M%S")
@@ -205,6 +209,10 @@ def quarantine_diverged_commits(
 
 def fast_forward_merge(repo_dir: Path, remote: str = "origin", branch: str = "main") -> tuple[bool, str]:
     """Performs a safe fast-forward merge (--ff-only) when the state is BEHIND."""
+    try:
+        assert_safe_git_refs(remote, branch)
+    except ValueError as exc:
+        return False, t("Refusing unsafe git ref: {error}", error=exc)
     res = run_git(repo_dir, "merge", "--ff-only", f"{remote}/{branch}")
     if res.returncode == 0:
         return True, t("Data updated successfully via fast-forward from {ref}", ref=f"{remote}/{branch}")
@@ -279,6 +287,44 @@ def engine_upstream_remotes(repo_dir: Path, names: list[str] | None = None) -> l
     return found
 
 
+def _is_safe_remote_name(name: str) -> bool:
+    """A git remote NAME, not a URL: no leading dash, no spaces, no control chars."""
+    if not name or name.startswith("-") or name in ("local", "none"):
+        # local/none are engine modes handled elsewhere, not real remotes
+        return name in ("local", "none")
+    return bool(re.fullmatch(r"[A-Za-z0-9._/-]+", name))
+
+
+def _is_safe_branch(branch: str) -> bool:
+    """Branch names must not become git options. Uses git check-ref-format when available."""
+    if not branch or branch.startswith("-") or ".." in branch:
+        return False
+    if not re.fullmatch(r"[A-Za-z0-9._/+-]+", branch):
+        return False
+    try:
+        probe = subprocess.run(
+            ["git", "check-ref-format", "--branch", branch],
+            capture_output=True, text=True, encoding="utf-8", timeout=5, check=False,
+        )
+        return probe.returncode == 0
+    except (OSError, subprocess.SubprocessError):
+        return True
+
+
+def _is_remote_url(value: str) -> bool:
+    return "://" in value or value.startswith("git@") or _SCP_URL.match(value) is not None
+
+
+def assert_safe_git_refs(remote: str, branch: str) -> None:
+    """Fail-closed validation for refs coming from remotes.yaml or env."""
+    if _is_remote_url(remote):
+        raise ValueError(f"remote must be a remote name, not a URL: {remote!r}")
+    if not _is_safe_remote_name(remote) and remote not in ("local", "none"):
+        raise ValueError(f"unsafe git remote name: {remote!r}")
+    if not _is_safe_branch(branch):
+        raise ValueError(f"unsafe git branch name: {branch!r}")
+
+
 def resolve_remotes(vault_data: Path) -> tuple[str, list[str]]:
     """Resolves the authoritative remote and mirrors from the environment or sync/remotes.yaml."""
     env_remote = os.environ.get("KNOWLEDGE_VAULT_REMOTE")
@@ -305,13 +351,22 @@ def resolve_remotes(vault_data: Path) -> tuple[str, list[str]]:
     if env_mirrors:
         mirrors = [m.strip() for m in env_mirrors.split(",") if m.strip()]
 
-    return auth_remote, mirrors
+    if not _is_safe_remote_name(auth_remote) and auth_remote not in ("local", "none"):
+        logger.warning("unsafe authoritative_remote %r, keeping it so downstream validation blocks the cycle", auth_remote)
+    safe_mirrors = [m for m in mirrors if _is_safe_remote_name(m)]
+    if len(safe_mirrors) != len(mirrors):
+        logger.warning("dropping %d unsafe mirror name(s)", len(mirrors) - len(safe_mirrors))
+    return auth_remote, safe_mirrors
 
 
 def oldest_unpublished_commit_timestamp(repo_dir: Path, remote: str, branch: str) -> float | None:
     """Unix timestamp (commit time) of the oldest commit not yet published to
     `remote`. None if there's no commit ahead, or if git can't determine it
     (missing branch/remote, invalid refname)."""
+    try:
+        assert_safe_git_refs(remote, branch)
+    except ValueError:
+        return None
     res = run_git(repo_dir, "log", "--reverse", "-1", "--format=%ct", f"{remote}/{branch}..HEAD")
     if res.returncode != 0:
         return None
@@ -408,6 +463,10 @@ def inspect_git_state(
     """Full Git state inspection, per the transactional contract."""
     if remote in ("local", "none"):
         return GitStatusResult(GitState.LOCAL_ONLY, t("Local-Only mode"), expected_branch)
+    try:
+        assert_safe_git_refs(remote, expected_branch)
+    except ValueError as exc:
+        return GitStatusResult(GitState.ERROR, t("Unsafe git ref: {error}", error=exc), expected_branch)
 
     # 1. Conflicts or pending operations
     conflict_msg = check_conflicts_or_rebase(repo_dir)

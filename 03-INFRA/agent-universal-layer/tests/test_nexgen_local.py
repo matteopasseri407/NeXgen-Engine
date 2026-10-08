@@ -87,7 +87,7 @@ def test_read_caps_output(tmp_path: Path) -> None:
     assert "[...troncato" in out and "continua da 20 su 100" in out
     assert tools.last_coverage == {
         "tool": "read_vault", "args": {"path": "lunga.md"},
-        "offset": 0, "total": 100, "truncated": True,
+        "offset": 0, "resume_at": 20, "total": 100, "truncated": True,
     }
     second = tools.read_vault("lunga.md", offset=20)
     assert second.startswith("x" * 20) and "continua da 40 su 100" in second

@@ -235,10 +235,12 @@ class ToolRegistry:
         start = max(0, int(offset or 0))
         chunk = text[start : start + self.cfg.read_chars]
         truncated = start + len(chunk) < total
+        resume_at = start + len(chunk)
         self.last_coverage = {
             "tool": name,
             "args": dict(args),
             "offset": start,
+            "resume_at": resume_at,
             "total": total,
             "truncated": truncated,
         }

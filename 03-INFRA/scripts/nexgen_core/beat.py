@@ -184,12 +184,15 @@ class Heartbeat:
         except Exception as exc:  # noqa: BLE001 - failure is returned, never raises
             # A corrupt liveness file blinds self-monitoring: alert once
             # (debounced) instead of returning a silent False nobody acts on.
-            self.megaphone.send_alert(
-                title=t("Agent sync self-monitoring is blind"),
-                message=t("The liveness file cannot be read ({error}); fix or delete it.", error=exc),
-                action=t("Run 'agent-sync apply' in the terminal to check the status."),
-                alert_key="guard_liveness_corrupt",
-            )
+            try:
+                self.megaphone.send_alert(
+                    title=t("Agent sync self-monitoring is blind"),
+                    message=t("The liveness file cannot be read ({error}); fix or delete it.", error=exc),
+                    action=t("Run 'agent-sync apply' in the terminal to check the status."),
+                    alert_key="guard_liveness_corrupt",
+                )
+            except Exception:
+                pass
             return False, t("Error reading liveness: {error}", error=exc)
 
     def run_dependency_watch(self) -> dict[str, Any]:

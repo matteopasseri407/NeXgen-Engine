@@ -51,7 +51,7 @@ def check_ref(
     if run_git(repo, "merge-base", "--is-ancestor", previous, target).returncode != 0:
         return False, [f"{ref} does not descend from its previous tip"]
     if ref == integration:
-        published = resolve_revision(repo, "origin/main")
+        published = resolve_revision(repo, "origin/main") or resolve_revision(repo, "main")
         if published is None:
             return False, ["could not resolve published main; fetch origin/main"]
         if run_git(repo, "merge-base", "--is-ancestor", published, target).returncode != 0:

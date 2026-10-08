@@ -201,11 +201,24 @@ class GuardRunner:
                             "instruction pointer {path} left untouched: safety backup failed ({error})",
                             path=target, error=exc,
                         ))
-                target.unlink()
             try:
-                target.symlink_to(canon)
+                from nexgen_core.files import publish_symlink
+
+                publish_symlink(target, canon)
             except OSError:
                 # Windows without symlink privileges: a copy beats nothing.
+                # publish_symlink never leaves the target missing, so a copy
+                # fallback only runs when the atomic path failed.
+                if target.is_dir() and not target.is_symlink():
+                    return False, (WARN + t(
+                        "instruction pointer {path} is a directory, left untouched",
+                        path=target,
+                    ))
+                try:
+                    if target.is_symlink() or target.is_file():
+                        target.unlink()
+                except OSError:
+                    pass
                 shutil.copy2(canon, target)
             return True, None
         except OSError as exc:
@@ -394,9 +407,20 @@ class GuardRunner:
             if not isinstance(spec, dict) or not isinstance(spec.get("file"), str):
                 continue
             candidate = (manifest_path.parent / spec["file"]).resolve()
-            if not str(candidate).startswith(str(manifest_path.parent.resolve())):
+            try:
+                parent_resolved = manifest_path.parent.resolve()
+                is_inside = candidate.is_relative_to(parent_resolved)
+            except (OSError, ValueError):
+                is_inside = False
+            if not is_inside:
                 name = spec.get("name", spec["file"])
                 return [WARN + t("runtime-permissions: {name} escapes permissions/, guardrail rejected", name=name)]
+            from nexgen_core.runtimes.base import Runtime
+
+            hook_name = Path(spec["file"]).name
+            if not Runtime._is_safe_hook_filename(hook_name):
+                name = spec.get("name", spec["file"])
+                return [WARN + t("runtime-permissions: {name} has an unsafe hook filename, guardrail rejected", name=name)]
             if not candidate.is_file():
                 return [WARN + t("runtime-permissions: guardrail body missing ({path})", path=candidate)]
             guardrail_source = candidate
@@ -645,8 +669,14 @@ class GuardRunner:
 
     def _phase_skills(self, actions: list[str]) -> None:
         """Skill materialization (skills.py)."""
+        import os
+
         mat = SkillMaterializer(vault_data=self.vault_data, engine_root=self.engine_root, home=self.home)
-        _skill_changes, skill_actions = mat.materialize(apply=True)
+        # The recurring guard never executes third-party installers: a Vault
+        # commit could otherwise run arbitrary commands on every machine twice
+        # an hour. Only an explicit `skills-sync apply` runs them.
+        allow_exec = os.environ.get("NEXGEN_ALLOW_INSTALLER_EXEC", "").strip().lower() in ("1", "true", "yes")
+        _skill_changes, skill_actions = mat.materialize(apply=True, allow_installer_exec=allow_exec)
         actions.extend(skill_actions)
         if any(is_error(action) for action in skill_actions):
             raise AlignmentError(t("Skill materialization failed (see the [ERROR] lines above)."))

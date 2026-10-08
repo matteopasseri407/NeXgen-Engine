@@ -107,7 +107,7 @@ def test_release_without_command_entry_is_refused_before_engine_moves(tmp_path, 
     _git(origin, "tag", "v0.2.0")
     updater = _load_updater()
     before = _git(engine, "rev-parse", "HEAD").stdout
-    assert updater.main(["--yes"], environ=_env(engine)) == 1
+    assert updater.main(["--yes", "--allow-unverified"], environ=_env(engine)) == 1
     assert _git(engine, "rev-parse", "HEAD").stdout == before
 
 
@@ -224,7 +224,7 @@ def test_yes_merges_release_without_detaching_head(tmp_path, capsys):
     updater = _load_updater()
     _origin, engine = _upgrade_fixture(tmp_path)
 
-    result = updater.main(["--yes"], environ=_env(engine))
+    result = updater.main(["--yes", "--allow-unverified"], environ=_env(engine))
 
     assert result == 0
     assert (engine / "VERSION").read_text(encoding="utf-8").strip() == "0.2.0"
@@ -239,7 +239,7 @@ def test_declined_confirmation_moves_nothing(tmp_path, capsys):
     before = _git(engine, "rev-parse", "HEAD").stdout.strip()
 
     result = updater.main(
-        [], environ=_env(engine), input_fn=lambda _prompt: "no"
+        ["--allow-unverified"], environ=_env(engine), input_fn=lambda _prompt: "no"
     )
 
     assert result == 0
@@ -261,7 +261,7 @@ def test_dirty_data_repo_blocks_before_engine_ref_moves(tmp_path, capsys):
     _git(data, "commit", "-m", "seed data")
     note.write_text("work in progress\n", encoding="utf-8")
 
-    result = updater.main(["--yes"], environ=_env(engine, data))
+    result = updater.main(["--yes", "--allow-unverified"], environ=_env(engine, data))
 
     assert result == 1
     assert _git(engine, "rev-parse", "HEAD").stdout.strip() == before
@@ -274,7 +274,7 @@ def test_dirty_engine_repo_blocks_before_merge(tmp_path, capsys):
     before = _git(engine, "rev-parse", "HEAD").stdout.strip()
     (engine / "local-work.txt").write_text("do not overwrite\n", encoding="utf-8")
 
-    result = updater.main(["--yes"], environ=_env(engine))
+    result = updater.main(["--yes", "--allow-unverified"], environ=_env(engine))
 
     assert result == 1
     assert _git(engine, "rev-parse", "HEAD").stdout.strip() == before
@@ -287,7 +287,7 @@ def test_detached_engine_checkout_is_refused(tmp_path, capsys):
     before = _git(engine, "rev-parse", "HEAD").stdout.strip()
     _git(engine, "checkout", "--detach", before)
 
-    result = updater.main(["--yes"], environ=_env(engine))
+    result = updater.main(["--yes", "--allow-unverified"], environ=_env(engine))
 
     assert result == 1
     assert _git(engine, "rev-parse", "HEAD").stdout.strip() == before
@@ -302,7 +302,7 @@ def test_missing_noninteractive_confirmation_fails_without_moving(tmp_path, caps
     def eof(_prompt):
         raise EOFError
 
-    result = updater.main([], environ=_env(engine), input_fn=eof)
+    result = updater.main(["--allow-unverified"], environ=_env(engine), input_fn=eof)
 
     assert result == 1
     assert _git(engine, "rev-parse", "HEAD").stdout.strip() == before
@@ -332,7 +332,7 @@ def test_wrong_or_foreign_release_signature_is_rejected(tmp_path, capsys, monkey
     monkeypatch.setattr(updater, "verify_release_tag", lambda *_a, **_k: updater.TagVerdict(status, "synthetic"))
 
     # 70, not the generic 1: the heartbeat turns it into an alert.
-    assert updater.main(["--yes"], environ=_env(engine)) == updater.EXIT_REFUSED == 70
+    assert updater.main(["--yes", "--allow-unverified"], environ=_env(engine)) == updater.EXIT_REFUSED == 70
     assert updater.main(["--check"], environ=_env(engine)) == updater.EXIT_REFUSED
 
     assert _git(engine, "rev-parse", "HEAD").stdout.strip() == before
@@ -376,7 +376,7 @@ def test_release_tag_with_mismatched_version_is_rejected_before_merge(tmp_path, 
     _git(origin, "tag", "-d", "v0.3.1")
     _git(origin, "tag", "v0.3.0")
 
-    result = updater.main(["--yes"], environ=_env(engine))
+    result = updater.main(["--yes", "--allow-unverified"], environ=_env(engine))
 
     assert result == 1
     assert _git(engine, "rev-parse", "HEAD").stdout.strip() == before
@@ -394,7 +394,7 @@ def test_single_clone_preserves_local_data_commit_with_a_merge(tmp_path, capsys)
     _git(engine, "config", "user.email", "nexgen-merge-test@localhost")
     local_commit = _git(engine, "rev-parse", "HEAD").stdout.strip()
 
-    result = updater.main(["--yes"], environ=_env(engine))
+    result = updater.main(["--yes", "--allow-unverified"], environ=_env(engine))
 
     assert result == 0
     assert local.read_text(encoding="utf-8") == "keep this history\n"
@@ -420,7 +420,7 @@ def test_split_engine_history_must_fast_forward(tmp_path, capsys):
     _git(data, "add", "note.md")
     _git(data, "commit", "-m", "seed data")
 
-    result = updater.main(["--yes"], environ=_env(engine, data))
+    result = updater.main(["--yes", "--allow-unverified"], environ=_env(engine, data))
 
     assert result == 1
     assert _git(engine, "rev-parse", "HEAD").stdout.strip() == before
@@ -442,7 +442,7 @@ def test_missing_single_clone_merge_identity_has_actionable_error(tmp_path, monk
 def test_explicit_downgrade_is_refused(tmp_path, capsys):
     updater = _load_updater()
     _origin, engine = _upgrade_fixture(tmp_path)
-    assert updater.main(["--yes"], environ=_env(engine)) == 0
+    assert updater.main(["--yes", "--allow-unverified"], environ=_env(engine)) == 0
     capsys.readouterr()
     before = _git(engine, "rev-parse", "HEAD").stdout.strip()
 
@@ -477,7 +477,7 @@ def test_post_merge_steps_never_touch_PATH(tmp_path, capsys, monkeypatch):
     monkeypatch.setattr(updater, "_run", fake_entry)
     monkeypatch.setattr(updater, "_doctor", lambda *_args, **_kwargs: (0, 0))
 
-    result = updater.main(["--yes"], environ=_env(engine))
+    result = updater.main(["--yes", "--allow-unverified"], environ=_env(engine))
 
     assert result == 0
     assert (engine / "VERSION").read_text(encoding="utf-8").strip() == "0.2.0"
@@ -516,7 +516,7 @@ def test_split_pin_is_committed_before_provisioning(tmp_path, capsys, monkeypatc
     monkeypatch.setattr(updater, "_run", fake_commands)
     monkeypatch.setattr(updater, "_doctor", lambda *_args, **_kwargs: (0, 0))
 
-    result = updater.main(["--yes"], environ=_env(engine, data))
+    result = updater.main(["--yes", "--allow-unverified"], environ=_env(engine, data))
 
     assert result == 0
     assert events == ["pin", "sync"]
@@ -552,7 +552,7 @@ def test_failed_split_pin_publish_stops_before_provisioning(tmp_path, capsys, mo
         return real_run(args, **kwargs)
 
     monkeypatch.setattr(updater, "_run", fail_pin_publish)
-    result = updater.main(["--yes"], environ=_env(engine, data))
+    result = updater.main(["--yes", "--allow-unverified"], environ=_env(engine, data))
 
     assert result == 1
     assert sync_called is False
@@ -569,7 +569,7 @@ def test_unreadable_pre_upgrade_doctor_blocks_before_merge(tmp_path, capsys, mon
     before = _git(engine, "rev-parse", "HEAD").stdout.strip()
     monkeypatch.setattr(updater, "_doctor", lambda *_args, **_kwargs: (None, 1))
 
-    result = updater.main(["--yes"], environ=_env(engine))
+    result = updater.main(["--yes", "--allow-unverified"], environ=_env(engine))
 
     assert result == 1
     assert _git(engine, "rev-parse", "HEAD").stdout.strip() == before
@@ -589,7 +589,7 @@ def test_failed_provisioning_does_not_auto_rollback(tmp_path, capsys, monkeypatc
         return real_run(args, **kwargs)
 
     monkeypatch.setattr(updater, "_run", fake_sync)
-    result = updater.main(["--yes"], environ=_env(engine))
+    result = updater.main(["--yes", "--allow-unverified"], environ=_env(engine))
 
     assert result == 1
     assert (engine / "VERSION").read_text(encoding="utf-8").strip() == "0.2.0"
@@ -618,7 +618,7 @@ def test_operational_exception_after_merge_keeps_recovery_instructions(tmp_path,
         return real_run(args, **kwargs)
 
     monkeypatch.setattr(updater, "_run", failing_command)
-    assert updater.main(["--yes"], environ=_env(engine)) == 1
+    assert updater.main(["--yes", "--allow-unverified"], environ=_env(engine)) == 1
     assert (engine / "VERSION").read_text().strip() == "0.2.0"
     error = capsys.readouterr().err
     assert f"git -C {engine} reset --hard {previous}" in error
@@ -651,7 +651,7 @@ def test_merge_failure_after_ref_moved_does_not_claim_rollback(tmp_path, capsys,
         return result
 
     monkeypatch.setattr(updater, "_run", failure_after_merge)
-    assert updater.main(["--yes"], environ=_env(engine)) == 1
+    assert updater.main(["--yes", "--allow-unverified"], environ=_env(engine)) == 1
     assert (engine / "VERSION").read_text().strip() == "0.2.0"
     error = capsys.readouterr().err
     assert "was rolled back" not in error
@@ -707,7 +707,7 @@ def test_failed_abort_keeps_recovery_instructions_when_ref_is_unchanged(tmp_path
         return real_run(args, **kwargs)
 
     monkeypatch.setattr(updater, "_run", failed_abort)
-    assert updater.main(["--yes"], environ=_env(engine)) == 1
+    assert updater.main(["--yes", "--allow-unverified"], environ=_env(engine)) == 1
     assert _git(engine, "rev-parse", "HEAD").stdout.strip() == previous
     assert "<<<<<<<" in changelog.read_text(encoding="utf-8")
     error = capsys.readouterr().err
@@ -730,7 +730,7 @@ def test_new_doctor_failure_is_reported_without_auto_rollback(tmp_path, capsys, 
         return real_run(args, **kwargs)
 
     monkeypatch.setattr(updater, "_run", fake_sync)
-    result = updater.main(["--yes"], environ=_env(engine))
+    result = updater.main(["--yes", "--allow-unverified"], environ=_env(engine))
 
     assert result == 1
     assert (engine / "VERSION").read_text(encoding="utf-8").strip() == "0.2.0"
@@ -788,7 +788,7 @@ def test_conflicted_merge_is_rolled_back_instead_of_leaving_markers(tmp_path, ca
     _git(engine, "commit", "-m", "local changelog edit")
     head_before = _git(engine, "rev-parse", "HEAD").stdout.strip()
 
-    result = updater.main(["--yes"], environ=_env(engine))
+    result = updater.main(["--yes", "--allow-unverified"], environ=_env(engine))
 
     assert result == 1
     assert _git(engine, "rev-parse", "HEAD").stdout.strip() == head_before
@@ -809,7 +809,7 @@ def test_being_ahead_of_the_newest_release_is_not_a_fault(tmp_path, capsys):
     """
     updater = _load_updater()
     _origin, engine = _upgrade_fixture(tmp_path)
-    assert updater.main(["--yes"], environ=_env(engine)) == 0
+    assert updater.main(["--yes", "--allow-unverified"], environ=_env(engine)) == 0
     capsys.readouterr()
     (engine / "VERSION").write_text("99.0.0\n", encoding="utf-8")
 
@@ -846,7 +846,7 @@ def test_doctor_with_undetermined_checks_does_not_block_update(tmp_path, capsys,
 
     monkeypatch.setattr(updater, "_run", fake_commands)
 
-    result = updater.main(["--yes"], environ=_env(engine))
+    result = updater.main(["--yes", "--allow-unverified"], environ=_env(engine))
 
     assert result == 0
     output = capsys.readouterr().out

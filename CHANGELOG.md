@@ -10,6 +10,46 @@ of any engine release.
 
 ## [Unreleased]
 
+### Fixed
+
+- Windows: `nexgen info` and the interactive shell no longer crash with
+  `'charmap' codec can't encode characters` on consoles whose code page
+  is not UTF-8. The dashboard degrades its box glyphs to ASCII there
+  (`marks.safe_text`) instead of raising; UTF-8 output is byte-identical.
+- Windows: the update-notifier's background refresh no longer flashes a
+  CMD window at shell startup. The detached spawn now carries
+  `CREATE_NO_WINDOW` alongside `DETACHED_PROCESS`.
+- Windows: a dangling skill junction (target moved across versions) no
+  longer fails the whole skills phase with `WinError 183` on every guard
+  cycle, leaving every skill view broken. The dead entry is dropped and
+  one skill's I/O error cannot stop the others from materializing.
+- Set-aside skill views and Startup fallback scripts now rotate (newest 3
+  survive), so a version flap mid-update cannot pile one backup per guard
+  cycle into the skills dirs or the Startup folder.
+
+## [2.5.1] - 2026-10-08
+
+### Fixed
+
+- CLI singular and plural aliases: `nexgen module` is an alias of `nexgen modules`, `nexgen tools` is an alias of
+  `nexgen tool`, and `nexgen stacks` is an alias of `nexgen stack` (completing `nexgen skills` for `skill`).
+- `nexgen_local.__main__` is now guarded by `if __name__ == "__main__":` to prevent premature execution during package
+  walks and test inspection.
+- `check_engine.py` automatically resolves the repository `.venv` interpreter when executed with a system Python lacking
+  test dependencies.
+- Cleaned up `# noqa` directives in `ruff_baseline.py` to prevent linter syntax warnings.
+- Pre-release hardening from bug hunt plus council challenge and code review with Claude Opus 5.5:
+  guard never executes third-party skill installers, guardrail path uses `is_relative_to` with hook filename allowlist,
+  git remote and branch validation fail closed, unverifiable releases need explicit `--allow-unverified`,
+  missing vault plan is dirty, vault promote holds `groom.lock`, restricted secret writes never fall back to world
+  readable, lazy MCP caps requests and locks audit, OAuth refresh holds its lock, Codex collision and empty command
+  handling, scheduler symlink errors surface, research resume resets penalties and resume points.
+- Council review follow-ups: updater lock stays merge only to avoid deadlock with child apply and vault push,
+  unsafe remotes are kept so downstream validation blocks instead of silently switching to origin,
+  Codex rename retired plus active is allowed, event sink matching uses shell split, scheduler propagates errors,
+  groom never removes shared timestamp paths, installer skills warn only on version drift, request too large answers
+  with its id, renderer isolates one corrupt CLI from the other three, liveness alerts never crash the beat.
+
 ## [2.5.0] - 2026-10-08
 
 ### Security
