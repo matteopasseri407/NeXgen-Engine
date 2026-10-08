@@ -166,7 +166,14 @@ def _collect_round(names, ask, result: ConsultResult, session_dir, brief: str, r
             else:
                 target.append(outcome)
                 target.sort(key=lambda opinion: names.index(opinion.seat_name))
-                result.tally[outcome.verdict] = result.tally.get(outcome.verdict, 0) + 1
+                if round_no == 1:
+                    result.tally[outcome.verdict] = result.tally.get(outcome.verdict, 0) + 1
+                else:
+                    rebuttals = getattr(result, "rebuttal_tally", None)
+                    if rebuttals is None:
+                        result.rebuttal_tally = {}
+                        rebuttals = result.rebuttal_tally
+                    rebuttals[outcome.verdict] = rebuttals.get(outcome.verdict, 0) + 1
                 label = "rebuttal" if round_no == 2 else outcome.model
                 print(f"\n## {name} ({label}): {outcome.verdict}\n\n{outcome.response}", flush=True)
                 kind = "opinion" if round_no == 1 else "rebuttal"

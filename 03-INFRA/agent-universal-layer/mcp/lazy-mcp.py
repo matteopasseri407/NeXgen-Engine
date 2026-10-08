@@ -110,7 +110,9 @@ HINT_KEYS = ("readOnlyHint", "destructiveHint", "idempotentHint", "openWorldHint
 #: unknown result fields through, so the same envelope serves both eras.
 RESULT_TYPE = "complete"
 MAX_REPLY_BYTES = 8 * 1024 * 1024
+MAX_REQUEST_BYTES = 8 * 1024 * 1024
 TRANSPORT_ERROR = -32000
+_AUDIT_LOCK = threading.Lock()
 
 
 class _TransportError(RuntimeError):
@@ -1007,12 +1009,13 @@ class Waiter:
 
     def _audit(self, server: str, tool: str, action: str, confirmed: bool = False) -> None:
         try:
-            with open(_log_path(), "a", encoding="utf-8") as fh:
-                fh.write(json.dumps({
-                    "ts": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
-                    "server": server, "tool": tool, "action": action,
-                    "confirmed": confirmed,
-                }) + "\n")
+            with _AUDIT_LOCK:
+                with open(_log_path(), "a", encoding="utf-8") as fh:
+                    fh.write(json.dumps({
+                        "ts": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+                        "server": server, "tool": tool, "action": action,
+                        "confirmed": confirmed,
+                    }) + "\n")
         except OSError:
             pass
 
@@ -1392,6 +1395,8 @@ def main() -> int:
     try:
         if FRAMING == "headers":
             for line in sys.stdin:
+                if len(line) > MAX_REQUEST_BYTES + 1:
+                    continue
                 line = line.strip()
                 if not line:
                     continue

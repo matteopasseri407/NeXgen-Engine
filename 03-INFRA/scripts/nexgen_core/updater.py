@@ -114,12 +114,15 @@ def _run(
     capture: bool = True,
 ) -> subprocess.CompletedProcess[str]:
     timeout = GIT_TIMEOUT_SECONDS if args and args[0] == "git" else COMMAND_TIMEOUT_SECONDS
+    env = dict(os.environ)
+    env.setdefault("GIT_TERMINAL_PROMPT", "0")
     try:
         proc = subprocess.Popen(
             list(args), cwd=str(cwd), text=True, encoding="utf-8", errors="replace",
             stdout=subprocess.PIPE if capture else None,
             stderr=subprocess.PIPE if capture else None,
             start_new_session=os.name == "posix",
+            env=env,
         )
     except OSError as exc:
         raise UpdateError(f"cannot launch update command ({type(exc).__name__})") from exc
@@ -127,6 +130,7 @@ def _run(
     try:
         try:
             out, err = proc.communicate(timeout=timeout)
+            group = None
         except subprocess.TimeoutExpired as exc:
             stopped = force_stop_process_tree(proc, process_group=group)
             if stopped:
@@ -144,7 +148,7 @@ def _run(
         force_stop_process_tree(proc, process_group=group)
         raise
     finally:
-        if group is not None or proc.poll() is None:
+        if proc.poll() is None:
             force_stop_process_tree(proc, process_group=group)
     if check and result.returncode != 0:
         detail = (result.stderr or result.stdout or "command failed").strip()
@@ -524,6 +528,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--yes", action="store_true", help="confirm the displayed update plan non-interactively")
     parser.add_argument(
+        "--allow-unverified",
+        action="store_true",
+        help="install even when the release signature cannot be verified (explicit opt-in, never default)",
+    )
+    parser.add_argument(
         "--unattended",
         action="store_true",
         help=(
@@ -638,7 +647,12 @@ def main(
             raise UpdateError(
                 f"unattended update refuses {target}: its signature could not be verified "
                 f"({verdict.detail}); recover by running 'nexgen-update --target {target.removeprefix('v')}' "
-                "interactively once you have checked the release"
+                "--allow-unverified interactively once you have checked the release"
+            )
+        if not verdict.ok and not args.allow_unverified:
+            raise UpdateRefused(
+                f"release {target} could not be verified ({verdict.detail}). "
+                "Nothing was installed. Rerun with --allow-unverified only after checking the release by hand."
             )
 
         _assert_mergeable(engine_repo, data_repo, target, split_topology=split_topology)
@@ -680,6 +694,11 @@ def main(
         try:
             # Whatever the guard did while we waited for the lock or for an
             # answer at the prompt, the merge needs the state checked above.
+            # The lock covers ONLY the merge: pin (vault-push) and apply run
+            # as child processes that take the same host lock themselves.
+            # Holding it across them would deadlock (lock is not re-entrant
+            # across processes, see lock.host_mutation). A guard cycle racing
+            # between merge and apply is resolved by re-running apply.
             _assert_mergeable(engine_repo, data_repo, target, split_topology=split_topology)
             previous_head = _git(engine_repo, "rev-parse", "HEAD").stdout.strip()
             mutation_started = True

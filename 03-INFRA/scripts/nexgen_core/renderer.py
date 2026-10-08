@@ -165,6 +165,12 @@ class McpRenderer:
                 else:
                     entry["args"] = []
 
+            if not str(entry.get("command") or "").strip() and not entry.get("url"):
+                import logging
+
+                logging.getLogger(__name__).warning("MCP server %r has an empty command after expansion, skipped", name)
+                continue
+
             # URL resolution
             if entry.get("url"):
                 entry["url"] = self._expand_value(str(entry["url"]))

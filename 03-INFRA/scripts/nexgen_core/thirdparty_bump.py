@@ -232,8 +232,8 @@ def apply_plan(
 
         skills_raw = load_skills_manifest(skills_path).get("skills", {})
         mcp_raw = load_mcp_manifest(mcp_path).get("servers", {}) if mcp_path.is_file() else {}
-    except Exception:  # noqa: BLE001 - bump failure is reported, never raises
-        skills_raw, mcp_raw = {}, {}
+    except Exception as exc:  # noqa: BLE001 - bump failure is reported, never raises
+        return 0, [f"{ERROR}cannot parse manifests, refusing to bump on corrupt config ({type(exc).__name__})"], []
 
     def _approved(change: tuple, name: str, field: str | None) -> bool:
         """This carrier approves exactly this change (kind, old, new).

@@ -183,19 +183,17 @@ def _atomic_write_text(path: Path, content: str) -> None:
 
 
 def _write_if_different(path: Path, content: str) -> bool:
+    from nexgen_core.files import write_text_if_changed
+
     if path.is_symlink():
+        try:
+            target = path.resolve(strict=True)
+        except OSError as exc:
+            raise OSError(f"refusing to write through a broken symlink at {path}: {exc}") from exc
         # A managed symlink farm points elsewhere on purpose: write through
         # the link instead of replacing it with a regular file.
-        path = path.resolve(strict=True)
-    if path.exists():
-        try:
-            if path.read_text(encoding="utf-8") == content:
-                return False
-        except (OSError, UnicodeDecodeError):
-            pass
-    path.parent.mkdir(parents=True, exist_ok=True)
-    _atomic_write_text(path, content)
-    return True
+        path = target
+    return write_text_if_changed(path, content)
 
 
 def _resolve_cmd(name: str) -> str | None:

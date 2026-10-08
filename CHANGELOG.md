@@ -19,6 +19,12 @@ of any engine release.
 - `check_engine.py` automatically resolves the repository `.venv` interpreter when executed with a system Python lacking
   test dependencies.
 - Cleaned up `# noqa` directives in `ruff_baseline.py` to prevent linter syntax warnings.
+- Pre-release hardening from bug hunt plus council challenge and code review with Claude Opus 5.5:
+  guard never executes third-party skill installers, guardrail path uses `is_relative_to` with hook filename allowlist,
+  git remote and branch validation fail closed, unverifiable releases need explicit `--allow-unverified`,
+  missing vault plan is dirty, vault promote holds `groom.lock`, restricted secret writes never fall back to world
+  readable, lazy MCP caps requests and locks audit, OAuth refresh holds its lock, Codex collision and empty command
+  handling, scheduler symlink errors surface, research resume resets penalties and resume points.
 
 ## [2.5.0] - 2026-10-08
 

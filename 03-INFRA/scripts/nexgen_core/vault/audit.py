@@ -197,8 +197,14 @@ def run_audit(request: AuditRequest, *, output=print) -> tuple[dict, int]:
     if blocked is not None:
         return blocked
 
-    line, appended = promote.append_backlog_line(request.vault, record)
-    backlog_commit = promote.commit_backlog(request.vault, request.timestamp) if appended else None
+    from nexgen_core.lock import HostLock, LockTimeoutError
+
+    try:
+        with HostLock(lock_path=request.state_dir / "groom.lock", timeout=30, command_name="vault-groom-promote"):
+            line, appended = promote.append_backlog_line(request.vault, record)
+            backlog_commit = promote.commit_backlog(request.vault, request.timestamp) if appended else None
+    except (OSError, LockTimeoutError) as exc:
+        return _block(record, request, f"could not acquire groom lock: {exc}", EXIT_INTERNAL_OR_PUBLISH_FAILED, output=output)
 
     exit_code = _publish_if_requested(request, record, output=output)
     promote.remove_promoted_clone(request.clone)

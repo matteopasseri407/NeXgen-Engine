@@ -80,12 +80,26 @@ def same_tree_content(src: Path, dst: Path) -> bool:
     """True if two trees contain exactly the same files, byte for byte."""
     if not src.is_dir() or not dst.is_dir():
         return False
-    left = {p.relative_to(src): p for p in src.rglob("*") if p.is_file()}
-    right = {p.relative_to(dst): p for p in dst.rglob("*") if p.is_file()}
+    try:
+        left = {p.relative_to(src): p for p in src.rglob("*") if p.is_file()}
+        right = {p.relative_to(dst): p for p in dst.rglob("*") if p.is_file()}
+    except OSError:
+        return False
     if left.keys() != right.keys():
         return False
+    to_compare: list = []
+    for key, left_path in left.items():
+        right_path = right[key]
+        try:
+            if left_path.stat().st_size != right_path.stat().st_size:
+                return False
+            if left_path.stat().st_mtime_ns == right_path.stat().st_mtime_ns:
+                continue
+        except OSError:
+            return False
+        to_compare.append(key)
     try:
-        return all(left[k].read_bytes() == right[k].read_bytes() for k in left)
+        return all(left[k].read_bytes() == right[k].read_bytes() for k in to_compare)
     except OSError:
         return False
 
