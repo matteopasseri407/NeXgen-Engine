@@ -10,6 +10,8 @@ of any engine release.
 
 ## [Unreleased]
 
+## [2.5.1] - 2026-10-08
+
 ### Fixed
 
 - CLI singular and plural aliases: `nexgen module` is an alias of `nexgen modules`, `nexgen tools` is an alias of
