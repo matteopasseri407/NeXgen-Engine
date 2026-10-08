@@ -41,9 +41,13 @@ def _run(argv: list[str]) -> subprocess.CompletedProcess[str]:
     fake_home = str(Path(tempfile.gettempdir()) / "nonexistent-home-for-tests")
     return subprocess.run(
         [sys.executable, str(entry), *argv],
-        capture_output=True, text=True, check=False, timeout=HELP_TIMEOUT_SECONDS,
+        capture_output=True, text=True, encoding="utf-8", errors="replace",
+        check=False, timeout=HELP_TIMEOUT_SECONDS,
         env={"PATH": "/usr/bin:/bin", "HOME": "/nonexistent-home-for-tests",
-             "USERPROFILE": fake_home},
+              "USERPROFILE": fake_home,
+              # The child must speak UTF-8 whatever the host code page is,
+              # or its accented help text is undecodable bytes here.
+              "PYTHONUTF8": "1"},
     )
 
 
