@@ -168,12 +168,38 @@ def test_replies_are_whole_lines_even_under_concurrent_load(waiter):
     w.ask(1, "lazy_list")
     for i in range(40):
         w.call(100 + i, "lazy_call", server=f"s{i % 4}", tool="sleep", arguments={"s": 0})
-    seen = set()
+    by_id = {}
     for _ in range(40):
         reply = w.read()  # json.loads raises if two replies were written into one line
-        assert reply["result"]["content"][0]["text"] == "slept"
-        seen.add(reply["id"])
-    assert seen == {100 + i for i in range(40)}
+        # Past MAX_CONCURRENT_REQUESTS the gateway answers a structured
+        # -32000 error instead of running the call: success and refusal
+        # are both whole, id-correlated lines.
+        ok = reply.get("result", {}).get("content", [{}])[0].get("text") == "slept"
+        refused = reply.get("error", {}).get("code") == -32000
+        assert ok or refused, reply
+        by_id[reply["id"]] = reply
+    assert set(by_id) == {100 + i for i in range(40)}
+    # The first call always finds a free slot, so it must succeed.
+    assert by_id[100]["result"]["content"][0]["text"] == "slept"
+
+
+def test_excess_concurrent_calls_get_structured_refusals(waiter):
+    """Past the concurrency cap the gateway refuses with id-correlated
+    -32000 errors instead of dropping replies or breaking framing."""
+    w = waiter({"s": {"code": SLOW_SERVER, "readonly": True}},
+               extra_env={"LAZY_MCP_MAX_CONCURRENCY": "1"})
+    w.ask(1, "lazy_list")
+    w.call(2, "lazy_call", server="s", tool="sleep", arguments={"s": 5})
+    time.sleep(0.5)  # the only slot is held
+    for rid in (3, 4, 5):
+        w.call(rid, "lazy_call", server="s", tool="sleep", arguments={"s": 0})
+    refused = set()
+    for _ in range(3):
+        reply = w.read()
+        assert reply["id"] in (3, 4, 5)
+        assert reply["error"]["code"] == -32000
+        refused.add(reply["id"])
+    assert refused == {3, 4, 5}
 
 
 # ------------------------------------------------------------------ failure causes
