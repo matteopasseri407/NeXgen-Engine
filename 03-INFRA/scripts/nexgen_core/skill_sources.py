@@ -101,6 +101,34 @@ def next_backup_path(path: Path) -> Path:
     return candidate
 
 
+#: How many set-aside skill views survive rotation next to the live one.
+SKILL_BACKUP_KEEP = 3
+
+
+def _prune_skill_backups(path: Path) -> None:
+    """Drops rotated-out set-aside views, oldest first.
+
+    Covers both the `<name>.bak-<stamp>` names written here and the
+    `<name>.pre-<tag>-<stamp>.bak` names written by files.backup_file,
+    so a flap cannot pile one backup per guard cycle in the skills dirs.
+    """
+    seen: set[Path] = set()
+    for pattern in (f"{path.name}.bak-*", f"{path.name}.pre-*.bak"):
+        seen.update(path.parent.glob(pattern))
+    ordered = sorted(seen)
+    is_junction = getattr(os.path, "isjunction", lambda p: False)
+    for old in ordered[: max(len(ordered) - SKILL_BACKUP_KEEP, 0)]:
+        # unlink() drops files, symlinks AND junctions without touching
+        # any target (rmtree would follow a junction into a live tree).
+        try:
+            if old.is_symlink() or old.is_file() or is_junction(old):
+                old.unlink()
+            else:
+                shutil.rmtree(old)
+        except OSError:
+            pass
+
+
 def make_link_or_copy(src: Path, dst: Path) -> bool:
     """Creates a symlink (or copies, on Windows if symlink privileges aren't active).
 
@@ -121,6 +149,19 @@ def make_link_or_copy(src: Path, dst: Path) -> bool:
         if same_tree_content(src, dst):
             return False
         dst.rename(next_backup_path(dst))
+        _prune_skill_backups(dst)
+    elif os.path.lexists(dst):
+        # Dangling junction or link (Windows): not a symlink, file, or
+        # dir by probing, yet present on disk. It used to fall through
+        # and kill symlink_to with WinError 183, failing the whole
+        # skills phase on every guard cycle; drop the dead entry.
+        try:
+            dst.unlink()
+        except OSError:
+            try:
+                shutil.rmtree(dst, ignore_errors=False)
+            except OSError:
+                pass
 
     try:
         dst.symlink_to(src, target_is_directory=src.is_dir())

@@ -16,6 +16,7 @@ from nexgen_core.files import atomic_write_text
 from nexgen_core.action_notes import is_error, is_warning  # noqa: E402 - sys.path shim for cloned checkout
 from nexgen_core.i18n import t
 from nexgen_core.marks import safe_mark as _safe_mark
+from nexgen_core.marks import safe_text
 from nexgen_core.paths import (
     remotes_config,
     resolve_engine_root,
@@ -517,7 +518,7 @@ def cmd_info(args) -> int:
     from nexgen_core.tools.info import render_info
     as_json = getattr(args, "json", False)
     interactive = getattr(args, "interactive", False)
-    print(render_info(as_json=as_json, show_all=getattr(args, "all", False)))
+    print(safe_text(render_info(as_json=as_json, show_all=getattr(args, "all", False))))
     if interactive:
         from nexgen_core.tools.shell import run_shell
         return run_shell()
