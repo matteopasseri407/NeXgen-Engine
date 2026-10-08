@@ -219,7 +219,10 @@ def _spawn_background_refresh() -> None:
                 return
             entry = [sys.executable, str(cli_entry), "tool", "update-notifier", "--refresh-cache"]
         if os.name == "nt":
-            creationflags = getattr(subprocess, "DETACHED_PROCESS", 0x00000008)
+            # DETACHED alone hands the console child a brand-new VISIBLE
+            # window: every shell startup flashed a CMD on Windows. Hide it.
+            creationflags = (getattr(subprocess, "DETACHED_PROCESS", 0x00000008)
+                             | getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000))
             subprocess.Popen(
                 entry, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                 stdin=subprocess.DEVNULL, creationflags=creationflags,

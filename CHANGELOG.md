@@ -10,6 +10,23 @@ of any engine release.
 
 ## [Unreleased]
 
+### Fixed
+
+- Windows: `nexgen info` and the interactive shell no longer crash with
+  `'charmap' codec can't encode characters` on consoles whose code page
+  is not UTF-8. The dashboard degrades its box glyphs to ASCII there
+  (`marks.safe_text`) instead of raising; UTF-8 output is byte-identical.
+- Windows: the update-notifier's background refresh no longer flashes a
+  CMD window at shell startup. The detached spawn now carries
+  `CREATE_NO_WINDOW` alongside `DETACHED_PROCESS`.
+- Windows: a dangling skill junction (target moved across versions) no
+  longer fails the whole skills phase with `WinError 183` on every guard
+  cycle, leaving every skill view broken. The dead entry is dropped and
+  one skill's I/O error cannot stop the others from materializing.
+- Set-aside skill views and Startup fallback scripts now rotate (newest 3
+  survive), so a version flap mid-update cannot pile one backup per guard
+  cycle into the skills dirs or the Startup folder.
+
 ## [2.5.0] - 2026-10-08
 
 ### Security

@@ -310,7 +310,15 @@ class SkillMaterializer:
             # If the local source exists, link it into the library
             if entry.source_path and entry.source_path.is_dir():
                 if apply:
-                    if make_link_or_copy(entry.source_path, lib_dest):
+                    try:
+                        linked = make_link_or_copy(entry.source_path, lib_dest)
+                    except OSError as exc:
+                        actions.append(ERROR + t(
+                            "skill '{name}': {error} (the other skills still materialize)",
+                            name=name, error=exc,
+                        ))
+                        continue
+                    if linked:
                         changes += 1
                         actions.append(t("Linked skill '{name}' into the library", name=name))
             elif entry.origin == "github" and entry.repo and entry.commit:
@@ -331,7 +339,15 @@ class SkillMaterializer:
 
                 if clone_success and apply:
                     source = github_skill_source(cache_dir, entry)
-                    if make_link_or_copy(source, lib_dest):
+                    try:
+                        linked = make_link_or_copy(source, lib_dest)
+                    except OSError as exc:
+                        actions.append(ERROR + t(
+                            "skill '{name}': {error} (the other skills still materialize)",
+                            name=name, error=exc,
+                        ))
+                        continue
+                    if linked:
                         changes += 1
                         actions.append(t("Linked github skill '{name}' into the library", name=name))
                     # Record the materialized pin even when the link was
@@ -370,7 +386,15 @@ class SkillMaterializer:
 
                     for tdir in target_dirs:
                         dest = tdir / name
-                        if make_link_or_copy(lib_dest, dest):
+                        try:
+                            linked = make_link_or_copy(lib_dest, dest)
+                        except OSError as exc:
+                            actions.append(ERROR + t(
+                                "skill '{name}': {error} (the other skills still materialize)",
+                                name=name, error=exc,
+                            ))
+                            continue
+                        if linked:
                             changes += 1
                             actions.append(t("Created active view '{name}' for {target}", name=name, target=target))
 
