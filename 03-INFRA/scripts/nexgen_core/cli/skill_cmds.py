@@ -9,7 +9,8 @@ from nexgen_core.i18n import t
 
 
 def register(sub) -> None:
-    p = sub.add_parser("skill", help=t("Find, show, and materialize skills"))
+    # `skills` too: `nexgen info` and the docs have always said `skills bump`.
+    p = sub.add_parser("skill", aliases=["skills"], help=t("Find, show, and materialize skills"))
     ssub = p.add_subparsers(dest="skill_command", metavar="verb")
 
     q = ssub.add_parser("list", help=t("List the managed skills"))

@@ -10,6 +10,11 @@ of any engine release.
 
 ## [Unreleased]
 
+### Fixed
+
+- `nexgen skills bump` works. `nexgen info` and the docs told people to run it, but the command was only ever
+  `nexgen skill bump` and the plural was refused as an invalid choice. `skills` is now an alias of `skill`.
+
 ## [2.5.0] - 2026-10-08
 
 ### Security

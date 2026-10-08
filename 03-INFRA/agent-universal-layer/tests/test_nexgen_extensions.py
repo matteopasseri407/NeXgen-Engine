@@ -210,6 +210,9 @@ def test_the_verbs_exist():
     parser = build_parser()
     assert parser.parse_args(["info", "--all"]).all is True
     assert parser.parse_args(["mcp", "bump"]).mcp_command == "bump"
+    # `nexgen info` and the docs say `skills bump`; the command was only ever `skill bump`
+    assert parser.parse_args(["skills", "bump"]).skill_command == "bump"
+    assert parser.parse_args(["skills", "bump"]).func.__code__ is parser.parse_args(["skill", "bump"]).func.__code__
 
 
 def test_what_the_dependency_watch_writes_is_what_info_reads(machine):
