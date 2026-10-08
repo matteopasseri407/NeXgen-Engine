@@ -512,9 +512,17 @@ def test_background_refresh_spawns_without_console_window_on_windows(tmp_path, m
     Regression: the detached spawn used DETACHED_PROCESS alone, which
     hands the console child a brand-new visible window at every shell
     startup with a stale cache.
+
+    Never patch os.name itself here: it is process-global and poisons
+    pathlib/pytest on POSIX. Patch only the reference this module sees.
     """
     _isolate(tmp_path, monkeypatch)
-    monkeypatch.setattr(notifier.os, "name", "nt")
+    import types
+
+    from nexgen_core.tools import notifier_state
+    monkeypatch.setattr(
+        notifier_state, "os", types.SimpleNamespace(name="nt")
+    )
     monkeypatch.setattr(notifier.shutil, "which", lambda _name: "C:\\bin\\nexgen.cmd")
     calls = {}
 
