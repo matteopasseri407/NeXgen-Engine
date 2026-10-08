@@ -155,11 +155,12 @@ def _start_fake(manifest_fragment: str, tmp_path: Path, audit: Path):
     return proc
 
 
-def _call(proc, server: str, tool: str, arguments=None, confirm: bool | None = None, rid: int = 10):
+def _call(proc, server: str, tool: str, arguments=None, confirm: bool | None = None, rid: int = 10,
+          via: str = "lazy_call"):
     args = {"server": server, "tool": tool, "arguments": arguments or {}}
     if confirm is not None:
         args["confirm"] = confirm
-    r = _rpc(proc, "tools/call", {"name": "lazy_call", "arguments": args}, rid=rid)
+    r = _rpc(proc, "tools/call", {"name": via, "arguments": args}, rid=rid)
     return r["result"]
 
 
@@ -207,7 +208,7 @@ def test_mutating_with_confirm_executes_and_audits(tmp_path: Path):
     audit = tmp_path / "audit.jsonl"
     proc = _start_fake(_base_manifest(FAKE_SERVER), tmp_path, audit)
     try:
-        res = _call(proc, "fake", "write_thing", {"v": "ciao"}, confirm=True)
+        res = _call(proc, "fake", "write_thing", {"v": "ciao"}, confirm=True, via="lazy_mutate")
         assert res.get("isError") is not True, res
         assert res["content"][0]["text"] == "written:ciao"
     finally:
@@ -411,7 +412,8 @@ def test_the_index_carries_the_four_hints_when_the_server_declares_them(tmp_path
 
 
 def test_the_meta_tools_expose_their_own_hints(tmp_path: Path):
-    """lazy_list/lazy_load si dichiarano di sola lettura, lazy_call no."""
+    """lazy_list/lazy_load/lazy_call si dichiarano di sola lettura (lazy_call inoltra solo i tool read-only),
+    lazy_mutate no: e' il tool su cui la CLI chiede il permesso alla persona."""
     audit = tmp_path / "audit.jsonl"
     proc = _start_fake(_base_manifest(FAKE_SERVER), tmp_path, audit)
     try:
@@ -419,8 +421,9 @@ def test_the_meta_tools_expose_their_own_hints(tmp_path: Path):
         tools = {t["name"]: t for t in r["result"]["tools"]}
         assert tools["lazy_list"]["annotations"]["readOnlyHint"] is True
         assert tools["lazy_load"]["annotations"]["readOnlyHint"] is True
-        assert tools["lazy_call"]["annotations"]["readOnlyHint"] is False
-        assert tools["lazy_call"]["annotations"]["destructiveHint"] is True
+        assert tools["lazy_call"]["annotations"]["readOnlyHint"] is True
+        assert tools["lazy_mutate"]["annotations"]["readOnlyHint"] is False
+        assert tools["lazy_mutate"]["annotations"]["destructiveHint"] is True
     finally:
         _stop_waiter(proc)
 

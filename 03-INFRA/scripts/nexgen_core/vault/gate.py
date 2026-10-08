@@ -28,6 +28,7 @@ import tempfile
 from collections.abc import Callable
 from pathlib import Path
 
+from nexgen_core.files import atomic_write_text
 from nexgen_core.git_ops import run_git
 from nexgen_core.errors import NexgenError
 from nexgen_core.i18n import t
@@ -73,7 +74,7 @@ def write_plan_record(state_dir: Path, timestamp: str, tranche_text: str) -> Pat
     state_dir.mkdir(parents=True, exist_ok=True)
     plan_record = state_dir / f"{timestamp}-plan.txt"
     text = tranche_text if tranche_text.endswith("\n") else tranche_text + "\n"
-    plan_record.write_text(text, encoding="utf-8", newline="\n")
+    atomic_write_text(plan_record, text, newline="\n")
     return plan_record
 
 

@@ -91,7 +91,7 @@ def sync_developer(repository: str) -> int:
             ["gh", "api", "--method", "POST", f"repos/{repository}/merges",
              "-f", "base=developer", "-f", "head=main",
              "-f", "commit_message=Merge main into developer"],
-            capture_output=True, text=True, check=False, timeout=120,
+            capture_output=True, text=True, encoding="utf-8", errors="replace", check=False, timeout=120,
         )
     except (OSError, subprocess.TimeoutExpired):
         print("Riallineamento non verificato. Controlla il workflow sync-developer su GitHub.", file=sys.stderr)

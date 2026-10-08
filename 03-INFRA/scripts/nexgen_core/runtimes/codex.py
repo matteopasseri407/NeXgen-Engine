@@ -22,7 +22,7 @@ import tomllib
 from pathlib import Path
 
 from nexgen_core.paths import codex_config
-from nexgen_core.runtimes.base import GuardrailError, Runtime
+from nexgen_core.runtimes.base import EVENT_SINK_NAME, GuardrailError, Runtime
 
 _POSTURE_RENDER = {"bypass": {"approval_policy": "never", "sandbox_mode": "danger-full-access"}}
 
@@ -142,6 +142,31 @@ class CodexRuntime(Runtime):
         del home, hook_source, engine_hooks_dir
         return None  # No verified guardrail hookup for Codex (see above)
 
+    def remove_event_sink(self, home: Path) -> str | None:
+        from nexgen_core.paths import codex_home
+
+        codex_dir = codex_home(home)
+        hooks_path = codex_dir / "hooks.json"
+        changed = False
+        if hooks_path.is_file():
+            try:
+                current = json.loads(hooks_path.read_text(encoding="utf-8"))
+            except (OSError, ValueError) as exc:
+                raise GuardrailError(f"codex: {hooks_path} is not valid JSON ({exc})") from exc
+            if isinstance(current, dict):
+                hooks = current.get("hooks")
+                changed = isinstance(hooks, dict) and self.strip_event_sink_hooks(hooks)
+                if "nexgen-event-sink" in current:
+                    del current["nexgen-event-sink"]
+                    changed = True
+                if changed:
+                    self.backup(hooks_path)
+                    self.atomic_write(hooks_path, json.dumps(current, indent=2) + "\n")
+        removed = self.remove_deployed(codex_dir / EVENT_SINK_NAME)
+        if changed or removed:
+            return f"codex: event sink removed from {hooks_path} (no declared module needs it)"
+        return None
+
     def install_event_sink(self, home: Path, sink_source: Path) -> str | None:
         from nexgen_core.paths import codex_home
 
@@ -152,8 +177,9 @@ class CodexRuntime(Runtime):
         dst = codex_dir / sink_source.name
         deployed = self.deploy_bytes(dst, sink_source.read_bytes())
         hooks_path = codex_dir / "hooks.json"
-        command_done = f"node {dst.as_posix()} on_done codex"
-        command_step = f"node {dst.as_posix()} on_step codex"
+        # Quoted: a home directory with a space (common on Windows) split an unquoted path in two.
+        command_done = f'node "{dst.as_posix()}" on_done codex'
+        command_step = f'node "{dst.as_posix()}" on_step codex'
 
         current: dict = {}
         if hooks_path.is_file():
@@ -178,14 +204,21 @@ class CodexRuntime(Runtime):
             changed = True
 
         def _has_command(groups: list, cmd: str) -> bool:
+            """True when `cmd` is registered; an older spelling of it is rewritten in place."""
+            nonlocal changed
+            found = False
             for g in groups:
                 if isinstance(g, dict):
                     for h in g.get("hooks", []):
                         if isinstance(h, dict):
                             existing_cmd = h.get("command", "")
-                            if existing_cmd == cmd or (sink_source.name in existing_cmd and cmd.split()[-2:] == existing_cmd.split()[-2:]):
-                                return True
-            return False
+                            if existing_cmd == cmd:
+                                found = True
+                            elif sink_source.name in existing_cmd and cmd.split()[-2:] == existing_cmd.split()[-2:]:
+                                h["command"] = cmd
+                                changed = True
+                                found = True
+            return found
 
         # Register Stop hook
         stop_groups = hooks.setdefault("Stop", [])

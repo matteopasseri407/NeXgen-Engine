@@ -32,8 +32,17 @@ ENGINE_DIRNAME = ".nexgen-engine"
 #: lock while they briefly coexist.
 STATE_SUBPATH = (".local", "state")
 
+#: Where the engine's own Python environment lives, relative to the home. Like
+#: the state, it stays out of the engine checkout: a venv inside it would be an
+#: untracked directory, and the updater refuses to work on a dirty tree.
+RUNTIME_SUBPATH = (".local", "share", "nexgen-engine", "runtime")
+
 #: Subfolder of the engine clone that contains scripts/ and agent-universal-layer/.
 ENGINE_SUBDIR = "03-INFRA"
+
+#: Where an installed wheel keeps the same content as `03-INFRA` (the layer:
+#: Council, lazy-mcp, hooks, manifests, skills, templates), inside `nexgen_core`.
+BUNDLED_ENGINE_DIRNAME = "_engine"
 
 
 def resolve_home(home: Path | None = None) -> Path:
@@ -91,17 +100,62 @@ def resolve_engine_root(home: Path | None = None, override: Path | None = None) 
     env = os.environ.get("AGENT_ENGINE_ROOT")
     if env:
         return Path(env).expanduser()
-    return resolve_home(home) / ENGINE_DIRNAME / ENGINE_SUBDIR
+    default = resolve_home(home) / ENGINE_DIRNAME / ENGINE_SUBDIR
+    if default.is_dir():
+        return default
+    # No checkout: an installed wheel carries its own copy of the layer. Without
+    # this, `nexgen council` and everything else that reads the layer looked for a
+    # folder that only exists in a clone.
+    return bundled_engine_root() or default
+
+
+def bundled_engine_root() -> Path | None:
+    """The engine root shipped inside an installed wheel, when there is one."""
+    candidate = Path(__file__).resolve().parent / BUNDLED_ENGINE_DIRNAME
+    return candidate if (candidate / "agent-universal-layer").is_dir() else None
+
+
+def installed_as_package() -> bool:
+    """True when this code runs from a package manager's site-packages.
+
+    Such an install owns its launchers (pipx and uv put them in `~/.local/bin`),
+    has no checkout to update with git and no pyproject to provision from. An
+    editable install runs from the repository and counts as a checkout.
+    """
+    return bool({part.lower() for part in Path(__file__).resolve().parts} & {"site-packages", "dist-packages"})
+
+
+def resolve_runtime_dir(home: Path | None = None) -> Path:
+    """Where the engine's own Python environment lives (see nexgen_core.runtime).
+
+    Precedence: `NEXGEN_RUNTIME_DIR` (absolute), then `XDG_DATA_HOME` when the
+    home in play is the real one, then `~/.local/share/nexgen-engine/runtime`.
+    A sandbox home keeps its own, so a development checkout never shares one
+    with the machine's working installation.
+    """
+    explicit = os.environ.get("NEXGEN_RUNTIME_DIR")
+    if explicit and Path(explicit).expanduser().is_absolute():
+        return Path(explicit).expanduser()
+    xdg = os.environ.get("XDG_DATA_HOME")
+    if xdg and not os.environ.get("NEXGEN_HOME") and (home is None or Path(home) == Path.home()):
+        candidate = Path(xdg).expanduser()
+        if candidate.is_absolute():
+            return candidate / "nexgen-engine" / "runtime"
+    return resolve_home(home).joinpath(*RUNTIME_SUBPATH)
 
 
 def resolve_state_dir(home: Path | None = None, override: Path | None = None) -> Path:
     """Where the machine-local state lives (locks, timestamps, debounce).
 
     Precedence: explicit argument, `AGENT_STATE_DIR`, `XDG_STATE_HOME`,
-    finally `~/.local/state`. `XDG_STATE_HOME` applies only when no explicit
-    home is in play: an explicit `home` (sandbox, tests) or `NEXGEN_HOME`
-    keeps state under that home, otherwise two writers would lock two
-    different files believing each one is alone.
+    finally `~/.local/state`. `XDG_STATE_HOME` applies when the home in play is
+    the real one, whether the caller left it implicit or passed it along: a
+    sandbox `home` or `NEXGEN_HOME` keeps state under that home. Telling the
+    two apart by "was a home passed" instead made the guard and `HostLock()`
+    resolve different lock files on a machine with XDG_STATE_HOME set, so two
+    writers each believed they were alone. A relative value is ignored, as the
+    XDG specification requires: honoring it anchors state at the working
+    directory.
     """
     if override is not None:
         return Path(override).expanduser()
@@ -109,8 +163,10 @@ def resolve_state_dir(home: Path | None = None, override: Path | None = None) ->
     if env:
         return Path(env).expanduser()
     xdg = os.environ.get("XDG_STATE_HOME")
-    if xdg and home is None and not os.environ.get("NEXGEN_HOME"):
-        return Path(xdg).expanduser()
+    if xdg and not os.environ.get("NEXGEN_HOME") and (home is None or Path(home) == Path.home()):
+        candidate = Path(xdg).expanduser()
+        if candidate.is_absolute():
+            return candidate
     return resolve_home(home).joinpath(*STATE_SUBPATH)
 
 

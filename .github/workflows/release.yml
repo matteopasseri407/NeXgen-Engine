@@ -9,9 +9,11 @@
 # it is signed.
 #
 # The tag is now cut on the maintainer's machine, where the signing key lives
-# and never leaves it. This workflow only publishes, and it refuses a tag that
-# carries no signature, so the claim in SECURITY.md is enforced rather than
-# asserted.
+# and never leaves it. This workflow only publishes, and it refuses a tag whose
+# signature the installed copies would not accept (release_trust.py, the same
+# code the updater runs), so the claim in SECURITY.md is enforced rather than
+# asserted. It also refuses a tag that is not on main or whose commit has not
+# passed CI: a tag pushed from a stray branch used to become a release.
 #
 # The automation being replaced existed for a real reason: a manual release
 # step is the step that gets skipped, and on 2026-07-30 main sat five merged
@@ -31,6 +33,7 @@ on:
 
 permissions:
   contents: write
+  actions: read
 
 jobs:
   publish:
@@ -40,7 +43,7 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Refuse a tag that is not annotated and signed
+      - name: Refuse a tag that installed copies would not accept
         env:
           TAG: ${{ github.ref_name }}
         run: |
@@ -50,16 +53,46 @@ jobs:
             echo "::error::$TAG is a $kind, not an annotated tag object. Release tags are created with 'git tag -s'." >&2
             exit 1
           fi
-          # Presence is checked, not cryptographic validity: the public key is
-          # deliberately absent from the runner. Presence is what closes the
-          # regression this workflow shipped for twelve releases, and real
-          # verification stays where the key is, in `git verify-tag` on a
-          # maintainer or auditor machine.
-          if ! git cat-file tag "$TAG" | grep -q -e "BEGIN PGP SIGNATURE" -e "BEGIN SSH SIGNATURE"; then
-            echo "::error::$TAG carries no signature. SECURITY.md requires every release tag past v0.3.0 to be signed." >&2
+          # The anchor is the PREVIOUS release's, exactly as an installed copy
+          # judges the next one: a release cannot vouch for itself. The first
+          # release after the anchor was introduced has no such predecessor and
+          # falls back to its own tree, which is said out loud.
+          prev="$(git describe --tags --abbrev=0 --match 'v*' "$TAG^" 2>/dev/null || true)"
+          anchor="03-INFRA/agent-universal-layer/trust"
+          trust="$anchor"
+          if [ -n "$prev" ] && git cat-file -e "$prev:$anchor/release-signers.txt" 2>/dev/null; then
+            mkdir -p "$RUNNER_TEMP/previous-release"
+            git archive "$prev" -- "$anchor" | tar -x -C "$RUNNER_TEMP/previous-release"
+            trust="$RUNNER_TEMP/previous-release/$anchor"
+            echo "Verifying $TAG against the trust anchor of $prev."
+          else
+            echo "::warning::No previous release carries a trust anchor; verifying $TAG against its own tree (self-attested)."
+          fi
+          python3 03-INFRA/scripts/nexgen_core/release_trust.py "$TAG" --trust-dir "$trust"
+
+      - name: Refuse a tag that is not on main
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin main
+          if ! git merge-base --is-ancestor "$TAG^{commit}" origin/main; then
+            echo "::error::$TAG does not point at a commit on main. Releases are cut from main." >&2
             exit 1
           fi
-          echo "$TAG is an annotated, signed tag."
+
+      - name: Refuse a commit that has not passed CI
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          sha="$(git rev-parse "$TAG^{commit}")"
+          passed="$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?head_sha=$sha&status=success" --jq '.total_count')"
+          if [ "$passed" -lt 1 ]; then
+            echo "::error::CI has no successful run for $sha. Wait for it (or fix it) and re-run this workflow." >&2
+            exit 1
+          fi
 
       - name: Check VERSION agrees with the tag
         id: check
@@ -106,7 +139,7 @@ jobs:
         # asset and verifies its sha256), and PyPI when that channel is
         # configured. One artifact, one hash, verified in three places.
         run: |
-          python -m pip install --upgrade build
+          python -m pip install "build==1.6.1"
           python -m build --sdist --wheel
 
       - name: Checksums
@@ -170,5 +203,5 @@ jobs:
           TWINE_PASSWORD: ${{ secrets.PYPI_API_TOKEN }}
         if: env.PYPI_API_TOKEN != ''
         run: |
-          python -m pip install --upgrade twine
+          python -m pip install "twine==7.0.0"
           python -m twine upload --non-interactive dist/*.tar.gz dist/*.whl

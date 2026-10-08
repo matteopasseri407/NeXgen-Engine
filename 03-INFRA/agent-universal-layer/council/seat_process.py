@@ -15,6 +15,7 @@ import json
 import math
 import os
 import queue
+import shutil
 import subprocess
 import tempfile
 import threading
@@ -79,6 +80,9 @@ class SeatInvocation:
     # _isolated_seat_env).
     env: dict[str, str] | None = None
     cwd: Path | None = None
+    # The per-seat directory `_isolated_seat_env` made (for codex it holds a copy of the real
+    # `auth.json`). Removed when the seat ends, whatever the outcome.
+    scratch: Path | None = None
 
 
 def _is_retryable_seat_error(error: SeatRunError) -> bool:
@@ -144,8 +148,9 @@ def _effort_forwarding(seat: dict) -> tuple[list[str], str]:
     Per-CLI semantics:
     - claude: --effort <v> verbatim.
     - codex: -c model_reasoning_effort=<v> verbatim.
-    - opencode: --variant <v> verbatim (provider-specific, no fixed enum to
-      validate against here -- see the long comment in _build_seat_command).
+    - opencode: no flag. OpenCode 2 dropped --variant (the command is refused with
+      its usage text); the variant is written into the model, provider/model#<v>, by
+      _opencode_model_argument. Provider-specific, no fixed enum to validate against.
     - agy: --effort <v> verbatim (low|medium|high|xhigh|max, per `agy --help`).
     - ollama: --think only documents low/medium/high (`ollama run --help`).
       xhigh/max (valid claude/codex tiers) are downmapped to --think high
@@ -164,7 +169,7 @@ def _effort_forwarding(seat: dict) -> tuple[list[str], str]:
     if cli == "codex":
         return ["-c", f'model_reasoning_effort="{effort}"'], label
     if cli == "opencode":
-        return ["--variant", str(effort)], label
+        return [], label
     if cli == "agy":
         if effort in ("low", "medium", "high", "xhigh", "max"):
             return ["--effort", str(effort)], label
@@ -176,6 +181,20 @@ def _effort_forwarding(seat: dict) -> tuple[list[str], str]:
             return ["--think", "high"], f"{label} (mapped to high for ollama)"
         return [], f"{label} (not applied: value not supported by ollama)"
     return [], label
+
+
+def _opencode_model_argument(seat: dict) -> str:
+    """The model as OpenCode 2 wants it with a reasoning effort: ``provider/model#variant``.
+
+    Its `run --help` says "Model to use in the format provider/model#variant", and the real binary
+    accepts that form while refusing the old ``--variant`` flag. A model that already names a
+    variant keeps it: two would be a different request than the seat declared.
+    """
+    model = str(seat["model"])
+    effort = seat.get("reasoning_effort")
+    if not effort or effort == "none" or "#" in model:
+        return model
+    return f"{model}#{effort}"
 
 
 def _effort_label(seat: dict) -> str:
@@ -219,7 +238,7 @@ _ISOLATED_SEAT_ENV_ALLOWLIST = (
 )
 
 
-def _isolated_seat_env(cli: str, session_dir: Path) -> dict[str, str]:
+def _isolated_seat_env(cli: str, session_dir: Path) -> tuple[dict[str, str], Path]:
     """Minimal environment for a codex/agy/opencode seat (audit FINDING A,
     2026-07-12): the Popen that launches these three CLIs used to omit
     ``env=`` entirely, so the child inherited os.environ in full -- every
@@ -281,9 +300,11 @@ def _isolated_seat_env(cli: str, session_dir: Path) -> dict[str, str]:
          mitigated as far as verified, not claimed closed.
 
     The isolated directories live under ``session_dir`` (already private,
-    mode 0700 -- see ``new_session_dir``) and share its lifecycle: removed
-    with the rest of the session on the normal path, hardened to 0700/0600
-    alongside it when ``--keep-session`` is used.
+    mode 0700 -- see ``new_session_dir``). The returned directory holds a copy
+    of the real Codex credentials, so the caller removes it as soon as the seat
+    ends (``SeatInvocation.scratch``): left to the session's lifecycle it sat
+    on disk for the rest of the run, and for days under ``--keep-session`` or
+    after a crash.
     """
     env = {name: os.environ[name] for name in _ISOLATED_SEAT_ENV_ALLOWLIST if name in os.environ}
     isolation_dir = Path(tempfile.mkdtemp(prefix=f"council-env-{cli}-", dir=session_dir))
@@ -314,7 +335,7 @@ def _isolated_seat_env(cli: str, session_dir: Path) -> dict[str, str]:
     # agy: base allowlist only -- see the docstring above for what was
     # checked and why no directory isolation was applied.
 
-    return env
+    return env, isolation_dir
 
 
 def _write_transport_file(session_dir: Path, prompt: str) -> Path:
@@ -506,27 +527,26 @@ def _build_seat_command(seat: dict, prompt: str, session_dir: Path) -> SeatInvoc
     model = seat["model"]
     if cli == "opencode":
         input_file = _write_transport_file(session_dir, prompt)
+        # --standalone: a private server. Without it OpenCode 2 `run` talks to the background service,
+        # where the empty config directory below is not the one in force and the person's own
+        # OpenCode (its servers, its credentials) is what answers.
         argv = [
-            "opencode", "run", OPENCODE_ATTACHED_PROMPT,
-            "-m", model, "--format", "json", "--file", str(input_file),
+            "opencode", "run", OPENCODE_ATTACHED_PROMPT, "--standalone",
+            "-m", _opencode_model_argument(seat), "--format", "json", "--file", str(input_file),
         ]
-        # --variant is opencode's real reasoning-effort control (verified via
-        # `opencode run --help`: "model variant (provider-specific reasoning
-        # effort, e.g., high, max, minimal)"), same concept as claude's
-        # --effort above. Forwarded as-is: unlike ollama's --think, opencode
-        # documents this as provider-specific with no fixed enum this script
-        # could validate against, so an unrecognized value is the target
-        # provider's problem to reject, not something to filter here. See
-        # _effort_forwarding: single source shared with _effort_label.
-        extra_argv, _label = _effort_forwarding(seat)
-        argv.extend(extra_argv)
+        # The reasoning effort travels inside the model name (provider/model#variant): OpenCode 2 has no
+        # --variant flag. Provider-specific with no fixed enum, so an unrecognized value is the target
+        # provider's problem to reject, not something to filter here. See _effort_forwarding: the label
+        # shown to the person comes from the same place.
+        env, scratch = _isolated_seat_env(cli, session_dir)
         return SeatInvocation(
             argv,
             None,
             None,
             input_file,
-            env=_isolated_seat_env(cli, session_dir),
+            env=env,
             cwd=session_dir,
+            scratch=scratch,
         )
     if cli == "agy":
         argv = [
@@ -538,12 +558,14 @@ def _build_seat_command(seat: dict, prompt: str, session_dir: Path) -> SeatInvoc
         # The prompt travels on stdin, never in argv: argv is visible in the
         # process table, and Antigravity's print mode consumes stdin when no
         # positional prompt is supplied. Same rule as every other seat.
+        env, scratch = _isolated_seat_env(cli, session_dir)
         return SeatInvocation(
             argv,
             prompt,
             None,
             None,
-            env=_isolated_seat_env(cli, session_dir),
+            env=env,
+            scratch=scratch,
         )
     if cli == "claude":
         # --tools "" already makes every tool, MCP included, uninvocable by
@@ -581,12 +603,14 @@ def _build_seat_command(seat: dict, prompt: str, session_dir: Path) -> SeatInvoc
         extra_argv, _label = _effort_forwarding(seat)
         argv.extend(extra_argv)
         argv.extend(["-s", "read-only", "-o", str(output_file)])
+        env, scratch = _isolated_seat_env(cli, session_dir)
         return SeatInvocation(
             argv,
             prompt,
             output_file,
             None,
-            env=_isolated_seat_env(cli, session_dir),
+            env=env,
+            scratch=scratch,
             # Confined CWD: with -s read-only the seat may still READ, so it
             # must not inherit the operator's checkout. Same as opencode.
             cwd=session_dir,
@@ -940,3 +964,5 @@ def run_seat(
             invocation.output_file.unlink(missing_ok=True)
         if invocation.input_file is not None:
             invocation.input_file.unlink(missing_ok=True)
+        if invocation.scratch is not None:
+            shutil.rmtree(invocation.scratch, ignore_errors=True)

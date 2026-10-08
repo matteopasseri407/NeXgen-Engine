@@ -32,7 +32,7 @@ from .source_selection import (pinned_path, sanitize_content, terms)
 from .evidence import (engine_sentence, retrieval_outcome, verify_answer)
 from .config import LaneConfig
 from .engine import (ANSWER_PROMPT, answer_task, check_canary, route_task, sources_from_receipts)
-from .llm import LLM, LLMError
+from .llm import LLM, LLMError, LLMTimeout
 from .tools import ToolError, ToolRegistry, audit_event
 
 from .step_state import (
@@ -78,6 +78,9 @@ def _ask(llm: LLM, state: LoopState, menu: list[Candidate], actions: list[str]) 
     user = decision_prompt(state, menu)
     try:
         raw = llm.choose(system, user, actions)
+    except LLMTimeout:
+        # A stalled model is not a malformed answer: repairing would wait the whole deadline again.
+        return None
     except Exception:  # noqa: BLE001 - a parser error is repaired once, like a bad object
         raw = None
     if _valid_decision(raw, actions):
@@ -102,7 +105,7 @@ def _ask_with_reason(
     )
     try:
         raw = llm.choose(DECISION_SYSTEM, user, actions)
-    except Exception:  # noqa: BLE001 - repair failure escalates, never loops
+    except Exception:  # noqa: BLE001 - repair failure (a timeout included) escalates, never loops
         return None
     return raw if _valid_decision(raw, actions) else None
 

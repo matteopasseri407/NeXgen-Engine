@@ -175,6 +175,12 @@ and the OCR service are stateless by design, and vault-mcp's data is the
 vault itself (backed up by its own Git remotes, not by this script). Run
 `./backup-restore.sh --help` for the full usage.
 
+A backup stops the containers that mount the volume for the few seconds the
+copy takes, then starts them again (also if the copy fails): a database file
+copied while it is being written can restore into a corrupt database. Set
+`BACKUP_HOT=1` to copy without stopping anything and accept that risk. A
+restore refuses to run while any container still uses the volume.
+
 Each stack binds to `127.0.0.1` only — they are NOT exposed on the public
 interface. You reach them from your workstation over SSH tunnels (see
 `03-INFRA/remote-automation.md`).

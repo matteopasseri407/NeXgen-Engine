@@ -17,6 +17,7 @@ from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 
+from nexgen_core.files import atomic_write_text
 from nexgen_core.i18n import t
 from nexgen_core.paths import resolve_engine_root, resolve_home, resolve_vault_data
 from nexgen_core.vault import audit, gate, prompts
@@ -168,7 +169,7 @@ def apply(
 
     state_dir.mkdir(parents=True, exist_ok=True)
     record_path = state_dir / f"{timestamp}.json"
-    record_path.write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8")
+    atomic_write_text(record_path, json.dumps(record, indent=2) + "\n")
     output(t("audit record: {record_path}", record_path=record_path))
 
     return exit_code

@@ -32,6 +32,7 @@ SCRIPTS_DIR = Path(__file__).resolve().parents[1]
 if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
+from nexgen_core.files import atomic_write_text  # noqa: E402 - sys.path shim for cloned checkout
 from nexgen_core.i18n import t  # noqa: E402 - sys.path shim for cloned checkout
 
 #: The line in the shipped template that exists only to instruct an agent.
@@ -192,7 +193,7 @@ def write_user_profile(
     # The note only ever addressed an agent doing this by hand.
     text = _AGENT_NOTE_RE.sub("", text, count=1)
 
-    path.write_text(text, encoding="utf-8")
+    atomic_write_text(path, text)
     return True, t("Profile filled in: {fields}", fields=", ".join(filled))
 
 
@@ -232,14 +233,11 @@ def write_remotes(vault_root: Path, *, profile: str) -> tuple[bool, str]:
                 "'nexgen config authoritative_remote <name>' names one later."
             )
     sync_dir.mkdir(parents=True, exist_ok=True)
-    target.write_text(
-        "# Written by the installer. `nexgen config authoritative_remote <name>`\n"
+    atomic_write_text(target, "# Written by the installer. `nexgen config authoritative_remote <name>`\n"
         "# changes it; see docs/sync-contract.md for what the two fields mean.\n"
         "schema_version: 1\n"
         f"authoritative_remote: {remote}\n"
-        "mirrors: []\n",
-        encoding="utf-8",
-    )
+        "mirrors: []\n")
     return True, t("Authoritative remote set to '{remote}'.", remote=remote) + later
 
 
@@ -264,7 +262,7 @@ def commit_setup(vault_root: Path, paths: list[Path]) -> tuple[bool, str]:
     def git(*args: str) -> subprocess.CompletedProcess:
         return subprocess.run(
             ["git", "-C", str(vault_root), *args],
-            capture_output=True, text=True, timeout=60, check=False,
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60, check=False,
         )
 
     relative = [str(p.relative_to(vault_root)) for p in tracked]
@@ -298,7 +296,7 @@ def align_now(timeout: float = 900.0) -> tuple[bool, str]:
     try:
         result = subprocess.run(
             [sys.executable, str(entry), "sync", "apply"],
-            capture_output=True, text=True, timeout=timeout, check=False,
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=timeout, check=False,
         )
     except (subprocess.TimeoutExpired, OSError) as exc:
         return False, t("Alignment could not be run: {error}", error=exc)
@@ -318,7 +316,7 @@ def _git_remotes(vault_root: Path) -> list[str]:
         return []
     result = subprocess.run(
         ["git", "-C", str(vault_root), "remote"],
-        capture_output=True, text=True, timeout=30, check=False,
+        capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30, check=False,
     )
     return [line.strip() for line in result.stdout.splitlines() if line.strip()]
 
@@ -340,7 +338,7 @@ def seed_skill_manifest(vault_root: Path) -> tuple[bool, str]:
     if not example.is_file():
         return False, t("No example skill manifest in this vault.")
     skills_dir.mkdir(parents=True, exist_ok=True)
-    target.write_text(example.read_text(encoding="utf-8"), encoding="utf-8")
+    atomic_write_text(target, example.read_text(encoding="utf-8"))
     return True, t("Skill manifest seeded from the example; it is yours to edit.")
 
 

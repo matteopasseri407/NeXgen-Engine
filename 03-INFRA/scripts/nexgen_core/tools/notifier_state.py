@@ -11,6 +11,7 @@ import sys
 import time
 from pathlib import Path
 
+from nexgen_core.files import atomic_write_text
 from nexgen_core.paths import resolve_home, resolve_state_dir
 
 THROTTLE_HOURS = 12
@@ -69,10 +70,7 @@ def _record_prompt_time(latest: str) -> None:
     try:
         legacy = resolve_home() / ".config" / "nexgen" / "last_update_check.json"
         legacy.parent.mkdir(parents=True, exist_ok=True)
-        legacy.write_text(
-            json.dumps({"timestamp": time.time(), "latest": latest}, indent=2) + "\n",
-            encoding="utf-8",
-        )
+        atomic_write_text(legacy, json.dumps({"timestamp": time.time(), "latest": latest}, indent=2) + "\n")
     except OSError:
         pass
     _write_state({"dismissed": {"version": latest, "day": _today()}})
@@ -131,7 +129,7 @@ def _resolve_newest_tag(engine_repo: str, timeout: int = 20, _local: bool = Fals
     try:
         proc = subprocess.run(
             ["git", "-C", engine_repo, "ls-remote", "--tags", "--refs", "origin"],
-            capture_output=True, text=True, check=False, timeout=timeout,
+            capture_output=True, text=True, encoding="utf-8", errors="replace", check=False, timeout=timeout,
         )
     except (OSError, subprocess.TimeoutExpired):
         return None
@@ -167,7 +165,7 @@ def refresh_update_cache(engine_repo: str | None = None, timeout: int = 20) -> d
             engine_root = resolve_engine_root()
             probe = subprocess.run(
                 ["git", "-C", str(engine_root), "rev-parse", "--show-toplevel"],
-                capture_output=True, text=True, check=False, timeout=timeout,
+                capture_output=True, text=True, encoding="utf-8", errors="replace", check=False, timeout=timeout,
             )
             if probe.returncode != 0:
                 return result

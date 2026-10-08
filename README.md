@@ -34,7 +34,7 @@ The sync command applies the configuration; doctor checks for drift and reports 
 Inspect the environment and manage it from the terminal:
 
 ```bash
-nexgen info    # visual dashboard: engine version, runtimes aligned, vault hygiene, secrets
+nexgen info    # visual dashboard: engine version, runtimes, modules, installed MCP servers and skills (core / yours / third-party, what moved upstream), secrets
 nexgen shell   # interactive REPL [1-7] — manage everything without opening an AI assistant
 nexgen doctor  # fail-closed checks: git alignment, MCP reachability, link hygiene, permissions
 ```
@@ -114,6 +114,12 @@ nexgen doctor
 
 Releases include a source archive, a wheel, and `SHA256SUMS` for download verification.
 PyPI and Homebrew publication are separate, pending distribution channels, documented in [release-packages.md](docs/release-packages.md).
+
+A package install carries the whole engine (the Council, the MCP proxy, the hooks, the
+templates), not only the commands, and leaves the launchers to the package manager.
+It has no repository folder, so the vault comes from the template repository, which doubles as one:
+`git clone https://github.com/matteopasseri407/NeXgen-Engine.git ~/KnowledgeVault`, then
+`nexgen init --local --root ~/KnowledgeVault` (`nexgen init --check --root ~/KnowledgeVault` first if you prefer to look).
 
 Package installations are updated through the package manager that installed them.
 For Git checkouts, `nexgen update` asks for confirmation; the scheduled heartbeat can apply patch releases unattended.

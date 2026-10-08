@@ -123,6 +123,8 @@ def run_rounds(
         try:
             response, usage = run_seat(seat, prompt, session_dir, timeout_seconds)
         except SeatRunError as e:
+            from routing import record_seat_failure
+            record_seat_failure(seat_name, str(e))
             sys.exit(str(e))
         # Audit FINDING B (2026-07-12): this gate used to be wired only into
         # _run_relay_stage. brainstorm/challenge/code-review wrote the raw
@@ -155,10 +157,23 @@ def run_rounds(
 
 
 def write_verdict(session_dir: Path, seat_name: str, seat: dict, mode: str, verdicts: list[str], final_response: str) -> None:
+    import json
+    q_status = "degraded" if seat.get("degraded") else "normal"
+    q_reason = str(seat.get("degraded_reason") or "")
     lines = [
+        "---",
+        f"seat: {seat_name}",
+        f"model: {seat.get('model', '')}",
+        f"mode: {mode}",
+        f"quorum_status: {q_status}",
+        f"degraded_reason: {q_reason}",
+        f"final_verdict: {verdicts[-1]}",
+        "---",
+        "",
         "# Verdict", "",
-        f"Seat: {seat_name} ({seat['model']})",
+        f"Seat: {seat_name} ({seat.get('model', '')})",
         f"Mode: {mode}",
+        f"Quorum status: {q_status.upper()}" + (f" ({q_reason})" if q_status == "degraded" else ""),
         f"Rounds run: {len(verdicts)}",
     ]
     for i, v in enumerate(verdicts, 1):
@@ -168,3 +183,12 @@ def write_verdict(session_dir: Path, seat_name: str, seat: dict, mode: str, verd
     lines.append("")
     lines.append(final_response)
     _write_private_text(session_dir / "verdict.md", "\n".join(lines) + "\n")
+    verdict_json = {
+        "seat": seat_name,
+        "model": seat.get("model", ""),
+        "mode": mode,
+        "quorum_status": q_status,
+        "degraded_reason": q_reason if q_status == "degraded" else None,
+        "final_verdict": verdicts[-1],
+    }
+    _write_private_text(session_dir / "verdict.json", json.dumps(verdict_json, indent=2))

@@ -89,7 +89,10 @@ class McpSecurityMiddleware:
 
         if self.settings.vault_token:
             token = _extract_token(headers)
-            if not token or not compare_digest(token, self.settings.vault_token):
+            # Bytes, not str: compare_digest raises TypeError on a str with non-ASCII characters,
+            # which a client controls (a header can carry any latin-1 byte), turning a wrong
+            # token into a 500 instead of a 401.
+            if not token or not compare_digest(token.encode("utf-8"), self.settings.vault_token.encode("utf-8")):
                 response = JSONResponse(
                     {"error": "unauthorized", "detail": "Missing or invalid bearer token."},
                     status_code=401,

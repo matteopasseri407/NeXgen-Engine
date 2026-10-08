@@ -26,6 +26,14 @@ from pathlib import Path
 IS_WINDOWS = sys.platform == "win32"
 HOST_MUTATIONS_DISABLED_ENV = "NEXGEN_DISABLE_HOST_MUTATIONS"
 
+# systemd turns the start timeout off for Type=oneshot unless it is set, so a
+# wedged run was never killed: it kept the host lock, and every later cycle
+# found the lock busy and exited 0 without doing anything. The guard's limit
+# stays under its 30-minute interval so two cycles can never overlap; the
+# heartbeat is longer because it also carries the unattended upgrade.
+GUARD_TIMEOUT_START = "25min"
+HEARTBEAT_TIMEOUT_START = "40min"
+
 _SYSTEMD_TIMER = """[Unit]
 Description=agent-sync guard every 30 minutes and shortly after login
 
@@ -79,11 +87,29 @@ def _systemd_env_line(key: str, value: str) -> str:
 
 
 def _scheduler_path(home: Path) -> str:
-    return os.pathsep.join([
+    """The PATH a unit declares: the home launchers first, then what the
+    caller sees, each directory once.
+
+    The guard runs with the PATH its own unit declares, so without the
+    deduplication every cycle prepended the same two directories to a value it
+    had itself written: the unit grew 51 bytes per cycle and was rewritten and
+    reloaded every time. Now the unit is a fixed point of its own environment,
+    and a unit that already grew collapses on its next write.
+    """
+    entries = [
         str(home / ".local" / "bin"),
         str(home / ".opencode" / "bin"),
-        os.environ.get("PATH", os.defpath),
-    ])
+        *os.environ.get("PATH", os.defpath).split(os.pathsep),
+    ]
+    seen: set[str] = set()
+    unique: list[str] = []
+    for entry in entries:
+        key = os.path.normcase(entry)
+        if not entry or key in seen:
+            continue
+        seen.add(key)
+        unique.append(entry)
+    return os.pathsep.join(unique)
 
 
 def _guard_shim(home: Path) -> str:
@@ -111,6 +137,7 @@ def _systemd_service_content(home: Path, engine_root: Path, vault_data: Path, va
         "",
         "[Service]",
         "Type=oneshot",
+        f"TimeoutStartSec={GUARD_TIMEOUT_START}",
     ]
     default_engine_root = (vault / "03-INFRA").resolve()
     if engine_root.resolve() != default_engine_root:
@@ -129,6 +156,7 @@ def _systemd_heartbeat_content(home: Path, engine_root: Path, vault_data: Path, 
         "",
         "[Service]",
         "Type=oneshot",
+        f"TimeoutStartSec={HEARTBEAT_TIMEOUT_START}",
     ]
     default_engine_root = (vault / "03-INFRA").resolve()
     if engine_root.resolve() != default_engine_root:
@@ -142,7 +170,7 @@ def _systemd_heartbeat_content(home: Path, engine_root: Path, vault_data: Path, 
 
 def _run_external(args: Sequence[str], *, timeout: int = 30) -> subprocess.CompletedProcess:
     try:
-        return subprocess.run(list(args), timeout=timeout, capture_output=True, text=True, check=False)
+        return subprocess.run(list(args), timeout=timeout, capture_output=True, text=True, encoding="utf-8", errors="replace", check=False)
     except subprocess.TimeoutExpired as exc:
         stdout = exc.stdout if isinstance(exc.stdout, str) else (exc.stdout or b"").decode("utf-8", "replace")
         return subprocess.CompletedProcess(list(args), 1, stdout, f"timed out after {timeout}s")
@@ -179,9 +207,13 @@ def _resolve_cmd(name: str) -> str | None:
     return None
 
 
-def _host_mutations_disabled() -> bool:
+def host_mutations_disabled() -> bool:
+    """True under NEXGEN_DISABLE_HOST_MUTATIONS: sandboxes, tests and dry runs."""
     value = os.environ.get(HOST_MUTATIONS_DISABLED_ENV, "").strip().lower()
     return value in {"1", "true", "yes", "on"}
+
+
+_host_mutations_disabled = host_mutations_disabled  # the name this module's callers used
 
 
 def install_systemd_units(
@@ -328,12 +360,12 @@ def install_scheduled_task(
 
     if _scheduled_task_invokes_wrapper(f"{task_name} Logon", wrapper_path):
         log(f"scheduled-task: '{task_name} Logon' already active; no rewrite")
-        logon_marker.write_text(_content_hash, encoding="utf-8")
+        _atomic_write_text(logon_marker, _content_hash)
         return heartbeat_ok
     if _previous_hash != _content_hash:
         r = _run_external(logon, timeout=60)
         if r.returncode == 0:
-            logon_marker.write_text(_content_hash, encoding="utf-8")
+            _atomic_write_text(logon_marker, _content_hash)
             log(f"scheduled-task: '{task_name} Logon' installed via schtasks.exe")
             return heartbeat_ok
         # No marker on failure: the next cycle must retry instead of

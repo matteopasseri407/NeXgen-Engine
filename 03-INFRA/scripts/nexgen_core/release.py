@@ -19,6 +19,9 @@ SCRIPTS_DIR = Path(__file__).resolve().parents[1]
 if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
+# After the path shim: the CI and the release workflow run this file as a script, where `nexgen_core` is not installed.
+from nexgen_core.files import atomic_write_text  # noqa: E402
+
 #: Anchored semver, with optional prerelease and build. Anchored is the
 #: whole point: without anchors, "almost a version" passes as a version.
 SEMVER_RE = re.compile(
@@ -112,7 +115,7 @@ def bump_version_files(repo_path: Path, new_version: str, notes: str = "") -> li
 
     # 1. VERSION
     version_file = repo_path / "VERSION"
-    version_file.write_text(f"{new_version}\n", encoding="utf-8")
+    atomic_write_text(version_file, f"{new_version}\n")
     modified.append(version_file)
 
     # 2. nexgen_core/__init__.py
@@ -121,7 +124,7 @@ def bump_version_files(repo_path: Path, new_version: str, notes: str = "") -> li
         content = init_file.read_text(encoding="utf-8")
         updated = re.sub(r'__version__\s*=\s*"[^"]+"', f'__version__ = "{new_version}"', content)
         if updated != content:
-            init_file.write_text(updated, encoding="utf-8")
+            atomic_write_text(init_file, updated)
             modified.append(init_file)
 
     # 3. CHANGELOG.md
@@ -139,7 +142,7 @@ def bump_version_files(repo_path: Path, new_version: str, notes: str = "") -> li
                 if first_h2 != -1:
                     inserted_notes = f"\n\n### Changed\n\n- {notes}\n" if notes else "\n\n### Fixed\n\n- Maintenance and bug fixes.\n"
                     content = content[:first_h2] + f"{version_header}{inserted_notes}\n" + content[first_h2:]
-            changelog_file.write_text(content, encoding="utf-8")
+            atomic_write_text(changelog_file, content)
             modified.append(changelog_file)
 
     return modified
@@ -174,7 +177,7 @@ def _preflight() -> int:
 
     tags = subprocess.run(
         ["git", "-C", str(repo), "tag", "--list", "--sort=-v:refname"],
-        capture_output=True, text=True, check=False, timeout=30,
+        capture_output=True, text=True, encoding="utf-8", errors="replace", check=False, timeout=30,
     ).stdout.split()
     if tags:
         newest = tags[0]
@@ -208,7 +211,7 @@ def _preflight() -> int:
 
     leaked = subprocess.run(
         ["git", "-C", str(repo), "grep", "-l", PRIVATE_MARKER],
-        capture_output=True, text=True, check=False, timeout=60,
+        capture_output=True, text=True, encoding="utf-8", errors="replace", check=False, timeout=60,
     ).stdout.split()
     if leaked:
         problems.append("private maintainer tooling reached the public tree: " + ", ".join(leaked))
@@ -217,7 +220,7 @@ def _preflight() -> int:
 
     baseline = subprocess.run(
         [sys.executable, str(repo / "03-INFRA" / "scripts" / "ruff_baseline_check.py")],
-        capture_output=True, text=True, check=False, timeout=300,
+        capture_output=True, text=True, encoding="utf-8", errors="replace", check=False, timeout=300,
     )
     if baseline.returncode != 0:
         problems.append("the lint gate does not pass; fix the findings rather than regenerating it")

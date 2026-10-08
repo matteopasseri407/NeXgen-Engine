@@ -14,6 +14,7 @@ import json
 import sys
 from pathlib import Path
 
+from nexgen_core.files import atomic_write_text
 from nexgen_core.i18n import t
 from nexgen_core.vault.audit import AuditRequest, run_audit
 
@@ -77,7 +78,7 @@ def main(argv: list[str] | None = None) -> int:
     state_dir = Path(args.state_dir)
     state_dir.mkdir(parents=True, exist_ok=True)
     record_path = state_dir / f"{args.timestamp}.json"
-    record_path.write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8")
+    atomic_write_text(record_path, json.dumps(record, indent=2) + "\n")
     print(t("audit record: {record_path}", record_path=record_path))
 
     return exit_code

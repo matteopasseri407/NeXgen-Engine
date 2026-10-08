@@ -226,7 +226,7 @@ def _extract(cli: str, stdout: str, output_file: Path) -> str:
         return stdout
     if cli == "codex":
         if output_file.is_file():
-            text = output_file.read_text(errors="replace").strip()
+            text = output_file.read_text(encoding="utf-8", errors="replace").strip()
             if text:
                 return text
         return stdout
@@ -285,7 +285,7 @@ def run_relay(
                 argv,
                 input=stdin_text,
                 capture_output=True,
-                text=True,
+                text=True, encoding="utf-8", errors="replace",
                 timeout=timeout,
                 env=_isolated_env(cli, workdir),
                 cwd=workdir,

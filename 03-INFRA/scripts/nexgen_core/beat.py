@@ -18,6 +18,7 @@ import logging
 import os
 import subprocess
 import time
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
@@ -30,7 +31,12 @@ from nexgen_core.paths import (
     resolve_state_dir,
     resolve_vault_data,
 )
-from nexgen_core.updater import EngineUpdater
+from nexgen_core.updater import (
+    EXIT_REFUSED as UPDATE_EXIT_REFUSED,
+    EXIT_ROLLBACK_FAILED as UPDATE_EXIT_ROLLBACK_FAILED,
+    EXIT_ROLLED_BACK as UPDATE_EXIT_ROLLED_BACK,
+    EngineUpdater,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -75,7 +81,7 @@ class Heartbeat:
         self.megaphone = Megaphone(state_dir=self.state_dir)
         self.liveness_file = self.state_dir / LIVENESS_FILE_NAME
 
-    def record_liveness(self, warnings: int = 0) -> None:
+    def record_liveness(self, warnings: int = 0, failed_phases: Sequence[str] = ()) -> None:
         """Records the successful completion of a Guard cycle, and by whom.
 
         The version is written alongside the timestamp because otherwise
@@ -88,14 +94,30 @@ class Heartbeat:
         version reading this file keeps working: it reads the first line and
         ignores the rest. The warning count rides a third line for the same
         reason: a cycle that completed with degraded phases is still a
-        completed cycle, but the monitor should say so.
+        completed cycle, but the monitor should say so. The phases that failed
+        ride a fourth line, only when there are any: the guard now runs every
+        phase even after one fails, so reaching the end no longer means every
+        phase worked, and "alive" and "healthy" are different answers.
         """
         from nexgen_core import __version__
+        from nexgen_core.files import atomic_write_text
 
         self.state_dir.mkdir(parents=True, exist_ok=True)
-        self.liveness_file.write_text(
-            f"{time.time()}\n{__version__}\nWARN={int(warnings)}\n", encoding="utf-8"
-        )
+        text = f"{time.time()}\n{__version__}\nWARN={int(warnings)}\n"
+        if failed_phases:
+            text += "FAIL=" + ",".join(failed_phases) + "\n"
+        atomic_write_text(self.liveness_file, text)
+
+    def recorded_failed_phases(self) -> list[str]:
+        """Phases that failed in the last recorded cycle (empty when none or unrecorded)."""
+        try:
+            lines = self.liveness_file.read_text(encoding="utf-8").splitlines()
+        except OSError:
+            return []
+        for line in lines[2:]:
+            if line.strip().startswith("FAIL="):
+                return [p for p in line.strip().split("=", 1)[1].split(",") if p]
+        return []
 
     def recorded_warnings(self) -> int | None:
         """Warning count of the last recorded cycle, None when unrecorded."""
@@ -155,6 +177,9 @@ class Heartbeat:
             warns = self.recorded_warnings()
             if warns:
                 msg += " " + t("(last cycle completed with {count} warnings)", count=warns)
+            failed = self.recorded_failed_phases()
+            if failed:
+                msg += " " + t("(last cycle: these phases failed: {phases})", phases=", ".join(failed))
             return True, msg
         except Exception as exc:  # noqa: BLE001 - failure is returned, never raises
             # A corrupt liveness file blinds self-monitoring: alert once
@@ -231,11 +256,44 @@ class Heartbeat:
                 **os.environ,
                 "AGENT_ENGINE_ROOT": str(self.engine_root),
                 "AGENT_VAULT_DATA": str(self.vault_data),
+                # The updater takes the host lock and keeps its rejected-release
+                # memory in this install's state directory, not the process's.
+                "AGENT_STATE_DIR": str(self.state_dir),
             }
             exit_code = EngineUpdater.main(["--unattended"], environ=environ)
+            self._alert_on_update_outcome(exit_code)
             return {"ok": exit_code == 0, "exit_code": exit_code}
         except Exception as exc:  # noqa: BLE001 - failure is returned, never raises
             return {"ok": False, "error": str(exc)}
+
+    def _alert_on_update_outcome(self, exit_code: int) -> None:
+        """Tells the person about the three update outcomes that need them.
+
+        Other non-zero codes are the quiet kind (a release that cannot be
+        verified, a busy lock, a jump the ceiling declines): they come back
+        every hour by design and would only train people to ignore the alert.
+        """
+        if exit_code == UPDATE_EXIT_REFUSED:
+            title = t("An update was refused")
+            message = t("A new release is not signed by a key this install trusts, so nothing was installed.")
+            action = t("Run 'nexgen-update --check' and look at the release before doing anything else.")
+            key = "update_refused"
+        elif exit_code == UPDATE_EXIT_ROLLED_BACK:
+            title = t("An automatic update failed and was undone")
+            message = t("The machine is back on the version that worked. That release is skipped until you update by hand.")
+            action = t("Run 'nexgen-update' interactively to see why it failed.")
+            key = "update_rolled_back"
+        elif exit_code == UPDATE_EXIT_ROLLBACK_FAILED:
+            title = t("An automatic update failed and could not be undone")
+            message = t("The engine may be half-updated. It was left as it is.")
+            action = t("Run 'nexgen doctor --summary' and follow the recovery printed by 'nexgen-update'.")
+            key = "update_rollback_failed"
+        else:
+            return
+        try:
+            self.megaphone.send_alert(title=title, message=message, action=action, alert_key=key)
+        except Exception as exc:  # noqa: BLE001 - an alert that fails must not fail the beat
+            logger.debug("update alert not sent (%s)", type(exc).__name__)
 
     def run_beat(self) -> dict[str, Any]:
         """Runs the full heartbeat cycle: the liveness question, then the two
@@ -248,7 +306,7 @@ class Heartbeat:
 
             probe = subprocess.run(
                 ["git", "-C", str(self.engine_root), "rev-parse", "--show-toplevel"],
-                capture_output=True, text=True, check=False, timeout=20,
+                capture_output=True, text=True, encoding="utf-8", errors="replace", check=False, timeout=20,
             )
             if probe.returncode == 0 and probe.stdout.strip():
                 refresh_update_cache(probe.stdout.strip())

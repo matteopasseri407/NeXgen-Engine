@@ -8,8 +8,9 @@ import subprocess
 import sys
 from pathlib import Path
 
+from nexgen_core.action_notes import WARN  # noqa: E402 - sys.path shim for cloned checkout
 from nexgen_core.i18n import t
-from nexgen_core.paths import resolve_home
+from nexgen_core.paths import resolve_home, resolve_state_dir
 
 
 from .notifier_state import _read_state, refresh_update_cache
@@ -70,6 +71,71 @@ def _posix_shell_targets(home: Path) -> list[tuple[str, Path, str]]:
     return targets
 
 
+_SHELLS = ("bash", "zsh", "fish", "powershell")
+_OPTOUT_FILENAME = "update-notifier-optout.txt"
+
+
+def _powershell_profile(home: Path) -> Path:
+    return home / ".config" / "powershell" / "Microsoft.PowerShell_profile.ps1"
+
+
+def _shell_targets(home: Path, shell: str | None = None) -> list[tuple[str, Path, str]]:
+    """Every (shell, startup file, block) the notice belongs in on this machine.
+
+    A shell nobody uses here is not a target: the PowerShell profile used to be created on
+    every Linux machine, whether or not PowerShell was installed. On POSIX it is a target
+    only where `pwsh` is on the PATH, its profile already exists, or it was asked for by name.
+    """
+    if os.name == "nt":
+        targets = _posix_shell_targets(home) if shell in ("bash", "zsh", "fish") else []
+        targets.append(("powershell", _powershell_profile(home), _POWERSHELL_HOOK))
+    else:
+        targets = _posix_shell_targets(home)
+        profile = _powershell_profile(home)
+        if shutil.which("pwsh") or profile.is_file() or shell == "powershell":
+            targets.append(("powershell", profile, _POWERSHELL_HOOK))
+    if shell in _SHELLS:
+        targets = [entry for entry in targets if entry[0] == shell]
+    return targets
+
+
+def _optout_file(home: Path) -> Path:
+    return resolve_state_dir(home) / _OPTOUT_FILENAME
+
+
+def _opted_out(home: Path) -> set[str]:
+    """What the user switched off: `shell:<name>` entries and `autostart`.
+
+    The guard re-ensures the notice every cycle, so `--remove` alone was undone within half
+    an hour; this record is what makes a removal stick until the user installs it again.
+    """
+    try:
+        lines = _optout_file(home).read_text(encoding="utf-8").splitlines()
+    except (OSError, NotImplementedError):
+        # A record that cannot be read is no record: ensuring the notice must not depend on it.
+        # (NotImplementedError: pathlib refusing a path flavour the running OS does not have.)
+        return set()
+    return {line.strip() for line in lines if line.strip()}
+
+
+def _set_opted_out(home: Path, tokens: set[str], off: bool) -> None:
+    """Adds (`off`) or clears `tokens`; an empty record deletes the file."""
+    current = _opted_out(home)
+    updated = current | tokens if off else current - tokens
+    if updated == current:
+        return
+    from nexgen_core.files import atomic_write_text
+
+    path = _optout_file(home)
+    try:
+        if updated:
+            atomic_write_text(path, "\n".join(sorted(updated)) + "\n")
+        else:
+            path.unlink(missing_ok=True)
+    except OSError as exc:
+        print(t("Could not record the choice in {path}: {error}", path=path, error=exc), file=sys.stderr)
+
+
 def cmd_install_shell_hook(remove: bool = False, shell: str | None = None, *, home: Path | None = None) -> int:
     """Installs (or removes) the shell-startup notice. Bash and zsh share
     the guarded block (~/.bashrc, ~/.zshrc when it exists); fish gets its
@@ -77,10 +143,14 @@ def cmd_install_shell_hook(remove: bool = False, shell: str | None = None, *, ho
     interactive shells only, `nexgen` on PATH, marker-checked so a
     second install is a no-op (and removal deletes only our own block)."""
     home = resolve_home(home)
-    targets = _posix_shell_targets(home) if os.name != "nt" or shell in ("bash", "zsh", "fish") else []
-    targets.append(("powershell", home / ".config" / "powershell" / "Microsoft.PowerShell_profile.ps1", _POWERSHELL_HOOK))
-    if shell in ("bash", "zsh", "fish", "powershell"):
-        targets = [entry for entry in targets if entry[0] == shell]
+    # A removal is the user's decision, and the guard would otherwise put the block back at its
+    # next cycle. Remembered per shell (all of them when none is named); installing clears it.
+    _set_opted_out(home, {f"shell:{name}" for name in (_SHELLS if shell is None else (shell,))}, off=remove)
+    return _apply_shell_hooks(_shell_targets(home, shell), remove)
+
+
+def _apply_shell_hooks(targets: list[tuple[str, Path, str]], remove: bool) -> int:
+    """Adds or removes the block in each target. Policy (who opted out) is the caller's."""
     marker = "NeXgen Engine update notice"
     rc = 0
     for name, path, block in targets:
@@ -146,7 +216,7 @@ def _write_if_different(path: Path, content: str) -> bool | None:
 
 def _run_quiet(argv: list[str], timeout: int = 60) -> tuple[int, str]:
     try:
-        proc = subprocess.run(argv, capture_output=True, text=True, check=False, timeout=timeout)
+        proc = subprocess.run(argv, capture_output=True, text=True, encoding="utf-8", errors="replace", check=False, timeout=timeout)
         return proc.returncode, (proc.stdout or "") + (proc.stderr or "")
     except (OSError, subprocess.TimeoutExpired) as exc:
         return 1, str(exc)
@@ -209,7 +279,7 @@ def _ensure_windows_boot_check(home: str) -> list[str]:
     vbs = os.path.join(state_dir, "nexgen-update-check-hidden.vbs")
     wrote = _write_text_if_different(vbs, _windows_vbs_content(exec_cmd))
     if wrote is None and not os.path.isfile(vbs):
-        return ["[WARN] wrapper not writable, logon task skipped (nothing points at thin air)"]
+        return [WARN + "wrapper not writable, logon task skipped (nothing points at thin air)"]
     if wrote:
         notes.append(f"[autostart] hidden wrapper updated: {vbs}")
     if _windows_task_runs_notifier(vbs):
@@ -232,7 +302,7 @@ def _ensure_windows_boot_check(home: str) -> list[str]:
         shutil.copy2(vbs, dest)
         notes.append(f"[autostart] logon fallback installed: {dest}")
     except OSError as exc:
-        notes.append(f"[WARN] logon task failed ({out.strip()}) and Startup fallback failed ({exc})")
+        notes.append(f"{WARN}logon task failed ({out.strip()}) and Startup fallback failed ({exc})")
     return notes
 
 
@@ -330,9 +400,9 @@ WantedBy=timers.target
         missing = [str(p) for p, w in ((service_file, wrote_service), (timer_file, wrote_timer))
                    if w is None and not p.is_file()]
         if missing:
-            notes.append(f"[WARN] boot entries not writable ({', '.join(missing)}), timer skipped")
+            notes.append(f"{WARN}boot entries not writable ({', '.join(missing)}), timer skipped")
             return notes
-        notes.append("[WARN] boot entries could not be verified, enabling anyway")
+        notes.append(WARN + "boot entries could not be verified, enabling anyway")
     changed = bool(changed or wrote_service or wrote_timer)
     if changed:
         notes.append(f"[autostart] boot entries written under {home}")
@@ -347,7 +417,7 @@ WantedBy=timers.target
         if rc == 0:
             notes.append("[autostart] boot timer enabled")
         else:
-            notes.append(f"[WARN] timer not enabled ({out.strip()}); headless machines need `loginctl enable-linger $USER`")
+            notes.append(f"{WARN}timer not enabled ({out.strip()}); headless machines need `loginctl enable-linger $USER`")
     elif not notes:
         notes.append("[autostart] boot timer already enabled")
     return notes
@@ -360,11 +430,21 @@ def ensure_boot_check(home: Path | str | None = None) -> list[str]:
         if os.name == "nt":
             base = (os.fspath(home) if home is not None
                     else (os.environ.get("NEXGEN_HOME") or os.path.expanduser("~")))
+            try:
+                declined = "autostart" in _opted_out(Path(base))
+            except NotImplementedError:
+                # The Windows lane is exercised on POSIX with os.name mocked, where Python 3.11 refuses to build a
+                # WindowsPath. With no readable record the answer is "not opted out", as in `_opted_out` itself.
+                declined = False
+            if declined:
+                return []
             return _ensure_windows_boot_check(base)
         resolved = resolve_home(home if home is None or isinstance(home, Path) else Path(home))
+        if "autostart" in _opted_out(resolved):
+            return []
         return _ensure_posix_boot_check(resolved)
     except Exception as exc:  # noqa: BLE001 - notifier never fails the shell
-        return [f"[WARN] boot check not ensured ({exc})"]
+        return [f"{WARN}boot check not ensured ({exc})"]
 
 
 def ensure_shell_hook(home: Path | None = None) -> list[str]:
@@ -372,24 +452,25 @@ def ensure_shell_hook(home: Path | None = None) -> list[str]:
     try:
         marker = "NeXgen Engine update notice"
         resolved = resolve_home(home)
-        if os.name == "nt":
-            targets = [resolved / ".config" / "powershell" / "Microsoft.PowerShell_profile.ps1"]
-        else:
-            targets = [path for _, path, _ in _posix_shell_targets(resolved)]
+        declined = _opted_out(resolved)
+        targets = [path for name, path, _ in _shell_targets(resolved) if f"shell:{name}" not in declined]
+        if not targets:
+            return []  # everything this machine has was switched off by the user
         missing = [p for p in targets
                    if not p.is_file() or marker not in p.read_text(encoding="utf-8", errors="replace")]
         if not missing:
             return ["[shell-hook] already present"]
-        rc = cmd_install_shell_hook(home=resolved)
+        rc = _apply_shell_hooks([entry for entry in _shell_targets(resolved) if f"shell:{entry[0]}" not in declined], remove=False)
         if rc == 0:
             return ["[shell-hook] installed for this machine's shells"]
-        return ["[WARN] shell hook installation returned an error"]
+        return [WARN + "shell hook installation returned an error"]
     except Exception as exc:  # noqa: BLE001 - notifier never fails the shell
-        return [f"[WARN] shell hook not ensured ({exc})"]
+        return [f"{WARN}shell hook not ensured ({exc})"]
 
 
 def cmd_install_autostart(remove: bool = False) -> int:
     home = resolve_home()
+    _set_opted_out(home, {"autostart"}, off=remove)
     if remove:
         return _remove_autostart(home)
     if os.name != "nt":
@@ -405,7 +486,7 @@ def _remove_autostart(home: Path) -> int:
         print("[autostart] logon task removed" if rc == 0 else "[autostart] no logon task present")
         leftover = not _remove_windows_fallback(os.fspath(home))
         if leftover:
-            print("[WARN] Startup fallback copy could not be removed, delete it by hand")
+            print(WARN + "Startup fallback copy could not be removed, delete it by hand")
         return 0
     removed = []
     for path in (home / ".config" / "autostart" / "nexgen-update-check.desktop",
@@ -493,7 +574,7 @@ def _publish_inventory() -> None:
             return
         proc = subprocess.run(
             [sys.executable, str(script), "--write", "--push"],
-            capture_output=True, text=True, check=False, timeout=280,
+            capture_output=True, text=True, encoding="utf-8", errors="replace", check=False, timeout=280,
         )
         if proc.returncode:
             print(f"[boot] inventario Governor non pubblicato (uscita {proc.returncode}). "
@@ -527,14 +608,15 @@ def _notify_passive_windows(message: str) -> None:
         probe = subprocess.run(
             ["powershell", "-NoProfile", "-Command",
              "Get-Module -ListAvailable -Name BurntToast | Select-Object -First 1"],
-            capture_output=True, text=True, check=False, timeout=30,
+            capture_output=True, text=True, encoding="utf-8", errors="replace", check=False, timeout=30,
         )
         if "BurntToast" not in (probe.stdout or ""):
             return
-        text = message.replace("'", "''")[:380]
-        toast = f"New-BurntToastNotification -Text 'NeXgen Engine', '{text}'"
+        from nexgen_core.processes import powershell_literal
+
+        toast = f"New-BurntToastNotification -Text 'NeXgen Engine', {powershell_literal(message[:380])}"
         if _call_logo_path():
-            toast += f" -AppLogo '{_call_logo_path()}'"
+            toast += f" -AppLogo {powershell_literal(str(_call_logo_path()))}"
         subprocess.run(
             ["powershell", "-NoProfile", "-Command", toast],
             check=False, timeout=30,

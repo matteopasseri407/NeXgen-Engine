@@ -6,13 +6,14 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import stat
 import time
 import urllib.error
 import urllib.parse
 import urllib.request
 from pathlib import Path
 from typing import Any
+
+from nexgen_core.files import atomic_write_text
 
 DEFAULT_QUERY = '"Example Domain" site:example.com'
 
@@ -52,18 +53,11 @@ def is_expected_result(url: str) -> bool:
 
 
 def write_success(path: Path, now: float, result_count: int) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_suffix(path.suffix + ".tmp")
-    temporary.write_text(
-        json.dumps(
-            {"ok": True, "checked_at": now, "result_count": result_count},
-            separators=(",", ":"),
-        )
-        + "\n",
-        encoding="utf-8",
-    )
-    temporary.chmod(stat.S_IRUSR | stat.S_IWUSR)
-    temporary.replace(path)
+    # mkstemp makes the new file 0600, and an existing one keeps its mode.
+    atomic_write_text(path, json.dumps(
+        {"ok": True, "checked_at": now, "result_count": result_count},
+        separators=(",", ":"),
+    ) + "\n")
 
 
 def probe(api_url: str, api_key: str, timeout: float) -> tuple[bool, int, str]:

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from dataclasses import asdict
 from pathlib import Path
@@ -202,7 +203,10 @@ def cmd_explore(args: argparse.Namespace) -> int:
 def cmd_eval(args: argparse.Namespace) -> int:
     from ..evals import SUITES, format_report, run_suite, suite_failed
     from ..llm import LLMError
+    from ..source_selection import INJECTION_LAYER_ENV
 
+    if getattr(args, "bare", False):
+        os.environ[INJECTION_LAYER_ENV] = "0"
     cfg = _config(args)
     try:
         llm = _llm(cfg)

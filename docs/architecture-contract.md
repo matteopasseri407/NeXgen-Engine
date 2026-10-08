@@ -33,6 +33,16 @@ passes its tests.
    machine in minutes; code arrives with a release. Therefore every consumer of
    a declarative file must tolerate a key or value it does not understand by
    skipping that entry loudly, never by rejecting the document.
+9. **One writer, one definition of a secret, one reader of the host.** A file the
+   engine owns is written through `nexgen_core.files` (atomic, mode-preserving,
+   backed up where it matters); a scan test fails the build on a direct
+   `write_text`. What a credential looks like is defined in
+   `nexgen_core.secret_shapes`, and one corpus of synthetic credentials is
+   run through every consumer of it. Everything that changes the machine takes
+   the same host lock, and a diagnostic that asks "would apply change this?"
+   asks the renderer itself in preview rather than re-deriving the answer. Where an MCP server
+   lives (mounted directly, behind the gateway, or absent) is likewise one function that the
+   renderer, the gateway and `nexgen mcp plan` all call.
 
 ---
 
@@ -76,14 +86,20 @@ runs regularly without holding the guard's lock.
 
 ### The self-upgrader
 Takes a released upgrade without asking and says nothing about it. Refuses on a
-dirty tree, refuses a bad signature, and only considers a tag that exists as a
-published release. Has a ceiling on how large a jump it may take unattended,
-defaulting to the smallest, because a machine that changes its own behaviour
-overnight changed it without anyone choosing that. Speaks only when it cannot
-do the work, and a failed attempt must name the recovery, not the check.
+dirty tree, and only considers a tag that exists as a published release. Has a
+ceiling on how large a jump it may take unattended, defaulting to the smallest,
+because a machine that changes its own behaviour overnight changed it without
+anyone choosing that. Speaks only when it cannot do the work, and a failed
+attempt must name the recovery, not the check.
 
-Signature enforcement belongs to the release process.
-The client currently warns on an unverifiable signature and continues; this remains a gap against the contract above.
+It verifies the release tag against the signers pinned in the copy that is
+already installed (SECURITY.md, "What an installed copy verifies"). A wrong
+signature, or one by a key that is not pinned, is refused in every mode; a
+release that cannot be verified at all is refused when nobody is there to read
+the warning. The merge happens under the host lock, and an unattended update
+that fails after the engine moved is undone on the spot and remembered as
+rejected, so it is neither left half-applied nor retried every hour. The
+interactive command never undoes anything by itself: a person is there to look.
 
 ### The dependency watch
 Looks upstream for every pinned third-party thing the layer declares: code
@@ -92,6 +108,17 @@ version. Produces a list and stops there, because applying an upstream change
 alters behaviour nobody chose. Never notifies. Being offline writes nothing and
 reports nothing: a workstation is offline all the time and that is not an
 incident.
+
+It also says when the publisher has withdrawn support for the exact version
+pinned (npm `deprecated`): "nothing newer exists" is not the same as "all good".
+And it watches what a module declares it carries (`upstream:` in the module
+catalog): a program shipped as a Docker image (n8n, the Firecrawl backend), or a
+version pinned inside a launcher script (Playwright). A module says which file
+holds the pin and where the newest release is read, so the watch does not have to
+know any of that. These are only reported, and the guardian holds every one: a
+program is replaced where it runs, that host may pin something else, and the
+Playwright launcher patches the files of one exact version, so even a patch jump
+is not a "small touch-up".
 
 ### The skill materializer
 Turns one declaration into the views each runtime can actually see. Four

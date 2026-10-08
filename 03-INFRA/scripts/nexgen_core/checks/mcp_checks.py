@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import logging
+import shutil
 import tomllib
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -209,6 +210,187 @@ def check_mcp_configs_rendered(vault_data: Path, home: Path) -> CheckOutcome:
         id="mcp.rendered_configs",
         severity=Severity.OK,
         message=t("MCP configuration files generated and aligned for all active CLIs"),
+    )
+
+
+#: Where each CLI keeps its server table inside its parsed config.
+_SERVER_TABLE_PATH: dict[str, tuple[str, ...]] = {
+    "claude": ("mcpServers",),
+    "antigravity": ("mcpServers",),
+    "codex": ("mcp_servers",),
+    "opencode": ("mcp", "servers"),
+}
+
+
+def _server_table(cli: str, text: str) -> dict:
+    """The server table out of a config's text, in that CLI's own format."""
+    if cli == "codex":
+        data = tomllib.loads(text)
+    elif cli == "opencode":
+        data = parse_jsonc(text) if text.strip() else {}
+    else:
+        data = json.loads(text) if text.strip() else {}
+    for key in _SERVER_TABLE_PATH[cli]:
+        data = data.get(key, {}) if isinstance(data, dict) else {}
+    return data if isinstance(data, dict) else {}
+
+
+def _changed_server_names(cli: str, old_text: str, new_text: str) -> list[str]:
+    """Names whose entry differs between two texts of one config (added, changed or dropped)."""
+    old, new = _server_table(cli, old_text), _server_table(cli, new_text)
+    return sorted(name for name in old.keys() | new.keys() if old.get(name) != new.get(name))
+
+
+def check_mcp_content_drift(vault_data: Path, home: Path, engine_root: Path | None = None) -> CheckOutcome:
+    """Would `apply` change what a CLI actually launches?
+
+    The names check above passes when a server is listed, whatever its
+    command, arguments, environment or timeouts say. A manifest edit that
+    changes a server (a new pin, a longer timeout) therefore showed as
+    healthy until the next guard cycle happened to rewrite the file. This
+    asks the renderer itself, in preview, and reports exactly the servers
+    whose rendered entry would change. A CLI that was never launched has no
+    file to compare and is left to the names check. The engine root is part
+    of what gets rendered (the HTTP bridge's path), so the caller passes the
+    one it is running from.
+    """
+    renderer = McpRenderer(vault_data=vault_data, engine_root=engine_root, home=home)
+    paths = {
+        "claude": claude_config(home),
+        "antigravity": antigravity_config(home),
+        "codex": codex_config(home),
+        "opencode": renderer.opencode_config_path(),
+    }
+    drifted: list[str] = []
+    skipped: list[str] = []
+    for cli, path in paths.items():
+        if not path.is_file():
+            continue
+        try:
+            pending = renderer.pending_changes(cli)
+            text = pending.get(path)
+            if text is None:
+                continue
+            names = _changed_server_names(cli, path.read_text(encoding="utf-8"), text)
+        except Exception as exc:  # noqa: BLE001 - check failure is reported, never raises
+            skipped.append(f"{cli} ({exc})")
+            continue
+        drifted.append(f"{cli}: {', '.join(names)}" if names else f"{cli}: " + t("settings outside the server list"))
+
+    def remedy() -> bool:
+        renderer.render_all(write=True)
+        return True
+
+    if drifted:
+        return CheckOutcome(
+            id="mcp.rendered_content",
+            severity=Severity.WARN,
+            message=t(
+                "Some CLI configurations no longer match what the manifest would write: {parts}",
+                parts="; ".join(drifted),
+            ),
+            action=t("Run 'agent-sync apply' to regenerate them (the guard cycle does it on its own too)."),
+            remedy=remedy,
+        )
+    if skipped:
+        return CheckOutcome(
+            id="mcp.rendered_content",
+            severity=Severity.UNDETERMINED,
+            message=t("Could not compare these CLI configurations with the manifest: {parts}", parts="; ".join(skipped)),
+        )
+    return CheckOutcome(
+        id="mcp.rendered_content",
+        severity=Severity.OK,
+        message=t("Every CLI configuration matches what the manifest would write"),
+    )
+
+
+def check_mcp_trials() -> CheckOutcome:
+    """Servers on trial here: fine for a day, a leftover if they are still around."""
+    from nexgen_core import mcp_trials
+
+    running = mcp_trials.active()
+    if not running:
+        return CheckOutcome(id="mcp.trials", severity=Severity.OK, message=t("No MCP servers on trial"))
+    names = ", ".join(f"{name} ({mcp_trials.time_left(info)} left)" for name, info in sorted(running.items()))
+    return CheckOutcome(
+        id="mcp.trials",
+        severity=Severity.WARN,
+        message=t("MCP servers on trial on this machine, not synced: {names}", names=names),
+        action=t("Keep one with 'nexgen mcp promote <name>' or end it with 'nexgen mcp drop <name>'; they end by themselves anyway."),
+    )
+
+
+def check_mcp_placement(vault_data: Path) -> CheckOutcome | None:
+    """Is every CLI's gateway mounted where servers are routed behind it, and every `exposure` one we know?
+
+    The static half of "the gateway works": it reads only the manifest. `nexgen mcp check` is the live half
+    (it starts the gateway and its backends). Returns None where there is no manifest.
+    """
+    from nexgen_core import mcp_placement
+
+    manifest = vault_data / "03-INFRA" / "agent-universal-layer" / "mcp" / "manifest.yaml"
+    if not manifest.is_file():
+        return None
+    try:
+        servers = load_mcp_manifest(manifest).get("servers", {})
+    except Exception as exc:  # noqa: BLE001 - check failure is reported, never raises
+        return CheckOutcome(id="mcp.placement", severity=Severity.UNDETERMINED,
+                            message=t("The MCP manifest could not be read, so placement was not checked: {error}", error=exc))
+    found = mcp_placement.problems(servers)
+    if found:
+        return CheckOutcome(
+            id="mcp.placement",
+            severity=Severity.BROKEN,
+            message=t("The MCP placement is incoherent: {problems}", problems="; ".join(found)),
+            action=t("Run 'nexgen mcp plan' to see it per CLI, then fix the manifest."),
+        )
+    return CheckOutcome(id="mcp.placement", severity=Severity.OK,
+                        message=t("Every CLI's gateway is mounted where servers are routed behind it"))
+
+
+def _command_resolves(command: str, home: Path) -> bool:
+    """Whether a CLI could actually start this command: on PATH, or a file that exists."""
+    if not command:
+        return False
+    expanded = Path(command).expanduser()
+    if expanded.is_absolute() or "/" in command or "\\" in command:
+        return expanded.is_file()
+    return shutil.which(command) is not None
+
+
+def check_mcp_commands(vault_data: Path, home: Path) -> CheckOutcome:
+    """Does every server a CLI is told to start have a program to start?
+
+    A server whose command is not installed does not fail loudly: the CLI
+    shows the connector as unavailable and the agent carries on without it.
+    The names and content checks both pass on such a config.
+    """
+    renderer = McpRenderer(vault_data=vault_data, home=home)
+    missing: dict[str, set[str]] = {}
+    for cli in ("claude", "codex", "antigravity", "opencode"):
+        try:
+            servers = renderer.load_resolved_servers(cli)
+        except Exception:  # noqa: BLE001 - the names check already reports an unresolvable manifest
+            continue
+        for name, srv in servers.items():
+            if srv.get("transport") == "http" or srv.get("url"):
+                continue
+            command = str(srv.get("command") or "")
+            if not _command_resolves(command, home):
+                missing.setdefault(name, set()).add(command or "?")
+    if missing:
+        parts = "; ".join(f"{name} ({', '.join(sorted(cmds))})" for name, cmds in sorted(missing.items()))
+        return CheckOutcome(
+            id="mcp.commands",
+            severity=Severity.WARN,
+            message=t("Some MCP servers point at a program that is not installed here: {parts}", parts=parts),
+            action=t("Install the missing program, or disable the server in the manifest on this machine."),
+        )
+    return CheckOutcome(
+        id="mcp.commands",
+        severity=Severity.OK,
+        message=t("Every stdio MCP server has a program to start"),
     )
 
 

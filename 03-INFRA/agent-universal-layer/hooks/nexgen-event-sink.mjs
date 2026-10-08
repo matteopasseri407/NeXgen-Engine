@@ -17,9 +17,14 @@
 // terminal, background task and IDE process exits immediately and silently.
 
 import { closeSync, existsSync, fstatSync, openSync, readSync } from "node:fs";
+import { createRequire } from "node:module";
 import { connect } from "node:net";
 import { homedir, platform } from "node:os";
 import { join } from "node:path";
+
+// An ES module has no `require`; the database fallback needs one to load node:sqlite
+// lazily (an old Node without it must not stop the hook from loading at all).
+const require = createRequire(import.meta.url);
 
 process.on("uncaughtException", () => process.exit(0));
 process.on("unhandledRejection", () => process.exit(0));

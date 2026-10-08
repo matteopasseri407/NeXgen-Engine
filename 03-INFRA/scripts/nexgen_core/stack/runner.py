@@ -37,7 +37,7 @@ def docker_available() -> tuple[bool, str]:
         )
     probe = subprocess.run(
         ["docker", "compose", "version"],
-        capture_output=True, text=True, check=False, timeout=30,
+        capture_output=True, text=True, encoding="utf-8", errors="replace", check=False, timeout=30,
     )
     if probe.returncode != 0:
         return False, t(
@@ -53,7 +53,7 @@ def _compose(engine_root: Path, service: Service, *args: str) -> subprocess.Comp
         raise StackError(t("Missing stack description for '{stack}': {cfile}", stack=service.stack, cfile=cfile))
     cmd = ["docker", "compose", "--env-file", str(env_file(engine_root)), "-f", str(cfile), *args]
     return subprocess.run(
-        cmd, capture_output=True, text=True, check=False,
+        cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", check=False,
         timeout=COMPOSE_TIMEOUT_SECONDS, cwd=str(cfile.parent),
     )
 

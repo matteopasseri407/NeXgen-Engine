@@ -40,6 +40,7 @@ try:
 except ImportError:  # pragma: no cover - the waiter imports with a fallback
     NPM_SPEC_RE = __import__("re").compile(r"^(?P<name>(?:@[\w.-]+/)?[\w.-]+)@(?P<version>\d[\w.+-]*)$")
 
+from nexgen_core.files import atomic_write_text
 from nexgen_core.config import load_mcp_manifest
 from nexgen_core.errors import NexgenError
 from nexgen_core.i18n import t
@@ -184,6 +185,18 @@ def _verified(deps: dict[str, Any], state_dir: Path) -> dict[str, str] | None:
     return {"DEPS_WORKSPACE": str(_run_workspace(clone, deps))}
 
 
+def _run(argv: list[str], cwd: Path, timeout: int) -> "subprocess.CompletedProcess[str]":
+    """A helper process that never inherits the caller's stdin.
+
+    The waiter provisions on a request thread while its main thread sits in a blocking read of the MCP
+    stream. A child that holds that same handle can wedge on Windows (git queries its stdin at start-up
+    and waits behind the pending read), and on any system it could swallow bytes of the protocol."""
+    return subprocess.run(
+        argv, cwd=cwd, stdin=subprocess.DEVNULL, capture_output=True, text=True,
+        encoding="utf-8", errors="replace", timeout=timeout,
+    )
+
+
 def _run_build(build: list[Any], workspace: Path, server: str) -> None:
     for step in build:
         argv = list(step) if isinstance(step, list) else shlex.split(str(step), posix=True)
@@ -193,7 +206,7 @@ def _run_build(build: list[Any], workspace: Path, server: str) -> None:
             raise ProvisionError(
                 t("build step '{cmd}' for server '{server}' needs '{bin}' on the machine.", cmd=" ".join(argv), server=server, bin=argv[0])
             )
-        proc = subprocess.run(argv, cwd=workspace, capture_output=True, text=True, timeout=600)
+        proc = _run(argv, workspace, 600)
         if proc.returncode != 0:
             tail = (proc.stderr or proc.stdout).strip().splitlines()[-5:]
             raise ProvisionError(
@@ -265,24 +278,18 @@ def _provision_git(deps: dict[str, Any], state_dir: Path, server: str) -> dict[s
             git = ["git"]
             if not shutil.which("git"):
                 raise ProvisionError(t("server '{server}' declares a git dependency but git is not on the machine.", server=server))
-            proc = subprocess.run(
-                git + ["init", "-q"], cwd=clone, capture_output=True, text=True, timeout=60,
-            )
+            proc = _run(git + ["init", "-q"], clone, 60)
             if proc.returncode != 0:
                 raise ProvisionError(t("git init failed for server '{server}': {err}", server=server, err=(proc.stderr or "").strip()))
-            proc = subprocess.run(
-                git + ["remote", "add", "origin", repo], cwd=clone, capture_output=True, text=True, timeout=60,
-            )
+            proc = _run(git + ["remote", "add", "origin", repo], clone, 60)
             if proc.returncode != 0:
                 raise ProvisionError(t("git remote add failed for server '{server}': {err}", server=server, err=(proc.stderr or "").strip()))
-            proc = subprocess.run(
-                git + ["fetch", "--depth", "1", "origin", rev], cwd=clone, capture_output=True, text=True, timeout=600,
-            )
+            proc = _run(git + ["fetch", "--depth", "1", "origin", rev], clone, 600)
             if proc.returncode != 0:
                 raise ProvisionError(
                     t("could not fetch rev '{rev}' of '{repo}' for server '{server}': {err}", rev=rev, repo=repo, server=server, err=(proc.stderr or "").strip().splitlines()[-1])
                 )
-            proc = subprocess.run(git + ["checkout", "-q", "FETCH_HEAD"], cwd=clone, capture_output=True, text=True, timeout=60)
+            proc = _run(git + ["checkout", "-q", "FETCH_HEAD"], clone, 60)
             if proc.returncode != 0:
                 raise ProvisionError(t("git checkout failed for server '{server}': {err}", server=server, err=(proc.stderr or "").strip()))
             workspace = _run_workspace(clone, deps)
@@ -293,12 +300,12 @@ def _provision_git(deps: dict[str, Any], state_dir: Path, server: str) -> dict[s
             build = deps.get("build") or []
             if build:
                 _run_build(build, workspace, server)
-            (clone / MARKER).write_text(json.dumps({
+            atomic_write_text(clone / MARKER, json.dumps({
                 "repo": repo,
                 "rev": rev,
                 "subdir": str(deps.get("subdir") or "").strip().strip("/"),
                 "build": _canonical_build(deps),
-            }), encoding="utf-8")
+            }))
             if final.exists():
                 shutil.rmtree(final, ignore_errors=True)
             os.replace(clone, final)

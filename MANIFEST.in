@@ -1,0 +1,6 @@
+# The wheel is built from the sdist, and setup.py copies the engine layer into it.
+# Setuptools only puts package files in an sdist, so the layer has to be named here.
+include VERSION
+graft 03-INFRA/agent-universal-layer
+prune 03-INFRA/agent-universal-layer/tests
+global-exclude __pycache__ *.pyc *.pyo

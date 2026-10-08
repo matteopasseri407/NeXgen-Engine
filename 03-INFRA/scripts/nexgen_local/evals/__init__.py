@@ -33,7 +33,7 @@ class MockWebRegistry(ToolRegistry):
         self._fixture = fixture
 
     def web_search(self, query: str) -> str:
-        output = self._fixture.read_text(errors="replace")[: self.cfg.read_chars]
+        output = self._fixture.read_text(encoding="utf-8", errors="replace")[: self.cfg.read_chars]
         return self._record("web_search", {"query": query}, output)
 
     def search_mail(self, query: str) -> str:
@@ -270,7 +270,7 @@ def run_patch_suite(llm: LLM, model: str, workdir: Path) -> dict[str, Any]:
         try:
             proposal = propose_patch(llm, cfg, str(task["file"]), str(task["instruction"]))
             apply_proposal(cfg, proposal.id, yes=True)
-            content = (sandbox["repo"] / str(task["file"])).read_text(errors="replace")
+            content = (sandbox["repo"] / str(task["file"])).read_text(encoding="utf-8", errors="replace")
             contains = str(task.get("check", {}).get("contains", ""))
             forbidden = str(task.get("check", {}).get("not_contains", ""))
             ok = (contains in content) and (not forbidden or forbidden not in content)

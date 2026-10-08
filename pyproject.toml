@@ -27,7 +27,7 @@ keywords = ["agents", "mcp", "automation", "knowledge-vault", "ai-agents", "clau
 # SQLite checkpoints) is core: every machine provisions it. Only the model
 # endpoint itself (your Ollama server, your opencode-attached model) is the
 # user's own business and never ships here.
-dependencies = ["PyYAML>=6.0,<7.0", "langgraph>=1.0,<2", "langchain-ollama>=1.0,<2", "httpx>=0.28,<1", "mcp>=2.0,<3", "langgraph-checkpoint-sqlite>=3,<4"]
+dependencies = ["PyYAML>=6.0,<7.0", "langgraph>=1.0,<2", "langchain-ollama>=1.0,<2", "httpx>=0.28,<1", "mcp>=2.2.0,<3", "langgraph-checkpoint-sqlite>=3,<4"]
 
 [project.optional-dependencies]
 dev = ["pytest>=8.0", "ruff>=0.6"]
@@ -35,6 +35,10 @@ dev = ["pytest>=8.0", "ruff>=0.6"]
 # so these install nothing extra.
 local = []
 council = []
+# Run the lane on a frontier model instead of the local pair: `NEXGEN_LANE_MODEL=anthropic:<model>`
+# (or `openai:<model>`). The provider packages stay out of a default install: a machine that only
+# uses local models never loads them. See docs/local-lane.md.
+frontier = ["langchain>=1.0,<2", "langchain-anthropic>=1.0,<2", "langchain-openai>=1.0,<2"]
 
 [project.urls]
 Homepage = "https://github.com/matteopasseri407/NeXgen-Engine"

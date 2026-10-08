@@ -85,7 +85,7 @@ def _read_text_bytes(path: Path) -> str:
 def _run_git(repo_root: Path, args: list[str], timeout: int = 120) -> tuple[int, str]:
     try:
         proc = subprocess.run(
-            ["git", "-C", str(repo_root), *args], capture_output=True, text=True, timeout=timeout
+            ["git", "-C", str(repo_root), *args], capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=timeout
         )
         return proc.returncode, (proc.stdout + proc.stderr)
     except (OSError, subprocess.SubprocessError) as exc:
@@ -346,7 +346,7 @@ def _apply_proposal(cfg: LaneConfig, proposal_id: str, *, verify: str | None) ->
     if verify:
         try:
             proc = subprocess.run(
-                shlex.split(verify), cwd=root, capture_output=True, text=True, timeout=APPLY_TIMEOUT
+                shlex.split(verify), cwd=root, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=APPLY_TIMEOUT
             )
             verify_rc = proc.returncode
             verify_output = f"rc={proc.returncode}\n{proc.stdout[-2000:]}{proc.stderr[-1000:]}"

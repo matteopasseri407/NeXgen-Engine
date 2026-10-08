@@ -34,6 +34,14 @@ def register(sub) -> None:
     q = ssub.add_parser("bump", help=t("Raise guardian-vetted third-party pins with one approval"))
     q.set_defaults(func=lambda a: _forward(["bump"]))
 
+    q = ssub.add_parser("adopt", help=t("Follow the engine for the skills it ships, instead of keeping frozen copies in the Vault"))
+    q.add_argument("names", nargs="*", help=t("Skills to adopt (default: list them)"))
+    q.add_argument("--all", action="store_true", help=t("Every copy identical to the engine's"))
+    q.add_argument("--force", action="store_true", help=t("Also adopt a copy that differs (it is kept in a backup folder)"))
+    q.add_argument("--dry-run", action="store_true", help=t("Show what would change, change nothing"))
+    q.set_defaults(func=lambda a: __import__("nexgen_core.skill_adopt", fromlist=["main"]).main(
+        a.names, all_=a.all, force=a.force, dry_run=a.dry_run))
+
     q = ssub.add_parser("validate", help=t("Check the manifest without writing anything"))
     q.set_defaults(func=lambda a: _forward(["validate"]))
 

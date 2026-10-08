@@ -30,6 +30,15 @@
 #                shared between machines through the vault, so a module bound
 #                to one desktop must say `host`. External modules default to
 #                `host`; the engine's own default to `shared`.
+#   upstream:    the third-party components the module carries, watched upstream like
+#                skills and MCP servers (`nexgen info`, the hourly watch, the guardian).
+#                A list of {name, kind, pinned_in, latest, ...}:
+#                  kind: docker  image: <ref>          the tag of that image in `pinned_in`
+#                  kind: npm     package, pattern      a regex whose first group is the version in `pinned_in`
+#                  pinned_in:    a file inside the engine (or the module's own source) that holds the pin
+#                  latest:       where the newest release is read: npm:<package> | git-tags:<owner/repo>
+#                  compare:      patch (default) | minor, for a rolling release whose patch is a build counter
+#                Reported only: a program is replaced where it runs, and the bump has no target for it.
 #   health:      a command that proves the module WORKS, not merely that its
 #                files are present. Run by `nexgen doctor`, never by the guard.
 #   provides:    what the engine installs for it.
@@ -92,6 +101,15 @@ modules:
     mcp_servers: [firecrawl]
     stack: firecrawl
     depends_on: []
+    # The MCP client (firecrawl-mcp) is pinned in the MCP manifest; this is the backend it talks to.
+    # Upstream tags a build per merge (2.11.99 ... 2.11.4xx), so only a new minor line is news.
+    upstream:
+      - name: firecrawl-api
+        kind: docker
+        image: ghcr.io/firecrawl/firecrawl
+        pinned_in: deploy/firecrawl/docker-compose.yml
+        latest: "git-tags:firecrawl/firecrawl"
+        compare: minor
 
   ocr:
     label: "Local OCR (vault-ocr)"
@@ -110,6 +128,14 @@ modules:
     mcp_servers: [n8n-mcp]
     stack: n8n
     depends_on: []
+    # The MCP endpoint is n8n's own, so the program is what gets updated: the image tag and n8n's
+    # release number are the same number.
+    upstream:
+      - name: n8n
+        kind: docker
+        image: n8nio/n8n
+        pinned_in: deploy/n8n/docker-compose.yml
+        latest: "npm:n8n"
 
   browser:
     label: "Visible browser (Playwright MCP + shared Chrome)"
@@ -119,6 +145,15 @@ modules:
     mcp_servers: [playwright]
     stack: null
     depends_on: []
+    # The launcher patches this exact upstream version in npm's cache, so it is never raised blind:
+    # a newer one needs its patches checked first (`node playwright-human-safe.mjs --self-test`).
+    upstream:
+      - name: playwright
+        kind: npm
+        package: "@playwright/mcp"
+        pinned_in: agent-universal-layer/mcp/playwright-human-safe.mjs
+        pattern: "const VERSION = '([^']+)';"
+        latest: "npm:@playwright/mcp"
 
   council:
     label: "AI Council (multi-model review, seats-driven)"
@@ -128,6 +163,7 @@ modules:
     mcp_servers: []
     stack: null
     depends_on: [memory]
+    health: "nexgen council contract"
 
   local-lane:
     label: "Governed local lane (read-only, optional)"

@@ -5,7 +5,9 @@ import os
 from pathlib import Path
 
 from nexgen_core.config import load_mcp_manifest
+from nexgen_core.deposit_env import read_deposit
 from nexgen_core.i18n import t
+from nexgen_core.mcp_placement import CLIS, DIRECT, place
 from nexgen_core.report import CheckOutcome, Severity
 
 
@@ -95,7 +97,14 @@ def check_tokens_in_env(vault_data: Path) -> CheckOutcome:
             message=t("MCP manifest missing, could not check the tokens."),
         )
 
-    data = load_mcp_manifest(manifest_path)
+    try:
+        data = load_mcp_manifest(manifest_path)
+    except Exception as exc:  # noqa: BLE001 - mcp.manifest_valid owns reporting a broken manifest
+        return CheckOutcome(
+            id="env.tokens_in_env",
+            severity=Severity.UNDETERMINED,
+            message=t("The MCP manifest could not be read, so the tokens were not checked ({error}).", error=type(exc).__name__),
+        )
     missing: list[str] = []
     for name, srv in data.get("servers", {}).items():
         if srv.get("transport") != "http" and not srv.get("url"):
@@ -110,8 +119,14 @@ def check_tokens_in_env(vault_data: Path) -> CheckOutcome:
         req_env = srv.get("require_env")
         if req_env and not os.environ.get(req_env):
             continue
-        if not os.environ.get(env_name):
-            missing.append(f"{name} (requires {env_name})")
+        if os.environ.get(env_name):
+            continue
+        # Behind the gateway the gateway itself finds the token in the secrets deposit's materialized file, whatever
+        # launched the CLI. A server mounted directly in a CLI needs the real environment: the CLI passes it on.
+        behind_gateway = all(place(srv, cli).kind != DIRECT for cli in CLIS)
+        if behind_gateway and read_deposit().get(env_name):
+            continue
+        missing.append(f"{name} (requires {env_name})")
 
     if missing:
         return CheckOutcome(
@@ -208,3 +223,39 @@ def check_secrets_materialized(home: Path, vault_data: Path | None = None) -> Ch
 
 
 
+
+
+def _normalized(path: Path) -> list[str]:
+    """The file's lines without trailing whitespace or trailing blank lines: what differs in meaning, not in editor habits."""
+    lines = [line.rstrip() for line in path.read_text(encoding="utf-8").splitlines()]
+    while lines and not lines[-1]:
+        lines.pop()
+    return lines
+
+
+def check_leak_patterns_twin(vault_data: Path, engine_root: Path) -> CheckOutcome | None:
+    """The private Vault keeps a copy of the leak-scan patterns the public engine's CI uses.
+
+    Two copies kept in step by a person's memory drifted before: the engine gained provider-token patterns
+    and the copy the maintainer's own push gate reads did not, so the gate that guards the public repository
+    was weaker than the one CI runs. Returns None where there is no Vault copy (every machine but the
+    maintainer's), because there is nothing to compare.
+    """
+    twin = vault_data / "03-INFRA" / "agent-universal-layer" / "sanitize" / "leak_patterns.yaml"
+    source = engine_root / "agent-universal-layer" / "leak-scan" / "leak_patterns.yaml"
+    if not twin.is_file() or not source.is_file():
+        return None
+    try:
+        same = _normalized(twin) == _normalized(source)
+    except (OSError, UnicodeDecodeError) as exc:
+        return CheckOutcome(id="security.leak_patterns_twin", severity=Severity.UNDETERMINED,
+                            message=t("The leak-scan pattern copies could not be compared: {error}", error=exc))
+    if same:
+        return CheckOutcome(id="security.leak_patterns_twin", severity=Severity.OK,
+                            message=t("The Vault's leak-scan patterns match the engine's"))
+    return CheckOutcome(
+        id="security.leak_patterns_twin",
+        severity=Severity.WARN,
+        message=t("The Vault's copy of the leak-scan patterns differs from the engine's, so its push gate may be weaker than CI's."),
+        action=t("Copy {source} over {twin}, then commit it in the Vault.", source=source, twin=twin),
+    )

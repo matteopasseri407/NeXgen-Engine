@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import io
 import logging
 import os
 import secrets
+import threading
 import time
 from typing import Any
 
@@ -45,7 +47,8 @@ async def require_ocr_token(authorization: str | None = Header(default=None)) ->
     if not authorization or not authorization.startswith("Bearer "):
         raise HTTPException(status_code=401, detail="missing bearer token")
     presented = authorization.removeprefix("Bearer ").strip()
-    if not secrets.compare_digest(presented, VAULT_OCR_TOKEN):
+    # Bytes: compare_digest raises TypeError on a str with non-ASCII characters, which the client controls.
+    if not secrets.compare_digest(presented.encode("utf-8"), VAULT_OCR_TOKEN.encode("utf-8")):
         raise HTTPException(status_code=401, detail="invalid bearer token")
 
 
@@ -54,6 +57,11 @@ app = FastAPI(
     version="1.0.0",
     description="RapidOCR extraction service for the user's agent layer. It never writes to the vault.",
 )
+
+
+#: One recognition at a time: the engine is CPU-bound and sized for a small VPS, and two at once
+#: only make both slower and risk the memory limit.
+_ENGINE_LOCK = threading.Lock()
 
 
 def get_engine() -> RapidOCR:
@@ -112,6 +120,11 @@ def markdown_from_lines(lines: list[dict[str, Any]]) -> str:
     return "\n".join(line["text"] for line in lines)
 
 
+def _recognize(data: bytes, min_confidence: float) -> Any:
+    with _ENGINE_LOCK:
+        return get_engine()(data, text_score=min_confidence or None)
+
+
 @app.get("/health")
 def health() -> dict[str, Any]:
     return {
@@ -134,10 +147,12 @@ async def ocr(
     if min_confidence < 0 or min_confidence > 1:
         raise HTTPException(status_code=400, detail="min_confidence must be between 0 and 1")
 
-    image_meta = validate_image(data)
+    # Off the event loop: decoding and recognition take seconds on a small VPS, and run inline they
+    # froze /health (the container's own healthcheck) and every other request for that long.
+    image_meta = await asyncio.to_thread(validate_image, data)
     digest = hashlib.sha256(data).hexdigest()
     started = time.perf_counter()
-    result = get_engine()(data, text_score=min_confidence or None)
+    result = await asyncio.to_thread(_recognize, data, min_confidence)
     elapsed = time.perf_counter() - started
 
     txts_raw = getattr(result, "txts", None)

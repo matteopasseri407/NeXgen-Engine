@@ -26,6 +26,19 @@ MIN_TERM = 2
 #: Files larger than this are skipped by search instead of read whole.
 MAX_SEARCH_BYTES = 1_000_000
 
+#: Names of files that hold credentials wherever they sit. A repository root is allowed, but a deploy
+#: checkout keeps its real `.env` (service tokens) inside it, and a key file is a key file in any folder.
+_SENSITIVE_NAME = re.compile(
+    r"(?i)^(?:\.env(?:\..*)?|\.netrc|\.npmrc|\.pypirc|\.git-credentials|tokens?\.json|credentials?(?:\..*)?"
+    r"|secrets?\..*|id_(?:rsa|dsa|ecdsa|ed25519)(?:\.pub)?|.*\.(?:pem|key|p12|pfx|age|kdbx|gpg|asc))$"
+)
+
+
+def is_sensitive_name(name: str) -> bool:
+    """A file name that says it holds a credential. `.env.example` is documentation, not a credential."""
+    return bool(_SENSITIVE_NAME.match(name)) and not name.lower().endswith((".example", ".sample", ".template", ".pub"))
+
+
 #: Legacy checkpoints did not persist an explicit status. These markers
 #: interpret only their refusal history; fresh operations declare status.
 _EMPTY_REFUSALS = ("nessun risultato", "nessun testo estraibile")
@@ -186,6 +199,8 @@ class ToolRegistry:
                 continue
             if any(part in self.cfg.excluded_parts for part in resolved.parts):
                 continue
+            if is_sensitive_name(resolved.name):
+                continue
             for root in roots:
                 try:
                     resolved.relative_to(root.resolve())
@@ -262,7 +277,7 @@ class ToolRegistry:
             try:
                 if resolved.stat().st_size > MAX_SEARCH_BYTES:
                     continue
-                text = resolved.read_text(errors="replace").casefold()
+                text = resolved.read_text(encoding="utf-8", errors="replace").casefold()
             except OSError:
                 continue
             # The action loop searches with require_all: a generic word must
@@ -654,7 +669,8 @@ class ToolRegistry:
         root = default_engine_root()
         lines = [f"engine_root: {root}"]
         version_file = root / "VERSION"
-        lines.append(f"version: {version_file.read_text().strip() if version_file.is_file() else 'sconosciuta'}")
+        version = version_file.read_text(encoding="utf-8").strip() if version_file.is_file() else "sconosciuta"
+        lines.append(f"version: {version}")
         if shutil.which("git") and (root / ".git").exists():
             run = self._run(["git", "-C", str(root), "rev-parse", "--short", "HEAD"], timeout=15)
             head = run.out.strip() if run.ok else ""
@@ -667,7 +683,7 @@ class ToolRegistry:
     @staticmethod
     def _run(cmd: list[str], timeout: int) -> RunResult:
         try:
-            proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+            proc = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=timeout)
             return RunResult(proc.returncode, proc.stdout, proc.stderr)
         except (OSError, subprocess.SubprocessError) as exc:
             return RunResult(1, "", str(exc))

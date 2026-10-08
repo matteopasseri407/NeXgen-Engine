@@ -31,6 +31,7 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from nexgen_core.files import atomic_write_text
 from nexgen_core.depwatch import PinFinding
 
 GIT_TIMEOUT_SECONDS = 120
@@ -76,7 +77,7 @@ class GuardFinding:
 def _run_git(args: list[str], cwd: Path) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         ["git", *args], cwd=str(cwd),
-        capture_output=True, text=True, check=False,
+        capture_output=True, text=True, encoding="utf-8", errors="replace", check=False,
         timeout=GIT_TIMEOUT_SECONDS,
     )
 
@@ -298,6 +299,14 @@ def judge_finding(
         verdict.reasons.append("nothing moved or unreachable")
         verdict.plain = "Niente di nuovo: resta dov'è."
         return verdict
+    if finding.what.startswith("module "):
+        # A module's component is a program or a patched launcher, not a pin in a manifest: it is
+        # replaced where it runs, after trying it. Even a patch jump is held, because the Playwright
+        # wrapper edits that exact version's files and a "small touch-up" would stop it starting.
+        verdict = GuardFinding(what=finding.what, pinned=finding.pinned, upstream=finding.upstream)
+        verdict.reasons.append("a component of a module: replaced where it runs, after trying it, never rewritten from here")
+        verdict.plain = "È un componente di un modulo (un programma o un lanciatore con patch): si aggiorna a mano dopo averlo provato. Qui lo segnalo soltanto."
+        return verdict
     if finding.kind == "git-commit":
         match = re.match(r"^skill '([^']+)'", finding.what)
         name = match.group(1) if match else ""
@@ -392,7 +401,7 @@ def run_guardian(
         }
         sidecar = Path(state_dir) / "nexgen" / "third-party-guard.json"
         sidecar.parent.mkdir(parents=True, exist_ok=True)
-        sidecar.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+        atomic_write_text(sidecar, json.dumps(payload, indent=2) + "\n")
         return {"ok": True, "auto": len(payload["auto"]),
                 "batch": len(payload["batch"]), "hold": len(payload["hold"])}
     except Exception as exc:  # noqa: BLE001 - guard failure is reported, never raises

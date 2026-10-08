@@ -32,9 +32,14 @@ def render(renderer, write: bool = False) -> tuple[bool, str]:
     if cfg_file.is_file():
         raw_existing = cfg_file.read_text(encoding="utf-8")
         try:
-            existing = parse_jsonc(raw_existing) if cfg_file.suffix == ".jsonc" else json.loads(raw_existing)
+            # OpenCode reads `opencode.json` with the same comment-tolerant parser as
+            # `opencode.jsonc`; a strict parse here turned a commented file that
+            # OpenCode itself loads fine into "invalid JSON" and a render that never ran.
+            existing = parse_jsonc(raw_existing) if raw_existing.strip() else {}
         except Exception as exc:  # noqa: BLE001 - render fallback, never raises
             raise ValueError(f"Could not parse {cfg_file}: invalid JSON/JSONC ({exc})")
+        if not isinstance(existing, dict):
+            raise ValueError(f"Could not parse {cfg_file}: expected a JSON object")
 
     raw_mcp = existing.get("mcp", {})
     if not isinstance(raw_mcp, dict):
@@ -153,9 +158,9 @@ def render(renderer, write: bool = False) -> tuple[bool, str]:
     mcp_config["servers"] = mcp_servers
     existing["mcp"] = mcp_config
     if write:
-        # JSONC-aware: preserves the existing file's comments instead of
-        # overwriting it with plain JSON (which OpenCode wouldn't read).
-        if cfg_file.suffix == ".jsonc" and raw_existing.strip():
+        # JSONC-aware for either file name: preserves the existing file's
+        # comments instead of overwriting them with plain JSON.
+        if raw_existing.strip():
             content = set_jsonc_top_level_value(raw_existing, "mcp", mcp_config)
             if "tools" in existing and tools_cfg != old_tools_cfg:
                 content = set_jsonc_top_level_value(content, "tools", tools_cfg)

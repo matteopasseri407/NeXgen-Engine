@@ -146,7 +146,8 @@ def test_publish_changes_handles_conflict_via_quarantine(tmp_path: Path) -> None
 
     # Publish in Clone B: should rebase, conflict, abort, quarantine, and reset cleanly
     success, msg = publish_changes(clone_b, branch="main", remote="origin")
-    assert success is True
+    # Preserved, but not published: a caller must not read this as success.
+    assert success is False
     assert "quarantine" in msg.lower()
 
     # Clone B's main has origin/main content
@@ -193,7 +194,7 @@ def test_quarantine_preserves_uncommitted_tracked_changes(tmp_path: Path) -> Non
     note_b.write_text("appunti IMPORTANTI non committati\n", encoding="utf-8")
 
     success, msg = publish_changes(clone_b, branch="main", remote="origin")
-    assert success is True
+    assert success is False
     assert "quarantine" in msg.lower()
 
     # Uncommitted work must be recoverable from the quarantine branch

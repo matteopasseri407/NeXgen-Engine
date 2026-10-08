@@ -59,13 +59,20 @@ before integration. Fix new lint findings rather than regenerating the baseline.
 | Persistent research ownership, continuation and expiry | `nexgen_local/research_graph.py`; locking in `nexgen_core/lock.py` | `test_nexgen_local_research.py` |
 | Proposal ids, exclusive approval and durable attempts | `nexgen_local/proposals.py`; domain checks in patch/mail/calendar/upload/workflow gates | `test_nexgen_proposal_execution.py`, `test_nexgen_local_patch.py`, `test_nexgen_local_compose.py`, `test_nexgen_local_calendars.py`, `test_nexgen_local_drive_mcp.py`, `test_nexgen_local_workflows.py` |
 | Council process lifecycle and relay checkpoints | `03-INFRA/agent-universal-layer/council/` | `test_nexgen_council_*.py` |
+| Third-party components inside modules (`upstream:` in the module catalog) | `nexgen_core/modules.py` (the declaration), `nexgen_core/depwatch.py` (reading the pin, asking upstream) | `test_nexgen_module_upstream.py`, `test_nexgen_depwatch_abandoned.py`, `test_nexgen_playwright_pin.py` |
+| Council seat flags against the installed vendor CLIs (`nexgen council contract`) | `council/cli_contract.py`; the flags come from `_build_seat_command` in `council/seat_process.py` | `test_nexgen_council_cli_contract.py` |
 | Owned subprocess cleanup and Windows launch adapters | `nexgen_core/processes.py` | `test_nexgen_council_process_integration.py`, `test_nexgen_mcp_transport.py`, `test_vault_groom.py` |
 | Vault publication and selected files | `nexgen_core/git_ops.py` | `test_nexgen_scoped_publish.py` |
 | Standalone Vault MCP indexing and note publication | `deploy/vault-mcp/src/vault_mcp_server/vault.py` | `test_deploy_vault_mcp.py` |
 | OCR path gates and bounded image reads | `deploy/ocr/mcp/vault_ocr_mcp.py` | `test_deploy_ocr_mcp.py` |
 | MCP mount policy and private connector preservation | `nexgen_core/renderer.py`; dialect writers in `mcp_render/` | `test_nexgen_mcp_preservation.py`, `test_nexgen_phase2.py`, `test_nexgen_lazy_mcp.py` |
-| Lazy MCP deadlines, framing and reply correlation | `03-INFRA/agent-universal-layer/mcp/lazy-mcp.py` | `test_nexgen_mcp_transport.py`, `test_nexgen_lazy_mcp.py` |
+| Lazy MCP deadlines, framing and reply correlation, concurrency, child environment, read/write split | `03-INFRA/agent-universal-layer/mcp/lazy-mcp.py` (see [lazy-mcp.md](docs/lazy-mcp.md)) | `test_nexgen_mcp_transport.py`, `test_nexgen_lazy_mcp.py`, `test_nexgen_lazy_mcp_serving.py` |
 | Released Engine update and mechanical pin | `nexgen_core/updater.py` | `test_nexgen_update_command.py` |
+| Installed MCP servers and skills: provenance, pins, upstream state (`nexgen info`) | `nexgen_core/extensions.py`; the sections in `nexgen_core/tools/info.py` (see [whats-installed.md](docs/whats-installed.md)) | `test_nexgen_extensions.py` |
+| OpenCode guardrail: plugin directory, V2 hooks, legacy cleanup | `agent-universal-layer/hooks/opencode-guardrail-plugin.mjs`, `nexgen-guardrail-core.mjs`; `nexgen_core/runtimes/opencode.py` | `test_nexgen_guardrail_adapters.py`, `test_runtimes.py`, `test_nexgen_opencode_live.py` (real binary, skipped without one) |
+| Skills the engine ships, kept as frozen Vault copies (`skills adopt`, `skills.engine_copies`) | `nexgen_core/skill_adopt.py`; `check_skill_engine_copies` in `nexgen_core/checks/skill_checks.py` | `test_nexgen_skill_adopt.py` |
+| Where a server's credential comes from (process, `environment.d`, secrets deposit) | `_declared_value` in `agent-universal-layer/mcp/lazy-mcp.py`; `nexgen_core/deposit_env.py` | `test_nexgen_mcp_credentials.py`, `test_nexgen_mcp_trim.py` |
+| Raising third-party pins, trying each MCP server before keeping the change | `nexgen_core/thirdparty_bump.py`; `verify_servers` in `nexgen_core/mcp_check.py` | `test_nexgen_bump.py`, `test_nexgen_mcp_check.py` |
 | Contributor lanes | `nexgen_core/lanes.py` | `test_nexgen_lanes.py` |
 
 Check the actual filenames before selecting a test. Graph modules drive the
@@ -95,7 +102,9 @@ Council, lazy MCP and Vault grooming share `nexgen_core/processes.py` for
 terminating owned subprocess trees. Pass only a process group created by the
 caller. Lazy MCP applies manifest startup/tool deadlines to RPC I/O, including
 pipe writes, and limits received bytes to 8 MiB per exchange. Provisioning has
-its own deadlines. A timed-out tool call has an unknown outcome and is never
+its own deadlines. A helper process the gateway can reach declares its stdin
+(`DEVNULL`): the gateway's own stdin is the protocol stream, and
+`test_nexgen_subprocess_stdin_contract.py` fails a launch that omits it. A timed-out tool call has an unknown outcome and is never
 automatically retried. Only matching JSON-RPC responses complete a request;
 notifications and replies to other requests do not.
 Council captures at most 8 MiB across stdout and stderr per invocation and

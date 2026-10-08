@@ -20,6 +20,14 @@
 #    is not satisfied.
 # ============================================================================
 
+# exposure: where a server lives, declared once.
+#   eager  mounted directly in every CLI listed in `targets`;
+#   lazy   behind the gateway (lazy-mcp) in every CLI listed in `targets`.
+# `targets` is always the allow-list of CLIs and `enabled: false` always switches a server off. Without
+# `exposure` the older knobs apply (`tier`, `lazy`, `lazy_targets`), so an unmigrated manifest keeps its
+# behaviour. `nexgen mcp plan` prints the result per CLI and why; `nexgen mcp check` starts each CLI's
+# gateway and compares what it serves with that plan.
+#
 # tier: `core` are the connectors the engine treats as fundamental and ships
 # mounted. Everything else is `optional` (the default when the key is absent):
 # it is known to exist and only mounted when someone asks for it, the same
@@ -45,6 +53,10 @@ servers:
     tier: core
     command: node
     args: ["${AGENT_ENGINE_ROOT}/agent-universal-layer/mcp/playwright-human-safe.mjs", "--cdp-endpoint", "http://localhost:9222"]
+    # The wrapper pins and patches this exact upstream version itself (VERSION in the .mjs), so the
+    # command line carries no `npx pkg@version`. That pin is declared once, by the `browser` module
+    # (`upstream:` in modules/modules.yaml), which reads it from the script: a number in this
+    # manifest could be rewritten by the bump without ever changing the one the wrapper uses.
     targets: [claude, codex, antigravity, opencode]
     windows:
       args: ["${AGENT_ENGINE_ROOT}\\agent-universal-layer\\mcp\\playwright-human-safe.mjs", "--cdp-endpoint", "http://localhost:9222"]
@@ -58,7 +70,7 @@ servers:
     transport: stdio
     tier: core
     command: npx
-    args: ["-y", "firecrawl-mcp@3.24.0"]
+    args: ["-y", "firecrawl-mcp@3.25.3"]
     env:
       FIRECRAWL_API_URL: "http://127.0.0.1:${FIRECRAWL_TUNNEL_PORT:-33002}"
     require_env: FIRECRAWL_TUNNEL_PORT
@@ -160,3 +172,18 @@ servers:
     args: ["-y", "@modelcontextprotocol/server-memory@2026.7.4"]
     require_env: MCP_MEMORY_OPT_IN
     targets: [codex]
+
+  # ---- the gateway (always mounted) -------------------------------------
+
+  # Every server declared `exposure: lazy` is served through this one proxy: a CLI loads its four small tools instead
+  # of every server's definitions, and a server added with `nexgen mcp add` goes behind it by default. Without this
+  # entry nothing routed to the gateway is reachable, and `nexgen doctor` says so.
+  lazy-mcp:
+    exposure: eager
+    tier: core
+    transport: stdio
+    command: python3
+    args: ["${AGENT_ENGINE_ROOT}/agent-universal-layer/mcp/lazy-mcp.py"]
+    env:
+      AGENT_VAULT_DATA: "${AGENT_VAULT_DATA}"
+    targets: [claude, codex, antigravity, opencode]

@@ -59,14 +59,14 @@ def _windows(title: str, body: str) -> bool:
     # BurntToast is not assumed: a balloon through the shell's own tray icon
     # needs nothing installed, which is the difference between a notification
     # that arrives on a fresh machine and one that arrives on a prepared one.
-    safe_title = title.replace("'", "''")
-    safe_body = body.replace("'", "''")
+    from nexgen_core.processes import powershell_literal
+
     script = (
         "Add-Type -AssemblyName System.Windows.Forms; "
         "$n = New-Object System.Windows.Forms.NotifyIcon; "
         "$n.Icon = [System.Drawing.SystemIcons]::Warning; "
         "$n.Visible = $true; "
-        f"$n.ShowBalloonTip(10000, '{safe_title}', '{safe_body}', "
+        f"$n.ShowBalloonTip(10000, {powershell_literal(title)}, {powershell_literal(body)}, "
         "[System.Windows.Forms.ToolTipIcon]::Warning); "
         "Start-Sleep -Seconds 10; $n.Dispose()"
     )

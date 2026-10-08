@@ -302,3 +302,52 @@ def test_health_endpoint_never_requires_a_token(client_with_token):
     which does not send an Authorization header."""
     response = client_with_token.get("/health")
     assert response.status_code == 200
+
+
+def test_a_non_ascii_bearer_is_a_401_not_a_crash(client_with_token):
+    response = client_with_token.post(
+        "/ocr",
+        files={"file": ("page.png", _image_bytes("PNG"), "image/png")},
+        headers={"Authorization": "Bearer té".encode("latin-1")},
+    )
+    assert response.status_code == 401
+
+
+def test_recognition_does_not_freeze_the_event_loop(app_module, monkeypatch):
+    """The engine takes seconds on a small VPS; run inline it froze /health and every other request."""
+    import time as _time
+
+    class SlowEngine:
+        def __call__(self, data, text_score=None):
+            _time.sleep(0.4)
+            return FakeOCRResult()
+
+    monkeypatch.setattr(app_module, "get_engine", lambda: SlowEngine())
+    upload = types.SimpleNamespace(filename="p.png", read=None)
+    payload = _image_bytes("PNG")
+    served = [payload]
+
+    async def read(_size):
+        return served.pop() if served else b""
+
+    upload.read = read
+
+    async def scenario():
+        ticks = 0
+        done = asyncio.Event()
+
+        async def ticker():
+            nonlocal ticks
+            while not done.is_set():
+                ticks += 1
+                await asyncio.sleep(0.01)
+
+        task = asyncio.create_task(ticker())
+        body = await app_module.ocr(file=upload, min_confidence=0.0, _auth=None)
+        done.set()
+        await task
+        return body, ticks
+
+    body, ticks = asyncio.run(scenario())
+    assert body["status"] == "ok"
+    assert ticks >= 10, f"the loop only ran {ticks} times while the engine worked"

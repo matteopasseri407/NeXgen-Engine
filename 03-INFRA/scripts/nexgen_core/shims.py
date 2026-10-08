@@ -15,7 +15,7 @@ import sys
 from pathlib import Path
 
 from nexgen_core.files import atomic_write_text
-from nexgen_core.paths import resolve_home
+from nexgen_core.paths import installed_as_package, resolve_home, resolve_runtime_dir
 
 #: The real command.
 PRIMARY = "nexgen"
@@ -52,6 +52,14 @@ NEXGEN_ENTRY="{entry}"
 if [ -n "${{AGENT_ENGINE_ROOT:-}}" ] && [ -f "$AGENT_ENGINE_ROOT/scripts/nexgen_core/cli/__init__.py" ]; then
     NEXGEN_ENTRY="$AGENT_ENGINE_ROOT/scripts/nexgen_core/cli/__init__.py"
 fi
+# The engine's own environment, once the guard has provisioned and verified it: it
+# holds the libraries the Council, the local lane and the MCP servers need. A plain
+# file test decides, so no interpreter is started just to choose one. Until then (or
+# if it is gone) any suitable Python runs, which is all the guard and doctor need.
+NEXGEN_RUNTIME="{runtime}"
+if [ -f "$NEXGEN_RUNTIME/.provisioned" ] && [ -x "$NEXGEN_RUNTIME/bin/python" ]; then
+    exec "$NEXGEN_RUNTIME/bin/python" "$NEXGEN_ENTRY" {prefix}"$@"
+fi
 for candidate in python3 python; do
     if command -v "$candidate" >/dev/null 2>&1; then
         if "$candidate" -c 'import sys; sys.exit(0 if sys.version_info >= (3, 11) else 1)' >/dev/null 2>&1; then
@@ -71,6 +79,12 @@ setlocal
 set "NEXGEN_ENTRY={entry}"
 if defined AGENT_ENGINE_ROOT (
     if exist "%AGENT_ENGINE_ROOT%\\scripts\\nexgen_core\\cli\\__init__.py" set "NEXGEN_ENTRY=%AGENT_ENGINE_ROOT%\\scripts\\nexgen_core\\cli\\__init__.py"
+)
+rem The engine's own environment, once provisioned and verified (see the POSIX launcher).
+set "NEXGEN_RUNTIME={runtime}"
+if exist "%NEXGEN_RUNTIME%\\.provisioned" if exist "%NEXGEN_RUNTIME%\\Scripts\\python.exe" (
+    "%NEXGEN_RUNTIME%\\Scripts\\python.exe" "%NEXGEN_ENTRY%" {prefix}%*
+    exit /b %ERRORLEVEL%
 )
 where py >nul 2>&1
 if %ERRORLEVEL% equ 0 (
@@ -100,7 +114,7 @@ def ensure_executable(path: Path) -> None:
         path.chmod(path.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
 
 
-def _render(name: str, prefix: list[str], entry: Path, windows: bool) -> str:
+def _render(name: str, prefix: list[str], entry: Path, windows: bool, runtime_dir: Path) -> str:
     note = (
         f"'{name}' is the historical name for '{PRIMARY} {' '.join(prefix)}'."
         if prefix
@@ -108,7 +122,7 @@ def _render(name: str, prefix: list[str], entry: Path, windows: bool) -> str:
     )
     prefix_str = ("".join(f'"{v}" ' for v in prefix)) if prefix else ""
     template = _WINDOWS_TEMPLATE if windows else _POSIX_TEMPLATE
-    return template.format(note=note, entry=str(entry), prefix=prefix_str)
+    return template.format(note=note, entry=str(entry), prefix=prefix_str, runtime=str(runtime_dir))
 
 
 def _is_stale_windows_ps1_shim(text: str) -> bool:
@@ -134,8 +148,19 @@ def install_shims(
     scripts_dir: Path | None = None,
     bin_dir: Path | None = None,
     home: Path | None = None,
+    changed: list[str] | None = None,
 ) -> list[str]:
-    """Generates the launchers for the current platform and returns what it wrote.
+    """Generates the launchers for the current platform and returns every launcher it manages.
+
+    Pass a list as `changed` to learn which of them it actually (re)wrote: the guard
+    used to answer that by hashing every file in `~/.local/bin` twice per cycle, which
+    on a machine with three large CLIs there meant reading 829 MB every 30 minutes.
+
+    When the engine runs from a package manager's site-packages the launchers are
+    the package manager's: pipx and uv put theirs in `~/.local/bin`, and replacing
+    them with these (which start whatever `python3` is on PATH, not the tool's own
+    environment) would break the install on the first guard cycle. Nothing is
+    written then. An explicit `bin_dir` is for tests and tools and is always honoured.
 
     It's idempotent: regenerating changes nothing if the content already
     matches, which is why the guard cycle can call it every round to
@@ -148,9 +173,12 @@ def install_shims(
     stale stubs are removed when their content matches the old forwarding
     pattern. Anything else named `.ps1` is left alone.
     """
+    if bin_dir is None and installed_as_package():
+        return []
     home_dir = resolve_home(home)
     target_bin = bin_dir or (home_dir / ".local" / "bin")
     target_bin.mkdir(parents=True, exist_ok=True)
+    runtime_dir = resolve_runtime_dir(home_dir)
 
     base_scripts = scripts_dir or Path(__file__).resolve().parents[1]
     entry = base_scripts / "nexgen_core" / "cli" / "__init__.py"
@@ -160,11 +188,13 @@ def install_shims(
     installed: list[str] = []
     for name, prefix in [(PRIMARY, [])] + sorted(LEGACY_ALIASES.items()):
         launcher = target_bin / f"{name}{suffix}"
-        content = _render(name, prefix, entry, windows)
+        content = _render(name, prefix, entry, windows, runtime_dir)
         if not (launcher.is_file() and launcher.read_text(encoding="utf-8") == content):
             # Atomic: a crash mid-write must not leave a truncated launcher
             # on PATH (a half launcher breaks every command using it).
             atomic_write_text(launcher, content)
+            if changed is not None:
+                changed.append(str(launcher))
         ensure_executable(launcher)
         installed.append(str(launcher))
 

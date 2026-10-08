@@ -42,7 +42,9 @@ def _retry_permission_error(operation):
             delay *= 2
 
 
-def atomic_write_text(path: Path, text: str, *, preserve_mode: bool = True, exclusive: bool = False) -> None:
+def atomic_write_text(
+    path: Path, text: str, *, preserve_mode: bool = True, exclusive: bool = False, newline: str | None = None
+) -> None:
     """Write-then-rename: a crash mid-write never leaves a truncated file.
 
     Carries the permission bits across the rename (a config rewritten
@@ -60,6 +62,17 @@ def atomic_write_text(path: Path, text: str, *, preserve_mode: bool = True, excl
     PID): two writers in one process, or a stale tmp from a crashed run,
     cannot silently clobber each other.
     """
+    _atomic_publish(path, text, binary=False, preserve_mode=preserve_mode, exclusive=exclusive, newline=newline)
+
+
+def atomic_write_bytes(path: Path, data: bytes, *, preserve_mode: bool = True) -> None:
+    """`atomic_write_text` for content that must reach the disk byte for byte (a script, a binary)."""
+    _atomic_publish(path, data, binary=True, preserve_mode=preserve_mode, exclusive=False, newline=None)
+
+
+def _atomic_publish(
+    path: Path, payload: str | bytes, *, binary: bool, preserve_mode: bool, exclusive: bool, newline: str | None
+) -> None:
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     old_mode = None
@@ -73,10 +86,11 @@ def atomic_write_text(path: Path, text: str, *, preserve_mode: bool = True, excl
     fd, name = tempfile.mkstemp(prefix=f"{path.name}.", suffix=".tmp", dir=path.parent)
     tmp = Path(name)
     try:
-        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+        opened = os.fdopen(fd, "wb") if binary else os.fdopen(fd, "w", encoding="utf-8", newline=newline)
+        with opened as handle:
             if old_mode is not None:
                 os.chmod(tmp, old_mode)
-            handle.write(text)
+            handle.write(payload)
             handle.flush()
             os.fsync(handle.fileno())
         _retry_permission_error(lambda: os.link(tmp, path) if exclusive else os.replace(tmp, path))
@@ -89,6 +103,30 @@ def atomic_write_text(path: Path, text: str, *, preserve_mode: bool = True, excl
                 os.close(dir_fd)
     finally:
         _retry_permission_error(lambda: tmp.unlink(missing_ok=True))
+
+
+def publish_symlink(link: Path, target: Path) -> None:
+    """Make `link` point at `target` without ever leaving it missing.
+
+    The link is built under a unique name beside the destination and renamed
+    over it, so a failure (no symlink privilege on Windows, a full disk)
+    leaves whatever was at `link` exactly as it was. Unlinking first and
+    linking afterwards left a window with nothing there, and no way back
+    when the second step failed. Raises OSError; the caller decides the
+    fallback (a copy).
+    """
+    link = Path(link)
+    link.parent.mkdir(parents=True, exist_ok=True)
+    fd, name = tempfile.mkstemp(prefix=f"{link.name}.", suffix=".lnk", dir=link.parent)
+    os.close(fd)
+    tmp = Path(name)
+    tmp.unlink()
+    try:
+        tmp.symlink_to(target)
+        _retry_permission_error(lambda: os.replace(tmp, link))
+    finally:
+        with contextlib.suppress(OSError):
+            tmp.unlink(missing_ok=True)
 
 
 def secure_artifact(directory: Path, path: Path | None = None) -> None:
@@ -182,9 +220,17 @@ def write_text_if_changed(
     True when it wrote.
     """
     path = Path(path)
-    if path.is_file():
+    # Editing a file means editing the file a symlink points to. Replacing the
+    # link itself silently detached a dotfiles-managed config (~/.bashrc into a
+    # dotfiles repository) from the place its owner keeps it. The backup stays
+    # beside the link, so it never lands inside someone's dotfiles repository.
+    try:
+        target = path.resolve() if path.is_symlink() else path
+    except RuntimeError as exc:  # symlink loop
+        raise OSError(t("Refusing to write through a symlink loop at {path}", path=path)) from exc
+    if target.is_file():
         try:
-            if path.read_text(encoding="utf-8") == text:
+            if target.read_text(encoding="utf-8") == text:
                 return False
         except UnicodeDecodeError as exc:
             # The file exists but cannot be read as text: overwriting it
@@ -196,7 +242,7 @@ def write_text_if_changed(
             # but with the original already backed up. Let it surface there.
             pass
     backup_file(path, tag=tag)
-    atomic_write_text(path, text)
+    atomic_write_text(target, text)
     if keep is not None:
         _prune_backups(path, _safe_tag(tag), keep)
     return True

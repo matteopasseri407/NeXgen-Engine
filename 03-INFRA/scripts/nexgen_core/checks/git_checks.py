@@ -7,6 +7,7 @@ from pathlib import Path
 
 from nexgen_core.git_ops import (
     GitState,
+    engine_upstream_remotes,
     get_current_branch,
     get_uncommitted_files,
     inspect_git_state,
@@ -199,6 +200,32 @@ def check_remotes_config(vault_data: Path) -> CheckOutcome | None:
         id="git.remotes_config",
         severity=Severity.OK,
         message=t("Remotes declaration readable"),
+    )
+
+
+def check_vault_remote_privacy(vault_data: Path) -> CheckOutcome | None:
+    """No remote of the vault may be the engine's public repository.
+
+    The vault holds private notes, decisions and (never committed, but nearby) secrets; the
+    engine's repository is public. A vault clone whose `origin` was left pointing at the engine,
+    or a remote added by mistake, is one `vault push` from publishing all of it. Returns None
+    when the vault is not a git repository (nothing to say).
+    """
+    if not (vault_data / ".git").exists():
+        return None
+    leaks = engine_upstream_remotes(vault_data)
+    if not leaks:
+        return CheckOutcome(
+            id="git.vault_remote_privacy",
+            severity=Severity.OK,
+            message=t("No remote of the Vault points at the engine's public repository"),
+        )
+    shown = ", ".join(f"{name} ({url})" for name, url in leaks)
+    return CheckOutcome(
+        id="git.vault_remote_privacy",
+        severity=Severity.BROKEN,
+        message=t("The Vault has a remote that is the engine's public repository: {remotes}", remotes=shown),
+        action=t("Point it at your own private repository ('git remote set-url <name> <url>') or remove it ('git remote remove <name>'). Publishing is refused until then."),
     )
 
 

@@ -93,6 +93,11 @@ class Settings:
         git_dir = Path(raw_git_dir).expanduser().resolve() if raw_git_dir else None
 
         if write_enabled:
+            if vault_token is None:
+                # The README has always said a write-enabled server never runs open; only the
+                # compose file enforced it. A bare-metal run with VAULT_WRITE_ENABLED=true and
+                # no VAULT_TOKEN served anyone who could reach the port a way to edit the vault.
+                raise ValueError("VAULT_TOKEN is required when VAULT_WRITE_ENABLED=true")
             if git_dir is None:
                 raise ValueError("VAULT_GIT_DIR is required when VAULT_WRITE_ENABLED=true")
             if not git_dir.exists():
