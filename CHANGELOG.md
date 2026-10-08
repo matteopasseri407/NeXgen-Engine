@@ -25,6 +25,11 @@ of any engine release.
   missing vault plan is dirty, vault promote holds `groom.lock`, restricted secret writes never fall back to world
   readable, lazy MCP caps requests and locks audit, OAuth refresh holds its lock, Codex collision and empty command
   handling, scheduler symlink errors surface, research resume resets penalties and resume points.
+- Council review follow-ups: updater lock stays merge only to avoid deadlock with child apply and vault push,
+  unsafe remotes are kept so downstream validation blocks instead of silently switching to origin,
+  Codex rename retired plus active is allowed, event sink matching uses shell split, scheduler propagates errors,
+  groom never removes shared timestamp paths, installer skills warn only on version drift, request too large answers
+  with its id, renderer isolates one corrupt CLI from the other three, liveness alerts never crash the beat.
 
 ## [2.5.0] - 2026-10-08
 

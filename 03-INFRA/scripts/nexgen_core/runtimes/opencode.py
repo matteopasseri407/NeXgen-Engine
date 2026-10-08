@@ -265,10 +265,10 @@ class OpenCodeRuntime(Runtime):
         )
 
     def install_guardrail(self, home: Path, hook_source: Path, engine_hooks_dir: Path) -> str | None:
-        import re
+        from nexgen_core.runtimes.base import Runtime
 
         hook_name = hook_source.name
-        if hook_name in (".", "..") or not re.fullmatch(r"[A-Za-z0-9._-]+", hook_name):
+        if not Runtime._is_safe_hook_filename(hook_name):
             raise GuardrailError(f"opencode: unsafe guardrail filename {hook_name!r}")
         config_path = self._config_path(home)
         if not config_path.is_file():

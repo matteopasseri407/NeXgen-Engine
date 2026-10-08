@@ -15,7 +15,6 @@ from __future__ import annotations
 import contextlib
 import json
 import logging
-import re
 import shutil
 import sys
 from dataclasses import dataclass, field
@@ -210,12 +209,14 @@ class GuardRunner:
                 # Windows without symlink privileges: a copy beats nothing.
                 # publish_symlink never leaves the target missing, so a copy
                 # fallback only runs when the atomic path failed.
+                if target.is_dir() and not target.is_symlink():
+                    return False, (WARN + t(
+                        "instruction pointer {path} is a directory, left untouched",
+                        path=target,
+                    ))
                 try:
                     if target.is_symlink() or target.is_file():
                         target.unlink()
-                    else:
-                        shutil.copy2(canon, target)
-                        return True, None
                 except OSError:
                     pass
                 shutil.copy2(canon, target)
@@ -414,8 +415,10 @@ class GuardRunner:
             if not is_inside:
                 name = spec.get("name", spec["file"])
                 return [WARN + t("runtime-permissions: {name} escapes permissions/, guardrail rejected", name=name)]
+            from nexgen_core.runtimes.base import Runtime
+
             hook_name = Path(spec["file"]).name
-            if hook_name in (".", "..") or not re.fullmatch(r"[A-Za-z0-9._-]+", hook_name):
+            if not Runtime._is_safe_hook_filename(hook_name):
                 name = spec.get("name", spec["file"])
                 return [WARN + t("runtime-permissions: {name} has an unsafe hook filename, guardrail rejected", name=name)]
             if not candidate.is_file():

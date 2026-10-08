@@ -127,6 +127,10 @@ def _run(
     except OSError as exc:
         raise UpdateError(f"cannot launch update command ({type(exc).__name__})") from exc
     group = proc.pid if os.name == "posix" else None
+    # Success leaves grandchildren alone: killing the process group after a
+    # successful communicate() risks SIGKILL on a reused PGID, and would take
+    # down legitimately daemonized helpers. Only a still-running child (poll
+    # is None: timeout, interrupt) is stopped via force_stop_process_tree.
     try:
         try:
             out, err = proc.communicate(timeout=timeout)

@@ -80,6 +80,8 @@ def _is_stale(kind: str, pinned: str, upstream: str | None, compare: str = "patc
     if upstream is None:
         return False
     if kind in ("npm-version", "docker-image"):
+        if pinned.strip().lower() == "latest":
+            return False
         old, new = NPM_SPEC_RE.match(f"x@{pinned.strip()}"), NPM_SPEC_RE.match(f"x@{upstream.strip()}")
         if old and new:
             mine = re.match(r"(\d+)\.(\d+)\.(\d+)", old.group("version"))
@@ -88,6 +90,8 @@ def _is_stale(kind: str, pinned: str, upstream: str | None, compare: str = "patc
                 keep = 2 if compare == "minor" else 3
                 return (tuple(int(g) for g in theirs.groups())[:keep]
                         > tuple(int(g) for g in mine.groups())[:keep])
+            # Non-strict semver (beta/build metadata): hold instead of flapping.
+            return False
     return upstream.strip().lower() != pinned.strip().lower()
 
 

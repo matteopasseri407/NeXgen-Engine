@@ -281,16 +281,19 @@ class McpRenderer:
         return codex.render(self, write=write)
 
     def render_all(self, write: bool = False) -> dict[str, bool]:
-        """Renders for all 4 CLIs."""
+        """Renders for all 4 CLIs, each isolated: one corrupt live config must not stall the other three."""
         results: dict[str, bool] = {}
-        ok_claude, _ = self.render_claude(write=write)
-        ok_agy, _ = self.render_antigravity(write=write)
-        ok_opencode, _ = self.render_opencode(write=write)
-        ok_codex, _ = self.render_codex(write=write)
-        results["claude"] = ok_claude
-        results["antigravity"] = ok_agy
-        results["opencode"] = ok_opencode
-        results["codex"] = ok_codex
+        for name, method in (
+            ("claude", self.render_claude),
+            ("antigravity", self.render_antigravity),
+            ("opencode", self.render_opencode),
+            ("codex", self.render_codex),
+        ):
+            try:
+                ok, _ = method(write=write)
+            except Exception:
+                ok = False
+            results[name] = ok
         return results
 
     @property

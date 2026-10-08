@@ -1351,6 +1351,17 @@ def _handle(req: dict[str, Any]) -> None:
 _SLOTS = threading.BoundedSemaphore(MAX_CONCURRENT_REQUESTS)
 
 
+def _respond_request_too_large(raw_line: str) -> None:
+    """The request exceeded MAX_REQUEST_BYTES: answer instead of hanging the client."""
+    try:
+        req = json.loads(raw_line[:65536])
+        req_id = req.get("id") if isinstance(req, dict) else None
+    except (ValueError, UnicodeError):
+        req_id = None
+    if req_id is not None:
+        _error(req_id, -32600, f"request exceeds {MAX_REQUEST_BYTES} bytes")
+
+
 def _guarded(req: Any) -> None:
     """Handles one request; whatever goes wrong becomes an answer, never silence (a client waiting on a
     reply that a dead thread will never send waits for ever)."""
@@ -1394,8 +1405,12 @@ def main() -> int:
                 previous[signum] = signal.signal(signum, interrupted)
     try:
         if FRAMING == "headers":
-            for line in sys.stdin:
-                if len(line) > MAX_REQUEST_BYTES + 1:
+            while True:
+                line = sys.stdin.readline(MAX_REQUEST_BYTES + 2)
+                if not line:
+                    break
+                if len(line.encode("utf-8", errors="replace")) > MAX_REQUEST_BYTES + 1:
+                    _respond_request_too_large(line)
                     continue
                 line = line.strip()
                 if not line:

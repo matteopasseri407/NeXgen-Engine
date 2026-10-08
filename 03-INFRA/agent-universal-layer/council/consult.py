@@ -57,6 +57,7 @@ class ConsultResult:
     rebuttals: list[Opinion] = field(default_factory=list)
     abstentions: list[Abstention] = field(default_factory=list)
     tally: dict[str, int] = field(default_factory=dict)
+    rebuttal_tally: dict[str, int] = field(default_factory=dict)
     disagreements: list[tuple[str, str]] = field(default_factory=list)
     status: str = "running"
 
@@ -169,11 +170,7 @@ def _collect_round(names, ask, result: ConsultResult, session_dir, brief: str, r
                 if round_no == 1:
                     result.tally[outcome.verdict] = result.tally.get(outcome.verdict, 0) + 1
                 else:
-                    rebuttals = getattr(result, "rebuttal_tally", None)
-                    if rebuttals is None:
-                        result.rebuttal_tally = {}
-                        rebuttals = result.rebuttal_tally
-                    rebuttals[outcome.verdict] = rebuttals.get(outcome.verdict, 0) + 1
+                    result.rebuttal_tally[outcome.verdict] = result.rebuttal_tally.get(outcome.verdict, 0) + 1
                 label = "rebuttal" if round_no == 2 else outcome.model
                 print(f"\n## {name} ({label}): {outcome.verdict}\n\n{outcome.response}", flush=True)
                 kind = "opinion" if round_no == 1 else "rebuttal"
