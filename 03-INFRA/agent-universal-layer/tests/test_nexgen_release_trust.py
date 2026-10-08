@@ -511,11 +511,12 @@ def test_a_release_signed_by_a_stranger_is_refused_in_every_mode(tmp_path, keyri
 def test_interactive_update_of_an_unsigned_release_still_goes_through_with_a_warning(
     tmp_path, keyring, client_keyring, capsys
 ):
-    """Interactive behaviour is unchanged for releases nobody can verify: a person
-    reads the warning and decides. Only a *wrong* signature is refused outright."""
+    """Unverifiable releases need explicit opt-in: a person reads the
+    warning and passes --allow-unverified. Only a *wrong* signature is
+    refused outright."""
     _origin, engine = _signed_upgrade(tmp_path, keyring, signer=None, pin="maintainer")
 
-    result = _load_updater().main(["--yes"], environ=_env(engine))
+    result = _load_updater().main(["--yes", "--allow-unverified"], environ=_env(engine))
 
     assert result == 0
     assert "could not be verified" in capsys.readouterr().err

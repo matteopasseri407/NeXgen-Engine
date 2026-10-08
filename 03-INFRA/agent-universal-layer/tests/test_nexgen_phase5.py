@@ -283,7 +283,7 @@ def test_interactive_mode_still_has_no_ceiling(tmp_path: Path):
     updater = _load_updater()
     _origin, engine = _upgrade_fixture(tmp_path, "0.1.0", "0.2.0")
 
-    result = updater.main(["--yes"], environ=_env(engine))
+    result = updater.main(["--yes", "--allow-unverified"], environ=_env(engine))
 
     assert result == 0
     assert (engine / "VERSION").read_text(encoding="utf-8").strip() == "0.2.0"

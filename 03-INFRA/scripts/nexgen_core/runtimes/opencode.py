@@ -381,7 +381,7 @@ class OpenCodeRuntime(Runtime):
                     parts = _shlex.split(p.strip(), posix=True)
                 except ValueError:
                     parts = p.split()
-                return bool(parts) and _Path(parts[0]).name == EVENT_SINK_NAME
+                return any(_Path(part).name == EVENT_SINK_NAME for part in parts if part)
 
             for key in ("plugins", "plugin"):
                 values = config.get(key)

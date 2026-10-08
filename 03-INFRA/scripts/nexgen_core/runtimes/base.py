@@ -140,7 +140,7 @@ class Runtime(ABC):
                 parts = text.split()
             if not parts:
                 return False
-            return Path(parts[0]).name == EVENT_SINK_NAME
+            return any(Path(p).name == EVENT_SINK_NAME for p in parts)
 
         changed = False
         for event in events:

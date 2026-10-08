@@ -129,7 +129,8 @@ def test_rebuttal_only_on_disagreement(tmp_path: Path) -> None:
     assert len(result.rebuttals) == 2
     assert sorted(runner.calls) == ["fake/a", "fake/a", "fake/b", "fake/b"]
     assert result.disagreements == [("sa", "sb")]
-    assert result.tally["APPROVE"] == 2  # opinione + replica di sa
+    assert result.tally["APPROVE"] == 1  # solo round 1: opinione di sa
+    assert result.rebuttal_tally["APPROVE"] == 1  # replica di sa
 
 
 def test_zero_opinions_refuses(tmp_path: Path) -> None:
