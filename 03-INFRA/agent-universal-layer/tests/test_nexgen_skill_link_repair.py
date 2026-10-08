@@ -12,7 +12,7 @@ SCRIPTS_DIR = Path(__file__).resolve().parents[2] / "scripts"
 if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
-from nexgen_core.skill_sources import make_link_or_copy  # noqa: E402
+from nexgen_core.skill_sources import make_link_or_copy, same_tree_content  # noqa: E402
 
 windows_only = pytest.mark.skipif(os.name != "nt", reason="junctions")
 
@@ -67,3 +67,20 @@ def test_link_replaces_dangling_junction(tmp_path):
     assert os.path.lexists(dst) and not dst.is_dir() and not dst.is_symlink()
     assert make_link_or_copy(src, dst) is True
     assert (dst / "SKILL.md").read_text(encoding="utf-8") == "live"
+
+
+def test_same_size_same_mtime_different_content_is_different(tmp_path):
+    """Timestamps are not content: equal size plus equal mtime must still
+    compare bytes. The shortcut once turned stale views into false greens.
+    """
+    a = tmp_path / "a"
+    b = tmp_path / "b"
+    _write_skill(a, "old")
+    _write_skill(b, "new")
+    stamp = 1_700_000_000
+    os.utime(a / "SKILL.md", (stamp, stamp))
+    os.utime(b / "SKILL.md", (stamp, stamp))
+    assert not same_tree_content(a, b)
+    _write_skill(b, "old")
+    os.utime(b / "SKILL.md", (stamp, stamp))
+    assert same_tree_content(a, b)

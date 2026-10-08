@@ -77,7 +77,14 @@ def is_safe_skill_name(name: str) -> bool:
 
 
 def same_tree_content(src: Path, dst: Path) -> bool:
-    """True if two trees contain exactly the same files, byte for byte."""
+    """True if two trees contain exactly the same files, byte for byte.
+
+    Size mismatch short-circuits (different size is proof of difference),
+    but equal size never implies equal content: every size-matched file is
+    compared byte for byte. A timestamp shortcut here once declared two
+    same-sized, same-tick files identical and turned stale skill views
+    into false-green pins on Windows CI.
+    """
     if not src.is_dir() or not dst.is_dir():
         return False
     try:
@@ -87,19 +94,12 @@ def same_tree_content(src: Path, dst: Path) -> bool:
         return False
     if left.keys() != right.keys():
         return False
-    to_compare: list = []
-    for key, left_path in left.items():
-        right_path = right[key]
-        try:
+    try:
+        for key, left_path in left.items():
+            right_path = right[key]
             if left_path.stat().st_size != right_path.stat().st_size:
                 return False
-            if left_path.stat().st_mtime_ns == right_path.stat().st_mtime_ns:
-                continue
-        except OSError:
-            return False
-        to_compare.append(key)
-    try:
-        return all(left[k].read_bytes() == right[k].read_bytes() for k in to_compare)
+        return all(left[k].read_bytes() == right[k].read_bytes() for k in left)
     except OSError:
         return False
 
