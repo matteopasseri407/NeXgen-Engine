@@ -287,7 +287,21 @@ class SkillFetcher:
                 github_skill_source(incoming, entry)
                 backup = next_backup_path(cache_dir) if cache_dir.exists() else None
                 if backup is not None:
-                    cache_dir.rename(backup)
+                    try:
+                        cache_dir.rename(backup)
+                    except OSError as exc:
+                        # Transient lock (a CLI holding the skill open, a
+                        # scanner, a concurrent cycle): nothing was touched,
+                        # old bytes and views stay valid, retry next cycle.
+                        # Anything else is a real I/O failure: say so loudly.
+                        import errno as _errno
+
+                        if exc.errno in (_errno.EACCES, _errno.EBUSY):
+                            return True, WARN + t(
+                                "github skill '{name}': cache locked by another process, keeping the previous pin and retrying next cycle",
+                                name=entry.name,
+                            )
+                        raise
                 try:
                     incoming.rename(cache_dir)
                 except OSError:

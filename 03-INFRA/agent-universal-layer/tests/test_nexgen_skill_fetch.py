@@ -1,6 +1,8 @@
 """A failed skill update must keep the last usable source and runtime view."""
 from __future__ import annotations
 
+import errno
+import os
 import subprocess
 from pathlib import Path
 
@@ -55,6 +57,29 @@ def test_missing_skill_at_new_pin_keeps_previous_skill(tmp_path):
     assert not ok and error
     assert (cache / "SKILL.md").read_text() == "verified first version\n"
     assert git(cache, "rev-parse", "HEAD") == previous
+
+
+def test_locked_cache_keeps_previous_pin_and_warns(tmp_path, monkeypatch):
+    """A cache another process holds open is a retry, not a failure:
+    old bytes stay put and the phase stays green."""
+    repo, cache, entry, fetcher = source_and_cache(tmp_path)
+    (repo / "SKILL.md").write_text("upstream moved on\n")
+    git(repo, "add", ".")
+    git(repo, "commit", "-m", "upstream moved")
+    entry.commit = git(repo, "rev-parse", "HEAD")
+    previous = git(cache, "rev-parse", "HEAD")
+    real_rename = os.rename
+
+    def locked(src, dst):
+        if Path(src) == cache:
+            raise PermissionError(errno.EACCES, "locked by another process")
+        return real_rename(src, dst)
+
+    monkeypatch.setattr(os, "rename", locked)
+    ok, note = fetcher.ensure_github_checkout(cache, entry)
+    assert ok and note
+    assert git(cache, "rev-parse", "HEAD") == previous
+    assert (cache / "SKILL.md").read_text() == "verified first version\n"
 
 
 def test_changed_bytes_at_same_pin_are_never_reported_as_verified(tmp_path):
