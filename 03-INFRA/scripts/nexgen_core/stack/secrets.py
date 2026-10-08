@@ -52,8 +52,8 @@ def _write_restricted_text(path: Path, content: str) -> None:
         fd = os.open(str(path), flags, stat.S_IRUSR | stat.S_IWUSR)
         with open(fd, "w", encoding="utf-8") as handle:
             handle.write(content)
-    except OSError:
-        path.write_text(content, encoding="utf-8")
+    except OSError as exc:
+        raise OSError(f"cannot write restricted file {path} ({type(exc).__name__})") from exc
     _restrict(path)
 
 

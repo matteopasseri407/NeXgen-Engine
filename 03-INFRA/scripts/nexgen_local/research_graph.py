@@ -478,6 +478,13 @@ def _continue_research(
     current["problems"] = []
     current["confabulation"] = False
     current["injection"] = False
+    # Fresh instruction, fresh penalties: empty streak and tried queries
+    # belong to the previous question, not to this one. Observations stay
+    # (they are evidence), but the new task must be allowed to search again.
+    loop.empty_streak = 0
+    loop.tried_queries = []
+    current["empty_streak"] = 0
+    current["tried_queries"] = []
     # New run on the same thread with the full carried-over state:
     # entry runs decide fresh (an as_node rewind would skip it and
     # strand the router with no pending decision).

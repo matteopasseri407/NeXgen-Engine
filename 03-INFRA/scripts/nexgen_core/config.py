@@ -225,10 +225,7 @@ def load_mcp_manifest(path: Path, *, strict: bool = False) -> dict[str, Any]:
             continue
 
         if label in retired_servers:
-            logger.warning(
-                "Connector '%s' in %s is both active and retired: inconsistent manifest, "
-                "skipping the active entry (stays retired)", name, path,
-            )
+            problems.append(f"connector '{name}': both active and retired, entry skipped (stays retired)")
             continue
 
         validated_servers[label] = srv

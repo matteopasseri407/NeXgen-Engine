@@ -78,8 +78,8 @@ def check_coverage(
     plan_path = Path(plan_record)
     if not plan_path.is_file():
         return {
-            "coverage_status": "clean",
-            "unaddressed_targets": [],
+            "coverage_status": "dirty",
+            "unaddressed_targets": ["plan-record-missing"],
             "matched_by_archive_move": [],
             "out_of_scope_targets": [],
         }

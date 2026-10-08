@@ -27,6 +27,16 @@ def render(renderer, write: bool = False) -> tuple[bool, str]:
     cfg_file = codex_config(renderer.home)
 
     retired = renderer.retired_server_names()
+    normalized: dict[str, str] = {}
+    for name in list(servers):
+        safe = name.replace("-", "_")
+        if safe in normalized and normalized[safe] != name:
+            raise ValueError(
+                f"Codex connector collision: {normalized[safe]!r} and {name!r} map to the same section {safe!r}"
+            )
+        normalized[safe] = name
+    # A retired/active pair with the same normalized name is a rename:
+    # the retired entry only removes the old section, it must not abort the render.
     unmounted = {
         name.replace("-", "_")
         for name in renderer.unmounted_server_names(servers, "codex")

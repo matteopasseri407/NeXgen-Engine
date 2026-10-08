@@ -85,12 +85,12 @@ def run_ruff() -> list[dict]:
                 REPO_ROOT / ".venv" / "bin" / "ruff",
                 REPO_ROOT / ".venv" / "Scripts" / "ruff.exe",
                 REPO_ROOT / ".venv" / "Scripts" / "ruff",
-                Path.home() / "NeXgen-Engine" / ".venv" / "bin" / "ruff",  # noqa: NEXGEN-REAL-HOME
-                Path.home() / "NeXgen-Engine" / ".venv" / "Scripts" / "ruff.exe",  # noqa: NEXGEN-REAL-HOME
-                Path.home() / ".venv" / "bin" / "ruff",  # noqa: NEXGEN-REAL-HOME
-                Path.home() / ".venv" / "Scripts" / "ruff.exe",  # noqa: NEXGEN-REAL-HOME
-                Path.home() / ".venvs" / "vault-tools" / "bin" / "ruff",  # noqa: NEXGEN-REAL-HOME
-                Path.home() / ".venvs" / "vault-tools" / "Scripts" / "ruff.exe",  # noqa: NEXGEN-REAL-HOME
+                Path.home() / "NeXgen-Engine" / ".venv" / "bin" / "ruff",  # noqa  # NEXGEN-REAL-HOME
+                Path.home() / "NeXgen-Engine" / ".venv" / "Scripts" / "ruff.exe",  # noqa  # NEXGEN-REAL-HOME
+                Path.home() / ".venv" / "bin" / "ruff",  # noqa  # NEXGEN-REAL-HOME
+                Path.home() / ".venv" / "Scripts" / "ruff.exe",  # noqa  # NEXGEN-REAL-HOME
+                Path.home() / ".venvs" / "vault-tools" / "bin" / "ruff",  # noqa  # NEXGEN-REAL-HOME
+                Path.home() / ".venvs" / "vault-tools" / "Scripts" / "ruff.exe",  # noqa  # NEXGEN-REAL-HOME
             ):
                 if venv_path.is_file() and os.access(venv_path, os.X_OK):
                     candidate = str(venv_path)

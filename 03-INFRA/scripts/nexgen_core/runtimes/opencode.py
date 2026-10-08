@@ -265,6 +265,11 @@ class OpenCodeRuntime(Runtime):
         )
 
     def install_guardrail(self, home: Path, hook_source: Path, engine_hooks_dir: Path) -> str | None:
+        from nexgen_core.runtimes.base import Runtime
+
+        hook_name = hook_source.name
+        if not Runtime._is_safe_hook_filename(hook_name):
+            raise GuardrailError(f"opencode: unsafe guardrail filename {hook_name!r}")
         config_path = self._config_path(home)
         if not config_path.is_file():
             return None  # OpenCode never launched here: no guardrail to install
@@ -366,11 +371,23 @@ class OpenCodeRuntime(Runtime):
         config = self._load(config_path)
         changed = False
         if config is not None:
+            import shlex as _shlex
+            from pathlib import Path as _Path
+
+            def _is_sink_plugin(p: object) -> bool:
+                if not isinstance(p, str):
+                    return False
+                try:
+                    parts = _shlex.split(p.strip(), posix=True)
+                except ValueError:
+                    parts = p.split()
+                return any(_Path(part).name == EVENT_SINK_NAME for part in parts if part)
+
             for key in ("plugins", "plugin"):
                 values = config.get(key)
                 if not isinstance(values, list):
                     continue
-                kept = [p for p in values if not (isinstance(p, str) and EVENT_SINK_NAME in p)]
+                kept = [p for p in values if not _is_sink_plugin(p)]
                 if len(kept) != len(values):
                     self._write_key(config_path, key, kept)
                     changed = True

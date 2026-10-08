@@ -25,7 +25,7 @@ if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
 from nexgen_core.files import atomic_write_text  # noqa: E402 - sys.path shim for cloned checkout
-from nexgen_core.action_notes import ERROR, is_error  # noqa: E402 - sys.path shim for cloned checkout
+from nexgen_core.action_notes import ERROR, WARN, is_error  # noqa: E402 - sys.path shim for cloned checkout
 from nexgen_core.config import (  # noqa: E402
     SKILL_EXPOSURES,
     SKILL_ORIGINS,
@@ -249,9 +249,26 @@ class SkillMaterializer:
             if not directory.is_dir():
                 continue
             for candidate in sorted(directory.iterdir()):
-                name = candidate.name
-                lib_source = self.library_dir / name
-                if not lib_source.is_dir() and not lib_source.is_symlink():
+                try:
+                    name = candidate.name
+                    lib_source = self.library_dir / name
+                except OSError:
+                    continue
+                try:
+                    if candidate.is_symlink():
+                        try:
+                            candidate.resolve()
+                        except RuntimeError:
+                            # Symlink loop: a single corrupt link must not take
+                            # down the whole skills phase.
+                            continue
+                        try:
+                            lib_source.resolve()
+                        except (OSError, RuntimeError):
+                            pass
+                except OSError:
+                    continue
+                if not lib_source.is_dir() and not lib_source.is_symlink() and not lib_source.is_file():
                     # No library entry at all: a dangling view-symlink that
                     # still points at the library path is ours and safe to
                     # take back (its target is already gone). Anything else
@@ -262,7 +279,7 @@ class SkillMaterializer:
                             raw_target = Path(os.readlink(candidate))
                             target = raw_target if raw_target.is_absolute() else candidate.parent / raw_target
                             points_at_library = target.resolve() == lib_source.resolve()
-                        except OSError:
+                        except (OSError, RuntimeError):
                             continue
                         if points_at_library:
                             try:
@@ -279,7 +296,10 @@ class SkillMaterializer:
                     wanted = self._target_of(directory) in (entry.targets or [])
                 if wanted:
                     continue
-                ours = candidate.is_symlink() and candidate.resolve() == lib_source.resolve()
+                try:
+                    ours = candidate.is_symlink() and candidate.resolve() == lib_source.resolve()
+                except (OSError, RuntimeError):
+                    continue
                 if not ours and not same_tree_content(lib_source, candidate):
                     continue  # copia divergente: potrebbe contenere lavoro altrui
                 try:
@@ -293,7 +313,7 @@ class SkillMaterializer:
                                  name=name, target=self._target_of(directory) or directory.name))
         return actions
 
-    def materialize(self, apply: bool = True) -> tuple[int, list[str]]:
+    def materialize(self, apply: bool = True, allow_installer_exec: bool = True) -> tuple[int, list[str]]:
         """Materializes every skill into the library and creates the native views."""
         skills = self.load_manifest()
         actions: list[str] = []
@@ -360,13 +380,37 @@ class SkillMaterializer:
                         continue
 
             elif entry.origin == "installer" and apply:
-                installed, note = self.fetcher.install_third_party(entry, lib_dest, self.discovery_dirs)
-                if note:
-                    actions.append(note)
-                    if installed:
-                        changes += 1
-                if not installed:
-                    continue
+                if not allow_installer_exec:
+                    try:
+                        recorded = self.fetcher._installed_versions().get(name)
+                    except OSError:
+                        recorded = None
+                    if recorded == (entry.version or "") and lib_dest.is_dir():
+                        # Already at this pin: views below are refreshed
+                        # silently, no per-cycle warning noise.
+                        pass
+                    elif not lib_dest.is_dir():
+                        actions.append(WARN + t(
+                            "skill '{name}': installer execution deferred to explicit skills-sync (version {version})",
+                            name=name, version=entry.version,
+                        ))
+                        continue
+                    else:
+                        actions.append(WARN + t(
+                            "skill '{name}': version {version} needs explicit skills-sync, keeping previous bytes",
+                            name=name, version=entry.version,
+                        ))
+                        # Stale bytes: still refresh views so the skill stays
+                        # reachable, but never record the new pin here.
+                        pass
+                else:
+                    installed, note = self.fetcher.install_third_party(entry, lib_dest, self.discovery_dirs)
+                    if note:
+                        actions.append(note)
+                        if installed:
+                            changes += 1
+                    if not installed:
+                        continue
 
             elif entry.origin == "upstream":
                 # Inventoried only, by design: the upstream installer owns

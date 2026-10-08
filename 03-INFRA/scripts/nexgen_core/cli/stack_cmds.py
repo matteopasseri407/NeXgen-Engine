@@ -11,7 +11,7 @@ from nexgen_core.paths import resolve_engine_root
 
 
 def register(sub) -> None:
-    p = sub.add_parser("stack", help=t("The connector services, on this machine"))
+    p = sub.add_parser("stack", aliases=["stacks"], help=t("The connector services, on this machine"))
     ssub = p.add_subparsers(dest="stack_command", metavar="verb")
 
     q = ssub.add_parser("up", help=t("Start the services and configure the connectors"))

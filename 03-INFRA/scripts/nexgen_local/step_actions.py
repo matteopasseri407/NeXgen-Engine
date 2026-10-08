@@ -135,7 +135,7 @@ def execute_action(llm: LLM, tools: ToolRegistry, state: LoopState, action: str,
             raise ToolError("niente da continuare: lettura completa o tetto raggiunto")
         tool = str(last.get("tool", ""))
         args = dict(last.get("args", {}))
-        args["offset"] = int(last.get("offset", 0)) + tools.cfg.read_chars
+        args["offset"] = int(last.get("resume_at", int(last.get("offset", 0)) + tools.cfg.read_chars))
         output = tools.call_result(tool, args)
         if not output.usable:
             # The source shrank mid-read: no chunk, no spiral. The loop

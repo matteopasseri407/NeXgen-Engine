@@ -128,7 +128,11 @@ def apply(
     try:
         gate.verify_hash_unchanged(plan_record, tranche_hash)
         gate.require_clean_tree(vault)
-    except gate.GateError as exc:
+    except (gate.GateError, OSError) as exc:
+        # No clone exists yet at this point (prepare_clone runs below with a
+        # mkdtemp-unique directory), so there is nothing to clean up here.
+        # Never rmtree a timestamp-shared path: two parallel applies in the
+        # same second must not delete each other's work.
         output(str(exc))
         return 1
 
