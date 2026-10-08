@@ -14,7 +14,7 @@ def _all(args) -> list[str]:
 
 
 def register(sub) -> None:
-    p = sub.add_parser("tool", help=t("Tools shipped with the engine"))
+    p = sub.add_parser("tool", aliases=["tools"], help=t("Tools shipped with the engine"))
     tsub = p.add_subparsers(dest="tool_command", metavar="tool")
 
     q = tsub.add_parser("now", help=t("The trustworthy local time, with sync status"))

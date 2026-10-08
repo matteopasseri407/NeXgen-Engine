@@ -26,7 +26,7 @@ from nexgen_core.paths import resolve_engine_root
 
 
 def register(sub) -> None:
-    p = sub.add_parser("modules", help=t("The engine's modules: what is installed where"))
+    p = sub.add_parser("modules", aliases=["module"], help=t("The engine's modules: what is installed where"))
     ssub = p.add_subparsers(dest="modules_command", metavar="verb")
 
     q = ssub.add_parser("list", help=t("Inventory: every module and its state on this machine"))

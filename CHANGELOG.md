@@ -12,8 +12,13 @@ of any engine release.
 
 ### Fixed
 
-- `nexgen skills bump` works. `nexgen info` and the docs told people to run it, but the command was only ever
-  `nexgen skill bump` and the plural was refused as an invalid choice. `skills` is now an alias of `skill`.
+- CLI singular and plural aliases: `nexgen module` is an alias of `nexgen modules`, `nexgen tools` is an alias of
+  `nexgen tool`, and `nexgen stacks` is an alias of `nexgen stack` (completing `nexgen skills` for `skill`).
+- `nexgen_local.__main__` is now guarded by `if __name__ == "__main__":` to prevent premature execution during package
+  walks and test inspection.
+- `check_engine.py` automatically resolves the repository `.venv` interpreter when executed with a system Python lacking
+  test dependencies.
+- Cleaned up `# noqa` directives in `ruff_baseline.py` to prevent linter syntax warnings.
 
 ## [2.5.0] - 2026-10-08
 

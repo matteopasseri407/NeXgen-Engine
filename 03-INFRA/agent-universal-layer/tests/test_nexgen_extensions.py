@@ -213,6 +213,12 @@ def test_the_verbs_exist():
     # `nexgen info` and the docs say `skills bump`; the command was only ever `skill bump`
     assert parser.parse_args(["skills", "bump"]).skill_command == "bump"
     assert parser.parse_args(["skills", "bump"]).func.__code__ is parser.parse_args(["skill", "bump"]).func.__code__
+    assert parser.parse_args(["module", "list"]).modules_command == "list"
+    assert parser.parse_args(["module", "list"]).func.__code__ is parser.parse_args(["modules", "list"]).func.__code__
+    assert parser.parse_args(["tools", "now"]).tool_command == "now"
+    assert parser.parse_args(["tools", "now"]).func.__code__ is parser.parse_args(["tool", "now"]).func.__code__
+    assert parser.parse_args(["stacks", "status"]).stack_command == "status"
+    assert parser.parse_args(["stacks", "status"]).func.__code__ is parser.parse_args(["stack", "status"]).func.__code__
 
 
 def test_what_the_dependency_watch_writes_is_what_info_reads(machine):
