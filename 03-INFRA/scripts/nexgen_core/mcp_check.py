@@ -23,7 +23,7 @@ from typing import Any
 
 from nexgen_core.i18n import t
 from nexgen_core.mcp_placement import CLIS, DIRECT, GATEWAY, GATEWAY_CLI_ENV, GATEWAY_KIND, gateway_servers_for, place
-from nexgen_core.processes import force_stop_process_tree, windows_command_argv
+from nexgen_core.processes import force_stop_process_tree, no_window_kwargs, windows_command_argv
 
 META_TOOLS = frozenset({"lazy_list", "lazy_load", "lazy_call", "lazy_mutate"})
 
@@ -47,6 +47,7 @@ class _Session:
         self.proc = subprocess.Popen(
             windows_command_argv(argv), stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
             text=True, encoding="utf-8", errors="replace", env=env, cwd=cwd, start_new_session=os.name == "posix",
+            **no_window_kwargs(),
         )
         self._lines: queue.Queue[str | None] = queue.Queue()
         threading.Thread(target=self._pump, daemon=True).start()

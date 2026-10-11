@@ -6,6 +6,7 @@ import shutil
 import signal
 import subprocess
 import time
+from typing import Any
 
 
 #: PowerShell reads all of these as a single quote, not just the ASCII apostrophe.
@@ -32,6 +33,25 @@ def windows_command_argv(argv: list[str]) -> list[str]:
     if executable.casefold().endswith((".cmd", ".bat")):
         return ["cmd.exe", "/d", "/s", "/c", executable, *argv[1:]]
     return [executable, *argv[1:]]
+
+
+def no_window_kwargs() -> dict[str, Any]:
+    """Popen/run kwargs that keep Windows from flashing a console.
+
+    A console child of a process without its own console (desktop CLIs,
+    MCP gateways, scheduled tasks) otherwise gets a visible window that
+    steals focus on every spawn. No-op on POSIX.
+    """
+    if os.name != "nt":
+        return {}
+    kwargs: dict[str, Any] = {"creationflags": getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)}
+    try:
+        info = subprocess.STARTUPINFO()  # type: ignore[attr-defined]
+        info.dwFlags |= getattr(subprocess, "STARTF_USESHOWWINDOW", 0x00000001)
+        kwargs["startupinfo"] = info
+    except (AttributeError, OSError):
+        pass
+    return kwargs
 
 
 def force_stop_process_tree(
@@ -61,6 +81,7 @@ def force_stop_process_tree(
                     ["taskkill.exe", "/PID", str(proc.pid), "/T", "/F"],
                     stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                     timeout=min(3.0, remaining), check=False,
+                    **no_window_kwargs(),
                 )
                 tree_killed = result.returncode == 0
             except (OSError, subprocess.TimeoutExpired):

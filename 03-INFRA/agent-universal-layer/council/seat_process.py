@@ -37,6 +37,20 @@ from session import (
 
 SUPPORTED_CLIS = ("opencode", "agy", "codex", "claude", "ollama")
 
+
+def _no_window_kwargs() -> dict:
+    """nexgen_core.processes.no_window_kwargs without a hard dependency.
+
+    Council also runs standalone (council.py as __main__) without the
+    engine on sys.path; there the import is best-effort and seats spawn
+    as before.
+    """
+    try:
+        from nexgen_core.processes import no_window_kwargs
+    except ImportError:
+        return {}
+    return no_window_kwargs()
+
 # agy: print mode reads the brief from stdin, outside the process argv.
 # Fresh-project and sandbox flags request the vendor's isolation posture;
 # tool and MCP restrictions remain asymmetric (see _build_seat_command).
@@ -730,6 +744,7 @@ def run_seat(
                 env=invocation.env,
                 cwd=invocation.cwd,
                 start_new_session=os.name == "posix",
+                **_no_window_kwargs(),
             )
         except OSError as e:
             raise SeatRunError(f"[council] unable to invoke the seat: {e}", "invocation")

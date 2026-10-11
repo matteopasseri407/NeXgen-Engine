@@ -70,6 +70,10 @@ export function consultGuardrailBody(hook, payloadText, strict) {
       input: payloadText,
       encoding: "utf8",
       timeout: Math.max(1, Number(hook.timeout) || 5) * 1000,
+      // The host is often a GUI app without a console (OpenCode desktop):
+      // without this every consultation flashes a visible window and steals
+      // focus. Bun honors it like Node does.
+      windowsHide: true,
     });
     if (result.error || result.status !== 0) {
       const detail = result.error ? result.error.message : `exit status ${result.status}`;

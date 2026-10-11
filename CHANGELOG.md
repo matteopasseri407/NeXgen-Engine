@@ -10,6 +10,8 @@ of any engine release.
 
 ## [Unreleased]
 
+## [2.5.2] - 2026-10-11
+
 ### Fixed
 
 - Windows: `nexgen info` and the interactive shell no longer crash with
@@ -26,6 +28,15 @@ of any engine release.
 - Set-aside skill views and Startup fallback scripts now rotate (newest 3
   survive), so a version flap mid-update cannot pile one backup per guard
   cycle into the skills dirs or the Startup folder.
+- Windows: Startup fallback backups no longer land inside the Startup
+  folder, where Windows executed the `.bak` copies at logon. They rotate
+  in `Programs/NeXgen-Backup` and strays from previous versions are
+  removed on the next guard cycle.
+- Windows: engine-spawned children (guardrail consults, lazy MCP servers,
+  council seats, scheduled-task probes) no longer flash a visible console
+  that steals focus. `nexgen_core.processes` gains `no_window_kwargs`
+  and every hot spawn site uses it; the guardrail consult sets
+  `windowsHide`.
 
 ## [2.5.1] - 2026-10-08
 
