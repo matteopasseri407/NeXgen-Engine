@@ -4,6 +4,12 @@ A console child of a process without its own console (the OpenCode
 desktop app, MCP gateways, scheduled tasks) otherwise gets a visible
 window that steals focus on every spawn: once per agent tool call
 through the guardrail consults and the lazy MCP servers.
+
+These tests never fake the platform: flipping ``os.name`` process-wide
+changes the ``pathlib`` flavour for everything built meanwhile
+(``PosixPath`` on a Windows runner), which poisons pytest's own path
+handling. The Windows-only behavior is asserted on Windows and skipped
+elsewhere.
 """
 from __future__ import annotations
 
@@ -12,6 +18,8 @@ import os
 import subprocess
 import sys
 from pathlib import Path
+
+import pytest
 
 
 SCRIPTS_DIR = Path(__file__).resolve().parents[2] / "scripts"
@@ -24,23 +32,20 @@ if str(COUNCIL_DIR) not in sys.path:
 from nexgen_core import mcp_check, scheduler  # noqa: E402
 from nexgen_core.processes import no_window_kwargs  # noqa: E402
 
-
-def _assert_forwarded(captured: dict) -> None:
-    expected = no_window_kwargs()
-    assert captured.get("creationflags", 0) == expected.get("creationflags", 0)
-    assert ("startupinfo" in captured) == ("startupinfo" in expected)
+windows_only = pytest.mark.skipif(os.name != "nt", reason="hidden consoles are a Windows behavior")
 
 
-def test_no_window_kwargs_contract(monkeypatch):
-    monkeypatch.setattr(os, "name", "nt")
-    hidden = no_window_kwargs()
-    assert hidden.get("creationflags", 0) & 0x08000000
-    monkeypatch.setattr(os, "name", "posix")
-    assert no_window_kwargs() == {}
+def test_no_window_kwargs_match_the_platform():
+    kwargs = no_window_kwargs()
+    if os.name == "nt":
+        assert kwargs.get("creationflags", 0) & 0x08000000
+        assert "startupinfo" in kwargs
+    else:
+        assert kwargs == {}
 
 
+@windows_only
 def test_scheduler_external_calls_stay_windowless(monkeypatch):
-    monkeypatch.setattr(os, "name", "nt")
     captured: dict = {}
 
     def fake_run(argv, **kwargs):
@@ -49,11 +54,12 @@ def test_scheduler_external_calls_stay_windowless(monkeypatch):
 
     monkeypatch.setattr(scheduler.subprocess, "run", fake_run)
     scheduler._run_external(["schtasks.exe", "/Query", "/TN", "synthetic"], timeout=1)
-    _assert_forwarded(captured)
+    assert captured.get("creationflags", 0) & 0x08000000
+    assert "startupinfo" in captured
 
 
+@windows_only
 def test_mcp_check_session_stays_windowless(monkeypatch):
-    monkeypatch.setattr(os, "name", "nt")
     captured: dict = {}
 
     class _FakeProc:
@@ -67,13 +73,14 @@ def test_mcp_check_session_stays_windowless(monkeypatch):
 
     monkeypatch.setattr(mcp_check.subprocess, "Popen", _FakeProc)
     mcp_check._Session(["synthetic"], {}, None)
-    _assert_forwarded(captured)
+    assert captured.get("creationflags", 0) & 0x08000000
+    assert "startupinfo" in captured
 
 
+@windows_only
 def test_lazy_server_spawn_stays_windowless(monkeypatch):
     import importlib.util
 
-    monkeypatch.setattr(os, "name", "nt")
     path = Path(__file__).resolve().parents[1] / "mcp" / "lazy-mcp.py"
     spec = importlib.util.spec_from_file_location("mcp_no_window_under_test", path)
     module = importlib.util.module_from_spec(spec)
@@ -95,9 +102,11 @@ def test_lazy_server_spawn_stays_windowless(monkeypatch):
         handle._start_stdio()
     finally:
         handle.proc = None
-    _assert_forwarded(captured)
+    assert captured.get("creationflags", 0) & 0x08000000
+    assert "startupinfo" in captured
 
 
+@windows_only
 def test_council_seat_spawn_stays_windowless(monkeypatch, tmp_path):
     import seat_process
     from seat_process import SeatInvocation, run_seat
@@ -119,4 +128,5 @@ def test_council_seat_spawn_stays_windowless(monkeypatch, tmp_path):
     monkeypatch.setattr(seat_process.subprocess, "Popen", spy)
     answer, _ = run_seat({"cli": "ollama", "model": "offline-test"}, "", tmp_path, 30)
     assert "VERDICT: APPROVE" in answer
-    _assert_forwarded(captured)
+    assert captured.get("creationflags", 0) & 0x08000000
+    assert "startupinfo" in captured
