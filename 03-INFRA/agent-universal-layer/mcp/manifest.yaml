@@ -111,27 +111,6 @@ servers:
       env:
         VAULT_OCR_API_URL: "http://127.0.0.1:${OCR_TUNNEL_PORT:-33003}"
 
-  # ---- PII anonymizer (Rizzo PII, MIT) --------------------------------
-  # Sidecar VPS via tunnel + fallback AppImage locale (vedi deploy/pii/).
-  # Il bridge non carica modelli: se la VPS non risponde avvia l'app
-  # locale, per questo il timeout tool copre un avvio a freddo.
-
-  rizzo-pii:
-    transport: stdio
-    tier: core
-    command: python3
-    args: ["${AGENT_ENGINE_ROOT}/deploy/pii/mcp/rizzo_pii_mcp.py"]
-    env:
-      PII_API_URL: "http://127.0.0.1:${PII_TUNNEL_PORT:-33004}"
-    require_env: PII_TUNNEL_PORT
-    timeouts: { startup: 30, tool: 300 }
-    targets: [claude, codex, antigravity, opencode]
-    windows:
-      command: py
-      args: ["-3", "${AGENT_ENGINE_ROOT}\\deploy\\pii\\mcp\\rizzo_pii_mcp.py"]
-      env:
-        PII_API_URL: "http://127.0.0.1:${PII_TUNNEL_PORT:-33004}"
-
   # ---- personal drive: search/read free, upload gated ------------------
   # Product-owned Drive access for every agent (engine code, stdlib only,
   # same machine-local token store as the private workspace adapter).

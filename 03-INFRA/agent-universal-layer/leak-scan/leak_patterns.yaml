@@ -79,10 +79,6 @@ leak_allow:
   - '127\.0\.0\.1'
   - '0\.0\.0\.0'
   - '255\.255\.255\.255'
-  # /home/app: home dell'utente non-root DENTRO i container dei deploy
-  # compose (non una workstation). Falso positivo trovato su deploy/pii,
-  # 2026-10-11: il mount del volume sull'home del container non e' un leak.
-  - '/home/app'
   # noreply@anthropic.com: trailer generico "Co-Authored-By" di Claude Code,
   # compare in OGNI commit fatto con lo strumento. Non e' un dato personale
   # (falso positivo trovato durante il collaudo di S0, 2026-07-08).

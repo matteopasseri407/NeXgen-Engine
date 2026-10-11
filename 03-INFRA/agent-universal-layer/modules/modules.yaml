@@ -120,15 +120,6 @@ modules:
     stack: vault-ocr
     depends_on: []
 
-  pii:
-    label: "PII anonymizer (Rizzo PII sidecar + local fallback)"
-    kind: connector
-    states: [absent, local, remote]
-    env_gates: [PII_TUNNEL_PORT]
-    mcp_servers: [rizzo-pii]
-    stack: pii
-    depends_on: []
-
   n8n:
     label: "Automations (n8n workflows and the n8n MCP)"
     kind: service
