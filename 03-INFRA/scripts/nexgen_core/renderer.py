@@ -325,6 +325,9 @@ class McpRenderer:
         cycle runs twice an hour, and rewriting a byte-identical file every
         cycle changes mtimes and piles up backups for nothing. Mechanics in
         `nexgen_core.files`; the last-3 rotation stays this writer's policy.
+        Committed content needs no local backup either (`skip_if_committed`):
+        git already holds the previous version, and the copy would only add
+        debris that dirties data repositories.
         """
         from nexgen_core.files import write_text_if_changed
 
@@ -339,6 +342,6 @@ class McpRenderer:
 
         # Rendered configs may carry bearer tokens in env blocks: keep the
         # historical 0600 on POSIX (Windows has no equivalent bit here).
-        if write_text_if_changed(path, content, keep=3) and not IS_WINDOWS:
+        if write_text_if_changed(path, content, keep=3, skip_if_committed=True) and not IS_WINDOWS:
             with contextlib.suppress(OSError):
                 os.chmod(path, 0o600)

@@ -156,8 +156,50 @@ def _safe_tag(tag: str | None) -> str | None:
     return cleaned or "untagged"
 
 
+def _is_clean_vs_head(path: Path) -> bool:
+    """True only when git proves the file is tracked AND unmodified vs HEAD.
+
+    Every failure mode (no git binary, outside a repo, no commits yet,
+    git error, timeout) returns False: a missed backup is unrecoverable,
+    a redundant one is just disk debris. Note `git diff --quiet` alone is
+    NOT proof -- it exits 0 for untracked files too -- so tracked-ness is
+    checked separately with `ls-files --error-unmatch`.
+    """
+    import shutil
+    import subprocess
+
+    if shutil.which("git") is None:
+        return False
+    try:
+        anchor = path if path.is_dir() else path.parent
+        top = subprocess.run(
+            ["git", "-C", str(anchor), "rev-parse", "--show-toplevel"],
+            capture_output=True, stdin=subprocess.DEVNULL,
+            encoding="utf-8", timeout=15,
+        )
+        if top.returncode != 0:
+            return False
+        rel = os.path.relpath(path, top.stdout.strip())
+        if rel.startswith(".."):
+            return False
+        root = top.stdout.strip()
+        tracked = subprocess.run(
+            ["git", "-C", root, "ls-files", "--error-unmatch", "--", rel],
+            capture_output=True, stdin=subprocess.DEVNULL, timeout=15,
+        )
+        if tracked.returncode != 0:
+            return False
+        clean = subprocess.run(
+            ["git", "-C", root, "diff", "--quiet", "HEAD", "--", rel],
+            capture_output=True, stdin=subprocess.DEVNULL, timeout=15,
+        )
+        return clean.returncode == 0
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return False
+
+
 def backup_file(path: Path, *, tag: str | None = None, keep: int | None = None,
-                text: str | None = None) -> Path | None:
+                text: str | None = None, skip_if_committed: bool = False) -> Path | None:
     """Timestamped copy of an EXISTING file, made BEFORE any write.
 
     Every incident that justified this package started with a config file
@@ -172,11 +214,19 @@ def backup_file(path: Path, *, tag: str | None = None, keep: int | None = None,
     accumulate and their cleanup stays the user's (see `docs/uninstall.md`).
     ``text`` snapshots bytes already read by a caller instead of rereading
     a live file that may have changed; that snapshot is published privately.
+    ``skip_if_committed`` skips the backup when git proves the on-disk
+    content is already committed (tracked and clean vs HEAD): the previous
+    version is recoverable with `git show HEAD:<path>` on any machine, so a
+    local copy only adds debris. Any doubt (untracked, dirty, no repo, git
+    missing or failing) still takes the backup. Returns None when skipped,
+    same as for a file that doesn't exist yet.
     """
     import shutil
 
     path = Path(path)
     if text is None and not path.is_file():
+        return None
+    if skip_if_committed and text is None and _is_clean_vs_head(path):
         return None
     stamp = f"{time.strftime('%Y%m%d-%H%M%S')}-{time.time_ns()}"
     safe = _safe_tag(tag)
@@ -210,7 +260,8 @@ def _prune_backups(path: Path, safe_tag: str | None, keep: int) -> None:
 
 
 def write_text_if_changed(
-    path: Path, text: str, *, tag: str | None = None, keep: int | None = None
+    path: Path, text: str, *, tag: str | None = None, keep: int | None = None,
+    skip_if_committed: bool = False,
 ) -> bool:
     """Backup (policy as in :func:`backup_file`) and atomic-write, but only
     when the content actually differs.
@@ -241,7 +292,7 @@ def write_text_if_changed(
             # Unreadable for permissions: the write below would fail too,
             # but with the original already backed up. Let it surface there.
             pass
-    backup_file(path, tag=tag)
+    backup_file(path, tag=tag, skip_if_committed=skip_if_committed)
     atomic_write_text(target, text)
     if keep is not None:
         _prune_backups(path, _safe_tag(tag), keep)
