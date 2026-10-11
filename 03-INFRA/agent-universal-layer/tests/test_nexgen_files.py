@@ -68,6 +68,58 @@ def test_backup_without_keep_accumulates(tmp_path: Path):
     assert len(list(tmp_path.glob("cfg.json.bak-*"))) == 2
 
 
+def _git_repo_with_commit(repo: Path, name: str = "cfg.json") -> Path:
+    import shutil
+    import subprocess
+
+    if shutil.which("git") is None:
+        pytest.skip("git non disponibile")
+    target = repo / name
+    target.write_text("v1", encoding="utf-8")
+    env = dict(
+        os.environ,
+        GIT_AUTHOR_NAME="t",
+        GIT_AUTHOR_EMAIL="t@t",
+        GIT_COMMITTER_NAME="t",
+        GIT_COMMITTER_EMAIL="t@t",
+    )
+    subprocess.run(["git", "init", "-q"], cwd=repo, check=True, env=env)
+    subprocess.run(["git", "add", name], cwd=repo, check=True, env=env)
+    subprocess.run(["git", "commit", "-qm", "v1"], cwd=repo, check=True, env=env)
+    return target
+
+
+def test_backup_skips_committed_clean_file(tmp_path: Path):
+    target = _git_repo_with_commit(tmp_path)
+    assert backup_file(target, skip_if_committed=True) is None
+    assert list(tmp_path.glob("cfg.json.bak-*")) == []
+    # Senza opt-in il comportamento resta quello storico.
+    assert backup_file(target) is not None
+
+
+def test_backup_keeps_dirty_and_untracked(tmp_path: Path):
+    target = _git_repo_with_commit(tmp_path)
+    target.write_text("v2-sporca", encoding="utf-8")
+    bak = backup_file(target, skip_if_committed=True)
+    assert bak is not None and bak.read_text(encoding="utf-8") == "v2-sporca"
+    fresh = tmp_path / "nuovo.json"
+    fresh.write_text("x", encoding="utf-8")
+    assert backup_file(fresh, skip_if_committed=True) is not None
+
+
+def test_backup_skips_only_outside_repos(tmp_path: Path):
+    target = tmp_path / "cfg.json"
+    target.write_text("v", encoding="utf-8")
+    assert backup_file(target, skip_if_committed=True) is not None
+
+
+def test_write_if_changed_skips_backup_when_committed(tmp_path: Path):
+    target = _git_repo_with_commit(tmp_path)
+    assert write_text_if_changed(target, "v2", keep=3, skip_if_committed=True) is True
+    assert target.read_text(encoding="utf-8") == "v2"
+    assert list(tmp_path.glob("cfg.json.bak-*")) == []
+
+
 def test_write_if_changed_skips_identical(tmp_path: Path):
     target = tmp_path / "cfg.json"
     target.write_text("same", encoding="utf-8")
