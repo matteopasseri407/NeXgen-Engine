@@ -123,8 +123,8 @@ def _process_helpers():
     scripts = str(Path(__file__).resolve().parents[2] / "scripts")
     if scripts not in sys.path:
         sys.path.insert(0, scripts)
-    from nexgen_core.processes import force_stop_process_tree, windows_command_argv
-    return force_stop_process_tree, windows_command_argv
+    from nexgen_core.processes import force_stop_process_tree, no_window_kwargs, windows_command_argv
+    return force_stop_process_tree, windows_command_argv, no_window_kwargs
 
 
 def _matching_reply(raw: bytes, rid: int) -> dict[str, Any] | None:
@@ -610,7 +610,8 @@ class _ServerHandle:
         }
         if not is_win:
             kwargs["start_new_session"] = True
-        _, command_argv = _process_helpers()
+        _, command_argv, no_window = _process_helpers()
+        kwargs.update(no_window())
         self.proc = subprocess.Popen(command_argv(cmd), **kwargs)
         self._process_group = self.proc.pid if not is_win else None
         with self._stderr_lock:
@@ -949,7 +950,7 @@ class _ServerHandle:
 
     def stop(self) -> None:
         if self.proc is not None:
-            force_stop, _ = _process_helpers()
+            force_stop, _, _ = _process_helpers()
             force_stop(self.proc, process_group=getattr(self, "_process_group", None))
             self._process_group = None
             self._init_done = False
