@@ -209,6 +209,7 @@ ssh -L 127.0.0.1:<n8n-tunnel-port>:127.0.0.1:5678 \
     -L 127.0.0.1:<firecrawl-tunnel-port>:127.0.0.1:3002 \
     -L 127.0.0.1:<ocr-tunnel-port>:127.0.0.1:3033 \
     -L 127.0.0.1:<vault-mcp-tunnel-port>:127.0.0.1:8081 \
+    -L 127.0.0.1:<pii-tunnel-port>:127.0.0.1:5005 \
     <remote-alias> -N
 ```
 
