@@ -86,8 +86,10 @@ def test_each_foreign_startup_version_has_a_distinct_backup(startup_install):
     startup_install.run()
     startup_install.target.write_text("second foreign version")
     startup_install.run()
-    backups = list(startup_install.target.parent.glob("*.bak"))
+    backup_dir = startup_install.target.parent.parent / "NeXgen-Backup"
+    backups = list(backup_dir.glob("*.bak"))
     assert {p.read_text() for p in backups} == {"foreign script", "second foreign version"}
+    assert list(startup_install.target.parent.glob("*.bak")) == []
 
 
 def test_vault_env_expands_tilde(tmp_path: Path, monkeypatch) -> None:
