@@ -92,6 +92,11 @@ leak_allow:
   # Home generica dell'immagine container ufficiale n8n, non path workstation
   # del maintainer (trovato da audit full-tree, 2026-07-09).
   - '/home/node\b'
+  # Home dell'utente non-root DENTRO i container dei deploy compose
+  # (es. pii-home:/home/app), non una workstation (falso positivo
+  # trovato su deploy/pii, 2026-10-11; la voce era andata persa col
+  # revert del modulo PII e viene ripristinata qui).
+  - '/home/app\b'
   - '(?i)[A-Z]:[\\/]Users[\\/]user\b'
   # Limite generico 15 MiB usato negli esempi OCR, non ID o telefono.
   - '^15728640$'
