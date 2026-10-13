@@ -18,7 +18,11 @@ from nexgen_core.bootstrap import desktop_app_orphans, print_desktop_stubs  # no
 
 @pytest.fixture(autouse=True)
 def _isolated_home(monkeypatch):
+    # Path resolution honors XDG_CONFIG_HOME (POSIX) and APPDATA (Windows):
+    # without this, a host carrying either variable renders into the real
+    # app config instead of the tmp home.
     monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
+    monkeypatch.delenv("APPDATA", raising=False)
 
 
 def _home_with_desktop(tmp_path: Path, servers: dict | None) -> Path:

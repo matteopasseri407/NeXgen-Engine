@@ -19,9 +19,11 @@ from nexgen_core.renderer import McpRenderer  # noqa: E402
 
 @pytest.fixture(autouse=True)
 def _isolated_desktop_home(monkeypatch):
-    # claude_desktop_config honors XDG_CONFIG_HOME: without this, a host
-    # carrying the variable would render into the real app config.
+    # claude_desktop_config honors XDG_CONFIG_HOME (POSIX) and APPDATA
+    # (Windows): without this, a host carrying either variable renders
+    # into the real app config instead of the tmp home.
     monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
+    monkeypatch.delenv("APPDATA", raising=False)
 
 
 def make_renderer(tmp_path, servers=None):
@@ -41,7 +43,6 @@ def desktop_file(tmp_path) -> Path:
 
 
 def test_paths_stay_inside_the_given_home(tmp_path, monkeypatch):
-    monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
     path = claude_desktop_config(tmp_path / "home")
     assert path.name == "claude_desktop_config.json"
     assert str(path).startswith(str(tmp_path / "home"))
@@ -265,3 +266,15 @@ def test_bare_commands_resolve_to_absolute_paths(tmp_path):
     if os.environ.get("PATH"):
         assert os.path.isabs(table["alpha"]["command"])
     assert table["ghost"]["command"] == "definitely-not-a-real-binary-xyz"
+
+
+def test_windows_paths_honor_appdata_and_fall_back_under_home(tmp_path, monkeypatch):
+    import sys as _sys
+
+    monkeypatch.setattr(_sys, "platform", "win32")
+    monkeypatch.setenv("APPDATA", str(tmp_path / "appdata"))
+    assert str(claude_desktop_config(tmp_path / "home")).startswith(str(tmp_path / "appdata"))
+    monkeypatch.delenv("APPDATA")
+    fallback = claude_desktop_config(tmp_path / "home")
+    assert str(fallback).startswith(str(tmp_path / "home"))
+    assert fallback.name == "claude_desktop_config.json"
