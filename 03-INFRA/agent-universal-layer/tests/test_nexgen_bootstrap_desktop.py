@@ -25,9 +25,20 @@ def _isolated_home(monkeypatch):
     monkeypatch.delenv("APPDATA", raising=False)
 
 
+def _desktop_cfg(home: Path) -> Path:
+    from nexgen_core.paths import claude_desktop_config
+
+    return claude_desktop_config(home)
+
+
 def _home_with_desktop(tmp_path: Path, servers: dict | None) -> Path:
+    # Write where the resolver reads on THIS platform (APPDATA on Windows,
+    # ~/.config elsewhere): hardcoding the POSIX layout is exactly what
+    # broke CI on Windows.
+    from nexgen_core.paths import claude_desktop_config
+
     home = tmp_path / "home"
-    cfg_dir = home / ".config" / "Claude"
+    cfg_dir = claude_desktop_config(home).parent
     cfg_dir.mkdir(parents=True, exist_ok=True)
     if servers is not None:
         (cfg_dir / "claude_desktop_config.json").write_text(
@@ -53,7 +64,7 @@ def test_no_app_config_means_no_orphans(tmp_path):
 
 def test_malformed_app_config_means_no_orphans(tmp_path):
     home = _home_with_desktop(tmp_path, None)
-    (home / ".config" / "Claude" / "claude_desktop_config.json").write_text("{nope", encoding="utf-8")
+    _desktop_cfg(home).write_text("{nope", encoding="utf-8")
     vault = _vault_with_manifest(tmp_path, {"a": {"command": "x"}})
     assert desktop_app_orphans(vault, home) == []
 
@@ -61,7 +72,7 @@ def test_malformed_app_config_means_no_orphans(tmp_path):
 @pytest.mark.parametrize("body", ["[]", '"just a string"', "null", "42"])
 def test_non_object_app_config_means_no_orphans_not_a_crash(tmp_path, body):
     home = _home_with_desktop(tmp_path, None)
-    (home / ".config" / "Claude" / "claude_desktop_config.json").write_text(body, encoding="utf-8")
+    _desktop_cfg(home).write_text(body, encoding="utf-8")
     vault = _vault_with_manifest(tmp_path, {"a": {"command": "x"}})
     assert desktop_app_orphans(vault, home) == []
 
@@ -94,7 +105,7 @@ def test_stubs_print_reviewable_entries_and_nothing_else(tmp_path, monkeypatch, 
     assert "ui-tool" in out
     assert "do-thing" in out
     assert "desktop_allow" in out
-    assert json.loads((home / ".config" / "Claude" / "claude_desktop_config.json").read_text())[
+    assert json.loads(_desktop_cfg(home).read_text())[
         "mcpServers"] == {"ui-tool": {"command": "do-thing", "args": ["--x"]}}
 
 
@@ -155,7 +166,7 @@ def test_corrupt_file_between_detect_and_stubs_prints_and_stops(tmp_path, monkey
 
     home = _home_with_desktop(tmp_path, {"late": {"command": "x"}})
     assert desktop_app_orphans(tmp_path / "vault", home) == ["late"]
-    (home / ".config" / "Claude" / "claude_desktop_config.json").write_text("{truncated", encoding="utf-8")
+    _desktop_cfg(home).write_text("{truncated", encoding="utf-8")
     print_desktop_stubs(["late"], home)
     assert "nothing to absorb" in capsys.readouterr().out
 
