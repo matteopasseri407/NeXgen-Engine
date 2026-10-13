@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import json
 import logging
+import os
+import re
 import shutil
 import tomllib
 from collections.abc import Callable
@@ -600,4 +602,64 @@ def check_desktop_allowlist(vault_data: Path, home: Path) -> CheckOutcome:
         id="mcp.desktop_allowlist",
         severity=Severity.OK,
         message=t("Every manifest server in Claude Desktop carries the Desktop allow flag"),
+    )
+
+
+_EXACT_REF_RE = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
+
+
+def _raw_ref_strings(value) -> list[str]:
+    if isinstance(value, str):
+        return [value]
+    if isinstance(value, list):
+        return [v for v in value if isinstance(v, str)]
+    if isinstance(value, dict):
+        return [v for v in value.values() if isinstance(v, str)]
+    return []
+
+
+def check_mcp_unresolved_refs(vault_data: Path, home: Path) -> CheckOutcome:
+    """${NAME} references no environment on this machine provides.
+
+    The renderer expands them against the process environment and falls
+    back to an empty string, so a server whose secret was skipped at
+    absorb time would fail obscurely at runtime. WARN-only: the fix is to
+    wire the value (`nexgen-secrets set[-host]` + materialize), and the
+    check's job is to name it instead of letting the 401 surprise.
+    """
+    del home  # manifest-level check: same answer on every machine shape
+    manifest_path = vault_data / "03-INFRA" / "agent-universal-layer" / "mcp" / "manifest.yaml"
+    try:
+        servers = load_mcp_manifest(manifest_path).get("servers", {}) or {}
+    except Exception:  # noqa: BLE001 - the manifest check already reports an unreadable manifest
+        return CheckOutcome(
+            id="mcp.unresolved_refs",
+            severity=Severity.UNDETERMINED,
+            message=t("The MCP manifest could not be read, so secret references were not checked."),
+        )
+    missing: list[str] = []
+    for name, srv in servers.items():
+        if not isinstance(srv, dict) or srv.get("enabled") is False:
+            continue
+        texts: list[str] = []
+        for key in ("command", "url", "args", "env"):
+            texts.extend(_raw_ref_strings(srv.get(key)))
+        blob = " ".join(texts)
+        if "<hidden>" in blob:
+            missing.append(f"{name}: <hidden> placeholder never replaced by hand")
+        for var in sorted(set(_EXACT_REF_RE.findall(blob))):
+            if not os.environ.get(var):
+                missing.append(f"{name}: {var}")
+    if missing:
+        return CheckOutcome(
+            id="mcp.unresolved_refs",
+            severity=Severity.WARN,
+            message=t("MCP servers reference secrets this machine does not provide: {parts}",
+                      parts="; ".join(sorted(missing))),
+            action=t("Wire them with 'nexgen-secrets set <name>' (shared) or 'set-host <name>' (this host), then materialize."),
+        )
+    return CheckOutcome(
+        id="mcp.unresolved_refs",
+        severity=Severity.OK,
+        message=t("Every secret reference in the manifest resolves on this machine"),
     )

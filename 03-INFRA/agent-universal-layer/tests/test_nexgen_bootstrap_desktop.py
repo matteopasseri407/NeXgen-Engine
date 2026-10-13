@@ -162,3 +162,186 @@ def test_non_required_finding_never_blocks_the_install():
     absorb = bootstrap.Finding("Claude Desktop app holds 1 MCP server(s) outside the manifest: x",
                                False, required=False, remedy="absorb them")
     assert bootstrap.render([absorb], "Assistants") == 0
+
+
+def test_secret_reader_keeps_bytes_and_never_asks(monkeypatch, capsys):
+    from nexgen_core import bootstrap
+
+    monkeypatch.setattr(bootstrap.getpass, "getpass", lambda prompt="": "Sk-AbC_-.+/=è")
+    monkeypatch.setattr(bootstrap, "_ask", lambda *a, **k: (_ for _ in ()).throw(AssertionError("no _ask")))
+    assert bootstrap._read_secret_value("value") == "Sk-AbC_-.+/=è"
+    assert capsys.readouterr().out == "" and capsys.readouterr().err == ""
+
+
+def test_secret_reader_eof_and_empty_mean_skip(monkeypatch):
+    from nexgen_core import bootstrap
+
+    def boom(prompt=""):
+        raise EOFError
+
+    monkeypatch.setattr(bootstrap.getpass, "getpass", boom)
+    assert bootstrap._read_secret_value("value") is None
+    monkeypatch.setattr(bootstrap.getpass, "getpass", lambda prompt="": "")
+    assert bootstrap._read_secret_value("value") is None
+
+
+def test_referenced_names_ignore_defaulted_refs():
+    from nexgen_core.bootstrap import _referenced_secret_names
+
+    adopted = {"srv": {"command": "x", "args": ["--k", "${API_KEY}"],
+                       "env": {"A": "${B}", "C": "http://h:${P:-8080}/", "D": "plain"}}}
+    assert _referenced_secret_names(adopted) == {"API_KEY": ["srv"], "B": ["srv"]}
+
+
+def test_literal_desktop_values_become_refs_after_adoption():
+    from nexgen_core.bootstrap import _adopted_entries, _referenced_secret_names
+
+    live = {"svc": {"command": "do-thing", "env": {"GITHUB_TOKEN": "ghp_literal-value-123"}}}
+    adopted = _adopted_entries(["svc"], live)
+    assert set(adopted) == {"svc"}
+    assert _referenced_secret_names(adopted) == {"GITHUB_TOKEN": ["svc"]}
+
+
+def test_masked_servers_reach_the_closing_summary(monkeypatch, capsys):
+    from nexgen_core import bootstrap
+
+    state = _wire_script_stub(monkeypatch, stored={})
+    monkeypatch.setattr(bootstrap, "_ask", lambda prompt, options="": "s")
+    monkeypatch.setattr(bootstrap, "_store_script", lambda root: Path(__file__))
+    bootstrap.wire_absorbed_secrets(Path("/vault"), {}, ["db-svc"])
+    out = capsys.readouterr().out
+    assert "db-svc" in out and "manual fix" in out
+    assert state["materialized"] == 0
+
+
+def test_failed_materialize_says_so(monkeypatch, capsys):
+    from nexgen_core import bootstrap
+
+    _wire_script_stub(monkeypatch, stored={"A": ("v", True)})
+    import subprocess as _sp
+
+    def boom(script):
+        raise _sp.SubprocessError
+
+    monkeypatch.setattr(bootstrap, "_store_materialize", boom)
+    monkeypatch.setattr(bootstrap, "_store_script", lambda root: Path(__file__))
+    bootstrap.wire_absorbed_secrets(Path("/vault"), {"A": ["s"]})
+    assert "materialize failed" in capsys.readouterr().out
+
+
+def test_masked_warning_survives_early_exits(monkeypatch, capsys):
+    from nexgen_core import bootstrap
+
+    monkeypatch.setattr(bootstrap, "_store_script", lambda root: Path("/nonexistent/x.py"))
+    bootstrap.wire_absorbed_secrets(Path("/vault"), {}, ["db-svc"])
+    out = capsys.readouterr().out
+    assert "db-svc" in out and "manual fix" in out
+
+    _wire_script_stub(monkeypatch, trial_ok=False)
+    monkeypatch.setattr(bootstrap, "_store_script", lambda root: Path(__file__))
+    bootstrap.wire_absorbed_secrets(Path("/vault"), {}, ["db-svc"])
+    out = capsys.readouterr().out
+    assert "db-svc" in out and "manual fix" in out
+
+
+def test_stubs_return_the_adopted_entries_for_wiring(tmp_path, monkeypatch, capsys):
+    from nexgen_core import bootstrap
+
+    home = _home_with_desktop(tmp_path, {"svc": {"command": "do-thing", "env": {"K": "literal-abc"}}})
+    adopted = bootstrap.print_desktop_stubs(["svc", "ghost"], home)
+    assert set(adopted) == {"svc"}
+    assert bootstrap._referenced_secret_names(adopted) == {}
+    capsys.readouterr()
+
+
+def _wire_script_stub(monkeypatch, stored=None, trial_ok=True):
+    from nexgen_core import bootstrap
+
+    state = {"stored": dict(stored or {}), "materialized": 0}
+
+    def names(script):
+        if not trial_ok:
+            return False, set(), set(), 0
+        return True, set(state["stored"]), set(), 3
+
+    def set_(script, name, value, *, host_only):
+        state["stored"][name] = (value, host_only)
+        return True
+
+    def materialize(script):
+        state["materialized"] += 1
+        return True
+
+    monkeypatch.setattr(bootstrap, "_store_names", names)
+    monkeypatch.setattr(bootstrap, "_store_set", set_)
+    monkeypatch.setattr(bootstrap, "_store_materialize", materialize)
+    return state
+
+
+def test_wire_creates_only_and_summarizes(monkeypatch, capsys):
+    from nexgen_core import bootstrap
+
+    state = _wire_script_stub(monkeypatch, stored={"OLD": ("v", True)})
+    answers = iter(["", "s"])
+    monkeypatch.setattr(bootstrap, "_ask", lambda prompt, options="": next(answers))
+    monkeypatch.setattr(bootstrap.getpass, "getpass", lambda prompt="": "N3w-V4lue")
+    monkeypatch.setattr(bootstrap, "_store_script", lambda root: Path(__file__))
+    bootstrap.wire_absorbed_secrets(Path("/vault"), {"NEW": ["srv"], "OLD": ["srv"], "SKIPME": ["srv"]})
+    assert state["stored"]["NEW"] == ("N3w-V4lue", True)
+    assert state["stored"]["OLD"] == ("v", True)
+    assert "SKIPME" not in state["stored"]
+    assert state["materialized"] == 1
+    out = capsys.readouterr().out
+    assert "NEW" in out and "SKIPME" in out
+
+
+def test_wire_without_store_access_prints_names_and_writes_nothing(monkeypatch, capsys):
+    from nexgen_core import bootstrap
+
+    _wire_script_stub(monkeypatch, trial_ok=False)
+    monkeypatch.setattr(bootstrap, "_store_script", lambda root: Path(__file__))
+    bootstrap.wire_absorbed_secrets(Path("/vault"), {"A": ["s1"], "B": ["s2"]})
+    out = capsys.readouterr().out
+    assert "A" in out and "B" in out and "enroll" in out
+
+
+def test_unresolved_refs_names_missing_env_only(tmp_path, monkeypatch):
+    from nexgen_core.checks.mcp_checks import check_mcp_unresolved_refs
+    from nexgen_core.report import Severity
+
+    vault = _vault_with_manifest(tmp_path, {
+        "a": {"command": "x", "env": {"K": "${MISSING_ONE}"}},
+        "b": {"command": "x", "env": {"K": "${PRESENT:-dflt}", "J": "plain"}},
+    })
+    monkeypatch.setenv("PRESENT", "1")
+    monkeypatch.delenv("MISSING_ONE", raising=False)
+    outcome = check_mcp_unresolved_refs(vault, tmp_path / "home")
+    assert outcome.severity == Severity.WARN
+    assert "a: MISSING_ONE" in outcome.message
+    assert "PRESENT" not in outcome.message
+    monkeypatch.setenv("MISSING_ONE", "1")
+    assert check_mcp_unresolved_refs(vault, tmp_path / "home").severity == Severity.OK
+
+
+def test_hidden_placeholder_is_flagged(tmp_path, monkeypatch):
+    from nexgen_core.checks.mcp_checks import check_mcp_unresolved_refs
+    from nexgen_core.report import Severity
+
+    vault = _vault_with_manifest(tmp_path, {
+        "a": {"command": "x", "args": ["--token", "<hidden>"]},
+    })
+    outcome = check_mcp_unresolved_refs(vault, tmp_path / "home")
+    assert outcome.severity == Severity.WARN
+    assert "<hidden>" in outcome.message
+
+
+def test_masked_only_skips_pointless_materialize(monkeypatch, capsys):
+    from nexgen_core import bootstrap
+
+    state = _wire_script_stub(monkeypatch, stored={})
+    monkeypatch.setattr(bootstrap, "_store_script", lambda root: Path(__file__))
+    bootstrap.wire_absorbed_secrets(Path("/vault"), {}, ["db-svc"])
+    out = capsys.readouterr().out
+    assert "db-svc" in out and "manual fix" in out
+    assert "already stored" not in out
+    assert state["materialized"] == 0

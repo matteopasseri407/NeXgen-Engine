@@ -49,6 +49,7 @@ from nexgen_core.checks.mcp_checks import (  # noqa: E402 - sys.path shim for cl
     check_mcp_deps,
     check_mcp_manifest,
     check_mcp_orphans,
+    check_mcp_unresolved_refs,
 )
 from nexgen_core.checks.module_checks import check_modules_catalog, check_modules_ready  # noqa: E402 - sys.path shim for cloned checkout
 from nexgen_core.checks.reachability_checks import check_mcp_reachability  # noqa: E402 - sys.path shim for cloned checkout
@@ -199,6 +200,7 @@ class Doctor:
             run("mcp.commands", lambda: check_mcp_commands(vault, home))
             run("mcp.orphans", lambda: check_mcp_orphans(vault, home))
             run("mcp.desktop_allowlist", lambda: check_desktop_allowlist(vault, home))
+            run("mcp.unresolved_refs", lambda: check_mcp_unresolved_refs(vault, home))
             run("mcp.reachability", lambda: check_mcp_reachability(vault, home))
             run("mcp.deps", lambda: check_mcp_deps(manifest_mcp, state))
             run("modules.catalog", lambda: check_modules_catalog(self.engine_root, vault))

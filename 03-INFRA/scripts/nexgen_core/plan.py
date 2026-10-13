@@ -195,7 +195,7 @@ def build_sync_plan(
         check_cli_instruction_pointers,
         check_opencode_instructions,
     )
-    from nexgen_core.checks.mcp_checks import check_desktop_allowlist, check_mcp_configs_rendered, check_mcp_content_drift, check_mcp_orphans
+    from nexgen_core.checks.mcp_checks import check_desktop_allowlist, check_mcp_configs_rendered, check_mcp_content_drift, check_mcp_orphans, check_mcp_unresolved_refs
     from nexgen_core.checks.skill_checks import (
         check_engine_starter_views,
         check_skill_library_symlinks,
@@ -209,6 +209,7 @@ def build_sync_plan(
         ("mcp", lambda: check_mcp_content_drift(vault, home_dir, engine)),
         ("mcp", lambda: check_mcp_orphans(vault, home_dir)),
         ("mcp", lambda: check_desktop_allowlist(vault, home_dir)),
+        ("mcp", lambda: check_mcp_unresolved_refs(vault, home_dir)),
         ("skills", lambda: check_skills_not_materialized(vault, home_dir)),
         ("skills", lambda: check_skills_pin_freshness(vault, home_dir)),
         ("skills", lambda: check_skills_out_of_manifest(vault, home_dir)),

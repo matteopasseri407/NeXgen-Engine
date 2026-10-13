@@ -18,11 +18,14 @@ ingest the user's own documents.
 from __future__ import annotations
 
 import argparse
+import getpass
 import importlib.util
 import json
 import os
 import platform
+import re
 import shutil
+import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -225,7 +228,17 @@ def desktop_app_orphans(root: Path, home: Path | None = None) -> list[str]:
     return sorted(names - declared)
 
 
-def print_desktop_stubs(names: list[str], home: Path | None = None) -> None:
+def _print_manual_fix(masked: list[str]) -> None:
+    """Servers whose secrets were cut out with no reference to wire: the
+    only signal before a runtime 401. Printed on every exit, including
+    the early ones, or the fresh-host case goes silent exactly when it
+    matters most."""
+    if masked:
+        print("  " + t("manual fix needed (secrets cut out, no reference to wire): {names}.",
+                        names=", ".join(masked)))
+
+
+def print_desktop_stubs(names: list[str], home: Path | None = None) -> dict[str, dict[str, Any]]:
     """Review stubs for live Desktop-app servers, printed, never applied.
 
     Applying during the install would write manifest entries the user has
@@ -240,27 +253,276 @@ def print_desktop_stubs(names: list[str], home: Path | None = None) -> None:
     live = _read_desktop_servers(home)
     if not live:
         print("  " + t("the Desktop config is gone: nothing to absorb."))
-        return
+        return {}
+    adopted = _adopted_entries(names, live)
+    skipped_names = [n for n in names if n in live and n not in adopted]
+    for name in skipped_names:
+        print("  " + t("skipping {name}: refused by validation.", name=_display_name(name)))
     stubs = []
-    for name in names:
-        if name not in live:
-            continue
-        entry = renderer_cli._adopt_entry("claude-desktop", live[name])
-        problem = renderer_cli._validate_stub_entry(name, entry)
-        if problem:
-            print("  " + t("skipping {name}: {reason}.",
-                           name=_display_name(name), reason=_display_name(problem)))
-            continue
-        stubs.append(renderer_cli._emit_manifest_stub(name, entry))
+    for name in sorted(adopted):
+        stubs.append(renderer_cli._emit_manifest_stub(name, adopted[name]))
     if not stubs:
         print("  " + t("nothing left to absorb."))
-        return
+        return adopted
     print("  " + t("manifest.yaml STUB below -- review it, adjust it, then place it under 'servers:'."))
     print("  " + t("Opting a server into the Desktop app itself is a separate manual 'desktop_allow: true', only for read-only servers."))
     print("servers:")
     for stub in stubs:
         print(stub)
     print("  " + t("Or run 'nexgen import --from claude-desktop --apply' to add them (backup + re-validation)."))
+    return adopted
+
+
+#: A bare ${NAME} reference in an absorbed entry: the value must come from
+#: the store. A ${NAME:-default} carries its own fallback and needs nothing.
+_EXACT_REF_RE = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
+
+
+def _referenced_secret_names(live: dict[str, Any]) -> dict[str, list[str]]:
+    """${NAME} references per adopted server, scanning env, args, url and
+    command. Only exact references count: defaulted ones resolve alone.
+
+    `live` must be adopted entries (`_adopt_entry`), not the raw Desktop
+    config: the app stores literal values, and the ${NAME}s only exist
+    after adoption scrubs them. Scanning raw values would find nothing in
+    exactly the typical case.
+    """
+    refs: dict[str, set[str]] = {}
+    for server, spec in live.items():
+        if not isinstance(spec, dict):
+            continue
+        texts: list[str] = []
+        for key in ("command", "url"):
+            value = spec.get(key)
+            if isinstance(value, str):
+                texts.append(value)
+            elif isinstance(value, list):
+                texts.extend(v for v in value if isinstance(v, str))
+        raw_args = spec.get("args")
+        if isinstance(raw_args, str):
+            texts.append(raw_args)
+        elif isinstance(raw_args, list):
+            texts.extend(v for v in raw_args if isinstance(v, str))
+        env = spec.get("env")
+        if isinstance(env, dict):
+            texts.extend(v for v in env.values() if isinstance(v, str))
+        for text in texts:
+            for name in _EXACT_REF_RE.findall(text):
+                refs.setdefault(name, set()).add(server)
+    return {name: sorted(servers) for name, servers in refs.items()}
+
+
+def _adopted_entries(names: list[str], live: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    """Adopted stubs for the named live servers, skipping invalid ones.
+
+    Shared by the printed stubs and the wiring step so both work on the
+    same transformation and the referenced names coincide by construction.
+    """
+    from nexgen_core import renderer_cli
+
+    adopted: dict[str, dict[str, Any]] = {}
+    for name in names:
+        if name not in live:
+            continue
+        entry = renderer_cli._adopt_entry("claude-desktop", live[name])
+        if renderer_cli._validate_stub_entry(name, entry) is not None:
+            continue
+        adopted[name] = entry
+    return adopted
+
+
+def _masked_servers(adopted: dict[str, dict[str, Any]]) -> list[str]:
+    """Adopted servers carrying a <hidden> placeholder: secrets were cut
+    out of args or URLs, so no ${NAME} will ever wire them. They need a
+    manual fix, and the closing summary must say so instead of letting a
+    runtime 401 be the first signal.
+    """
+    masked = []
+
+    def carries(value: Any) -> bool:
+        if isinstance(value, str):
+            return "<hidden>" in value
+        if isinstance(value, list):
+            return any(carries(v) for v in value)
+        if isinstance(value, dict):
+            return any(carries(v) for v in value.values())
+        return False
+
+    for name, entry in adopted.items():
+        if carries(entry):
+            masked.append(name)
+    return sorted(masked)
+
+
+def _read_secret_value(prompt: str) -> str | None:
+    """One secret from the terminal: no echo, no case folding, no trimming.
+
+    Deliberately not `_ask`: lowercasing would destroy case-sensitive
+    tokens, and echo would leak them into scrollback. EOF or an empty
+    value means "skip this name", never "store an empty secret".
+    """
+    try:
+        value = getpass.getpass(f"  {prompt}: ")
+    except (EOFError, KeyboardInterrupt):
+        return None
+    return value or None
+
+
+def _store_script(root: Path) -> Path:
+    return root / "03-INFRA" / "scripts" / "nexgen-secrets.py"
+
+
+def _store_names(script: Path) -> tuple[bool, set[str], set[str], int]:
+    """Trial decrypt plus inventory: (ok, shared, host, recipients).
+
+    The human-readable `list` output is the contract: "shared:",
+    "per_host (...):", two-space names. The store prints a single per_host
+    section for the current host only (`per_host.get(HOSTNAME)`), so every
+    parsed host name belongs here; a future multi-host listing would only
+    ever skip a question, and the doctor WARN would still name the secret.
+    A zero exit with unparseable output yields empty sets; every write goes
+    through --create-only, so a concurrent writer still loses safely
+    instead of last-write-wins.
+    """
+    try:
+        proc = subprocess.run(
+            [sys.executable, str(script), "list"], capture_output=True, text=True, encoding="utf-8",
+            errors="replace", timeout=60)
+    except (OSError, subprocess.SubprocessError):
+        return False, set(), set(), 0
+    if proc.returncode != 0:
+        return False, set(), set(), 0
+    shared, host, section, recipients = set(), set(), None, 0
+    for line in proc.stdout.splitlines():
+        if line.startswith("shared:"):
+            section = shared
+        elif line.startswith("per_host"):
+            section = host
+        elif line.startswith("recipients:"):
+            section = None
+            try:
+                recipients = int(line.split(":")[1].split()[0])
+            except (IndexError, ValueError):
+                recipients = 0
+        elif section is not None and line.startswith("  ") and line.strip():
+            section.add(line.strip().split(":")[0])
+    return True, shared, host, recipients
+
+
+def _store_set(script: Path, name: str, value: str, *, host_only: bool) -> bool:
+    """Create-only write through the store's own commands (stdin, synced).
+
+    `--create-only` makes the store refuse an existing name instead of
+    overwriting it: the names snapshot above decides, and a concurrent
+    writer loses safely instead of last-write-wins.
+    """
+    try:
+        proc = subprocess.run(
+            [sys.executable, str(script), "set-host" if host_only else "set",
+             "--create-only", name],
+            input=value.encode("utf-8"), capture_output=True, timeout=120)
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return proc.returncode == 0
+
+
+def _store_materialize(script: Path) -> bool:
+    try:
+        proc = subprocess.run(
+            [sys.executable, str(script), "materialize"], capture_output=True, text=True, encoding="utf-8",
+            errors="replace", timeout=120)
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return proc.returncode == 0
+
+
+def _materialize_best_effort(script: Path) -> bool:
+    """Materialize that never raises into the install flow: a failure is a
+    message, not a crash, and the caller reports it."""
+    try:
+        return _store_materialize(script)
+    except Exception:  # noqa: BLE001 - install step reports, never raises
+        return False
+
+
+def wire_absorbed_secrets(root: Path, refs: dict[str, list[str]], masked: list[str] | None = None) -> None:
+    """Guided wiring for the ${NAME}s absorbed entries reference.
+
+    Creates only: names already in the store are materialized, never
+    rewritten, and overwriting stays an explicit `set` outside init.
+    Skipped, externally-managed, and manually-to-fix names end up in the
+    closing summary, so no server silently runs on an empty value.
+    """
+    masked = sorted(masked or [])
+    script = _store_script(root)
+    if not script.is_file():
+        _print_manual_fix(masked)
+        print("  " + t("no secrets store in this vault: wire the values by hand."))
+        return
+    ok, shared, host, recipients = _store_names(script)
+    if not ok:
+        _print_manual_fix(masked)
+        if refs:
+            print("  " + t("this host cannot open the secrets store yet (enroll first):"))
+            for name in sorted(refs):
+                print(f"    - {name}")
+            print("  " + t("after enrollment, wire them with 'nexgen-secrets set <name>' (shared) "
+                            "or 'nexgen-secrets set-host <name>' (this host only)."))
+        else:
+            print("  " + t("this host cannot open the secrets store yet (enroll first)."))
+        return
+    missing = [n for n in sorted(refs) if n not in shared and n not in host]
+    if not missing:
+        if refs:
+            if _materialize_best_effort(script):
+                print("  " + t("every referenced secret is already stored: materialized."))
+            else:
+                print("  " + t("every referenced secret is already stored, but materialize failed: "
+                                "run 'nexgen-secrets materialize' by hand."))
+        _print_manual_fix(masked)
+        return
+    wired, skipped, external = [], [], []
+    for name in missing:
+        servers = refs[name]
+        if len(servers) > 1:
+            print("  " + t("warning: {name} is referenced by {count} servers ({servers}): "
+                            "one value will serve all of them.",
+                            name=name, count=len(servers), servers=", ".join(servers)))
+            if not _ask(t("use one value anyway?"), "y / N").startswith("y"):
+                skipped.append(name)
+                continue
+        choice = _ask(
+            t("{name}: save for this host, all hosts, externally managed, or skip?", name=name),
+            t("H=host (default) / A=all {hosts} / E=external / S=skip",
+              hosts=f"{recipients} enrolled hosts" if recipients > 0 else "enrolled hosts"),
+        )
+        if choice.startswith("e"):
+            external.append(name)
+            continue
+        if choice.startswith("s"):
+            skipped.append(name)
+            continue
+        value = None
+        if choice.startswith("a") or choice.startswith("h") or choice == "":
+            value = _read_secret_value(t("value for {name} (hidden, empty skips)", name=name))
+        if value is None:
+            skipped.append(name)
+            continue
+        if _store_set(script, name, value, host_only=not choice.startswith("a")):
+            wired.append(name)
+        else:
+            print("  " + t("could not store {name}: skipped.", name=name))
+            skipped.append(name)
+    materialized = _materialize_best_effort(script)
+    print("  " + t("wired: {names}.", names=", ".join(wired) if wired else t("none")))
+    if not materialized:
+        print("  " + t("materialize failed: run 'nexgen-secrets materialize' by hand "
+                        "before the values reach the environment."))
+    if skipped:
+        print("  " + t("inactive until wired: {names}.", names=", ".join(skipped)))
+    if external:
+        print("  " + t("externally managed (not checked): {names}.", names=", ".join(external)))
+    _print_manual_fix(masked)
 
 
 def install_launchers(root: Path) -> str:
@@ -438,7 +700,11 @@ def main(argv: list[str] | None = None) -> int:
                 "y / N",
             )
             if answer.startswith("y"):
-                print_desktop_stubs(desktop_new)
+                adopted = print_desktop_stubs(desktop_new)
+                refs = _referenced_secret_names(adopted)
+                masked = _masked_servers(adopted)
+                if refs or masked:
+                    wire_absorbed_secrets(root, refs, masked)
 
     print(f"\n{c['bold']}{c['cyan']}5 · " + t("Setting it up") + c['reset'])
     steps: list[Finding] = []
