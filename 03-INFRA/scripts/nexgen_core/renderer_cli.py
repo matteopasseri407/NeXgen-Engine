@@ -27,6 +27,7 @@ from nexgen_core.paths import (  # noqa: E402 - sys.path shim for cloned checkou
     antigravity_config,
     antigravity_configs,
     claude_config,
+    claude_desktop_config,
     codex_config,
     opencode_config_candidates,
     resolve_home,
@@ -51,6 +52,7 @@ def _renderer() -> McpRenderer:
 def _cli_config_path(cli: str) -> Path:
     return {
         "claude": claude_config(HOME),
+        "claude-desktop": claude_desktop_config(HOME),
         "codex": codex_config(HOME),
         "antigravity": antigravity_config(HOME),
         "opencode": _renderer().opencode_config_path(),
@@ -111,6 +113,7 @@ def cmd_write(cli: str) -> int:
     r = _renderer()
     funcs = {
         "claude": r.render_claude,
+        "claude-desktop": r.render_claude_desktop,
         "codex": r.render_codex,
         "antigravity": r.render_antigravity,
         "opencode": r.render_opencode,
@@ -211,7 +214,7 @@ def _adopt_entry(cli: str, spec: dict) -> dict:
     """Best-effort inverse of r_<cli>: from the live structure to a manifest stub."""
     entry: dict[str, Any] = {}
     args = spec.get("args")
-    if cli in ("claude", "opencode"):
+    if cli in ("claude", "claude-desktop", "opencode"):
         if spec.get("type") == "http" or "url" in spec:
             entry["transport"] = "http"
             entry["url"] = spec.get("url")
@@ -263,7 +266,13 @@ def _adopt_entry(cli: str, spec: dict) -> dict:
                 entry["args"] = args
             if spec.get("env"):
                 entry["env"] = spec["env"]
-    entry["targets"] = [cli]
+    if cli == "claude-desktop":
+        # The Desktop app never mounts by `targets` (default-deny allowlist);
+        # resolution reuses the CLI's, so an adopted entry starts there and
+        # the reviewer opts it in with `desktop_allow: true` when read-only.
+        entry["targets"] = ["claude"]
+    else:
+        entry["targets"] = [cli]
     return entry
 
 
@@ -333,7 +342,7 @@ def _load_live(cli: str) -> dict | None:
         return None
     text = path.read_text("utf-8")
     try:
-        if cli == "claude":
+        if cli in ("claude", "claude-desktop"):
             return json.loads(text).get("mcpServers", {})
         if cli == "codex":
             import tomllib
@@ -483,9 +492,14 @@ def cmd_adopt(cli: str, apply: bool = False) -> int:
 
 def cmd_inventory() -> int:
     """Read-only scan of the MCP servers per CLI (used by agent-sync inventory)."""
+    from nexgen_core.mcp_render.claude_desktop import allowed_desktop_servers
+
     r = _renderer()
-    for cli in ("claude", "codex", "antigravity", "opencode"):
-        servers = r.load_resolved_servers(cli)
+    for cli in ("claude", "claude-desktop", "codex", "antigravity", "opencode"):
+        if cli == "claude-desktop":
+            servers = allowed_desktop_servers(r)
+        else:
+            servers = r.load_resolved_servers(cli)
         names = ", ".join(sorted(servers)) if servers else t("(none)")
         print(f"  {cli}: {len(servers)} server -- {names}")
     return 0

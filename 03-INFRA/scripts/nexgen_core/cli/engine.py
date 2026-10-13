@@ -64,7 +64,7 @@ def register(sub) -> None:
 
     p = sub.add_parser("import", help=t("Generate manifest stubs from a live CLI config (read-only, on stdout)"))
     p.add_argument("--from", dest="source", required=True,
-                   choices=["claude", "claudecode", "codex", "antigravity", "opencode"],
+                   choices=["claude", "claudecode", "claude-desktop", "codex", "antigravity", "opencode"],
                    help=t("The CLI whose live config to read"))
     p.add_argument("--dry-run", dest="dry_run", action="store_true",
                    help=t("Print to stdout only (the default; accepted for explicitness)"))

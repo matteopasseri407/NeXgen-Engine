@@ -96,7 +96,7 @@ The [sync contract](docs/sync-contract.md) describes what it manages, what it pr
   See [local-lane.md](docs/local-lane.md).
 * **Secrets store:** asymmetric `age` encryption (`99-SECRETS/secrets.yaml.age`) on machine-local keys (`0600`), isolated per-host OAuth slots, materialized `secrets.env` for shells and systemd services. No passphrase to remember or type.
 * **Operator shell:** `nexgen info` status dashboard and `nexgen shell` interactive REPL, so routine management never needs an AI assistant open.
-* **Four runtimes:** Claude Code, Codex, OpenCode (native V2: scope-file instructions, `plugins`/`permissions`, skill views) and Antigravity, each rendered in its own dialect, Council seats included.
+* **Four runtimes plus the Desktop app:** Claude Code, Codex, OpenCode (native V2: scope-file instructions, `plugins`/`permissions`, skill views) and Antigravity, each rendered in its own dialect, Council seats included. The Claude Desktop app receives only explicitly allowlisted read-only servers (`desktop_allow`), since it has no guardrail hooks.
 * **Fail-closed diagnostics (`nexgen doctor`):** automated checks over git alignment, manifest reachability, link hygiene, token presence and permission boundaries. A check that cannot verify reports undetermined instead of passing.
 
 ---

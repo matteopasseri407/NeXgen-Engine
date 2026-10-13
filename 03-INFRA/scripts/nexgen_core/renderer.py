@@ -1,13 +1,15 @@
 #!/usr/bin/env python3
-"""Generator and renderer for MCP configurations across the 4 CLIs (Claude, Codex, OpenCode, Antigravity).
+"""Generator and renderer for MCP configurations across the 4 CLIs (Claude, Codex, OpenCode, Antigravity) plus the Claude Desktop app.
 
 Contract order and rules:
 1. Canonical manifest (mcp/manifest.yaml) as the single source of truth.
 2. Resolution of stdio commands (command + expanded args) and HTTP servers with env-ref tokens.
-3. Native support for the 4 CLIs: Claude, Codex (TOML), OpenCode, Antigravity (bridge).
+3. Native support for the 4 CLIs: Claude, Codex (TOML), OpenCode, Antigravity (bridge); plus Claude Desktop (default-deny allowlist, see mcp_render/claude_desktop).
 4. Additive preservation of live servers absent from the manifest, except
    those listed in `retired_servers`: that's the explicit, cross-CLI removal
    mechanism, and it always wins over additive preservation.
+   (On Desktop, manifest-known but not allowlisted servers are additionally
+   reported, never removed.)
 5. Atomic writes with safety backups and strict error handling.
 """
 from __future__ import annotations
@@ -114,6 +116,78 @@ class McpRenderer:
         data = load_mcp_manifest(self.manifest_path)
         return set(data.get("retired_servers", set()))
 
+    def _resolve_entry(
+        self,
+        name: str,
+        srv: dict[str, Any],
+        cli_target: str,
+        gateway: dict[str, Any] | None = None,
+    ) -> dict[str, Any] | None:
+        """Resolves one manifest entry for a CLI: None when its `require_env`
+        gate is unsatisfied or its command empties out after expansion.
+
+        Shared by every dialect: what Desktop launches for an allowlisted
+        server is resolved exactly like what a CLI would launch, never a
+        second implementation of the same expansion.
+        """
+        import logging
+
+        req_env = srv.get("require_env")
+        if req_env and not os.environ.get(req_env):
+            return None
+
+        # Windows override
+        entry = dict(srv)
+        # `deps` is the provisioning contract, resolved at spawn by the
+        # waiter; it must never reach the CLIs' native configs.
+        entry.pop("deps", None)
+        if IS_WINDOWS and "windows" in entry:
+            win_override = entry.pop("windows")
+            if isinstance(win_override, dict):
+                entry.update(win_override)
+
+        # command and args resolution
+        cmd = entry.get("command") or entry.get("cmd")
+        args = entry.get("args", [])
+        if isinstance(cmd, list):
+            resolved_cmd = [self._expand_value(str(c)) for c in cmd]
+            if IS_WINDOWS and resolved_cmd:
+                resolved_cmd[0] = self._normalize_windows_shim(resolved_cmd[0])
+            entry["command"] = resolved_cmd[0] if resolved_cmd else ""
+            entry["args"] = resolved_cmd[1:]
+        elif isinstance(cmd, str):
+            expanded_cmd = self._expand_value(cmd)
+            if IS_WINDOWS:
+                expanded_cmd = self._normalize_windows_shim(expanded_cmd)
+            entry["command"] = expanded_cmd
+            if isinstance(args, list):
+                entry["args"] = [self._expand_value(str(a)) for a in args]
+            else:
+                entry["args"] = []
+
+        if not str(entry.get("command") or "").strip() and not entry.get("url"):
+            logging.getLogger(__name__).warning("MCP server %r has an empty command after expansion, skipped", name)
+            return None
+
+        # URL resolution
+        if entry.get("url"):
+            entry["url"] = self._expand_value(str(entry["url"]))
+
+        # env resolution
+        if "env" in entry and isinstance(entry["env"], dict):
+            entry["env"] = {
+                k: self._expand_value(str(v))
+                for k, v in entry["env"].items()
+            }
+
+        if name == GATEWAY:
+            # The gateway serves exactly what the plan routes behind it for THIS CLI, so it has to know which.
+            entry["env"] = {**(entry.get("env") if isinstance(entry.get("env"), dict) else {}), GATEWAY_CLI_ENV: cli_target}
+        elif entry.get("tools_deny") or entry.get("tools_allow"):
+            entry = self._trimmed_entry(name, entry, gateway, cli_target)
+
+        return entry
+
     def load_resolved_servers(self, cli_target: str) -> dict[str, dict[str, Any]]:
         """Loads the MCP servers resolved and filtered for a specific CLI."""
         if not self.manifest_path.is_file():
@@ -129,64 +203,9 @@ class McpRenderer:
             if place(srv, cli_target).kind != DIRECT:
                 continue
 
-            # require_env check
-            req_env = srv.get("require_env")
-            if req_env:
-                env_val = os.environ.get(req_env)
-                if not env_val:
-                    continue
-
-            # Windows override
-            entry = dict(srv)
-            # `deps` is the provisioning contract, resolved at spawn by the
-            # waiter; it must never reach the CLIs' native configs.
-            entry.pop("deps", None)
-            if IS_WINDOWS and "windows" in entry:
-                win_override = entry.pop("windows")
-                if isinstance(win_override, dict):
-                    entry.update(win_override)
-
-            # command and args resolution
-            cmd = entry.get("command") or entry.get("cmd")
-            args = entry.get("args", [])
-            if isinstance(cmd, list):
-                resolved_cmd = [self._expand_value(str(c)) for c in cmd]
-                if IS_WINDOWS and resolved_cmd:
-                    resolved_cmd[0] = self._normalize_windows_shim(resolved_cmd[0])
-                entry["command"] = resolved_cmd[0] if resolved_cmd else ""
-                entry["args"] = resolved_cmd[1:]
-            elif isinstance(cmd, str):
-                expanded_cmd = self._expand_value(cmd)
-                if IS_WINDOWS:
-                    expanded_cmd = self._normalize_windows_shim(expanded_cmd)
-                entry["command"] = expanded_cmd
-                if isinstance(args, list):
-                    entry["args"] = [self._expand_value(str(a)) for a in args]
-                else:
-                    entry["args"] = []
-
-            if not str(entry.get("command") or "").strip() and not entry.get("url"):
-                import logging
-
-                logging.getLogger(__name__).warning("MCP server %r has an empty command after expansion, skipped", name)
+            entry = self._resolve_entry(name, srv, cli_target, raw_servers.get(GATEWAY))
+            if entry is None:
                 continue
-
-            # URL resolution
-            if entry.get("url"):
-                entry["url"] = self._expand_value(str(entry["url"]))
-
-            # env resolution
-            if "env" in entry and isinstance(entry["env"], dict):
-                entry["env"] = {
-                    k: self._expand_value(str(v))
-                    for k, v in entry["env"].items()
-                }
-
-            if name == GATEWAY:
-                # The gateway serves exactly what the plan routes behind it for THIS CLI, so it has to know which.
-                entry["env"] = {**(entry.get("env") if isinstance(entry.get("env"), dict) else {}), GATEWAY_CLI_ENV: cli_target}
-            elif entry.get("tools_deny") or entry.get("tools_allow"):
-                entry = self._trimmed_entry(name, entry, raw_servers.get(GATEWAY), cli_target)
 
             resolved[name] = entry
 
@@ -280,11 +299,17 @@ class McpRenderer:
         from nexgen_core.mcp_render import codex
         return codex.render(self, write=write)
 
+    def render_claude_desktop(self, write: bool = False) -> tuple[bool, str]:
+        """Generates the Claude Desktop app's MCP configuration (default-deny allowlist)."""
+        from nexgen_core.mcp_render import claude_desktop
+        return claude_desktop.render(self, write=write)
+
     def render_all(self, write: bool = False) -> dict[str, bool]:
-        """Renders for all 4 CLIs, each isolated: one corrupt live config must not stall the other three."""
+        """Renders for all targets, each isolated: one corrupt live config must not stall the others."""
         results: dict[str, bool] = {}
         for name, method in (
             ("claude", self.render_claude),
+            ("claude-desktop", self.render_claude_desktop),
             ("antigravity", self.render_antigravity),
             ("opencode", self.render_opencode),
             ("codex", self.render_codex),
@@ -313,7 +338,7 @@ class McpRenderer:
         """
         self._pending = {}
         try:
-            getattr(self, f"render_{cli_target}")(write=True)
+            getattr(self, f"render_{cli_target.replace('-', '_')}")(write=True)
             return dict(self._pending)
         finally:
             self._pending = None

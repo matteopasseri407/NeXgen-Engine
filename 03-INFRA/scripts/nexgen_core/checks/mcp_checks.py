@@ -16,8 +16,10 @@ from nexgen_core.paths import (
     antigravity_config,
     antigravity_configs,
     claude_config,
+    claude_desktop_config,
     codex_config,
 )
+from nexgen_core.mcp_render.claude_desktop import allowed_desktop_servers
 from nexgen_core.renderer import McpRenderer
 from nexgen_core.report import CheckOutcome, Severity
 
@@ -97,6 +99,7 @@ class _CliRenderSpec:
 #: (only Codex remaps hyphens).
 _CLI_RENDER_SPECS: dict[str, _CliRenderSpec] = {
     "claude": _CliRenderSpec(_rendered_names_claude_style, _identity),
+    "claude-desktop": _CliRenderSpec(_rendered_names_claude_style, _identity),
     "antigravity": _CliRenderSpec(_rendered_names_claude_style, _identity),
     "codex": _CliRenderSpec(_rendered_names_codex, _codex_section_name),
     "opencode": _CliRenderSpec(_rendered_names_opencode, _identity),
@@ -113,7 +116,10 @@ def _expected_and_rendered(renderer: McpRenderer, cli: str, path: Path) -> tuple
     ignorance), plain for an unreadable or never-launched config.
     """
     try:
-        expected = set(renderer.load_resolved_servers(cli).keys())
+        if cli == "claude-desktop":
+            expected = set(allowed_desktop_servers(renderer).keys())
+        else:
+            expected = set(renderer.load_resolved_servers(cli).keys())
     except Exception as exc:  # noqa: BLE001 - check failure is reported, never raises
         return f"template: the manifest cannot be rendered for {cli} ({exc})", set(), set()
     if not path.is_file():
@@ -146,6 +152,9 @@ def check_mcp_configs_rendered(vault_data: Path, home: Path) -> CheckOutcome:
 
     cli_paths = {
         "claude": claude_config(home),
+        # The Desktop app owns this file's preferences: a missing file only
+        # means the app never launched here, same as any other CLI.
+        "claude-desktop": claude_desktop_config(home),
         # Canonical first; a machine Antigravity itself configured (never
         # rendered here) may only carry a fan-out copy -- same content,
         # read-only check, so the first existing file wins.
@@ -163,15 +172,15 @@ def check_mcp_configs_rendered(vault_data: Path, home: Path) -> CheckOutcome:
 
     for cli, path in cli_paths.items():
         error, expected, rendered = _expected_and_rendered(renderer, cli, path)
-        if error:
-            if error.startswith("template:"):
-                # Apply would fail exactly like this: a fault, not ignorance.
-                broken_parts.append(error.removeprefix("template: "))
-            else:
-                undetermined_parts.append(error)
+        if error and error.startswith("template:"):
+            # Apply would fail exactly like this: a fault, not ignorance.
+            broken_parts.append(error.removeprefix("template: "))
             continue
         if not expected:
             continue  # nothing expected for this CLI on this manifest
+        if error:
+            undetermined_parts.append(error)
+            continue
 
         spec = _CLI_RENDER_SPECS[cli]
         norm_expected = {spec.normalize(name): name for name in expected}
@@ -216,6 +225,7 @@ def check_mcp_configs_rendered(vault_data: Path, home: Path) -> CheckOutcome:
 #: Where each CLI keeps its server table inside its parsed config.
 _SERVER_TABLE_PATH: dict[str, tuple[str, ...]] = {
     "claude": ("mcpServers",),
+    "claude-desktop": ("mcpServers",),
     "antigravity": ("mcpServers",),
     "codex": ("mcp_servers",),
     "opencode": ("mcp", "servers"),
@@ -257,6 +267,7 @@ def check_mcp_content_drift(vault_data: Path, home: Path, engine_root: Path | No
     renderer = McpRenderer(vault_data=vault_data, engine_root=engine_root, home=home)
     paths = {
         "claude": claude_config(home),
+        "claude-desktop": claude_desktop_config(home),
         "antigravity": antigravity_config(home),
         "codex": codex_config(home),
         "opencode": renderer.opencode_config_path(),
@@ -368,9 +379,12 @@ def check_mcp_commands(vault_data: Path, home: Path) -> CheckOutcome:
     """
     renderer = McpRenderer(vault_data=vault_data, home=home)
     missing: dict[str, set[str]] = {}
-    for cli in ("claude", "codex", "antigravity", "opencode"):
+    for cli in ("claude", "claude-desktop", "codex", "antigravity", "opencode"):
         try:
-            servers = renderer.load_resolved_servers(cli)
+            if cli == "claude-desktop":
+                servers = allowed_desktop_servers(renderer)
+            else:
+                servers = renderer.load_resolved_servers(cli)
         except Exception:  # noqa: BLE001 - the names check already reports an unresolvable manifest
             continue
         for name, srv in servers.items():
@@ -479,6 +493,7 @@ def check_mcp_orphans(vault_data: Path, home: Path) -> CheckOutcome:
 
     cli_paths = {
         "claude": claude_config(home),
+        "claude-desktop": claude_desktop_config(home),
         "antigravity": next(
             (p for p in antigravity_configs(home) if p.is_file()),
             antigravity_config(home),
@@ -530,4 +545,59 @@ def check_mcp_orphans(vault_data: Path, home: Path) -> CheckOutcome:
         id="mcp.orphans",
         severity=Severity.OK,
         message=t("No MCP servers configured outside the manifest"),
+    )
+
+
+def check_desktop_allowlist(vault_data: Path, home: Path) -> CheckOutcome:
+    """Manifest-known servers live in the Desktop app without being allowed.
+
+    The Desktop renderer is default-deny (`desktop_allow: true` opts in)
+    because the app has no guardrail hooks. A manifest-known server found
+    live without the flag is either a hand-added entry or a leftover from
+    before the flag existed: either way it runs without the protections
+    the same server has on the CLIs. WARN-only by design, and never
+    removed: like orphans, someone put it there, and the check's only job
+    is to make that visible instead of letting it drift silently.
+    """
+    from nexgen_core.mcp_render.claude_desktop import DESKTOP_ALLOW_KEY
+
+    path = claude_desktop_config(home)
+    if not path.is_file():
+        return CheckOutcome(
+            id="mcp.desktop_allowlist",
+            severity=Severity.OK,
+            message=t("Claude Desktop never launched here: no allowlist to check"),
+        )
+    try:
+        live = _rendered_names_claude_style(path)
+    except Exception as exc:  # noqa: BLE001 - check failure is reported, never raises
+        return CheckOutcome(
+            id="mcp.desktop_allowlist",
+            severity=Severity.UNDETERMINED,
+            message=t("Could not read the Claude Desktop config: {error}", error=exc),
+        )
+    try:
+        manifest_path = vault_data / "03-INFRA" / "agent-universal-layer" / "mcp" / "manifest.yaml"
+        raw = load_mcp_manifest(manifest_path).get("servers", {})
+    except Exception:  # noqa: BLE001 - the manifest check already reports an unreadable manifest
+        return CheckOutcome(
+            id="mcp.desktop_allowlist",
+            severity=Severity.UNDETERMINED,
+            message=t("The MCP manifest could not be read, so the Desktop allowlist was not checked."),
+        )
+    denied = sorted(name for name in live if name in raw and raw[name].get(DESKTOP_ALLOW_KEY) is not True)
+    if denied:
+        return CheckOutcome(
+            id="mcp.desktop_allowlist",
+            severity=Severity.WARN,
+            message=t(
+                "Claude Desktop runs manifest servers without the Desktop allow flag (no guardrail hooks there): {names}",
+                names=", ".join(denied),
+            ),
+            action=t("Set 'desktop_allow: true' in mcp/manifest.yaml only for read-only servers, or remove them from the Desktop config with the app closed."),
+        )
+    return CheckOutcome(
+        id="mcp.desktop_allowlist",
+        severity=Severity.OK,
+        message=t("Every manifest server in Claude Desktop carries the Desktop allow flag"),
     )

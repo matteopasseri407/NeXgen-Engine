@@ -40,6 +40,7 @@ from nexgen_core.checks.instructions_checks import (  # noqa: E402 - sys.path sh
     check_opencode_instructions,
 )
 from nexgen_core.checks.mcp_checks import (  # noqa: E402 - sys.path shim for cloned checkout
+    check_desktop_allowlist,
     check_mcp_commands,
     check_mcp_configs_rendered,
     check_mcp_placement,
@@ -197,6 +198,7 @@ class Doctor:
             run("mcp.rendered_content", lambda: check_mcp_content_drift(vault, home, self.engine_root))
             run("mcp.commands", lambda: check_mcp_commands(vault, home))
             run("mcp.orphans", lambda: check_mcp_orphans(vault, home))
+            run("mcp.desktop_allowlist", lambda: check_desktop_allowlist(vault, home))
             run("mcp.reachability", lambda: check_mcp_reachability(vault, home))
             run("mcp.deps", lambda: check_mcp_deps(manifest_mcp, state))
             run("modules.catalog", lambda: check_modules_catalog(self.engine_root, vault))
