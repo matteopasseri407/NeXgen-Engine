@@ -271,15 +271,12 @@ def _missing_config_actions(vault: Path, home: Path) -> list[str]:
     actions: list[str] = []
     for cli, path in cli_paths.items():
         try:
-            if cli == "claude-desktop":
-                from nexgen_core.mcp_render.claude_desktop import allowed_desktop_servers
-
-                expected = allowed_desktop_servers(renderer)
-            else:
-                expected = renderer.load_resolved_servers(cli)
+            expected = renderer.load_resolved_servers(cli)
         except Exception:  # noqa: BLE001 - plan error is reported, never raises
             continue  # a manifest the renderer cannot resolve is reported
                           # by the probes above; nothing more to add here
         if expected and not path.is_file():
+            if cli == "claude-desktop" and not path.parent.is_dir():
+                continue  # no app directory: never launched here, nothing to propose
             actions.append(f"[mcp] render would create {path} ({cli} never launched)")
     return actions

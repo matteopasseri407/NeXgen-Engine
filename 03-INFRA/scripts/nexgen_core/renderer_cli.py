@@ -492,14 +492,9 @@ def cmd_adopt(cli: str, apply: bool = False) -> int:
 
 def cmd_inventory() -> int:
     """Read-only scan of the MCP servers per CLI (used by agent-sync inventory)."""
-    from nexgen_core.mcp_render.claude_desktop import allowed_desktop_servers
-
     r = _renderer()
     for cli in ("claude", "claude-desktop", "codex", "antigravity", "opencode"):
-        if cli == "claude-desktop":
-            servers = allowed_desktop_servers(r)
-        else:
-            servers = r.load_resolved_servers(cli)
+        servers = r.load_resolved_servers(cli)
         names = ", ".join(sorted(servers)) if servers else t("(none)")
         print(f"  {cli}: {len(servers)} server -- {names}")
     return 0

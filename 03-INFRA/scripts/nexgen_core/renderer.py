@@ -189,7 +189,16 @@ class McpRenderer:
         return entry
 
     def load_resolved_servers(self, cli_target: str) -> dict[str, dict[str, Any]]:
-        """Loads the MCP servers resolved and filtered for a specific CLI."""
+        """Loads the MCP servers resolved and filtered for a specific CLI.
+
+        `claude-desktop` answers here too, with its allowlist, so every
+        caller (checks, plan, inventory) shares the one entry point instead
+        of branching on the CLI name.
+        """
+        if cli_target == "claude-desktop":
+            from nexgen_core.mcp_render.claude_desktop import allowed_desktop_servers
+
+            return allowed_desktop_servers(self)
         if not self.manifest_path.is_file():
             return {}
 

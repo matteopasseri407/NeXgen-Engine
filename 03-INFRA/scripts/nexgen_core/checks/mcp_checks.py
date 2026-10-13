@@ -19,7 +19,6 @@ from nexgen_core.paths import (
     claude_desktop_config,
     codex_config,
 )
-from nexgen_core.mcp_render.claude_desktop import allowed_desktop_servers
 from nexgen_core.renderer import McpRenderer
 from nexgen_core.report import CheckOutcome, Severity
 
@@ -116,10 +115,7 @@ def _expected_and_rendered(renderer: McpRenderer, cli: str, path: Path) -> tuple
     ignorance), plain for an unreadable or never-launched config.
     """
     try:
-        if cli == "claude-desktop":
-            expected = set(allowed_desktop_servers(renderer).keys())
-        else:
-            expected = set(renderer.load_resolved_servers(cli).keys())
+        expected = set(renderer.load_resolved_servers(cli).keys())
     except Exception as exc:  # noqa: BLE001 - check failure is reported, never raises
         return f"template: the manifest cannot be rendered for {cli} ({exc})", set(), set()
     if not path.is_file():
@@ -381,10 +377,7 @@ def check_mcp_commands(vault_data: Path, home: Path) -> CheckOutcome:
     missing: dict[str, set[str]] = {}
     for cli in ("claude", "claude-desktop", "codex", "antigravity", "opencode"):
         try:
-            if cli == "claude-desktop":
-                servers = allowed_desktop_servers(renderer)
-            else:
-                servers = renderer.load_resolved_servers(cli)
+            servers = renderer.load_resolved_servers(cli)
         except Exception:  # noqa: BLE001 - the names check already reports an unresolvable manifest
             continue
         for name, srv in servers.items():
@@ -578,14 +571,21 @@ def check_desktop_allowlist(vault_data: Path, home: Path) -> CheckOutcome:
         )
     try:
         manifest_path = vault_data / "03-INFRA" / "agent-universal-layer" / "mcp" / "manifest.yaml"
-        raw = load_mcp_manifest(manifest_path).get("servers", {})
+        raw = load_mcp_manifest(manifest_path).get("servers", {}) or {}
     except Exception:  # noqa: BLE001 - the manifest check already reports an unreadable manifest
         return CheckOutcome(
             id="mcp.desktop_allowlist",
             severity=Severity.UNDETERMINED,
             message=t("The MCP manifest could not be read, so the Desktop allowlist was not checked."),
         )
-    denied = sorted(name for name in live if name in raw and raw[name].get(DESKTOP_ALLOW_KEY) is not True)
+
+    def _unflagged(name: str) -> bool:
+        entry = raw.get(name)
+        if not isinstance(entry, dict) or entry.get("enabled") is False:
+            return False
+        return entry.get(DESKTOP_ALLOW_KEY) is not True
+
+    denied = sorted(name for name in live if _unflagged(name))
     if denied:
         return CheckOutcome(
             id="mcp.desktop_allowlist",
