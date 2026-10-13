@@ -19,12 +19,14 @@ from __future__ import annotations
 
 import argparse
 import importlib.util
+import json
 import os
 import platform
 import shutil
 import sys
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 SCRIPTS_DIR = Path(__file__).resolve().parents[1]
 if str(SCRIPTS_DIR) not in sys.path:
@@ -175,6 +177,92 @@ def detect_clis(home: Path | None = None) -> list[str]:
     return found
 
 
+def _display_name(name: str) -> str:
+    """A live server name safe to print: JSON keys can carry anything,
+    including ANSI escapes left by a third-party extension installer."""
+    import re
+
+    return re.sub(r"[^\x20-\x7e]", "?", name)
+
+
+def _read_desktop_servers(home: Path | None = None) -> dict[str, Any] | None:
+    """The app's live server table, or None when absent or unreadable.
+
+    The one reader for the install path: detection and stubs share it, so
+    they can never disagree about which file they read.
+    """
+    try:
+        from nexgen_core.paths import claude_desktop_config
+
+        data = json.loads(claude_desktop_config(resolve_home(home)).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(data, dict):
+        return {}
+    live = data.get("mcpServers", {})
+    return dict(live) if isinstance(live, dict) else {}
+
+
+def desktop_app_orphans(root: Path, home: Path | None = None) -> list[str]:
+    """Live Claude Desktop app servers missing from the vault manifest.
+
+    Read-only: an absent, malformed, or non-object app config means none,
+    never an error. An unreadable manifest means every live server counts,
+    because claiming "already absorbed" without reading the manifest would
+    be the quiet wrong.
+    """
+    live = _read_desktop_servers(home)
+    if not live:
+        return []
+    names = set(live)
+    manifest = root / "03-INFRA" / "agent-universal-layer" / "mcp" / "manifest.yaml"
+    try:
+        from nexgen_core.config import load_mcp_manifest
+
+        declared = set(load_mcp_manifest(manifest).get("servers", {}))
+    except Exception:  # noqa: BLE001 - unreadable manifest: everything live is new
+        return sorted(names)
+    return sorted(names - declared)
+
+
+def print_desktop_stubs(names: list[str], home: Path | None = None) -> None:
+    """Review stubs for live Desktop-app servers, printed, never applied.
+
+    Applying during the install would write manifest entries the user has
+    not reviewed; the stubs below go under 'servers:' by hand, or with
+    'nexgen import --from claude-desktop --apply'. A stub targets the
+    Claude CLI (the Desktop renderer resolves from there); opting it into
+    the app itself is a separate manual 'desktop_allow: true', only for
+    read-only servers.
+    """
+    from nexgen_core import renderer_cli
+
+    live = _read_desktop_servers(home)
+    if not live:
+        print("  " + t("the Desktop config is gone: nothing to absorb."))
+        return
+    stubs = []
+    for name in names:
+        if name not in live:
+            continue
+        entry = renderer_cli._adopt_entry("claude-desktop", live[name])
+        problem = renderer_cli._validate_stub_entry(name, entry)
+        if problem:
+            print("  " + t("skipping {name}: {reason}.",
+                           name=_display_name(name), reason=_display_name(problem)))
+            continue
+        stubs.append(renderer_cli._emit_manifest_stub(name, entry))
+    if not stubs:
+        print("  " + t("nothing left to absorb."))
+        return
+    print("  " + t("manifest.yaml STUB below -- review it, adjust it, then place it under 'servers:'."))
+    print("  " + t("Opting a server into the Desktop app itself is a separate manual 'desktop_allow: true', only for read-only servers."))
+    print("servers:")
+    for stub in stubs:
+        print(stub)
+    print("  " + t("Or run 'nexgen import --from claude-desktop --apply' to add them (backup + re-validation)."))
+
+
 def install_launchers(root: Path) -> str:
     """Generates the commands, if the engine lives in this clone.
 
@@ -293,6 +381,14 @@ def main(argv: list[str] | None = None) -> int:
             "the engine will configure it on its own from then on"
         ),
     )]
+    desktop_new = desktop_app_orphans(root)
+    if desktop_new:
+        found.append(Finding(
+            t("Claude Desktop app holds {count} MCP server(s) outside the manifest: {names}",
+              count=len(desktop_new), names=", ".join(_display_name(n) for n in desktop_new)),
+            False, required=False,
+            remedy=t("absorb them with 'nexgen import --from claude-desktop'"),
+        ))
     missing += render(found, "3 · " + t("Assistants found on this machine"))
 
     if missing:
@@ -330,6 +426,19 @@ def main(argv: list[str] | None = None) -> int:
         profile, mode = guided_profile()
         print("\n  " + t("Profile:") + f" {c['bold']}{profile}{c['reset']} · "
               + t("Services:") + f" {c['bold']}{mode}{c['reset']}")
+
+        if desktop_new:
+            # Guided terminal only: --local promises no questions, and the
+            # non-tty path returned earlier. Read-only either way. Both the
+            # detection above and the stubs below resolve the effective home
+            # (main never passes an override), so they always read one file.
+            answer = _ask(
+                t("Absorb the {count} Claude Desktop MCP server(s) into the manifest now (review stub, nothing applied)?",
+                  count=len(desktop_new)),
+                "y / N",
+            )
+            if answer.startswith("y"):
+                print_desktop_stubs(desktop_new)
 
     print(f"\n{c['bold']}{c['cyan']}5 · " + t("Setting it up") + c['reset'])
     steps: list[Finding] = []

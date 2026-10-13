@@ -191,6 +191,44 @@ def cmd_reset(cli: str) -> int:
 #: server then failed to authenticate and nothing said why.
 LITERAL_SECRET = "<AUTH>"
 
+#: Credentials embedded in a URL (postgres://user:pass@host): redacted in
+#: place, keeping the rest of the address usable.
+_USERINFO_RE = re.compile(r"(://)[^/@\s]*@")
+
+
+def _scrub_desktop_entry(entry: dict) -> dict:
+    """Strips credentials from a Desktop-adopted entry before it can reach
+    a terminal scrollback or the versioned manifest.
+
+    Secret-shaped env values become ${NAME} references, secret-shaped args
+    become <hidden>, URL userinfo is redacted in place. Desktop is the only
+    adopter that both prints stubs during install and applies them with one
+    command, so it scrubs here, once, covering both paths.
+    """
+    from nexgen_core import secret_shapes
+
+    def scrub(value: str, key: str, *, as_ref: bool) -> str:
+        if value.startswith("${") and value.endswith("}"):
+            return value
+        if _USERINFO_RE.search(value):
+            return _USERINFO_RE.sub(r"\1<hidden>@", value)
+        if secret_shapes.looks_like_secret_value(value) or secret_shapes.SENSITIVE_NAME_SUBSTRING.search(key):
+            if as_ref and re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", key):
+                return "${" + key + "}"
+            return "<hidden>"
+        return value
+
+    env = entry.get("env")
+    if isinstance(env, dict):
+        entry["env"] = {
+            key: scrub(value, key, as_ref=True) if isinstance(value, str) else value
+            for key, value in env.items()
+        }
+    args = entry.get("args")
+    if isinstance(args, list):
+        entry["args"] = [scrub(arg, "", as_ref=False) if isinstance(arg, str) else arg for arg in args]
+    return entry
+
 
 def _bearer_var(auth_header: Any) -> str | None:
     """The environment variable behind a bearer header, if there is one.
@@ -230,7 +268,11 @@ def _adopt_entry(cli: str, spec: dict) -> dict:
                     entry["args"] = command[1:]
             else:
                 entry["command"] = command
-            env = spec.get("env") if cli == "claude" else spec.get("environment")
+            if args:
+                # The Desktop app keeps args separate from the command;
+                # the CLI's array form above stays the fallback.
+                entry["args"] = args
+            env = spec.get("env") if cli in ("claude", "claude-desktop") else spec.get("environment")
             if env:
                 entry["env"] = env
     elif cli == "codex":
@@ -270,6 +312,9 @@ def _adopt_entry(cli: str, spec: dict) -> dict:
         # The Desktop app never mounts by `targets` (default-deny allowlist);
         # resolution reuses the CLI's, so an adopted entry starts there and
         # the reviewer opts it in with `desktop_allow: true` when read-only.
+        # Scrubbed first: this same entry feeds the printed stub and
+        # `--apply`, and neither may carry a live credential.
+        entry = _scrub_desktop_entry(entry)
         entry["targets"] = ["claude"]
     else:
         entry["targets"] = [cli]
