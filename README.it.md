@@ -50,7 +50,7 @@ Il motore tiene separate tre fonti di configurazione:
 * **Segreti:** cifratura asimmetrica `age` (`99-SECRETS/secrets.yaml.age`) su chiavi locali (`0600`), slot OAuth isolati per host e `secrets.env` generato per shell e servizi.
   Non serve una passphrase.
 * **Shell operatore:** dashboard `nexgen info` e REPL interattiva `nexgen shell`, così la gestione ordinaria non richiede mai una CLI AI aperta.
-* **Quattro runtime:** Claude Code, Codex, OpenCode (nativo V2: istruzioni, `plugins`/`permissions`, viste skill) e Antigravity, ognuno nel suo dialetto, seggi Council inclusi.
+* **Quattro runtime più l'app Desktop:** Claude Code, Codex, OpenCode (nativo V2: istruzioni, `plugins`/`permissions`, viste skill) e Antigravity, ognuno nel suo dialetto, seggi Council inclusi. L'app Claude Desktop riceve solo server read-only esplicitamente consentiti (`desktop_allow`), dato che non ha hook guardrail.
 * **Diagnostica (`nexgen doctor`):** controlli automatici su allineamento Git, manifest, link, token e permessi.
   Un controllo che non riesce a verificare dichiara un esito indeterminato.
 

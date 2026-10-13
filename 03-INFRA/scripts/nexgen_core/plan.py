@@ -34,6 +34,7 @@ from nexgen_core.i18n import t
 from nexgen_core.paths import (
     antigravity_config,
     claude_config,
+    claude_desktop_config,
     codex_config,
     resolve_engine_root,
     resolve_home,
@@ -194,7 +195,7 @@ def build_sync_plan(
         check_cli_instruction_pointers,
         check_opencode_instructions,
     )
-    from nexgen_core.checks.mcp_checks import check_mcp_configs_rendered, check_mcp_content_drift, check_mcp_orphans
+    from nexgen_core.checks.mcp_checks import check_desktop_allowlist, check_mcp_configs_rendered, check_mcp_content_drift, check_mcp_orphans, check_mcp_unresolved_refs
     from nexgen_core.checks.skill_checks import (
         check_engine_starter_views,
         check_skill_library_symlinks,
@@ -207,6 +208,8 @@ def build_sync_plan(
         ("mcp", lambda: check_mcp_configs_rendered(vault, home_dir)),
         ("mcp", lambda: check_mcp_content_drift(vault, home_dir, engine)),
         ("mcp", lambda: check_mcp_orphans(vault, home_dir)),
+        ("mcp", lambda: check_desktop_allowlist(vault, home_dir)),
+        ("mcp", lambda: check_mcp_unresolved_refs(vault, home_dir)),
         ("skills", lambda: check_skills_not_materialized(vault, home_dir)),
         ("skills", lambda: check_skills_pin_freshness(vault, home_dir)),
         ("skills", lambda: check_skills_out_of_manifest(vault, home_dir)),
@@ -261,6 +264,7 @@ def _missing_config_actions(vault: Path, home: Path) -> list[str]:
     renderer = McpRenderer(vault_data=vault, home=home)
     cli_paths = {
         "claude": claude_config(home),
+        "claude-desktop": claude_desktop_config(home),
         "antigravity": antigravity_config(home),
         "codex": codex_config(home),
         "opencode": renderer.opencode_config_path(),
@@ -273,5 +277,7 @@ def _missing_config_actions(vault: Path, home: Path) -> list[str]:
             continue  # a manifest the renderer cannot resolve is reported
                           # by the probes above; nothing more to add here
         if expected and not path.is_file():
+            if cli == "claude-desktop" and not path.parent.is_dir():
+                continue  # no app directory: never launched here, nothing to propose
             actions.append(f"[mcp] render would create {path} ({cli} never launched)")
     return actions

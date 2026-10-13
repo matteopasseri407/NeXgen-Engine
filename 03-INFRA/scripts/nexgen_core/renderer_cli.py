@@ -27,6 +27,7 @@ from nexgen_core.paths import (  # noqa: E402 - sys.path shim for cloned checkou
     antigravity_config,
     antigravity_configs,
     claude_config,
+    claude_desktop_config,
     codex_config,
     opencode_config_candidates,
     resolve_home,
@@ -51,6 +52,7 @@ def _renderer() -> McpRenderer:
 def _cli_config_path(cli: str) -> Path:
     return {
         "claude": claude_config(HOME),
+        "claude-desktop": claude_desktop_config(HOME),
         "codex": codex_config(HOME),
         "antigravity": antigravity_config(HOME),
         "opencode": _renderer().opencode_config_path(),
@@ -111,6 +113,7 @@ def cmd_write(cli: str) -> int:
     r = _renderer()
     funcs = {
         "claude": r.render_claude,
+        "claude-desktop": r.render_claude_desktop,
         "codex": r.render_codex,
         "antigravity": r.render_antigravity,
         "opencode": r.render_opencode,
@@ -188,6 +191,44 @@ def cmd_reset(cli: str) -> int:
 #: server then failed to authenticate and nothing said why.
 LITERAL_SECRET = "<AUTH>"
 
+#: Credentials embedded in a URL (postgres://user:pass@host): redacted in
+#: place, keeping the rest of the address usable.
+_USERINFO_RE = re.compile(r"(://)[^/@\s]*@")
+
+
+def _scrub_desktop_entry(entry: dict) -> dict:
+    """Strips credentials from a Desktop-adopted entry before it can reach
+    a terminal scrollback or the versioned manifest.
+
+    Secret-shaped env values become ${NAME} references, secret-shaped args
+    become <hidden>, URL userinfo is redacted in place. Desktop is the only
+    adopter that both prints stubs during install and applies them with one
+    command, so it scrubs here, once, covering both paths.
+    """
+    from nexgen_core import secret_shapes
+
+    def scrub(value: str, key: str, *, as_ref: bool) -> str:
+        if value.startswith("${") and value.endswith("}"):
+            return value
+        if _USERINFO_RE.search(value):
+            return _USERINFO_RE.sub(r"\1<hidden>@", value)
+        if secret_shapes.looks_like_secret_value(value) or secret_shapes.SENSITIVE_NAME_SUBSTRING.search(key):
+            if as_ref and re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", key):
+                return "${" + key + "}"
+            return "<hidden>"
+        return value
+
+    env = entry.get("env")
+    if isinstance(env, dict):
+        entry["env"] = {
+            key: scrub(value, key, as_ref=True) if isinstance(value, str) else value
+            for key, value in env.items()
+        }
+    args = entry.get("args")
+    if isinstance(args, list):
+        entry["args"] = [scrub(arg, "", as_ref=False) if isinstance(arg, str) else arg for arg in args]
+    return entry
+
 
 def _bearer_var(auth_header: Any) -> str | None:
     """The environment variable behind a bearer header, if there is one.
@@ -211,7 +252,7 @@ def _adopt_entry(cli: str, spec: dict) -> dict:
     """Best-effort inverse of r_<cli>: from the live structure to a manifest stub."""
     entry: dict[str, Any] = {}
     args = spec.get("args")
-    if cli in ("claude", "opencode"):
+    if cli in ("claude", "claude-desktop", "opencode"):
         if spec.get("type") == "http" or "url" in spec:
             entry["transport"] = "http"
             entry["url"] = spec.get("url")
@@ -227,7 +268,11 @@ def _adopt_entry(cli: str, spec: dict) -> dict:
                     entry["args"] = command[1:]
             else:
                 entry["command"] = command
-            env = spec.get("env") if cli == "claude" else spec.get("environment")
+            if args:
+                # The Desktop app keeps args separate from the command;
+                # the CLI's array form above stays the fallback.
+                entry["args"] = args
+            env = spec.get("env") if cli in ("claude", "claude-desktop") else spec.get("environment")
             if env:
                 entry["env"] = env
     elif cli == "codex":
@@ -263,7 +308,16 @@ def _adopt_entry(cli: str, spec: dict) -> dict:
                 entry["args"] = args
             if spec.get("env"):
                 entry["env"] = spec["env"]
-    entry["targets"] = [cli]
+    if cli == "claude-desktop":
+        # The Desktop app never mounts by `targets` (default-deny allowlist);
+        # resolution reuses the CLI's, so an adopted entry starts there and
+        # the reviewer opts it in with `desktop_allow: true` when read-only.
+        # Scrubbed first: this same entry feeds the printed stub and
+        # `--apply`, and neither may carry a live credential.
+        entry = _scrub_desktop_entry(entry)
+        entry["targets"] = ["claude"]
+    else:
+        entry["targets"] = [cli]
     return entry
 
 
@@ -333,7 +387,7 @@ def _load_live(cli: str) -> dict | None:
         return None
     text = path.read_text("utf-8")
     try:
-        if cli == "claude":
+        if cli in ("claude", "claude-desktop"):
             return json.loads(text).get("mcpServers", {})
         if cli == "codex":
             import tomllib
@@ -484,7 +538,7 @@ def cmd_adopt(cli: str, apply: bool = False) -> int:
 def cmd_inventory() -> int:
     """Read-only scan of the MCP servers per CLI (used by agent-sync inventory)."""
     r = _renderer()
-    for cli in ("claude", "codex", "antigravity", "opencode"):
+    for cli in ("claude", "claude-desktop", "codex", "antigravity", "opencode"):
         servers = r.load_resolved_servers(cli)
         names = ", ".join(sorted(servers)) if servers else t("(none)")
         print(f"  {cli}: {len(servers)} server -- {names}")

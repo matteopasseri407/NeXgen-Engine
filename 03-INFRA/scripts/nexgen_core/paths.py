@@ -275,6 +275,25 @@ def claude_settings(home: Path | None = None) -> Path:
     return resolve_home(home) / ".claude" / "settings.json"
 
 
+def claude_desktop_config(home: Path | None = None) -> Path:
+    """Claude Desktop's MCP configuration (the Electron app, not the CLI).
+
+    The app owns everything else in this file (preferences, window state):
+    the renderer may only touch its `mcpServers` table, additively, and
+    never while the app is running (it rewrites the file on save).
+    """
+    resolved = resolve_home(home)
+    if sys.platform == "win32":
+        appdata = Path(os.environ.get("APPDATA") or (resolved / "AppData" / "Roaming"))
+        return appdata / "Claude" / "claude_desktop_config.json"
+    if sys.platform == "darwin":
+        return resolved / "Library" / "Application Support" / "Claude" / "claude_desktop_config.json"
+    xdg = os.environ.get("XDG_CONFIG_HOME")
+    if xdg:
+        return Path(xdg).expanduser() / "Claude" / "claude_desktop_config.json"
+    return resolved / ".config" / "Claude" / "claude_desktop_config.json"
+
+
 def codex_home(home: Path | None = None) -> Path:
     """Codex's home: `$CODEX_HOME` wins when set, else `~/.codex` under `home`.
 
