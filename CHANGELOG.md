@@ -10,6 +10,8 @@ of any engine release.
 
 ## [Unreleased]
 
+## [2.13.0] - 2026-10-14
+
 ### Changed
 
 - Council local seats run under OpenCode, whatever the inference runtime: a local seat is `cli: opencode` plus a
