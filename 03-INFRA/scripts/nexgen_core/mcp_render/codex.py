@@ -61,7 +61,9 @@ def render(renderer, write: bool = False) -> tuple[bool, str]:
                 if stripped.startswith("[mcp_servers."):
                     in_mcp_section = True
                     section = next(iter(tomllib.loads(stripped)["mcp_servers"]))
-                    keep_current = section not in managed and section not in unmounted
+                    # A hand-written `my-server` is the manifest's `my_server`:
+                    # compare in Codex's spelling, or both end up in the file.
+                    keep_current = section.replace("-", "_") not in managed and section.replace("-", "_") not in unmounted
                     if keep_current:
                         preserved.setdefault(section, []).append(line)
                     continue
@@ -117,7 +119,8 @@ def render(renderer, write: bool = False) -> tuple[bool, str]:
     if not isinstance(old_servers, dict):
         raise ValueError("Codex mcp_servers must be a table; original preserved.")
     for key, value in old_servers.items():
-        if key not in managed and key not in unmounted and generated.get("mcp_servers", {}).get(key) != value:
+        if (key.replace("-", "_") not in managed and key.replace("-", "_") not in unmounted
+                and generated.get("mcp_servers", {}).get(key) != value):
             raise ValueError("Codex rendering would change an unmanaged connector; original preserved.")
     if write:
         renderer._backup_and_write(cfg_file, content)

@@ -334,3 +334,26 @@ def test_a_previous_command_is_recognised_the_way_which_found_it(monkeypatch, na
 
     monkeypatch.setenv("PATHEXT", ".COM;.EXE;.BAT;.CMD")
     assert claude_desktop._names_command(f"/x/{name}", "tool", windows=windows) is expected
+
+
+def test_gated_names_leave_out_retired_and_http_entries(tmp_path, monkeypatch):
+    """A retired or HTTP entry is never pending on Desktop: it must not stay in
+    the managed sidecar, nor keep a check undetermined forever."""
+    from nexgen_core.mcp_render.claude_desktop import gated_desktop_names
+
+    monkeypatch.delenv("NEXGEN_TEST_GATE", raising=False)
+    home, vault = tmp_path / "home", tmp_path / "vault"
+    manifest = vault / "03-INFRA/agent-universal-layer/mcp/manifest.yaml"
+    manifest.parent.mkdir(parents=True)
+    gate = {"tier": "core", "desktop_allow": True, "require_env": "NEXGEN_TEST_GATE"}
+    manifest.write_text(yaml.safe_dump({
+        "retired_servers": ["old"],
+        "servers": {
+            "old": {"transport": "stdio", "command": "o", **gate},
+            "web": {"transport": "http", "url": "https://example.invalid/mcp", **gate},
+            "kept": {"transport": "stdio", "command": "k", **gate},
+        },
+    }))
+    home.mkdir()
+    renderer = McpRenderer(vault_data=vault, engine_root=tmp_path / "engine", home=home)
+    assert gated_desktop_names(renderer) == {"kept"}

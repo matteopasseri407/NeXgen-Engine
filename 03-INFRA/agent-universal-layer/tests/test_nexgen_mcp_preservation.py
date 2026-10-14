@@ -151,3 +151,14 @@ def test_mcp_checks_give_the_same_verdict_with_and_without_the_gate(tmp_path, mo
     monkeypatch.delenv("NEXGEN_TEST_GATE")
     without_gate = check_mcp_orphans(vault, home).severity
     assert with_gate == without_gate == Severity.OK
+
+
+def test_a_hand_written_hyphen_section_is_the_manifest_server(tmp_path):
+    """`[mcp_servers.my-server]` on disk is the manifest's `my-server`: one
+    section afterwards, in Codex's spelling, not a foreign duplicate."""
+    renderer, config = renderer_fixture(tmp_path, "my-server")
+    config.write_text('[mcp_servers.my-server]\ncommand = "old"\n')
+    renderer.render_codex(write=True)
+    servers = tomllib.loads(config.read_text())["mcp_servers"]
+    assert list(servers) == ["my_server"]
+    assert servers["my_server"]["command"] == "python"

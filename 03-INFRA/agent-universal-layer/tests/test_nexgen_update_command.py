@@ -759,7 +759,7 @@ def test_interactive_rollback_that_cannot_finish_keeps_the_manual_recovery(tmp_p
     monkeypatch.setattr(updater, "_run", fake_sync_and_broken_reset)
     result = updater.main(["--yes", "--allow-unverified"], environ=_env(engine))
 
-    assert result == 1
+    assert result == updater.EXIT_ROLLBACK_FAILED  # a wrapper can tell this from "restored"
     error = capsys.readouterr().err
     assert "could not be completed" in error
     assert f"git -C {engine} reset --hard {previous}" in error
@@ -878,3 +878,32 @@ def test_doctor_with_undetermined_checks_does_not_block_update(tmp_path, capsys,
     assert result == 0
     output = capsys.readouterr().out
     assert "doctor reports no failures" in output
+
+
+def test_a_commit_made_during_the_update_is_never_reset_away(tmp_path, capsys, monkeypatch):
+    """The lock is released before apply: a commit someone makes on the engine
+    meanwhile must survive the rollback, which then hands over to the person."""
+    updater = _load_updater()
+    _origin, engine = _upgrade_fixture(tmp_path)
+    doctor_results = iter(((0, 0), (1, 1)))
+    monkeypatch.setattr(updater, "_doctor", lambda *_args, **_kwargs: next(doctor_results))
+    real_run = updater._run
+    entry = _tree_entry(engine)
+    committed = []
+
+    def apply_while_someone_commits(args, **kwargs):
+        if args == entry + ["apply"]:
+            if not committed:
+                (engine / "LOCAL-NOTE.md").write_text("work in progress\n", encoding="utf-8")
+                _git(engine, "add", "LOCAL-NOTE.md")
+                _git(engine, "commit", "-q", "-m", "local work")
+                committed.append(_git(engine, "rev-parse", "HEAD").stdout.strip())
+            return subprocess.CompletedProcess(args, 0, "", "")
+        return real_run(args, **kwargs)
+
+    monkeypatch.setattr(updater, "_run", apply_while_someone_commits)
+    result = updater.main(["--yes", "--allow-unverified"], environ=_env(engine))
+
+    assert result == updater.EXIT_ROLLBACK_FAILED
+    assert _git(engine, "rev-parse", "HEAD").stdout.strip() == committed[0]
+    assert "would be lost" in capsys.readouterr().err
