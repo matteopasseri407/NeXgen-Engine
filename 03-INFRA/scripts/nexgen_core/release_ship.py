@@ -35,6 +35,7 @@ SCRIPTS_DIR = Path(__file__).resolve().parents[1]
 if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
+from nexgen_core.files import atomic_write_text  # noqa: E402
 from nexgen_core.paths import resolve_engine_root  # noqa: E402
 from nexgen_core.release import bump_version_files, compute_next_version, is_semver, newer_version  # noqa: E402
 
@@ -268,7 +269,7 @@ class Shipper:
             if update.returncode == 0:
                 break
             log = self.install_log or Path(tempfile.gettempdir()) / "nexgen-release-ship-install.log"
-            log.write_text(f"{update.stdout}\n{update.stderr}", encoding="utf-8")
+            atomic_write_text(log, f"{update.stdout}\n{update.stderr}")
             # A clean rollback leaves the previous version in place. The usual
             # cause is a scheduled guard or sync cycle that started in the same
             # minute, so one more try after it has finished is worth it; a
