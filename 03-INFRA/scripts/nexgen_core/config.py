@@ -12,6 +12,7 @@ import os
 import re
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 import yaml
 
@@ -289,6 +290,30 @@ def load_skills_manifest(path: Path, *, strict: bool = False) -> dict[str, Any]:
 
 
 
+#: Hosts a local seat's endpoint may name. A local seat is what the privacy role falls back
+#: to so that the data never leaves the machine: anything but loopback would break that.
+LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
+
+
+def _validate_local_seat(name: str, seat: dict[str, Any]) -> None:
+    """A local seat: OpenCode as the harness, a loopback OpenAI-compatible server as the inference.
+
+    The runtime behind the URL (llama.cpp, Ollama, ...) does not matter; the harness is always
+    OpenCode, so the model is ``<provider>/<model>`` like any other OpenCode seat.
+    """
+    url = seat["base_url"]
+    if not isinstance(url, str) or not url.strip():
+        raise ConfigError(f"Council seat {name}: base_url must be a non-empty URL")
+    if seat.get("cli") != "opencode":
+        raise ConfigError(f"Council seat {name}: base_url is only for cli opencode (local inference goes through OpenCode)")
+    parts = urlsplit(url.strip())
+    if parts.scheme not in ("http", "https") or (parts.hostname or "").lower() not in LOOPBACK_HOSTS:
+        raise ConfigError(f"Council seat {name}: base_url must be an http(s) loopback address, got {url!r}")
+    provider, _, model = str(seat["model"]).partition("/")
+    if not provider or not model:
+        raise ConfigError(f"Council seat {name}: a local seat's model must be <provider>/<model>")
+
+
 def load_council_config(path: Path) -> dict[str, Any]:
     """Loads council/seats.yaml tolerantly."""
     raw = _load_yaml(path, "Council configuration")
@@ -308,6 +333,10 @@ def load_council_config(path: Path) -> dict[str, Any]:
                 raise ConfigError(f"Council seat {name} needs a non-empty {field}")
         if "zero_retention" in seat and not isinstance(seat["zero_retention"], bool):
             raise ConfigError(f"Council seat {name}: zero_retention must be boolean")
+        if "host" in seat and (not isinstance(seat["host"], str) or not seat["host"].strip()):
+            raise ConfigError(f"Council seat {name}: host must be a non-empty hostname")
+        if "base_url" in seat:
+            _validate_local_seat(name, seat)
     return {
         "schema_version": raw.get("schema_version", 1),
         "seats": seats,

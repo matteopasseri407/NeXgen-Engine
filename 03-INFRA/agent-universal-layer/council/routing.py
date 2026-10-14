@@ -12,11 +12,14 @@ import os
 import json
 import re
 import shutil
+import socket
 import subprocess
+import sys
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 from nexgen_core.processes import windows_command_argv as _windows_command_argv
 
@@ -34,7 +37,8 @@ CHANNEL_TO_CLI = {
     "zen": "opencode",
     "zen-free": "opencode",
     "nvidia": "opencode",
-    "local": "ollama",
+    # Local inference always runs under OpenCode: one harness, whatever the runtime behind it.
+    "local": "opencode",
 }
 PROBE_TIMEOUT_SECONDS = 10
 
@@ -63,6 +67,8 @@ class RoutingCandidate:
 def seat_channel(seat: dict[str, Any]) -> str | None:
     """Execution pool, derived from the CLI's actual model identifier."""
     cli = seat.get("cli")
+    if cli == "opencode" and seat.get("base_url"):
+        return "local"
     if cli == "opencode":
         provider, _, model = str(seat.get("model", "")).partition("/")
         if provider == "opencode-go":
@@ -327,6 +333,35 @@ def _run_probe(argv: list[str]) -> tuple[bool, str]:
     return True, output
 
 
+def _loopback_port_listening(base_url: str) -> bool:
+    """Whether something listens on a local seat's port, WITHOUT connecting to it on Linux.
+
+    A local server may be socket-activated (MiniCPM: systemd owns the port and a connection starts
+    the model and stops the voice cockpit to free the GPU). A probe that connected would do that on
+    every routing check, so on Linux the kernel's listen table is read instead. Elsewhere there is
+    no socket activation in this setup, and a plain connect is the portable answer.
+    """
+    parts = urlsplit(base_url.strip())
+    port = parts.port or (443 if parts.scheme == "https" else 80)
+    if sys.platform.startswith("linux"):
+        for table in ("/proc/net/tcp", "/proc/net/tcp6"):
+            try:
+                rows = Path(table).read_text(encoding="ascii").splitlines()[1:]
+            except OSError:
+                continue
+            for row in rows:
+                fields = row.split()
+                # fields[1] is local "ADDR:PORT" in hex, fields[3] the state; 0A is LISTEN.
+                if len(fields) > 3 and fields[3] == "0A" and int(fields[1].rsplit(":", 1)[1], 16) == port:
+                    return True
+        return False
+    try:
+        with socket.create_connection((parts.hostname or "127.0.0.1", port), timeout=1):
+            return True
+    except OSError:
+        return False
+
+
 def _model_in_lines(model: str, output: str) -> bool:
     wanted = model.casefold()
     return any(line.strip().casefold() == wanted for line in output.splitlines())
@@ -398,8 +433,19 @@ def seat_capabilities(seats: dict[str, dict[str, Any]]) -> dict[str, SeatCapabil
 
     for name, seat in seats.items():
         cli = str(seat["cli"])
+        host = str(seat.get("host") or "").strip()
+        if host and host.casefold() != socket.gethostname().casefold():
+            capabilities[name] = SeatCapability(False, f"seat bound to host '{host}'")
+            continue
         if not shutil.which(cli):
             capabilities[name] = SeatCapability(False, f"CLI '{cli}' not present on this host")
+            continue
+        if cli == "opencode" and seat.get("base_url"):
+            listening = _loopback_port_listening(str(seat["base_url"]))
+            capabilities[name] = SeatCapability(
+                listening,
+                "local inference endpoint is listening" if listening else "nothing listens on the local inference endpoint",
+            )
             continue
 
         if cli == "codex":
