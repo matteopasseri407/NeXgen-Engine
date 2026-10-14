@@ -55,6 +55,9 @@ Every commit on `main` from `8fcd351` (2026-07-08) onward carries a verifiable
 signature (`git verify-commit`). Release tags are signed with `git tag -s` on a
 maintainer machine and verified with `git verify-tag`; both OpenPGP and SSH
 signature formats are accepted.
+`release.py ship` signs with the key the machine's git is configured to use and,
+before pushing, verifies the tag against the trust anchor of the copy installed on
+that machine, so a tag the fleet would refuse is deleted locally and never published.
 
 From `v0.98.0` onward, `release.yml` requires an annotated tag containing a signature block.
 It checks the presence of the signature, not who made it. Cryptographic verification happens where the keys are: on installed copies when they update (see below), and on a maintainer or auditor machine.

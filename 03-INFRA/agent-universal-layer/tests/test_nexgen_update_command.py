@@ -161,6 +161,23 @@ def test_unattended_ceiling_allows_only_patch_jumps():
         updater._assert_within_unattended_ceiling("2.1.8", "v3.0.0")  # major: no
 
 
+def test_a_machine_can_raise_its_ceiling_to_minor_but_never_to_major(tmp_path):
+    updater = _load_updater()
+    state = tmp_path / "state"
+    assert updater._read_ceiling(state) == "patch"
+    assert updater.main(["--set-unattended-ceiling", "minor"], environ={"AGENT_STATE_DIR": str(state)}) == 0
+    assert updater._read_ceiling(state) == "minor"
+    updater._assert_within_unattended_ceiling("2.13.0", "v2.14.0", "minor")
+    with pytest.raises(updater.UpdateError, match="major version change"):
+        updater._assert_within_unattended_ceiling("2.13.0", "v3.0.0", "minor")
+
+
+def test_an_unreadable_ceiling_falls_back_to_patch(tmp_path):
+    updater = _load_updater()
+    (tmp_path / updater.CEILING_FILE).write_text("major\n", encoding="utf-8")
+    assert updater._read_ceiling(tmp_path) == "patch"
+
+
 def test_unattended_refuses_minor_jump_without_moving_head(tmp_path, capsys):
     updater = _load_updater()
     origin, engine = _upgrade_fixture(tmp_path)

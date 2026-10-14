@@ -87,7 +87,10 @@ verifies that both the engine clone and the separate data clone are clean,
 shows the merge/provision/doctor plan, and asks for confirmation. In
 automation, `nexgen update --yes` is the explicit-confirmation form, and
 `nexgen update --unattended` additionally refuses any jump larger than a
-patch-level release. It discovers the data root in this order:
+patch-level release. A maintainer machine can raise that to minor releases with
+`nexgen update --set-unattended-ceiling minor` (stored in this machine's state
+directory; `patch` puts it back). A major release is never taken unattended.
+It discovers the data root in this order:
 `AGENT_VAULT_DATA`,
 `KNOWLEDGE_VAULT_PATH`, then `~/KnowledgeVault` when that default is a Git
 checkout. If none exists, it keeps the engine checkout as the data root. It
