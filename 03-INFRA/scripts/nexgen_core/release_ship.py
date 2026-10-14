@@ -25,6 +25,7 @@ import json
 import shutil
 import subprocess
 import sys
+import tempfile
 import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
@@ -71,6 +72,7 @@ class Shipper:
     poll_seconds: float = 30.0
     wait_limit_seconds: float = 3600.0
     branch: str = "developer"
+    install_log: Path | None = None
     _step: str = field(default="start", init=False)
 
     # -- plumbing ---------------------------------------------------------
@@ -254,12 +256,29 @@ class Shipper:
         self._wait(synced, "sync-developer to merge main back")
         self._do("git", "merge", "--ff-only", f"origin/{self.branch}", what="fast-forward to origin")
 
+    def _installed_version(self) -> str:
+        installed_file = self.engine_root.parent / "VERSION"
+        return installed_file.read_text(encoding="utf-8").strip() if installed_file.is_file() else "?"
+
     def _install(self, version: str) -> None:
         self._enter("install")
-        self._do("nexgen", "update", "--yes", "--target", version, what="nexgen update")
+        before = self._installed_version()
+        for attempt in (1, 2):
+            update = self.run(["nexgen", "update", "--yes", "--target", version], self.repo)
+            if update.returncode == 0:
+                break
+            log = self.install_log or Path(tempfile.gettempdir()) / "nexgen-release-ship-install.log"
+            log.write_text(f"{update.stdout}\n{update.stderr}", encoding="utf-8")
+            # A clean rollback leaves the previous version in place. The usual
+            # cause is a scheduled guard or sync cycle that started in the same
+            # minute, so one more try after it has finished is worth it; a
+            # half-done rollback is never retried.
+            if attempt == 2 or self._installed_version() != before:
+                raise ShipStop(self._step, f"nexgen update failed and was rolled back; full output in {log}")
+            self.log(f"   update failed and was rolled back, retrying once (output in {log})")
+            self.sleep(self.poll_seconds * 4)
         # An update can end without moving anything; only the installed VERSION says it did.
-        installed_file = self.engine_root.parent / "VERSION"
-        installed = installed_file.read_text(encoding="utf-8").strip() if installed_file.is_file() else "?"
+        installed = self._installed_version()
         if installed != version:
             raise ShipStop(self._step, f"this machine is still on {installed}, not {version}")
         doctor = self.run(["nexgen", "doctor", "--strict", "--summary"], self.repo)
