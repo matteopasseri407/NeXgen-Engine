@@ -266,3 +266,10 @@ def test_a_bump_with_nothing_to_say_is_refused_before_any_write(tmp_path):
 
     assert (tmp_path / "VERSION").read_text(encoding="utf-8") == "2.0.2\n"
     assert cl_file.read_text(encoding="utf-8") == original
+
+
+def test_a_force_pushed_before_falls_back_to_the_published_base():
+    sha = "c" * 40
+    assert scan_range("push", "a" * 40, sha, first_push_base="origin/main", before_present=False) == f"origin/main..{sha}"
+    assert scan_range("push", "a" * 40, sha, before_present=False) == sha
+    assert scan_range("push", "a" * 40, sha, first_push_base="origin/main") == f"{'a' * 40}..{sha}"

@@ -13,6 +13,7 @@ import os
 import shutil
 import subprocess
 import tempfile
+import time
 from pathlib import Path
 
 import pytest
@@ -371,9 +372,17 @@ def test_verification_removes_its_throwaway_keyring(tmp_path, keyring, client_ke
     if ps is not None and os.name != "nt":
         # Match on the process *name*: grepping whole command lines would also
         # hit the shell that launched pytest whenever its own text says so.
-        processes = subprocess.run([ps, "-eo", "comm=,args="], capture_output=True, text=True).stdout.splitlines()
-        assert [ln for ln in processes
-                if ln.split(None, 1)[0] in {"gpg-agent", "keyboxd", "dirmngr"} and str(scratch) in ln] == []
+        def leftovers() -> list[str]:
+            processes = subprocess.run([ps, "-eo", "comm=,args="], capture_output=True, text=True).stdout.splitlines()
+            return [ln for ln in processes
+                    if ln.split(None, 1)[0] in {"gpg-agent", "keyboxd", "dirmngr"} and str(scratch) in ln]
+
+        # `gpgconf --kill` signals the daemon and returns; the daemon exits a
+        # moment later. Checking once raced it on a busy CI runner.
+        deadline = time.monotonic() + 5
+        while leftovers() and time.monotonic() < deadline:
+            time.sleep(0.1)
+        assert leftovers() == []
 
 
 @needs_gpg

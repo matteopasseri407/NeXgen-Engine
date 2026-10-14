@@ -53,7 +53,10 @@ def version_matches_tag(version: str, tag: str) -> tuple[bool, str]:
     return True, f"{tag} and VERSION {version} agree"
 
 
-def scan_range(event_name: str, before: str, sha: str, pr_base: str = "", pr_head: str = "", first_push_base: str = "") -> str:
+def scan_range(
+    event_name: str, before: str, sha: str, pr_base: str = "", pr_head: str = "",
+    first_push_base: str = "", before_present: bool = True,
+) -> str:
     """The commit range the leak-prevention gate must examine.
 
     This is a security decision, not CI scaffolding: getting it wrong means
@@ -63,7 +66,9 @@ def scan_range(event_name: str, before: str, sha: str, pr_base: str = "", pr_hea
         if not pr_base or not pr_head:
             raise ValueError("a pull request must declare base and head")
         return f"{pr_base}..{pr_head}"
-    if not before or before == ZERO_SHA:
+    if not before or before == ZERO_SHA or not before_present:
+        # A force-push leaves `before` pointing at a commit the clone does not
+        # have, and `before..sha` then fails instead of scanning anything.
         # Without a trusted published base, a bare SHA scans all ancestors.
         # Never reduce this to sha^: that would miss earlier branch commits.
         return f"{first_push_base}..{sha}" if first_push_base else sha
@@ -341,8 +346,19 @@ def main(argv: list[str] | None = None) -> int:
         print(message, file=sys.stdout if ok else sys.stderr)
         return 0 if ok else 1
 
+    before_present = True
+    if args.before and args.before != ZERO_SHA:
+        import subprocess
+
+        before_present = subprocess.run(
+            ["git", "cat-file", "-e", f"{args.before}^{{commit}}"],
+            capture_output=True, check=False, timeout=30,
+        ).returncode == 0
     try:
-        print(scan_range(args.event, args.before, args.sha, args.pr_base, args.pr_head, args.first_push_base))
+        print(scan_range(
+            args.event, args.before, args.sha, args.pr_base, args.pr_head, args.first_push_base,
+            before_present=before_present,
+        ))
     except ValueError as exc:
         print(str(exc), file=sys.stderr)
         return 1
