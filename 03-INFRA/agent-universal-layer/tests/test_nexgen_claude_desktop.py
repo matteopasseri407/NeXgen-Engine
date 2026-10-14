@@ -317,7 +317,8 @@ def test_a_command_resolved_earlier_survives_a_different_path(tmp_path, monkeypa
     monkeypatch.setenv("PATH", str(bins[1].parent))
     renderer.render_claude_desktop(write=True)
     table = json.loads(desktop_file(tmp_path).read_text(encoding="utf-8"))["mcpServers"]
-    assert table["alpha"]["command"] == str(bins[0])
+    # Windows answers with PATHEXT casing (tool.EXE): compare as the OS does.
+    assert os.path.normcase(table["alpha"]["command"]) == os.path.normcase(str(bins[0]))
 
 
 @pytest.mark.parametrize(("name", "windows", "expected"), [
