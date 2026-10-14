@@ -10,6 +10,23 @@ of any engine release.
 
 ## [Unreleased]
 
+### Fixed
+
+- The lane over a local OpenAI-compatible server (llama.cpp) lost every short answer from models that answer inside
+  an unclosed `<think>` block: MiniCPM-V 4.7 skips the thought on a short reply, writes the answer in the open block
+  and stops without closing it, so the server filed it as reasoning and langchain-openai dropped it — 9 of 9 short
+  replies came back empty with reasoning on. Prose and form requests to a non-OpenAI `OPENAI_BASE_URL` now ask for
+  the thought inline (`reasoning_format: none`) and the adapter keeps only the answer; an unclosed block ended by
+  the budget still counts as truncated. Decisions keep the parsed, schema-constrained channel.
+- On a local OpenAI-compatible server the tier's thinking switch had no effect: router and decisions always thought,
+  and a thinking decision was cut at its 256-token cap (20 calls in the agent suite) and refused. Tutor now sends
+  `enable_thinking: false` to those channels as the Ollama path already did; tiers that may think get a 1536-token
+  budget on both paths. MiniCPM-V 4.7 agent loop under tutor: 12/16 to 13/16.
+
+### Changed
+
+- `nexgen-local tier evaluate` help names the agent-loop suite it already ran.
+
 ## [2.12.0] - 2026-10-14
 
 ### Added
