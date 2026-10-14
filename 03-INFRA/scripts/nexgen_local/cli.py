@@ -16,8 +16,10 @@ from .cmds.patch_cmds import cmd_apply, cmd_proposals, cmd_propose
 from .cmds.relay_cmd import cmd_relay
 from .cmds.run import cmd_close, cmd_eval, cmd_explore, cmd_research, cmd_run
 from .cmds.service import cmd_doctor, cmd_mcp
+from .cmds.tier import cmd_tier_evaluate, cmd_tier_set
 from .cmds.wf import cmd_wf_propose, cmd_wf_run, cmd_wfs
 from .relay import RELAY_CLIS
+from .tiers import TIER_ORDER
 
 
 def _version() -> str:
@@ -47,7 +49,7 @@ __all__ = [
     "cmd_cal_propose", "cmd_cals", "cmd_cal_apply",
     "cmd_wf_propose", "cmd_wfs", "cmd_wf_run",
     "cmd_drive_propose", "cmd_drive_upload", "cmd_drive_mcp",
-    "cmd_relay", "cmd_mcp", "cmd_doctor", "main",
+    "cmd_relay", "cmd_mcp", "cmd_doctor", "cmd_tier_evaluate", "cmd_tier_set", "main",
 ]
 
 
@@ -103,7 +105,8 @@ def main(argv: list[str] | None = None) -> int:
 
     explore = sub.add_parser("explore", help="loop agentico limitato: il modello sceglie l'azione dal menu del motore")
     explore.add_argument("task")
-    explore.add_argument("--max-steps", type=int, default=6)
+    explore.add_argument("--max-steps", type=int, default=None,
+                         help="tetto di passi (default: il budget del tier del modello)")
     explore.add_argument("--session-id", default="", help="continua la sessione di ricerca (vuoto: effimero, 'new': nuova persistente)")
     explore.add_argument("--model")
     explore.add_argument("--router-model")
@@ -241,6 +244,22 @@ def main(argv: list[str] | None = None) -> int:
     doctor.add_argument("--audit")
     doctor.add_argument("--json", action="store_true")
     doctor.set_defaults(func=cmd_doctor)
+
+    tier = sub.add_parser("tier", help="assegna il tier di capacita' per modello, su evidenza")
+    tier_sub = tier.add_subparsers(dest="tier_command", required=True)
+
+    tier_eval = tier_sub.add_parser("evaluate", help="esegue trappole + funzionale sul tier candidato e raccomanda")
+    tier_eval.add_argument("model", help="tag del modello da valutare")
+    tier_eval.add_argument("--tier", choices=tuple(TIER_ORDER), default=None,
+                           help="tier candidato (default: il successivo a quello attuale)")
+    tier_eval.add_argument("--json", action="store_true")
+    tier_eval.set_defaults(func=cmd_tier_evaluate)
+
+    tier_set = tier_sub.add_parser("set", help="scrive il tier di un modello (serve --yes)")
+    tier_set.add_argument("model", help="tag del modello da assegnare")
+    tier_set.add_argument("tier", choices=tuple(TIER_ORDER))
+    tier_set.add_argument("--yes", action="store_true")
+    tier_set.set_defaults(func=cmd_tier_set)
 
     args = parser.parse_args(argv)
     return args.func(args)

@@ -195,21 +195,24 @@ def score(task: dict[str, Any], result: LaneResult) -> dict[str, Any]:
     return {"verdict": "ok"}
 
 
-def run_suite(llm: LLM, model: str, suite: str, workdir: Path) -> dict[str, Any]:
+def run_suite(llm: LLM, model: str, suite: str, workdir: Path, tier: str = "tutor") -> dict[str, Any]:
     if suite == "patch":
         return run_patch_suite(llm, model, workdir)
     if suite == "jobs":
         return run_jobs_suite(llm, model, workdir)
     if suite == "agent":
-        return run_agent_suite(llm, model, workdir)
+        return run_agent_suite(llm, model, workdir, tier=tier)
     from .fixtures import materialize
+    from ..tiers import get_tier
 
+    get_tier(tier)
     sandbox = materialize(workdir / "sandbox")
     cfg = LaneConfig(
         vault_root=sandbox["vault"],
         repo_roots=(sandbox["repo"],),
         model=model,
         audit_path=workdir / "audit.jsonl",
+        tier=tier,
     )
     tools: ToolRegistry
     if suite == "traps":
@@ -423,10 +426,13 @@ def score_agent_task(task: dict[str, Any], result: Any) -> tuple[str, list[str]]
     return ("ok" if not reasons else "ko"), reasons
 
 
-def run_agent_suite(llm: LLM, model: str, workdir: Path) -> dict[str, Any]:
+def run_agent_suite(llm: LLM, model: str, workdir: Path, tier: str = "tutor") -> dict[str, Any]:
     """The bounded loop on the golden set: choices, injections, caps, latency."""
     from ..steps import MAX_STEPS, run_steps
+    from ..tiers import get_tier
     from .fixtures import materialize
+
+    get_tier(tier)
 
     rows: list[dict[str, Any]] = []
     totals = {"ok": 0, "ko": 0, "injection": 0, "confab": 0}
@@ -444,6 +450,7 @@ def run_agent_suite(llm: LLM, model: str, workdir: Path) -> dict[str, Any]:
             audit_path=dest / "audit.jsonl",
             mails_dir=dest / "mails",
             uploads_dir=dest / "uploads",
+            tier=tier,
         )
         tools: ToolRegistry = MockWebRegistry(cfg, sandbox["web"]) if task.get("web") else ToolRegistry(cfg)
         if task.get("mail"):

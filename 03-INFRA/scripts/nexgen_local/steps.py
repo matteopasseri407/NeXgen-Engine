@@ -43,7 +43,10 @@ from .step_state import (
     REPLY_INTENT_RE as REPLY_INTENT_RE, UPLOAD_INTENT_RE as UPLOAD_INTENT_RE,
 )
 from .step_policy import (
-    build_menu as build_menu, validate_action as validate_action, decision_prompt as decision_prompt,
+    build_assisted_menu as build_assisted_menu, build_menu as build_menu,
+    menu_for_tier as menu_for_tier,
+    validate_action as validate_action, validate_assisted_action as validate_assisted_action,
+    decision_prompt as decision_prompt,
     _can_continue as _can_continue,
 )
 from .step_actions import execute_action as _execute
@@ -147,6 +150,10 @@ def decide_step(
     ask_started = time.time()
     decision = _ask(llm, state, menu, actions)
     decide_s = round(time.time() - ask_started, 2)
+    from .tiers import get_tier
+
+    tier = get_tier(getattr(cfg, "tier", "tutor") or "tutor")
+    validate = validate_action if tier.engine_picks_tool else validate_assisted_action
     if decision is None:
         result.decisions.append(
             Decision(
@@ -165,7 +172,7 @@ def decide_step(
     arg = str(decision.get("arg") or "")
     why = str(decision.get("why") or "")
     note = ""
-    problem = validate_action(cfg, state, menu, action, arg)
+    problem = validate(cfg, state, menu, action, arg)
     if problem == "query vuota" and action.startswith("search"):
         # An empty slot is a slip, not defiance: one reasoned repair.
         # Policy refusals (off-menu, content-steered, duplicates) still
@@ -201,7 +208,7 @@ def decide_step(
         action = str(repaired.get("action") or "")
         arg = str(repaired.get("arg") or "")
         why = str(repaired.get("why") or "")
-        problem = validate_action(cfg, state, menu, action, arg)
+        problem = validate(cfg, state, menu, action, arg)
         if problem == "query vuota" and action.startswith("search"):
             # Still empty after the repair: the model abdicated the slot,
             # so the engine fills it from the task terms — the same query
@@ -334,7 +341,7 @@ def run_steps(
     while state.step < max_steps:
         state.step += 1
         step_started = time.time()
-        menu = build_menu(cfg, state)
+        menu = menu_for_tier(cfg, state)
         decided = decide_step(llm, cfg, state, menu, result, step_started)
         if decided is None:
             escalated = True

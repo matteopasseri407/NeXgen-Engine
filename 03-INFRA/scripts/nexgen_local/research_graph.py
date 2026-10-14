@@ -40,7 +40,7 @@ from .step_state import (
     LoopState,
     StepResult,
 )
-from .step_policy import build_menu
+from .step_policy import menu_for_tier
 from .step_actions import execute_action
 from .steps import decide_step, finish_answer
 from .tools import ToolError, ToolRegistry
@@ -228,7 +228,7 @@ def _node_decide(ctx_factory, state: ResearchState) -> dict[str, Any]:
     ctx = ctx_factory(state)
     loop, result = _load_loop(state)
     loop.step += 1
-    menu = build_menu(ctx.cfg, loop)
+    menu = menu_for_tier(ctx.cfg, loop)
     decided = decide_step(ctx.llm, ctx.cfg, loop, menu, result, time.time())
     loop.decisions = list(result.decisions)
     update: dict[str, Any] = {

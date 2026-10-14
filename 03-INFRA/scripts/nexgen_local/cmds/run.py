@@ -152,8 +152,10 @@ def cmd_explore(args: argparse.Namespace) -> int:
     from ..llm import LLMError
     from ..research_graph import ResearchError, research_task
     from ..steps import run_steps
+    from ..tiers import effective_max_steps
 
     cfg = _config(args)
+    max_steps = effective_max_steps(cfg, getattr(args, "max_steps", None))
     session_id = str(getattr(args, "session_id", "") or "")
     if session_id == "new":
         session_id = ""
@@ -163,14 +165,14 @@ def cmd_explore(args: argparse.Namespace) -> int:
     try:
         llm = _llm(cfg)
         if session_id or start_persistent:
-            summary = research_task(llm, cfg, args.task, session_id=session_id, max_steps=args.max_steps)
+            summary = research_task(llm, cfg, args.task, session_id=session_id, max_steps=max_steps)
             print(summary["answer"] or "(nessuna risposta: passaggio a un agente piu' capace)")
             print(f"[sessione: {summary['session_id']} — stato: {summary['status']}]")
             _warn_unverified(summary.get("problems", []))
             if summary.get("problems"):
                 return 1
             return 0 if summary["status"] == "answer" else 1
-        result = run_steps(llm, ToolRegistry(cfg), cfg, args.task, max_steps=args.max_steps)
+        result = run_steps(llm, ToolRegistry(cfg), cfg, args.task, max_steps=max_steps)
     except (LLMError, ResearchError) as exc:
         print(f"nexgen-local: {exc}", file=sys.stderr)
         return 2

@@ -66,6 +66,10 @@ def tool_explore(cfg: LaneConfig, llm: LLM, task: str, max_steps: int = 6, sessi
     """
     from .research_graph import ResearchError, research_task
     from .steps import run_steps
+    from .tiers import get_tier
+
+    cap = get_tier(getattr(cfg, "tier", "tutor") or "tutor").max_steps
+    max_steps = max(1, min(int(max_steps), cap))
 
     if not session_id:
         result = run_steps(llm, ToolRegistry(cfg), cfg, task, max_steps=max_steps)
@@ -162,7 +166,7 @@ def build_server(
     @server.tool(
         description=(
             "Ciclo guidato a piu' passi: il motore propone il menu, il modello sceglie "
-            "(sola lettura, max_steps 1-6). Con session_id continua una ricerca "
+            "(sola lettura, max_steps entro il tetto del tier). Con session_id continua una ricerca "
             "persistente (stesse fonti, letture e proposte) invece di ricominciare; "
             "session_id='new' ne avvia una."
         )
