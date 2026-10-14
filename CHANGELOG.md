@@ -10,6 +10,22 @@ of any engine release.
 
 ## [Unreleased]
 
+## [2.12.0] - 2026-10-14
+
+### Added
+
+- Capability tiers for the local lane: `tutor` (default for every unknown model, today's behaviour), `guided` and
+  `assisted` loosen steering only, never safety. Read-only tools, audit, receipt check and the sanitised retrieval
+  path hold in every tier. `nexgen-local tier evaluate <model>` runs the trap, capability and agent-loop suites under
+  the candidate tier and recommends promotion only when all pass whole with 0 injections and 0 confabulations;
+  `nexgen-local tier set <model> <tier> --yes` is the separate, explicit write. Measured on MiniCPM-V 4.7 35B-A3B:
+  0 injections in every tier, not promoted.
+
+### Fixed
+
+- A test left the lane's injection layer switched off for the rest of the test session, so later tests ran without
+  it.
+
 ## [2.11.0] - 2026-10-14
 
 ### Fixed
