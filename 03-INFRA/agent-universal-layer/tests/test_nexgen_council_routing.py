@@ -70,9 +70,9 @@ def test_v4_parser_extracts_top_three_with_cli() -> None:
 
     privacy = plan.roles["Privacy"]
     assert [(c.value, c.cli) for c in privacy] == [
-        ("gemma4-12b-64k:latest", "ollama"),
-        ("gemma4-12b-openclaw:latest", "ollama"),
-        ("gemma4:12b", "ollama"),
+        ("gemma4-12b-64k:latest", "opencode"),
+        ("gemma4-12b-openclaw:latest", "opencode"),
+        ("gemma4:12b", "opencode"),
     ]
 
 

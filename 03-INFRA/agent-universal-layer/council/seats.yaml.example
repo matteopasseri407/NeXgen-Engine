@@ -111,3 +111,15 @@ seats:
     model: provider/nome-modello
     quota_pool: nome-cli-provider
     zero_retention: false
+  # Seggio locale: OpenCode e' sempre l'harness, l'inferenza gira su questa macchina.
+  # Il runtime (llama.cpp, Ollama, ...) e' solo il base_url, che deve essere di loopback:
+  # e' il ripiego del ruolo privacy, il dato non deve uscire. `host` lega il seggio alla
+  # macchina che lo serve (seats.yaml e' condiviso fra le macchine).
+  esempio-locale:
+    vendor: local
+    cli: opencode
+    model: local/nome-modello
+    base_url: http://127.0.0.1:8080/v1
+    host: nome-della-macchina
+    routing_label: nome-modello
+    zero_retention: false
