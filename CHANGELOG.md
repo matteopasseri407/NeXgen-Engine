@@ -10,6 +10,32 @@ of any engine release.
 
 ## [Unreleased]
 
+## [2.11.0] - 2026-10-14
+
+### Fixed
+
+- The recurring guard (systemd, no shell environment) and an interactive run no longer rewrite each other's work.
+  Codex keeps one section order, Claude Desktop keeps env-gated entries and the commands it resolved, the MCP checks
+  give the same verdict from both, and the systemd unit PATH converges instead of churning.
+- `nexgen plan` never lists a warning as aligned: repairable drift is a planned action, anything that needs you is
+  listed under "needs attention".
+- The guard reports MCP success only when every CLI rendered, and names the failing ones with their error.
+- Backups of rendered configs are always private (0600); a `~/CLAUDE.md` symlink survives its pointer being rewritten.
+- A failed update rolls back on the interactive path too, never resets away commits made during the update, and exits
+  72 when the rollback itself cannot finish.
+
+### Added
+
+- ChatGPT desktop and Antigravity desktop are detected and kept in sync even without their CLI. The doctor reports a
+  Codex version skew between ChatGPT desktop and the CLI, and Antigravity MCP copies that drifted from the canonical
+  file.
+- `NEXGEN_AUTO_UPDATE=0` turns off the hourly unattended update (on by default).
+
+### Changed
+
+- Releases: a bump with no notes is refused, the release workflow fails on empty notes and verifies the tag with the
+  previous release's verifier and trust anchor.
+
 ## [2.10.0] - 2026-10-13
 
 ### Changed
