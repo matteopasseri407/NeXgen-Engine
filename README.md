@@ -214,7 +214,8 @@ After adding a runtime, run `nexgen sync`.
 ## Development
 
 Development uses `developer`; releases reach `main` through a verified pull request.
-The [branch contract](docs/agent-lanes.md) covers concurrent work and automatic alignment with `main`.
+Maintainers cut a release with `nexgen release ship`, which runs the bump, pull request, checks, signed tag and sync in one command.
+The [branch contract](docs/agent-lanes.md) covers concurrent work, releasing and automatic alignment with `main`.
 See [CONTRIBUTING.md](CONTRIBUTING.md) for module ownership and test requirements.
 
 ---

@@ -204,6 +204,9 @@ the previous release's symlinks point at match the table that generates them,
 that no private maintainer tooling reached the public tree, and that the lint
 gate passes rather than having been regenerated.
 
+`nexgen release ship` runs this preflight itself, so a maintainer only needs it
+on its own to check a release before starting one.
+
 ## What CI checks on every PR
 
 All of these run automatically (`.github/workflows/ci.yml`) and must pass:
@@ -242,11 +245,20 @@ don't work around the gate.
 
 ## Publishing
 
-Commit development on `developer`, following `AGENTS.md`.
-Publish an authorized release through a pull request from `developer` to `main`.
-Keep both branches after the merge.
-The maintainer merges only after the required CI checks and signing requirements
-are satisfied, then creates the signed release tag on the verified merge.
+Commit development on `developer`, following `AGENTS.md`, with the release notes
+under `## [Unreleased]` in `CHANGELOG.md`.
+A maintainer publishes from the development checkout with one command:
+
+```sh
+nexgen release ship minor --install   # or patch / major / X.Y.Z
+```
+
+It opens the pull request from `developer` to `main`, merges it only after the
+required checks pass, signs the release tag on the verified merge with that
+machine's own key (refusing it if installed copies would not accept the
+signer), waits for the release workflow and for `main` to be merged back into
+`developer`. Both branches are kept. The steps and how a stopped run resumes
+are in [docs/agent-lanes.md](docs/agent-lanes.md#releasing).
 
 ## License
 

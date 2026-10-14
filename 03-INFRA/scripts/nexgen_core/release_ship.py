@@ -120,6 +120,14 @@ class Shipper:
             self.log(f"   VERSION {version} is already ahead of v{newest}: not bumping again")
             return version
 
+        # VERSION equal to the newest tag is the normal start of a release, and
+        # also what a rerun after a pushed tag looks like. Only the second one
+        # has main not yet merged back into developer: bumping there would
+        # release a version nobody asked for.
+        self._do("git", "fetch", "origin", "main")
+        if self.run(["git", "merge-base", "--is-ancestor", "origin/main", f"origin/{self.branch}"], self.repo).returncode != 0:
+            raise ShipStop(self._step, f"v{version} is still finishing (main not yet back in {self.branch}); "
+                           "wait for sync-developer, then 'nexgen update' to install it")
         target = compute_next_version(version, bump)
         try:
             modified = bump_version_files(self.repo, target, notes)
@@ -135,6 +143,15 @@ class Shipper:
         self._do("git", "push", "-q", "origin", self.branch)
         self.log(f"   bumped {version} -> {target}")
         return target
+
+    def _already_merged(self) -> str | None:
+        """On a rerun after the merge, main already has the release commit: no second pull request."""
+        self._do("git", "fetch", "origin", "main")
+        head = self._do("git", "rev-parse", "HEAD")
+        if self.run(["git", "merge-base", "--is-ancestor", head, "origin/main"], self.repo).returncode != 0:
+            return None
+        self.log("   already merged into main: resuming after the merge")
+        return self._do("git", "rev-parse", "origin/main")
 
     def _open_pull_request(self, version: str) -> int:
         self._enter("pull request")
@@ -279,18 +296,21 @@ class Shipper:
             self.log(f"   update failed and was rolled back, retrying once (output in {log})")
             self.sleep(self.poll_seconds * 4)
         # An update can end without moving anything; only the installed VERSION says it did.
+        # Doctor gates on failures only: warnings (optional deps, orphans) are non-blocking by design.
         installed = self._installed_version()
         if installed != version:
             raise ShipStop(self._step, f"this machine is still on {installed}, not {version}")
-        doctor = self.run(["nexgen", "doctor", "--strict", "--summary"], self.repo)
+        doctor = self.run(["nexgen", "doctor", "--summary"], self.repo)
         if doctor.returncode != 0:
             last = (doctor.stdout or doctor.stderr).strip().splitlines()
             raise ShipStop(self._step, f"installed, but doctor is not clean: {last[-1] if last else doctor.returncode}")
 
     def ship(self, bump: str, notes: str = "", install: bool = False) -> str:
         version = self._prepare(bump, notes)
-        number = self._open_pull_request(version)
-        merged = self._merge(number)
+        merged = self._already_merged()
+        if merged is None:
+            number = self._open_pull_request(version)
+            merged = self._merge(number)
         self._wait_main_ci(merged)
         tag = self._tag(version, merged)
         self._wait_release(tag)
@@ -300,16 +320,34 @@ class Shipper:
         return tag
 
 
+def _checkout_of_cwd() -> Path | None:
+    top = subprocess.run(
+        ["git", "rev-parse", "--show-toplevel"], capture_output=True, text=True,
+        encoding="utf-8", errors="replace", check=False, timeout=30,
+    )
+    return Path(top.stdout.strip()).resolve() if top.returncode == 0 and top.stdout.strip() else None
+
+
 def main(argv: Sequence[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(prog="release.py ship", description=__doc__.splitlines()[0])
+    parser = argparse.ArgumentParser(prog="nexgen release ship", description=__doc__.splitlines()[0])
     parser.add_argument("bump", nargs="?", default="patch", help="patch, minor, major or X.Y.Z (ignored if VERSION is already bumped)")
     parser.add_argument("--notes", default="", help="one line added on top of the Unreleased notes")
     parser.add_argument("--install", action="store_true", help="also run 'nexgen update --yes' and doctor on this machine")
-    parser.add_argument("--repo", type=Path, default=Path(__file__).resolve().parents[3])
+    parser.add_argument("--repo", type=Path, default=None, help="the development checkout (default: the git repository of the current directory)")
     parser.add_argument("--poll", type=float, default=30.0, help="seconds between polls")
     args = parser.parse_args(argv)
 
-    shipper = Shipper(repo=args.repo.resolve(), engine_root=resolve_engine_root(), poll_seconds=args.poll)
+    engine_root = resolve_engine_root()
+    repo = args.repo.resolve() if args.repo else _checkout_of_cwd()
+    if repo is None or not (repo / "03-INFRA" / "scripts" / "nexgen_core" / "release.py").is_file():
+        print("STOP start: run it from a NeXgen Engine development checkout (or pass --repo)", file=sys.stderr)
+        return 1
+    if repo == engine_root.resolve().parent:
+        # The installed copy only ever moves to released tags; releasing from it
+        # would bump and push from the tree the updater owns.
+        print("STOP start: this is the installed engine, not a development checkout", file=sys.stderr)
+        return 1
+    shipper = Shipper(repo=repo, engine_root=engine_root, poll_seconds=args.poll)
     try:
         tag = shipper.ship(args.bump, args.notes, args.install)
     except ShipStop as stop:

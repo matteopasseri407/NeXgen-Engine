@@ -10,6 +10,20 @@ of any engine release.
 
 ## [Unreleased]
 
+### Added
+
+- `nexgen release ship [patch|minor|major] [--install]`: the one-command release is now a `nexgen` verb on every
+  platform, run from the development checkout (the current directory's repository). It refuses to run from the
+  installed engine, which only ever moves to released tags.
+
+### Fixed
+
+- The leak-scan range after a force-push: GitHub's `before` names a commit the clone does not have, and
+  `before..sha` failed instead of scanning. It now falls back to everything not yet on `main`.
+- The test suite no longer depends on the machine running it: no global or system git config (a maintainer's
+  `commit.gpgsign = true` failed 17 trust tests) and no inherited vault remote (`KNOWLEDGE_VAULT_REMOTE` hijacked
+  two remote tests). Locally it now behaves as it does in CI.
+
 ## [2.14.1] - 2026-10-15
 
 ### Fixed
