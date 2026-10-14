@@ -111,6 +111,20 @@ def gated_desktop_names(renderer) -> set[str]:
     }
 
 
+def _names_command(path: str, command: str) -> bool:
+    """True when `path` is an executable called `command`.
+
+    Windows matches case-insensitively and through PATHEXT, which is how
+    `shutil.which` found it (it answers `tool.EXE` for `tool`).
+    """
+    name = Path(path).name
+    if os.name != "nt":
+        return name == command
+    exts = [e.lower() for e in os.environ.get("PATHEXT", ".EXE;.CMD;.BAT;.COM").split(";") if e]
+    stem, suffix = os.path.splitext(name.lower())
+    return name.lower() == command.lower() or (stem == command.lower() and suffix in exts)
+
+
 def _absolute_command(command: str, previous: str = "") -> str:
     """Bare commands depend on the launcher's PATH, and the app starts
     from the graphical session with a minimal one (macOS especially).
@@ -123,7 +137,7 @@ def _absolute_command(command: str, previous: str = "") -> str:
     """
     if not command or "/" in command or "\\" in command:
         return command
-    if previous and Path(previous).name in (command, command + ".exe") and os.access(previous, os.X_OK):
+    if previous and _names_command(previous, command) and os.access(previous, os.X_OK):
         return previous
     found = shutil.which(command)
     return found or command
