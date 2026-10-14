@@ -10,15 +10,83 @@ of any engine release.
 
 ## [Unreleased]
 
+## [2.11.0] - 2026-10-14
+
+### Fixed
+
+- The recurring guard (systemd, no shell environment) and an interactive run no longer rewrite each other's work.
+  Codex keeps one section order, Claude Desktop keeps env-gated entries and the commands it resolved, the MCP checks
+  give the same verdict from both, and the systemd unit PATH converges instead of churning.
+- `nexgen plan` never lists a warning as aligned: repairable drift is a planned action, anything that needs you is
+  listed under "needs attention".
+- The guard reports MCP success only when every CLI rendered, and names the failing ones with their error.
+- Backups of rendered configs are always private (0600); a `~/CLAUDE.md` symlink survives its pointer being rewritten.
+- A failed update rolls back on the interactive path too, never resets away commits made during the update, and exits
+  72 when the rollback itself cannot finish.
+
+### Added
+
+- ChatGPT desktop and Antigravity desktop are detected and kept in sync even without their CLI. The doctor reports a
+  Codex version skew between ChatGPT desktop and the CLI, and Antigravity MCP copies that drifted from the canonical
+  file.
+- `NEXGEN_AUTO_UPDATE=0` turns off the hourly unattended update (on by default).
+
+### Changed
+
+- Releases: a bump with no notes is refused, the release workflow fails on empty notes and verifies the tag with the
+  previous release's verifier and trust anchor.
+
 ## [2.10.0] - 2026-10-13
+
+### Changed
+
+- Release marker only: no engine code changed since v2.9.0.
 
 ## [2.9.0] - 2026-10-13
 
+### Changed
+
+- Release marker only: no engine code changed since v2.8.0.
+
 ## [2.8.0] - 2026-10-13
+
+### Fixed
+
+- Test-only: the Claude Desktop test suites use the resolved config path on every OS, so on Windows they read the same
+  file the code writes.
 
 ## [2.7.0] - 2026-10-13
 
+### Fixed
+
+- Test-only: the Claude Desktop test suites no longer read the live machine config through `APPDATA` on Windows.
+
 ## [2.6.0] - 2026-10-13
+
+### Added
+
+- Claude Desktop MCP dialect. Servers are rendered into `claude_desktop_config.json` (Linux, macOS and Windows paths)
+  only when their manifest entry sets `desktop_allow: true`. Anything not flagged stays out. Manifest-known live entries
+  without the flag are reported by the new `mcp.desktop_allowlist` doctor check and never removed. Writes are additive,
+  keep the app's own preferences, and do not run while the app is open.
+- Install offers to absorb Claude Desktop MCP servers that are live but missing from the manifest. The guided terminal
+  prints review-only stubs; nothing is applied until you opt in.
+- Assisted secrets wiring for absorbed servers: a guided step with create-only writes, a hidden input for secret values,
+  and skip or external options. Materialization happens at the end.
+- The doctor warns about unresolved secret references.
+
+### Security
+
+- Adopted Claude Desktop entries are scrubbed before they are written: environment values become secret references,
+  arguments are masked, and credentials in URL userinfo are removed. This covers both the print and the apply paths.
+- The gateway server is refused for Claude Desktop even when it is flagged.
+
+### Fixed
+
+- Claude Desktop integration: revoking `desktop_allow` removes only what the engine rendered, and a rewrite rebases onto
+  the live file so user additions survive. Bare commands resolve to absolute paths for the app's minimal PATH, and no
+  config file is created on a machine without the app.
+- The leak scan's allow entry for the container home path, dropped with the reverted PII module, is restored.
 
 ## [2.5.3] - 2026-10-11
 

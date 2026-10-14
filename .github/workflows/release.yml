@@ -59,16 +59,24 @@ jobs:
           # falls back to its own tree, which is said out loud.
           prev="$(git describe --tags --abbrev=0 --match 'v*' "$TAG^" 2>/dev/null || true)"
           anchor="03-INFRA/agent-universal-layer/trust"
+          verifier="03-INFRA/scripts/nexgen_core/release_trust.py"
           trust="$anchor"
-          if [ -n "$prev" ] && git cat-file -e "$prev:$anchor/release-signers.txt" 2>/dev/null; then
+          # The verifier comes from the previous release too, not only the
+          # anchor: a tag that ships a changed verifier must not get to judge
+          # itself with it. release_trust.py is standalone, so it can run from
+          # a copy outside the checkout.
+          if [ -n "$prev" ] && git cat-file -e "$prev:$anchor/release-signers.txt" 2>/dev/null \
+             && git cat-file -e "$prev:$verifier" 2>/dev/null; then
             mkdir -p "$RUNNER_TEMP/previous-release"
             git archive "$prev" -- "$anchor" | tar -x -C "$RUNNER_TEMP/previous-release"
+            git show "$prev:$verifier" > "$RUNNER_TEMP/previous-release/release_trust.py"
             trust="$RUNNER_TEMP/previous-release/$anchor"
-            echo "Verifying $TAG against the trust anchor of $prev."
+            verifier="$RUNNER_TEMP/previous-release/release_trust.py"
+            echo "Verifying $TAG with the verifier and trust anchor of $prev."
           else
-            echo "::warning::No previous release carries a trust anchor; verifying $TAG against its own tree (self-attested)."
+            echo "::warning::No previous release carries a trust anchor and verifier; verifying $TAG with its own tree (self-attested)."
           fi
-          python3 03-INFRA/scripts/nexgen_core/release_trust.py "$TAG" --trust-dir "$trust"
+          python3 "$verifier" "$TAG" --trust-dir "$trust"
 
       - name: Refuse a tag that is not on main
         env:
@@ -122,13 +130,11 @@ jobs:
           )
           body = (match.group(1).strip() if match else "")
           if not body:
-              # Not fatal: a release with no notes is worse than a release that
-              # is late, but silently shipping an empty body is worse than both.
-              body = (
-                  f"No changelog section found for {version}. "
-                  "See the commit history for this tag."
-              )
-              print(f"::warning::CHANGELOG.md has no populated section for {version}")
+              # Fatal: the notes are what installed copies show the person
+              # before they accept an update, and a release that ships without
+              # them is a release nobody can judge. Fix CHANGELOG.md and re-run.
+              print(f"::error::CHANGELOG.md has no populated section for {version}. Write it, then re-run this workflow.")
+              sys.exit(1)
           pathlib.Path("RELEASE_NOTES.md").write_text(body + "\n", encoding="utf-8")
           print(body[:400])
           PY

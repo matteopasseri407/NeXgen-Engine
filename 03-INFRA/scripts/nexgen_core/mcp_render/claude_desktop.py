@@ -21,6 +21,7 @@ from __future__ import annotations
 import copy
 import json
 import logging
+import os
 import shutil
 from pathlib import Path
 from typing import Any
@@ -90,13 +91,56 @@ def allowed_desktop_servers(renderer: Any) -> dict[str, dict]:
     return allowed
 
 
-def _absolute_command(command: str) -> str:
+def gated_desktop_names(renderer) -> set[str]:
+    """Allowlisted servers whose `require_env` is unset in this process.
+
+    The recurring guard runs without the shell environment: these resolve
+    from an interactive apply and not from the guard, so the guard must
+    leave their entries alone instead of deleting what the shell wrote.
+    """
+    from nexgen_core.config import load_mcp_manifest
+
+    if not renderer.manifest_path.is_file():
+        return set()
+    raw = load_mcp_manifest(renderer.manifest_path).get("servers", {}) or {}
+    return {
+        name for name, srv in raw.items()
+        if isinstance(srv, dict) and srv.get("enabled") is not False
+        and srv.get(DESKTOP_ALLOW_KEY) is True and name != GATEWAY
+        # Desktop only mounts stdio, so an HTTP entry is never pending.
+        and srv.get("transport") != "http" and not srv.get("url")
+        and srv.get("require_env") and not os.environ.get(srv["require_env"])
+    } - set(renderer.retired_server_names())
+
+
+def _names_command(path: str, command: str, windows: bool | None = None) -> bool:
+    """True when `path` is an executable called `command`.
+
+    Windows matches case-insensitively and through PATHEXT, which is how
+    `shutil.which` found it (it answers `tool.EXE` for `tool`).
+    """
+    name = Path(path).name
+    if not (os.name == "nt" if windows is None else windows):
+        return name == command
+    exts = [e.lower() for e in os.environ.get("PATHEXT", ".EXE;.CMD;.BAT;.COM").split(";") if e]
+    stem, suffix = os.path.splitext(name.lower())
+    return name.lower() == command.lower() or (stem == command.lower() and suffix in exts)
+
+
+def _absolute_command(command: str, previous: str = "") -> str:
     """Bare commands depend on the launcher's PATH, and the app starts
     from the graphical session with a minimal one (macOS especially).
     Resolve what the renderer can see; keep the bare name (with a
-    warning) when it cannot, instead of writing an entry known dead."""
+    warning) when it cannot, instead of writing an entry known dead.
+
+    A path written earlier for the same command wins while it still
+    exists: the guard and an interactive shell see different PATHs, and
+    re-resolving each time made them rewrite the entry against each other.
+    """
     if not command or "/" in command or "\\" in command:
         return command
+    if previous and _names_command(previous, command) and os.access(previous, os.X_OK):
+        return previous
     found = shutil.which(command)
     return found or command
 
@@ -124,11 +168,13 @@ def render(renderer, write: bool = False) -> tuple[bool, str]:
         raise ValueError(f"Could not render {cfg_file}: mcpServers must be an object")
     for retired in renderer.retired_server_names():
         mcp_servers.pop(retired, None)
-    for stale in _read_managed(cfg_file) - set(servers):
+    gated = gated_desktop_names(renderer) & set(mcp_servers)
+    for stale in _read_managed(cfg_file) - set(servers) - gated:
         mcp_servers.pop(stale, None)
     for name, srv in servers.items():
         raw_command = srv.get("command", "")
-        command = _absolute_command(raw_command)
+        previous = mcp_servers.get(name, {}).get("command", "") if isinstance(mcp_servers.get(name), dict) else ""
+        command = _absolute_command(raw_command, previous)
         if command == raw_command and raw_command and "/" not in raw_command and "\\" not in raw_command:
             logger.warning("MCP server %r: command %r not on PATH, writing it bare for Desktop", name, raw_command)
         mcp_servers[name] = {
@@ -149,7 +195,7 @@ def render(renderer, write: bool = False) -> tuple[bool, str]:
         sidecar_before = sidecar.read_text(encoding="utf-8")
     except OSError:
         sidecar_before = None
-    sidecar_text = json.dumps({"mcpServers": sorted(servers)}, indent=2) + "\n"
+    sidecar_text = json.dumps({"mcpServers": sorted(set(servers) | gated)}, indent=2) + "\n"
     if write:
         write_json_config(renderer, cfg_file, before, existing)
         if sidecar_text != sidecar_before:

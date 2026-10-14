@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -278,3 +279,81 @@ def test_windows_paths_honor_appdata_and_fall_back_under_home(tmp_path, monkeypa
     fallback = claude_desktop_config(tmp_path / "home")
     assert str(fallback).startswith(str(tmp_path / "home"))
     assert fallback.name == "claude_desktop_config.json"
+
+
+def test_guard_without_the_shell_env_keeps_env_gated_desktop_entries(tmp_path, monkeypatch):
+    """The guard runs without OCR_TUNNEL_PORT: what the shell wrote must survive it."""
+    renderer = make_renderer(tmp_path, {
+        "ocr": {"transport": "stdio", "command": "/usr/bin/python3", "args": ["ocr.py"], "tier": "core",
+                "require_env": "OCR_TUNNEL_PORT", "desktop_allow": True},
+    })
+    desktop_file(tmp_path).parent.mkdir(parents=True)
+    monkeypatch.setenv("OCR_TUNNEL_PORT", "9000")
+    renderer.render_claude_desktop(write=True)
+    interactive = desktop_file(tmp_path).read_text(encoding="utf-8")
+
+    monkeypatch.delenv("OCR_TUNNEL_PORT")
+    renderer.render_claude_desktop(write=True)
+    assert desktop_file(tmp_path).read_text(encoding="utf-8") == interactive
+    assert renderer.pending_changes("claude-desktop") == {}
+
+
+def test_a_command_resolved_earlier_survives_a_different_path(tmp_path, monkeypatch):
+    """Guard and shell see different PATHs: the absolute command must not flip."""
+    bins = []
+    for folder in ("shell-bin", "guard-bin"):
+        # Windows resolves a bare name only through PATHEXT.
+        exe = tmp_path / folder / ("tool.exe" if os.name == "nt" else "tool")
+        exe.parent.mkdir()
+        exe.write_text("#!/bin/sh\n")
+        exe.chmod(0o755)
+        bins.append(exe)
+    renderer = make_renderer(tmp_path, {
+        "alpha": {"transport": "stdio", "command": "tool", "args": [], "tier": "core", "desktop_allow": True},
+    })
+    desktop_file(tmp_path).parent.mkdir(parents=True)
+    monkeypatch.setenv("PATH", str(bins[0].parent))
+    renderer.render_claude_desktop(write=True)
+    monkeypatch.setenv("PATH", str(bins[1].parent))
+    renderer.render_claude_desktop(write=True)
+    table = json.loads(desktop_file(tmp_path).read_text(encoding="utf-8"))["mcpServers"]
+    # Windows answers with PATHEXT casing (tool.EXE): compare as the OS does.
+    assert os.path.normcase(table["alpha"]["command"]) == os.path.normcase(str(bins[0]))
+
+
+@pytest.mark.parametrize(("name", "windows", "expected"), [
+    ("tool", False, True),
+    ("tool.exe", False, False),
+    ("tool.EXE", True, True),
+    ("TOOL.cmd", True, True),
+    ("tool.txt", True, False),
+    ("other.exe", True, False),
+])
+def test_a_previous_command_is_recognised_the_way_which_found_it(monkeypatch, name, windows, expected):
+    from nexgen_core.mcp_render import claude_desktop
+
+    monkeypatch.setenv("PATHEXT", ".COM;.EXE;.BAT;.CMD")
+    assert claude_desktop._names_command(f"/x/{name}", "tool", windows=windows) is expected
+
+
+def test_gated_names_leave_out_retired_and_http_entries(tmp_path, monkeypatch):
+    """A retired or HTTP entry is never pending on Desktop: it must not stay in
+    the managed sidecar, nor keep a check undetermined forever."""
+    from nexgen_core.mcp_render.claude_desktop import gated_desktop_names
+
+    monkeypatch.delenv("NEXGEN_TEST_GATE", raising=False)
+    home, vault = tmp_path / "home", tmp_path / "vault"
+    manifest = vault / "03-INFRA/agent-universal-layer/mcp/manifest.yaml"
+    manifest.parent.mkdir(parents=True)
+    gate = {"tier": "core", "desktop_allow": True, "require_env": "NEXGEN_TEST_GATE"}
+    manifest.write_text(yaml.safe_dump({
+        "retired_servers": ["old"],
+        "servers": {
+            "old": {"transport": "stdio", "command": "o", **gate},
+            "web": {"transport": "http", "url": "https://example.invalid/mcp", **gate},
+            "kept": {"transport": "stdio", "command": "k", **gate},
+        },
+    }))
+    home.mkdir()
+    renderer = McpRenderer(vault_data=vault, engine_root=tmp_path / "engine", home=home)
+    assert gated_desktop_names(renderer) == {"kept"}

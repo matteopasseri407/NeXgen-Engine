@@ -70,6 +70,58 @@ def test_an_already_bloated_unit_path_collapses_to_unique_entries(tmp_path, monk
     assert "/usr/bin" in entries
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="the systemd unit is Linux-only; Windows paths are escaped in it")
+@pytest.mark.parametrize("builder", ["_systemd_service_content", "_systemd_heartbeat_content"])
+def test_unit_is_the_same_whichever_shell_installed_it(tmp_path, monkeypatch, builder):
+    """Each shell has its own PATH. Copying the caller's PATH into the unit meant
+    every shell that ran the install rewrote the unit and reloaded the timers."""
+    from nexgen_core import scheduler
+
+    home = tmp_path / "home"
+    engine = tmp_path / "engine" / "03-INFRA"
+    vault = tmp_path / "vault"
+    build = getattr(scheduler, builder)
+    monkeypatch.setattr(scheduler, "_tool_dirs", lambda: [])
+    monkeypatch.setenv("PATH", os.pathsep.join(["/home/user/.nvm/versions/node/v20/bin", "/usr/bin"]))
+    from_one_shell = build(home, engine, vault, vault)
+    monkeypatch.setenv("PATH", os.pathsep.join(["/opt/other-tools", "/bin", "/usr/local/bin"]))
+    assert build(home, engine, vault, vault) == from_one_shell
+
+
+def test_a_shell_without_nvm_never_takes_node_away_from_the_guard(tmp_path, monkeypatch):
+    """The nvm shell puts node's directory in the unit; a later install from a
+    shell that cannot see nvm keeps it, and the two converge on one unit."""
+    from nexgen_core import scheduler
+
+    home = tmp_path / "home"
+    unit = home / ".config/systemd/user/agent-sync.service"
+    unit.parent.mkdir(parents=True)
+    nvm = "/home/user/.nvm/versions/node/v20/bin"
+
+    def build():
+        return scheduler._systemd_service_content(home, tmp_path / "engine/03-INFRA", tmp_path / "v", tmp_path / "v")
+
+    monkeypatch.setattr(scheduler, "_tool_dirs", lambda: [nvm])
+    unit.write_text(build(), encoding="utf-8")
+    monkeypatch.setattr(scheduler, "_tool_dirs", lambda: ["/opt/brew/bin"])
+    unit.write_text(build(), encoding="utf-8")
+    second = unit.read_text(encoding="utf-8")
+    monkeypatch.setattr(scheduler, "_tool_dirs", lambda: [nvm])
+
+    assert nvm in second and "/opt/brew/bin" in second
+    assert build() == second
+
+
+def test_unit_backups_are_rotated_instead_of_piling_up(tmp_path):
+    """Every change to a unit left a backup behind; the renderer keeps three, so should the units."""
+    from nexgen_core import scheduler
+
+    unit = tmp_path / "agent-sync.service"
+    for version in range(6):
+        scheduler._write_if_different(unit, f"[Unit]\nDescription=v{version}\n")
+    assert len(list(tmp_path.glob("agent-sync.service.bak-*"))) <= 3
+
+
 # ------------------------------------------------------------------ git paths
 
 
@@ -336,3 +388,20 @@ def test_applying_twice_changes_nothing_but_machine_state(sandbox, monkeypatch):
     after_first = tree()
     assert apply_once().success
     assert tree() == after_first
+
+
+def test_a_unit_path_with_backslashes_reads_back_unchanged(tmp_path, monkeypatch):
+    """The unit escapes backslashes; reading the PATH back must undo it, or
+    each install doubles them and the unit never stops changing (Windows paths)."""
+    from nexgen_core import scheduler
+
+    home = tmp_path / "home"
+    unit = home / ".config/systemd/user/agent-sync.service"
+    unit.parent.mkdir(parents=True)
+    monkeypatch.setattr(scheduler, "_tool_dirs", lambda: [r"/opt/odd\dir"])
+
+    def build():
+        return scheduler._systemd_service_content(home, tmp_path / "engine/03-INFRA", tmp_path / "v", tmp_path / "v")
+
+    unit.write_text(build(), encoding="utf-8")
+    assert build() == unit.read_text(encoding="utf-8")

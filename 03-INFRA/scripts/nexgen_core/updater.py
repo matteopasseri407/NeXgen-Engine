@@ -2,10 +2,11 @@
 """Deliberate, cross-platform NeXgen Engine release updater (v2).
 
 The command updates only to a released semantic-version tag. It never stashes
-or commits user-authored data, never checks out a detached HEAD, and never
-rolls back automatically. In a split install it may commit the mechanical
-engine pin, and only that exact file, through ``vault-push``. A dirty engine or
-data repository stops the update before the engine ref moves.
+or commits user-authored data and never checks out a detached HEAD. If an
+update fails after the engine moved, it goes back to the previous head and
+re-applies the old tree, interactive or not. In a split install it may commit
+the mechanical engine pin, and only that exact file, through ``vault-push``. A
+dirty engine or data repository stops the update before the engine ref moves.
 
 ``--unattended`` is the one behaviour change from that interactive contract:
 it skips the confirmation prompt the way ``--yes`` does, but caps how large a
@@ -26,11 +27,11 @@ stolen push token would use.
 
 Two more rules apply to the merge itself. It happens under the host lock, the
 one every path that changes this machine takes, so it can no longer run in the
-middle of a guard cycle. And an *unattended* update that fails after the engine
-moved is undone on the spot (the interactive command still never rolls back on
-its own): the machine goes back to the version that worked, the release is
-remembered as rejected so the next beat does not retry it every hour, and the
-beat raises an alert from the exit code.
+middle of a guard cycle. And an update that fails after the engine
+moved is undone on the spot, by either path: the machine goes back to the
+version that worked. An *unattended* failure also remembers the release as
+rejected, so the next beat does not retry it every hour, and the beat raises an
+alert from the exit code.
 """
 from __future__ import annotations
 
@@ -428,7 +429,7 @@ def _assert_mergeable(engine_repo: Path, data_repo: Path, target: str, *, split_
         _assert_merge_identity(engine_repo)
 
 
-def _rollback_unattended(
+def _roll_back(
     exc: PostMergeError,
     *,
     entry: list[str],
@@ -437,23 +438,38 @@ def _rollback_unattended(
     state_dir: Path,
     target: str,
     current: str,
+    unattended: bool,
 ) -> int:
-    """Undoes an unattended update that failed after the engine moved.
+    """Undoes an update that failed after the engine moved, and re-applies the old tree.
 
-    Interactive updates never do this: a person is there to look first. With
-    nobody there, leaving the engine half-upgraded meant the next beat read
-    "already at the requested version" and the machine ran on a tree that had
-    failed its own checks, with no alert.
+    Unattended updates always do this: with nobody there, leaving the engine
+    half-upgraded meant the next beat read "already at the requested version"
+    and the machine ran on a tree that had failed its own checks, with no
+    alert. Interactive updates do it too, because a half-new machine is no
+    better for having a person standing next to it. The difference is the
+    memory: only an unattended rollback marks the release as rejected, since
+    a person who asked for it can decide to try again.
     """
     print(f"nexgen-update: ERROR: {exc}", file=sys.stderr)
-    print(f"The unattended update to {target} failed; going back to v{current}.", file=sys.stderr)
+    print(f"The {'unattended ' if unattended else ''}update to {target} failed; going back to v{current}.", file=sys.stderr)
     try:
         with host_mutation("nexgen-update-rollback", state_dir=state_dir, timeout=UPDATE_LOCK_WAIT_SECONDS):
             _git(exc.engine_repo, "merge", "--abort", check=False)
+            # The lock was released between the merge and the apply, so a
+            # person may have committed on the engine meanwhile. Those are
+            # the only non-merge commits since previous_head that the
+            # release does not carry: reset --hard would erase them.
+            foreign = _git(
+                exc.engine_repo, "rev-list", "--no-merges", f"{exc.previous_head}..HEAD", "--not", target,
+                check=False,
+            ).stdout.split()
+            if foreign:
+                raise UpdateError(f"{len(foreign)} commit(s) made on the engine during the update would be lost")
             _git(exc.engine_repo, "reset", "--hard", exc.previous_head)
     except (LockTimeoutError, UpdateError, OSError) as rollback_exc:
         print(
-            f"nexgen-update: the rollback itself failed ({type(rollback_exc).__name__}). "
+            f"nexgen-update: the rollback itself failed "
+            f"({rollback_exc if isinstance(rollback_exc, UpdateError) else type(rollback_exc).__name__}). "
             f"The engine is left as it is. By hand:\n  git -C {exc.engine_repo} reset --hard {exc.previous_head}",
             file=sys.stderr,
         )
@@ -468,17 +484,25 @@ def _rollback_unattended(
             )
         except UpdateError as pin_exc:
             notes.append(f"the engine pin was not restored: {pin_exc}")
-    realigned = _run([*entry, "apply"], cwd=data_repo, check=False, capture=False)
-    if realigned.returncode != 0:
-        notes.append("agent-sync apply from the restored tree also failed")
-    _record_rejected(state_dir, target, str(exc))
+    try:
+        realigned = _run([*entry, "apply"], cwd=data_repo, check=False, capture=False)
+    except (UpdateError, OSError) as apply_exc:
+        notes.append(f"agent-sync apply from the restored tree could not run ({type(apply_exc).__name__})")
+    else:
+        if realigned.returncode != 0:
+            notes.append("agent-sync apply from the restored tree also failed")
+    if unattended:
+        _record_rejected(state_dir, target, str(exc))
     for note in notes:
         print(f"nexgen-update: WARNING: {note}", file=sys.stderr)
-    print(
-        f"Rolled back to v{current}. Unattended updates will skip {target}; "
-        f"review it and run 'nexgen-update --target {target.removeprefix('v')}' to try again.",
-        file=sys.stderr,
-    )
+    if unattended:
+        print(
+            f"Rolled back to v{current}. Unattended updates will skip {target}; "
+            f"review it and run 'nexgen-update --target {target.removeprefix('v')}' to try again.",
+            file=sys.stderr,
+        )
+    else:
+        print(f"Rolled back to v{current}. Fix the failure above, then run 'nexgen-update' again.", file=sys.stderr)
     return EXIT_ROLLED_BACK
 
 
@@ -552,7 +576,7 @@ def build_parser() -> argparse.ArgumentParser:
 def _report_post_merge_error(exc: PostMergeError, pin_file: Path | None) -> int:
     print(f"nexgen-update: ERROR: {exc}", file=sys.stderr)
     print(
-        "The updater will not roll back automatically. After reviewing the failure, the recoverable rollback is:\n"
+        "The automatic rollback could not be completed. The recoverable rollback by hand is:\n"
         f"  git -C {exc.engine_repo} reset --hard {exc.previous_head}",
         file=sys.stderr,
     )
@@ -572,6 +596,32 @@ def _report_post_merge_error(exc: PostMergeError, pin_file: Path | None) -> int:
             "through vault-push before running agent-sync again.",
             file=sys.stderr,
         )
+    return 1
+
+
+def _recover_failed_update(
+    exc: PostMergeError,
+    *,
+    args: argparse.Namespace,
+    entry: list[str],
+    data_repo: Path,
+    pin_file: Path | None,
+    state_dir: Path,
+    target: str,
+    current: str,
+) -> int:
+    code = _roll_back(
+        exc, entry=entry, data_repo=data_repo, pin_file=pin_file,
+        state_dir=state_dir, target=target, current=current, unattended=args.unattended,
+    )
+    if args.unattended:
+        return code
+    if code == EXIT_ROLLBACK_FAILED:
+        # The rollback could not be finished, so the person needs the full
+        # manual recovery, which is what this path printed before. The exit
+        # code says so too: a wrapper must tell "restored" from "half-new".
+        _report_post_merge_error(exc, pin_file)
+        return EXIT_ROLLBACK_FAILED
     return 1
 
 
@@ -795,12 +845,10 @@ def main(
         )
         return 0
     except PostMergeError as exc:
-        if args.unattended:
-            return _rollback_unattended(
-                exc, entry=entry, data_repo=data_repo, pin_file=pin_file,
-                state_dir=state_dir, target=target, current=current,
-            )
-        return _report_post_merge_error(exc, pin_file)
+        return _recover_failed_update(
+            exc, args=args, entry=entry, data_repo=data_repo, pin_file=pin_file,
+            state_dir=state_dir, target=target, current=current,
+        )
     except (UpdateError, OSError, UnicodeError, subprocess.SubprocessError) as exc:
         safe_error = exc if isinstance(exc, UpdateError) else UpdateError(f"update operation failed ({type(exc).__name__})")
         if mutation_started and previous_head and engine_repo is not None:
@@ -808,12 +856,10 @@ def main(
                 f"update interrupted after merge was started: {safe_error}",
                 previous_head=previous_head, engine_repo=engine_repo,
             )
-            if args.unattended:
-                return _rollback_unattended(
-                    interrupted, entry=entry, data_repo=data_repo, pin_file=pin_file,
-                    state_dir=state_dir, target=target, current=current,
-                )
-            return _report_post_merge_error(interrupted, pin_file)
+            return _recover_failed_update(
+                interrupted, args=args, entry=entry, data_repo=data_repo, pin_file=pin_file,
+                state_dir=state_dir, target=target, current=current,
+            )
         print(f"nexgen-update: ERROR: {safe_error}", file=sys.stderr)
         return exc.exit_code if isinstance(exc, UpdateRefused) else 1
 

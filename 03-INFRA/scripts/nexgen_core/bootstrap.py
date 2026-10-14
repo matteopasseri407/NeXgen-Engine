@@ -45,6 +45,7 @@ from nexgen_core.first_run import (  # noqa: E402 - sys.path shim for cloned che
 )
 from nexgen_core.i18n import t  # noqa: E402 - sys.path shim for cloned checkout
 from nexgen_core.paths import installed_as_package, resolve_home  # noqa: E402 - sys.path shim for cloned checkout
+from nexgen_core.platforms import installed_desktop_apps  # noqa: E402 - sys.path shim for cloned checkout
 
 #: The Python version below which the engine won't start.
 MINIMUM_PYTHON = (3, 11)
@@ -177,6 +178,14 @@ def detect_clis(home: Path | None = None) -> list[str]:
     found = [name for name in ("claude", "codex", "opencode") if shutil.which(name)]
     if shutil.which("agy") or (home_dir / ".gemini" / "settings.json").is_file():
         found.append("antigravity")
+    # A desktop app shares its config with a CLI target: ChatGPT with Codex
+    # (~/.codex), Antigravity IDE with Antigravity (~/.gemini). Its presence
+    # alone is enough to configure that target, so an app-only machine is not
+    # skipped. The target is listed once, however many of its surfaces exist.
+    for app in installed_desktop_apps():
+        for target in app.targets:
+            if target not in found:
+                found.append(target)
     return found
 
 

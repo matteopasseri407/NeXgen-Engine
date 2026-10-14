@@ -44,7 +44,9 @@ def render(renderer, write: bool = False) -> tuple[bool, str]:
     managed = {name.replace("-", "_") for name in servers} | {name.replace("-", "_") for name in retired}
 
     existing_lines: list[str] = []
-    preserved_lines: list[str] = []
+    # Kept sections grouped by name, so each one can be emitted at a fixed
+    # place whatever the environment resolved this time (see below).
+    preserved: dict[str, list[str]] = {}
     previous = {}
     if cfg_file.is_file():
         try:
@@ -59,9 +61,11 @@ def render(renderer, write: bool = False) -> tuple[bool, str]:
                 if stripped.startswith("[mcp_servers."):
                     in_mcp_section = True
                     section = next(iter(tomllib.loads(stripped)["mcp_servers"]))
-                    keep_current = section not in managed and section not in unmounted
+                    # A hand-written `my-server` is the manifest's `my_server`:
+                    # compare in Codex's spelling, or both end up in the file.
+                    keep_current = section.replace("-", "_") not in managed and section.replace("-", "_") not in unmounted
                     if keep_current:
-                        preserved_lines.append(line)
+                        preserved.setdefault(section, []).append(line)
                     continue
                 elif stripped.startswith("[") and not stripped.startswith("[mcp_servers."):
                     in_mcp_section = False
@@ -69,7 +73,7 @@ def render(renderer, write: bool = False) -> tuple[bool, str]:
                 if not in_mcp_section and not line.startswith("# NeXgen Engine"):
                     existing_lines.append(line)
                 elif in_mcp_section and keep_current:
-                    preserved_lines.append(line)
+                    preserved[section].append(line)
         except (OSError, ValueError) as exc:
             raise ValueError("Cannot read or parse the Codex configuration; original preserved.") from exc
 
@@ -83,40 +87,26 @@ def render(renderer, write: bool = False) -> tuple[bool, str]:
 
     lines.append(header)
     lines.append("")
-    if preserved_lines:
-        lines.append("\n".join(preserved_lines).strip())
-        lines.append("")
-    for name, srv in servers.items():
-        safe_name = name.replace("-", "_")
-        section = _toml_key(safe_name)
-        lines.append(f"[mcp_servers.{section}]")
-        if srv.get("transport") == "http" or srv.get("url"):
-            lines.append(f'url = {json.dumps(srv["url"])}')
-            auth_env = srv.get("auth", {}).get("env") if isinstance(srv.get("auth"), dict) else None
-            if auth_env:
-                lines.append(f'bearer_token_env_var = "{auth_env}"')
-        else:
-            lines.append(f'command = {json.dumps(srv.get("command", ""))}')
-            args_json = json.dumps(srv.get("args", []))
-            lines.append(f"args = {args_json}")
-        # The timeouts the manifest declares apply to both kinds of server. Only the http branch
-        # wrote them, so a stdio server (vault-ocr, drive and lane: 30 s to start, up to 300 s per tool)
-        # ran on Codex's defaults (10 s to start), and the manifest comment claiming "Codex renders its native
-        # timeout fields" was true for half the servers. They go before the env sub-table: a key
-        # after a `[table]` header belongs to that table.
-        timeouts = srv.get("timeouts", {})
-        if isinstance(timeouts, dict):
-            if "startup" in timeouts:
-                lines.append(f'startup_timeout_sec = {float(timeouts["startup"])}')
-            if "tool" in timeouts:
-                lines.append(f'tool_timeout_sec = {float(timeouts["tool"])}')
-        if not (srv.get("transport") == "http" or srv.get("url")):
-            env = srv.get("env", {})
-            if env:
-                lines.append(f"[mcp_servers.{section}.env]")
-                for k, v in env.items():
-                    lines.append(f'{_toml_key(k)} = {json.dumps(str(v))}')
-        lines.append("")
+    # One fixed order, independent of os.environ: connectors the manifest
+    # does not know first (as found on disk), then every manifest server in
+    # manifest order. An env-gated server that cannot be resolved right now
+    # (the guard runs without the user's shell environment) keeps its text
+    # from disk but also its manifest slot. Putting it among the foreign
+    # connectors made the guard and an interactive apply reorder the file
+    # against each other on every run: endless rewrites, backups and a
+    # drift warning that never cleared.
+    manifest_order = [name.replace("-", "_") for name in renderer.manifest_server_names()]
+    for section_name, block in preserved.items():
+        if section_name not in manifest_order:
+            lines.append("\n".join(block).strip())
+            lines.append("")
+    by_safe_name = {name.replace("-", "_"): (name, srv) for name, srv in servers.items()}
+    for safe_name in manifest_order + [n for n in by_safe_name if n not in manifest_order]:
+        if safe_name in by_safe_name:
+            lines.extend(_render_server(*by_safe_name[safe_name]))
+        elif safe_name in preserved:
+            lines.append("\n".join(preserved[safe_name]).strip())
+            lines.append("")
 
     content = "\n".join(lines).strip() + "\n"
     generated = tomllib.loads(content)
@@ -129,8 +119,45 @@ def render(renderer, write: bool = False) -> tuple[bool, str]:
     if not isinstance(old_servers, dict):
         raise ValueError("Codex mcp_servers must be a table; original preserved.")
     for key, value in old_servers.items():
-        if key not in managed and key not in unmounted and generated.get("mcp_servers", {}).get(key) != value:
+        if (key.replace("-", "_") not in managed and key.replace("-", "_") not in unmounted
+                and generated.get("mcp_servers", {}).get(key) != value):
             raise ValueError("Codex rendering would change an unmanaged connector; original preserved.")
     if write:
         renderer._backup_and_write(cfg_file, content)
     return True, t("Codex configuration updated")
+
+
+def _render_server(name: str, srv: dict) -> list[str]:
+    """One manifest server as its TOML section(s), freshly rendered."""
+    lines: list[str] = []
+    safe_name = name.replace("-", "_")
+    section = _toml_key(safe_name)
+    lines.append(f"[mcp_servers.{section}]")
+    if srv.get("transport") == "http" or srv.get("url"):
+        lines.append(f'url = {json.dumps(srv["url"])}')
+        auth_env = srv.get("auth", {}).get("env") if isinstance(srv.get("auth"), dict) else None
+        if auth_env:
+            lines.append(f'bearer_token_env_var = "{auth_env}"')
+    else:
+        lines.append(f'command = {json.dumps(srv.get("command", ""))}')
+        args_json = json.dumps(srv.get("args", []))
+        lines.append(f"args = {args_json}")
+    # The timeouts the manifest declares apply to both kinds of server. Only the http branch
+    # wrote them, so a stdio server (vault-ocr, drive and lane: 30 s to start, up to 300 s per tool)
+    # ran on Codex's defaults (10 s to start), and the manifest comment claiming "Codex renders its native
+    # timeout fields" was true for half the servers. They go before the env sub-table: a key
+    # after a `[table]` header belongs to that table.
+    timeouts = srv.get("timeouts", {})
+    if isinstance(timeouts, dict):
+        if "startup" in timeouts:
+            lines.append(f'startup_timeout_sec = {float(timeouts["startup"])}')
+        if "tool" in timeouts:
+            lines.append(f'tool_timeout_sec = {float(timeouts["tool"])}')
+    if not (srv.get("transport") == "http" or srv.get("url")):
+        env = srv.get("env", {})
+        if env:
+            lines.append(f"[mcp_servers.{section}.env]")
+            for k, v in env.items():
+                lines.append(f'{_toml_key(k)} = {json.dumps(str(v))}')
+    lines.append("")
+    return lines

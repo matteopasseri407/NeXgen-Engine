@@ -18,7 +18,7 @@ import logging
 import os
 import subprocess
 import time
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
@@ -42,6 +42,16 @@ logger = logging.getLogger(__name__)
 
 LIVENESS_FILE_NAME = "agent-guard-liveness"
 MAX_LIVENESS_AGE_HOURS = 2.5
+#: Set to 0 (or off, false, no) to stop the hourly unattended patch update.
+#: On by default: the self-upgrader is a deliberate feature, and this switch
+#: is for a machine whose owner wants every update to be a manual one.
+AUTO_UPDATE_ENV = "NEXGEN_AUTO_UPDATE"
+_AUTO_UPDATE_OFF = {"0", "false", "no", "off"}
+
+
+def auto_update_enabled(environ: Mapping[str, str] | None = None) -> bool:
+    value = (os.environ if environ is None else environ).get(AUTO_UPDATE_ENV, "")
+    return value.strip().lower() not in _AUTO_UPDATE_OFF
 
 
 def _just_booted(grace_seconds: float) -> bool:
@@ -254,6 +264,9 @@ class Heartbeat:
         updater. Uses THIS Heartbeat's vault/engine, not the process
         environment, so a Heartbeat built for tests never touches the host's
         real installation."""
+        if not auto_update_enabled():
+            logger.info("unattended update skipped: %s is turned off", AUTO_UPDATE_ENV)
+            return {"ok": True, "skipped": "disabled"}
         try:
             environ = {
                 **os.environ,

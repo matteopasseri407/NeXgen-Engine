@@ -102,3 +102,63 @@ def test_env_gated_connector_is_preserved_only_for_its_declared_runtime(tmp_path
     live = {"local-private": {"command": "node"}}
     renderer._drop_unmounted(live, {}, cli_target="codex")
     assert ("local-private" in live) is allowed_here
+
+
+def test_codex_order_does_not_depend_on_the_environment(tmp_path, monkeypatch):
+    """The guard runs without the shell's env: an env-gated server it cannot
+    resolve keeps its manifest slot, so guard and interactive apply agree."""
+    home, vault = tmp_path / "home", tmp_path / "vault"
+    manifest = vault / "03-INFRA/agent-universal-layer/mcp/manifest.yaml"
+    manifest.parent.mkdir(parents=True)
+    manifest.write_text(yaml.safe_dump({"servers": {
+        "alpha": {"transport": "stdio", "command": "a", "args": [], "tier": "core"},
+        "gated": {"transport": "stdio", "command": "g", "args": [], "tier": "core", "require_env": "NEXGEN_TEST_GATE"},
+        "omega": {"transport": "stdio", "command": "o", "args": [], "tier": "core"},
+    }}, sort_keys=False))
+    config = home / ".codex/config.toml"
+    config.parent.mkdir(parents=True)
+    config.write_text('model = "private"\n\n[mcp_servers.private_tool]\ncommand = "p"\n')
+    renderer = McpRenderer(vault_data=vault, engine_root=tmp_path / "engine", home=home)
+
+    monkeypatch.setenv("NEXGEN_TEST_GATE", "1")
+    renderer.render_codex(write=True)
+    interactive = config.read_text()
+    monkeypatch.delenv("NEXGEN_TEST_GATE")
+    renderer.render_codex(write=True)
+
+    assert config.read_text() == interactive
+    sections = [line for line in interactive.splitlines() if line.startswith("[mcp_servers.")]
+    assert sections == ["[mcp_servers.private_tool]", "[mcp_servers.alpha]", "[mcp_servers.gated]", "[mcp_servers.omega]"]
+
+
+def test_mcp_checks_give_the_same_verdict_with_and_without_the_gate(tmp_path, monkeypatch):
+    """Guard (no shell env) and shell must not disagree on orphans."""
+    from nexgen_core.checks.mcp_checks import check_mcp_orphans
+    from nexgen_core.report import Severity
+
+    home, vault = tmp_path / "home", tmp_path / "vault"
+    manifest = vault / "03-INFRA/agent-universal-layer/mcp/manifest.yaml"
+    manifest.parent.mkdir(parents=True)
+    manifest.write_text(yaml.safe_dump({"servers": {
+        "gated": {"transport": "stdio", "command": "g", "args": [], "tier": "core", "require_env": "NEXGEN_TEST_GATE"},
+    }}))
+    (home / ".codex").mkdir(parents=True)
+    renderer = McpRenderer(vault_data=vault, engine_root=tmp_path / "engine", home=home)
+    monkeypatch.setenv("NEXGEN_TEST_GATE", "1")
+    renderer.render_codex(write=True)
+
+    with_gate = check_mcp_orphans(vault, home).severity
+    monkeypatch.delenv("NEXGEN_TEST_GATE")
+    without_gate = check_mcp_orphans(vault, home).severity
+    assert with_gate == without_gate == Severity.OK
+
+
+def test_a_hand_written_hyphen_section_is_the_manifest_server(tmp_path):
+    """`[mcp_servers.my-server]` on disk is the manifest's `my-server`: one
+    section afterwards, in Codex's spelling, not a foreign duplicate."""
+    renderer, config = renderer_fixture(tmp_path, "my-server")
+    config.write_text('[mcp_servers.my-server]\ncommand = "old"\n')
+    renderer.render_codex(write=True)
+    servers = tomllib.loads(config.read_text())["mcp_servers"]
+    assert list(servers) == ["my_server"]
+    assert servers["my_server"]["command"] == "python"

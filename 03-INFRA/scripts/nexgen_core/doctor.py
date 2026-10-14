@@ -25,6 +25,9 @@ from nexgen_core.checks.git_checks import (  # noqa: E402 - sys.path shim for cl
     check_remotes_config,
     check_vault_remote_privacy,
 )
+from nexgen_core.checks.desktop_checks import (  # noqa: E402 - sys.path shim for cloned checkout
+    check_codex_desktop_skew,
+)
 from nexgen_core.checks.identity_checks import (  # noqa: E402 - sys.path shim for cloned checkout
     check_agent_self,
     check_agent_self_metadata,
@@ -41,6 +44,7 @@ from nexgen_core.checks.instructions_checks import (  # noqa: E402 - sys.path sh
 )
 from nexgen_core.checks.mcp_checks import (  # noqa: E402 - sys.path shim for cloned checkout
     check_desktop_allowlist,
+    check_antigravity_fanout,
     check_mcp_commands,
     check_mcp_configs_rendered,
     check_mcp_placement,
@@ -196,6 +200,7 @@ class Doctor:
             run("mcp.rendered_configs", lambda: check_mcp_configs_rendered(vault, home))
             run("mcp.placement", lambda: check_mcp_placement(vault))
             run("mcp.trials", check_mcp_trials)
+            run("mcp.antigravity_fanout", lambda: check_antigravity_fanout(vault, home))
             run("mcp.rendered_content", lambda: check_mcp_content_drift(vault, home, self.engine_root))
             run("mcp.commands", lambda: check_mcp_commands(vault, home))
             run("mcp.orphans", lambda: check_mcp_orphans(vault, home))
@@ -230,6 +235,9 @@ class Doctor:
             run("env.tokens_in_env", lambda: check_tokens_in_env(vault))
             run("security.secrets_materialized", lambda: check_secrets_materialized(home, vault))
             run("security.leak_patterns_twin", lambda: check_leak_patterns_twin(vault, self.engine_root))
+
+            # 6b. Desktop apps that share a config with their CLI
+            run("desktop.codex_version_skew", check_codex_desktop_skew)
 
             # 7. Canonical instructions and bootstrap hygiene
             run("instructions.canonical_present", lambda: check_canonical_instructions_present(vault))

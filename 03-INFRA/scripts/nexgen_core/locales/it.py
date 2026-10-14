@@ -862,14 +862,16 @@ MESSAGES: dict[str, str] = {
         (
             "Render MCP fallito dopo aver sincronizzato le skill ({error}): sistema la config del CLI e rilancia"
         ),
-    "MCP render reported no change applied for: {clis}":
-        "Il render MCP non ha applicato modifiche per: {clis}",
+    "MCP render failed for: {clis}":
+        "Render MCP fallito per: {clis}",
     "Pull completed (derived files not regenerated: run apply next)":
         "Pull completato (file derivati non rigenerati: ora lancia apply)",
     "Alignment completed with warnings (see actions above)":
         "Allineamento completato con avvisi (vedi sopra)",
     "instruction pointer {path} left untouched: safety backup failed ({error})":
         "Puntatore istruzioni {path} lasciato com'è: backup di sicurezza fallito ({error})",
+    "opencode dead 'instructions' entries left untouched: safety backup failed ({error})":
+        "Voci 'instructions' obsolete di opencode lasciate com'erano: backup di sicurezza fallito ({error})",
     "instruction pointer {path} not aligned ({error})":
         "Puntatore istruzioni {path} non allineato ({error})",
     "Startup self-alignment reported no success and no error; verify with `nexgen doctor`":
@@ -998,6 +1000,8 @@ MESSAGES: dict[str, str] = {
     "Move the work to developer and run the engine test gate.": "Porta il lavoro su developer ed esegui il gate dei test dell'Engine.",
     "Engine checkout on developer; development commits and local edits are allowed.": "Checkout dell'Engine su developer; commit di sviluppo e modifiche locali sono consentiti.",
     "Engine branch check failed: {detail}": "Controllo del ramo Engine fallito: {detail}",
+    'their require_env is unset in this process':
+        'la loro require_env non è impostata in questo processo',
     'settings outside the server list':
         "impostazioni fuori dall'elenco dei server",
     'Some CLI configurations no longer match what the manifest would write: {parts}':
@@ -1222,4 +1226,28 @@ MESSAGES: dict[str, str] = {
         "Il gateway ({gateway}) non era nel manifest, quindi l'ho aggiunto anch'esso: senza, niente di ciò che ci sta dietro è raggiungibile.",
     "The gateway ({gateway}) is not in your manifest, and a trial is served by it. Adding any server with 'nexgen mcp add' puts it in; or copy the {gateway} entry from the shipped template.":
         "Il gateway ({gateway}) non è nel tuo manifest e una prova passa da lì. Aggiungere un server qualsiasi con 'nexgen mcp add' lo mette; oppure copia la voce {gateway} dal modello fornito.",
+    'Could not read the Codex version of {which}, so the desktop app and the CLI were not compared.':
+        'Non riesco a leggere la versione di Codex di {which}, quindi app desktop e CLI non sono stati confrontati.',
+    'the one bundled in ChatGPT desktop':
+        'quella inclusa in ChatGPT desktop',
+    'the codex CLI':
+        'la CLI codex',
+    'ChatGPT desktop and the codex CLI run the same Codex version ({version})':
+        'ChatGPT desktop e la CLI codex usano la stessa versione di Codex ({version})',
+    'ChatGPT desktop bundles Codex {desktop} but the codex CLI is {cli}; both read the same ~/.codex, so each may run settings the other does not understand.':
+        "ChatGPT desktop include Codex {desktop} ma la CLI codex è {cli}; leggono entrambi lo stesso ~/.codex, quindi ciascuno potrebbe eseguire impostazioni che l'altro non capisce.",
+    "Antigravity's MCP configuration has not been rendered on this machine yet, so its copies were not compared.":
+        'La configurazione MCP di Antigravity non è ancora stata generata su questa macchina, quindi le sue copie non sono state confrontate.',
+    'points elsewhere':
+        'punta altrove',
+    'differs':
+        'diversa',
+    'missing':
+        'mancante',
+    'Antigravity reads its MCP servers from folders that no longer match the canonical file: {parts}':
+        'Antigravity legge i server MCP da cartelle che non corrispondono più al file canonico: {parts}',
+    "Run 'agent-sync apply' to point every folder back at the canonical file.":
+        "Esegui 'agent-sync apply' per far puntare di nuovo ogni cartella al file canonico.",
+    "Antigravity's MCP configuration is the same in every folder it reads from":
+        'La configurazione MCP di Antigravity è la stessa in ogni cartella da cui legge',
 }

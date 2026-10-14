@@ -518,3 +518,26 @@ jobs:
             exit 0
           fi
           echo "::warning::v$version is not released yet (newest tag: ${newest:-none}). Cut it with: git tag -s v$version -m \"Release v$version\" && git push origin v$version"
+
+      - name: Check the pending version has its CHANGELOG section
+        # Warn-only, like the rest of this job. The release workflow refuses an
+        # empty section, so a bump without notes would otherwise be discovered
+        # only when the tag is pushed.
+        run: |
+          set -euo pipefail
+          version="$(tr -d '[:space:]' < VERSION)"
+          python3 - "$version" <<'PY'
+          import pathlib, re, sys
+          version = sys.argv[1]
+          text = pathlib.Path("CHANGELOG.md").read_text(encoding="utf-8")
+          match = re.search(
+              rf"^## \[{re.escape(version)}\][^\n]*\n(.*?)(?=^## \[|\Z)",
+              text, re.M | re.S,
+          )
+          if match is None:
+              print(f"::warning::CHANGELOG.md has no section for {version}. The release workflow will refuse to publish it.")
+          elif not match.group(1).strip():
+              print(f"::warning::CHANGELOG.md section for {version} is empty. The release workflow will refuse to publish it.")
+          else:
+              print(f"CHANGELOG.md has notes for {version}.")
+          PY
