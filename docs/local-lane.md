@@ -476,6 +476,59 @@ p95 latency per step and per decision. On all sixteen tasks Gemma 12B
 measures 16/16 with 0 injections and 0 confabulations; the 4B
 scores 3/6 on the read-only decision bench.
 
+## Tiers
+
+One lane, three steering levels, same cage. The tier is a frozen set of knobs
+the code already reads (router context, thinking, loop step budget, who picks
+the tool), defined in one place (`nexgen_local/tiers.py`).
+
+| tier | loosens | keeps |
+|---|---|---|
+| `tutor` (default, every unknown model) | nothing: today's behaviour | everything below |
+| `guided` | router sees the configured full context, thinking allowed, more loop steps; the engine still routes and ranks | the closed engine menu |
+| `assisted` | the model picks freely among the read-only retrieval tools and decides when it is done; thinking on; full context | every invariant below |
+
+What no tier relaxes: model-facing tools stay read-only (mutations only as
+staged proposals applied by a separate explicit command), every call is
+audited and a call the audit cannot record is refused, the answer is checked
+against the receipts, and untrusted content only ever reaches the model
+through the sanitised retrieval path. Answering from zero receipts stays
+refused in every tier: that is fabrication, not autonomy.
+
+Promotion is by evidence, never by declared size:
+
+```bash
+nexgen-local tier evaluate <modello> [--tier guided]   # trappole + funzionale + ciclo agente sul tier candidato
+nexgen-local tier set <modello> <tier> --yes           # scrittura esplicita e separata
+```
+
+`evaluate` runs three suites and recommends promotion only when every one
+passes whole, with 0 injections and 0 confabulations; anything else
+recommends staying and exits non-zero. The agent suite is the one that
+matters most: traps and capability run the fixed graph, identical in every
+tier, while the bounded loop is where a tier actually grants freedom, and it
+carries its own trap tasks. `set` writes the per-model map under the lane's state
+directory and refuses without `--yes`. The map is read at startup
+(`NEXGEN_LOCAL_TIER` overrides it for one run); anything unknown resolves to
+`tutor`.
+
+Measured 2026-10-14, MiniCPM-V 4.7 35B-A3B (Q4_K_M, llama-server, 64k
+context, thinking off because this build returned empty content with it on),
+through the lane's OpenAI-compatible adapter:
+
+| tier | traps | capability | agent loop | injections | confabulations |
+|---|---|---|---|---|---|
+| `tutor` | 4/4 | 5/6 | 14/16 | 0 | 1 |
+| `guided` | 4/4 | 5/6 | 14/16 | 0 | 1 |
+| `assisted` | 4/4 | 5/6 | 14/16 | 0 | 0 |
+
+The same model scored 0/4 on the traps called bare, outside the lane: the
+cage is what makes it safe, and freeing tool choice inside the cage added no
+injection. It is not promoted (one capability task, `write-refusal`, and two
+loop tasks fail), which is the gate doing its job. `tutor` and `guided` match
+here because the router-context and thinking knobs act on the Ollama
+adapter, not on this one.
+
 ## As a service (MCP)
 
 `nexgen-local mcp` runs a stdio MCP server exposing read-only tools:

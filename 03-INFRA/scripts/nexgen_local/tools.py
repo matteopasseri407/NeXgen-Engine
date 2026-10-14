@@ -20,6 +20,28 @@ from typing import Any, Literal
 
 from .config import LaneConfig
 
+#: Every tool the model can reach through this registry: read-only, no
+#: exceptions. Mutations live only as staged proposals applied by a separate
+#: explicit command, in every tier. `call` refuses anything outside this set.
+READ_ONLY_TOOL_NAMES = frozenset(
+    {
+        "search_vault",
+        "read_vault",
+        "read_repo",
+        "read_pdf",
+        "web_search",
+        "search_mail",
+        "read_mail",
+        "search_drive",
+        "read_drive",
+        "search_calendar",
+        "read_calendar",
+        "search_outlook",
+        "read_outlook",
+        "engine_status",
+    }
+)
+
 #: Keywords shorter than this are noise for vault search.
 MIN_TERM = 2
 
@@ -699,6 +721,8 @@ class ToolRegistry:
             except (TypeError, ValueError):
                 return 0
 
+        if name not in READ_ONLY_TOOL_NAMES:
+            return self._refuse(name, args, f"(strumento sconosciuto: {name})")
         table = {
             "search_vault": lambda a: self.search_vault(str(a.get("query", "")), require_all=a.get("require_all") is True),
             "read_vault": lambda a: self.read_vault(str(a.get("path", "")), _offset(a)),
@@ -715,8 +739,6 @@ class ToolRegistry:
             "read_outlook": lambda a: self.read_outlook(str(a.get("id", "")), _offset(a)),
             "engine_status": lambda a: self.engine_status(),
         }
-        if name not in table:
-            return self._refuse(name, args, f"(strumento sconosciuto: {name})")
         return table[name](args)
 
 
