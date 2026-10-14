@@ -10,6 +10,8 @@ of any engine release.
 
 ## [Unreleased]
 
+## [2.14.1] - 2026-10-15
+
 ### Fixed
 
 - `release.py ship --install` retries the install once when it was cleanly rolled back: the usual cause is a
