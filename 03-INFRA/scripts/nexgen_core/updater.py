@@ -455,10 +455,21 @@ def _roll_back(
     try:
         with host_mutation("nexgen-update-rollback", state_dir=state_dir, timeout=UPDATE_LOCK_WAIT_SECONDS):
             _git(exc.engine_repo, "merge", "--abort", check=False)
+            # The lock was released between the merge and the apply, so a
+            # person may have committed on the engine meanwhile. Those are
+            # the only non-merge commits since previous_head that the
+            # release does not carry: reset --hard would erase them.
+            foreign = _git(
+                exc.engine_repo, "rev-list", "--no-merges", f"{exc.previous_head}..HEAD", "--not", target,
+                check=False,
+            ).stdout.split()
+            if foreign:
+                raise UpdateError(f"{len(foreign)} commit(s) made on the engine during the update would be lost")
             _git(exc.engine_repo, "reset", "--hard", exc.previous_head)
     except (LockTimeoutError, UpdateError, OSError) as rollback_exc:
         print(
-            f"nexgen-update: the rollback itself failed ({type(rollback_exc).__name__}). "
+            f"nexgen-update: the rollback itself failed "
+            f"({rollback_exc if isinstance(rollback_exc, UpdateError) else type(rollback_exc).__name__}). "
             f"The engine is left as it is. By hand:\n  git -C {exc.engine_repo} reset --hard {exc.previous_head}",
             file=sys.stderr,
         )
@@ -607,8 +618,10 @@ def _recover_failed_update(
         return code
     if code == EXIT_ROLLBACK_FAILED:
         # The rollback could not be finished, so the person needs the full
-        # manual recovery, which is what this path printed before.
+        # manual recovery, which is what this path printed before. The exit
+        # code says so too: a wrapper must tell "restored" from "half-new".
         _report_post_merge_error(exc, pin_file)
+        return EXIT_ROLLBACK_FAILED
     return 1
 
 

@@ -107,8 +107,10 @@ def gated_desktop_names(renderer) -> set[str]:
         name for name, srv in raw.items()
         if isinstance(srv, dict) and srv.get("enabled") is not False
         and srv.get(DESKTOP_ALLOW_KEY) is True and name != GATEWAY
+        # Desktop only mounts stdio, so an HTTP entry is never pending.
+        and srv.get("transport") != "http" and not srv.get("url")
         and srv.get("require_env") and not os.environ.get(srv["require_env"])
-    }
+    } - set(renderer.retired_server_names())
 
 
 def _names_command(path: str, command: str, windows: bool | None = None) -> bool:
