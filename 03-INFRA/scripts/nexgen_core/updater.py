@@ -69,6 +69,9 @@ EXIT_REFUSED = 70
 EXIT_ROLLED_BACK = 71
 EXIT_ROLLBACK_FAILED = 72
 REJECTED_FILE = "update-rejected.json"
+#: This machine's own unattended ceiling, written by --set-unattended-ceiling.
+CEILING_FILE = "update-unattended-ceiling"
+CEILINGS = ("patch", "minor")
 
 
 class UpdateError(NexgenError, RuntimeError):
@@ -417,6 +420,15 @@ def _clear_rejected(state_dir: Path) -> None:
         pass
 
 
+def _read_ceiling(state_dir: Path) -> str:
+    """The ceiling this machine's owner chose; anything unreadable is "patch"."""
+    try:
+        value = (state_dir / CEILING_FILE).read_text(encoding="utf-8").strip().lower()
+    except OSError:
+        return "patch"
+    return value if value in CEILINGS else "patch"
+
+
 def _assert_mergeable(engine_repo: Path, data_repo: Path, target: str, *, split_topology: bool) -> None:
     """The state the merge needs. Checked once early, for a clear refusal, and
     again under the host lock, because a guard cycle may have run in between."""
@@ -516,21 +528,25 @@ def _doctor(entry: list[str], *, data_repo: Path) -> tuple[int | None, int]:
     return (int(match.group(1)) if match else None), result.returncode
 
 
-def _assert_within_unattended_ceiling(current: str, target: str) -> None:
-    """Refuses an unattended jump larger than a patch release.
+def _assert_within_unattended_ceiling(current: str, target: str, ceiling: str = "patch") -> None:
+    """Refuses an unattended jump larger than this machine's ceiling.
 
     The ceiling defaults to the smallest possible jump: same major, same
     minor. A minor or major release changes behaviour a human has not read
-    about yet, so unattended mode declines it. The message names the
+    about yet, so unattended mode declines it. A machine whose owner also
+    writes the releases can raise it to "minor" (`--set-unattended-ceiling`);
+    a major release is never taken unattended. The message names the
     recovery -- running the interactive command by hand -- not the check
     that failed, per the self-upgrader's contract.
     """
     current_major, current_minor, _ = _version_tuple(current)
     target_major, target_minor, _ = _version_tuple(target)
-    if (target_major, target_minor) != (current_major, current_minor):
+    allowed = target_major == current_major and (ceiling == "minor" or target_minor == current_minor)
+    if not allowed:
+        kind = "major" if target_major != current_major else "minor"
         raise UpdateError(
             f"unattended update refuses the jump from v{current} to {target} "
-            "(minor or major version change); recover by running "
+            f"({kind} version change, this machine's ceiling is {ceiling}); recover by running "
             f"'nexgen-update --target {target.removeprefix('v')}' interactively "
             "to review the release notes and confirm it by hand"
         )
@@ -570,6 +586,11 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument("--target", metavar="vX.Y.Z", help="install this released tag instead of the newest one")
+    parser.add_argument(
+        "--set-unattended-ceiling",
+        choices=CEILINGS,
+        help="remember on this machine how large a jump --unattended may take (a major one never), then exit",
+    )
     return parser
 
 
@@ -633,6 +654,12 @@ def main(
 ) -> int:
     args = build_parser().parse_args(argv)
     env = dict(os.environ if environ is None else environ)
+    if args.set_unattended_ceiling:
+        state_dir = _state_dir(env)
+        state_dir.mkdir(parents=True, exist_ok=True)
+        atomic_write_text(state_dir / CEILING_FILE, args.set_unattended_ceiling + "\n")
+        print(f"Unattended updates on this machine now take up to a {args.set_unattended_ceiling} release.")
+        return 0
     previous_head = ""
     engine_repo: Path | None = None
     pin_file: Path | None = None
@@ -674,7 +701,7 @@ def main(
             return 0
 
         if args.unattended:
-            _assert_within_unattended_ceiling(current, target)
+            _assert_within_unattended_ceiling(current, target, _read_ceiling(state_dir))
             if _read_rejected(state_dir).get("target") == target:
                 print(
                     f"{target} was rolled back after a failed unattended update; unattended updates skip it. "

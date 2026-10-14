@@ -10,6 +10,20 @@ of any engine release.
 
 ## [Unreleased]
 
+## [2.14.0] - 2026-10-15
+
+### Added
+
+- `release.py ship [patch|minor|major]`: the whole release in one command, from any maintainer machine. It bumps,
+  opens the `developer -> main` pull request, waits for its checks, merges, waits for the CI on main, signs the tag
+  with the machine's own configured key, refuses to push it unless the *installed* trust anchor would accept it,
+  waits for the release workflow (one rerun on failure), and waits for `sync-developer`. `--install` also updates
+  this machine and runs doctor. It stops at the first step that is not green with one line saying which and why,
+  and running it again resumes instead of bumping twice.
+- `nexgen update --set-unattended-ceiling minor`: a machine whose owner writes the releases can let the hourly
+  unattended update take minor releases too. The default stays `patch`, and a major release is never taken
+  unattended. The choice lives in this machine's state directory, not in the shared data.
+
 ## [2.13.0] - 2026-10-14
 
 ### Changed

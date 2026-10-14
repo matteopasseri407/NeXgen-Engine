@@ -252,7 +252,7 @@ def test_unattended_refuses_a_minor_jump(tmp_path: Path, capsys):
     assert _git(engine, "rev-parse", "HEAD").stdout.strip() == before
     assert (engine / "VERSION").read_text(encoding="utf-8").strip() == "0.1.0"
     error = capsys.readouterr().err
-    assert "minor or major" in error
+    assert "minor version change" in error
     # The failure must name the recovery (the interactive command), not the check.
     assert "nexgen-update --target" in error
 
