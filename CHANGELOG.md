@@ -24,6 +24,9 @@ of any engine release.
   and a thinking decision was cut at its 256-token cap (20 calls in the agent suite) and refused. Tutor now sends
   `enable_thinking: false` to those channels as the Ollama path already did; tiers that may think get a 1536-token
   budget on both paths. MiniCPM-V 4.7 agent loop under tutor: 12/16 to 13/16.
+- Windows: concurrent atomic writes to one file could fail with "Access is denied". Writers that collided on a
+  replace retried in lockstep and collided again until the 0.8 s budget ran out (seen in CI). The retry wait is now
+  jittered and the budget is 2 s; a persistent denial still surfaces.
 
 ### Changed
 
