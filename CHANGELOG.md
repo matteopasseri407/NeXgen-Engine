@@ -10,6 +10,8 @@ of any engine release.
 
 ## [Unreleased]
 
+## [2.15.0] - 2026-10-15
+
 ### Added
 
 - `nexgen release ship [patch|minor|major] [--install]`: the one-command release is now a `nexgen` verb on every
