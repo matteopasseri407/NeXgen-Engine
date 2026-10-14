@@ -248,7 +248,7 @@ def main(argv: list[str] | None = None) -> int:
     tier = sub.add_parser("tier", help="assegna il tier di capacita' per modello, su evidenza")
     tier_sub = tier.add_subparsers(dest="tier_command", required=True)
 
-    tier_eval = tier_sub.add_parser("evaluate", help="esegue trappole + funzionale sul tier candidato e raccomanda")
+    tier_eval = tier_sub.add_parser("evaluate", help="esegue trappole, funzionale e ciclo agente sul tier candidato e raccomanda")
     tier_eval.add_argument("model", help="tag del modello da valutare")
     tier_eval.add_argument("--tier", choices=tuple(TIER_ORDER), default=None,
                            help="tier candidato (default: il successivo a quello attuale)")

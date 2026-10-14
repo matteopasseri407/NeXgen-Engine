@@ -133,3 +133,77 @@ def test_the_environment_chooses_the_model(tmp_path, monkeypatch):
     monkeypatch.setenv(llm_module.LANE_MODEL_ENV, "openai:gpt-test")
     chosen = build_llm(cfg)
     assert isinstance(chosen, ChatModelLLM) and chosen.spec == "openai:gpt-test"
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        ("<think>\nlet me add\n</think>\n\n391", "391"),
+        ("<think>\nSì", "Sì"),
+        ("\n</think>\n\nCiao!", "Ciao!"),
+        ("Nessun pensiero qui.", "Nessun pensiero qui."),
+    ],
+)
+def test_text_keeps_the_answer_and_drops_inline_thought(make, raw, expected):
+    model, _ = make(reply(raw, finish_reason="stop"))
+    assert model.text("sys", "user") == expected
+
+
+def test_an_answer_written_inside_an_unclosed_think_block_is_not_lost(make):
+    model, _ = make(reply("<think>\n{\"route\": \"mail\"}", finish_reason="stop"))
+    assert model.json("sys", "user") == {"route": "mail"}
+
+
+def test_an_unclosed_thought_cut_by_the_budget_is_still_a_truncation(make):
+    model, _ = make(reply("<think>\nstill thinking about", finish_reason="length"))
+    with pytest.raises(LLMError, match="troncata"):
+        model.text("sys", "user")
+
+
+@pytest.mark.parametrize(
+    ("spec", "base", "local"),
+    [
+        ("openai:minicpm", "http://127.0.0.1:8091/v1", True),
+        ("openai:gpt-test", "https://api.openai.com/v1", False),
+        ("openai:gpt-test", "", False),
+        ("anthropic:claude-test", "http://127.0.0.1:8091/v1", False),
+    ],
+)
+def test_only_a_local_openai_compatible_server_gets_llama_cpp_parameters(tmp_path, monkeypatch, spec, base, local):
+    monkeypatch.delenv("OPENAI_API_BASE", raising=False)
+    if base:
+        monkeypatch.setenv("OPENAI_BASE_URL", base)
+    else:
+        monkeypatch.delenv("OPENAI_BASE_URL", raising=False)
+    built = []
+
+    def factory(spec, **kwargs):
+        built.append(kwargs)
+        return FakeChat([])
+
+    ChatModelLLM(LaneConfig(vault_root=tmp_path, model="synthetic"), spec, model_factory=factory)
+    json_kw, text_kw, decision_kw = built
+    if not local:
+        assert not any("extra_body" in kw for kw in built)
+        return
+    off = {"enable_thinking": False}
+    assert text_kw["extra_body"] == {"reasoning_format": "none"}
+    assert json_kw["extra_body"] == {"reasoning_format": "none", "chat_template_kwargs": off}
+    assert decision_kw["extra_body"] == {"chat_template_kwargs": off}
+    assert (json_kw["max_tokens"], decision_kw["max_tokens"]) == (512, 256)
+
+
+def test_a_tier_that_may_think_gets_room_to_finish_the_thought(tmp_path, monkeypatch):
+    monkeypatch.setenv("OPENAI_BASE_URL", "http://127.0.0.1:8091/v1")
+    built = []
+
+    def factory(spec, **kwargs):
+        built.append(kwargs)
+        return FakeChat([])
+
+    cfg = LaneConfig(vault_root=tmp_path, model="synthetic", tier="guided")
+    ChatModelLLM(cfg, "openai:minicpm", model_factory=factory)
+    json_kw, _, decision_kw = built
+    assert json_kw["max_tokens"] == decision_kw["max_tokens"] == llm_module.THINKING_PREDICT
+    assert "chat_template_kwargs" not in json_kw["extra_body"]
+    assert "extra_body" not in decision_kw

@@ -14,6 +14,7 @@ from __future__ import annotations
 import contextlib
 import glob
 import os
+import random
 import re
 import tempfile
 import time
@@ -21,14 +22,20 @@ from pathlib import Path
 
 from nexgen_core.i18n import t
 
-#: Retry budget per filesystem operation. Locks
-#: from antivirus/indexing usually clear in milliseconds; past this budget
-#: the error is real and must surface, not be retried forever.
-_RETRY_BUDGET_SECONDS = 0.8
+#: Retry budget per filesystem operation. Locks from antivirus/indexing
+#: usually clear in milliseconds, but a scan of a fresh file on a loaded
+#: Windows box can hold it longer; past this budget the error is real and
+#: must surface, not be retried forever.
+_RETRY_BUDGET_SECONDS = 2.0
 
 
 def _retry_permission_error(operation):
-    """Retry a transient file lock, never conceal a persistent denial."""
+    """Retry a transient file lock, never conceal a persistent denial.
+
+    The wait is jittered: writers that collided on one target (Windows denies
+    a replace while another is in flight) would otherwise retry in lockstep
+    and collide again until the budget ran out.
+    """
     deadline = time.monotonic() + _RETRY_BUDGET_SECONDS
     delay = 0.05
     while True:
@@ -38,8 +45,8 @@ def _retry_permission_error(operation):
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 raise
-            time.sleep(min(delay, remaining))
-            delay *= 2
+            time.sleep(min(delay * random.uniform(0.5, 1.5), remaining))
+            delay = min(delay * 2, 0.4)
 
 
 def atomic_write_text(

@@ -15,6 +15,7 @@ import threading
 import time
 import weakref
 from typing import Protocol
+from urllib.parse import urlsplit
 
 from nexgen_core.errors import NexgenError
 
@@ -72,6 +73,33 @@ def _json_block(text: str) -> dict | None:
     return parsed if isinstance(parsed, dict) else None
 
 
+_THINK_OPEN = "<think>"
+_THINK_CLOSE = "</think>"
+
+
+def _strip_thinking(text: str, done_reason: str) -> str:
+    """The answer out of a reply that carries its thought inline as `<think>` tags.
+
+    A server asked to return thought unparsed (llama.cpp `reasoning_format: none`) hands back
+    `<think>thought</think>answer`: the answer is what follows the close. Some models (MiniCPM-V
+    4.7 measured) skip the thought on a short answer and write it INSIDE the open block, ending
+    on EOS with no close: a server that does parse the thought then files the whole answer as
+    reasoning and returns empty content. An unclosed block that ended on a natural stop is
+    therefore the answer; one cut by the budget is a truncated thought and yields nothing, so
+    the caller's truncation check still fires. Text with no leading tag is returned unchanged.
+    """
+    head = text.lstrip()
+    if head.startswith(_THINK_OPEN):
+        body = head[len(_THINK_OPEN):]
+        if _THINK_CLOSE in body:
+            return body.split(_THINK_CLOSE, 1)[1].lstrip()
+        return "" if done_reason == "length" else body.strip()
+    # A template that pre-opens the block leaves only the close in the output.
+    if _THINK_CLOSE in head and _THINK_OPEN not in head:
+        return head.split(_THINK_CLOSE, 1)[1].lstrip()
+    return text
+
+
 #: The router sees a short prompt and answers with a small JSON form: a small
 #: context keeps the 4B-class router light while the answerer keeps cfg.num_ctx.
 ROUTER_NUM_CTX = 4096
@@ -80,6 +108,12 @@ ROUTER_NUM_CTX = 4096
 #: choice can run long. Context is cheap on this box (measured: 8K -> 82K
 #: moves residency by ~0.1GB), thinking tokens are not.
 DECISION_NUM_CTX = 16384
+
+#: Output cap of a router or decision channel the tier lets think. The bound
+#: covers thought AND form: at the plain caps (512/256) a thinking decision
+#: was cut mid-thought on 20 of the agent suite's calls (MiniCPM-V 4.7),
+#: and a cut decision is a refused one.
+THINKING_PREDICT = 1536
 
 #: Wall-clock bounds per channel (seconds). num_predict caps how much the
 #: model may generate, not how long a stalled connection may hang: a
@@ -197,11 +231,11 @@ class _ChatModelLLM:
 
         return [SystemMessage(content=system), HumanMessage(content=user)]
 
-    @staticmethod
-    def _content(message) -> str:
+    @classmethod
+    def _content(cls, message) -> str:
         content = getattr(message, "content", "")
         if isinstance(content, str):
-            return content
+            return _strip_thinking(content, cls._done_reason(message))
         return json.dumps(content, ensure_ascii=False)
 
     @staticmethod
@@ -396,8 +430,9 @@ class ChatOllamaLLM(_ChatModelLLM):
             # un 400 su ogni decisione chiuderebbe il loop in escalation.
             can_think = capabilities is not None and "thinking" in capabilities
             thought = True if (tier.thinking and can_think) else False
-            self._json_model = ChatOllama(format="json", reasoning=thought, **router_common)
-            self._decision_model = ChatOllama(reasoning=thought, **decision_common)
+            budget = {"num_predict": THINKING_PREDICT} if thought else {}
+            self._json_model = ChatOllama(format="json", reasoning=thought, **{**router_common, **budget})
+            self._decision_model = ChatOllama(reasoning=thought, **{**decision_common, **budget})
         except TypeError:  # older driver without reasoning/validate switches
             self._json_model = ChatOllama(format="json", **router_common)
             self._text_model = ChatOllama(**answer_common)
@@ -439,10 +474,30 @@ class ChatModelLLM(_ChatModelLLM):
         self._runner = asyncio.Runner()
         self._invoke_lock = threading.Lock()
         self._finalizer = weakref.finalize(self, _close_runtime, self._runner, None)
+        from .tiers import get_tier
+
         common = {"timeout": TEXT_TIMEOUT_SECONDS}
-        self._json_model = factory(spec, temperature=0.0, max_tokens=512, **common)
-        self._text_model = factory(spec, temperature=cfg.temperature, max_tokens=2048, **common)
-        self._decision_model = factory(spec, temperature=0.0, max_tokens=256, **common)
+        router = {"max_tokens": 512}
+        text = {"max_tokens": 2048}
+        decision = {"max_tokens": 256}
+        if _local_openai_endpoint(provider):
+            # Prose and forms ask for the thought inline, so `_content` can recover an answer the
+            # server would otherwise file as reasoning (and langchain-openai discard). The decision
+            # channel stays parsed: its grammar-constrained JSON must not carry tags.
+            inline = {"reasoning_format": "none"}
+            text["extra_body"] = inline
+            # Router and decisions think only where the tier allows it, as on the Ollama path;
+            # a template without the switch ignores it.
+            if get_tier(getattr(cfg, "tier", "tutor") or "tutor").thinking:
+                router = {"max_tokens": THINKING_PREDICT, "extra_body": inline}
+                decision = {"max_tokens": THINKING_PREDICT}
+            else:
+                no_thought = {"chat_template_kwargs": {"enable_thinking": False}}
+                router["extra_body"] = {**inline, **no_thought}
+                decision["extra_body"] = no_thought
+        self._json_model = factory(spec, temperature=0.0, **router, **common)
+        self._text_model = factory(spec, temperature=cfg.temperature, **text, **common)
+        self._decision_model = factory(spec, temperature=0.0, **decision, **common)
 
     def _check_outbound(self, messages) -> None:
         """What the lane reads (mail, notes, files) goes to a third party here, so a credential in it must not.
@@ -473,6 +528,20 @@ class ChatModelLLM(_ChatModelLLM):
             return init_chat_model(spec, **kwargs)
         except ImportError as exc:
             raise LLMError(f"manca il pacchetto del provider per '{spec}': {exc}") from exc
+
+
+def _local_openai_endpoint(provider: str) -> bool:
+    """An `openai:` spec pointed by OPENAI_BASE_URL at a server that is not OpenAI (llama.cpp, vLLM...).
+
+    Only there is `reasoning_format` sent: OpenAI's own API refuses parameters it does not know.
+    """
+    if provider != "openai":
+        return False
+    base = (os.environ.get("OPENAI_BASE_URL") or os.environ.get("OPENAI_API_BASE") or "").strip()
+    if not base:
+        return False
+    host = (urlsplit(base).hostname or "").lower()
+    return bool(host) and host != "openai.com" and not host.endswith(".openai.com")
 
 
 #: Env var that switches the lane to a frontier model: `provider:model`. Unset = the local Ollama pair.
