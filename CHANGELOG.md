@@ -10,6 +10,12 @@ of any engine release.
 
 ## [Unreleased]
 
+### Fixed
+
+- `release.py ship --install` retries the install once when it was cleanly rolled back: the usual cause is a
+  scheduled guard or sync cycle starting in the same minute. The full update output now goes to a log file named
+  in the stop line, instead of only its last line.
+
 ## [2.14.0] - 2026-10-15
 
 ### Added

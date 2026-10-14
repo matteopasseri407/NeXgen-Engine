@@ -163,3 +163,27 @@ def test_install_is_checked_against_the_installed_version(repo):
     (installed / "VERSION").write_text("2.14.0\n", encoding="utf-8")
     world.synced_after = 1
     assert shipper.ship("minor", install=True) == "v2.14.0"
+
+
+def test_an_update_rolled_back_by_a_colliding_timer_is_retried_once(repo, tmp_path):
+    installed = repo / "installed"
+    (installed / "03-INFRA").mkdir(parents=True)
+    (installed / "VERSION").write_text("2.13.0\n", encoding="utf-8")
+    world = FakeWorld(repo)
+    updates = iter([1, 0])
+    original = world.answer
+
+    def answer(argv):
+        if argv[:2] == ("nexgen", "update"):
+            code = next(updates)
+            if code == 0:
+                (installed / "VERSION").write_text("2.14.0\n", encoding="utf-8")
+            return "Rolled back to v2.13.0." if code else "installed", code
+        return original(argv)
+
+    world.answer = answer
+    shipper = _shipper(repo, world, install_log=tmp_path / "install.log")
+    shipper.engine_root = installed / "03-INFRA"
+    assert shipper.ship("minor", install=True) == "v2.14.0"
+    assert "Rolled back" in (tmp_path / "install.log").read_text(encoding="utf-8")
+    assert sum(1 for c in world.calls if c[:2] == ("nexgen", "update")) == 2
