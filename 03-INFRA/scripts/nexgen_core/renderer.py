@@ -55,6 +55,9 @@ class McpRenderer:
         #: While not None, writes are collected here instead of performed
         #: (see :meth:`pending_changes`).
         self._pending: dict[Path, str] | None = None
+        #: Error text per target from the last :meth:`render_all`, for the
+        #: callers that must say why a target failed (the guard does).
+        self.last_errors: dict[str, str] = {}
         self.path_placeholders = {
             "AGENT_ENGINE_ROOT": str(self.engine_root),
             "AGENT_VAULT_DATA": str(self.vault_data),
@@ -188,6 +191,12 @@ class McpRenderer:
 
         return entry
 
+    def manifest_server_names(self) -> list[str]:
+        """Every server the manifest declares, in manifest order, resolvable here or not."""
+        if not self.manifest_path.is_file():
+            return []
+        return list(load_mcp_manifest(self.manifest_path).get("servers", {}))
+
     def load_resolved_servers(self, cli_target: str) -> dict[str, dict[str, Any]]:
         """Loads the MCP servers resolved and filtered for a specific CLI.
 
@@ -266,6 +275,25 @@ class McpRenderer:
             unmounted.add(name)
         return unmounted
 
+    def env_gated_server_names(self, cli_target: str) -> set[str]:
+        """Servers that would mount for this CLI but whose `require_env` is unset here.
+
+        The guard runs without the shell environment, so for these this
+        process can tell neither "expected" nor "stray": checks must not
+        decide on them, or the same machine gets opposite verdicts from
+        the guard and from the shell.
+        """
+        if cli_target == "claude-desktop":
+            from nexgen_core.mcp_render.claude_desktop import gated_desktop_names
+            return gated_desktop_names(self)
+        if not self.manifest_path.is_file():
+            return set()
+        return {
+            name for name, srv in load_mcp_manifest(self.manifest_path).get("servers", {}).items()
+            if srv.get("require_env") and not os.environ.get(srv["require_env"])
+            and place(srv, cli_target).kind == DIRECT
+        }
+
     def _drop_unmounted(self, mcp_servers: dict, mounted: dict, cli_target: str = "") -> None:
         for name in self.unmounted_server_names(mounted, cli_target):
             mcp_servers.pop(name, None)
@@ -316,6 +344,7 @@ class McpRenderer:
     def render_all(self, write: bool = False) -> dict[str, bool]:
         """Renders for all targets, each isolated: one corrupt live config must not stall the others."""
         results: dict[str, bool] = {}
+        self.last_errors = {}
         for name, method in (
             ("claude", self.render_claude),
             ("claude-desktop", self.render_claude_desktop),
@@ -325,8 +354,11 @@ class McpRenderer:
         ):
             try:
                 ok, _ = method(write=write)
-            except Exception:
+            except Exception as exc:
+                # Keep the message: a bare "failed" tells the user nothing
+                # about which line of which config to fix.
                 ok = False
+                self.last_errors[name] = str(exc) or type(exc).__name__
             results[name] = ok
         return results
 

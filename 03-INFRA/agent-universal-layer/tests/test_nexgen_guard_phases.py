@@ -185,3 +185,84 @@ def test_no_other_module_spells_the_severity_prefixes_by_hand():
         if by_hand.search(line)
     ]
     assert offenders == []
+
+
+# ------------------------------------------------------------- mcp render result
+
+
+def test_mcp_phase_claims_success_only_when_every_cli_rendered_and_names_the_failure(tmp_path, monkeypatch):
+    """The phase used to append "regenerated for every CLI" before it looked at the
+    results, so a codex config that could not be written was reported as a success.
+    A failed target must be named together with the error that stopped it."""
+    from nexgen_core import guard as guard_module
+    from nexgen_core import mcp_trials
+    from nexgen_core.i18n import t
+
+    class FailingRenderer:
+        def __init__(self, **_kw):
+            self.last_errors: dict[str, str] = {}
+
+        def render_all(self, write: bool = False) -> dict[str, bool]:
+            self.last_errors = {"codex": "line 3 is not valid TOML"}
+            return {"claude": True, "claude-desktop": True, "antigravity": True, "opencode": True, "codex": False}
+
+    monkeypatch.setattr(guard_module, "McpRenderer", FailingRenderer)
+    monkeypatch.setattr(mcp_trials, "purge_expired", lambda: [])
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    runner = GuardRunner(vault_data=vault, home=tmp_path / "home")
+    actions: list[str] = []
+
+    runner._phase_mcp(actions, skip_mcp=False)
+
+    assert t("MCP configurations regenerated for every CLI") not in actions
+    assert any(action_notes.is_warning(a) and "codex" in a and "line 3 is not valid TOML" in a for a in actions)
+
+
+def test_dead_opencode_instructions_are_not_rewritten_when_their_safety_copy_fails(tmp_path, monkeypatch):
+    """The backup of opencode.json was suppressed and the file rewritten anyway, so a
+    failed copy removed the only record of the user's own lines. No copy, no rewrite."""
+    import json
+
+    from nexgen_core import files
+    from nexgen_core.paths import canonical_instructions
+    from nexgen_core.renderer import McpRenderer
+
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    runner = GuardRunner(vault_data=vault, home=tmp_path / "home")
+    config = McpRenderer(vault_data=vault, home=tmp_path / "home").opencode_config_path()
+    config.parent.mkdir(parents=True, exist_ok=True)
+    original = json.dumps({"instructions": [str(canonical_instructions(vault)), "~/my-own-rules.md"]}, indent=2) + "\n"
+    config.write_text(original, encoding="utf-8")
+
+    def no_space(*_a, **_kw):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(files, "backup_file", no_space)
+
+    outcome = runner._drop_dead_opencode_instructions_array()
+
+    assert outcome is not None and action_notes.is_warning(outcome)
+    assert config.read_text(encoding="utf-8") == original
+
+
+def test_claude_md_symlink_survives_the_pointer_being_rewritten(tmp_path, monkeypatch):
+    """~/CLAUDE.md is often a link into a dotfiles repository. Rewriting the pointer
+    replaced the link with a regular file, detaching it from its owner."""
+    vault = tmp_path / "vault"
+    canon = vault / "03-INFRA" / "agent-universal-layer" / "instructions" / "AGENTS.md"
+    canon.parent.mkdir(parents=True)
+    canon.write_text("# canon\n", encoding="utf-8")
+    home = tmp_path / "home"
+    home.mkdir()
+    dotfiles = tmp_path / "dotfiles" / "CLAUDE.md"
+    dotfiles.parent.mkdir()
+    dotfiles.write_text("hand-written lines\n", encoding="utf-8")
+    (home / "CLAUDE.md").symlink_to(dotfiles)
+    runner = GuardRunner(vault_data=vault, home=home)
+
+    runner.align_instructions()
+
+    assert (home / "CLAUDE.md").is_symlink()
+    assert dotfiles.read_text(encoding="utf-8").startswith("# Claude compatibility pointer")

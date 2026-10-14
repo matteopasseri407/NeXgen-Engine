@@ -237,6 +237,12 @@ def backup_file(path: Path, *, tag: str | None = None, keep: int | None = None,
     try:
         if text is None:
             shutil.copy2(path, backup_path)
+            # copy2 gives the backup the source's mode, which undoes the
+            # private mkstemp file made above. Rendered configs hold bearer
+            # tokens, so a backup must never be readable by more people than
+            # the mkstemp default allows.
+            if os.name != "nt":
+                os.chmod(backup_path, 0o600)
         else:
             atomic_write_text(backup_path, text, preserve_mode=False)
     except BaseException:

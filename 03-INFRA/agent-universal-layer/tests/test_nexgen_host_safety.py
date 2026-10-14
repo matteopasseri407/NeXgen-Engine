@@ -178,8 +178,7 @@ def test_unattended_update_that_fails_after_the_merge_is_undone_and_not_retried_
     assert "unattended updates skip it" in capsys.readouterr().out
 
 
-def test_interactive_update_never_rolls_back_on_its_own(tmp_path, monkeypatch, capsys):
-    """A person is there to look first; this contract did not change."""
+def test_interactive_update_rolls_back_a_failed_apply_like_an_unattended_one(tmp_path, monkeypatch, capsys):
     updater = _load_updater()
     _verified(updater, monkeypatch)
     _origin, engine = _release_whose_apply_fails(tmp_path)
@@ -188,8 +187,8 @@ def test_interactive_update_never_rolls_back_on_its_own(tmp_path, monkeypatch, c
     result = updater.main(["--yes"], environ=_env(engine))
 
     assert result == 1
-    assert _git(engine, "rev-parse", "HEAD").stdout.strip() != before
-    assert "will not roll back automatically" in capsys.readouterr().err
+    assert _git(engine, "rev-parse", "HEAD").stdout.strip() == before
+    assert "Rolled back to" in capsys.readouterr().err
 
 
 def test_a_successful_update_forgets_the_rejected_release(tmp_path, monkeypatch):
@@ -283,3 +282,32 @@ def test_heartbeat_turns_the_three_update_outcomes_that_need_a_person_into_alert
     assert len(alerts) == 1
     assert alerts[0]["alert_key"] in {"update_refused", "update_rolled_back", "update_rollback_failed"}
     assert alerts[0]["title"] and alerts[0]["message"] and alerts[0]["action"]
+
+
+@pytest.mark.parametrize(("value", "enabled"), [
+    (None, True), ("", True), ("1", True), ("yes", True), ("0", False), (" OFF ", False), ("false", False), ("no", False),
+])
+def test_the_unattended_update_is_on_by_default_and_the_setting_turns_it_off(value, enabled):
+    from nexgen_core import beat
+
+    environ = {} if value is None else {beat.AUTO_UPDATE_ENV: value}
+    assert beat.auto_update_enabled(environ) is enabled
+
+
+def test_a_disabled_auto_update_never_runs_the_updater_and_says_why(tmp_path, monkeypatch, caplog):
+    from nexgen_core import beat
+    from nexgen_core.beat import Heartbeat
+
+    calls: list[list[str]] = []
+    monkeypatch.setattr(beat.EngineUpdater, "main", staticmethod(lambda argv, **kw: calls.append(argv) or 0))
+    beat_obj = Heartbeat(home=tmp_path / "home", vault_data=tmp_path / "vault", engine_root=tmp_path / "engine")
+
+    monkeypatch.setenv(beat.AUTO_UPDATE_ENV, "0")
+    with caplog.at_level("INFO", logger="nexgen_core.beat"):
+        result = beat_obj.run_self_upgrade()
+    assert calls == [] and result == {"ok": True, "skipped": "disabled"}
+    assert beat.AUTO_UPDATE_ENV in caplog.text
+
+    monkeypatch.delenv(beat.AUTO_UPDATE_ENV)
+    assert beat_obj.run_self_upgrade()["exit_code"] == 0
+    assert calls == [["--unattended"]]

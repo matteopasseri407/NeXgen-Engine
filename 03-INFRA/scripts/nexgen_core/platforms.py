@@ -19,7 +19,13 @@ The wording of each status is deliberately about evidence, not confidence.
 """
 from __future__ import annotations
 
+import os
+import sys
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
+from pathlib import Path
+
+from nexgen_core.paths import resolve_home
 
 
 @dataclass(frozen=True)
@@ -73,6 +79,99 @@ RUNTIMES: tuple[Support, ...] = (
         "--sandbox with the prompt on stdin; vendor isolation limits are documented in docs/council.md",
     ),
 )
+
+@dataclass(frozen=True)
+class DesktopApp:
+    """A desktop app that shares its config with a CLI the engine already configures.
+
+    ChatGPT desktop bundles Codex and reads the same ~/.codex as the CLI;
+    Antigravity IDE reads the same ~/.gemini as `agy`. So an app on its own
+    must still get the targets it shares, and the locations below are only
+    used to decide that the app is on this machine.
+
+    `bundled` names the CLI binary shipped inside the app, relative to the
+    app root, when there is one. The macOS and Windows layouts are not
+    verified on a real install; only the Linux one is.
+    """
+
+    name: str
+    targets: tuple[str, ...]
+    locations: Mapping[str, tuple[str, ...]]
+    bundled: tuple[str, ...] = ()
+
+
+#: Where each app lives per operating-system family ("linux", "darwin",
+#: "win32"). `%LOCALAPPDATA%` is expanded at lookup time. The Windows Store
+#: package is not listed: its folder under WindowsApps is versioned and not
+#: readable without elevated rights, so it cannot be detected honestly.
+DESKTOP_APPS: tuple[DesktopApp, ...] = (
+    DesktopApp(
+        "ChatGPT",
+        ("codex",),
+        {
+            "linux": ("/usr/lib/chatgpt", "/usr/bin/chatgpt"),
+            "darwin": ("/Applications/ChatGPT.app",),
+            "win32": ("%LOCALAPPDATA%/Programs/ChatGPT",),
+        },
+        bundled=("resources/codex", "resources/codex.exe", "Contents/Resources/codex"),
+    ),
+    DesktopApp(
+        "Antigravity",
+        ("antigravity",),
+        {
+            "linux": ("/opt/antigravity-ide", "/usr/share/antigravity"),
+            "darwin": ("/Applications/Antigravity.app",),
+            "win32": ("%LOCALAPPDATA%/Programs/Antigravity",),
+        },
+    ),
+)
+
+
+def _family(platform: str) -> str:
+    if platform.startswith("win"):
+        return "win32"
+    if platform == "darwin":
+        return "darwin"
+    return "linux"
+
+
+def _candidate_roots(app: DesktopApp, family: str, env: Mapping[str, str]) -> list[Path]:
+    roots: list[Path] = []
+    local_app_data = env.get("LOCALAPPDATA") or str(resolve_home() / "AppData" / "Local")
+    for raw in app.locations.get(family, ()):
+        roots.append(Path(raw.replace("%LOCALAPPDATA%", local_app_data)))
+    return roots
+
+
+def existing_roots(app: DesktopApp, platform: str | None = None, env: Mapping[str, str] | None = None) -> list[Path]:
+    """The install locations of one app that are present on this machine."""
+    family = _family(sys.platform if platform is None else platform)
+    environment = os.environ if env is None else env
+    return [root for root in _candidate_roots(app, family, environment) if root.exists()]
+
+
+def installed_desktop_apps(
+    platform: str | None = None,
+    env: Mapping[str, str] | None = None,
+    exists: Callable[[Path], bool] = Path.exists,
+) -> list[DesktopApp]:
+    """The desktop apps present on this machine, in declaration order.
+
+    `platform`, `env` and `exists` are injectable so every operating system
+    can be exercised from one test run. A missing or unreadable location is
+    simply "not installed": detection never raises.
+    """
+    family = _family(sys.platform if platform is None else platform)
+    environment = os.environ if env is None else env
+    found: list[DesktopApp] = []
+    for app in DESKTOP_APPS:
+        try:
+            if any(exists(root) for root in _candidate_roots(app, family, environment)):
+                found.append(app)
+        except OSError:
+            continue
+    return found
+
 
 START = "<!-- platform-status:start -->"
 END = "<!-- platform-status:end -->"

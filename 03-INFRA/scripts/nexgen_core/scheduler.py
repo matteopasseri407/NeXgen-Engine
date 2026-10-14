@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -86,9 +87,49 @@ def _systemd_env_line(key: str, value: str) -> str:
     return f'Environment="{key}={escaped}"'
 
 
+_STANDARD_SERVICE_DIRS = (
+    "/usr/local/sbin",
+    "/usr/local/bin",
+    "/usr/sbin",
+    "/usr/bin",
+    "/sbin",
+    "/bin",
+    "/snap/bin",
+)
+
+#: What the guard and its children launch by name. Their directories join the
+#: unit's PATH even when they live outside the standard ones (nvm, volta,
+#: ~/.opencode, a Homebrew prefix).
+_GUARD_TOOLS = ("git", "node", "npx", "uv", "gh", "claude", "codex", "agy", "opencode")
+
+
+def _tool_dirs() -> list[str]:
+    return [str(Path(found).parent) for tool in _GUARD_TOOLS if (found := shutil.which(tool))]
+
+
+def _unit_path_entries(home: Path) -> list[str]:
+    """The PATH directories the installed units already declare, in order."""
+    entries: list[str] = []
+    for name in ("agent-sync.service", "agent-heartbeat.service"):
+        try:
+            text = (home / ".config" / "systemd" / "user" / name).read_text(encoding="utf-8")
+        except OSError:
+            continue
+        match = re.search(r'^Environment="PATH=([^"]*)"', text, re.M)
+        if match:
+            entries.extend(match.group(1).split(os.pathsep))
+    return entries
+
+
 def _scheduler_path(home: Path) -> str:
-    """The PATH a unit declares: the home launchers first, then what the
-    caller sees, each directory once.
+    """The PATH a unit declares: the home launchers, the directory of the
+    interpreter running the engine, then the standard system directories.
+
+    The caller's PATH is not copied wholesale. Every shell has its own PATH,
+    so copying it made each shell that ran the install rewrite the unit and
+    reload the timers. The interpreter directory is there
+    because the shim starts whatever `python3` is first on PATH, and that must
+    be the interpreter that installed the engine. Each directory appears once.
 
     The guard runs with the PATH its own unit declares, so without the
     deduplication every cycle prepended the same two directories to a value it
@@ -99,7 +140,15 @@ def _scheduler_path(home: Path) -> str:
     entries = [
         str(home / ".local" / "bin"),
         str(home / ".opencode" / "bin"),
-        *os.environ.get("PATH", os.defpath).split(os.pathsep),
+        str(Path(sys.executable).parent) if sys.executable else "",
+        # What the installed units already declare stays, in its order, and
+        # the directories of the tools this shell can see are only ever added.
+        # A shell that cannot see nvm therefore never takes `node` away from
+        # the guard, and two shells converge on one unit instead of
+        # rewriting it against each other.
+        *_unit_path_entries(home),
+        *_tool_dirs(),
+        *_STANDARD_SERVICE_DIRS,
     ]
     seen: set[str] = set()
     unique: list[str] = []
@@ -195,7 +244,10 @@ def _write_if_different(path: Path, content: str) -> bool:
         # A managed symlink farm points elsewhere on purpose: write through
         # the link instead of replacing it with a regular file.
         path = target
-    return write_text_if_changed(path, content)
+    # Units are rewritten whenever their content changes; without a rotation
+    # every change leaves another backup behind. Keep the last three, the
+    # same policy the MCP renderer uses.
+    return write_text_if_changed(path, content, keep=3)
 
 
 def _resolve_cmd(name: str) -> str | None:

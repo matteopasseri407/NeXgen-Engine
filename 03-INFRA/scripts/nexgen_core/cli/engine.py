@@ -175,6 +175,8 @@ def cmd_plan(args) -> int:
             print(t("No drift in the probed domains (see 'not checked here' below for the rest)."))
         for line in plan.in_sync:
             print(t("  aligned: {line}", line=line))
+        for line in plan.needs_attention:
+            print(t("  needs attention: {line}", line=line))
         for line in plan.not_checked:
             print(t("  not checked here: {line}", line=line))
     if getattr(args, "check", False) and plan.drift:

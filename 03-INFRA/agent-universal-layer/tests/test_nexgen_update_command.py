@@ -555,12 +555,11 @@ def test_failed_split_pin_publish_stops_before_provisioning(tmp_path, capsys, mo
     result = updater.main(["--yes", "--allow-unverified"], environ=_env(engine, data))
 
     assert result == 1
-    assert sync_called is False
-    assert (engine / "VERSION").read_text(encoding="utf-8").strip() == "0.2.0"
-    assert _git(data, "status", "--porcelain").stdout.strip()
+    assert sync_called is True  # the rollback re-applies the restored tree
+    assert (engine / "VERSION").read_text(encoding="utf-8").strip() == "0.1.0"
     error = capsys.readouterr().err
     assert "private engine pin was not published" in error
-    assert "If 99-INDEX/ENGINE-PIN.txt moved" in error
+    assert "Rolled back to v0.1.0" in error
 
 
 def test_unreadable_pre_upgrade_doctor_blocks_before_merge(tmp_path, capsys, monkeypatch):
@@ -576,7 +575,7 @@ def test_unreadable_pre_upgrade_doctor_blocks_before_merge(tmp_path, capsys, mon
     assert "pre-upgrade doctor did not return a readable" in capsys.readouterr().err
 
 
-def test_failed_provisioning_does_not_auto_rollback(tmp_path, capsys, monkeypatch):
+def test_failed_provisioning_rolls_back_to_the_previous_head(tmp_path, capsys, monkeypatch):
     updater = _load_updater()
     _origin, engine = _upgrade_fixture(tmp_path)
     previous = _git(engine, "rev-parse", "HEAD").stdout.strip()
@@ -592,10 +591,11 @@ def test_failed_provisioning_does_not_auto_rollback(tmp_path, capsys, monkeypatc
     result = updater.main(["--yes", "--allow-unverified"], environ=_env(engine))
 
     assert result == 1
-    assert (engine / "VERSION").read_text(encoding="utf-8").strip() == "0.2.0"
+    assert _git(engine, "rev-parse", "HEAD").stdout.strip() == previous
+    assert (engine / "VERSION").read_text(encoding="utf-8").strip() == "0.1.0"
     error = capsys.readouterr().err
     assert "agent-sync apply failed" in error
-    assert f"git -C {engine} reset --hard {previous}" in error
+    assert "Rolled back to v0.1.0" in error
 
 
 @pytest.mark.parametrize("failure", ["apply", "doctor"])
@@ -619,9 +619,10 @@ def test_operational_exception_after_merge_keeps_recovery_instructions(tmp_path,
 
     monkeypatch.setattr(updater, "_run", failing_command)
     assert updater.main(["--yes", "--allow-unverified"], environ=_env(engine)) == 1
-    assert (engine / "VERSION").read_text().strip() == "0.2.0"
+    assert _git(engine, "rev-parse", "HEAD").stdout.strip() == previous
+    assert (engine / "VERSION").read_text().strip() == "0.1.0"
     error = capsys.readouterr().err
-    assert f"git -C {engine} reset --hard {previous}" in error
+    assert "Rolled back to v0.1.0" in error
     assert "synthetic private payload" not in error
 
 
@@ -638,7 +639,7 @@ def test_command_launch_failure_is_an_update_error(tmp_path, monkeypatch):
     assert "synthetic private payload" not in str(error.value)
 
 
-def test_merge_failure_after_ref_moved_does_not_claim_rollback(tmp_path, capsys, monkeypatch):
+def test_merge_failure_after_ref_moved_is_rolled_back(tmp_path, capsys, monkeypatch):
     updater = _load_updater()
     _, engine = _upgrade_fixture(tmp_path)
     previous = _git(engine, "rev-parse", "HEAD").stdout.strip()
@@ -652,10 +653,10 @@ def test_merge_failure_after_ref_moved_does_not_claim_rollback(tmp_path, capsys,
 
     monkeypatch.setattr(updater, "_run", failure_after_merge)
     assert updater.main(["--yes", "--allow-unverified"], environ=_env(engine)) == 1
-    assert (engine / "VERSION").read_text().strip() == "0.2.0"
+    assert _git(engine, "rev-parse", "HEAD").stdout.strip() == previous
+    assert (engine / "VERSION").read_text().strip() == "0.1.0"
     error = capsys.readouterr().err
-    assert "was rolled back" not in error
-    assert f"git -C {engine} reset --hard {previous}" in error
+    assert "Rolled back to v0.1.0" in error
 
 
 def test_live_silent_update_command_obeys_deadline_and_is_reaped(tmp_path, monkeypatch):
@@ -689,7 +690,7 @@ def test_live_silent_update_command_obeys_deadline_and_is_reaped(tmp_path, monke
         pool.shutdown(wait=True)
 
 
-def test_failed_abort_keeps_recovery_instructions_when_ref_is_unchanged(tmp_path, capsys, monkeypatch):
+def test_a_conflicted_merge_whose_abort_fails_is_undone_by_the_rollback(tmp_path, capsys, monkeypatch):
     updater = _load_updater()
     _, engine = _upgrade_fixture(tmp_path)
     _git(engine, "config", "user.name", "nexgen merge test")
@@ -709,13 +710,12 @@ def test_failed_abort_keeps_recovery_instructions_when_ref_is_unchanged(tmp_path
     monkeypatch.setattr(updater, "_run", failed_abort)
     assert updater.main(["--yes", "--allow-unverified"], environ=_env(engine)) == 1
     assert _git(engine, "rev-parse", "HEAD").stdout.strip() == previous
-    assert "<<<<<<<" in changelog.read_text(encoding="utf-8")
+    assert changelog.read_text(encoding="utf-8") == "Local conflicting changelog.\n"  # no conflict markers left
     error = capsys.readouterr().err
-    assert "was rolled back" not in error
-    assert f"git -C {engine} reset --hard {previous}" in error
+    assert "Rolled back to v0.1.0" in error
 
 
-def test_new_doctor_failure_is_reported_without_auto_rollback(tmp_path, capsys, monkeypatch):
+def test_new_doctor_failure_is_rolled_back(tmp_path, capsys, monkeypatch):
     updater = _load_updater()
     _origin, engine = _upgrade_fixture(tmp_path)
     previous = _git(engine, "rev-parse", "HEAD").stdout.strip()
@@ -733,10 +733,37 @@ def test_new_doctor_failure_is_reported_without_auto_rollback(tmp_path, capsys, 
     result = updater.main(["--yes", "--allow-unverified"], environ=_env(engine))
 
     assert result == 1
-    assert (engine / "VERSION").read_text(encoding="utf-8").strip() == "0.2.0"
+    assert _git(engine, "rev-parse", "HEAD").stdout.strip() == previous
+    assert (engine / "VERSION").read_text(encoding="utf-8").strip() == "0.1.0"
     error = capsys.readouterr().err
     assert "introduced new failures: before=0, after=1" in error
+    assert "Rolled back to v0.1.0" in error
+
+
+def test_interactive_rollback_that_cannot_finish_keeps_the_manual_recovery(tmp_path, capsys, monkeypatch):
+    updater = _load_updater()
+    _origin, engine = _upgrade_fixture(tmp_path)
+    previous = _git(engine, "rev-parse", "HEAD").stdout.strip()
+    doctor_results = iter(((0, 0), (1, 1)))
+    monkeypatch.setattr(updater, "_doctor", lambda *_args, **_kwargs: next(doctor_results))
+    real_run = updater._run
+    entry = _tree_entry(engine)
+
+    def fake_sync_and_broken_reset(args, **kwargs):
+        if args == entry + ["apply"]:
+            return subprocess.CompletedProcess(args, 0, "", "")
+        if args[-3:] == ["reset", "--hard", previous]:
+            raise updater.UpdateError("synthetic reset failure")
+        return real_run(args, **kwargs)
+
+    monkeypatch.setattr(updater, "_run", fake_sync_and_broken_reset)
+    result = updater.main(["--yes", "--allow-unverified"], environ=_env(engine))
+
+    assert result == 1
+    error = capsys.readouterr().err
+    assert "could not be completed" in error
     assert f"git -C {engine} reset --hard {previous}" in error
+    assert "Rolled back" not in error
 
 
 def test_provisioner_installs_real_command_on_both_platforms(sandbox):

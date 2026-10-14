@@ -65,9 +65,11 @@ own output rather than hidden:
 `--check` turns drift into a non-zero exit for CI; `--json` emits the plan
 with provenance (engine version, vault, branch, commit, per-domain findings).
 The plan never runs remedies, never writes, and never touches the network.
-Three rules keep the plan honest: a probe that cannot run is reported as
+Four rules keep the plan honest: a probe that cannot run is reported as
 drift (apply would fail the same way), an undetermined probe is declared
-under "not checked here" instead of disappearing, and a config file absent
+under "not checked here" instead of disappearing, a warning is never
+"aligned" (one apply repairs is drift, one that waits on the user is listed
+under "needs attention"), and a config file absent
 for a CLI the manifest expects to configure is stated as a planned action
 (`render would create …`), not as a green light.
 

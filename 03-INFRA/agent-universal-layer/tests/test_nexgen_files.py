@@ -128,3 +128,15 @@ def test_write_if_changed_skips_identical(tmp_path: Path):
     assert write_text_if_changed(target, "new", keep=3) is True
     assert target.read_text(encoding="utf-8") == "new"
     assert len(list(tmp_path.glob("*.bak-*"))) == 1
+
+
+def test_backup_of_a_loosely_moded_config_is_private(tmp_path: Path):
+    """A backup copied the source's mode, so a 0644 config that held resolved tokens
+    left a readable 0644 copy behind. Backups are 0600 on POSIX whatever the source."""
+    if os.name == "nt":
+        pytest.skip("mode bits are a POSIX concept")
+    target = tmp_path / "config.json"
+    target.write_text('{"token": "secret"}', encoding="utf-8")
+    os.chmod(target, 0o644)
+    backup = backup_file(target, tag="instructions")
+    assert backup is not None and backup.stat().st_mode & 0o777 == 0o600

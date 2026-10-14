@@ -278,3 +278,41 @@ def test_windows_paths_honor_appdata_and_fall_back_under_home(tmp_path, monkeypa
     fallback = claude_desktop_config(tmp_path / "home")
     assert str(fallback).startswith(str(tmp_path / "home"))
     assert fallback.name == "claude_desktop_config.json"
+
+
+def test_guard_without_the_shell_env_keeps_env_gated_desktop_entries(tmp_path, monkeypatch):
+    """The guard runs without OCR_TUNNEL_PORT: what the shell wrote must survive it."""
+    renderer = make_renderer(tmp_path, {
+        "ocr": {"transport": "stdio", "command": "/usr/bin/python3", "args": ["ocr.py"], "tier": "core",
+                "require_env": "OCR_TUNNEL_PORT", "desktop_allow": True},
+    })
+    desktop_file(tmp_path).parent.mkdir(parents=True)
+    monkeypatch.setenv("OCR_TUNNEL_PORT", "9000")
+    renderer.render_claude_desktop(write=True)
+    interactive = desktop_file(tmp_path).read_text(encoding="utf-8")
+
+    monkeypatch.delenv("OCR_TUNNEL_PORT")
+    renderer.render_claude_desktop(write=True)
+    assert desktop_file(tmp_path).read_text(encoding="utf-8") == interactive
+    assert renderer.pending_changes("claude-desktop") == {}
+
+
+def test_a_command_resolved_earlier_survives_a_different_path(tmp_path, monkeypatch):
+    """Guard and shell see different PATHs: the absolute command must not flip."""
+    bins = []
+    for folder in ("shell-bin", "guard-bin"):
+        exe = tmp_path / folder / "tool"
+        exe.parent.mkdir()
+        exe.write_text("#!/bin/sh\n")
+        exe.chmod(0o755)
+        bins.append(exe)
+    renderer = make_renderer(tmp_path, {
+        "alpha": {"transport": "stdio", "command": "tool", "args": [], "tier": "core", "desktop_allow": True},
+    })
+    desktop_file(tmp_path).parent.mkdir(parents=True)
+    monkeypatch.setenv("PATH", str(bins[0].parent))
+    renderer.render_claude_desktop(write=True)
+    monkeypatch.setenv("PATH", str(bins[1].parent))
+    renderer.render_claude_desktop(write=True)
+    table = json.loads(desktop_file(tmp_path).read_text(encoding="utf-8"))["mcpServers"]
+    assert table["alpha"]["command"] == str(bins[0])
