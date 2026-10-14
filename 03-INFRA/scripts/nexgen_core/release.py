@@ -273,6 +273,12 @@ def _preflight() -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
+    argv = sys.argv[1:] if argv is None else argv
+    if argv[:1] == ["ship"]:
+        # The whole release in one command; it has its own options and help.
+        from nexgen_core.release_ship import main as ship_main
+
+        return ship_main(argv[1:])
     parser = argparse.ArgumentParser(
         prog="nexgen-release-rules",
         description="The release rules, callable from CI and from the command line.",
@@ -284,6 +290,7 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("tag")
 
     sub.add_parser("preflight", help="Everything a release needs to be true before tagging")
+    sub.add_parser("ship", help="Bump, merge, tag, publish and sync in one command (see 'ship --help')")
 
     p = sub.add_parser("scan-range", help="Which commit range needs to be scanned")
     p.add_argument("--event", required=True)
