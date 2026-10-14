@@ -143,7 +143,7 @@ def _skew_setup(monkeypatch, bundled_version, cli_version):
     monkeypatch.setattr(desktop_checks, "installed_desktop_apps", lambda: [platforms.DESKTOP_APPS[0]])
     monkeypatch.setattr(desktop_checks, "_bundled_codex", lambda: Path("/usr/lib/chatgpt/resources/codex"))
     monkeypatch.setattr(desktop_checks.shutil, "which", lambda name: "/home/user/.local/bin/codex")
-    versions = {"/usr/lib/chatgpt/resources/codex": bundled_version, "/home/user/.local/bin/codex": cli_version}
+    versions = {str(Path("/usr/lib/chatgpt/resources/codex")): bundled_version, "/home/user/.local/bin/codex": cli_version}
     monkeypatch.setattr(desktop_checks, "_binary_version", lambda binary: versions[str(binary)])
 
 

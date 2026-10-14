@@ -388,3 +388,20 @@ def test_applying_twice_changes_nothing_but_machine_state(sandbox, monkeypatch):
     after_first = tree()
     assert apply_once().success
     assert tree() == after_first
+
+
+def test_a_unit_path_with_backslashes_reads_back_unchanged(tmp_path, monkeypatch):
+    """The unit escapes backslashes; reading the PATH back must undo it, or
+    each install doubles them and the unit never stops changing (Windows paths)."""
+    from nexgen_core import scheduler
+
+    home = tmp_path / "home"
+    unit = home / ".config/systemd/user/agent-sync.service"
+    unit.parent.mkdir(parents=True)
+    monkeypatch.setattr(scheduler, "_tool_dirs", lambda: [r"/opt/odd\dir"])
+
+    def build():
+        return scheduler._systemd_service_content(home, tmp_path / "engine/03-INFRA", tmp_path / "v", tmp_path / "v")
+
+    unit.write_text(build(), encoding="utf-8")
+    assert build() == unit.read_text(encoding="utf-8")

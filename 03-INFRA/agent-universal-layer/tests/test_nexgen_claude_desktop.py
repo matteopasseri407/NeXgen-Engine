@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -301,7 +302,8 @@ def test_a_command_resolved_earlier_survives_a_different_path(tmp_path, monkeypa
     """Guard and shell see different PATHs: the absolute command must not flip."""
     bins = []
     for folder in ("shell-bin", "guard-bin"):
-        exe = tmp_path / folder / "tool"
+        # Windows resolves a bare name only through PATHEXT.
+        exe = tmp_path / folder / ("tool.exe" if os.name == "nt" else "tool")
         exe.parent.mkdir()
         exe.write_text("#!/bin/sh\n")
         exe.chmod(0o755)

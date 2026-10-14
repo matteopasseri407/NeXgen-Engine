@@ -115,9 +115,13 @@ def _unit_path_entries(home: Path) -> list[str]:
             text = (home / ".config" / "systemd" / "user" / name).read_text(encoding="utf-8")
         except OSError:
             continue
-        match = re.search(r'^Environment="PATH=([^"]*)"', text, re.M)
+        match = re.search(r'^Environment="PATH=((?:[^"\\]|\\.)*)"', text, re.M)
         if match:
-            entries.extend(match.group(1).split(os.pathsep))
+            # Undo _systemd_env_line's escaping, or every read would double
+            # the backslashes of a path that has them and the unit would
+            # never stop changing.
+            value = re.sub(r"\\(.)", r"\1", match.group(1))
+            entries.extend(value.split(os.pathsep))
     return entries
 
 
