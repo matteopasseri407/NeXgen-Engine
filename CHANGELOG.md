@@ -10,6 +10,8 @@ of any engine release.
 
 ## [Unreleased]
 
+## [2.14.0] - 2026-10-15
+
 ### Added
 
 - `release.py ship [patch|minor|major]`: the whole release in one command, from any maintainer machine. It bumps,
