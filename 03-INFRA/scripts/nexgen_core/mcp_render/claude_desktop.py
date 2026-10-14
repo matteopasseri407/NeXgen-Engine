@@ -111,14 +111,14 @@ def gated_desktop_names(renderer) -> set[str]:
     }
 
 
-def _names_command(path: str, command: str) -> bool:
+def _names_command(path: str, command: str, windows: bool | None = None) -> bool:
     """True when `path` is an executable called `command`.
 
     Windows matches case-insensitively and through PATHEXT, which is how
     `shutil.which` found it (it answers `tool.EXE` for `tool`).
     """
     name = Path(path).name
-    if os.name != "nt":
+    if not (os.name == "nt" if windows is None else windows):
         return name == command
     exts = [e.lower() for e in os.environ.get("PATHEXT", ".EXE;.CMD;.BAT;.COM").split(";") if e]
     stem, suffix = os.path.splitext(name.lower())

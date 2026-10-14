@@ -331,6 +331,5 @@ def test_a_command_resolved_earlier_survives_a_different_path(tmp_path, monkeypa
 def test_a_previous_command_is_recognised_the_way_which_found_it(monkeypatch, name, windows, expected):
     from nexgen_core.mcp_render import claude_desktop
 
-    monkeypatch.setattr(claude_desktop.os, "name", "nt" if windows else "posix")
     monkeypatch.setenv("PATHEXT", ".COM;.EXE;.BAT;.CMD")
-    assert claude_desktop._names_command(f"/x/{name}", "tool") is expected
+    assert claude_desktop._names_command(f"/x/{name}", "tool", windows=windows) is expected
