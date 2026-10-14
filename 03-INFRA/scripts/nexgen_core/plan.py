@@ -54,6 +54,7 @@ class SyncPlan:
     git_notes: list[str] = field(default_factory=list)
     planned_actions: list[str] = field(default_factory=list)
     in_sync: list[str] = field(default_factory=list)
+    needs_attention: list[str] = field(default_factory=list)
     not_checked: list[str] = field(default_factory=list)
 
     @property
@@ -72,6 +73,7 @@ class SyncPlan:
             "git_notes": list(self.git_notes),
             "planned_actions": list(self.planned_actions),
             "in_sync": list(self.in_sync),
+            "needs_attention": list(self.needs_attention),
             "not_checked": list(self.not_checked),
         }
 
@@ -137,20 +139,25 @@ def _git_probe(vault_data: Path) -> tuple[list[str], list[str]]:
     return notes, actions
 
 
-def _probe(outcome) -> tuple[str | None, str | None, str | None]:
-    """A check outcome becomes (planned action, in-sync line, not-checked line)."""
+def _probe(outcome) -> tuple[str, str] | None:
+    """A check outcome becomes (bucket, line): planned, in_sync, attention or unchecked."""
     if outcome is None:
-        return None, None, None
+        return None
     line = outcome.message
     if getattr(outcome, "action", ""):
         line += " → " + outcome.action
     if outcome.severity == Severity.BROKEN:
-        return line, None, None
+        return "planned", line
+    if outcome.severity == Severity.WARN:
+        # A warning is never "aligned". One that apply repairs on its own
+        # (a remedy) is drift an apply would change; one that waits on the
+        # user (a secret to wire) is neither, and says so.
+        return ("planned", line) if getattr(outcome, "remedy", None) else ("attention", line)
     if outcome.severity == Severity.UNDETERMINED:
         # "Could not check" is not "nothing to do": the plan must say so,
         # because apply may well write there.
-        return None, None, line
-    return None, line, None
+        return "unchecked", line
+    return "in_sync", line
 
 
 def build_sync_plan(
@@ -230,14 +237,17 @@ def build_sync_plan(
             plan.planned_actions.append(f"[{domain}] render currently fails: {exc}")
             continue
         outcomes = result if isinstance(result, list) else [result]
+        buckets = {
+            "planned": plan.planned_actions,
+            "in_sync": plan.in_sync,
+            "attention": plan.needs_attention,
+            "unchecked": plan.not_checked,
+        }
         for outcome in outcomes:
-            action, ok, unchecked = _probe(outcome)
-            if action:
-                plan.planned_actions.append(f"[{domain}] {action}")
-            elif ok:
-                plan.in_sync.append(f"[{domain}] {ok}")
-            elif unchecked:
-                plan.not_checked.append(f"[{domain}] {unchecked}")
+            probed = _probe(outcome)
+            if probed:
+                bucket, line = probed
+                buckets[bucket].append(f"[{domain}] {line}")
 
     # A config file that does not exist yet, for a CLI the manifest expects
     # to configure, is the clearest planned action there is: the renderer

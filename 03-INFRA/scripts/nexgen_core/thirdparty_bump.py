@@ -526,8 +526,15 @@ def _rematerialize(vault_data: Path, home: Path | None, skills: bool, mcp: bool)
         from nexgen_core.renderer import McpRenderer
 
         rend = McpRenderer(vault_data=vault_data, engine_root=engine_root, home=home)
-        rend.render_all(write=True)
-        notes.append(t("MCP configurations regenerated for every CLI"))
+        results = rend.render_all(write=True)
+        # Same rule as the guard: success only when every target made it.
+        failed = sorted(cli for cli, ok in results.items() if not ok)
+        if failed:
+            notes.append(t("MCP render failed for: {clis}", clis=", ".join(
+                f"{cli} ({rend.last_errors[cli]})" if rend.last_errors.get(cli) else cli for cli in failed
+            )))
+        else:
+            notes.append(t("MCP configurations regenerated for every CLI"))
     return notes
 
 

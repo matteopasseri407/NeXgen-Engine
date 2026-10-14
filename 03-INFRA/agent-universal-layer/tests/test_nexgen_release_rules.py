@@ -195,6 +195,30 @@ def test_bump_version_files(tmp_path: Path):
     assert "## [2.0.3]" in cl_file.read_text(encoding="utf-8")
 
 
+@pytest.mark.parametrize(
+    ("unreleased_body", "notes", "expected_body"),
+    [
+        ("", "Fixed the thing", "### Changed\n\n- Fixed the thing"),
+        ("### Added\n\n- A curated entry.", "", "### Added\n\n- A curated entry."),
+    ],
+)
+def test_the_unreleased_section_becomes_the_new_version_and_is_left_empty(tmp_path, unreleased_body, notes, expected_body):
+    (tmp_path / "VERSION").write_text("2.0.2\n", encoding="utf-8")
+    cl_file = tmp_path / "CHANGELOG.md"
+    cl_file.write_text(
+        f"# Changelog\n\n## [Unreleased]\n\n{unreleased_body}\n\n## [2.0.2] - 2026-01-01\n\n- Older.\n",
+        encoding="utf-8",
+    )
+
+    bump_version_files(tmp_path, "2.0.3", notes)
+
+    text = cl_file.read_text(encoding="utf-8")
+    assert text.index("## [Unreleased]") < text.index("## [2.0.3]") < text.index("## [2.0.2]")
+    between_unreleased_and_release = text.split("## [Unreleased]", 1)[1].split("## [2.0.3]", 1)[0]
+    assert between_unreleased_and_release.strip() == ""
+    new_release_body = text.split("## [2.0.3]", 1)[1].split("## [2.0.2]", 1)[0]
+    assert expected_body in new_release_body
+
 
 def test_first_push_checks_all_unpublished_commits_and_excludes_published_history(tmp_path):
     import subprocess
@@ -229,3 +253,16 @@ def test_first_push_checks_all_unpublished_commits_and_excludes_published_histor
     assert marker in text  # a value removed at the tip is still examined
     assert "clean final state" in text
     assert "published legacy fixture" not in text
+
+
+def test_a_bump_with_nothing_to_say_is_refused_before_any_write(tmp_path):
+    (tmp_path / "VERSION").write_text("2.0.2\n", encoding="utf-8")
+    cl_file = tmp_path / "CHANGELOG.md"
+    original = "# Changelog\n\n## [Unreleased]\n\n## [2.0.2] - 2026-01-01\n\n- Older.\n"
+    cl_file.write_text(original, encoding="utf-8")
+
+    with pytest.raises(ValueError, match="Unreleased"):
+        bump_version_files(tmp_path, "2.0.3")
+
+    assert (tmp_path / "VERSION").read_text(encoding="utf-8") == "2.0.2\n"
+    assert cl_file.read_text(encoding="utf-8") == original

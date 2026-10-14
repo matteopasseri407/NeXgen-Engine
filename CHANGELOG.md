@@ -12,13 +12,55 @@ of any engine release.
 
 ## [2.10.0] - 2026-10-13
 
+### Changed
+
+- Release marker only: no engine code changed since v2.9.0.
+
 ## [2.9.0] - 2026-10-13
+
+### Changed
+
+- Release marker only: no engine code changed since v2.8.0.
 
 ## [2.8.0] - 2026-10-13
 
+### Fixed
+
+- Test-only: the Claude Desktop test suites use the resolved config path on every OS, so on Windows they read the same
+  file the code writes.
+
 ## [2.7.0] - 2026-10-13
 
+### Fixed
+
+- Test-only: the Claude Desktop test suites no longer read the live machine config through `APPDATA` on Windows.
+
 ## [2.6.0] - 2026-10-13
+
+### Added
+
+- Claude Desktop MCP dialect. Servers are rendered into `claude_desktop_config.json` (Linux, macOS and Windows paths)
+  only when their manifest entry sets `desktop_allow: true`. Anything not flagged stays out. Manifest-known live entries
+  without the flag are reported by the new `mcp.desktop_allowlist` doctor check and never removed. Writes are additive,
+  keep the app's own preferences, and do not run while the app is open.
+- Install offers to absorb Claude Desktop MCP servers that are live but missing from the manifest. The guided terminal
+  prints review-only stubs; nothing is applied until you opt in.
+- Assisted secrets wiring for absorbed servers: a guided step with create-only writes, a hidden input for secret values,
+  and skip or external options. Materialization happens at the end.
+- The doctor warns about unresolved secret references.
+
+### Security
+
+- Adopted Claude Desktop entries are scrubbed before they are written: environment values become secret references,
+  arguments are masked, and credentials in URL userinfo are removed. This covers both the print and the apply paths.
+- The gateway server is refused for Claude Desktop even when it is flagged.
+
+### Fixed
+
+- Claude Desktop integration: revoking `desktop_allow` removes only what the engine rendered, and a rewrite rebases onto
+  the live file so user additions survive. Bare commands resolve to absolute paths for the app's minimal PATH, and no
+  config file is created on a machine without the app.
+- The leak scan's allow entry for the container home path, dropped with the reverted PII module, is restored.
 
 ## [2.5.3] - 2026-10-11
 

@@ -110,6 +110,10 @@ def compute_next_version(current: str, bump: str = "patch") -> str:
     raise ValueError(f"Invalid bump type '{bump}'. Use patch, minor, major, or explicit X.Y.Z.")
 
 
+#: The Unreleased heading and its body, up to the next version heading.
+_UNRELEASED_SECTION = re.compile(r"^## \[Unreleased\][^\n]*(?:\n|\Z)(.*?)(?=^## \[|\Z)", re.M | re.S)
+
+
 def bump_version_files(repo_path: Path, new_version: str, notes: str = "") -> list[Path]:
     """Updates VERSION, nexgen_core/__init__.py, and CHANGELOG.md with the new version."""
     import datetime
@@ -117,6 +121,16 @@ def bump_version_files(repo_path: Path, new_version: str, notes: str = "") -> li
     new_version = new_version.strip().lstrip("v")
     if not is_semver(new_version):
         raise ValueError(f"Target version '{new_version}' is not valid semver")
+
+    # Refuse before writing anything: a release with nothing to say used to
+    # get a generic placeholder body, which slips past the release gate's
+    # empty-notes check while telling users nothing.
+    changelog_file = repo_path / "CHANGELOG.md"
+    if changelog_file.is_file() and not notes.strip():
+        current = changelog_file.read_text(encoding="utf-8")
+        unreleased = _UNRELEASED_SECTION.search(current)
+        if f"## [{new_version}]" not in current and not (unreleased and unreleased.group(1).strip()):
+            raise ValueError("Nothing to release notes for: write them under '## [Unreleased]' or pass --notes.")
 
     modified: list[Path] = []
 
@@ -135,19 +149,26 @@ def bump_version_files(repo_path: Path, new_version: str, notes: str = "") -> li
             modified.append(init_file)
 
     # 3. CHANGELOG.md
-    changelog_file = repo_path / "CHANGELOG.md"
     if changelog_file.is_file():
         content = changelog_file.read_text(encoding="utf-8")
         today = datetime.date.today().isoformat()
         version_header = f"## [{new_version}] - {today}"
 
         if f"## [{new_version}]" not in content:
-            if "## [Unreleased]" in content:
-                content = content.replace("## [Unreleased]", f"## [Unreleased]\n\n{version_header}")
+            unreleased = _UNRELEASED_SECTION.search(content)
+            if unreleased:
+                # The Unreleased body is what the maintainer curated for this
+                # release, so it moves under the new heading and Unreleased is
+                # left empty for the next cycle. --notes is added on top of it.
+                body = unreleased.group(1).strip()
+                if notes:
+                    body = f"### Changed\n\n- {notes}" + (f"\n\n{body}" if body else "")
+                section = f"## [Unreleased]\n\n{version_header}\n\n{body}\n\n"
+                content = content[:unreleased.start()] + section + content[unreleased.end():]
             else:
                 first_h2 = content.find("## [")
                 if first_h2 != -1:
-                    inserted_notes = f"\n\n### Changed\n\n- {notes}\n" if notes else "\n\n### Fixed\n\n- Maintenance and bug fixes.\n"
+                    inserted_notes = f"\n\n### Changed\n\n- {notes}\n"
                     content = content[:first_h2] + f"{version_header}{inserted_notes}\n" + content[first_h2:]
             atomic_write_text(changelog_file, content)
             modified.append(changelog_file)
@@ -298,7 +319,11 @@ def main(argv: list[str] | None = None) -> int:
         repo_path = Path(args.repo).resolve()
         current = (repo_path / "VERSION").read_text(encoding="utf-8").strip()
         next_ver = compute_next_version(current, args.bump)
-        modified = bump_version_files(repo_path, next_ver, args.notes)
+        try:
+            modified = bump_version_files(repo_path, next_ver, args.notes)
+        except ValueError as exc:
+            print(str(exc), file=sys.stderr)
+            return 1
         print(f"Bumped version: {current} -> {next_ver}")
         for m in modified:
             print(f"  updated: {m}")

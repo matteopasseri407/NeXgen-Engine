@@ -12,7 +12,6 @@ Phases of the guard cycle (guard / apply):
 """
 from __future__ import annotations
 
-import contextlib
 import json
 import logging
 import shutil
@@ -133,6 +132,20 @@ class GuardRunner:
         )
 
         if not claude_md.is_file() or claude_md.read_text(encoding="utf-8") != content:
+            # A dotfiles-managed ~/CLAUDE.md is a symlink: write through it so
+            # the link (and the repository behind it) survives the update.
+            # Replacing the link itself would detach the file from its owner.
+            # The exception is a link to the canonical file: writing through
+            # it would overwrite the canonical instructions, so the link is
+            # replaced instead.
+            write_target = claude_md
+            if claude_md.is_symlink():
+                try:
+                    resolved = claude_md.resolve()
+                except RuntimeError:  # symlink loop: nothing to write through
+                    resolved = claude_md
+                if resolved != canon.resolve():
+                    write_target = resolved
             # The file may contain hand-written lines. Regenerating it is
             # fine; making it disappear without a copy is not: if the
             # safety copy itself fails, stop instead of destroying the
@@ -148,10 +161,10 @@ class GuardRunner:
                         path=claude_md, error=exc,
                     ))
                 else:
-                    atomic_write_text(claude_md, content)
+                    atomic_write_text(write_target, content)
                     actions.append(t("Updated instruction pointer {path}", path=claude_md))
             else:
-                atomic_write_text(claude_md, content)
+                atomic_write_text(write_target, content)
                 actions.append(t("Updated instruction pointer {path}", path=claude_md))
 
         # The other three CLIs read the canonical file directly. Aligning
@@ -294,8 +307,15 @@ class GuardRunner:
                 body = json.dumps(data, indent=2) + "\n"
             from nexgen_core.files import backup_file
 
-            with contextlib.suppress(OSError):
+            # Same rule as the pointer above: no safety copy, no rewrite. The
+            # user's opencode.json may hold lines the engine never added.
+            try:
                 backup_file(candidate, tag="instructions")
+            except OSError as exc:
+                return WARN + t(
+                    "opencode dead 'instructions' entries left untouched: safety backup failed ({error})",
+                    error=exc,
+                )
             atomic_write_text(candidate, body)
         except OSError:
             return None
@@ -702,10 +722,17 @@ class GuardRunner:
             # wrote above, so the message must say the transaction is
             # partial instead of dying with a bare traceback.
             raise RuntimeError(t("MCP rendering failed ({error}): fix the CLI config and re-run", error=exc)) from exc
-        actions.append(t("MCP configurations regenerated for every CLI"))
         failed = sorted(cli for cli, ok in results.items() if not ok)
-        if failed:
-            actions.append(WARN + t("MCP render reported no change applied for: {clis}", clis=", ".join(failed)))
+        if not failed:
+            actions.append(t("MCP configurations regenerated for every CLI"))
+            return
+        # Success is claimed only when every target made it. The failing
+        # ones are named with their error, so the line tells the user what
+        # to fix rather than only that something went wrong.
+        details = ", ".join(
+            f"{cli} ({rend.last_errors[cli]})" if rend.last_errors.get(cli) else cli for cli in failed
+        )
+        actions.append(WARN + t("MCP render failed for: {clis}", clis=details))
 
     def _phase_permissions(self, actions: list[str]) -> None:
         """Permission posture + guardrail hook per CLI."""

@@ -177,3 +177,23 @@ def test_undetermined_probes_are_declared_not_hidden(sandbox, monkeypatch):
     plan = build_sync_plan()
     assert any("[mcp] indeterminato di prova" in line for line in plan.not_checked)
     assert not any("indeterminato di prova" in a for a in plan.planned_actions)
+
+
+def test_warnings_are_never_filed_as_aligned(sandbox, monkeypatch):
+    """WARN with a remedy is drift apply would fix; without one it needs the user."""
+    import nexgen_core.checks.mcp_checks as mcp_checks
+    from nexgen_core.report import CheckOutcome, Severity
+
+    monkeypatch.setattr(
+        mcp_checks, "check_mcp_content_drift",
+        lambda *a, **k: CheckOutcome(id="mcp.rendered_content", severity=Severity.WARN, message="deriva riparabile", remedy=lambda: True),
+    )
+    monkeypatch.setattr(
+        mcp_checks, "check_mcp_unresolved_refs",
+        lambda *a, **k: CheckOutcome(id="mcp.unresolved_refs", severity=Severity.WARN, message="segreto da collegare"),
+    )
+
+    plan = build_sync_plan()
+    assert any("deriva riparabile" in a for a in plan.planned_actions)
+    assert any("segreto da collegare" in a for a in plan.needs_attention)
+    assert not any("deriva riparabile" in line or "segreto da collegare" in line for line in plan.in_sync)

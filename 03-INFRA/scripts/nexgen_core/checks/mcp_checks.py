@@ -15,6 +15,7 @@ from nexgen_core.config import load_mcp_manifest
 from nexgen_core.i18n import t
 from nexgen_core.jsonc import parse_jsonc
 from nexgen_core.paths import (
+    ANTIGRAVITY_CONSUMER_DIRS,
     antigravity_config,
     antigravity_configs,
     claude_config,
@@ -184,7 +185,14 @@ def check_mcp_configs_rendered(vault_data: Path, home: Path) -> CheckOutcome:
         norm_expected = {spec.normalize(name): name for name in expected}
         missing_norm = set(norm_expected) - rendered
         missing = {norm_expected[n] for n in missing_norm}
-        extra = rendered - set(norm_expected)
+        # Env-gated servers this process cannot resolve are manifest servers
+        # all the same: never extras. Absent from disk they are unknowable
+        # here, not missing, so the guard and the shell agree.
+        gated = {spec.normalize(name): name for name in renderer.env_gated_server_names(cli)}
+        extra = rendered - set(norm_expected) - set(gated)
+        unknowable = sorted(gated[n] for n in set(gated) - rendered)
+        if unknowable:
+            undetermined_parts.append(f"{cli}: {', '.join(unknowable)} (" + t("their require_env is unset in this process") + ")")
 
         if missing:
             broken_parts.append(f"{cli}: missing {', '.join(sorted(missing))}")
@@ -247,6 +255,67 @@ def _changed_server_names(cli: str, old_text: str, new_text: str) -> list[str]:
     """Names whose entry differs between two texts of one config (added, changed or dropped)."""
     old, new = _server_table(cli, old_text), _server_table(cli, new_text)
     return sorted(name for name in old.keys() | new.keys() if old.get(name) != new.get(name))
+
+
+def check_antigravity_fanout(vault_data: Path, home: Path) -> CheckOutcome:
+    """Every folder Antigravity reads its MCP servers from must hold the canonical file.
+
+    The rendered-configs check reads only the canonical file, so a fan-out
+    copy that drifted (Antigravity itself wrote to it, or it was edited by
+    hand) stayed invisible until Antigravity launched that copy. A copy is
+    fine when it is a link to the canonical file, or a real file with the
+    same bytes. The remedy re-runs the Antigravity render: a diverged copy is
+    backed up, and the servers only it held are carried into the canonical file.
+    """
+    canonical = antigravity_config(home)
+    if not canonical.is_file():
+        return CheckOutcome(
+            id="mcp.antigravity_fanout",
+            severity=Severity.UNDETERMINED,
+            message=t("Antigravity's MCP configuration has not been rendered on this machine yet, so its copies were not compared."),
+        )
+    canonical_bytes = canonical.read_bytes()
+    diverged: list[str] = []
+    for directory in ANTIGRAVITY_CONSUMER_DIRS:
+        path = home / ".gemini" / directory / "mcp_config.json"
+        if path.is_symlink():
+            try:
+                same = path.resolve() == canonical.resolve()
+            except OSError:
+                same = False
+            if not same:
+                diverged.append(f"{directory} (" + t("points elsewhere") + ")")
+        elif path.is_file():
+            if path.read_bytes() != canonical_bytes:
+                diverged.append(f"{directory} (" + t("differs") + ")")
+        elif path.parent.is_dir():
+            # The folder exists, so Antigravity has run here and the copy should be there too.
+            diverged.append(f"{directory} (" + t("missing") + ")")
+        # A folder that was never created is simply not a place this machine uses yet.
+
+    if not diverged:
+        return CheckOutcome(
+            id="mcp.antigravity_fanout",
+            severity=Severity.OK,
+            message=t("Antigravity's MCP configuration is the same in every folder it reads from"),
+        )
+
+    renderer = McpRenderer(vault_data=vault_data, home=home)
+
+    def remedy() -> bool:
+        renderer.render_antigravity(write=True)
+        return True
+
+    return CheckOutcome(
+        id="mcp.antigravity_fanout",
+        severity=Severity.BROKEN,
+        message=t(
+            "Antigravity reads its MCP servers from folders that no longer match the canonical file: {parts}",
+            parts=", ".join(diverged),
+        ),
+        action=t("Run 'agent-sync apply' to point every folder back at the canonical file."),
+        remedy=remedy,
+    )
 
 
 def check_mcp_content_drift(vault_data: Path, home: Path, engine_root: Path | None = None) -> CheckOutcome:
@@ -506,7 +575,8 @@ def check_mcp_orphans(vault_data: Path, home: Path) -> CheckOutcome:
         if error:
             continue  # the rendered-configs check already reports unreadable configs
         spec = _CLI_RENDER_SPECS[cli]
-        norm_expected = {spec.normalize(name) for name in expected}
+        # Env-gated manifest servers are never orphans, whoever runs the check.
+        norm_expected = {spec.normalize(name) for name in expected | renderer.env_gated_server_names(cli)}
         orphans = sorted(rendered - norm_expected)
         if not orphans:
             continue
