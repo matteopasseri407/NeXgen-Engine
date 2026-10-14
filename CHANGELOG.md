@@ -10,6 +10,8 @@ of any engine release.
 
 ## [Unreleased]
 
+## [2.12.1] - 2026-10-14
+
 ### Fixed
 
 - The lane over a local OpenAI-compatible server (llama.cpp) lost every short answer from models that answer inside
