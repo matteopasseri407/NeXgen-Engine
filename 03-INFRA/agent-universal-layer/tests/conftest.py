@@ -39,14 +39,25 @@ def no_ollama_probe(request, monkeypatch):
 
 
 @pytest.fixture(autouse=True)
-def isolated_runtime_overrides(monkeypatch):
+def isolated_runtime_overrides(monkeypatch, tmp_path_factory):
     """No inherited override may redirect a fixture's writes to the host."""
     for key in (
         "XDG_CONFIG_HOME", "XDG_STATE_HOME", "CODEX_HOME", "NEXGEN_HOME",
         "AGENT_STATE_DIR", "AGENT_VAULT_DATA", "AGENT_ENGINE_ROOT",
         "KNOWLEDGE_VAULT_PATH", "AGENT_SYNC_LOCK_FILE", "APPDATA", "LOCALAPPDATA",
+        # A maintainer's own vault remote won over the remotes.yaml a fixture wrote.
+        "KNOWLEDGE_VAULT_REMOTE", "ORACLE_SSH_HOST",
     ):
         monkeypatch.delenv(key, raising=False)
+    # The suite runs against git as CI has it: no global or system config. A
+    # maintainer's `commit.gpgsign = true` made every fixture commit try to sign
+    # with a key the fixture's throwaway keyring does not have, and failed only
+    # on the machines that release.
+    empty_config = tmp_path_factory.getbasetemp() / "empty-gitconfig"
+    if not empty_config.exists():
+        empty_config.write_text("", encoding="utf-8")
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(empty_config))
+    monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
     # Safe by default. Only tests built around a sandbox used to set this, so any
     # other test that ran the scheduler phase (a guard cycle with a tmp home, for
     # instance) reached the real `systemctl --user` of whoever ran the suite. A test

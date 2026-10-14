@@ -32,6 +32,9 @@ def _all(args) -> list[str]:
 
 def register(sub) -> None:
     """Declares the engine's verbs on the dispatcher."""
+    # Listed here for --help only: `nexgen release ...` is handed to the release
+    # rules' own parser before this dispatcher parses anything.
+    sub.add_parser("release", help=t("Maintainers: ship a release in one command ('nexgen release ship --help')"))
     p = sub.add_parser("sync", aliases=["apply"], help=t("Align this machine now"))
     p.add_argument("--offline", "--allow-offline", dest="allow_offline", action="store_true",
                    help=t("Proceed even without reaching the remote"))

@@ -34,6 +34,8 @@ class FakeWorld:
         self.trust_ok = True
         self.synced_after = 1
         self.open_prs: list[dict] = []
+        self.already_merged = False
+        self.developer_synced = True
 
     def __call__(self, argv, cwd):
         argv = tuple(str(a) for a in argv)
@@ -58,6 +60,10 @@ class FakeWorld:
             case ("git", "rev-parse", "origin/main"):
                 return MERGED, 0
             case ("git", "merge-base", "--is-ancestor"):
+                if argv[-1] == "origin/main":
+                    return "", 0 if self.already_merged else 1
+                if argv[-2:] == ("origin/main", "origin/developer"):
+                    return "", 0 if self.developer_synced else 1
                 if argv[-1] == "origin/developer":
                     self.synced_after -= 1
                     return "", 0 if self.synced_after < 0 else 1
@@ -187,3 +193,20 @@ def test_an_update_rolled_back_by_a_colliding_timer_is_retried_once(repo, tmp_pa
     assert shipper.ship("minor", install=True) == "v2.14.0"
     assert "Rolled back" in (tmp_path / "install.log").read_text(encoding="utf-8")
     assert sum(1 for c in world.calls if c[:2] == ("nexgen", "update")) == 2
+
+
+def test_a_rerun_after_the_merge_does_not_open_a_second_pull_request(repo):
+    (repo / "VERSION").write_text("2.14.0\n", encoding="utf-8")
+    world = FakeWorld(repo)
+    world.already_merged = True
+    assert _shipper(repo, world).ship("minor") == "v2.14.0"
+    assert not any(c[:3] in {("gh", "pr", "create"), ("gh", "pr", "merge"), ("gh", "pr", "list")} for c in world.calls)
+    assert any(c[:3] == ("git", "tag", "-s") for c in world.calls)
+
+
+def test_a_rerun_after_the_tag_does_not_bump_a_second_time(repo):
+    world = FakeWorld(repo)
+    world.developer_synced = False
+    with pytest.raises(ShipStop, match="still finishing"):
+        _shipper(repo, world).ship("patch")
+    assert (repo / "VERSION").read_text(encoding="utf-8") == "2.13.0\n"

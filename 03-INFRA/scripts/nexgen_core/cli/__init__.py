@@ -54,6 +54,10 @@ def _run_cli(argv: list[str]) -> int:
     # REMAINDER, which swallows optionals.
     if argv and argv[0] == "local":
         return local_cmds.dispatch(argv[1:])
+    if argv and argv[0] == "release":
+        from nexgen_core.release import main as release_main
+
+        return release_main(argv[1:])
     parser = build_parser()
     # Arguments meant for a subcommand are not this parser's business: it
     # collects them and hands them off intact to whoever forwards them.
