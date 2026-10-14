@@ -41,7 +41,7 @@ It prints one `== step` line per step and ends with either `OK vX.Y.Z` or `STOP 
 8. **sync developer**: waits for `sync-developer` to merge `main` back into `developer`.
 9. **install** (only with `--install`): runs `nexgen update --yes --target vX.Y.Z`.
    If the update fails and is rolled back, it retries once.
-   It then checks that the installed `VERSION` matches and runs `nexgen doctor --strict --summary`.
+   It then checks that the installed `VERSION` matches and runs `nexgen doctor --summary`, which stops it only on failures (warnings are non-blocking).
 
 Every maintainer machine signs with its own key, and that key has to be listed in `trust/release-signers.txt`.
 Installed copies only accept signers they pin, so a new key takes two releases (see `SECURITY.md`).
