@@ -14,6 +14,8 @@ from pathlib import Path
 from nexgen_core.files import secure_artifact as secure_artifact
 from nexgen_core.paths import resolve_home, resolve_vault_data
 
+from .tiers import DEFAULT_TIER, TIERS, tier_for_model
+
 #: Default Ollama tag. Never hardcoded into behaviour, only into the fallback.
 DEFAULT_MODEL = "gemma4-12b-openclaw:latest"
 
@@ -81,6 +83,13 @@ class LaneConfig:
     pdftotext_cmd: str = "pdftotext"
     max_steps: int = 4
     excluded_parts: frozenset[str] = EXCLUDED_PARTS
+    #: Capability tier of the model in use: tutor, guided or assisted. Unknown
+    #: models and unknown names resolve to tutor, the strictest tier.
+    tier: str = DEFAULT_TIER
+
+    def __post_init__(self) -> None:
+        if self.tier not in TIERS:
+            raise ValueError(f"tier sconosciuto: {self.tier!r} (attesi: {', '.join(TIERS)})")
 
     @property
     def router_tag(self) -> str:
@@ -100,6 +109,7 @@ class LaneConfig:
         audit: str | Path | None = None,
         router_model: str | None = None,
         answer_model: str | None = None,
+        tier: str | None = None,
     ) -> "LaneConfig":
         # The one resolver: it also reads KNOWLEDGE_VAULT_PATH, which this lane ignored.
         vault_root = resolve_vault_data(None, Path(vault) if vault else None).resolve()
@@ -115,12 +125,72 @@ class LaneConfig:
             num_ctx = int(os.environ.get("NEXGEN_LOCAL_NUM_CTX") or 0) or 65536
         except ValueError:
             num_ctx = 65536
+        resolved_model = model or os.environ.get("NEXGEN_LOCAL_MODEL") or DEFAULT_MODEL
+        # An explicit tier wins; otherwise the stored per-model map decides;
+        # anything unknown degrades to tutor, never to a guess.
+        requested = (tier or os.environ.get("NEXGEN_LOCAL_TIER") or "").strip()
+        resolved_tier = requested if requested in TIERS else tier_for_model(resolved_model, load_model_tiers())
         return cls(
             vault_root=vault_root,
             repo_roots=repo_roots,
-            model=model or os.environ.get("NEXGEN_LOCAL_MODEL") or DEFAULT_MODEL,
+            model=resolved_model,
             router_model=router_model or os.environ.get("NEXGEN_LOCAL_ROUTER_MODEL") or "",
             answer_model=answer_model or os.environ.get("NEXGEN_LOCAL_ANSWER_MODEL") or "",
             num_ctx=num_ctx,
             audit_path=audit_path,
+            tier=resolved_tier,
         )
+
+
+def model_tiers_path() -> Path:
+    """Where the per-model tier map lives: the lane's own state directory."""
+    from .tiers import tiers_file
+
+    return tiers_file()
+
+
+def load_model_tiers(path: str | Path | None = None) -> dict[str, str]:
+    """The stored per-model tiers; missing or corrupt files mean no map.
+
+    Tolerant on purpose: at the config boundary an unreadable map must degrade
+    to tutor for every model, not abort the lane.
+    """
+    from .tiers import tiers_file
+
+    target = Path(path).expanduser() if path else tiers_file()
+    try:
+        raw = target.read_text(encoding="utf-8")
+    except OSError:
+        return {}
+    try:
+        import json
+
+        parsed = json.loads(raw)
+    except ValueError:
+        return {}
+    if not isinstance(parsed, dict):
+        return {}
+    return {str(model): str(name) for model, name in parsed.items() if isinstance(model, str)}
+
+
+def save_model_tier(model: str, tier: str, path: str | Path | None = None) -> Path:
+    """Store one model's tier; the explicit approval step after an evaluation.
+
+    Raises ValueError on an empty model or an unknown tier instead of writing
+    a map the lane would silently read as tutor.
+    """
+    from .tiers import tiers_file
+
+    name = str(model or "").strip()
+    if not name:
+        raise ValueError("modello vuoto: indica il tag del modello da assegnare")
+    if tier not in TIERS:
+        raise ValueError(f"tier sconosciuto: {tier!r} (attesi: {', '.join(TIERS)})")
+    target = Path(path).expanduser() if path else tiers_file()
+    mapping = load_model_tiers(target)
+    mapping[name] = tier
+    target.parent.mkdir(parents=True, exist_ok=True)
+    import json
+
+    target.write_text(json.dumps(mapping, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    return target

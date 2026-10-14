@@ -326,6 +326,9 @@ class ChatOllamaLLM(_ChatModelLLM):
         host = os.environ.get("OLLAMA_HOST") or "http://127.0.0.1:11434"
         if "://" not in host:
             host = "http://" + host
+        from .tiers import get_tier
+
+        tier = get_tier(getattr(cfg, "tier", "tutor") or "tutor")
         self._runner = asyncio.Runner()
         self._invoke_lock = threading.Lock()
         transport = AsyncHTTPTransport()
@@ -337,7 +340,9 @@ class ChatOllamaLLM(_ChatModelLLM):
             "model": cfg.router_tag,
             "base_url": host,
             "temperature": 0.0,
-            "num_ctx": min(cfg.num_ctx, ROUTER_NUM_CTX),
+            # Guided and assisted route with the configured full context; tutor
+            # keeps the small window the 4B-class router was measured with.
+            "num_ctx": cfg.num_ctx if tier.router_full_ctx else min(cfg.num_ctx, ROUTER_NUM_CTX),
             # A 4-field form; cap it like decisions.
             "num_predict": 512,
             "validate_model_on_init": False,
@@ -373,7 +378,6 @@ class ChatOllamaLLM(_ChatModelLLM):
             **clients,
         }
         try:
-            self._json_model = ChatOllama(format="json", reasoning=False, **router_common)
             # Prosa con pensiero (bozze, risposte): niente schema forzato qui,
             # il CoT aiuta e non rompe nulla. Misurato sul golden set. Solo se il
             # modello sa pensare: Ollama risponde 400 "does not support thinking" a
@@ -384,10 +388,16 @@ class ChatOllamaLLM(_ChatModelLLM):
             thinks = capabilities is None or "thinking" in capabilities
             self._text_model = ChatOllama(reasoning=True if thinks else None, **answer_common)
             self._answer_common = answer_common
-            # Decisioni SENZA pensiero: il canale e' uno schema forzato
+            # Decisioni SENZA pensiero di default: il canale e' uno schema forzato
             # (json_schema) e il think ci va a cazzotti — misurato: 12/16
             # e p95 decisione da 5s a 170s. Scelta secca, niente rimuginii.
-            self._decision_model = ChatOllama(reasoning=False, **decision_common)
+            # I tier alti lo permettono, ma solo dove il modello sa pensare davvero:
+            # capacita' sconosciute restano fail-closed (niente pensiero), perche'
+            # un 400 su ogni decisione chiuderebbe il loop in escalation.
+            can_think = capabilities is not None and "thinking" in capabilities
+            thought = True if (tier.thinking and can_think) else False
+            self._json_model = ChatOllama(format="json", reasoning=thought, **router_common)
+            self._decision_model = ChatOllama(reasoning=thought, **decision_common)
         except TypeError:  # older driver without reasoning/validate switches
             self._json_model = ChatOllama(format="json", **router_common)
             self._text_model = ChatOllama(**answer_common)
