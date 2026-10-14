@@ -211,6 +211,36 @@ def _opencode_model_argument(seat: dict) -> str:
     return f"{model}#{effort}"
 
 
+def is_local_seat(seat: dict) -> bool:
+    """OpenCode as the harness over a loopback inference server (llama.cpp, Ollama, ...).
+
+    Local inference never gets a harness of its own: one harness to maintain, whatever the runtime.
+    """
+    return seat.get("cli") == "opencode" and bool(seat.get("base_url"))
+
+
+def _write_local_provider_config(config_home: Path, seat: dict) -> None:
+    """The seat's only provider, written into its private, otherwise empty OpenCode config.
+
+    Nothing else goes in: no ``mcp`` key, no other provider, so the isolation the empty directory
+    gives every OpenCode seat still holds. The model is declared so `run -m` can resolve it.
+    """
+    provider, _, model = str(seat["model"]).partition("/")
+    config = {
+        "provider": {
+            provider: {
+                "npm": "@ai-sdk/openai-compatible",
+                "name": provider,
+                "options": {"baseURL": str(seat["base_url"]).strip()},
+                "models": {model.split("#", 1)[0]: {"tool_call": True}},
+            }
+        }
+    }
+    opencode_dir = config_home / "opencode"
+    _private_mkdir(opencode_dir, exist_ok=True)
+    _write_private_text(opencode_dir / "opencode.json", json.dumps(config, indent=2))
+
+
 def _effort_label(seat: dict) -> str:
     """Shared by every place that renders a seat's reasoning_effort to the
     user (propose, the static menu, routing-status): a single source so a
@@ -553,6 +583,8 @@ def _build_seat_command(seat: dict, prompt: str, session_dir: Path) -> SeatInvoc
         # provider's problem to reject, not something to filter here. See _effort_forwarding: the label
         # shown to the person comes from the same place.
         env, scratch = _isolated_seat_env(cli, session_dir)
+        if is_local_seat(seat):
+            _write_local_provider_config(Path(env["XDG_CONFIG_HOME"]), seat)
         return SeatInvocation(
             argv,
             None,

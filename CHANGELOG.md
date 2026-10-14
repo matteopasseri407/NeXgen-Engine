@@ -10,6 +10,23 @@ of any engine release.
 
 ## [Unreleased]
 
+## [2.13.0] - 2026-10-14
+
+### Changed
+
+- Council local seats run under OpenCode, whatever the inference runtime: a local seat is `cli: opencode` plus a
+  loopback `base_url` (llama.cpp, Ollama, any OpenAI-compatible server), and the `local` channel maps to
+  `opencode` instead of `ollama`. The seat's private, otherwise empty OpenCode config gets exactly one provider
+  for that URL, with no MCP. One harness to maintain instead of one per runtime. `cli: ollama` seats still load.
+
+### Added
+
+- Seat field `host`: binds a seat to the machine that serves it, since `seats.yaml` is shared across machines.
+  A seat bound elsewhere is reported unavailable instead of failing at run time.
+- Local seat availability is read from the kernel's listen table on Linux, without connecting: a connection to a
+  socket-activated server would start the model on every routing check. Other platforms use a plain connect.
+- `base_url` is validated: http(s), loopback only, `cli: opencode` only, model in `<provider>/<model>` form.
+
 ## [2.12.1] - 2026-10-14
 
 ### Fixed
