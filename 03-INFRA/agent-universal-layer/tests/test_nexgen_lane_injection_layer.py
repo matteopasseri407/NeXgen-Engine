@@ -82,7 +82,11 @@ def test_eval_bare_switches_the_layer_off_for_the_run(monkeypatch):
 
     from nexgen_local.cmds import run
 
-    monkeypatch.delenv("NEXGEN_LANE_INJECTION_LAYER", raising=False)
+    # setenv, not delenv: cmd_eval writes os.environ itself, and only a value
+    # monkeypatch recorded is undone at teardown. A delenv of an absent
+    # variable records nothing, so the "0" leaked and switched the injection
+    # layer off for every later test in the session.
+    monkeypatch.setenv("NEXGEN_LANE_INJECTION_LAYER", "1")
     monkeypatch.setattr(run, "_llm", lambda cfg: (_ for _ in ()).throw(run_error()))
 
     def run_error():
@@ -94,4 +98,3 @@ def test_eval_bare_switches_the_layer_off_for_the_run(monkeypatch):
     assert run.cmd_eval(args) == 2
     import os
     assert os.environ.get("NEXGEN_LANE_INJECTION_LAYER") == "0"
-    monkeypatch.delenv("NEXGEN_LANE_INJECTION_LAYER")
