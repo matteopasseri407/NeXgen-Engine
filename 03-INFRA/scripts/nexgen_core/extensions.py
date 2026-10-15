@@ -125,24 +125,27 @@ class _Upstream:
 
     def describe(self, kind: str, name: str, pins: list[dict[str, Any]]) -> dict[str, Any]:
         """What the watch said about these pins of one item (all of them, or one component)."""
-        verdict = self._verdicts.get((kind, name))
-        withdrawn = next((p["deprecated"] for p in pins if p.get("deprecated")), None)
-        extra = {"deprecated": withdrawn} if withdrawn else {}
-        stale = next((p for p in pins if p.get("stale")), None)
-        if stale is not None:
-            out: dict[str, Any] = {
-                "state": "stale",
-                "pinned": stale.get("pinned") or (verdict or {}).get("pinned"),
-                "upstream": stale.get("upstream") or (verdict or {}).get("upstream"),
-                **extra,
-            }
-            if verdict:
-                out["verdict"] = {"auto": "ready", "batch": "ready", "hold": "held"}[verdict["tier"]]
-                out["plain"] = verdict.get("plain") or ""
-            return out
-        if any(p.get("upstream") for p in pins):
-            return {"state": "current", **extra}
-        return {"state": "unknown"}
+        return _describe_update(kind, name, pins, self._verdicts.get((kind, name)))
+
+
+def _describe_update(kind: str, name: str, pins: list[dict[str, Any]], verdict: dict[str, Any] | None) -> dict[str, Any]:
+    withdrawn = next((p["deprecated"] for p in pins if p.get("deprecated")), None)
+    extra = {"deprecated": withdrawn} if withdrawn else {}
+    stale = next((p for p in pins if p.get("stale")), None)
+    if stale is not None:
+        out: dict[str, Any] = {
+            "state": "stale",
+            "pinned": stale.get("pinned") or (verdict or {}).get("pinned"),
+            "upstream": stale.get("upstream") or (verdict or {}).get("upstream"),
+            **extra,
+        }
+        if verdict:
+            out["verdict"] = {"auto": "ready", "batch": "ready", "hold": "held"}[verdict["tier"]]
+            out["plain"] = verdict.get("plain") or ""
+        return out
+    if any(p.get("upstream") for p in pins):
+        return {"state": "current", **extra}
+    return {"state": "unknown"}
 
 
 def _load_servers(vault_data: Path) -> tuple[dict[str, dict[str, Any]], str | None]:
@@ -157,32 +160,35 @@ def _load_servers(vault_data: Path) -> tuple[dict[str, dict[str, Any]], str | No
         return {}, str(exc)
 
 
+def _mcp_row(name: str, srv: dict[str, Any], upstream: _Upstream) -> dict[str, Any]:
+    cells = _cells(srv)
+    pin, pin_state = _mcp_pin(srv)
+    denied = srv.get("tools_deny")
+    allowed = srv.get("tools_allow")
+    state = "off" if srv.get("enabled") is False else "trial" if "_trial_expires" in srv else "on"
+    return {
+        "name": name,
+        "provenance": mcp_provenance(srv),
+        "state": state,
+        "tier": srv.get("tier") or "",
+        "where": _summarize_where(cells),
+        "why_off": _why_off(srv) if _summarize_where(cells) == "off" else "",
+        "placement": cells,
+        "clis": [cli for cli, kind in cells.items() if kind != "absent"],
+        "pin": pin,
+        "pin_state": pin_state,
+        "hidden_tools": len(denied) if isinstance(denied, list) else 0,
+        "only_tools": len(allowed) if isinstance(allowed, list) else 0,
+        "update": upstream.lookup("mcp", name) if pin_state == "pinned" else {"state": "n/a"},
+    }
+
+
 def mcp_rows(servers: dict[str, dict[str, Any]], upstream: _Upstream) -> list[dict[str, Any]]:
     rows = []
     for name, srv in servers.items():
         if not isinstance(srv, dict):
             continue
-        cells = _cells(srv)
-        pin, pin_state = _mcp_pin(srv)
-        denied = srv.get("tools_deny")
-        allowed = srv.get("tools_allow")
-        state = "off" if srv.get("enabled") is False else "trial" if "_trial_expires" in srv else "on"
-        row = {
-            "name": name,
-            "provenance": mcp_provenance(srv),
-            "state": state,
-            "tier": srv.get("tier") or "",
-            "where": _summarize_where(cells),
-            "why_off": _why_off(srv) if _summarize_where(cells) == "off" else "",
-            "placement": cells,
-            "clis": [cli for cli, kind in cells.items() if kind != "absent"],
-            "pin": pin,
-            "pin_state": pin_state,
-            "hidden_tools": len(denied) if isinstance(denied, list) else 0,
-            "only_tools": len(allowed) if isinstance(allowed, list) else 0,
-            "update": upstream.lookup("mcp", name) if pin_state == "pinned" else {"state": "n/a"},
-        }
-        rows.append(row)
+        rows.append(_mcp_row(name, srv, upstream))
     return rows
 
 
@@ -216,6 +222,23 @@ def _engine_copy(name: str, engine_root: Path, vault_data: Path) -> str | None:
     return "same" if same_tree_content(shipped, copy) else "differs"
 
 
+def _skill_row(name: str, entry: dict[str, Any], present: set[str], vault_data: Path, engine_root: Path, upstream: _Upstream) -> dict[str, Any]:
+    origin = str(entry.get("origin") or "vault")
+    copy = _engine_copy(name, engine_root, vault_data) if origin == "vault" else None
+    provenance = ENGINE if origin == "engine" or copy is not None else YOURS if origin == "vault" else THIRD_PARTY
+    pin = _skill_pin(entry)
+    return {
+        "name": name,
+        "provenance": provenance,
+        "origin": origin,
+        "exposure": str(entry.get("exposure") or "lazy"),
+        "pin": pin,
+        "in_library": name in present,
+        "engine_copy": copy,
+        "update": upstream.lookup("skill", name) if provenance == THIRD_PARTY and pin else {"state": "n/a"},
+    }
+
+
 def skill_rows(vault_data: Path, engine_root: Path, home: Path, upstream: _Upstream) -> tuple[list[dict[str, Any]], str | None, list[str]]:
     """Rows for the declared skills, an error if the manifest cannot be read, and the library entries outside it."""
     from nexgen_core.skills import SkillMaterializer
@@ -233,20 +256,7 @@ def skill_rows(vault_data: Path, engine_root: Path, home: Path, upstream: _Upstr
     for name, entry in declared.items():
         if not isinstance(entry, dict):
             continue
-        origin = str(entry.get("origin") or "vault")
-        copy = _engine_copy(name, engine_root, vault_data) if origin == "vault" else None
-        provenance = ENGINE if origin == "engine" or copy is not None else YOURS if origin == "vault" else THIRD_PARTY
-        pin = _skill_pin(entry)
-        rows.append({
-            "name": name,
-            "provenance": provenance,
-            "origin": origin,
-            "exposure": str(entry.get("exposure") or "lazy"),
-            "pin": pin,
-            "in_library": name in present,
-            "engine_copy": copy,
-            "update": upstream.lookup("skill", name) if provenance == THIRD_PARTY and pin else {"state": "n/a"},
-        })
+        rows.append(_skill_row(name, entry, present, vault_data, engine_root, upstream))
     return rows, None, sorted(present - set(declared))
 
 
