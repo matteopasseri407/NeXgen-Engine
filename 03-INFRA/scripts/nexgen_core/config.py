@@ -184,21 +184,8 @@ def _split_if_block(text: str, start: int) -> tuple[str, str, int]:
         cursor = token.end()
 
 
-def load_mcp_manifest(path: Path, *, strict: bool = False) -> dict[str, Any]:
-    """Loads and validates mcp/manifest.yaml tolerantly.
-
-    ``retired_servers`` is the explicit, cross-CLI removal mechanism: a name
-    listed there disappears from the returned active connectors, so every
-    consumer (the renderer, dependency watch) sees it exactly once. A name
-    present both among the retired and among the active servers is a manifest
-    error: the active entry is skipped with a warning, and the document is
-    never rejected (invariant 8).
-
-    ``strict=True`` turns skipped entries into one `ConfigError` naming them
-    all: the guard preflight and the doctor validity check use it, so a typo
-    can never silently drop a connector while every report says aligned.
-    Unknown *fields* stay tolerated in both modes (forward compatibility).
-    """
+def _load_mcp_manifest_impl(path: Path, *, strict: bool = False) -> dict[str, Any]:
+    """Corpo di load_mcp_manifest (helper privato dello split)."""
     raw = _load_yaml(path, "MCP manifest")
     servers = raw.get("servers", {})
     if not isinstance(servers, dict):
@@ -248,13 +235,26 @@ def load_mcp_manifest(path: Path, *, strict: bool = False) -> dict[str, Any]:
     }
 
 
-def load_skills_manifest(path: Path, *, strict: bool = False) -> dict[str, Any]:
-    """Loads and validates skills.manifest.yaml tolerantly.
+def load_mcp_manifest(path: Path, *, strict: bool = False) -> dict[str, Any]:
+    """Loads and validates mcp/manifest.yaml tolerantly.
 
-    ``strict=True`` turns structurally invalid entries into one `ConfigError`
-    (unknown *origins* stay tolerated in both modes: a machine receiving a
-    skill from a future origin must warn and continue, never stop).
+    ``retired_servers`` is the explicit, cross-CLI removal mechanism: a name
+    listed there disappears from the returned active connectors, so every
+    consumer (the renderer, dependency watch) sees it exactly once. A name
+    present both among the retired and among the active servers is a manifest
+    error: the active entry is skipped with a warning, and the document is
+    never rejected (invariant 8).
+
+    ``strict=True`` turns skipped entries into one `ConfigError` naming them
+    all: the guard preflight and the doctor validity check use it, so a typo
+    can never silently drop a connector while every report says aligned.
+    Unknown *fields* stay tolerated in both modes (forward compatibility).
     """
+    return _load_mcp_manifest_impl(path, strict=strict)
+
+
+def _load_skills_manifest_impl(path: Path, *, strict: bool = False) -> dict[str, Any]:
+    """Corpo di load_skills_manifest (helper privato dello split)."""
     raw = _load_yaml(path, "Skills manifest")
     skills = raw.get("skills", {})
     if not isinstance(skills, dict):
@@ -288,6 +288,15 @@ def load_skills_manifest(path: Path, *, strict: bool = False) -> dict[str, Any]:
         "raw": raw,
     }
 
+
+def load_skills_manifest(path: Path, *, strict: bool = False) -> dict[str, Any]:
+    """Loads and validates skills.manifest.yaml tolerantly.
+
+    ``strict=True`` turns structurally invalid entries into one `ConfigError`
+    (unknown *origins* stay tolerated in both modes: a machine receiving a
+    skill from a future origin must warn and continue, never stop).
+    """
+    return _load_skills_manifest_impl(path, strict=strict)
 
 
 #: Hosts a local seat's endpoint may name. A local seat is what the privacy role falls back
