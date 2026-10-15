@@ -343,28 +343,25 @@ def _mentions_test(low: str) -> bool:
     return any(word in low for word in _TEST_WORDS)
 
 
-def verify_answer(answer: str, receipts: list[dict[str, Any]], collected: str | None = None) -> list[str]:
-    """Machine check of the answer's claims, against successful receipts only.
+def _check_grounding(
+    text: str,
+    low: str,
+    receipts: list[dict[str, Any]],
+    paths: list[str],
+    searched: bool,
+    web_ok: bool,
+    successful: list[dict[str, Any]],
+    collected: str | None,
+) -> list[str]:
+    """Claim and citation checks against successful receipts only.
 
-    An empty list means every claim about work done and every cited source is
-    backed by what the engine actually read. A failed search is not evidence;
-    a path cited but never read is a problem; a claimed write or a claimed
-    test is always one. Each family needs its own evidence: "ho letto" needs
-    a read receipt, "ho cercato" a search receipt, and "aggiornato"/"test
-    superati" fail even with receipts because the lane can neither write nor
-    run tests.
-
-    ``collected`` is the engine's retrieved text. When the caller passes it
-    explicitly (``""`` means "retrieval ran but produced nothing") and the
-    answer asserts facts without any absence phrasing, that is an invention
-    even without claim words. ``None`` (the default for callers without
-    retrieval context) skips that check.
+    A failed search is not evidence; a path cited but never read is a
+    problem; a claimed write or a claimed test is always one. Each family
+    needs its own evidence: "ho letto" needs a read receipt, "ho cercato"
+    a search receipt, and "aggiornato"/"test superati" fail even with
+    receipts because the lane can neither write nor run tests.
     """
-    text = str(answer or "")
-    low = text.casefold()
     problems: list[str] = []
-    successful = [receipt for receipt in receipts if receipt.get("ok")]
-    paths, searched, web_ok = _evidence(receipts)
     if _has_claim(low, _READ_CLAIM_PHRASES) and not paths:
         problems.append("afferma una lettura senza una ricevuta di lettura riuscita")
     elif _has_claim(low, _READ_CLAIM_PHRASES) and not successful:
@@ -392,9 +389,55 @@ def verify_answer(answer: str, receipts: list[dict[str, Any]], collected: str | 
         if _cited_drive_name(cited, receipts):
             continue
         problems.append(f"cita una fonte non letta: {cited}")
+    return problems
+
+
+def _verify_answer(
+    text: str,
+    low: str,
+    receipts: list[dict[str, Any]],
+    paths: list[str],
+    web_ok: bool,
+    collected: str | None,
+) -> list[str]:
+    """Invention check for empty retrieval.
+
+    When the caller passes ``collected`` explicitly (``""`` means
+    "retrieval ran but produced nothing") and the answer asserts facts
+    without any absence phrasing, that is an invention even without claim
+    words. ``None`` (the default for callers without retrieval context)
+    skips that check.
+    """
     if collected is not None and not collected and receipts and not paths and not web_ok:
         if low.strip() and not honest_empty_outcome(text):
-            problems.append("afferma fatti senza contenuto recuperato dal motore")
+            return ["afferma fatti senza contenuto recuperato dal motore"]
+    return []
+
+
+def verify_answer(answer: str, receipts: list[dict[str, Any]], collected: str | None = None) -> list[str]:
+    """Machine check of the answer's claims, against successful receipts only.
+
+    An empty list means every claim about work done and every cited source is
+    backed by what the engine actually read. A failed search is not evidence;
+    a path cited but never read is a problem; a claimed write or a claimed
+    test is always one. Each family needs its own evidence: "ho letto" needs
+    a read receipt, "ho cercato" a search receipt, and "aggiornato"/"test
+    superati" fail even with receipts because the lane can neither write nor
+    run tests.
+
+    ``collected`` is the engine's retrieved text. When the caller passes it
+    explicitly (``""`` means "retrieval ran but produced nothing") and the
+    answer asserts facts without any absence phrasing, that is an invention
+    even without claim words. ``None`` (the default for callers without
+    retrieval context) skips that check.
+    """
+    text = str(answer or "")
+    low = text.casefold()
+    problems: list[str] = []
+    successful = [receipt for receipt in receipts if receipt.get("ok")]
+    paths, searched, web_ok = _evidence(receipts)
+    problems.extend(_check_grounding(text, low, receipts, paths, searched, web_ok, successful, collected))
+    problems.extend(_verify_answer(text, low, receipts, paths, web_ok, collected))
     # Deduplicate while keeping order: one family, one reason.
     seen: set[str] = set()
     unique: list[str] = []
