@@ -491,6 +491,52 @@ def _continue_research(
     return app.invoke(current, config=thread)
 
 
+def _start_task(
+    llm: LLM, cfg: LaneConfig, task: str, session_id: str,
+    max_steps: int, canary_list: list[str], is_new: bool,
+) -> ResearchState | None:
+    """Build the initial state for a new session; None when continuing."""
+    if not is_new:
+        return None
+    route = route_task(llm, cfg, task)
+    created = _initial_research_state(session_id, task, route, max_steps, canary_list)
+    named_path = str(route.get("path") or "")
+    if named_path and str(route.get("root") or ""):
+        loop = _loop_from_persisted(created["loop"])
+        loop.named_path = pinned_path(str(route.get("root")), named_path)
+        created["loop"] = _loop_to_persisted(loop)
+    return created
+
+
+def _continue_task(
+    app: Any, thread: dict[str, Any], created: ResearchState | None,
+    tools: ToolRegistry, llm: LLM, cfg: LaneConfig, canary_list: list[str],
+    session_id: str, task: str, max_steps: int,
+) -> ResearchState:
+    """Run the graph: fresh state, restarted file, or continued session."""
+    if created is not None:
+        return app.invoke(created, config=thread)
+    snapshot = app.get_state(thread)
+    if not snapshot.values:
+        # A file without a first checkpoint can restart this
+        # instruction, under the same exclusive ownership.
+        route = route_task(llm, cfg, task)
+        restarted = _initial_research_state(session_id, task, route, max_steps, canary_list)
+        return app.invoke(restarted, config=thread)
+    return _continue_research(
+        app, thread, snapshot, tools, llm, cfg, canary_list,
+        session_id, task, max_steps,
+    )
+
+
+def _finish_task(session_id: str, final: ResearchState) -> dict[str, Any]:
+    """Summarize the final state, appending the status block to the answer."""
+    summary = _summary(session_id, final)
+    if summary["answer"]:
+        summary["answer"] = summary["answer"] + "\n\n" + summary["status_block"]
+    return summary
+
+
 def research_task(
     llm: LLM,
     cfg: LaneConfig,
@@ -518,15 +564,7 @@ def research_task(
         _sweep_old_sessions(cfg)
         tools = ToolRegistry(cfg)
         canary_list = [str(c) for c in canaries]
-        created: ResearchState | None = None
-        if is_new:
-            route = route_task(llm, cfg, task)
-            created = _initial_research_state(session_id, task, route, max_steps, canary_list)
-            named_path = str(route.get("path") or "")
-            if named_path and str(route.get("root") or ""):
-                loop = _loop_from_persisted(created["loop"])
-                loop.named_path = pinned_path(str(route.get("root")), named_path)
-                created["loop"] = _loop_to_persisted(loop)
+        created = _start_task(llm, cfg, task, session_id, max_steps, canary_list, is_new)
 
         def ctx_factory(state: ResearchState) -> _Ctx:
             return _Ctx(llm, tools, cfg, canary_list, StepResult(task=state.get("task", task)))
@@ -535,26 +573,12 @@ def research_task(
             try:
                 app = build_research_app(ctx_factory).compile(checkpointer=saver)
                 thread = {"configurable": {"thread_id": session_id}}
-                if created is not None:
-                    final = app.invoke(created, config=thread)
-                else:
-                    snapshot = app.get_state(thread)
-                    if not snapshot.values:
-                        # A file without a first checkpoint can restart this
-                        # instruction, under the same exclusive ownership.
-                        route = route_task(llm, cfg, task)
-                        created = _initial_research_state(session_id, task, route, max_steps, canary_list)
-                        final = app.invoke(created, config=thread)
-                    else:
-                        final = _continue_research(
-                            app, thread, snapshot, tools, llm, cfg, canary_list,
-                            session_id, task, max_steps,
-                        )
+                final = _continue_task(
+                    app, thread, created, tools, llm, cfg, canary_list,
+                    session_id, task, max_steps,
+                )
             finally:
                 # Checkpoints may hold mail bodies: lock them down even when
                 # the run raised midway.
                 _secure_storage(cfg.research_dir, session_file)
-            summary = _summary(session_id, final)
-            if summary["answer"]:
-                summary["answer"] = summary["answer"] + "\n\n" + summary["status_block"]
-            return summary
+            return _finish_task(session_id, final)
