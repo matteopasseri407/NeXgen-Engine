@@ -22,8 +22,12 @@ from nexgen_core.lock import HostLock, LockTimeoutError
 PROPOSAL_ID_RE = re.compile(r"\d{8}-\d{6}-[0-9a-f]{8}")
 
 
-def valid_proposal_id(proposal_id: str) -> bool:
+def _valid_proposal_id_impl(proposal_id: str) -> bool:
     return bool(PROPOSAL_ID_RE.fullmatch(str(proposal_id or "")))
+
+
+def valid_proposal_id(proposal_id: str) -> bool:
+    return _valid_proposal_id_impl(proposal_id)
 
 
 def new_proposal_id() -> str:
@@ -52,13 +56,18 @@ def read_proposal_data(path: Path, proposal_id: str, error: type[Exception]) -> 
     return migrate_attempt(data)
 
 
-def content_sha(*parts: str) -> str:
+def _content_sha_impl(*parts: str) -> str:
     """Bind approval fields using an unambiguous, versioned encoding."""
     encoded = json.dumps(parts, ensure_ascii=True, separators=(",", ":")).encode("utf-8")
     return "v1:" + hashlib.sha256(encoded).hexdigest()
 
 
-def validate_content(saved: str, error: type[Exception], *parts: str) -> None:
+def content_sha(*parts: str) -> str:
+    """Bind approval fields using an unambiguous, versioned encoding."""
+    return _content_sha_impl(*parts)
+
+
+def _validate_content_impl(saved: str, error: type[Exception], *parts: str) -> None:
     if not isinstance(saved, str) or not saved:
         raise error("proposta senza vincolo di integrita': riproponi e riapprova")
     expected = content_sha(*parts)
@@ -68,6 +77,10 @@ def validate_content(saved: str, error: type[Exception], *parts: str) -> None:
         expected = hashlib.sha256(b"".join(b"\x00" + p.encode("utf-8") for p in parts)).hexdigest()
     if saved != expected:
         raise error("contenuto cambiato dopo la proposta: riproponi e riapprova")
+
+
+def validate_content(saved: str, error: type[Exception], *parts: str) -> None:
+    return _validate_content_impl(saved, error, *parts)
 
 
 def refuse_prior_attempt(proposal: AttemptedProposal, error: type[Exception]) -> None:
