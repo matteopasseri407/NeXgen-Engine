@@ -114,6 +114,9 @@ class McpRenderer:
         configuration, not merely be absent from new ones. Removing it is
         not a failure and must not be reported as one.
         """
+        return self._retired_server_names_impl()
+
+    def _retired_server_names_impl(self) -> set[str]:
         if not self.manifest_path.is_file():
             return set()
         data = load_mcp_manifest(self.manifest_path)
@@ -193,6 +196,9 @@ class McpRenderer:
 
     def manifest_server_names(self) -> list[str]:
         """Every server the manifest declares, in manifest order, resolvable here or not."""
+        return self._manifest_server_names_impl()
+
+    def _manifest_server_names_impl(self) -> list[str]:
         if not self.manifest_path.is_file():
             return []
         return list(load_mcp_manifest(self.manifest_path).get("servers", {}))
@@ -204,6 +210,9 @@ class McpRenderer:
         caller (checks, plan, inventory) shares the one entry point instead
         of branching on the CLI name.
         """
+        return self._load_resolved_servers_impl(cli_target)
+
+    def _load_resolved_servers_impl(self, cli_target: str) -> dict[str, dict[str, Any]]:
         if cli_target == "claude-desktop":
             from nexgen_core.mcp_render.claude_desktop import allowed_desktop_servers
 
