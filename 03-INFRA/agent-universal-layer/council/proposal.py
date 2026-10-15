@@ -304,6 +304,12 @@ def _seat_spend_note(seat: dict, cost: str | None) -> str:
     return ""
 
 
+def _refuse_unconfirmed_payment(seat_name: str, answer: str) -> None:
+    """Hard stop for a pay-per-use seat without human confirmation."""
+    if answer not in ("y", "yes"):
+        sys.exit(f"[council] STOP: pay-per-use seat '{seat_name}' not confirmed.")
+
+
 def _confirm_pay_per_use(seat_name: str, seat: dict, cost: str | None) -> None:
     """Real-money gate: a pay-per-use seat is never invoked without the human
     confirming it, because the call spends actual money on a per-use channel.
@@ -320,8 +326,7 @@ def _confirm_pay_per_use(seat_name: str, seat: dict, cost: str | None) -> None:
         answer = input(f"Confirm pay-per-use call for seat '{seat_name}'? [y/N] ").strip().casefold()
     except EOFError:
         answer = ""
-    if answer not in ("y", "yes"):
-        sys.exit(f"[council] STOP: pay-per-use seat '{seat_name}' not confirmed.")
+    _refuse_unconfirmed_payment(seat_name, answer)
 
 
 def _confirm_seat_call(seat_name: str, seat: dict, config: dict | None = None) -> None:
