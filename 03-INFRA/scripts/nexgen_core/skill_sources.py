@@ -143,14 +143,7 @@ def _prune_skill_backups(path: Path) -> None:
             pass
 
 
-def make_link_or_copy(src: Path, dst: Path) -> bool:
-    """Creates a symlink (or copies, on Windows if symlink privileges aren't active).
-
-    A real folder found where the view should be is never deleted: it may
-    hold work nobody entrusted to us. If the content already matches,
-    nothing is touched; otherwise it's set aside with a backup before taking
-    its place.
-    """
+def _link_or_copy_body(src: Path, dst: Path) -> bool:
     dst.parent.mkdir(parents=True, exist_ok=True)
     if dst.is_symlink() or dst.is_file():
         try:
@@ -187,6 +180,17 @@ def make_link_or_copy(src: Path, dst: Path) -> bool:
         else:
             shutil.copy2(src, dst)
         return True
+
+
+def make_link_or_copy(src: Path, dst: Path) -> bool:
+    """Creates a symlink (or copies, on Windows if symlink privileges aren't active).
+
+    A real folder found where the view should be is never deleted: it may
+    hold work nobody entrusted to us. If the content already matches,
+    nothing is touched; otherwise it's set aside with a backup before taking
+    its place.
+    """
+    return _link_or_copy_body(src, dst)
 
 
 #: `owner/name`, the shorthand a manifest declares a GitHub skill with.
@@ -425,10 +429,9 @@ class SkillFetcher:
             return None
         return out
 
-    def install_third_party(
+    def _install_third_party_body(
         self, entry: SkillEntry, lib_dest: Path, discovery_dirs: tuple[Path, ...]
     ) -> tuple[bool, str | None]:
-        """Runs a third-party installer, but only when the pin actually moved."""
         try:
             recorded = self._installed_versions().get(entry.name)
         except OSError as exc:
@@ -487,3 +490,9 @@ class SkillFetcher:
             "the installer for '{name}' ran but left no new copy to claim: keeping the previous version",
             name=entry.name,
         )
+
+    def install_third_party(
+        self, entry: SkillEntry, lib_dest: Path, discovery_dirs: tuple[Path, ...]
+    ) -> tuple[bool, str | None]:
+        """Runs a third-party installer, but only when the pin actually moved."""
+        return self._install_third_party_body(entry, lib_dest, discovery_dirs)
