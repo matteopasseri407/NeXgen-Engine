@@ -524,7 +524,14 @@ class GuardRunner:
                 if abort is not None:
                     return abort
 
-                failed = self._run_phases(actions, branch, skip_mcp)
+                failed: list[str] = []
+                failed += self._phase_align(actions, skip_mcp)
+                try:
+                    self._phase_permissions(actions)
+                except Exception as exc:  # noqa: BLE001 - one phase failing must not stop the others
+                    failed.append("permissions")
+                    actions.append(ERROR + t("Phase '{phase}' failed: {error}", phase="permissions", error=exc))
+                failed += self._phase_run(actions, branch)
                 self._phase_liveness(actions, is_guard, mode, failed)
 
                 if failed:
@@ -573,6 +580,38 @@ class GuardRunner:
                 actions_taken=actions,
             )
 
+    def _phase_align(self, actions: list[str], skip_mcp: bool) -> list[str]:
+        """First alignment block: skills + MCP rendering (moved from _run_phases)."""
+        failed: list[str] = []
+        for name, run_phase in (
+            ("skills", lambda: self._phase_skills(actions)),
+            ("mcp", lambda: self._phase_mcp(actions, skip_mcp)),
+        ):
+            try:
+                run_phase()
+            except Exception as exc:  # noqa: BLE001 - one phase failing must not stop the others
+                failed.append(name)
+                actions.append(ERROR + t("Phase '{phase}' failed: {error}", phase=name, error=exc))
+        return failed
+
+    def _phase_run(self, actions: list[str], branch: str) -> list[str]:
+        """Remaining run phases: instructions + launchers + scheduler + modules + runtime."""
+        failed: list[str] = []
+        for name, run_phase in (
+            ("instructions", lambda: self._phase_instructions(actions)),
+            ("launchers", lambda: self._phase_launchers(actions)),
+            ("scheduler", lambda: self._phase_scheduler(actions, branch)),
+            ("modules", lambda: self._phase_modules(actions)),
+            # Last: it may spend minutes on pip, and the safety phases above do not wait for it.
+            ("runtime", lambda: self._phase_runtime(actions)),
+        ):
+            try:
+                run_phase()
+            except Exception as exc:  # noqa: BLE001 - one phase failing must not stop the others
+                failed.append(name)
+                actions.append(ERROR + t("Phase '{phase}' failed: {error}", phase=name, error=exc))
+        return failed
+
     def _run_phases(self, actions: list[str], branch: str, skip_mcp: bool) -> list[str]:
         """Runs every write phase, each isolated from the others; returns the names that failed.
 
@@ -585,24 +624,14 @@ class GuardRunner:
         result is negative, the exit code non-zero, the doctor says which
         phases), it just does not take the rest down with it.
         """
-        phases = (
-            ("skills", lambda: self._phase_skills(actions)),
-            ("mcp", lambda: self._phase_mcp(actions, skip_mcp)),
-            ("permissions", lambda: self._phase_permissions(actions)),
-            ("instructions", lambda: self._phase_instructions(actions)),
-            ("launchers", lambda: self._phase_launchers(actions)),
-            ("scheduler", lambda: self._phase_scheduler(actions, branch)),
-            ("modules", lambda: self._phase_modules(actions)),
-            # Last: it may spend minutes on pip, and the safety phases above do not wait for it.
-            ("runtime", lambda: self._phase_runtime(actions)),
-        )
         failed: list[str] = []
-        for name, run_phase in phases:
-            try:
-                run_phase()
-            except Exception as exc:  # noqa: BLE001 - one phase failing must not stop the others
-                failed.append(name)
-                actions.append(ERROR + t("Phase '{phase}' failed: {error}", phase=name, error=exc))
+        failed += self._phase_align(actions, skip_mcp)
+        try:
+            self._phase_permissions(actions)
+        except Exception as exc:  # noqa: BLE001 - one phase failing must not stop the others
+            failed.append("permissions")
+            actions.append(ERROR + t("Phase '{phase}' failed: {error}", phase="permissions", error=exc))
+        failed += self._phase_run(actions, branch)
         return failed
 
     def _phase_git(
