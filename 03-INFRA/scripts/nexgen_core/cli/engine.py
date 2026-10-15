@@ -30,8 +30,8 @@ def _all(args) -> list[str]:
     return list(getattr(args, "passthrough", []) or [])
 
 
-def register(sub) -> None:
-    """Declares the engine's verbs on the dispatcher."""
+def _register_sync(sub) -> None:
+    """Verbi di allineamento: installano, pianificano e applicano."""
     # Listed here for --help only: `nexgen release ...` is handed to the release
     # rules' own parser before this dispatcher parses anything.
     sub.add_parser("release", help=t("Maintainers: ship a release in one command ('nexgen release ship --help')"))
@@ -86,6 +86,9 @@ def register(sub) -> None:
     p = sub.add_parser("preflight", help=t("Check the configuration without writing anything"))
     p.set_defaults(func=cmd_sync, mode="preflight", allow_offline=False, skip_mcp=False)
 
+
+def _register_doctor(sub) -> None:
+    """Verbo di diagnosi."""
     p = sub.add_parser("doctor", help=t("Tell me if something's wrong"))
     p.add_argument("-v", "--verbose", action="store_true", help=t("List everything that was checked"))
     p.add_argument("--strict", action="store_true", help=t("Also treat undetermined results as failures"))
@@ -95,6 +98,9 @@ def register(sub) -> None:
                    help=t("Apply the available automatic remedies"))
     p.set_defaults(func=cmd_doctor)
 
+
+def _register_info(sub) -> None:
+    """Stato, shell e verbi interni invocati dai timer, non dalle persone."""
     p = sub.add_parser("info", aliases=["status"], help=t("Visual system status and architecture dashboard"))
     p.add_argument("--json", action="store_true", help=t("Output in JSON format"))
     p.add_argument("-i", "--interactive", action="store_true", help=t("Launch interactive shell after info"))
@@ -128,6 +134,13 @@ def register(sub) -> None:
 
     p = sub.add_parser("bootstrap-alerts", help=t("Diagnose and alert only on failures (internal use)"))
     p.set_defaults(func=cmd_bootstrap_alerts)
+
+
+def register(sub) -> None:
+    """Declares the engine's verbs on the dispatcher."""
+    _register_sync(sub)
+    _register_doctor(sub)
+    _register_info(sub)
 
 
 def _action_mark(act: str) -> tuple[str, str]:
