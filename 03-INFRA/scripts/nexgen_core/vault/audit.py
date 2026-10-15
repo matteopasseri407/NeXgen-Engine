@@ -151,10 +151,8 @@ def _publish_if_requested(request: AuditRequest, record: dict, *, output) -> int
     return EXIT_INTERNAL_OR_PUBLISH_FAILED
 
 
-def run_audit(request: AuditRequest, *, output=print) -> tuple[dict, int]:
-    """The promotion gate. Returns (record, exit_code); it doesn't write
-    the JSON record to disk itself -- that's the caller's job (CLI or
-    groom.py), which knows where to put it."""
+def _run_audit_impl(request: AuditRequest, *, output=print) -> tuple[dict, int]:
+    """Implementazione interna del promotion gate (run_audit delega qui)."""
     record = _new_record(request)
 
     if request.write_exit_code != 0:
@@ -215,3 +213,10 @@ def run_audit(request: AuditRequest, *, output=print) -> tuple[dict, int]:
     output(f"pushed: {str(record['pushed']).lower()}")
 
     return record, exit_code
+
+
+def run_audit(request: AuditRequest, *, output=print) -> tuple[dict, int]:
+    """The promotion gate. Returns (record, exit_code); it doesn't write
+    the JSON record to disk itself -- that's the caller's job (CLI or
+    groom.py), which knows where to put it."""
+    return _run_audit_impl(request, output=output)
