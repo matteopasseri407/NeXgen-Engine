@@ -313,18 +313,17 @@ class SkillMaterializer:
                                  name=name, target=self._target_of(directory) or directory.name))
         return actions
 
-    def materialize(self, apply: bool = True, allow_installer_exec: bool = True) -> tuple[int, list[str]]:
-        """Materializes every skill into the library and creates the native views."""
-        skills = self.load_manifest()
+    def _collect_desired(self, skills: dict[str, SkillEntry]) -> dict[str, SkillEntry]:
+        """Which manifest entries concern whoever is using this machine."""
+        return {name: entry for name, entry in skills.items() if self._belongs_here(entry)}
+
+    def _write_views(
+        self, desired: dict[str, SkillEntry], apply: bool, allow_installer_exec: bool
+    ) -> tuple[int, list[str]]:
+        """Materializes library entries and native views for the desired skills."""
         actions: list[str] = []
         changes = 0
-
-        self.library_dir.mkdir(parents=True, exist_ok=True)
-        self.active_dir.mkdir(parents=True, exist_ok=True)
-
-        for name, entry in skills.items():
-            if not self._belongs_here(entry):
-                continue
+        for name, entry in desired.items():
             lib_dest = self.library_dir / name
 
             # If the local source exists, link it into the library
@@ -441,6 +440,21 @@ class SkillMaterializer:
                         if linked:
                             changes += 1
                             actions.append(t("Created active view '{name}' for {target}", name=name, target=target))
+        return changes, actions
+
+    def materialize(self, apply: bool = True, allow_installer_exec: bool = True) -> tuple[int, list[str]]:
+        """Materializes every skill into the library and creates the native views."""
+        skills = self.load_manifest()
+        actions: list[str] = []
+        changes = 0
+
+        self.library_dir.mkdir(parents=True, exist_ok=True)
+        self.active_dir.mkdir(parents=True, exist_ok=True)
+
+        desired = self._collect_desired(skills)
+        written, write_actions = self._write_views(desired, apply, allow_installer_exec)
+        changes += written
+        actions.extend(write_actions)
 
         if apply:
             actions.extend(self._remove_stale_views(skills))
