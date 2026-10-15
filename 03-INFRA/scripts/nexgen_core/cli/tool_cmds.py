@@ -13,7 +13,7 @@ def _all(args) -> list[str]:
     return list(getattr(args, "passthrough", []) or [])
 
 
-def register(sub) -> None:
+def _register_utilities(sub) -> None:
     p = sub.add_parser("tool", aliases=["tools"], help=t("Tools shipped with the engine"))
     tsub = p.add_subparsers(dest="tool_command", metavar="tool")
 
@@ -70,6 +70,14 @@ def register(sub) -> None:
 
     p.set_defaults(func=lambda a: _usage(p))
 
+    # The council isn't a tool: it's its own top-level verb. The runner is
+    # the launcher in nexgen_core/tools/council.py, which subprocesses
+    # agent-universal-layer/council/council.py where the logic lives.
+    c = sub.add_parser("council", help=t("Convene a review across models from different vendors"))
+    c.set_defaults(func=cmd_council)
+
+
+def _register_mcp_block(sub) -> None:
     # `mcp` sta a livello top-level: è la superficie che rulesync ha reso
     # familiare e il piano chiede per nome (`nexgen mcp add`).
     m = sub.add_parser("mcp", help=t("Add and inspect MCP connectors"))
@@ -133,11 +141,10 @@ def register(sub) -> None:
     a.add_argument("--direct", action="store_true", help=t("Instead: measure the directly mounted servers (tools and weight of what a CLI loads up front)"))
     a.set_defaults(func=cmd_mcp_check)
 
-    # The council isn't a tool: it's its own top-level verb. The runner is
-    # the launcher in nexgen_core/tools/council.py, which subprocesses
-    # agent-universal-layer/council/council.py where the logic lives.
-    c = sub.add_parser("council", help=t("Convene a review across models from different vendors"))
-    c.set_defaults(func=cmd_council)
+
+def register(sub) -> None:
+    _register_utilities(sub)
+    _register_mcp_block(sub)
 
 
 def _usage(parser) -> int:
