@@ -374,6 +374,64 @@ def _write_report(path: Path, findings: list[PinFinding]) -> None:
     atomic_write_text(path, "\n".join(lines).rstrip() + "\n")
 
 
+def _collect_pins(
+    skills_raw: dict[str, dict],
+    mcp_raw: dict[str, dict],
+    engine_root: Path,
+    vault_data: Path,
+) -> tuple[list[tuple[str, str, str, str]], list[_ModulePin]]:
+    """Collect phase: every declared pin, skills+MCP plus switched-on modules."""
+    try:
+        module_pins = _collect_module_pins(engine_root, vault_data)
+    except Exception as exc:  # noqa: BLE001 - no engine tree to read (a bare install) just means no module pins
+        logger.debug("module pins not collected (%s)", type(exc).__name__)
+        module_pins = []
+    pins = _collect_skill_pins(skills_raw) + _collect_mcp_pins(mcp_raw)
+    return pins, module_pins
+
+
+def _pin_one(
+    what: str,
+    kind: str,
+    pinned: str,
+    key: str,
+    *,
+    git_check: Callable[[str], str | None],
+    npm_check: Callable[[str], str | None],
+    deprecation_check: Callable[[str, str], str | None],
+    tag_check: Callable[[str], str | None],
+    compare: str = "patch",
+    package: str = "",
+) -> PinFinding:
+    """Pin phase: resolve one pin upstream, never applying anything."""
+    if kind == "manual-version":
+        return PinFinding(kind=kind, what=what, pinned=pinned, upstream=None, stale=False)
+    if key.startswith("npm:") or key.startswith("git-tags:"):
+        source, _, argument = key.partition(":")
+        newest = tag_check(argument) if source == "git-tags" else npm_check(argument)
+        deprecated = deprecation_check(package, pinned) if package and newest is not None else None
+        return PinFinding(
+            kind=kind, what=what, pinned=pinned, upstream=newest,
+            stale=_is_stale(kind, pinned, newest, compare), deprecated=deprecated,
+        )
+    upstream = git_check(key) if kind == "git-commit" else npm_check(key)
+    stale = _is_stale(kind, pinned, upstream)
+    # Asked only when the registry answered at all, and only for a package a person pinned.
+    deprecated = deprecation_check(key, pinned) if kind == "npm-version" and upstream is not None else None
+    return PinFinding(kind=kind, what=what, pinned=pinned, upstream=upstream, stale=stale, deprecated=deprecated)
+
+
+def _run_depwatch(findings: list[PinFinding], resolved_state: Path) -> DepwatchResult:
+    """Run phase: write the list and its sidecar, staying quiet when offline."""
+    if not any(f.upstream is not None for f in findings):
+        # Nothing pinned, or upstream isn't responding right now: offline is not an incident, stay quiet.
+        return DepwatchResult(findings=findings, report_path=None, wrote=False)
+    report_path = resolved_state / REPORT_FILE_NAME
+    _write_report(report_path, findings)
+    _write_status_sidecar(resolved_state, findings)
+    return DepwatchResult(findings=findings, report_path=report_path, wrote=True)
+
+
 def run_depwatch(
     *,
     vault_data: Path | None = None,
@@ -413,39 +471,23 @@ def run_depwatch(
         except ConfigError:
             mcp_raw = {}
 
-    try:
-        module_pins = _collect_module_pins(resolve_engine_root(), resolved_vault)
-    except Exception as exc:  # noqa: BLE001 - no engine tree to read (a bare install) just means no module pins
-        logger.debug("module pins not collected (%s)", type(exc).__name__)
-        module_pins = []
-    pins = _collect_skill_pins(skills_raw) + _collect_mcp_pins(mcp_raw)
+    pins, module_pins = _collect_pins(skills_raw, mcp_raw, resolve_engine_root(), resolved_vault)
     findings: list[PinFinding] = []
     for what, kind, pinned, key in pins:
-        if kind == "manual-version":
-            findings.append(PinFinding(kind=kind, what=what, pinned=pinned, upstream=None, stale=False))
-            continue
-        upstream = git_check(key) if kind == "git-commit" else npm_check(key)
-        stale = _is_stale(kind, pinned, upstream)
-        # Asked only when the registry answered at all, and only for a package a person pinned.
-        deprecated = deprecation_check(key, pinned) if kind == "npm-version" and upstream is not None else None
-        findings.append(PinFinding(kind=kind, what=what, pinned=pinned, upstream=upstream, stale=stale, deprecated=deprecated))
+        findings.append(_pin_one(
+            what, kind, pinned, key,
+            git_check=git_check, npm_check=npm_check,
+            deprecation_check=deprecation_check, tag_check=tag_check,
+        ))
     for mp in module_pins:
-        source, _, argument = mp.latest.partition(":")
-        newest = tag_check(argument) if source == "git-tags" else npm_check(argument)
-        deprecated = deprecation_check(mp.package, mp.pinned) if mp.package and newest is not None else None
-        findings.append(PinFinding(
-            kind=mp.kind, what=mp.label, pinned=mp.pinned, upstream=newest,
-            stale=_is_stale(mp.kind, mp.pinned, newest, mp.compare), deprecated=deprecated,
+        findings.append(_pin_one(
+            mp.label, mp.kind, mp.pinned, mp.latest,
+            git_check=git_check, npm_check=npm_check,
+            deprecation_check=deprecation_check, tag_check=tag_check,
+            compare=mp.compare, package=mp.package,
         ))
 
-    if not any(f.upstream is not None for f in findings):
-        # Nothing pinned, or upstream isn't responding right now: offline is not an incident, stay quiet.
-        return DepwatchResult(findings=findings, report_path=None, wrote=False)
-
-    report_path = resolved_state / REPORT_FILE_NAME
-    _write_report(report_path, findings)
-    _write_status_sidecar(resolved_state, findings)
-    return DepwatchResult(findings=findings, report_path=report_path, wrote=True)
+    return _run_depwatch(findings, resolved_state)
 
 
 def _write_status_sidecar(state_dir: Path, findings: list[PinFinding]) -> None:
