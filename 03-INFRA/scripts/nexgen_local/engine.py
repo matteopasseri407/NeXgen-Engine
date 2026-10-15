@@ -283,6 +283,44 @@ class LaneResult:
     problems: list[str] = field(default_factory=list)
 
 
+def _sanitize_route(llm: LLM, cfg: LaneConfig, task: str) -> dict[str, Any]:
+    """Route phase: validated routing, never an unverified path."""
+    return route_task(llm, cfg, task)
+
+
+def _retrieve_evidence(
+    tools: ToolRegistry, cfg: LaneConfig, route: dict[str, Any], task: str
+) -> tuple[str, str]:
+    """Retrieve phase: engine-built content plus its explicit outcome."""
+    collected = retrieve(tools, cfg, route, task)
+    outcome = retrieval_outcome(tools.calls, tools.refusals, collected)
+    return collected, outcome
+
+
+def _answer_from_evidence(
+    llm: LLM,
+    cfg: LaneConfig,
+    tools: ToolRegistry,
+    route: dict[str, Any],
+    task: str,
+    collected: str,
+    outcome: str,
+) -> str:
+    """Answer phase: model prose on content, engine sentence on empty/failure."""
+    if outcome == "ok":
+        return answer_task(
+            llm,
+            cfg,
+            task,
+            collected,
+            str(route.get("source")),
+            sources=sources_from_receipts(tools.calls),
+        )
+    # Empty or failed retrieval is an engine outcome, not a writing
+    # prompt: the model is not asked to report the void (and fill it).
+    return engine_sentence(outcome)
+
+
 def run_lane(
     llm: LLM,
     tools: ToolRegistry,
@@ -293,22 +331,9 @@ def run_lane(
     """Plain-Python driver: same helpers the graph nodes call."""
     tools.calls.clear()
     tools.refusals.clear()
-    route = route_task(llm, cfg, task)
-    collected = retrieve(tools, cfg, route, task)
-    outcome = retrieval_outcome(tools.calls, tools.refusals, collected)
-    if outcome == "ok":
-        answer = answer_task(
-            llm,
-            cfg,
-            task,
-            collected,
-            str(route.get("source")),
-            sources=sources_from_receipts(tools.calls),
-        )
-    else:
-        # Empty or failed retrieval is an engine outcome, not a writing
-        # prompt: the model is not asked to report the void (and fill it).
-        answer = engine_sentence(outcome)
+    route = _sanitize_route(llm, cfg, task)
+    collected, outcome = _retrieve_evidence(tools, cfg, route, task)
+    answer = _answer_from_evidence(llm, cfg, tools, route, task, collected, outcome)
     receipts = [call.receipt() for call in tools.calls]
     problems = verify_answer(answer, receipts, collected)
     return LaneResult(
