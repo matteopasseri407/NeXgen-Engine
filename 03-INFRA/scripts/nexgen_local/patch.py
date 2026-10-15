@@ -203,6 +203,52 @@ def list_proposals(cfg: LaneConfig) -> list[Proposal]:
     return proposals
 
 
+def _build_proposal(
+    cfg: LaneConfig,
+    rel: str,
+    root: Path,
+    instruction: str,
+    text: str,
+    new_text: str,
+    patch: str,
+    dry_ok: bool,
+    dry_output: str,
+    why: str,
+) -> Proposal:
+    """Costruisce, memorizza e registra la proposta senza cambiarne il contenuto."""
+    proposal = Proposal(
+        id="",
+        file=rel,
+        repo_root=str(root),
+        instruction=instruction,
+        original_hash=_sha(text),
+        new_hash=_sha(new_text),
+        patch=patch,
+        dry_run=dry_ok,
+        dry_run_output=dry_output,
+        model_text=why,
+        created_at=time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+    )
+    for _ in range(5):
+        proposal.id = new_proposal_id()
+        try:
+            _create(cfg, proposal)
+            break
+        except PatchError as exc:
+            if "collisione" not in str(exc):
+                raise
+    else:
+        raise PatchError("collisione id proposta, riprova")
+    audit_event(
+        cfg,
+        "propose_patch",
+        {"file": rel, "original_hash": proposal.original_hash, "dry_run": dry_ok},
+        ok=dry_ok,
+        chars=len(patch),
+    )
+    return proposal
+
+
 def propose_patch(llm: LLM, cfg: LaneConfig, file_rel: str, instruction: str) -> Proposal:
     """Ask the model for a snippet replacement; validate, diff and dry-run it."""
     target = _repo_file(cfg, file_rel)
@@ -243,37 +289,7 @@ def propose_patch(llm: LLM, cfg: LaneConfig, file_rel: str, instruction: str) ->
     if not patch.strip():
         raise PatchError("diff vuoto")
     dry_ok, dry_output = _dry_run(root, patch)
-    proposal = Proposal(
-        id="",
-        file=rel,
-        repo_root=str(root),
-        instruction=instruction,
-        original_hash=_sha(text),
-        new_hash=_sha(new_text),
-        patch=patch,
-        dry_run=dry_ok,
-        dry_run_output=dry_output,
-        model_text=why,
-        created_at=time.strftime("%Y-%m-%dT%H:%M:%S%z"),
-    )
-    for _ in range(5):
-        proposal.id = new_proposal_id()
-        try:
-            _create(cfg, proposal)
-            break
-        except PatchError as exc:
-            if "collisione" not in str(exc):
-                raise
-    else:
-        raise PatchError("collisione id proposta, riprova")
-    audit_event(
-        cfg,
-        "propose_patch",
-        {"file": rel, "original_hash": proposal.original_hash, "dry_run": dry_ok},
-        ok=dry_ok,
-        chars=len(patch),
-    )
-    return proposal
+    return _build_proposal(cfg, rel, root, instruction, text, new_text, patch, dry_ok, dry_output, why)
 
 
 def apply_proposal(
@@ -293,16 +309,23 @@ def apply_proposal(
         return _apply_proposal(cfg, proposal_id, verify=verify)
 
 
-def _apply_proposal(cfg: LaneConfig, proposal_id: str, *, verify: str | None) -> dict:
-    proposal = load_proposal(cfg, proposal_id)
+def _check_approval(cfg: LaneConfig, proposal: Proposal) -> tuple[Path, Path]:
+    """Ricontrolla approvazione, root vincolato e freschezza hash senza scrivere."""
     if proposal.applied_at:
         raise PatchError("proposta gia' applicata")
     if not proposal.dry_run:
         raise PatchError("il dry-run della proposta era fallito: non si applica")
     path, root = _approved_target(cfg, proposal)
-    rel = proposal.file
     if _sha(_read_text_bytes(path)) != proposal.original_hash:
         raise PatchError("proposta stantia: il file e' cambiato dopo la proposta")
+    return path, root
+
+
+def _run_apply(
+    cfg: LaneConfig, proposal: Proposal, path: Path, root: Path, *, verify: str | None
+) -> dict:
+    """Applica la patch gia' approvata: ricevuta d'intento, penna, esito."""
+    rel = proposal.file
 
     # Write-ahead receipt: the intent is recorded before the pen moves.
     audit_event(
@@ -377,6 +400,12 @@ def _apply_proposal(cfg: LaneConfig, proposal_id: str, *, verify: str | None) ->
         "verify_rc": verify_rc,
         "verify": verify_output,
     }
+
+
+def _apply_proposal(cfg: LaneConfig, proposal_id: str, *, verify: str | None) -> dict:
+    proposal = load_proposal(cfg, proposal_id)
+    path, root = _check_approval(cfg, proposal)
+    return _run_apply(cfg, proposal, path, root, verify=verify)
 
 
 def format_gate(proposal: Proposal) -> str:
