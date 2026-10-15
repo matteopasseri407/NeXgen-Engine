@@ -148,22 +148,12 @@ def cmd_close(args: argparse.Namespace) -> int:
     return 1 if result.problems else 0
 
 
-def cmd_explore(args: argparse.Namespace) -> int:
+def _run_explore_cmd(llm, cfg, args: argparse.Namespace, max_steps: int, session_id: str, start_persistent: bool) -> int:
     from ..llm import LLMError
     from ..research_graph import ResearchError, research_task
     from ..steps import run_steps
-    from ..tiers import effective_max_steps
 
-    cfg = _config(args)
-    max_steps = effective_max_steps(cfg, getattr(args, "max_steps", None))
-    session_id = str(getattr(args, "session_id", "") or "")
-    if session_id == "new":
-        session_id = ""
-        start_persistent = True
-    else:
-        start_persistent = False
     try:
-        llm = _llm(cfg)
         if session_id or start_persistent:
             summary = research_task(llm, cfg, args.task, session_id=session_id, max_steps=max_steps)
             print(summary["answer"] or "(nessuna risposta: passaggio a un agente piu' capace)")
@@ -202,19 +192,29 @@ def cmd_explore(args: argparse.Namespace) -> int:
     return 2 if result.escalated and not result.answer else 0
 
 
-def cmd_eval(args: argparse.Namespace) -> int:
-    from ..evals import SUITES, format_report, run_suite, suite_failed
+def cmd_explore(args: argparse.Namespace) -> int:
     from ..llm import LLMError
-    from ..source_selection import INJECTION_LAYER_ENV
+    from ..tiers import effective_max_steps
 
-    if getattr(args, "bare", False):
-        os.environ[INJECTION_LAYER_ENV] = "0"
     cfg = _config(args)
+    max_steps = effective_max_steps(cfg, getattr(args, "max_steps", None))
+    session_id = str(getattr(args, "session_id", "") or "")
+    if session_id == "new":
+        session_id = ""
+        start_persistent = True
+    else:
+        start_persistent = False
     try:
         llm = _llm(cfg)
     except LLMError as exc:
         print(f"nexgen-local: {exc}", file=sys.stderr)
         return 2
+    return _run_explore_cmd(llm, cfg, args, max_steps, session_id, start_persistent)
+
+
+def _run_eval_cmd(llm, cfg, args: argparse.Namespace) -> int:
+    from ..evals import SUITES, format_report, run_suite, suite_failed
+
     suites = list(SUITES) if args.suite == "all" else [args.suite]
     reports = []
     failed = False
@@ -229,3 +229,18 @@ def cmd_eval(args: argparse.Namespace) -> int:
         for report in reports:
             print(format_report(report))
     return 1 if failed else 0
+
+
+def cmd_eval(args: argparse.Namespace) -> int:
+    from ..llm import LLMError
+    from ..source_selection import INJECTION_LAYER_ENV
+
+    if getattr(args, "bare", False):
+        os.environ[INJECTION_LAYER_ENV] = "0"
+    cfg = _config(args)
+    try:
+        llm = _llm(cfg)
+    except LLMError as exc:
+        print(f"nexgen-local: {exc}", file=sys.stderr)
+        return 2
+    return _run_eval_cmd(llm, cfg, args)
