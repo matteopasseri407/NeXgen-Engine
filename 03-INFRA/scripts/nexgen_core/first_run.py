@@ -134,7 +134,7 @@ def _memory_gb() -> int | None:
         return None
 
 
-def write_user_profile(
+def _write_profile(
     vault_root: Path,
     *,
     profile: str,
@@ -197,7 +197,18 @@ def write_user_profile(
     return True, t("Profile filled in: {fields}", fields=", ".join(filled))
 
 
-def write_remotes(vault_root: Path, *, profile: str) -> tuple[bool, str]:
+def write_user_profile(
+    vault_root: Path,
+    *,
+    profile: str,
+    clis: list[str],
+    machines: str,
+) -> tuple[bool, str]:
+    """Fills the installation profile from the answers just given."""
+    return _write_profile(vault_root, profile=profile, clis=clis, machines=machines)
+
+
+def _write_remotes_body(vault_root: Path, *, profile: str) -> tuple[bool, str]:
     """Names the authoritative remote, so a single-machine install stays quiet.
 
     Without this, someone who installs on one machine keeps the public
@@ -239,6 +250,11 @@ def write_remotes(vault_root: Path, *, profile: str) -> tuple[bool, str]:
         f"authoritative_remote: {remote}\n"
         "mirrors: []\n")
     return True, t("Authoritative remote set to '{remote}'.", remote=remote) + later
+
+
+def write_remotes(vault_root: Path, *, profile: str) -> tuple[bool, str]:
+    """Names the authoritative remote, so a single-machine install stays quiet."""
+    return _write_remotes_body(vault_root, profile=profile)
 
 
 def commit_setup(vault_root: Path, paths: list[Path]) -> tuple[bool, str]:
