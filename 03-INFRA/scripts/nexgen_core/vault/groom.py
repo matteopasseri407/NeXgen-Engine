@@ -81,49 +81,37 @@ def make_log_path(suffix: str) -> Path:
     return Path(name)
 
 
-def preview(
-    *, vault: Path, runner: Runner, log_path: Path | None = None, output: Callable[[str], object] = print
-) -> int:
-    """The default: proposes a tranche, shows it, writes nothing."""
+def _preview_phase(
+    *, vault: Path, runner: Runner, log_path: Path | None, log_suffix: str
+) -> tuple[str, Path, int]:
+    """Propose a tranche and write the propose log. No prompts, no gates, no output."""
     prompt = prompts.build_propose_prompt(PLAYBOOK, str(vault))
     result = runner.run_readonly(prompt)
-    log_path = log_path or make_log_path(".preview")
-    log_path.write_text(result.text, encoding="utf-8")
-    output(result.text)
-    output("")
-    output(t("log: {log_path}", log_path=log_path))
-    return result.exit_code
+    resolved = log_path or make_log_path(log_suffix)
+    resolved.write_text(result.text, encoding="utf-8")
+    return (result.text, resolved, result.exit_code)
 
 
-def apply(
+def _apply_phase(
     *,
     vault: Path,
     runner: Runner,
     state_dir: Path,
     timestamp: str,
+    tranche: str,
+    propose_log: Path,
     engine_scripts: Path | None,
     push_if_clean: bool,
-    log_path: Path | None = None,
     input_func: Callable[[str], str] = input,
     output: Callable[[str], object] = print,
-) -> int:
-    """Proposes, shows, confirms, and only then executes -- inside the clone."""
-    propose_log = log_path or make_log_path(".propose")
-    prompt = prompts.build_propose_prompt(PLAYBOOK, str(vault))
-    proposal = runner.run_readonly(prompt)
-    propose_log.write_text(proposal.text, encoding="utf-8")
-    tranche = proposal.text
-
-    if not tranche.strip():
-        output(t("vault-groom: empty proposal, nothing to review -- aborting."))
-        return 1
-
+) -> tuple[dict | None, int]:
+    """Confirm, gate, execute inside the clone, and audit. None record = early abort."""
     plan_record = gate.write_plan_record(state_dir, timestamp, tranche)
     tranche_hash = gate.hash_plan_record(plan_record)
 
     if not gate.confirm_tranche(tranche, tranche_hash, input_func=input_func, output=output):
         output(t("vault-groom: cancelled, no changes to the vault."))
-        return 0
+        return (None, 0)
 
     try:
         gate.verify_hash_unchanged(plan_record, tranche_hash)
@@ -134,7 +122,7 @@ def apply(
         # Never rmtree a timestamp-shared path: two parallel applies in the
         # same second must not delete each other's work.
         output(str(exc))
-        return 1
+        return (None, 1)
 
     base = git(vault, "rev-parse", "HEAD").strip()
     branch = git(vault, "rev-parse", "--abbrev-ref", "HEAD").strip()
@@ -143,7 +131,7 @@ def apply(
         clone_dir = gate.prepare_clone(vault, state_dir, timestamp)
     except (subprocess.CalledProcessError, GitCommandError) as exc:
         output(t("vault-groom: could not prepare the temp clone: {error}", error=exc))
-        return 1
+        return (None, 1)
 
     archive_root = resolve_archive_root(vault)
     write_prompt = prompts.build_write_prompt(PLAYBOOK, str(plan_record), tranche_hash, tranche)
@@ -170,13 +158,72 @@ def apply(
         engine_scripts=engine_scripts,
     )
     record, exit_code = audit.run_audit(request, output=output)
+    return (record, exit_code)
 
+
+def _publish_phase(
+    *, state_dir: Path, timestamp: str, record: dict, exit_code: int, output: Callable[[str], object] = print
+) -> int:
+    """Persist the audit report. Publish itself already ran inside the audit when requested."""
     state_dir.mkdir(parents=True, exist_ok=True)
     record_path = state_dir / f"{timestamp}.json"
     atomic_write_text(record_path, json.dumps(record, indent=2) + "\n")
     output(t("audit record: {record_path}", record_path=record_path))
-
     return exit_code
+
+
+def preview(
+    *, vault: Path, runner: Runner, log_path: Path | None = None, output: Callable[[str], object] = print
+) -> int:
+    """The default: proposes a tranche, shows it, writes nothing."""
+    tranche, resolved, exit_code = _preview_phase(
+        vault=vault, runner=runner, log_path=log_path, log_suffix=".preview"
+    )
+    output(tranche)
+    output("")
+    output(t("log: {log_path}", log_path=resolved))
+    return exit_code
+
+
+def apply(
+    *,
+    vault: Path,
+    runner: Runner,
+    state_dir: Path,
+    timestamp: str,
+    engine_scripts: Path | None,
+    push_if_clean: bool,
+    log_path: Path | None = None,
+    input_func: Callable[[str], str] = input,
+    output: Callable[[str], object] = print,
+) -> int:
+    """Proposes, shows, confirms, and only then executes -- inside the clone."""
+    tranche, propose_log, _proposal_exit = _preview_phase(
+        vault=vault, runner=runner, log_path=log_path, log_suffix=".propose"
+    )
+
+    if not tranche.strip():
+        output(t("vault-groom: empty proposal, nothing to review -- aborting."))
+        return 1
+
+    record, exit_code = _apply_phase(
+        vault=vault,
+        runner=runner,
+        state_dir=state_dir,
+        timestamp=timestamp,
+        tranche=tranche,
+        propose_log=propose_log,
+        engine_scripts=engine_scripts,
+        push_if_clean=push_if_clean,
+        input_func=input_func,
+        output=output,
+    )
+    if record is None:
+        return exit_code
+
+    return _publish_phase(
+        state_dir=state_dir, timestamp=timestamp, record=record, exit_code=exit_code, output=output
+    )
 
 
 def main(argv: list[str] | None = None) -> int:
