@@ -106,7 +106,7 @@ def _parse_env(pairs: list[str] | None) -> dict[str, str]:
     return env
 
 
-def build_entry(
+def _build_entry_impl(
     *,
     name: str,
     targets: list[str],
@@ -183,6 +183,25 @@ def build_entry(
     return entry
 
 
+def build_entry(
+    *,
+    name: str,
+    targets: list[str],
+    command: str | None,
+    args: list[str] | None,
+    url: str | None,
+    auth_env: str | None,
+    env: dict[str, str] | None,
+    lazy: bool,
+    readonly: bool,
+) -> dict:
+    """The manifest entry, validated before anything is written."""
+    return _build_entry_impl(
+        name=name, targets=targets, command=command, args=args, url=url,
+        auth_env=auth_env, env=env, lazy=lazy, readonly=readonly,
+    )
+
+
 def add_server(
     name: str,
     targets_raw: str | None,
@@ -218,7 +237,7 @@ def add_server(
     return insert_entry(name, entry, dry_run=dry_run, home=home, vault_data=vault_data, targets=targets)
 
 
-def insert_entry(
+def _insert_entry_impl(
     name: str, entry: dict, *, dry_run: bool = False, home=None, vault_data=None, targets: list[str] | None = None,
 ) -> tuple[int, str]:
     """Writes an already-validated entry into the manifest: atomic, with a backup, refusing a name that is taken."""
@@ -258,3 +277,12 @@ def insert_entry(
     if adds_gateway:
         done += " " + t("The gateway ({gateway}) was not in the manifest, so it was added too: nothing behind it is reachable without it.", gateway=GATEWAY)
     return 0, done
+
+
+def insert_entry(
+    name: str, entry: dict, *, dry_run: bool = False, home=None, vault_data=None, targets: list[str] | None = None,
+) -> tuple[int, str]:
+    """Writes an already-validated entry into the manifest: atomic, with a backup, refusing a name that is taken."""
+    return _insert_entry_impl(
+        name, entry, dry_run=dry_run, home=home, vault_data=vault_data, targets=targets,
+    )
