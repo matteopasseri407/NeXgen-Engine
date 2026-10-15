@@ -122,6 +122,31 @@ def tool_status(cfg: LaneConfig) -> str:
     )
 
 
+def _register_ask(server, cfg: LaneConfig, llm_factory: Callable[[], LLM]):
+    @server.tool(description="Domanda singola alla lane locale (sola lettura, ciclo guidato).")
+    def lane_ask(question: str) -> str:
+        try:
+            return tool_ask(cfg, llm_factory(), question)
+        except (LLMError, JobError) as exc:
+            return f"(rifiutato: {exc})"
+
+
+def _register_explore(server, cfg: LaneConfig, llm_factory: Callable[[], LLM]):
+    @server.tool(
+        description=(
+            "Ciclo guidato a piu' passi: il motore propone il menu, il modello sceglie "
+            "(sola lettura, max_steps entro il tetto del tier). Con session_id continua una ricerca "
+            "persistente (stesse fonti, letture e proposte) invece di ricominciare; "
+            "session_id='new' ne avvia una."
+        )
+    )
+    def lane_explore(task: str, max_steps: int = 6, session_id: str = "") -> str:
+        try:
+            return tool_explore(cfg, llm_factory(), task, max_steps=max(1, min(int(max_steps), 6)), session_id=session_id or "")
+        except (LLMError, JobError) as exc:
+            return f"(rifiutato: {exc})"
+
+
 def build_server(
     cfg: LaneConfig | None = None,
     llm_factory: Callable[[], LLM] | None = None,
@@ -155,27 +180,8 @@ def build_server(
     )
 
     if include_ask:
-
-        @server.tool(description="Domanda singola alla lane locale (sola lettura, ciclo guidato).")
-        def lane_ask(question: str) -> str:
-            try:
-                return tool_ask(cfg, llm_factory(), question)
-            except (LLMError, JobError) as exc:
-                return f"(rifiutato: {exc})"
-
-    @server.tool(
-        description=(
-            "Ciclo guidato a piu' passi: il motore propone il menu, il modello sceglie "
-            "(sola lettura, max_steps entro il tetto del tier). Con session_id continua una ricerca "
-            "persistente (stesse fonti, letture e proposte) invece di ricominciare; "
-            "session_id='new' ne avvia una."
-        )
-    )
-    def lane_explore(task: str, max_steps: int = 6, session_id: str = "") -> str:
-        try:
-            return tool_explore(cfg, llm_factory(), task, max_steps=max(1, min(int(max_steps), 6)), session_id=session_id or "")
-        except (LLMError, JobError) as exc:
-            return f"(rifiutato: {exc})"
+        _register_ask(server, cfg, llm_factory)
+    _register_explore(server, cfg, llm_factory)
 
     @server.tool(description="Ricerca su vault, posta, Drive e web con sintesi e citazioni (sola lettura).")
     def lane_research(topic: str) -> str:
