@@ -136,16 +136,11 @@ def _correct_answer(llm: LLM, task: str, collected: str, answer: str, problems: 
         return ""
 
 
-def decide_step(
+def _decide_driver(
     llm: LLM, cfg: LaneConfig, state: LoopState, menu: list[Candidate], result: StepResult,
     step_started: float,
 ) -> tuple[str, str] | None:
-    """One engine-menu/model-choice/validation round; shared by every driver.
-
-    Returns (action, arg) when the step proceeds; appends the Decision and
-    returns None when the loop must escalate. An ``answer`` or ``escalate``
-    choice is returned normally: the caller finishes or stops.
-    """
+    """Driver della decisione: un giro menu-motore/scelta-modello/validazione."""
     actions = sorted({candidate.action for candidate in menu})
     ask_started = time.time()
     decision = _ask(llm, state, menu, actions)
@@ -239,19 +234,27 @@ def decide_step(
     return action, arg
 
 
-def finish_answer(
+def decide_step(
+    llm: LLM, cfg: LaneConfig, state: LoopState, menu: list[Candidate], result: StepResult,
+    step_started: float,
+) -> tuple[str, str] | None:
+    """One engine-menu/model-choice/validation round; shared by every driver.
+
+    Returns (action, arg) when the step proceeds; appends the Decision and
+    returns None when the loop must escalate. An ``answer`` or ``escalate``
+    choice is returned normally: the caller finishes or stops.
+    """
+    return _decide_driver(llm, cfg, state, menu, result, step_started)
+
+
+def _finish_driver(
     llm: LLM, tools: ToolRegistry, cfg: LaneConfig, state: LoopState,
     route: dict[str, Any], task: str, canaries: Iterable[str],
     result: StepResult, step_started: float,
     receipts: list[dict[str, Any]] | None = None,
     refusals: list[str] | None = None,
 ) -> None:
-    """Build the final answer from collected content; shared by every driver.
-
-    ``receipts``/``refusals`` default to this run's registry; the persistent
-    research driver passes the session-accumulated ones instead, so the
-    claim check sees every source the answer was built from.
-    """
+    """Driver della risposta finale: costruisce l'answer dal contenuto raccolto."""
     from types import SimpleNamespace
 
     blocks = [
@@ -310,6 +313,80 @@ def finish_answer(
     result.decisions[-1].elapsed_s = round(time.time() - step_started, 2)
 
 
+def finish_answer(
+    llm: LLM, tools: ToolRegistry, cfg: LaneConfig, state: LoopState,
+    route: dict[str, Any], task: str, canaries: Iterable[str],
+    result: StepResult, step_started: float,
+    receipts: list[dict[str, Any]] | None = None,
+    refusals: list[str] | None = None,
+) -> None:
+    """Build the final answer from collected content; shared by every driver.
+
+    ``receipts``/``refusals`` default to this run's registry; the persistent
+    research driver passes the session-accumulated ones instead, so the
+    claim check sees every source the answer was built from.
+    """
+    return _finish_driver(
+        llm, tools, cfg, state, route, task, canaries, result, step_started,
+        receipts=receipts, refusals=refusals,
+    )
+
+
+def _loop_driver(
+    llm: LLM,
+    tools: ToolRegistry,
+    cfg: LaneConfig,
+    task: str,
+    route: dict[str, Any],
+    state: LoopState,
+    result: StepResult,
+    max_steps: int,
+    canaries: Iterable[str],
+) -> bool:
+    """Driver del loop: in sequenza _decide_driver poi _finish_driver o esecuzione."""
+    escalated = False
+    step_started = time.time()
+    while state.step < max_steps:
+        state.step += 1
+        step_started = time.time()
+        menu = menu_for_tier(cfg, state)
+        decided = _decide_driver(llm, cfg, state, menu, result, step_started)
+        if decided is None:
+            escalated = True
+            break
+        action, arg = decided
+        if action == "escalate":
+            result.decisions[-1].elapsed_s = round(time.time() - step_started, 2)
+            escalated = True
+            break
+        if action == "answer":
+            _finish_driver(llm, tools, cfg, state, route, task, canaries, result, step_started)
+            break
+        try:
+            _execute(llm, tools, state, action, arg)
+        except ToolError as exc:
+            result.decisions[-1].ok = False
+            result.decisions[-1].detail = str(exc)
+            result.decisions[-1].elapsed_s = round(time.time() - step_started, 2)
+            escalated = True
+            break
+        result.decisions[-1].elapsed_s = round(time.time() - step_started, 2)
+    else:
+        result.decisions.append(
+            Decision(
+                state.step,
+                "escalate",
+                "",
+                "",
+                ok=False,
+                detail="cap",
+                elapsed_s=round(time.time() - step_started, 2),
+            )
+        )
+        escalated = True
+    return escalated
+
+
 def run_steps(
     llm: LLM,
     tools: ToolRegistry,
@@ -336,46 +413,7 @@ def run_steps(
         want_upload=bool(UPLOAD_INTENT_RE.search(task)),
     )
     result = StepResult(task=task)
-    escalated = False
-    step_started = time.time()
-    while state.step < max_steps:
-        state.step += 1
-        step_started = time.time()
-        menu = menu_for_tier(cfg, state)
-        decided = decide_step(llm, cfg, state, menu, result, step_started)
-        if decided is None:
-            escalated = True
-            break
-        action, arg = decided
-        if action == "escalate":
-            result.decisions[-1].elapsed_s = round(time.time() - step_started, 2)
-            escalated = True
-            break
-        if action == "answer":
-            finish_answer(llm, tools, cfg, state, route, task, canaries, result, step_started)
-            break
-        try:
-            _execute(llm, tools, state, action, arg)
-        except ToolError as exc:
-            result.decisions[-1].ok = False
-            result.decisions[-1].detail = str(exc)
-            result.decisions[-1].elapsed_s = round(time.time() - step_started, 2)
-            escalated = True
-            break
-        result.decisions[-1].elapsed_s = round(time.time() - step_started, 2)
-    else:
-        result.decisions.append(
-            Decision(
-                state.step,
-                "escalate",
-                "",
-                "",
-                ok=False,
-                detail="cap",
-                elapsed_s=round(time.time() - step_started, 2),
-            )
-        )
-        escalated = True
+    escalated = _loop_driver(llm, tools, cfg, task, route, state, result, max_steps, canaries)
     result.steps = state.step
     result.escalated = escalated
     result.mail_draft = state.mail_draft
