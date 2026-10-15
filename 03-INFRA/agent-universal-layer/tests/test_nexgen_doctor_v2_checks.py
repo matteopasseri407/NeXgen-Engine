@@ -839,3 +839,72 @@ def test_check_secrets_materialized(tmp_path):
     auth_json.write_text(json.dumps({"deepseek": {"type": "api", "key": "sk-new-key"}}), encoding="utf-8")
     outcome_matched = security_checks.check_secrets_materialized(home, vault)
     assert outcome_matched.severity == Severity.OK
+
+
+def test_doctor_summary_with_failures_survives_a_cp850_console(monkeypatch):
+    """Il riepilogo con guasti stampa il marchio e il messaggio: deve reggere cp850."""
+    import io
+    from types import SimpleNamespace
+
+    import nexgen_core.doctor as doctor_mod
+    from nexgen_core.report import CheckOutcome, Report, Severity
+
+    broken = [CheckOutcome(id="prova", severity=Severity.BROKEN,
+                           message="rottura grave del controllo")]
+    report = Report()
+    for outcome in broken:
+        report.add(outcome)
+    monkeypatch.setattr(doctor_mod, "Doctor",
+                        lambda: SimpleNamespace(run_diagnostics=lambda **k: report))
+    buf = io.BytesIO()
+    out = io.TextIOWrapper(buf, encoding="cp850")
+    monkeypatch.setattr(sys, "stdout", out)
+
+    assert doctor_mod.main(["--summary"]) == 1
+    out.flush()
+    assert "[X]" in buf.getvalue().decode("cp850")
+
+
+def test_doctor_human_report_survives_a_cp850_console(monkeypatch):
+    """Il report umano stampa messaggi dinamici: deve reggere cp850."""
+    import io
+    from types import SimpleNamespace
+
+    import nexgen_core.doctor as doctor_mod
+    from nexgen_core.report import CheckOutcome, Report, Severity
+
+    report = Report()
+    report.add(CheckOutcome(id="prova", severity=Severity.BROKEN,
+                            message="controllo fallito — da sistemare"))
+    monkeypatch.setattr(doctor_mod, "Doctor",
+                        lambda: SimpleNamespace(run_diagnostics=lambda **k: report))
+    buf = io.BytesIO()
+    out = io.TextIOWrapper(buf, encoding="cp850")
+    monkeypatch.setattr(sys, "stdout", out)
+
+    assert doctor_mod.main([]) == 1
+    out.flush()
+    assert "controllo fallito - da sistemare" in buf.getvalue().decode("cp850")
+
+
+def test_engine_doctor_command_survives_a_cp850_console(monkeypatch):
+    """Anche il ramo human di cmd_doctor passa da safe_text."""
+    import io
+    from types import SimpleNamespace
+
+    from nexgen_core.cli import engine as engine_cli
+    from nexgen_core.report import CheckOutcome, Report, Severity
+
+    report = Report()
+    report.add(CheckOutcome(id="prova", severity=Severity.BROKEN,
+                            message="controllo fallito — da sistemare"))
+    monkeypatch.setattr("nexgen_core.doctor.Doctor",
+                        lambda: SimpleNamespace(run_diagnostics=lambda **k: report))
+    buf = io.BytesIO()
+    out = io.TextIOWrapper(buf, encoding="cp850")
+    monkeypatch.setattr(sys, "stdout", out)
+
+    args = SimpleNamespace(json=False, summary=False, fix=False, verbose=False, strict=False)
+    assert engine_cli.cmd_doctor(args) == 1
+    out.flush()
+    assert "controllo fallito - da sistemare" in buf.getvalue().decode("cp850")

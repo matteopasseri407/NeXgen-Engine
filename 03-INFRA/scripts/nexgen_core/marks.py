@@ -5,7 +5,14 @@ from __future__ import annotations
 import sys
 
 
-def safe_mark(mark: str, stream=sys.stdout) -> str:
+def safe_mark(mark: str, stream=None) -> str:
+    """The mark when the stream encodes it, else its ASCII fallback.
+
+    `stream` defaults to the *current* sys.stdout, like safe_text: binding
+    it at import time kept pointing at whatever sys.stdout was then.
+    """
+    if stream is None:
+        stream = sys.stdout
     try:
         mark.encode(getattr(stream, "encoding", None) or "utf-8")
         return mark
@@ -19,6 +26,7 @@ _ASCII_FALLBACKS = {
     "•": "*",
     "●": "*",
     "↳": "->",
+    "→": "->",
     "·": "-",
     "—": "-",
     "✓": "[OK]",

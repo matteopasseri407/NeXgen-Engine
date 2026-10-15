@@ -369,3 +369,44 @@ def test_a_complete_vault_still_gets_its_missing_folders(tmp_path):
     findings = bootstrap.scaffold(root, write=True)
     assert all(f.ok for f in findings)
     assert (root / "04-NOW").is_dir()
+
+
+def test_render_survives_a_cp850_console():
+    """Lo stdout non UTF-8 di Windows (codepage 850/1252 o output rediretto)
+    non codifica i simboli del report: il render non deve mai sollevarsi."""
+    import io
+
+    from nexgen_core import bootstrap
+
+    finding = bootstrap.Finding("git", False, required=True, remedy="install git")
+    buf = io.BytesIO()
+    stream = io.TextIOWrapper(buf, encoding="cp850")
+    assert bootstrap.render([finding], "Prerequisites", stream=stream) == 1
+    stream.flush()
+    assert "[X]" in buf.getvalue().decode("cp850")
+
+
+def test_init_problem_lines_survive_a_cp850_console(tmp_path, monkeypatch):
+    """Le righe dei problemi passano dal template vero e dalla stampa vera di init:
+    devono reggere cp850 sia la freccia del template sia la lineetta del messaggio."""
+    import io
+    from types import SimpleNamespace
+
+    from nexgen_core import bootstrap
+    from nexgen_core.report import CheckOutcome, Severity
+
+    vault = _full_scaffold(tmp_path)
+    monkeypatch.setenv("NEXGEN_HOME", str(tmp_path / "sandbox-home"))
+    monkeypatch.setattr(bootstrap, "align_now", lambda timeout=900.0: (True, "ok"))
+    broken = CheckOutcome(id="prova", severity=Severity.BROKEN,
+                          message="config mancante — da sistemare", action="ripara ora")
+    fake = SimpleNamespace(broken=[broken])
+    monkeypatch.setattr("nexgen_core.doctor.Doctor",
+                        lambda: SimpleNamespace(run_diagnostics=lambda **k: fake))
+    buf = io.BytesIO()
+    out = io.TextIOWrapper(buf, encoding="cp850")
+    monkeypatch.setattr(sys, "stdout", out)
+
+    assert bootstrap.main(["--local", "--root", str(vault)]) == 1
+    out.flush()
+    assert "->" in buf.getvalue().decode("cp850")

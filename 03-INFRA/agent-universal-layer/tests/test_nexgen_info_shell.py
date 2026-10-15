@@ -101,3 +101,14 @@ def test_safe_text_degrades_gracefully_on_cp1252():
     degraded = safe_text("a ─ b • c", _stream("cp1252"))
     degraded.encode("cp1252")
     assert "neXgen" in safe_text("neXgen", _stream("cp1252"))
+
+
+def test_safe_text_maps_the_arrow_to_ascii():
+    assert safe_text("a → b", _stream("cp1252")) == "a -> b"
+
+
+def test_safe_mark_uses_the_stdout_of_the_moment(monkeypatch):
+    from nexgen_core.marks import safe_mark
+
+    monkeypatch.setattr(sys, "stdout", _stream("cp850"))
+    assert safe_mark("✓") == "[OK]"

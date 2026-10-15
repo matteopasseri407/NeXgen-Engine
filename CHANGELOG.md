@@ -10,6 +10,16 @@ of any engine release.
 
 ## [Unreleased]
 
+## [2.15.2] - 2026-10-15
+
+### Fixed
+
+- Human console output no longer crashes with `UnicodeEncodeError` on
+  Windows consoles whose stdout is not UTF-8 (cp850/cp1252): the init,
+  plan, doctor, inventory and bump paths route every human print
+  through `marks.safe_text`, which degrades glyphs instead of raising.
+  `safe_mark` no longer binds `sys.stdout` at import time.
+
 ## [2.15.1] - 2026-10-15
 
 ### Fixed

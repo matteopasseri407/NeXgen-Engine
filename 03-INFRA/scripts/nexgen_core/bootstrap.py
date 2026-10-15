@@ -44,6 +44,7 @@ from nexgen_core.first_run import (  # noqa: E402 - sys.path shim for cloned che
     write_user_profile,
 )
 from nexgen_core.i18n import t  # noqa: E402 - sys.path shim for cloned checkout
+from nexgen_core.marks import safe_text  # noqa: E402 - sys.path shim for cloned checkout
 from nexgen_core.paths import installed_as_package, resolve_home  # noqa: E402 - sys.path shim for cloned checkout
 from nexgen_core.platforms import installed_desktop_apps  # noqa: E402 - sys.path shim for cloned checkout
 
@@ -592,16 +593,16 @@ def render(findings: list[Finding], title: str, stream=None) -> int:
     ok_sym = _sym("✓", "[OK]", stream)
     err_sym = _sym("✗", "[X]", stream)
     warn_sym = _sym("○", "[o]", stream)
-    print(f"\n{c['bold']}{c['cyan']}{title}{c['reset']}", file=stream)
+    print(safe_text(f"\n{c['bold']}{c['cyan']}{title}{c['reset']}", stream), file=stream)
     missing = 0
     for f in findings:
         if f.ok:
-            print(f"  {c['green']}{ok_sym}{c['reset']} {f.label}", file=stream)
+            print(safe_text(f"  {c['green']}{ok_sym}{c['reset']} {f.label}", stream), file=stream)
         elif f.required:
-            print(f"  {c['red']}{err_sym}{c['reset']} {f.label} — {f.remedy}", file=stream)
+            print(safe_text(f"  {c['red']}{err_sym}{c['reset']} {f.label} — {f.remedy}", stream), file=stream)
             missing += 1
         else:
-            print(f"  {c['yellow']}{warn_sym}{c['reset']} {f.label} — {f.remedy}", file=stream)
+            print(safe_text(f"  {c['yellow']}{warn_sym}{c['reset']} {f.label} — {f.remedy}", stream), file=stream)
     return missing
 
 
@@ -747,12 +748,12 @@ def main(argv: list[str] | None = None) -> int:
     ok_sym = _sym("✓", "[OK]", sys.stdout)
     err_sym = _sym("✗", "[X]", sys.stdout)
     for step in steps:
-        print(f"  {c['green']}{ok_sym}{c['reset']} {step.label}")
+        print(safe_text(f"  {c['green']}{ok_sym}{c['reset']} {step.label}"))
 
     aligned, message = align_now()
-    print(("  " + f"{c['green']}{ok_sym}{c['reset']} " if aligned else "  " + f"{c['red']}{err_sym}{c['reset']} ") + message)
+    print(safe_text(("  " + f"{c['green']}{ok_sym}{c['reset']} " if aligned else "  " + f"{c['red']}{err_sym}{c['reset']} ") + message))
 
-    print(f"\n{c['bold']}{c['cyan']}6 · " + t("Where you are") + c['reset'])
+    print(safe_text(f"\n{c['bold']}{c['cyan']}6 · " + t("Where you are") + c['reset']))
 
     # Not "did the command return zero", but "is this machine actually set
     # up". They came apart during development, and the install said Ready
@@ -760,28 +761,28 @@ def main(argv: list[str] | None = None) -> int:
     count, problems = remaining_problems()
 
     if aligned and count == 0:
-        print(f"  {c['green']}" + t("Ready.") + f"{c['reset']} " + t("Nothing else is required."))
+        print(safe_text(f"  {c['green']}" + t("Ready.") + f"{c['reset']} " + t("Nothing else is required.")))
         if mode == "LOCAL-FULL":
-            print(f"  {c['dim']}→ " + t("the five connectors run here: 'nexgen stack up' starts them.") + c['reset'])
+            print(safe_text(f"  {c['dim']}→ " + t("the five connectors run here: 'nexgen stack up' starts them.") + c['reset']))
         elif mode == "CLOUD-SERVER":
-            print(f"  {c['dim']}→ " + t("the services live on a server: see 03-INFRA/deploy/.") + c['reset'])
-        print("\n  " + t("From now on: 'nexgen doctor' tells you if anything is wrong, "
-                         "and 'nexgen update' brings in a new version."))
-        print(f"  {c['dim']}"
+            print(safe_text(f"  {c['dim']}→ " + t("the services live on a server: see 03-INFRA/deploy/.") + c['reset']))
+        print(safe_text("\n  " + t("From now on: 'nexgen doctor' tells you if anything is wrong, "
+                                "and 'nexgen update' brings in a new version.")))
+        print(safe_text(f"  {c['dim']}"
               + t("Want the guided path too, to bring your own documents in? Open INIT.md.")
-              + c['reset'])
+              + c['reset']))
         return 0
 
-    print(f"  {c['yellow']}" + t("Installed. {count} thing(s) still need attention:", count=max(count, 0))
-          + f"{c['reset']}")
+    print(safe_text(f"  {c['yellow']}" + t("Installed. {count} thing(s) still need attention:", count=max(count, 0))
+          + f"{c['reset']}"))
     for line in problems[:5]:
-        print(f"    - {line}")
+        print(safe_text(f"    - {line}"))
     if count > 5:
-        print(f"    {c['dim']}" + t("...and {more} more: run 'nexgen doctor'.", more=count - 5) + c['reset'])
+        print(safe_text(f"    {c['dim']}" + t("...and {more} more: run 'nexgen doctor'.", more=count - 5) + c['reset']))
     if not aligned:
-        print("\n  " + t("The alignment stopped first: {reason}", reason=message))
-    print("  " + t("Run 'nexgen doctor' for the whole list; most of it clears "
-                   "with 'nexgen sync apply'."))
+        print(safe_text("\n  " + t("The alignment stopped first: {reason}", reason=message)))
+    print(safe_text("  " + t("Run 'nexgen doctor' for the whole list; most of it clears "
+                   "with 'nexgen sync apply'.")))
     return 1
 
 

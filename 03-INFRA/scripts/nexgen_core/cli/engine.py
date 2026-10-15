@@ -251,7 +251,7 @@ def cmd_doctor(args) -> int:
     elif args.summary:
         print(f"FAIL={len(report.broken)} OK={report.ok_count} WARN={len(report.warnings)} UNDETERMINED={len(report.undetermined)}")
     else:
-        print(report.format_human(verbose=args.verbose))
+        print(safe_text(report.format_human(verbose=args.verbose)))
     return report.exit_code(strict=args.strict)
 
 
@@ -386,33 +386,33 @@ def cmd_inventory(args) -> int:
         names = ", ".join(sorted(servers)) if servers else t("none")
         lazy = renderer.list_lazy_servers(cli_name)
         lazy_part = t(" — optional, not mounted: {names}", names=", ".join(lazy)) if lazy else ""
-        print(f"  {cli_name}: {len(servers)} — {names}{lazy_part}")
+        print(safe_text(f"  {cli_name}: {len(servers)} — {names}{lazy_part}"))
 
-    print("\n" + t(">>> Skills: manifest compared against the materialized library"))
+    print(safe_text("\n" + t(">>> Skills: manifest compared against the materialized library")))
     mat = SkillMaterializer(vault_data=vault_data, engine_root=engine_root, home=home)
     declared = mat.load_manifest()
     materialized = [p.name for p in mat.library_dir.iterdir() if p.is_dir()] if mat.library_dir.is_dir() else []
     extras = sorted(m for m in materialized if m not in declared)
     missing = sorted(s for s in declared if s not in materialized)
-    print(t("  {materialized} materialized, {declared} declared", materialized=len(materialized), declared=len(declared)))
+    print(safe_text(t("  {materialized} materialized, {declared} declared", materialized=len(materialized), declared=len(declared))))
     if extras:
-        print(t("  outside the manifest (kept, never deleted): {names}", names=", ".join(extras)))
+        print(safe_text(t("  outside the manifest (kept, never deleted): {names}", names=", ".join(extras))))
     if missing:
-        print(t("  declared but not materialized yet: {names}", names=", ".join(missing)))
+        print(safe_text(t("  declared but not materialized yet: {names}", names=", ".join(missing))))
         problems += 1
 
-    print("\n" + t(">>> Instructions per runtime"))
+    print(safe_text("\n" + t(">>> Instructions per runtime")))
     for label, path, kind in _bootstrap_targets(home):
         state = _instruction_state(path, kind, vault_data)
-        print(f"  {label}: {state}")
+        print(safe_text(f"  {label}: {state}"))
         if state.startswith("diverged"):
             problems += 1
 
-    print("\n" + t(">>> Runtimes' native memories"))
+    print(safe_text("\n" + t(">>> Runtimes' native memories")))
     for label, note in _native_memory_report(home):
-        print(f"  {label}: {note}")
+        print(safe_text(f"  {label}: {note}"))
 
-    print("\n" + t("Read-only: nothing was modified."))
+    print(safe_text("\n" + t("Read-only: nothing was modified.")))
     return 2 if problems else 0
 
 
