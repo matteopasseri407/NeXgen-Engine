@@ -423,26 +423,41 @@ WantedBy=timers.target
     return notes
 
 
+def _ensure_posix(home: Path | str | None = None) -> list[str]:
+    """Lane POSIX: risoluzione home + opt-out, poi boot check."""
+    resolved = resolve_home(home if home is None or isinstance(home, Path) else Path(home))
+    if "autostart" in _opted_out(resolved):
+        return []
+    return _ensure_posix_boot_check(resolved)
+
+
+def _ensure_windows(home: Path | str | None = None) -> list[str]:
+    """Lane Windows: home come stringa + opt-out, poi boot check.
+
+    Resta su `os`/`str` di proposito (no pathlib): la lane e' esercitata
+    su Linux con `os.name` mockato a `nt`, dove `Path` diventerebbe un
+    `WindowsPath` non installabile.
+    """
+    base = (os.fspath(home) if home is not None
+            else (os.environ.get("NEXGEN_HOME") or os.path.expanduser("~")))
+    try:
+        declined = "autostart" in _opted_out(Path(base))
+    except NotImplementedError:
+        # Percorso Windows valutato su POSIX con os.name mockato: senza
+        # record leggibile la risposta e' "non disattivato", come in `_opted_out`.
+        declined = False
+    if declined:
+        return []
+    return _ensure_windows_boot_check(base)
+
+
 def ensure_boot_check(home: Path | str | None = None) -> list[str]:
     """Idempotent boot-time update check for this machine. Never raises:
     a failed lane is a note, not a broken sync."""
     try:
         if os.name == "nt":
-            base = (os.fspath(home) if home is not None
-                    else (os.environ.get("NEXGEN_HOME") or os.path.expanduser("~")))
-            try:
-                declined = "autostart" in _opted_out(Path(base))
-            except NotImplementedError:
-                # The Windows lane is exercised on POSIX with os.name mocked, where Python 3.11 refuses to build a
-                # WindowsPath. With no readable record the answer is "not opted out", as in `_opted_out` itself.
-                declined = False
-            if declined:
-                return []
-            return _ensure_windows_boot_check(base)
-        resolved = resolve_home(home if home is None or isinstance(home, Path) else Path(home))
-        if "autostart" in _opted_out(resolved):
-            return []
-        return _ensure_posix_boot_check(resolved)
+            return _ensure_windows(home)
+        return _ensure_posix(home)
     except Exception as exc:  # noqa: BLE001 - notifier never fails the shell
         return [f"{WARN}boot check not ensured ({exc})"]
 
