@@ -28,6 +28,14 @@ pre-existing Windows failures unchanged, CI green on Linux and Windows.
   silent, and a still-pushable one is a calm warning. Only a real publish
   path to the public repository stays a failure.
 
+### Fixed
+
+- On Windows `security.secrets_materialized` reads the canonical XDG
+  `auth.json` (`~/.local/share/opencode/`) first: a stale `%LOCALAPPDATA%`
+  copy (including one a Windows Store Python redirects into its own
+  sandbox) no longer shadows the live file, and AppData stays only as a
+  fallback when the XDG file is absent.
+
 ## [2.15.2] - 2026-10-15
 
 ### Fixed
