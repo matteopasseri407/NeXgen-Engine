@@ -397,7 +397,13 @@ def load_catalog(engine_root: Path, external: Sequence[str | Path] = ()) -> dict
     modules_raw = raw.get("modules", {})
     if not isinstance(modules_raw, dict):
         raise ConfigError(f"{path}: 'modules' must be a map")
+    return _load_spec(path, modules_raw, external)
 
+
+def _load_spec(
+    path: Path, modules_raw: dict, external: Sequence[str | Path] = ()
+) -> dict[str, ModuleDef]:
+    """Build the catalog from an already loaded ``modules:`` map."""
     modules: dict[str, ModuleDef] = {}
     for mid, spec in modules_raw.items():
         modules[mid] = _module_from_spec(str(mid), spec, path)
@@ -509,7 +515,16 @@ def derive_state(
     default for a tunneled setup, where the endpoint is 127.0.0.1 either
     way).
     """
-    env = env if env is not None else dict(os.environ)
+    resolved = env if env is not None else dict(os.environ)
+    return _derive_state(modules, state_file, resolved)
+
+
+def _derive_state(
+    modules: dict[str, ModuleDef],
+    state_file: dict[str, str],
+    env: dict[str, str],
+) -> list[ModuleState]:
+    """Pure derivation from an already resolved environment."""
     results: list[ModuleState] = []
     for mid, module in modules.items():
         declared = state_file.get(mid)
@@ -603,6 +618,11 @@ def write_state_file(
     if not hosts:
         raw.pop("hosts", None)
 
+    return _write_state_file(path, raw)
+
+
+def _write_state_file(path: Path, raw: dict) -> Path:
+    """Serialize ``raw`` and publish it, but only when it actually changed."""
     header = (
         "# Module state, written by 'nexgen modules set' / 'modules add'.\n"
         "# Declares where each module runs: absent (off), local (this machine),\n"
@@ -614,8 +634,14 @@ def write_state_file(
         "# 'external:' lists repositories that declare themselves modules.\n"
     )
     body = yaml.safe_dump(raw, sort_keys=True, allow_unicode=True, default_flow_style=False)
+    text = header + body
     path.parent.mkdir(parents=True, exist_ok=True)
-    atomic_write_text(path, header + body)
+    try:
+        existing = path.read_text(encoding="utf-8")
+    except (FileNotFoundError, OSError):
+        existing = None
+    if existing != text:
+        atomic_write_text(path, text)
     return path
 
 
