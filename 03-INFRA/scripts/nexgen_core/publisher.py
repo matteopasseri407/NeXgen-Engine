@@ -27,6 +27,16 @@ from nexgen_core.lock import host_mutation  # noqa: E402 - sys.path shim for clo
 from nexgen_core.paths import resolve_vault_data  # noqa: E402 - sys.path shim for cloned checkout
 
 
+def _resolve_branch(vault_data: Path) -> str:
+    # Same precedence as the checks: whoever forces the branch via
+    # the environment variable also forces it for publishing.
+    return (
+        os.environ.get("KNOWLEDGE_VAULT_BRANCH")
+        or get_current_branch(vault_data)
+        or "main"
+    )
+
+
 class Publisher:
     """Publication manager for vault-push."""
 
@@ -41,15 +51,17 @@ class Publisher:
         timeout: float = 30.0
     ) -> tuple[int, str]:
         """Runs the full publication flow under lock."""
+        return self._publish_locked(message=message, files=files, timeout=timeout)
+
+    def _publish_locked(
+        self,
+        message: str = "update: vault sync",
+        files: list[str] | None = None,
+        timeout: float = 30.0
+    ) -> tuple[int, str]:
         with host_mutation("vault-push", timeout=timeout):
             auth_remote, mirrors = resolve_remotes(self.vault_data)
-            # Same precedence as the checks: whoever forces the branch via
-            # the environment variable also forces it for publishing.
-            branch = (
-                os.environ.get("KNOWLEDGE_VAULT_BRANCH")
-                or get_current_branch(self.vault_data)
-                or "main"
-            )
+            branch = _resolve_branch(self.vault_data)
 
             success, msg = publish_changes(
                 repo_dir=self.vault_data,
@@ -65,20 +77,27 @@ class Publisher:
             return 1, msg
 
 
-def main(argv: list[str] | None = None) -> int:
-    """CLI entry point for the vault-push (v2) command."""
+def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="vault-push",
         description="Publishes the Vault's commits to the authoritative remote",
     )
     parser.add_argument("-m", "--message", default="update: vault sync", help="Commit message")
     parser.add_argument("files", nargs="*", help="Specific files to publish")
-    args = parser.parse_args(argv)
+    return parser
 
+
+def _run_publish(args: argparse.Namespace) -> int:
     pub = Publisher()
     code, msg = pub.publish(message=args.message, files=args.files or None)
     print(msg)
     return code
+
+
+def main(argv: list[str] | None = None) -> int:
+    """CLI entry point for the vault-push (v2) command."""
+    args = _build_parser().parse_args(argv)
+    return _run_publish(args)
 
 
 if __name__ == "__main__":
