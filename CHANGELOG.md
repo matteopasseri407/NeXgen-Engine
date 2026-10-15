@@ -10,6 +10,14 @@ of any engine release.
 
 ## [Unreleased]
 
+### Fixed
+
+- On Windows `security.secrets_materialized` reads the canonical XDG
+  `auth.json` (`~/.local/share/opencode/`) first: a stale `%LOCALAPPDATA%`
+  copy (including one a Windows Store Python redirects into its own
+  sandbox) no longer shadows the live file, and AppData stays only as a
+  fallback when the XDG file is absent.
+
 ## [2.15.2] - 2026-10-15
 
 ### Fixed

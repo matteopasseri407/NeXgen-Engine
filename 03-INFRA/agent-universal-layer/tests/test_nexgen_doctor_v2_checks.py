@@ -841,6 +841,44 @@ def test_check_secrets_materialized(tmp_path):
     assert outcome_matched.severity == Severity.OK
 
 
+def test_secrets_check_prefers_the_xdg_auth_over_a_stale_appdata_copy(tmp_path, monkeypatch):
+    """Su Windows una copia vecchia in %LOCALAPPDATA% non deve ombreggiare il
+    file XDG canonico, che e' quello che OpenCode riscrive; la copia in AppData
+    resta solo come fallback quando l'XDG manca."""
+    home = tmp_path / "home"
+    vault = tmp_path / "vault"
+    appdata = tmp_path / "appdata"
+    home.mkdir()
+    vault.mkdir()
+
+    secrets_env = home / ".config" / "nexgen" / "secrets.env"
+    secrets_env.parent.mkdir(parents=True)
+    secrets_env.write_text("export DEEPSEEK_API_KEY=sk-live-key\n", encoding="utf-8")
+    secrets_env.chmod(0o600)
+
+    xdg_auth = home / ".local" / "share" / "opencode" / "auth.json"
+    xdg_auth.parent.mkdir(parents=True)
+    xdg_auth.write_text(json.dumps({"deepseek": {"type": "api", "key": "sk-live-key"}}), encoding="utf-8")
+    xdg_auth.chmod(0o600)
+
+    stale = appdata / "opencode" / "auth.json"
+    stale.parent.mkdir(parents=True)
+    stale.write_text(json.dumps({"deepseek": {"type": "api", "key": "sk-old-stale-key"}}), encoding="utf-8")
+
+    monkeypatch.setenv("LOCALAPPDATA", str(appdata))
+    monkeypatch.setattr(os, "name", "nt")
+
+    # La copia AppData esiste ma non e' quella viva: il check deve leggere l'XDG.
+    outcome = security_checks.check_secrets_materialized(home, vault)
+    assert outcome.severity == Severity.OK, outcome.message
+
+    # Senza il file XDG, la copia AppData resta un fallback valido.
+    xdg_auth.unlink()
+    outcome_fallback = security_checks.check_secrets_materialized(home, vault)
+    assert outcome_fallback.severity == Severity.WARN
+    assert "provider key mismatch for 'deepseek'" in outcome_fallback.message
+
+
 def test_doctor_summary_with_failures_survives_a_cp850_console(monkeypatch):
     """Il riepilogo con guasti stampa il marchio e il messaggio: deve reggere cp850."""
     import io
