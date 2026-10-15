@@ -28,15 +28,77 @@ _READ_STORES = {
 }
 
 
-def execute_action(llm: LLM, tools: ToolRegistry, state: LoopState, action: str, arg: str) -> None:
-    if action == "search_vault":
-        output = tools.call_result("search_vault", {"query": arg, "require_all": True})
+def _run_vault(tools: ToolRegistry, state: LoopState, action: str, arg: str) -> bool:
+    """Sorgente vault: ricerca note. True quando l'azione e' stata gestita."""
+    if action != "search_vault":
+        return False
+    output = tools.call_result("search_vault", {"query": arg, "require_all": True})
+    state.tried_queries.append(arg)
+    hits = [] if not output.usable else [line.strip() for line in output.text.splitlines() if line.strip()]
+    state.hits = hits
+    state.empty_streak = 0 if hits else state.empty_streak + 1
+    state.content_seen.append(sanitize_content(output.text))
+    state.observations.append(_observe("search_vault", arg, output.text))
+    return True
+
+
+def _run_calendar(tools: ToolRegistry, state: LoopState, action: str, arg: str) -> bool:
+    """Sorgente calendario: ricerca e lettura eventi. True quando gestita."""
+    if action == "search_calendar":
+        output = tools.call_result("search_calendar", {"query": arg})
         state.tried_queries.append(arg)
-        hits = [] if not output.usable else [line.strip() for line in output.text.splitlines() if line.strip()]
-        state.hits = hits
-        state.empty_streak = 0 if hits else state.empty_streak + 1
+        ids = [] if not output.usable else [line.split("|")[0].strip() for line in output.text.splitlines() if line.strip()]
+        state.calendar_ids = [eid for eid in ids if eid]
+        state.empty_streak = 0 if state.calendar_ids else state.empty_streak + 1
         state.content_seen.append(sanitize_content(output.text))
-        state.observations.append(_observe("search_vault", arg, output.text))
+        state.observations.append(_observe("search_calendar", arg, output.text))
+        return True
+    if action == "read_calendar":
+        output = tools.call_result("read_calendar", {"id": arg})
+        if output.usable:
+            state.calendar.append(sanitize_content(output.text))
+            state.empty_streak = 0
+            state.last_read = dict(tools.last_coverage)
+            if arg not in state.read_ids:
+                state.read_ids.append(arg)
+        state.content_seen.append(sanitize_content(output.text))
+        state.observations.append(_observe("read_calendar", arg, output.text))
+        return True
+    return False
+
+
+def _run_drive(tools: ToolRegistry, state: LoopState, action: str, arg: str) -> bool:
+    """Sorgente drive: ricerca e lettura file. True quando gestita."""
+    if action == "search_drive":
+        output = tools.call_result("search_drive", {"query": arg})
+        state.tried_queries.append(arg)
+        ids = [] if not output.usable else [line.split("|")[0].strip() for line in output.text.splitlines() if line.strip()]
+        state.drive_ids = [fid for fid in ids if fid]
+        state.empty_streak = 0 if state.drive_ids else state.empty_streak + 1
+        state.content_seen.append(sanitize_content(output.text))
+        state.observations.append(_observe("search_drive", arg, output.text))
+        return True
+    if action == "read_drive":
+        output = tools.call_result("read_drive", {"id": arg})
+        if output.usable:
+            state.drive.append(sanitize_content(output.text))
+            state.empty_streak = 0
+            state.last_read = dict(tools.last_coverage)
+            if arg not in state.read_ids:
+                state.read_ids.append(arg)
+        state.content_seen.append(sanitize_content(output.text))
+        state.observations.append(_observe(action, arg, output.text))
+        return True
+    return False
+
+
+def execute_action(llm: LLM, tools: ToolRegistry, state: LoopState, action: str, arg: str) -> None:
+    if _run_vault(tools, state, action, arg):
+        pass
+    elif _run_calendar(tools, state, action, arg):
+        pass
+    elif _run_drive(tools, state, action, arg):
+        pass
     elif action == "search_web":
         output = tools.call_result("web_search", {"query": arg})
         state.tried_queries.append(arg)
@@ -53,14 +115,6 @@ def execute_action(llm: LLM, tools: ToolRegistry, state: LoopState, action: str,
         state.empty_streak = 0 if state.mail_ids else state.empty_streak + 1
         state.content_seen.append(sanitize_content(output.text))
         state.observations.append(_observe("search_mail", arg, output.text))
-    elif action == "search_drive":
-        output = tools.call_result("search_drive", {"query": arg})
-        state.tried_queries.append(arg)
-        ids = [] if not output.usable else [line.split("|")[0].strip() for line in output.text.splitlines() if line.strip()]
-        state.drive_ids = [fid for fid in ids if fid]
-        state.empty_streak = 0 if state.drive_ids else state.empty_streak + 1
-        state.content_seen.append(sanitize_content(output.text))
-        state.observations.append(_observe("search_drive", arg, output.text))
     elif action == "search_outlook":
         output = tools.call_result("search_outlook", {"query": arg})
         state.tried_queries.append(arg)
@@ -69,14 +123,6 @@ def execute_action(llm: LLM, tools: ToolRegistry, state: LoopState, action: str,
         state.empty_streak = 0 if state.outlook_ids else state.empty_streak + 1
         state.content_seen.append(sanitize_content(output.text))
         state.observations.append(_observe("search_outlook", arg, output.text))
-    elif action == "search_calendar":
-        output = tools.call_result("search_calendar", {"query": arg})
-        state.tried_queries.append(arg)
-        ids = [] if not output.usable else [line.split("|")[0].strip() for line in output.text.splitlines() if line.strip()]
-        state.calendar_ids = [eid for eid in ids if eid]
-        state.empty_streak = 0 if state.calendar_ids else state.empty_streak + 1
-        state.content_seen.append(sanitize_content(output.text))
-        state.observations.append(_observe("search_calendar", arg, output.text))
     elif action == "read_file":
         found = existing_file(tools.cfg, arg)
         if not found:
@@ -96,17 +142,15 @@ def execute_action(llm: LLM, tools: ToolRegistry, state: LoopState, action: str,
             state.last_read = dict(tools.last_coverage)
         state.content_seen.append(sanitize_content(output.text))
         state.observations.append(_observe("read_file", rel, output.text))
-    elif action in ("read_mail", "read_drive"):
-        output = tools.call_result("read_mail", {"id": arg}) if action == "read_mail" else tools.call_result("read_drive", {"id": arg})
+    elif action == "read_mail":
+        output = tools.call_result("read_mail", {"id": arg})
         if output.usable:
-            store = state.mail if action == "read_mail" else state.drive
-            store.append(sanitize_content(output.text))
+            state.mail.append(sanitize_content(output.text))
             state.empty_streak = 0
             state.last_read = dict(tools.last_coverage)
             if arg not in state.read_ids:
                 state.read_ids.append(arg)
-            if action == "read_mail":
-                state.last_mail_id = arg
+            state.last_mail_id = arg
         state.content_seen.append(sanitize_content(output.text))
         state.observations.append(_observe(action, arg, output.text))
     elif action == "read_outlook":
@@ -119,16 +163,6 @@ def execute_action(llm: LLM, tools: ToolRegistry, state: LoopState, action: str,
                 state.read_ids.append(arg)
         state.content_seen.append(sanitize_content(output.text))
         state.observations.append(_observe("read_outlook", arg, output.text))
-    elif action == "read_calendar":
-        output = tools.call_result("read_calendar", {"id": arg})
-        if output.usable:
-            state.calendar.append(sanitize_content(output.text))
-            state.empty_streak = 0
-            state.last_read = dict(tools.last_coverage)
-            if arg not in state.read_ids:
-                state.read_ids.append(arg)
-        state.content_seen.append(sanitize_content(output.text))
-        state.observations.append(_observe("read_calendar", arg, output.text))
     elif action == "continue_read":
         last = state.last_read
         if not last.get("truncated") or state.continuations >= MAX_CONTINUATIONS:
