@@ -20,7 +20,7 @@ import subprocess
 import tempfile
 import threading
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from routing import _windows_command_argv
@@ -72,6 +72,11 @@ OPENCODE_ATTACHED_PROMPT = (
 
 
 class SeatRunError(RuntimeError):
+    # Optional, read-only shutdown telemetry attached by run_seat when a
+    # seat fails after at least one stop was observed. Never part of the
+    # constructor signature: raising sites are unchanged.
+    shutdown_telemetry: list[dict] | None = None
+
     def __init__(self, message: str, kind: str = "error") -> None:
         # Diagnostics are provider output too. Sanitize before console,
         # consultation transcripts or LangGraph checkpoints can retain them.
@@ -759,6 +764,64 @@ class _SeatRuntime:
     stderr_lines: list[str] | None = None
     returncode: int | None = None
     hung: bool = False
+    # Read-only shutdown observations, one event per process stop, in order.
+    # Filled by _stop_process_tree_with_telemetry; exposed on the run_seat
+    # result (usage["shutdown_telemetry"]) or on SeatRunError, never read
+    # for control flow.
+    shutdown_telemetry: list[dict] = field(default_factory=list)
+
+
+def _infer_stop_method(proc: subprocess.Popen) -> str:
+    """Name the stop path _force_stop_process_tree takes, without acting.
+
+    Read-only mirror of its dispatch: POSIX kills the seat's own process
+    group, Windows taskkills the PID tree, anything else falls back to
+    proc.kill(). Observing the conditions is not performing the kill.
+    """
+    if os.name == "posix" and getattr(proc, "_council_process_group", None) is not None:
+        return "killpg"
+    if os.name == "nt" and getattr(proc, "pid", None) is not None:
+        return "taskkill"
+    return "fallback"
+
+
+def _stop_process_tree_with_telemetry(
+    proc: subprocess.Popen, sink: list[dict] | None, *, reason: str
+) -> dict:
+    """Stop exactly as before; additionally record what the stop observed.
+
+    The stop call itself is byte-for-byte the old behavior. The returned
+    event only observes: the method that applied, liveness before and
+    after, the returncode, and whether an NTFS-handle retry would still be
+    needed (observed, never performed here). Observation never raises:
+    telemetry must not break a seat run.
+    """
+    try:
+        alive_before = proc.poll() is None
+    except Exception:
+        alive_before = None
+    stopped = _force_stop_process_tree(proc)
+    try:
+        survivors = proc.poll() is None
+    except Exception:
+        survivors = None
+    try:
+        returncode = proc.returncode
+    except Exception:
+        returncode = None
+    event = {
+        "reason": reason,
+        "method": _infer_stop_method(proc),
+        "platform": os.name,
+        "alive_before": alive_before,
+        "stopped": stopped,
+        "returncode": returncode,
+        "survivors_after_wait": survivors,
+        "needs_retry": bool(survivors and os.name == "nt"),
+    }
+    if sink is not None:
+        sink.append(event)
+    return event
 
 
 def _build_command(
@@ -878,7 +941,7 @@ def _run_with_timeout(prepared: _PreparedSeat, runtime: _SeatRuntime) -> _SeatRu
             raise _output_limit(model)
         remaining = deadline - time.monotonic()
         if remaining <= 0:
-            _force_stop_process_tree(proc)
+            _stop_process_tree_with_telemetry(proc, runtime.shutdown_telemetry, reason="streaming_timeout")
             if not activity.is_set():
                 raise SeatRunError(
                     f"[council] seat '{model}' did not respond within {timeout_label}s "
@@ -910,7 +973,7 @@ def _run_with_timeout(prepared: _PreparedSeat, runtime: _SeatRuntime) -> _SeatRu
             if not isinstance(event, dict):
                 continue
             if event.get("type") == "error":
-                _force_stop_process_tree(proc)
+                _stop_process_tree_with_telemetry(proc, runtime.shutdown_telemetry, reason="seat_error")
                 raise SeatRunError(f"[council] error from seat: {event.get('error')}", "seat_error")
             part = event.get("part") or {}
             if not isinstance(part, dict):
@@ -976,7 +1039,7 @@ def _run_with_timeout(prepared: _PreparedSeat, runtime: _SeatRuntime) -> _SeatRu
                 continue
     except subprocess.TimeoutExpired:
         hung = True
-        _force_stop_process_tree(proc)
+        _stop_process_tree_with_telemetry(proc, runtime.shutdown_telemetry, reason="post_eof_hung")
         # Re-join after the kill: the fd is now at EOF, so the readers
         # finish -- joining before building the diagnostic avoids reading
         # stderr_lines while a live thread may still be appending to it
@@ -988,7 +1051,7 @@ def _run_with_timeout(prepared: _PreparedSeat, runtime: _SeatRuntime) -> _SeatRu
         except subprocess.TimeoutExpired:
             returncode = None  # unkillable; sentinel outside the int space
     if returncode is not None:
-        _force_stop_process_tree(proc)
+        _stop_process_tree_with_telemetry(proc, runtime.shutdown_telemetry, reason="post_wait_reap")
     reader_deadline = time.monotonic() + 5
     for reader in (runtime.stdout_reader, runtime.stderr_reader):
         reader.join(timeout=max(0.0, reader_deadline - time.monotonic()))
@@ -1098,7 +1161,18 @@ def run_seat(
     runtime = _SeatRuntime()
     try:
         _run_with_timeout(prepared, runtime)
-        return _collect_result(prepared, runtime)
+        answer, usage = _collect_result(prepared, runtime)
+        if runtime.shutdown_telemetry:
+            # Optional extra field only: the (verdict, usage) shape and every
+            # raising site are unchanged. Same list object, so a cleanup stop
+            # in the finally below is still visible; run_seat never mutates
+            # it after returning.
+            usage = {**usage, "shutdown_telemetry": runtime.shutdown_telemetry}
+        return answer, usage
+    except SeatRunError as exc:
+        if runtime.shutdown_telemetry and exc.shutdown_telemetry is None:
+            exc.shutdown_telemetry = runtime.shutdown_telemetry
+        raise
     finally:
         capture = runtime.capture
         proc = runtime.proc
@@ -1109,7 +1183,7 @@ def run_seat(
         # longer touched here on purpose (parallel seats overlap).
         if proc_token:
             if proc is not None and (proc.poll() is None or getattr(proc, "_council_process_group", None) is not None):
-                _force_stop_process_tree(proc)
+                _stop_process_tree_with_telemetry(proc, runtime.shutdown_telemetry, reason="cleanup")
             _release_proc(proc_token)
         cleanup_deadline = time.monotonic() + 5
         for worker in (runtime.stdin_writer, runtime.stdout_reader, runtime.stderr_reader):
