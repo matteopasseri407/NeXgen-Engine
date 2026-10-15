@@ -7,7 +7,6 @@ Solo chiamate finte, mai rete, mai chiavi vere.
 from __future__ import annotations
 
 import inspect
-import io
 import json
 import sys
 import urllib.request

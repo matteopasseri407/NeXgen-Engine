@@ -16,9 +16,9 @@ SCRIPTS_DIR = Path(__file__).resolve().parents[3] / "scripts"
 if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
-from nexgen_core.cli import build_parser
-from nexgen_core.cli import main as nexgen_main
-from nexgen_core.cli import engine as engine_cmds
+from nexgen_core.cli import build_parser  # noqa: E402
+from nexgen_core.cli import main as nexgen_main  # noqa: E402
+from nexgen_core.cli import engine as engine_cmds  # noqa: E402
 
 EXPECTED_ENGINE_COMMANDS = [
     "release",

@@ -19,7 +19,6 @@ from nexgen_core.marks import safe_mark as _safe_mark
 from nexgen_core.marks import safe_text
 from nexgen_core.paths import (
     remotes_config,
-    resolve_engine_root,
     resolve_vault_data,
 )
 

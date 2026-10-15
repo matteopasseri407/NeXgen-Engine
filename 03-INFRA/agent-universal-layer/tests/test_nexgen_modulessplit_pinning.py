@@ -16,7 +16,7 @@ SCRIPTS_DIR = Path(__file__).resolve().parents[2] / "scripts"
 if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
-from nexgen_core.modules import (
+from nexgen_core.modules import (  # noqa: E402
     ModuleDef,
     derive_state,
     load_catalog,

@@ -14,7 +14,7 @@ SCRIPTS_DIR = Path(__file__).resolve().parents[2] / "scripts"
 if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
-from nexgen_core.tools.vault_map import build_context, scan
+from nexgen_core.tools.vault_map import build_context, scan  # noqa: E402
 
 
 def _make_pinning_vault(tmp_path: Path) -> Path:

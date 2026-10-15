@@ -7,7 +7,6 @@ Solo comandi finti in tmp_path, mai comandi reali, mai rete.
 """
 from __future__ import annotations
 
-import argparse
 import inspect
 import subprocess
 import sys
@@ -21,7 +20,7 @@ SCRIPTS_DIR = Path(__file__).resolve().parents[2] / "scripts"
 if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
-from nexgen_core.cli import tool_cmds as tc_mod
+from nexgen_core.cli import tool_cmds as tc_mod  # noqa: E402
 
 MCP_VERBS = {"add", "try", "trials", "promote", "drop", "list", "bump", "plan", "check"}
 TOOL_VERBS = {"now", "open", "chrome", "firecrawl", "update-notifier"}
