@@ -160,7 +160,7 @@ def _probe(outcome) -> tuple[str, str] | None:
     return "in_sync", line
 
 
-def build_sync_plan(
+def _build_sync_plan_impl(
     home: Path | None = None,
     vault_data: Path | None = None,
     engine_root: Path | None = None,
@@ -265,6 +265,15 @@ def build_sync_plan(
         "they need the network or live credentials a plan never touches."
     ))
     return plan
+
+
+def build_sync_plan(
+    home: Path | None = None,
+    vault_data: Path | None = None,
+    engine_root: Path | None = None,
+) -> SyncPlan:
+    """Delega a :func:`_build_sync_plan_impl`; firma e comportamento invariati."""
+    return _build_sync_plan_impl(home=home, vault_data=vault_data, engine_root=engine_root)
 
 
 def _missing_config_actions(vault: Path, home: Path) -> list[str]:
