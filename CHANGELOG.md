@@ -10,6 +10,8 @@ of any engine release.
 
 ## [Unreleased]
 
+## [2.15.2] - 2026-10-15
+
 ### Fixed
 
 - Human console output no longer crashes with `UnicodeEncodeError` on
