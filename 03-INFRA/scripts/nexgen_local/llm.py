@@ -344,6 +344,47 @@ class _ChatModelLLM:
         return result if isinstance(result, dict) and result.get("action") in actions else None
 
 
+def _build_thinking(thinking_allowed: bool, can_think: bool) -> bool:
+    """Whether a thinking channel may think: the tier allows it AND the model can.
+
+    Pure decision extracted from the constructors: Ollama passes the tier flag
+    with the capability probe, the frontier local path passes it with True.
+    """
+    return bool(thinking_allowed and can_think)
+
+
+def _build_ollama(ChatOllama, *, router_common, answer_common, decision_common, thought, budget, thinks):
+    """The Ollama triple (router form, answer, decision) with its old-driver fallback.
+
+    Returns (json_model, text_model, decision_model, answer_common_or_None):
+    the last item preserves the original `self._answer_common` semantics, set
+    only when the thinking-aware answer construction succeeded.
+    """
+    try:
+        text_model = ChatOllama(reasoning=True if thinks else None, **answer_common)
+    except TypeError:  # older driver without reasoning/validate switches
+        json_model = ChatOllama(format="json", **router_common)
+        text_model = ChatOllama(**answer_common)
+        decision_model = ChatOllama(**decision_common)
+        return json_model, text_model, decision_model, None
+    try:
+        json_model = ChatOllama(format="json", reasoning=thought, **{**router_common, **budget})
+        decision_model = ChatOllama(reasoning=thought, **{**decision_common, **budget})
+    except TypeError:  # older driver without reasoning/validate switches
+        json_model = ChatOllama(format="json", **router_common)
+        text_model = ChatOllama(**answer_common)
+        decision_model = ChatOllama(**decision_common)
+    return json_model, text_model, decision_model, answer_common
+
+
+def _build_frontier(factory, spec, *, temperature, router, text, decision, common):
+    """The frontier triple over one `init_chat_model` factory, same budgets as before."""
+    json_model = factory(spec, temperature=0.0, **router, **common)
+    text_model = factory(spec, temperature=temperature, **text, **common)
+    decision_model = factory(spec, temperature=0.0, **decision, **common)
+    return json_model, text_model, decision_model
+
+
 class ChatOllamaLLM(_ChatModelLLM):
     """Synchronous contract backed by cancellable LangChain/Ollama requests."""
 
@@ -411,32 +452,34 @@ class ChatOllamaLLM(_ChatModelLLM):
             "client_kwargs": {"timeout": DECISION_TIMEOUT_SECONDS},
             **clients,
         }
-        try:
-            # Prosa con pensiero (bozze, risposte): niente schema forzato qui,
-            # il CoT aiuta e non rompe nulla. Misurato sul golden set. Solo se il
-            # modello sa pensare: Ollama risponde 400 "does not support thinking" a
-            # reasoning=True su un modello che non lo ha (granite, qwen2.5-coder, molti
-            # 12B), e prima di questo controllo ogni modello senza thinking rendeva
-            # inutilizzabile l'intera lane.
-            capabilities = _ollama_capabilities(host, cfg.answer_tag)
-            thinks = capabilities is None or "thinking" in capabilities
-            self._text_model = ChatOllama(reasoning=True if thinks else None, **answer_common)
-            self._answer_common = answer_common
-            # Decisioni SENZA pensiero di default: il canale e' uno schema forzato
-            # (json_schema) e il think ci va a cazzotti — misurato: 12/16
-            # e p95 decisione da 5s a 170s. Scelta secca, niente rimuginii.
-            # I tier alti lo permettono, ma solo dove il modello sa pensare davvero:
-            # capacita' sconosciute restano fail-closed (niente pensiero), perche'
-            # un 400 su ogni decisione chiuderebbe il loop in escalation.
-            can_think = capabilities is not None and "thinking" in capabilities
-            thought = True if (tier.thinking and can_think) else False
-            budget = {"num_predict": THINKING_PREDICT} if thought else {}
-            self._json_model = ChatOllama(format="json", reasoning=thought, **{**router_common, **budget})
-            self._decision_model = ChatOllama(reasoning=thought, **{**decision_common, **budget})
-        except TypeError:  # older driver without reasoning/validate switches
-            self._json_model = ChatOllama(format="json", **router_common)
-            self._text_model = ChatOllama(**answer_common)
-            self._decision_model = ChatOllama(**decision_common)
+        # Prosa con pensiero (bozze, risposte): niente schema forzato qui,
+        # il CoT aiuta e non rompe nulla. Misurato sul golden set. Solo se il
+        # modello sa pensare: Ollama risponde 400 "does not support thinking" a
+        # reasoning=True su un modello che non lo ha (granite, qwen2.5-coder, molti
+        # 12B), e prima di questo controllo ogni modello senza thinking rendeva
+        # inutilizzabile l'intera lane.
+        capabilities = _ollama_capabilities(host, cfg.answer_tag)
+        thinks = capabilities is None or "thinking" in capabilities
+        # Decisioni SENZA pensiero di default: il canale e' uno schema forzato
+        # (json_schema) e il think ci va a cazzotti — misurato: 12/16
+        # e p95 decisione da 5s a 170s. Scelta secca, niente rimuginii.
+        # I tier alti lo permettono, ma solo dove il modello sa pensare davvero:
+        # capacita' sconosciute restano fail-closed (niente pensiero), perche'
+        # un 400 su ogni decisione chiuderebbe il loop in escalation.
+        can_think = capabilities is not None and "thinking" in capabilities
+        thought = _build_thinking(tier.thinking, can_think)
+        budget = {"num_predict": THINKING_PREDICT} if thought else {}
+        self._json_model, self._text_model, self._decision_model, kept = _build_ollama(
+            ChatOllama,
+            router_common=router_common,
+            answer_common=answer_common,
+            decision_common=decision_common,
+            thought=thought,
+            budget=budget,
+            thinks=thinks,
+        )
+        if kept is not None:
+            self._answer_common = kept
 
     def _structured_decision(self, schema: dict):
         return self._decision_model.with_structured_output(schema, method="json_schema", include_raw=True)
@@ -488,16 +531,16 @@ class ChatModelLLM(_ChatModelLLM):
             text["extra_body"] = inline
             # Router and decisions think only where the tier allows it, as on the Ollama path;
             # a template without the switch ignores it.
-            if get_tier(getattr(cfg, "tier", "tutor") or "tutor").thinking:
+            if _build_thinking(get_tier(getattr(cfg, "tier", "tutor") or "tutor").thinking, True):
                 router = {"max_tokens": THINKING_PREDICT, "extra_body": inline}
                 decision = {"max_tokens": THINKING_PREDICT}
             else:
                 no_thought = {"chat_template_kwargs": {"enable_thinking": False}}
                 router["extra_body"] = {**inline, **no_thought}
                 decision["extra_body"] = no_thought
-        self._json_model = factory(spec, temperature=0.0, **router, **common)
-        self._text_model = factory(spec, temperature=cfg.temperature, **text, **common)
-        self._decision_model = factory(spec, temperature=0.0, **decision, **common)
+        self._json_model, self._text_model, self._decision_model = _build_frontier(
+            factory, spec, temperature=cfg.temperature, router=router, text=text, decision=decision, common=common
+        )
 
     def _check_outbound(self, messages) -> None:
         """What the lane reads (mail, notes, files) goes to a third party here, so a credential in it must not.
