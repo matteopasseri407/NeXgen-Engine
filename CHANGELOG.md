@@ -10,6 +10,8 @@ of any engine release.
 
 ## [Unreleased]
 
+## [2.15.1] - 2026-10-15
+
 ### Fixed
 
 - `nexgen plan` no longer crashes with `UnicodeEncodeError` on Windows
