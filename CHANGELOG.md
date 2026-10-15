@@ -10,6 +10,13 @@ of any engine release.
 
 ## [Unreleased]
 
+### Fixed
+
+- `nexgen plan` no longer crashes with `UnicodeEncodeError` on Windows
+  consoles whose stdout is not UTF-8 (cp850/cp1252): the two arrow
+  separators in the human plan output are now ASCII (`->`), as
+  `nexgen info` already uses.
+
 ## [2.15.0] - 2026-10-15
 
 ### Added
