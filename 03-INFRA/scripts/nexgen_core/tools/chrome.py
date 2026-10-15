@@ -141,8 +141,7 @@ def _profile_pattern(profile: str) -> str:
     return f"--user-data-dir={escaped}"
 
 
-def heal_chrome(extra_args: list[str] | None = None) -> int:
-    """Restarts Chrome if the process stayed open without responding on CDP."""
+def _heal_chrome_impl(extra_args: list[str] | None = None) -> int:
     if is_cdp_up():
         return 0
 
@@ -198,6 +197,11 @@ def heal_chrome(extra_args: list[str] | None = None) -> int:
 
     time.sleep(1.0)
     return launch_chrome(extra_args)
+
+
+def heal_chrome(extra_args: list[str] | None = None) -> int:
+    """Restarts Chrome if the process stayed open without responding on CDP."""
+    return _heal_chrome_impl(extra_args)
 
 
 def main(argv: list[str] | None = None) -> int:
