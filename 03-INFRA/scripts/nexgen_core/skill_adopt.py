@@ -67,8 +67,7 @@ def candidates(vault_data: Path, engine_root: Path) -> list[Candidate]:
     return found
 
 
-def describe_difference(candidate: Candidate) -> str:
-    """One line on how a changed copy differs: which files, and how many lines of the main one."""
+def _describe_difference(candidate: Candidate) -> str:
     ours = {p.relative_to(candidate.copy) for p in candidate.copy.rglob("*") if p.is_file()}
     theirs = {p.relative_to(candidate.shipped) for p in candidate.shipped.rglob("*") if p.is_file()}
     files = sorted(str(f) for f in ours ^ theirs)
@@ -90,6 +89,11 @@ def describe_difference(candidate: Candidate) -> str:
              files=", ".join(files) or "?", added=added, removed=removed)
 
 
+def describe_difference(candidate: Candidate) -> str:
+    """One line on how a changed copy differs: which files, and how many lines of the main one."""
+    return _describe_difference(candidate)
+
+
 def _retarget(text: str, name: str) -> str | None:
     """The manifest text with this entry's origin switched to `engine`, or None if it cannot be done safely."""
     span = entry_span(text, name)
@@ -102,7 +106,7 @@ def _retarget(text: str, name: str) -> str | None:
     return text[:start] + block + text[end:]
 
 
-def adopt(
+def _adopt_impl(
     names: list[str] | None = None,
     *,
     include_changed: bool = False,
@@ -112,7 +116,6 @@ def adopt(
     engine_root: Path | None = None,
     state_dir: Path | None = None,
 ) -> list[Outcome]:
-    """Adopts the named candidates (all identical ones when `names` is None). Changed ones need `include_changed`."""
     from nexgen_core.lock import HostLock, host_mutation
     from nexgen_core.skills import SkillMaterializer
 
@@ -171,6 +174,20 @@ def adopt(
             outcomes.append(Outcome(candidate.name, True, t("follows the engine now; your copy is in {where}", where=vault_stash / candidate.name)))
         SkillMaterializer(vault_data=vault, engine_root=engine, home=resolved_home).materialize(apply=True)
     return outcomes
+
+
+def adopt(
+    names: list[str] | None = None,
+    *,
+    include_changed: bool = False,
+    dry_run: bool = False,
+    home: Path | None = None,
+    vault_data: Path | None = None,
+    engine_root: Path | None = None,
+    state_dir: Path | None = None,
+) -> list[Outcome]:
+    """Adopts the named candidates (all identical ones when `names` is None). Changed ones need `include_changed`."""
+    return _adopt_impl(names, include_changed=include_changed, dry_run=dry_run, home=home, vault_data=vault_data, engine_root=engine_root, state_dir=state_dir)
 
 
 def main(names: list[str], *, all_: bool, force: bool, dry_run: bool) -> int:
