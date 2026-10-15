@@ -123,7 +123,7 @@ def list_quarantine_branches(repo_dir: Path) -> list[str]:
     return [b.strip() for b in r.stdout.splitlines() if b.strip()]
 
 
-def quarantine_diverged_commits(
+def _quarantine_diverged_commits_impl(
     repo_dir: Path, remote: str = "origin", branch: str = "main"
 ) -> tuple[bool, str, str]:
     """Isolates diverged local commits into a quarantine branch and resets local branch to remote.
@@ -205,6 +205,13 @@ def quarantine_diverged_commits(
         "Diverged local commits moved to quarantine branch '{q_branch}'. Local branch reset to {remote}/{branch}.",
         q_branch=q_branch, remote=remote, branch=branch,
     )
+
+
+def quarantine_diverged_commits(
+    repo_dir: Path, remote: str = "origin", branch: str = "main"
+) -> tuple[bool, str, str]:
+    """Public wrapper: delegates to the private quarantine helper."""
+    return _quarantine_diverged_commits_impl(repo_dir, remote=remote, branch=branch)
 
 
 def fast_forward_merge(repo_dir: Path, remote: str = "origin", branch: str = "main") -> tuple[bool, str]:
@@ -555,7 +562,7 @@ def inspect_git_state(
         )
 
 
-def publish_changes(
+def _publish_changes_impl(
     repo_dir: Path,
     branch: str = "main",
     remote: str = "origin",
@@ -765,3 +772,22 @@ def publish_changes(
     if mirror_notes:
         return True, "; ".join(mirror_notes)
     return True, t("Nothing to publish")
+
+
+def publish_changes(
+    repo_dir: Path,
+    branch: str = "main",
+    remote: str = "origin",
+    mirrors: list[str] | None = None,
+    commit_msg: str | None = None,
+    files_to_commit: list[str] | None = None
+) -> tuple[bool, str]:
+    """Public wrapper: delegates to the private publish helper."""
+    return _publish_changes_impl(
+        repo_dir,
+        branch=branch,
+        remote=remote,
+        mirrors=mirrors,
+        commit_msg=commit_msg,
+        files_to_commit=files_to_commit,
+    )
