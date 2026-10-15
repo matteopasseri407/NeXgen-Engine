@@ -83,7 +83,7 @@ def _fill(text: str, field: str, value: str, *, section: str | None = None) -> t
     return text[:start] + body + text[end:], bool(count)
 
 
-def describe_host() -> str:
+def _describe_host_body() -> str:
     """This machine, in the terms the profile asks for.
 
     Deliberately shallow: operating system, processors, memory. Anything
@@ -114,6 +114,11 @@ def describe_host() -> str:
     if memory:
         parts.append(f"{memory} GB RAM")
     return ", ".join(parts)
+
+
+def describe_host() -> str:
+    """This machine, in the terms the profile asks for."""
+    return _describe_host_body()
 
 
 def _memory_gb() -> int | None:
