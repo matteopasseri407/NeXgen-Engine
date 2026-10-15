@@ -145,8 +145,7 @@ def _absolute_command(command: str, previous: str = "") -> str:
     return found or command
 
 
-def render(renderer, write: bool = False) -> tuple[bool, str]:
-    """Generates the Desktop app's `mcpServers` table, nothing else."""
+def _render_impl(renderer, write: bool = False) -> tuple[bool, str]:
     servers = allowed_desktop_servers(renderer)
     cfg_file = claude_desktop_config(renderer.home)
     existing = load_json_object(cfg_file)
@@ -201,3 +200,8 @@ def render(renderer, write: bool = False) -> tuple[bool, str]:
         if sidecar_text != sidecar_before:
             renderer._backup_and_write(sidecar, sidecar_text)
     return True, t("Claude Desktop configuration updated")
+
+
+def render(renderer, write: bool = False) -> tuple[bool, str]:
+    """Generates the Desktop app's `mcpServers` table, nothing else."""
+    return _render_impl(renderer, write)
