@@ -45,7 +45,7 @@ def _call(path: str, http: HttpFn, auth_http: HttpFn | None, method: str = "GET"
         raise ConnectorError("(calendario: risposta illeggibile dal provider)") from exc
 
 
-def list_events(
+def _list_events_impl(
     calendar_id: str = "primary",
     time_min: str = "",
     time_max: str = "",
@@ -76,7 +76,24 @@ def list_events(
     return payload.get("items", []) if isinstance(payload, dict) else []
 
 
-def get_event(calendar_id: str = "primary", event_id: str = "", http: HttpFn | None = None) -> dict[str, Any]:
+def list_events(
+    calendar_id: str = "primary",
+    time_min: str = "",
+    time_max: str = "",
+    max_results: int = 10,
+    http: HttpFn | None = None,
+    q: str = "",
+) -> list[dict[str, Any]]:
+    """Upcoming events in the window, optionally pre-filtered server-side.
+
+    ``q`` is the provider's free-text search (summary, description,
+    location): filtering server-side first is what keeps an event past the
+    page limit visible. Callers still refine locally afterwards.
+    """
+    return _list_events_impl(calendar_id, time_min, time_max, max_results, http, q)
+
+
+def _get_event_impl(calendar_id: str = "primary", event_id: str = "", http: HttpFn | None = None) -> dict[str, Any]:
     if not str(event_id or "").strip():
         raise ConnectorError("(id evento vuoto)")
     call = http or _default_http
@@ -90,13 +107,21 @@ def get_event(calendar_id: str = "primary", event_id: str = "", http: HttpFn | N
     return payload
 
 
-def when(value: Any) -> str:
+def get_event(calendar_id: str = "primary", event_id: str = "", http: HttpFn | None = None) -> dict[str, Any]:
+    return _get_event_impl(calendar_id, event_id, http)
+
+
+def _when_impl(value: Any) -> str:
     if isinstance(value, dict):
         return str(value.get("dateTime") or value.get("date") or "")
     return str(value or "")
 
 
-def describe_event(item: dict[str, Any]) -> str:
+def when(value: Any) -> str:
+    return _when_impl(value)
+
+
+def _describe_event_impl(item: dict[str, Any]) -> str:
     """One honest line per event: time, title, location when present."""
     return (
         f"{item.get('id', '')} | {when(item.get('start'))} -> {when(item.get('end'))} | "
@@ -104,7 +129,12 @@ def describe_event(item: dict[str, Any]) -> str:
     )
 
 
-def create_event(
+def describe_event(item: dict[str, Any]) -> str:
+    """One honest line per event: time, title, location when present."""
+    return _describe_event_impl(item)
+
+
+def _create_event_impl(
     summary: str,
     start: str,
     end: str,
@@ -135,7 +165,20 @@ def create_event(
     return {"id": str(created["id"]), "summary": summary}
 
 
-def delete_event(calendar_id: str = "primary", event_id: str = "", http: HttpFn | None = None) -> dict[str, Any]:
+def create_event(
+    summary: str,
+    start: str,
+    end: str,
+    description: str = "",
+    location: str = "",
+    calendar_id: str = "primary",
+    http: HttpFn | None = None,
+) -> dict[str, Any]:
+    """Create an event. Only the calendar gate calls this, after approval."""
+    return _create_event_impl(summary, start, end, description, location, calendar_id, http)
+
+
+def _delete_event_impl(calendar_id: str = "primary", event_id: str = "", http: HttpFn | None = None) -> dict[str, Any]:
     """Delete an event. Only the calendar gate calls this, after approval."""
     if not str(event_id or "").strip():
         raise ConnectorError("(id evento vuoto)")
@@ -147,3 +190,8 @@ def delete_event(calendar_id: str = "primary", event_id: str = "", http: HttpFn 
         "DELETE",
     )
     return {"id": str(event_id), "deleted": True}
+
+
+def delete_event(calendar_id: str = "primary", event_id: str = "", http: HttpFn | None = None) -> dict[str, Any]:
+    """Delete an event. Only the calendar gate calls this, after approval."""
+    return _delete_event_impl(calendar_id, event_id, http)

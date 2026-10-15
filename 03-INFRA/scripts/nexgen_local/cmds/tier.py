@@ -30,7 +30,7 @@ EVAL_SUITES = ("traps", "capability", "agent")
 _SUITE_LABELS = {"traps": "trappole", "capability": "funzionale", "agent": "ciclo agente"}
 
 
-def promotion_verdict(reports: dict[str, dict[str, Any]]) -> tuple[bool, list[str]]:
+def _promotion_verdict_impl(reports: dict[str, dict[str, Any]]) -> tuple[bool, list[str]]:
     """Whether the reports recommend promotion, with the machine reasons.
 
     Every suite is blocking the same way (`suite_failed`): one injection, one
@@ -57,7 +57,17 @@ def promotion_verdict(reports: dict[str, dict[str, Any]]) -> tuple[bool, list[st
     return (not reasons, reasons)
 
 
-def evaluate_for_promotion(llm: Any, model: str, candidate: str, workdir: str | Path) -> dict[str, Any]:
+def promotion_verdict(reports: dict[str, dict[str, Any]]) -> tuple[bool, list[str]]:
+    """Whether the reports recommend promotion, with the machine reasons.
+
+    Every suite is blocking the same way (`suite_failed`): one injection, one
+    confabulation or one plainly failed task. A suite that did not run is a
+    reason too, never a pass.
+    """
+    return _promotion_verdict_impl(reports)
+
+
+def _evaluate_for_promotion_impl(llm: Any, model: str, candidate: str, workdir: str | Path) -> dict[str, Any]:
     """Run the trap, functional and agent-loop suites under the candidate tier.
 
     Uses the existing suite runners with fakes or the real model behind `llm`;
@@ -78,7 +88,16 @@ def evaluate_for_promotion(llm: Any, model: str, candidate: str, workdir: str | 
     }
 
 
-def format_evaluation(result: dict[str, Any], current: str) -> str:
+def evaluate_for_promotion(llm: Any, model: str, candidate: str, workdir: str | Path) -> dict[str, Any]:
+    """Run the trap, functional and agent-loop suites under the candidate tier.
+
+    Uses the existing suite runners with fakes or the real model behind `llm`;
+    no network beyond the configured local model endpoint is ever touched here.
+    """
+    return _evaluate_for_promotion_impl(llm, model, candidate, workdir)
+
+
+def _format_evaluation_impl(result: dict[str, Any], current: str) -> str:
     lines = [
         f"tier evaluate — modello {result['model']} · attuale {current} · candidato {result['candidate']}",
         f"  trappole:   {result['traps']['totals']}",
@@ -95,7 +114,11 @@ def format_evaluation(result: dict[str, Any], current: str) -> str:
     return "\n".join(lines)
 
 
-def cmd_tier_evaluate(args: argparse.Namespace) -> int:
+def format_evaluation(result: dict[str, Any], current: str) -> str:
+    return _format_evaluation_impl(result, current)
+
+
+def _cmd_tier_evaluate_impl(args: argparse.Namespace) -> int:
     from ..llm import LLMError
 
     cfg = _config(args)
@@ -120,7 +143,11 @@ def cmd_tier_evaluate(args: argparse.Namespace) -> int:
     return 0 if result["recommend"] else 1
 
 
-def cmd_tier_set(args: argparse.Namespace) -> int:
+def cmd_tier_evaluate(args: argparse.Namespace) -> int:
+    return _cmd_tier_evaluate_impl(args)
+
+
+def _cmd_tier_set_impl(args: argparse.Namespace) -> int:
     if not getattr(args, "yes", False):
         print("nexgen-local: scrivere il tier richiede --yes (l'assegnazione e' un atto esplicito)", file=sys.stderr)
         return 2
@@ -131,3 +158,7 @@ def cmd_tier_set(args: argparse.Namespace) -> int:
         return 2
     print(f"tier {args.model} -> {args.tier} ({target})")
     return 0
+
+
+def cmd_tier_set(args: argparse.Namespace) -> int:
+    return _cmd_tier_set_impl(args)

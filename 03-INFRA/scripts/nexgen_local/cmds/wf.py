@@ -14,7 +14,7 @@ from ..tools import ToolError
 _config = _base.command_config
 
 
-def cmd_wf_propose(args: argparse.Namespace) -> int:
+def _cmd_wf_propose_impl(args: argparse.Namespace) -> int:
     from ..workflows import WorkflowError, format_gate, propose_run
 
     cfg = _config(args)
@@ -31,7 +31,11 @@ def cmd_wf_propose(args: argparse.Namespace) -> int:
     return 0
 
 
-def cmd_wfs(args: argparse.Namespace) -> int:
+def cmd_wf_propose(args: argparse.Namespace) -> int:
+    return _cmd_wf_propose_impl(args)
+
+
+def _cmd_wfs_impl(args: argparse.Namespace) -> int:
     from ..workflows import WorkflowError, list_proposals as list_wf_proposals, load_allowlist
 
     cfg = _config(args)
@@ -50,7 +54,11 @@ def cmd_wfs(args: argparse.Namespace) -> int:
     return 0
 
 
-def cmd_wf_run(args: argparse.Namespace) -> int:
+def cmd_wfs(args: argparse.Namespace) -> int:
+    return _cmd_wfs_impl(args)
+
+
+def _cmd_wf_run_impl(args: argparse.Namespace) -> int:
     from ..workflows import WorkflowError, confirm_run
 
     cfg = _config(args)
@@ -64,3 +72,7 @@ def cmd_wf_run(args: argparse.Namespace) -> int:
     else:
         print(f"eseguito: {result['id']}\n{result['outcome'] or '(nessun output)'}")
     return 0
+
+
+def cmd_wf_run(args: argparse.Namespace) -> int:
+    return _cmd_wf_run_impl(args)
