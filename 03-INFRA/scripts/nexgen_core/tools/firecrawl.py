@@ -179,7 +179,7 @@ class FirecrawlClient:
         payload = {"url": url, "formats": formats_list}
         return self._request("/v2/scrape", payload=payload)
 
-    def search(
+    def _search_impl(
         self,
         query: str,
         limit: int = 20,
@@ -198,6 +198,23 @@ class FirecrawlClient:
             payload["scrapeOptions"] = {"formats": scrape_formats or ["markdown"]}
 
         return self._request("/v2/search", payload=payload)
+
+    def search(
+        self,
+        query: str,
+        limit: int = 20,
+        sources: list[str] | None = None,
+        scrape: bool = False,
+        scrape_formats: list[str] | None = None,
+    ) -> dict[str, Any]:
+        """Runs a web search through Firecrawl."""
+        return self._search_impl(
+            query,
+            limit=limit,
+            sources=sources,
+            scrape=scrape,
+            scrape_formats=scrape_formats,
+        )
 
 
 def _format_results(res: dict[str, Any]) -> str:
@@ -218,7 +235,7 @@ def _format_results(res: dict[str, Any]) -> str:
     return "\n".join(lines) if lines else json.dumps(data, indent=2)
 
 
-def main(argv: list[str] | None = None) -> int:
+def _main_impl(argv: list[str] | None = None) -> int:
     if argv is None:
         argv = sys.argv[1:]
 
@@ -315,6 +332,10 @@ def main(argv: list[str] | None = None) -> int:
 
     parser.print_help()
     return 0
+
+
+def main(argv: list[str] | None = None) -> int:
+    return _main_impl(argv)
 
 
 if __name__ == "__main__":
