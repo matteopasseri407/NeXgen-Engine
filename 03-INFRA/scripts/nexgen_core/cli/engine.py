@@ -390,6 +390,11 @@ def cmd_inventory(args) -> int:
     return code
 
 
+# Compat: single owner of inventory rows is nexgen_core.tools.info; this alias
+# keeps the historical import path used by the opencode smoke test.
+from nexgen_core.tools.info import _native_memory_report as _native_memory_report  # noqa: F401,E402
+
+
 def cmd_info(args) -> int:
     """Renders the visual system dashboard and optional interactive shell."""
     from nexgen_core.tools.info import render_info
