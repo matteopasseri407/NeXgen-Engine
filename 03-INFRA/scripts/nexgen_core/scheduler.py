@@ -334,6 +334,44 @@ def _scheduled_task_invokes_wrapper(task_name: str, wrapper_path: Path) -> bool:
     return str(wrapper_path) in r.stdout
 
 
+def _render_wrapper(
+    *,
+    script_path: Path,
+    engine_root: Path,
+    vault_data: Path,
+    vault: Path,
+    branch: str,
+    mode: str,
+) -> str:
+    """Renders the hidden VBS wrapper without touching the filesystem."""
+
+    def vbs_string(value: Path | str) -> str:
+        return str(value).replace('"', '""')
+
+    return _VBS_TEMPLATE.format(
+        script=vbs_string(script_path),
+        engine_root=vbs_string(engine_root),
+        vault_data=vbs_string(vault_data),
+        vault=vbs_string(vault),
+        branch=vbs_string(branch),
+        mode=mode,
+    )
+
+
+def _install_wrapper(
+    path: Path,
+    content: str,
+    *,
+    log: Callable[[str], None] = print,
+    label: str = "hidden wrapper updated",
+) -> bool:
+    """Writes one wrapper file, logging only when it changed."""
+    if _write_if_different(path, content):
+        log(f"scheduled-task: {label}")
+        return True
+    return False
+
+
 def install_scheduled_task(
     *,
     home: Path,
@@ -365,26 +403,30 @@ def install_scheduled_task(
     log_dir.mkdir(parents=True, exist_ok=True)
     wrapper_path = log_dir / "start-agent-sync-hidden.vbs"
 
-    def vbs_string(value: Path | str) -> str:
-        return str(value).replace('"', '""')
-
-    def wrapper_for(mode: str) -> str:
-        return _VBS_TEMPLATE.format(
-            script=vbs_string(script_path),
-            engine_root=vbs_string(engine_root),
-            vault_data=vbs_string(vault_data),
-            vault=vbs_string(vault),
-            branch=vbs_string(branch),
-            mode=mode,
-        )
-
-    content = wrapper_for("guard")
-    if _write_if_different(wrapper_path, content):
-        log("scheduled-task: hidden wrapper updated")
+    content = _render_wrapper(
+        script_path=script_path,
+        engine_root=engine_root,
+        vault_data=vault_data,
+        vault=vault,
+        branch=branch,
+        mode="guard",
+    )
+    _install_wrapper(wrapper_path, content, log=log, label="hidden wrapper updated")
 
     beat_path = log_dir / "start-agent-heartbeat-hidden.vbs"
-    if _write_if_different(beat_path, wrapper_for("heartbeat")):
-        log("scheduled-task: heartbeat wrapper updated")
+    _install_wrapper(
+        beat_path,
+        _render_wrapper(
+            script_path=script_path,
+            engine_root=engine_root,
+            vault_data=vault_data,
+            vault=vault,
+            branch=branch,
+            mode="heartbeat",
+        ),
+        log=log,
+        label="heartbeat wrapper updated",
+    )
     beat_task = "KnowledgeVault Agent Heartbeat"
     heartbeat_ok = True
     if not _scheduled_task_invokes_wrapper(beat_task, beat_path):
