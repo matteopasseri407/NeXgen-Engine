@@ -16,7 +16,7 @@ from nexgen_core.mcp_placement import CLIS, DIRECT, GATEWAY, GATEWAY_KIND, gatew
 _SYMBOL = {DIRECT: "direct", GATEWAY_KIND: "gateway", "absent": "-"}
 
 
-def build(manifest_path) -> dict[str, Any]:
+def _build_impl(manifest_path) -> dict[str, Any]:
     """The plan as data: rows per server, the gateway's served set per CLI, what would change, what is incoherent."""
     from nexgen_core import mcp_trials
 
@@ -45,7 +45,12 @@ def build(manifest_path) -> dict[str, Any]:
     return {"rows": rows, "gateway": gateway, "changes": changes, "problems": problems(servers)}
 
 
-def render(plan: dict[str, Any]) -> str:
+def build(manifest_path) -> dict[str, Any]:
+    """The plan as data: rows per server, the gateway's served set per CLI, what would change, what is incoherent."""
+    return _build_impl(manifest_path)
+
+
+def _render_impl(plan: dict[str, Any]) -> str:
     width = max([len(r["server"]) for r in plan["rows"]] + [6])
     head = "  " + "server".ljust(width) + "  " + "  ".join(c.ljust(11) for c in CLIS) + "  " + t("why")
     lines = [head, "  " + "-" * (len(head) - 2)]
@@ -75,7 +80,11 @@ def render(plan: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
-def main(*, as_json: bool = False) -> int:
+def render(plan: dict[str, Any]) -> str:
+    return _render_impl(plan)
+
+
+def _main_impl(*, as_json: bool = False) -> int:
     from nexgen_core.renderer import McpRenderer
 
     renderer = McpRenderer()
@@ -85,3 +94,7 @@ def main(*, as_json: bool = False) -> int:
     plan = build(renderer.manifest_path)
     print(json.dumps(plan, indent=2, ensure_ascii=False) if as_json else render(plan))
     return 1 if plan["problems"] else 0
+
+
+def main(*, as_json: bool = False) -> int:
+    return _main_impl(as_json=as_json)
