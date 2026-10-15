@@ -255,6 +255,21 @@ def judge_github_skill(
         shutil.rmtree(work, ignore_errors=True)
 
 
+def _npm_jump_rule(
+    old_v: tuple[int, int, int], new_v: tuple[int, int, int],
+    pinned: str, latest: str,
+) -> tuple[str, str, str]:
+    """Pure jump rule, no verdict objects: moved verbatim from the judge."""
+    if new_v[0] != old_v[0]:
+        return (HOLD, f"major jump {pinned} -> {latest}: read the changelog",
+                f"Salto grosso ({pinned} -> {latest}): da guardare con calma.")
+    if new_v[1] != old_v[1]:
+        return (HOLD, f"minor jump {pinned} -> {latest}: read the changelog",
+                f"Ci sono novità dentro ({pinned} -> {latest}): da guardare prima.")
+    return (BATCH, f"patch jump {pinned} -> {latest}",
+            f"Piccolo ritocco ({pinned} -> {latest}), stessa linea: niente funzioni nuove.")
+
+
 def judge_npm_package(what: str, pinned: str, latest: str) -> GuardFinding:
     """Verdict for one npm pin: patch-only batches, the rest is held.
 
@@ -275,31 +290,38 @@ def judge_npm_package(what: str, pinned: str, latest: str) -> GuardFinding:
         finding.reasons.append("upstream is not newer")
         finding.plain = "Niente di nuovo: resta dov'è."
         return finding
-    if new_v[0] != old_v[0]:
-        finding.reasons.append(f"major jump {pinned} -> {latest}: read the changelog")
-        finding.plain = f"Salto grosso ({pinned} -> {latest}): da guardare con calma."
-        return finding
-    if new_v[1] != old_v[1]:
-        finding.reasons.append(f"minor jump {pinned} -> {latest}: read the changelog")
-        finding.plain = f"Ci sono novità dentro ({pinned} -> {latest}): da guardare prima."
-        return finding
-    finding.verdict = BATCH
-    finding.reasons.append(f"patch jump {pinned} -> {latest}")
-    finding.plain = f"Piccolo ritocco ({pinned} -> {latest}), stessa linea: niente funzioni nuove."
+    verdict, reason, plain = _npm_jump_rule(old_v, new_v, pinned, latest)
+    finding.verdict = verdict
+    finding.reasons.append(reason)
+    finding.plain = plain
     return finding
+
+
+def _finding_route(finding: PinFinding) -> str:
+    """Pure routing rule, no verdict objects: moved verbatim from the judge."""
+    if not finding.stale or finding.upstream is None:
+        return "current"
+    if finding.what.startswith("module "):
+        return "module"
+    if finding.kind == "git-commit":
+        return "git-commit"
+    if finding.kind == "npm-version":
+        return "npm-version"
+    return "unknown"
 
 
 def judge_finding(
     finding: PinFinding, skill_scopes: dict[str, str] | None = None,
 ) -> GuardFinding:
     """Routes one stale depwatch finding to the right deterministic judge."""
-    if not finding.stale or finding.upstream is None:
+    route = _finding_route(finding)
+    if route == "current":
         verdict = GuardFinding(what=finding.what, pinned=finding.pinned,
                                upstream=finding.upstream or "")
         verdict.reasons.append("nothing moved or unreachable")
         verdict.plain = "Niente di nuovo: resta dov'è."
         return verdict
-    if finding.what.startswith("module "):
+    if route == "module":
         # A module's component is a program or a patched launcher, not a pin in a manifest: it is
         # replaced where it runs, after trying it. Even a patch jump is held, because the Playwright
         # wrapper edits that exact version's files and a "small touch-up" would stop it starting.
@@ -307,7 +329,7 @@ def judge_finding(
         verdict.reasons.append("a component of a module: replaced where it runs, after trying it, never rewritten from here")
         verdict.plain = "È un componente di un modulo (un programma o un lanciatore con patch): si aggiorna a mano dopo averlo provato. Qui lo segnalo soltanto."
         return verdict
-    if finding.kind == "git-commit":
+    if route == "git-commit":
         match = re.match(r"^skill '([^']+)'", finding.what)
         name = match.group(1) if match else ""
         scope = (skill_scopes or {}).get(name, ".")
@@ -322,7 +344,7 @@ def judge_finding(
             verdict.plain = "Non capisco da dove viene: resta fermo."
             return verdict
         return judge_github_skill(finding.what, key, finding.pinned, finding.upstream, scope)
-    if finding.kind == "npm-version":
+    if route == "npm-version":
         return judge_npm_package(finding.what, finding.pinned, finding.upstream)
     verdict = GuardFinding(what=finding.what, pinned=finding.pinned,
                            upstream=finding.upstream)
