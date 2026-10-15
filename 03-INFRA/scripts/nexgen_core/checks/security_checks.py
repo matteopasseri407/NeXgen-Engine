@@ -9,6 +9,7 @@ from nexgen_core.deposit_env import read_deposit
 from nexgen_core.i18n import t
 from nexgen_core.mcp_placement import CLIS, DIRECT, place
 from nexgen_core.report import CheckOutcome, Severity
+from nexgen_core.tools.required_rules import DEFAULT_RULES, missing_signatures
 
 
 def check_required_rules(vault_data: Path, engine_root: Path | None = None) -> CheckOutcome:
@@ -31,7 +32,6 @@ def check_required_rules(vault_data: Path, engine_root: Path | None = None) -> C
             if candidate.is_file():
                 rules_file = candidate
             else:
-                from nexgen_core.tools.required_rules import DEFAULT_RULES
                 if DEFAULT_RULES.is_file():
                     rules_file = DEFAULT_RULES
 
@@ -49,8 +49,6 @@ def check_required_rules(vault_data: Path, engine_root: Path | None = None) -> C
             message=t("The mandatory rules file required-rules.txt is not present."),
             action=t("Restore required-rules.txt next to AGENTS.md."),
         )
-
-    from nexgen_core.tools.required_rules import missing_signatures
 
     try:
         missing = missing_signatures(canon, rules_file)
