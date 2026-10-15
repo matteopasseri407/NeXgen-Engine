@@ -23,10 +23,8 @@ def _opencode_timeouts(timeouts: Any) -> dict[str, int]:
             pass
     return mapped
 
-def render(renderer, write: bool = False) -> tuple[bool, str]:
-    """Generates native OpenCode 2 MCP config and migrates flat V1 entries."""
-    servers = renderer.load_resolved_servers("opencode")
-    cfg_file = renderer.opencode_config_path()
+def _load_existing_config(cfg_file: Any) -> tuple[dict[str, Any], str]:
+    """Reads the live OpenCode config, comment-tolerant like OpenCode itself."""
     existing: dict[str, Any] = {}
     raw_existing = ""
     if cfg_file.is_file():
@@ -40,7 +38,11 @@ def render(renderer, write: bool = False) -> tuple[bool, str]:
             raise ValueError(f"Could not parse {cfg_file}: invalid JSON/JSONC ({exc})")
         if not isinstance(existing, dict):
             raise ValueError(f"Could not parse {cfg_file}: expected a JSON object")
+    return existing, raw_existing
 
+
+def _migrated_mcp_state(existing: dict[str, Any], cfg_file: Any) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Splits the stored `mcp` block into config plus migrated V1 servers."""
     raw_mcp = existing.get("mcp", {})
     if not isinstance(raw_mcp, dict):
         raise ValueError(f"Could not render {cfg_file}: mcp must be an object")
@@ -74,57 +76,62 @@ def render(renderer, write: bool = False) -> tuple[bool, str]:
                 }
                 migrated["oauth"] = {oauth_fields.get(k, k): v for k, v in oauth.items()}
             mcp_servers[name] = migrated
-    for retired in renderer.retired_server_names():
-        mcp_servers.pop(retired, None)
-    renderer._drop_unmounted(mcp_servers, servers, cli_target="opencode")
-    tools_cfg: dict[str, Any] = dict(existing.get("tools") or {})
-    old_tools_cfg = dict(tools_cfg)
-    permissions = existing.get("permissions", [])
-    if not isinstance(permissions, list):
-        raise ValueError(f"Could not render {cfg_file}: permissions must be an array")
-    permissions = list(permissions)
-    old_permissions = list(permissions)
+    return mcp_config, mcp_servers
+
+
+def _build_entry(srv: dict[str, Any]) -> dict[str, Any]:
+    """One manifest server as its native OpenCode entry."""
+    mapped = _opencode_timeouts(srv.get("timeouts"))
+    if srv.get("transport") == "http" or srv.get("url"):
+        url_env = srv.get("url_env")
+        url = f"{{env:{url_env}}}" if url_env else srv["url"]
+        auth_env = srv.get("auth", {}).get("env") if isinstance(srv.get("auth"), dict) else ""
+        headers = {"Authorization": f"Bearer {{env:{auth_env}}}"} if auth_env else {}
+        entry: dict[str, Any] = {
+            "type": "remote",
+            "url": url,
+        }
+        if auth_env:
+            entry["headers"] = headers
+            entry["oauth"] = False
+        elif srv.get("oauth"):
+            # OpenCode handles the OAuth flow itself (discovery,
+            # dynamic registration, tokens outside the config):
+            # no headers, no client secrets in the config. An
+            # explicit `oauth_client_id` (a public identifier, never
+            # a secret) is forwarded for providers that do not
+            # support dynamic client registration, e.g. Google
+            # Workspace MCP.
+            oauth_config: dict[str, Any] = {}
+            client_id = srv.get("oauth_client_id")
+            if isinstance(client_id, str) and client_id.strip():
+                oauth_config["client_id"] = client_id.strip()
+            if oauth_config:
+                entry["oauth"] = oauth_config
+        elif srv.get("oauth") is False and "oauth" in srv:
+            entry["oauth"] = False
+    else:
+        cmd_list = [srv.get("command", "")] + list(srv.get("args", []))
+        entry = {
+            "type": "local",
+            "command": cmd_list,
+        }
+        if srv.get("env"):
+            entry["environment"] = srv["env"]
+    if mapped:
+        entry["timeout"] = mapped
+    return entry
+
+
+def _apply_servers(
+    servers: dict[str, Any],
+    mcp_servers: dict[str, Any],
+    tools_cfg: dict[str, Any],
+    permissions: list[Any],
+) -> None:
+    """Mounts every resolved server and records its tool-deny rules."""
     for name, srv in servers.items():
-        mapped = _opencode_timeouts(srv.get("timeouts"))
-        if srv.get("transport") == "http" or srv.get("url"):
-            url_env = srv.get("url_env")
-            url = f"{{env:{url_env}}}" if url_env else srv["url"]
-            auth_env = srv.get("auth", {}).get("env") if isinstance(srv.get("auth"), dict) else ""
-            headers = {"Authorization": f"Bearer {{env:{auth_env}}}"} if auth_env else {}
-            entry: dict[str, Any] = {
-                "type": "remote",
-                "url": url,
-            }
-            if auth_env:
-                entry["headers"] = headers
-                entry["oauth"] = False
-            elif srv.get("oauth"):
-                # OpenCode handles the OAuth flow itself (discovery,
-                # dynamic registration, tokens outside the config):
-                # no headers, no client secrets in the config. An
-                # explicit `oauth_client_id` (a public identifier, never
-                # a secret) is forwarded for providers that do not
-                # support dynamic client registration, e.g. Google
-                # Workspace MCP.
-                oauth_config: dict[str, Any] = {}
-                client_id = srv.get("oauth_client_id")
-                if isinstance(client_id, str) and client_id.strip():
-                    oauth_config["client_id"] = client_id.strip()
-                if oauth_config:
-                    entry["oauth"] = oauth_config
-            elif srv.get("oauth") is False and "oauth" in srv:
-                entry["oauth"] = False
-        else:
-            cmd_list = [srv.get("command", "")] + list(srv.get("args", []))
-            entry = {
-                "type": "local",
-                "command": cmd_list,
-            }
-            if srv.get("env"):
-                entry["environment"] = srv["env"]
-        if mapped:
-            entry["timeout"] = mapped
-        mcp_servers[name] = entry
+        mcp_servers[name] = _build_entry(srv)
         # V2 denies tools through permissions, including Code Mode tools.
         deny = srv.get("tools_deny")
         if isinstance(deny, list) and deny:
@@ -136,6 +143,22 @@ def render(renderer, write: bool = False) -> tuple[bool, str]:
                 if tools_cfg.get(action) is False:
                     tools_cfg.pop(action)
 
+
+def _prune_unmounted(renderer: Any, mcp_servers: dict[str, Any], servers: dict[str, Any]) -> None:
+    """Drops retired and env-unmounted servers from the preserved set."""
+    for retired in renderer.retired_server_names():
+        mcp_servers.pop(retired, None)
+    renderer._drop_unmounted(mcp_servers, servers, cli_target="opencode")
+
+
+def _finalize_state(
+    existing: dict[str, Any],
+    mcp_config: dict[str, Any],
+    mcp_servers: dict[str, Any],
+    tools_cfg: dict[str, Any],
+    permissions: list[Any],
+) -> bool:
+    """Merges tools/permissions/mcp into the existing config. Returns the websearch-drop flag."""
     # This renderer owns MCP entries, not the user's native tool choices.
     # In particular, websearch remains available as a fallback when the
     # Firecrawl connector is unavailable. One exception, once: the
@@ -157,6 +180,23 @@ def render(renderer, write: bool = False) -> tuple[bool, str]:
         existing["permissions"] = permissions
     mcp_config["servers"] = mcp_servers
     existing["mcp"] = mcp_config
+    return drop_engine_websearch
+
+
+def _persist_config(
+    renderer: Any,
+    cfg_file: Any,
+    raw_existing: str,
+    existing: dict[str, Any],
+    mcp_config: dict[str, Any],
+    tools_cfg: dict[str, Any],
+    old_tools_cfg: dict[str, Any],
+    permissions: list[Any],
+    old_permissions: list[Any],
+    drop_engine_websearch: bool,
+    write: bool,
+) -> None:
+    """JSONC-aware write of the merged config, preserving file comments."""
     if write:
         # JSONC-aware for either file name: preserves the existing file's
         # comments instead of overwriting them with plain JSON.
@@ -172,4 +212,35 @@ def render(renderer, write: bool = False) -> tuple[bool, str]:
             # File missing or empty: no comments to preserve.
             content = json.dumps(existing, indent=2) + "\n"
         renderer._backup_and_write(cfg_file, content)
+
+
+def render(renderer, write: bool = False) -> tuple[bool, str]:
+    """Generates native OpenCode 2 MCP config and migrates flat V1 entries."""
+    servers = renderer.load_resolved_servers("opencode")
+    cfg_file = renderer.opencode_config_path()
+    existing, raw_existing = _load_existing_config(cfg_file)
+    mcp_config, mcp_servers = _migrated_mcp_state(existing, cfg_file)
+    _prune_unmounted(renderer, mcp_servers, servers)
+    tools_cfg: dict[str, Any] = dict(existing.get("tools") or {})
+    old_tools_cfg = dict(tools_cfg)
+    permissions = existing.get("permissions", [])
+    if not isinstance(permissions, list):
+        raise ValueError(f"Could not render {cfg_file}: permissions must be an array")
+    permissions = list(permissions)
+    old_permissions = list(permissions)
+    _apply_servers(servers, mcp_servers, tools_cfg, permissions)
+    drop_engine_websearch = _finalize_state(existing, mcp_config, mcp_servers, tools_cfg, permissions)
+    _persist_config(
+        renderer,
+        cfg_file,
+        raw_existing,
+        existing,
+        mcp_config,
+        tools_cfg,
+        old_tools_cfg,
+        permissions,
+        old_permissions,
+        drop_engine_websearch,
+        write,
+    )
     return True, t("OpenCode configuration updated")
