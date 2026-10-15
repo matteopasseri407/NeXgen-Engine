@@ -103,8 +103,8 @@ def _confined_file(cfg: LaneConfig, local_path: str) -> Path:
     raise DriveGateError("file fuori dalle radici consentite o inesistente")
 
 
-def stage_upload(cfg: LaneConfig, local_path: str, name: str = "", folder_id: str = "") -> dict[str, Any]:
-    """Validate and stage: no bytes leave the machine here."""
+def _stage_upload(cfg: LaneConfig, local_path: str, name: str = "", folder_id: str = "") -> dict[str, Any]:
+    """Prepara la proposta di upload: nessun byte lascia la macchina qui."""
     from .connectors.drive import MAX_UPLOAD_BYTES
 
     target = _confined_file(cfg, local_path)
@@ -147,6 +147,11 @@ def stage_upload(cfg: LaneConfig, local_path: str, name: str = "", folder_id: st
         chars=proposal.size,
     )
     return asdict(proposal)
+
+
+def stage_upload(cfg: LaneConfig, local_path: str, name: str = "", folder_id: str = "") -> dict[str, Any]:
+    """Validate and stage: no bytes leave the machine here."""
+    return _stage_upload(cfg, local_path, name, folder_id)
 
 
 def confirm_upload(cfg: LaneConfig, proposal_id: str, confirm: bool) -> dict[str, Any]:
@@ -219,11 +224,9 @@ def _registry(cfg: LaneConfig):
     return ToolRegistry(cfg)
 
 
-def build_server(cfg: LaneConfig | None = None):
-    """Build the Drive stdio server. Imported lazily like the lane server."""
+def _build_server(cfg: LaneConfig):
+    """Costruisce il server Drive: registrazione dei tool attesi."""
     from mcp.server.mcpserver import MCPServer
-
-    cfg = cfg or LaneConfig.from_env()
 
     server = MCPServer(
         name="nexgen-drive",
@@ -275,6 +278,12 @@ def build_server(cfg: LaneConfig | None = None):
         return json.dumps(done, ensure_ascii=False, indent=1)
 
     return server
+
+
+def build_server(cfg: LaneConfig | None = None):
+    """Build the Drive stdio server. Imported lazily like the lane server."""
+    cfg = cfg or LaneConfig.from_env()
+    return _build_server(cfg)
 
 
 def run_server(cfg: LaneConfig | None = None) -> int:
