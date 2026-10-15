@@ -433,7 +433,7 @@ def test_unattended_unsigned_release_refuses(tmp_path, monkeypatch):
     monkeypatch.setattr(updater, "verify_release_tag",
                         lambda *_a, **_k: updater.TagVerdict("unverifiable", "synthetic: lightweight tag"))
 
-    assert updater.main(["--unattended"], environ=_env(engine)) == 70
+    assert updater.main(["--unattended"], environ=_env(engine)) == 1
     assert (engine / "VERSION").read_text(encoding="utf-8").strip() == "0.1.0"
 
 

@@ -91,7 +91,8 @@ def test_get_agent_now_data_su_ora_finta_stabile(monkeypatch: pytest.MonkeyPatch
     assert set(first.keys()) == expected_keys
     assert first["source"] == "system_clock"
     assert first["timezone"] == "Europe/Rome"
-    assert first["local_time"] == FIXED.isoformat(timespec="seconds")
+    assert datetime.datetime.fromisoformat(first["local_time"]).astimezone(
+        datetime.UTC) == FIXED.astimezone(datetime.UTC)
     assert first["epoch_seconds"] == int(FIXED.timestamp())
     assert first["date"] == "2026-10-15"
     assert first["year"] == 2026

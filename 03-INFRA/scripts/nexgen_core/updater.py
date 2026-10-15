@@ -724,6 +724,12 @@ def main(
             print("\nCheck only. No installed files or branch were changed.")
             return 0
 
+        if args.unattended and not verdict.ok and not verdict.no_verifier:
+            raise UpdateError(
+                f"unattended update refuses {target}: its signature could not be verified "
+                f"({verdict.detail}); recover by running 'nexgen-update --target {target.removeprefix('v')}' "
+                "--allow-unverified interactively once you have checked the release"
+            )
         if not verdict.ok and (args.allow_unverified or verdict.no_verifier):
             # Installing without a check happens in exactly two cases: the
             # machine has no verifier program at all (BAD and UNTRUSTED

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import inspect
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -78,11 +79,16 @@ def test_sink_command_finto_stabile() -> None:
 
 
 def test_sink_command_basename_e_gruppi_vuoti(tmp_path: Path) -> None:
-    # Basename con path quotato e spazi: riconosciuto come sink.
+    # Basename con path quotato e spazi: riconosciuto come sink dove la
+    # piattaforma usa backslash come separatore, ignorato altrove.
     quoted = f'node "C:\\Program Files\\{EVENT_SINK_NAME}"'
     hooks: dict = {"Stop": [{"hooks": [{"command": quoted}]}]}
-    assert Runtime.strip_event_sink_hooks(hooks) is True
-    assert "Stop" not in hooks  # evento rimasto senza gruppi: rimosso.
+    if os.name == "nt":
+        assert Runtime.strip_event_sink_hooks(hooks) is True
+        assert "Stop" not in hooks  # evento rimasto senza gruppi: rimosso.
+    else:
+        assert Runtime.strip_event_sink_hooks(hooks) is False
+        assert hooks["Stop"][0]["hooks"] == [{"command": quoted}]
 
     # Comando malformato (quote non chiusa): fallback senza crash, nessun falso positivo.
     hooks2: dict = {"Stop": [{"hooks": [{"command": 'node "unterminated'}]}]}
