@@ -173,7 +173,7 @@ def cmd_plan(args) -> int:
         if plan.drift:
             print(t("DRIFT: an apply would change or unblock the following:"))
             for action in plan.planned_actions:
-                print(f"  → {action}")
+                print(f"  -> {action}")
         else:
             print(t("No drift in the probed domains (see 'not checked here' below for the rest)."))
         for line in plan.in_sync:

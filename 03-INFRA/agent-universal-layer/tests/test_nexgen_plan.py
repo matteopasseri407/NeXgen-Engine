@@ -197,3 +197,25 @@ def test_warnings_are_never_filed_as_aligned(sandbox, monkeypatch):
     assert any("deriva riparabile" in a for a in plan.planned_actions)
     assert any("segreto da collegare" in a for a in plan.needs_attention)
     assert not any("deriva riparabile" in line or "segreto da collegare" in line for line in plan.in_sync)
+
+
+def test_plan_human_output_survives_a_cp850_console(sandbox, monkeypatch, capsys):
+    """Lo stdout non UTF-8 di Windows (codepage 850/1252 o output rediretto)
+    non codifica U+2192: se il piano umano lo emette, `nexgen plan` muore
+    di UnicodeEncodeError (visto in v2.15.0)."""
+    import nexgen_core.checks.mcp_checks as mcp_checks
+    from nexgen_core.report import CheckOutcome, Severity
+
+    monkeypatch.setattr(
+        mcp_checks, "check_mcp_content_drift",
+        lambda *a, **k: CheckOutcome(
+            id="mcp.rendered_content", severity=Severity.WARN,
+            message="deriva riparabile", action="esegui apply",
+            remedy=lambda: True),
+    )
+
+    engine_cli.cmd_plan(SimpleNamespace(check=False, json=False))
+
+    out = capsys.readouterr().out
+    assert "deriva riparabile" in out
+    out.encode("cp850")

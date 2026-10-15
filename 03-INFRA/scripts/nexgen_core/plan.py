@@ -145,7 +145,7 @@ def _probe(outcome) -> tuple[str, str] | None:
         return None
     line = outcome.message
     if getattr(outcome, "action", ""):
-        line += " → " + outcome.action
+        line += " -> " + outcome.action
     if outcome.severity == Severity.BROKEN:
         return "planned", line
     if outcome.severity == Severity.WARN:
