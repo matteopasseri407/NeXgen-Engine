@@ -524,14 +524,7 @@ class GuardRunner:
                 if abort is not None:
                     return abort
 
-                failed: list[str] = []
-                failed += self._phase_align(actions, skip_mcp)
-                try:
-                    self._phase_permissions(actions)
-                except Exception as exc:  # noqa: BLE001 - one phase failing must not stop the others
-                    failed.append("permissions")
-                    actions.append(ERROR + t("Phase '{phase}' failed: {error}", phase="permissions", error=exc))
-                failed += self._phase_run(actions, branch)
+                failed = self._run_phases(actions, branch, skip_mcp)
                 self._phase_liveness(actions, is_guard, mode, failed)
 
                 if failed:
