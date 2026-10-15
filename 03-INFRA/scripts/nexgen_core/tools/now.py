@@ -17,7 +17,7 @@ from typing import Any
 from nexgen_core.i18n import t
 
 
-def get_ntp_status_linux() -> dict[str, str]:
+def _get_ntp_status_linux_impl() -> dict[str, str]:
     """Queries timedatectl on Linux to check NTP synchronization."""
     res = {
         "timezone": "",
@@ -54,7 +54,11 @@ def get_ntp_status_linux() -> dict[str, str]:
     return res
 
 
-def get_ntp_status_windows() -> dict[str, str]:
+def get_ntp_status_linux() -> dict[str, str]:
+    return _get_ntp_status_linux_impl()
+
+
+def _get_ntp_status_windows_impl() -> dict[str, str]:
     """Checks W32Time status on Windows."""
     res = {
         "timezone": "",
@@ -82,7 +86,11 @@ def get_ntp_status_windows() -> dict[str, str]:
     return res
 
 
-def get_agent_now_data() -> dict[str, Any]:
+def get_ntp_status_windows() -> dict[str, str]:
+    return _get_ntp_status_windows_impl()
+
+
+def _get_agent_now_data_impl() -> dict[str, Any]:
     """Generates the complete 13-field dictionary."""
     now_local = datetime.datetime.now().astimezone()
     now_utc = now_local.astimezone(datetime.UTC)
@@ -121,7 +129,11 @@ def get_agent_now_data() -> dict[str, Any]:
     }
 
 
-def format_human(data: dict[str, Any]) -> str:
+def get_agent_now_data() -> dict[str, Any]:
+    return _get_agent_now_data_impl()
+
+
+def _format_human_impl(data: dict[str, Any]) -> str:
     return t(
         "Local: {local_time}\n"
         "UTC:   {utc_time}\n"
@@ -137,7 +149,11 @@ def format_human(data: dict[str, Any]) -> str:
     )
 
 
-def format_shell(data: dict[str, Any]) -> str:
+def format_human(data: dict[str, Any]) -> str:
+    return _format_human_impl(data)
+
+
+def _format_shell_impl(data: dict[str, Any]) -> str:
     lines = [
         f"AGENT_NOW_LOCAL_ISO='{data['local_time']}'",
         f"AGENT_NOW_UTC_ISO='{data['utc_time']}'",
@@ -152,7 +168,11 @@ def format_shell(data: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
-def main(argv: list[str] | None = None) -> int:
+def format_shell(data: dict[str, Any]) -> str:
+    return _format_shell_impl(data)
+
+
+def _main_impl(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="nexgen tool now", description=t("Deterministic current date/time source for agents"))
     parser.add_argument("--format", choices=["json", "human", "shell"], default="json")
     parser.add_argument("--json", action="store_true", help=t("Output in JSON"))
@@ -179,6 +199,10 @@ def main(argv: list[str] | None = None) -> int:
         print(format_shell(data))
 
     return 0
+
+
+def main(argv: list[str] | None = None) -> int:
+    return _main_impl(argv)
 
 
 if __name__ == "__main__":
