@@ -202,6 +202,109 @@ def _replace_in_entries(text: str, carriers: list[tuple[str, str | None]],
     return text, replaced
 
 
+def _schedule_item(
+    planned: dict,
+    notes: list[str],
+    is_approved: Callable[[tuple, str, str | None], bool],
+    item: dict,
+    where: str,
+    old: str,
+    new: str,
+    carriers: list,
+    field: str | None,
+) -> bool:
+    # Approval compares versions (what the verdicts judged); old/new
+    # are replacement strings (SHAs or pkg@version tokens).
+    vold, vnew = str(item.get("pinned") or ""), str(item.get("upstream") or "")
+    kind = str((_target_of(item)).get("kind") or "")
+    blocked = [n for (n, f) in carriers if not is_approved((kind, vold, vnew), n, f)]
+    if blocked:
+        other = blocked[0]
+        notes.append(t("'{what}': held back, '{other}' shares the pin and is not approved",
+                       what=item.get("what"), other=other))
+        return False
+    key = (str((_target_of(item)).get("kind") or ""), where, old, new, field)
+    group = planned.setdefault(key, {"items": [], "carriers": []})
+    group["items"].append(item)
+    for carrier in carriers:
+        if carrier not in group["carriers"]:
+            group["carriers"].append(carrier)
+    return True
+
+
+def _write_bump(
+    skills_path: Path,
+    mcp_path: Path,
+    skills_text: str,
+    mcp_text: str,
+    new_skills: str,
+    new_mcp: str,
+    vault_data: Path,
+    home: Path | None,
+) -> tuple[int, list[str], dict[str, Path]]:
+    backups: dict[str, Path] = {}
+    if new_skills != skills_text:
+        backup = _backup(skills_path)
+        if backup is None:
+            return 0, [ERROR + t("cannot back up {path}, nothing written", path=skills_path)], {}
+        backups["skills"] = backup
+    if new_mcp != mcp_text and mcp_path.is_file():
+        backup = _backup(mcp_path)
+        if backup is None:
+            return 0, [ERROR + t("cannot back up {path}, nothing written", path=mcp_path)], {}
+        backups["mcp"] = backup
+    try:
+        # Atomic writes: temp file plus rename, so a failure (full
+        # disk included) leaves the original intact instead of truncated.
+        # If the second write fails, the first is restored: half a plan
+        # is never left applied.
+        if "skills" in backups:
+            _atomic_write(skills_path, new_skills)
+        if "mcp" in backups:
+            try:
+                _atomic_write(mcp_path, new_mcp)
+            except OSError as exc:
+                restore_notes = []
+                if "skills" in backups and not _restore(skills_path, backups["skills"]):
+                    restore_notes.append(t("could not restore {path} from {backup}",
+                                           path=skills_path, backup=backups["skills"]))
+                return 0, ([ERROR + t("write failed ({error}), manifests restored from backups",
+                                            error=exc)]
+                           + [f"{ERROR}{note}" for note in restore_notes]), {}
+    except OSError as exc:
+        return 0, [ERROR + t("write failed ({error}), manifests untouched",
+                                   error=exc)], {}
+    problems = _revalidate(vault_data, home)
+    if problems:
+        restore_failures = []
+        for key, backup in backups.items():
+            if not _restore(skills_path if key == "skills" else mcp_path, backup):
+                restore_failures.append(t("could not restore {path} from {backup}",
+                                          path=skills_path if key == "skills" else mcp_path,
+                                          backup=backup))
+        restored = t("edits rolled back, manifests restored from {backups}",
+                     backups=", ".join(str(b) for b in backups.values()))
+        return 0, [ERROR + restored, *problems,
+                   *(f"{ERROR}{note}" for note in restore_failures)], {}
+    return 1, [t("Backups kept next to the manifests: {backups}",
+                 backups=", ".join(str(b) for b in backups.values()))], backups
+
+
+def _rollback_bump(skills_path: Path, mcp_path: Path, backups: dict[str, Path]) -> list[str]:
+    """Restores both manifests from backup. A failed restore is
+    reported loudly: claiming a rollback that did not happen would
+    be worse than the failure itself."""
+    failures = []
+    for key in ("skills", "mcp"):
+        backup = backups.get(key)
+        if backup is not None and not _restore(
+                skills_path if key == "skills" else mcp_path, backup):
+            failures.append(t("could not restore {path} from {backup}",
+                              path=skills_path if key == "skills" else mcp_path,
+                              backup=backup))
+    return failures
+
+
 def apply_plan(
     raisable: list[dict], vault_data: Path, *, sync: bool = True,
     home: Path | None = None,
@@ -297,23 +400,7 @@ def apply_plan(
 
     def _schedule(item: dict, where: str, old: str, new: str,
                   carriers: list, field: str | None) -> bool:
-        # Approval compares versions (what the verdicts judged); old/new
-        # are replacement strings (SHAs or pkg@version tokens).
-        vold, vnew = str(item.get("pinned") or ""), str(item.get("upstream") or "")
-        kind = str((_target_of(item)).get("kind") or "")
-        blocked = [n for (n, f) in carriers if not _approved((kind, vold, vnew), n, f)]
-        if blocked:
-            other = blocked[0]
-            notes.append(t("'{what}': held back, '{other}' shares the pin and is not approved",
-                           what=item.get("what"), other=other))
-            return False
-        key = (str((_target_of(item)).get("kind") or ""), where, old, new, field)
-        group = planned.setdefault(key, {"items": [], "carriers": []})
-        group["items"].append(item)
-        for carrier in carriers:
-            if carrier not in group["carriers"]:
-                group["carriers"].append(carrier)
-        return True
+        return _schedule_item(planned, notes, _approved, item, where, old, new, carriers, field)
 
     for item in raisable:
         target = _target_of(item)
@@ -374,52 +461,8 @@ def apply_plan(
                 notes.append(t("'{what}': pin already moved, skipped", what=item.get("what")))
 
     def _write_phase() -> tuple[int, list[str], dict[str, Path]]:
-        backups: dict[str, Path] = {}
-        if new_skills != skills_text:
-            backup = _backup(skills_path)
-            if backup is None:
-                return 0, [ERROR + t("cannot back up {path}, nothing written", path=skills_path)], {}
-            backups["skills"] = backup
-        if new_mcp != mcp_text and mcp_path.is_file():
-            backup = _backup(mcp_path)
-            if backup is None:
-                return 0, [ERROR + t("cannot back up {path}, nothing written", path=mcp_path)], {}
-            backups["mcp"] = backup
-        try:
-            # Atomic writes: temp file plus rename, so a failure (full
-            # disk included) leaves the original intact instead of truncated.
-            # If the second write fails, the first is restored: half a plan
-            # is never left applied.
-            if "skills" in backups:
-                _atomic_write(skills_path, new_skills)
-            if "mcp" in backups:
-                try:
-                    _atomic_write(mcp_path, new_mcp)
-                except OSError as exc:
-                    restore_notes = []
-                    if "skills" in backups and not _restore(skills_path, backups["skills"]):
-                        restore_notes.append(t("could not restore {path} from {backup}",
-                                               path=skills_path, backup=backups["skills"]))
-                    return 0, ([ERROR + t("write failed ({error}), manifests restored from backups",
-                                                error=exc)]
-                               + [f"{ERROR}{note}" for note in restore_notes]), {}
-        except OSError as exc:
-            return 0, [ERROR + t("write failed ({error}), manifests untouched",
-                                       error=exc)], {}
-        problems = _revalidate(vault_data, home)
-        if problems:
-            restore_failures = []
-            for key, backup in backups.items():
-                if not _restore(skills_path if key == "skills" else mcp_path, backup):
-                    restore_failures.append(t("could not restore {path} from {backup}",
-                                              path=skills_path if key == "skills" else mcp_path,
-                                              backup=backup))
-            restored = t("edits rolled back, manifests restored from {backups}",
-                         backups=", ".join(str(b) for b in backups.values()))
-            return 0, [ERROR + restored, *problems,
-                       *(f"{ERROR}{note}" for note in restore_failures)], {}
-        return 1, [t("Backups kept next to the manifests: {backups}",
-                     backups=", ".join(str(b) for b in backups.values()))], backups
+        return _write_bump(skills_path, mcp_path, skills_text, mcp_text,
+                           new_skills, new_mcp, vault_data, home)
 
     phase_ok, phase_notes, phase_backups = _write_phase()
     notes.extend(phase_notes)
@@ -431,18 +474,7 @@ def apply_plan(
     # version nobody installed would never retry the install.
 
     def _rollback_pins() -> list[str]:
-        """Restores both manifests from backup. A failed restore is
-        reported loudly: claiming a rollback that did not happen would
-        be worse than the failure itself."""
-        failures = []
-        for key in ("skills", "mcp"):
-            backup = phase_backups.get(key)
-            if backup is not None and not _restore(
-                    skills_path if key == "skills" else mcp_path, backup):
-                failures.append(t("could not restore {path} from {backup}",
-                                  path=skills_path if key == "skills" else mcp_path,
-                                  backup=backup))
-        return failures
+        return _rollback_bump(skills_path, mcp_path, phase_backups)
 
     bumps = 0
     moved: list[dict] = []
