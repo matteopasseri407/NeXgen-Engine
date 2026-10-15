@@ -5,14 +5,12 @@ from __future__ import annotations
 import time
 from pathlib import Path
 
-from nexgen_core.paths import resolve_state_dir
 
-
-from .notifier_state import CACHE_TOO_OLD_TO_NAG_DAYS, _read_state, _record_skills_dismissal, _skills_dismissed, _write_state
+from .notifier_state import CACHE_TOO_OLD_TO_NAG_DAYS, _read_state, _record_skills_dismissal, _skills_dismissed, _state_file, _write_state
 
 
 def _applied_file() -> Path:
-    return Path(resolve_state_dir()) / "nexgen" / "third-party-applied.json"
+    return _state_file().parent / "third-party-applied.json"
 
 
 def _short_skill_name(what: str) -> str:
@@ -71,7 +69,7 @@ def _held_once_daily(mark: bool = True) -> str | None:
         import hashlib
         import json
 
-        guard_file = Path(resolve_state_dir()) / "nexgen" / "third-party-guard.json"
+        guard_file = _state_file().parent / "third-party-guard.json"
         data = json.loads(guard_file.read_text(encoding="utf-8"))
         if not isinstance(data, dict):
             return None
@@ -121,7 +119,7 @@ def _batch_once_daily(mark: bool = True) -> str | None:
         import hashlib
         import json
 
-        guard_file = Path(resolve_state_dir()) / "nexgen" / "third-party-guard.json"
+        guard_file = _state_file().parent / "third-party-guard.json"
         data = json.loads(guard_file.read_text(encoding="utf-8"))
         if not isinstance(data, dict):
             return None
