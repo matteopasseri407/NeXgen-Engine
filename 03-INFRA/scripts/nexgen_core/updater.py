@@ -724,13 +724,19 @@ def main(
             print("\nCheck only. No installed files or branch were changed.")
             return 0
 
-        if args.unattended and not verdict.ok:
-            raise UpdateError(
-                f"unattended update refuses {target}: its signature could not be verified "
-                f"({verdict.detail}); recover by running 'nexgen-update --target {target.removeprefix('v')}' "
-                "--allow-unverified interactively once you have checked the release"
+        if not verdict.ok and (args.allow_unverified or verdict.no_verifier):
+            # Installing without a check happens in exactly two cases: the
+            # machine has no verifier program at all (BAD and UNTRUSTED
+            # already refused inside _release_verdict, in every mode), or the
+            # installer explicitly said so with --allow-unverified. An
+            # unsigned or otherwise unverifiable release without the flag
+            # refuses below: anyone able to publish an unsigned tag must not
+            # be able to install code on a whole fleet of unattended machines.
+            print(
+                f"\nNote: the signature of {target} could not be checked on this "
+                f"machine; installing anyway."
             )
-        if not verdict.ok and not args.allow_unverified:
+        elif not verdict.ok:
             raise UpdateRefused(
                 f"release {target} could not be verified ({verdict.detail}). "
                 "Nothing was installed. Rerun with --allow-unverified only after checking the release by hand."

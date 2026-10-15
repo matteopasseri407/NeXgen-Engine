@@ -74,6 +74,11 @@ class TagVerdict:
     status: str
     detail: str
     signer: str = ""
+    #: True only when the check could not run because the verifier program
+    #: itself is missing. Every other unverifiable outcome (no signature,
+    #: no anchor, broken tooling) is a property of the release, not of the
+    #: machine, and must never be confused with this one.
+    no_verifier: bool = False
 
     @property
     def ok(self) -> bool:
@@ -212,7 +217,10 @@ def _gnupg_scratch_base() -> str:
 
 def _verify_openpgp(repo: Path, ref: str, anchor: TrustAnchor) -> TagVerdict:
     gpg = shutil.which("gpg")
-    if not gpg or anchor.openpgp_keys is None:
+    if not gpg:
+        return TagVerdict(UNVERIFIABLE, "gpg is not installed, so an OpenPGP signature cannot be checked",
+                          no_verifier=True)
+    if anchor.openpgp_keys is None:
         return TagVerdict(UNVERIFIABLE, "gpg is not installed, so an OpenPGP signature cannot be checked")
     gpg_path = Path(gpg).as_posix()
     with tempfile.TemporaryDirectory(prefix="nexgen-trust-", dir=_gnupg_scratch_base(), ignore_cleanup_errors=True) as home:
@@ -249,7 +257,8 @@ def _verify_openpgp(repo: Path, ref: str, anchor: TrustAnchor) -> TagVerdict:
 
 def _verify_ssh(repo: Path, ref: str, anchor: TrustAnchor) -> TagVerdict:
     if not shutil.which("ssh-keygen"):
-        return TagVerdict(UNVERIFIABLE, "ssh-keygen is not installed, so an SSH signature cannot be checked")
+        return TagVerdict(UNVERIFIABLE, "ssh-keygen is not installed, so an SSH signature cannot be checked",
+                          no_verifier=True)
     with tempfile.TemporaryDirectory(prefix="nexgen-trust-", ignore_cleanup_errors=True) as home:
         allowed = Path(home) / "allowed_signers"
         allowed.write_text(

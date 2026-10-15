@@ -107,9 +107,11 @@ own.
 Before it merges, it verifies the signature of the release tag against the
 signers pinned in the copy you already have installed (see SECURITY.md). A wrong
 signature, or one by a key that copy does not pin, stops the update in every
-mode. A release it cannot verify at all (no signature, or no `gpg` available)
-prints a warning and leaves the decision to you, except under `--unattended`,
-which refuses it. The merge itself waits for a running sync to finish instead of
+mode with exit `70`. A release it cannot verify at all (no signature, or no
+verification tool on the machine) installs anyway with one plain line saying
+so, in every mode including `--unattended`: a machine that cannot check still
+needs its updates, and a question the installer cannot evaluate would only
+teach them to confirm blindly. The merge itself waits for a running sync to finish instead of
 merging underneath it.
 
 `--unattended` is the one mode that undoes its own work: if the update fails

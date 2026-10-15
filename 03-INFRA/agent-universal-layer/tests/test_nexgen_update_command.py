@@ -356,6 +356,97 @@ def test_wrong_or_foreign_release_signature_is_rejected(tmp_path, capsys, monkey
     assert "not signed by a trusted release key" in capsys.readouterr().err
 
 
+def test_unverifiable_release_installs_with_a_plain_note_in_every_mode(tmp_path, capsys, monkeypatch):
+    """No verifier on the machine must never strand the user: install with one
+    plain line and no question. Forged or foreign signatures still refuse,
+    pinned by the test above."""
+    updater = _load_updater()
+    _origin, engine = _upgrade_fixture(tmp_path)
+    monkeypatch.setattr(updater, "verify_release_tag",
+                        lambda *_a, **_k: updater.TagVerdict("unverifiable", "synthetic: no verifier", no_verifier=True))
+
+    assert updater.main(["--check"], environ=_env(engine)) == 0
+
+    before = _git(engine, "rev-parse", "HEAD").stdout.strip()
+    assert updater.main(["--yes"], environ=_env(engine)) == 0
+    assert _git(engine, "rev-parse", "HEAD").stdout.strip() != before
+    assert (engine / "VERSION").read_text(encoding="utf-8").strip() == "0.2.0"
+    out = capsys.readouterr().out
+    assert "gpg" not in out and "allow-unverified" not in out
+
+
+def test_unverifiable_release_installs_interactively_without_crypto_questions(tmp_path, capsys, monkeypatch):
+    updater = _load_updater()
+    _origin, engine = _upgrade_fixture(tmp_path)
+    monkeypatch.setattr(updater, "verify_release_tag",
+                        lambda *_a, **_k: updater.TagVerdict("unverifiable", "synthetic: no verifier", no_verifier=True))
+
+    asked = []
+    result = updater.main([], environ=_env(engine), input_fn=lambda p: asked.append(p) or "yes")
+
+    assert result == 0
+    assert (engine / "VERSION").read_text(encoding="utf-8").strip() == "0.2.0"
+    assert all("gpg" not in p and "verif" not in p.lower() for p in asked)
+
+
+def test_unattended_unverifiable_release_installs_instead_of_stranding_the_fleet(tmp_path, monkeypatch):
+    updater = _load_updater()
+    _origin, engine = _patch_upgrade(tmp_path)
+    monkeypatch.setattr(updater, "verify_release_tag",
+                        lambda *_a, **_k: updater.TagVerdict("unverifiable", "synthetic: no verifier", no_verifier=True))
+
+    assert updater.main(["--unattended"], environ=_env(engine)) == 0
+    assert (engine / "VERSION").read_text(encoding="utf-8").strip() == "0.1.1"
+
+
+def _patch_upgrade(tmp_path):
+    origin = tmp_path / "origin"
+    origin.mkdir()
+    _git(origin, "init", "-b", "main")
+    _write_release(origin, "0.1.0")
+    engine = tmp_path / "engine"
+    _git(tmp_path, "clone", str(origin), str(engine))
+    _write_release(origin, "0.1.1", previous="0.1.0")
+    return origin, engine
+
+
+def test_unsigned_release_refuses_in_every_mode_without_the_flag(tmp_path, capsys, monkeypatch):
+    """Anyone able to publish an unsigned tag must not own the fleet: no
+    prompt, no install, in every mode. The flag is the only way past."""
+    updater = _load_updater()
+    _origin, engine = _upgrade_fixture(tmp_path)
+    monkeypatch.setattr(updater, "verify_release_tag",
+                        lambda *_a, **_k: updater.TagVerdict("unverifiable", "synthetic: lightweight tag"))
+    before = _git(engine, "rev-parse", "HEAD").stdout.strip()
+
+    asked = []
+    assert updater.main([], environ=_env(engine), input_fn=lambda p: asked.append(p) or "yes") == 70
+    assert asked == []
+    assert updater.main(["--yes"], environ=_env(engine)) == updater.EXIT_REFUSED == 70
+    assert _git(engine, "rev-parse", "HEAD").stdout.strip() == before
+    assert "could not be verified" in capsys.readouterr().err
+
+
+def test_unattended_unsigned_release_refuses(tmp_path, monkeypatch):
+    updater = _load_updater()
+    _origin, engine = _patch_upgrade(tmp_path)
+    monkeypatch.setattr(updater, "verify_release_tag",
+                        lambda *_a, **_k: updater.TagVerdict("unverifiable", "synthetic: lightweight tag"))
+
+    assert updater.main(["--unattended"], environ=_env(engine)) == 70
+    assert (engine / "VERSION").read_text(encoding="utf-8").strip() == "0.1.0"
+
+
+def test_allow_unverified_still_opens_unsigned_releases(tmp_path, monkeypatch):
+    updater = _load_updater()
+    _origin, engine = _upgrade_fixture(tmp_path)
+    monkeypatch.setattr(updater, "verify_release_tag",
+                        lambda *_a, **_k: updater.TagVerdict("unverifiable", "synthetic: lightweight tag"))
+
+    assert updater.main(["--yes", "--allow-unverified"], environ=_env(engine)) == 0
+    assert (engine / "VERSION").read_text(encoding="utf-8").strip() == "0.2.0"
+
+
 def test_unverifiable_release_warns_interactively_without_mislabeling_it(tmp_path, capsys):
     """The fixture's lightweight tag has no signature and the fixture ships no
     trust anchor: that is "cannot verify", not "tampered", and the wording

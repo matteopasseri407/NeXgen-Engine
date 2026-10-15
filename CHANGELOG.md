@@ -10,6 +10,17 @@ of any engine release.
 
 ## [Unreleased]
 
+### Changed
+
+- Updating no longer interrogates the installer about signatures: a release
+  that cannot be verified on the machine installs with one plain line, in
+  every mode including `--unattended`. A wrong signature, or one by a key
+  the installed copy does not pin, still refuses everywhere with exit 70.
+- The doctor no longer fails on the standard single clone: a public remote
+  that is fetch-only while publishing goes to a private remote stays
+  silent, and a still-pushable one is a calm warning. Only a real publish
+  path to the public repository stays a failure.
+
 ## [2.15.2] - 2026-10-15
 
 ### Fixed

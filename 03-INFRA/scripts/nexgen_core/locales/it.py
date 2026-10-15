@@ -1028,6 +1028,12 @@ MESSAGES: dict[str, str] = {
         "Il Vault ha un remote che è il repository pubblico dell'engine: {remotes}",
     "Point it at your own private repository ('git remote set-url <name> <url>') or remove it ('git remote remove <name>'). Publishing is refused until then.":
         "Puntalo al tuo repository privato ('git remote set-url <nome> <url>') oppure toglilo ('git remote remove <nome>'). Fino ad allora la pubblicazione è rifiutata.",
+    "Update channel only: {remotes} serve the engine updates and never receive your notes, which go to {auth}.":
+        "Solo canale degli aggiornamenti: {remotes} serve per gli update del motore e non riceve mai le tue note, che vanno su {auth}.",
+    "Make {name} fetch-only once: 'git remote set-url --push {name} DISABLED'. Your notes already go to {auth}.":
+        "Rendi {name} di sola lettura una volta sola: 'git remote set-url --push {name} DISABLED'. Le tue note vanno già su {auth}.",
+    "Bare 'git push' would publish to {name}: run 'git remote set-url --push {name} DISABLED' once to keep it fetch-only.":
+        "Un 'git push' senza argomenti pubblicherebbe su {name}: dai una volta sola 'git remote set-url --push {name} DISABLED' per tenerlo di sola lettura.",
     'Scheduled-task state is checked on Linux/systemd only; not checked here.':
         'Lo stato delle attività pianificate si controlla solo su Linux/systemd; qui non è stato controllato.',
     'systemd is not available here (or host changes are disabled): the timers were not checked.':
