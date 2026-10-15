@@ -68,14 +68,18 @@ class ProvisionError(NexgenError):
     """A dependency could not be verified or provisioned. Message is user-facing."""
 
 
+def _validate_deps_impl(deps: dict[str, Any], server: str) -> None:
+    _validate_kind(deps, server)
+    _validate_pins(deps, server)
+
+
 def validate_deps(deps: dict[str, Any], server: str) -> None:
     """Public pin validation, shared by MCP servers and skills.
 
     Raises ProvisionError when the deps block is malformed or unpinned.
     Offline-safe: no network, no state dir access.
     """
-    _validate_kind(deps, server)
-    _validate_pins(deps, server)
+    return _validate_deps_impl(deps, server)
 
 
 def _workspace_root(state_dir: Path) -> Path:
@@ -89,14 +93,7 @@ def _canonical_build(deps: dict[str, Any]) -> list[Any]:
     return list(build) if isinstance(build, list) else [build]
 
 
-def workspace_path(deps: dict[str, Any], state_dir: Path) -> Path:
-    """Deterministic workspace path for a git dep: state_dir/deps/<hash>.
-
-    Hash covers repo, rev, subdir and build: changing any of them
-    provisions a fresh workspace instead of silently reusing a build made
-    from different sources or steps. (Hashing repo+rev only meant a subdir
-    or build change with the same rev kept serving the old bytes.)
-    """
+def _workspace_path_impl(deps: dict[str, Any], state_dir: Path) -> Path:
     repo = str(deps.get("repo") or "").strip()
     rev = str(deps.get("rev") or "").strip()
     subdir = str(deps.get("subdir") or "").strip().strip("/")
@@ -106,6 +103,17 @@ def workspace_path(deps: dict[str, Any], state_dir: Path) -> Path:
         build_key = str(deps.get("build"))
     digest = hashlib.sha256(f"{repo}|{rev}|{subdir}|{build_key}".encode()).hexdigest()[:16]
     return _workspace_root(state_dir) / digest
+
+
+def workspace_path(deps: dict[str, Any], state_dir: Path) -> Path:
+    """Deterministic workspace path for a git dep: state_dir/deps/<hash>.
+
+    Hash covers repo, rev, subdir and build: changing any of them
+    provisions a fresh workspace instead of silently reusing a build made
+    from different sources or steps. (Hashing repo+rev only meant a subdir
+    or build change with the same rev kept serving the old bytes.)
+    """
+    return _workspace_path_impl(deps, state_dir)
 
 
 def _validate_kind(deps: dict[str, Any], server: str) -> str:
@@ -312,14 +320,7 @@ def _provision_git(deps: dict[str, Any], state_dir: Path, server: str) -> dict[s
         return {"DEPS_WORKSPACE": str(_run_workspace(final, deps))}
 
 
-def ensure_deps(deps: dict[str, Any], state_dir: Path, install: bool = False, server: str = "<server>") -> tuple[dict[str, str], str | None]:
-    """Make sure the dependency declared by ``deps`` is satisfiable.
-
-    Returns ``(context, error)``: ``context`` carries ``DEPS_WORKSPACE`` when
-    a git workspace exists (so the caller can substitute it in server args);
-    ``error`` is None on success. With ``install=False`` this is a local,
-    offline-safe check (markers and tool presence only).
-    """
+def _ensure_deps_impl(deps: dict[str, Any], state_dir: Path, install: bool = False, server: str = "<server>") -> tuple[dict[str, str], str | None]:
     if not isinstance(deps, dict) or not deps:
         return {}, t("server '{server}' declares an empty 'deps' block.", server=server)
     try:
@@ -341,8 +342,18 @@ def ensure_deps(deps: dict[str, Any], state_dir: Path, install: bool = False, se
         return {}, str(exc)
 
 
-def report_unsatisfied_deps(vault_data: Path, state_dir: Path | None = None) -> list[str]:
-    """Doctor-side, offline-safe report of servers whose declared deps are missing."""
+def ensure_deps(deps: dict[str, Any], state_dir: Path, install: bool = False, server: str = "<server>") -> tuple[dict[str, str], str | None]:
+    """Make sure the dependency declared by ``deps`` is satisfiable.
+
+    Returns ``(context, error)``: ``context`` carries ``DEPS_WORKSPACE`` when
+    a git workspace exists (so the caller can substitute it in server args);
+    ``error`` is None on success. With ``install=False`` this is a local,
+    offline-safe check (markers and tool presence only).
+    """
+    return _ensure_deps_impl(deps, state_dir, install=install, server=server)
+
+
+def _report_unsatisfied_deps_impl(vault_data: Path, state_dir: Path | None = None) -> list[str]:
     state = Path(state_dir) if state_dir is not None else resolve_state_dir()
     path = mcp_manifest(vault_data)
     try:
@@ -359,3 +370,8 @@ def report_unsatisfied_deps(vault_data: Path, state_dir: Path | None = None) -> 
         if error:
             problems.append(f"{name}: {error}")
     return problems
+
+
+def report_unsatisfied_deps(vault_data: Path, state_dir: Path | None = None) -> list[str]:
+    """Doctor-side, offline-safe report of servers whose declared deps are missing."""
+    return _report_unsatisfied_deps_impl(vault_data, state_dir=state_dir)
