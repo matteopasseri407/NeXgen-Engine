@@ -406,7 +406,7 @@ def _load_live(cli: str) -> dict | None:
     return {}
 
 
-def insert_server_stubs(manifest_path: Path, stubs: list[str]) -> tuple[bool, str, Path | None]:
+def _insert_server_stubs_impl(manifest_path: Path, stubs: list[str]) -> tuple[bool, str, Path | None]:
     """Appends stubs under the top-level `servers:` block: locked,
     validate-before-replace, with backup.
 
@@ -482,7 +482,11 @@ def insert_server_stubs(manifest_path: Path, stubs: list[str]) -> tuple[bool, st
         lock.release()
 
 
-def cmd_adopt(cli: str, apply: bool = False) -> int:
+def insert_server_stubs(manifest_path: Path, stubs: list[str]) -> tuple[bool, str, Path | None]:
+    return _insert_server_stubs_impl(manifest_path, stubs)
+
+
+def _cmd_adopt_impl(cli: str, apply: bool = False) -> int:
     """Finds live servers outside the manifest and proposes (or applies) their entries."""
     manifest_path = _manifest_path()
     try:
@@ -533,6 +537,10 @@ def cmd_adopt(cli: str, apply: bool = False) -> int:
         print(stub)
     print(">>> " + t("Rerun with --apply to add them under 'servers:' (backup + re-validation)."))
     return 0
+
+
+def cmd_adopt(cli: str, apply: bool = False) -> int:
+    return _cmd_adopt_impl(cli, apply)
 
 
 def cmd_inventory() -> int:
