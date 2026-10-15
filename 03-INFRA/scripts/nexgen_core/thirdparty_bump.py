@@ -24,6 +24,7 @@ if str(SCRIPTS_DIR) not in sys.path:
 
 from nexgen_core.action_notes import ERROR, is_error  # noqa: E402 - sys.path shim for cloned checkout
 from nexgen_core.i18n import t  # noqa: E402
+from nexgen_core.marks import safe_text  # noqa: E402 - sys.path shim for cloned checkout
 from nexgen_core.manifest_text import entry_span as _entry_span  # noqa: E402
 from nexgen_core.files import atomic_write_text as _atomic_write  # noqa: E402
 from nexgen_core.paths import (  # noqa: E402
@@ -578,28 +579,28 @@ def bump_batch(
 
     auto, batch, held = collect_plan(payload)
     if auto:
-        print(t("{count} identical-bytes pins already moved on their own:",
-                count=len(auto)))
+        print(safe_text(t("{count} identical-bytes pins already moved on their own:",
+                count=len(auto))))
         for item in auto:
-            print(f"  - {item.get('what')}: {item.get('plain') or ''}")
+            print(safe_text(f"  - {item.get('what')}: {item.get('plain') or ''}"))
     raisable = batch
     if not raisable:
-        print(t("Nothing vetted to raise. {held} items stay held.", held=len(held)))
+        print(safe_text(t("Nothing vetted to raise. {held} items stay held.", held=len(held))))
         for item in held:
-            print(f"  - {item.get('what')}: {item.get('plain') or ''}")
+            print(safe_text(f"  - {item.get('what')}: {item.get('plain') or ''}"))
         return 0
 
-    print(t("These {count} updates passed the deterministic checks:", count=len(raisable)))
+    print(safe_text(t("These {count} updates passed the deterministic checks:", count=len(raisable))))
     for item in raisable:
-        print(f"  - {item.get('what')}: {item.get('plain') or ''}")
+        print(safe_text(f"  - {item.get('what')}: {item.get('plain') or ''}"))
         print(f"    {item.get('pinned')} -> {item.get('upstream')}")
     if held:
-        print(t("{held} items stay held (never touched by this command):", held=len(held)))
+        print(safe_text(t("{held} items stay held (never touched by this command):", held=len(held))))
         for item in held:
-            print(f"  - {item.get('what')}: {item.get('plain') or ''}")
+            print(safe_text(f"  - {item.get('what')}: {item.get('plain') or ''}"))
 
     try:
-        answer = input_fn(t("Raise these {count} pins? [s/N] ", count=len(raisable)))
+        answer = input_fn(safe_text(t("Raise these {count} pins? [s/N] ", count=len(raisable))))
     except EOFError:
         return 0
     if answer.strip().lower() not in {"s", "si", "y", "yes"}:

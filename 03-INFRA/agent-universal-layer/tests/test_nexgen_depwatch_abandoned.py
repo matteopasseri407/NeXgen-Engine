@@ -245,3 +245,13 @@ def test_a_component_is_reported_and_never_rewritten(machine):
     payload = json.loads((machine["state"] / "nexgen" / "third-party-guard.json").read_text(encoding="utf-8"))
     auto, batch, held = collect_plan(payload)
     assert (auto, batch) == ([], []) and len(held) == len(stale)
+
+
+def test_guard_plain_reasons_survive_a_cp850_console():
+    """Le righe .plain vanno a console nel bump: devono reggere cp850."""
+    from nexgen_core.thirdparty_guard import judge_npm_package
+
+    for latest in ("2.0.0", "1.1.0", "1.0.1"):
+        plain = judge_npm_package("demo", "1.0.0", latest).plain
+        assert "->" in plain
+        plain.encode("cp850")

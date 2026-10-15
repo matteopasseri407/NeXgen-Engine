@@ -196,3 +196,20 @@ def test_singular_and_plural_cli_aliases_resolve_identically(singular: str, plur
     assert res_plur.returncode == 0
     assert "Traceback" not in res_sing.stderr
     assert "Traceback" not in res_plur.stderr
+
+
+def test_inventory_survives_a_cp850_console(sandbox, monkeypatch):
+    """L'inventario MCP e skill va a console: deve reggere cp850."""
+    import io
+    from types import SimpleNamespace
+
+    from nexgen_core.cli import engine as engine_cli
+
+    buf = io.BytesIO()
+    out = io.TextIOWrapper(buf, encoding="cp850")
+    monkeypatch.setattr(sys, "stdout", out)
+    engine_cli.cmd_inventory(SimpleNamespace())
+    out.flush()
+    rendered = buf.getvalue().decode("cp850")
+    assert "claude:" in rendered
+    assert " - " in rendered

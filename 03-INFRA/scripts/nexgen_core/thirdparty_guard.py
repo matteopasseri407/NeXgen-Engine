@@ -277,15 +277,15 @@ def judge_npm_package(what: str, pinned: str, latest: str) -> GuardFinding:
         return finding
     if new_v[0] != old_v[0]:
         finding.reasons.append(f"major jump {pinned} -> {latest}: read the changelog")
-        finding.plain = f"Salto grosso ({pinned} → {latest}): da guardare con calma."
+        finding.plain = f"Salto grosso ({pinned} -> {latest}): da guardare con calma."
         return finding
     if new_v[1] != old_v[1]:
         finding.reasons.append(f"minor jump {pinned} -> {latest}: read the changelog")
-        finding.plain = f"Ci sono novità dentro ({pinned} → {latest}): da guardare prima."
+        finding.plain = f"Ci sono novità dentro ({pinned} -> {latest}): da guardare prima."
         return finding
     finding.verdict = BATCH
     finding.reasons.append(f"patch jump {pinned} -> {latest}")
-    finding.plain = f"Piccolo ritocco ({pinned} → {latest}), stessa linea: niente funzioni nuove."
+    finding.plain = f"Piccolo ritocco ({pinned} -> {latest}), stessa linea: niente funzioni nuove."
     return finding
 
 
