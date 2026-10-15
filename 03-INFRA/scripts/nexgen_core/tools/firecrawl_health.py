@@ -3,7 +3,8 @@
 
 Wrapper che delega a nexgen_core.tools.firecrawl (la logica vive li
 come sottocomando interno `health`); firme pubbliche e comportamenti
-invariati.
+invariati. Nota: per simulare probe e orologio nei test si agisce su
+nexgen_core.tools.firecrawl, non su questo modulo.
 """
 
 from __future__ import annotations
