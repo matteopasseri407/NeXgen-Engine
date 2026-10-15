@@ -185,7 +185,7 @@ def propose_mail(
     )
 
 
-def propose_mail_from_context(
+def _build_draft(
     llm: LLM,
     cfg: LaneConfig,
     instruction: str,
@@ -197,11 +197,7 @@ def propose_mail_from_context(
     kind: str,
     provider: str = "gmail",
 ) -> MailProposal:
-    """Draft from already-retrieved context: no fetch, used inside the loop.
-
-    The loop reuses the content it just read (receipted); only the CLI path
-    fetches the original itself. Either way the model drafts just the body.
-    """
+    """Costruisce e memorizza la bozza senza mai inviare (fase draft)."""
     body = _draft_body(llm, context, instruction)
     proposal = MailProposal(
         id="",
@@ -234,6 +230,36 @@ def propose_mail_from_context(
         chars=len(body),
     )
     return proposal
+
+
+def propose_mail_from_context(
+    llm: LLM,
+    cfg: LaneConfig,
+    instruction: str,
+    *,
+    to: str,
+    subject: str,
+    in_reply_to: str,
+    context: str,
+    kind: str,
+    provider: str = "gmail",
+) -> MailProposal:
+    """Draft from already-retrieved context: no fetch, used inside the loop.
+
+    The loop reuses the content it just read (receipted); only the CLI path
+    fetches the original itself. Either way the model drafts just the body.
+    """
+    return _build_draft(
+        llm,
+        cfg,
+        instruction,
+        to=to,
+        subject=subject,
+        in_reply_to=in_reply_to,
+        context=context,
+        kind=kind,
+        provider=provider,
+    )
 
 
 def mail_envelope(read_output: str) -> tuple[str, str]:
@@ -281,6 +307,15 @@ def apply_mail(cfg: LaneConfig, proposal_id: str, *, yes: bool) -> dict[str, Any
         return _apply_mail(cfg, proposal_id)
 
 
+def _send_mail(backend: Any, proposal: MailProposal) -> dict[str, Any]:
+    """Esegue l'invio gia' approvato: solo backend del gate, nessun altro invio."""
+    if proposal.kind == "reply":
+        # The original must still be there: no phantom replies.
+        backend.get_message(proposal.in_reply_to)
+        return backend.reply_to(proposal.in_reply_to, proposal.body)
+    return backend.send_message(proposal.to, proposal.subject, proposal.body)
+
+
 def _apply_mail(cfg: LaneConfig, proposal_id: str) -> dict[str, Any]:
     proposal = load_proposal(cfg, proposal_id)
     if proposal.applied_at:
@@ -308,12 +343,7 @@ def _apply_mail(cfg: LaneConfig, proposal_id: str) -> dict[str, Any]:
     )
     record_attempt(proposal, lambda: _save(cfg, proposal), MailError)
     try:
-        if proposal.kind == "reply":
-            # The original must still be there: no phantom replies.
-            backend.get_message(proposal.in_reply_to)
-            sent = backend.reply_to(proposal.in_reply_to, proposal.body)
-        else:
-            sent = backend.send_message(proposal.to, proposal.subject, proposal.body)
+        sent = _send_mail(backend, proposal)
     except ConnectorError as exc:
         audit_event(
             cfg,
