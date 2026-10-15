@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from nexgen_core.checks.mcp_checks import _allowlist_from_raw, _collect_dep_problems
 from nexgen_core.config import load_skills_manifest
 from nexgen_core.i18n import t
 from nexgen_core.paths import skills_manifest
@@ -161,10 +162,7 @@ def _skills_orphans_allowlist(vault_data: Path) -> set[str]:
         data = load_skills_manifest(path)
     except Exception:  # noqa: BLE001 - check failure is reported, never raises
         return set()
-    entries = (data.get("raw") or {}).get("orphans_allowlist")
-    if not isinstance(entries, list):
-        return set()
-    return {str(entry).strip() for entry in entries if str(entry).strip()}
+    return _allowlist_from_raw(data.get("raw"), path, coerce=True)
 
 
 def check_skills_not_materialized(vault_data: Path, home: Path) -> CheckOutcome:
@@ -383,9 +381,6 @@ def check_skill_deps(manifest_path: Path, state_dir: Path) -> CheckOutcome:
     A missing dependency is a WARN: it says what to install, it never fails
     the doctor.
     """
-    from nexgen_core.config import load_skills_manifest
-    from nexgen_core.provision import ensure_deps
-
     try:
         data = load_skills_manifest(manifest_path)
     except Exception:  # noqa: BLE001 - check failure is reported, never raises
@@ -395,14 +390,9 @@ def check_skill_deps(manifest_path: Path, state_dir: Path) -> CheckOutcome:
             message=t("The skills manifest could not be read, so declared skill dependencies were not checked."),
         )
 
-    problems: list[str] = []
-    for name, skill in (data.get("skills") or {}).items():
-        deps = skill.get("deps")
-        if not isinstance(deps, dict):
-            continue
-        _, error = ensure_deps(deps, state_dir, install=False, server=f"skill {name}")
-        if error:
-            problems.append(f"{name}: {error}")
+    problems = _collect_dep_problems(
+        data.get("skills"), state_dir, label=lambda name: f"skill {name}"
+    )
 
     if not problems:
         return CheckOutcome(

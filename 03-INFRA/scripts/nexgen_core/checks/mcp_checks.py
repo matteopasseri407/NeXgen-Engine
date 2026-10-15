@@ -42,6 +42,59 @@ def _command_resolves(command: str, home: Path) -> bool:
     return shutil.which(command) is not None
 
 
+def _allowlist_from_raw(raw: dict | None, manifest_path: Path, *, coerce: bool = False) -> set[str]:
+    """Shared parsing of the manifest's own `orphans_allowlist` key.
+
+    Cross-domain helper used by both the MCP and the skills checks: an entry
+    is either a bare name (exempt everywhere) or `cli:name` (exempt on that
+    CLI only). Anything malformed is ignored, never fatal: an allowlist must
+    not become a second way to break the manifest. With `coerce=False`
+    (MCP spelling) only non-empty strings are kept and the rest is warned
+    about; with `coerce=True` (skills spelling) entries are stringified
+    first, preserving the historical skills behaviour byte for byte.
+    """
+    entries = (raw or {}).get("orphans_allowlist")
+    if not isinstance(entries, list):
+        return set()
+    allowed: set[str] = set()
+    for entry in entries:
+        if coerce:
+            text = str(entry).strip()
+            if text:
+                allowed.add(text)
+        elif isinstance(entry, str) and entry.strip():
+            allowed.add(entry.strip())
+        else:
+            logger.warning("Ignoring invalid orphans_allowlist entry in %s: %r", manifest_path, entry)
+    return allowed
+
+
+def _collect_dep_problems(
+    entries: dict | None, state_dir: Path, *, label: Callable[[str], str] | None = None
+) -> list[str]:
+    """Shared verification loop for declared `deps:` blocks.
+
+    Cross-domain helper used by both the MCP and the skills checks:
+    verification only, never installs. Each entry holding a dict `deps:`
+    is checked offline-safe via `ensure_deps(..., install=False)`; the
+    `label` maps the entry name to the `server` label `ensure_deps`
+    reports (MCP passes the bare name, skills pass `skill <name>`).
+    Returns `"<name>: <error>"` strings in manifest order.
+    """
+    from nexgen_core.provision import ensure_deps
+
+    problems: list[str] = []
+    for name, entry in (entries or {}).items():
+        deps = entry.get("deps")
+        if not isinstance(deps, dict):
+            continue
+        server = label(name) if label is not None else name
+        _, error = ensure_deps(deps, state_dir, install=False, server=server)
+        if error:
+            problems.append(f"{name}: {error}")
+    return problems
+
+
 def _orphans_allowlist(manifest_path: Path) -> set[str]:
     """Names the user declared as legitimate outside-the-manifest entries.
 
@@ -56,17 +109,7 @@ def _orphans_allowlist(manifest_path: Path) -> set[str]:
         data = load_mcp_manifest(manifest_path)
     except Exception:  # noqa: BLE001 - check failure is reported, never raises
         return set()
-    raw = data.get("raw") or {}
-    entries = raw.get("orphans_allowlist")
-    if not isinstance(entries, list):
-        return set()
-    allowed: set[str] = set()
-    for entry in entries:
-        if isinstance(entry, str) and entry.strip():
-            allowed.add(entry.strip())
-        else:
-            logger.warning("Ignoring invalid orphans_allowlist entry in %s: %r", manifest_path, entry)
-    return allowed
+    return _allowlist_from_raw(data.get("raw"), manifest_path)
 
 
 # ---- Manifest validity -----------------------------------------------------
@@ -540,16 +583,7 @@ def check_mcp_deps(manifest_path: Path, state_dir: Path) -> CheckOutcome:
             message=t("The MCP manifest could not be read, so declared dependencies were not checked."),
         )
 
-    from nexgen_core.provision import ensure_deps
-
-    problems: list[str] = []
-    for name, srv in (data.get("servers") or {}).items():
-        deps = srv.get("deps")
-        if not isinstance(deps, dict):
-            continue
-        _, error = ensure_deps(deps, state_dir, install=False, server=name)
-        if error:
-            problems.append(f"{name}: {error}")
+    problems = _collect_dep_problems(data.get("servers"), state_dir)
 
     if not problems:
         return CheckOutcome(
