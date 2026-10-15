@@ -104,8 +104,7 @@ def _spawn_env(entry_env: dict[str, str]) -> dict[str, str]:
     return {**os.environ, **{str(k): str(v) for k, v in entry_env.items()}}
 
 
-def check_gateway(renderer, cli: str, *, timeout: float = 90.0) -> CliResult:
-    """The gateway as `cli` would start it, against what the plan says it must serve."""
+def _check_gateway_impl(renderer, cli: str, *, timeout: float = 90.0) -> CliResult:
     result = CliResult(cli)
     started = time.monotonic()
     entry = renderer.load_resolved_servers(cli).get(GATEWAY)
@@ -154,6 +153,11 @@ def check_gateway(renderer, cli: str, *, timeout: float = 90.0) -> CliResult:
     result.seconds = round(time.monotonic() - started, 1)
     result.ok = not result.problems
     return result
+
+
+def check_gateway(renderer, cli: str, *, timeout: float = 90.0) -> CliResult:
+    """The gateway as `cli` would start it, against what the plan says it must serve."""
+    return _check_gateway_impl(renderer, cli, timeout=timeout)
 
 
 @dataclass
@@ -216,8 +220,7 @@ def _http_tools(entry: dict[str, Any], timeout: float) -> list[dict[str, Any]]:
     return tools
 
 
-def check_direct(renderer, cli: str, name: str, *, timeout: float = 60.0) -> DirectResult:
-    """One directly mounted server, started or called the way `cli` would: how many tools, how heavy, how long."""
+def _check_direct_impl(renderer, cli: str, name: str, *, timeout: float = 60.0) -> DirectResult:
     entry = renderer.load_resolved_servers(cli)[name]
     result = DirectResult(name)
     started = time.monotonic()
@@ -246,14 +249,12 @@ def check_direct(renderer, cli: str, name: str, *, timeout: float = 60.0) -> Dir
     return result
 
 
-def verify_servers(renderer, names: list[str], *, timeout: float = 120.0) -> list[str]:
-    """Does each named server start and list tools, the way a CLI would reach it? Returns what did not.
+def check_direct(renderer, cli: str, name: str, *, timeout: float = 60.0) -> DirectResult:
+    """One directly mounted server, started or called the way `cli` would: how many tools, how heavy, how long."""
+    return _check_direct_impl(renderer, cli, name, timeout=timeout)
 
-    Used after a pin was raised, before it is kept: the new version has just been rendered, so this starts exactly
-    what the CLIs would start. A server mounted directly is started on its own; one behind the gateway is looked for
-    in the index of the first CLI that serves it. A server that is only missing a credential is not the update's
-    fault and is not reported.
-    """
+
+def _verify_servers_impl(renderer, names: list[str], *, timeout: float = 120.0) -> list[str]:
     from nexgen_core import mcp_trials
     from nexgen_core.config import load_mcp_manifest
 
@@ -289,6 +290,17 @@ def verify_servers(renderer, names: list[str], *, timeout: float = 120.0) -> lis
         elif name not in outcome_gw.served and not outcome_gw.problems:
             problems.append(t("{name}: the gateway does not offer it", name=name))
     return problems
+
+
+def verify_servers(renderer, names: list[str], *, timeout: float = 120.0) -> list[str]:
+    """Does each named server start and list tools, the way a CLI would reach it? Returns what did not.
+
+    Used after a pin was raised, before it is kept: the new version has just been rendered, so this starts exactly
+    what the CLIs would start. A server mounted directly is started on its own; one behind the gateway is looked for
+    in the index of the first CLI that serves it. A server that is only missing a credential is not the update's
+    fault and is not reported.
+    """
+    return _verify_servers_impl(renderer, names, timeout=timeout)
 
 
 def main_direct(clis: tuple[str, ...] = CLIS, *, timeout: float = 60.0) -> int:
