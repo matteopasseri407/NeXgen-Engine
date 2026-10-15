@@ -64,7 +64,7 @@ class Note:
         return len(self.lines)
 
 
-def parse_note(path: Path) -> Note:
+def _parse_note_impl(path: Path) -> Note:
     text = path.read_text(encoding="utf-8", errors="replace")
     lines = text.splitlines()
     frontmatter: dict[str, str] = {}
@@ -84,7 +84,11 @@ def parse_note(path: Path) -> Note:
     return Note(path=path, rel=rel, lines=lines, frontmatter=frontmatter, has_frontmatter=has_frontmatter)
 
 
-def iter_notes() -> list[Note]:
+def parse_note(path: Path) -> Note:
+    return _parse_note_impl(path)
+
+
+def _iter_notes_impl() -> list[Note]:
     notes: list[Note] = []
     for dirpath, dirnames, filenames in os.walk(ROOT):
         rel_dir = Path(dirpath).relative_to(ROOT).as_posix()
@@ -101,7 +105,11 @@ def iter_notes() -> list[Note]:
     return sorted(notes, key=lambda n: n.rel)
 
 
-def parse_note_date(note: Note) -> date | None:
+def iter_notes() -> list[Note]:
+    return _iter_notes_impl()
+
+
+def _parse_note_date_impl(note: Note) -> date | None:
     value = note.frontmatter.get("last_reviewed") or note.frontmatter.get("last_updated")
     if not value:
         return None
@@ -111,7 +119,11 @@ def parse_note_date(note: Note) -> date | None:
         return None
 
 
-def dir_size(path: Path) -> int:
+def parse_note_date(note: Note) -> date | None:
+    return _parse_note_date_impl(note)
+
+
+def _dir_size_impl(path: Path) -> int:
     total = 0
     if not path.exists():
         return total
@@ -121,7 +133,11 @@ def dir_size(path: Path) -> int:
     return total
 
 
-def human_size(size: int) -> str:
+def dir_size(path: Path) -> int:
+    return _dir_size_impl(path)
+
+
+def _human_size_impl(size: int) -> str:
     units = ["B", "K", "M", "G"]
     value = float(size)
     for unit in units:
@@ -131,7 +147,11 @@ def human_size(size: int) -> str:
     return f"{size}B"
 
 
-def normalize_prefix(value: str) -> str | None:
+def human_size(size: int) -> str:
+    return _human_size_impl(size)
+
+
+def _normalize_prefix_impl(value: str) -> str | None:
     prefix = value.strip()
     if not prefix or prefix.startswith("#"):
         return None
@@ -141,7 +161,11 @@ def normalize_prefix(value: str) -> str | None:
     return f"{prefix}/"
 
 
-def normalize_relpath(value: str) -> str | None:
+def normalize_prefix(value: str) -> str | None:
+    return _normalize_prefix_impl(value)
+
+
+def _normalize_relpath_impl(value: str) -> str | None:
     rel = value.strip()
     if not rel or rel.startswith("#"):
         return None
@@ -149,7 +173,11 @@ def normalize_relpath(value: str) -> str | None:
     return rel or None
 
 
-def load_relaxed_prefixes(root: Path = ROOT) -> tuple[str, ...]:
+def normalize_relpath(value: str) -> str | None:
+    return _normalize_relpath_impl(value)
+
+
+def _load_relaxed_prefixes_impl(root: Path = ROOT) -> tuple[str, ...]:
     """Per-vault prefixes allowed to use local frontmatter schemas.
 
     The public engine ships no private workflow assumptions. A private
@@ -174,7 +202,11 @@ def load_relaxed_prefixes(root: Path = ROOT) -> tuple[str, ...]:
     return tuple(dict.fromkeys(prefixes))
 
 
-def load_generated_dirs(root: Path = ROOT) -> tuple[str, ...]:
+def load_relaxed_prefixes(root: Path = ROOT) -> tuple[str, ...]:
+    return _load_relaxed_prefixes_impl(root)
+
+
+def _load_generated_dirs_impl(root: Path = ROOT) -> tuple[str, ...]:
     dirs: list[str] = list(DEFAULT_GENERATED_DIRS)
 
     env_value = os.environ.get("VAULT_LIFECYCLE_GENERATED_DIRS", "")
@@ -193,11 +225,19 @@ def load_generated_dirs(root: Path = ROOT) -> tuple[str, ...]:
     return tuple(dict.fromkeys(dirs))
 
 
-def is_relaxed(note: Note, prefixes: tuple[str, ...]) -> bool:
+def load_generated_dirs(root: Path = ROOT) -> tuple[str, ...]:
+    return _load_generated_dirs_impl(root)
+
+
+def _is_relaxed_impl(note: Note, prefixes: tuple[str, ...]) -> bool:
     return bool(prefixes) and note.rel.startswith(prefixes)
 
 
-def print_section(title: str, rows: list[str], limit: int) -> None:
+def is_relaxed(note: Note, prefixes: tuple[str, ...]) -> bool:
+    return _is_relaxed_impl(note, prefixes)
+
+
+def _print_section_impl(title: str, rows: list[str], limit: int) -> None:
     print(f"\n## {title}")
     if not rows:
         print("OK")
@@ -209,7 +249,11 @@ def print_section(title: str, rows: list[str], limit: int) -> None:
         print(f"... +{remaining} more")
 
 
-def main(argv: list[str] | None = None) -> int:
+def print_section(title: str, rows: list[str], limit: int) -> None:
+    return _print_section_impl(title, rows, limit)
+
+
+def _main_impl(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="nexgen vault lifecycle", description="Read-only KnowledgeVault lifecycle audit.")
     parser.add_argument("--today", default=date.today().isoformat(), help="YYYY-MM-DD, defaults to today.")
     parser.add_argument("--stale-days", type=int, default=60)
@@ -299,6 +343,10 @@ def main(argv: list[str] | None = None) -> int:
 
     print("\nThis is an audit list, not an automatic deletion list.")
     return 0
+
+
+def main(argv: list[str] | None = None) -> int:
+    return _main_impl(argv)
 
 
 if __name__ == "__main__":
