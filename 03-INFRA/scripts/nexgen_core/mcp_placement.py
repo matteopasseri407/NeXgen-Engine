@@ -59,7 +59,7 @@ def _oauth_only(srv: dict[str, Any]) -> bool:
     return is_http and bool(srv.get("oauth")) and not has_bearer
 
 
-def place(srv: dict[str, Any], cli: str) -> Placement:
+def _place_impl(srv: dict[str, Any], cli: str) -> Placement:
     """Where `srv` lives for `cli`. Environment gates (`require_env`) are the caller's: they depend on the shell."""
     targets = srv.get("targets") or list(CLIS)
     if cli not in targets:
@@ -83,15 +83,25 @@ def place(srv: dict[str, Any], cli: str) -> Placement:
     return Placement(ABSENT, "inert (not core, not enabled)")
 
 
+def place(srv: dict[str, Any], cli: str) -> Placement:
+    """Where `srv` lives for `cli`. Environment gates (`require_env`) are the caller's: they depend on the shell."""
+    return _place_impl(srv, cli)
+
+
+def _plan_impl(servers: dict[str, dict[str, Any]], clis: tuple[str, ...] = CLIS) -> dict[str, dict[str, Placement]]:
+    """name -> cli -> Placement, for every server."""
+    return {name: {cli: _place_impl(srv, cli) for cli in clis} for name, srv in servers.items() if isinstance(srv, dict)}
+
+
 def plan(servers: dict[str, dict[str, Any]], clis: tuple[str, ...] = CLIS) -> dict[str, dict[str, Placement]]:
     """name -> cli -> Placement, for every server."""
-    return {name: {cli: place(srv, cli) for cli in clis} for name, srv in servers.items() if isinstance(srv, dict)}
+    return _plan_impl(servers, clis)
 
 
-def problems(servers: dict[str, dict[str, Any]], clis: tuple[str, ...] = CLIS) -> list[str]:
+def _problems_impl(servers: dict[str, dict[str, Any]], clis: tuple[str, ...] = CLIS) -> list[str]:
     """What makes the plan incoherent, in plain words: a CLI that would be told to use a gateway it does not have."""
     found: list[str] = []
-    table = plan(servers, clis)
+    table = _plan_impl(servers, clis)
     gateway = table.get(GATEWAY)
     for cli in clis:
         routed = sorted(name for name, row in table.items() if name != GATEWAY and row[cli].kind == GATEWAY_KIND)
@@ -105,7 +115,7 @@ def problems(servers: dict[str, dict[str, Any]], clis: tuple[str, ...] = CLIS) -
     for name, srv in servers.items():
         if not isinstance(srv, dict) or not _oauth_only(srv):
             continue
-        behind = [cli for cli in clis if place(srv, cli).kind == GATEWAY_KIND]
+        behind = [cli for cli in clis if _place_impl(srv, cli).kind == GATEWAY_KIND]
         if behind:
             found.append(
                 f"{name}: a server that authenticates with OAuth cannot do it behind the gateway (which can only send a bearer "
@@ -118,6 +128,16 @@ def problems(servers: dict[str, dict[str, Any]], clis: tuple[str, ...] = CLIS) -
     return found
 
 
+def problems(servers: dict[str, dict[str, Any]], clis: tuple[str, ...] = CLIS) -> list[str]:
+    """What makes the plan incoherent, in plain words: a CLI that would be told to use a gateway it does not have."""
+    return _problems_impl(servers, clis)
+
+
+def _gateway_servers_for_impl(servers: dict[str, dict[str, Any]], cli: str) -> set[str]:
+    """The servers the gateway mounted in `cli` must serve: exactly those placed behind it for that CLI."""
+    return {name for name, srv in servers.items() if isinstance(srv, dict) and name != GATEWAY and _place_impl(srv, cli).kind == GATEWAY_KIND}
+
+
 def gateway_servers_for(servers: dict[str, dict[str, Any]], cli: str) -> set[str]:
     """The servers the gateway mounted in `cli` must serve: exactly those placed behind it for that CLI."""
-    return {name for name, srv in servers.items() if isinstance(srv, dict) and name != GATEWAY and place(srv, cli).kind == GATEWAY_KIND}
+    return _gateway_servers_for_impl(servers, cli)
