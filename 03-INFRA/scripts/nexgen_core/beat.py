@@ -156,6 +156,9 @@ class Heartbeat:
 
     def check_liveness(self) -> tuple[bool, str]:
         """Checks whether the Guard has run within the expected window."""
+        return self._check_liveness_impl()
+
+    def _check_liveness_impl(self) -> tuple[bool, str]:
         if not self.liveness_file.is_file():
             return False, t("No guard cycle has been recorded yet")
 
@@ -210,6 +213,9 @@ class Heartbeat:
         stale ones with deterministic rules, and raises the vetted pins
         without asking. Held items never move here. Never notifies: a
         failure is missed maintenance, not a reason to stop the heartbeat."""
+        return self._run_dependency_watch_impl()
+
+    def _run_dependency_watch_impl(self) -> dict[str, Any]:
         try:
             result = run_depwatch(vault_data=self.vault_data, state_dir=self.state_dir)
             answer: dict[str, Any] = {
