@@ -122,48 +122,56 @@ class Runtime(ABC):
         return None
 
     @staticmethod
+    def _is_sink_command(cmd: object) -> bool:
+        import shlex
+
+        if not isinstance(cmd, str):
+            return False
+        text = cmd.strip()
+        try:
+            parts = shlex.split(text, posix=True)
+        except ValueError:
+            parts = text.split()
+        if not parts:
+            return False
+        return any(Path(p).name == EVENT_SINK_NAME for p in parts)
+
+    @staticmethod
+    def _strip_sink_from_event(hooks: dict, event: str) -> bool:
+        groups = hooks.get(event)
+        if not isinstance(groups, list):
+            return False
+        kept = []
+        changed_here = False
+        for group in groups:
+            inner = group.get("hooks") if isinstance(group, dict) else None
+            if not isinstance(inner, list):
+                kept.append(group)
+                continue
+            remaining = [h for h in inner if not (isinstance(h, dict) and Runtime._is_sink_command(h.get("command")))]
+            if len(remaining) == len(inner):
+                kept.append(group)
+                continue
+            changed_here = True
+            if remaining:
+                kept.append({**group, "hooks": remaining})
+        if kept:
+            hooks[event] = kept
+        else:
+            del hooks[event]
+        return changed_here
+
+    @staticmethod
     def strip_event_sink_hooks(hooks: dict, events: tuple[str, ...] = ("Stop", "PreToolUse")) -> bool:
         """Drops the sink's hook items from `{event: [{matcher?, hooks: [...]}]}`; True if it dropped any.
 
         A group left with no hooks goes with them, and an event left with no groups; groups that
         also hold someone else's hooks keep those exactly as they were.
         """
-        import shlex
-
-        def _is_sink_command(cmd: object) -> bool:
-            if not isinstance(cmd, str):
-                return False
-            text = cmd.strip()
-            try:
-                parts = shlex.split(text, posix=True)
-            except ValueError:
-                parts = text.split()
-            if not parts:
-                return False
-            return any(Path(p).name == EVENT_SINK_NAME for p in parts)
-
         changed = False
         for event in events:
-            groups = hooks.get(event)
-            if not isinstance(groups, list):
-                continue
-            kept = []
-            for group in groups:
-                inner = group.get("hooks") if isinstance(group, dict) else None
-                if not isinstance(inner, list):
-                    kept.append(group)
-                    continue
-                remaining = [h for h in inner if not (isinstance(h, dict) and _is_sink_command(h.get("command")))]
-                if len(remaining) == len(inner):
-                    kept.append(group)
-                    continue
+            if Runtime._strip_sink_from_event(hooks, event):
                 changed = True
-                if remaining:
-                    kept.append({**group, "hooks": remaining})
-            if kept:
-                hooks[event] = kept
-            else:
-                del hooks[event]
         return changed
 
     @staticmethod
@@ -216,6 +224,10 @@ class Runtime(ABC):
         atomic_write_text(path, text)
 
     @staticmethod
+    def _needs_deploy(dst: Path, body: bytes) -> bool:
+        return not (dst.exists() and dst.read_bytes() == body)
+
+    @staticmethod
     def deploy_bytes(dst: Path, body: bytes) -> bool:
         """Copies `body` to `dst` only if different (idempotence: a guard
         that runs every few minutes must not rewrite an identical file on
@@ -227,7 +239,7 @@ class Runtime(ABC):
         """
         from nexgen_core.files import atomic_write_bytes
 
-        if dst.exists() and dst.read_bytes() == body:
+        if not Runtime._needs_deploy(dst, body):
             return False
         atomic_write_bytes(dst, body)
         return True
@@ -247,6 +259,25 @@ class Runtime(ABC):
             raise GuardrailError(f"{self.name}: missing engine guardrail core ({source})")
         return self.deploy_bytes(directory / GUARDRAIL_CORE_NAME, source.read_bytes())
 
+    def _build_sidecar_content(
+        self,
+        existing: dict,
+        body: Path,
+        home: Path,
+        timeout: int,
+        strict: bool | None,
+        auto_allow: bool | None,
+    ) -> str:
+        return json.dumps(
+            {
+                "hooks": [{"file": str(body), "timeout": timeout}],
+                "strict": bool(existing.get("strict")) if strict is None else strict,
+                "autoAllow": bool(existing.get("autoAllow")) if auto_allow is None else auto_allow,
+                "auditFile": str(self.guardrail_audit_file(home, self.name)),
+            },
+            indent=2,
+        ) + "\n"
+
     def write_guardrail_sidecar(
         self,
         path: Path,
@@ -261,15 +292,7 @@ class Runtime(ABC):
         value the sidecar already has: the posture (which decides them) is applied after the
         guardrail, in a separate call, and must not be undone by the next guardrail install."""
         existing = self.read_guardrail_sidecar(path)
-        content = json.dumps(
-            {
-                "hooks": [{"file": str(body), "timeout": timeout}],
-                "strict": bool(existing.get("strict")) if strict is None else strict,
-                "autoAllow": bool(existing.get("autoAllow")) if auto_allow is None else auto_allow,
-                "auditFile": str(self.guardrail_audit_file(home, self.name)),
-            },
-            indent=2,
-        ) + "\n"
+        content = self._build_sidecar_content(existing, body, home, timeout, strict, auto_allow)
         if path.is_file() and path.read_text(encoding="utf-8") == content:
             return False
         self.atomic_write(path, content)
