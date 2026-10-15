@@ -8,7 +8,14 @@ This file tracks the **engine** (this repo). Your own data — manifests,
 instructions, skills, secrets — lives in your KnowledgeVault and is not part
 of any engine release.
 
-## [Unreleased]
+## [3.0.0] - 2026-10-16
+
+Stabilization release: no new features, same behavior everywhere, smaller
+and duller pieces. Over seventy splits and unifications, each landed with
+behavior-pinning tests first and a green suite after. Duplicates unified
+(notifier state, firecrawl probe, required rules, mcp and skill deps,
+info and inventory). Removal candidates all overturned by proof. Five
+pre-existing Windows failures unchanged, CI green on Linux and Windows.
 
 ### Changed
 
