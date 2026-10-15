@@ -96,6 +96,49 @@ def _extract_links(text: str) -> list[str]:
     return links
 
 
+def _resolve_link(
+    vault: Path,
+    by_rel_lower: dict[str, str],
+    lookup: dict[str, list[str]],
+    target: str,
+    source_rel: str,
+) -> tuple[str, str | None]:
+    """Return (status, resolved_rel): note | excluded | broken."""
+    cleaned = target.replace("\\", "/").strip().lstrip("./")
+    candidates = [cleaned]
+    if not cleaned.lower().endswith(NOTE_EXTENSIONS):
+        candidates.extend(cleaned + ext for ext in NOTE_EXTENSIONS)
+    source_dir = Path(source_rel).parent.as_posix()
+    for candidate in list(candidates):
+        joined = posixpath.normpath(posixpath.join(source_dir, candidate)) if source_dir != "." else candidate
+        if joined not in candidates and not joined.startswith(".."):
+            candidates.append(joined)
+    for candidate in candidates:
+        rel = by_rel_lower.get(candidate.lower())
+        if rel:
+            return "note", rel
+    matches = lookup.get(_normalize_lookup(cleaned), [])
+    if matches:
+        return "note", sorted(matches)[0]
+    for candidate in candidates:
+        probe = (vault / candidate).resolve()
+        try:
+            probe.relative_to(vault.resolve())
+        except ValueError:
+            continue
+        if probe.exists():
+            return "excluded", None
+    return "broken", None
+
+
+def _moved_hint(lookup: dict[str, list[str]], target: str) -> str | None:
+    """For a broken path-qualified target, a unique basename match is
+    almost always the note's new home after a move/archive."""
+    stem = _normalize_lookup(Path(target.replace("\\", "/")).stem)
+    matches = sorted(set(lookup.get(stem, [])))
+    return matches[0] if len(matches) == 1 else None
+
+
 def scan(vault: Path, collect_adjacency: bool = False) -> dict:
     notes: dict[str, str] = {}
     titles: dict[str, str] = {}
@@ -124,41 +167,6 @@ def scan(vault: Path, collect_adjacency: bool = False) -> dict:
             if key:
                 lookup.setdefault(key, []).append(rel)
 
-    def resolve(target: str, source_rel: str) -> tuple[str, str | None]:
-        """Return (status, resolved_rel): note | excluded | broken."""
-        cleaned = target.replace("\\", "/").strip().lstrip("./")
-        candidates = [cleaned]
-        if not cleaned.lower().endswith(NOTE_EXTENSIONS):
-            candidates.extend(cleaned + ext for ext in NOTE_EXTENSIONS)
-        source_dir = Path(source_rel).parent.as_posix()
-        for candidate in list(candidates):
-            joined = posixpath.normpath(posixpath.join(source_dir, candidate)) if source_dir != "." else candidate
-            if joined not in candidates and not joined.startswith(".."):
-                candidates.append(joined)
-        for candidate in candidates:
-            rel = by_rel_lower.get(candidate.lower())
-            if rel:
-                return "note", rel
-        matches = lookup.get(_normalize_lookup(cleaned), [])
-        if matches:
-            return "note", sorted(matches)[0]
-        for candidate in candidates:
-            probe = (vault / candidate).resolve()
-            try:
-                probe.relative_to(vault.resolve())
-            except ValueError:
-                continue
-            if probe.exists():
-                return "excluded", None
-        return "broken", None
-
-    def moved_hint(target: str) -> str | None:
-        """For a broken path-qualified target, a unique basename match is
-        almost always the note's new home after a move/archive."""
-        stem = _normalize_lookup(Path(target.replace("\\", "/")).stem)
-        matches = sorted(set(lookup.get(stem, [])))
-        return matches[0] if len(matches) == 1 else None
-
     outbound: dict[str, list[str]] = {}
     inbound: Counter[str] = Counter()
     broken: list[dict[str, str]] = []
@@ -172,7 +180,7 @@ def scan(vault: Path, collect_adjacency: bool = False) -> dict:
         total_links += len(links)
         generated = rel in GENERATED_SOURCES
         for target in links:
-            status, resolved = resolve(target, rel)
+            status, resolved = _resolve_link(vault, by_rel_lower, lookup, target, rel)
             if status == "note" and resolved and resolved != rel:
                 if not generated:
                     inbound[resolved] += 1
@@ -186,7 +194,7 @@ def scan(vault: Path, collect_adjacency: bool = False) -> dict:
                 # defect, and must not drown the live signal.
                 bucket = archived_broken if "archive" in Path(rel).parts else broken
                 entry = {"source": rel, "target": target}
-                hint = moved_hint(target)
+                hint = _moved_hint(lookup, target)
                 if hint:
                     entry["hint"] = hint
                 bucket.append(entry)
