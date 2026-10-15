@@ -23,11 +23,18 @@ from . import ConnectorError
 _API = "https://gmail.googleapis.com/gmail/v1/users/me"
 
 
-def _get(url: str, http: HttpFn, auth_http: HttpFn | None) -> Any:
+def _call_backend(
+    req: urllib.request.Request,
+    http: HttpFn,
+    auth_http: HttpFn | None,
+    *,
+    ok_statuses: tuple[int, ...],
+    failure_label: str,
+) -> bytes:
+    """Unico punto di uscita HTTP: token, chiamata singola, errori chiari."""
     from . import auth as _auth  # local import: keeps cold paths dependency-free
 
     token = _auth.access_token(auth_http)
-    req = urllib.request.Request(url, method="GET")
     req.add_header("Authorization", f"Bearer {token}")
     try:
         result = http(req, 60)
@@ -35,12 +42,21 @@ def _get(url: str, http: HttpFn, auth_http: HttpFn | None) -> Any:
         raise ConnectorError(f"(gmail non raggiungibile: {exc})") from exc
     if result.status == 401:
         raise ConnectorError("(gmail: accesso scaduto o revocato, serve un nuovo login)")
-    if result.status != 200:
-        raise ConnectorError(f"(gmail: ricerca fallita: HTTP {result.status})")
+    if result.status not in ok_statuses:
+        raise ConnectorError(f"{failure_label}: HTTP {result.status})")
+    return result.body
+
+
+# ---------------- READ: ricerca e lettura, mai invii ----------------
+
+
+def _get(url: str, http: HttpFn, auth_http: HttpFn | None) -> Any:
+    req = urllib.request.Request(url, method="GET")
+    body = _call_backend(req, http, auth_http, ok_statuses=(200,), failure_label="(gmail: ricerca fallita")
     import json
 
     try:
-        return json.loads(result.body.decode("utf-8", errors="replace"))
+        return json.loads(body.decode("utf-8", errors="replace"))
     except ValueError as exc:
         raise ConnectorError("(gmail: risposta illeggibile dal provider)") from exc
 
@@ -163,25 +179,19 @@ def get_message(mid: str, http: HttpFn | None = None) -> dict[str, Any]:
     }
 
 
-def _post(path: str, payload: dict[str, Any], http: HttpFn, auth_http: HttpFn | None) -> dict[str, Any]:
-    from . import auth as _auth
+# ---------------- SEND: invio e risposta, solo qui ----------------
 
-    token = _auth.access_token(auth_http)
+
+def _post(path: str, payload: dict[str, Any], http: HttpFn, auth_http: HttpFn | None) -> dict[str, Any]:
     import json
 
     req = urllib.request.Request(f"{_API}{path}", data=json.dumps(payload).encode("utf-8"), method="POST")
-    req.add_header("Authorization", f"Bearer {token}")
     req.add_header("Content-Type", "application/json")
+    body = _call_backend(
+        req, http, auth_http, ok_statuses=(200, 201), failure_label="(gmail: invio fallito"
+    )
     try:
-        result = http(req, 60)
-    except OSError as exc:
-        raise ConnectorError(f"(gmail non raggiungibile: {exc})") from exc
-    if result.status == 401:
-        raise ConnectorError("(gmail: accesso scaduto o revocato, serve un nuovo login)")
-    if result.status not in (200, 201):
-        raise ConnectorError(f"(gmail: invio fallito: HTTP {result.status})")
-    try:
-        data = json.loads(result.body.decode("utf-8", errors="replace"))
+        data = json.loads(body.decode("utf-8", errors="replace"))
     except ValueError as exc:
         raise ConnectorError("(gmail: risposta illeggibile dal provider)") from exc
     return data if isinstance(data, dict) else {}
