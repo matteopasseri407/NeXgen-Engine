@@ -641,6 +641,26 @@ def test_skills_not_materialized_and_remedy(tmp_path: Path, monkeypatch):
     assert outcome_after.severity == Severity.OK
 
 
+def test_an_upstream_skill_is_never_reported_as_missing(tmp_path: Path, monkeypatch):
+    """MUST-09: una skill `origin: upstream` è inventariata, non materializzata
+    (i byte li possiede l'installer suo): il doctor la segnalava come mancante
+    a ogni ciclo, per sempre."""
+    vault, home, engine_root = _setup_skills_vault(tmp_path)
+    monkeypatch.setenv("AGENT_ENGINE_ROOT", str(engine_root))
+    manifest = vault / "03-INFRA" / "agent-universal-layer" / "skills" / "skills.manifest.yaml"
+    manifest.write_text(_SKILLS_MANIFEST + (
+        "  uppy:\n    origin: upstream\n    exposure: manual\n"
+        "    targets: [claude]\n    deps:\n      kind: npx\n      spec: \"uppy@1.0.0\"\n"
+    ), encoding="utf-8")
+
+    first = skill_checks.check_skills_not_materialized(vault, home)
+    assert "uppy" not in (first.message or ""), first.message
+
+    skill_checks.check_skills_not_materialized(vault, home).remedy()
+    after = skill_checks.check_skills_not_materialized(vault, home)
+    assert after.severity == Severity.OK, after.message
+
+
 def test_engine_starter_views_broken_then_fixed(tmp_path: Path, monkeypatch):
     vault, home, engine_root = _setup_skills_vault(tmp_path)
     monkeypatch.setenv("AGENT_ENGINE_ROOT", str(engine_root))

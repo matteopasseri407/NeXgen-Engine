@@ -175,7 +175,12 @@ def check_skills_not_materialized(vault_data: Path, home: Path) -> CheckOutcome:
         return True
 
     declared = mat.load_manifest()
-    missing = sorted(name for name in declared if not (library_dir / name / "SKILL.md").is_file())
+    # An upstream skill is inventoried only: its own installer owns the bytes,
+    # so the engine never materializes it and must not report it missing.
+    missing = sorted(
+        name for name, entry in declared.items()
+        if entry.origin != "upstream" and not (library_dir / name / "SKILL.md").is_file()
+    )
 
     if missing:
         return CheckOutcome(
