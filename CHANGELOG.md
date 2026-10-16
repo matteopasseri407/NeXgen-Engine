@@ -8,7 +8,7 @@ This file tracks the **engine** (this repo). Your own data — manifests,
 instructions, skills, secrets — lives in your KnowledgeVault and is not part
 of any engine release.
 
-## [3.0.0] - 2026-10-16
+## [2.16.0] - 2026-10-16
 
 Stabilization release: no new features, same behavior everywhere, smaller
 and duller pieces. Over seventy splits and unifications, each landed with
