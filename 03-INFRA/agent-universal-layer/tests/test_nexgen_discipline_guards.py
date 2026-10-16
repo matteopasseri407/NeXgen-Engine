@@ -75,6 +75,19 @@ def test_init_creates_files_and_hooks_and_never_overwrites(repo):
     assert "mine" in hook.read_text()
 
 
+def test_the_installed_hooks_do_not_hand_gits_own_context_downstream(repo):
+    """git exports GIT_DIR when it runs a hook, and a push from a linked
+    worktree points it at that worktree. On 2026-10-16 a proof run started
+    from the pre-push hook used it: tests edited the real repository and a
+    test clone's push launched the same hook again, in a loop."""
+    from nexgen_core.discipline.scaffold import HOOK_COMMANDS
+
+    init_project(repo.path, "")
+    for name in HOOK_COMMANDS:
+        text = (repo.path / ".git" / "hooks" / name).read_text(encoding="utf-8")
+        assert "unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE" in text
+
+
 def test_the_installed_hook_really_blocks_an_oversized_commit(repo):
     init_project(repo.path, "")
     repo.write("big.py", BIG)

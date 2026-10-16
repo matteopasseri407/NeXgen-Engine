@@ -21,6 +21,9 @@ if [ ! -x "$PY" ] || [ ! -f "$ENGINE" ]; then
   echo "discipline: python ($PY) or engine ($ENGINE) not found; run 'discipline.py init' again from a current NeXgen install" >&2
   exit 1
 fi
+# git exports GIT_DIR to a hook, and a push from a linked worktree points it at
+# that worktree: anything run here must not resolve the repository from it.
+unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_COMMON_DIR GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_PREFIX
 {commands}
 """
 HOOK_COMMANDS = {
