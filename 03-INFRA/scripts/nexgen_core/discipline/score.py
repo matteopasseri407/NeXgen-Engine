@@ -41,10 +41,15 @@ def score(changes: list[Change]) -> tuple[int, list[str]]:
     return sum(p for p, _ in reasons), [f"+{p} {why}" for p, why in reasons]
 
 
+def is_critical(cfg: Config, path: str, old_path: str | None = None) -> bool:
+    """A declared production path, by its new name or its old one (a moved file stays covered)."""
+    return (any(fnmatch(name, g) for name in (path, old_path) if name for g in cfg.review_paths)
+            and not any(fnmatch(path, g) for g in cfg.review_exempt))
+
+
 def is_complex(changes: list[Change], cfg: Config) -> tuple[bool, int, list[str]]:
     """Only changes to declared production paths can require a review: reviews cost money."""
-    scoped = [c for c in changes if any(fnmatch(name, g) for name in (c.path, c.old_path) if name for g in cfg.review_paths)
-              and not any(fnmatch(c.path, g) for g in cfg.review_exempt)]
+    scoped = [c for c in changes if is_critical(cfg, c.path, c.old_path)]
     control = [c for c in changes if CONTROL_FILES.search(c.path) or (
         WORKFLOW.search(c.path) and "discipline" in f"{c.old}{c.new}")] if cfg.review_paths else []
     if not scoped and not control:

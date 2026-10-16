@@ -148,6 +148,7 @@ def test_merge_that_brings_only_published_work_is_exempt(repo):
     repo.git("checkout", "-q", "main")
     complex_change(repo)
     repo.commit("big work already on main")
+    repo.git("update-ref", "refs/remotes/origin/main", "main")  # main was pushed
     repo.git("checkout", "-q", "dev")
     repo.git("merge", "-q", "--no-ff", "-m", "pull main", "main")
     assert cli.main(["gate", "--base", base, "--head", "HEAD"]) == 0

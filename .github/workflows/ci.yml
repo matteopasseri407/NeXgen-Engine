@@ -26,6 +26,10 @@ jobs:
         with:
           python-version: "3.x"
 
+      # The per-commit proof runs a fix's tests before and after the fix, so the test dependencies must be here.
+      - name: Test dependencies
+        run: pip install pytest pyyaml 'langgraph>=1.0,<2' 'langgraph-checkpoint-sqlite>=3,<4' 'langchain-ollama>=1.0,<2'
+
       # Size ratchet and shell/PowerShell gate on every change; a complex change also
       # needs its review receipt (the release PR and main only get the static check).
       # The base, head and strictness are chosen in Python from these event values.

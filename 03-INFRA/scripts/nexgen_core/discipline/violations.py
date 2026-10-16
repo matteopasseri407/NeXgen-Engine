@@ -23,7 +23,7 @@ class Violation:
         return f"{self.path}: {self.message}"
 
 
-TEST_PATH = re.compile(r"(^|/)(tests?|__tests__)/|(^|/)test_[^/]*$|_test\.[^/]*$|\.(test|spec)\.[^/]*$")
+TEST_PATH = re.compile(r"(^|/)(tests?|__tests__)/|(^|/)(test_[^/]*|conftest\.py)$|_test\.[^/]*$|\.(test|spec)\.[^/]*$")
 
 
 def selected(change: Change, cfg: Config, extensions: tuple[str, ...]) -> bool:

@@ -24,7 +24,7 @@ The rest rely on you. Do not argue with a gate: change the work.
    **[gate, per commit]** A commit that changes critical code (`review_paths`) carries a test in the same commit. A commit
    titled `fix...:` must also show its test failing on the code before the fix: the gate runs it against the parent
    (`test_command`, default `python -m pytest -q`) and refuses a test that passes either way. If no test is possible, say so in
-   the commit message: `nexgen: no-test reason="..."`. **[gate]** Tests are never deleted, reduced in number or assertions, or skipped without the
+   the commit message: `nexgen: no-test reason="..."`. The `fix` title is the trigger for the proof (an honesty check, like receipts); critical code needs its test whatever the title. **[gate]** Tests are never deleted, reduced in number or assertions, or skipped without the
    owner adding the path to `test_removal_ok` in `.nexgen-discipline.toml` first. Every project defines one
    real-flow command (`smoke_command`) that proves the program works; until it exists the health report is red.
    "Done" means the checks ran and their output is shown. Say what you did not verify.
