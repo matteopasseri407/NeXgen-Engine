@@ -11,6 +11,7 @@ from __future__ import annotations
 import inspect
 import sys
 import time
+import types
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -72,6 +73,35 @@ def test_check_liveness_stale_avvisa_una_volta(tmp_path: Path, monkeypatch: pyte
     assert isinstance(msg, str) and msg.strip()
     assert len(calls) == 1
     assert calls[0].get("alert_key") == "guard_stale"
+
+
+def test_system_uptime_uses_the_windows_tick_count(monkeypatch: pytest.MonkeyPatch) -> None:
+    """MUST-06: on Windows the uptime comes from GetTickCount64, not /proc/uptime."""
+    fake_ctypes = types.SimpleNamespace(windll=types.SimpleNamespace(
+        kernel32=types.SimpleNamespace(GetTickCount64=lambda: 60_000),
+    ))
+    monkeypatch.setattr(beat, "os", types.SimpleNamespace(name="nt"))
+    monkeypatch.setitem(sys.modules, "ctypes", fake_ctypes)
+
+    assert beat._system_uptime_seconds() == 60.0
+    assert beat._just_booted(300.0) is True
+    assert beat._just_booted(30.0) is False
+
+
+def test_stale_liveness_just_after_a_boot_does_not_alarm(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A night of downtime reads as "machine just started", not "sync stalled"."""
+    hb = _make_heartbeat(tmp_path)
+    hb.state_dir.mkdir(parents=True, exist_ok=True)
+    hb.liveness_file.write_text(f"{time.time() - 10 * 3600}\n", encoding="utf-8")
+    monkeypatch.setattr(beat, "_system_uptime_seconds", lambda: 300.0, raising=False)
+    calls: list[dict] = []
+    hb.megaphone.send_alert = lambda **kw: calls.append(kw) or False  # type: ignore[method-assign]
+
+    ok, msg = hb.check_liveness()
+
+    assert ok is True, "the guard has not had a chance to run yet"
+    assert calls == [], "the just-booted grace must silence the stall alarm"
+    assert isinstance(msg, str) and msg.strip()
 
 
 @dataclass
