@@ -1,4 +1,3 @@
-from discipline_repo import repo  # noqa: F401  (pytest fixture)
 from nexgen_core.discipline import gates
 from nexgen_core.discipline.config import Config
 from nexgen_core.discipline.gitutil import changes

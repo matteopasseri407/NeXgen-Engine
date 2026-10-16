@@ -1,4 +1,4 @@
-from discipline_repo import production, repo  # noqa: F401  (pytest fixture)
+from discipline_repo import production
 import json
 
 from nexgen_core.discipline import cli, review

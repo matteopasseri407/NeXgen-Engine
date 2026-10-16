@@ -55,7 +55,7 @@ def _diff_args(base: str, head: str | None) -> list[str]:
 
 def show(root: Path, spec: str) -> str | None:
     proc = subprocess.run(["git", "-C", str(root), "show", spec], capture_output=True)
-    return proc.stdout.decode("utf-8", errors="replace") if proc.returncode == 0 else None
+    return proc.stdout.decode("utf-8", errors="replace").replace("\r\n", "\n") if proc.returncode == 0 else None
 
 
 def read_new(root: Path, path: str, head: str | None) -> str | None:

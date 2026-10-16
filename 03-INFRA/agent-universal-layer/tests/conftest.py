@@ -18,6 +18,8 @@ from pathlib import Path
 
 import pytest
 
+pytest_plugins = ["discipline_repo"]
+
 TESTS_DIR = Path(__file__).resolve().parent
 FIXTURES = TESTS_DIR / "fixtures"
 REAL_UL = TESTS_DIR.parent                      # .../agent-universal-layer (real source)

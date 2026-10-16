@@ -25,7 +25,7 @@ OWNER_WORDS = {"APPROVE": "PROCEDI", "REVISE": "RIDUCI", "REJECT": "FERMA"}
 
 
 def _digest(text: str | None) -> str:
-    return "-" if text is None else hashlib.sha256(text.encode()).hexdigest()[:16]
+    return "-" if text is None else hashlib.sha256(text.replace("\r\n", "\n").encode()).hexdigest()[:16]
 
 
 def diff_hash(root: Path, base: str, head: str | None) -> str:

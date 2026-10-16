@@ -1,4 +1,3 @@
-from discipline_repo import repo  # noqa: F401  (pytest fixture)
 from nexgen_core.discipline import cli
 
 BIG = "x = 1\n" * 600
