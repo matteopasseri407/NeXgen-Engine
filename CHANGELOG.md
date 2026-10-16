@@ -30,6 +30,13 @@ pre-existing Windows failures unchanged, CI green on Linux and Windows.
 
 ### Fixed
 
+- Firecrawl search works again on a self-hosted stack: the deploy template
+  now pins the api image to `2.11.528` (was `2.11.99`) and playwright-service
+  to the matching digest. `firecrawl-mcp` 3.25 and later sends the search
+  keys `toolDetail`/`domainTools`, which images older than mid-September
+  reject with 400, so every `firecrawl_search` failed while scrape kept
+  working. An existing deploy picks the fix up with `docker compose pull`
+  and `up -d` in the firecrawl stack, or by re-running `bootstrap-vps.sh`.
 - On Windows `security.secrets_materialized` reads the canonical XDG
   `auth.json` (`~/.local/share/opencode/`) first: a stale `%LOCALAPPDATA%`
   copy (including one a Windows Store Python redirects into its own
