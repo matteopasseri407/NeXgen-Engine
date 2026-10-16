@@ -15,7 +15,7 @@ from nexgen_core.guard import GuardMode, GuardRunner
 from nexgen_core.i18n import set_language
 from nexgen_core.megaphone import Megaphone
 
-from conftest import install_engine_layer
+from conftest import install_engine_layer  # noqa: E402
 
 
 def test_megaphone_debounce(tmp_path: Path):

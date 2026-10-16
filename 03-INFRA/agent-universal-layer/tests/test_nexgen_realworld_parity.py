@@ -22,7 +22,7 @@ from nexgen_core.skills import SkillMaterializer
 from nexgen_core.skills import main as skills_main
 from nexgen_core.updater import EngineUpdater
 
-from conftest import install_engine_layer
+from conftest import install_engine_layer  # noqa: E402
 
 
 def test_a1_shebang_on_all_entrypoints():
