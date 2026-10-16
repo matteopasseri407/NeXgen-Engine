@@ -205,6 +205,20 @@ def _make_bin_stubs(sandbox: Sandbox) -> None:
         stub.chmod(stub.stat().st_mode | stat.S_IEXEC)
 
 
+def install_engine_layer(home: Path) -> Path:
+    """Write the minimal engine layer a guard cycle reads at its default path.
+
+    The modules phase fails closed when the catalog is missing (a broken
+    install must never pass as a silent no-op), so a test that runs a real
+    cycle gives the fake machine a layer: an empty catalog declares nothing,
+    which is what these sandboxes want.
+    """
+    layer = home / ".nexgen-engine" / "03-INFRA" / "agent-universal-layer" / "modules"
+    layer.mkdir(parents=True, exist_ok=True)
+    (layer / "modules.yaml").write_text("schema_version: 1\nmodules: {}\n", encoding="utf-8")
+    return layer
+
+
 def _copy_engine_scripts(sandbox: Sandbox) -> None:
     sandbox.mcp_dir.mkdir(parents=True, exist_ok=True)
     sandbox.scripts_dir.mkdir(parents=True, exist_ok=True)

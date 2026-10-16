@@ -18,6 +18,8 @@ from pathlib import Path
 
 import pytest
 
+from conftest import install_engine_layer
+
 REPO = Path(__file__).resolve().parents[3]
 LEAK_DIR = REPO / "03-INFRA" / "agent-universal-layer" / "leak-scan"
 
@@ -374,6 +376,7 @@ def test_applying_twice_changes_nothing_but_machine_state(sandbox, monkeypatch):
     from nexgen_core.guard import GuardMode, GuardRunner
 
     monkeypatch.setenv("KNOWLEDGE_VAULT_REMOTE", "local")
+    install_engine_layer(sandbox.home)  # a real cycle needs the engine layer its modules phase reads
 
     def apply_once():
         return GuardRunner(vault_data=sandbox.vault, home=sandbox.home).run(mode=GuardMode.APPLY, allow_offline=True)

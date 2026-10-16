@@ -22,6 +22,8 @@ from nexgen_core.skills import SkillMaterializer
 from nexgen_core.skills import main as skills_main
 from nexgen_core.updater import EngineUpdater
 
+from conftest import install_engine_layer
+
 
 def test_a1_shebang_on_all_entrypoints():
     """A1: Tutti i moduli eseguibili devono avere shebang #!/usr/bin/env python3 a riga 1."""
@@ -221,7 +223,9 @@ def test_r1_git_behind_auto_fast_forward(tmp_path: Path, monkeypatch: pytest.Mon
     subprocess.run(["git", "-C", str(other_dir), "push", "origin", "main"], check=True)
 
     # Local vault è indietro rispetto a remote
-    runner = GuardRunner(vault_data=local_dir, home=tmp_path / "home")
+    home = tmp_path / "home"
+    install_engine_layer(home)  # the apply cycle needs the engine layer its modules phase reads
+    runner = GuardRunner(vault_data=local_dir, home=home)
     res = runner.run(mode=GuardMode.APPLY)
     assert res.success is True
     assert (local_dir / "file.txt").read_text() == "v2"

@@ -99,6 +99,54 @@ def test_a_crash_inside_the_permissions_phase_is_a_failed_phase_not_a_warning(tm
     assert "scheduler" in ran and "modules" in ran  # and the cycle went on
 
 
+def test_a_crash_inside_the_launchers_phase_is_a_failed_phase_not_a_warning(tmp_path, monkeypatch):
+    """MUST-02: install_shims raising was caught inside the helper and turned
+    into a WARN; the phase never reached `failed` and the guard exited 0
+    while the commands stayed broken."""
+    from nexgen_core import shims
+
+    runner, ran = _runner(tmp_path, monkeypatch)
+    monkeypatch.setattr(runner, "_phase_launchers", GuardRunner._phase_launchers.__get__(runner))
+    monkeypatch.setattr(shims, "install_shims", lambda **_kw: (_ for _ in ()).throw(OSError("shims denied")))
+
+    result = runner.run(GuardMode.APPLY)
+
+    assert result.success is False and result.exit_code == 1
+    assert runner.heartbeat.recorded_failed_phases() == ["launchers"]
+    assert "modules" in ran  # and the cycle went on
+
+
+def test_a_crash_inside_the_scheduler_phase_is_a_failed_phase_not_a_warning(tmp_path, monkeypatch):
+    """MUST-02: a scheduler that raises must fail the cycle with the phase named."""
+    from nexgen_core import guard as guard_module
+
+    runner, ran = _runner(tmp_path, monkeypatch)
+    monkeypatch.setattr(runner, "_phase_scheduler", GuardRunner._phase_scheduler.__get__(runner))
+    monkeypatch.setattr(guard_module, "install_scheduler", lambda **_kw: (_ for _ in ()).throw(OSError("schtasks denied")))
+
+    result = runner.run(GuardMode.APPLY)
+
+    assert result.success is False and result.exit_code == 1
+    assert runner.heartbeat.recorded_failed_phases() == ["scheduler"]
+    assert "modules" in ran  # and the cycle went on
+
+
+def test_a_crash_inside_the_modules_phase_is_a_failed_phase_not_a_warning(tmp_path, monkeypatch):
+    """MUST-02: modules that cannot be realigned used to be a WARN only."""
+    from nexgen_core import module_install
+
+    runner, ran = _runner(tmp_path, monkeypatch)
+    monkeypatch.setattr(runner, "_phase_modules", GuardRunner._phase_modules.__get__(runner))
+    monkeypatch.setattr(module_install, "install_declared_modules",
+                        lambda *_a, **_kw: (_ for _ in ()).throw(OSError("modules denied")))
+
+    result = runner.run(GuardMode.APPLY)
+
+    assert result.success is False and result.exit_code == 1
+    assert runner.heartbeat.recorded_failed_phases() == ["modules"]
+    assert "runtime" in ran  # and the cycle went on
+
+
 def test_warnings_are_counted_whatever_spelling_the_emitter_used(tmp_path, monkeypatch):
     """skill_sources wrote "[WARNING]" while the guard counted "[WARN]" and "[AVVISO]":
     a skill warning was not counted and the cycle was reported as a plain success."""

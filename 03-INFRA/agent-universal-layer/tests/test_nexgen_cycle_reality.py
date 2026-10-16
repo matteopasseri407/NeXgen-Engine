@@ -19,6 +19,8 @@ if os.name == "nt":  # the systemd units, the fake systemctl and the PATH are PO
 
 from nexgen_core.guard import GuardMode, GuardRunner
 
+from conftest import install_engine_layer
+
 
 def _fake_systemctl(bin_dir: Path, log: Path) -> None:
     """A systemctl that records its arguments and succeeds. Nothing reaches the real user manager."""
@@ -45,6 +47,7 @@ def systemd_sandbox(sandbox, monkeypatch, tmp_path):
     monkeypatch.delenv("NEXGEN_DISABLE_HOST_MUTATIONS", raising=False)
     monkeypatch.setenv("PATH", f"{fake_bin}{os.pathsep}{os.environ['PATH']}")
     monkeypatch.setenv("KNOWLEDGE_VAULT_REMOTE", "local")
+    install_engine_layer(sandbox.home)  # a real cycle needs the engine layer its modules phase reads
     sandbox.systemctl_log = log
     return sandbox
 

@@ -774,45 +774,36 @@ class GuardRunner:
         """The commands themselves. A deleted or stale launcher
         after an update is drift like any other, and fixing it
         silently is the job: asking the user to do it isn't."""
-        try:
-            from nexgen_core.shims import install_shims
+        from nexgen_core.shims import install_shims
 
-            # install_shims says what it rewrote. This used to hash every file in
-            # ~/.local/bin before and after (829 MB read, twice, every 30 minutes
-            # on a machine with three large CLIs there) to work out the same thing.
-            repaired: list[str] = []
-            install_shims(home=self.home, changed=repaired)
-            if repaired:
-                actions.append(t("Commands realigned ({count})", count=len(repaired)))
-        except Exception as exc:  # noqa: BLE001 - phase failure is recorded, never raises
-            actions.append(WARN + t("Commands not realigned: {error}", error=exc))
+        # install_shims says what it rewrote. This used to hash every file in
+        # ~/.local/bin before and after (829 MB read, twice, every 30 minutes
+        # on a machine with three large CLIs there) to work out the same thing.
+        repaired: list[str] = []
+        install_shims(home=self.home, changed=repaired)
+        if repaired:
+            actions.append(t("Commands realigned ({count})", count=len(repaired)))
 
     def _phase_scheduler(self, actions: list[str], branch: str) -> None:
         """Startup self-alignment installation (systemd / scheduled task),
         plus the update notice lanes: shell hook and boot-time check are
         drift like any other, so the guard keeps them installed."""
-        try:
-            sched_ok = install_scheduler(
-                home=self.home,
-                engine_root=self.engine_root,
-                vault_data=self.vault_data,
-                vault=self.vault_data,
-                branch=branch,
-                log=lambda msg: actions.append(msg),
-            )
-            if sched_ok:
-                actions.append(t("Startup self-alignment configured"))
-            else:
-                actions.append(WARN + t("Startup self-alignment reported no success and no error; verify with `nexgen doctor`"))
-        except Exception as exc:  # noqa: BLE001 - phase failure is recorded, never raises
-            actions.append(WARN + t("Self-alignment configuration did not succeed: {error}", error=exc))
-        try:
-            from nexgen_core.tools.update_notifier import ensure_boot_check, ensure_shell_hook
+        sched_ok = install_scheduler(
+            home=self.home,
+            engine_root=self.engine_root,
+            vault_data=self.vault_data,
+            vault=self.vault_data,
+            branch=branch,
+            log=lambda msg: actions.append(msg),
+        )
+        if sched_ok:
+            actions.append(t("Startup self-alignment configured"))
+        else:
+            actions.append(WARN + t("Startup self-alignment reported no success and no error; verify with `nexgen doctor`"))
+        from nexgen_core.tools.update_notifier import ensure_boot_check, ensure_shell_hook
 
-            actions.extend(ensure_shell_hook(self.home))
-            actions.extend(ensure_boot_check(self.home))
-        except Exception as exc:  # noqa: BLE001 - phase failure is recorded, never raises
-            actions.append(WARN + t("Update notice lanes not ensured: {error}", error=exc))
+        actions.extend(ensure_shell_hook(self.home))
+        actions.extend(ensure_boot_check(self.home))
 
     def _phase_modules(self, actions: list[str]) -> None:
         """Modules this machine declared: their commands and units
@@ -820,20 +811,17 @@ class GuardRunner:
         guard from something a module has to survive into what keeps
         it alive -- every primitive below is idempotent, so a module
         already in place costs nothing."""
-        try:
-            from nexgen_core.module_install import install_declared_modules
-            from nexgen_core.modules import modules_state
+        from nexgen_core.module_install import install_declared_modules
+        from nexgen_core.modules import modules_state
 
-            module_actions = install_declared_modules(
-                modules_state(vault_data=self.vault_data, engine_root=self.engine_root),
-                home=self.home,
-                engine_root=self.engine_root,
-                log=lambda msg: actions.append(msg),
-            )
-            if module_actions:
-                actions.append(t("Modules realigned ({count})", count=len(module_actions)))
-        except Exception as exc:  # noqa: BLE001 - phase failure is recorded, never raises
-            actions.append(WARN + t("Modules not realigned: {error}", error=exc))
+        module_actions = install_declared_modules(
+            modules_state(vault_data=self.vault_data, engine_root=self.engine_root),
+            home=self.home,
+            engine_root=self.engine_root,
+            log=lambda msg: actions.append(msg),
+        )
+        if module_actions:
+            actions.append(t("Modules realigned ({count})", count=len(module_actions)))
 
     def _phase_runtime(self, actions: list[str]) -> None:
         """The engine's own Python environment: provisioned from the checkout's

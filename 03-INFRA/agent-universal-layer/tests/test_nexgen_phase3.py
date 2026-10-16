@@ -15,6 +15,8 @@ from nexgen_core.guard import GuardMode, GuardRunner
 from nexgen_core.i18n import set_language
 from nexgen_core.megaphone import Megaphone
 
+from conftest import install_engine_layer
+
 
 def test_megaphone_debounce(tmp_path: Path):
     state_dir = tmp_path / "state"
@@ -59,6 +61,10 @@ def test_guard_runner_cycle(tmp_path: Path):
     run_git(vault, "commit", "-m", "init")
 
     home = tmp_path / "home"
+    # The guard reads the engine layer from the default install path; without
+    # it the modules phase fails closed (a missing catalog is a broken
+    # install, not a silent no-op), so the happy path needs the layer.
+    install_engine_layer(home)
     runner = GuardRunner(vault_data=vault, home=home)
 
     # Test preflight
