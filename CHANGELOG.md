@@ -44,7 +44,7 @@ pre-existing Windows failures unchanged, CI green on Linux and Windows.
   complexity score, and an independent-review receipt bound to the exact file contents for
   complex changes to declared production paths (`.nexgen-discipline.toml`); the receipt is an honesty
   check, not a security boundary. `check_engine.py` and a CI job run it.
-- Paid reviews are the exception: required only for a bigger change to the declared critical files (`review_paths`, threshold 4) or
+- Paid reviews are the exception: required only for a bigger change to the declared critical files (`review_paths`, threshold 4: about 200 net lines, or a new file plus about 100 lines; names end in `*` so the pieces of a split critical file stay covered; the discipline engine itself is on the list) or
   for edits to the discipline config and the CI that runs the gate; the owner can ask for one any time or record their own
   decision for free with `discipline.py approve --reason`.
 - `discipline.py init`, `report` and `smoke`: any project gets a config, a decision log and local git hooks that call the

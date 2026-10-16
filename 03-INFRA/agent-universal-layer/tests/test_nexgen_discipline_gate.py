@@ -270,3 +270,22 @@ def test_a_workflow_that_runs_the_gate_cannot_be_edited_without_a_decision(repo)
     repo.write(".github/workflows/other.yml", "run: echo hi\n")
     (repo.path / ".github/workflows/ci.yml").write_text("run: python discipline.py ci\n")
     assert cli.main(["gate", "--base", base]) == 0
+
+
+def test_pieces_split_from_a_critical_file_stay_covered_by_its_prefix(repo):
+    repo.write(".nexgen-discipline.toml", 'complexity_threshold = 4\nreview_paths = ["core/git_ops*"]\n')
+    repo.commit("declare critical")
+    repo.write("core/git_ops_publish.py", BUSY * 45)  # extracted next to git_ops.py, keeps the prefix
+    assert cli.main(["gate", "--base", "HEAD"]) == 1
+    repo.write("core/other_name.py", BUSY * 45)  # a differently named piece is the known loophole, flagged in the rules
+    (repo.path / "core/git_ops_publish.py").unlink()
+    assert cli.main(["gate", "--base", "HEAD"]) == 0
+
+
+def test_renaming_a_critical_file_does_not_escape_the_list(repo):
+    repo.write(".nexgen-discipline.toml", 'complexity_threshold = 4\nreview_paths = ["core/git_ops.py"]\n')
+    repo.write("core/git_ops.py", BUSY * 45)
+    base = repo.commit("critical file")
+    repo.git("mv", "core/git_ops.py", "core/vcs.py")
+    (repo.path / "core/vcs.py").write_text(BUSY * 90)
+    assert cli.main(["gate", "--base", base]) == 1

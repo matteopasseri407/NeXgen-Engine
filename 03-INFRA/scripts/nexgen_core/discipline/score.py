@@ -43,7 +43,7 @@ def score(changes: list[Change]) -> tuple[int, list[str]]:
 
 def is_complex(changes: list[Change], cfg: Config) -> tuple[bool, int, list[str]]:
     """Only changes to declared production paths can require a review: reviews cost money."""
-    scoped = [c for c in changes if any(fnmatch(c.path, g) for g in cfg.review_paths)
+    scoped = [c for c in changes if any(fnmatch(name, g) for name in (c.path, c.old_path) if name for g in cfg.review_paths)
               and not any(fnmatch(c.path, g) for g in cfg.review_exempt)]
     control = [c for c in changes if CONTROL_FILES.search(c.path) or (
         WORKFLOW.search(c.path) and "discipline" in f"{c.old}{c.new}")] if cfg.review_paths else []

@@ -24,7 +24,7 @@ The rest rely on you. Do not argue with a gate: change the work.
    "Done" means the checks ran and their output is shown. Say what you did not verify.
 7. **[gate] Paid reviews are the exception.** They cost the owner real money, so by default there is none: tests and
    the automatic gates are enough. A review or the owner's recorded decision is required only for (a) a bigger
-   change (score 4 or more, about 200 net lines or a new file) to the project's **critical files**, the short
+   change (score 4 or more: about 200 net lines, or a new file plus about 100 lines) to the project's **critical files**, the short
    `review_paths` list in `.nexgen-discipline.toml` where a mistake loses user data, opens a security hole or breaks
    updating, and (b) any change to the discipline config or to the CI that runs the gate. The owner can ask for a
    review at any time (`python 03-INFRA/scripts/discipline.py review`, then `receipt`), or settle it for free by recording their own decision:

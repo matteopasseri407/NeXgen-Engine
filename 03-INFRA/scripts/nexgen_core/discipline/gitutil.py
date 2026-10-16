@@ -43,6 +43,7 @@ class Change:
     status: str  # A, M or D
     old: str | None
     new: str | None
+    old_path: str | None = None  # the previous name when the file was moved
 
 
 def _diff_args(base: str, head: str | None) -> list[str]:
@@ -79,7 +80,7 @@ def changes(root: Path, base: str, head: str | None = None, renames: bool = True
         status = "M" if status == "R" else status
         old = None if status == "A" else show(root, f"{base}:{old_path}")
         new = None if status == "D" else read_new(root, path, head)
-        result.append(Change(path, status, old, new))
+        result.append(Change(path, status, old, new, old_path if old_path != path else None))
     return result
 
 
