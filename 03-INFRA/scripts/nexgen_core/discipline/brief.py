@@ -23,6 +23,9 @@ Review the attached diff for, in this order:
    without migration, secrets or untrusted input reaching a shell, missing tests for new behavior.
 
 For each problem give the file and a concrete scenario or a concrete cut. Generic remarks do not count.
+6. **Design smells** (judgement calls, only if the diff shows them): mysterious names, feature envy, shotgun surgery
+   (one change scattered over many files), divergent change (a file edited for unrelated reasons), middle man, long call chains.
+
 If the change is sound and minimal, say so.
 
 End your answer with, in this order:

@@ -47,6 +47,9 @@ pre-existing Windows failures unchanged, CI green on Linux and Windows.
 - Paid reviews are the exception: required only for a bigger change to the declared critical files (`review_paths`, threshold 4: about 200 net lines, or a new file plus about 100 lines; names end in `*` so the pieces of a split critical file stay covered; the discipline engine itself is on the list) or
   for edits to the discipline config and the CI that runs the gate; the owner can ask for one any time or record their own
   decision for free with `discipline.py approve --reason`.
+- Per-commit proof (`discipline/regress.py`, from the Pocock skills' diagnose and TDD loop): a commit that changes critical code carries a
+  test, and a commit titled `fix...:` must show its test failing on the parent's code, so a test that passes by construction is refused.
+  Escape: `nexgen: no-test reason="..."` in the commit message. `test_command` in the config sets the runner.
 - The size rule is "one file, one job": line counts are the alarm. A file past 500 lines may declare its single job with
   `nexgen: one-job reason="..."` (up to 1000 lines) instead of being split; functions still never grow past 60.
 - `discipline.py init`, `report` and `smoke`: any project gets a config, a decision log and local git hooks that call the

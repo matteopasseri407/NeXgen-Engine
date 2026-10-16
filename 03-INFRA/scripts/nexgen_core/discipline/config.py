@@ -24,6 +24,7 @@ class Config:
     shell_max_logic: int = 8
     complexity_threshold: int = 8  # a repository may lower it for its critical paths
     smoke_command: str = ""  # the one command that proves the program really works
+    test_command: str = "python -m pytest -q"  # run on a fix's tests against the code before the fix; empty turns that proof off
     test_removal_ok: tuple[str, ...] = ()  # test paths the owner allowed to shrink or go
     review_paths: tuple[str, ...] = ()  # globs of production code; empty means no review is ever required
     review_exempt: tuple[str, ...] = ("*/tests/*", "tests/*", "*/test_*", "test_*")

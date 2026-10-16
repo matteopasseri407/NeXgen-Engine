@@ -4,9 +4,9 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from . import review
+from . import regress, review
 from .config import COMMAND, Config
-from .gitutil import Change, own_changes
+from .gitutil import STAGED, Change, own_changes
 from .score import is_complex
 from .integrity import check_test_integrity
 from .shellgate import check_shell
@@ -39,6 +39,8 @@ def run(root: Path, cfg: Config, base: str, head: str | None, need_review: bool)
     out = Outcome(violations=static_checks(changed, cfg))
     out.complex, out.score, out.reasons = is_complex(changed, cfg)
     out.gated = need_review
+    if need_review and head != STAGED:  # per-commit proof needs committed work; a release PR is static-only
+        out.violations += regress.check_commits(root, cfg, base, head or "HEAD")
     if need_review and out.complex:
         out.receipt_problem = review.receipt_problem(root, review.diff_hash(root, base, head), head)
     return out
