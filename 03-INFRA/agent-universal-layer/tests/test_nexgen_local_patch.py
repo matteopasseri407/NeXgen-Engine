@@ -312,9 +312,11 @@ def test_a_post_apply_mismatch_puts_the_file_back(tmp_path: Path) -> None:
 
 
 def test_a_mismatch_is_undone_even_when_the_audit_cannot_write(tmp_path, monkeypatch):
-    """MUST-16, revisione: se l'audit fallisce sul ramo di rifiuto il file
-    deve essere gia' tornato indietro. Su Windows il registro si blocca per
-    davvero, ed era il percorso che lasciava la modifica a meta'."""
+    """MUST-16, revisione: un registro che non si puo' scrivere non deve
+    impedire il ripristino ne' coprire il rifiuto. Su Windows il registro si
+    blocca per davvero, ed era il percorso che lasciava la modifica a meta'."""
+    import json
+
     from nexgen_local import patch as patch_mod
 
     repo = _git_repo(tmp_path)
@@ -335,16 +337,21 @@ def test_a_mismatch_is_undone_even_when_the_audit_cannot_write(tmp_path, monkeyp
         return real_audit(cfg_arg, kind, payload, **kwargs)
 
     monkeypatch.setattr(patch_mod, "audit_event", failing_audit)
-    with pytest.raises(PermissionError):
+    with pytest.raises(PatchError, match="ripristino: restored"):
         apply_proposal(cfg, proposal.id, yes=True)
 
     assert (repo / "notes.md").read_text(encoding="utf-8") == original
+    lines = [json.loads(line) for line in cfg.audit_path.read_text(encoding="utf-8").strip().splitlines()]
+    apply_phases = [line["args"].get("phase") for line in lines if line["tool"] == "apply_patch"]
+    assert apply_phases == ["intent"], "il risultato non e' scrivibile, l'intento resta"
 
 
 def test_a_failed_rollback_keeps_the_original_bytes_beside_the_file(tmp_path, monkeypatch):
     """Se anche il ripristino fallisce, i byte originali restano in un file
-    accanto e il rifiuto ne dice il percorso: senza quella copia l'unico
-    contenuto buono esisterebbe solo in memoria."""
+    dell'area della lane (non nel repository) e il registro dice che il
+    ripristino non e' riuscito."""
+    import json
+
     from nexgen_local import patch as patch_mod
 
     repo = _git_repo(tmp_path)
@@ -358,20 +365,30 @@ def test_a_failed_rollback_keeps_the_original_bytes_beside_the_file(tmp_path, mo
     tampered.new_hash = "0" * 64
     patch_mod._save(cfg, tampered)
 
+    real_write = patch_mod.atomic_write_bytes
+
     def failing_write(path_arg, data, **kwargs):
-        raise OSError("disco pieno")
+        if Path(path_arg) == target:
+            raise OSError("disco pieno")
+        return real_write(path_arg, data, **kwargs)
 
     monkeypatch.setattr(patch_mod, "atomic_write_bytes", failing_write)
-    with pytest.raises(PatchError, match="pre-patch"):
+    with pytest.raises(PatchError, match="ripristino non e' riuscito"):
         apply_proposal(cfg, proposal.id, yes=True)
 
-    assert target.with_name("notes.md.pre-patch").read_text(encoding="utf-8") == original
+    spare = cfg.proposals_dir / f"{proposal.id}.pre-patch"
+    assert spare.read_text(encoding="utf-8") == original
+    assert spare.parent == cfg.proposals_dir, "la copia non vive nel repository"
+    lines = [json.loads(line) for line in cfg.audit_path.read_text(encoding="utf-8").strip().splitlines()]
+    assert lines[-1]["args"]["restore"] == "failed"
 
 
 def test_a_file_changed_meanwhile_is_never_overwritten_by_the_rollback(tmp_path, monkeypatch):
     """Il ripristino controlla che il file sia ancora quello che la penna ha
-    prodotto: se qualcuno l'ha toccato, si rifiuta invece di cancellare il
-    suo lavoro."""
+    prodotto: se qualcuno l'ha toccato si rifiuta, lo lascia com'e' e lo
+    scrive nel registro."""
+    import json
+
     from nexgen_local import patch as patch_mod
 
     repo = _git_repo(tmp_path)
@@ -384,7 +401,9 @@ def test_a_file_changed_meanwhile_is_never_overwritten_by_the_rollback(tmp_path,
     patch_mod._save(cfg, tampered)
 
     monkeypatch.setattr(patch_mod, "_still_ours", lambda path_arg, expected: False)
-    with pytest.raises(PatchError, match="cambiato durante il ripristino"):
+    with pytest.raises(PatchError, match="ripristino: changed"):
         apply_proposal(cfg, proposal.id, yes=True)
 
     assert (repo / "notes.md").read_text(encoding="utf-8") == "Questo contiene un refuso.\n"
+    lines = [json.loads(line) for line in cfg.audit_path.read_text(encoding="utf-8").strip().splitlines()]
+    assert lines[-1]["args"]["restore"] == "changed"

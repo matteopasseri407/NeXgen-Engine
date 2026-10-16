@@ -21,8 +21,9 @@ import tempfile
 import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
+from typing import NoReturn
 
-from nexgen_core.files import atomic_write_bytes, write_private_text
+from nexgen_core.files import atomic_write_bytes, secure_artifact, write_private_text
 
 from .config import LaneConfig
 from .llm import LLM
@@ -332,27 +333,72 @@ def _still_ours(path: Path, expected: str) -> bool:
         return False
 
 
-def _rollback_file(path: Path, before: bytes, expected: str | None) -> None:
-    """Puts the pre-patch bytes back, atomically and only if untouched.
+def _spare_path(cfg: LaneConfig, proposal: Proposal) -> Path:
+    """Where the original bytes go when even the restore cannot be written.
 
-    `expected` is the content hash read right after `git apply`, or None when
-    that read failed: a hash that no longer matches means someone else changed
-    the file meanwhile, and it is left alone. The write goes through the
-    engine's own atomic writer, so a failure cannot truncate the file, and the
-    original bytes are saved beside it for whoever has to finish by hand.
+    The lane's own directory, not the repository: a `.pre-patch` sitting next
+    to the file would show up as an untracked file and could be committed by
+    mistake, and each proposal gets its own copy instead of one shared name.
+    """
+    return cfg.proposals_dir / f"{proposal.id}.pre-patch"
+
+
+def _restore_outcome(
+    path: Path, before: bytes, expected: str | None, spare: Path,
+) -> str:
+    """Puts the pre-patch bytes back and reports how it went.
+
+    Returns "restored", "changed" (someone else edited the file meanwhile, so
+    it is left alone) or "failed" (even the atomic write could not land; the
+    original bytes are saved in `spare` and the refusal names it). `expected`
+    is the content hash read right after `git apply`, or None when that read
+    failed: with the applied output unknown, putting the known-good bytes
+    back is the safer act, so the "changed" check is skipped on purpose. A
+    file can change again between that check and the write; the window is
+    milliseconds and closing it would need a lock on the file itself.
     """
     if expected is not None and not _still_ours(path, expected):
-        raise PatchError("il file e' cambiato durante il ripristino: lasciato com'e'")
+        return "changed"
     try:
         atomic_write_bytes(path, before)
-    except OSError as exc:
-        spare = path.with_name(path.name + ".pre-patch")
+    except OSError:
         try:
-            spare.write_bytes(before)
-            where = f"; i byte originali sono in {spare}"
-        except OSError:
-            where = ""
-        raise PatchError(f"ripristino fallito ({exc}){where}") from exc
+            if not spare.exists():
+                secure_artifact(spare.parent)
+                atomic_write_bytes(spare, before, preserve_mode=False)
+        except OSError:  # nexgen: allow reason="the refusal below still reaches the person"
+            pass
+        return "failed"
+    return "restored"
+
+
+def _settle_mismatch(
+    cfg: LaneConfig, proposal: Proposal, path: Path, before: bytes, applied: str | None,
+) -> NoReturn:
+    """The applied pen stroke does not match the proposal: put the file back.
+
+    The outcome reaches the log in every case, restored or not: the restore
+    runs first and the result line is written whatever it did, because the
+    two cases where the file stays wrong are the ones where the record
+    matters most. An audit that cannot write does not cover that refusal.
+    """
+    outcome = "failed"
+    try:
+        outcome = _restore_outcome(path, before, applied, _spare_path(cfg, proposal))
+    finally:
+        try:
+            audit_event(cfg, "apply_patch",
+                        {"file": proposal.file, "proposal": proposal.id, "phase": "result",
+                         "rc": "hash", "restore": outcome},
+                        ok=False, chars=len(proposal.patch))
+        except OSError:  # nexgen: allow reason="the refusal below is what the person needs"
+            pass
+    if outcome == "failed":
+        raise PatchError(
+            "il file applicato non corrisponde alla proposta e il ripristino non e' riuscito: "
+            f"i byte originali sono in {_spare_path(cfg, proposal)}"
+        )
+    raise PatchError(f"il file applicato non corrisponde alla proposta (ripristino: {outcome})")
 
 
 def _run_apply(
@@ -388,13 +434,7 @@ def _run_apply(
     except OSError:
         applied = None
     if applied != proposal.new_hash:
-        # The pen has already moved: the rollback comes before the audit,
-        # because an audit that cannot write used to leave the file changed.
-        _rollback_file(path, before, applied)
-        audit_event(cfg, "apply_patch",
-                    {"file": rel, "proposal": proposal.id, "phase": "result", "rc": "hash"},
-                    ok=False, chars=len(proposal.patch))
-        raise PatchError("il file applicato non corrisponde alla proposta; il file e' tornato com'era")
+        _settle_mismatch(cfg, proposal, path, before, applied)
 
     verify_output = ""
     verify_rc: int | None = None
