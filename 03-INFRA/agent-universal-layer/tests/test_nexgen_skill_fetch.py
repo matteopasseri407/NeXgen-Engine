@@ -61,8 +61,9 @@ def test_missing_skill_at_new_pin_keeps_previous_skill(tmp_path):
 
 
 def test_locked_cache_keeps_previous_pin_and_warns(tmp_path, monkeypatch):
-    """A cache another process holds open is a retry, not a failure:
-    old bytes stay put and the phase stays green."""
+    """A cache another process holds open is a retry, not a failure: old
+    bytes stay put, the phase stays green, and the pin is not recorded as
+    materialized while the files on disk are still the previous ones."""
     repo, cache, entry, fetcher = source_and_cache(tmp_path)
     (repo / "SKILL.md").write_text("upstream moved on\n")
     git(repo, "add", ".")
@@ -78,7 +79,7 @@ def test_locked_cache_keeps_previous_pin_and_warns(tmp_path, monkeypatch):
 
     monkeypatch.setattr(os, "rename", locked)
     ok, note = fetcher.ensure_github_checkout(cache, entry)
-    assert ok and note
+    assert not ok and note
     assert git(cache, "rev-parse", "HEAD") == previous
     assert (cache / "SKILL.md").read_text() == "verified first version\n"
 
