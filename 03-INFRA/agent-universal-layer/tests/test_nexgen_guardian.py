@@ -362,3 +362,35 @@ def test_a_scope_that_does_not_exist_is_never_identical_bytes(tmp_path: Path):
     verdict = judge_github_skill("skill 'demo'", str(repo), pin, head, "skills/typo")
     assert verdict.verdict == HOLD
     assert any("scope" in reason for reason in verdict.reasons)
+
+
+def test_a_scope_with_a_trailing_slash_is_the_same_scope(tmp_path: Path):
+    """La normalizzazione copre anche lo slash finale; questo test lo fissa
+    perché un manifest scritto così è normale, non un caso di scuola."""
+    repo = _repo(tmp_path, "skill")
+    target = repo / "skills" / "demo"
+    target.mkdir(parents=True)
+    (target / "SKILL.md").write_text("# demo\n", encoding="utf-8")
+    pin = _commit(repo, "skill as pinned")
+    (target / "SKILL.md").write_text("# demo\n\nA clearer sentence.\n", encoding="utf-8")
+    head = _commit(repo, "prose touch-up")
+
+    verdict = judge_github_skill("skill 'demo'", str(repo), pin, head, "skills/demo/")
+    assert verdict.verdict == BATCH
+
+
+def test_a_rename_that_gains_the_executable_bit_is_held(tmp_path: Path):
+    """Il parser delle rinomine deve restituire il percorso nuovo: se desse
+    quello vecchio, il modo non verrebbe letto e un file rinominato con +x
+    passerebbe come prosa."""
+    repo = _repo(tmp_path, "skill")
+    (repo / "notes.md").write_text("# demo\n", encoding="utf-8")
+    pin = _commit(repo, "skill as pinned")
+    _git(repo, "mv", "notes.md", "run.md")
+    _git(repo, "update-index", "--chmod=+x", "run.md")
+    _git(repo, "commit", "-m", "the note is renamed and can run")
+    head = _git(repo, "rev-parse", "HEAD")
+
+    verdict = judge_github_skill("skill 'demo'", str(repo), pin, head, ".")
+    assert verdict.verdict == HOLD
+    assert any("executable" in reason for reason in verdict.reasons)

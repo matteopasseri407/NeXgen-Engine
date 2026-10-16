@@ -125,6 +125,17 @@ def _normalized_scope(scope: str) -> str:
     return cleaned.rstrip("/")
 
 
+def _scope_pathspec(scope: str) -> list[str]:
+    """`-- <scope>` as a literal path.
+
+    Git's pathspecs are patterns: a scope whose name contains `*` or `[`
+    would be read as a glob by `diff` and `ls-tree` while the prefix check
+    reads it literally, and `:(literal)` makes the three readings the same
+    by construction.
+    """
+    return [] if scope in (".", "") else ["--", f":(literal){scope}"]
+
+
 def _in_scope(path: str, scope: str) -> bool:
     scope = _normalized_scope(scope)
     return scope in (".", "") or path == scope or path.startswith(scope + "/")
@@ -156,10 +167,7 @@ def _modes_at_head(work: Path, head: str, scope: str) -> dict[str, str] | None:
     One recursive listing for the whole scope: asking git per file would
     spawn a process for every file of a large skill.
     """
-    args = ["ls-tree", "-r", "-z", head]
-    if scope not in (".", ""):
-        args += ["--", scope]
-    listing = _run_git(args, cwd=work)
+    listing = _run_git(["ls-tree", "-r", "-z", head, *_scope_pathspec(scope)], cwd=work)
     if listing.returncode != 0:
         return None
     modes: dict[str, str] = {}
@@ -279,7 +287,7 @@ def judge_github_skill(
             finding.plain = "La storia del progetto è stata riscritta: strano, da guardare prima."
             return finding
 
-        scope_arg = [] if scope in (".", "") else ["--", scope]
+        scope_arg = _scope_pathspec(scope)
         # -z: NUL-separated paths, never C-quoted. A quoted non-ASCII
         # name ("skills/demo/\303\251vil.py") would otherwise miss the
         # scope check, read as an empty diff, and wrongly verdict AUTO.
