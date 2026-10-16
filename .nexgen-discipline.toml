@@ -1,0 +1,13 @@
+# NeXgen's own production code: a complex change here needs an independent review.
+# Notes, docs and tests never do. Changing this file, CI or hooks is always reviewed.
+review_paths = [
+  "03-INFRA/*",
+  ".github/*",
+  "install.sh",
+  "install.ps1",
+  "setup.py",
+  "pyproject.toml",
+  "MANIFEST.in",
+]
+# Translation tables grow with every new message; they are data, not logic.
+exclude = ["*/locales/*"]

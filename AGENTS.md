@@ -24,4 +24,9 @@ Shared behavior has one owner; drivers import it. Preserve existing entry
 points and verify resumed state when changing its data contract.
 Authorized maintainer work does not require an external-contributor issue.
 
+Write code under `03-INFRA/engineering-rules.md`; `check_engine.py` enforces its
+size and shell/PowerShell limits (`nexgen_core/discipline/`). A change that
+`python 03-INFRA/scripts/discipline.py score` calls complex needs an independent
+review receipt before push.
+
 Details and enforcement: `docs/agent-lanes.md`.

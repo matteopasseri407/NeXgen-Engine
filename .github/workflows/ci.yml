@@ -14,6 +14,29 @@ permissions:
   contents: read
 
 jobs:
+
+  discipline:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: "3.x"
+
+      # Size ratchet and shell/PowerShell gate on every change; a complex change also
+      # needs its review receipt (the release PR and main only get the static check).
+      # The base, head and strictness are chosen in Python from these event values.
+      - name: Discipline gate
+        env:
+          EVENT: ${{ github.event_name }}
+          BEFORE: ${{ github.event.before }}
+          BASE_REF: ${{ github.base_ref }}
+          HEAD_REF: ${{ github.head_ref || github.ref_name }}
+        run: python 03-INFRA/scripts/discipline.py ci --event "$EVENT" --before "$BEFORE" --base-ref "$BASE_REF" --head-ref "$HEAD_REF"
+
   self-check:
     runs-on: ubuntu-latest
     steps:

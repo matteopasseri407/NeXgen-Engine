@@ -98,3 +98,8 @@ __pycache__/
 
 # Build output: setup.py copies the engine layer here only inside build/lib.
 03-INFRA/scripts/nexgen_core/_engine/
+
+# Discipline review scratch files (receipts/ is committed)
+.nexgen-discipline/review.diff
+.nexgen-discipline/brief.md
+.nexgen-discipline/pending

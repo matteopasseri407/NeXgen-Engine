@@ -29,8 +29,9 @@ python -m pip install -e '.[dev]'
 python 03-INFRA/scripts/check_engine.py
 ```
 
-The last command runs the committed Ruff baseline gate and the full pytest
-suite. It stops on the first failing gate and never invokes sync or release.
+The last command runs the committed Ruff baseline gate, the discipline
+size/shell gate (an oversized file or function may exist but never grow) and the
+full pytest suite. It stops on the first failing gate and never invokes sync or release.
 For a bounded change, pass the relevant test file first; run the full command
 before integration. Fix new lint findings rather than regenerating the baseline.
 
@@ -74,6 +75,7 @@ before integration. Fix new lint findings rather than regenerating the baseline.
 | Where a server's credential comes from (process, `environment.d`, secrets deposit) | `_declared_value` in `agent-universal-layer/mcp/lazy-mcp.py`; `nexgen_core/deposit_env.py` | `test_nexgen_mcp_credentials.py`, `test_nexgen_mcp_trim.py` |
 | Raising third-party pins, trying each MCP server before keeping the change | `nexgen_core/thirdparty_bump.py`; `verify_servers` in `nexgen_core/mcp_check.py` | `test_nexgen_bump.py`, `test_nexgen_mcp_check.py` |
 | Contributor lanes | `nexgen_core/lanes.py` | `test_nexgen_lanes.py` |
+| Size ratchet, shell/PowerShell gate, complexity score, independent-review receipt | `nexgen_core/discipline/` (`python 03-INFRA/scripts/discipline.py`) | `test_nexgen_discipline_*.py` |
 
 Check the actual filenames before selecting a test. Graph modules drive the
 existing decision functions; they do not hold a second implementation.

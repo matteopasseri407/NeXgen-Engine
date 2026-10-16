@@ -569,7 +569,7 @@ def _build_seat_command(seat: dict, prompt: str, session_dir: Path) -> SeatInvoc
       reachable through: verified safe by construction, not just by prompt.
 
     See the "Council CLI-level enforcement is asymmetric" note in
-    ``instructions/AGENTS.md`` (next to the "Council exception" paragraph)
+    ``03-INFRA/council-rules.md`` (next to the "Council exception" paragraph)
     for the user-facing version of this same finding.
     """
     cli = seat["cli"]

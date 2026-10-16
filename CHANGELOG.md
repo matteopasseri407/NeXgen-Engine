@@ -36,6 +36,23 @@ pre-existing Windows failures unchanged, CI green on Linux and Windows.
   sandbox) no longer shadows the live file, and AppData stays only as a
   fallback when the XDG file is absent.
 
+### Added
+
+- `nexgen_core/discipline` (`python 03-INFRA/scripts/discipline.py`): mechanical engineering
+  discipline for code written by agents. Size ratchet (files over 500 lines and functions over
+  60 may not grow; limits are read from the base revision), a soft shell/PowerShell gate, a
+  complexity score, and an independent-review receipt bound to the exact file contents for
+  complex changes to declared production paths (`.nexgen-discipline.toml`); the receipt is an honesty
+  check, not a security boundary. `check_engine.py` and a CI job run it.
+- `03-INFRA/engineering-rules.md`, the `nexgen-discipline` skill, and `03-INFRA/writing-and-alerts.md`.
+
+### Changed
+
+- The canonical bootstrap shrinks from 37.6 KB to about 20 KB: browser steps, identity,
+  single-source detail, the Council trigger, writing voice and the garden rule moved to the
+  notes that already own them. "Operate autonomously" now means reversible steps inside the
+  request, and cross-platform means one Python implementation, never parallel `.sh`/`.ps1` pairs.
+
 ## [2.15.2] - 2026-10-15
 
 ### Fixed
