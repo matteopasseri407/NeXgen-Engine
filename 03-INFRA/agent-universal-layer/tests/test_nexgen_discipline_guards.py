@@ -3,7 +3,6 @@ import subprocess
 import sys
 from pathlib import Path
 
-from discipline_repo import repo  # noqa: F401  (pytest fixture)
 from nexgen_core.discipline import cli
 from nexgen_core.discipline.config import load
 from nexgen_core.discipline.health import report, run_smoke

@@ -9,7 +9,7 @@ from fnmatch import fnmatch
 
 from .config import Config
 from .gitutil import Change
-from .violations import CODE_EXT, TEST_PATH, Violation, selected
+from .violations import CODE_EXT, TEST_PATH, Violation
 
 PY_SKIPS = {"pytest.mark.skip", "pytest.mark.skipif", "pytest.mark.xfail", "pytest.skip", "pytest.xfail",
             "unittest.skip", "unittest.skipIf", "unittest.skipUnless"}
