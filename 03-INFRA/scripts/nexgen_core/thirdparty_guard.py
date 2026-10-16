@@ -104,8 +104,36 @@ def _clone_no_checkout(repo: str, dest: Path) -> bool:
     return res.returncode == 0
 
 
+def _normalized_scope(scope: str) -> str:
+    """A manifest scope can arrive with Windows backslashes; git's paths are
+    always forward-slashed, and `skills\\demo` matches nothing at all."""
+    return scope.strip().replace("\\", "/")
+
+
 def _in_scope(path: str, scope: str) -> bool:
+    # A manifest can carry a Windows backslash, and git's paths never do.
+    scope = _normalized_scope(scope)
     return scope in (".", "") or path == scope or path.startswith(scope.rstrip("/") + "/")
+
+
+def _empty_scope_verdict(entries: list[tuple[str, str]], scope: str) -> tuple[str, str, str]:
+    """The verdict when nothing in the diff falls inside the scope.
+
+    No entries at all: the vendored bytes really are identical (AUTO).
+    Entries the scope cannot place: the comparison is broken, and AUTO there
+    would wave a third-party change through unread (HOLD).
+    """
+    if entries:
+        return (
+            HOLD,
+            f"the diff lists {len(entries)} file(s), none inside scope {scope!r}",
+            "Il controllo dello scope non torna: resto ferma e faccio guardare.",
+        )
+    return (
+        AUTO,
+        "vendored bytes identical between pin and HEAD",
+        "Contenuto identico a prima: cambia solo il numero, niente di nuovo dentro.",
+    )
 
 
 def _parse_name_status_z(output: str) -> list[tuple[str, str]]:
@@ -164,7 +192,7 @@ def judge_github_skill(
             finding.plain = "La storia del progetto è stata riscritta: strano, da guardare prima."
             return finding
 
-        scope_arg = [] if scope in (".", "") else ["--", scope]
+        scope_arg = [] if scope in (".", "") else ["--", _normalized_scope(scope)]
         # -z: NUL-separated paths, never C-quoted. A quoted non-ASCII
         # name ("skills/demo/\303\251vil.py") would otherwise miss the
         # scope check, read as an empty diff, and wrongly verdict AUTO.
@@ -174,12 +202,12 @@ def judge_github_skill(
         entries = _parse_name_status_z(status.stdout)
         scoped = [(flag, name) for flag, name in entries if _in_scope(name, scope)]
         if not scoped:
-            finding.verdict = AUTO
-            finding.reasons.append("vendored bytes identical between pin and HEAD")
-            finding.plain = "Contenuto identico a prima: cambia solo il numero, niente di nuovo dentro."
+            finding.verdict, reason, plain = _empty_scope_verdict(entries, scope)
+            finding.reasons.append(reason)
+            finding.plain = plain
             return finding
 
-        skill_md = "SKILL.md" if scope in (".", "") else f"{scope.rstrip('/')}/SKILL.md"
+        skill_md = "SKILL.md" if scope in (".", "") else f"{_normalized_scope(scope).rstrip('/')}/SKILL.md"
         tree = _run_git(["ls-tree", head, skill_md], cwd=work)
         if not _ok(tree, "ls-tree"):
             return finding

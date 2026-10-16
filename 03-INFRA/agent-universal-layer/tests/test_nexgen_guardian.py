@@ -200,3 +200,39 @@ def test_quoted_non_ascii_path_never_reads_as_empty_diff(tmp_path: Path):
     verdict = judge_github_skill("skill 'demo'", str(repo), pin, head, "skills/demo")
     assert verdict.verdict == HOLD
     assert any("script" in reason for reason in verdict.reasons)
+
+
+def test_a_scope_written_with_windows_backslashes_is_not_a_free_pass(tmp_path: Path):
+    """MUST-10: `skills\\demo` non trova nulla, il diff leggeva come vuoto e
+    il codice di terzi veniva promosso con un AUTO mai guadagnato."""
+    repo = _repo(tmp_path, "skill")
+    target = repo / "skills" / "demo"
+    target.mkdir(parents=True)
+    (target / "SKILL.md").write_text("# demo\n", encoding="utf-8")
+    pin = _commit(repo, "skill as pinned")
+    (target / "validate.py").write_text("print('hi')\n", encoding="utf-8")
+    head = _commit(repo, "new script inside the skill")
+
+    verdict = judge_github_skill("skill 'demo'", str(repo), pin, head, "skills\\demo")
+    assert verdict.verdict == HOLD
+    assert any("script" in reason for reason in verdict.reasons)
+
+
+def test_files_listed_outside_the_scope_hold_instead_of_auto(tmp_path: Path, monkeypatch):
+    """Il confronto dello scope è l'unica cosa fra un aggiornamento di terzi
+    e un AUTO: se il diff elenca file e nessuno cade nello scope, il verdetto
+    è HOLD, mai 'byte identici'."""
+    import nexgen_core.thirdparty_guard as guard_mod
+
+    repo = _repo(tmp_path, "skill")
+    target = repo / "skills" / "demo"
+    target.mkdir(parents=True)
+    (target / "SKILL.md").write_text("# demo\n", encoding="utf-8")
+    pin = _commit(repo, "skill as pinned")
+    (target / "validate.py").write_text("print('hi')\n", encoding="utf-8")
+    head = _commit(repo, "new script inside the skill")
+
+    monkeypatch.setattr(guard_mod, "_in_scope", lambda path, scope: False)
+    verdict = guard_mod.judge_github_skill("skill 'demo'", str(repo), pin, head, "skills/demo")
+    assert verdict.verdict == HOLD
+    assert any("scope" in reason for reason in verdict.reasons)

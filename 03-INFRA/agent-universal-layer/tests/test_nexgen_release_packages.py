@@ -81,13 +81,15 @@ def test_the_pinned_version_stays_inside_the_declared_range():
         sys.path.insert(0, str(GENERATOR.parent))
     import release_packages
 
-    sdist = lambda i: {"packagetype": "sdist", "url": f"u{i}", "digests": {"sha256": "a" * 64}}
+    def _sdist(i: str) -> dict:
+        return {"packagetype": "sdist", "url": f"u{i}", "digests": {"sha256": "a" * 64}}
+
     releases = {
-        "0.9.0": [sdist("09")],
-        "1.9.0": [sdist("19")],
+        "0.9.0": [_sdist("09")],
+        "1.9.0": [_sdist("19")],
         "1.9.5": [{"packagetype": "bdist_wheel"}],
-        "2.0.0": [sdist("20")],
-        "2.0.1rc1": [sdist("rc")],
+        "2.0.0": [_sdist("20")],
+        "2.0.1rc1": [_sdist("rc")],
     }
     assert release_packages._choose_release("demo>=1.0,<2", releases) == (
         "demo", "1.9.0", "u19", "a" * 64)
