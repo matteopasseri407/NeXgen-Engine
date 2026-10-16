@@ -296,12 +296,12 @@ class SkillFetcher:
                     except OSError as exc:
                         # Transient lock (a CLI holding the skill open, a
                         # scanner, a concurrent cycle): nothing was touched,
-                        # old bytes and views stay valid, retry next cycle.
-                        # Anything else is a real I/O failure: say so loudly.
+                        # old bytes stay valid, retry next cycle. Reported
+                        # as not materialized so the caller records no pin.
                         import errno as _errno
 
                         if exc.errno in (_errno.EACCES, _errno.EBUSY):
-                            return True, WARN + t(
+                            return False, WARN + t(
                                 "github skill '{name}': cache locked by another process, keeping the previous pin and retrying next cycle",
                                 name=entry.name,
                             )

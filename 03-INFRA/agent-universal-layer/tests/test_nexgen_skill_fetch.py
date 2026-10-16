@@ -9,6 +9,7 @@ from pathlib import Path
 import pytest
 
 from nexgen_core.skill_sources import SkillEntry, SkillFetcher
+from nexgen_core.skills import SkillMaterializer
 
 
 def git(repo, *args):
@@ -131,3 +132,46 @@ def test_invalid_declared_source_never_replaces_usable_cache(tmp_path, subpath):
     ok, error = fetcher.ensure_github_checkout(cache, entry)
     assert not ok and error
     assert (cache / "SKILL.md").read_text() == "verified first version\n"
+
+
+def test_a_locked_cache_does_not_record_the_new_pin(tmp_path, monkeypatch):
+    """MUST-07: un lock sulla cache è un rinvio, ma il pin non deve essere
+    registrato: i byte nuovi non ci sono, e il doctor crederebbe di sì."""
+    source = tmp_path / "source"
+    source.mkdir()
+    git(source, "init", "--initial-branch=main")
+    git(source, "config", "user.name", "Test")
+    git(source, "config", "user.email", "test@localhost")
+    git(source, "config", "commit.gpgsign", "false")
+    git(source, "config", "core.hooksPath", str(tmp_path / "empty-hooks"))
+    (source / "SKILL.md").write_text("verified first version\n")
+    git(source, "add", ".")
+    git(source, "commit", "-m", "first")
+    old_pin = git(source, "rev-parse", "HEAD")
+
+    mat = SkillMaterializer(vault_data=tmp_path / "vault", home=tmp_path / "home")
+    cache_dir = mat.home / ".agents" / "cache" / "github-skills" / "synthetic"
+    cache_dir.parent.mkdir(parents=True, exist_ok=True)
+    git(tmp_path, "clone", str(source), str(cache_dir))
+    mat.fetcher._record_installed_version("synthetic", old_pin)
+    previous = mat.fetcher._installed_versions_file().read_bytes()
+
+    (source / "SKILL.md").write_text("verified second version\n")
+    git(source, "add", ".")
+    git(source, "commit", "-m", "second")
+    entry = SkillEntry("synthetic", origin="github", repo=str(source),
+                       commit=git(source, "rev-parse", "HEAD"))
+
+    real_rename = os.rename
+
+    def locked(src, dst):
+        if Path(src) == cache_dir:
+            raise PermissionError(errno.EACCES, "locked by another process")
+        return real_rename(src, dst)
+
+    monkeypatch.setattr(os, "rename", locked)
+    monkeypatch.setattr(mat, "load_manifest", lambda: {"synthetic": entry})
+    _, actions = mat.materialize(apply=True)
+
+    assert any("locked" in action for action in actions), actions
+    assert mat.fetcher._installed_versions_file().read_bytes() == previous
