@@ -592,3 +592,49 @@ def test_the_first_frame_decides_the_protocol_era_of_a_dual_era_server(tmp_path:
         assert res["content"][0]["text"] == "value:42", res
     finally:
         _stop_waiter(proc)
+
+
+
+def test_stop_closes_the_pipes_even_with_a_worker_still_alive(monkeypatch):
+    """MUST-17: `_close_pipes` deve scattare sempre. Con un worker ancora vivo
+    le pipe restavano aperte (handle orfani) e il lettore bloccato non aveva
+    nulla che lo sbloccasse: il fix e' la chiusura incondizionata."""
+    import importlib.util
+    import threading
+
+    spec = importlib.util.spec_from_file_location("lazy_mcp_under_test", LAZY_MCP)
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = mod
+    spec.loader.exec_module(mod)
+
+    closed: list[str] = []
+
+    class _Pipe:
+        def __init__(self, name: str) -> None:
+            self.name = name
+
+        def close(self) -> None:
+            closed.append(self.name)
+
+    class _Proc:
+        stdin = _Pipe("stdin")
+        stdout = _Pipe("stdout")
+        stderr = _Pipe("stderr")
+
+        def poll(self):
+            return None
+
+    release = threading.Event()
+    worker = threading.Thread(target=release.wait, daemon=True)
+    worker.start()
+    handle = mod._ServerHandle("synthetic", {"command": "python", "args": ["-c", "pass"]})
+    handle.proc = _Proc()
+    handle._io_worker = worker  # vivo di proposito: e' il caso del timeout
+    monkeypatch.setattr(mod, "_process_helpers", lambda: (lambda *a, **k: None, None, None))
+
+    try:
+        handle.stop()
+        assert sorted(closed) == ["stderr", "stdin", "stdout"], "le pipe si chiudono sempre"
+    finally:
+        release.set()
+        worker.join(timeout=2)
