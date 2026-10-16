@@ -128,7 +128,9 @@ def _quarantine_diverged_commits_impl(
 ) -> tuple[bool, str, str]:
     """Isolates diverged local commits into a quarantine branch and resets local branch to remote.
 
-    Returns: (success, quarantine_branch_name, message)
+    Refuses while tracked files have uncommitted changes: the hard reset
+    would flatten the working tree (Invariant 1). Returns: (success,
+    quarantine_branch_name, message).
     """
     try:
         assert_safe_git_refs(remote, branch)
@@ -151,49 +153,19 @@ def _quarantine_diverged_commits_impl(
             found=current.stdout.strip() or "detached HEAD", expected=branch,
         )
 
+    # Unsaved work first (Invariant 1): the hard reset below would flatten
+    # the working tree, and moving someone's work to a branch they did not
+    # ask for is still touching it. Refuse before creating anything; the
+    # caller keeps its changes and resolves the divergence by hand.
+    if get_uncommitted_files(repo_dir):
+        return False, "", t("Cannot quarantine while there are uncommitted changes")
+
     # 1. Create quarantine branch at current HEAD
     b_res = run_git(repo_dir, "branch", q_branch)
     if b_res.returncode != 0:
         return False, "", t("Failed to create quarantine branch {branch}: {error}", branch=q_branch, error=b_res.stderr.strip())
 
-    # 2. Preserve any uncommitted tracked changes on the quarantine branch
-    #    before the hard reset: reset --hard would otherwise destroy them.
-    #    If preservation fails, abort: never reset over work that was not saved.
-    sw_res = run_git(repo_dir, "switch", q_branch)
-    if sw_res.returncode != 0:
-        return False, q_branch, t(
-            "Created {q_branch}, but could not switch to it: {error}",
-            q_branch=q_branch, error=sw_res.stderr.strip(),
-        )
-    dirty = get_uncommitted_files(repo_dir)
-    if dirty:
-        add_res = run_git(repo_dir, "add", "--", *dirty)
-        if add_res.returncode != 0:
-            run_git(repo_dir, "switch", branch)
-            return False, q_branch, t(
-                "Created {q_branch}, but could not stage uncommitted changes before realignment: {error}",
-                q_branch=q_branch, error=add_res.stderr.strip(),
-            )
-        c_res = run_git(repo_dir, "commit", "-m", "quarantine: preserve uncommitted changes before realignment")
-        if c_res.returncode != 0:
-            run_git(repo_dir, "switch", branch)
-            return False, q_branch, t(
-                "Created {q_branch}, but could not preserve uncommitted changes before realignment",
-                q_branch=q_branch,
-            )
-    sw_back = run_git(repo_dir, "switch", branch)
-    if sw_back.returncode != 0:
-        # The work is safe on the quarantine branch (committed above, or
-        # there was nothing dirty to lose): report the failure and STOP.
-        # Resetting here would run on the quarantine branch and destroy
-        # exactly what was just preserved.
-        return False, q_branch, t(
-            "Work preserved on {q_branch}, but could not switch back to {branch}: {error}. "
-            "No reset was performed; switch back by hand and retry.",
-            q_branch=q_branch, branch=branch, error=sw_back.stderr.strip(),
-        )
-
-    # 3. Hard reset local branch to remote/branch
+    # 2. Hard reset local branch to remote/branch
     r_res = run_git(repo_dir, "reset", "--hard", f"{remote}/{branch}")
     if r_res.returncode != 0:
         return False, q_branch, t(
@@ -719,7 +691,7 @@ def _publish_changes_impl(
                         "('nexgen vault quarantine --diff <branch>'), then publish again.",
                         detail=q_msg,
                     )
-                return False, t("Data has diverged from {remote}, automatic rebase did not succeed", remote=remote)
+                return False, t("Data has diverged from {remote}: {reason}", remote=remote, reason=q_msg)
 
     # Mirror update (best effort, but reported: a silent mirror failure
     # means the backup drifts for weeks until someone diffs it by hand).
