@@ -67,7 +67,7 @@ def _run(root: Path, rev: str, tests: list[str], command: str, new_tests_from: s
                 (tree / test).parent.mkdir(parents=True, exist_ok=True)
                 atomic_write_text(tree / test, git(root, "show", f"{new_tests_from}:{test}"))
             return subprocess.run([*argv, *tests], cwd=tree, capture_output=True, text=True, encoding="utf-8", errors="replace",
-                                  timeout=TIMEOUT, env=_child_env())
+                                  timeout=TIMEOUT, env=_child_env(), stdin=subprocess.DEVNULL)
         finally:
             git(root, "worktree", "remove", "--force", str(tree), check=False)
 

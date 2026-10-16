@@ -31,6 +31,31 @@ def test_a_proof_run_never_inherits_the_outer_repository(monkeypatch):
     assert env["PYTHONDONTWRITEBYTECODE"] == "1"
 
 
+def test_a_proof_run_never_hands_the_parents_stdin_to_the_child(repo, monkeypatch):
+    """A helper process must not inherit stdin: on Windows a child that reads a
+    reader which never closes hangs at zero CPU (the rule provision.py learned
+    the hard way, and the shape a hung proof run showed on 2026-10-16)."""
+    import subprocess
+
+    from nexgen_core.discipline import regress
+
+    repo.write("tests/test_calc.py", REAL_TEST)
+    commit = repo.commit("seed a test file")
+    captured: dict = {}
+    real = regress.subprocess.run
+
+    def spy(argv, **kwargs):
+        if isinstance(argv, list) and argv[1:3] == ["-m", "pytest"]:
+            captured.update(kwargs)
+            return subprocess.CompletedProcess(argv, 0, "", "")
+        return real(argv, **kwargs)
+
+    monkeypatch.setattr(regress.subprocess, "run", spy)
+    regress._run(repo.path, commit, ["tests/test_calc.py"], "python -m pytest -q", commit)
+
+    assert captured.get("stdin") is subprocess.DEVNULL
+
+
 def start(repo, on_main=False):
     repo.write("src/__init__.py", "")
     repo.write("src/calc.py", BUGGY)
