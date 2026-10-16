@@ -307,3 +307,84 @@ def test_a_post_apply_mismatch_puts_the_file_back(tmp_path: Path) -> None:
         apply_proposal(cfg, proposal.id, yes=True)
 
     assert (repo / "notes.md").read_text(encoding="utf-8") == original
+    state = load_proposal(cfg, proposal.id)
+    assert state.attempted_at and not state.applied_at, "la proposta resta rifiutata, non applicata"
+
+
+def test_a_mismatch_is_undone_even_when_the_audit_cannot_write(tmp_path, monkeypatch):
+    """MUST-16, revisione: se l'audit fallisce sul ramo di rifiuto il file
+    deve essere gia' tornato indietro. Su Windows il registro si blocca per
+    davvero, ed era il percorso che lasciava la modifica a meta'."""
+    from nexgen_local import patch as patch_mod
+
+    repo = _git_repo(tmp_path)
+    original = "Questo contiente un refuso.\n"
+    (repo / "notes.md").write_text(original, encoding="utf-8")
+    cfg = _cfg(tmp_path, repo)
+    proposal = propose_patch(PatchLLM({"old": "contiente", "new": "contiene", "why": "refuso"}),
+                             cfg, "notes.md", "correggi il refuso")
+    tampered = load_proposal(cfg, proposal.id)
+    tampered.new_hash = "0" * 64
+    patch_mod._save(cfg, tampered)
+
+    real_audit = patch_mod.audit_event
+
+    def failing_audit(cfg_arg, kind, payload, **kwargs):
+        if payload.get("phase") == "result":
+            raise PermissionError("audit bloccato da un altro processo")
+        return real_audit(cfg_arg, kind, payload, **kwargs)
+
+    monkeypatch.setattr(patch_mod, "audit_event", failing_audit)
+    with pytest.raises(PermissionError):
+        apply_proposal(cfg, proposal.id, yes=True)
+
+    assert (repo / "notes.md").read_text(encoding="utf-8") == original
+
+
+def test_a_failed_rollback_keeps_the_original_bytes_beside_the_file(tmp_path, monkeypatch):
+    """Se anche il ripristino fallisce, i byte originali restano in un file
+    accanto e il rifiuto ne dice il percorso: senza quella copia l'unico
+    contenuto buono esisterebbe solo in memoria."""
+    from nexgen_local import patch as patch_mod
+
+    repo = _git_repo(tmp_path)
+    original = "Questo contiente un refuso.\n"
+    target = repo / "notes.md"
+    target.write_text(original, encoding="utf-8")
+    cfg = _cfg(tmp_path, repo)
+    proposal = propose_patch(PatchLLM({"old": "contiente", "new": "contiene", "why": "refuso"}),
+                             cfg, "notes.md", "correggi il refuso")
+    tampered = load_proposal(cfg, proposal.id)
+    tampered.new_hash = "0" * 64
+    patch_mod._save(cfg, tampered)
+
+    def failing_write(path_arg, data, **kwargs):
+        raise OSError("disco pieno")
+
+    monkeypatch.setattr(patch_mod, "atomic_write_bytes", failing_write)
+    with pytest.raises(PatchError, match="pre-patch"):
+        apply_proposal(cfg, proposal.id, yes=True)
+
+    assert target.with_name("notes.md.pre-patch").read_text(encoding="utf-8") == original
+
+
+def test_a_file_changed_meanwhile_is_never_overwritten_by_the_rollback(tmp_path, monkeypatch):
+    """Il ripristino controlla che il file sia ancora quello che la penna ha
+    prodotto: se qualcuno l'ha toccato, si rifiuta invece di cancellare il
+    suo lavoro."""
+    from nexgen_local import patch as patch_mod
+
+    repo = _git_repo(tmp_path)
+    (repo / "notes.md").write_text("Questo contiente un refuso.\n", encoding="utf-8")
+    cfg = _cfg(tmp_path, repo)
+    proposal = propose_patch(PatchLLM({"old": "contiente", "new": "contiene", "why": "refuso"}),
+                             cfg, "notes.md", "correggi il refuso")
+    tampered = load_proposal(cfg, proposal.id)
+    tampered.new_hash = "0" * 64
+    patch_mod._save(cfg, tampered)
+
+    monkeypatch.setattr(patch_mod, "_still_ours", lambda path_arg, expected: False)
+    with pytest.raises(PatchError, match="cambiato durante il ripristino"):
+        apply_proposal(cfg, proposal.id, yes=True)
+
+    assert (repo / "notes.md").read_text(encoding="utf-8") == "Questo contiene un refuso.\n"

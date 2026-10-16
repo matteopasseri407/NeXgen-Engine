@@ -22,7 +22,7 @@ import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
-from nexgen_core.files import write_private_text
+from nexgen_core.files import atomic_write_bytes, write_private_text
 
 from .config import LaneConfig
 from .llm import LLM
@@ -321,18 +321,38 @@ def _check_approval(cfg: LaneConfig, proposal: Proposal) -> tuple[Path, Path]:
     return path, root
 
 
-def _rollback_file(path: Path, before: bytes) -> None:
-    """Puts back the bytes the file had before the patch was applied.
+def _still_ours(path: Path, expected: str) -> bool:
+    """True while the file holds what `git apply` produced.
 
-    A post-apply validation failure used to leave the file half-changed with
-    the proposal marked failed, and nothing said which state the tree was in.
+    An unreadable file counts as changed: the safe answer is to leave it.
     """
     try:
-        path.write_bytes(before)
+        return _sha(_read_text_bytes(path)) == expected
+    except OSError:  # nexgen: allow reason="an unreadable file counts as changed: leave it alone"
+        return False
+
+
+def _rollback_file(path: Path, before: bytes, expected: str | None) -> None:
+    """Puts the pre-patch bytes back, atomically and only if untouched.
+
+    `expected` is the content hash read right after `git apply`, or None when
+    that read failed: a hash that no longer matches means someone else changed
+    the file meanwhile, and it is left alone. The write goes through the
+    engine's own atomic writer, so a failure cannot truncate the file, and the
+    original bytes are saved beside it for whoever has to finish by hand.
+    """
+    if expected is not None and not _still_ours(path, expected):
+        raise PatchError("il file e' cambiato durante il ripristino: lasciato com'e'")
+    try:
+        atomic_write_bytes(path, before)
     except OSError as exc:
-        raise PatchError(
-            f"il file applicato non corrisponde alla proposta e il ripristino e' fallito: {exc}"
-        ) from exc
+        spare = path.with_name(path.name + ".pre-patch")
+        try:
+            spare.write_bytes(before)
+            where = f"; i byte originali sono in {spare}"
+        except OSError:
+            where = ""
+        raise PatchError(f"ripristino fallito ({exc}){where}") from exc
 
 
 def _run_apply(
@@ -342,16 +362,14 @@ def _run_apply(
     rel = proposal.file
 
     # Write-ahead receipt: the intent is recorded before the pen moves.
-    audit_event(
-        cfg,
-        "apply_patch",
-        {"file": rel, "proposal": proposal.id, "phase": "intent"},
-        ok=True,
-        chars=len(proposal.patch),
-    )
+    audit_event(cfg, "apply_patch", {"file": rel, "proposal": proposal.id, "phase": "intent"},
+                ok=True, chars=len(proposal.patch))
 
     record_attempt(proposal, lambda: _save(cfg, proposal), PatchError)
-    before = path.read_bytes()  # what a failed post-apply check puts back
+    try:
+        before = path.read_bytes()  # what a failed post-apply check puts back
+    except OSError as exc:
+        raise PatchError(f"il file non e' leggibile ({type(exc).__name__}): non applico") from exc
     with tempfile.NamedTemporaryFile("wb", suffix=".patch", delete=False) as handle:
         handle.write(proposal.patch.encode("utf-8"))
         patch_path = Path(handle.name)
@@ -361,19 +379,21 @@ def _run_apply(
     finally:
         patch_path.unlink(missing_ok=True)
     if code != 0:
-        audit_event(
-            cfg,
-            "apply_patch",
-            {"file": rel, "proposal": proposal.id, "phase": "result", "rc": code},
-            ok=False,
-            chars=len(proposal.patch),
-        )
+        audit_event(cfg, "apply_patch",
+                    {"file": rel, "proposal": proposal.id, "phase": "result", "rc": code},
+                    ok=False, chars=len(proposal.patch))
         raise PatchError(f"git apply fallito: {output.strip()}")
-    if _sha(_read_text_bytes(path)) != proposal.new_hash:
+    try:
+        applied = _sha(_read_text_bytes(path))
+    except OSError:
+        applied = None
+    if applied != proposal.new_hash:
+        # The pen has already moved: the rollback comes before the audit,
+        # because an audit that cannot write used to leave the file changed.
+        _rollback_file(path, before, applied)
         audit_event(cfg, "apply_patch",
                     {"file": rel, "proposal": proposal.id, "phase": "result", "rc": "hash"},
                     ok=False, chars=len(proposal.patch))
-        _rollback_file(path, before)
         raise PatchError("il file applicato non corrisponde alla proposta; il file e' tornato com'era")
 
     verify_output = ""
