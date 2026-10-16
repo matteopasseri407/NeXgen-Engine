@@ -337,7 +337,7 @@ def test_a_mismatch_is_undone_even_when_the_audit_cannot_write(tmp_path, monkeyp
         return real_audit(cfg_arg, kind, payload, **kwargs)
 
     monkeypatch.setattr(patch_mod, "audit_event", failing_audit)
-    with pytest.raises(PatchError, match="ripristino: restored"):
+    with pytest.raises(PatchError, match="tornato com'era"):
         apply_proposal(cfg, proposal.id, yes=True)
 
     assert (repo / "notes.md").read_text(encoding="utf-8") == original
@@ -347,9 +347,9 @@ def test_a_mismatch_is_undone_even_when_the_audit_cannot_write(tmp_path, monkeyp
 
 
 def test_a_failed_rollback_keeps_the_original_bytes_beside_the_file(tmp_path, monkeypatch):
-    """Se anche il ripristino fallisce, i byte originali restano in un file
-    dell'area della lane (non nel repository) e il registro dice che il
-    ripristino non e' riuscito."""
+    """Se il ripristino non riesce, i byte originali restano in un file
+    dell'area della lane (non nel repository) e il registro dice sia l'esito
+    sia che la copia c'e'."""
     import json
 
     from nexgen_local import patch as patch_mod
@@ -373,7 +373,7 @@ def test_a_failed_rollback_keeps_the_original_bytes_beside_the_file(tmp_path, mo
         return real_write(path_arg, data, **kwargs)
 
     monkeypatch.setattr(patch_mod, "atomic_write_bytes", failing_write)
-    with pytest.raises(PatchError, match="ripristino non e' riuscito"):
+    with pytest.raises(PatchError, match="ripristino: failed"):
         apply_proposal(cfg, proposal.id, yes=True)
 
     spare = cfg.proposals_dir / f"{proposal.id}.pre-patch"
@@ -381,12 +381,42 @@ def test_a_failed_rollback_keeps_the_original_bytes_beside_the_file(tmp_path, mo
     assert spare.parent == cfg.proposals_dir, "la copia non vive nel repository"
     lines = [json.loads(line) for line in cfg.audit_path.read_text(encoding="utf-8").strip().splitlines()]
     assert lines[-1]["args"]["restore"] == "failed"
+    assert lines[-1]["args"]["spare"] == "written"
 
 
 def test_a_file_changed_meanwhile_is_never_overwritten_by_the_rollback(tmp_path, monkeypatch):
     """Il ripristino controlla che il file sia ancora quello che la penna ha
-    prodotto: se qualcuno l'ha toccato si rifiuta, lo lascia com'e' e lo
-    scrive nel registro."""
+    prodotto: se qualcuno l'ha toccato si rifiuta, lo lascia com'e' e ne
+    conserva comunque i byte originali in una copia."""
+    import json
+
+    from nexgen_local import patch as patch_mod
+
+    repo = _git_repo(tmp_path)
+    original = "Questo contiente un refuso.\n"
+    (repo / "notes.md").write_text(original, encoding="utf-8")
+    cfg = _cfg(tmp_path, repo)
+    proposal = propose_patch(PatchLLM({"old": "contiente", "new": "contiene", "why": "refuso"}),
+                             cfg, "notes.md", "correggi il refuso")
+    tampered = load_proposal(cfg, proposal.id)
+    tampered.new_hash = "0" * 64
+    patch_mod._save(cfg, tampered)
+
+    monkeypatch.setattr(patch_mod, "_file_state", lambda path_arg, expected: "changed")
+    with pytest.raises(PatchError, match="ripristino: changed"):
+        apply_proposal(cfg, proposal.id, yes=True)
+
+    assert (repo / "notes.md").read_text(encoding="utf-8") == "Questo contiene un refuso.\n"
+    spare = cfg.proposals_dir / f"{proposal.id}.pre-patch"
+    assert spare.read_text(encoding="utf-8") == original
+    lines = [json.loads(line) for line in cfg.audit_path.read_text(encoding="utf-8").strip().splitlines()]
+    assert lines[-1]["args"]["restore"] == "changed"
+    assert lines[-1]["args"]["spare"] == "written"
+
+
+def test_when_no_copy_can_be_saved_the_refusal_does_not_promise_one(tmp_path, monkeypatch):
+    """Disco pieno fino in fondo: il file resta modificato e nessuna copia
+    esiste, quindi il rifiuto non deve indicare un percorso che non c'e'."""
     import json
 
     from nexgen_local import patch as patch_mod
@@ -400,10 +430,15 @@ def test_a_file_changed_meanwhile_is_never_overwritten_by_the_rollback(tmp_path,
     tampered.new_hash = "0" * 64
     patch_mod._save(cfg, tampered)
 
-    monkeypatch.setattr(patch_mod, "_still_ours", lambda path_arg, expected: False)
-    with pytest.raises(PatchError, match="ripristino: changed"):
+    def failing_write(path_arg, data, **kwargs):
+        raise OSError("disco pieno")
+
+    monkeypatch.setattr(patch_mod, "atomic_write_bytes", failing_write)
+    with pytest.raises(PatchError) as refused:
         apply_proposal(cfg, proposal.id, yes=True)
 
-    assert (repo / "notes.md").read_text(encoding="utf-8") == "Questo contiene un refuso.\n"
+    assert "copia" in str(refused.value) and ".pre-patch" not in str(refused.value)
+    assert not (cfg.proposals_dir / f"{proposal.id}.pre-patch").exists()
     lines = [json.loads(line) for line in cfg.audit_path.read_text(encoding="utf-8").strip().splitlines()]
-    assert lines[-1]["args"]["restore"] == "changed"
+    assert lines[-1]["args"]["restore"] == "failed"
+    assert lines[-1]["args"]["spare"] == "failed"

@@ -1,3 +1,4 @@
+# nexgen: one-job reason="apply one approved patch to one file without leaving it half-changed"
 """The pen, gated: patch proposals whose approval screen is machine facts only.
 
 The model never writes. It returns a snippet replacement as JSON; the engine
@@ -322,54 +323,103 @@ def _check_approval(cfg: LaneConfig, proposal: Proposal) -> tuple[Path, Path]:
     return path, root
 
 
-def _still_ours(path: Path, expected: str) -> bool:
-    """True while the file holds what `git apply` produced.
-
-    An unreadable file counts as changed: the safe answer is to leave it.
-    """
+def _file_state(path: Path, expected: str) -> str:
+    """`ours` while the file holds what `git apply` produced, else `changed`,
+    or `unreadable` when it cannot be read at all: a file a scanner is
+    holding open for a moment is not a change, and the log should not say it
+    was one."""
     try:
-        return _sha(_read_text_bytes(path)) == expected
-    except OSError:  # nexgen: allow reason="an unreadable file counts as changed: leave it alone"
-        return False
+        return "ours" if _sha(_read_text_bytes(path)) == expected else "changed"
+    except OSError:
+        return "unreadable"
 
 
 def _spare_path(cfg: LaneConfig, proposal: Proposal) -> Path:
-    """Where the original bytes go when even the restore cannot be written.
+    """Where the original bytes go whenever they cannot go back.
 
-    The lane's own directory, not the repository: a `.pre-patch` sitting next
-    to the file would show up as an untracked file and could be committed by
-    mistake, and each proposal gets its own copy instead of one shared name.
+    The lane's own directory, not the repository: a `.pre-patch` beside the
+    file would be an untracked file a commit could pick up, and each proposal
+    gets its own copy instead of one shared name. The id comes from a JSON
+    record, so a tampered one must not escape that directory.
     """
+    if not proposal.id or ".." in proposal.id or any(sep in proposal.id for sep in "\\/:"):
+        raise PatchError(f"identificativo di proposta non valido: {proposal.id!r}")
     return cfg.proposals_dir / f"{proposal.id}.pre-patch"
+
+
+def _keep_original(before: bytes, spare: Path) -> str:
+    """Saves the pre-patch bytes for a human and says how it went.
+
+    `written` when this call saved them, `exists` when a copy from an earlier
+    failure was already there, `failed` when even that write could not land
+    (a full disk, a locked directory): a refusal must never point at a file
+    that is not there.
+    """
+    if spare.exists():
+        return "exists"
+    try:
+        secure_artifact(spare.parent)
+        atomic_write_bytes(spare, before, preserve_mode=False)
+    except OSError:  # nexgen: allow reason="the outcome carries the failure; nothing else can be done"
+        return "failed"
+    return "written"
 
 
 def _restore_outcome(
     path: Path, before: bytes, expected: str | None, spare: Path,
-) -> str:
-    """Puts the pre-patch bytes back and reports how it went.
+) -> tuple[str, str]:
+    """Puts the pre-patch bytes back when they are ours to put back.
 
-    Returns "restored", "changed" (someone else edited the file meanwhile, so
-    it is left alone) or "failed" (even the atomic write could not land; the
-    original bytes are saved in `spare` and the refusal names it). `expected`
+    Returns (restore, spare). `restore` is `restored`, `changed` (someone
+    else edited the file meanwhile), `unreadable` (it could not be read to
+    check) or `failed` (even the atomic write could not land); `spare` is
+    what `_keep_original` reports whenever the bytes did not go back. The
+    original bytes are kept in both non-restoring cases: the file may carry
+    edits nobody committed, and only a copy can bring them back. `expected`
     is the content hash read right after `git apply`, or None when that read
-    failed: with the applied output unknown, putting the known-good bytes
-    back is the safer act, so the "changed" check is skipped on purpose. A
-    file can change again between that check and the write; the window is
-    milliseconds and closing it would need a lock on the file itself.
+    failed: with the applied output unknown, the known-good bytes go back on
+    purpose. A parallel apply on the same file is the one case where the
+    check and the write can still lose work: the lane locks per proposal,
+    not per file, and half a megabyte of window is not a lock.
     """
-    if expected is not None and not _still_ours(path, expected):
-        return "changed"
+    if expected is not None:
+        state = _file_state(path, expected)
+        if state != "ours":
+            return state, _keep_original(before, spare)
     try:
         atomic_write_bytes(path, before)
     except OSError:
-        try:
-            if not spare.exists():
-                secure_artifact(spare.parent)
-                atomic_write_bytes(spare, before, preserve_mode=False)
-        except OSError:  # nexgen: allow reason="the refusal below still reaches the person"
-            pass
-        return "failed"
-    return "restored"
+        return "failed", _keep_original(before, spare)
+    return "restored", "not-needed"
+
+
+def _approved_bytes_or_refuse(path: Path, proposal: Proposal) -> bytes:
+    """The file's bytes, refusing when they are not the approved ones.
+
+    A second apply on the same file can slip in between the approval check
+    and this read: with bytes nobody approved, a rollback would erase that
+    other change. The read itself is guarded too: a file that cannot be read
+    is refused before anything is applied.
+    """
+    try:
+        before = path.read_bytes()
+    except OSError as exc:
+        raise PatchError(f"il file non e' leggibile ({type(exc).__name__}): non applico") from exc
+    if _sha(before.decode("utf-8", errors="replace")) != proposal.original_hash:
+        raise PatchError("il file e' cambiato dopo l'approvazione: non applico, riprova la proposta")
+    return before
+
+
+def _applied_hash(path: Path) -> str | None:
+    """The hash of what `git apply` produced, or None when it cannot be read.
+
+    The caller treats an unreadable result as a mismatch: it knows the file
+    is not what the proposal promised, and the pre-patch bytes can go back.
+    """
+    try:
+        return _sha(_read_text_bytes(path))
+    except OSError:  # nexgen: allow reason="the caller treats an unreadable result as a mismatch"
+        return None
 
 
 def _settle_mismatch(
@@ -379,26 +429,32 @@ def _settle_mismatch(
 
     The outcome reaches the log in every case, restored or not: the restore
     runs first and the result line is written whatever it did, because the
-    two cases where the file stays wrong are the ones where the record
-    matters most. An audit that cannot write does not cover that refusal.
+    cases where the file stays wrong are the ones where the record matters
+    most. The line also carries whether a copy of the original bytes exists,
+    so the refusal cannot promise one that is not there.
     """
-    outcome = "failed"
+    outcome, spare = "failed", "failed"
     try:
-        outcome = _restore_outcome(path, before, applied, _spare_path(cfg, proposal))
+        outcome, spare = _restore_outcome(path, before, applied, _spare_path(cfg, proposal))
     finally:
         try:
             audit_event(cfg, "apply_patch",
                         {"file": proposal.file, "proposal": proposal.id, "phase": "result",
-                         "rc": "hash", "restore": outcome},
+                         "rc": "hash", "restore": outcome, "spare": spare},
                         ok=False, chars=len(proposal.patch))
         except OSError:  # nexgen: allow reason="the refusal below is what the person needs"
             pass
-    if outcome == "failed":
+    if outcome == "restored":
+        raise PatchError("il file applicato non corrisponde alla proposta; il file e' tornato com'era")
+    if spare in ("written", "exists"):
         raise PatchError(
-            "il file applicato non corrisponde alla proposta e il ripristino non e' riuscito: "
+            f"il file applicato non corrisponde alla proposta (ripristino: {outcome}); "
             f"i byte originali sono in {_spare_path(cfg, proposal)}"
         )
-    raise PatchError(f"il file applicato non corrisponde alla proposta (ripristino: {outcome})")
+    raise PatchError(
+        f"il file applicato non corrisponde alla proposta (ripristino: {outcome}) e la copia "
+        "dei byte originali non e' riuscita: il file va guardato a mano"
+    )
 
 
 def _run_apply(
@@ -412,10 +468,7 @@ def _run_apply(
                 ok=True, chars=len(proposal.patch))
 
     record_attempt(proposal, lambda: _save(cfg, proposal), PatchError)
-    try:
-        before = path.read_bytes()  # what a failed post-apply check puts back
-    except OSError as exc:
-        raise PatchError(f"il file non e' leggibile ({type(exc).__name__}): non applico") from exc
+    before = _approved_bytes_or_refuse(path, proposal)  # a failed check puts these back
     with tempfile.NamedTemporaryFile("wb", suffix=".patch", delete=False) as handle:
         handle.write(proposal.patch.encode("utf-8"))
         patch_path = Path(handle.name)
@@ -429,10 +482,7 @@ def _run_apply(
                     {"file": rel, "proposal": proposal.id, "phase": "result", "rc": code},
                     ok=False, chars=len(proposal.patch))
         raise PatchError(f"git apply fallito: {output.strip()}")
-    try:
-        applied = _sha(_read_text_bytes(path))
-    except OSError:
-        applied = None
+    applied = _applied_hash(path)
     if applied != proposal.new_hash:
         _settle_mismatch(cfg, proposal, path, before, applied)
 
