@@ -7,7 +7,7 @@ import sys
 from pathlib import Path
 
 from . import gates, review
-from .config import COMMAND, Config, load
+from .config import COMMAND, Config, ConfigError, load
 from .health import report, run_smoke
 from .gitutil import STAGED, Change, GitError, fork_point, git, own_changes, parents, repo_root, resolve_base
 from .score import is_complex
@@ -108,8 +108,9 @@ def cmd_smoke(args: argparse.Namespace) -> int:
 
 
 def cmd_init(args: argparse.Namespace) -> int:
-    print("\n".join(init_project(repo_root(Path.cwd()), args.smoke)))
-    return 0
+    lines, protected = init_project(repo_root(Path.cwd()), args.smoke)
+    print("\n".join(lines))
+    return 0 if protected else 1
 
 
 def cmd_ci(args: argparse.Namespace) -> int:
@@ -169,6 +170,6 @@ def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     try:
         return args.func(args)
-    except GitError as err:
+    except (GitError, ConfigError) as err:
         print(f"discipline: {err}", file=sys.stderr)
         return 1

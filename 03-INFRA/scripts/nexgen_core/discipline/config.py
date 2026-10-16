@@ -8,6 +8,11 @@ from pathlib import Path
 from .gitutil import show
 
 CONFIG_NAME = ".nexgen-discipline.toml"
+
+
+class ConfigError(RuntimeError):
+    pass
+
 COMMAND = "python 03-INFRA/scripts/discipline.py"
 
 
@@ -33,7 +38,10 @@ def load(root: Path, base: str) -> Config:
     text = show(root, f"{base}:{CONFIG_NAME}")
     if text is None:
         return Config()
-    data = tomllib.loads(text)
+    try:
+        data = tomllib.loads(text)
+    except tomllib.TOMLDecodeError as err:
+        raise ConfigError(f"{CONFIG_NAME} at {base} is not valid TOML ({err}). Fix that file; quote values with double quotes and escape backslashes.") from err
     known = {f.name for f in fields(Config)}
     values = {k: (tuple(v) if isinstance(v, list) else v) for k, v in data.items() if k in known}
     if "exclude" in values:  # a repository adds to the defaults, it does not replace them

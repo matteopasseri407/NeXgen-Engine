@@ -1,7 +1,6 @@
 """Plain-Italian health report and the real-flow smoke command. Read-only, never blocks a commit."""
 from __future__ import annotations
 
-import shlex
 import subprocess
 from datetime import date
 from pathlib import Path
@@ -35,6 +34,8 @@ def _status(smoke: str, now: dict[str, int], before: dict[str, int] | None) -> t
         return "ROSSO", f"il debito è cresciuto di {grew} voci in una settimana", "Fermati: nessun codice nuovo nei file elencati da `audit` finché non rientra."
     if grew > 0:
         return "GIALLO", f"il debito è cresciuto di {grew} in una settimana", "Controlla `audit`: chi ha ingrandito file o funzioni oltre i limiti?"
+    if before is None:
+        return "GIALLO", "progetto nuovo: ancora nessun dato di una settimana fa per confrontare", "Nessuna per ora."
     return "VERDE", "nessun peggioramento in una settimana", "Nessuna."
 
 
@@ -65,4 +66,8 @@ def run_smoke(root: Path) -> int:
     if not command:
         print("smoke: nessun test del percorso reale definito (smoke_command in .nexgen-discipline.toml)")
         return 0
-    return subprocess.run(shlex.split(command), cwd=root, check=False).returncode
+    try:  # the owner's own command, run as typed so `npm test` and `a && b` work on every OS
+        return subprocess.run(command, cwd=root, shell=True, check=False).returncode  # noqa: S602
+    except OSError as err:
+        print(f"smoke: il comando non è partito: {err}")
+        return 1

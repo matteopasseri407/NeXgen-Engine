@@ -134,11 +134,14 @@ def files_at(root: Path, rev: str, suffixes: tuple[str, ...]) -> dict[str, str]:
                           capture_output=True)
     out, pos, texts = proc.stdout, 0, {}
     for name in names:
-        end = out.index(b"\n", pos)
+        end = out.find(b"\n", pos)
+        if end < 0:
+            break
         header = out[pos:end].split()
         pos = end + 1
-        if len(header) == 3 and header[1] == b"blob":
+        if len(header) == 3 and header[2].isdigit():  # "<sha> <type> <size>"; "<rev:path> missing" has no body
             size = int(header[2])
-            texts[name] = out[pos:pos + size].decode("utf-8", errors="replace")
+            if header[1] == b"blob":
+                texts[name] = out[pos:pos + size].decode("utf-8", errors="replace")
             pos += size + 1
     return texts
