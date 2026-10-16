@@ -63,7 +63,10 @@ def force_stop_process_tree(
     A parent can have exited while its children still own inherited pipes.
     Windows taskkill /T handles npm shims as well as direct executables.
     """
-    if process_group is None and proc.poll() is not None:
+    # POSIX without a group has nothing left to signal; on Windows the
+    # launcher can return while its children (npm shims, workers) stay
+    # alive, so the tree kill below must still run.
+    if os.name == "posix" and process_group is None and proc.poll() is not None:
         return True
     deadline = time.monotonic() + max(0.0, timeout)
     tree_killed = False
