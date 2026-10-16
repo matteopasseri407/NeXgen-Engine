@@ -185,3 +185,36 @@ def test_more_shapes_of_swallowing_are_caught(repo):
     for body in ("continue", "return []", "return {}", 'return ""'):
         repo.write("mod.py", f"def f(xs):\n    for x in xs:\n        try:\n            g(x)\n        except Exception:\n            {body}\n")
         assert cli.main(["check", "--base", base]) == 1, body
+
+
+def test_moving_assertions_into_a_helper_is_not_weakening(repo):
+    base = committed_tests(repo, "def test_a():\n    assert 1\n    assert 2\n")
+    repo.write("tests/test_x.py", "def check():\n    assert 1\n    assert 2\n\n\ndef test_a():\n    check()\n")
+    assert cli.main(["check", "--base", base]) == 0
+
+
+def test_parametrize_cases_in_a_named_constant_are_counted_both_ways(repo):
+    three = "def test_a():\n    assert 1\n\n\ndef test_b():\n    assert 2\n\n\ndef test_c():\n    assert 3\n"
+    base = committed_tests(repo, three)
+    head = "import pytest\n\nCASES = {cases}\n\n\n@pytest.mark.parametrize(\"i\", CASES)\ndef test_i(i):\n    assert i\n"
+    repo.write("tests/test_x.py", head.format(cases="[1, 2, 3]"))
+    assert cli.main(["check", "--base", base]) == 0  # three cases kept: only the shape changed
+    repo.write("tests/test_x.py", head.format(cases="[1]"))
+    assert cli.main(["check", "--base", base]) == 1  # two of the three cases are gone
+
+
+def test_deleting_js_tests_is_flagged_even_if_an_empty_one_is_added(repo):
+    old = "".join(f"it('case {i}', () => {{ expect({i}).toBe({i}); }});\n" for i in range(30))
+    repo.write("tests/a.test.js", old)
+    base = repo.commit("js tests")
+    (repo.path / "tests/a.test.js").unlink()
+    repo.write("tests/b.test.js", "// nothing yet\n")
+    assert cli.main(["check", "--base", base]) == 1
+
+
+def test_init_in_a_non_ascii_smoke_keeps_the_config_valid_and_rerun_stays_quiet(repo):
+    init_project(repo.path, "echo ✓")
+    repo.commit("init")
+    assert load(repo.path, "HEAD").smoke_command == "echo ✓"
+    lines, _ = init_project(repo.path, "")
+    assert not any("ATTENZIONE" in line for line in lines)

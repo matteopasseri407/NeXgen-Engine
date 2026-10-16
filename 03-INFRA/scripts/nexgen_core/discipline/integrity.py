@@ -14,16 +14,8 @@ from .violations import CODE_EXT, TEST_PATH, Violation, selected
 PY_SKIPS = {"pytest.mark.skip", "pytest.mark.skipif", "pytest.mark.xfail", "pytest.skip", "pytest.xfail",
             "unittest.skip", "unittest.skipIf", "unittest.skipUnless"}
 SKIP = re.compile(r"pytest\.mark\.(skip|skipif|xfail)|pytest\.(skip|xfail)\(|unittest\.skip|\b(describe|it|test)\.skip\(|\bx(it|describe|test)\(|@Ignore")
+OTHER_TESTS = re.compile(r"\b(?:it|test)\s*\(|\bfunc Test\w+|@Test\b")
 HOW_TO_ALLOW = "If this is intended, the owner adds the path to test_removal_ok in .nexgen-discipline.toml first."
-
-
-def _cases(func: ast.AST) -> int:
-    """How many test cases a function stands for: a literal parametrize list counts each entry."""
-    for deco in getattr(func, "decorator_list", ()):
-        if isinstance(deco, ast.Call) and getattr(deco.func, "attr", "") == "parametrize" and len(deco.args) > 1 \
-                and isinstance(deco.args[1], (ast.List, ast.Tuple)):
-            return max(len(deco.args[1].elts), 1)
-    return 1
 
 
 def count_skips(change_text: str | None, path: str) -> int:
@@ -37,21 +29,45 @@ def count_skips(change_text: str | None, path: str) -> int:
     return sum(isinstance(n, ast.Attribute) and ast.unparse(n) in PY_SKIPS for n in ast.walk(tree))
 
 
+def _literal_sizes(tree: ast.AST) -> dict[str, int]:
+    """Module-level `NAME = [..]`/`(..)` lists, so `parametrize("x", NAME)` can be weighed."""
+    return {t.id: len(n.value.elts) for n in ast.walk(tree) if isinstance(n, ast.Assign)
+            and isinstance(n.value, (ast.List, ast.Tuple)) for t in n.targets if isinstance(t, ast.Name)}
+
+
+def _cases(func: ast.AST, sizes: dict[str, int]) -> int:
+    """How many test cases a function stands for: a parametrize list (literal or named) counts each entry."""
+    for deco in getattr(func, "decorator_list", ()):
+        if isinstance(deco, ast.Call) and getattr(deco.func, "attr", "") == "parametrize" and len(deco.args) > 1:
+            cases = deco.args[1]
+            size = len(cases.elts) if isinstance(cases, (ast.List, ast.Tuple)) else sizes.get(getattr(cases, "id", ""), 1)
+            return max(size, 1)
+    return 1
+
+
 def test_stats(source: str | None) -> tuple[int, int]:
-    """(test cases, assertions) in a Python test file; (0, 0) if it does not parse."""
+    """(test cases, assertions) in a Python test file; assertions in helpers count too. (0, 0) if it does not parse."""
     try:
         tree = ast.parse(source or "")
-    except SyntaxError:
+    except SyntaxError:  # nexgen: allow reason="a file that does not parse has nothing to count"
         return 0, 0
+    sizes = _literal_sizes(tree)
+    asserting = {id(n) for n in ast.walk(tree) if isinstance(n, ast.Assert) or (isinstance(n, ast.Call) and getattr(
+        n.func, "attr", getattr(n.func, "id", "")).startswith("assert"))}
     tests = asserts = 0
     for func in ast.walk(tree):
         if isinstance(func, (ast.FunctionDef, ast.AsyncFunctionDef)) and func.name.startswith("test"):
-            weight = _cases(func)
+            weight = _cases(func, sizes)
             tests += weight
-            for node in ast.walk(func):
-                is_call = isinstance(node, ast.Call) and getattr(node.func, "attr", getattr(node.func, "id", "")).startswith("assert")
-                asserts += weight * (isinstance(node, ast.Assert) or is_call)
-    return tests, asserts
+            inside = {id(n) for n in ast.walk(func)} & asserting
+            asserts += weight * len(inside)
+            asserting -= inside  # helpers outside any test function keep weight 1
+    return tests, asserts + len(asserting)
+
+
+def other_language_tests(source: str | None) -> int:
+    """Rough count of test cases in non-Python files: it(/test( in JS, func Test in Go, @Test in Java."""
+    return len(OTHER_TESTS.findall(source or ""))
 
 
 def _is_test(change: Change, cfg: Config) -> bool:
@@ -76,8 +92,8 @@ def check_test_integrity(changes: list[Change], cfg: Config) -> list[Violation]:
     if a1 < a0:
         problems.append(f"assertions went from {a0} to {a1}")
     others = [c for c in tests if not c.path.endswith(".py")]
-    if any(c.new is None for c in others) and not any(c.old is None for c in others):
-        problems.append("a test file was deleted")
+    if sum(other_language_tests(c.new) for c in others) < sum(other_language_tests(c.old) for c in others):
+        problems.append("fewer test cases in non-Python test files")
     if not problems:
         return []
     return [Violation(", ".join(c.path for c in tests[:3]), f"tests weakened: {'; '.join(problems)}. {HOW_TO_ALLOW}", "test")]

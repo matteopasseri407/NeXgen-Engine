@@ -37,7 +37,7 @@ Una riga per decisione: data, cosa, perché. Gli agent la leggono e non la rimet
 
 def _config_text(smoke: str) -> str:
     return ("# Limiti e opzioni della disciplina di questo progetto (valgono i valori già committati).\n"
-            f"smoke_command = {json.dumps(smoke)}  # il comando che prova il programma davvero\n"
+            f"smoke_command = {json.dumps(smoke, ensure_ascii=False)}  # il comando che prova il programma davvero\n"
             "# review_paths = []  # percorsi di produzione che richiedono una revisione se la modifica è complessa\n")
 
 
@@ -55,6 +55,7 @@ def _install_hook(hooks: Path, name: str) -> tuple[str, bool]:
 def init_project(root: Path, smoke: str = "") -> tuple[list[str], bool]:
     """Create what is missing; never overwrite the owner's files. Returns (what it did, whether all is protected)."""
     done: list[str] = []
+    config_is_new = not (root / CONFIG_NAME).exists()
     for name, text in ((CONFIG_NAME, _config_text(smoke)), ("DECISIONS.md", DECISIONS)):
         if not (root / name).exists():
             atomic_write_text(root / name, text)
@@ -68,6 +69,6 @@ def init_project(root: Path, smoke: str = "") -> tuple[list[str], bool]:
     hooks.mkdir(parents=True, exist_ok=True)
     results = [_install_hook(hooks, name) for name in HOOK_COMMANDS]
     done += [line for line, _ in results]
-    if not smoke:
+    if not smoke and config_is_new:
         done.append("ATTENZIONE: manca smoke_command, il rapporto resta ROSSO finché non lo definisci")
     return done, all(ok for _, ok in results)
