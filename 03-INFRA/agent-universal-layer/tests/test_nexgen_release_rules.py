@@ -70,6 +70,24 @@ def test_versions_compare_as_numbers_not_as_text():
     assert newer_version("v1.0.0", "0.99.2")
 
 
+def test_a_final_version_outranks_its_own_pre_releases():
+    """SemVer 2.0.0: dopo la -rc1 la versione finale deve poter uscire.
+
+    Scartando il suffisso le due valgono uguale, e `release ship` rifiuta la
+    2.16.0 perché "esiste già": è la -rc a bloccarla.
+    """
+    assert newer_version("2.16.0", "2.16.0-rc1")
+    assert not newer_version("2.16.0-rc1", "2.16.0")
+    assert newer_version("2.16.0-rc2", "2.16.0-rc1")
+    assert newer_version("2.16.0-beta.11", "2.16.0-beta.2")
+    assert newer_version("2.16.0-beta.2", "2.16.0-beta.1")
+    assert newer_version("2.16.0-beta.2", "2.16.0-beta")
+    assert newer_version("2.16.0-beta", "2.16.0-alpha")
+    assert not newer_version("2.16.0-alpha", "2.16.0-beta")
+    # SemVer: un identificatore numerico vale meno di uno alfanumerico.
+    assert newer_version("2.16.0-alpha", "2.16.0-1")
+
+
 def test_the_repository_version_is_a_real_version():
     version_file = Path(__file__).resolve().parents[3] / "VERSION"
     assert is_semver(version_file.read_text(encoding="utf-8"))

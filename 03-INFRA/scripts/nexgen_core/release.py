@@ -75,20 +75,35 @@ def scan_range(
     return f"{before}..{sha}"
 
 
+def _precedence(version: str) -> tuple:
+    """A SemVer 2.0.0 ordering key, so tuple comparison says it correctly.
+
+    The pre-release is part of the key: without it "2.16.0" and "2.16.0-rc1"
+    tie, and the release gate refuses a final version whose rc already
+    shipped. Identifiers follow the spec: numeric below alphanumeric, and a
+    shorter set below a longer one that starts with it.
+    """
+    core, _, suffix = version.strip().lstrip("v").partition("-")
+    nums: list[int] = []
+    for n in core.split("+", 1)[0].split(".")[:3]:
+        if not n.isdigit():
+            raise ValueError(f"non-semver tag {version!r}")
+        nums.append(int(n))
+    while len(nums) < 3:
+        nums.append(0)
+    major, minor, patch = nums[0], nums[1], nums[2]
+    if not suffix:
+        return (major, minor, patch, 1)  # a final release outranks its own -rc
+    identifiers = tuple(
+        (0, int(p)) if p.isdigit() else (1, p)
+        for p in suffix.split("+", 1)[0].split(".")
+    )
+    return (major, minor, patch, 0, *identifiers)
+
+
 def newer_version(left: str, right: str) -> bool:
     """True if `left` is newer than `right`, comparing numbers rather than text."""
-    def parts(v: str) -> tuple[int, ...]:
-        core = v.strip().lstrip("v").split("-", 1)[0].split("+", 1)[0]
-        nums = []
-        for n in core.split(".")[:3]:
-            if not n.isdigit():
-                raise ValueError(f"non-semver tag {v!r}")
-            nums.append(int(n))
-        while len(nums) < 3:
-            nums.append(0)
-        return tuple(nums)
-
-    return parts(left) > parts(right)
+    return _precedence(left) > _precedence(right)
 
 
 def compute_next_version(current: str, bump: str = "patch") -> str:
