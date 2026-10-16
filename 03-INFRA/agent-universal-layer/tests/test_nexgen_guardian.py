@@ -316,3 +316,49 @@ def test_a_gitlink_planted_in_a_skill_is_held(tmp_path: Path):
     verdict = judge_github_skill("skill 'demo'", str(repo), pin, head, ".")
     assert verdict.verdict == HOLD
     assert any("gitlink" in reason for reason in verdict.reasons)
+
+
+def test_a_scope_written_with_a_dot_slash_still_finds_the_diff(tmp_path: Path):
+    """MUST-10: `./skills/demo` è lo stesso di `skills/demo`. Prima il diff
+    veniva letto e lo scope no, quindi ogni aggiornamento restava HOLD per
+    sempre pur essendo prosa innocua."""
+    repo = _repo(tmp_path, "skill")
+    target = repo / "skills" / "demo"
+    target.mkdir(parents=True)
+    (target / "SKILL.md").write_text("# demo\n", encoding="utf-8")
+    pin = _commit(repo, "skill as pinned")
+    (target / "SKILL.md").write_text("# demo\n\nA clearer sentence.\n", encoding="utf-8")
+    head = _commit(repo, "prose touch-up")
+
+    verdict = judge_github_skill("skill 'demo'", str(repo), pin, head, "./skills/demo")
+    assert verdict.verdict == BATCH
+
+
+def test_a_scope_of_spaces_is_read_like_the_whole_repo(tmp_path: Path):
+    """Le due letture dello scope devono dire la stessa cosa: prima il
+    pathspec rifiutava la stringa vuota e `_in_scope` la leggeva come
+    "tutto il repo", quindi lo stesso manifest dava due verdetti diversi."""
+    repo = _repo(tmp_path, "skill")
+    (repo / "SKILL.md").write_text("# demo\n", encoding="utf-8")
+    pin = _commit(repo, "skill as pinned")
+    (repo / "SKILL.md").write_text("# demo\n\nA clearer sentence.\n", encoding="utf-8")
+    head = _commit(repo, "prose touch-up")
+
+    verdict = judge_github_skill("skill 'demo'", str(repo), pin, head, "   ")
+    assert verdict.verdict == BATCH
+
+
+def test_a_scope_that_does_not_exist_is_never_identical_bytes(tmp_path: Path):
+    """MUST-10: con uno scope scritto male git non lista niente, e "nessuna
+    riga" leggeva come "byte identici": AUTO per un refuso di percorso."""
+    repo = _repo(tmp_path, "skill")
+    target = repo / "skills" / "demo"
+    target.mkdir(parents=True)
+    (target / "SKILL.md").write_text("# demo\n", encoding="utf-8")
+    pin = _commit(repo, "skill as pinned")
+    (repo / "README.md").write_text("docs\n", encoding="utf-8")
+    head = _commit(repo, "docs outside the skill")
+
+    verdict = judge_github_skill("skill 'demo'", str(repo), pin, head, "skills/typo")
+    assert verdict.verdict == HOLD
+    assert any("scope" in reason for reason in verdict.reasons)

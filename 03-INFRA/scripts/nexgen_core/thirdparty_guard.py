@@ -113,15 +113,21 @@ def _clone_no_checkout(repo: str, dest: Path) -> bool:
 
 
 def _normalized_scope(scope: str) -> str:
-    """A manifest scope can arrive with Windows backslashes; git's paths are
-    always forward-slashed, and `skills\\demo` matches nothing at all."""
-    return scope.strip().replace("\\", "/")
+    """Git's own view of a manifest scope.
+
+    Manifest scopes arrive with Windows backslashes (`skills\\demo`), a
+    leading `./`, a trailing slash or stray spaces, and git matches none of
+    those forms against the paths it prints.
+    """
+    cleaned = scope.strip().replace("\\", "/")
+    while cleaned.startswith("./"):
+        cleaned = cleaned[2:]
+    return cleaned.rstrip("/")
 
 
 def _in_scope(path: str, scope: str) -> bool:
-    # A manifest can carry a Windows backslash, and git's paths never do.
     scope = _normalized_scope(scope)
-    return scope in (".", "") or path == scope or path.startswith(scope.rstrip("/") + "/")
+    return scope in (".", "") or path == scope or path.startswith(scope + "/")
 
 
 def _empty_scope_verdict(entries: list[tuple[str, str]], scope: str) -> tuple[str, str, str]:
@@ -170,10 +176,16 @@ def _scope_shape_problem(
 ) -> tuple[str, str] | None:
     """The (reason, plain) that holds this scope's shape, or None.
 
-    Every scoped path must be a plain blob at HEAD: the mode is checked on
-    all of them, not only on the new files, because a symlink the pin
-    already carried can be retargeted in place.
+    A scope that is not a tree at HEAD cannot be compared, so "no diff" must
+    not read as "identical bytes". Every scoped path must be a plain blob at
+    HEAD: the mode is checked on all of them, not only on the new files,
+    because a symlink the pin already carried can be retargeted in place.
     """
+    if scope not in (".", ""):
+        probe = _run_git(["cat-file", "-t", f"{head}:{scope}"], cwd=work)
+        if probe.returncode != 0 or probe.stdout.strip() != "tree":
+            return (f"scope {scope!r} is not a tree at HEAD",
+                    "Lo scope indicato non esiste in questa versione: da guardare prima.")
     modes = _modes_at_head(work, head, scope)
     if modes is None:
         return ("inspection failed at ls-tree, cannot verify",
@@ -239,6 +251,7 @@ def judge_github_skill(
 ) -> GuardFinding:
     """Verdict for one github-pinned skill, from the diff alone."""
     finding = GuardFinding(what=what, pinned=pinned, upstream=head)
+    scope = _normalized_scope(scope)
     tmp_parent = Path(tempfile.gettempdir())
     work = tmp_parent / f".nexgen-guard-{time.time_ns()}"
 
@@ -266,7 +279,7 @@ def judge_github_skill(
             finding.plain = "La storia del progetto è stata riscritta: strano, da guardare prima."
             return finding
 
-        scope_arg = [] if scope in (".", "") else ["--", _normalized_scope(scope)]
+        scope_arg = [] if scope in (".", "") else ["--", scope]
         # -z: NUL-separated paths, never C-quoted. A quoted non-ASCII
         # name ("skills/demo/\303\251vil.py") would otherwise miss the
         # scope check, read as an empty diff, and wrongly verdict AUTO.
@@ -285,7 +298,7 @@ def judge_github_skill(
             finding.plain = plain
             return finding
 
-        skill_md = "SKILL.md" if scope in (".", "") else f"{_normalized_scope(scope).rstrip('/')}/SKILL.md"
+        skill_md = "SKILL.md" if scope in (".", "") else f"{scope}/SKILL.md"
         tree = _run_git(["ls-tree", head, skill_md], cwd=work)
         if not _ok(tree, "ls-tree"):
             return finding
@@ -294,8 +307,7 @@ def judge_github_skill(
             finding.plain = "Sparisce il file principale della skill: da guardare prima."
             return finding
 
-        added = [name for flag, name in scoped if flag == "A"]
-        for name in added:
+        for name in (name for flag, name in scoped if flag == "A"):
             if violation := _added_file_violation(name):
                 finding.reasons.append(violation[0])
                 finding.plain = violation[1]
