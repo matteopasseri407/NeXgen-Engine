@@ -435,6 +435,11 @@ def resolve_seat(
     degraded = False
     degraded_reason = None
     if not seat_name:
+        # Choosing a seat starts a real model on a real subscription: it
+        # happens only when asked (`--auto`), never as a side effect of
+        # forgetting `--seat`. Without it the human gets the menu and stops.
+        if not getattr(args, "auto", False):
+            _require_human_single_selection(args, config, seats, default_routing_role)
         seat_name, degraded, degraded_reason = _auto_select_best_seat(args, config, seats, default_routing_role)
     if seat_name not in seats:
         sys.exit(f"[council] unknown seat: {seat_name}. Available: {', '.join(seats)}")

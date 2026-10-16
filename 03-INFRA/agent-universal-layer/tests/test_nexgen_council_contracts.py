@@ -245,3 +245,38 @@ def test_explicit_codex_model_can_differ_from_default(tmp_path, monkeypatch, cap
     assert not _probe_codex_inventory({"model": "other", "reasoning_effort": "ultra"}).available
     _warn_if_explicit_codex_seat_not_default("explicit", {"cli": "codex", "model": "other", "reasoning_effort": "max"})
     assert "warning" not in capsys.readouterr().out
+
+
+def test_a_missing_seat_asks_instead_of_starting_a_model(monkeypatch):
+    """MUST-15: senza --seat e senza --auto il Council non lancia un modello
+    esterno da solo; mostra le scelte e si ferma."""
+    from types import SimpleNamespace
+
+    import proposal
+
+    seats = {"local": {"cli": "ollama", "model": "synthetic:latest", "vendor": "local"}}
+    monkeypatch.setattr(proposal, "probe_host", lambda *a, **k: pytest.fail("nessun seat deve partire"))
+    args = SimpleNamespace(seat=None, auto=False, mode="challenge", strict=False, allow_degraded=False,
+                           routing_role=None, author_vendor=None, zero_retention=False)
+
+    with pytest.raises(SystemExit) as stopped:
+        proposal.resolve_seat(args, config={"seats": seats, "routing": {"enabled": False}})
+    assert "rerun with --seat" in str(stopped.value)
+
+
+def test_auto_chooses_without_a_seat_only_when_asked(monkeypatch):
+    """Il comportamento vecchio resta, ma dietro --auto esplicito."""
+    from types import SimpleNamespace
+
+    import proposal
+
+    seats = {"local": {"cli": "ollama", "model": "synthetic:latest", "vendor": "local"}}
+    monkeypatch.setattr(proposal, "_auto_select_best_seat", lambda *a: ("local", False, None))
+    monkeypatch.setattr(proposal, "_check_seat_allowed", lambda *a, **k: None)
+    monkeypatch.setattr(proposal, "_warn_if_explicit_codex_seat_not_default", lambda *a: None)
+    args = SimpleNamespace(seat=None, auto=True, mode="challenge", strict=False, allow_degraded=False,
+                           routing_role=None, author_vendor=None, zero_retention=False)
+
+    name, seat = proposal.resolve_seat(args, config={"seats": seats, "routing": {"enabled": False}})
+    assert name == "local"
+    assert seat["cli"] == "ollama"
