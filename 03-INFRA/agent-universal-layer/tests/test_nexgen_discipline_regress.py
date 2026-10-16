@@ -8,6 +8,29 @@ REAL_TEST = "from src.calc import add\n\n\ndef test_add():\n    assert add(2, 3)
 TAUTOLOGY = "from src.calc import add\n\n\ndef test_add():\n    assert add(2, 3) == add(2, 3)\n"
 
 
+def test_a_proof_run_never_inherits_the_outer_repository(monkeypatch):
+    """A hook exports GIT_DIR (a push from a linked worktree points it at that
+    worktree). Seen on 2026-10-16: proof runs of another revision then edited
+    the real repository (`git -C <tmp> config` wrote there) and a test-clone
+    push resolved `origin` to the real remote, through the hook again."""
+    from nexgen_core.discipline import regress
+
+    monkeypatch.setenv("GIT_DIR", "C:/real/repo/.git/worktrees/w")
+    monkeypatch.setenv("GIT_WORK_TREE", "C:/real/repo")
+    monkeypatch.setenv("GIT_INDEX_FILE", "C:/real/repo/.git/worktrees/w/index")
+    monkeypatch.setenv("GIT_COMMON_DIR", "C:/real/repo/.git")
+    monkeypatch.setenv("KEEP_ME", "1")
+
+    env = regress._child_env()
+
+    assert "GIT_DIR" not in env
+    assert "GIT_WORK_TREE" not in env
+    assert "GIT_INDEX_FILE" not in env
+    assert "GIT_COMMON_DIR" not in env
+    assert env["KEEP_ME"] == "1"
+    assert env["PYTHONDONTWRITEBYTECODE"] == "1"
+
+
 def start(repo, on_main=False):
     repo.write("src/__init__.py", "")
     repo.write("src/calc.py", BUGGY)

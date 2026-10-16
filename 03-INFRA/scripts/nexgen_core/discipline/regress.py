@@ -25,6 +25,20 @@ NO_TEST = re.compile(r'nexgen:\s*no-test\s+reason="[^"]{10,}"')
 PUBLISHED_REFS = ("origin/main",)  # remote-tracking only: a local `main` is where small projects work
 TIMEOUT = 600
 NO_TESTS_RAN = 5  # pytest: everything collected was skipped or deselected
+#: Environment keys that point git at the outer repository. A proof runs another
+#: revision's tests: when this tool is started by a git hook (a push from a
+#: linked worktree exports GIT_DIR), test code running `git -C <tmp> config`
+#: would edit the real repository instead of its own scratch copy.
+GIT_CONTEXT_KEYS = (
+    "GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR",
+    "GIT_OBJECT_DIRECTORY", "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_PREFIX",
+)
+
+
+def _child_env() -> dict[str, str]:
+    return {key: value for key, value in os.environ.items() if key not in GIT_CONTEXT_KEYS} | {
+        "PYTHONDONTWRITEBYTECODE": "1",
+    }
 
 
 def _commits(root: Path, base: str, head: str) -> list[str]:
@@ -53,7 +67,7 @@ def _run(root: Path, rev: str, tests: list[str], command: str, new_tests_from: s
                 (tree / test).parent.mkdir(parents=True, exist_ok=True)
                 atomic_write_text(tree / test, git(root, "show", f"{new_tests_from}:{test}"))
             return subprocess.run([*argv, *tests], cwd=tree, capture_output=True, text=True, encoding="utf-8", errors="replace",
-                                  timeout=TIMEOUT, env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"})
+                                  timeout=TIMEOUT, env=_child_env())
         finally:
             git(root, "worktree", "remove", "--force", str(tree), check=False)
 

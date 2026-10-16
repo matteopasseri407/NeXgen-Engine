@@ -49,6 +49,11 @@ def isolated_runtime_overrides(monkeypatch, tmp_path_factory):
         "KNOWLEDGE_VAULT_PATH", "AGENT_SYNC_LOCK_FILE", "APPDATA", "LOCALAPPDATA",
         # A maintainer's own vault remote won over the remotes.yaml a fixture wrote.
         "KNOWLEDGE_VAULT_REMOTE", "ORACLE_SSH_HOST",
+        # A git hook exports GIT_DIR (a push from a linked worktree points it at
+        # that worktree): without clearing it, a test's `git -C <tmp> config`
+        # rewrites the real repository instead of its own scratch copy.
+        "GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR",
+        "GIT_OBJECT_DIRECTORY", "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_PREFIX",
     ):
         monkeypatch.delenv(key, raising=False)
     # The suite runs against git as CI has it: no global or system config. A
