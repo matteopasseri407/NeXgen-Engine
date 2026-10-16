@@ -130,3 +130,51 @@ def test_council_seat_spawn_stays_windowless(monkeypatch, tmp_path):
     assert "VERDICT: APPROVE" in answer
     assert captured.get("creationflags", 0) & 0x08000000
     assert "startupinfo" in captured
+
+
+@windows_only
+def test_a_windows_shim_is_invoked_through_cmd(tmp_path):
+    """MUST-18: un .cmd (npx, codex) non è eseguibile lanciato nudo; l'helper
+    lo passa a cmd.exe /d /s /c, che è l'unico modo perché parta."""
+    from nexgen_core.processes import windows_command_argv
+
+    shim = tmp_path / "fakecodex.cmd"
+    shim.write_text("@echo off\r\n", encoding="utf-8")
+    resolved = windows_command_argv([str(shim), "exec", "prompt"])
+    assert resolved[:4] == ["cmd.exe", "/d", "/s", "/c"]
+    assert resolved[4] == str(shim)
+    assert resolved[5:] == ["exec", "prompt"]
+
+    plain = windows_command_argv([sys.executable, "-c", "pass"])
+    assert plain == [sys.executable, "-c", "pass"]
+
+
+def test_the_relay_resolves_the_cli_shim_before_running(tmp_path, monkeypatch):
+    """MUST-18: l'argv del relay passa dall'helper che risolve gli shim .cmd
+    di Windows: lanciare `codex` nudo su Windows non parte."""
+    import nexgen_local.relay as relay_module
+    from nexgen_local.config import LaneConfig
+
+    asked: list[list[str]] = []
+    launched: list[list[str]] = []
+
+    def resolve(argv):
+        asked.append(list(argv))
+        return ["cmd.exe", "/d", "/s", "/c", *argv]
+
+    def fake_run(argv, **kwargs):
+        launched.append(list(argv))
+        raise OSError("stop: conta solo cosa sarebbe partito")
+
+    monkeypatch.setattr(relay_module, "windows_command_argv", resolve, raising=False)
+    monkeypatch.setattr(relay_module.subprocess, "run", fake_run)
+    monkeypatch.setattr(relay_module.shutil, "which", lambda cli: f"C:/npm/{cli}.cmd")
+    monkeypatch.setattr(relay_module, "_build_argv", lambda *args: (["codex", "exec", "p"], None))
+    cfg = LaneConfig(vault_root=tmp_path / "vault", repo_roots=(), model="synthetic-model",
+                     audit_path=tmp_path / "audit.jsonl")
+
+    with pytest.raises(relay_module.RelayError):
+        relay_module.run_relay(cfg, "codex", "synthetic-model", "prompt")
+
+    assert asked == [["codex", "exec", "p"]], "l'argv deve passare dall'helper degli shim"
+    assert launched and launched[0][:4] == ["cmd.exe", "/d", "/s", "/c"]

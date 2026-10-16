@@ -26,6 +26,8 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
+from nexgen_core.processes import windows_command_argv
+
 from .config import LaneConfig
 from .tools import audit_event
 
@@ -286,15 +288,11 @@ def run_relay(
 
         started = time.time()
         try:
-            proc = subprocess.run(
-                argv,
-                input=stdin_text,
-                capture_output=True,
-                text=True, encoding="utf-8", errors="replace",
-                timeout=timeout,
-                env=_isolated_env(cli, workdir),
-                cwd=workdir,
-            )
+            # A Windows .cmd shim (npx, codex) is not an executable on its own:
+            # the helper resolves it, or through cmd.exe it will not start.
+            proc = subprocess.run(windows_command_argv(argv), input=stdin_text, capture_output=True,
+                                  text=True, encoding="utf-8", errors="replace", timeout=timeout,
+                                  env=_isolated_env(cli, workdir), cwd=workdir)
         except subprocess.TimeoutExpired as exc:
             audit_event(cfg, "relay", {"cli": cli, "model": model, "timeout": timeout}, ok=False, chars=0)
             raise RelayError(f"{cli} non ha risposto entro {timeout}s") from exc
