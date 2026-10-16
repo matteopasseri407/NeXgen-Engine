@@ -236,3 +236,41 @@ def test_files_listed_outside_the_scope_hold_instead_of_auto(tmp_path: Path, mon
     verdict = guard_mod.judge_github_skill("skill 'demo'", str(repo), pin, head, "skills/demo")
     assert verdict.verdict == HOLD
     assert any("scope" in reason for reason in verdict.reasons)
+
+
+def test_a_symlink_added_to_a_skill_is_held(tmp_path: Path):
+    """MUST-13: il modo 120000 non è un documento, è un rimando a un file
+    fuori dalla skill: leggeva come prosa e finiva in BATCH."""
+    repo = _repo(tmp_path, "skill")
+    (repo / "SKILL.md").write_text("# demo\n", encoding="utf-8")
+    pin = _commit(repo, "skill as pinned")
+    # Un symlink si registra anche dove il sistema non sa crearne uno:
+    # git lo tiene in indice con il modo 120000.
+    blob = subprocess.run(
+        ["git", "hash-object", "-w", "--stdin"], cwd=repo,
+        input="/etc/passwd\n", text=True, capture_output=True, check=True,
+    )
+    _git(repo, "update-index", "--add", "--cacheinfo", f"120000,{blob.stdout.strip()},notes.md")
+    _git(repo, "commit", "-m", "docs pointer")
+    head = _git(repo, "rev-parse", "HEAD")
+
+    verdict = judge_github_skill("skill 'demo'", str(repo), pin, head, ".")
+    assert verdict.verdict == HOLD
+    assert any("symlink" in reason for reason in verdict.reasons)
+
+
+def test_a_tracked_file_replaced_by_a_symlink_is_held(tmp_path: Path):
+    repo = _repo(tmp_path, "skill")
+    (repo / "SKILL.md").write_text("# demo\n", encoding="utf-8")
+    pin = _commit(repo, "skill as pinned")
+    blob = subprocess.run(
+        ["git", "hash-object", "-w", "--stdin"], cwd=repo,
+        input="../../notes.md\n", text=True, capture_output=True, check=True,
+    )
+    _git(repo, "update-index", "--cacheinfo", f"120000,{blob.stdout.strip()},SKILL.md")
+    _git(repo, "commit", "-m", "the skill file becomes a pointer")
+    head = _git(repo, "rev-parse", "HEAD")
+
+    verdict = judge_github_skill("skill 'demo'", str(repo), pin, head, ".")
+    assert verdict.verdict == HOLD
+    assert any("symlink" in reason for reason in verdict.reasons)

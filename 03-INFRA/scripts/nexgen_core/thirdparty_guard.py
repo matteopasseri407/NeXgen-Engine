@@ -56,6 +56,9 @@ PROSE_SUFFIXES = frozenset({
 #: Hook and plugin wiring is never boring: held, always.
 HOOK_NAMES = frozenset({"hooks.json", "plugin.json", "settings.json", "hooks.yaml"})
 
+#: A symlink in a skill points at bytes nobody vendored: held, always.
+SYMLINK_MODE = "120000"
+
 #: A batchable diff stays small enough to glance at in one go.
 BATCH_MAX_FILES = 20
 BATCH_MAX_LINES = 300
@@ -134,6 +137,32 @@ def _empty_scope_verdict(entries: list[tuple[str, str]], scope: str) -> tuple[st
         "vendored bytes identical between pin and HEAD",
         "Contenuto identico a prima: cambia solo il numero, niente di nuovo dentro.",
     )
+
+
+def _added_file_violation(name: str, work: Path, head: str) -> tuple[str, str] | None:
+    """The (reason, plain) that holds one added file, or None when boring.
+
+    A new file is held when it can run (script suffix, hook wiring, the
+    executable bit) or when it is a symlink: mode 120000 points at bytes
+    nobody vendored, and it used to read as prose and be batched.
+    """
+    if Path(name).suffix.lower() in SCRIPT_SUFFIXES:
+        return f"new script added: {name}", f"C'è un programma nuovo dentro ({name}): da guardare prima."
+    if Path(name).name in HOOK_NAMES or "/hooks/" in name:
+        return (f"new hook wiring added: {name}",
+                f"Tocca i collegamenti automatici ({name}): da guardare prima.")
+    mode = _run_git(["ls-tree", head, "--", name], cwd=work)
+    if mode.returncode != 0:
+        return ("inspection failed at ls-tree, cannot verify",
+                "Non sono riuscita a controllare bene: resta fermo, ci riprovo da sola.")
+    tree_line = mode.stdout.strip()
+    if tree_line.startswith(SYMLINK_MODE):
+        return (f"new symlink planted: {name}",
+                f"C'è un rimando a un file fuori dalla skill ({name}): da guardare prima.")
+    if re.match(r"^\d*755\s", tree_line):
+        return (f"new executable file: {name}",
+                f"C'è un file nuovo che può partire da solo ({name}): da guardare prima.")
+    return None
 
 
 def _parse_name_status_z(output: str) -> list[tuple[str, str]]:
@@ -218,28 +247,22 @@ def judge_github_skill(
 
         added = [name for flag, name in scoped if flag == "A"]
         for name in added:
-            if Path(name).suffix.lower() in SCRIPT_SUFFIXES:
-                finding.reasons.append(f"new script added: {name}")
-                finding.plain = f"C'è un programma nuovo dentro ({name}): da guardare prima."
-                return finding
-            if Path(name).name in HOOK_NAMES or "/hooks/" in name:
-                finding.reasons.append(f"new hook wiring added: {name}")
-                finding.plain = f"Tocca i collegamenti automatici ({name}): da guardare prima."
-                return finding
-            mode = _run_git(["ls-tree", head, "--", name], cwd=work)
-            if not _ok(mode, "ls-tree"):
-                return finding
-            if re.match(r"^\d*755\s", mode.stdout.strip()):
-                finding.reasons.append(f"new executable file: {name}")
-                finding.plain = f"C'è un file nuovo che può partire da solo ({name}): da guardare prima."
+            if violation := _added_file_violation(name, work, head):
+                finding.reasons.append(violation[0])
+                finding.plain = violation[1]
                 return finding
 
         summary = _run_git(["diff", "--summary", f"{pinned}..{head}", *scope_arg], cwd=work)
         if not _ok(summary, "diff"):
             return finding
-        if re.search(r"mode change \d+ => \d*755 ", summary.stdout):
-            finding.reasons.append("an existing file gained the executable bit")
-            finding.plain = "Un file esistente diventa eseguibile: da guardare prima."
+        symlinked = re.search(r"mode change (?:\d+ => 120000|120000 => \d+) ", summary.stdout)
+        if symlinked or re.search(r"mode change \d+ => \d*755 ", summary.stdout):
+            if symlinked:
+                finding.reasons.append("a tracked file became or stopped being a symlink")
+                finding.plain = "Un file è diventato un rimando a un altro file: da guardare prima."
+            else:
+                finding.reasons.append("an existing file gained the executable bit")
+                finding.plain = "Un file esistente diventa eseguibile: da guardare prima."
             return finding
 
         touched_hooks = [
