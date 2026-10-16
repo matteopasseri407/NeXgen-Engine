@@ -256,11 +256,35 @@ def test_a_missing_seat_asks_instead_of_starting_a_model(monkeypatch):
 
     seats = {"local": {"cli": "ollama", "model": "synthetic:latest", "vendor": "local"}}
     monkeypatch.setattr(proposal, "probe_host", lambda *a, **k: pytest.fail("nessun seat deve partire"))
+    monkeypatch.setattr(proposal, "_auto_select_best_seat",
+                        lambda *a: pytest.fail("senza --auto non si sceglie"))
     args = SimpleNamespace(seat=None, auto=False, mode="challenge", strict=False, allow_degraded=False,
                            routing_role=None, author_vendor=None, zero_retention=False)
 
     with pytest.raises(SystemExit) as stopped:
         proposal.resolve_seat(args, config={"seats": seats, "routing": {"enabled": False}})
+    assert "rerun with --seat" in str(stopped.value)
+
+
+def test_routing_with_one_candidate_still_asks_without_auto(monkeypatch):
+    """Il controesempio del revisore: con il routing attivo e un solo
+    candidato la scelta non e' 'gia' fatta', e senza --auto si chiede lo
+    stesso invece di avviare quel modello."""
+    from types import SimpleNamespace
+
+    import proposal
+
+    seats = {"local": {"cli": "ollama", "model": "synthetic:latest", "vendor": "local"}}
+    monkeypatch.setattr(proposal, "_auto_select_best_seat",
+                        lambda *a: pytest.fail("senza --auto non si sceglie"))
+    monkeypatch.setattr(proposal, "_routing_enabled", lambda config: True)
+    monkeypatch.setattr(proposal, "_routing_role_for_mode", lambda *a, **k: "L-Code")
+    monkeypatch.setattr(proposal, "_print_routing_proposal", lambda *a, **k: True)
+    args = SimpleNamespace(seat=None, auto=False, mode="code-review", strict=False, allow_degraded=False,
+                           routing_role="L-Code", author_vendor=None, zero_retention=False)
+
+    with pytest.raises(SystemExit) as stopped:
+        proposal.resolve_seat(args, config={"seats": seats, "routing": {"enabled": True}})
     assert "rerun with --seat" in str(stopped.value)
 
 

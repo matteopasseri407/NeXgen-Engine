@@ -406,7 +406,7 @@ def _add_common_args(parser: argparse.ArgumentParser, *, include_seat: bool = Tr
         parser.add_argument("--seat", metavar="NAME", help="seat explicitly chosen by the human")
         parser.add_argument("--auto", action="store_true", help="choose a seat without asking (default: ask)")
         parser.add_argument("--routing-role", metavar="ROLE",
-                            help="document role to propose, e.g. L-Sys; does not start a seat without --seat")
+                            help="document role to propose, e.g. L-Sys; does not start a seat by itself")
     parser.add_argument(
         "--strict", action="store_true",
         help="fail-closed: do not allow fallback outside Governor approved candidates",
