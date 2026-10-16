@@ -17,6 +17,7 @@ import contextlib
 import errno
 import math
 import os
+import random
 import sys
 import time
 from pathlib import Path
@@ -44,6 +45,17 @@ class LockTimeoutError(NexgenError, TimeoutError):
 class LockIOError(NexgenError, OSError):
     """The lock is inaccessible, rather than held by another process."""
     exit_code = 1
+
+
+def _is_retryable_open_error(exc: OSError) -> bool:
+    """A lock file held open for an instant (Defender, the indexer) is contention.
+
+    Windows reports ERROR_SHARING_VIOLATION ("the file is being used by
+    another process", WinError 32) as a PermissionError with EACCES: the
+    file is there, the moment is wrong. Retrying inside the same timeout as
+    a held lock is the right posture; anything else stays a typed error.
+    """
+    return isinstance(exc, PermissionError) or exc.errno == errno.EACCES
 
 
 class HostLock:
@@ -119,7 +131,10 @@ class HostLock:
                     with contextlib.suppress(OSError):
                         os.close(self._fd)
                     self._fd = None
-                raise LockIOError(t("Could not open lock {path}: {error}", path=self.lock_path, error=exc)) from exc
+                if not _is_retryable_open_error(exc):
+                    raise LockIOError(t("Could not open lock {path}: {error}", path=self.lock_path, error=exc)) from exc
+                # Contention on the file itself: retry below, within the
+                # same budget as a held lock.
 
             elapsed = time.monotonic() - start_time
             if elapsed >= self.timeout:
@@ -131,7 +146,8 @@ class HostLock:
                 )
                 raise LockTimeoutError(msg, self.lock_path, self.is_guard)
 
-            time.sleep(0.5)
+            # Jittered: several waiting processes must not retry in lock step.
+            time.sleep(0.5 * (0.5 + random.random()))
 
     def release(self) -> None:
         """Releases the lock and closes the file descriptor."""
