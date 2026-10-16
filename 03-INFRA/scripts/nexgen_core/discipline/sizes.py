@@ -5,14 +5,10 @@ Compared against the base revision, so no baseline file exists to regenerate.
 from __future__ import annotations
 
 import ast
-import re
 
 from .config import Config
 from .gitutil import Change
-from .violations import CODE_EXT, Violation, line_count, selected
-
-
-TEST_PATH = re.compile(r"(^|/)(tests?|__tests__)/|(^|/)test_[^/]*$|_test\.[^/]*$|\.(test|spec)\.[^/]*$")
+from .violations import CODE_EXT, TEST_PATH, Violation, line_count, selected
 
 
 def python_function_lengths(source: str | None) -> dict[str, int]:
@@ -42,7 +38,7 @@ def _file_violation(change: Change, cfg: Config) -> Violation | None:
     if new > cfg.max_file_lines and (change.old is None or new > old):
         grew = f"grew from {old} lines" if change.old is not None else "is new"
         return Violation(change.path, f"{new} lines (limit {cfg.max_file_lines}), {grew}. "
-                         "Do not add to this file: put the new code in a separate module.")
+                         "Do not add to this file: put the new code in a separate module.", "file")
     return None
 
 
@@ -52,7 +48,7 @@ def _function_violations(change: Change, cfg: Config) -> list[Violation]:
     for name, length in python_function_lengths(change.new).items():
         if length > cfg.max_func_lines and length > before.get(name, 0):
             found.append(Violation(change.path, f"function {name} is {length} lines "
-                                   f"(limit {cfg.max_func_lines}). Split it; do not extend it."))
+                                   f"(limit {cfg.max_func_lines}). Split it; do not extend it.", "function"))
     return found
 
 

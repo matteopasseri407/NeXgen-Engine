@@ -135,7 +135,7 @@ Before local delegation, check GPU/activity if relevant; do not load a large mod
 
 # Engineering Discipline
 
-Every code change, any project: reuse before writing, make the smallest diff, keep files and functions small (an oversized one never grows), put logic in the project's main language and keep shell/PowerShell to thin launchers, and show the checks' output before saying "done". Where a project has the discipline gate, run it before you push; a complex change to its declared production code needs an independent Council review, and anything else (docs, notes, tests, prototypes, small apps) never does, because reviews cost money. The rules, and which of them are checked mechanically: `03-INFRA/engineering-rules.md`.
+Every code change, any project: reuse before writing, make the smallest diff, keep files and functions small (an oversized one never grows), put logic in the project's main language and keep shell/PowerShell to thin launchers, and show the checks' output before saying "done". Where a project has the discipline gate, run it before you push; a complex change to its declared production code needs an independent Council review, and anything else (docs, notes, tests, prototypes, small apps) never does, because reviews cost money. In a new project run `discipline.py init` once; `discipline.py report` gives the owner a plain health report. The rules, and which of them are checked mechanically: `03-INFRA/engineering-rules.md`.
 
 # Operating Style
 

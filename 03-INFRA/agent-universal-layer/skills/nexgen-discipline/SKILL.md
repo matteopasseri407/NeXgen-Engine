@@ -7,6 +7,7 @@ description: Use for ANY code change, before writing code. A search-first, small
 
 The rules are in `03-INFRA/engineering-rules.md`. This is the order to apply them in.
 
+0. **New project?** Run `python 03-INFRA/scripts/discipline.py init --smoke "<command>"` once, then `report` shows the owner the state.
 1. **Restate** in two lines what you will do and what you will not touch.
 2. **Search** (`rg`) for existing code that does it; list what you will reuse.
 3. **Propose** the minimal diff. If it needs a dependency, script language, data-format change or CI/hook

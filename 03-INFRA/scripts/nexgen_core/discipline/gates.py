@@ -8,8 +8,10 @@ from . import review
 from .config import COMMAND, Config
 from .gitutil import Change, own_changes
 from .score import is_complex
+from .integrity import check_test_integrity
 from .shellgate import check_shell
 from .sizes import check_sizes
+from .swallow import check_swallowed
 from .violations import Violation
 
 
@@ -28,7 +30,8 @@ class Outcome:
 
 
 def static_checks(changed: list[Change], cfg: Config) -> list[Violation]:
-    return check_sizes(changed, cfg) + check_shell(changed, cfg)
+    return (check_sizes(changed, cfg) + check_shell(changed, cfg)
+            + check_test_integrity(changed, cfg) + check_swallowed(changed, cfg))
 
 
 def run(root: Path, cfg: Config, base: str, head: str | None, need_review: bool) -> Outcome:

@@ -45,9 +45,9 @@ def check_shell(changes: list[Change], cfg: Config) -> list[Violation]:
             found.append(Violation(change.path, f"{lines} lines and {logic} logic signals "
                                    f"(limits {cfg.shell_max_lines}/{cfg.shell_max_logic}). Put the logic in the "
                                    "project's main language and keep this a thin launcher, or add "
-                                   '`nexgen: allow reason="why shell is the right tool"` at the top.'))
+                                   '`nexgen: allow reason="why shell is the right tool"` at the top.', "shell"))
         elif over and lines > cfg.shell_max_lines * MARKED_CAP_FACTOR and (
                 change.old is None or lines - line_count(change.old) > SMALL_EDIT):
             found.append(Violation(change.path, f"{lines} lines exceeds the hard cap "
-                                   f"{cfg.shell_max_lines * MARKED_CAP_FACTOR} even with a reason. Split it."))
+                                   f"{cfg.shell_max_lines * MARKED_CAP_FACTOR} even with a reason. Split it.", "shell"))
     return found

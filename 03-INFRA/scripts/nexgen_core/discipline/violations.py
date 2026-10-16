@@ -1,6 +1,7 @@
 """Shared result type and path filters for every gate."""
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from fnmatch import fnmatch
 
@@ -16,9 +17,13 @@ CODE_EXT = (".py", ".js", ".jsx", ".ts", ".tsx", ".mjs", ".go", ".rs", ".java", 
 class Violation:
     path: str
     message: str
+    kind: str = ""  # file, function, shell, test, swallow
 
     def __str__(self) -> str:
         return f"{self.path}: {self.message}"
+
+
+TEST_PATH = re.compile(r"(^|/)(tests?|__tests__)/|(^|/)test_[^/]*$|_test\.[^/]*$|\.(test|spec)\.[^/]*$")
 
 
 def selected(change: Change, cfg: Config, extensions: tuple[str, ...]) -> bool:

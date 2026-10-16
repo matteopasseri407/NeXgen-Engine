@@ -44,6 +44,9 @@ pre-existing Windows failures unchanged, CI green on Linux and Windows.
   complexity score, and an independent-review receipt bound to the exact file contents for
   complex changes to declared production paths (`.nexgen-discipline.toml`); the receipt is an honesty
   check, not a security boundary. `check_engine.py` and a CI job run it.
+- `discipline.py init`, `report` and `smoke`: any project gets a config, a decision log and local git hooks that call the
+  installed engine; a plain-Italian health report (red until the project defines a real-flow `smoke_command`); gates against
+  deleted, weakened or skipped tests and against new swallowed exceptions.
 - `03-INFRA/engineering-rules.md`, the `nexgen-discipline` skill, and `03-INFRA/writing-and-alerts.md`.
 
 ### Changed

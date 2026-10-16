@@ -122,3 +122,23 @@ def diff_text(root: Path, base: str, head: str | None = None) -> str:
                                   capture_output=True, text=True, encoding="utf-8", errors="replace")
             text += proc.stdout
     return text
+
+
+def files_at(root: Path, rev: str, suffixes: tuple[str, ...]) -> dict[str, str]:
+    """Text of every file at `rev` with one of the suffixes, read with a single git process."""
+    names = [n for n in git(root, "ls-tree", "-r", "--name-only", rev, check=False).splitlines()
+             if n.lower().endswith(suffixes)]
+    if not names:
+        return {}
+    proc = subprocess.run(["git", "-C", str(root), "cat-file", "--batch"], input="".join(f"{rev}:{n}\n" for n in names).encode(),
+                          capture_output=True)
+    out, pos, texts = proc.stdout, 0, {}
+    for name in names:
+        end = out.index(b"\n", pos)
+        header = out[pos:end].split()
+        pos = end + 1
+        if len(header) == 3 and header[1] == b"blob":
+            size = int(header[2])
+            texts[name] = out[pos:pos + size].decode("utf-8", errors="replace")
+            pos += size + 1
+    return texts

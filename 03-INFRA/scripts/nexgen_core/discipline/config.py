@@ -18,6 +18,8 @@ class Config:
     shell_max_lines: int = 40
     shell_max_logic: int = 8
     complexity_threshold: int = 8
+    smoke_command: str = ""  # the one command that proves the program really works
+    test_removal_ok: tuple[str, ...] = ()  # test paths the owner allowed to shrink or go
     review_paths: tuple[str, ...] = ()  # globs of production code; empty means no review is ever required
     review_exempt: tuple[str, ...] = ("*/tests/*", "tests/*", "*/test_*", "test_*")
     exclude: tuple[str, ...] = field(default_factory=lambda: (

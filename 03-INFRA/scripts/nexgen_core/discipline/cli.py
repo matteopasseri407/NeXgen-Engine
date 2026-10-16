@@ -1,4 +1,4 @@
-"""Command line: check, score, gate, review, receipt, audit, ci."""
+"""Command line: check, score, gate, review, receipt, audit, report, smoke, init, ci."""
 from __future__ import annotations
 
 import argparse
@@ -8,8 +8,12 @@ from pathlib import Path
 
 from . import gates, review
 from .config import COMMAND, Config, load
+from .health import report, run_smoke
 from .gitutil import STAGED, Change, GitError, fork_point, git, own_changes, parents, repo_root, resolve_base
 from .score import is_complex
+from .shellgate import check_shell
+from .sizes import check_sizes
+from .scaffold import init_project
 from .violations import CODE_EXT, SHELL_EXT
 
 COUNCIL = ("council code-review .nexgen-discipline/review.diff --context .nexgen-discipline/brief.md "
@@ -89,8 +93,22 @@ def cmd_audit(args: argparse.Namespace) -> int:
     files = [Change(p, "A", None, (root / p).read_text(encoding="utf-8", errors="replace"))
              for p in git(root, "ls-files").splitlines()
              if p.lower().endswith(CODE_EXT + SHELL_EXT) and (root / p).is_file()]
-    found = gates.static_checks(files, cfg)
+    found = check_sizes(files, cfg) + check_shell(files, cfg)
     print("\n".join(f"DEBT {v}" for v in found) or "No debt found.")
+    return 0
+
+
+def cmd_report(args: argparse.Namespace) -> int:
+    print(report(repo_root(Path.cwd())))
+    return 0
+
+
+def cmd_smoke(args: argparse.Namespace) -> int:
+    return run_smoke(repo_root(Path.cwd()))
+
+
+def cmd_init(args: argparse.Namespace) -> int:
+    print("\n".join(init_project(repo_root(Path.cwd()), args.smoke)))
     return 0
 
 
@@ -135,6 +153,11 @@ def build_parser() -> argparse.ArgumentParser:
     receipt.add_argument("--reviewer", default="unknown")
     receipt.add_argument("--from-file", help="reviewer output file (default: stdin)")
     sub.add_parser("audit", help="list existing debt across the repo").set_defaults(func=cmd_audit)
+    sub.add_parser("report", help="plain-Italian health report").set_defaults(func=cmd_report)
+    sub.add_parser("smoke", help="run the project's real-flow command").set_defaults(func=cmd_smoke)
+    init = sub.add_parser("init", help="set up this project: config, decision log, git hooks")
+    init.add_argument("--smoke", default="", help="the command that proves the program really works")
+    init.set_defaults(func=cmd_init)
     ci = sub.add_parser("ci", help="CI entry point")
     for flag in ("event", "before", "base-ref", "head-ref"):
         ci.add_argument(f"--{flag}", default="")
