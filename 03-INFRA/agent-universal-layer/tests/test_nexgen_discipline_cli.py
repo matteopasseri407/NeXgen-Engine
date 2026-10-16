@@ -66,3 +66,26 @@ def test_a_small_fix_to_an_oversized_reasoned_script_is_allowed(repo):
     assert cli.main(["check", "--base", base]) == 0
     repo.write("deploy.sh", script + "echo fix\n" * 30)
     assert cli.main(["check", "--base", base]) == 1
+
+
+def test_a_big_file_that_declares_its_one_job_is_allowed_up_to_the_hard_cap(repo):
+    base = repo.git("rev-parse", "HEAD")
+    job = '# nexgen: one-job reason="the Italian message table, one entry per sentence"\n'
+    repo.write("table.py", job + "X = 1\n" * 700)
+    assert cli.main(["check", "--base", base]) == 0
+    repo.write("table.py", job + "X = 1\n" * 1100)
+    assert cli.main(["check", "--base", base]) == 1
+
+
+def test_a_one_job_note_needs_a_real_reason(repo):
+    base = repo.git("rev-parse", "HEAD")
+    repo.write("table.py", '# nexgen: one-job reason="ok"\n' + "X = 1\n" * 700)
+    assert cli.main(["check", "--base", base]) == 1
+    repo.write("table.py", "# nexgen: one-job\n" + "X = 1\n" * 700)
+    assert cli.main(["check", "--base", base]) == 1
+
+
+def test_one_job_does_not_excuse_a_long_function(repo):
+    base = repo.git("rev-parse", "HEAD")
+    repo.write("job.py", '# nexgen: one-job reason="a single parser for a single format"\n' + "def f():\n" + "    pass\n" * 70)
+    assert cli.main(["check", "--base", base]) == 1

@@ -9,8 +9,10 @@ The rest rely on you. Do not argue with a gate: change the work.
    language, a data-format or public-interface change, a new top-level package, or a change to CI, hooks or
    discipline config. In an unattended session, write the proposal down and do not do it. New files inside
    an existing module need no permission.
-3. **[gate] Size ratchet.** Files stay under 500 lines (tests exempt) and functions under 60. An oversized
-   file or function never grows: extract the new code into its own module.
+3. **[gate] One file, one job.** A file does one thing and a function does one step; line counts are the smoke
+   alarm, not the rule. Past 500 lines a file (tests exempt) must not grow unless it declares its single job at the
+   top with `nexgen: one-job reason="what its one job is"` (up to 1000 lines); otherwise extract the new code into
+   its own module. A function past 60 lines never grows: split it.
 4. **[gate] Logic goes in the main language.** Shell and PowerShell are thin launchers: under 40 lines,
    no parsing, no state, no retries. Anything bigger needs `nexgen: allow reason="..."` at the top of the
    file, with a real reason.

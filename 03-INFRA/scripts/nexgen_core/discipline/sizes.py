@@ -5,10 +5,21 @@ Compared against the base revision, so no baseline file exists to regenerate.
 from __future__ import annotations
 
 import ast
+import re
 
 from .config import Config
 from .gitutil import Change
 from .violations import CODE_EXT, TEST_PATH, Violation, line_count, selected
+
+
+ONE_JOB = re.compile(r"nexgen:\s*one-job\b.*reason\s*=\s*[\"']?(\S[^\"']{9,})", re.I)
+ONE_JOB_WINDOW = 15
+ONE_JOB_CAP = 1000  # even a file with a single job stops here
+
+
+def declares_one_job(text: str | None) -> bool:
+    """`nexgen: one-job reason="..."` in the first lines: the author says what the one job of this big file is."""
+    return any(ONE_JOB.search(line) for line in (text or "").splitlines()[:ONE_JOB_WINDOW])
 
 
 def python_function_lengths(source: str | None) -> dict[str, int]:
@@ -35,10 +46,12 @@ def python_function_lengths(source: str | None) -> dict[str, int]:
 
 def _file_violation(change: Change, cfg: Config) -> Violation | None:
     new, old = line_count(change.new), line_count(change.old)
+    if declares_one_job(change.new) and (new <= ONE_JOB_CAP or (change.old is not None and new <= old)):
+        return None
     if new > cfg.max_file_lines and (change.old is None or new > old):
         grew = f"grew from {old} lines" if change.old is not None else "is new"
         return Violation(change.path, f"{new} lines (limit {cfg.max_file_lines}), {grew}. "
-                         "Do not add to this file: put the new code in a separate module.", "file")
+                         "One file does one job: if this one does a single thing, say so at the top with `nexgen: one-job reason=\"what its one job is\"` (up to 1000 lines); otherwise put the new code in a separate module.", "file")
     return None
 
 
