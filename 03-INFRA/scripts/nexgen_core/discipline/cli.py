@@ -87,6 +87,18 @@ def cmd_receipt(args: argparse.Namespace) -> int:
     return 0 if verdict == "APPROVE" else 2
 
 
+def cmd_approve(args: argparse.Namespace) -> int:
+    """The owner's own decision, recorded against the exact work. Agents must never run this by themselves."""
+    root, _, base, head = _scope(args)
+    if len(args.reason.strip()) < 10:
+        print("FAIL give the owner's reason in words: --reason \"...\"", file=sys.stderr)
+        return 1
+    digest = review.diff_hash(root, base, head)
+    review.record_receipt(root, digest, "APPROVE", "owner", review.owner_output(args.reason.strip()))
+    print(f"Owner approval recorded for {digest}. Commit .nexgen-discipline/receipts/.")
+    return 0
+
+
 def cmd_audit(args: argparse.Namespace) -> int:
     root = repo_root(Path.cwd())
     cfg = load(root, "HEAD")
@@ -153,6 +165,8 @@ def build_parser() -> argparse.ArgumentParser:
     receipt = scoped("receipt", cmd_receipt, "record the reviewer's verdict for this exact work")
     receipt.add_argument("--reviewer", default="unknown")
     receipt.add_argument("--from-file", help="reviewer output file (default: stdin)")
+    approve = scoped("approve", cmd_approve, "record the OWNER's decision to accept this work without a paid review")
+    approve.add_argument("--reason", required=True, help="why the owner accepts it, in the owner's words")
     sub.add_parser("audit", help="list existing debt across the repo").set_defaults(func=cmd_audit)
     sub.add_parser("report", help="plain-Italian health report").set_defaults(func=cmd_report)
     sub.add_parser("smoke", help="run the project's real-flow command").set_defaults(func=cmd_smoke)

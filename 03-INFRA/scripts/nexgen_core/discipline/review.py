@@ -73,6 +73,10 @@ def record_receipt(root: Path, digest: str, verdict: str, reviewer: str, output:
     return path
 
 
+def owner_output(reason: str) -> str:
+    return f"Approvata dal proprietario, senza revisione a pagamento. Motivo: {reason}"
+
+
 def receipt_problem(root: Path, digest: str, head: str | None) -> str | None:
     """None when a committed APPROVE receipt exists for exactly this work, else why not."""
     path = f"{RECEIPT_DIR}/{digest}.json"

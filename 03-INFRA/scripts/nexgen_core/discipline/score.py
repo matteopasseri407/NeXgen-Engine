@@ -10,7 +10,8 @@ from .violations import CODE_EXT, SHELL_EXT, line_count
 
 DEPENDENCY_FILES = re.compile(r"(^|/)(requirements[^/]*\.txt|pyproject\.toml|setup\.py|package\.json|go\.mod|"
                               r"Cargo\.toml|Gemfile|composer\.json|pom\.xml|build\.gradle[^/]*)$")
-CONTROL_FILES = re.compile(r"(^|/)(\.github/|\.nexgen-discipline|\.pre-commit|\.husky/)")
+CONTROL_FILES = re.compile(r"(^|/)(\.nexgen-discipline|\.pre-commit|\.husky/)")
+WORKFLOW = re.compile(r"(^|/)\.github/workflows/")
 COUNTED = CODE_EXT + SHELL_EXT + (".yml", ".yaml", ".toml", ".json")  # prose and notes are free
 LINES_PER_POINT = 50
 MAX_LINE_POINTS = 6
@@ -44,11 +45,12 @@ def is_complex(changes: list[Change], cfg: Config) -> tuple[bool, int, list[str]
     """Only changes to declared production paths can require a review: reviews cost money."""
     scoped = [c for c in changes if any(fnmatch(c.path, g) for g in cfg.review_paths)
               and not any(fnmatch(c.path, g) for g in cfg.review_exempt)]
-    control = [c for c in changes if CONTROL_FILES.search(c.path)] if cfg.review_paths else []
+    control = [c for c in changes if CONTROL_FILES.search(c.path) or (
+        WORKFLOW.search(c.path) and "discipline" in f"{c.old}{c.new}")] if cfg.review_paths else []
     if not scoped and not control:
         return False, 0, ["no declared production path touched: no review required"]
     total, reasons = score(scoped)
     if control:  # switching the rules or the CI off must never be a way to skip the review
         total = max(total, cfg.complexity_threshold)
-        reasons.append("always reviewed: CI, hooks or discipline config changed")
+        reasons.append("always needs a decision: discipline config, hooks or the CI that runs the gate changed")
     return total >= cfg.complexity_threshold, total, reasons

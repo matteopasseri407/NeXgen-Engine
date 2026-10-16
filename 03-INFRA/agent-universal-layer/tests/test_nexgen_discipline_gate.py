@@ -213,7 +213,7 @@ def test_switching_the_rules_off_is_always_reviewed(repo, capsys):
     production(repo)
     repo.write(".nexgen-discipline.toml", "review_paths = []\n")
     assert cli.main(["gate", "--base", "HEAD"]) == 1
-    assert "always reviewed" in capsys.readouterr().out
+    assert "always needs a decision" in capsys.readouterr().out
 
 
 def test_tests_never_trigger_a_review(repo):
@@ -228,3 +228,45 @@ def test_notes_do_not_count_as_code_lines(repo):
     for i in range(8):
         repo.write(f"notes{i}.md", "line\n" * 400)
     assert cli.main(["gate", "--base", "HEAD"]) == 0
+
+
+def test_the_owner_can_accept_the_work_for_free_and_it_is_recorded(repo, capsys):
+    production(repo)
+    complex_change(repo)
+    assert cli.main(["gate", "--base", "HEAD"]) == 1
+    assert cli.main(["approve", "--base", "HEAD", "--reason", "ho letto il riepilogo e lo accetto"]) == 0
+    assert cli.main(["gate", "--base", "HEAD"]) == 0
+    saved = next((repo.path / ".nexgen-discipline" / "receipts").glob("*.json")).read_text()
+    assert '"reviewer": "owner"' in saved and "ho letto il riepilogo" in saved
+
+
+def test_an_approval_needs_a_reason_and_covers_only_that_exact_work(repo):
+    production(repo)
+    complex_change(repo)
+    assert cli.main(["approve", "--base", "HEAD", "--reason", "ok"]) == 1
+    cli.main(["approve", "--base", "HEAD", "--reason", "accetto questa modifica"])
+    repo.write("m0.py", BUSY * 21)
+    assert cli.main(["gate", "--base", "HEAD"]) == 1
+
+
+def test_only_declared_critical_files_with_a_big_enough_change_need_a_decision(repo):
+    repo.write(".nexgen-discipline.toml", 'complexity_threshold = 4\nreview_paths = ["core/*"]\n')
+    repo.commit("declare critical")
+    for i in range(5):
+        repo.write(f"other/m{i}.py", BUSY * 20)  # big, but not critical
+    assert cli.main(["gate", "--base", "HEAD"]) == 0
+    repo.write("core/small.py", BUSY)  # critical but tiny
+    assert cli.main(["gate", "--base", "HEAD"]) == 0
+    repo.write("core/big.py", BUSY * 60)  # critical and big
+    assert cli.main(["gate", "--base", "HEAD"]) == 1
+
+
+def test_a_workflow_that_runs_the_gate_cannot_be_edited_without_a_decision(repo):
+    production(repo)
+    repo.write(".github/workflows/ci.yml", "run: python discipline.py ci\n")
+    base = repo.commit("ci")
+    repo.write(".github/workflows/ci.yml", "run: echo skipped\n")
+    assert cli.main(["gate", "--base", base]) == 1
+    repo.write(".github/workflows/other.yml", "run: echo hi\n")
+    (repo.path / ".github/workflows/ci.yml").write_text("run: python discipline.py ci\n")
+    assert cli.main(["gate", "--base", base]) == 0

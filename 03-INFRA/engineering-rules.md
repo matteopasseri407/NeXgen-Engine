@@ -22,14 +22,16 @@ The rest rely on you. Do not argue with a gate: change the work.
    owner adding the path to `test_removal_ok` in `.nexgen-discipline.toml` first. Every project defines one
    real-flow command (`smoke_command`) that proves the program works; until it exists the health report is red.
    "Done" means the checks ran and their output is shown. Say what you did not verify.
-7. **[gate] Complex production change, independent review.** Reviews cost money, so they apply only to
-   changes to declared production paths (`review_paths` in `.nexgen-discipline.toml`); docs, notes, tests,
-   prototypes and small apps never need one. At a complexity score of 8 or more
-   (`python 03-INFRA/scripts/discipline.py score`), run `review`, show the owner the reviewer options and let them authorize the run, then
-   record the verdict with `receipt`. Do not push on REVISE or REJECT; reduce the change and review again.
-   Any edit after `review` invalidates the review. The receipt is an honesty check, not a security boundary:
-   open `.nexgen-discipline/receipts/*.json` to read what the reviewer actually said. CI judges only the push
-   it is given, so run the gate before you push; `check_engine.py` does.
+7. **[gate] Paid reviews are the exception.** They cost the owner real money, so by default there is none: tests and
+   the automatic gates are enough. A review or the owner's recorded decision is required only for (a) a bigger
+   change (score 4 or more, about 200 net lines or a new file) to the project's **critical files**, the short
+   `review_paths` list in `.nexgen-discipline.toml` where a mistake loses user data, opens a security hole or breaks
+   updating, and (b) any change to the discipline config or to the CI that runs the gate. The owner can ask for a
+   review at any time (`python 03-INFRA/scripts/discipline.py review`, then `receipt`), or settle it for free by recording their own decision:
+   `python 03-INFRA/scripts/discipline.py approve --reason "<the owner's words>"`. **Agents never run `approve` on their own**: only after the owner
+   has said so in this session, quoting what the owner said. Any edit after `review` or `approve` invalidates it.
+   Receipts are an honesty check, not a security boundary: read `.nexgen-discipline/receipts/*.json` to see who
+   decided what. CI judges only the push it is given, so run the gate before you push; `check_engine.py` does.
 8. **Never bypass a gate.** No `--no-verify`, no raised limits (they are read from the base revision), no
    skipped or deleted tests. If a gate is wrong, tell the owner and stop.
 

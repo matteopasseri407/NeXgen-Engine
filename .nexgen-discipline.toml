@@ -1,13 +1,23 @@
-# NeXgen's own production code: a complex change here needs an independent review.
-# Notes, docs and tests never do. Changing this file, CI or hooks is always reviewed.
+# NeXgen's CRITICAL code: where a mistake loses a user's data, opens a security hole or breaks updating.
+# A bigger change here (score 4 or more, about 200 net lines, or a new file) needs an independent review
+# or the owner's recorded decision (`discipline.py approve --reason "..."`). Everything else is free of
+# paid reviews: tests and the automatic gates are enough. Changing this file always needs a decision.
+complexity_threshold = 4
 review_paths = [
-  "03-INFRA/*",
-  ".github/*",
+  "03-INFRA/scripts/nexgen_core/git_ops.py",
+  "03-INFRA/scripts/nexgen_core/guard.py",
+  "03-INFRA/scripts/nexgen_core/updater.py",
+  "03-INFRA/scripts/nexgen_core/thirdparty_guard.py",
+  "03-INFRA/scripts/nexgen_core/release*.py",
+  "03-INFRA/scripts/nexgen_core/lock.py",
+  "03-INFRA/scripts/nexgen_core/files.py",
+  "03-INFRA/scripts/nexgen_local/patch.py",
+  "03-INFRA/scripts/nexgen_local/proposals.py",
+  "03-INFRA/agent-universal-layer/council/proposal.py",
+  "03-INFRA/agent-universal-layer/trust/*",
+  "03-INFRA/agent-universal-layer/leak-scan/*",
   "install.sh",
   "install.ps1",
-  "setup.py",
-  "pyproject.toml",
-  "MANIFEST.in",
 ]
 # Translation tables grow with every new message; they are data, not logic.
 exclude = ["*/locales/*"]
