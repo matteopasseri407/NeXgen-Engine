@@ -385,11 +385,11 @@ def install_scheduled_task(
     if _host_mutations_disabled():
         return True
     task_name = "KnowledgeVault Agent Sync"
-    # Since v2.3.0 the guard reaches the engine through the installed shim
-    # (`agent-sync.cmd`, written by `install_shims` earlier in the same
-    # cycle), never through a transitional twin inside the checkout: there
-    # is nothing left in 03-INFRA/scripts to point at.
-    script_path = home / ".local" / "bin" / "agent-sync.cmd"
+    # The shim `install_shims` wrote earlier in the cycle: current launcher
+    # name first, the historical alias as fallback.
+    script_path = home / ".local" / "bin" / "nexgen.cmd"
+    if not script_path.is_file():
+        script_path = home / ".local" / "bin" / "agent-sync.cmd"
     if not script_path.is_file():
         warning = (
             f"scheduled-task: WARNING — {script_path} doesn't exist yet; "

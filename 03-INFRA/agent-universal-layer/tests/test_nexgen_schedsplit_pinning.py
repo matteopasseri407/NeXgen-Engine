@@ -80,6 +80,38 @@ def test_install_refuses_without_shim_with_clear_message(tmp_path: Path, monkeyp
     assert list((tmp_path / "home").rglob("*.vbs")) == []
 
 
+def test_install_accepts_the_nexgen_shim_when_agent_sync_is_gone(tmp_path: Path, monkeypatch):
+    """MUST-05: an install that finds only `nexgen.cmd` must succeed.
+
+    `nexgen` is the current launcher name and `agent-sync.cmd` the historical
+    alias; hardcoding the alias made the install fail on every cycle on a
+    machine where only the current shim exists (or was left)."""
+    home, engine_root, vault_data, vault = _fake_home(tmp_path)
+    shim = home / ".local" / "bin" / "nexgen.cmd"
+    shim.parent.mkdir(parents=True, exist_ok=True)
+    shim.write_text("synthetic launcher", encoding="utf-8")
+    monkeypatch.setattr(scheduler, "_host_mutations_disabled", lambda: False)
+    monkeypatch.setattr(scheduler, "host_mutations_disabled", lambda: False)
+    monkeypatch.setattr(scheduler, "_scheduled_task_invokes_wrapper", lambda *a: True)
+    monkeypatch.setattr(
+        scheduler,
+        "_run_external",
+        lambda args, **k: subprocess.CompletedProcess(args, 0, "", ""),
+    )
+    messages: list[str] = []
+    ok = scheduler.install_scheduled_task(
+        home=home,
+        engine_root=engine_root,
+        vault_data=vault_data,
+        vault=vault,
+        branch="main",
+        log=messages.append,
+    )
+    assert ok is True, messages
+    wrapper = (home / ".local" / "state" / "start-agent-sync-hidden.vbs").read_text(encoding="utf-8")
+    assert "nexgen.cmd" in wrapper and "agent-sync.cmd" not in wrapper
+
+
 def test_install_refuses_unreadable_wrapper_with_clear_message(tmp_path: Path):
     home, _, _, _ = _fake_home(tmp_path)
     target = home / ".local" / "state" / "start-agent-sync-hidden.vbs"
