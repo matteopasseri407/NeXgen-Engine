@@ -883,22 +883,21 @@ def main(
             "03-INFRA/deploy/README.md before redeploying it."
         )
         return 0
-    except PostMergeError as exc:
-        return _recover_failed_update(
-            exc, args=args, entry=entry, data_repo=data_repo, pin_file=pin_file,
-            state_dir=state_dir, target=target, current=current,
-        )
-    except (UpdateError, OSError, UnicodeError, subprocess.SubprocessError) as exc:
+    except (UpdateError, OSError, UnicodeError, subprocess.SubprocessError,
+            KeyboardInterrupt) as exc:
         safe_error = exc if isinstance(exc, UpdateError) else UpdateError(f"update operation failed ({type(exc).__name__})")
         if mutation_started and previous_head and engine_repo is not None:
-            interrupted = PostMergeError(
-                f"update interrupted after merge was started: {safe_error}",
+            interrupted = exc if isinstance(exc, PostMergeError) else PostMergeError(
+                f"update interrupted after the merge was started: {safe_error}",
                 previous_head=previous_head, engine_repo=engine_repo,
             )
             return _recover_failed_update(
                 interrupted, args=args, entry=entry, data_repo=data_repo, pin_file=pin_file,
                 state_dir=state_dir, target=target, current=current,
             )
+        if isinstance(exc, KeyboardInterrupt):
+            print("nexgen-update: interrupted before anything was changed.", file=sys.stderr)
+            return 130
         print(f"nexgen-update: ERROR: {safe_error}", file=sys.stderr)
         return exc.exit_code if isinstance(exc, UpdateRefused) else 1
 

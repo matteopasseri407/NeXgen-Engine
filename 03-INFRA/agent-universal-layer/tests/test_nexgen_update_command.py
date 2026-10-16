@@ -1015,3 +1015,29 @@ def test_a_commit_made_during_the_update_is_never_reset_away(tmp_path, capsys, m
     assert result == updater.EXIT_ROLLBACK_FAILED
     assert _git(engine, "rev-parse", "HEAD").stdout.strip() == committed[0]
     assert "would be lost" in capsys.readouterr().err
+
+
+def test_an_interrupt_during_apply_rolls_the_engine_back(tmp_path, monkeypatch):
+    """MUST-14: un Ctrl+C dopo l'inizio del merge non deve lasciare il
+    motore a metà. L'interruzione esce con un esito e il repo torna al
+    commit che c'era prima."""
+    origin, engine = _upgrade_fixture(tmp_path)
+    updater = _load_updater()
+    before = _git(engine, "rev-parse", "HEAD").stdout.strip()
+
+    real_run = updater._run
+    fired: list[list[str]] = []
+
+    def interrupt_once(args, **kwargs):
+        if "apply" in args and not fired:
+            fired.append(args)
+            raise KeyboardInterrupt
+        return real_run(args, **kwargs)
+
+    monkeypatch.setattr(updater, "_run", interrupt_once)
+    try:
+        code = updater.main(["--yes", "--allow-unverified"], environ=_env(engine))
+    except KeyboardInterrupt:  # il difetto: usciva senza rollback
+        code = None
+    assert code not in (None, 0), "l'interruzione deve uscire con un esito, non propagarsi"
+    assert _git(engine, "rev-parse", "HEAD").stdout.strip() == before
