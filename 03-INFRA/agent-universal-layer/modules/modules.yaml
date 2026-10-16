@@ -38,6 +38,7 @@
 #                  pinned_in:    a file inside the engine (or the module's own source) that holds the pin
 #                  latest:       where the newest release is read: npm:<package> | git-tags:<owner/repo>
 #                  compare:      patch (default) | minor, for a rolling release whose patch is a build counter
+#                                | build:<N>, the same release flagged once the pin is N builds behind
 #                Reported only: a program is replaced where it runs, and the bump has no target for it.
 #   health:      a command that proves the module WORKS, not merely that its
 #                files are present. Run by `nexgen doctor`, never by the guard.
@@ -102,14 +103,16 @@ modules:
     stack: firecrawl
     depends_on: []
     # The MCP client (firecrawl-mcp) is pinned in the MCP manifest; this is the backend it talks to.
-    # Upstream tags a build per merge (2.11.99 ... 2.11.4xx), so only a new minor line is news.
+    # Upstream tags a build per merge (~4-5 a day), so plain patch compare would always be stale. `minor`
+    # alone hid three months of drift (2.11.99 -> 2.11.528) until the search API broke the MCP client:
+    # 100 builds is roughly three weeks behind.
     upstream:
       - name: firecrawl-api
         kind: docker
         image: ghcr.io/firecrawl/firecrawl
         pinned_in: deploy/firecrawl/docker-compose.yml
         latest: "git-tags:firecrawl/firecrawl"
-        compare: minor
+        compare: build:100
 
   ocr:
     label: "Local OCR (vault-ocr)"

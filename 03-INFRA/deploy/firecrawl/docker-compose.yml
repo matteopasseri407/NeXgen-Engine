@@ -19,7 +19,8 @@
 # Images are pinned to explicit version tags where upstream publishes them.
 # ghcr.io/firecrawl/nuq-postgres and ghcr.io/firecrawl/playwright-service
 # publish NO versioned tags (only `latest`), so they are pinned by sha256
-# DIGEST below (resolved 2026-07-14) — same reproducibility, stronger than
+# DIGEST below (nuq-postgres resolved 2026-07-14, playwright-service
+# 2026-10-16 together with api 2.11.528) — same reproducibility, stronger than
 # a mutable tag. To bump: docker pull <repo>:latest && docker inspect
 # --format '{{index .RepoDigests 0}}' <repo>:latest, then update here or
 # override via .env.
@@ -55,7 +56,10 @@
 
 services:
   firecrawl-api:
-    image: ${FIRECRAWL_IMAGE:-ghcr.io/firecrawl/firecrawl:2.11.99}
+    # 2.11.528 (2026-10-16) or newer is required by firecrawl-mcp >= 3.25: that client sends the
+    # search keys `toolDetail`/`domainTools` (added upstream 2026-09-12, PR #4621) and older
+    # images reject them with 400 "Unrecognized key", so every firecrawl_search fails.
+    image: ${FIRECRAWL_IMAGE:-ghcr.io/firecrawl/firecrawl:2.11.528}
     container_name: firecrawl-api
     restart: unless-stopped
     # Upstream's docker harness: supervises API + queue workers in-process.
@@ -163,7 +167,7 @@ services:
 
   firecrawl-playwright:
     # No versioned tags published — pinned by digest (see header).
-    image: ${FIRECRAWL_PLAYWRIGHT_IMAGE:-ghcr.io/firecrawl/playwright-service@sha256:6359b0d9070f27400b4a9b615509be06919e40121fc1fdc42d4efeddf02653d2}
+    image: ${FIRECRAWL_PLAYWRIGHT_IMAGE:-ghcr.io/firecrawl/playwright-service@sha256:717699bf8a61d94451926c810d19ca1d36278192907e307bf5229a558b08fcc6}
     container_name: firecrawl-playwright
     restart: unless-stopped
     environment:

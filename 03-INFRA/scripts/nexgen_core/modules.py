@@ -58,7 +58,9 @@ RUNTIME_HOOKS = ("event_sink", "guardrail")
 
 #: How a third-party component of a module is pinned, and how the newest release is learned.
 UPSTREAM_KINDS = ("docker", "npm")
-UPSTREAM_COMPARE = ("patch", "minor")
+UPSTREAM_COMPARE = ("patch", "minor", "build:<N>")
+#: ``build:<N>``: a build-counter release that is news on a new minor, or once the pin is N builds behind.
+BUILD_COMPARE_RE = re.compile(r"build:([1-9][0-9]*)")
 UPSTREAM_LATEST_SOURCES = ("npm", "git-tags")
 _UPSTREAM_KEYS = ("name", "kind", "pinned_in", "latest", "image", "package", "pattern", "compare")
 
@@ -144,6 +146,7 @@ class ModuleUpstream:
     #: ``npm`` only: a regex whose first group is the pinned version.
     pattern: str = ""
     #: ``minor`` for a rolling release whose patch number is a build counter: only a new minor is news.
+    #: ``build:<N>`` for the same kind of release when falling N builds behind should still be news.
     compare: str = "patch"
 
 
@@ -192,7 +195,8 @@ def _parse_upstream(spec: Any, path: Path, mid: str) -> tuple[ModuleUpstream, ..
         source, _, argument = values["latest"].partition(":")
         if source not in UPSTREAM_LATEST_SOURCES or not argument:
             raise ConfigError(f"{where}: 'latest' must be one of {[f'{s}:<name>' for s in UPSTREAM_LATEST_SOURCES]}")
-        if values["compare"] and values["compare"] not in UPSTREAM_COMPARE:
+        if values["compare"] and values["compare"] not in ("patch", "minor") \
+                and not BUILD_COMPARE_RE.fullmatch(values["compare"]):
             raise ConfigError(f"{where}: 'compare' must be one of {list(UPSTREAM_COMPARE)}")
         if values["kind"] == "docker" and not values["image"]:
             raise ConfigError(f"{where} is a docker component and needs 'image'")
