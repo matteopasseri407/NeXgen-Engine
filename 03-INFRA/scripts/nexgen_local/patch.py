@@ -321,6 +321,20 @@ def _check_approval(cfg: LaneConfig, proposal: Proposal) -> tuple[Path, Path]:
     return path, root
 
 
+def _rollback_file(path: Path, before: bytes) -> None:
+    """Puts back the bytes the file had before the patch was applied.
+
+    A post-apply validation failure used to leave the file half-changed with
+    the proposal marked failed, and nothing said which state the tree was in.
+    """
+    try:
+        path.write_bytes(before)
+    except OSError as exc:
+        raise PatchError(
+            f"il file applicato non corrisponde alla proposta e il ripristino e' fallito: {exc}"
+        ) from exc
+
+
 def _run_apply(
     cfg: LaneConfig, proposal: Proposal, path: Path, root: Path, *, verify: str | None
 ) -> dict:
@@ -337,6 +351,7 @@ def _run_apply(
     )
 
     record_attempt(proposal, lambda: _save(cfg, proposal), PatchError)
+    before = path.read_bytes()  # what a failed post-apply check puts back
     with tempfile.NamedTemporaryFile("wb", suffix=".patch", delete=False) as handle:
         handle.write(proposal.patch.encode("utf-8"))
         patch_path = Path(handle.name)
@@ -355,14 +370,11 @@ def _run_apply(
         )
         raise PatchError(f"git apply fallito: {output.strip()}")
     if _sha(_read_text_bytes(path)) != proposal.new_hash:
-        audit_event(
-            cfg,
-            "apply_patch",
-            {"file": rel, "proposal": proposal.id, "phase": "result", "rc": "hash"},
-            ok=False,
-            chars=len(proposal.patch),
-        )
-        raise PatchError("il file applicato non corrisponde alla proposta")
+        audit_event(cfg, "apply_patch",
+                    {"file": rel, "proposal": proposal.id, "phase": "result", "rc": "hash"},
+                    ok=False, chars=len(proposal.patch))
+        _rollback_file(path, before)
+        raise PatchError("il file applicato non corrisponde alla proposta; il file e' tornato com'era")
 
     verify_output = ""
     verify_rc: int | None = None

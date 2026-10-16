@@ -285,3 +285,25 @@ def test_same_patch_twice_gets_unique_ids(tmp_path: Path) -> None:
     second = propose_patch(llm, cfg, "notes.md", "correggi il refuso")
     assert first.id != second.id
     assert load_proposal(cfg, first.id).patch == load_proposal(cfg, second.id).patch
+
+
+def test_a_post_apply_mismatch_puts_the_file_back(tmp_path: Path) -> None:
+    """MUST-16: se dopo l'applicazione il contenuto non corrisponde alla
+    proposta (a-capo diversi sotto), il file torna esattamente com'era:
+    mezze modifiche mai, e la proposta resta rifiutata."""
+    from nexgen_local import patch as patch_mod
+
+    repo = _git_repo(tmp_path)
+    original = "Questo contiente un refuso.\n"
+    (repo / "notes.md").write_text(original, encoding="utf-8")
+    cfg = _cfg(tmp_path, repo)
+    proposal = propose_patch(PatchLLM({"old": "contiente", "new": "contiene", "why": "refuso"}),
+                             cfg, "notes.md", "correggi il refuso")
+    tampered = load_proposal(cfg, proposal.id)
+    tampered.new_hash = "0" * 64
+    patch_mod._save(cfg, tampered)
+
+    with pytest.raises(PatchError, match="corrisponde alla proposta"):
+        apply_proposal(cfg, proposal.id, yes=True)
+
+    assert (repo / "notes.md").read_text(encoding="utf-8") == original
