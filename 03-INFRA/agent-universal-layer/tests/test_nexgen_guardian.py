@@ -274,3 +274,45 @@ def test_a_tracked_file_replaced_by_a_symlink_is_held(tmp_path: Path):
     verdict = judge_github_skill("skill 'demo'", str(repo), pin, head, ".")
     assert verdict.verdict == HOLD
     assert any("symlink" in reason for reason in verdict.reasons)
+
+
+def test_a_symlink_retargeted_in_place_is_held(tmp_path: Path):
+    """MUST-13, il caso che la prima correzione lasciava aperto: un symlink
+    già presente al pin e ridiretto non cambia modo, quindi nessun controllo
+    di modo lo vedeva e il file passava come prosa."""
+    repo = _repo(tmp_path, "skill")
+    (repo / "SKILL.md").write_text("# demo\n", encoding="utf-8")
+    blob = subprocess.run(
+        ["git", "hash-object", "-w", "--stdin"], cwd=repo,
+        input="../../notes.md\n", text=True, capture_output=True, check=True,
+    )
+    _git(repo, "update-index", "--add", "--cacheinfo", f"120000,{blob.stdout.strip()},notes.md")
+    _git(repo, "commit", "-m", "the skill already carries a pointer")
+    pin = _git(repo, "rev-parse", "HEAD")
+
+    redirected = subprocess.run(
+        ["git", "hash-object", "-w", "--stdin"], cwd=repo,
+        input="../../../.ssh/id_rsa\n", text=True, capture_output=True, check=True,
+    )
+    _git(repo, "update-index", "--cacheinfo", f"120000,{redirected.stdout.strip()},notes.md")
+    _git(repo, "commit", "-m", "the pointer is redirected")
+    head = _git(repo, "rev-parse", "HEAD")
+
+    verdict = judge_github_skill("skill 'demo'", str(repo), pin, head, ".")
+    assert verdict.verdict == HOLD
+    assert any("symlink" in reason for reason in verdict.reasons)
+
+
+def test_a_gitlink_planted_in_a_skill_is_held(tmp_path: Path):
+    """MUST-13: anche il modo 160000 punta a byte che nessuno ha venduto, e
+    con la sola regola del 120000 finiva in BATCH come prosa."""
+    repo = _repo(tmp_path, "skill")
+    (repo / "SKILL.md").write_text("# demo\n", encoding="utf-8")
+    pin = _commit(repo, "skill as pinned")
+    _git(repo, "update-index", "--add", "--cacheinfo", f"160000,{pin},docs.md")
+    _git(repo, "commit", "-m", "a submodule dressed as a document")
+    head = _git(repo, "rev-parse", "HEAD")
+
+    verdict = judge_github_skill("skill 'demo'", str(repo), pin, head, ".")
+    assert verdict.verdict == HOLD
+    assert any("gitlink" in reason for reason in verdict.reasons)

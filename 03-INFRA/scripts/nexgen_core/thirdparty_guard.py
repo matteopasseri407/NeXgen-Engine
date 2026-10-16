@@ -1,3 +1,4 @@
+# nexgen: one-job reason="judge one pinned third-party move: promote, batch or hold"
 """Deterministic third-party update guardian for NeXgen Engine v2.
 
 depwatch reports WHAT moved upstream; this module judges whether the move
@@ -56,8 +57,12 @@ PROSE_SUFFIXES = frozenset({
 #: Hook and plugin wiring is never boring: held, always.
 HOOK_NAMES = frozenset({"hooks.json", "plugin.json", "settings.json", "hooks.yaml"})
 
-#: A symlink in a skill points at bytes nobody vendored: held, always.
+#: The only tree mode a vendored skill file may have. Everything else is
+#: held: 100755 can run, a symlink (120000) points at bytes nobody vendored,
+#: a gitlink (160000) is a commit nobody vendored.
+APPROVED_MODE = "100644"
 SYMLINK_MODE = "120000"
+GITLINK_MODE = "160000"
 
 #: A batchable diff stays small enough to glance at in one go.
 BATCH_MAX_FILES = 20
@@ -139,29 +144,69 @@ def _empty_scope_verdict(entries: list[tuple[str, str]], scope: str) -> tuple[st
     )
 
 
-def _added_file_violation(name: str, work: Path, head: str) -> tuple[str, str] | None:
+def _modes_at_head(work: Path, head: str, scope: str) -> dict[str, str] | None:
+    """{path: mode} for everything the scope owns at HEAD, None if unreadable.
+
+    One recursive listing for the whole scope: asking git per file would
+    spawn a process for every file of a large skill.
+    """
+    args = ["ls-tree", "-r", "-z", head]
+    if scope not in (".", ""):
+        args += ["--", scope]
+    listing = _run_git(args, cwd=work)
+    if listing.returncode != 0:
+        return None
+    modes: dict[str, str] = {}
+    for record in listing.stdout.split("\0"):
+        meta, _, name = record.partition("\t")
+        mode = meta.split(" ", 1)[0] if meta else ""
+        if name and mode:
+            modes[name] = mode
+    return modes
+
+
+def _scope_shape_problem(
+    work: Path, head: str, scope: str, scoped: list[tuple[str, str]],
+) -> tuple[str, str] | None:
+    """The (reason, plain) that holds this scope's shape, or None.
+
+    Every scoped path must be a plain blob at HEAD: the mode is checked on
+    all of them, not only on the new files, because a symlink the pin
+    already carried can be retargeted in place.
+    """
+    modes = _modes_at_head(work, head, scope)
+    if modes is None:
+        return ("inspection failed at ls-tree, cannot verify",
+                "Non sono riuscita a controllare bene: resta fermo, ci riprovo da sola.")
+    for _, name in scoped:
+        mode = modes.get(name)
+        if mode is None or mode == APPROVED_MODE:
+            continue  # deleted in this update, or exactly what a file should be
+        if mode == SYMLINK_MODE:
+            return (f"symlink in the skill: {name}",
+                    f"C'è un rimando a un file fuori dalla skill ({name}): da guardare prima.")
+        if mode == GITLINK_MODE:
+            return (f"gitlink in the skill: {name}",
+                    f"C'è un riferimento a un altro repository ({name}): da guardare prima.")
+        if mode.endswith("755"):
+            return (f"executable file in the skill: {name}",
+                    f"C'è un file che può partire da solo ({name}): da guardare prima.")
+        return (f"unusual mode {mode!r} on {name}",
+                f"Un file è registrato in modo strano ({name}): da guardare prima.")
+    return None
+
+
+def _added_file_violation(name: str) -> tuple[str, str] | None:
     """The (reason, plain) that holds one added file, or None when boring.
 
-    A new file is held when it can run (script suffix, hook wiring, the
-    executable bit) or when it is a symlink: mode 120000 points at bytes
-    nobody vendored, and it used to read as prose and be batched.
+    A new file is held when it can run or when it wires a hook; the shape of
+    the bytes is the scope's business, checked on every scoped path.
     """
     if Path(name).suffix.lower() in SCRIPT_SUFFIXES:
         return f"new script added: {name}", f"C'è un programma nuovo dentro ({name}): da guardare prima."
     if Path(name).name in HOOK_NAMES or "/hooks/" in name:
         return (f"new hook wiring added: {name}",
                 f"Tocca i collegamenti automatici ({name}): da guardare prima.")
-    mode = _run_git(["ls-tree", head, "--", name], cwd=work)
-    if mode.returncode != 0:
-        return ("inspection failed at ls-tree, cannot verify",
-                "Non sono riuscita a controllare bene: resta fermo, ci riprovo da sola.")
-    tree_line = mode.stdout.strip()
-    if tree_line.startswith(SYMLINK_MODE):
-        return (f"new symlink planted: {name}",
-                f"C'è un rimando a un file fuori dalla skill ({name}): da guardare prima.")
-    if re.match(r"^\d*755\s", tree_line):
-        return (f"new executable file: {name}",
-                f"C'è un file nuovo che può partire da solo ({name}): da guardare prima.")
     return None
 
 
@@ -230,6 +275,10 @@ def judge_github_skill(
             return finding
         entries = _parse_name_status_z(status.stdout)
         scoped = [(flag, name) for flag, name in entries if _in_scope(name, scope)]
+        if violation := _scope_shape_problem(work, head, scope, scoped):
+            finding.reasons.append(violation[0])
+            finding.plain = violation[1]
+            return finding
         if not scoped:
             finding.verdict, reason, plain = _empty_scope_verdict(entries, scope)
             finding.reasons.append(reason)
@@ -247,23 +296,10 @@ def judge_github_skill(
 
         added = [name for flag, name in scoped if flag == "A"]
         for name in added:
-            if violation := _added_file_violation(name, work, head):
+            if violation := _added_file_violation(name):
                 finding.reasons.append(violation[0])
                 finding.plain = violation[1]
                 return finding
-
-        summary = _run_git(["diff", "--summary", f"{pinned}..{head}", *scope_arg], cwd=work)
-        if not _ok(summary, "diff"):
-            return finding
-        symlinked = re.search(r"mode change (?:\d+ => 120000|120000 => \d+) ", summary.stdout)
-        if symlinked or re.search(r"mode change \d+ => \d*755 ", summary.stdout):
-            if symlinked:
-                finding.reasons.append("a tracked file became or stopped being a symlink")
-                finding.plain = "Un file è diventato un rimando a un altro file: da guardare prima."
-            else:
-                finding.reasons.append("an existing file gained the executable bit")
-                finding.plain = "Un file esistente diventa eseguibile: da guardare prima."
-            return finding
 
         touched_hooks = [
             name for _, name in scoped
