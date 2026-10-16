@@ -47,6 +47,10 @@ class LockIOError(NexgenError, OSError):
     exit_code = 1
 
 
+#: ERROR_SHARING_VIOLATION, ERROR_LOCK_VIOLATION: another process holds the file.
+_SHARING_WINERRORS = (32, 33)
+
+
 def _is_retryable_open_error(exc: OSError) -> bool:
     """A lock file held open for an instant (Defender, the indexer) is contention.
 
@@ -54,8 +58,11 @@ def _is_retryable_open_error(exc: OSError) -> bool:
     another process", WinError 32) as a PermissionError with EACCES: the
     file is there, the moment is wrong. Retrying inside the same timeout as
     a held lock is the right posture; anything else stays a typed error.
+    EACCES alone is not enough: a lock that is really off-limits (sudo, an
+    ACL, WinError 5) says the same, and retrying it would end as a silent
+    guard contention instead of an error.
     """
-    return isinstance(exc, PermissionError) or exc.errno == errno.EACCES
+    return getattr(exc, "winerror", None) in _SHARING_WINERRORS
 
 
 class HostLock:

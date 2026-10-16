@@ -58,6 +58,15 @@ def test_guard_lock_contention_is_silent_success() -> None:
     assert manual.exit_code == 75
 
 
+def _sharing_violation() -> PermissionError:
+    """What Windows raises while another process holds the file: EACCES with
+    winerror 32 (ERROR_SHARING_VIOLATION). Set by hand so the case also runs
+    where the attribute does not exist natively."""
+    exc = PermissionError(errno.EACCES, "The process cannot access the file because it is being used by another process")
+    exc.winerror = 32
+    return exc
+
+
 def test_open_held_by_another_process_is_retried_not_fatal(tmp_path: Path, monkeypatch) -> None:
     """MUST-03: on Windows Defender or the indexer can hold the just-opened
     lock file (WinError 32 arrives as PermissionError). That is contention,
@@ -68,7 +77,7 @@ def test_open_held_by_another_process_is_retried_not_fatal(tmp_path: Path, monke
     def flaky_open(*args, **kwargs):
         attempts["count"] += 1
         if attempts["count"] <= 2:
-            raise PermissionError(errno.EACCES, "The process cannot access the file (WinError 32)")
+            raise _sharing_violation()
         return real_open(*args, **kwargs)
 
     monkeypatch.setattr(lock.os, "open", flaky_open)
@@ -91,3 +100,20 @@ def test_non_retryable_open_error_still_fails_closed(tmp_path: Path, monkeypatch
     monkeypatch.setattr(lock.time, "sleep", lambda _seconds: None)
     with pytest.raises(LockIOError):
         HostLock(lock_path=tmp_path / "guard.lock", timeout=1).acquire()
+
+
+@pytest.mark.parametrize("winerror", [None, 5], ids=["posix-eacces", "windows-access-denied"])
+def test_a_lock_nobody_may_open_is_an_error_not_contention(tmp_path: Path, monkeypatch, winerror) -> None:
+    """A lock file that is really off-limits (made by sudo, an ACL that says
+    no) is not "another sync is running". Retrying it until the timeout turned
+    it into a guard contention, which exits 0 in silence, forever."""
+    def denied_open(*args, **kwargs):
+        exc = PermissionError(errno.EACCES, "Permission denied")
+        if winerror is not None:
+            exc.winerror = winerror
+        raise exc
+
+    monkeypatch.setattr(lock.os, "open", denied_open)
+    monkeypatch.setattr(lock.time, "sleep", lambda _seconds: None)
+    with pytest.raises(LockIOError):
+        HostLock(lock_path=tmp_path / "guard.lock", timeout=1, is_guard=True).acquire()
