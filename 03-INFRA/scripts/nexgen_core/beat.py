@@ -64,7 +64,11 @@ def _system_uptime_seconds() -> float | None:
         try:
             import ctypes
 
-            return ctypes.windll.kernel32.GetTickCount64() / 1000.0
+            tick_count = ctypes.windll.kernel32.GetTickCount64
+            # Undeclared, ctypes reads the 64-bit result as a 32-bit int:
+            # negative past 24.8 days, which reads as "just booted".
+            tick_count.restype = ctypes.c_uint64
+            return tick_count() / 1000.0
         except (AttributeError, OSError):  # nexgen: allow reason="the reading is optional; without it alerting behaves as before"
             return None
     try:

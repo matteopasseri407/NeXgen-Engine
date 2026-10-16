@@ -77,8 +77,10 @@ def test_check_liveness_stale_avvisa_una_volta(tmp_path: Path, monkeypatch: pyte
 
 def test_system_uptime_uses_the_windows_tick_count(monkeypatch: pytest.MonkeyPatch) -> None:
     """MUST-06: on Windows the uptime comes from GetTickCount64, not /proc/uptime."""
-    fake_ctypes = types.SimpleNamespace(windll=types.SimpleNamespace(
-        kernel32=types.SimpleNamespace(GetTickCount64=lambda: 60_000),
+    import ctypes
+
+    fake_ctypes = types.SimpleNamespace(c_uint64=ctypes.c_uint64, windll=types.SimpleNamespace(
+        kernel32=types.SimpleNamespace(GetTickCount64=_TickCount64(60_000)),
     ))
     monkeypatch.setattr(beat, "os", types.SimpleNamespace(name="nt"))
     monkeypatch.setitem(sys.modules, "ctypes", fake_ctypes)
@@ -86,6 +88,39 @@ def test_system_uptime_uses_the_windows_tick_count(monkeypatch: pytest.MonkeyPat
     assert beat._system_uptime_seconds() == 60.0
     assert beat._just_booted(300.0) is True
     assert beat._just_booted(30.0) is False
+
+
+class _TickCount64:
+    """GetTickCount64 as ctypes really hands it over: without a declared
+    restype the 64-bit result is read as a signed C int (32 bits)."""
+
+    def __init__(self, milliseconds: int) -> None:
+        self.milliseconds = milliseconds
+        self.restype = None
+
+    def __call__(self) -> int:
+        import ctypes
+
+        if self.restype is ctypes.c_uint64:
+            return self.milliseconds
+        return ctypes.c_int(self.milliseconds).value
+
+
+def test_a_month_of_windows_uptime_is_not_a_fresh_boot(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Past 2**31 ms (24.8 days) the truncated reading went negative: always
+    "less than the grace window", so a stalled sync never alarmed again."""
+    import ctypes
+
+    thirty_days_ms = 30 * 86_400 * 1000
+    fake_ctypes = types.SimpleNamespace(
+        c_uint64=ctypes.c_uint64,
+        windll=types.SimpleNamespace(kernel32=types.SimpleNamespace(GetTickCount64=_TickCount64(thirty_days_ms))),
+    )
+    monkeypatch.setattr(beat, "os", types.SimpleNamespace(name="nt"))
+    monkeypatch.setitem(sys.modules, "ctypes", fake_ctypes)
+
+    assert beat._system_uptime_seconds() == thirty_days_ms / 1000.0
+    assert beat._just_booted(300.0) is False
 
 
 def test_stale_liveness_just_after_a_boot_does_not_alarm(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
