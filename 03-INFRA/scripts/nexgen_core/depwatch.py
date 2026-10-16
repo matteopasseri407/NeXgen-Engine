@@ -76,6 +76,8 @@ def _is_stale(kind: str, pinned: str, upstream: str | None, compare: str = "patc
     Versions compare properly: a pin ahead of the registry (vendor
     installer faster than npm) is current, not stale. ``compare="minor"`` is for a rolling
     release whose patch number is a build counter: only a newer minor line is news.
+    ``compare="build:<N>"`` is the same release watched closer: a newer minor, or a pin that fell
+    N or more builds behind on its own minor line.
     """
     if upstream is None:
         return False
@@ -87,9 +89,13 @@ def _is_stale(kind: str, pinned: str, upstream: str | None, compare: str = "patc
             mine = re.match(r"(\d+)\.(\d+)\.(\d+)", old.group("version"))
             theirs = re.match(r"(\d+)\.(\d+)\.(\d+)", new.group("version"))
             if mine and theirs:
+                have, newest = tuple(int(g) for g in mine.groups()), tuple(int(g) for g in theirs.groups())
+                build = re.fullmatch(r"build:([1-9][0-9]*)", compare)
+                if build:
+                    return newest[:2] > have[:2] or (
+                        newest[:2] == have[:2] and newest[2] - have[2] >= int(build.group(1)))
                 keep = 2 if compare == "minor" else 3
-                return (tuple(int(g) for g in theirs.groups())[:keep]
-                        > tuple(int(g) for g in mine.groups())[:keep])
+                return newest[:keep] > have[:keep]
             # Non-strict semver (beta/build metadata): hold instead of flapping.
             return False
     return upstream.strip().lower() != pinned.strip().lower()

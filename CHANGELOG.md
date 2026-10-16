@@ -19,6 +19,11 @@ pre-existing Windows failures unchanged, CI green on Linux and Windows.
 
 ### Changed
 
+- The upstream watch can flag a build-counter release once a pin falls
+  behind: a module component may declare `compare: build:<N>` (a newer
+  minor, or N builds behind on the same minor). Firecrawl uses `build:100`,
+  about three weeks; `minor` alone had hidden 2.11.99 -> 2.11.528 until the
+  search API stopped matching the MCP client.
 - Updating no longer interrogates the installer about signatures: a release
   that cannot be verified on the machine installs with one plain line, in
   every mode including `--unattended`. A wrong signature, or one by a key
