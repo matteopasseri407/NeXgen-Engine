@@ -94,6 +94,19 @@ def test_the_suite_runs_in_parallel_and_the_floor_leg_gets_the_same_command():
     assert len(labels) == 2
 
 
+def test_the_timing_sensitive_modules_are_pinned_to_one_worker():
+    """`--dist loadgroup` meets the `xdist_group` marker; both must exist, or the
+    pinning is a comment nobody reads and these tests fail under load again."""
+    config = tomllib.loads((REPO / "pyproject.toml").read_text(encoding="utf-8"))
+    markers = config["tool"]["pytest"]["ini_options"]["markers"]
+    assert any("xdist_group" in marker for marker in markers)
+
+    tests = REPO / "03-INFRA" / "agent-universal-layer" / "tests"
+    for module in ("test_nexgen_mcp_transport.py", "test_nexgen_update_command.py"):
+        source = (tests / module).read_text(encoding="utf-8")
+        assert 'pytest.mark.xdist_group("serial")' in source, module
+
+
 def test_pytest_xdist_is_a_development_dependency_only():
     """Parallelism is a test-runner detail: it must never reach a user's install."""
     text = (REPO / "pyproject.toml").read_text(encoding="utf-8")

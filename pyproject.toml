@@ -98,6 +98,11 @@ nexgen_local = [
 [tool.pytest.ini_options]
 testpaths = ["03-INFRA/agent-universal-layer/tests"]
 pythonpath = ["03-INFRA/scripts"]
+# `xdist_group` is read by pytest-xdist's `--dist loadgroup` (see ci.yml):
+# tests pinned to "serial" share one worker instead of being dropped.
+markers = [
+    "xdist_group: pin tests that share a real, timing-sensitive resource to one worker",
+]
 
 [tool.ruff]
 line-length = 120

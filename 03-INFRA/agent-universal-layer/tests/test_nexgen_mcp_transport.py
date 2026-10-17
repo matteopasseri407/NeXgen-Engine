@@ -16,6 +16,12 @@ from pathlib import Path
 
 import pytest
 
+# These tests launch and reap real subprocesses with millisecond deadlines: run
+# concurrently with the rest of the suite they lose their race to machine load
+# (verified 2026-10-17: 6 failures under `-n auto`, all green serially). The pin
+# keeps every test - it only stops this module from competing with itself.
+pytestmark = pytest.mark.xdist_group("serial")
+
 
 @pytest.fixture(scope="module")
 def proxy():
