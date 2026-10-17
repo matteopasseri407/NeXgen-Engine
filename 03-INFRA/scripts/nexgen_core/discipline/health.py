@@ -8,17 +8,22 @@ from pathlib import Path
 from .config import Config, load
 from .gitutil import Change, files_at, git
 from .shellgate import check_shell
-from .sizes import check_sizes
-from .violations import CODE_EXT, SHELL_EXT
+from .sizes import split_queue
+from .violations import CODE_EXT, SHELL_EXT, Violation
 
 WINDOW_DAYS = 7
 GROWTH_RED = 5
+QUEUE_SHOWN = 10
 
 
-def debt(files: dict[str, str], cfg: Config) -> dict[str, int]:
-    """Existing size and shell debt, counted by kind."""
-    changes = [Change(p, "A", None, text) for p, text in files.items()]
-    found = check_sizes(changes, cfg) + check_shell(changes, cfg)
+def findings(files: dict[str, str], cfg: Config) -> list[Violation]:
+    """What the report shows at one revision: the split queue and the shell debt."""
+    changes = [Change(path, "A", None, text) for path, text in files.items()]
+    return split_queue(changes, cfg) + check_shell(changes, cfg)
+
+
+def counts(found: list[Violation]) -> dict[str, int]:
+    """The report's numbers, counted by kind."""
     return {kind: sum(v.kind == kind for v in found) for kind in ("file", "function", "shell")}
 
 
@@ -31,20 +36,33 @@ def _status(smoke: str, now: dict[str, int], before: dict[str, int] | None) -> t
     if not smoke:
         return "ROSSO", "manca il test del percorso reale", "Definisci smoke_command in .nexgen-discipline.toml: il comando che prova il programma davvero."
     if grew > GROWTH_RED:
-        return "ROSSO", f"il debito è cresciuto di {grew} voci in una settimana", "Fermati: nessun codice nuovo nei file elencati da `audit` finché non rientra."
+        return "GIALLO", f"la coda split è cresciuta di {grew} voci in una settimana", "Niente blocca: guarda la coda split qui sotto e decidi cosa dividere quando vuoi."
     if grew > 0:
-        return "GIALLO", f"il debito è cresciuto di {grew} in una settimana", "Controlla `audit`: chi ha ingrandito file o funzioni oltre i limiti?"
+        return "GIALLO", f"la coda split è cresciuta di {grew} in una settimana", "Nessuna azione obbligata: il tetto è un avviso."
     if before is None:
         return "GIALLO", "progetto nuovo: ancora nessun dato di una settimana fa per confrontare", "Nessuna per ora."
     return "VERDE", "nessun peggioramento in una settimana", "Nessuna."
 
 
+def _queue_section(found: list[Violation]) -> list[str]:
+    """The split queue in the report: the work that is owed, up to a readable length."""
+    queued = [v for v in found if v.kind in ("file", "function")]
+    lines = [f"- Coda split ({len(queued)} voci, nessuna blocca il push):"]
+    if not queued:
+        return [*lines, "  - vuota"]
+    lines += [f"  - {v}" for v in queued[:QUEUE_SHOWN]]
+    if len(queued) > QUEUE_SHOWN:
+        lines.append(f"  - ... e altre {len(queued) - QUEUE_SHOWN} voci: `discipline.py audit` le elenca tutte.")
+    return lines
+
+
 def report(root: Path) -> str:
     cfg = load(root, "HEAD")
     suffixes = CODE_EXT + SHELL_EXT
-    now = debt(files_at(root, "HEAD", suffixes), cfg)
+    found = findings(files_at(root, "HEAD", suffixes), cfg)
+    now = counts(found)
     old_rev = git(root, "rev-list", "-1", f"--before={WINDOW_DAYS} days ago", "HEAD", check=False).strip()
-    before = debt(files_at(root, old_rev, suffixes), cfg) if old_rev else None
+    before = counts(findings(files_at(root, old_rev, suffixes), cfg)) if old_rev else None
     commits = git(root, "rev-list", "--count", f"--since={WINDOW_DAYS} days ago", "HEAD", check=False).strip() or "0"
     label, why, action = _status(cfg.smoke_command, now, before)
     smoke = f"definito (`{cfg.smoke_command}`)" if cfg.smoke_command else "NON DEFINITO"
@@ -54,6 +72,7 @@ def report(root: Path) -> str:
         f"- File oltre {cfg.max_file_lines} righe: {_trend(now['file'], before and before['file'])}",
         f"- Funzioni oltre {cfg.max_func_lines} righe: {_trend(now['function'], before and before['function'])}",
         f"- Script shell/PowerShell con logica: {_trend(now['shell'], before and before['shell'])}",
+        *_queue_section(found),
         f"- Test del percorso reale: {smoke}",
         f"- Commit negli ultimi {WINDOW_DAYS} giorni: {commits}",
         f"Prossima azione: {action}",

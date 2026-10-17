@@ -88,7 +88,10 @@ def _build_content(renderer, servers, existing_lines, preserved):
     # connectors made the guard and an interactive apply reorder the file
     # against each other on every run: endless rewrites, backups and a
     # drift warning that never cleared.
-    manifest_order = [name.replace("-", "_") for name in renderer.manifest_server_names()]
+    # Deduplicated, keeping the first occurrence: two manifest names that collapse
+    # into the same section (`demo-one` and `demo_one`) would otherwise be emitted
+    # twice, and `tomllib.loads` below refuses a table declared twice.
+    manifest_order = list(dict.fromkeys(name.replace("-", "_") for name in renderer.manifest_server_names()))
     for section_name, block in preserved.items():
         if section_name not in manifest_order:
             lines.append("\n".join(block).strip())

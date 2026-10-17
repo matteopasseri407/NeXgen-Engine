@@ -57,6 +57,31 @@ def test_a_notifier_that_hangs_is_given_up_on(monkeypatch):
     assert notify.send_desktop("Titolo", "Corpo") is False
 
 
+def test_the_windows_balloon_is_not_killed_by_its_own_timeout(monkeypatch):
+    """Lo script dorme quanto basta a mostrare il pallone: il timeout deve durare di più.
+
+    Con il timeout uguale alla pausa il processo viene ucciso un istante prima di
+    finire, `send_desktop` risponde di no, chi ha composto l'avviso non segna
+    l'invio e ogni controllo rifà l'attesa e rimostra lo stesso pallone.
+    """
+    import re
+
+    seen: dict = {}
+    monkeypatch.setattr(notify.sys, "platform", "win32")
+    monkeypatch.setattr(notify.shutil, "which", lambda name: "powershell" if name == "powershell" else None)
+
+    def fake_run(command, **kwargs):
+        script = command[-1]
+        seen["sleep"] = int(re.search(r"Start-Sleep -Seconds (\d+)", script).group(1))
+        seen["timeout"] = kwargs.get("timeout")
+        return subprocess.CompletedProcess(command, 0, b"", b"")
+
+    monkeypatch.setattr(notify.subprocess, "run", fake_run)
+
+    assert notify.send_desktop("Titolo", "Corpo") is True
+    assert seen["timeout"] is not None and seen["timeout"] > seen["sleep"], seen
+
+
 def test_an_empty_message_is_not_shown(monkeypatch):
     called = False
 

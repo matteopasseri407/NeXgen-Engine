@@ -10,7 +10,9 @@ from __future__ import annotations
 import re
 from pathlib import Path, PurePosixPath
 
-FILENAME_RE = re.compile(r"`([\w./-]+\.md)`")
+#: A backticked `.md` path in the Note column. Spaces are part of the name: an Obsidian
+#: note called "nota con spazi.md" was not a target at all, so the tranche was rejected.
+FILENAME_RE = re.compile(r"`([^`\n]+\.md)`")
 NO_ACTION_RE = re.compile(r"nessuna azione|no action", re.IGNORECASE)
 # Deliberately broad (matches "archive", "archivia", "archiviare", ...): the
 # Action column is free prose, not an enum -- this only decides which

@@ -31,6 +31,43 @@ def test_fewer_tests_or_assertions_or_a_new_skip_are_flagged(repo):
         assert cli.main(["check", "--base", base]) == 1, weakened
 
 
+def test_a_new_platform_only_test_is_not_a_weakening(repo):
+    """Una prova nuova che gira solo su Windows nasce così: marcarla non indebolisce nulla.
+
+    Il conteggio dei marcatori era un totale sul file, quindi il marcatore di un
+    test appena scritto veniva letto come un test esistente spento.
+    """
+    base = committed_tests(repo)
+    repo.write(
+        "tests/test_x.py",
+        TESTS
+        + "\n\nimport os\nimport pytest\n\n\n"
+        + '@pytest.mark.skipif(os.name != "nt", reason="a Windows-only reproduction")\n'
+        + "def test_c():\n    assert 4\n",
+    )
+    assert cli.main(["check", "--base", base]) == 0
+
+
+def test_a_new_test_that_skips_itself_is_not_a_weakening(repo):
+    base = committed_tests(repo)
+    repo.write(
+        "tests/test_x.py",
+        TESTS + "\n\nimport pytest\n\n\ndef test_c():\n    pytest.skip('only where the driver exists')\n    assert 4\n",
+    )
+    assert cli.main(["check", "--base", base]) == 0
+
+
+def test_skipping_a_test_the_base_already_had_is_still_flagged(repo):
+    base = committed_tests(repo)
+    repo.write(
+        "tests/test_x.py",
+        "import os\nimport pytest\n\n\n"
+        + '@pytest.mark.skipif(os.name != "nt", reason="qui la prova non gira")\n'
+        + "def test_a():\n    assert 1\n\n\ndef test_b():\n    assert 2\n    assert 3\n",
+    )
+    assert cli.main(["check", "--base", base]) == 1
+
+
 def test_adding_tests_is_never_flagged(repo):
     base = committed_tests(repo)
     repo.write("tests/test_x.py", TESTS + "\n\ndef test_c():\n    assert 4\n")
@@ -88,12 +125,13 @@ def test_the_installed_hooks_do_not_hand_gits_own_context_downstream(repo):
         assert "unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE" in text
 
 
-def test_the_installed_hook_really_blocks_an_oversized_commit(repo):
+def test_the_installed_hook_lets_an_oversized_commit_through_and_says_so(repo):
     init_project(repo.path, "")
     repo.write("big.py", BIG)
     repo.git("add", "big.py")
     done = subprocess.run(["git", "-C", str(repo.path), "commit", "-q", "-m", "big"], capture_output=True, text=True)
-    assert done.returncode != 0 and "big.py" in done.stdout + done.stderr
+    assert done.returncode == 0
+    assert "big.py" in done.stdout + done.stderr  # the alarm is shown; the commit is not refused
 
 
 def test_the_hook_fails_loudly_when_the_engine_is_missing(repo):
@@ -117,6 +155,16 @@ def test_report_is_red_without_a_smoke_command_and_green_with_history(repo, monk
     repo.write("a.txt", "a\n")
     repo.commit("recent")
     assert "VERDE" in report(repo.path)
+
+
+def test_the_report_prints_the_split_queue(repo):
+    """The ceiling is a warning: what is over it is work to do, listed for the owner."""
+    repo.write("big.py", BIG)
+    repo.write("small.py", "x = 1\n")
+    repo.commit("debt")
+    text = report(repo.path)
+    assert "Coda split" in text and "big.py" in text
+    assert "small.py" not in text
 
 
 def test_smoke_runs_the_project_command_and_reports_its_exit_code(repo):

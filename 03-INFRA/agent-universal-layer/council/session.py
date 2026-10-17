@@ -98,8 +98,10 @@ def _secure_session_tree(session_dir: Path) -> None:
 def session_run_lock(session_dir: Path):
     """Keep one stable lock outside the tree that cleanup may remove.
 
-    Also honor older runs' in-tree lock when present. If an OS refuses to
-    remove that open legacy file, cleanup preserves the session.
+    Also honor older runs' in-tree lock when present: it is taken and released
+    immediately, to ask whether an old run still owns this session. Held open it
+    kept the tree it lives in unremovable on Windows (WinError 32), so cleanup
+    preserved every old session forever.
     """
     lock_dir = session_dir.parent.parent / "session-locks"
     secure_artifact(lock_dir)
@@ -112,7 +114,7 @@ def session_run_lock(session_dir: Path):
         if legacy_path.exists():
             legacy = HostLock(legacy_path, timeout=0, command_name="council session")
             legacy.acquire()
-            stack.callback(legacy.release)
+            legacy.release()  # a question, not a hold: see the docstring above
         yield
 
 

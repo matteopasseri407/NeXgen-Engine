@@ -289,10 +289,12 @@ def test_ensure_shell_hook_installs_once(tmp_path, monkeypatch):
     assert notifier.ensure_shell_hook(home) == ["[shell-hook] already present"]
 
 
-def test_ensure_boot_check_windows_uses_schtasks(tmp_path, monkeypatch):
+def test_ensure_boot_check_windows_uses_schtasks(tmp_path, monkeypatch, pretend_os):
     home = _isolate(tmp_path, monkeypatch)
     orig_name = notifier.os.name
-    monkeypatch.setattr(notifier.os, "name", "nt")
+    from nexgen_core.tools import notifier_boot
+
+    pretend_os(notifier_boot, "nt")
     monkeypatch.setenv("APPDATA", str(tmp_path / "appdata"))
     calls = []
 
@@ -331,10 +333,12 @@ def test_windows_vbs_quotes_spaced_paths():
     assert 'shell.Run """C:\\Users\\First Last\\.local\\bin\\nexgen.cmd"" tool update-notifier --boot"' in content
 
 
-def test_windows_fallback_removed_after_success(tmp_path, monkeypatch):
+def test_windows_fallback_removed_after_success(tmp_path, monkeypatch, pretend_os):
     home = _isolate(tmp_path, monkeypatch)
     orig_name = notifier.os.name
-    monkeypatch.setattr(notifier.os, "name", "nt")
+    from nexgen_core.tools import notifier_boot
+
+    pretend_os(notifier_boot, "nt")
     appdata = tmp_path / "appdata"
     monkeypatch.setenv("APPDATA", str(appdata))
     try:

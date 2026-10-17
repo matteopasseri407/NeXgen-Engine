@@ -25,8 +25,11 @@ points and verify resumed state when changing its data contract.
 Authorized maintainer work does not require an external-contributor issue.
 
 Write code under `03-INFRA/engineering-rules.md`; `check_engine.py` enforces its
-size and shell/PowerShell limits (`nexgen_core/discipline/`). A change that
-`python 03-INFRA/scripts/discipline.py score` calls complex needs an independent
-review receipt before push.
+shell/PowerShell limit, its per-commit test rule and its test-integrity rules
+(`nexgen_core/discipline/`). Its size ceiling is an alarm, not a gate: what is
+over it is printed by `check`/`gate` and listed by
+`python 03-INFRA/scripts/discipline.py report` as the split queue.
+The complexity score and the review receipts are switched off: nothing needs a
+review before a push.
 
 Details and enforcement: `docs/agent-lanes.md`.

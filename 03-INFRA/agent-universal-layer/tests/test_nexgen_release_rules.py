@@ -5,6 +5,8 @@ Il caso che conta è il primo: il glob che viveva nello YAML accettava
 """
 from __future__ import annotations
 
+import json
+import subprocess
 import sys
 from pathlib import Path
 
@@ -14,7 +16,7 @@ SCRIPTS_DIR = Path(__file__).resolve().parents[2] / "scripts"
 if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
-from nexgen_core.release import (
+from nexgen_core.release import (  # noqa: E402 - after the path shim, as CI runs it
     ZERO_SHA,
     bump_version_files,
     compute_next_version,
@@ -22,6 +24,16 @@ from nexgen_core.release import (
     newer_version,
     scan_range,
     version_matches_tag,
+)
+from nexgen_core.release_checks import (  # noqa: E402 - after the path shim, as CI runs it
+    REQUIRED_LINE,
+    check_state,
+    ci_passed,
+    commit_checks,
+    declared_checks,
+    required_annotation,
+    required_checks,
+    verdict,
 )
 
 
@@ -291,3 +303,180 @@ def test_a_force_pushed_before_falls_back_to_the_published_base():
     assert scan_range("push", "a" * 40, sha, first_push_base="origin/main", before_present=False) == f"origin/main..{sha}"
     assert scan_range("push", "a" * 40, sha, before_present=False) == sha
     assert scan_range("push", "a" * 40, sha, first_push_base="origin/main") == f"{'a' * 40}..{sha}"
+
+
+# --- the checks main requires, and whether a commit carries them ---------------
+
+
+class FakeGitHub:
+    """A scripted GitHub: what the protection and the rules declare, and what one commit carries."""
+
+    def __init__(self, required=("engine-tests",), protection_ok=True, rules_ok=True, runs=None, ci_success=1):
+        self.required = list(required)
+        self.protection_ok = protection_ok
+        self.rules_ok = rules_ok
+        self.runs = runs if runs is not None else {}
+        self.ci_success = ci_success
+        self.calls: list[tuple[str, ...]] = []
+
+    def __call__(self, argv, cwd):
+        argv = tuple(str(a) for a in argv)
+        self.calls.append(argv)
+        code, out = self._answer(argv)
+        return subprocess.CompletedProcess(argv, code, out, "")
+
+    def _answer(self, argv) -> tuple[int, str]:
+        url = next((arg for arg in argv[2:] if arg.startswith("repos/")), "")
+        if url.endswith("required_status_checks"):
+            if not self.protection_ok:
+                return 1, ""
+            return 0, json.dumps({"contexts": self.required, "checks": []})
+        if url.endswith("/rules/branches/main"):
+            if not self.rules_ok:
+                return 1, ""
+            rules = [{"type": "required_status_checks",
+                      "parameters": {"required_status_checks": [{"context": name} for name in self.required]}}]
+            return 0, json.dumps(rules)
+        if "/check-runs" in url:
+            sha = url.split("/")[-2]
+            runs = self.runs.get(sha)
+            if runs is None:
+                runs = [{"name": name, "status": "completed", "conclusion": "success"} for name in self.required]
+            return 0, json.dumps({"check_runs": runs})
+        if "actions/workflows" in url:
+            return 0, f"{self.ci_success}\n"
+        return 0, ""
+
+
+def _check(state: str, name: str = "engine-tests") -> dict:
+    return {"name": name, "status": "completed", "conclusion": state}
+
+
+def test_a_missing_or_running_check_is_not_a_failure_yet():
+    assert check_state(None) is None
+    assert check_state({"name": "x", "status": "in_progress"}) is None
+    assert check_state(_check("success")) is True
+    assert check_state(_check("failure")) is False
+    assert verdict({"engine-tests": _check("success")}, {"engine-tests"}) == ("green", [])
+
+
+def test_the_verdict_names_what_failed_and_what_has_not_reported():
+    assert verdict({"engine-tests": _check("failure")}, {"engine-tests"}) == ("failed", ["engine-tests"])
+    assert verdict({}, {"engine-tests"}) == ("missing", ["engine-tests"])
+    assert verdict({"other": _check("success")}, {"engine-tests"}) == ("missing", ["engine-tests"])
+
+
+def test_the_required_checks_are_read_from_both_places_github_keeps_them(tmp_path):
+    github = FakeGitHub(required=["engine-tests", "vault-mcp-smoke"])
+    assert required_checks(tmp_path, github) == {"engine-tests", "vault-mcp-smoke"}
+    assert any("protection" in " ".join(call) for call in github.calls)
+    assert any("rules/branches" in " ".join(call) for call in github.calls)
+
+
+def test_a_protection_a_token_cannot_read_still_gives_the_rules_own_answer(tmp_path):
+    """A workflow token has no admin rights: the rules endpoint is the one it can read."""
+    github = FakeGitHub(required=["engine-tests"], protection_ok=False)
+    assert required_checks(tmp_path, github) == {"engine-tests"}
+    assert required_checks(tmp_path, FakeGitHub(protection_ok=False, rules_ok=False)) is None
+
+
+def test_one_commit_carries_its_checks_by_name(tmp_path):
+    github = FakeGitHub(required=["engine-tests"])
+    assert commit_checks(tmp_path, "a" * 40, github) == {
+        "engine-tests": {"name": "engine-tests", "status": "completed", "conclusion": "success"}}
+
+
+def test_the_list_travels_in_the_tag_annotation_and_comes_back(tmp_path):
+    annotation = required_annotation({"test", "engine-tests"})
+    assert REQUIRED_LINE in annotation[1]
+    assert declared_checks("Release v1.2.3\n\n" + annotation[1]) == {"test", "engine-tests"}
+    assert declared_checks("Release v1.2.3") is None
+    assert required_annotation(None) == []
+
+
+def test_a_ship_tag_is_accepted_when_its_commit_carries_the_checks(tmp_path):
+    github = FakeGitHub(required=["engine-tests"])
+    message = "Release v1.2.3\n\n" + required_annotation({"engine-tests"})[1]
+    runner = _tag_runner(github, message)
+    ok, reason = ci_passed(tmp_path, "v1.2.3", run=runner, wait_seconds=0)
+    assert ok and "engine-tests" in reason
+
+
+def test_a_ship_tag_is_refused_when_a_required_check_failed(tmp_path):
+    github = FakeGitHub(required=["engine-tests"], runs={"a" * 40: [_check("failure")]})
+    message = "Release v1.2.3\n\n" + required_annotation({"engine-tests"})[1]
+    ok, reason = ci_passed(tmp_path, "v1.2.3", run=_tag_runner(github, message), wait_seconds=0)
+    assert not ok and "engine-tests" in reason
+
+
+def test_a_required_check_that_has_not_reported_is_waited_for(tmp_path):
+    github = FakeGitHub(required=["engine-tests"], runs={"a" * 40: []})
+    message = "Release v1.2.3\n\n" + required_annotation({"engine-tests"})[1]
+    slept: list[float] = []
+    ok, reason = ci_passed(tmp_path, "v1.2.3", run=_tag_runner(github, message), wait_seconds=60,
+                           sleep=slept.append)
+    assert not ok and "not reported" in reason
+    assert slept, "a missing required check is waited for, not refused at once"
+
+
+def test_a_hand_cut_tag_is_judged_by_its_ci_run(tmp_path):
+    """The documented hand-cut flow (`git tag -s -m "Release vX"`) has no list, and
+    keeps the rule this gate started with: one successful ci.yml run."""
+    ok, reason = ci_passed(tmp_path, "v1.2.3", run=_tag_runner(FakeGitHub(ci_success=1), "Release v1.2.3"))
+    assert ok and "ci.yml" in reason
+    refused, why = ci_passed(tmp_path, "v1.2.3", run=_tag_runner(FakeGitHub(ci_success=0), "Release v1.2.3"))
+    assert not refused and "no successful run" in why
+
+
+def test_a_tag_that_is_not_in_this_checkout_is_refused_not_guessed(tmp_path):
+    """`git rev-parse` echoes a missing tag's name on stdout, so the answer is checked, not assumed."""
+    github = FakeGitHub()
+    runner = _tag_runner(github, "Release v1.2.3")
+    original = runner
+
+    def run(argv, cwd):
+        argv = tuple(str(a) for a in argv)
+        if argv[:2] == ("git", "-C") and "rev-parse" in argv:
+            return subprocess.CompletedProcess(argv, 128, "v1.2.3^{commit}", "")
+        return original(argv, cwd)
+
+    ok, reason = ci_passed(tmp_path, "v1.2.3", run=run)
+    assert not ok and "not a tag" in reason
+
+
+def _tag_runner(github: FakeGitHub, message: str):
+    """The api answers above, plus the two git reads `ci_passed` makes."""
+
+    def run(argv, cwd):
+        argv = tuple(str(a) for a in argv)
+        if argv[:2] == ("git", "-C") and "%(contents:body)" in " ".join(argv):
+            return subprocess.CompletedProcess(argv, 0, message, "")
+        if argv[:2] == ("git", "-C") and "rev-parse" in argv:
+            return subprocess.CompletedProcess(argv, 0, ("a" * 40) + "\n", "")
+        return github(argv, cwd)
+
+    return run
+
+
+def test_the_release_workflow_refuses_with_the_rules_own_verdict():
+    """The step that keeps a stray tag from becoming a release calls the Python rule:
+    one place decides what "has passed CI" means, for ship and for the workflow."""
+    workflow = (Path(__file__).resolve().parents[3] / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
+    step = workflow.split("Refuse a commit that has not passed CI", 1)[1].split("- name:", 1)[0]
+    assert "release.py ci-passed" in step
+    assert "--tag" in step
+
+
+def test_a_green_push_run_never_stands_in_for_the_pull_requests_own_run():
+    """PR #126: the push run's engine-tests was green while the pull request's own run of the
+    same commit had not started; ship read the green copy and asked GitHub for a merge it refused."""
+    from nexgen_core.release_checks import by_name, verdict
+
+    push = {"name": "engine-tests", "status": "COMPLETED", "conclusion": "SUCCESS", "startedAt": "2026-10-17T19:00:00Z"}
+    pull = {"name": "engine-tests", "status": "QUEUED", "conclusion": "", "startedAt": "2026-10-17T19:01:00Z"}
+    for order in ([push, pull], [pull, push]):
+        assert verdict(by_name(order), {"engine-tests"}) == ("missing", ["engine-tests"])
+
+    later_red = {**push, "conclusion": "FAILURE", "startedAt": "2026-10-17T19:05:00Z"}
+    for order in ([push, later_red], [later_red, push]):
+        assert verdict(by_name(order), {"engine-tests"}) == ("failed", ["engine-tests"])

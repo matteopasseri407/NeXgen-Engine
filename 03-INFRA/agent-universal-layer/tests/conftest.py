@@ -28,6 +28,30 @@ REAL_SCRIPTS = REAL_VAULT / "03-INFRA" / "scripts"
 
 SENTINEL_NAME = ".b1-sandbox-sentinel"
 
+
+class _OsNamed:
+    """The real `os` module seen through one module, with only `name` changed."""
+
+    def __init__(self, name: str) -> None:
+        self.name = name
+
+    def __getattr__(self, attr: str):
+        return getattr(os, attr)
+
+
+@pytest.fixture
+def pretend_os(monkeypatch):
+    """`pretend_os(module, "nt")`: that module, and only it, believes it runs on Windows.
+
+    Setting `module.os.name` changes the one shared `os` module for the whole
+    interpreter: pathlib, subprocess and a parallel worker's own channel then
+    take the Windows branch on Linux, and the worker crashes.
+    """
+    def apply(module, name: str = "nt") -> None:
+        monkeypatch.setattr(module, "os", _OsNamed(name))
+    return apply
+
+
 @pytest.fixture(autouse=True)
 def no_ollama_probe(request, monkeypatch):
     """The lane's capability probe talks to whatever OLLAMA_HOST points at: never from a test, unless the test is about the probe."""

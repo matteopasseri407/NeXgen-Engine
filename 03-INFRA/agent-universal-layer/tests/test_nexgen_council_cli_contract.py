@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import os
 import sys
+import tempfile
 from pathlib import Path
 
 import pytest
@@ -61,10 +62,15 @@ def test_reading_the_flags_leaves_the_codex_credentials_alone(tmp_path, monkeypa
     home.mkdir()
     (home / "auth.json").write_text('{"token": "must-not-be-copied"}', encoding="utf-8")
     monkeypatch.setenv("CODEX_HOME", str(home))
-    copies_before = sorted(Path(os.environ.get("TMPDIR") or "/tmp").glob("council-*"))
+    # A temp dir of its own: in a parallel run other tests create and remove
+    # council-* copies in the shared one while this test counts them.
+    own_tmp = tmp_path / "tmp"
+    own_tmp.mkdir()
+    monkeypatch.setenv("TMPDIR", str(own_tmp))
+    monkeypatch.setattr(tempfile, "tempdir", str(own_tmp))
     cli_contract.flags_passed("codex")
     assert os.environ["CODEX_HOME"] == str(home)
-    assert sorted(Path(os.environ.get("TMPDIR") or "/tmp").glob("council-*")) == copies_before
+    assert sorted(own_tmp.glob("council-*")) == []
 
 
 def test_a_flag_is_found_whole_not_as_the_start_of_another(monkeypatch):

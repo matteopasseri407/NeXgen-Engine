@@ -177,6 +177,30 @@ def test_cli_instruction_pointers_ok_when_aligned(tmp_path: Path, monkeypatch):
     assert codex_outcomes[0].severity == Severity.OK
 
 
+def test_cli_instruction_pointers_ok_when_the_copy_is_identical(tmp_path: Path, monkeypatch):
+    """Su Windows senza privilegi di symlink il guard lascia una copia identica.
+
+    Pretendere un symlink rendeva il doctor BROKEN per sempre su quelle
+    macchine, e `agent-sync apply` riscriveva la stessa copia.
+    """
+    vault = tmp_path / "vault"
+    home = tmp_path / "home"
+    home.mkdir()
+    canon = _write_canon(vault)
+    bin_dir = tmp_path / "bin"
+    _make_executable_stub(bin_dir, "codex")
+    monkeypatch.setenv("PATH", str(bin_dir))
+
+    pointer = home / ".codex" / "AGENTS.md"
+    pointer.parent.mkdir(parents=True)
+    pointer.write_bytes(canon.read_bytes())
+    assert not pointer.is_symlink()
+
+    outcomes = instructions_checks.check_cli_instruction_pointers(vault, home)
+    codex_outcomes = [o for o in outcomes if o.id == "instructions.codex_pointer"]
+    assert codex_outcomes[0].severity == Severity.OK, codex_outcomes[0].message
+
+
 def test_opencode_instructions_scope_file_rules(tmp_path: Path, monkeypatch):
     """V2 resolves the global scope file, never the `instructions` array:
     removing or altering the real scope file must fail the doctor,
@@ -659,6 +683,28 @@ def test_an_upstream_skill_is_never_reported_as_missing(tmp_path: Path, monkeypa
     skill_checks.check_skills_not_materialized(vault, home).remedy()
     after = skill_checks.check_skills_not_materialized(vault, home)
     assert after.severity == Severity.OK, after.message
+
+
+def test_a_personal_skill_of_another_member_is_not_reported_missing(tmp_path: Path, monkeypatch):
+    """Una skill `scope: personal` di un altro membro non riguarda questa macchina.
+
+    Il doctor la segnalava come non materializzata per sempre, e il rimedio
+    (`agent-sync apply`) non poteva materializzarla: non è sua.
+    """
+    vault, home, engine_root = _setup_skills_vault(tmp_path)
+    monkeypatch.setenv("AGENT_ENGINE_ROOT", str(engine_root))
+    monkeypatch.setenv("AGENT_TEAM_MEMBER", "matteo")
+    manifest = vault / "03-INFRA" / "agent-universal-layer" / "skills" / "skills.manifest.yaml"
+    manifest.write_text(_SKILLS_MANIFEST + (
+        "  personal-of-someone-else:\n    origin: vault\n    scope: personal\n    owner: giulia\n"
+        "    exposure: manual\n    targets: [claude]\n"
+    ), encoding="utf-8")
+
+    skill_checks.check_skills_not_materialized(vault, home).remedy()
+    outcome = skill_checks.check_skills_not_materialized(vault, home)
+
+    assert "personal-of-someone-else" not in (outcome.message or ""), outcome.message
+    assert outcome.severity == Severity.OK, outcome.message
 
 
 def test_engine_starter_views_broken_then_fixed(tmp_path: Path, monkeypatch):

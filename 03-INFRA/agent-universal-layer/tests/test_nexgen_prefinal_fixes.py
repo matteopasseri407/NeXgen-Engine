@@ -94,5 +94,8 @@ def test_updater_refuses_unverified_without_flag():
     from nexgen_core import updater as _updater
 
     assert "--allow-unverified" in inspect.getsource(_updater.build_parser)
-    src = inspect.getsource(_updater.main)
+    # The policy itself lives in its own function since the channel refactor
+    # (main calls it); the invariant is unchanged: the flag is read, and an
+    # unverified release refuses when it is absent.
+    src = inspect.getsource(_updater._gate_on_signature)
     assert "allow_unverified" in src and "could not be verified" in src

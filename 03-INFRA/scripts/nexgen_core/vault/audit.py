@@ -151,6 +151,30 @@ def _publish_if_requested(request: AuditRequest, record: dict, *, output) -> int
     return EXIT_INTERNAL_OR_PUBLISH_FAILED
 
 
+def _record_in_backlog(request: AuditRequest, record: dict, *, output) -> tuple[str, str | None, tuple[dict, int] | None]:
+    """Under the groom lock: appends the run's line to the backlog note and commits it.
+
+    The promotion has already landed when this runs, so a failure here cannot undo it: it comes
+    back as a block (None when it worked) instead of escaping, or the caller loses the record.
+    """
+    from nexgen_core.lock import HostLock, LockTimeoutError
+
+    try:
+        with HostLock(lock_path=request.state_dir / "groom.lock", timeout=30, command_name="vault-groom-promote"):
+            line, appended = promote.append_backlog_line(request.vault, record)
+            commit = promote.commit_backlog(request.vault, request.timestamp) if appended else None
+        return line, commit, None
+    except LockTimeoutError as exc:
+        blocked = _block(record, request, f"could not acquire groom lock: {exc}", EXIT_INTERNAL_OR_PUBLISH_FAILED, output=output)
+        return "", None, blocked
+    except (OSError, GitCommandError) as exc:
+        blocked = _block(
+            record, request, f"the promotion landed but recording it failed: {exc}",
+            EXIT_INTERNAL_OR_PUBLISH_FAILED, output=output,
+        )
+        return "", None, blocked
+
+
 def _run_audit_impl(request: AuditRequest, *, output=print) -> tuple[dict, int]:
     """Implementazione interna del promotion gate (run_audit delega qui)."""
     record = _new_record(request)
@@ -195,14 +219,9 @@ def _run_audit_impl(request: AuditRequest, *, output=print) -> tuple[dict, int]:
     if blocked is not None:
         return blocked
 
-    from nexgen_core.lock import HostLock, LockTimeoutError
-
-    try:
-        with HostLock(lock_path=request.state_dir / "groom.lock", timeout=30, command_name="vault-groom-promote"):
-            line, appended = promote.append_backlog_line(request.vault, record)
-            backlog_commit = promote.commit_backlog(request.vault, request.timestamp) if appended else None
-    except (OSError, LockTimeoutError) as exc:
-        return _block(record, request, f"could not acquire groom lock: {exc}", EXIT_INTERNAL_OR_PUBLISH_FAILED, output=output)
+    line, backlog_commit, blocked = _record_in_backlog(request, record, output=output)
+    if blocked is not None:
+        return blocked
 
     exit_code = _publish_if_requested(request, record, output=output)
     promote.remove_promoted_clone(request.clone)

@@ -1,6 +1,9 @@
 """Test integrity: tests may be added freely, but not removed, weakened or skipped on the quiet.
 
-Counts are totals over the whole change, so moving, splitting or merging tests is fine."""
+Counts are totals over the whole change, so moving, splitting or merging tests is fine. A skip
+marker is judged where it sits: one that arrives with a NEW test function gates new work (a
+Windows-only reproduction), while one added to a test the base already had, or outside every
+test function, is still a weakening."""
 from __future__ import annotations
 
 import ast
@@ -18,15 +21,53 @@ OTHER_TESTS = re.compile(r"\b(?:it|test)\s*\(|\bfunc Test\w+|@Test\b")
 HOW_TO_ALLOW = "If this is intended, the owner adds the path to test_removal_ok in .nexgen-discipline.toml first."
 
 
-def count_skips(change_text: str | None, path: str) -> int:
-    """Skip/xfail markers. In Python only real code counts, not the word inside a string."""
+def _is_marker(node: ast.AST) -> bool:
+    """A skip/xfail marker in real code: `pytest.mark.skipif`, or `pytest.skip(...)` inside one."""
+    return isinstance(node, ast.Attribute) and ast.unparse(node) in PY_SKIPS
+
+
+def marker_sites(source: str | None, path: str) -> tuple[int, dict[str, int]]:
+    """Where this version's skip/xfail markers sit.
+
+    Returns (markers outside any test function, markers per test function). In Python only real
+    code counts, not the word inside a string; a non-Python test file has no functions to
+    attribute them to, so all of them count as outside.
+    """
     if not path.endswith(".py"):
-        return len(SKIP.findall(change_text or ""))
+        return len(SKIP.findall(source or "")), {}
     try:
-        tree = ast.parse(change_text or "")
+        tree = ast.parse(source or "")
     except SyntaxError:  # nexgen: allow reason="a file that does not parse has no markers to count"
-        return 0
-    return sum(isinstance(n, ast.Attribute) and ast.unparse(n) in PY_SKIPS for n in ast.walk(tree))
+        return 0, {}
+    per_test: dict[str, int] = {}
+    owned: set[int] = set()
+    for func in ast.walk(tree):
+        if not isinstance(func, (ast.FunctionDef, ast.AsyncFunctionDef)) or not func.name.startswith("test"):
+            continue
+        inside = [n for n in ast.walk(func) if _is_marker(n)]
+        # Every test function is listed, zero included: the caller has to tell "this test
+        # is new" from "this existing test had no marker", and an absent key says neither.
+        per_test[func.name] = len(inside)
+        owned.update(id(n) for n in inside)
+    outside = sum(1 for n in ast.walk(tree) if _is_marker(n) and id(n) not in owned)
+    return outside, per_test
+
+
+def skip_growth(old: str | None, new: str | None, path: str) -> int:
+    """How many skip/xfail markers this change ADDS to tests that already existed.
+
+    A marker that arrives together with a brand-new test function is a gate on new work, the
+    way a Windows-only reproduction is written, and is not a weakening. A marker added to a
+    test the base already had is still refused, and so is one outside every test function
+    (`pytestmark`, or any non-Python test file).
+    """
+    outside_before, per_test_before = marker_sites(old, path)
+    outside_after, per_test_after = marker_sites(new, path)
+    growth = outside_after - outside_before
+    for name, count in per_test_after.items():
+        if name in per_test_before:
+            growth += max(0, count - per_test_before[name])
+    return growth
 
 
 def _literal_sizes(tree: ast.AST) -> dict[str, int]:
@@ -80,9 +121,7 @@ def check_test_integrity(changes: list[Change], cfg: Config) -> list[Violation]:
     if not tests:
         return []
     problems = []
-    skips_before = sum(count_skips(c.old, c.path) for c in tests)
-    skips_after = sum(count_skips(c.new, c.path) for c in tests)
-    if skips_after > skips_before:
+    if sum(skip_growth(c.old, c.new, c.path) for c in tests) > 0:
         problems.append("a skip/xfail marker was added")
     py = [c for c in tests if c.path.endswith(".py")]
     (t0, a0), (t1, a1) = (tuple(map(sum, zip(*(test_stats(getattr(c, side)) for c in py), strict=False))) or (0, 0)

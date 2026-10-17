@@ -38,6 +38,11 @@ def srv(**kw):
     (srv(exposure="lazy", enabled=False), "claude", "absent", "disabled"),
     (srv(exposure="eager", tier="core", lazy=True), "claude", "direct", "exposure: eager"),  # exposure beats the old knobs
     (srv(exposure="native"), "claude", "absent", "unknown exposure 'native'"),
+    # an empty list is "none", not "all": only an absent key means every CLI
+    (srv(exposure="eager", targets=[]), "claude", "absent", "not in targets"),
+    (srv(exposure="eager", targets=[]), "opencode", "absent", "not in targets"),
+    (srv(lazy=True, enabled=True, lazy_targets=[]), "claude", "direct", "legacy: enabled"),
+    (srv(lazy=True, lazy_targets=[]), "claude", "absent", "inert (not core, not enabled)"),
     # legacy, no exposure
     (srv(tier="core"), "opencode", "direct", "legacy: core"),
     (srv(enabled=True), "opencode", "direct", "legacy: enabled"),
@@ -50,6 +55,17 @@ def srv(**kw):
 def test_the_rule(entry, cli, kind, why):
     placement = mp.place(entry, cli)
     assert (placement.kind, placement.why) == (kind, why)
+
+
+def test_an_empty_target_list_mounts_nothing():
+    """`targets: []` scritto a mano vuol dire "su nessun CLI", non "su tutti".
+
+    `or list(CLIS)` confondeva la chiave assente con la lista vuota: il server
+    finiva montato ovunque, il contrario di ciò che il manifest dice.
+    """
+    entry = srv(exposure="eager", targets=[])
+    assert [mp.place(entry, cli).kind for cli in mp.CLIS] == ["absent"] * len(mp.CLIS)
+    assert mp.gateway_servers_for({"s": srv(exposure="lazy", targets=[])}, "claude") == set()
 
 
 def test_the_gateway_must_be_mounted_where_servers_are_routed_to_it():

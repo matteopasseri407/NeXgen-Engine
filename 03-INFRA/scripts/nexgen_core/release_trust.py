@@ -215,7 +215,7 @@ def _gnupg_scratch_base() -> str:
     return base
 
 
-def _verify_openpgp(repo: Path, ref: str, anchor: TrustAnchor) -> TagVerdict:
+def _verify_openpgp(repo: Path, ref: str, anchor: TrustAnchor, *, verb: str = "verify-tag") -> TagVerdict:
     gpg = shutil.which("gpg")
     if not gpg:
         return TagVerdict(UNVERIFIABLE, "gpg is not installed, so an OpenPGP signature cannot be checked",
@@ -238,7 +238,7 @@ def _verify_openpgp(repo: Path, ref: str, anchor: TrustAnchor) -> TagVerdict:
                 "-c", f"gpg.program={gpg_path}",
                 "-c", f"gpg.openpgp.program={gpg_path}",
                 "-c", "gpg.minTrustLevel=undefined",
-                "verify-tag", "--raw", ref,
+                verb, "--raw", ref,
                 env=env,
             )
             return classify_gpg_status(f"{proc.stderr}\n{proc.stdout}", anchor.openpgp)
@@ -255,7 +255,7 @@ def _verify_openpgp(repo: Path, ref: str, anchor: TrustAnchor) -> TagVerdict:
                     pass
 
 
-def _verify_ssh(repo: Path, ref: str, anchor: TrustAnchor) -> TagVerdict:
+def _verify_ssh(repo: Path, ref: str, anchor: TrustAnchor, *, verb: str = "verify-tag") -> TagVerdict:
     if not shutil.which("ssh-keygen"):
         return TagVerdict(UNVERIFIABLE, "ssh-keygen is not installed, so an SSH signature cannot be checked",
                           no_verifier=True)
@@ -269,7 +269,7 @@ def _verify_ssh(repo: Path, ref: str, anchor: TrustAnchor) -> TagVerdict:
             repo,
             "-c", "gpg.format=ssh",
             "-c", f"gpg.ssh.allowedSignersFile={allowed.as_posix()}",
-            "verify-tag", ref,
+            verb, ref,
             env=_hermetic_env(),
         )
         return classify_ssh_result(proc.returncode, f"{proc.stderr}\n{proc.stdout}")
@@ -301,6 +301,41 @@ def verify_release_tag(repo: Path, tag: str, *, trust_dir: Path | None = None) -
         if not anchor.ssh:
             return TagVerdict(UNTRUSTED, "signed with SSH, but the trust anchor pins no SSH key")
         return _verify_ssh(repo, ref, anchor)
+    except (OSError, subprocess.SubprocessError) as exc:
+        return TagVerdict(UNVERIFIABLE, f"signature check could not run ({type(exc).__name__})")
+
+
+def verify_signed_commit(repo: Path, commit: str, *, trust_dir: Path | None = None) -> TagVerdict:
+    """Verifies that ``commit`` carries a signature the pinned keys accept.
+
+    A dev channel installs a commit instead of a release, and it must clear the
+    same bar a release does: the same anchor file, the same classifiers, the
+    same verdicts. ``unverifiable`` here means "unsigned, or the machine has no
+    verifier", which on a channel that follows a moving branch is the normal
+    case, not an edge: the caller refuses it and says so.
+    """
+    resolved = _git(repo, "rev-parse", "--verify", f"{commit}^{{commit}}", env=_hermetic_env())
+    if resolved.returncode != 0:
+        return TagVerdict(UNVERIFIABLE, f"{commit} is not a commit in this repository")
+    sha = resolved.stdout.strip()
+    try:
+        body = _git(repo, "cat-file", "commit", sha).stdout
+        positions = {s: body.find(m) for s, m in (("openpgp", _PGP_MARKER), ("ssh", _SSH_MARKER)) if m in body}
+        if not positions:
+            return TagVerdict(UNVERIFIABLE, f"commit {sha[:9]} carries no signature")
+        # The earliest block is the one git itself treats as the signature.
+        scheme = min(positions, key=lambda s: positions[s])
+        try:
+            anchor = load_trust_anchor(trust_dir if trust_dir is not None else repo / TRUST_RELPATH)
+        except TrustAnchorError as exc:
+            return TagVerdict(UNVERIFIABLE, str(exc))
+        if scheme == "openpgp":
+            if not anchor.openpgp:
+                return TagVerdict(UNTRUSTED, "signed with OpenPGP, but the trust anchor pins no OpenPGP key")
+            return _verify_openpgp(repo, sha, anchor, verb="verify-commit")
+        if not anchor.ssh:
+            return TagVerdict(UNTRUSTED, "signed with SSH, but the trust anchor pins no SSH key")
+        return _verify_ssh(repo, sha, anchor, verb="verify-commit")
     except (OSError, subprocess.SubprocessError) as exc:
         return TagVerdict(UNVERIFIABLE, f"signature check could not run ({type(exc).__name__})")
 

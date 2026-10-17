@@ -10,6 +10,11 @@ from pathlib import Path
 import pytest
 from conftest import REAL_VAULT, load_agent_sync_module
 
+# Deadline-and-reap tests against the real updater: under `-n auto` machine
+# load wins the race (verified 2026-10-17: failed in parallel, green serially),
+# so the module is pinned to one worker. Nothing is skipped or removed.
+pytestmark = pytest.mark.xdist_group("serial")
+
 SCRIPT = REAL_VAULT / "03-INFRA" / "scripts" / "nexgen_core" / "updater.py"
 
 

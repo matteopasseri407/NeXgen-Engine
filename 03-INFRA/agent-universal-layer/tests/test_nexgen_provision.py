@@ -111,6 +111,39 @@ def test_git_rev_change_provisions_fresh(tmp_path):
     assert ctx["DEPS_WORKSPACE"] != workspace_path({"kind": "git", "repo": repo_uri, "rev": rev1}, state)
 
 
+def test_a_workspace_that_cannot_be_removed_is_a_clear_failure(tmp_path, monkeypatch):
+    """Su Windows un file tenuto aperto lascia la cartella al suo posto.
+
+    `rmtree(..., ignore_errors=True)` non dice se ha davvero rimosso: senza il
+    controllo, `os.replace` sollevava un PermissionError grezzo, la run restava
+    a metà e nessuno spiegava cosa tenere chiuso.
+    """
+    repo_uri, rev = _git_repo_with_commit(tmp_path)
+    deps = {"kind": "git", "repo": repo_uri, "rev": rev}
+    state = tmp_path / "state"
+    ctx, err = ensure_deps(deps, state, install=True, server="srv")
+    assert err is None, err
+    final = Path(ctx["DEPS_WORKSPACE"])
+    # Un run interrotto prima del marker: la cartella è lì, il marker no, quindi
+    # il provisioning la ricrea e deve prima toglierla di mezzo.
+    (final / provision.MARKER).unlink()
+
+    monkeypatch.setattr(provision.shutil, "rmtree", lambda *a, **k: None)  # cosa fa Windows con un file aperto
+    real_replace = provision.os.replace
+
+    def refuse_the_workspace_swap(src_path, dst_path, *args, **kwargs):
+        if Path(dst_path) == final:
+            raise PermissionError(13, "Access is denied")
+        return real_replace(src_path, dst_path, *args, **kwargs)
+
+    monkeypatch.setattr(provision.os, "replace", refuse_the_workspace_swap)
+
+    ctx2, err2 = ensure_deps(deps, state, install=True, server="srv")
+
+    assert ctx2 == {}
+    assert err2 is not None and "still holds" in err2, err2
+
+
 def test_git_subdir_and_build(tmp_path):
     repo = tmp_path / "src"
     repo.mkdir()
@@ -184,6 +217,32 @@ def test_run_build_handles_quoted_arguments(tmp_path: Path):
     _run_build([cmd], tmp_path, "test-server")
     assert out_file.read_text(encoding="utf-8") == "hello world with spaces"
 
+
+
+def test_a_build_step_that_is_a_cmd_shim_goes_through_cmd_exe(tmp_path: Path, monkeypatch, pretend_os):
+    """`shutil.which("npm")` trova `npm.cmd`, che CreateProcess non esegue da solo.
+
+    `_run` lo lanciava per nome: su Windows il passo di build moriva con
+    FileNotFoundError, quindi i build NPM non partivano mai.
+    """
+    from nexgen_core.provision import _run_build
+
+    shim = r"C:\nodejs\npm.cmd"
+    monkeypatch.setattr(provision.shutil, "which", lambda name: shim if name == "npm" else None)
+    from nexgen_core import processes
+
+    pretend_os(processes, "nt")
+    seen: list[list[str]] = []
+
+    def fake_run(argv, **kwargs):
+        seen.append(list(argv))
+        return subprocess.CompletedProcess(argv, 0, "", "")
+
+    monkeypatch.setattr(provision.subprocess, "run", fake_run)
+
+    _run_build([["npm", "run", "build"]], tmp_path, "test-server")
+
+    assert seen == [["cmd.exe", "/d", "/s", "/c", shim, "run", "build"]]
 
 
 def test_a_helper_process_never_inherits_the_callers_stdin():

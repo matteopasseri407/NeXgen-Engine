@@ -9,10 +9,10 @@ from pathlib import Path
 from . import gates, review
 from .config import COMMAND, Config, ConfigError, load
 from .health import report, run_smoke
-from .gitutil import STAGED, Change, GitError, fork_point, git, own_changes, parents, repo_root, resolve_base
+from .gitutil import STAGED, Change, GitError, files_at, fork_point, git, own_changes, parents, repo_root, resolve_base
 from .score import is_complex
 from .shellgate import check_shell
-from .sizes import check_sizes
+from .sizes import split_queue
 from .scaffold import init_project
 from .violations import CODE_EXT, SHELL_EXT
 
@@ -35,23 +35,22 @@ def _scope(args: argparse.Namespace) -> tuple[Path, Config, str, str | None]:
     return root, load(root, base), base, head
 
 
-def cmd_check(args: argparse.Namespace, need_review: bool = False) -> int:
+def cmd_check(args: argparse.Namespace, per_commit: bool = False) -> int:
     root, cfg, base, head = _scope(args)
-    out = gates.run(root, cfg, base, head, need_review)
+    out = gates.run(root, cfg, base, head, per_commit)
     print(gates.render(out))
     return 0 if out.ok else 1
 
 
 def cmd_gate(args: argparse.Namespace) -> int:
-    return cmd_check(args, need_review=True)
+    return cmd_check(args, per_commit=True)
 
 
 def cmd_score(args: argparse.Namespace) -> int:
-    root, cfg, base, head = _scope(args)
-    flagged, total, reasons = is_complex(own_changes(root, base, head), cfg)
-    print(f"score {total} (threshold {cfg.complexity_threshold}): "
-          f"{'COMPLEX, independent review required' if flagged else 'simple'}")
-    print("\n".join(reasons))
+    """Kept so old runbooks do not break: the score decides nothing any more."""
+    print("score: switched off. Nothing asks for it: no change needs a review and no gate checks a receipt. "
+          f"The gates that still refuse work are `{COMMAND} check`'s (shell, tests, swallowed errors); "
+          f"what is over the size ceiling is listed by `{COMMAND} report`.")
     return 0
 
 
@@ -100,12 +99,11 @@ def cmd_approve(args: argparse.Namespace) -> int:
 
 
 def cmd_audit(args: argparse.Namespace) -> int:
+    """The split queue and the shell debt at HEAD, listed: an audit never refuses anything."""
     root = repo_root(Path.cwd())
     cfg = load(root, "HEAD")
-    files = [Change(p, "A", None, (root / p).read_text(encoding="utf-8", errors="replace"))
-             for p in git(root, "ls-files").splitlines()
-             if p.lower().endswith(CODE_EXT + SHELL_EXT) and (root / p).is_file()]
-    found = check_sizes(files, cfg) + check_shell(files, cfg)
+    changes = [Change(p, "A", None, text) for p, text in files_at(root, "HEAD", CODE_EXT + SHELL_EXT).items()]
+    found = split_queue(changes, cfg) + check_shell(changes, cfg)
     print("\n".join(f"DEBT {v}" for v in found) or "No debt found.")
     return 0
 
@@ -137,7 +135,7 @@ def cmd_ci(args: argparse.Namespace) -> int:
     base = pushed_before or fork_point(root, base_ref, head) or resolve_base(root)
     release = (pull_request and args.head_ref == "developer" and args.base_ref == "main") or \
         (not pull_request and args.head_ref == "main")
-    out = gates.run(root, load(root, base), base, head, need_review=not release, release=release)
+    out = gates.run(root, load(root, base), base, head, per_commit=not release, release=release)
     print(gates.render(out))
     return 0 if out.ok else 1
 
@@ -158,16 +156,16 @@ def build_parser() -> argparse.ArgumentParser:
         p.set_defaults(func=func)
         return p
 
-    scoped("check", cmd_check, "size ratchet and shell/PowerShell gate")
-    scoped("score", cmd_score, "complexity score of the change")
-    scoped("gate", cmd_gate, "check plus review receipt for complex changes")
+    scoped("check", cmd_check, "shell/PowerShell gate, test integrity and the size alarm")
+    scoped("score", cmd_score, "switched off: kept so old runbooks do not break")
+    scoped("gate", cmd_gate, "check plus the per-commit proofs")
     scoped("review", cmd_review, "prepare the brief for an independent reviewer")
-    receipt = scoped("receipt", cmd_receipt, "record the reviewer's verdict for this exact work")
+    receipt = scoped("receipt", cmd_receipt, "record the reviewer's verdict for this exact work (manual: no gate asks for it)")
     receipt.add_argument("--reviewer", default="unknown")
     receipt.add_argument("--from-file", help="reviewer output file (default: stdin)")
     approve = scoped("approve", cmd_approve, "record the OWNER's decision to accept this work without a paid review")
     approve.add_argument("--reason", required=True, help="why the owner accepts it, in the owner's words")
-    sub.add_parser("audit", help="list existing debt across the repo").set_defaults(func=cmd_audit)
+    sub.add_parser("audit", help="list the split queue and the shell debt across the repo").set_defaults(func=cmd_audit)
     sub.add_parser("report", help="plain-Italian health report").set_defaults(func=cmd_report)
     sub.add_parser("smoke", help="run the project's real-flow command").set_defaults(func=cmd_smoke)
     init = sub.add_parser("init", help="set up this project: config, decision log, git hooks")

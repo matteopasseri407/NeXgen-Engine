@@ -13,7 +13,9 @@
 # signature the installed copies would not accept (release_trust.py, the same
 # code the updater runs), so the claim in SECURITY.md is enforced rather than
 # asserted. It also refuses a tag that is not on main or whose commit has not
-# passed CI: a tag pushed from a stray branch used to become a release.
+# passed the checks main requires (`release.py ci-passed`, the same rule
+# `release ship` waits for): a tag pushed from a stray branch used to become a
+# release, and a red job nobody requires used to hold one.
 #
 # The automation being replaced existed for a real reason: a manual release
 # step is the step that gets skipped, and on 2026-07-30 main sat five merged
@@ -95,10 +97,14 @@ jobs:
           TAG: ${{ github.ref_name }}
         run: |
           set -euo pipefail
-          sha="$(git rev-parse "$TAG^{commit}")"
-          passed="$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?head_sha=$sha&status=success" --jq '.total_count')"
-          if [ "$passed" -lt 1 ]; then
-            echo "::error::CI has no successful run for $sha. Wait for it (or fix it) and re-run this workflow." >&2
+          # The rule lives in Python (nexgen_core/release.py), the same one `release ship`
+          # runs: a tag ship cut carries the checks the release was verified against in its
+          # signed annotation, and the commit must carry those green. A tag cut by hand has
+          # no such line, and then one successful ci.yml run is what it takes — the rule
+          # this step started with. Never the whole ci.yml run for a ship tag: a job nobody
+          # requires (engine-tests-windows) must not hold a release.
+          if ! python3 03-INFRA/scripts/nexgen_core/release.py ci-passed --tag "$TAG" --wait 900; then
+            echo "::error::the tagged commit has not passed the checks main requires. Wait for them (or fix them) and re-run this workflow." >&2
             exit 1
           fi
 

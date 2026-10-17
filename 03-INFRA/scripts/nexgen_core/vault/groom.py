@@ -198,9 +198,17 @@ def apply(
     output: Callable[[str], object] = print,
 ) -> int:
     """Proposes, shows, confirms, and only then executes -- inside the clone."""
-    tranche, propose_log, _proposal_exit = _preview_phase(
+    tranche, propose_log, propose_exit = _preview_phase(
         vault=vault, runner=runner, log_path=log_path, log_suffix=".propose"
     )
+
+    if propose_exit != 0:
+        # A failed propose pass prints its error where the tranche would be:
+        # showing that as a proposal and executing it once confirmed would turn
+        # a timeout into an approved plan for the write pass.
+        output(t("vault-groom: the propose pass failed (exit {code}), nothing to review -- aborting.", code=propose_exit))
+        output(t("log: {log_path}", log_path=propose_log))
+        return propose_exit
 
     if not tranche.strip():
         output(t("vault-groom: empty proposal, nothing to review -- aborting."))

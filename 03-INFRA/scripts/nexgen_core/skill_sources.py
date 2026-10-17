@@ -29,6 +29,7 @@ from nexgen_core.i18n import t  # noqa: E402
 from nexgen_core.files import atomic_write_text  # noqa: E402
 from nexgen_core.lock import HostLock  # noqa: E402
 from nexgen_core.paths import resolve_home, resolve_state_dir  # noqa: E402
+from nexgen_core.processes import windows_command_argv  # noqa: E402 - one place knows the Windows shims
 
 
 @dataclass
@@ -449,7 +450,7 @@ class SkillFetcher:
             return False, ERROR + t("Cannot verify the existing skill library: {path}", path=lib_dest)
         try:
             result = subprocess.run(
-                list(entry.install), stdin=subprocess.DEVNULL,
+                windows_command_argv(list(entry.install)), stdin=subprocess.DEVNULL,
                 capture_output=True, text=True, encoding="utf-8", errors="replace", check=False,
                 timeout=INSTALLER_TIMEOUT_SECONDS,
                 env={**os.environ, **GIT_NONINTERACTIVE_ENV},

@@ -16,8 +16,6 @@ from __future__ import annotations
 import difflib
 import hashlib
 import json
-import os
-import shlex
 import subprocess
 import tempfile
 import time
@@ -26,7 +24,7 @@ from pathlib import Path
 from typing import NoReturn
 
 from nexgen_core.files import atomic_write_bytes, secure_artifact, write_private_text
-from nexgen_core.processes import windows_command_argv
+from nexgen_core.processes import split_command_line, windows_command_argv
 
 from .config import LaneConfig
 from .llm import LLM
@@ -108,20 +106,8 @@ def _run_git(repo_root: Path, args: list[str], timeout: int = 120) -> tuple[int,
 
 
 def _verify_argv(verify: str) -> list[str]:
-    """The verify command as argv for this platform.
-
-    shlex in its non-POSIX mode keeps backslashes but also leaves the quotes
-    inside the tokens; subprocess would escape them again (list2cmdline) and
-    the program would receive them as literal characters. One matching outer
-    pair is peeled off each token; backslashes stay untouched.
-    """
-    argv = shlex.split(verify, posix=os.name != "nt")
-    if os.name != "nt":
-        return argv
-    return [
-        token[1:-1] if len(token) >= 2 and token[0] == token[-1] and token[0] in "\"'" else token
-        for token in argv
-    ]
+    """The verify command as argv for this platform (one rule: `processes.split_command_line`)."""
+    return split_command_line(verify)
 
 
 def _repo_file(cfg: LaneConfig, file_rel: str) -> tuple[Path, str, Path] | None:

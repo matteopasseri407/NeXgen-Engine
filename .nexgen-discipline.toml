@@ -1,11 +1,10 @@
 # NeXgen's CRITICAL code: where a mistake loses a user's data, opens a security hole, breaks updating or
-# switches the gate off. A bigger change here (score 4 or more: about 200 net lines, or a new file plus about
-# 100 lines) needs an independent review or the owner's recorded decision (`discipline.py approve --reason "..."`).
-# Everything else is free of paid reviews: tests and the automatic gates are enough.
-# Names end in `*` on purpose: when a big critical file is split, the new pieces keep its prefix and stay covered
-# (a split into a differently named file is the loophole to avoid). Changing this file always needs a decision.
-complexity_threshold = 4
-smoke_command = "python 03-INFRA/scripts/discipline.py gate"
+# switches the gate off. A commit touching one of these files carries a test in the same commit (`review_paths`).
+# The names end in `*` on purpose: when a big critical file is split, the new pieces keep its prefix and stay
+# covered (a split into a differently named file is the loophole to avoid). Changing this file always needs a
+# decision.
+complexity_threshold = 4  # only the size of a change `discipline.py review` puts in the brief; no gate reads it
+smoke_command = "python 03-INFRA/scripts/smoke.py"
 review_paths = [
   "03-INFRA/scripts/nexgen_core/git_ops*",
   "03-INFRA/scripts/nexgen_core/guard*",

@@ -24,15 +24,33 @@ import sys
 #: A notifier that hangs would hold the whole alerting path open.
 NOTIFY_TIMEOUT_SECONDS = 10
 
+#: How long the Windows balloon stays on screen. Its script sleeps this long on
+#: purpose: the tray icon disappears with the process, so a shorter life would
+#: take the balloon away with it.
+BALLOON_SECONDS = 10
+
 
 def _run(command: list[str]) -> bool:
     try:
         result = subprocess.run(
-            command, capture_output=True, check=False, timeout=NOTIFY_TIMEOUT_SECONDS
+            command, capture_output=True, check=False, timeout=_budget(command)
         )
         return result.returncode == 0
     except (OSError, subprocess.SubprocessError):
         return False
+
+
+def _budget(command: list[str]) -> int:
+    """How long this notifier may take.
+
+    The balloon script is the only one that waits on purpose (it sleeps
+    BALLOON_SECONDS with the icon still up), so its budget is the one that has to
+    outlast that pause: killed at the same instant, the send was reported as
+    failed for a balloon that was already on screen.
+    """
+    if command and command[0] == "powershell":
+        return NOTIFY_TIMEOUT_SECONDS + BALLOON_SECONDS
+    return NOTIFY_TIMEOUT_SECONDS
 
 
 def _linux(title: str, body: str) -> bool:
@@ -68,7 +86,7 @@ def _windows(title: str, body: str) -> bool:
         "$n.Visible = $true; "
         f"$n.ShowBalloonTip(10000, {powershell_literal(title)}, {powershell_literal(body)}, "
         "[System.Windows.Forms.ToolTipIcon]::Warning); "
-        "Start-Sleep -Seconds 10; $n.Dispose()"
+        f"Start-Sleep -Seconds {BALLOON_SECONDS}; $n.Dispose()"
     )
     return _run(["powershell", "-NoProfile", "-NonInteractive", "-Command", script])
 

@@ -38,6 +38,11 @@ cat VERSION                                                  # the version you'r
 If the latest tag is newer than your `VERSION` file, an upgrade is
 available.
 
+## Channels
+
+Development builds are for people who work on the engine itself; the default is `stable` (released tags of `main`).
+An installation opens `nightly` or `beta` in its own private config (`update.allow_channels: [nightly, beta]` in `sync/remotes.yaml`) and remembers the choice with `nexgen update --channel nightly`: `nightly` follows the tip of `developer` only when it is signed and its CI gates (leak scan, Linux suite, fast Windows gate) are green on that commit, and `beta` only when the full nightly suite has proved it on Windows and Linux.
+
 ## Startup notice (one prompt per day, launch-or-skip)
 
 Every interactive shell can tell you when an upgrade is pending and offer

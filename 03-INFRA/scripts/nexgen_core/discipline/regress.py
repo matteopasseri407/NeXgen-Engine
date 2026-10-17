@@ -2,7 +2,9 @@
 
 Critical code never ships without a test in the same commit, and a commit titled `fix...:` that changes code must
 show its tests failing on the parent's code and passing on its own, so a test that passes by construction (or
-never runs) is caught. The title is the trigger: the critical-code rule applies whatever the title says.
+never runs) is caught. The title is the trigger for the proof; the critical-code rule applies whatever the title
+says. A change that only touches comments, docstrings or blank lines changes no behaviour, so it is not a code
+change here and asks for no test.
 """
 from __future__ import annotations
 
@@ -16,13 +18,13 @@ from pathlib import Path
 
 from ..files import atomic_write_text
 from .config import Config
-from .gitutil import git
+from .essence import differs_in_code
+from .gitutil import git, show
 from .score import is_critical
 from .violations import CODE_EXT, SHELL_EXT, TEST_PATH, Violation
 
 FIX = re.compile(r"^fix(\([^)]*\))?!?:", re.IGNORECASE)
 NO_TEST = re.compile(r'nexgen:\s*no-test\s+reason="[^"]{10,}"')
-PUBLISHED_REFS = ("origin/main",)  # remote-tracking only: a local `main` is where small projects work
 TIMEOUT = 600
 NO_TESTS_RAN = 5  # pytest: everything collected was skipped or deselected
 #: Environment keys that point git at the outer repository. A proof runs another
@@ -42,10 +44,16 @@ def _child_env() -> dict[str, str]:
 
 
 def _commits(root: Path, base: str, head: str) -> list[str]:
-    """Commits authored on this branch: published history was judged when it was pushed."""
+    """Commits that no remote has yet: published history was judged when it was pushed.
+
+    `--not --remotes`, not `^origin/main`: a rewrite of history leaves old
+    commits unreachable from the branch they came from while they are still on a
+    remote, and judging those again asked 181 already published commits for
+    their tests and blocked a push (2026-10-17).
+    """
     is_commit = git(root, "rev-parse", "--verify", "-q", f"{base}^{{commit}}", check=False).strip()
-    published = [f"^{ref}" for ref in PUBLISHED_REFS if git(root, "rev-parse", "--verify", "-q", ref, check=False).strip()]
-    return git(root, "rev-list", "--reverse", "--no-merges", f"{base}..{head}" if is_commit else head, *published).split()
+    return git(root, "rev-list", "--reverse", "--no-merges", f"{base}..{head}" if is_commit else head,
+               "--not", "--remotes").split()
 
 
 def _touched(root: Path, commit: str) -> list[tuple[str, str | None]]:
@@ -92,6 +100,15 @@ def _proof_problem(root: Path, commit: str, tests: list[str], command: str) -> s
     return None
 
 
+def _differs_in_code(root: Path, commit: str, paths: list[str]) -> set[str]:
+    """The subset of `paths` whose code really changed: not a comment, a docstring or a blank line.
+
+    A path that did not exist in the parent revision (a new file, a move) counts as changed.
+    """
+    return {path for path in paths
+            if differs_in_code(show(root, f"{commit}^:{path}"), show(root, f"{commit}:{path}"))}
+
+
 def check_commits(root: Path, cfg: Config, base: str, head: str) -> list[Violation]:
     found: list[Violation] = []
     escape = 'or write `nexgen: no-test reason="..."` in the commit message if no test is possible'
@@ -106,8 +123,13 @@ def check_commits(root: Path, cfg: Config, base: str, head: str) -> list[Violati
         tests = [p for p, _ in touched if TEST_PATH.search(p) and p.lower().endswith(CODE_EXT)]
         code = [p for p, _ in touched if p.lower().endswith(CODE_EXT + SHELL_EXT) and not TEST_PATH.search(p)]
         critical = [p for p, old in touched if p in code and is_critical(cfg, p, old)]
+        is_fix_title = bool(FIX.match(subject))
+        # A comment, a docstring or a blank line changes nothing a test could prove.
+        written = _differs_in_code(root, commit, code if is_fix_title else critical)
+        code = [p for p in code if p in written]
+        critical = [p for p in critical if p in written]
         label = f"commit {commit[:8]} ({subject[:50]})"
-        is_fix = bool(FIX.match(subject)) and bool(code)  # a fix to tests, docs or config has no code to prove
+        is_fix = is_fix_title and bool(code)  # a fix to tests, docs or config has no code to prove
         if (is_fix or critical) and not tests:
             what = "a fix needs a test that fails before it and passes after" if is_fix else "critical code changed without a test in the same commit"
             found.append(Violation(label, f"{what}; add it, {escape}", "regress"))

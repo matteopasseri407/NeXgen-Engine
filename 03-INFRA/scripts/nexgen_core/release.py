@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import argparse
 import re
+import subprocess
 import sys
 from pathlib import Path
 
@@ -21,6 +22,7 @@ if str(SCRIPTS_DIR) not in sys.path:
 
 # After the path shim: the CI and the release workflow run this file as a script, where `nexgen_core` is not installed.
 from nexgen_core.files import atomic_write_text  # noqa: E402
+from nexgen_core.release_checks import ci_passed  # noqa: E402
 
 #: Anchored semver, with optional prerelease and build. Anchored is the
 #: whole point: without anchors, "almost a version" passes as a version.
@@ -292,13 +294,8 @@ def _preflight() -> int:
     return 0
 
 
-def main(argv: list[str] | None = None) -> int:
-    argv = sys.argv[1:] if argv is None else argv
-    if argv[:1] == ["ship"]:
-        # The whole release in one command; it has its own options and help.
-        from nexgen_core.release_ship import main as ship_main
-
-        return ship_main(argv[1:])
+def _build_parser() -> argparse.ArgumentParser:
+    """The command line: the rules CI and the maintainer's shell invoke by name."""
     parser = argparse.ArgumentParser(
         prog="nexgen-release-rules",
         description="The release rules, callable from CI and from the command line.",
@@ -320,6 +317,12 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--pr-head", default="")
     p.add_argument("--first-push-base", default="", help="already published ref; absent means full ancestry")
 
+    p = sub.add_parser("ci-passed", help="Has the tagged commit passed the checks main requires?")
+    p.add_argument("--tag", required=True)
+    p.add_argument("--repo", default=".")
+    p.add_argument("--wait", type=float, default=900.0,
+                   help="seconds to wait for a required check that has not reported yet")
+
     p = sub.add_parser("next-version", help="Compute next semver version")
     p.add_argument("current")
     p.add_argument("bump", nargs="?", default="patch")
@@ -328,8 +331,17 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("bump", nargs="?", default="patch")
     p.add_argument("--repo", default=".")
     p.add_argument("--notes", default="")
+    return parser
 
-    args = parser.parse_args(argv)
+
+def main(argv: list[str] | None = None) -> int:
+    argv = sys.argv[1:] if argv is None else argv
+    if argv[:1] == ["ship"]:
+        # The whole release in one command; it has its own options and help.
+        from nexgen_core.release_ship import main as ship_main
+
+        return ship_main(argv[1:])
+    args = _build_parser().parse_args(argv)
 
     if args.command == "preflight":
         return _preflight()
@@ -361,10 +373,18 @@ def main(argv: list[str] | None = None) -> int:
         print(message, file=sys.stdout if ok else sys.stderr)
         return 0 if ok else 1
 
+    if args.command == "ci-passed":
+        ok, message = ci_passed(Path(args.repo).resolve(), args.tag, wait_seconds=args.wait)
+        print(message, file=sys.stdout if ok else sys.stderr)
+        return 0 if ok else 1
+
+    return _scan_range_command(args)
+
+
+def _scan_range_command(args: argparse.Namespace) -> int:
+    """`scan-range`: which commits this push or pull request introduced, as a git range."""
     before_present = True
     if args.before and args.before != ZERO_SHA:
-        import subprocess
-
         before_present = subprocess.run(
             ["git", "cat-file", "-e", f"{args.before}^{{commit}}"],
             capture_output=True, check=False, timeout=30,

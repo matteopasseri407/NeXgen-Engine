@@ -41,7 +41,10 @@ PEM_BLOCK = re.compile(r"-----BEGIN [A-Z0-9 ]+-----.*?-----END [A-Z0-9 ]+-----",
 
 #: High-entropy runs with no provider prefix.
 LONG_HEX = re.compile(r"\b[A-Fa-f0-9]{40,}\b")
-LONG_BASE64 = re.compile(r"\b[A-Za-z0-9+/_-]{43,}={0,2}\b")
+#: A base64-looking run, padding included. Lookarounds rather than `\b`: `+` and `/` are
+#: not word characters, and a `=` pad at the end of a value is followed by no boundary,
+#: so `\b` both missed a 42-character payload and dropped the `==` from the redaction.
+LONG_BASE64 = re.compile(r"(?<![A-Za-z0-9+/_=-])[A-Za-z0-9+/_-]{42,}={0,2}(?![A-Za-z0-9+/_=-])")
 
 #: A value that is a credential wearing a plain string: what a manifest entry must never carry.
 SECRET_VALUE = re.compile(f"{PROVIDER_TOKEN.pattern}|{LONG_HEX.pattern}|{LONG_BASE64.pattern}")
