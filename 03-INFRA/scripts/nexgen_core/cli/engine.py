@@ -12,6 +12,7 @@ from pathlib import Path
 
 import yaml
 
+from nexgen_core.cli.remotes_file import RemotesFileError, read_remotes_file
 from nexgen_core.files import atomic_write_text
 from nexgen_core.action_notes import is_error, is_warning  # noqa: E402 - sys.path shim for cloned checkout
 from nexgen_core.i18n import t
@@ -305,14 +306,11 @@ def _set_authoritative_remote(vault_data: Path, remote: str) -> int:
     on purpose: publishing is a decision made by a separate command.
     """
     path = remotes_config(vault_data)
-    data: dict = {}
-    if path.is_file():
-        try:
-            loaded = yaml.safe_load(path.read_text(encoding="utf-8"))
-            if isinstance(loaded, dict):
-                data = loaded
-        except (OSError, yaml.YAMLError):
-            data = {}
+    try:
+        data = read_remotes_file(path)
+    except RemotesFileError as exc:
+        print(exc, file=sys.stderr)
+        return 1
     data["schema_version"] = data.get("schema_version", 1)
     data["authoritative_remote"] = remote.strip()
     data.setdefault("mirrors", [])
