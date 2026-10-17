@@ -376,6 +376,34 @@ def test_claude_runner_never_allows_push(tmp_path, monkeypatch):
     assert captured["cwd"] == tmp_path / "clone"
 
 
+def test_claude_write_pass_cannot_write_the_live_vault_through_mcp(tmp_path, monkeypatch):
+    # The write pass edits only the origin-less clone. The vault-library MCP
+    # server writes to the LIVE vault repo, outside the clone, so its write
+    # tools must not be in the write pass allowlist.
+    import nexgen_core.vault.runner as runner_module
+
+    captured = {}
+
+    def fake_streaming(cmd, *, cwd, input_text, timeout):
+        captured["cmd"] = cmd
+        return RunResult(text="ok", exit_code=0)
+
+    monkeypatch.setattr(runner_module.shutil, "which", lambda cmd: f"/bin/{cmd}")
+    monkeypatch.setattr(runner_module, "_run_streaming", fake_streaming)
+    get_runner("claude", "some-model", tmp_path).run_write("prompt", tmp_path / "clone")
+
+    idx = captured["cmd"].index("--allowedTools")
+    allowed = set(captured["cmd"][idx + 1:captured["cmd"].index("--disallowedTools")])
+    live_vault_writers = {
+        "mcp__vault-library__update_note",
+        "mcp__vault-library__update_section",
+        "mcp__vault-library__create_note",
+        "mcp__vault-library__append_note",
+    }
+    assert not allowed & live_vault_writers
+    assert {"Edit", "Write"} <= allowed
+
+
 @pytest.mark.parametrize("write", [False, True])
 def test_agy_groom_keeps_print_mode_scope_and_explicit_model(tmp_path, monkeypatch, write):
     import nexgen_core.vault.runner as runner_module
