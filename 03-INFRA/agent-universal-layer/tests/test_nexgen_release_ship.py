@@ -37,6 +37,11 @@ class FakeWorld:
         self.already_merged = False
         self.main_carries_the_branch = False
         self.developer_synced = True
+        #: What `main`'s branch protection requires. `engine-tests-windows` is not
+        #: on it: it is slow and flaky, and CI reports it without blocking a release.
+        self.required_checks = ["test"]
+        self.check_runs: dict[str, list[dict]] = {}
+        self.ci_on_main = "success"
 
     def __call__(self, argv, cwd):
         argv = tuple(str(a) for a in argv)
@@ -44,7 +49,20 @@ class FakeWorld:
         out, code = self.answer(argv)
         return subprocess.CompletedProcess(argv, code, out, "" if code == 0 else "boom")
 
+    def api(self, url: str) -> str:
+        """GitHub's two api answers ship reads: the required checks, and one commit's check runs."""
+        if url.endswith("protection/required_status_checks"):
+            return json.dumps({"contexts": self.required_checks, "checks": []})
+        sha = url.split("/")[-2]
+        runs = self.check_runs.get(sha)
+        if runs is None:
+            runs = [{"name": name, "status": "completed", "conclusion": "success"} for name in self.required_checks]
+        return json.dumps({"check_runs": runs})
+
     def answer(self, argv):  # noqa: C901 - a dispatch table reads best flat
+        if argv[:2] == ("gh", "api"):
+            url = next(arg for arg in argv[2:] if arg.startswith("repos/"))
+            return self.api(url), 0
         if argv[-1] == "preflight":
             return "Ready to tag.", 0
         if "release_trust.py" in " ".join(argv):
@@ -79,7 +97,7 @@ class FakeWorld:
                 rollup = self.rollups.pop(0) if len(self.rollups) > 1 else self.rollups[0]
                 return json.dumps({"headRefOid": RELEASE_HEAD, "statusCheckRollup": rollup}), 0
             case ("gh", "run", "list") if "ci.yml" in argv:
-                return json.dumps([{"databaseId": 5, "status": "completed", "conclusion": "success"}]), 0
+                return json.dumps([{"databaseId": 5, "status": "completed", "conclusion": self.ci_on_main}]), 0
             case ("gh", "run", "list"):
                 runs = self.release_runs.pop(0) if len(self.release_runs) > 1 else self.release_runs[0]
                 return json.dumps(runs), 0
@@ -116,6 +134,86 @@ def test_the_ignored_lane_guard_does_not_stop_it_but_a_real_failure_does(repo):
     with pytest.raises(ShipStop, match="failing checks: test"):
         _shipper(repo, world).ship("minor")
     assert not any(c[:3] == ("gh", "pr", "merge") for c in world.calls)
+
+
+def test_a_non_required_job_that_failed_does_not_hold_the_release(repo):
+    """`engine-tests-windows` is not required on main: CI reports it, and a release
+    does not wait for it. The whole run's verdict used to decide."""
+    world = FakeWorld(repo)
+    world.rollups = [[
+        {"name": "test", "status": "COMPLETED", "conclusion": "SUCCESS"},
+        {"name": "engine-tests-windows", "status": "COMPLETED", "conclusion": "FAILURE"},
+    ]]
+    assert _shipper(repo, world).ship("minor") == "v2.14.0"
+    assert any(c[:3] == ("gh", "pr", "merge") for c in world.calls)
+
+
+def test_a_non_required_job_still_queued_does_not_hold_the_release(repo):
+    world = FakeWorld(repo)
+    world.rollups = [[
+        {"name": "test", "status": "COMPLETED", "conclusion": "SUCCESS"},
+        {"name": "engine-tests-windows", "status": "IN_PROGRESS"},
+    ]]
+    assert _shipper(repo, world, wait_limit_seconds=3).ship("minor") == "v2.14.0"
+    assert any(c[:3] == ("gh", "pr", "merge") for c in world.calls)
+
+
+def test_the_verdict_reads_the_required_checks_from_the_branch_protection(repo):
+    world = FakeWorld(repo)
+    assert _shipper(repo, world).ship("minor") == "v2.14.0"
+    assert ("gh", "api", "repos/{owner}/{repo}/branches/main/protection/required_status_checks") in world.calls
+    assert not any("ci.yml" in c for c in world.calls), "the workflow run is the fallback, not the rule"
+
+
+def test_the_required_checks_are_read_from_both_shapes_of_the_api(repo):
+    world = FakeWorld(repo)
+    original = world.answer
+
+    def answer(argv):
+        if argv[:2] == ("gh", "api") and argv[-1].endswith("required_status_checks"):
+            return json.dumps({"contexts": ["test"], "checks": [{"context": "leak-scan"}]}), 0
+        return original(argv)
+
+    world.answer = answer
+    assert _shipper(repo, world)._required_checks() == {"test", "leak-scan"}
+
+
+def test_an_unreadable_protection_falls_back_to_every_check(repo):
+    """A repository without branch protection, or a token that cannot read it, keeps
+    the strict reading: every check the run reports counts."""
+    world = FakeWorld(repo)
+    original = world.answer
+
+    def answer(argv):
+        if argv[:2] == ("gh", "api"):
+            return "", 1
+        return original(argv)
+
+    world.answer = answer
+    assert _shipper(repo, world)._required_checks() is None
+    world.rollups = [[{"name": "engine-tests-windows", "status": "COMPLETED", "conclusion": "FAILURE"}]]
+    with pytest.raises(ShipStop, match="failing checks: engine-tests-windows"):
+        _shipper(repo, world).ship("minor")
+
+
+def test_a_red_non_required_job_on_main_does_not_stop_the_tag(repo):
+    world = FakeWorld(repo)
+    world.ci_on_main = "failure"  # the run's verdict is red because of a job nobody required
+    world.check_runs = {MERGED: [
+        {"name": "test", "status": "completed", "conclusion": "success"},
+        {"name": "engine-tests-windows", "status": "completed", "conclusion": "failure"},
+    ]}
+    assert _shipper(repo, world).ship("minor") == "v2.14.0"
+    assert any(c[:2] == ("git", "push") and c[-1] == "v2.14.0" for c in world.calls)
+
+
+def test_a_red_required_check_on_main_stops_before_the_tag(repo):
+    world = FakeWorld(repo)
+    world.ci_on_main = "failure"
+    world.check_runs = {MERGED: [{"name": "test", "status": "completed", "conclusion": "failure"}]}
+    with pytest.raises(ShipStop, match="failing required checks on main: test"):
+        _shipper(repo, world).ship("minor")
+    assert not any(c[:2] == ("git", "push") and c[-1] == "v2.14.0" for c in world.calls)
 
 
 def test_a_tag_the_installed_copies_would_refuse_is_deleted_and_never_pushed(repo):

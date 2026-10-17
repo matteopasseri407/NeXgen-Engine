@@ -63,6 +63,18 @@ def _default_run(argv: Sequence[str], cwd: Path) -> subprocess.CompletedProcess[
     )
 
 
+def _answer(text: str) -> dict:
+    """GitHub's answer as a mapping, `{}` when it cannot be read.
+
+    An unreadable answer leads to the same place as an empty one: the caller's
+    own "GitHub will not say" path, which falls back to the strict reading.
+    """
+    try:
+        return json.loads(text or "{}")
+    except json.JSONDecodeError:  # nexgen: allow reason="an unreadable answer is treated as no answer by the caller"
+        return {}
+
+
 @dataclass
 class Shipper:
     repo: Path
@@ -183,27 +195,57 @@ class Shipper:
         self.log(f"   opened #{number}")
         return number
 
+    def _required_checks(self) -> set[str] | None:
+        """The checks main's branch protection requires, or None when GitHub will not say.
+
+        That list is the repository's own answer to "what may block a merge".
+        `engine-tests-windows` is not on it: it is slow and flaky, so CI reports it
+        without a release waiting for it.
+        """
+        result = self.run(
+            ["gh", "api", "repos/{owner}/{repo}/branches/main/protection/required_status_checks"], self.repo)
+        if result.returncode != 0:
+            return None
+        data = _answer(result.stdout)
+        names = {str(name) for name in data.get("contexts") or []}
+        names |= {str(check.get("context")) for check in data.get("checks") or [] if check.get("context")}
+        return names or None
+
+    @staticmethod
+    def _state(check: dict | None) -> bool | None:
+        """True when the check passed, False when it failed, None while it is missing or running."""
+        if check is None:
+            return None
+        status = (check.get("status") or "").upper()
+        state = (check.get("conclusion") or check.get("state") or "").upper()
+        if status in _PENDING or (status and status != "COMPLETED") or state in _PENDING or not state:
+            return None
+        return state in _GREEN
+
+    def _required_verdict(self, checks: dict[str, dict], required: set[str], what: str) -> str | None:
+        """None while a required check is missing or still running; 'green' when all of them passed."""
+        states = {name: self._state(checks.get(name)) for name in required}
+        if any(state is None for state in states.values()):
+            return None
+        failed = sorted(name for name, state in states.items() if state is False)
+        if failed:
+            raise ShipStop(self._step, f"failing {what}: " + ", ".join(failed))
+        return "green"
+
     def _checks_verdict(self, number: int, head: str) -> str | None:
         data = json.loads(self._do("gh", "pr", "view", str(number), "--json", "headRefOid,statusCheckRollup"))
         if data.get("headRefOid") != head:
             return None  # GitHub has not seen the pushed head yet
-        checks = data.get("statusCheckRollup") or []
-        if not checks:
+        rollup = data.get("statusCheckRollup") or []
+        if not rollup:
             return None
-        failed = []
-        for check in checks:
-            name = check.get("name") or check.get("context") or "?"
-            if any(ignored in name for ignored in IGNORED_CHECKS):
-                continue
-            status = (check.get("status") or "").upper()
-            state = (check.get("conclusion") or check.get("state") or "").upper()
-            if status in _PENDING or (status and status != "COMPLETED") or state in _PENDING or not state:
-                return None
-            if state not in _GREEN:
-                failed.append(name)
-        if failed:
-            raise ShipStop(self._step, "failing checks: " + ", ".join(sorted(set(failed))))
-        return "green"
+        by_name = {str(check.get("name") or check.get("context") or "?"): check for check in rollup}
+        required = self._required_checks()
+        if required is None:
+            # No branch protection to read: every check the run reports counts, and the
+            # lane guard keeps its old exception.
+            required = {name for name in by_name if not any(ignored in name for ignored in IGNORED_CHECKS)}
+        return self._required_verdict(by_name, required, "checks")
 
     def _merge(self, number: int) -> str:
         self._enter(f"checks on #{number}")
@@ -230,8 +272,22 @@ class Shipper:
             return f"failed:{run.get('databaseId')}"
         return f"ok:{run.get('databaseId')}"
 
+    def _commit_checks(self, sha: str) -> dict[str, dict]:
+        """Every check GitHub reports for one commit, by name; empty when it cannot be read."""
+        result = self.run(
+            ["gh", "api", f"repos/{{owner}}/{{repo}}/commits/{sha}/check-runs", "-F", "per_page=100"], self.repo)
+        if result.returncode != 0:
+            return {}
+        return {str(run.get("name") or "?"): run for run in _answer(result.stdout).get("check_runs") or []}
+
     def _wait_main_ci(self, sha: str) -> None:
         self._enter(f"CI on main {sha[:8]}")
+        required = self._required_checks()
+        if required:
+            self._wait(lambda: self._required_verdict(self._commit_checks(sha), required, "required checks on main"),
+                       "the required checks on main")
+            return
+        # Nothing to read: the workflow run on the merge commit is the strict, old reading.
         query = ("gh", "run", "list", "--commit", sha, "--workflow", "ci.yml", "--limit", "1",
                  "--json", "databaseId,status,conclusion")
         verdict = self._wait(lambda: self._run_verdict(query), "the CI on main")

@@ -31,9 +31,10 @@ It prints one `== step` line per step and ends with either `OK vX.Y.Z` or `STOP 
    The bump is skipped when `VERSION` is already ahead of the newest tag.
 2. **pull request**: opens the `developer` to `main` pull request, or reuses the open one.
    No pull request is opened when it would change no file: if `main` already carries the branch's tree (what `sync-developer` leaves behind) the release goes straight to the checks and the tag.
-3. **checks on the pull request**: waits for the required checks. The `lane-guard` check is ignored here, because it rejects every push that does not come from a feature lane.
+3. **checks on the pull request**: waits for the checks `main`'s branch protection requires, read with `gh api .../branches/main/protection/required_status_checks`. A job nobody requires, `engine-tests-windows` among them, is reported by CI without holding the release; when the protection cannot be read, every check in the run counts as before.
+   The `lane-guard` check is ignored here, because it rejects every push that does not come from a feature lane.
 4. **merge**: merges with a merge commit.
-5. **CI on main**: waits for `ci.yml` on the merge commit.
+5. **CI on main**: waits for the same required checks on the merge commit, or (when the protection cannot be read) for the whole `ci.yml` run.
 6. **tag**: creates the tag with `git tag -s`, signed by the key this machine's git is configured to use.
    It then verifies the tag against the trust anchor of the installed copy (`trust/release-signers.txt`).
    If that copy would refuse the tag, the tag is deleted locally and nothing is pushed.
