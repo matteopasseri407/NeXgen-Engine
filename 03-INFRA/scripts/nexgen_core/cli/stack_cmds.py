@@ -54,13 +54,20 @@ def cmd_up(args) -> int:
 
     # The connectors only mount themselves if the workstation knows where to find them.
     env_values = secrets.read_env_file(env_file(engine_root))
-    exports: dict[str, str] = {}
+    target = secrets.workstation_env_path()
+    # One file holds every service's variables: starting a single service may
+    # only rewrite that service's exports, or the running ones lose theirs.
+    exports: dict[str, str] = secrets.read_env_file(target) if args.services else {}
     for service in SERVICES:
         if args.services and service.name not in args.services:
             continue
-        exports.update(secrets.resolve_exports(service.exports, service.port, env_values))
+        resolved = secrets.resolve_exports(service.exports, service.port, env_values)
+        for name in service.exports:
+            if name not in resolved:
+                # An export whose secret is gone must disappear, not point at nothing.
+                exports.pop(name, None)
+        exports.update(resolved)
 
-    target = secrets.workstation_env_path()
     secrets.write_workstation_env(target, exports)
     print("  ✓ " + t("Connector variables written to {target}", target=target))
     print("\n" + t("Reopen your session (or export those variables), then run: nexgen sync"))

@@ -97,6 +97,21 @@ def test_the_pinned_version_stays_inside_the_declared_range():
         release_packages._choose_release("demo>=3.0", releases)
 
 
+def test_the_formula_class_matches_the_file_homebrew_loads(tmp_path):
+    """Homebrew ricava il nome della classe dal file: nexgen.rb vuole `class Nexgen`.
+
+    Con `class NexgenEngine < Formula` brew rifiuta la formula ("formula class
+    name does not match file name"), quindi `brew install` e `brew audit` non
+    funzionano.
+    """
+    formula = _generate(tmp_path)
+    text = formula.read_text(encoding="utf-8")
+
+    assert formula.name == "nexgen.rb"
+    assert "\nclass Nexgen < Formula\n" in text
+    assert "NexgenEngine" not in text
+
+
 def test_no_asset_sha256_means_no_formula(tmp_path):
     with pytest.raises(SystemExit):
         _generate(tmp_path, argv=["--version", "2.2.0", "--asset-url", "https://x/y.tar.gz",

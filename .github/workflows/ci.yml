@@ -1,9 +1,16 @@
-name: CI
+﻿name: CI
 
 on:
   push:
     branches: ["**"]
   pull_request:
+  # The nightly run at 03:00 UTC exists for the Windows leg (engine-tests-windows
+  # below), which no longer runs on push/PR: windows-latest is the scarcest and
+  # slowest runner here, so it answers once a night and on demand instead of on
+  # every push. workflow_dispatch is the manual door to the same job.
+  schedule:
+    - cron: "0 3 * * *"
+  workflow_dispatch:
 
 # Default to read-only GITHUB_TOKEN permissions for every job in this
 # workflow (least privilege - none of the jobs below push commits, open
@@ -12,6 +19,12 @@ on:
 # override only if a specific job later needs more.
 permissions:
   contents: read
+
+# One run per ref at a time: a new push cancels the run it supersedes, so only
+# the newest state of a branch or pull request is judged.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
 
@@ -30,8 +43,9 @@ jobs:
       - name: Test dependencies
         run: pip install pytest pyyaml 'langgraph>=1.0,<2' 'langgraph-checkpoint-sqlite>=3,<4' 'langchain-ollama>=1.0,<2'
 
-      # Size ratchet and shell/PowerShell gate on every change; a complex change also
-      # needs its review receipt (the release PR and main only get the static check).
+      # Shell/PowerShell, per-commit tests and test integrity gate every change; what is over the
+      # size ceiling is printed as a warning and listed by `discipline.py report` (a split queue,
+      # never a refusal). The release PR and main only get the static check.
       # The base, head and strictness are chosen in Python from these event values.
       - name: Discipline gate
         env:
@@ -110,11 +124,11 @@ jobs:
         # greps: same patterns, but now scans EVERY commit newly introduced by
         # this push/PR (not just the final tree), so a value that lands in an
         # intermediate commit and is removed later still gets caught. Matches
-        # are always redacted in the output — this log is public.
+        # are always redacted in the output â€” this log is public.
         run: |
           set -euo pipefail
           # Quale intervallo viene scansionato decide cosa il gate controlla:
-          # è una regola di sicurezza, e vive dove si può provare.
+          # Ã¨ una regola di sicurezza, e vive dove si puÃ² provare.
           RANGE="$(python3 03-INFRA/scripts/nexgen_core/release.py scan-range \
             --event "${{ github.event_name }}" \
             --before "${{ github.event.before }}" \
@@ -328,8 +342,8 @@ jobs:
     # The bundled vault-library MCP server, exercised for real (2026-07-14):
     # build the image, run it read-only on a fixture vault + bare repo (same
     # uid trick bootstrap-vps.sh uses), then drive the actual write path over
-    # streamable-http MCP — create/read/update with the hash guard, plus the
-    # 99-SECRETS refusal — and verify the commits landed in the bare repo as
+    # streamable-http MCP â€” create/read/update with the hash guard, plus the
+    # 99-SECRETS refusal â€” and verify the commits landed in the bare repo as
     # author "Vault MCP". This is the repeatable proof that a Cloud-Server
     # install's notes door actually works, not just parses.
     runs-on: ubuntu-latest
@@ -455,11 +469,37 @@ jobs:
             fi
             sleep 10
           done
-          pip install pytest pyyaml 'langgraph>=1.0,<2' 'langgraph-checkpoint-sqlite>=3,<4' 'langchain-ollama>=1.0,<2'
+          pip install pytest pyyaml pytest-xdist 'langgraph>=1.0,<2' 'langgraph-checkpoint-sqlite>=3,<4' 'langchain-ollama>=1.0,<2'
 
       - name: Engine regression suite
         working-directory: 03-INFRA/agent-universal-layer/tests
-        run: python3 -m pytest -v
+        # -n auto spreads the suite over the runner's cores (2026-10-17): the
+        # tests that share a real resource are pinned to one worker with
+        # `@pytest.mark.xdist_group("serial")`, so the speedup never trades
+        # away a test - it only moves the ones that cannot run concurrently.
+        run: python3 -m pytest -v -n auto --dist loadgroup
+
+  smoke-linux:
+    # The checkout's own commands, run for real on a clean runner (2026-10-17):
+    # the engine-tests job proves behavior against fakes; this proves that on a
+    # machine which has never seen this project, the launcher a user really gets
+    # is rendered from THIS checkout and that every read-only command answers
+    # with the exit code it promises. The budget is the smoke's own (30s), well
+    # inside the 3-minute job cap.
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: "3.12"
+
+      - name: Install the engine's dependencies from this checkout
+        run: pip install .
+
+      - name: Engine smoke (read-only commands + launcher)
+        run: python 03-INFRA/scripts/smoke.py
 
   opencode2-smoke:
     # OpenCode 2 native-contract gate (2026-09-22): the suite above proves
@@ -491,6 +531,14 @@ jobs:
     # B2.5: Windows now exercises the shared Python provisioner. POSIX-only
     # shell/doctor tests are skipped by pytest markers; the Windows-specific
     # value is the direct agent_sync.py guard smoke in a sandboxed USERPROFILE.
+    #
+    # Event gate (2026-10-17): this job answers on workflow_dispatch and on a
+    # pull request into main - never on a plain push. Daily work on developer
+    # does not wait for the scarcest runner; a release does, because Windows CI
+    # found a real bug the same day that neither the local machine nor the smoke
+    # could see. The Linux legs still judge every push. The nightly full-suite
+    # Windows run lives in full-suite-windows below, which checks out `developer`.
+    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.base_ref == 'main')
     runs-on: windows-latest
     # windows-latest is slow but not unbounded: a normal run is minutes. Cap
     # it so a Windows-only subprocess deadlock surfaces as a failed job with
@@ -504,11 +552,155 @@ jobs:
           python-version: "3.x"
 
       - name: Install test dependencies
-        run: pip install pytest pyyaml 'langgraph>=1.0,<2' 'langgraph-checkpoint-sqlite>=3,<4' 'langchain-ollama>=1.0,<2'
+        run: pip install pytest pyyaml pytest-xdist 'langgraph>=1.0,<2' 'langgraph-checkpoint-sqlite>=3,<4' 'langchain-ollama>=1.0,<2'
 
       - name: Engine regression suite and agent_sync.py smoke
         working-directory: 03-INFRA/agent-universal-layer/tests
-        run: python -m pytest -v
+        run: python -m pytest -v -n auto --dist loadgroup
+
+  quick-windows:
+    # The fast Windows gate a `nightly` candidate needs (2026-10-17): the
+    # launcher a Windows user gets, its exit codes, paths and encodings - the
+    # things that break a Windows machine and nothing else. It runs on every
+    # push of `developer` and finishes in minutes. It never blocks the push
+    # (CI is asynchronous): it blocks the propagation of `nightly` to unlocked
+    # machines, which is the only place this gate is asked for.
+    if: github.ref == 'refs/heads/developer'
+    runs-on: windows-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: "3.x"
+
+      - name: Install the engine's dependencies from this checkout
+        run: pip install . pytest
+
+      - name: Engine smoke (the launcher, its exit codes)
+        run: python 03-INFRA/scripts/smoke.py
+
+      - name: Fast Windows-critical tests
+        # Picked, not marked: these are the files that cover the .cmd shims and
+        # the commands a user types, text encoding, and path handling. A subset
+        # that grows by decision, not by accident.
+        working-directory: 03-INFRA/agent-universal-layer/tests
+        run: >-
+          python -m pytest -q
+          test_nexgen_command_surface.py
+          test_nexgen_text_encoding.py
+          test_nexgen_pathssplit_pinning.py
+
+  full-suite-linux:
+    # The Linux leg of the nightly full-suite run: the proof the `beta` channel
+    # reads. GitHub runs `schedule` only on a repository's default branch, so a
+    # nightly that judged the branch it actually cares about has to check
+    # `developer` out itself: without this, the schedule tested `main` every
+    # night and no commit of `developer` could ever be proved. Same reason for
+    # full-suite-windows below.
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    #: The commit this leg tested: the status is published on THIS sha, not on
+    #: whatever `developer` points at when the last job starts.
+    outputs:
+      sha: ${{ steps.tested.outputs.sha }}
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: developer
+          fetch-depth: 0
+
+      - name: Record the commit this leg tested
+        id: tested
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: "3.12"
+
+      - name: Install the engine's dependencies from this checkout
+        # The dependency list comes from the checkout (pyproject.toml), not from
+        # a second hand-kept list that drifts away from it.
+        run: pip install . pytest
+
+      - name: Engine regression suite on developer
+        working-directory: 03-INFRA/agent-universal-layer/tests
+        run: python3 -m pytest -q
+
+  full-suite-windows:
+    # The Windows leg of the nightly, on `developer` (see full-suite-linux).
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: windows-latest
+    timeout-minutes: 25
+    outputs:
+      sha: ${{ steps.tested.outputs.sha }}
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: developer
+          fetch-depth: 0
+
+      - name: Record the commit this leg tested
+        id: tested
+        shell: pwsh
+        run: |
+          $sha = (git rev-parse HEAD)
+          "sha=$sha" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: "3.12"
+
+      - name: Install the engine's dependencies from this checkout
+        run: pip install . pytest
+
+      - name: Engine regression suite on developer
+        working-directory: 03-INFRA/agent-universal-layer/tests
+        run: python -m pytest -q
+
+  full-suite-status:
+    # The one thing that opens `beta`: a `full-suite` commit status on the
+    # exact developer commit the two legs above ran on. A commit without this
+    # status is never installable, which is why the status is published here,
+    # after both legs, and not read from the run's event (a schedule run is
+    # always about the default branch, so its event proves nothing about
+    # developer).
+    if: always() && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
+    needs: [full-suite-linux, full-suite-windows]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      statuses: write
+    steps:
+      - name: Publish the full-suite status on the commit both legs tested
+        env:
+          GH_TOKEN: ${{ github.token }}
+          LINUX: ${{ needs.full-suite-linux.result }}
+          WINDOWS: ${{ needs.full-suite-windows.result }}
+          LINUX_SHA: ${{ needs.full-suite-linux.outputs.sha }}
+          WINDOWS_SHA: ${{ needs.full-suite-windows.outputs.sha }}
+        run: |
+          set -euo pipefail
+          if [ -z "$LINUX_SHA" ]; then
+            echo "no leg reported a commit to mark (linux=$LINUX windows=$WINDOWS); nothing published"
+            exit 0
+          fi
+          if [ "$LINUX" = success ] && [ "$WINDOWS" = success ] && [ "$LINUX_SHA" = "$WINDOWS_SHA" ]; then
+            state=success
+            description="full-suite green: linux and windows"
+          else
+            state=failure
+            description="full-suite red: linux=$LINUX windows=$WINDOWS shas=$LINUX_SHA/$WINDOWS_SHA"
+          fi
+          # On the commit the legs RAN on: a branch that moved while they worked
+          # must not wear a green it never earned (the two shas disagreeing is a
+          # failure, not a green on the newer one).
+          gh api -X POST "repos/${GITHUB_REPOSITORY}/statuses/${LINUX_SHA}" \
+            -f state="$state" -f context=full-suite -f description="$description"
+          echo "published full-suite=$state on $LINUX_SHA"
 
   release-pending:
     # Warn-only, and deliberately so: it never fails a pull request and never

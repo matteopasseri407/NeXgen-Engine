@@ -60,6 +60,15 @@ _MEDIATED_BYPASS = [
     {"action": "shell", "resource": "*", "effect": "ask"},
 ]
 
+#: Every effect a posture renders. A rule whose effect is one of these was written by the
+#: engine in an earlier cycle (the person's own choices are `deny`, or anything else): only
+#: those rules may have their effect updated when the posture changes.
+_RENDERED_EFFECTS = {
+    rule["effect"]
+    for rendered in (*_POSTURE_RENDER.values(), _MEDIATED_BYPASS)
+    for rule in rendered
+}
+
 #: Legacy V1 dimensions and their V2 action names. Only these dimensions
 #: are migrated: every other `permission.*` key (webfetch, doom_loop, ...)
 #: stays whatever the user set it to -- unless the user set it inside the
@@ -171,13 +180,20 @@ class OpenCodeRuntime(Runtime):
         # The plugin answers for the person only under a mediated bypass; elsewhere the person
         # asked to be asked. Under bypass a broken guardrail must block rather than ask.
         self.set_guardrail_flags(self.guardrail_sidecar(home), autoAllow=mediated, strict=posture == "bypass")
-        claimed = {(r.get("action"), r.get("resource")) for r in rules if isinstance(r, dict)}
+        claimed = {(r.get("action"), r.get("resource")): r for r in rules if isinstance(r, dict)}
         for rule in desired:
-            if (rule["action"], rule["resource"]) in claimed:
-                continue  # the user already ruled on this pair: theirs wins
-            rules.append(dict(rule))
-            claimed.add((rule["action"], rule["resource"]))
-            changed = True
+            existing = claimed.get((rule["action"], rule["resource"]))
+            if existing is None:
+                rules.append(dict(rule))
+                claimed[(rule["action"], rule["resource"])] = rules[-1]
+                changed = True
+            elif existing.get("effect") in _RENDERED_EFFECTS and existing.get("effect") != rule["effect"]:
+                # A pair carrying an effect a posture renders is the engine's own,
+                # from an earlier cycle: skipping it left the previous posture's
+                # effect in place forever (shell stayed `allow` while the person
+                # had asked to be asked). Any other effect is the person's ruling.
+                existing["effect"] = rule["effect"]
+                changed = True
         if not changed:
             return None
         self._write_key(path, "permissions", rules)

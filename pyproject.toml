@@ -30,7 +30,7 @@ keywords = ["agents", "mcp", "automation", "knowledge-vault", "ai-agents", "clau
 dependencies = ["PyYAML>=6.0,<7.0", "langgraph>=1.0,<2", "langchain-ollama>=1.0,<2", "httpx>=0.28,<1", "mcp>=2.2.0,<3", "langgraph-checkpoint-sqlite>=3,<4"]
 
 [project.optional-dependencies]
-dev = ["pytest>=8.0", "ruff>=0.6"]
+dev = ["pytest>=8.0", "pytest-xdist>=3.6", "ruff>=0.6"]
 # Kept for compatibility: the lane and council orchestration is core now,
 # so these install nothing extra.
 local = []
@@ -98,6 +98,11 @@ nexgen_local = [
 [tool.pytest.ini_options]
 testpaths = ["03-INFRA/agent-universal-layer/tests"]
 pythonpath = ["03-INFRA/scripts"]
+# `xdist_group` is read by pytest-xdist's `--dist loadgroup` (see ci.yml):
+# tests pinned to "serial" share one worker instead of being dropped.
+markers = [
+    "xdist_group: pin tests that share a real, timing-sensitive resource to one worker",
+]
 
 [tool.ruff]
 line-length = 120

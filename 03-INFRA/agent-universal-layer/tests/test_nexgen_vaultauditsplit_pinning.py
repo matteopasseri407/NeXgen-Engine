@@ -182,6 +182,96 @@ def test_run_audit_write_exit_nonzero_blocks_without_touching_vault(tmp_path: Pa
     assert (request.clone / ".GROOM_QUARANTINE.json").is_file()
 
 
+def test_coverage_reads_a_note_whose_name_has_spaces(tmp_path: Path):
+    """Una nota Obsidian con uno spazio nel nome è una nota, non una riga illeggibile.
+
+    `FILENAME_RE` ammetteva solo `[\\w./-]`, quindi quel target non entrava in
+    `targets`: la tranche veniva bocciata come out_of_scope (o unparseable) pur
+    essendo approvata e corretta.
+    """
+    from nexgen_core.vault.coverage import extract_action_targets
+
+    text = (
+        "| Note | Action | Why |\n| --- | --- | --- |\n"
+        "| `02-PROJECTS/nota con spazi.md` | compress | troppo lunga |\n"
+    )
+
+    targets, archive_targets, found_any_row = extract_action_targets(text)
+
+    assert targets == {"02-PROJECTS/nota con spazi.md"}
+    assert archive_targets == set()
+    assert found_any_row is True
+
+
+def test_coverage_still_reads_the_other_rows(tmp_path: Path):
+    from nexgen_core.vault.coverage import extract_action_targets
+
+    text = (
+        "| Note | Action | Why |\n| --- | --- | --- |\n"
+        "| `01-NOTES/senza-spazi.md` | archive | vecchia |\n"
+        "| `99-ARCHIVE/roba/` | no action | gia' a posto |\n"
+    )
+    targets, archive_targets, found_any_row = extract_action_targets(text)
+
+    assert targets == {"01-NOTES/senza-spazi.md"}
+    assert archive_targets == {"01-NOTES/senza-spazi.md"}
+    assert found_any_row is True
+
+
+def test_a_non_ascii_name_is_read_back_as_it_is(tmp_path: Path) -> None:
+    """`core.quotepath` cita i nomi non ASCII: la tranche va letta com'è.
+
+    Con i nomi citati (`caff\\303\\250.md`) `collect_clone_facts` salvava
+    l'escape ottale e `check_coverage` bocciava la tranche, out_of_scope e
+    non indirizzata, pur essendo corretta.
+    """
+    from nexgen_core.vault.promote import collect_clone_facts
+
+    repo = _init_repo(tmp_path / "utf8")
+    _commit_file(repo, "01-NOTES/caffè.md", "v1\n", "seed")
+    base = _head(repo)
+    _commit_file(repo, "01-NOTES/caffè.md", "v2\n", "accento")
+    head = _head(repo)
+
+    _commits, touched, _added = collect_clone_facts(repo, base, head)
+
+    assert "01-NOTES/caffè.md" in touched
+    assert not any("\\" in path for path in touched), touched
+
+
+def test_a_failed_backlog_commit_after_promotion_is_reported_not_raised(tmp_path: Path, monkeypatch) -> None:
+    """Il commit della backlog puo' fallire dopo la promozione: si riporta, non si esplode.
+
+    GitCommandError non e' un OSError: sfuggiva al `except (OSError, LockTimeoutError)`
+    con la promozione gia' avvenuta, quindi il record JSON non veniva scritto e il
+    comando moriva con un traceback al posto di un esito.
+    """
+    import nexgen_core.vault.promote as promote_module
+    from nexgen_core.vault.git_utils import GitCommandError
+
+    monkeypatch.setattr(
+        promote_module, "run_publish",
+        lambda *a, **k: (_ for _ in ()).throw(AssertionError("publish non deve partire")),
+    )
+    monkeypatch.setattr(
+        promote_module, "commit_backlog",
+        lambda *a, **k: (_ for _ in ()).throw(GitCommandError("fatal: cannot commit")),
+    )
+    request, vault, base = _make_request(tmp_path, "commitfail")
+    head_before_clone = _head(request.clone)
+
+    record, exit_code = run_audit(request, output=lambda *_: None)
+
+    assert exit_code == 1
+    assert record["promoted"] is True  # la promozione era gia' avvenuta
+    assert "cannot commit" in record["blocked_reason"]
+    assert _head(vault) != base, "la promozione resta dov'era"
+    subprocess.run(
+        ["git", "-C", str(vault), "merge-base", "--is-ancestor", head_before_clone, "HEAD"],
+        check=True, capture_output=True, timeout=30,
+    )
+
+
 def test_public_signatures_unchanged() -> None:
     assert list(inspect.signature(run_audit).parameters) == ["request", "output"]
     assert [f.name for f in dc_fields(AuditRequest)] == [

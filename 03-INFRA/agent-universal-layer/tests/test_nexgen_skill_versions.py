@@ -55,6 +55,33 @@ def test_installer_cannot_report_success_when_pin_write_fails(tmp_path, monkeypa
     assert fetcher._installed_versions_file().read_bytes() == previous
 
 
+def test_an_installer_that_is_a_cmd_shim_runs_through_cmd_exe(tmp_path, monkeypatch):
+    """Su Windows `npx` è `npx.cmd`, e CreateProcess non lo esegue da solo.
+
+    L'installer di terze parti veniva lanciato per nome: falliva sempre (errore
+    riportato, nessun crash), quindi la skill non si installava mai.
+    """
+    import subprocess
+
+    fetcher = SkillFetcher(home=tmp_path / "home")
+    library = tmp_path / "library" / "demo"
+    shim = r"C:\nodejs\npx.cmd"
+    monkeypatch.setattr(skill_sources.shutil, "which", lambda name: shim if name == "npx" else None)
+    monkeypatch.setattr(skill_sources.os, "name", "nt")
+    seen: list[list[str]] = []
+
+    def fake_run(argv, **kwargs):
+        seen.append(list(argv))
+        return subprocess.CompletedProcess(argv, 0, "", "")
+
+    monkeypatch.setattr(skill_sources.subprocess, "run", fake_run)
+    entry = SkillEntry("demo", origin="installer", version="2", install=["npx", "--yes", "someone/skill@1.0.0"])
+
+    fetcher.install_third_party(entry, library, ())
+
+    assert seen == [["cmd.exe", "/d", "/s", "/c", shim, "--yes", "someone/skill@1.0.0"]]
+
+
 def test_github_materialization_reports_pin_write_failure(tmp_path, monkeypatch):
     mat = SkillMaterializer(vault_data=tmp_path / "vault", home=tmp_path / "home")
     pin = "a" * 40

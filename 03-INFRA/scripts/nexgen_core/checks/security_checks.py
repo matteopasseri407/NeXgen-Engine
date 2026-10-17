@@ -77,15 +77,27 @@ def check_required_rules(vault_data: Path, engine_root: Path | None = None) -> C
         )
 
 
+def _is_http_server(srv: object) -> bool:
+    """Is this a manifest entry whose token the environment has to carry?
+
+    `enabled: false` is a server the person switched off by hand: it is mounted
+    nowhere (the renderer skips it, and so does the reference check), so a token
+    it names is not missing.
+    """
+    if not isinstance(srv, dict) or srv.get("enabled") is False:
+        return False
+    return srv.get("transport") == "http" or bool(srv.get("url"))
+
+
 def check_tokens_in_env(vault_data: Path) -> CheckOutcome:
     """Tokens for HTTP servers with bearer auth must be set in env.
 
     Ported from the "Tokens in env" section of the release's doctor. The
     rule isn't "every token must always exist", but "a server the user has
     chosen to enable (require_env satisfied, the same way the renderer
-    checks it) must have its token in env". A server that isn't enabled is
-    a choice, not an error: the renderer doesn't mount it at all, so the
-    missing token isn't a problem.
+    checks it) must have its token in env". A server that isn't enabled, by
+    `require_env` or by `enabled: false`, is a choice, not an error: the
+    renderer doesn't mount it at all, so its token isn't missing.
     """
     manifest_path = vault_data / "03-INFRA" / "agent-universal-layer" / "mcp" / "manifest.yaml"
     if not manifest_path.is_file():
@@ -105,7 +117,7 @@ def check_tokens_in_env(vault_data: Path) -> CheckOutcome:
         )
     missing: list[str] = []
     for name, srv in data.get("servers", {}).items():
-        if srv.get("transport") != "http" and not srv.get("url"):
+        if not _is_http_server(srv):
             continue
         auth = srv.get("auth")
         if not isinstance(auth, dict) or auth.get("type") != "bearer":

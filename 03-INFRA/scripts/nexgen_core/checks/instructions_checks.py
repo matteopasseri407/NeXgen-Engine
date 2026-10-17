@@ -99,6 +99,11 @@ def _pointer_outcome(cli_name: str, id_: str, pointer_file: Path, canon: Path, *
             aligned = canon.is_file() and pointer_file.resolve() == canon.resolve()
         except OSError:
             aligned = False
+        if not aligned and canon.is_file() and pointer_file.is_file() and not pointer_file.is_symlink():
+            # Windows without symlink privileges: the guard leaves an identical copy
+            # instead. Demanding a symlink here kept the doctor red on those machines
+            # for good, and the remedy rewrote the same copy.
+            aligned = pointer_file.read_bytes() == canon.read_bytes()
         if aligned:
             return CheckOutcome(id=id_, severity=Severity.OK, message=t("{cli_name} points to the canonical AGENTS.md file", cli_name=cli_name))
         return CheckOutcome(

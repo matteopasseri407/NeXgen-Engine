@@ -45,6 +45,7 @@ from nexgen_core.config import load_mcp_manifest
 from nexgen_core.errors import NexgenError
 from nexgen_core.i18n import t
 from nexgen_core.paths import mcp_manifest, resolve_state_dir
+from nexgen_core.processes import windows_command_argv
 
 logger = logging.getLogger(__name__)
 
@@ -200,7 +201,7 @@ def _run(argv: list[str], cwd: Path, timeout: int) -> "subprocess.CompletedProce
     stream. A child that holds that same handle can wedge on Windows (git queries its stdin at start-up
     and waits behind the pending read), and on any system it could swallow bytes of the protocol."""
     return subprocess.run(
-        argv, cwd=cwd, stdin=subprocess.DEVNULL, capture_output=True, text=True,
+        windows_command_argv(argv), cwd=cwd, stdin=subprocess.DEVNULL, capture_output=True, text=True,
         encoding="utf-8", errors="replace", timeout=timeout,
     )
 
@@ -316,6 +317,14 @@ def _provision_git(deps: dict[str, Any], state_dir: Path, server: str) -> dict[s
             }))
             if final.exists():
                 shutil.rmtree(final, ignore_errors=True)
+                if final.exists():
+                    # Windows keeps a directory whose files are open in another process:
+                    # `ignore_errors=True` said nothing, and os.replace below answered with
+                    # a bare PermissionError that explained nothing.
+                    raise ProvisionError(
+                        t("cannot replace '{path}' for server '{server}': something still holds a file inside it, close it and run again.",
+                          path=final, server=server)
+                    )
             os.replace(clone, final)
         return {"DEPS_WORKSPACE": str(_run_workspace(final, deps))}
 

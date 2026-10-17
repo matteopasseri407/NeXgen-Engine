@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Contributor gate: the existing Ruff baseline, the discipline gate (size, shell, review receipt), then sandboxed pytest.
+"""Contributor gate: the existing Ruff baseline, the discipline gate (shell, per-commit tests,
+size alarm), then sandboxed pytest.
 
 Optional arguments are forwarded to pytest, for example a test file or -k.
 Without arguments it runs the complete suite. It does not sync or release.

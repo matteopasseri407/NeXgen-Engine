@@ -221,8 +221,14 @@ def _http_tools(entry: dict[str, Any], timeout: float) -> list[dict[str, Any]]:
 
 
 def _check_direct_impl(renderer, cli: str, name: str, *, timeout: float = 60.0) -> DirectResult:
-    entry = renderer.load_resolved_servers(cli)[name]
+    entry = renderer.load_resolved_servers(cli).get(name)
     result = DirectResult(name)
+    if entry is None:
+        # No resolved entry at all (an unsatisfied `require_env`): the server is not
+        # mounted in this CLI, which is a fact to report, not a KeyError out of `nexgen mcp bump`.
+        result.ok = False
+        result.problem = t("{name}: not mounted in {cli} (a variable it requires is not set)", name=name, cli=cli)
+        return result
     started = time.monotonic()
     session = None
     try:
@@ -287,8 +293,12 @@ def _verify_servers_impl(renderer, names: list[str], *, timeout: float = 120.0) 
         own = [pr for pr in outcome_gw.problems if pr.startswith(f"{name}:") or f" {name} " in f" {pr} "]
         if own:
             problems.extend(own)
-        elif name not in outcome_gw.served and not outcome_gw.problems:
-            problems.append(t("{name}: the gateway does not offer it", name=name))
+        elif name not in outcome_gw.served:
+            # The gateway did not list it. When the gateway failed as a whole its own
+            # reason is what explains this: silence here made every server behind a
+            # crashed gateway look fine.
+            reason = "; ".join(outcome_gw.problems) or t("the gateway does not offer it")
+            problems.append(f"{name}: {reason}")
     return problems
 
 

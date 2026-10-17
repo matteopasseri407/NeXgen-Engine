@@ -310,8 +310,8 @@ def run_relay(
             ok=proc.returncode == 0,
             chars=len(answer),
         )
-        if proc.returncode != 0 and not answer:
-            detail = (proc.stderr or "").strip()[-500:]
+        if proc.returncode != 0:
+            detail = (proc.stderr or "").strip()[-500:] or answer[-500:]
             raise RelayError(f"{cli} e' uscito con codice {proc.returncode}: {detail}")
         return RelayResult(
             cli=cli,

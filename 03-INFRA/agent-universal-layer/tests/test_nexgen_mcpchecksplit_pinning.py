@@ -176,6 +176,50 @@ def test_verify_ignores_unknown_name(tmp_path: Path, monkeypatch: pytest.MonkeyP
     assert mcp_check.verify_servers(renderer, ["nothing-by-that-name"], timeout=5) == []
 
 
+def test_verify_reports_a_server_a_dead_gateway_never_listed(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Un gateway che non risponde non "offre tutto": il server dietro di lui e' irraggiungibile.
+
+    Con `problems` del gateway generico e `served` vuoto nessun problema veniva
+    registrato per il server dietro il gateway, che risultava a posto.
+    """
+    renderer = _make_layout(tmp_path, monkeypatch)
+
+    class _DeadSession(_FakeSession):
+        def handshake(self, timeout: float) -> None:
+            raise RuntimeError("the process ended before answering initialize")
+
+    monkeypatch.setattr(mcp_check, "_Session", _DeadSession)
+
+    problems = mcp_check.verify_servers(renderer, [PIN_SRV], timeout=5)
+
+    assert len(problems) == 1 and problems[0].startswith(f"{PIN_SRV}:")
+    assert "initialize" in problems[0], problems
+
+
+def test_verify_reports_a_server_that_is_not_mounted_at_all(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Un `require_env` non soddisfatto esclude il server dalle voci risolte: si segnala, non si esplode.
+
+    La voce risolta non esiste, e `load_resolved_servers(cli)[name]` sollevava
+    KeyError: `nexgen mcp bump` moriva invece di verificare.
+    """
+    renderer = _make_layout(tmp_path, monkeypatch)
+    manifest = yaml.safe_load(renderer.manifest_path.read_text(encoding="utf-8"))
+    manifest["servers"]["needy-direct"] = {
+        "exposure": "eager",
+        "command": sys.executable,
+        "args": [str(tmp_path / "fake-direct.py")],
+        "targets": [CLI],
+        "require_env": "NEXGEN_PINNING_TOKEN_UNSET",
+    }
+    renderer.manifest_path.write_text(yaml.safe_dump(manifest), encoding="utf-8")
+    monkeypatch.delenv("NEXGEN_PINNING_TOKEN_UNSET", raising=False)
+
+    problems = mcp_check.verify_servers(renderer, ["needy-direct"], timeout=5)
+
+    assert len(problems) == 1 and problems[0].startswith("needy-direct:")
+    assert CLI in problems[0], problems
+
+
 def test_public_signatures_unchanged() -> None:
     assert list(inspect.signature(mcp_check.check_gateway).parameters) == ["renderer", "cli", "timeout"]
     assert list(inspect.signature(mcp_check.check_direct).parameters) == ["renderer", "cli", "name", "timeout"]

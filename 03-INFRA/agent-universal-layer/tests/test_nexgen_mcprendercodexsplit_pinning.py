@@ -103,6 +103,37 @@ def test_render_stabile_su_doppia_chiamata(tmp_path, monkeypatch) -> None:
     assert cfg.read_bytes() == first
 
 
+def test_two_manifest_names_that_collapse_are_rendered_once(tmp_path, monkeypatch) -> None:
+    """Due nomi che diventano la stessa sezione non devono uscire due volte.
+
+    `manifest_order` ripeteva il nome normalizzato: `[mcp_servers.demo_one]`
+    finiva nel file due volte e `tomllib.loads` sollevava TOMLDecodeError invece
+    di una configurazione valida.
+    """
+    monkeypatch.delenv("CODEX_HOME", raising=False)
+    monkeypatch.delenv("NEXGEN_CODEX_COLLISION_UNSET", raising=False)
+    renderer = _make_renderer(
+        tmp_path,
+        {
+            "demo-one": {"transport": "stdio", "command": "fake-cmd", "args": [], "tier": "core"},
+            # Unresolved right now (its variable is not in this shell), so the
+            # collision is not caught by the resolved-names guard: it reaches the
+            # rendered text.
+            "demo_one": {
+                "transport": "stdio", "command": "other-cmd", "args": [], "tier": "core",
+                "require_env": "NEXGEN_CODEX_COLLISION_UNSET",
+            },
+        },
+    )
+
+    ok, _msg = codex_mod.render(renderer, write=True)
+
+    assert ok is True
+    text = _codex_file(renderer).read_text(encoding="utf-8")
+    assert text.count("[mcp_servers.demo_one]") == 1
+    assert list(tomllib.loads(text)["mcp_servers"]) == ["demo_one"]
+
+
 def test_firme_pubbliche_invariate() -> None:
     assert list(inspect.signature(codex_mod.render).parameters) == ["renderer", "write"]
     public = {

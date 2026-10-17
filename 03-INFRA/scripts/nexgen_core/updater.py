@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# nexgen: one-job reason="move this machine between engine trees: prove the target, merge it, and undo the move if the machine fails its own checks"
 """Deliberate, cross-platform NeXgen Engine release updater (v2).
 
 The command updates only to a released semantic-version tag. It never stashes
@@ -37,6 +38,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 import os
 import re
 import subprocess
@@ -57,9 +59,10 @@ from nexgen_core.lock import EXIT_BUSY_MANUAL, LockTimeoutError, host_mutation  
 from nexgen_core.paths import resolve_home, resolve_state_dir  # noqa: E402
 from nexgen_core.processes import force_stop_process_tree  # noqa: E402
 from nexgen_core.release_trust import BAD, UNTRUSTED, TagVerdict, verify_release_tag  # noqa: E402
+from nexgen_core import update_channel, update_window  # noqa: E402
 
-SEMVER = re.compile(r"^v?(\d+)\.(\d+)\.(\d+)$")
 CHANGELOG_HEADING = re.compile(r"^## \[(\d+\.\d+\.\d+)\].*$", re.MULTILINE)
+logger = logging.getLogger("nexgen.update")
 GIT_TIMEOUT_SECONDS = 120.0
 COMMAND_TIMEOUT_SECONDS = 600.0
 #: How long the merge waits for a running guard cycle before giving up.
@@ -207,60 +210,20 @@ def resolve_repositories(environ: Mapping[str, str]) -> tuple[Path, Path]:
     return engine_repo, data_repo
 
 
-def _version_tuple(value: str) -> tuple[int, int, int]:
-    match = SEMVER.fullmatch(value.strip())
-    if not match:
-        raise UpdateError(f"invalid semantic version: {value!r}")
-    return tuple(int(part) for part in match.groups())
-
-
 def _current_version(engine_repo: Path) -> str:
     value = (engine_repo / "VERSION").read_text(encoding="utf-8").strip()
-    _version_tuple(value)
+    update_channel.version_tuple(value)
     return value
-
-
-def _released_tags(engine_repo: Path) -> list[str]:
-    _git(engine_repo, "fetch", "origin", "+refs/heads/main:refs/remotes/origin/main", "--tags")
-    remote_main = _git(engine_repo, "rev-parse", "--verify", "origin/main", check=False)
-    if remote_main.returncode != 0:
-        raise UpdateError("origin/main is missing; cannot prove which tags are public releases")
-    remote_tags = _git(engine_repo, "ls-remote", "--tags", "--refs", "origin").stdout
-    published = {
-        ref.removeprefix("refs/tags/")
-        for line in remote_tags.splitlines()
-        if len((fields := line.split())) == 2
-        for ref in [fields[1]]
-        if ref.startswith("refs/tags/")
-    }
-    result = _git(engine_repo, "tag", "--merged", "origin/main", "--sort=-version:refname")
-    return [
-        line.strip()
-        for line in result.stdout.splitlines()
-        if SEMVER.fullmatch(line.strip()) and line.strip() in published
-    ]
-
-
-def _target_tag(engine_repo: Path, requested: str | None) -> str:
-    tags = _released_tags(engine_repo)
-    if not tags:
-        raise UpdateError("origin/main has no released semantic-version tags")
-    if not requested:
-        return tags[0]
-    requested = requested if requested.startswith("v") else f"v{requested}"
-    if requested not in tags:
-        raise UpdateError(f"{requested} is not a released tag merged into origin/main")
-    return requested
 
 
 def _changelog_between(engine_repo: Path, current: str, target: str) -> str:
     changelog = _git(engine_repo, "show", f"{target}:CHANGELOG.md").stdout
-    current_v = _version_tuple(current)
-    target_v = _version_tuple(target)
+    current_v = update_channel.version_tuple(current)
+    target_v = update_channel.version_tuple(target)
     matches = list(CHANGELOG_HEADING.finditer(changelog))
     sections: list[str] = []
     for index, match in enumerate(matches):
-        version = _version_tuple(match.group(1))
+        version = update_channel.version_tuple(match.group(1))
         if current_v < version <= target_v:
             end = matches[index + 1].start() if index + 1 < len(matches) else len(changelog)
             sections.append(changelog[match.start():end].strip())
@@ -311,20 +274,6 @@ def _assert_merge_identity(engine_repo: Path) -> None:
             "the single-clone update needs a Git user.name and user.email to "
             "preserve local data commits in a merge"
         )
-
-
-def _assert_target_version(engine_repo: Path, target: str) -> str:
-    expected = target.removeprefix("v")
-    release_version = _git(engine_repo, "show", f"{target}:VERSION").stdout.strip()
-    _version_tuple(release_version)
-    if release_version != expected:
-        raise UpdateError(
-            f"release {target} contains VERSION={release_version!r}; expected {expected!r}"
-        )
-    entry = _git(engine_repo, "cat-file", "-e", f"{target}:03-INFRA/scripts/nexgen_core/cli/__init__.py", check=False)
-    if entry.returncode:
-        raise UpdateError(f"release {target} is missing its command entry; installed engine unchanged")
-    return release_version
 
 
 def _commit_split_pin(
@@ -449,7 +398,7 @@ def _roll_back(
     pin_file: Path | None,
     state_dir: Path,
     target: str,
-    current: str,
+    previous_label: str,
     unattended: bool,
 ) -> int:
     """Undoes an update that failed after the engine moved, and re-applies the old tree.
@@ -463,7 +412,7 @@ def _roll_back(
     a person who asked for it can decide to try again.
     """
     print(f"nexgen-update: ERROR: {exc}", file=sys.stderr)
-    print(f"The {'unattended ' if unattended else ''}update to {target} failed; going back to v{current}.", file=sys.stderr)
+    print(f"The {'unattended ' if unattended else ''}update to {target} failed; going back to {previous_label}.", file=sys.stderr)
     try:
         with host_mutation("nexgen-update-rollback", state_dir=state_dir, timeout=UPDATE_LOCK_WAIT_SECONDS):
             _git(exc.engine_repo, "merge", "--abort", check=False)
@@ -491,7 +440,7 @@ def _roll_back(
     if pin_file:
         try:
             _commit_split_pin(
-                pin_file=pin_file, target_head=exc.previous_head, target=f"v{current}",
+                pin_file=pin_file, target_head=exc.previous_head, target=previous_label,
                 data_repo=data_repo, entry=entry,
             )
         except UpdateError as pin_exc:
@@ -509,12 +458,12 @@ def _roll_back(
         print(f"nexgen-update: WARNING: {note}", file=sys.stderr)
     if unattended:
         print(
-            f"Rolled back to v{current}. Unattended updates will skip {target}; "
+            f"Rolled back to {previous_label}. Unattended updates will skip {target}; "
             f"review it and run 'nexgen-update --target {target.removeprefix('v')}' to try again.",
             file=sys.stderr,
         )
     else:
-        print(f"Rolled back to v{current}. Fix the failure above, then run 'nexgen-update' again.", file=sys.stderr)
+        print(f"Rolled back to {previous_label}. Fix the failure above, then run 'nexgen-update' again.", file=sys.stderr)
     return EXIT_ROLLED_BACK
 
 
@@ -539,8 +488,8 @@ def _assert_within_unattended_ceiling(current: str, target: str, ceiling: str = 
     recovery -- running the interactive command by hand -- not the check
     that failed, per the self-upgrader's contract.
     """
-    current_major, current_minor, _ = _version_tuple(current)
-    target_major, target_minor, _ = _version_tuple(target)
+    current_major, current_minor, _ = update_channel.version_tuple(current)
+    target_major, target_minor, _ = update_channel.version_tuple(target)
     allowed = target_major == current_major and (ceiling == "minor" or target_minor == current_minor)
     if not allowed:
         kind = "major" if target_major != current_major else "minor"
@@ -587,6 +536,18 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--target", metavar="vX.Y.Z", help="install this released tag instead of the newest one")
     parser.add_argument(
+        "--channel",
+        choices=update_channel.CHANNELS,
+        default=None,
+        help=(
+            "which NeXgen Engine this machine follows: stable (released tags, the default), "
+            "nightly (the tip of developer, signed and green on the CI gates it "
+            "requires) or beta (the newest signed commit the full nightly suite proved). "
+            "The nightly and beta channels are closed on an installation whose private "
+            "config does not open them. The choice is remembered; without the flag the remembered channel is used"
+        ),
+    )
+    parser.add_argument(
         "--set-unattended-ceiling",
         choices=CEILINGS,
         help="remember on this machine how large a jump --unattended may take (a major one never), then exit",
@@ -620,6 +581,17 @@ def _report_post_merge_error(exc: PostMergeError, pin_file: Path | None) -> int:
     return 1
 
 
+def _came_from_label(current: str, previous_head: str, *, release: bool) -> str:
+    """Where a rollback goes back to: `vX.Y.Z` on stable, the short commit on a moving channel.
+
+    `previous_label` (the parameter `_roll_back` takes) is this string: on nightly
+    channel a version number would name a release the machine was not running.
+    """
+    if release:
+        return f"v{current}"
+    return previous_head[:9] or current
+
+
 def _recover_failed_update(
     exc: PostMergeError,
     *,
@@ -629,11 +601,11 @@ def _recover_failed_update(
     pin_file: Path | None,
     state_dir: Path,
     target: str,
-    current: str,
+    previous_label: str,
 ) -> int:
     code = _roll_back(
         exc, entry=entry, data_repo=data_repo, pin_file=pin_file,
-        state_dir=state_dir, target=target, current=current, unattended=args.unattended,
+        state_dir=state_dir, target=target, previous_label=previous_label, unattended=args.unattended,
     )
     if args.unattended:
         return code
@@ -644,6 +616,149 @@ def _recover_failed_update(
         _report_post_merge_error(exc, pin_file)
         return EXIT_ROLLBACK_FAILED
     return 1
+
+
+def _announce(engine_repo: Path, data_repo: Path, current: str, target: update_channel.TargetPlan) -> None:
+    print(f"Engine: {engine_repo}")
+    print(f"Data:   {data_repo}")
+    print(f"Current: v{current}")
+    print(f"Channel: {target.channel}")
+    if target.channel_target is not None:
+        print(f"Target:  {target.label} (VERSION {target.version}; {target.channel_target.detail})")
+    else:
+        print(f"Latest released target: {target.ref}")
+
+
+def _settled(engine_repo: Path, current: str, target: update_channel.TargetPlan, *, requested: str | None) -> bool:
+    """True when there is nothing to do, with the reason printed. Never moves the tree."""
+    if not target.release:
+        if target.rev == _git(engine_repo, "rev-parse", "HEAD").stdout.strip():
+            print(f"NeXgen Engine is already at {target.label}.")
+            return True
+        return False
+    if update_channel.version_tuple(target.version) < update_channel.version_tuple(current):
+        # Two different situations, and only one of them is a fault. Somebody who
+        # names an older version explicitly asked for a thing that will not
+        # happen, and has to be told so. Being ahead of the newest release is
+        # simply what running a pre-release looks like: reporting it hourly as a
+        # refusal told a person that something had gone wrong when nothing had.
+        if requested:
+            raise UpdateError(
+                f"refusing to downgrade from v{current} to {target.ref}; use the manual recovery runbook"
+            )
+        print(
+            f"v{current} is ahead of the newest release ({target.ref}): nothing to update to. "
+            f"Expected on a pre-release; the next published release will be picked up."
+        )
+        return True
+    if update_channel.version_tuple(target.version) == update_channel.version_tuple(current):
+        print("NeXgen Engine is already at the requested released version.")
+        return True
+    return False
+
+
+def _present_notes(engine_repo: Path, current: str, target: update_channel.TargetPlan) -> TagVerdict:
+    """Shows what the target carries and returns the signature verdict that admits it."""
+    if target.release:
+        print("\nRelease notes:\n")
+        print(_changelog_between(engine_repo, current, target.ref))
+        verdict = _release_verdict(engine_repo, target.ref)
+    else:
+        print(f"\nCommits carried by {target.label}:\n")
+        print(update_channel.commits_at(engine_repo, target.rev))
+        # The signature was judged when the target was chosen, against the same
+        # anchor a release uses. Judging it again here could only produce a
+        # second answer to a question already answered.
+        verdict = target.channel_target.verdict  # type: ignore[union-attr]
+    if verdict.ok:
+        print(f"\nRelease signature: verified ({verdict.detail}).")
+    else:
+        print(f"\nWARNING: the signature of {target.ref} could not be verified: {verdict.detail}.", file=sys.stderr)
+    return verdict
+
+
+def _remember_channel(state_dir: Path, channel: str) -> None:
+    """Records the choice; a state file that cannot be written is a note, never a rollback."""
+    try:
+        update_channel.write_channel(state_dir, channel)
+    except OSError as exc:  # nexgen: allow reason="a state file that cannot be written must not undo an update that already worked"
+        print(f"nexgen-update: WARNING: the channel choice was not recorded ({exc})", file=sys.stderr)
+
+
+def _gate_on_signature(args: argparse.Namespace, target: update_channel.TargetPlan, verdict: TagVerdict) -> None:
+    """The release policy on an unverified signature, or nothing when it is verified.
+
+    Installing without a check happens in exactly two cases: the machine has no
+    verifier program at all (BAD and UNTRUSTED already refused inside
+    _release_verdict, in every mode), or the installer said so with
+    --allow-unverified. An unsigned or otherwise unverifiable release without
+    the flag refuses below: anyone able to publish an unsigned tag must not be
+    able to install code on a whole fleet of unattended machines.
+    """
+    if verdict.ok:
+        return
+    if args.unattended and not verdict.no_verifier:
+        raise UpdateError(
+            f"unattended update refuses {target.ref}: its signature could not be verified "
+            f"({verdict.detail}); recover by running 'nexgen-update --target {target.ref.removeprefix('v')}' "
+            "--allow-unverified interactively once you have checked the release"
+        )
+    if args.allow_unverified or verdict.no_verifier:
+        print(f"\nNote: the signature of {target.ref} could not be checked on this machine; installing anyway.")
+        return
+    raise UpdateRefused(
+        f"release {target.ref} could not be verified ({verdict.detail}). "
+        "Nothing was installed. Rerun with --allow-unverified only after checking the release by hand."
+    )
+
+
+def _enforce_ceiling(args: argparse.Namespace, target: update_channel.TargetPlan, current: str, state_dir: Path) -> None:
+    """The ceiling caps an unattended RELEASE jump; a nightly or beta target is a proved opt-in."""
+    if args.unattended and target.release:
+        _assert_within_unattended_ceiling(current, target.ref, _read_ceiling(state_dir))
+
+
+def _stop_if_settled(
+    engine_repo: Path, current: str, target: update_channel.TargetPlan, args: argparse.Namespace, state_dir: Path,
+) -> bool:
+    """True when there is nothing to install; remembers an explicit channel choice either way.
+
+    A switch to a channel that is already installed is still an answer:
+    `--channel stable` on a machine that follows nightly and is already at the release
+    has to be remembered, or the next bare run would follow nightly again.
+    """
+    if not _settled(engine_repo, current, target, requested=args.target):
+        return False
+    if args.channel:
+        _remember_channel(state_dir, target.channel)
+    return True
+
+
+def _rolled_back_before(state_dir: Path, target: str) -> bool:
+    """True when an unattended update of this exact target already failed and was undone."""
+    if _read_rejected(state_dir).get("target") != target:
+        return False
+    print(
+        f"{target} was rolled back after a failed unattended update; unattended updates skip it. "
+        f"Review it, then run 'nexgen-update --target {target.removeprefix('v')}' to try again."
+    )
+    return True
+
+
+def _report_success(target: update_channel.TargetPlan, post_fail: int | None) -> None:
+    """The end of a good update: what landed, what a doctor still says, what is still owed."""
+    if post_fail == 0:
+        print(f"\nNeXgen Engine {target.label} installed: doctor reports no failures.")
+        print("Warnings listed above (if any) are non-blocking: unprovisioned")
+        print("optional deps provision on first use, orphans stay untouched by design.")
+    else:
+        print(f"\nNeXgen Engine {target.label} installed with no new doctor failures.")
+        print(f"The machine still has {post_fail} pre-existing doctor failure(s).")
+    print("Other machines remain behind until they run nexgen-update too.")
+    print(
+        "Cloud-Server note: the VPS is a separate install; follow "
+        "03-INFRA/deploy/README.md before redeploying it."
+    )
 
 
 def main(
@@ -670,85 +785,30 @@ def main(
         split_topology = data_repo != engine_repo
         state_dir = _state_dir(env)
         current = _current_version(engine_repo)
-        target = _target_tag(engine_repo, args.target)
-        target_version = _assert_target_version(engine_repo, target)
-        target_head = _git(engine_repo, "rev-parse", f"{target}^{{commit}}").stdout.strip()
-        print(f"Engine: {engine_repo}")
-        print(f"Data:   {data_repo}")
-        print(f"Current: v{current}")
-        print(f"Latest released target: {target}")
-
-        if _version_tuple(target_version) < _version_tuple(current):
-            # Two different situations, and only one of them is a fault.
-            #
-            # Somebody who names an older version explicitly asked for a
-            # thing that will not happen, and has to be told so.
-            if args.target:
-                raise UpdateError(
-                    f"refusing to downgrade from v{current} to {target}; "
-                    f"use the manual recovery runbook"
-                )
-            # Being ahead of the newest release is simply what running a
-            # pre-release looks like. Reporting it hourly as a refusal told a
-            # person that something had gone wrong when nothing had.
-            print(
-                f"v{current} is ahead of the newest release ({target}): nothing to update to. "
-                f"Expected on a pre-release; the next published release will be picked up."
-            )
+        channel = update_channel.resolve_channel(args.channel, state_dir, vault_data=data_repo)
+        # Before anything is fetched or judged: an automatic update onto a moving
+        # branch has no business running while the machine is in use.
+        if update_window.defer_if_busy(unattended=args.unattended, channel=channel, state_dir=state_dir):
             return 0
-        if _version_tuple(target_version) == _version_tuple(current):
-            print("NeXgen Engine is already at the requested released version.")
+        target = update_channel.plan_target(
+            engine_repo, state_dir, channel=channel, requested=args.target, vault_data=data_repo,
+        )
+        _announce(engine_repo, data_repo, current, target)
+        if _stop_if_settled(engine_repo, current, target, args, state_dir):
             return 0
 
-        if args.unattended:
-            _assert_within_unattended_ceiling(current, target, _read_ceiling(state_dir))
-            if _read_rejected(state_dir).get("target") == target:
-                print(
-                    f"{target} was rolled back after a failed unattended update; unattended updates skip it. "
-                    f"Review it, then run 'nexgen-update --target {target.removeprefix('v')}' to try again."
-                )
-                return 0
-
-        print("\nRelease notes:\n")
-        print(_changelog_between(engine_repo, current, target))
-        verdict = _release_verdict(engine_repo, target)
-        if verdict.ok:
-            print(f"\nRelease signature: verified ({verdict.detail}).")
-        else:
-            print(
-                f"\nWARNING: the signature of {target} could not be verified: {verdict.detail}.",
-                file=sys.stderr,
-            )
+        _enforce_ceiling(args, target, current, state_dir)
+        if args.unattended and _rolled_back_before(state_dir, target.ref):
+            return 0
+        verdict = _present_notes(engine_repo, current, target)
 
         if args.check:
             print("\nCheck only. No installed files or branch were changed.")
             return 0
 
-        if args.unattended and not verdict.ok and not verdict.no_verifier:
-            raise UpdateError(
-                f"unattended update refuses {target}: its signature could not be verified "
-                f"({verdict.detail}); recover by running 'nexgen-update --target {target.removeprefix('v')}' "
-                "--allow-unverified interactively once you have checked the release"
-            )
-        if not verdict.ok and (args.allow_unverified or verdict.no_verifier):
-            # Installing without a check happens in exactly two cases: the
-            # machine has no verifier program at all (BAD and UNTRUSTED
-            # already refused inside _release_verdict, in every mode), or the
-            # installer explicitly said so with --allow-unverified. An
-            # unsigned or otherwise unverifiable release without the flag
-            # refuses below: anyone able to publish an unsigned tag must not
-            # be able to install code on a whole fleet of unattended machines.
-            print(
-                f"\nNote: the signature of {target} could not be checked on this "
-                f"machine; installing anyway."
-            )
-        elif not verdict.ok:
-            raise UpdateRefused(
-                f"release {target} could not be verified ({verdict.detail}). "
-                "Nothing was installed. Rerun with --allow-unverified only after checking the release by hand."
-            )
+        _gate_on_signature(args, target, verdict)
 
-        _assert_mergeable(engine_repo, data_repo, target, split_topology=split_topology)
+        _assert_mergeable(engine_repo, data_repo, target.ref, split_topology=split_topology)
 
         pin_candidate = data_repo / "99-INDEX" / "ENGINE-PIN.txt"
         # In a split topology the pin is this machine's migration record:
@@ -757,7 +817,7 @@ def main(
         pin_file = pin_candidate if split_topology else None
         print("\nPlan:")
         merge_mode = "--ff-only" if split_topology else "--no-edit"
-        print(f"  1. git merge {merge_mode} {target}")
+        print(f"  1. git merge {merge_mode} {target.label}")
         step = 2
         if pin_file:
             print(f"  {step}. update 99-INDEX/ENGINE-PIN.txt through vault-push")
@@ -766,7 +826,7 @@ def main(
         step += 1
         print(f"  {step}. agent-doctor --summary")
 
-        if not (args.yes or args.unattended) and not _confirm(input_fn, current=current, target=target):
+        if not (args.yes or args.unattended) and not _confirm(input_fn, current=current, target=target.label):
             print("Update cancelled. No installed files or branch were changed.")
             return 0
 
@@ -792,17 +852,17 @@ def main(
             # Holding it across them would deadlock (lock is not re-entrant
             # across processes, see lock.host_mutation). A guard cycle racing
             # between merge and apply is resolved by re-running apply.
-            _assert_mergeable(engine_repo, data_repo, target, split_topology=split_topology)
+            _assert_mergeable(engine_repo, data_repo, target.ref, split_topology=split_topology)
             previous_head = _git(engine_repo, "rev-parse", "HEAD").stdout.strip()
             mutation_started = True
-            merge = _git(engine_repo, "merge", merge_mode, target, check=False)
+            merge = _git(engine_repo, "merge", merge_mode, target.ref, check=False)
             if merge.returncode != 0:
                 _git(engine_repo, "merge", "--abort", check=False)
                 ref_moved = _git(engine_repo, "rev-parse", "HEAD").stdout.strip() != previous_head
                 detail = (merge.stderr or merge.stdout or "merge failed").strip()
                 if ref_moved:
                     raise PostMergeError(
-                        f"merge {merge_mode} {target} failed after the engine ref moved: {detail}",
+                        f"merge {merge_mode} {target.label} failed after the engine ref moved: {detail}",
                         previous_head=previous_head, engine_repo=engine_repo,
                     )
                 _assert_clean(engine_repo, label="engine after failed merge")
@@ -810,7 +870,7 @@ def main(
                     raise UpdateError("failed merge cleanup left an active merge")
                 mutation_started = False
                 raise UpdateError(
-                    f"merge {merge_mode} {target}: {detail}\n"
+                    f"merge {merge_mode} {target.label}: {detail}\n"
                     f"The merge was rolled back; {engine_repo} is still at {previous_head[:9]}."
                 )
         finally:
@@ -822,8 +882,8 @@ def main(
             try:
                 _commit_split_pin(
                     pin_file=pin_file,
-                    target_head=target_head,
-                    target=target,
+                    target_head=target.rev,
+                    target=target.label,
                     data_repo=data_repo,
                     entry=entry,
                 )
@@ -863,26 +923,22 @@ def main(
             )
 
         installed = _current_version(engine_repo)
-        if installed != target_version:
+        if installed != target.version:
             raise PostMergeError(
-                f"VERSION is {installed}, expected {target_version}",
+                f"VERSION is {installed}, expected {target.version}",
                 previous_head=previous_head,
                 engine_repo=engine_repo,
             )
         _clear_rejected(state_dir)
-        if post_fail == 0:
-            print(f"\nNeXgen Engine {target} installed: doctor reports no failures.")
-            print("Warnings listed above (if any) are non-blocking: unprovisioned")
-            print("optional deps provision on first use, orphans stay untouched by design.")
-        else:
-            print(f"\nNeXgen Engine {target} installed with no new doctor failures.")
-            print(f"The machine still has {post_fail} pre-existing doctor failure(s).")
-        print("Other machines remain behind until they run nexgen-update too.")
-        print(
-            "Cloud-Server note: the VPS is a separate install; follow "
-            "03-INFRA/deploy/README.md before redeploying it."
-        )
+        _remember_channel(state_dir, target.channel)
+        _report_success(target, post_fail)
         return 0
+    except update_channel.ChannelError as exc:
+        # A channel that cannot answer, or that answered "nothing installable",
+        # is a refusal this machine's owner can act on, not a crash. A refused
+        # signature keeps the exit code a refused release has (70).
+        print(f"nexgen-update: ERROR: {exc}", file=sys.stderr)
+        return EXIT_REFUSED if isinstance(exc, update_channel.ChannelRefused) else 1
     except (UpdateError, OSError, UnicodeError, subprocess.SubprocessError,
             KeyboardInterrupt) as exc:
         safe_error = exc if isinstance(exc, UpdateError) else UpdateError(f"update operation failed ({type(exc).__name__})")
@@ -893,7 +949,8 @@ def main(
             )
             return _recover_failed_update(
                 interrupted, args=args, entry=entry, data_repo=data_repo, pin_file=pin_file,
-                state_dir=state_dir, target=target, current=current,
+                state_dir=state_dir, target=target.label,
+                previous_label=_came_from_label(current, previous_head, release=target.release),
             )
         if isinstance(exc, KeyboardInterrupt):
             print("nexgen-update: interrupted before anything was changed.", file=sys.stderr)
@@ -918,10 +975,10 @@ class EngineUpdater:
         """
         engine_repo, _ = resolve_repositories(os.environ)
         curr = _current_version(engine_repo)
-        tags = _released_tags(engine_repo)
+        tags = update_channel.released_tags(engine_repo)
         if tags:
             latest = tags[0].removeprefix("v")
-            has_up = _version_tuple(latest) > _version_tuple(curr)
+            has_up = update_channel.version_tuple(latest) > update_channel.version_tuple(curr)
             return has_up, f"v{curr}", f"v{latest}"
         return False, f"v{curr}", f"v{curr}"
 

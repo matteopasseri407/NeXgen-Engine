@@ -130,6 +130,24 @@ def test_commits_already_published_are_not_judged(repo):
     assert problems(repo, repo.git("rev-parse", "HEAD~1")) == []
 
 
+def test_a_commit_already_on_any_remote_branch_is_not_judged_again(repo):
+    """A rewrite of history leaves old commits unreachable from the branch they came
+    from while they are still on a remote: judging them again asked 181 already
+    published commits for their tests and blocked a push, on 2026-10-17."""
+    base = start(repo)
+    repo.write("src/calc.py", FIXED)
+    published = repo.commit("tidy the maths")  # critical code, no test: refused if it is judged
+    repo.git("update-ref", "refs/remotes/origin/old-branch", published)
+    assert problems(repo, base) == []
+
+
+def test_a_commit_no_remote_has_is_still_judged(repo):
+    base = start(repo)
+    repo.write("src/calc.py", FIXED)
+    repo.commit("tidy the maths")
+    assert any("critical code changed" in p for p in problems(repo, base))
+
+
 def test_a_project_working_on_main_is_judged_too(repo):
     base = start(repo, on_main=True)
     repo.write("src/calc.py", FIXED)
@@ -175,3 +193,66 @@ def test_a_moved_critical_file_is_still_critical(repo):
     repo.git("mv", "src/calc.py", "lib_calc.py")
     repo.commit("tidy: move the file")
     assert any("critical code changed" in p for p in problems(repo, base))
+
+
+def test_a_comment_only_change_to_critical_code_needs_no_test(repo):
+    base = start(repo)
+    repo.write("src/calc.py", "# the maths is subtle\n" + BUGGY)
+    repo.commit("tidy the maths")
+    assert problems(repo, base) == []
+
+
+def test_a_docstring_only_change_to_critical_code_needs_no_test(repo):
+    base = start(repo)
+    repo.write("src/calc.py", '"""Add two numbers."""\n' + BUGGY)
+    repo.commit("document the maths")
+    assert problems(repo, base) == []
+
+
+def test_a_blank_line_only_change_to_critical_code_needs_no_test(repo):
+    base = start(repo)
+    repo.write("src/calc.py", BUGGY + "\n\n")
+    repo.commit("space the maths")
+    assert problems(repo, base) == []
+
+
+def test_a_real_change_beside_a_comment_still_needs_its_test(repo):
+    """The rule is about behaviour: a comment does not excuse the code beside it."""
+    base = start(repo)
+    repo.write("src/calc.py", "# a comment\n" + FIXED)
+    repo.commit("tidy the maths")
+    assert any("critical code changed" in p for p in problems(repo, base))
+
+
+def test_a_docstring_only_fix_needs_no_proof(repo):
+    """A `fix:` that only edits a docstring has no behaviour to prove."""
+    base = start(repo)
+    repo.write("src/calc.py", '"""Adds two numbers, honestly."""\n' + BUGGY)
+    repo.commit("fix: the docstring described the wrong operation")
+    assert problems(repo, base) == []
+
+
+def test_a_reformatted_file_is_the_same_code():
+    """A pure re-layout is not a code change: no test can fail on it."""
+    from nexgen_core.discipline.essence import differs_in_code
+
+    assert not differs_in_code("x = 1\n", "x = 1\n\n\n# a note\n")
+    assert differs_in_code("x = 1\n", "x = 2\n")
+
+
+def test_a_docstring_only_change_inside_a_function_is_the_same_code():
+    from nexgen_core.discipline.essence import differs_in_code
+
+    assert not differs_in_code('def f():\n    """a"""\n    return 1\n', 'def f():\n    """b"""\n    return 1\n')
+
+
+def test_a_comment_inside_a_string_is_code():
+    from nexgen_core.discipline.essence import differs_in_code
+
+    assert differs_in_code('x = "# not a comment"\n', 'x = "# still not a comment"\n')
+
+
+def test_a_shell_comment_only_change_is_not_a_code_change():
+    from nexgen_core.discipline.essence import differs_in_code
+
+    assert not differs_in_code("#!/bin/sh\necho hi\n", "#!/bin/sh\n# a note\necho hi\n")

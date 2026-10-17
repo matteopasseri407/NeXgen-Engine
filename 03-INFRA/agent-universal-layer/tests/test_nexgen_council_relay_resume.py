@@ -55,6 +55,39 @@ def test_cleanup_preserves_busy_relay_and_reuses_stable_lock(tmp_path, monkeypat
     assert not target.exists()
 
 
+def test_cleanup_removes_a_session_whose_legacy_lock_is_not_held(tmp_path, monkeypatch):
+    """Su Windows un file aperto dentro l'albero fa fallire rmtree (WinError 32).
+
+    Il lock legacy vive dentro la sessione: tenerlo aperto mentre si rimuove la
+    cartella faceva fallire la pulizia, e la sessione vecchia non spariva mai.
+    """
+    import shutil
+
+    from nexgen_core.lock import HostLock, LockTimeoutError
+
+    sessions = tmp_path / "sessions"
+    target = sessions / "synthetic"
+    target.mkdir(parents=True)
+    (target / "relay-run.lock").write_text("", encoding="utf-8")
+    monkeypatch.setattr(session, "SESSIONS_DIR", sessions)
+    real_rmtree = shutil.rmtree
+
+    def windows_like_rmtree(path, *args, **kwargs):
+        probe = HostLock(Path(path) / "relay-run.lock", timeout=0)
+        try:
+            probe.acquire()
+        except LockTimeoutError:
+            raise PermissionError(32, "The process cannot access the file")
+        else:
+            probe.release()
+        real_rmtree(path, *args, **kwargs)
+
+    monkeypatch.setattr(session.shutil, "rmtree", windows_like_rmtree)
+
+    assert session._cleanup_sessions(0, remove_all=True) == 1
+    assert not target.exists()
+
+
 def test_cleanup_honors_active_older_relay_lock(tmp_path, monkeypatch):
     from nexgen_core.lock import HostLock
     sessions = tmp_path / "sessions"

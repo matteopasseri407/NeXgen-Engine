@@ -232,6 +232,42 @@ def test_apply_dirty_tree_aborts_before_clone(tmp_path):
     assert clones == []
 
 
+def test_apply_aborts_when_the_propose_pass_failed(tmp_path):
+    """A propose pass that timed out prints its error where the tranche would be.
+
+    Showing that error as a proposal and, once confirmed, sending it to the write
+    pass as an approved plan is the defect: the failure must stop `apply` instead.
+    """
+    vault = init_repo(tmp_path / "vault")
+    commit_file(vault, "notes/example.md", "verbose content\n", "seed")
+    state_dir = tmp_path / "state"
+
+    class TimeoutRunner:
+        name = "fake"
+        model = "fake-model"
+
+        def run_readonly(self, prompt: str) -> RunResult:
+            return RunResult(text="[vault-groom: runner timed out after 1200s, killed]\n", exit_code=124)
+
+        def run_write(self, prompt: str, workdir: Path) -> RunResult:
+            raise AssertionError("il write pass non deve partire su una proposta fallita")
+
+    exit_code = groom.apply(
+        vault=vault,
+        runner=TimeoutRunner(),
+        state_dir=state_dir,
+        timestamp="20260101-000004",
+        engine_scripts=None,
+        push_if_clean=False,
+        input_func=lambda _: "yes",
+        output=lambda *_: None,
+    )
+
+    assert exit_code == 124
+    clones = [p for p in state_dir.glob("*") if p.is_dir() and "clone" in p.name]
+    assert clones == []
+
+
 def test_apply_hash_tampered_between_confirm_and_write_aborts(tmp_path):
     vault = init_repo(tmp_path / "vault")
     commit_file(vault, "notes/example.md", "verbose content\n", "seed")

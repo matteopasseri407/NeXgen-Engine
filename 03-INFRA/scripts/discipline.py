@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""discipline.py -- size ratchet, shell/PowerShell gate and review receipt.
+"""discipline.py -- shell/PowerShell gate, per-commit test proofs, size alarm and review receipt.
 
 Delegates entirely to nexgen_core.discipline (the logic lives in the package;
 this file is the entry point engine docs and CI call).

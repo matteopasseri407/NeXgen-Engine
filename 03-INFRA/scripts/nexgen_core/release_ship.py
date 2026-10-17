@@ -1,6 +1,10 @@
 #!/usr/bin/env python3
 """One command from `developer` to a published, signed release.
 
+One job: run the release traphila in order, from the bump to the push, and stop
+at the first step that is not green. The machine half of it (`--install`) lives
+in `release_install.py`, where the steps are pinned by the same tests.
+
 The steps were always the same and always done by hand: bump, open the
 `developer -> main` pull request, wait for its checks, merge, wait for the CI
 on the merge commit (the release workflow refuses a tag before that is green),
@@ -25,7 +29,6 @@ import json
 import shutil
 import subprocess
 import sys
-import tempfile
 import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
@@ -35,13 +38,24 @@ SCRIPTS_DIR = Path(__file__).resolve().parents[1]
 if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
-from nexgen_core.files import atomic_write_text  # noqa: E402
 from nexgen_core.paths import resolve_engine_root  # noqa: E402
 from nexgen_core.release import bump_version_files, compute_next_version, is_semver, newer_version  # noqa: E402
+from nexgen_core.release_checks import (  # noqa: E402
+    commit_checks,
+    required_annotation,
+    required_checks,
+    verdict,
+)
+from nexgen_core.release_install import Installer, InstallProblem  # noqa: E402
 
 #: Checks that fail on purpose on this pull request and say nothing about the
 #: release: the lane guard rejects pushes that do not come from a feature lane.
 IGNORED_CHECKS = ("lane-guard",)
+
+#: The name this machine's own smoke is published under: `smoke-windows` on the
+#: Windows desktop (what the release flow calls it), and a name that cannot
+#: shadow a CI job's check anywhere else.
+SMOKE_CONTEXT = "smoke-windows" if sys.platform == "win32" else "smoke-local"
 
 _PENDING = {"QUEUED", "IN_PROGRESS", "PENDING", "WAITING", "REQUESTED", "EXPECTED"}
 _GREEN = {"SUCCESS", "SKIPPED", "NEUTRAL"}
@@ -61,6 +75,18 @@ def _default_run(argv: Sequence[str], cwd: Path) -> subprocess.CompletedProcess[
         [exe, *argv[1:]], cwd=cwd, capture_output=True, text=True,
         encoding="utf-8", errors="replace", check=False, timeout=1800,
     )
+
+
+def _answer(text: str) -> dict:
+    """GitHub's answer as a mapping, `{}` when it cannot be read.
+
+    An unreadable answer leads to the same place as an empty one: the caller's
+    own "GitHub will not say" path, which falls back to the strict reading.
+    """
+    try:
+        return json.loads(text or "{}")
+    except json.JSONDecodeError:  # nexgen: allow reason="an unreadable answer is treated as no answer by the caller"
+        return {}
 
 
 @dataclass
@@ -120,14 +146,16 @@ class Shipper:
             self.log(f"   VERSION {version} is already ahead of v{newest}: not bumping again")
             return version
 
-        # VERSION equal to the newest tag is the normal start of a release, and
-        # also what a rerun after a pushed tag looks like. Only the second one
-        # has main not yet merged back into developer: bumping there would
-        # release a version nobody asked for.
+        # VERSION equal to the newest tag is both the normal start of a release and
+        # what a rerun after a pushed tag looks like. What tells them apart is whether
+        # main has come back into developer yet: while it has not, this run finishes
+        # the release that is out (release workflow, sync, install) instead of bumping
+        # a second version nobody asked for.
         self._do("git", "fetch", "origin", "main")
-        if self.run(["git", "merge-base", "--is-ancestor", "origin/main", f"origin/{self.branch}"], self.repo).returncode != 0:
-            raise ShipStop(self._step, f"v{version} is still finishing (main not yet back in {self.branch}); "
-                           "wait for sync-developer, then 'nexgen update' to install it")
+        if not self._main_is_in_developer():
+            self.log(f"   v{version} is tagged and main is not back in {self.branch} yet: "
+                     "finishing that release")
+            return version
         target = compute_next_version(version, bump)
         try:
             modified = bump_version_files(self.repo, target, notes)
@@ -144,14 +172,25 @@ class Shipper:
         self.log(f"   bumped {version} -> {target}")
         return target
 
-    def _already_merged(self) -> str | None:
-        """On a rerun after the merge, main already has the release commit: no second pull request."""
+    def _merge_point(self) -> str | None:
+        """Where the release continues, when there is nothing left to merge into main.
+
+        Two ways to be there. The release commit is already on main (a rerun after
+        the merge), or main already carries this branch's tree, which is what
+        sync-developer leaves behind: developer is 'ahead' only by the merge of
+        main, a pull request would change no file, GitHub opens it anyway, and the
+        release looped on empty pull requests (#124, #125 on 2026-10-17).
+        """
         self._do("git", "fetch", "origin", "main")
         head = self._do("git", "rev-parse", "HEAD")
-        if self.run(["git", "merge-base", "--is-ancestor", head, "origin/main"], self.repo).returncode != 0:
-            return None
-        self.log("   already merged into main: resuming after the merge")
-        return self._do("git", "rev-parse", "origin/main")
+        merged = self._do("git", "rev-parse", "origin/main")
+        if self.run(["git", "merge-base", "--is-ancestor", head, "origin/main"], self.repo).returncode == 0:
+            self.log("   already merged into main: resuming after the merge")
+            return merged
+        if self.run(["git", "diff", "--quiet", "origin/main", head], self.repo).returncode == 0:
+            self.log("   main already carries this branch's tree: no pull request to open")
+            return merged
+        return None
 
     def _open_pull_request(self, version: str) -> int:
         self._enter("pull request")
@@ -172,39 +211,102 @@ class Shipper:
         self.log(f"   opened #{number}")
         return number
 
+    def _required_checks(self) -> set[str] | None:
+        """The checks main's branch protection requires, or None when GitHub will not say.
+
+        That list is the repository's own answer to "what may block a merge".
+        `engine-tests-windows` is not on it: it is slow and flaky, so CI reports it
+        without a release waiting for it. The rule itself lives in
+        `nexgen_core/release.py`, where release.yml reads the same one.
+        """
+        return required_checks(self.repo, self.run)
+
+    def _required_verdict(self, checks: dict[str, dict], required: set[str], what: str) -> str | None:
+        """None while a required check is missing or still running; 'green' when all of them passed."""
+        state, detail = verdict(checks, required)
+        if state == "missing":
+            return None
+        if state == "failed":
+            raise ShipStop(self._step, f"failing {what}: " + ", ".join(detail))
+        return "green"
+
     def _checks_verdict(self, number: int, head: str) -> str | None:
         data = json.loads(self._do("gh", "pr", "view", str(number), "--json", "headRefOid,statusCheckRollup"))
         if data.get("headRefOid") != head:
             return None  # GitHub has not seen the pushed head yet
-        checks = data.get("statusCheckRollup") or []
-        if not checks:
+        rollup = data.get("statusCheckRollup") or []
+        if not rollup:
             return None
-        failed = []
-        for check in checks:
-            name = check.get("name") or check.get("context") or "?"
-            if any(ignored in name for ignored in IGNORED_CHECKS):
-                continue
-            status = (check.get("status") or "").upper()
-            state = (check.get("conclusion") or check.get("state") or "").upper()
-            if status in _PENDING or (status and status != "COMPLETED") or state in _PENDING or not state:
-                return None
-            if state not in _GREEN:
-                failed.append(name)
-        if failed:
-            raise ShipStop(self._step, "failing checks: " + ", ".join(sorted(set(failed))))
-        return "green"
+        by_name = {str(check.get("name") or check.get("context") or "?"): check for check in rollup}
+        required = self._required_checks()
+        if required is None:
+            # No branch protection to read: every check the run reports counts, and the
+            # lane guard keeps its old exception.
+            required = {name for name in by_name if not any(ignored in name for ignored in IGNORED_CHECKS)}
+        return self._required_verdict(by_name, required, "checks")
 
-    def _merge(self, number: int) -> str:
+    def _pull_request_tree(self, number: int) -> str | None:
+        """The tree GitHub built and tested for this pull request (`refs/pull/<n>/merge`), or None.
+
+        Asked before the merge: that ref is what the checks ran on, and it is
+        deleted when the pull request is merged.
+        """
+        ref = self.run(["gh", "api", f"repos/{{owner}}/{{repo}}/git/ref/pull/{number}/merge"], self.repo)
+        if ref.returncode != 0:
+            return None
+        sha = (_answer(ref.stdout) or {}).get("object", {}).get("sha")
+        if not sha:
+            return None
+        commit = self.run(["gh", "api", f"repos/{{owner}}/{{repo}}/commits/{sha}"], self.repo)
+        if commit.returncode != 0:
+            return None
+        return (_answer(commit.stdout) or {}).get("commit", {}).get("tree", {}).get("sha") or None
+
+    def _tree_of(self, revision: str) -> str:
+        """The tree one commit carries, as this checkout knows it."""
+        return self._do("git", "rev-parse", f"{revision}^{{tree}}")
+
+    def _publish_status(self, sha: str, state: str, description: str) -> None:
+        """One commit status on the pull request head: how this machine's own proof went."""
+        self._do("gh", "api", f"repos/{{owner}}/{{repo}}/statuses/{sha}", "--method", "POST",
+                 "-f", f"state={state}", "-f", f"context={SMOKE_CONTEXT}", "-f", f"description={description}",
+                 what="publishing this machine's smoke status")
+
+    def _smoke_status(self, sha: str) -> None:
+        """The real smoke of the candidate checkout, run here and recorded on the pull request.
+
+        The checks on GitHub know nothing about this machine's vault, launchers and
+        CLIs: the smoke is the proof they cannot give, so it runs while they run and
+        its verdict is published as a commit status. A failure is published too, and
+        nothing is merged.
+        """
+        self._enter("smoke on this machine")
+        script = self.repo / "03-INFRA" / "scripts" / "smoke.py"
+        started = time.monotonic()
+        smoke = self.run([sys.executable, str(script)], self.repo)
+        spent = int(time.monotonic() - started)
+        passed = smoke.returncode == 0
+        self._publish_status(sha, "success" if passed else "failure",
+                             f"{'passed' if passed else 'failed'} in {spent}s on this machine")
+        if not passed:
+            last = (smoke.stdout or smoke.stderr).strip().splitlines()
+            raise ShipStop(self._step, f"the smoke on this machine failed ({last[-1] if last else smoke.returncode}); "
+                                       f"it is on the pull request as `{SMOKE_CONTEXT}`, and nothing was merged")
+
+    def _merge(self, number: int) -> tuple[str, str | None]:
+        """Merge the pull request: the commit on main, and the tree its checks proved (or None)."""
         self._enter(f"checks on #{number}")
         head = self._do("git", "rev-parse", "HEAD")
+        self._smoke_status(head)  # this machine's proof, while the checks run on GitHub
         self._wait(lambda: self._checks_verdict(number, head), "the pull request checks")
+        tested = self._pull_request_tree(number)  # before the merge: that ref goes with it
         self._enter("merge")
         self._do("gh", "pr", "merge", str(number), "--merge", what="merge")
         self._do("git", "fetch", "origin", "main")
         merged = self._do("git", "rev-parse", "origin/main")
         if self.run(["git", "merge-base", "--is-ancestor", head, merged], self.repo).returncode != 0:
             raise ShipStop(self._step, f"origin/main {merged[:8]} does not contain the release commit {head[:8]}")
-        return merged
+        return merged, tested
 
     def _run_verdict(self, query: Sequence[str], branch: str = "") -> str | None:
         runs = json.loads(self._do(*query) or "[]")
@@ -219,18 +321,68 @@ class Shipper:
             return f"failed:{run.get('databaseId')}"
         return f"ok:{run.get('databaseId')}"
 
-    def _wait_main_ci(self, sha: str) -> None:
+    def _commit_checks(self, sha: str) -> dict[str, dict]:
+        """Every check GitHub reports for one commit, by name; empty when it cannot be read."""
+        return commit_checks(self.repo, sha, self.run)
+
+    def _wait_main_ci(self, sha: str, tested_tree: str | None = None) -> None:
+        """Wait for the required checks on main, unless that commit carries the tree the checks proved.
+
+        GitHub tested the pull request's merge ref; `pr merge` creates that same
+        merge when main has not moved, so the checks carry over to the commit on
+        main and there is nothing left to wait for. A different tree means they do
+        not, and then the required checks on main are the only proof there is.
+        """
+        if tested_tree and self._tree_of(sha) == tested_tree:
+            self.log("   the merge carries the tree the checks passed: nothing to wait for on main")
+            return
         self._enter(f"CI on main {sha[:8]}")
+        required = self._required_checks()
+        if required:
+            self._wait(lambda: self._required_verdict(self._commit_checks(sha), required, "required checks on main"),
+                       "the required checks on main")
+            return
+        # Nothing to read: the workflow run on the merge commit is the strict, old reading.
         query = ("gh", "run", "list", "--commit", sha, "--workflow", "ci.yml", "--limit", "1",
                  "--json", "databaseId,status,conclusion")
         verdict = self._wait(lambda: self._run_verdict(query), "the CI on main")
         if verdict.startswith("failed"):
             raise ShipStop(self._step, f"CI on main failed (run {verdict.split(':')[1]})")
 
+    def _main_is_in_developer(self) -> bool:
+        """True when origin/main is already an ancestor of origin/<branch>: the previous release came back."""
+        merged_in = self.run(["git", "merge-base", "--is-ancestor", "origin/main", f"origin/{self.branch}"], self.repo)
+        return merged_in.returncode == 0
+
+    def _published_tag(self, tag: str) -> bool:
+        """True when origin already has this tag: a rerun reuses the release, it does not remake it."""
+        return bool(self._do("git", "ls-remote", "--tags", "origin", f"refs/tags/{tag}").strip())
+
+    def _local_tag(self, tag: str) -> str | None:
+        """The commit this machine's own tag points at, or None when there is no such tag."""
+        found = self.run(["git", "rev-parse", "--verify", "-q", f"refs/tags/{tag}^{{commit}}"], self.repo)
+        return found.stdout.strip() if found.returncode == 0 and found.stdout.strip() else None
+
     def _tag(self, version: str, sha: str) -> str:
         tag = f"v{version}"
         self._enter(f"tag {tag}")
-        self._do("git", "tag", "-s", tag, "-m", f"Release {tag}", sha, what="signing the tag")
+        if self._published_tag(tag):
+            self.log(f"   {tag} is already on origin: reusing the published tag")
+            return tag
+        # A tag this machine made but never pushed (an interrupted run) is reused, not
+        # remade: `git tag -s` would refuse an existing name and the release would stop
+        # one step from the end.
+        local = self._local_tag(tag)
+        if local is not None and local != sha:
+            raise ShipStop(self._step, f"the local {tag} points at {local[:8]}, not at {sha[:8]}: "
+                                       f"delete it by hand (git tag -d {tag}) and run ship again")
+        created = local is None
+        if created:
+            # The checks this release was verified against travel in the annotation:
+            # release.yml reads the same rule with its own token, which cannot read
+            # main's branch protection.
+            self._do("git", "tag", "-s", tag, "-m", f"Release {tag}",
+                     *required_annotation(self._required_checks()), sha, what="signing the tag")
         trust = self.engine_root / "scripts" / "nexgen_core" / "release_trust.py"
         verdict = self.run(
             [sys.executable, str(trust), tag, "--repo", str(self.repo),
@@ -238,9 +390,11 @@ class Shipper:
             self.repo,
         )
         if verdict.returncode != 0:
-            self.run(["git", "tag", "-d", tag], self.repo)
             line = (verdict.stdout or verdict.stderr).strip().splitlines()
-            raise ShipStop(self._step, f"installed copies would refuse it ({line[-1] if line else 'no verdict'}); tag deleted, nothing pushed")
+            if created:
+                self.run(["git", "tag", "-d", tag], self.repo)
+            cleanup = "tag deleted, nothing pushed" if created else f"{tag} left as it was, nothing pushed"
+            raise ShipStop(self._step, f"installed copies would refuse it ({line[-1] if line else 'no verdict'}); {cleanup}")
         self._do("git", "push", "-q", "origin", tag)
         return tag
 
@@ -274,44 +428,24 @@ class Shipper:
         self._wait(synced, "sync-developer to merge main back")
         self._do("git", "merge", "--ff-only", f"origin/{self.branch}", what="fast-forward to origin")
 
-    def _installed_version(self) -> str:
-        installed_file = self.engine_root.parent / "VERSION"
-        return installed_file.read_text(encoding="utf-8").strip() if installed_file.is_file() else "?"
-
     def _install(self, version: str) -> None:
+        """This machine's half of the release: `release_install` owns the steps, ship the step name."""
         self._enter("install")
-        before = self._installed_version()
-        for attempt in (1, 2):
-            update = self.run(["nexgen", "update", "--yes", "--target", version], self.repo)
-            if update.returncode == 0:
-                break
-            log = self.install_log or Path(tempfile.gettempdir()) / "nexgen-release-ship-install.log"
-            atomic_write_text(log, f"{update.stdout}\n{update.stderr}")
-            # A clean rollback leaves the previous version in place. The usual
-            # cause is a scheduled guard or sync cycle that started in the same
-            # minute, so one more try after it has finished is worth it; a
-            # half-done rollback is never retried.
-            if attempt == 2 or self._installed_version() != before:
-                raise ShipStop(self._step, f"nexgen update failed and was rolled back; full output in {log}")
-            self.log(f"   update failed and was rolled back, retrying once (output in {log})")
-            self.sleep(self.poll_seconds * 4)
-        # An update can end without moving anything; only the installed VERSION says it did.
-        # Doctor gates on failures only: warnings (optional deps, orphans) are non-blocking by design.
-        installed = self._installed_version()
-        if installed != version:
-            raise ShipStop(self._step, f"this machine is still on {installed}, not {version}")
-        doctor = self.run(["nexgen", "doctor", "--summary"], self.repo)
-        if doctor.returncode != 0:
-            last = (doctor.stdout or doctor.stderr).strip().splitlines()
-            raise ShipStop(self._step, f"installed, but doctor is not clean: {last[-1] if last else doctor.returncode}")
+        installer = Installer(engine_root=self.engine_root, repo=self.repo, run=self.run, log=self.log,
+                              sleep=self.sleep, poll_seconds=self.poll_seconds, install_log=self.install_log)
+        try:
+            installer.install(version)
+        except InstallProblem as problem:
+            raise ShipStop(self._step, str(problem)) from None
 
     def ship(self, bump: str, notes: str = "", install: bool = False) -> str:
         version = self._prepare(bump, notes)
-        merged = self._already_merged()
+        merged = self._merge_point()
+        tested: str | None = None
         if merged is None:
             number = self._open_pull_request(version)
-            merged = self._merge(number)
-        self._wait_main_ci(merged)
+            merged, tested = self._merge(number)
+        self._wait_main_ci(merged, tested)
         tag = self._tag(version, merged)
         self._wait_release(tag)
         self._sync_developer(merged)

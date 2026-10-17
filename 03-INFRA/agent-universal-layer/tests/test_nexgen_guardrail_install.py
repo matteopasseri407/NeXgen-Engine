@@ -177,6 +177,35 @@ def test_an_explicit_user_deny_is_never_touched(tmp_path):
     assert rules[("shell", "*")] == "deny"
 
 
+def test_switching_posture_rewrites_the_effect_of_the_pairs_the_engine_wrote(tmp_path):
+    """accept-edits after bypass must bring shell back to ask.
+
+    The engine only adds a pair the person has not ruled on; a pair it wrote
+    itself is not the person's ruling, and skipping it kept the previous
+    posture's effect forever (shell stayed allow, so nothing was ever asked).
+    """
+    home, path, rt, rules = _install_and_bypass(tmp_path, guardrail=False)
+    assert rules[("shell", "*")] == "allow"
+
+    assert rt.apply_posture(home, "accept-edits") is not None
+
+    rules = {(r["action"], r["resource"]): r["effect"] for r in json.loads(path.read_text(encoding="utf-8"))["permissions"]}
+    assert rules[("shell", "*")] == "ask"
+    assert rt.read_posture(home) == "accept-edits"
+
+
+def test_switching_back_to_bypass_turns_the_shell_rule_to_allow_again(tmp_path):
+    home, path = _opencode_home(tmp_path)
+    rt = OpenCodeRuntime()
+    rt.apply_posture(home, "accept-edits")
+
+    rt.apply_posture(home, "bypass")
+
+    rules = {(r["action"], r["resource"]): r["effect"] for r in json.loads(path.read_text(encoding="utf-8"))["permissions"]}
+    assert rules[("shell", "*")] == "allow"
+    assert rt.read_posture(home) == "bypass"
+
+
 def test_an_ask_posture_keeps_asking_and_the_plugin_does_not_answer_for_the_person(tmp_path):
     home, _path = _opencode_home(tmp_path)
     rt = OpenCodeRuntime()
@@ -201,6 +230,30 @@ def test_reinstalling_the_guardrail_keeps_the_flags_the_posture_set(tmp_path):
 
 
 # ------------------------------------------------------------------ Antigravity
+
+
+def test_antigravity_registers_the_adapter_so_a_path_with_spaces_still_runs(tmp_path):
+    """Il comando dell'hook va quotato: la home di Windows contiene spesso spazi.
+
+    `node C:\\Users\\Mario Rossi\\...\\adapter.mjs` si spezza in due argomenti e
+    l'hook del guardrail non parte, mentre i tool restano non controllati.
+    """
+    from nexgen_core.paths import antigravity_settings
+
+    home = tmp_path / "home con spazi"
+    home.mkdir()
+    settings = antigravity_settings(home)
+    settings.parent.mkdir(parents=True)
+    settings.write_text("{}", encoding="utf-8")
+    rt = AntigravityRuntime()
+
+    rt.install_guardrail(home, _body(tmp_path), HOOKS)
+
+    hooks = json.loads((home / ".gemini" / "config" / "hooks.json").read_text(encoding="utf-8"))
+    command = hooks["nexgen-guardrail"]["PreToolUse"][0]["hooks"][0]["command"]
+    assert command.startswith('node "')
+    assert command.endswith('"')
+    assert rt.install_guardrail(home, _body(tmp_path), HOOKS) is None  # e si assesta
 
 
 def test_antigravity_becomes_strict_under_bypass(tmp_path):

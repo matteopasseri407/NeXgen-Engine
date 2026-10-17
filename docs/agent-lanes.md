@@ -30,27 +30,36 @@ It prints one `== step` line per step and ends with either `OK vX.Y.Z` or `STOP 
    If the preflight fails, the bump is undone.
    The bump is skipped when `VERSION` is already ahead of the newest tag.
 2. **pull request**: opens the `developer` to `main` pull request, or reuses the open one.
-3. **checks on the pull request**: waits for the required checks. The `lane-guard` check is ignored here, because it rejects every push that does not come from a feature lane.
+   No pull request is opened when it would change no file: if `main` already carries the branch's tree (what `sync-developer` leaves behind) the release goes straight to the checks and the tag.
+3. **smoke here, and checks on the pull request**: this machine's own smoke (`03-INFRA/scripts/smoke.py` of the candidate checkout) runs while GitHub runs the checks, and its verdict is published on the pull request's head as the `smoke-windows` status (the duration in the description); a failure is published too, and nothing is merged.
+   Then it waits for the checks `main`'s branch protection requires, read with `gh api .../branches/main/protection/required_status_checks`. A job nobody requires, `engine-tests-windows` among them, is reported by CI without holding the release; when the protection cannot be read, every check in the run counts as before.
+   The `lane-guard` check is ignored here, because it rejects every push that does not come from a feature lane.
 4. **merge**: merges with a merge commit.
-5. **CI on main**: waits for `ci.yml` on the merge commit.
+5. **CI on main**: waits for the same required checks on the merge commit, or (when the protection cannot be read) for the whole `ci.yml` run — unless the merge commit carries exactly the tree the pull request checks passed (`refs/pull/<n>/merge`), in which case those checks are the proof and there is no second CI to wait for.
 6. **tag**: creates the tag with `git tag -s`, signed by the key this machine's git is configured to use.
+   Its annotation also carries the checks this release was verified against (`Required checks: …`), which `release.yml` reads back: its own token cannot read `main`'s branch protection.
    It then verifies the tag against the trust anchor of the installed copy (`trust/release-signers.txt`).
    If that copy would refuse the tag, the tag is deleted locally and nothing is pushed.
+   A tag already on the remote is reused, and a tag left here by an interrupted run is verified and pushed instead of being made again.
 7. **release workflow**: pushes the tag, waits for `release.yml`, and reruns it once if it fails.
    It then checks that the GitHub release is not a draft and has assets.
 8. **sync developer**: waits for `sync-developer` to merge `main` back into `developer`.
 9. **install** (only with `--install`): runs `nexgen update --yes --target vX.Y.Z`.
-   If the update fails and is rolled back, it retries once.
-   It then checks that the installed `VERSION` matches and runs `nexgen doctor --summary`, which stops it only on failures (warnings are non-blocking).
+   If the update fails and is rolled back, it retries once; a refusal because the vault has uncommitted or untracked files is not retried, and is reported in one line naming the folder.
+   It then checks that the installed `VERSION` matches and runs the installed engine's own smoke (`03-INFRA/scripts/smoke.py` of the installed tree, with the interpreter the launchers use, so a release tree needs no `.venv`): a machine that fails it is put back on the version it came from (`nexgen update --yes --target <previous>`) and the release stops saying so.
+   Finally it runs `nexgen doctor --summary`, which stops it only on failures (warnings are non-blocking).
 
 Every maintainer machine signs with its own key, and that key has to be listed in `trust/release-signers.txt`.
 Installed copies only accept signers they pin, so a new key takes two releases (see `SECURITY.md`).
 
-After a stop, fix the reason and run it again; it resumes:
+After a stop, fix the reason and run it again; it resumes from the first step that is not done:
 a version that is already bumped is not bumped again, an open release pull request is reused,
-and a release commit already on `main` skips straight to the CI and the tag.
-After the tag is pushed there is nothing left to redo: a rerun while `main` is not yet back in `developer`
-stops with "still finishing" instead of bumping again. Wait for `sync-developer`, then run `nexgen update`.
+a pull request that would change no file is not opened at all,
+a release commit already on `main` skips straight to the CI and the tag,
+and a tag already published goes on from there.
+A rerun while `main` is not yet back in `developer` finishes the release that is out
+(the tag is reused, the sync is awaited, `--install` installs the version it finds)
+instead of bumping a second version.
 
 ## Verification and concurrent work
 

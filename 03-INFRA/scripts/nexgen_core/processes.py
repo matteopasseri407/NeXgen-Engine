@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import shlex
 import shutil
 import signal
 import subprocess
@@ -21,6 +22,23 @@ def powershell_literal(text: str) -> str:
     (a commit subject, a path) that is injection, not just a lost toast.
     """
     return "'" + "".join(ch * 2 if ch in _POWERSHELL_QUOTES else ch for ch in text) + "'"
+
+
+def split_command_line(command: str) -> list[str]:
+    """A typed command line as argv for this platform.
+
+    shlex in POSIX mode eats the backslashes of a Windows path (`C:\\tools` becomes
+    `C: ools`), and the command then fails over a path that does not exist. The
+    non-POSIX mode keeps them, but leaves the quotes inside the tokens, where
+    subprocess would escape them again: one matching outer pair is peeled off.
+    """
+    argv = shlex.split(command, posix=os.name != "nt")
+    if os.name != "nt":
+        return argv
+    return [
+        token[1:-1] if len(token) >= 2 and token[0] == token[-1] and token[0] in "\"'" else token
+        for token in argv
+    ]
 
 
 def windows_command_argv(argv: list[str]) -> list[str]:

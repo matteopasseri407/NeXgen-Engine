@@ -1,6 +1,9 @@
-"""Size ratchet: an oversized file or function may exist, but may never grow.
+"""The size ceiling as an alarm: what is over it joins the split queue.
 
-Compared against the base revision, so no baseline file exists to regenerate.
+Nothing here refuses a push. `check` and `gate` print what is over the ceiling as
+a warning, `report` and `audit` print the same list as the splitting still owed.
+A file that declares its one job at the top (`nexgen: one-job reason="..."`)
+is not queued until the hard cap; a function has no such escape.
 """
 from __future__ import annotations
 
@@ -44,34 +47,42 @@ def python_function_lengths(source: str | None) -> dict[str, int]:
     return lengths
 
 
+def _growth(change: Change) -> str:
+    """Which way the file moved, when the change carries its parent revision."""
+    if change.old is None:
+        return ""
+    before, after = line_count(change.old), line_count(change.new)
+    if after > before:
+        return f", grew from {before} lines"
+    return f", shrank from {before} lines" if after < before else ""
+
+
 def _file_violation(change: Change, cfg: Config) -> Violation | None:
-    new, old = line_count(change.new), line_count(change.old)
-    if declares_one_job(change.new) and (new <= ONE_JOB_CAP or (change.old is not None and new <= old)):
+    lines = line_count(change.new)
+    if lines <= cfg.max_file_lines:
         return None
-    if new > cfg.max_file_lines and (change.old is None or new > old):
-        grew = f"grew from {old} lines" if change.old is not None else "is new"
-        return Violation(change.path, f"{new} lines (limit {cfg.max_file_lines}), {grew}. "
-                         "One file does one job: if this one does a single thing, say so at the top with `nexgen: one-job reason=\"what its one job is\"` (up to 1000 lines); otherwise put the new code in a separate module.", "file")
-    return None
+    if declares_one_job(change.new) and lines <= ONE_JOB_CAP:
+        return None
+    return Violation(change.path, f"{lines} lines (limit {cfg.max_file_lines}){_growth(change)}. "
+                     "One file does one job: split it, or say what its one job is at the top with "
+                     f"`nexgen: one-job reason=\"...\"` (up to {ONE_JOB_CAP} lines).", "file")
 
 
 def _function_violations(change: Change, cfg: Config) -> list[Violation]:
-    before = python_function_lengths(change.old)
-    found = []
-    for name, length in python_function_lengths(change.new).items():
-        if length > cfg.max_func_lines and length > before.get(name, 0):
-            found.append(Violation(change.path, f"function {name} is {length} lines "
-                                   f"(limit {cfg.max_func_lines}). Split it; do not extend it.", "function"))
-    return found
+    if not change.path.endswith(".py"):
+        return []
+    return [Violation(change.path, f"function {name} is {length} lines (limit {cfg.max_func_lines}): "
+                       "split it when you next touch it.", "function")
+            for name, length in python_function_lengths(change.new).items() if length > cfg.max_func_lines]
 
 
-def check_sizes(changes: list[Change], cfg: Config) -> list[Violation]:
+def split_queue(changes: list[Change], cfg: Config) -> list[Violation]:
+    """Files and functions over the ceiling in this set of files: the work list of splits."""
     found: list[Violation] = []
     for change in changes:
         if not selected(change, cfg, CODE_EXT):
             continue
         if not TEST_PATH.search(change.path) and (violation := _file_violation(change, cfg)):
             found.append(violation)
-        if change.path.endswith(".py"):
-            found.extend(_function_violations(change, cfg))
+        found.extend(_function_violations(change, cfg))
     return found

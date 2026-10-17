@@ -299,6 +299,89 @@ def test_outlook_without_client_id_needs_setup(
         outlook_mod.search_messages("x")
 
 
+def _fake_host_lock(monkeypatch: pytest.MonkeyPatch, on_enter) -> list[dict]:
+    """A lock that records how it was taken and runs `on_enter` when it is."""
+    from nexgen_core import lock as lock_mod
+
+    taken: list[dict] = []
+
+    class FakeLock:
+        def __init__(self, lock_path, timeout=None, command_name="agent-sync"):
+            self.lock_path = Path(lock_path)
+            self.timeout = timeout
+            self.command_name = command_name
+
+        def __enter__(self):
+            taken.append({"path": self.lock_path, "timeout": self.timeout, "command": self.command_name})
+            on_enter()
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+    monkeypatch.setattr(lock_mod, "HostLock", FakeLock)
+    return taken
+
+
+def _expired_token(dir_path: Path) -> Path:
+    tokens = dir_path / "tokens.json"
+    tokens.write_text(
+        json.dumps({"refresh_token": "vecchio", "access_token": "scaduto", "expires_at": 1}),
+        encoding="utf-8",
+    )
+    return tokens
+
+
+def test_outlook_access_token_rereads_under_the_lock(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Chi aspetta il lock non deve rifare il refresh con un token gia' ruotato.
+
+    Con la rotazione del refresh token (RTR) il secondo processo che presenta
+    il token consumato dal primo riceve invalid_grant e resta fuori fino al
+    login manuale: sotto il lock la coppia va riletta, non rifatta.
+    """
+    from nexgen_local.connectors import outlook as outlook_mod
+
+    directory = _outlook_env(tmp_path, monkeypatch)
+    tokens = _expired_token(directory)
+
+    def someone_else_refreshed() -> None:
+        tokens.write_text(
+            json.dumps({"refresh_token": "nuovo", "access_token": "fresco", "expires_at": int(time.time()) + 3600}),
+            encoding="utf-8",
+        )
+
+    taken = _fake_host_lock(monkeypatch, someone_else_refreshed)
+
+    def never(_req, _timeout: int) -> HttpResult:
+        raise AssertionError("secondo refresh sullo stesso refresh token")
+
+    assert outlook_mod.access_token(http=never) == "fresco"
+    assert taken, "il refresh va serializzato da un lock, come per Google"
+    assert taken[0]["path"] == tokens.with_suffix(".lock")
+
+
+def test_outlook_access_token_reports_a_busy_lock_as_an_auth_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Un lock occupato e' un accesso non riuscito, non un traceback."""
+    from nexgen_core.lock import LockTimeoutError
+    from nexgen_local.connectors import outlook as outlook_mod
+
+    directory = _outlook_env(tmp_path, monkeypatch)
+    _expired_token(directory)
+
+    def raise_timeout() -> None:
+        raise LockTimeoutError("occupato", directory / "tokens.lock")
+
+    _fake_host_lock(monkeypatch, raise_timeout)
+
+    def never(_req, _timeout: int) -> HttpResult:
+        raise AssertionError("nessuna chiamata di rete mentre il token e' di un altro processo")
+
+    with pytest.raises(ConnectorError, match="token occupato"):
+        outlook_mod.access_token(http=never)
+
+
 def test_outlook_reply_threads_server_side(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     from nexgen_local.connectors import outlook as outlook_mod
 

@@ -248,3 +248,14 @@ def test_the_doctor_still_wants_the_real_environment_for_a_directly_mounted_serv
 @posix_only
 def test_the_doctor_reports_a_token_that_is_nowhere(home):
     assert check_tokens_in_env(manifest_with(home, exposure="lazy")).severity is Severity.BROKEN
+
+
+def test_a_server_switched_off_needs_no_token(home):
+    """`enabled: false` vuol dire spento: il suo token mancante non è un difetto.
+
+    `nexgen mcp bump` e la lettura dei riferimenti (mcp_checks) saltano già i
+    server disabilitati; qui il controllo segnalava BROKEN per un server che
+    l'utente ha spento di proposito.
+    """
+    outcome = check_tokens_in_env(manifest_with(home, enabled=False))
+    assert outcome.severity is Severity.OK
