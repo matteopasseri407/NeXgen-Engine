@@ -26,7 +26,7 @@ def python_function_lengths(source: str | None) -> dict[str, int]:
     """Qualified name -> line count for every function, nested ones included."""
     try:
         tree = ast.parse(source or "")
-    except SyntaxError:
+    except SyntaxError:  # nexgen: allow reason="unparseable source has no measurable functions; the syntax check reports it"
         return {}
     lengths: dict[str, int] = {}
 

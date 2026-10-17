@@ -27,7 +27,7 @@ def read_cached_success(path: Path, ttl_seconds: int, now: float) -> dict[str, A
     try:
         cached = json.loads(path.read_text(encoding="utf-8"))
         checked_at = float(cached["checked_at"])
-    except (OSError, ValueError, KeyError, TypeError, json.JSONDecodeError):
+    except (OSError, ValueError, KeyError, TypeError, json.JSONDecodeError):  # nexgen: allow reason="an unreadable cache is a miss: the probe runs again"
         return None
     if cached.get("ok") is True and 0 <= now - checked_at < ttl_seconds:
         return cached
@@ -52,7 +52,7 @@ def extract_urls(payload: dict[str, Any]) -> list[str]:
 def is_expected_result(url: str) -> bool:
     try:
         hostname = (urllib.parse.urlparse(url).hostname or "").lower()
-    except ValueError:
+    except ValueError:  # nexgen: allow reason="a URL that does not parse is not the expected result"
         return False
     return hostname == "example.com" or hostname.endswith(".example.com")
 
