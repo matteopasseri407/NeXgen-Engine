@@ -167,6 +167,55 @@ def test_write_if_changed_skips_identical(tmp_path: Path):
     assert len(list(tmp_path.glob("*.bak-*"))) == 1
 
 
+def test_skip_if_committed_judges_the_file_actually_written(tmp_path: Path, monkeypatch):
+    """A committed, clean symlink said "no backup needed" while the real file
+    it points to had uncommitted edits; the write then overwrote them."""
+    import shutil
+    import subprocess
+
+    import nexgen_core.files as files_mod
+
+    target = _git_repo_with_commit(tmp_path, name="real.json")
+    # link.json is a committed regular file here; the symlink is simulated by
+    # making the module's Path report it as a link to real.json. This needs no
+    # symlink privilege, so the test runs on every platform.
+    link = tmp_path / "link.json"
+    link.write_text("v1", encoding="utf-8")
+    env = dict(
+        os.environ,
+        GIT_AUTHOR_NAME="t",
+        GIT_AUTHOR_EMAIL="t@t",
+        GIT_COMMITTER_NAME="t",
+        GIT_COMMITTER_EMAIL="t@t",
+    )
+    subprocess.run(["git", "add", "link.json"], cwd=tmp_path, check=True, env=env)
+    subprocess.run(["git", "commit", "-qm", "link"], cwd=tmp_path, check=True, env=env)
+    target.write_text("v2-sporca", encoding="utf-8")
+
+    class _LinkedPath(type(Path())):
+        def is_symlink(self):
+            return self.name == "link.json" or super().is_symlink()
+
+        def resolve(self, strict=False):
+            if self.name == "link.json":
+                return target
+            return super().resolve(strict)
+
+    real_copy2 = shutil.copy2
+
+    def _copy2_following_link(src, dst, *args, **kwargs):
+        # copy2 follows a real symlink, so the backup holds the target's bytes.
+        source = target if Path(src).name == "link.json" else src
+        return real_copy2(source, dst, *args, **kwargs)
+
+    monkeypatch.setattr(files_mod, "Path", _LinkedPath)
+    monkeypatch.setattr(shutil, "copy2", _copy2_following_link)
+    assert files_mod.write_text_if_changed(link, "v3", skip_if_committed=True) is True
+    assert target.read_text(encoding="utf-8") == "v3"
+    backups = list(tmp_path.glob("link.json.bak-*"))
+    assert [b.read_text(encoding="utf-8") for b in backups] == ["v2-sporca"]
+
+
 def test_backup_of_a_loosely_moded_config_is_private(tmp_path: Path):
     """A backup copied the source's mode, so a 0644 config that held resolved tokens
     left a readable 0644 copy behind. Backups are 0600 on POSIX whatever the source."""

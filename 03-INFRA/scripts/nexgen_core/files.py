@@ -317,7 +317,11 @@ def _write_text_if_changed_impl(
             # Unreadable for permissions: the write below would fail too,
             # but with the original already backed up. Let it surface there.
             pass
-    backup_file(path, tag=tag, skip_if_committed=skip_if_committed)
+    # The clean-vs-HEAD proof must be taken on the file that is written
+    # (`target`), not on the link: a committed link is "clean" even while the
+    # real file it points to has uncommitted edits.
+    if not (skip_if_committed and _is_clean_vs_head(target)):
+        backup_file(path, tag=tag)
     atomic_write_text(target, text)
     if keep is not None:
         _prune_backups(path, _safe_tag(tag), keep)
