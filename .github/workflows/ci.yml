@@ -30,8 +30,10 @@ jobs:
       - name: Test dependencies
         run: pip install pytest pyyaml 'langgraph>=1.0,<2' 'langgraph-checkpoint-sqlite>=3,<4' 'langchain-ollama>=1.0,<2'
 
-      # Size ratchet and shell/PowerShell gate on every change; a complex change also
-      # needs its review receipt (the release PR and main only get the static check).
+      # Shell/PowerShell, per-commit tests and test integrity gate every change; what is over the
+      # size ceiling is printed as a warning and listed by `discipline.py report` (a split queue,
+      # never a refusal). A complex change still needs its review receipt (the release PR and main
+      # only get the static check).
       # The base, head and strictness are chosen in Python from these event values.
       - name: Discipline gate
         env:

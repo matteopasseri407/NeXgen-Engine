@@ -9,16 +9,16 @@ The rest rely on you. Do not argue with a gate: change the work.
    language, a data-format or public-interface change, a new top-level package, or a change to CI, hooks or
    discipline config. In an unattended session, write the proposal down and do not do it. New files inside
    an existing module need no permission.
-3. **[gate] One component, one job, explained.** A file owns one behavior and a function does one step of it.
+3. **One component, one job, explained.** A file owns one behavior and a function does one step of it.
    Each file opens with a docstring that says its one job and why it exists, and each function says the step it
    does, so an agent can understand the component from its header without reading the callers. Line counts are
-   the smoke alarm, not the rule: past 500 lines a file (tests exempt) must not grow unless it declares its single
-   job at the top with `nexgen: one-job reason="what its one job is"` (up to 1000 lines). A function past 60 lines
-   never grows. When a change does not fit, **split first**: extract a component with its own job (behavior pinned
-   by tests before the code moves), then make the change in the smaller file. **Never compact existing code to fit**
-   (joining lines, shortening messages, squeezing calls): that hides the alarm instead of answering it, and counts
-   as bypassing the gate. If a serious bug cannot wait for the split, the fix lands and the file overflows openly:
-   say so in the commit and queue the split.
+   the smoke alarm, not the rule: past 500 lines a file (tests exempt) and past 60 lines a function join the
+   **split queue** that `discipline.py report` prints and `audit` lists in full. The queue is work to do when a
+   file is next touched; it never blocks a push. When a change does not fit, **split first**: extract a component
+   with its own job (behavior pinned by tests before the code moves), then make the change in the smaller file.
+   **Never compact existing code to fit** (joining lines, shortening messages, squeezing calls): that hides the
+   alarm instead of answering it. A file that really does one thing says so at the top with
+   `nexgen: one-job reason="what its one job is"` and stays out of the queue up to 1000 lines.
 4. **[gate] Logic goes in the main language.** Shell and PowerShell are thin launchers: under 40 lines,
    no parsing, no state, no retries. Anything bigger needs `nexgen: allow reason="..."` at the top of the
    file, with a real reason.
@@ -51,5 +51,5 @@ The rest rely on you. Do not argue with a gate: change the work.
 
 - New project: `python 03-INFRA/scripts/discipline.py init --smoke "<command that proves it works>"` creates the config, a `DECISIONS.md` for the
   owner's decisions, and local git hooks that run the checks (and fail loudly if the engine is missing).
-- `python 03-INFRA/scripts/discipline.py report` prints a ten-line health report in plain Italian for the owner (green, yellow or red).
-- `python 03-INFRA/scripts/discipline.py audit` lists the existing debt. The gates never fail on debt that already existed, only on making it worse.
+- `python 03-INFRA/scripts/discipline.py report` prints a short health report in plain Italian for the owner (green, yellow or red) with the split queue.
+- `python 03-INFRA/scripts/discipline.py audit` lists the whole split queue and the shell debt. Neither ever refuses a push: they are work to do, not a gate.

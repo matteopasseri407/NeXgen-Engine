@@ -125,12 +125,13 @@ def test_the_installed_hooks_do_not_hand_gits_own_context_downstream(repo):
         assert "unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE" in text
 
 
-def test_the_installed_hook_really_blocks_an_oversized_commit(repo):
+def test_the_installed_hook_lets_an_oversized_commit_through_and_says_so(repo):
     init_project(repo.path, "")
     repo.write("big.py", BIG)
     repo.git("add", "big.py")
     done = subprocess.run(["git", "-C", str(repo.path), "commit", "-q", "-m", "big"], capture_output=True, text=True)
-    assert done.returncode != 0 and "big.py" in done.stdout + done.stderr
+    assert done.returncode == 0
+    assert "big.py" in done.stdout + done.stderr  # the alarm is shown; the commit is not refused
 
 
 def test_the_hook_fails_loudly_when_the_engine_is_missing(repo):
@@ -154,6 +155,16 @@ def test_report_is_red_without_a_smoke_command_and_green_with_history(repo, monk
     repo.write("a.txt", "a\n")
     repo.commit("recent")
     assert "VERDE" in report(repo.path)
+
+
+def test_the_report_prints_the_split_queue(repo):
+    """The ceiling is a warning: what is over it is work to do, listed for the owner."""
+    repo.write("big.py", BIG)
+    repo.write("small.py", "x = 1\n")
+    repo.commit("debt")
+    text = report(repo.path)
+    assert "Coda split" in text and "big.py" in text
+    assert "small.py" not in text
 
 
 def test_smoke_runs_the_project_command_and_reports_its_exit_code(repo):

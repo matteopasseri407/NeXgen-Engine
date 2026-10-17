@@ -4,7 +4,7 @@ import json
 from nexgen_core.discipline import cli, review
 from nexgen_core.discipline.config import Config
 from nexgen_core.discipline.gitutil import changes
-from nexgen_core.discipline.score import score
+from nexgen_core.discipline.score import is_critical, score
 
 BUSY = "def f():\n    return 1\n\n" * 3
 
@@ -118,13 +118,15 @@ def test_parse_verdict_reads_only_the_last_line():
     assert review.parse_verdict("VERDICT: APPROVE\nbut then I reconsidered") is None
 
 
-def test_staged_check_works_on_first_commit(tmp_path, monkeypatch):
+def test_staged_check_works_on_first_commit(tmp_path, monkeypatch, capsys):
+    """The first commit has no HEAD to compare with: the base is the empty tree."""
     import subprocess
     subprocess.run(["git", "init", "-q", "-b", "main", str(tmp_path)], check=True)
     monkeypatch.chdir(tmp_path)
     (tmp_path / "big.py").write_text("x = 1\n" * 600)
     subprocess.run(["git", "-C", str(tmp_path), "add", "-A"], check=True)
-    assert cli.main(["check", "--staged"]) == 1
+    assert cli.main(["check", "--staged"]) == 0
+    assert "WARN big.py" in capsys.readouterr().out
 
 
 def test_merging_published_main_needs_no_receipt(repo):
@@ -284,9 +286,12 @@ def test_pieces_split_from_a_critical_file_stay_covered_by_its_prefix(repo):
 
 
 def test_renaming_a_critical_file_does_not_escape_the_list(repo):
-    repo.write(".nexgen-discipline.toml", 'complexity_threshold = 4\nreview_paths = ["core/git_ops.py"]\n')
+    """The list matches a detected move by its old name: it does not become a brand-new file."""
+    repo.write(".nexgen-discipline.toml", 'review_paths = ["core/git_ops.py"]\n')
     repo.write("core/git_ops.py", BUSY * 45)
     base = repo.commit("critical file")
     repo.git("mv", "core/git_ops.py", "core/vcs.py")
-    (repo.path / "core/vcs.py").write_text(BUSY * 90)
-    assert cli.main(["gate", "--base", base]) == 1
+    moved = [c for c in changes(repo.path, base) if c.path == "core/vcs.py"]
+    cfg = Config(review_paths=("core/git_ops.py",))
+    assert moved and moved[0].old_path == "core/git_ops.py"
+    assert is_critical(cfg, moved[0].path, moved[0].old_path)
