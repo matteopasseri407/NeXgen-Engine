@@ -382,6 +382,8 @@ def test_the_merge_that_carries_the_tested_tree_skips_the_wait_on_main(repo):
     assert _shipper(repo, world).ship("minor") == "v2.14.0"
     assert any(c[:2] == ("git", "push") and c[-1] == "v2.14.0" for c in world.calls)
     assert not any("/check-runs" in " ".join(c) for c in world.calls), "the checks on main are not even asked for"
+    # The release workflow judges the tagged commit: this machine's proof is recorded there too.
+    assert any(f"statuses/{MERGED}" in " ".join(status) and "state=success" in status for status in world.statuses)
 
 
 def test_a_merge_that_carries_another_tree_waits_for_the_checks_on_main(repo):

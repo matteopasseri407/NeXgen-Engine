@@ -52,7 +52,9 @@ def test_the_windows_leg_answers_nightly_on_demand_and_on_a_release_pull_request
     assert "schedule" not in gate
     # Positive form only: an expression that merely excludes push would silently
     # start running a Windows leg on a future event.
-    assert "push" not in gate
+    # A plain push never starts it; the one push that does is the release merge on main.
+    assert gate.count("'push'") == 1
+    assert "(github.event_name == 'push' && github.ref == 'refs/heads/main')" in gate
     assert "github.event_name == 'pull_request' && github.base_ref == 'main'" in gate
     assert "-n auto" in job["steps"][-1]["run"]
 
