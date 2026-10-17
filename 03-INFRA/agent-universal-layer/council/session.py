@@ -251,15 +251,16 @@ def _stop_one_proc(proc: subprocess.Popen) -> None:
         if getattr(proc, "_council_process_group", None) is not None:
             _force_stop_process_tree(proc)
             return
-        if proc.poll() is None:
-            if os.name == "nt" and getattr(proc, "pid", None) is not None:
+        if os.name == "nt" and getattr(proc, "pid", None) is not None:
+            # Windows has no process group and the launcher can be gone while
+            # its children still run (same rule as MUST-04): always taskkill.
+            _force_stop_process_tree(proc)
+        elif proc.poll() is None:
+            proc.terminate()
+            try:
+                proc.wait(timeout=3)
+            except subprocess.TimeoutExpired:
                 _force_stop_process_tree(proc)
-            else:
-                proc.terminate()
-                try:
-                    proc.wait(timeout=3)
-                except subprocess.TimeoutExpired:
-                    _force_stop_process_tree(proc)
     except Exception:
         pass
 
