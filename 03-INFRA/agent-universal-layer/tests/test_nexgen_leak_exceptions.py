@@ -51,7 +51,8 @@ def _scan(tmp_path: Path, repo: Path, base: str, exceptions: str | None) -> subp
         pinned = tmp_path / "exceptions.yaml"
         pinned.write_text(exceptions, encoding="utf-8")
         args += ["--exceptions", str(pinned)]
-    return subprocess.run(args, capture_output=True, text=True, encoding="utf-8")
+    env = {**os.environ, "PYTHONIOENCODING": "utf-8"}  # Windows runners print in the ANSI codepage otherwise
+    return subprocess.run(args, capture_output=True, text=True, encoding="utf-8", env=env)
 
 
 def _entry(commit: str, path: str) -> str:
