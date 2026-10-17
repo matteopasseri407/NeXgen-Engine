@@ -36,6 +36,7 @@ It prints one `== step` line per step and ends with either `OK vX.Y.Z` or `STOP 
 4. **merge**: merges with a merge commit.
 5. **CI on main**: waits for the same required checks on the merge commit, or (when the protection cannot be read) for the whole `ci.yml` run.
 6. **tag**: creates the tag with `git tag -s`, signed by the key this machine's git is configured to use.
+   Its annotation also carries the checks this release was verified against (`Required checks: …`), which `release.yml` reads back: its own token cannot read `main`'s branch protection.
    It then verifies the tag against the trust anchor of the installed copy (`trust/release-signers.txt`).
    If that copy would refuse the tag, the tag is deleted locally and nothing is pushed.
    A tag already on the remote is reused, and a tag left here by an interrupted run is verified and pushed instead of being made again.

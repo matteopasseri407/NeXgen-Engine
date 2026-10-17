@@ -43,6 +43,12 @@ if str(SCRIPTS_DIR) not in sys.path:
 from nexgen_core.files import atomic_write_text  # noqa: E402
 from nexgen_core.paths import resolve_engine_root, resolve_home, resolve_runtime_dir  # noqa: E402
 from nexgen_core.release import bump_version_files, compute_next_version, is_semver, newer_version  # noqa: E402
+from nexgen_core.release_checks import (  # noqa: E402
+    commit_checks,
+    required_annotation,
+    required_checks,
+    verdict,
+)
 
 #: Checks that fail on purpose on this pull request and say nothing about the
 #: release: the lane guard rejects pushes that do not come from a feature lane.
@@ -217,36 +223,18 @@ class Shipper:
 
         That list is the repository's own answer to "what may block a merge".
         `engine-tests-windows` is not on it: it is slow and flaky, so CI reports it
-        without a release waiting for it.
+        without a release waiting for it. The rule itself lives in
+        `nexgen_core/release.py`, where release.yml reads the same one.
         """
-        result = self.run(
-            ["gh", "api", "repos/{owner}/{repo}/branches/main/protection/required_status_checks"], self.repo)
-        if result.returncode != 0:
-            return None
-        data = _answer(result.stdout)
-        names = {str(name) for name in data.get("contexts") or []}
-        names |= {str(check.get("context")) for check in data.get("checks") or [] if check.get("context")}
-        return names or None
-
-    @staticmethod
-    def _state(check: dict | None) -> bool | None:
-        """True when the check passed, False when it failed, None while it is missing or running."""
-        if check is None:
-            return None
-        status = (check.get("status") or "").upper()
-        state = (check.get("conclusion") or check.get("state") or "").upper()
-        if status in _PENDING or (status and status != "COMPLETED") or state in _PENDING or not state:
-            return None
-        return state in _GREEN
+        return required_checks(self.repo, self.run)
 
     def _required_verdict(self, checks: dict[str, dict], required: set[str], what: str) -> str | None:
         """None while a required check is missing or still running; 'green' when all of them passed."""
-        states = {name: self._state(checks.get(name)) for name in required}
-        if any(state is None for state in states.values()):
+        state, detail = verdict(checks, required)
+        if state == "missing":
             return None
-        failed = sorted(name for name, state in states.items() if state is False)
-        if failed:
-            raise ShipStop(self._step, f"failing {what}: " + ", ".join(failed))
+        if state == "failed":
+            raise ShipStop(self._step, f"failing {what}: " + ", ".join(detail))
         return "green"
 
     def _checks_verdict(self, number: int, head: str) -> str | None:
@@ -291,11 +279,7 @@ class Shipper:
 
     def _commit_checks(self, sha: str) -> dict[str, dict]:
         """Every check GitHub reports for one commit, by name; empty when it cannot be read."""
-        result = self.run(
-            ["gh", "api", f"repos/{{owner}}/{{repo}}/commits/{sha}/check-runs", "-F", "per_page=100"], self.repo)
-        if result.returncode != 0:
-            return {}
-        return {str(run.get("name") or "?"): run for run in _answer(result.stdout).get("check_runs") or []}
+        return commit_checks(self.repo, sha, self.run)
 
     def _wait_main_ci(self, sha: str) -> None:
         self._enter(f"CI on main {sha[:8]}")
@@ -340,7 +324,11 @@ class Shipper:
                                        f"delete it by hand (git tag -d {tag}) and run ship again")
         created = local is None
         if created:
-            self._do("git", "tag", "-s", tag, "-m", f"Release {tag}", sha, what="signing the tag")
+            # The checks this release was verified against travel in the annotation:
+            # release.yml reads the same rule with its own token, which cannot read
+            # main's branch protection.
+            self._do("git", "tag", "-s", tag, "-m", f"Release {tag}",
+                     *required_annotation(self._required_checks()), sha, what="signing the tag")
         trust = self.engine_root / "scripts" / "nexgen_core" / "release_trust.py"
         verdict = self.run(
             [sys.executable, str(trust), tag, "--repo", str(self.repo),

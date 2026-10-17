@@ -65,9 +65,13 @@ class FakeWorld:
         return subprocess.CompletedProcess(argv, code, out, "" if code == 0 else "boom")
 
     def api(self, url: str) -> str:
-        """GitHub's two api answers ship reads: the required checks, and one commit's check runs."""
-        if url.endswith("protection/required_status_checks"):
+        """GitHub's api answers: the required checks (from both places GitHub keeps them), and a commit's runs."""
+        if url.endswith("required_status_checks"):
             return json.dumps({"contexts": self.required_checks, "checks": []})
+        if url.endswith("/rules/branches/main"):
+            rule = {"type": "required_status_checks",
+                    "parameters": {"required_status_checks": [{"context": name} for name in self.required_checks]}}
+            return json.dumps([rule, {"type": "non_fast_forward"}])
         sha = url.split("/")[-2]
         runs = self.check_runs.get(sha)
         if runs is None:
@@ -226,6 +230,18 @@ def test_the_verdict_reads_the_required_checks_from_the_branch_protection(repo):
     assert _shipper(repo, world).ship("minor") == "v2.14.0"
     assert ("gh", "api", "repos/{owner}/{repo}/branches/main/protection/required_status_checks") in world.calls
     assert not any("ci.yml" in c for c in world.calls), "the workflow run is the fallback, not the rule"
+
+
+def test_the_tag_carries_the_checks_the_release_was_verified_against(repo):
+    """release.yml reads the required list from the tag's annotation: its own token
+    cannot read main's branch protection, and the list travels signed with the tag."""
+    world = FakeWorld(repo)
+    world.required_checks = ["test", "leak-scan"]
+    assert _shipper(repo, world).ship("minor") == "v2.14.0"
+    tag_call = next(call for call in world.calls if call[:3] == ("git", "tag", "-s"))
+    messages = [tag_call[index + 1] for index, arg in enumerate(tag_call) if arg == "-m"]
+    assert any(message.startswith("Release v2.14.0") for message in messages)
+    assert "Required checks: leak-scan, test" in messages
 
 
 def test_the_required_checks_are_read_from_both_shapes_of_the_api(repo):
