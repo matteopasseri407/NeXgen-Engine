@@ -57,6 +57,10 @@ class FakeWorld:
         self.remote_tags: list[str] = []
         #: The tag this run is publishing, so the release workflow's run is reported for it.
         self.shipping_tag = "v2.14.0"
+        #: The tree GitHub tested for the pull request, and the tree its merge carries here.
+        self.tested_tree = "a" * 40
+        self.merge_tree = "a" * 40
+        self.pull_request_sha = "d" * 40
 
     def __call__(self, argv, cwd):
         argv = tuple(str(a) for a in argv)
@@ -72,6 +76,10 @@ class FakeWorld:
             rule = {"type": "required_status_checks",
                     "parameters": {"required_status_checks": [{"context": name} for name in self.required_checks]}}
             return json.dumps([rule, {"type": "non_fast_forward"}])
+        if "/git/ref/pull/" in url:
+            return json.dumps({"object": {"sha": self.pull_request_sha}})
+        if url.endswith(self.pull_request_sha):
+            return json.dumps({"commit": {"tree": {"sha": self.tested_tree}}})
         sha = url.split("/")[-2]
         runs = self.check_runs.get(sha)
         if runs is None:
@@ -135,6 +143,8 @@ class FakeWorld:
                 return "\n".join(self.local_tags), 0
             case ("git", "rev-parse", "HEAD"):
                 return RELEASE_HEAD, 0
+            case ("git", "rev-parse", _) if argv[-1].endswith("^{tree}"):
+                return self.merge_tree, 0
             case ("git", "rev-parse", "origin/main"):
                 return MERGED, 0
             case ("git", "merge-base", "--is-ancestor"):
@@ -277,6 +287,7 @@ def test_an_unreadable_protection_falls_back_to_every_check(repo):
 
 def test_a_red_non_required_job_on_main_does_not_stop_the_tag(repo):
     world = FakeWorld(repo)
+    world.merge_tree = "c" * 40  # a different tree on main: the required checks are asked for
     world.ci_on_main = "failure"  # the run's verdict is red because of a job nobody required
     world.check_runs = {MERGED: [
         {"name": "test", "status": "completed", "conclusion": "success"},
@@ -288,11 +299,47 @@ def test_a_red_non_required_job_on_main_does_not_stop_the_tag(repo):
 
 def test_a_red_required_check_on_main_stops_before_the_tag(repo):
     world = FakeWorld(repo)
+    world.merge_tree = "c" * 40  # a different tree on main: the required checks are asked for
     world.ci_on_main = "failure"
     world.check_runs = {MERGED: [{"name": "test", "status": "completed", "conclusion": "failure"}]}
     with pytest.raises(ShipStop, match="failing required checks on main: test"):
         _shipper(repo, world).ship("minor")
     assert not any(c[:2] == ("git", "push") and c[-1] == "v2.14.0" for c in world.calls)
+
+
+def test_the_merge_that_carries_the_tested_tree_skips_the_wait_on_main(repo):
+    """GitHub tested the pull request's merge ref. When the merge on main carries that same
+    tree, `pr merge` produced what was tested and there is no second CI to wait for."""
+    world = FakeWorld(repo)
+    world.ci_on_main = "failure"  # the run on main is red: nobody waits for it
+    world.check_runs = {MERGED: [{"name": "test", "status": "completed", "conclusion": "failure"}]}
+    assert _shipper(repo, world).ship("minor") == "v2.14.0"
+    assert any(c[:2] == ("git", "push") and c[-1] == "v2.14.0" for c in world.calls)
+    assert not any("/check-runs" in " ".join(c) for c in world.calls), "the checks on main are not even asked for"
+
+
+def test_a_merge_that_carries_another_tree_waits_for_the_checks_on_main(repo):
+    world = FakeWorld(repo)
+    world.merge_tree = "c" * 40  # main moved, or the merge came out differently
+    world.check_runs = {MERGED: [{"name": "test", "status": "completed", "conclusion": "failure"}]}
+    with pytest.raises(ShipStop, match="failing required checks on main: test"):
+        _shipper(repo, world).ship("minor")
+    assert not any(c[:2] == ("git", "push") and c[-1] == "v2.14.0" for c in world.calls)
+
+
+def test_an_unreadable_pull_request_ref_waits_for_the_checks_on_main(repo):
+    """No merge ref to compare with (the API will not say): waiting is the safe reading."""
+    world = FakeWorld(repo)
+    original = world.answer
+
+    def answer(argv):
+        if argv[:2] == ("gh", "api") and "/git/ref/pull/" in " ".join(argv):
+            return "", 1
+        return original(argv)
+
+    world.answer = answer
+    assert _shipper(repo, world).ship("minor") == "v2.14.0"
+    assert any("/check-runs" in " ".join(c) for c in world.calls)
 
 
 def test_a_tag_the_installed_copies_would_refuse_is_deleted_and_never_pushed(repo):

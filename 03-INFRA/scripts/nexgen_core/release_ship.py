@@ -240,17 +240,40 @@ class Shipper:
             required = {name for name in by_name if not any(ignored in name for ignored in IGNORED_CHECKS)}
         return self._required_verdict(by_name, required, "checks")
 
-    def _merge(self, number: int) -> str:
+    def _pull_request_tree(self, number: int) -> str | None:
+        """The tree GitHub built and tested for this pull request (`refs/pull/<n>/merge`), or None.
+
+        Asked before the merge: that ref is what the checks ran on, and it is
+        deleted when the pull request is merged.
+        """
+        ref = self.run(["gh", "api", f"repos/{{owner}}/{{repo}}/git/ref/pull/{number}/merge"], self.repo)
+        if ref.returncode != 0:
+            return None
+        sha = (_answer(ref.stdout) or {}).get("object", {}).get("sha")
+        if not sha:
+            return None
+        commit = self.run(["gh", "api", f"repos/{{owner}}/{{repo}}/commits/{sha}"], self.repo)
+        if commit.returncode != 0:
+            return None
+        return (_answer(commit.stdout) or {}).get("commit", {}).get("tree", {}).get("sha") or None
+
+    def _tree_of(self, revision: str) -> str:
+        """The tree one commit carries, as this checkout knows it."""
+        return self._do("git", "rev-parse", f"{revision}^{{tree}}")
+
+    def _merge(self, number: int) -> tuple[str, str | None]:
+        """Merge the pull request: the commit on main, and the tree its checks proved (or None)."""
         self._enter(f"checks on #{number}")
         head = self._do("git", "rev-parse", "HEAD")
         self._wait(lambda: self._checks_verdict(number, head), "the pull request checks")
+        tested = self._pull_request_tree(number)  # before the merge: that ref goes with it
         self._enter("merge")
         self._do("gh", "pr", "merge", str(number), "--merge", what="merge")
         self._do("git", "fetch", "origin", "main")
         merged = self._do("git", "rev-parse", "origin/main")
         if self.run(["git", "merge-base", "--is-ancestor", head, merged], self.repo).returncode != 0:
             raise ShipStop(self._step, f"origin/main {merged[:8]} does not contain the release commit {head[:8]}")
-        return merged
+        return merged, tested
 
     def _run_verdict(self, query: Sequence[str], branch: str = "") -> str | None:
         runs = json.loads(self._do(*query) or "[]")
@@ -269,7 +292,17 @@ class Shipper:
         """Every check GitHub reports for one commit, by name; empty when it cannot be read."""
         return commit_checks(self.repo, sha, self.run)
 
-    def _wait_main_ci(self, sha: str) -> None:
+    def _wait_main_ci(self, sha: str, tested_tree: str | None = None) -> None:
+        """Wait for the required checks on main, unless that commit carries the tree the checks proved.
+
+        GitHub tested the pull request's merge ref; `pr merge` creates that same
+        merge when main has not moved, so the checks carry over to the commit on
+        main and there is nothing left to wait for. A different tree means they do
+        not, and then the required checks on main are the only proof there is.
+        """
+        if tested_tree and self._tree_of(sha) == tested_tree:
+            self.log("   the merge carries the tree the checks passed: nothing to wait for on main")
+            return
         self._enter(f"CI on main {sha[:8]}")
         required = self._required_checks()
         if required:
@@ -375,10 +408,11 @@ class Shipper:
     def ship(self, bump: str, notes: str = "", install: bool = False) -> str:
         version = self._prepare(bump, notes)
         merged = self._merge_point()
+        tested: str | None = None
         if merged is None:
             number = self._open_pull_request(version)
-            merged = self._merge(number)
-        self._wait_main_ci(merged)
+            merged, tested = self._merge(number)
+        self._wait_main_ci(merged, tested)
         tag = self._tag(version, merged)
         self._wait_release(tag)
         self._sync_developer(merged)

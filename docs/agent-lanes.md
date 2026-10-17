@@ -34,7 +34,7 @@ It prints one `== step` line per step and ends with either `OK vX.Y.Z` or `STOP 
 3. **checks on the pull request**: waits for the checks `main`'s branch protection requires, read with `gh api .../branches/main/protection/required_status_checks`. A job nobody requires, `engine-tests-windows` among them, is reported by CI without holding the release; when the protection cannot be read, every check in the run counts as before.
    The `lane-guard` check is ignored here, because it rejects every push that does not come from a feature lane.
 4. **merge**: merges with a merge commit.
-5. **CI on main**: waits for the same required checks on the merge commit, or (when the protection cannot be read) for the whole `ci.yml` run.
+5. **CI on main**: waits for the same required checks on the merge commit, or (when the protection cannot be read) for the whole `ci.yml` run — unless the merge commit carries exactly the tree the pull request checks passed (`refs/pull/<n>/merge`), in which case those checks are the proof and there is no second CI to wait for.
 6. **tag**: creates the tag with `git tag -s`, signed by the key this machine's git is configured to use.
    Its annotation also carries the checks this release was verified against (`Required checks: …`), which `release.yml` reads back: its own token cannot read `main`'s branch protection.
    It then verifies the tag against the trust anchor of the installed copy (`trust/release-signers.txt`).
