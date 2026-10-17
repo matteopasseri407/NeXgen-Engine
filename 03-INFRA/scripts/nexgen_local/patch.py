@@ -274,7 +274,13 @@ def propose_patch(llm: LLM, cfg: LaneConfig, file_rel: str, instruction: str) ->
     data = path.read_bytes()
     if b"\x00" in data[:4096]:
         raise PatchError("file binario, non modificabile")
-    text = data.decode("utf-8", errors="replace")
+    try:
+        text = data.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise PatchError(
+            "il file non e' testo UTF-8 valido (es. una riga in cp1252): non si modifica. "
+            "Convertilo in UTF-8 e riprova."
+        ) from exc
     if len(text) > MAX_FILE_CHARS:
         raise PatchError(f"file troppo grande per una proposta ({len(text)} caratteri)")
 
@@ -401,7 +407,7 @@ def _restore_outcome(
             return state, _keep_original(before, spare)
     try:
         atomic_write_bytes(path, before)
-    except OSError:
+    except (OSError, ValueError, PatchError):
         return "failed", _keep_original(before, spare)
     return "restored", "not-needed"
 
@@ -422,13 +428,16 @@ def _refuse_apply(cfg: LaneConfig, proposal: Proposal, rc: str, reason: str) -> 
     raise PatchError(reason)
 
 
-def _approved_bytes_or_refuse(cfg: LaneConfig, path: Path, proposal: Proposal) -> bytes:
-    """The file's bytes, refusing when they are not the approved ones.
+def _approved_bytes_or_refuse(cfg: LaneConfig, path: Path, proposal: Proposal) -> tuple[bytes, Path]:
+    """The file's bytes and the spare path, refusing when they are not the
+    approved ones.
 
     A second apply on the same file can slip in between the approval check
     and this read: with bytes nobody approved, a rollback would erase that
     other change. The read itself is guarded too: a file that cannot be read
-    is refused before anything is applied.
+    is refused before anything is applied. The spare path is validated here,
+    before the pen moves, so a tampered proposal id cannot fail in the middle
+    of a restore.
     """
     try:
         before = path.read_bytes()
@@ -438,7 +447,7 @@ def _approved_bytes_or_refuse(cfg: LaneConfig, path: Path, proposal: Proposal) -
     if _hash_bytes(before) != proposal.original_hash:
         _refuse_apply(cfg, proposal, "stale",
                       "il file e' cambiato dopo l'approvazione: non applico, riprova la proposta")
-    return before
+    return before, _spare_path(cfg, proposal)
 
 
 def _applied_hash(path: Path) -> str | None:
@@ -455,7 +464,7 @@ def _applied_hash(path: Path) -> str | None:
 
 
 def _settle_mismatch(
-    cfg: LaneConfig, proposal: Proposal, path: Path, before: bytes, applied: str | None,
+    cfg: LaneConfig, proposal: Proposal, spare_path: Path, path: Path, before: bytes, applied: str | None,
 ) -> NoReturn:
     """The applied pen stroke does not match the proposal: put the file back.
 
@@ -467,7 +476,7 @@ def _settle_mismatch(
     """
     outcome, spare = "failed", "failed"
     try:
-        outcome, spare = _restore_outcome(path, before, applied, _spare_path(cfg, proposal))
+        outcome, spare = _restore_outcome(path, before, applied, spare_path)
     finally:
         try:
             audit_event(cfg, "apply_patch",
@@ -481,7 +490,7 @@ def _settle_mismatch(
     if spare in ("written", "exists"):
         raise PatchError(
             f"il file applicato non corrisponde alla proposta (ripristino: {outcome}); "
-            f"i byte originali sono in {_spare_path(cfg, proposal)}"
+            f"i byte originali sono in {spare_path}"
         )
     raise PatchError(
         f"il file applicato non corrisponde alla proposta (ripristino: {outcome}) e la copia "
@@ -500,7 +509,7 @@ def _run_apply(
                 ok=True, chars=len(proposal.patch))
 
     record_attempt(proposal, lambda: _save(cfg, proposal), PatchError)
-    before = _approved_bytes_or_refuse(cfg, path, proposal)  # a failed check puts these back
+    before, spare = _approved_bytes_or_refuse(cfg, path, proposal)
     with tempfile.NamedTemporaryFile("wb", suffix=".patch", delete=False) as handle:
         handle.write(proposal.patch.encode("utf-8"))
         patch_path = Path(handle.name)
@@ -516,7 +525,7 @@ def _run_apply(
         raise PatchError(f"git apply fallito: {output.strip()}")
     applied = _applied_hash(path)
     if applied != proposal.new_hash:
-        _settle_mismatch(cfg, proposal, path, before, applied)
+        _settle_mismatch(cfg, proposal, spare, path, before, applied)
 
     verify_output = ""
     verify_rc: int | None = None

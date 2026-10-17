@@ -492,3 +492,20 @@ def test_the_file_identity_is_the_raw_bytes_not_a_decoded_view(tmp_path):
     identity = patch_mod._hash_bytes(first.read_bytes())
     assert identity != patch_mod._hash_bytes(second.read_bytes())
     assert patch_mod._file_state(second, identity) == "changed"
+
+
+def test_a_file_that_is_not_valid_utf8_is_refused_at_the_proposal(tmp_path):
+    """Un file cp1252 con un byte non ASCII lontano dal punto da correggere
+    non e' testo UTF-8: l'identita' sui byte grezzi e il testo della proposta
+    non possono coincidere, quindi si rifiuta alla proposta invece di
+    applicare e poi disfare."""
+    repo = _git_repo(tmp_path)
+    original = "perch\xe8 un refuso contiente\n".encode("cp1252")
+    (repo / "notes.md").write_bytes(original)
+
+    cfg = _cfg(tmp_path, repo)
+    with pytest.raises(PatchError, match="UTF-8"):
+        propose_patch(PatchLLM({"old": "contiente", "new": "contiene", "why": "refuso"}),
+                      cfg, "notes.md", "correggi il refuso")
+
+    assert (repo / "notes.md").read_bytes() == original
