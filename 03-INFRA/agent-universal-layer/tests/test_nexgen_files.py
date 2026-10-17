@@ -34,6 +34,43 @@ def test_atomic_write_preserves_mode(tmp_path: Path):
     assert target.stat().st_mode & 0o777 == 0o600
 
 
+def test_atomic_write_over_a_read_only_target_survives_windows_refusals(tmp_path: Path, monkeypatch):
+    """Ricognizione 13: su Windows un file read-only non si sostituisce e non
+    si cancella; il temporaneo read-only restava orfano e mascherava l'errore
+    originale. Il rifiuto di Windows è simulato qui, così la prova gira anche
+    su Linux."""
+    import nexgen_core.files as files_mod
+
+    target = tmp_path / "cfg.json"
+    target.write_text("old", encoding="utf-8")
+    os.chmod(target, 0o444)
+
+    real_replace = os.replace
+    real_unlink = Path.unlink
+
+    def refusing_replace(src, dst):
+        for entry in (Path(src), Path(dst)):
+            if entry.exists() and not entry.stat().st_mode & 0o200:
+                raise PermissionError(13, "Access denied: read-only", str(entry))
+        return real_replace(src, dst)
+
+    def refusing_unlink(self, *args, **kwargs):
+        if self.exists() and not self.stat().st_mode & 0o200:
+            raise PermissionError(13, "Access denied: read-only", str(self))
+        return real_unlink(self, *args, **kwargs)
+
+    monkeypatch.setattr(files_mod.os, "replace", refusing_replace)
+    monkeypatch.setattr(Path, "unlink", refusing_unlink)
+    try:
+        files_mod.atomic_write_text(target, "new")
+    finally:
+        monkeypatch.setattr(Path, "unlink", real_unlink)
+
+    assert target.read_text(encoding="utf-8") == "new"
+    assert target.stat().st_mode & 0o200 == 0, "il file pubblicato resta read-only"
+    assert list(tmp_path.rglob("*.tmp*")) == [], "il temporaneo non deve restare orfano"
+
+
 def test_backup_names_reasons_and_skips_missing(tmp_path: Path):
     assert backup_file(tmp_path / "absent.json") is None
     target = tmp_path / "cfg.json"

@@ -95,12 +95,18 @@ def _atomic_publish(
     try:
         opened = os.fdopen(fd, "wb") if binary else os.fdopen(fd, "w", encoding="utf-8", newline=newline)
         with opened as handle:
-            if old_mode is not None:
-                os.chmod(tmp, old_mode)
             handle.write(payload)
             handle.flush()
             os.fsync(handle.fileno())
+        # Windows refuses to replace a read-only file and refuses to delete one:
+        # the write bit is cleared for the swap and the original mode is put
+        # back on the published file, so nothing read-only stays read-only by
+        # accident (the temporary stays writable until it is gone).
+        if old_mode is not None and not old_mode & 0o200:
+            os.chmod(path, old_mode | 0o200)
         _retry_permission_error(lambda: os.link(tmp, path) if exclusive else os.replace(tmp, path))
+        if old_mode is not None:
+            os.chmod(path, old_mode)
         # Some filesystems (and Windows) do not support directory fsync.
         with contextlib.suppress(OSError):
             dir_fd = os.open(path.parent, os.O_RDONLY)
