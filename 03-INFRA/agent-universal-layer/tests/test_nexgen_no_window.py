@@ -185,3 +185,28 @@ def test_the_relay_resolves_the_cli_shim_before_running(tmp_path, monkeypatch):
 
     assert asked == [["codex", "exec", "p"]], "l'argv deve passare dall'helper degli shim"
     assert launched and launched[0][:4] == ["cmd.exe", "/d", "/s", "/c"]
+
+
+def test_a_windows_shim_is_wrapped_and_a_plain_command_is_not(tmp_path, monkeypatch):
+    """La stessa regola, provata su ogni piattaforma: si sostituisce solo il
+    nome che l'helper legge dentro `nexgen_core.processes` (il modulo os vero
+    resta intatto, come vuole l'intestazione di questo file). Un .cmd passa da
+    cmd.exe, un comando normale resta quello che il chiamante ha chiesto,
+    cosi' la prova del fix vale anche nella CI Linux, dove i test
+    Windows-only vengono saltati."""
+    from types import SimpleNamespace
+
+    from nexgen_core import processes
+
+    monkeypatch.setattr(processes, "os", SimpleNamespace(name="nt"))
+    monkeypatch.setattr(
+        processes.shutil, "which",
+        lambda name: str(tmp_path / f"{name}.cmd") if name == "npx" else str(tmp_path / name),
+    )
+
+    wrapped = processes.windows_command_argv(["npx", "install"])
+    assert wrapped[:4] == ["cmd.exe", "/d", "/s", "/c"]
+    assert wrapped[4] == str(tmp_path / "npx.cmd")
+    assert wrapped[5:] == ["install"]
+
+    assert processes.windows_command_argv(["runner", "exec"]) == ["runner", "exec"]
