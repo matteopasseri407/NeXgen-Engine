@@ -304,3 +304,25 @@ def test_auto_chooses_without_a_seat_only_when_asked(monkeypatch):
     name, seat = proposal.resolve_seat(args, config={"seats": seats, "routing": {"enabled": False}})
     assert name == "local"
     assert seat["cli"] == "ollama"
+
+
+def test_the_council_refuses_even_if_the_menu_function_returns(monkeypatch):
+    """La garanzia che la revisione voleva vedere scritta: se la funzione del
+    menu tornasse invece di uscire, il Council non sceglie da solo. Il seat
+    resta vuoto e il controllo del seat sconosciuto ferma l'esecuzione,
+    mentre il ramo che sceglie non viene mai raggiunto (fallisce il test se
+    lo e')."""
+    from types import SimpleNamespace
+
+    import proposal
+
+    seats = {"local": {"cli": "ollama", "model": "synthetic:latest", "vendor": "local"}}
+    monkeypatch.setattr(proposal, "_require_human_single_selection", lambda *a: None)
+    monkeypatch.setattr(proposal, "_auto_select_best_seat",
+                        lambda *a: pytest.fail("senza --auto non si sceglie"))
+    args = SimpleNamespace(seat=None, auto=False, mode="challenge", strict=False, allow_degraded=False,
+                           routing_role=None, author_vendor=None, zero_retention=False)
+
+    with pytest.raises(SystemExit) as stopped:
+        proposal.resolve_seat(args, config={"seats": seats, "routing": {"enabled": False}})
+    assert "unknown seat" in str(stopped.value)
