@@ -239,9 +239,8 @@ def _changelog_between(engine_repo: Path, current: str, target: str) -> str:
 
 
 def _commits_before(engine_repo: Path, target: str) -> str:
-    """What a dev channel is about to carry: the commits, since there is no release note."""
-    listed = _git(engine_repo, "log", "--oneline", "--no-merges", "-n", "30", target)
-    return listed.stdout.strip() or "(no commits to show)"
+    """Kept for callers that show what a dev target carries; the git call lives in update_channel."""
+    return update_channel.commits_at(engine_repo, target)
 
 
 def _assert_clean(repo: Path, *, label: str) -> None:
@@ -415,7 +414,7 @@ def _roll_back(
     pin_file: Path | None,
     state_dir: Path,
     target: str,
-    current: str,
+    previous_label: str,
     unattended: bool,
 ) -> int:
     """Undoes an update that failed after the engine moved, and re-applies the old tree.
@@ -429,7 +428,7 @@ def _roll_back(
     a person who asked for it can decide to try again.
     """
     print(f"nexgen-update: ERROR: {exc}", file=sys.stderr)
-    print(f"The {'unattended ' if unattended else ''}update to {target} failed; going back to v{current}.", file=sys.stderr)
+    print(f"The {'unattended ' if unattended else ''}update to {target} failed; going back to {previous_label}.", file=sys.stderr)
     try:
         with host_mutation("nexgen-update-rollback", state_dir=state_dir, timeout=UPDATE_LOCK_WAIT_SECONDS):
             _git(exc.engine_repo, "merge", "--abort", check=False)
@@ -457,7 +456,7 @@ def _roll_back(
     if pin_file:
         try:
             _commit_split_pin(
-                pin_file=pin_file, target_head=exc.previous_head, target=f"v{current}",
+                pin_file=pin_file, target_head=exc.previous_head, target=previous_label,
                 data_repo=data_repo, entry=entry,
             )
         except UpdateError as pin_exc:
@@ -475,12 +474,12 @@ def _roll_back(
         print(f"nexgen-update: WARNING: {note}", file=sys.stderr)
     if unattended:
         print(
-            f"Rolled back to v{current}. Unattended updates will skip {target}; "
+            f"Rolled back to {previous_label}. Unattended updates will skip {target}; "
             f"review it and run 'nexgen-update --target {target.removeprefix('v')}' to try again.",
             file=sys.stderr,
         )
     else:
-        print(f"Rolled back to v{current}. Fix the failure above, then run 'nexgen-update' again.", file=sys.stderr)
+        print(f"Rolled back to {previous_label}. Fix the failure above, then run 'nexgen-update' again.", file=sys.stderr)
     return EXIT_ROLLED_BACK
 
 
@@ -598,6 +597,17 @@ def _report_post_merge_error(exc: PostMergeError, pin_file: Path | None) -> int:
     return 1
 
 
+def _came_from_label(current: str, previous_head: str, *, release: bool) -> str:
+    """Where a rollback goes back to: `vX.Y.Z` on stable, the short commit on dev.
+
+    `previous_label` (the parameter `_roll_back` takes) is this string: on a dev
+    channel a version number would name a release the machine was not running.
+    """
+    if release:
+        return f"v{current}"
+    return previous_head[:9] or current
+
+
 def _recover_failed_update(
     exc: PostMergeError,
     *,
@@ -607,11 +617,11 @@ def _recover_failed_update(
     pin_file: Path | None,
     state_dir: Path,
     target: str,
-    current: str,
+    previous_label: str,
 ) -> int:
     code = _roll_back(
         exc, entry=entry, data_repo=data_repo, pin_file=pin_file,
-        state_dir=state_dir, target=target, current=current, unattended=args.unattended,
+        state_dir=state_dir, target=target, previous_label=previous_label, unattended=args.unattended,
     )
     if args.unattended:
         return code
@@ -718,6 +728,12 @@ def _gate_on_signature(args: argparse.Namespace, target: update_channel.TargetPl
     )
 
 
+def _enforce_ceiling(args: argparse.Namespace, target: update_channel.TargetPlan, current: str, state_dir: Path) -> None:
+    """The ceiling caps an unattended RELEASE jump; a dev channel is a different, proved opt-in."""
+    if args.unattended and target.release:
+        _assert_within_unattended_ceiling(current, target.ref, _read_ceiling(state_dir))
+
+
 def _stop_if_settled(
     engine_repo: Path, current: str, target: update_channel.TargetPlan, args: argparse.Namespace, state_dir: Path,
 ) -> bool:
@@ -776,12 +792,7 @@ def main(
         if _stop_if_settled(engine_repo, current, target, args, state_dir):
             return 0
 
-        if args.unattended and target.release:
-            # The ceiling caps an unattended *release* jump: a person has not
-            # read the notes. A dev channel is a different opt-in, made
-            # deliberately and remembered, and its target is proved (signed, and
-            # for dev-verified green on both platforms) before it gets here.
-            _assert_within_unattended_ceiling(current, target.ref, _read_ceiling(state_dir))
+        _enforce_ceiling(args, target, current, state_dir)
         if args.unattended and _rolled_back_before(state_dir, target.ref):
             return 0
 
@@ -945,7 +956,8 @@ def main(
             )
             return _recover_failed_update(
                 interrupted, args=args, entry=entry, data_repo=data_repo, pin_file=pin_file,
-                state_dir=state_dir, target=target.label, current=current,
+                state_dir=state_dir, target=target.label,
+                previous_label=_came_from_label(current, previous_head, release=target.release),
             )
         if isinstance(exc, KeyboardInterrupt):
             print("nexgen-update: interrupted before anything was changed.", file=sys.stderr)

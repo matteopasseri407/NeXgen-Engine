@@ -117,6 +117,12 @@ def released_tags(engine_repo: Path) -> list[str]:
     ]
 
 
+def commits_at(engine_repo: Path, rev: str) -> str:
+    """The commits a dev target carries; there is no changelog section to read."""
+    listed = _git(engine_repo, "log", "--oneline", "--no-merges", "-n", "30", rev)
+    return listed.stdout.strip() or "(no commits to show)"
+
+
 def tag_version(engine_repo: Path, tag: str) -> str:
     """The VERSION a release tag carries, checked against the tag's own name and tree."""
     expected = tag.removeprefix("v")

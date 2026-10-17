@@ -301,6 +301,43 @@ def test_a_check_only_run_never_changes_the_remembered_channel(tmp_path):
 
 
 # --------------------------------------------------------------------------
+# The rollback guarantee holds on every channel.
+# --------------------------------------------------------------------------
+
+@pytest.mark.skipif(SSH_KEYGEN is None, reason="needs ssh-keygen")
+def test_a_failed_post_update_check_rolls_a_dev_update_back(tmp_path, monkeypatch, capsys):
+    """A dev machine comes back to the commit it ran, not to a version number."""
+    machine = _machine(tmp_path, tip_signed=True)
+    before = _head(machine.engine)
+    doctor_results = iter(((0, 0), (1, 1)))
+    monkeypatch.setattr(updater, "_doctor", lambda *_args, **_kwargs: next(doctor_results))
+
+    result = updater.main(["--yes", "--channel", "dev"], environ=_env(machine))
+
+    assert result == 1
+    assert _head(machine.engine) == before
+    assert (machine.engine / "VERSION").read_text(encoding="utf-8").strip() == "0.1.0"
+    error = capsys.readouterr().err
+    assert "introduced new failures: before=0, after=1" in error
+    assert f"Rolled back to {before[:9]}" in error
+
+
+@pytest.mark.skipif(SSH_KEYGEN is None, reason="needs ssh-keygen")
+def test_an_unattended_dev_failure_is_rolled_back_and_remembered(tmp_path, monkeypatch, capsys):
+    machine = _machine(tmp_path, tip_signed=True)
+    before = _head(machine.engine)
+    doctor_results = iter(((0, 0), (1, 1)))
+    monkeypatch.setattr(updater, "_doctor", lambda *_args, **_kwargs: next(doctor_results))
+
+    result = updater.main(["--unattended", "--channel", "dev"], environ=_env(machine))
+
+    assert result == updater.EXIT_ROLLED_BACK
+    assert _head(machine.engine) == before
+    assert uc.read_channel(machine.state) == "stable"  # the failed switch is not remembered
+    assert f"Rolled back to {before[:9]}" in capsys.readouterr().err
+
+
+# --------------------------------------------------------------------------
 # dev: the tip of developer, and only when it is signed by a pinned key.
 # --------------------------------------------------------------------------
 
