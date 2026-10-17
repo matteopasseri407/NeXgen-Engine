@@ -532,12 +532,13 @@ jobs:
     # shell/doctor tests are skipped by pytest markers; the Windows-specific
     # value is the direct agent_sync.py guard smoke in a sandboxed USERPROFILE.
     #
-    # Event gate (2026-10-17): this job answers on the nightly schedule, on
-    # workflow_dispatch, and on a pull request into main - never on a plain push.
-    # Daily work on developer does not wait for the scarcest runner; a release
-    # does, because Windows CI found a real bug the same day that neither the
-    # local machine nor the smoke could see. The Linux legs still judge every push.
-    if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule' || (github.event_name == 'pull_request' && github.base_ref == 'main')
+    # Event gate (2026-10-17): this job answers on workflow_dispatch and on a
+    # pull request into main - never on a plain push. Daily work on developer
+    # does not wait for the scarcest runner; a release does, because Windows CI
+    # found a real bug the same day that neither the local machine nor the smoke
+    # could see. The Linux legs still judge every push. The nightly Windows run
+    # lives in nightly-windows below, which checks out `developer`.
+    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.base_ref == 'main')
     runs-on: windows-latest
     # windows-latest is slow but not unbounded: a normal run is minutes. Cap
     # it so a Windows-only subprocess deadlock surfaces as a failed job with
@@ -556,6 +557,95 @@ jobs:
       - name: Engine regression suite and agent_sync.py smoke
         working-directory: 03-INFRA/agent-universal-layer/tests
         run: python -m pytest -v -n auto --dist loadgroup
+
+  nightly-linux:
+    # The Linux leg of the nightly. GitHub runs `schedule` only on a
+    # repository's default branch, so a nightly that judged the branch it
+    # actually cares about has to check `developer` out itself: without this,
+    # the schedule tested `main` every night and `dev-verified` could never
+    # find a commit. Same reason for nightly-windows below.
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: developer
+          fetch-depth: 0
+
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: "3.12"
+
+      - name: Install the engine's dependencies from this checkout
+        # The dependency list comes from the checkout (pyproject.toml), not from
+        # a second hand-kept list that drifts away from it.
+        run: pip install . pytest
+
+      - name: Engine regression suite on developer
+        working-directory: 03-INFRA/agent-universal-layer/tests
+        run: python3 -m pytest -q
+
+  nightly-windows:
+    # The Windows leg of the nightly, on `developer` (see nightly-linux).
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: windows-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: developer
+          fetch-depth: 0
+
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: "3.12"
+
+      - name: Install the engine's dependencies from this checkout
+        run: pip install . pytest
+
+      - name: Engine regression suite on developer
+        working-directory: 03-INFRA/agent-universal-layer/tests
+        run: python -m pytest -q
+
+  nightly-status:
+    # The one thing that opens `dev-verified`: a `nightly` commit status on the
+    # exact developer commit the two legs above ran on. A commit without this
+    # status is never installable, which is why the status is published here,
+    # after both legs, and not read from the run's event (a schedule run is
+    # always about the default branch, so its event proves nothing about
+    # developer).
+    if: always() && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
+    needs: [nightly-linux, nightly-windows]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      statuses: write
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: developer
+          fetch-depth: 1
+
+      - name: Publish the nightly status on the tested commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+          LINUX: ${{ needs.nightly-linux.result }}
+          WINDOWS: ${{ needs.nightly-windows.result }}
+        run: |
+          set -euo pipefail
+          sha="$(git rev-parse HEAD)"
+          if [ "$LINUX" = success ] && [ "$WINDOWS" = success ]; then
+            state=success
+            description="nightly green: linux and windows"
+          else
+            state=failure
+            description="nightly red: linux=$LINUX windows=$WINDOWS"
+          fi
+          gh api -X POST "repos/${GITHUB_REPOSITORY}/statuses/${sha}" \
+            -f state="$state" -f context=nightly -f description="$description"
+          echo "published nightly=$state on $sha"
 
   release-pending:
     # Warn-only, and deliberately so: it never fails a pull request and never

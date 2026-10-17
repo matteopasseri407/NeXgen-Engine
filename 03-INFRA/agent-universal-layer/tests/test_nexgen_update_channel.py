@@ -436,7 +436,7 @@ def test_dev_verified_takes_the_newest_signed_commit_with_a_green_nightly(tmp_pa
     unsigned = _git(machine.origin, "rev-parse", "developer").stdout.strip()
     # The newest nightly is green on an unsigned commit: the answer is the
     # newest SIGNED one the nightly covered, never the unsigned tip.
-    monkeypatch.setattr(uc, "green_nightly_shas", lambda **_kw: [unsigned, signed])
+    monkeypatch.setattr(uc, "nightly_verified_shas", lambda **_kw: [unsigned, signed])
 
     assert updater.main(["--yes", "--channel", "dev-verified"], environ=_env(machine)) == 0
 
@@ -447,7 +447,7 @@ def test_dev_verified_takes_the_newest_signed_commit_with_a_green_nightly(tmp_pa
 def test_dev_verified_never_installs_a_commit_without_a_green_nightly(tmp_path, monkeypatch, capsys):
     machine = _machine(tmp_path, tip_signed=True)
     before = _head(machine.engine)
-    monkeypatch.setattr(uc, "green_nightly_shas", lambda **_kw: [])
+    monkeypatch.setattr(uc, "nightly_verified_shas", lambda **_kw: [])
 
     result = updater.main(["--yes", "--channel", "dev-verified"], environ=_env(machine))
 
@@ -461,7 +461,7 @@ def test_dev_verified_refuses_a_green_nightly_whose_commit_is_not_signed(tmp_pat
     machine = _machine(tmp_path, tip_signed=True, extra_unsigned=True)
     unsigned = _git(machine.origin, "rev-parse", "developer").stdout.strip()
     before = _head(machine.engine)
-    monkeypatch.setattr(uc, "green_nightly_shas", lambda **_kw: [unsigned])
+    monkeypatch.setattr(uc, "nightly_verified_shas", lambda **_kw: [unsigned])
 
     result = updater.main(["--yes", "--channel", "dev-verified"], environ=_env(machine))
 
@@ -470,46 +470,50 @@ def test_dev_verified_refuses_a_green_nightly_whose_commit_is_not_signed(tmp_pat
 
 
 # --------------------------------------------------------------------------
-# The nightly lookup itself: schedule runs only, and both platforms in them.
+# The nightly proof: the `nightly` status the workflow publishes on the commit,
+# never the run's event (a schedule run is always about the default branch).
 # --------------------------------------------------------------------------
 
-def _runs(*entries: tuple[int, str, str, str]) -> dict:
-    return {
-        "workflow_runs": [
-            {"id": run_id, "head_sha": sha, "conclusion": conclusion, "event": event,
-             "head_branch": "developer"}
-            for run_id, sha, conclusion, event in entries
-        ]
-    }
+def _commits(*shas: str) -> dict:
+    return {"commits": [{"sha": sha} for sha in shas]}
 
 
-def _jobs(*labels: tuple[str, ...]) -> dict:
-    return {"jobs": [{"labels": list(label), "conclusion": "success"} for label in labels]}
+def _statuses(*entries: tuple[str, str]) -> dict:
+    return {"statuses": [{"context": context, "state": state} for context, state in entries]}
 
 
-def test_only_successful_schedule_runs_on_developer_are_candidates(monkeypatch):
+def test_only_commits_with_a_green_nightly_status_are_candidates(monkeypatch):
+    green, red, other = "a" * 40, "b" * 40, "c" * 40
     payloads = {
-        "repos/o/r/actions/workflows/ci.yml/runs?branch=developer&event=schedule&status=success&per_page=30":
-            _runs((1, "a" * 40, "success", "schedule"), (2, "b" * 40, "failure", "schedule"),
-                  (3, "c" * 40, "success", "push")),
-        "repos/o/r/actions/runs/1/jobs?per_page=100": _jobs(("ubuntu-latest",), ("windows-latest",)),
-        "repos/o/r/actions/runs/3/jobs?per_page=100": _jobs(("ubuntu-latest",), ("windows-latest",)),
+        "repos/o/r/commits?sha=developer&per_page=12": _commits(green, red, other),
+        f"repos/o/r/commits/{green}/status": _statuses(("nightly", "success")),
+        f"repos/o/r/commits/{red}/status": _statuses(("nightly", "failure")),
+        # A green status in ANOTHER context proves nothing about the nightly.
+        f"repos/o/r/commits/{other}/status": _statuses(("ci", "success")),
     }
     monkeypatch.setattr(uc, "_api_get", lambda path: payloads[path])
 
-    assert uc.green_nightly_shas("o/r") == ["a" * 40]
+    assert uc.nightly_verified_shas("o/r") == [green]
 
 
-def test_a_run_without_the_windows_leg_proves_nothing(monkeypatch):
-    """Windows and Linux, or the nightly did not judge what dev-verified claims."""
-    payloads = {
-        "repos/o/r/actions/workflows/ci.yml/runs?branch=developer&event=schedule&status=success&per_page=30":
-            _runs((1, "a" * 40, "success", "schedule")),
-        "repos/o/r/actions/runs/1/jobs?per_page=100": _jobs(("ubuntu-latest",)),
-    }
-    monkeypatch.setattr(uc, "_api_get", lambda path: payloads[path])
+def test_a_commit_with_no_status_at_all_is_never_a_candidate(monkeypatch):
+    """A rewritten history or a nightly that never ran leaves no status: no green, no candidate."""
+    monkeypatch.setattr(uc, "_api_get", lambda path: _commits("d" * 40) if "commits?" in path else _statuses())
 
-    assert uc.green_nightly_shas("o/r") == []
+    assert uc.nightly_verified_shas("o/r") == []
+
+
+def test_the_status_lookup_reads_the_commit_not_the_run_event(monkeypatch):
+    """The bug this replaces: schedule runs exist only on the default branch."""
+    seen: list[str] = []
+    monkeypatch.setattr(uc, "_api_get", lambda path: seen.append(path) or (
+        _commits("e" * 40) if "commits?" in path else _statuses(("nightly", "success"))
+    ))
+
+    assert uc.nightly_verified_shas("o/r") == ["e" * 40]
+    assert seen[0].startswith("repos/o/r/commits?sha=developer")
+    assert f"repos/o/r/commits/{'e' * 40}/status" == seen[1]
+    assert not any("actions/" in path for path in seen)
 
 
 def test_the_public_api_answers_when_gh_is_missing(monkeypatch):

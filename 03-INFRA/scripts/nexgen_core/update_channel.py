@@ -1,4 +1,4 @@
-"""Which NeXgen Engine a machine follows, and why a dev target is allowed.
+﻿"""Which NeXgen Engine a machine follows, and why a dev target is allowed.
 
 A stable machine follows released tags. A machine on `dev` follows the tip of
 `developer`, and a machine on `dev-verified` follows the newest signed commit
@@ -45,8 +45,7 @@ UNLOCKABLE = tuple(channel for channel in CHANNELS if channel != DEFAULT_CHANNEL
 DEVELOPER_BRANCH = "developer"
 #: The public repository whose Actions runs prove a dev-verified candidate.
 REPO_SLUG = "matteopasseri407/NeXgen-Engine"
-CI_WORKFLOW = "ci.yml"
-NIGHTLY_LIMIT = 30
+NIGHTLY_LIMIT = 12
 API_TIMEOUT_SECONDS = 20.0
 GIT_TIMEOUT_SECONDS = 120.0
 
@@ -323,40 +322,46 @@ def dev_verified_target(
     lookup=None,
     trust_dir: Path | None = None,
 ) -> ChannelTarget:
-    """The newest signed commit of `developer` a green nightly actually ran on.
+    """The newest signed commit of `developer` whose `nightly` status is green.
 
-    Walking the green runs newest first means an unsigned or rewritten tip is
+    Walking the green commits newest first means an unsigned or rewritten tip is
     skipped instead of blocking the channel: the machine lands on the newest
-    commit that is both signed and proved.
+    commit that is both signed and proved. There is no other door: a commit the
+    nightly did not run on has no status, and no status means no candidate.
     """
-    green = (green_nightly_shas() if lookup is None else lookup())
-    if not green:
+    verified = (nightly_verified_shas() if lookup is None else lookup())
+    if not verified:
         raise ChannelError(
-            f"no schedule run of {CI_WORKFLOW} on {DEVELOPER_BRANCH} has finished green on Windows and Linux; "
+            f"no commit of {DEVELOPER_BRANCH} carries a green 'nightly' status; "
             "dev-verified never installs a commit the nightly did not prove"
         )
     # The green commits come from the remote history; fetch it before judging them.
     developer_tip(engine_repo)
-    for rev in green:
+    for rev in verified:
         present = _git(engine_repo, "cat-file", "-e", f"{rev}^{{commit}}")
         if present.returncode != 0:
             continue  # rewritten away, or older than this clone's history
         try:
             return _signed_target(
                 engine_repo, rev, channel="dev-verified",
-                detail="green nightly on Windows and Linux", trust_dir=trust_dir,
+                detail="nightly green on Windows and Linux", trust_dir=trust_dir,
             )
         except ChannelRefused:  # nexgen: allow reason="a candidate the pinned keys refuse is skipped for the next green one, never installed"
             continue
     raise ChannelError(
-        "no commit in the recent green nightlies of "
-        f"{DEVELOPER_BRANCH} is signed by a pinned key; dev-verified has no candidate"
+        f"no commit carrying a green 'nightly' status on {DEVELOPER_BRANCH} is signed by a pinned key; "
+        "dev-verified has no candidate"
     )
 
 
 # --------------------------------------------------------------------------
-# The public API of the nightly proof: schedule runs, green, both platforms.
+# The public API of the nightly proof: a `nightly` status on the commit itself.
 # --------------------------------------------------------------------------
+
+#: The commit status the nightly workflow publishes, after both legs, on the
+#: commit of `developer` it tested (see .github/workflows/ci.yml).
+NIGHTLY_CONTEXT = "nightly"
+
 
 def _parse_json(text: str) -> dict:
     try:
@@ -397,53 +402,46 @@ def _api_get(path: str) -> dict:
     return _https_api(path)
 
 
-#: Runner labels that mean "this job ran on Windows" / "... on Linux".
-_WINDOWS_LABELS = ("windows",)
-_LINUX_LABELS = ("ubuntu", "linux")
+def nightly_state(slug: str, sha: str) -> str:
+    """The state the nightly published for this commit: success, failure, pending, error, or ''.
+
+    Only the `nightly` context counts. GitHub's own "Verified" badge is never
+    consulted anywhere in this module: a dev commit is trusted because the
+    install's pinned keys signed it, and proved because the nightly that ran
+    Windows and Linux published a green status on it.
+    """
+    payload = _api_get(f"repos/{slug}/commits/{sha}/status")
+    statuses = payload.get("statuses")
+    for status in statuses if isinstance(statuses, list) else []:
+        if isinstance(status, dict) and status.get("context") == NIGHTLY_CONTEXT:
+            return str(status.get("state") or "")
+    return ""
 
 
-def _platforms(jobs_payload: dict) -> set[str]:
-    """Which platforms the jobs of one run covered, counting only green jobs."""
-    found: set[str] = set()
-    for job in jobs_payload.get("jobs", []):
-        if job.get("conclusion") != "success":
-            continue
-        labels = " ".join(str(label).lower() for label in job.get("labels", []))
-        if any(token in labels for token in _WINDOWS_LABELS):
-            found.add("windows")
-        if any(token in labels for token in _LINUX_LABELS):
-            found.add("linux")
-    return found
-
-
-def green_nightly_shas(
+def nightly_verified_shas(
     slug: str = REPO_SLUG,
     *,
     branch: str = DEVELOPER_BRANCH,
     limit: int = NIGHTLY_LIMIT,
 ) -> list[str]:
-    """Head commits of recent successful schedule runs, newest first.
+    """Commits of `branch` with a green `nightly` status, newest first.
 
-    "Successful" is not enough on its own: a run that skipped the Windows leg
-    would prove half of what dev-verified claims, so the jobs of each run are
-    read back and only the runs that really covered Windows and Linux count.
+    The status, not the run: GitHub runs `schedule` only on the default branch,
+    so reading the event would report `main` every night while the branch a
+    machine follows stayed unproved. One status read per candidate commit, and
+    the list is capped by `limit`: this runs from a machine's update cycle, and
+    an API budget spent walking history is a budget spent for nothing.
     """
-    runs = _api_get(
-        f"repos/{slug}/actions/workflows/{CI_WORKFLOW}/runs"
-        f"?branch={branch}&event=schedule&status=success&per_page={limit}"
-    )
-    shas: list[str] = []
-    for run in runs.get("workflow_runs", []):
-        if run.get("event") != "schedule" or run.get("conclusion") != "success":
-            continue
-        run_id = run.get("id")
-        sha = run.get("head_sha")
-        if not run_id or not sha:
-            continue
-        platforms = _platforms(_api_get(f"repos/{slug}/actions/runs/{run_id}/jobs?per_page=100"))
-        if {"windows", "linux"} <= platforms:
-            shas.append(str(sha))
-    return shas
+    listed = _api_get(f"repos/{slug}/commits?sha={branch}&per_page={limit}")
+    commits = listed.get("commits")
+    if not isinstance(commits, list):
+        raise ChannelError("the GitHub API answered without a commit list")
+    verified: list[str] = []
+    for entry in commits:
+        sha = entry.get("sha") if isinstance(entry, dict) else None
+        if sha and nightly_state(slug, str(sha)) == "success":
+            verified.append(str(sha))
+    return verified
 
 
 def version_footer(state_dir: Path | None = None) -> str:

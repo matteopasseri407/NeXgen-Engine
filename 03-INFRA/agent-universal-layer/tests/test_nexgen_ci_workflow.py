@@ -47,12 +47,51 @@ def test_the_windows_leg_answers_nightly_on_demand_and_on_a_release_pull_request
     job = doc["jobs"]["engine-tests-windows"]
     gate = job["if"]
     assert "workflow_dispatch" in gate
-    assert "schedule" in gate
+    # The nightly door exists, and this leg is not the one that walks through it:
+    # nightly-windows does, on `developer` (see the test below).
+    assert "schedule" not in gate
     # Positive form only: an expression that merely excludes push would silently
     # start running a Windows leg on a future event.
     assert "push" not in gate
     assert "github.event_name == 'pull_request' && github.base_ref == 'main'" in gate
     assert "-n auto" in job["steps"][-1]["run"]
+
+
+def test_the_nightly_runs_on_developer_and_publishes_a_status_on_the_commit():
+    """GitHub runs `schedule` only on the default branch (2026-10-17).
+
+    A nightly that never checked out `developer` proved nothing about the branch
+    dev-verified follows, and a dev-verified that read the run's event would
+    look for a schedule run on a branch that can never have one. Both halves are
+    pinned here: the checkout, and the `nightly` status the commit carries.
+    """
+    doc = workflow()
+    jobs = doc["jobs"]
+    legs = ["nightly-linux", "nightly-windows"]
+    for name in legs:
+        job = jobs[name]
+        gate = job["if"]
+        assert "schedule" in gate and "workflow_dispatch" in gate
+        checkout = next(s for s in job["steps"] if "actions/checkout" in s.get("uses", ""))
+        assert checkout["with"]["ref"] == "developer", name
+
+    status = jobs["nightly-status"]
+    assert set(status["needs"]) == set(legs)
+    assert status["permissions"]["statuses"] == "write"
+    assert "always()" in status["if"]
+    step = next(s for s in status["steps"] if "statuses/" in s.get("run", ""))
+    # The status goes on the commit under test, in the context dev-verified reads.
+    assert "gh api -X POST" in step["run"] and "context=nightly" in step["run"]
+    assert '"$LINUX" = success' in step["run"] and '"$WINDOWS" = success' in step["run"]
+
+
+def test_the_windows_leg_no_longer_duplicates_the_scheduled_run():
+    """The nightly has its own Windows leg on developer; this one is for releases and dispatch."""
+    doc = workflow()
+    gate = doc["jobs"]["engine-tests-windows"]["if"]
+    assert "schedule" not in gate
+    assert "workflow_dispatch" in gate
+    assert "github.event_name == 'pull_request' && github.base_ref == 'main'" in gate
 
 
 def test_smoke_linux_runs_the_real_smoke_on_every_push():
