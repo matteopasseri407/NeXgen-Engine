@@ -200,7 +200,9 @@ class GuardRunner:
             if target.is_symlink() and target.resolve() == canon.resolve():
                 return False, None
             target.parent.mkdir(parents=True, exist_ok=True)
-            if target.exists() or target.is_symlink():
+            # A folded copy identical to the canon is aligned: no backup, no rewrite.
+            same_copy = target.is_file() and not target.is_symlink() and target.read_bytes() == canon.read_bytes()
+            if (target.exists() or target.is_symlink()) and not same_copy:
                 # A real copy may contain hand-written lines. If the safety
                 # copy itself fails, stop here: unlinking anyway would destroy
                 # the only copy of those lines.
@@ -210,23 +212,22 @@ class GuardRunner:
                     try:
                         backup_file(target, tag="instructions")
                     except OSError as exc:
-                        return False, (WARN + t(
+                        return False, WARN + t(
                             "instruction pointer {path} left untouched: safety backup failed ({error})",
-                            path=target, error=exc,
-                        ))
+                            path=target, error=exc)
             try:
                 from nexgen_core.files import publish_symlink
 
                 publish_symlink(target, canon)
             except OSError:
+                if same_copy:
+                    return False, None
                 # Windows without symlink privileges: a copy beats nothing.
                 # publish_symlink never leaves the target missing, so a copy
                 # fallback only runs when the atomic path failed.
                 if target.is_dir() and not target.is_symlink():
-                    return False, (WARN + t(
-                        "instruction pointer {path} is a directory, left untouched",
-                        path=target,
-                    ))
+                    return False, WARN + t("instruction pointer {path} is a directory, left untouched",
+                                           path=target)
                 try:
                     if target.is_symlink() or target.is_file():
                         target.unlink()
@@ -235,9 +236,8 @@ class GuardRunner:
                 shutil.copy2(canon, target)
             return True, None
         except OSError as exc:
-            return False, (WARN + t(
-                "instruction pointer {path} not aligned ({error})", path=target, error=exc,
-            ))
+            return False, WARN + t("instruction pointer {path} not aligned ({error})",
+                                   path=target, error=exc)
 
     def _align_opencode_instructions(self, canon: Path) -> str | None:
         """Points OpenCode V2 at the canonical file through the scope file it

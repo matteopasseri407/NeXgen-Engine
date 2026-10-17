@@ -341,3 +341,30 @@ def test_claude_md_symlink_survives_the_pointer_being_rewritten(tmp_path, monkey
 
     assert (home / "CLAUDE.md").is_symlink()
     assert dotfiles.read_text(encoding="utf-8").startswith("# Claude compatibility pointer")
+
+
+def test_an_identical_copy_is_not_backed_up_again_every_cycle(tmp_path, monkeypatch):
+    """Ricognizione 18: con il symlink ripiegato su copia (Windows senza
+    Developer Mode) ogni ciclo faceva un backup e ricopiava. Se la copia è
+    già identica alla sorgente non serve né l'uno né l'altra."""
+    from nexgen_core import files
+
+    vault = tmp_path / "vault"
+    canon = vault / "03-INFRA" / "agent-universal-layer" / "instructions" / "AGENTS.md"
+    canon.parent.mkdir(parents=True)
+    canon.write_text("# canon\n", encoding="utf-8")
+    home = tmp_path / "home"
+    home.mkdir()
+    target = home / "CLAUDE.md"
+    target.write_text("# canon\n", encoding="utf-8")
+    backups: list = []
+    monkeypatch.setattr(files, "backup_file", lambda *a, **kw: backups.append(a) or None)
+    monkeypatch.setattr(files, "publish_symlink",
+                        lambda *_: (_ for _ in ()).throw(OSError("nessun privilegio di symlink")))
+    runner = GuardRunner(vault_data=vault, home=home)
+
+    changed, warning = runner._link_to_canonical(target, canon)
+
+    assert (changed, warning) == (False, None)
+    assert backups == [], "una copia identica non va salvata di nuovo"
+    assert target.read_text(encoding="utf-8") == "# canon\n"
