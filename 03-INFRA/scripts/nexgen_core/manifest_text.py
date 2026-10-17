@@ -13,8 +13,11 @@ def entry_span(text: str, name: str) -> tuple[int, int] | None:
 
     Manifest entries are two-space-indented maps with deeper-indented bodies; the block runs until a blank line,
     a less-indented line, or the next entry. Anything outside the block (comments, other entries) is never touched.
+    The key may be quoted -- `"name":`, as json.dumps writes it and as a stub or a name YAML has to quote does:
+    a quoted key is the same entry, not a missing one.
     """
-    match = re.search(rf"^  {re.escape(name)}:\s*\n", text, re.MULTILINE)
+    key = rf"(?:{re.escape(name)}|\"{re.escape(name)}\"|'{re.escape(name)}')"
+    match = re.search(rf"^  {key}:\s*\n", text, re.MULTILINE)
     if not match:
         return None
     end = match.end()
