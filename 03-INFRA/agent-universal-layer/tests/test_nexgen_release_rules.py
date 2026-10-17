@@ -480,3 +480,21 @@ def test_a_green_push_run_never_stands_in_for_the_pull_requests_own_run():
     later_red = {**push, "conclusion": "FAILURE", "startedAt": "2026-10-17T19:05:00Z"}
     for order in ([push, later_red], [later_red, push]):
         assert verdict(by_name(order), {"engine-tests"}) == ("failed", ["engine-tests"])
+
+
+def test_reading_a_commits_checks_is_a_get_not_a_post():
+    """`gh api -F` sends a POST; the check-runs endpoint answers it with 404, and every
+    required check of v2.16.1 and v2.16.2 read as "not reported" in the release workflow."""
+    from nexgen_core.release_checks import commit_checks
+
+    seen: list[list[str]] = []
+
+    def run(argv, cwd):
+        seen.append(list(argv))
+        body = json.dumps({"check_runs": [{"name": "engine-tests", "status": "completed", "conclusion": "success"}]})
+        return subprocess.CompletedProcess(argv, 0, body, "")
+
+    assert set(commit_checks(Path("."), "abc", run)) == {"engine-tests"}
+    argv = seen[0]
+    assert not any(flag in argv for flag in ("-F", "-f", "--field", "--raw-field", "-X", "--method"))
+    assert argv[2].endswith("/check-runs?per_page=100")
