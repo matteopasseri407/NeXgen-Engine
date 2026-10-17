@@ -52,6 +52,11 @@ from nexgen_core.release_install import Installer, InstallProblem  # noqa: E402
 #: release: the lane guard rejects pushes that do not come from a feature lane.
 IGNORED_CHECKS = ("lane-guard",)
 
+#: The name this machine's own smoke is published under: `smoke-windows` on the
+#: Windows desktop (what the release flow calls it), and a name that cannot
+#: shadow a CI job's check anywhere else.
+SMOKE_CONTEXT = "smoke-windows" if sys.platform == "win32" else "smoke-local"
+
 _PENDING = {"QUEUED", "IN_PROGRESS", "PENDING", "WAITING", "REQUESTED", "EXPECTED"}
 _GREEN = {"SUCCESS", "SKIPPED", "NEUTRAL"}
 
@@ -261,10 +266,38 @@ class Shipper:
         """The tree one commit carries, as this checkout knows it."""
         return self._do("git", "rev-parse", f"{revision}^{{tree}}")
 
+    def _publish_status(self, sha: str, state: str, description: str) -> None:
+        """One commit status on the pull request head: how this machine's own proof went."""
+        self._do("gh", "api", f"repos/{{owner}}/{{repo}}/statuses/{sha}", "--method", "POST",
+                 "-f", f"state={state}", "-f", f"context={SMOKE_CONTEXT}", "-f", f"description={description}",
+                 what="publishing this machine's smoke status")
+
+    def _smoke_status(self, sha: str) -> None:
+        """The real smoke of the candidate checkout, run here and recorded on the pull request.
+
+        The checks on GitHub know nothing about this machine's vault, launchers and
+        CLIs: the smoke is the proof they cannot give, so it runs while they run and
+        its verdict is published as a commit status. A failure is published too, and
+        nothing is merged.
+        """
+        self._enter("smoke on this machine")
+        script = self.repo / "03-INFRA" / "scripts" / "smoke.py"
+        started = time.monotonic()
+        smoke = self.run([sys.executable, str(script)], self.repo)
+        spent = int(time.monotonic() - started)
+        passed = smoke.returncode == 0
+        self._publish_status(sha, "success" if passed else "failure",
+                             f"{'passed' if passed else 'failed'} in {spent}s on this machine")
+        if not passed:
+            last = (smoke.stdout or smoke.stderr).strip().splitlines()
+            raise ShipStop(self._step, f"the smoke on this machine failed ({last[-1] if last else smoke.returncode}); "
+                                       f"it is on the pull request as `{SMOKE_CONTEXT}`, and nothing was merged")
+
     def _merge(self, number: int) -> tuple[str, str | None]:
         """Merge the pull request: the commit on main, and the tree its checks proved (or None)."""
         self._enter(f"checks on #{number}")
         head = self._do("git", "rev-parse", "HEAD")
+        self._smoke_status(head)  # this machine's proof, while the checks run on GitHub
         self._wait(lambda: self._checks_verdict(number, head), "the pull request checks")
         tested = self._pull_request_tree(number)  # before the merge: that ref goes with it
         self._enter("merge")

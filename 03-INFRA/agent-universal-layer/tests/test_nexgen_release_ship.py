@@ -44,6 +44,7 @@ class FakeWorld:
         self.check_runs: dict[str, list[dict]] = {}
         self.ci_on_main = "success"
         self.smoke_fails = False
+        self.installed_smoke_fails = False
         #: Where a successful `nexgen update` writes the version it installed.
         self.install_root: Path | None = None
         #: What the updater reports and refuses with, word for word.
@@ -61,6 +62,8 @@ class FakeWorld:
         self.tested_tree = "a" * 40
         self.merge_tree = "a" * 40
         self.pull_request_sha = "d" * 40
+        #: Every commit status ship published, as the argv it published it with.
+        self.statuses: list[tuple[str, ...]] = []
 
     def __call__(self, argv, cwd):
         argv = tuple(str(a) for a in argv)
@@ -97,11 +100,16 @@ class FakeWorld:
         if argv[:2] == ("git", "push") and argv[-1].startswith("v"):
             self.shipping_tag = argv[-1]
         if argv[-1].endswith("smoke.py"):
-            return ("SMOKE FAILED (1)", 1) if self.smoke_fails else ("SMOKE OK (12s)", 0)
+            installed = self.install_root is not None and str(self.install_root) in argv[-1]
+            failing = self.installed_smoke_fails if installed else self.smoke_fails
+            return ("SMOKE FAILED (1)", 1) if failing else ("SMOKE OK (12s)", 0)
         if argv[:2] == ("nexgen", "update"):
             return self._update(argv)
         if argv[:2] == ("git", "-C") and "status" in argv:
             return ("?? notes.md\n" if self.data_dirty else ""), 0
+        if argv[:2] == ("gh", "api") and "/statuses/" in " ".join(argv):
+            self.statuses.append(argv)
+            return "", 0
         if argv[:2] == ("gh", "api"):
             url = next(arg for arg in argv[2:] if arg.startswith("repos/"))
             return self.api(url), 0
@@ -274,7 +282,7 @@ def test_an_unreadable_protection_falls_back_to_every_check(repo):
     original = world.answer
 
     def answer(argv):
-        if argv[:2] == ("gh", "api"):
+        if argv[:2] == ("gh", "api") and "statuses/" not in " ".join(argv):
             return "", 1
         return original(argv)
 
@@ -305,6 +313,30 @@ def test_a_red_required_check_on_main_stops_before_the_tag(repo):
     with pytest.raises(ShipStop, match="failing required checks on main: test"):
         _shipper(repo, world).ship("minor")
     assert not any(c[:2] == ("git", "push") and c[-1] == "v2.14.0" for c in world.calls)
+
+
+def test_the_local_smoke_is_recorded_on_the_pull_request_before_the_merge(repo):
+    """The checks on GitHub know nothing about this machine; the smoke is the proof they
+    cannot give, run while they run and published on the pull request's head."""
+    world = FakeWorld(repo)
+    assert _shipper(repo, world).ship("minor") == "v2.14.0"
+    smoke = [call for call in world.calls if call[-1].endswith("smoke.py")]
+    assert smoke and str(repo / "03-INFRA" / "scripts" / "smoke.py") in smoke[0]
+    assert smoke[0][0] == sys.executable
+    published = world.statuses[0]
+    assert f"repos/{{owner}}/{{repo}}/statuses/{RELEASE_HEAD}" in published
+    assert "state=success" in published and "context=smoke-windows" in published
+    assert any(arg.startswith("description=passed in ") and arg.endswith("s on this machine") for arg in published)
+    assert world.calls.index(smoke[0]) < world.calls.index(next(c for c in world.calls if c[:3] == ("gh", "pr", "merge")))
+
+
+def test_a_failing_local_smoke_is_recorded_and_nothing_is_merged(repo):
+    world = FakeWorld(repo)
+    world.smoke_fails = True
+    with pytest.raises(ShipStop, match="smoke on this machine failed"):
+        _shipper(repo, world).ship("minor")
+    assert "state=failure" in world.statuses[0]
+    assert not any(c[:3] == ("gh", "pr", "merge") for c in world.calls)
 
 
 def test_the_merge_that_carries_the_tested_tree_skips_the_wait_on_main(repo):
@@ -405,9 +437,8 @@ def test_the_install_runs_the_installed_engines_own_smoke(repo):
     shipper = _shipper(repo, world)
     shipper.engine_root = installed / "03-INFRA"
     assert shipper.ship("minor", install=True) == "v2.14.0"
-    smoke = [call for call in world.calls if call[-1].endswith("smoke.py")]
-    assert smoke, "the installed smoke must run"
-    assert smoke[0][-1] == str(installed / "03-INFRA" / "scripts" / "smoke.py")
+    smoke = [call for call in world.calls if call[-1] == str(installed / "03-INFRA" / "scripts" / "smoke.py")]
+    assert smoke, "the installed engine's own smoke must run"
     assert Path(smoke[0][0]).name.lower().startswith(("python", "py"))
 
 
@@ -423,7 +454,7 @@ def test_an_installed_engine_without_a_smoke_cannot_be_called_proved(repo):
 
 def test_a_failed_smoke_puts_the_previous_version_back_and_stops(repo, tmp_path):
     world = FakeWorld(repo)
-    world.smoke_fails = True
+    world.installed_smoke_fails = True
     installed = installed_engine(repo, "2.13.0")
     world.install_root = installed
     shipper = _shipper(repo, world, install_log=tmp_path / "install.log")
@@ -436,7 +467,7 @@ def test_a_failed_smoke_puts_the_previous_version_back_and_stops(repo, tmp_path)
 
 def test_a_rollback_that_does_not_finish_says_what_to_run_by_hand(repo, tmp_path):
     world = FakeWorld(repo)
-    world.smoke_fails = True
+    world.installed_smoke_fails = True
     installed = installed_engine(repo, "2.13.0")
     world.install_root = installed
     original = world.answer

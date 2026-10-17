@@ -31,7 +31,8 @@ It prints one `== step` line per step and ends with either `OK vX.Y.Z` or `STOP 
    The bump is skipped when `VERSION` is already ahead of the newest tag.
 2. **pull request**: opens the `developer` to `main` pull request, or reuses the open one.
    No pull request is opened when it would change no file: if `main` already carries the branch's tree (what `sync-developer` leaves behind) the release goes straight to the checks and the tag.
-3. **checks on the pull request**: waits for the checks `main`'s branch protection requires, read with `gh api .../branches/main/protection/required_status_checks`. A job nobody requires, `engine-tests-windows` among them, is reported by CI without holding the release; when the protection cannot be read, every check in the run counts as before.
+3. **smoke here, and checks on the pull request**: this machine's own smoke (`03-INFRA/scripts/smoke.py` of the candidate checkout) runs while GitHub runs the checks, and its verdict is published on the pull request's head as the `smoke-windows` status (the duration in the description); a failure is published too, and nothing is merged.
+   Then it waits for the checks `main`'s branch protection requires, read with `gh api .../branches/main/protection/required_status_checks`. A job nobody requires, `engine-tests-windows` among them, is reported by CI without holding the release; when the protection cannot be read, every check in the run counts as before.
    The `lane-guard` check is ignored here, because it rejects every push that does not come from a feature lane.
 4. **merge**: merges with a merge commit.
 5. **CI on main**: waits for the same required checks on the merge commit, or (when the protection cannot be read) for the whole `ci.yml` run — unless the merge commit carries exactly the tree the pull request checks passed (`refs/pull/<n>/merge`), in which case those checks are the proof and there is no second CI to wait for.
