@@ -137,7 +137,7 @@ def cmd_ci(args: argparse.Namespace) -> int:
     base = pushed_before or fork_point(root, base_ref, head) or resolve_base(root)
     release = (pull_request and args.head_ref == "developer" and args.base_ref == "main") or \
         (not pull_request and args.head_ref == "main")
-    out = gates.run(root, load(root, base), base, head, need_review=not release)
+    out = gates.run(root, load(root, base), base, head, need_review=not release, release=release)
     print(gates.render(out))
     return 0 if out.ok else 1
 

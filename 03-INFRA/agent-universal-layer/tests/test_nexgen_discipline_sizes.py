@@ -24,6 +24,21 @@ def test_existing_oversized_file_may_exist_but_not_grow(repo):
     assert run(repo, base) == []
 
 
+def test_a_release_does_not_re_judge_growth_its_pushes_already_judged(repo):
+    """The release diff spans every push since the last release; the size
+    ratchet judged each of them already, so the release refuses only what a
+    release must (shell, swallowed errors), not the accumulated growth."""
+    repo.write("big.py", BIG)
+    base = repo.commit("legacy")
+    repo.write("big.py", BIG + "y = 2\n")
+    repo.write("deploy.sh", "echo step\n" * 60)
+    release = gates.run(repo.path, Config(), base, None, need_review=False, release=True)
+    assert not any("grew from 600" in str(v) for v in release.violations)
+    assert any("deploy.sh" in str(v) for v in release.violations)
+    push = gates.run(repo.path, Config(), base, None, need_review=False)
+    assert any("grew from 600" in str(v) for v in push.violations)
+
+
 def test_shrinking_an_oversized_file_passes(repo):
     repo.write("big.py", BIG)
     base = repo.commit("legacy")

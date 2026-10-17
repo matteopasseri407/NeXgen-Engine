@@ -34,9 +34,21 @@ def static_checks(changed: list[Change], cfg: Config) -> list[Violation]:
             + check_test_integrity(changed, cfg) + check_swallowed(changed, cfg))
 
 
-def run(root: Path, cfg: Config, base: str, head: str | None, need_review: bool) -> Outcome:
+def release_checks(changed: list[Change], cfg: Config) -> list[Violation]:
+    """What a release still judges: the shape of the code it ships.
+
+    The size and test-integrity ratchets judge each change once, at the push
+    that brings it in. A release diff spans every push since the last release,
+    including growth from before the gate existed, so re-judging it there only
+    blocks the release without protecting anything a push did not already check.
+    """
+    return check_shell(changed, cfg) + check_swallowed(changed, cfg)
+
+
+def run(root: Path, cfg: Config, base: str, head: str | None, need_review: bool,
+        release: bool = False) -> Outcome:
     changed = own_changes(root, base, head)
-    out = Outcome(violations=static_checks(changed, cfg))
+    out = Outcome(violations=(release_checks if release else static_checks)(changed, cfg))
     out.complex, out.score, out.reasons = is_complex(changed, cfg)
     out.gated = need_review
     if need_review and head != STAGED:  # per-commit proof needs committed work; a release PR is static-only
