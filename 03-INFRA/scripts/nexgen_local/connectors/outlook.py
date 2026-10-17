@@ -107,21 +107,40 @@ def refresh_tokens(tokens: dict[str, Any], http: HttpFn | None = None) -> dict[s
 
 def access_token(http: HttpFn | None = None) -> str:
     """A valid access token, or NeedsLogin. Never opens a browser."""
+    from nexgen_core.lock import HostLock, LockTimeoutError
+
     if not client_id():
         raise NeedsLogin("(outlook non configurato: serve la registrazione app in Azure + login una tantum)")
-    tokens = load_tokens()
-    if not tokens:
-        raise NeedsLogin("(outlook non configurato: nessun token su questa macchina, serve il login una tantum)")
-    access = str(tokens.get("access_token") or "")
-    expires_at = int(tokens.get("expires_at") or 0)
-    if access and expires_at > int(time.time()) + 60:
-        return access
     try:
-        return str(refresh_tokens(tokens, http)["access_token"])
+        # One refresh at a time. Microsoft rotates the refresh token, so two
+        # processes refreshing together make the provider answer invalid_grant
+        # to the second one and that person stays out until a manual login.
+        with HostLock(lock_path=token_file().with_suffix(".lock"), timeout=10, command_name="oauth-refresh"):
+            tokens = load_tokens()
+            if not tokens:
+                raise NeedsLogin("(outlook non configurato: nessun token su questa macchina, serve il login una tantum)")
+            access = str(tokens.get("access_token") or "")
+            expires_at = int(tokens.get("expires_at") or 0)
+            if access and expires_at > int(time.time()) + 60:
+                return access
+            # Re-read under the lock: another process may have refreshed already.
+            tokens = load_tokens() or tokens
+            access = str(tokens.get("access_token") or "")
+            expires_at = int(tokens.get("expires_at") or 0)
+            if access and expires_at > int(time.time()) + 60:
+                return access
+            try:
+                return str(refresh_tokens(tokens, http)["access_token"])
+            except AuthError:
+                raise
+            except Exception as exc:  # noqa: BLE001 - any refresh surprise is an auth failure
+                raise AuthError(f"(accesso non riuscito: {exc})") from exc
+    except NeedsLogin:
+        raise
     except AuthError:
         raise
-    except Exception as exc:  # noqa: BLE001 - any refresh surprise is an auth failure
-        raise AuthError(f"(accesso non riuscito: {exc})") from exc
+    except LockTimeoutError as exc:
+        raise AuthError("(accesso non riuscito: token occupato da un altro processo, riprova)") from exc
 
 
 # Trasporto Graph condiviso da READ e SEND: un solo punto per
