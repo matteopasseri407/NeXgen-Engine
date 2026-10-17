@@ -187,8 +187,14 @@ def parse_added_lines(diff_text: str, label_prefix: str) -> list[Unit]:
     units: list[Unit] = []
     cur_file = "?"
     ln = 0
+    # A "+++ " line is a file header only between files. Inside a hunk it is
+    # added content (an added line "++ ..." shows up as "+++ ..."), so the
+    # hunk state decides: "@@" opens a hunk, "diff " closes it.
+    in_hunk = False
     for raw in diff_text.splitlines():
-        if raw.startswith("+++ "):
+        if raw.startswith("diff "):
+            in_hunk = False
+        if raw.startswith("+++ ") and not in_hunk:
             cur_file = raw[4:].split("\t")[0]
             cur_file = cur_file.removeprefix("b/")
             if cur_file != "/dev/null":
@@ -198,10 +204,11 @@ def parse_added_lines(diff_text: str, label_prefix: str) -> list[Unit]:
                 units.append(Unit(f"{label} (filename)", 0, cur_file))
             continue
         if raw.startswith("@@"):
+            in_hunk = True
             m = re.search(r"\+(\d+)", raw)
             ln = int(m.group(1)) if m else 0
             continue
-        if raw.startswith("+") and not raw.startswith("+++"):
+        if raw.startswith("+"):
             label = f"{label_prefix}{cur_file}" if label_prefix else cur_file
             units.append(Unit(label, ln, raw[1:]))
             ln += 1

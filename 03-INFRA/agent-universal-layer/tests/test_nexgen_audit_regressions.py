@@ -394,6 +394,28 @@ def test_leak_scan_recognizes_the_keys_of_common_providers(provider, template):
     assert any(f.blocking for f in findings), f"{provider} slipped through in: {template}"
 
 
+def test_leak_scan_reads_an_added_line_that_starts_with_plus_signs():
+    """An added line whose content begins with '++' shows in the diff as
+    '+++...'. It is content, not a file header, so it must be scanned and
+    must advance the line counter (the finding has to name its true line)."""
+    leak_scan = _load_leak_scan()
+    patterns, allow = leak_scan.load_patterns(LEAK_DIR / "leak_patterns.yaml")
+    token = _synthetic_tokens()["anthropic"]
+    diff = (
+        "diff --git a/notes.env b/notes.env\n"
+        "new file mode 100644\n"
+        "--- /dev/null\n"
+        "+++ b/notes.env\n"
+        "@@ -0,0 +1,2 @@\n"
+        "+first line\n"
+        f"+++API_KEY={token}\n"
+    )
+    units = leak_scan.parse_added_lines(diff, "")
+    findings = leak_scan.scan_units(units, patterns, allow, [])
+    blocking = [f for f in findings if f.blocking]
+    assert [(f.label, f.lineno) for f in blocking] == [("notes.env", 2)]
+
+
 # --------------------------------------------------------------- whole cycle
 
 
