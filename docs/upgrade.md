@@ -38,6 +38,11 @@ cat VERSION                                                  # the version you'r
 If the latest tag is newer than your `VERSION` file, an upgrade is
 available.
 
+## Channels
+
+Development builds are for people who work on the engine itself; the default is `stable` (released tags of `main`).
+An installation that wants `dev` or `dev-verified` opens them in its own private config (`update.allow_channels` in `sync/remotes.yaml`) and remembers the choice afterwards with `nexgen update --channel dev`, which keeps only signed commits and, for `dev-verified`, only commits a nightly run proved.
+
 ## Startup notice (one prompt per day, launch-or-skip)
 
 Every interactive shell can tell you when an upgrade is pending and offer
