@@ -219,7 +219,7 @@ def test_run_build_handles_quoted_arguments(tmp_path: Path):
 
 
 
-def test_a_build_step_that_is_a_cmd_shim_goes_through_cmd_exe(tmp_path: Path, monkeypatch):
+def test_a_build_step_that_is_a_cmd_shim_goes_through_cmd_exe(tmp_path: Path, monkeypatch, pretend_os):
     """`shutil.which("npm")` trova `npm.cmd`, che CreateProcess non esegue da solo.
 
     `_run` lo lanciava per nome: su Windows il passo di build moriva con
@@ -229,7 +229,9 @@ def test_a_build_step_that_is_a_cmd_shim_goes_through_cmd_exe(tmp_path: Path, mo
 
     shim = r"C:\nodejs\npm.cmd"
     monkeypatch.setattr(provision.shutil, "which", lambda name: shim if name == "npm" else None)
-    monkeypatch.setattr(provision.os, "name", "nt")
+    from nexgen_core import processes
+
+    pretend_os(processes, "nt")
     seen: list[list[str]] = []
 
     def fake_run(argv, **kwargs):

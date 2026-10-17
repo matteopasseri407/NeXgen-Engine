@@ -55,7 +55,7 @@ def test_installer_cannot_report_success_when_pin_write_fails(tmp_path, monkeypa
     assert fetcher._installed_versions_file().read_bytes() == previous
 
 
-def test_an_installer_that_is_a_cmd_shim_runs_through_cmd_exe(tmp_path, monkeypatch):
+def test_an_installer_that_is_a_cmd_shim_runs_through_cmd_exe(tmp_path, monkeypatch, pretend_os):
     """Su Windows `npx` è `npx.cmd`, e CreateProcess non lo esegue da solo.
 
     L'installer di terze parti veniva lanciato per nome: falliva sempre (errore
@@ -67,7 +67,9 @@ def test_an_installer_that_is_a_cmd_shim_runs_through_cmd_exe(tmp_path, monkeypa
     library = tmp_path / "library" / "demo"
     shim = r"C:\nodejs\npx.cmd"
     monkeypatch.setattr(skill_sources.shutil, "which", lambda name: shim if name == "npx" else None)
-    monkeypatch.setattr(skill_sources.os, "name", "nt")
+    from nexgen_core import processes
+
+    pretend_os(processes, "nt")
     seen: list[list[str]] = []
 
     def fake_run(argv, **kwargs):
