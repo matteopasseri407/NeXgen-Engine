@@ -16,7 +16,7 @@ behavior-pinning tests first and a green suite after. Duplicates unified
 (notifier state, firecrawl probe, required rules, mcp and skill deps,
 info and inventory). Removal candidates all overturned by proof. Five
 pre-existing Windows failures unchanged, CI green on Linux and Windows.
-On top of that, the stabilization plan (`docs/piano-stabilizzazione.md`)
+On top of that, the stabilization plan
 closed 25 Must Fix and ten serious defects from a file-by-file review of
 the whole code base, each with a test that failed before the fix.
 
