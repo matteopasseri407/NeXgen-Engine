@@ -36,7 +36,7 @@ if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
 from nexgen_core.files import atomic_write_text  # noqa: E402
-from nexgen_core.paths import resolve_engine_root  # noqa: E402
+from nexgen_core.paths import resolve_engine_root, resolve_home, resolve_runtime_dir  # noqa: E402
 from nexgen_core.release import bump_version_files, compute_next_version, is_semver, newer_version  # noqa: E402
 
 #: Checks that fail on purpose on this pull request and say nothing about the
@@ -345,6 +345,53 @@ class Shipper:
         installed_file = self.engine_root.parent / "VERSION"
         return installed_file.read_text(encoding="utf-8").strip() if installed_file.is_file() else "?"
 
+    def _runs_this_engine(self, argv: list[str]) -> bool:
+        """True when this interpreter is Python 3.11+, the floor the engine declares (the launchers' own check)."""
+        probe = self.run([*argv, "-c", "import sys; sys.exit(0 if sys.version_info >= (3, 11) else 1)"], self.repo)
+        return probe.returncode == 0
+
+    def _launcher_python(self) -> list[str]:
+        """The interpreter the installed launchers use, as the argv they use it with.
+
+        The same order they follow: the provisioned runtime, then `py -3` and
+        `python` on Windows or `python3` and `python` elsewhere, each only if it
+        really is a Python this engine can run on. Never this checkout's
+        interpreter: a release tree carries no `.venv` of its own.
+        """
+        runtime = resolve_runtime_dir(resolve_home())
+        if (runtime / ".provisioned").is_file():
+            for candidate in (runtime / "bin" / "python", runtime / "Scripts" / "python.exe"):
+                if candidate.is_file():
+                    return [str(candidate)]
+        names = (("py", "-3"), ("python",)) if sys.platform == "win32" else (("python3",), ("python",))
+        for name in names:
+            found = shutil.which(name[0])
+            if found and self._runs_this_engine([found, *name[1:]]):
+                return [found, *name[1:]]
+        raise ShipStop(self._step, "no Python 3.11 or newer found to run the installed engine's smoke")
+
+    def _smoke_installed(self, version: str, previous: str) -> None:
+        """The installed engine's own smoke, run the way the machine runs it.
+
+        A machine that fails it goes back to the version it came from, by the same
+        update command, and the release stops there saying which version it is on.
+        """
+        script = self.engine_root / "scripts" / "smoke.py"
+        if not script.is_file():
+            raise ShipStop(self._step, f"the installed engine has no {script.name}: nothing proved it runs")
+        smoke = self.run([*self._launcher_python(), str(script)], self.repo)
+        if smoke.returncode == 0:
+            self.log(f"   the installed v{version} passes its own smoke")
+            return
+        log = self.install_log or Path(tempfile.gettempdir()) / "nexgen-release-ship-install.log"
+        atomic_write_text(log, f"{smoke.stdout}\n{smoke.stderr}")
+        rollback = self.run(["nexgen", "update", "--yes", "--target", previous], self.repo)
+        if rollback.returncode != 0 or self._installed_version() != previous:
+            raise ShipStop(self._step, f"the installed v{version} failed its smoke (output in {log}) and this machine "
+                                       f"is not back on {previous}: run 'nexgen update --yes --target {previous}' by hand")
+        raise ShipStop(self._step, f"the installed v{version} failed its smoke (output in {log}); "
+                                   f"this machine is back on {previous}")
+
     def _install(self, version: str) -> None:
         self._enter("install")
         before = self._installed_version()
@@ -367,6 +414,7 @@ class Shipper:
         installed = self._installed_version()
         if installed != version:
             raise ShipStop(self._step, f"this machine is still on {installed}, not {version}")
+        self._smoke_installed(version, before)
         doctor = self.run(["nexgen", "doctor", "--summary"], self.repo)
         if doctor.returncode != 0:
             last = (doctor.stdout or doctor.stderr).strip().splitlines()

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -42,6 +43,9 @@ class FakeWorld:
         self.required_checks = ["test"]
         self.check_runs: dict[str, list[dict]] = {}
         self.ci_on_main = "success"
+        self.smoke_fails = False
+        #: Where a successful `nexgen update` writes the version it installed.
+        self.install_root: Path | None = None
 
     def __call__(self, argv, cwd):
         argv = tuple(str(a) for a in argv)
@@ -60,6 +64,12 @@ class FakeWorld:
         return json.dumps({"check_runs": runs})
 
     def answer(self, argv):  # noqa: C901 - a dispatch table reads best flat
+        if argv[-1].endswith("smoke.py"):
+            return ("SMOKE FAILED (1)", 1) if self.smoke_fails else ("SMOKE OK (12s)", 0)
+        if argv[:2] == ("nexgen", "update"):
+            if self.install_root is not None:
+                (self.install_root / "VERSION").write_text(argv[-1] + "\n", encoding="utf-8")
+            return f"installed {argv[-1]}", 0
         if argv[:2] == ("gh", "api"):
             url = next(arg for arg in argv[2:] if arg.startswith("repos/"))
             return self.api(url), 0
@@ -111,6 +121,16 @@ def repo(tmp_path):
     (tmp_path / "VERSION").write_text("2.13.0\n", encoding="utf-8")
     (tmp_path / "CHANGELOG.md").write_text("# Changelog\n\n## [Unreleased]\n\n- shipped by one command\n\n## [2.13.0] - 2026-10-14\n", encoding="utf-8")
     return tmp_path
+
+
+def installed_engine(repo: Path, version: str, *, smoke: bool = True) -> Path:
+    """An installed engine as the updater leaves it: a release tree, no `.venv` of its own."""
+    installed = repo / "installed"
+    (installed / "03-INFRA" / "scripts").mkdir(parents=True, exist_ok=True)
+    (installed / "VERSION").write_text(version + "\n", encoding="utf-8")
+    if smoke:
+        (installed / "03-INFRA" / "scripts" / "smoke.py").write_text("# the installed smoke\n", encoding="utf-8")
+    return installed
 
 
 def _shipper(repo, world, **kw):
@@ -260,9 +280,7 @@ def test_waiting_has_a_limit(repo):
 
 def test_install_is_checked_against_the_installed_version(repo):
     world = FakeWorld(repo)
-    installed = repo / "installed"
-    (installed / "03-INFRA").mkdir(parents=True)
-    (installed / "VERSION").write_text("2.13.0\n", encoding="utf-8")
+    installed = installed_engine(repo, "2.13.0")
     shipper = _shipper(repo, world)
     shipper.engine_root = installed / "03-INFRA"
     with pytest.raises(ShipStop, match="still on 2.13.0"):
@@ -272,10 +290,94 @@ def test_install_is_checked_against_the_installed_version(repo):
     assert shipper.ship("minor", install=True) == "v2.14.0"
 
 
+def test_the_install_runs_the_installed_engines_own_smoke(repo):
+    """The release is about the engine the machine runs: the smoke is the installed
+    tree's own script, run with the interpreter the launchers use, not this checkout's."""
+    world = FakeWorld(repo)
+    installed = installed_engine(repo, "2.13.0")
+    world.install_root = installed
+    shipper = _shipper(repo, world)
+    shipper.engine_root = installed / "03-INFRA"
+    assert shipper.ship("minor", install=True) == "v2.14.0"
+    smoke = [call for call in world.calls if call[-1].endswith("smoke.py")]
+    assert smoke, "the installed smoke must run"
+    assert smoke[0][-1] == str(installed / "03-INFRA" / "scripts" / "smoke.py")
+    assert Path(smoke[0][0]).name.lower().startswith(("python", "py"))
+
+
+def test_an_installed_engine_without_a_smoke_cannot_be_called_proved(repo):
+    world = FakeWorld(repo)
+    installed = installed_engine(repo, "2.13.0", smoke=False)
+    world.install_root = installed
+    shipper = _shipper(repo, world)
+    shipper.engine_root = installed / "03-INFRA"
+    with pytest.raises(ShipStop, match="has no smoke.py"):
+        shipper.ship("minor", install=True)
+
+
+def test_a_failed_smoke_puts_the_previous_version_back_and_stops(repo, tmp_path):
+    world = FakeWorld(repo)
+    world.smoke_fails = True
+    installed = installed_engine(repo, "2.13.0")
+    world.install_root = installed
+    shipper = _shipper(repo, world, install_log=tmp_path / "install.log")
+    shipper.engine_root = installed / "03-INFRA"
+    with pytest.raises(ShipStop, match="back on 2.13.0"):
+        shipper.ship("minor", install=True)
+    assert ("nexgen", "update", "--yes", "--target", "2.13.0") in world.calls
+    assert "SMOKE FAILED" in (tmp_path / "install.log").read_text(encoding="utf-8")
+
+
+def test_a_rollback_that_does_not_finish_says_what_to_run_by_hand(repo, tmp_path):
+    world = FakeWorld(repo)
+    world.smoke_fails = True
+    installed = installed_engine(repo, "2.13.0")
+    world.install_root = installed
+    original = world.answer
+
+    def answer(argv):
+        if argv[:2] == ("nexgen", "update") and argv[-1] == "2.13.0":
+            return "the rollback could not start", 1
+        return original(argv)
+
+    world.answer = answer
+    shipper = _shipper(repo, world, install_log=tmp_path / "install.log")
+    shipper.engine_root = installed / "03-INFRA"
+    with pytest.raises(ShipStop, match="by hand"):
+        shipper.ship("minor", install=True)
+
+
+def test_the_launcher_interpreter_is_the_provisioned_runtime(repo, tmp_path, monkeypatch):
+    """A release tree may have no `.venv`: the installed engine runs on its runtime, and
+    the interpreter never comes from inside the engine folder."""
+    from nexgen_core import release_ship
+
+    runtime = tmp_path / "runtime"
+    (runtime / "bin").mkdir(parents=True)
+    (runtime / "bin" / "python").write_text("#!/bin/sh\n", encoding="utf-8")
+    monkeypatch.setattr(release_ship, "resolve_runtime_dir", lambda home=None: runtime)
+    shipper = _shipper(repo, FakeWorld(repo))
+    shipper.engine_root = repo / "installed" / "03-INFRA"
+    (runtime / ".provisioned").write_text("", encoding="utf-8")
+    assert shipper._launcher_python() == [str(runtime / "bin" / "python")]
+    (runtime / ".provisioned").unlink()
+    chosen = shipper._launcher_python()
+    assert Path(chosen[0]).name.lower().startswith(("python", "py"))
+    assert shipper.engine_root not in Path(chosen[0]).parents
+
+
+def test_the_version_probe_is_the_launchers_own(repo):
+    """The launchers accept a Python 3.11 or newer; the interpreter for the installed
+    smoke is chosen the same way, so a stub that is not Python is never picked."""
+    from nexgen_core import release_ship
+
+    shipper = Shipper(repo=repo, engine_root=repo / "engine", run=release_ship._default_run, log=lambda _m: None)
+    assert shipper._runs_this_engine([sys.executable])
+    assert not shipper._runs_this_engine([shutil.which("git") or "git"])
+
+
 def test_an_update_rolled_back_by_a_colliding_timer_is_retried_once(repo, tmp_path):
-    installed = repo / "installed"
-    (installed / "03-INFRA").mkdir(parents=True)
-    (installed / "VERSION").write_text("2.13.0\n", encoding="utf-8")
+    installed = installed_engine(repo, "2.13.0")
     world = FakeWorld(repo)
     updates = iter([1, 0])
     original = world.answer
