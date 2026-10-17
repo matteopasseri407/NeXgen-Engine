@@ -130,6 +130,24 @@ def test_commits_already_published_are_not_judged(repo):
     assert problems(repo, repo.git("rev-parse", "HEAD~1")) == []
 
 
+def test_a_commit_already_on_any_remote_branch_is_not_judged_again(repo):
+    """A rewrite of history leaves old commits unreachable from the branch they came
+    from while they are still on a remote: judging them again asked 181 already
+    published commits for their tests and blocked a push, on 2026-10-17."""
+    base = start(repo)
+    repo.write("src/calc.py", FIXED)
+    published = repo.commit("tidy the maths")  # critical code, no test: refused if it is judged
+    repo.git("update-ref", "refs/remotes/origin/old-branch", published)
+    assert problems(repo, base) == []
+
+
+def test_a_commit_no_remote_has_is_still_judged(repo):
+    base = start(repo)
+    repo.write("src/calc.py", FIXED)
+    repo.commit("tidy the maths")
+    assert any("critical code changed" in p for p in problems(repo, base))
+
+
 def test_a_project_working_on_main_is_judged_too(repo):
     base = start(repo, on_main=True)
     repo.write("src/calc.py", FIXED)

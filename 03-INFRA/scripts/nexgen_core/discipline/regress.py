@@ -25,7 +25,6 @@ from .violations import CODE_EXT, SHELL_EXT, TEST_PATH, Violation
 
 FIX = re.compile(r"^fix(\([^)]*\))?!?:", re.IGNORECASE)
 NO_TEST = re.compile(r'nexgen:\s*no-test\s+reason="[^"]{10,}"')
-PUBLISHED_REFS = ("origin/main",)  # remote-tracking only: a local `main` is where small projects work
 TIMEOUT = 600
 NO_TESTS_RAN = 5  # pytest: everything collected was skipped or deselected
 #: Environment keys that point git at the outer repository. A proof runs another
@@ -45,10 +44,16 @@ def _child_env() -> dict[str, str]:
 
 
 def _commits(root: Path, base: str, head: str) -> list[str]:
-    """Commits authored on this branch: published history was judged when it was pushed."""
+    """Commits that no remote has yet: published history was judged when it was pushed.
+
+    `--not --remotes`, not `^origin/main`: a rewrite of history leaves old
+    commits unreachable from the branch they came from while they are still on a
+    remote, and judging those again asked 181 already published commits for
+    their tests and blocked a push (2026-10-17).
+    """
     is_commit = git(root, "rev-parse", "--verify", "-q", f"{base}^{{commit}}", check=False).strip()
-    published = [f"^{ref}" for ref in PUBLISHED_REFS if git(root, "rev-parse", "--verify", "-q", ref, check=False).strip()]
-    return git(root, "rev-list", "--reverse", "--no-merges", f"{base}..{head}" if is_commit else head, *published).split()
+    return git(root, "rev-list", "--reverse", "--no-merges", f"{base}..{head}" if is_commit else head,
+               "--not", "--remotes").split()
 
 
 def _touched(root: Path, commit: str) -> list[tuple[str, str | None]]:
