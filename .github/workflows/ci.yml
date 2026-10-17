@@ -538,7 +538,9 @@ jobs:
     # found a real bug the same day that neither the local machine nor the smoke
     # could see. The Linux legs still judge every push. The nightly full-suite
     # Windows run lives in full-suite-windows below, which checks out `developer`.
-    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.base_ref == 'main')
+    # A push to main is a release merge, and the release workflow judges that
+    # commit, so the Windows leg runs there too (v2.16.4 waited for it in vain).
+    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.base_ref == 'main') || (github.event_name == 'push' && github.ref == 'refs/heads/main')
     runs-on: windows-latest
     # windows-latest is slow but not unbounded: a normal run is minutes. Cap
     # it so a Windows-only subprocess deadlock surfaces as a failed job with

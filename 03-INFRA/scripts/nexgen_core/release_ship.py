@@ -336,6 +336,10 @@ class Shipper:
         """
         if tested_tree and self._tree_of(sha) == tested_tree:
             self.log("   the merge carries the tree the checks passed: nothing to wait for on main")
+            # The release workflow judges the tagged commit, not the pull request head:
+            # this machine's proof has to be on it too, or it waits for a status that
+            # never comes (v2.16.4). Same tree, same verdict.
+            self._publish_status(sha, "success", "the pull request's tree, whose smoke passed on this machine")
             return
         self._enter(f"CI on main {sha[:8]}")
         required = self._required_checks()
