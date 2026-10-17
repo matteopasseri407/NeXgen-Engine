@@ -661,6 +661,28 @@ def test_an_upstream_skill_is_never_reported_as_missing(tmp_path: Path, monkeypa
     assert after.severity == Severity.OK, after.message
 
 
+def test_a_personal_skill_of_another_member_is_not_reported_missing(tmp_path: Path, monkeypatch):
+    """Una skill `scope: personal` di un altro membro non riguarda questa macchina.
+
+    Il doctor la segnalava come non materializzata per sempre, e il rimedio
+    (`agent-sync apply`) non poteva materializzarla: non è sua.
+    """
+    vault, home, engine_root = _setup_skills_vault(tmp_path)
+    monkeypatch.setenv("AGENT_ENGINE_ROOT", str(engine_root))
+    monkeypatch.setenv("AGENT_TEAM_MEMBER", "matteo")
+    manifest = vault / "03-INFRA" / "agent-universal-layer" / "skills" / "skills.manifest.yaml"
+    manifest.write_text(_SKILLS_MANIFEST + (
+        "  personal-of-someone-else:\n    origin: vault\n    scope: personal\n    owner: giulia\n"
+        "    exposure: manual\n    targets: [claude]\n"
+    ), encoding="utf-8")
+
+    skill_checks.check_skills_not_materialized(vault, home).remedy()
+    outcome = skill_checks.check_skills_not_materialized(vault, home)
+
+    assert "personal-of-someone-else" not in (outcome.message or ""), outcome.message
+    assert outcome.severity == Severity.OK, outcome.message
+
+
 def test_engine_starter_views_broken_then_fixed(tmp_path: Path, monkeypatch):
     vault, home, engine_root = _setup_skills_vault(tmp_path)
     monkeypatch.setenv("AGENT_ENGINE_ROOT", str(engine_root))
