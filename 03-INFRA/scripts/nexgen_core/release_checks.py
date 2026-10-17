@@ -118,7 +118,9 @@ def by_name(checks: Sequence[dict]) -> dict[str, dict]:
 
 def commit_checks(repo: Path, sha: str, run: Runner = run_command) -> dict[str, dict]:
     """Every check GitHub reports for one commit, by name; empty when it cannot be read."""
-    result = run(["gh", "api", f"repos/{{owner}}/{{repo}}/commits/{sha}/check-runs", "-F", "per_page=100"], repo)
+    # The page size rides in the query string: `-F` would make gh send a POST,
+    # which this endpoint answers with 404 (v2.16.1 and v2.16.2 read "not reported").
+    result = run(["gh", "api", f"repos/{{owner}}/{{repo}}/commits/{sha}/check-runs?per_page=100"], repo)
     if result.returncode != 0:
         return {}
     return by_name((_answer(result.stdout) or {}).get("check_runs") or [])
