@@ -24,11 +24,16 @@ import sys
 #: A notifier that hangs would hold the whole alerting path open.
 NOTIFY_TIMEOUT_SECONDS = 10
 
+#: How long the Windows balloon stays on screen. Its script sleeps this long on
+#: purpose: the tray icon disappears with the process, so a shorter life would
+#: take the balloon away with it.
+BALLOON_SECONDS = 10
 
-def _run(command: list[str]) -> bool:
+
+def _run(command: list[str], timeout: int = NOTIFY_TIMEOUT_SECONDS) -> bool:
     try:
         result = subprocess.run(
-            command, capture_output=True, check=False, timeout=NOTIFY_TIMEOUT_SECONDS
+            command, capture_output=True, check=False, timeout=timeout
         )
         return result.returncode == 0
     except (OSError, subprocess.SubprocessError):
@@ -68,9 +73,12 @@ def _windows(title: str, body: str) -> bool:
         "$n.Visible = $true; "
         f"$n.ShowBalloonTip(10000, {powershell_literal(title)}, {powershell_literal(body)}, "
         "[System.Windows.Forms.ToolTipIcon]::Warning); "
-        "Start-Sleep -Seconds 10; $n.Dispose()"
+        f"Start-Sleep -Seconds {BALLOON_SECONDS}; $n.Dispose()"
     )
-    return _run(["powershell", "-NoProfile", "-NonInteractive", "-Command", script])
+    # The timeout must outlast the sleep: killing the script at the same instant
+    # reported "not shown" for a balloon that was already on screen.
+    return _run(["powershell", "-NoProfile", "-NonInteractive", "-Command", script],
+                timeout=NOTIFY_TIMEOUT_SECONDS + BALLOON_SECONDS)
 
 
 def desktop_is_available() -> bool:
