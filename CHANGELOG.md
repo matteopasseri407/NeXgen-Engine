@@ -10,6 +10,12 @@ of any engine release.
 
 ## [Unreleased]
 
+## [2.16.4] - 2026-10-18
+
+### Changed
+
+- The release's install step runs the installed launcher, so the machine that ships lands on the new version; deadline tests hold under a fully loaded parallel run.
+
 ## [2.16.3] - 2026-10-17
 
 ### Changed
