@@ -154,6 +154,19 @@ def _env(machine: Machine) -> dict[str, str]:
     }
 
 
+def _with_git_identity(monkeypatch) -> None:
+    """A real machine has a Git identity; a divergent merge needs one.
+
+    The suite deliberately runs with git's global and system config isolated,
+    so an update that has to write a merge commit needs the identity in the
+    process environment, which is where a machine that can run one has it.
+    """
+    monkeypatch.setenv("GIT_AUTHOR_NAME", "channel test")
+    monkeypatch.setenv("GIT_AUTHOR_EMAIL", "channel-test-identity")
+    monkeypatch.setenv("GIT_COMMITTER_NAME", "channel test")
+    monkeypatch.setenv("GIT_COMMITTER_EMAIL", "channel-test-identity")
+
+
 def _head(repo: Path) -> str:
     return _git(repo, "rev-parse", "HEAD").stdout.strip()
 
@@ -211,6 +224,80 @@ def test_a_broken_or_unknown_unlock_closes_the_door(tmp_path, body):
 
 def test_a_missing_unlock_file_is_the_closed_default(tmp_path):
     assert uc.allowed_channels(config_path=tmp_path / "absent.yaml") == frozenset()
+
+
+# --------------------------------------------------------------------------
+# The choice is remembered, and a switch that was refused is not.
+# --------------------------------------------------------------------------
+
+def _new_release(origin: Path, version: str, pub: Path) -> None:
+    """A new signed release on origin/main, containing what developer already has.
+
+    That is the real order: `sync-developer` brings main back into developer, so
+    the release a machine returns to contains the commits it was already running.
+    """
+    _git(origin, "checkout", "-q", "main")
+    _git(origin, "merge", "-q", "--no-edit", "developer")
+    _tree(origin, version)
+    _git(origin, "add", "-A")
+    _git(origin, "commit", "-q", "-m", f"release {version}")
+    _git(origin, "-c", "gpg.format=ssh", "-c", f"user.signingkey={pub.as_posix()}",
+         "tag", "-s", "-m", f"Release {version}", f"v{version}")
+
+
+def _new_dev_commit(origin: Path, pub: Path, text: str) -> str:
+    """A new signed commit on origin/developer, the way the branch advances."""
+    _git(origin, "checkout", "-q", "developer")
+    (origin / f"{text}.txt").write_text(f"{text}\n", encoding="utf-8")
+    return _signed(origin, pub, text)
+
+
+@pytest.mark.skipif(SSH_KEYGEN is None, reason="needs ssh-keygen")
+def test_the_chosen_channel_is_remembered_and_respected(tmp_path):
+    machine = _machine(tmp_path, tip_signed=True)
+
+    assert updater.main(["--yes", "--channel", "dev"], environ=_env(machine)) == 0
+    assert uc.read_channel(machine.state) == "dev"
+
+    # The branch advances; a bare `nexgen update` follows the remembered channel.
+    moved = _new_dev_commit(machine.origin, machine.pub, "later dev work")
+    assert updater.main(["--yes"], environ=_env(machine)) == 0
+
+    assert _head(machine.engine) == moved
+
+
+@pytest.mark.skipif(SSH_KEYGEN is None, reason="needs ssh-keygen")
+def test_channel_stable_brings_a_dev_machine_back_to_releases(tmp_path, monkeypatch):
+    _with_git_identity(monkeypatch)
+    machine = _machine(tmp_path, tip_signed=True)
+    assert updater.main(["--yes", "--channel", "dev"], environ=_env(machine)) == 0
+    assert uc.read_channel(machine.state) == "dev"
+    _new_release(machine.origin, "0.3.0", machine.pub)
+
+    assert updater.main(["--yes", "--channel", "stable"], environ=_env(machine)) == 0
+
+    assert uc.read_channel(machine.state) == "stable"
+    assert (machine.engine / "VERSION").read_text(encoding="utf-8").strip() == "0.3.0"
+
+
+@pytest.mark.skipif(SSH_KEYGEN is None, reason="needs ssh-keygen")
+def test_a_refused_switch_is_not_remembered(tmp_path):
+    machine = _machine(tmp_path, tip_signed=False)
+
+    assert updater.main(["--yes", "--channel", "dev"], environ=_env(machine)) == updater.EXIT_REFUSED
+
+    assert uc.read_channel(machine.state) == "stable"
+    assert not (machine.state / uc.CHANNEL_FILE).exists()
+
+
+@pytest.mark.skipif(SSH_KEYGEN is None, reason="needs ssh-keygen")
+def test_a_check_only_run_never_changes_the_remembered_channel(tmp_path):
+    machine = _machine(tmp_path, tip_signed=True)
+
+    assert updater.main(["--check", "--channel", "dev"], environ=_env(machine)) == 0
+
+    assert uc.read_channel(machine.state) == "stable"
+    assert not (machine.state / uc.CHANNEL_FILE).exists()
 
 
 # --------------------------------------------------------------------------

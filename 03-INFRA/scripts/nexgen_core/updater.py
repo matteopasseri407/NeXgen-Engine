@@ -683,6 +683,14 @@ def _present_notes(engine_repo: Path, current: str, target: update_channel.Targe
     return verdict
 
 
+def _remember_channel(state_dir: Path, channel: str) -> None:
+    """Records the choice; a state file that cannot be written is a note, never a rollback."""
+    try:
+        update_channel.write_channel(state_dir, channel)
+    except OSError as exc:  # nexgen: allow reason="a state file that cannot be written must not undo an update that already worked"
+        print(f"nexgen-update: WARNING: the channel choice was not recorded ({exc})", file=sys.stderr)
+
+
 def _gate_on_signature(args: argparse.Namespace, target: update_channel.TargetPlan, verdict: TagVerdict) -> None:
     """The release policy on an unverified signature, or nothing when it is verified.
 
@@ -708,6 +716,33 @@ def _gate_on_signature(args: argparse.Namespace, target: update_channel.TargetPl
         f"release {target.ref} could not be verified ({verdict.detail}). "
         "Nothing was installed. Rerun with --allow-unverified only after checking the release by hand."
     )
+
+
+def _stop_if_settled(
+    engine_repo: Path, current: str, target: update_channel.TargetPlan, args: argparse.Namespace, state_dir: Path,
+) -> bool:
+    """True when there is nothing to install; remembers an explicit channel choice either way.
+
+    A switch to a channel that is already installed is still an answer:
+    `--channel stable` on a dev machine that is already at the newest release
+    has to be remembered, or the next bare run would follow dev again.
+    """
+    if not _settled(engine_repo, current, target, requested=args.target):
+        return False
+    if args.channel:
+        _remember_channel(state_dir, target.channel)
+    return True
+
+
+def _rolled_back_before(state_dir: Path, target: str) -> bool:
+    """True when an unattended update of this exact target already failed and was undone."""
+    if _read_rejected(state_dir).get("target") != target:
+        return False
+    print(
+        f"{target} was rolled back after a failed unattended update; unattended updates skip it. "
+        f"Review it, then run 'nexgen-update --target {target.removeprefix('v')}' to try again."
+    )
+    return True
 
 
 def main(
@@ -738,7 +773,7 @@ def main(
             engine_repo, state_dir, channel=args.channel, requested=args.target, vault_data=data_repo,
         )
         _announce(engine_repo, data_repo, current, target)
-        if _settled(engine_repo, current, target, requested=args.target):
+        if _stop_if_settled(engine_repo, current, target, args, state_dir):
             return 0
 
         if args.unattended and target.release:
@@ -747,13 +782,8 @@ def main(
             # deliberately and remembered, and its target is proved (signed, and
             # for dev-verified green on both platforms) before it gets here.
             _assert_within_unattended_ceiling(current, target.ref, _read_ceiling(state_dir))
-        if args.unattended:
-            if _read_rejected(state_dir).get("target") == target.ref:
-                print(
-                    f"{target.ref} was rolled back after a failed unattended update; unattended updates skip it. "
-                    f"Review it, then run 'nexgen-update --target {target.ref.removeprefix('v')}' to try again."
-                )
-                return 0
+        if args.unattended and _rolled_back_before(state_dir, target.ref):
+            return 0
 
         verdict = _present_notes(engine_repo, current, target)
 
@@ -885,6 +915,7 @@ def main(
                 engine_repo=engine_repo,
             )
         _clear_rejected(state_dir)
+        _remember_channel(state_dir, target.channel)
         if post_fail == 0:
             print(f"\nNeXgen Engine {target.label} installed: doctor reports no failures.")
             print("Warnings listed above (if any) are non-blocking: unprovisioned")
@@ -914,7 +945,7 @@ def main(
             )
             return _recover_failed_update(
                 interrupted, args=args, entry=entry, data_repo=data_repo, pin_file=pin_file,
-                state_dir=state_dir, target=target, current=current,
+                state_dir=state_dir, target=target.label, current=current,
             )
         if isinstance(exc, KeyboardInterrupt):
             print("nexgen-update: interrupted before anything was changed.", file=sys.stderr)
