@@ -123,7 +123,17 @@ def commit_checks(repo: Path, sha: str, run: Runner = run_command) -> dict[str, 
     result = run(["gh", "api", f"repos/{{owner}}/{{repo}}/commits/{sha}/check-runs?per_page=100"], repo)
     if result.returncode != 0:
         return {}
-    return by_name((_answer(result.stdout) or {}).get("check_runs") or [])
+    checks = list((_answer(result.stdout) or {}).get("check_runs") or [])
+    # A required check can be a commit status, not a check run: this machine's
+    # smoke is published that way, and v2.16.4 waited for it where it never looked.
+    status = run(["gh", "api", f"repos/{{owner}}/{{repo}}/commits/{sha}/status"], repo)
+    if status.returncode == 0:
+        for entry in (_answer(status.stdout) or {}).get("statuses") or []:
+            state = str(entry.get("state") or "")
+            checks.append({"name": entry.get("context"), "conclusion": state,
+                           "status": "pending" if state.lower() == "pending" else "completed",
+                           "started_at": entry.get("created_at") or ""})
+    return by_name(checks)
 
 
 def ci_run_passed(repo: Path, sha: str, run: Runner = run_command, workflow: str = "ci.yml") -> bool:

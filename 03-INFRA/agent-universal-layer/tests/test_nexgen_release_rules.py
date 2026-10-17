@@ -498,3 +498,18 @@ def test_reading_a_commits_checks_is_a_get_not_a_post():
     argv = seen[0]
     assert not any(flag in argv for flag in ("-F", "-f", "--field", "--raw-field", "-X", "--method"))
     assert argv[2].endswith("/check-runs?per_page=100")
+
+
+def test_a_required_commit_status_counts_like_a_check_run():
+    """This machine's smoke is a commit status, not a check run; v2.16.4's release
+    workflow read only the check runs and waited for smoke-windows forever."""
+    from nexgen_core.release_checks import commit_checks, verdict
+
+    def run(argv, cwd):
+        if argv[2].endswith("/status"):
+            body = {"statuses": [{"context": "smoke-windows", "state": "success", "created_at": "2026-10-18T01:00:00Z"}]}
+        else:
+            body = {"check_runs": [{"name": "engine-tests", "status": "completed", "conclusion": "success"}]}
+        return subprocess.CompletedProcess(argv, 0, json.dumps(body), "")
+
+    assert verdict(commit_checks(Path("."), "abc", run), {"engine-tests", "smoke-windows"}) == ("green", [])
