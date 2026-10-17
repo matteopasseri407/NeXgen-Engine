@@ -79,9 +79,14 @@ def _sha(text: str) -> str:
 
 
 def _hash_bytes(data: bytes) -> str:
-    """The proposal's hash of a file's bytes: one definition, used by the
-    proposal, the approval check and the post-apply check."""
-    return _sha(data.decode("utf-8", errors="replace"))
+    """The identity of a file: a hash of its bytes, never of a decoded view.
+
+    Decoding with `errors="replace"` collapses different invalid sequences
+    onto the same text, which would let the state check call someone else's
+    edit "still ours" and overwrite it. For a valid UTF-8 file this is the
+    same value the text-based proposal hashes produce.
+    """
+    return hashlib.sha256(data).hexdigest()
 
 
 def _read_text_bytes(path: Path) -> str:
@@ -216,6 +221,7 @@ def _build_proposal(
     rel: str,
     root: Path,
     instruction: str,
+    data: bytes,
     text: str,
     new_text: str,
     patch: str,
@@ -229,7 +235,7 @@ def _build_proposal(
         file=rel,
         repo_root=str(root),
         instruction=instruction,
-        original_hash=_sha(text),
+        original_hash=_hash_bytes(data),
         new_hash=_sha(new_text),
         patch=patch,
         dry_run=dry_ok,
@@ -297,7 +303,7 @@ def propose_patch(llm: LLM, cfg: LaneConfig, file_rel: str, instruction: str) ->
     if not patch.strip():
         raise PatchError("diff vuoto")
     dry_ok, dry_output = _dry_run(root, patch)
-    return _build_proposal(cfg, rel, root, instruction, text, new_text, patch, dry_ok, dry_output, why)
+    return _build_proposal(cfg, rel, root, instruction, data, text, new_text, patch, dry_ok, dry_output, why)
 
 
 def apply_proposal(
@@ -361,9 +367,9 @@ def _keep_original(before: bytes, spare: Path) -> str:
     (a full disk, a locked directory): a refusal must never point at a file
     that is not there. Any failure counts as failed.
     """
-    if spare.exists():
-        return "exists"
     try:
+        if spare.exists():
+            return "exists"
         secure_artifact(spare.parent)
         atomic_write_bytes(spare, before, preserve_mode=False)
     except (OSError, ValueError, PatchError):  # nexgen: allow reason="the outcome carries the failure"
@@ -411,7 +417,7 @@ def _refuse_apply(cfg: LaneConfig, proposal: Proposal, rc: str, reason: str) -> 
         audit_event(cfg, "apply_patch",
                     {"file": proposal.file, "proposal": proposal.id, "phase": "result", "rc": rc},
                     ok=False, chars=len(proposal.patch))
-    except OSError:  # nexgen: allow reason="the refusal below is what the person needs"
+    except (OSError, ValueError, PatchError):  # nexgen: allow reason="the refusal below is what the person needs"
         pass
     raise PatchError(reason)
 
@@ -468,7 +474,7 @@ def _settle_mismatch(
                         {"file": proposal.file, "proposal": proposal.id, "phase": "result",
                          "rc": "hash", "restore": outcome, "spare": spare},
                         ok=False, chars=len(proposal.patch))
-        except OSError:  # nexgen: allow reason="the refusal below is what the person needs"
+        except (OSError, ValueError, PatchError):  # nexgen: allow reason="the refusal below is what the person needs"
             pass
     if outcome == "restored":
         raise PatchError("il file applicato non corrisponde alla proposta; il file e' tornato com'era")

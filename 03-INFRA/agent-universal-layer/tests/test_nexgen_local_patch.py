@@ -472,3 +472,23 @@ def test_a_refused_apply_still_writes_its_result_line(tmp_path, monkeypatch):
     results = [line for line in lines if line["tool"] == "apply_patch" and line["args"].get("phase") == "result"]
     assert results and results[-1]["args"]["rc"] == "stale"
     assert (repo / "notes.md").read_text(encoding="utf-8") == "scritto da qualcun altro nel frattempo.\n"
+
+
+def test_the_file_identity_is_the_raw_bytes_not_a_decoded_view(tmp_path):
+    """Due contenuti che differiscono solo per byte non validi non sono lo
+    stesso file. Con l'hash calcolato sulla decodifica sostitutiva lo
+    sarebbero, e il ripristino sovrascriverebbe la modifica di qualcun altro
+    credendo che il file fosse ancora il suo."""
+    from nexgen_local import patch as patch_mod
+
+    first = tmp_path / "primo"
+    second = tmp_path / "secondo"
+    first.write_bytes(b"riga valida\n\xff finale\n")
+    second.write_bytes(b"riga valida\n\xfe finale\n")
+
+    decoded = patch_mod._sha(patch_mod._read_text_bytes(first))
+    assert decoded == patch_mod._sha(patch_mod._read_text_bytes(second)), "la vista decodificata li confonde"
+
+    identity = patch_mod._hash_bytes(first.read_bytes())
+    assert identity != patch_mod._hash_bytes(second.read_bytes())
+    assert patch_mod._file_state(second, identity) == "changed"
