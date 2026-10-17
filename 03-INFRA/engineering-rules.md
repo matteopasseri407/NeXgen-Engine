@@ -9,10 +9,16 @@ The rest rely on you. Do not argue with a gate: change the work.
    language, a data-format or public-interface change, a new top-level package, or a change to CI, hooks or
    discipline config. In an unattended session, write the proposal down and do not do it. New files inside
    an existing module need no permission.
-3. **[gate] One file, one job.** A file does one thing and a function does one step; line counts are the smoke
-   alarm, not the rule. Past 500 lines a file (tests exempt) must not grow unless it declares its single job at the
-   top with `nexgen: one-job reason="what its one job is"` (up to 1000 lines); otherwise extract the new code into
-   its own module. A function past 60 lines never grows: split it.
+3. **[gate] One component, one job, explained.** A file owns one behavior and a function does one step of it.
+   Each file opens with a docstring that says its one job and why it exists, and each function says the step it
+   does, so an agent can understand the component from its header without reading the callers. Line counts are
+   the smoke alarm, not the rule: past 500 lines a file (tests exempt) must not grow unless it declares its single
+   job at the top with `nexgen: one-job reason="what its one job is"` (up to 1000 lines). A function past 60 lines
+   never grows. When a change does not fit, **split first**: extract a component with its own job (behavior pinned
+   by tests before the code moves), then make the change in the smaller file. **Never compact existing code to fit**
+   (joining lines, shortening messages, squeezing calls): that hides the alarm instead of answering it, and counts
+   as bypassing the gate. If a serious bug cannot wait for the split, the fix lands and the file overflows openly:
+   say so in the commit and queue the split.
 4. **[gate] Logic goes in the main language.** Shell and PowerShell are thin launchers: under 40 lines,
    no parsing, no state, no retries. Anything bigger needs `nexgen: allow reason="..."` at the top of the
    file, with a real reason.
