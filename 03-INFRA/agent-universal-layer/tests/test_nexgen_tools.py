@@ -102,6 +102,21 @@ def test_shims_installation(tmp_path: Path):
     assert (bin_dir / "agent-doctor").exists() or (bin_dir / "agent-doctor.cmd").exists()
 
 
+def test_windows_launchers_never_read_errorlevel_inside_a_block():
+    """cmd.exe expands %ERRORLEVEL% when a parenthesised block is parsed, not when the command in it runs.
+
+    Inside a block the launcher therefore sees the value from before Python ran:
+    `exit /b %ERRORLEVEL%` reported success for a failing command, and the version
+    check never failed. Inside a block only `exit /b` and `if not errorlevel 1` are
+    correct, because both are read at run time.
+    """
+    from nexgen_core.shims import _render
+    text = _render("agent-sync", [], SCRIPTS_DIR / "x.py", True, Path("C:/runtime"))
+    inside_blocks = [line for line in text.splitlines() if line.startswith("    ")]
+    assert inside_blocks
+    assert [line for line in inside_blocks if "%ERRORLEVEL%" in line] == []
+
+
 def test_vault_map_default_path(tmp_path: Path, monkeypatch):
     from nexgen_core.tools.vault_map import main as vault_map_main
     vault_dir = tmp_path / "vault"
