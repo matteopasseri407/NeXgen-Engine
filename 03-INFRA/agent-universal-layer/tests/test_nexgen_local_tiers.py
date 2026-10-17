@@ -300,14 +300,23 @@ def test_assisted_free_search_choice_while_tutor_refuses(tmp_path: Path) -> None
     assert tutor_result.escalated is True
     assert tutor_result.decisions[1].ok is False
 
+    # The assisted tier chooses its searches freely, but it still answers only
+    # from notes it has read: citing a vault hit it never opened is refused.
     cfg_assisted = _cfg(tmp_path / "assisted", tier="assisted")
     _write(cfg_assisted.vault_root / "01-NOTE" / "airone.md", "Airone Blu e' un progetto dimostrativo.\n")
+    unread = run_steps(ScriptedLLM(decisions=[dict(d) for d in decisions]), FakeMailRegistry(cfg_assisted),
+                       cfg_assisted, task)
+    assert unread.escalated is True
+    assert "da leggere" in unread.decisions[-1].detail
+
+    assisted_decisions = [decisions[0], {"action": "read_file", "arg": "01-NOTE/airone.md"}, *decisions[1:]]
     assisted_llm = ScriptedLLM(
-        decisions=[dict(d) for d in decisions],
+        decisions=[dict(d) for d in assisted_decisions],
         answers=["Airone Blu, progetto dimostrativo. Il commercialista chiede fatture e conferma. [01-NOTE/airone.md]"],
     )
     assisted_result = run_steps(assisted_llm, FakeMailRegistry(cfg_assisted), cfg_assisted, task)
-    assert [d.action for d in assisted_result.decisions] == ["search_vault", "search_mail", "read_mail", "answer"]
+    assert [d.action for d in assisted_result.decisions] == [
+        "search_vault", "read_file", "search_mail", "read_mail", "answer"]
     assert assisted_result.escalated is False
     assert assisted_result.problems == []
 
