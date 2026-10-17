@@ -145,18 +145,18 @@ def test_config_command_names_the_authoritative_remote(tmp_path: Path, monkeypat
     monkeypatch.delenv("KNOWLEDGE_VAULT_REMOTE", raising=False)
     monkeypatch.delenv("KNOWLEDGE_VAULT_MIRRORS", raising=False)
 
-    rc = engine_cmds.cmd_config(Namespace(field="authoritative_remote", value="oracle-n8n"))
+    rc = engine_cmds.cmd_config(Namespace(field="authoritative_remote", value="backup-b"))
     assert rc == 0
     out = capsys.readouterr().out
-    assert "oracle-n8n" in out
+    assert "backup-b" in out
 
     remotes = vault / "03-INFRA" / "agent-universal-layer" / "sync" / "remotes.yaml"
-    assert "authoritative_remote: oracle-n8n" in remotes.read_text(encoding="utf-8")
+    assert "authoritative_remote: backup-b" in remotes.read_text(encoding="utf-8")
 
     # Reading it back works, and mirrors stay read-only from the command line.
     rc_show = engine_cmds.cmd_config(Namespace(field="authoritative_remote", value=None))
     assert rc_show == 0
-    assert "oracle-n8n" in capsys.readouterr().out
+    assert "backup-b" in capsys.readouterr().out
     rc_mirror = engine_cmds.cmd_config(Namespace(field="mirrors", value="somewhere"))
     assert rc_mirror == 2
 

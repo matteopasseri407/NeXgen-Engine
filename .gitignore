@@ -103,3 +103,7 @@ __pycache__/
 .nexgen-discipline/review.diff
 .nexgen-discipline/brief.md
 .nexgen-discipline/pending
+
+# Private to the owner, kept in the vault: never published with the engine.
+DECISIONS.md
+.nexgen-discipline/receipts/
