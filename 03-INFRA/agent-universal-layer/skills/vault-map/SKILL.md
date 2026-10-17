@@ -9,13 +9,15 @@ Read-only structural map of the vault's wikilink graph. The text after the
 command, if any, is the request (e.g. a specific folder or question about
 the structure).
 
-1. Locate the vault root (the directory containing `00-START-HERE.md`).
-   If it is not obvious from the environment, ask instead of guessing.
-2. Run the analyzer, read-only:
-   `python3 03-INFRA/scripts/vault-map.py --vault <root>`
-   (on Windows use `python` or `py -3` instead of `python3`; resolve the
-   script inside the engine clone if the relative path does not exist;
-   `--json` for programmatic use, `--check` for the one-line summary).
+1. The vault root needs no guessing: the tool resolves it itself, in this
+   order: `AGENT_VAULT_DATA`, `KNOWLEDGE_VAULT_PATH`, then `~/KnowledgeVault`.
+   Pass `--vault <root>` only to point it somewhere else.
+2. Run the analyzer, read-only: `vault-map` (the installed command;
+   `python3 03-INFRA/scripts/vault-map.py` is the same tool through the
+   engine checkout, and on Windows use `python` or `py -3`).
+   `--json` for programmatic use, `--check` for the one-line summary plus
+   the broken links it found, `--context <note>` with `--hops` and
+   `--max-nodes` for the neighbourhood of a single note.
 3. Explain the result in plain language, not raw output:
    - **broken links**: what points where, and the likely cause (usually a
      renamed note); these are real defects worth fixing at the source.
