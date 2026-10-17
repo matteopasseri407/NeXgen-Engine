@@ -133,17 +133,24 @@ def test_council_seat_spawn_stays_windowless(monkeypatch, tmp_path):
 
 
 @windows_only
-def test_a_windows_shim_is_invoked_through_cmd(tmp_path):
+def test_a_windows_shim_is_invoked_through_cmd(tmp_path, monkeypatch):
     """MUST-18: un .cmd (npx, codex) non è eseguibile lanciato nudo; l'helper
-    lo passa a cmd.exe /d /s /c, che è l'unico modo perché parta."""
+    lo passa a cmd.exe /d /s /c, che è l'unico modo perché parta. Un comando
+    che non è uno shim resta invece quello che il chiamante ha chiesto."""
+    from nexgen_core import processes
     from nexgen_core.processes import windows_command_argv
 
     shim = tmp_path / "fakecodex.cmd"
     shim.write_text("@echo off\r\n", encoding="utf-8")
+    monkeypatch.setattr(processes.shutil, "which", lambda name: str(tmp_path / name))
     resolved = windows_command_argv([str(shim), "exec", "prompt"])
     assert resolved[:4] == ["cmd.exe", "/d", "/s", "/c"]
-    assert resolved[4] == str(shim)
+    assert resolved[4].casefold().endswith(".cmd")
     assert resolved[5:] == ["exec", "prompt"]
+
+    # Un eseguibile normale parte anche per nome: risolverlo cambierebbe
+    # l'argv che il chiamante vede senza aggiungere nulla.
+    assert windows_command_argv(["runner", "exec"]) == ["runner", "exec"]
 
     plain = windows_command_argv([sys.executable, "-c", "pass"])
     assert plain == [sys.executable, "-c", "pass"]

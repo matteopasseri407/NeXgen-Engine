@@ -32,7 +32,9 @@ def windows_command_argv(argv: list[str]) -> list[str]:
         return list(argv)
     if executable.casefold().endswith((".cmd", ".bat")):
         return ["cmd.exe", "/d", "/s", "/c", executable, *argv[1:]]
-    return [executable, *argv[1:]]
+    # Anything else starts by name as well as by path: keeping the caller's
+    # own argv means what a caller sees is what it asked for.
+    return list(argv)
 
 
 def no_window_kwargs() -> dict[str, Any]:
