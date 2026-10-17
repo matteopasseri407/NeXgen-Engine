@@ -194,6 +194,55 @@ def test_send_without_provider_confirmation_is_refused(
         gmail_mod.send_message("mario@esempio.it", "Ciao", "Corpo.", http=http)
 
 
+def _sent_message(captured: dict):
+    """The message Gmail would receive, decoded back with the stdlib parser."""
+    import email
+    import email.policy
+
+    posted = json.loads(captured["body"].decode())
+    return email.message_from_bytes(base64.urlsafe_b64decode(posted["raw"]), policy=email.policy.default)
+
+
+def test_send_header_injection_in_subject_adds_no_bcc(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    _token_dir(tmp_path, monkeypatch)
+    captured: dict = {}
+    gmail_mod.send_message("mario@esempio.it", "Ciao\r\nBcc: evil@example.com", "Corpo.", http=_post_fake(captured))
+    sent = _sent_message(captured)
+    assert sent["Bcc"] is None
+    assert str(sent["Subject"]).startswith("Ciao")
+
+
+def test_reply_header_injection_in_original_sender_adds_no_bcc(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _token_dir(tmp_path, monkeypatch)
+    captured: dict = {}
+    import json as _json
+
+    payload = _json.loads(_gmail_full())
+    payload["payload"]["headers"][0]["value"] = "commercialista@esempio.it\r\nBcc: evil@example.com"
+
+    def call(req, timeout: int) -> HttpResult:
+        if req.full_url.endswith("/messages/send"):
+            captured["body"] = req.data
+            return HttpResult(200, b'{"id": "sent7"}')
+        return HttpResult(200, _json.dumps(payload).encode())
+
+    gmail_mod.reply_to("m1", "Rispondo.", http=call)
+    assert _sent_message(captured)["Bcc"] is None
+
+
+def test_send_accented_subject_and_body_round_trip(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    _token_dir(tmp_path, monkeypatch)
+    captured: dict = {}
+    subject = "Perché il budget è di 900 €"
+    gmail_mod.send_message("mario@esempio.it", subject, "Corpo perché sì.", http=_post_fake(captured))
+    sent = _sent_message(captured)
+    assert sent["MIME-Version"] == "1.0"
+    assert str(sent["Subject"]) == subject
+    assert sent.get_content().strip() == "Corpo perché sì."
+
+
 def _outlook_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     directory = tmp_path / "ol-tokens"
     directory.mkdir()

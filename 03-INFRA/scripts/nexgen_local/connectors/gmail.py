@@ -13,8 +13,11 @@ never a false "no mail".
 from __future__ import annotations
 
 import base64
+import re
 import urllib.parse
 import urllib.request
+from email.message import EmailMessage
+from email.policy import SMTP
 from typing import Any
 
 from .auth import HttpFn, _default_http
@@ -197,12 +200,28 @@ def _post(path: str, payload: dict[str, Any], http: HttpFn, auth_http: HttpFn | 
     return data if isinstance(data, dict) else {}
 
 
-def _raw_message(to: str, subject: str, body: str, cc: str = "") -> str:
-    lines = [f"To: {to}", f"Subject: {subject}"]
+def _header_value(value: str) -> str:
+    """One header value on one line: a CR or LF would start a new header (Bcc, ...)."""
+    return re.sub(r"[\r\n]+", " ", str(value or "")).strip()
+
+
+def _raw_message(to: str, subject: str, body: str, cc: str = "", in_reply_to: str = "") -> str:
+    """RFC 2822 message, base64url as the Gmail API wants it.
+
+    EmailMessage writes MIME-Version, Content-Type and UTF-8 body, and encodes
+    non-ASCII headers. Every header value goes through _header_value first,
+    so a newline from an incoming message cannot add a header.
+    """
+    msg = EmailMessage(policy=SMTP)
+    msg["To"] = _header_value(to)
+    msg["Subject"] = _header_value(subject)
     if cc:
-        lines.append(f"Cc: {cc}")
-    lines.extend(["", body])
-    return base64.urlsafe_b64encode("\r\n".join(lines).encode("utf-8")).decode("ascii")
+        msg["Cc"] = _header_value(cc)
+    if in_reply_to:
+        msg["In-Reply-To"] = _header_value(in_reply_to)
+        msg["References"] = _header_value(in_reply_to)
+    msg.set_content(body)
+    return base64.urlsafe_b64encode(msg.as_bytes()).decode("ascii")
 
 
 def send_message(to: str, subject: str, body: str, cc: str = "", http: HttpFn | None = None) -> dict[str, Any]:
@@ -233,14 +252,9 @@ def reply_to(message_id: str, body: str, http: HttpFn | None = None) -> dict[str
         raise ConnectorError("(gmail: mittente originale illeggibile, risposta impossibile)")
     subject = original.get("subject", "") or "Re: "
     subject = subject if subject.lower().startswith("re:") else f"Re: {subject}"
-    lines = [f"To: {to}", f"Subject: {subject}"]
     thread_id = original.get("threadId", "")
     msg_id = str(original.get("message-id", ""))
-    if msg_id:
-        lines.append(f"In-Reply-To: {msg_id}")
-        lines.append(f"References: {msg_id}")
-    lines.extend(["", str(body or "")])
-    raw = base64.urlsafe_b64encode("\r\n".join(lines).encode("utf-8")).decode("ascii")
+    raw = _raw_message(to, subject, str(body or ""), in_reply_to=msg_id)
     call = http or _default_http
     payload = {"raw": raw}
     if thread_id:
