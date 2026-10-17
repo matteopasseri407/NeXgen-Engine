@@ -1,4 +1,4 @@
-﻿"""The dev channels: which commit they point at, and what they refuse.
+"""The dev channels: which commit they point at, and what they refuse.
 
 A stable target is a version; a dev target is a commit, and the only thing that
 makes it installable is a signature the installed tree already pins (never a
@@ -24,7 +24,7 @@ if str(SCRIPTS) not in sys.path:
     sys.path.insert(0, str(SCRIPTS))
 
 from nexgen_core import update_channel as uc  # noqa: E402
-from nexgen_core import updater  # noqa: E402
+from nexgen_core import update_window, updater  # noqa: E402
 
 SSH_KEYGEN = shutil.which("ssh-keygen")
 
@@ -304,10 +304,20 @@ def test_a_check_only_run_never_changes_the_remembered_channel(tmp_path):
 # The rollback guarantee holds on every channel.
 # --------------------------------------------------------------------------
 
-@pytest.mark.skipif(SSH_KEYGEN is None, reason="needs ssh-keygen")
 def test_a_failed_post_update_check_rolls_a_dev_update_back(tmp_path, monkeypatch, capsys):
     """A dev machine comes back to the commit it ran, not to a version number."""
-    machine = _machine(tmp_path, tip_signed=True)
+    from nexgen_core.release_trust import VERIFIED, TagVerdict
+
+    machine = _machine(tmp_path, tip_signed=False)
+    # The rollback machinery is what this test is about, so the dev target is
+    # handed over already proved: the signature path has its own tests.
+    fetched = _git(machine.engine, "fetch", "-q", "origin", "developer:refs/remotes/origin/developer")
+    assert fetched.returncode == 0
+    tip = _git(machine.origin, "rev-parse", "developer").stdout.strip()
+    monkeypatch.setattr(uc, "dev_target", lambda *_a, **_k: uc.ChannelTarget(
+        channel="dev", rev=tip, version="0.2.0", label=f"developer@{tip[:9]}",
+        detail="synthetic verified signature", verdict=TagVerdict(VERIFIED, "synthetic verified signature"),
+    ))
     before = _head(machine.engine)
     doctor_results = iter(((0, 0), (1, 1)))
     monkeypatch.setattr(updater, "_doctor", lambda *_args, **_kwargs: next(doctor_results))
@@ -379,6 +389,75 @@ def test_version_keeps_the_plain_line_when_the_engine_is_not_there(tmp_path, mon
     line = _version_line(monkeypatch, capsys, state, engine=tmp_path / "absent")
 
     assert line.endswith("(dev)")
+
+
+# --------------------------------------------------------------------------
+# An automatic dev update waits for a quiet machine.
+# --------------------------------------------------------------------------
+
+def test_an_unattended_dev_update_waits_while_a_command_holds_the_host_lock(tmp_path, capsys):
+    """The lock is the engine's own signal that something on this machine is running."""
+    from nexgen_core.lock import host_mutation
+
+    machine = _machine(tmp_path, tip_signed=True)
+    before = _head(machine.engine)
+    machine.state.mkdir(parents=True, exist_ok=True)
+    holder = host_mutation("someone-elses-command", state_dir=machine.state, timeout=5)
+    holder.acquire()
+    try:
+        result = updater.main(["--unattended", "--channel", "dev"], environ=_env(machine))
+    finally:
+        holder.release()
+
+    assert result == 0
+    assert _head(machine.engine) == before
+    assert "Postponed to the next cycle" in capsys.readouterr().out
+
+
+def test_an_unattended_dev_update_waits_right_after_a_guard_cycle(tmp_path, capsys):
+    """A liveness file written moments ago means the machine's maintenance is active."""
+    from nexgen_core.beat import LIVENESS_FILE_NAME
+
+    machine = _machine(tmp_path, tip_signed=True)
+    before = _head(machine.engine)
+    machine.state.mkdir(parents=True, exist_ok=True)
+    (machine.state / LIVENESS_FILE_NAME).write_text('{"warnings": 0}\n', encoding="utf-8")
+
+    result = updater.main(["--unattended", "--channel", "dev"], environ=_env(machine))
+
+    assert result == 0
+    assert _head(machine.engine) == before
+    assert "Postponed to the next cycle" in capsys.readouterr().out
+
+
+@pytest.mark.skipif(SSH_KEYGEN is None, reason="needs ssh-keygen")
+def test_an_unattended_dev_update_runs_when_the_machine_is_quiet(tmp_path):
+    machine = _machine(tmp_path, tip_signed=True)
+    tip = _git(machine.origin, "rev-parse", "developer").stdout.strip()
+
+    result = updater.main(["--unattended", "--channel", "dev"], environ=_env(machine))
+
+    assert result == 0
+    assert _head(machine.engine) == tip
+
+
+def test_the_quiet_window_only_applies_to_automatic_dev_updates(tmp_path):
+    """The rule protects a moving branch; a patch release keeps its own contract."""
+    from nexgen_core.lock import host_mutation
+
+    state = tmp_path / "state"
+    state.mkdir()
+    assert update_window.defer_if_busy(unattended=True, channel="stable", state_dir=state) is False
+
+    holder = host_mutation("someone-elses-command", state_dir=state, timeout=5)
+    holder.acquire()
+    try:
+        assert update_window.defer_if_busy(unattended=True, channel="dev", state_dir=state) is True
+        assert update_window.defer_if_busy(unattended=True, channel="stable", state_dir=state) is False
+        # An interactive run is never postponed: the person asked for it now.
+        assert update_window.defer_if_busy(unattended=False, channel="dev", state_dir=state) is False
+    finally:
+        holder.release()
 
 
 # --------------------------------------------------------------------------

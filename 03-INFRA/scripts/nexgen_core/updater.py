@@ -56,14 +56,14 @@ if str(SCRIPTS_DIR) not in sys.path:
 from nexgen_core.errors import NexgenError  # noqa: E402
 from nexgen_core.files import atomic_write_text  # noqa: E402
 from nexgen_core.i18n import t  # noqa: E402
-from nexgen_core.lock import EXIT_BUSY_MANUAL, LockTimeoutError, host_mutation  # noqa: E402
+from nexgen_core.lock import EXIT_BUSY_MANUAL, LockIOError, LockTimeoutError, host_mutation  # noqa: E402
 from nexgen_core.paths import resolve_home, resolve_state_dir  # noqa: E402
 from nexgen_core.processes import force_stop_process_tree  # noqa: E402
 from nexgen_core.release_trust import BAD, UNTRUSTED, TagVerdict, verify_release_tag  # noqa: E402
-from nexgen_core import update_channel  # noqa: E402
+from nexgen_core import update_channel, update_window  # noqa: E402
 
-SEMVER = update_channel.SEMVER
 CHANGELOG_HEADING = re.compile(r"^## \[(\d+\.\d+\.\d+)\].*$", re.MULTILINE)
+logger = logging.getLogger("nexgen.update")
 GIT_TIMEOUT_SECONDS = 120.0
 COMMAND_TIMEOUT_SECONDS = 600.0
 #: How long the merge waits for a running guard cycle before giving up.
@@ -211,36 +211,26 @@ def resolve_repositories(environ: Mapping[str, str]) -> tuple[Path, Path]:
     return engine_repo, data_repo
 
 
-def _version_tuple(value: str) -> tuple[int, int, int]:
-    """Alias of the one semver parser (`update_channel.version_tuple`), kept for its many callers here."""
-    return update_channel.version_tuple(value)
-
-
 def _current_version(engine_repo: Path) -> str:
     value = (engine_repo / "VERSION").read_text(encoding="utf-8").strip()
-    _version_tuple(value)
+    update_channel.version_tuple(value)
     return value
 
 
 def _changelog_between(engine_repo: Path, current: str, target: str) -> str:
     changelog = _git(engine_repo, "show", f"{target}:CHANGELOG.md").stdout
-    current_v = _version_tuple(current)
-    target_v = _version_tuple(target)
+    current_v = update_channel.version_tuple(current)
+    target_v = update_channel.version_tuple(target)
     matches = list(CHANGELOG_HEADING.finditer(changelog))
     sections: list[str] = []
     for index, match in enumerate(matches):
-        version = _version_tuple(match.group(1))
+        version = update_channel.version_tuple(match.group(1))
         if current_v < version <= target_v:
             end = matches[index + 1].start() if index + 1 < len(matches) else len(changelog)
             sections.append(changelog[match.start():end].strip())
     if not sections:
         raise UpdateError(f"CHANGELOG.md has no entry between v{current} and {target}")
     return "\n\n".join(sections)
-
-
-def _commits_before(engine_repo: Path, target: str) -> str:
-    """Kept for callers that show what a dev target carries; the git call lives in update_channel."""
-    return update_channel.commits_at(engine_repo, target)
 
 
 def _assert_clean(repo: Path, *, label: str) -> None:
@@ -285,11 +275,6 @@ def _assert_merge_identity(engine_repo: Path) -> None:
             "the single-clone update needs a Git user.name and user.email to "
             "preserve local data commits in a merge"
         )
-
-
-def _assert_target_version(engine_repo: Path, target: str) -> str:
-    """Kept for callers that need only the version of an already-chosen release tag."""
-    return update_channel.tag_version(engine_repo, target)
 
 
 def _commit_split_pin(
@@ -504,8 +489,8 @@ def _assert_within_unattended_ceiling(current: str, target: str, ceiling: str = 
     recovery -- running the interactive command by hand -- not the check
     that failed, per the self-upgrader's contract.
     """
-    current_major, current_minor, _ = _version_tuple(current)
-    target_major, target_minor, _ = _version_tuple(target)
+    current_major, current_minor, _ = update_channel.version_tuple(current)
+    target_major, target_minor, _ = update_channel.version_tuple(target)
     allowed = target_major == current_major and (ceiling == "minor" or target_minor == current_minor)
     if not allowed:
         kind = "major" if target_major != current_major else "minor"
@@ -652,7 +637,7 @@ def _settled(engine_repo: Path, current: str, target: update_channel.TargetPlan,
             print(f"NeXgen Engine is already at {target.label}.")
             return True
         return False
-    if _version_tuple(target.version) < _version_tuple(current):
+    if update_channel.version_tuple(target.version) < update_channel.version_tuple(current):
         # Two different situations, and only one of them is a fault. Somebody who
         # names an older version explicitly asked for a thing that will not
         # happen, and has to be told so. Being ahead of the newest release is
@@ -667,7 +652,7 @@ def _settled(engine_repo: Path, current: str, target: update_channel.TargetPlan,
             f"Expected on a pre-release; the next published release will be picked up."
         )
         return True
-    if _version_tuple(target.version) == _version_tuple(current):
+    if update_channel.version_tuple(target.version) == update_channel.version_tuple(current):
         print("NeXgen Engine is already at the requested released version.")
         return True
     return False
@@ -681,7 +666,7 @@ def _present_notes(engine_repo: Path, current: str, target: update_channel.Targe
         verdict = _release_verdict(engine_repo, target.ref)
     else:
         print(f"\nCommits carried by {target.label}:\n")
-        print(_commits_before(engine_repo, target.rev))
+        print(update_channel.commits_at(engine_repo, target.rev))
         # The signature was judged when the target was chosen, against the same
         # anchor a release uses. Judging it again here could only produce a
         # second answer to a question already answered.
@@ -761,6 +746,22 @@ def _rolled_back_before(state_dir: Path, target: str) -> bool:
     return True
 
 
+def _report_success(target: update_channel.TargetPlan, post_fail: int | None) -> None:
+    """The end of a good update: what landed, what a doctor still says, what is still owed."""
+    if post_fail == 0:
+        print(f"\nNeXgen Engine {target.label} installed: doctor reports no failures.")
+        print("Warnings listed above (if any) are non-blocking: unprovisioned")
+        print("optional deps provision on first use, orphans stay untouched by design.")
+    else:
+        print(f"\nNeXgen Engine {target.label} installed with no new doctor failures.")
+        print(f"The machine still has {post_fail} pre-existing doctor failure(s).")
+    print("Other machines remain behind until they run nexgen-update too.")
+    print(
+        "Cloud-Server note: the VPS is a separate install; follow "
+        "03-INFRA/deploy/README.md before redeploying it."
+    )
+
+
 def main(
     argv: Sequence[str] | None = None,
     *,
@@ -785,8 +786,13 @@ def main(
         split_topology = data_repo != engine_repo
         state_dir = _state_dir(env)
         current = _current_version(engine_repo)
+        channel = update_channel.resolve_channel(args.channel, state_dir, vault_data=data_repo)
+        # Before anything is fetched or judged: an automatic update onto a moving
+        # branch has no business running while the machine is in use.
+        if update_window.defer_if_busy(unattended=args.unattended, channel=channel, state_dir=state_dir):
+            return 0
         target = update_channel.plan_target(
-            engine_repo, state_dir, channel=args.channel, requested=args.target, vault_data=data_repo,
+            engine_repo, state_dir, channel=channel, requested=args.target, vault_data=data_repo,
         )
         _announce(engine_repo, data_repo, current, target)
         if _stop_if_settled(engine_repo, current, target, args, state_dir):
@@ -795,7 +801,6 @@ def main(
         _enforce_ceiling(args, target, current, state_dir)
         if args.unattended and _rolled_back_before(state_dir, target.ref):
             return 0
-
         verdict = _present_notes(engine_repo, current, target)
 
         if args.check:
@@ -927,18 +932,7 @@ def main(
             )
         _clear_rejected(state_dir)
         _remember_channel(state_dir, target.channel)
-        if post_fail == 0:
-            print(f"\nNeXgen Engine {target.label} installed: doctor reports no failures.")
-            print("Warnings listed above (if any) are non-blocking: unprovisioned")
-            print("optional deps provision on first use, orphans stay untouched by design.")
-        else:
-            print(f"\nNeXgen Engine {target.label} installed with no new doctor failures.")
-            print(f"The machine still has {post_fail} pre-existing doctor failure(s).")
-        print("Other machines remain behind until they run nexgen-update too.")
-        print(
-            "Cloud-Server note: the VPS is a separate install; follow "
-            "03-INFRA/deploy/README.md before redeploying it."
-        )
+        _report_success(target, post_fail)
         return 0
     except update_channel.ChannelError as exc:
         # A channel that cannot answer, or that answered "nothing installable",
@@ -985,7 +979,7 @@ class EngineUpdater:
         tags = update_channel.released_tags(engine_repo)
         if tags:
             latest = tags[0].removeprefix("v")
-            has_up = _version_tuple(latest) > _version_tuple(curr)
+            has_up = update_channel.version_tuple(latest) > update_channel.version_tuple(curr)
             return has_up, f"v{curr}", f"v{latest}"
         return False, f"v{curr}", f"v{curr}"
 
