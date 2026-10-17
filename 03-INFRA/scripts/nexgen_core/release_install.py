@@ -2,10 +2,10 @@
 
 The release is not finished when the tag is published: the machine that runs it
 has to run the new engine too. This is that half, kept apart from the traphila in
-`release_ship.py` — run `nexgen update`, prove the installed engine with its own
-smoke and the interpreter the launchers use, put the machine back on the version
-it came from when the smoke fails, and report a vault that cannot be aligned
-instead of hiding it behind "already at version".
+`release_ship.py` — run the installed launcher's `update`, prove the installed
+engine with its own smoke and the interpreter the launchers use, put the machine
+back on the version it came from when the smoke fails, and report a vault that
+cannot be aligned instead of hiding it behind "already at version".
 
 The `run` seam is the same one ship uses: a callable that answers like the
 commands do, so every step here is tested without touching a real machine.
@@ -23,7 +23,9 @@ from pathlib import Path
 from subprocess import CompletedProcess
 
 from .files import atomic_write_text
+from .module_install import shim_path
 from .paths import resolve_home, resolve_runtime_dir
+from .shims import PRIMARY
 
 #: The updater's own refusal when a repository it merges into is not clean
 #: (`_assert_clean` in `nexgen_core/updater.py`, same git flags here).
@@ -69,15 +71,31 @@ class Installer:
             raise InstallProblem(f"the vault {dirty} has uncommitted or untracked files: "
                                  "commit or stash them, then run ship --install again")
         self._smoke(version, previous)
-        doctor = self.run(["nexgen", "doctor", "--summary"], self.repo)
+        doctor = self.run([str(self.launcher()), "doctor", "--summary"], self.repo)
         if doctor.returncode != 0:
             last = (doctor.stdout or doctor.stderr).strip().splitlines()
             raise InstallProblem(f"installed, but doctor is not clean: {last[-1] if last else doctor.returncode}")
 
+    def launcher(self) -> Path:
+        """The installed command, the one that runs the engine this machine has.
+
+        Ship runs from a development checkout, whose own `nexgen` is what PATH
+        resolves while it runs: that one answers "already at the requested released
+        version" about the checkout, so v2.16.3 updated nothing and left this machine
+        on 2.16.2 with the release green. Every command here goes through the
+        launcher the installer wrote, and a machine without one stops the release
+        instead of quietly updating another tree.
+        """
+        launcher = shim_path(resolve_home() / ".local" / "bin", PRIMARY)
+        if not launcher.is_file():
+            raise InstallProblem(f"the installed command is not at {launcher}: run 'nexgen init' from the "
+                                 "engine you want to use (it rewrites the launchers), then ship --install again")
+        return launcher
+
     def _update(self, version: str, previous: str) -> str:
         """Run the updater; a rollback caused by a colliding cycle is retried once, and only once."""
         for attempt in (1, 2):
-            update = self.run(["nexgen", "update", "--yes", "--target", version], self.repo)
+            update = self.run([str(self.launcher()), "update", "--yes", "--target", version], self.repo)
             output = f"{update.stdout}\n{update.stderr}"
             if update.returncode == 0:
                 return output
@@ -113,7 +131,7 @@ class Installer:
             return
         log = self._log_path()
         atomic_write_text(log, f"{smoke.stdout}\n{smoke.stderr}")
-        rollback = self.run(["nexgen", "update", "--yes", "--target", previous], self.repo)
+        rollback = self.run([str(self.launcher()), "update", "--yes", "--target", previous], self.repo)
         if rollback.returncode != 0 or self.installed_version() != previous:
             raise InstallProblem(f"the installed v{version} failed its smoke (output in {log}) and this machine "
                                  f"is not back on {previous}: run 'nexgen update --yes --target {previous}' by hand")

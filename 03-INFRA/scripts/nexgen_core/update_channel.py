@@ -321,14 +321,40 @@ def nightly_target(
     A commit that has not passed them is a commit nobody has judged yet.
     """
     tip = developer_tip(engine_repo)
-    target = _signed_target(engine_repo, tip, channel="nightly", detail="tip of developer", trust_dir=trust_dir)
-    missing = (checks_missing(REPO_SLUG, tip) if checks is None else checks(tip))
+    target = _newest_signed_on_developer(engine_repo, tip, trust_dir)
+    rev = target.rev
+    missing = (checks_missing(REPO_SLUG, rev) if checks is None else checks(rev))
     if missing:
         raise ChannelRefused(
-            f"commit {tip[:9]} on nightly has not passed the CI gates developer requires: "
+            f"commit {rev[:9]} on nightly has not passed the CI gates developer requires: "
             f"{', '.join(missing)}. Nothing was installed; the next push that goes green opens the channel."
         )
     return target
+
+
+#: How far back nightly looks, along developer's first parents, for a commit the
+#: pinned keys signed: the tip after a release is GitHub's own merge of main.
+NIGHTLY_LOOKBACK = 20
+
+
+def _newest_signed_on_developer(engine_repo: Path, tip: str, trust_dir: Path | None) -> ChannelTarget:
+    """The newest commit of developer, not yet installed here, that the pinned keys signed.
+
+    After every release the sync workflow merges main back into developer, and
+    that merge is signed by GitHub, not by a pinned key: taking only the tip
+    would close nightly until the owner's next push. Only commits this machine
+    does not already have are candidates, so the walk never moves it backwards.
+    """
+    listed = _git(engine_repo, "rev-list", "--first-parent", f"--max-count={NIGHTLY_LOOKBACK}", tip, "--not", "HEAD")
+    candidates = listed.stdout.split() if listed.returncode == 0 else [tip]
+    first_refusal: ChannelRefused | None = None
+    for rev in candidates or [tip]:
+        detail = "tip of developer" if rev == tip else f"newest commit of developer a pinned key signed, below {tip[:9]}"
+        try:
+            return _signed_target(engine_repo, rev, channel="nightly", detail=detail, trust_dir=trust_dir)
+        except ChannelRefused as refused:  # nexgen: allow reason="a commit the pinned keys did not sign is passed over for the next one down, never installed"
+            first_refusal = first_refusal or refused
+    raise first_refusal or ChannelRefused(f"no commit of {DEVELOPER_BRANCH} is signed by a pinned key")
 
 
 def beta_target(

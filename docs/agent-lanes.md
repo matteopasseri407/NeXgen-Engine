@@ -44,10 +44,11 @@ It prints one `== step` line per step and ends with either `OK vX.Y.Z` or `STOP 
 7. **release workflow**: pushes the tag, waits for `release.yml`, and reruns it once if it fails.
    It then checks that the GitHub release is not a draft and has assets.
 8. **sync developer**: waits for `sync-developer` to merge `main` back into `developer`.
-9. **install** (only with `--install`): runs `nexgen update --yes --target vX.Y.Z`.
+9. **install** (only with `--install`): runs `nexgen update --yes --target vX.Y.Z` through the installed launcher (`~/.local/bin/nexgen.cmd` on Windows, `~/.local/bin/nexgen` elsewhere), never through the `nexgen` that PATH resolves: run from a development checkout that is the checkout, which answers "already at the requested released version" about itself and updates nothing.
+   A machine with no installed launcher stops here saying so.
    If the update fails and is rolled back, it retries once; a refusal because the vault has uncommitted or untracked files is not retried, and is reported in one line naming the folder.
-   It then checks that the installed `VERSION` matches and runs the installed engine's own smoke (`03-INFRA/scripts/smoke.py` of the installed tree, with the interpreter the launchers use, so a release tree needs no `.venv`): a machine that fails it is put back on the version it came from (`nexgen update --yes --target <previous>`) and the release stops saying so.
-   Finally it runs `nexgen doctor --summary`, which stops it only on failures (warnings are non-blocking).
+   It then checks that the installed `VERSION` matches and runs the installed engine's own smoke (`03-INFRA/scripts/smoke.py` of the installed tree, with the interpreter the launchers use, so a release tree needs no `.venv`): a machine that fails it is put back on the version it came from (the same launcher, `update --yes --target <previous>`) and the release stops saying so.
+   Finally it runs the installed launcher's `doctor --summary`, which stops it only on failures (warnings are non-blocking).
 
 Every maintainer machine signs with its own key, and that key has to be listed in `trust/release-signers.txt`.
 Installed copies only accept signers they pin, so a new key takes two releases (see `SECURITY.md`).

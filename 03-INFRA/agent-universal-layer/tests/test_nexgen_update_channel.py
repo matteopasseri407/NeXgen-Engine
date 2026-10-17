@@ -519,8 +519,25 @@ def test_an_unsigned_developer_tip_is_refused_in_every_mode(tmp_path, flags, cap
 
 
 @pytest.mark.skipif(SSH_KEYGEN is None, reason="needs ssh-keygen")
-def test_a_developer_tip_signed_by_a_stranger_is_refused(tmp_path, capsys):
+def test_a_developer_tip_signed_by_a_stranger_is_never_installed(tmp_path, monkeypatch, capsys):
+    """The stranger's commit is passed over; the machine lands on the pinned-signed one below it."""
     machine = _machine(tmp_path, tip_signed=True)
+    owner_signed = _git(machine.origin, "rev-parse", "developer").stdout.strip()
+    stranger = _key(tmp_path / "stranger")
+    _git(machine.origin, "checkout", "-q", "developer")
+    (machine.origin / "foreign.txt").write_text("foreign\n", encoding="utf-8")
+    _signed(machine.origin, stranger, "dev work by a stranger")
+    _gates_green(monkeypatch)
+
+    assert updater.main(["--yes", "--channel", "nightly"], environ=_env(machine)) == 0
+
+    assert _head(machine.engine) == owner_signed
+    assert not (machine.engine / "foreign.txt").exists()
+
+
+@pytest.mark.skipif(SSH_KEYGEN is None, reason="needs ssh-keygen")
+def test_a_developer_branch_only_a_stranger_signed_is_refused(tmp_path, capsys):
+    machine = _machine(tmp_path, tip_signed=False)
     stranger = _key(tmp_path / "stranger")
     _git(machine.origin, "checkout", "-q", "developer")
     (machine.origin / "foreign.txt").write_text("foreign\n", encoding="utf-8")
@@ -674,3 +691,16 @@ def test_gh_is_preferred_and_its_failure_still_reaches_the_public_api(monkeypatc
 
     assert uc._api_get("repos/o/r/x") == {"runs": []}
     assert seen == ["repos/o/r/x"]
+
+
+@pytest.mark.skipif(SSH_KEYGEN is None, reason="needs ssh-keygen")
+def test_nightly_passes_over_a_tip_no_pinned_key_signed_for_the_signed_commit_below_it(tmp_path, monkeypatch):
+    """After a release GitHub's own merge of main sits on top of developer, signed by
+    GitHub; v2.16.3 refused it and nightly stayed shut until the owner pushed again."""
+    machine = _machine(tmp_path, tip_signed=True, extra_unsigned=True)
+    signed = _git(machine.origin, "rev-parse", "developer~1").stdout.strip()
+    _gates_green(monkeypatch)
+
+    assert updater.main(["--yes", "--channel", "nightly"], environ=_env(machine)) == 0
+
+    assert _head(machine.engine) == signed

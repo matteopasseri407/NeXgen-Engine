@@ -15,6 +15,16 @@ from conftest import REAL_VAULT, load_agent_sync_module
 # so the module is pinned to one worker. Nothing is skipped or removed.
 pytestmark = pytest.mark.xdist_group("serial")
 
+#: What the deadline does not cover and a loaded machine still pays for: starting the
+#: command (a fresh interpreter measures 0.25s under `-n auto`, 16 workers, 16 cores)
+#: and stopping its tree, which is `force_stop_process_tree`'s own 5s budget in
+#: `nexgen_core/processes.py` plus the second `communicate(timeout=1)`. A wait here is
+#: the deadline the test declares plus that room, so it scales with the deadline.
+#: Kept below the 30s the silent command sleeps, so an updater that ignores its
+#: deadline still fails this module instead of waiting forever.
+COMMAND_START_SECONDS = 15.0
+DEADLINE_MARGIN = 5.0
+
 SCRIPT = REAL_VAULT / "03-INFRA" / "scripts" / "nexgen_core" / "updater.py"
 
 
@@ -773,9 +783,18 @@ def test_merge_failure_after_ref_moved_is_rolled_back(tmp_path, capsys, monkeypa
 
 
 def test_live_silent_update_command_obeys_deadline_and_is_reaped(tmp_path, monkeypatch):
+    """The command is stopped at its deadline and reaped, so no orphan keeps running.
+
+    The wait here is the deadline the test declares plus the room a loaded machine
+    needs to start the command and stop its tree (`COMMAND_START_SECONDS`): the
+    property is that the deadline is obeyed, not that 1.5s of wall clock was enough
+    for this machine to get there. It stays under the command's own 30s sleep, so an
+    updater that ignores its deadline still fails here.
+    """
     from concurrent.futures import ThreadPoolExecutor, TimeoutError
     updater = _load_updater()
     monkeypatch.setattr(updater, "COMMAND_TIMEOUT_SECONDS", 0.15, raising=False)
+    budget = COMMAND_START_SECONDS + updater.COMMAND_TIMEOUT_SECONDS * DEADLINE_MARGIN
     real_popen = subprocess.Popen
     launched = []
 
@@ -791,7 +810,7 @@ def test_live_silent_update_command_obeys_deadline_and_is_reaped(tmp_path, monke
     try:
         with pytest.raises(updater.UpdateError, match="timeout"):
             try:
-                future.result(timeout=1.5)
+                future.result(timeout=budget)
             except TimeoutError:
                 pytest.fail("updater command stayed alive beyond its deadline")
         assert launched[0].returncode is not None
@@ -799,7 +818,7 @@ def test_live_silent_update_command_obeys_deadline_and_is_reaped(tmp_path, monke
         for proc in launched:
             if proc.poll() is None:
                 proc.kill()
-            proc.wait(timeout=3)
+            proc.wait(timeout=budget)
         pool.shutdown(wait=True)
 
 
