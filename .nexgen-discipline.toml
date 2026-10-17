@@ -4,7 +4,7 @@
 # covered (a split into a differently named file is the loophole to avoid). Changing this file always needs a
 # decision.
 complexity_threshold = 4  # only the size of a change `discipline.py review` puts in the brief; no gate reads it
-smoke_command = "python 03-INFRA/scripts/discipline.py gate"
+smoke_command = "python 03-INFRA/scripts/smoke.py"
 review_paths = [
   "03-INFRA/scripts/nexgen_core/git_ops*",
   "03-INFRA/scripts/nexgen_core/guard*",
