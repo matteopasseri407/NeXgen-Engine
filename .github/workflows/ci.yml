@@ -4,6 +4,13 @@ on:
   push:
     branches: ["**"]
   pull_request:
+  # The nightly run at 03:00 UTC exists for the Windows leg (engine-tests-windows
+  # below), which no longer runs on push/PR: windows-latest is the scarcest and
+  # slowest runner here, so it answers once a night and on demand instead of on
+  # every push. workflow_dispatch is the manual door to the same job.
+  schedule:
+    - cron: "0 3 * * *"
+  workflow_dispatch:
 
 # Default to read-only GITHUB_TOKEN permissions for every job in this
 # workflow (least privilege - none of the jobs below push commits, open
@@ -462,11 +469,37 @@ jobs:
             fi
             sleep 10
           done
-          pip install pytest pyyaml 'langgraph>=1.0,<2' 'langgraph-checkpoint-sqlite>=3,<4' 'langchain-ollama>=1.0,<2'
+          pip install pytest pyyaml pytest-xdist 'langgraph>=1.0,<2' 'langgraph-checkpoint-sqlite>=3,<4' 'langchain-ollama>=1.0,<2'
 
       - name: Engine regression suite
         working-directory: 03-INFRA/agent-universal-layer/tests
-        run: python3 -m pytest -v
+        # -n auto spreads the suite over the runner's cores (2026-10-17): the
+        # tests that share a real resource are pinned to one worker with
+        # `@pytest.mark.xdist_group("serial")`, so the speedup never trades
+        # away a test - it only moves the ones that cannot run concurrently.
+        run: python3 -m pytest -v -n auto --dist loadgroup
+
+  smoke-linux:
+    # The checkout's own commands, run for real on a clean runner (2026-10-17):
+    # the engine-tests job proves behavior against fakes; this proves that on a
+    # machine which has never seen this project, the launcher a user really gets
+    # is rendered from THIS checkout and that every read-only command answers
+    # with the exit code it promises. The budget is the smoke's own (30s), well
+    # inside the 3-minute job cap.
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: "3.12"
+
+      - name: Install the engine's dependencies from this checkout
+        run: pip install .
+
+      - name: Engine smoke (read-only commands + launcher)
+        run: python 03-INFRA/scripts/smoke.py
 
   opencode2-smoke:
     # OpenCode 2 native-contract gate (2026-09-22): the suite above proves
@@ -498,6 +531,13 @@ jobs:
     # B2.5: Windows now exercises the shared Python provisioner. POSIX-only
     # shell/doctor tests are skipped by pytest markers; the Windows-specific
     # value is the direct agent_sync.py guard smoke in a sandboxed USERPROFILE.
+    #
+    # Event gate (2026-10-17): this job answers on the nightly schedule and on
+    # workflow_dispatch only - never on push or pull_request. A Windows runner
+    # answers one question ("does the provisioner still work on Windows?"),
+    # which no push changes minute by minute, and it costs the scarcest runner
+    # in the pool on every commit. The Linux legs still judge every push.
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule'
     runs-on: windows-latest
     # windows-latest is slow but not unbounded: a normal run is minutes. Cap
     # it so a Windows-only subprocess deadlock surfaces as a failed job with
