@@ -31,13 +31,12 @@ def test_a_new_push_cancels_the_run_it_supersedes():
     assert concurrency["cancel-in-progress"] is True
 
 
-def test_the_windows_leg_answers_only_on_the_nightly_run_and_on_demand():
-    """A push decides nothing about Windows, so it must not spend a Windows runner.
+def test_the_windows_leg_answers_nightly_on_demand_and_on_a_release_pull_request():
+    """Daily pushes do not wait for Windows; a pull request into main does.
 
     The workflow still has the push/pull_request triggers every Linux job uses;
-    the Windows job opts out of them itself, which is the thing asserted here:
-    if the `if` line is dropped, this test goes red on the next push rather than
-    after a wasted windows-latest slot.
+    the Windows job opts out of a plain push itself, which is the thing asserted
+    here: if the `if` line is dropped, this test goes red on the next push.
     """
     doc = workflow()
     # The nightly door exists, at the hour the job's own budget was planned for.
@@ -49,10 +48,11 @@ def test_the_windows_leg_answers_only_on_the_nightly_run_and_on_demand():
     gate = job["if"]
     assert "workflow_dispatch" in gate
     assert "schedule" in gate
-    # Positive form only: an expression that merely excludes push/pull_request
-    # would silently start running a Windows leg on a future event.
+    # Positive form only: an expression that merely excludes push would silently
+    # start running a Windows leg on a future event.
     assert "push" not in gate
-    assert "pull_request" not in gate
+    assert "github.event_name == 'pull_request' && github.base_ref == 'main'" in gate
+    assert "-n auto" in job["steps"][-1]["run"]
 
 
 def test_smoke_linux_runs_the_real_smoke_on_every_push():
