@@ -104,6 +104,26 @@ def test_default_scorciatoie_su_comandi_finti(monkeypatch: pytest.MonkeyPatch) -
     assert sh.default("") is False
 
 
+def test_a_windows_path_keeps_its_backslashes(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Lo split dei sottocomandi non deve mangiare le barre rovesciate.
+
+    In modalità POSIX `C:\\tools\\run.bat` diventa `C: ools` piu' un tab, quindi
+    il sottocomando fallisce su un percorso che non esiste. Su Windows lo split
+    non-POSIX tiene le barre e lascia le virgolette nei token: una coppia
+    esterna viene tolta, come per il verify di patch.py.
+    """
+    monkeypatch.setattr(shell_mod.os, "name", "nt")
+    assert shell_mod.split_command_line('"C:\\tools\\my skill\\run.bat" --now') == [
+        "C:\\tools\\my skill\\run.bat", "--now",
+    ]
+    assert shell_mod.split_command_line("plain two") == ["plain", "two"]
+
+
+def test_a_posix_command_line_keeps_the_posix_split(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(shell_mod.os, "name", "posix")
+    assert shell_mod.split_command_line('"/opt/x/my skill" --now') == ["/opt/x/my skill", "--now"]
+
+
 def test_firme_pubbliche_invariate() -> None:
     assert list(inspect.signature(shell_mod.render_menu).parameters) == []
     assert list(inspect.signature(shell_mod.run_shell).parameters) == ["vault_data"]

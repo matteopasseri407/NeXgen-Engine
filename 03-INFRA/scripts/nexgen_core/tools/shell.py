@@ -8,12 +8,12 @@ from __future__ import annotations
 
 import cmd
 import os
-import shlex
 import subprocess
 import sys
 from pathlib import Path
 from typing import Any
 from nexgen_core.marks import safe_text
+from nexgen_core.processes import split_command_line
 
 from nexgen_core.paths import resolve_home
 from nexgen_core.tools.info import (
@@ -154,7 +154,7 @@ class NeXgenShell(cmd.Cmd):
 
         try:
             from nexgen_core.cli import _run_cli
-            args = shlex.split(raw, posix=sys.platform != "win32")
+            args = split_command_line(raw)
             _run_cli(args)
         except Exception as exc:  # noqa: BLE001 - shell reports, never raises
             print(f"{C_YELLOW}[!] Command error: {exc}{C_RESET}")
@@ -180,7 +180,7 @@ class NeXgenShell(cmd.Cmd):
         p.add_argument("--summary", action="store_true")
         p.add_argument("--fix", action="store_true")
         try:
-            parsed = p.parse_args(shlex.split(arg))
+            parsed = p.parse_args(split_command_line(arg))
             cmd_doctor(parsed)
         except SystemExit:
             pass
@@ -193,7 +193,7 @@ class NeXgenShell(cmd.Cmd):
         p.add_argument("--offline", action="store_true")
         p.add_argument("--skip-mcp", action="store_true")
         try:
-            parsed = p.parse_args(shlex.split(arg))
+            parsed = p.parse_args(split_command_line(arg))
             setattr(parsed, "mode", "apply")
             cmd_sync(parsed)
         except SystemExit:
@@ -204,7 +204,7 @@ class NeXgenShell(cmd.Cmd):
         Usage: modules list
                modules set <id> <absent|local|remote>"""
         from nexgen_core.cli import _run_cli
-        args = ["modules"] + (shlex.split(arg) if arg else ["list"])
+        args = ["modules"] + (split_command_line(arg) if arg else ["list"])
         _run_cli(args)
 
     def complete_modules(self, text: str, line: str, begidx: int, endidx: int) -> list[str]:
@@ -223,7 +223,7 @@ class NeXgenShell(cmd.Cmd):
             print(f"{C_YELLOW}[!] Secrets manager script not found: {script}{C_RESET}")
             return
         arg_str = arg if arg else "list"
-        subprocess.run([sys.executable, str(script), *shlex.split(arg_str)], check=False)
+        subprocess.run([sys.executable, str(script), *split_command_line(arg_str)], check=False)
 
     def complete_secrets(self, text: str, line: str, begidx: int, endidx: int) -> list[str]:
         tokens = line.split()
@@ -234,7 +234,7 @@ class NeXgenShell(cmd.Cmd):
     def do_vault(self, arg: str) -> None:
         """Vault operations: map, push."""
         from nexgen_core.cli import _run_cli
-        args = ["vault"] + (shlex.split(arg) if arg else ["map"])
+        args = ["vault"] + (split_command_line(arg) if arg else ["map"])
         _run_cli(args)
 
     def complete_vault(self, text: str, line: str, begidx: int, endidx: int) -> list[str]:
@@ -246,7 +246,7 @@ class NeXgenShell(cmd.Cmd):
     def do_update(self, arg: str) -> None:
         """Update NeXgen Engine release."""
         from nexgen_core.cli import _run_cli
-        args = ["update"] + shlex.split(arg)
+        args = ["update"] + split_command_line(arg)
         _run_cli(args)
 
     def do_clear(self, arg: str) -> None:
