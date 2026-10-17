@@ -13,6 +13,12 @@ on:
 permissions:
   contents: read
 
+# One run per ref at a time: a new push cancels the run it supersedes, so only
+# the newest state of a branch or pull request is judged.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
 
   discipline:
