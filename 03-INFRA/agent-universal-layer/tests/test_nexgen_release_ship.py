@@ -406,33 +406,41 @@ def test_a_rollback_that_does_not_finish_says_what_to_run_by_hand(repo, tmp_path
         shipper.ship("minor", install=True)
 
 
+def _installer(repo, world, **kw):
+    """The machine half of a release, on the same scripted world."""
+    from nexgen_core.release_install import Installer
+
+    return Installer(engine_root=repo / "installed" / "03-INFRA", repo=repo, run=world,
+                     log=lambda _m: None, sleep=lambda _s: None, poll_seconds=1, **kw)
+
+
 def test_the_launcher_interpreter_is_the_provisioned_runtime(repo, tmp_path, monkeypatch):
     """A release tree may have no `.venv`: the installed engine runs on its runtime, and
     the interpreter never comes from inside the engine folder."""
-    from nexgen_core import release_ship
+    from nexgen_core import release_install
 
     runtime = tmp_path / "runtime"
     (runtime / "bin").mkdir(parents=True)
     (runtime / "bin" / "python").write_text("#!/bin/sh\n", encoding="utf-8")
-    monkeypatch.setattr(release_ship, "resolve_runtime_dir", lambda home=None: runtime)
-    shipper = _shipper(repo, FakeWorld(repo))
-    shipper.engine_root = repo / "installed" / "03-INFRA"
+    monkeypatch.setattr(release_install, "resolve_runtime_dir", lambda home=None: runtime)
+    installer = _installer(repo, FakeWorld(repo))
     (runtime / ".provisioned").write_text("", encoding="utf-8")
-    assert shipper._launcher_python() == [str(runtime / "bin" / "python")]
+    assert installer.launcher_python() == [str(runtime / "bin" / "python")]
     (runtime / ".provisioned").unlink()
-    chosen = shipper._launcher_python()
+    chosen = installer.launcher_python()
     assert Path(chosen[0]).name.lower().startswith(("python", "py"))
-    assert shipper.engine_root not in Path(chosen[0]).parents
+    assert installer.engine_root not in Path(chosen[0]).parents
 
 
 def test_the_version_probe_is_the_launchers_own(repo):
     """The launchers accept a Python 3.11 or newer; the interpreter for the installed
     smoke is chosen the same way, so a stub that is not Python is never picked."""
-    from nexgen_core import release_ship
+    from nexgen_core import release_install, release_ship
 
-    shipper = Shipper(repo=repo, engine_root=repo / "engine", run=release_ship._default_run, log=lambda _m: None)
-    assert shipper._runs_this_engine([sys.executable])
-    assert not shipper._runs_this_engine([shutil.which("git") or "git"])
+    installer = release_install.Installer(engine_root=repo / "engine", repo=repo,
+                                          run=release_ship._default_run, log=lambda _m: None)
+    assert installer._runs_this_engine([sys.executable])
+    assert not installer._runs_this_engine([shutil.which("git") or "git"])
 
 
 def test_an_update_refused_for_a_dirty_vault_says_which_folder_and_stops(repo, tmp_path):

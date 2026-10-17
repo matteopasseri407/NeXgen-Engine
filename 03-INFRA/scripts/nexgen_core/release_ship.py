@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """One command from `developer` to a published, signed release.
 
-One job: run the release traphila in order, from the bump to this machine's own
-install, and stop at the first step that is not green.
-nexgen: one-job reason="the release traphila in one order, every step pinned by a test"
+One job: run the release traphila in order, from the bump to the push, and stop
+at the first step that is not green. The machine half of it (`--install`) lives
+in `release_install.py`, where the steps are pinned by the same tests.
 
 The steps were always the same and always done by hand: bump, open the
 `developer -> main` pull request, wait for its checks, merge, wait for the CI
@@ -26,11 +26,9 @@ from __future__ import annotations
 
 import argparse
 import json
-import re
 import shutil
 import subprocess
 import sys
-import tempfile
 import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
@@ -40,8 +38,7 @@ SCRIPTS_DIR = Path(__file__).resolve().parents[1]
 if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
-from nexgen_core.files import atomic_write_text  # noqa: E402
-from nexgen_core.paths import resolve_engine_root, resolve_home, resolve_runtime_dir  # noqa: E402
+from nexgen_core.paths import resolve_engine_root  # noqa: E402
 from nexgen_core.release import bump_version_files, compute_next_version, is_semver, newer_version  # noqa: E402
 from nexgen_core.release_checks import (  # noqa: E402
     commit_checks,
@@ -49,6 +46,7 @@ from nexgen_core.release_checks import (  # noqa: E402
     required_checks,
     verdict,
 )
+from nexgen_core.release_install import Installer, InstallProblem  # noqa: E402
 
 #: Checks that fail on purpose on this pull request and say nothing about the
 #: release: the lane guard rejects pushes that do not come from a feature lane.
@@ -56,16 +54,6 @@ IGNORED_CHECKS = ("lane-guard",)
 
 _PENDING = {"QUEUED", "IN_PROGRESS", "PENDING", "WAITING", "REQUESTED", "EXPECTED"}
 _GREEN = {"SUCCESS", "SKIPPED", "NEUTRAL"}
-
-#: The updater's own refusal when a repository it merges into is not clean
-#: (`_assert_clean` in `nexgen_core/updater.py`, same git flags here).
-DIRTY_REFUSAL = re.compile(r"(?P<label>\w+) repository is dirty")
-
-
-def _reported_folders(output: str) -> dict[str, Path]:
-    """The engine and data folders the updater prints at the start of every run."""
-    return {match.group(1).lower(): Path(match.group(2).strip())
-            for match in re.finditer(r"^(Engine|Data):\s+(\S.*?)\s*$", output, re.M)}
 
 
 class ShipStop(Exception):
@@ -374,119 +362,15 @@ class Shipper:
         self._wait(synced, "sync-developer to merge main back")
         self._do("git", "merge", "--ff-only", f"origin/{self.branch}", what="fast-forward to origin")
 
-    def _installed_version(self) -> str:
-        installed_file = self.engine_root.parent / "VERSION"
-        return installed_file.read_text(encoding="utf-8").strip() if installed_file.is_file() else "?"
-
-    def _runs_this_engine(self, argv: list[str]) -> bool:
-        """True when this interpreter is Python 3.11+, the floor the engine declares (the launchers' own check)."""
-        probe = self.run([*argv, "-c", "import sys; sys.exit(0 if sys.version_info >= (3, 11) else 1)"], self.repo)
-        return probe.returncode == 0
-
-    def _launcher_python(self) -> list[str]:
-        """The interpreter the installed launchers use, as the argv they use it with.
-
-        The same order they follow: the provisioned runtime, then `py -3` and
-        `python` on Windows or `python3` and `python` elsewhere, each only if it
-        really is a Python this engine can run on. Never this checkout's
-        interpreter: a release tree carries no `.venv` of its own.
-        """
-        runtime = resolve_runtime_dir(resolve_home())
-        if (runtime / ".provisioned").is_file():
-            for candidate in (runtime / "bin" / "python", runtime / "Scripts" / "python.exe"):
-                if candidate.is_file():
-                    return [str(candidate)]
-        names = (("py", "-3"), ("python",)) if sys.platform == "win32" else (("python3",), ("python",))
-        for name in names:
-            found = shutil.which(name[0])
-            if found and self._runs_this_engine([found, *name[1:]]):
-                return [found, *name[1:]]
-        raise ShipStop(self._step, "no Python 3.11 or newer found to run the installed engine's smoke")
-
-    def _smoke_installed(self, version: str, previous: str) -> None:
-        """The installed engine's own smoke, run the way the machine runs it.
-
-        A machine that fails it goes back to the version it came from, by the same
-        update command, and the release stops there saying which version it is on.
-        """
-        script = self.engine_root / "scripts" / "smoke.py"
-        if not script.is_file():
-            raise ShipStop(self._step, f"the installed engine has no {script.name}: nothing proved it runs")
-        smoke = self.run([*self._launcher_python(), str(script)], self.repo)
-        if smoke.returncode == 0:
-            self.log(f"   the installed v{version} passes its own smoke")
-            return
-        log = self.install_log or Path(tempfile.gettempdir()) / "nexgen-release-ship-install.log"
-        atomic_write_text(log, f"{smoke.stdout}\n{smoke.stderr}")
-        rollback = self.run(["nexgen", "update", "--yes", "--target", previous], self.repo)
-        if rollback.returncode != 0 or self._installed_version() != previous:
-            raise ShipStop(self._step, f"the installed v{version} failed its smoke (output in {log}) and this machine "
-                                       f"is not back on {previous}: run 'nexgen update --yes --target {previous}' by hand")
-        raise ShipStop(self._step, f"the installed v{version} failed its smoke (output in {log}); "
-                                   f"this machine is back on {previous}")
-
-    def _dirty_refusal(self, output: str) -> str | None:
-        """The updater's refusal for a repository that is not clean, in one line naming the folder.
-
-        Nothing was rolled back and nothing will be on a second try: the files a
-        person must commit or stash are the whole reason, so ship stops here.
-        """
-        match = DIRTY_REFUSAL.search(output)
-        if match is None:
-            return None
-        label = match.group("label")
-        folder = _reported_folders(output).get("data" if label == "data" else "engine")
-        return (f"the {label} checkout has uncommitted or untracked files ({folder or '?'}): "
-                "commit or stash them, then run ship --install again")
-
-    def _data_with_dirty_files(self, output: str) -> Path | None:
-        """The data folder the updater named, when it still carries uncommitted or untracked files.
-
-        `nexgen update` refuses on that before it moves the engine, but it returns
-        before looking when the engine is already at the wanted version: the release
-        ended green on a machine whose vault cannot be aligned. Ship asks the same
-        question itself, with the same git flags.
-        """
-        folder = _reported_folders(output).get("data")
-        if folder is None or not folder.is_dir():
-            return None
-        status = self.run(["git", "-C", str(folder), "status", "--porcelain=v1", "--untracked-files=normal"],
-                          self.repo)
-        return folder if status.returncode == 0 and status.stdout.strip() else None
-
     def _install(self, version: str) -> None:
+        """This machine's half of the release: `release_install` owns the steps, ship the step name."""
         self._enter("install")
-        before = self._installed_version()
-        for attempt in (1, 2):
-            update = self.run(["nexgen", "update", "--yes", "--target", version], self.repo)
-            output = f"{update.stdout}\n{update.stderr}"
-            if update.returncode == 0:
-                break
-            if (refusal := self._dirty_refusal(output)):
-                raise ShipStop(self._step, refusal)
-            log = self.install_log or Path(tempfile.gettempdir()) / "nexgen-release-ship-install.log"
-            atomic_write_text(log, output)
-            # A clean rollback leaves the previous version in place. The usual
-            # cause is a scheduled guard or sync cycle that started in the same
-            # minute, so one more try after it has finished is worth it; a
-            # half-done rollback is never retried.
-            if attempt == 2 or self._installed_version() != before:
-                raise ShipStop(self._step, f"nexgen update failed and was rolled back; full output in {log}")
-            self.log(f"   update failed and was rolled back, retrying once (output in {log})")
-            self.sleep(self.poll_seconds * 4)
-        # An update can end without moving anything; only the installed VERSION says it did.
-        # Doctor gates on failures only: warnings (optional deps, orphans) are non-blocking by design.
-        installed = self._installed_version()
-        if installed != version:
-            raise ShipStop(self._step, f"this machine is still on {installed}, not {version}")
-        if (dirty := self._data_with_dirty_files(output)):
-            raise ShipStop(self._step, f"the vault {dirty} has uncommitted or untracked files: "
-                                       "commit or stash them, then run ship --install again")
-        self._smoke_installed(version, before)
-        doctor = self.run(["nexgen", "doctor", "--summary"], self.repo)
-        if doctor.returncode != 0:
-            last = (doctor.stdout or doctor.stderr).strip().splitlines()
-            raise ShipStop(self._step, f"installed, but doctor is not clean: {last[-1] if last else doctor.returncode}")
+        installer = Installer(engine_root=self.engine_root, repo=self.repo, run=self.run, log=self.log,
+                              sleep=self.sleep, poll_seconds=self.poll_seconds, install_log=self.install_log)
+        try:
+            installer.install(version)
+        except InstallProblem as problem:
+            raise ShipStop(self._step, str(problem)) from None
 
     def ship(self, bump: str, notes: str = "", install: bool = False) -> str:
         version = self._prepare(bump, notes)
