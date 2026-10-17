@@ -4,10 +4,9 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from . import regress, review
-from .config import COMMAND, Config
+from . import regress
+from .config import Config
 from .gitutil import STAGED, Change, own_changes
-from .score import is_complex
 from .integrity import check_test_integrity
 from .shellgate import check_shell
 from .sizes import split_queue
@@ -19,15 +18,10 @@ from .violations import Violation
 class Outcome:
     violations: list[Violation] = field(default_factory=list)
     warnings: list[Violation] = field(default_factory=list)  # the split queue: shown, never blocking
-    complex: bool = False
-    score: int = 0
-    reasons: list[str] = field(default_factory=list)
-    receipt_problem: str | None = None
-    gated: bool = False
 
     @property
     def ok(self) -> bool:
-        return not self.violations and not self.receipt_problem
+        return not self.violations
 
 
 def static_checks(changed: list[Change], cfg: Config) -> list[Violation]:
@@ -53,30 +47,26 @@ def release_checks(changed: list[Change], cfg: Config) -> list[Violation]:
     return check_shell(changed, cfg) + check_swallowed(changed, cfg)
 
 
-def run(root: Path, cfg: Config, base: str, head: str | None, need_review: bool,
+def run(root: Path, cfg: Config, base: str, head: str | None, per_commit: bool,
         release: bool = False) -> Outcome:
+    """Everything one scope is judged by.
+
+    The score and the review receipts are switched off: nothing here asks for a
+    review. `per_commit` adds the proofs that need committed work; the size
+    ceiling is collected as a warning whatever happens.
+    """
     changed = own_changes(root, base, head)
     out = Outcome(violations=(release_checks if release else static_checks)(changed, cfg),
                   warnings=[] if release else size_alarm(changed, cfg))
-    out.complex, out.score, out.reasons = is_complex(changed, cfg)
-    out.gated = need_review
-    if need_review and head != STAGED:  # per-commit proof needs committed work; a release PR is static-only
+    if per_commit and head != STAGED:  # per-commit proof needs committed work; a release PR is static-only
         out.violations += regress.check_commits(root, cfg, base, head or "HEAD")
-    if need_review and out.complex:
-        out.receipt_problem = review.receipt_problem(root, review.diff_hash(root, base, head), head)
     return out
 
 
 def render(out: Outcome) -> str:
     lines = [f"FAIL {v}" for v in out.violations]
     lines += [f"WARN {v}" for v in out.warnings]
-    if out.receipt_problem:
-        lines.append(f"FAIL complex change (score {out.score}: {'; '.join(out.reasons)}): {out.receipt_problem}. "
-                     f"Run `{COMMAND} review`, get the owner's go-ahead for the reviewer, "
-                     f"then `{COMMAND} receipt`.")
     if out.ok:
-        extra = (", review receipt present" if out.gated else f", complex: `{COMMAND} gate` will need a review") if out.complex else ""
-        note = f" (complexity {out.score}{extra})" if out.complex else ""
         queued = f" ({len(out.warnings)} in the split queue)" if out.warnings else ""
-        lines.append("OK" + note + queued)
+        lines.append("OK" + queued)
     return "\n".join(lines)

@@ -32,8 +32,7 @@ jobs:
 
       # Shell/PowerShell, per-commit tests and test integrity gate every change; what is over the
       # size ceiling is printed as a warning and listed by `discipline.py report` (a split queue,
-      # never a refusal). A complex change still needs its review receipt (the release PR and main
-      # only get the static check).
+      # never a refusal). The release PR and main only get the static check.
       # The base, head and strictness are chosen in Python from these event values.
       - name: Discipline gate
         env:

@@ -62,10 +62,10 @@ def test_a_release_prints_no_size_alarm_its_pushes_already_showed(repo):
     base = repo.commit("legacy")
     repo.write("big.py", BIG + "y = 2\n")
     repo.write("deploy.sh", "echo step\n" * 60)
-    release = gates.run(repo.path, Config(), base, None, False, release=True)
+    release = gates.run(repo.path, Config(), base, None, per_commit=False, release=True)
     assert release.warnings == []
     assert any("deploy.sh" in str(v) for v in release.violations)
-    push = gates.run(repo.path, Config(), base, None, False)
+    push = gates.run(repo.path, Config(), base, None, per_commit=False)
     assert any("big.py" in str(v) for v in push.warnings)
 
 
