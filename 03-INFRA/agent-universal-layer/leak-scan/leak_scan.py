@@ -256,6 +256,31 @@ def units_from_commit_range(repo: str, range_spec: str) -> list[Unit]:
     return units
 
 
+def load_exceptions(path: Path) -> set[tuple[str, int, str, str]]:
+    """The published findings pinned one by one: (label, line, kind, redacted).
+
+    Each entry names the full commit; the label is rebuilt the way
+    units_from_commit_range writes it, so an entry can only ever match that
+    exact commit, file, line, pattern and value. A malformed entry aborts:
+    a half-read exception file must not quietly let anything through.
+    """
+    if not path.is_file():
+        sys.exit(f"[leak-scan] ABORT: exceptions file not found: {path}")
+    data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    pinned: set[tuple[str, int, str, str]] = set()
+    for entry in data.get("exceptions", []):
+        try:
+            # `rev`, not `commit`: a bare 40-hex value would itself read as a token.
+            commit, rel, line = str(entry["rev"]), str(entry["path"]), int(entry["line"])
+            kind, match, reason = str(entry["kind"]), str(entry["match"]), str(entry["reason"]).strip()
+        except (KeyError, TypeError, ValueError):
+            sys.exit(f"[leak-scan] ABORT: malformed exception entry: {entry!r}")
+        if len(commit) != 40 or not reason:
+            sys.exit(f"[leak-scan] ABORT: an exception needs the full commit and a reason: {entry!r}")
+        pinned.add((f"commit {commit[:9]}: {rel}", line, kind, match))
+    return pinned
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--patterns", required=True, help="public pattern file (leak_hard/leak_allow)")
@@ -266,7 +291,16 @@ def main() -> int:
     mode.add_argument("--staged", action="store_true", help="scan the staged diff")
     mode.add_argument("--message", metavar="FILE", help="scan a commit-message file")
     mode.add_argument("--commit-range", metavar="BASE..HEAD", help="scan every commit in the range")
+    ap.add_argument("--exceptions", metavar="FILE",
+                    help="already-published findings pinned to their exact commit (commit-range only)")
     args = ap.parse_args()
+    if args.exceptions and not args.commit_range:
+        sys.exit("[leak-scan] ABORT: --exceptions applies only to --commit-range")
+    beside = Path(args.patterns).with_name("published_exceptions.yaml")
+    if args.commit_range and not args.exceptions and beside.is_file():
+        # Shipped next to the public patterns, so every commit-range scan
+        # (CI included) uses the same pinned list without being told.
+        args.exceptions = str(beside)
 
     patterns, allow = load_patterns(Path(args.patterns))
     denylist = load_denylist(Path(args.denylist)) if args.denylist else []
@@ -281,6 +315,12 @@ def main() -> int:
         units = units_from_commit_range(args.repo, args.commit_range)
 
     findings = scan_units(units, patterns, allow, denylist)
+    if args.exceptions:
+        pinned = load_exceptions(Path(args.exceptions))
+        known = [f for f in findings if (f.label, f.lineno, f.kind, f.redacted) in pinned]
+        findings = [f for f in findings if f not in known]
+        if known:
+            print(f"[leak-scan] {len(known)} already-published finding(s) pinned in {args.exceptions}")
     if not findings:
         return 0
 

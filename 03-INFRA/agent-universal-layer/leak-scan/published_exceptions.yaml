@@ -1,0 +1,70 @@
+# Findings that are already in the published history, pinned one by one.
+#
+# A commit-range scan re-reads every commit since the last release, so a value
+# that landed in a commit already on GitHub blocks every later release while no
+# longer being preventable. Each entry below matches ONE finding only: the exact
+# commit (rev), file, line, pattern and redacted value. The same value in any other
+# commit, file or line still blocks, and a reordered pattern file stops matching
+# (fail-closed). Add an entry only for a commit that is already public, with the
+# reason; never for a new commit, which must be fixed before it is pushed.
+exceptions:
+  - rev: "03bdc5823c8ba6440b4bb5f447c35ddfd46fab13"
+    path: 03-INFRA/agent-universal-layer/tests/test_nexgen_llmsplit_pinning.py
+    line: 160
+    kind: pattern:h9
+    match: "--…-- (27 chars)"
+    reason: fake PEM header built in a redaction test, no key material
+  - rev: "d4636ac06284efa04c7afc22a6f37daa98b48809"
+    path: 03-INFRA/agent-universal-layer/tests/test_nexgen_llmsplit_pinning.py
+    line: 160
+    kind: pattern:h9
+    match: "--…-- (27 chars)"
+    reason: same fake PEM header, carried by a later commit
+  - rev: "48b845e7ed43bb0adc600e8af5ebc757c3359d93"
+    path: 03-INFRA/agent-universal-layer/tests/test_nexgen_depwatchsplit_pinning.py
+    line: 21
+    kind: pattern:h4
+    match: "ab…45 (44 chars)"
+    reason: FAKE_COMMIT test constant (abc123def456... repeated), not a credential
+  - rev: "d4636ac06284efa04c7afc22a6f37daa98b48809"
+    path: 03-INFRA/agent-universal-layer/tests/test_nexgen_depwatchsplit_pinning.py
+    line: 21
+    kind: pattern:h4
+    match: "ab…45 (44 chars)"
+    reason: same FAKE_COMMIT constant, carried by a later commit
+  - rev: "9950e5e5cbe1efe175d548474f68fddd855bbb2e"
+    path: 03-INFRA/agent-universal-layer/tests/test_nexgen_discipline_guards.py
+    line: 26
+    kind: pattern:h3
+    match: "n@…ip (18 chars)"
+    reason: a newline followed by the pytest skip decorator in a test string, read as an e-mail address
+  - rev: "b7f7e381346f55c05e7e93f3a4b1aa5c0a60565c"
+    path: 03-INFRA/agent-universal-layer/tests/test_nexgen_discipline_guards.py
+    line: 140
+    kind: pattern:h3
+    match: "n@…ze (25 chars)"
+    reason: a newline followed by the pytest parametrize decorator in a test string, read as an e-mail address
+  - rev: "955ae20dea61de1065cae5e4a28fd13c3eaf4ffd"
+    path: 03-INFRA/agent-universal-layer/tests/test_nexgen_discipline_guards.py
+    line: 199
+    kind: pattern:h3
+    match: "n@…ze (25 chars)"
+    reason: a newline followed by the pytest parametrize decorator in a test string, read as an e-mail address
+  - rev: "1d301fa86cd0f92053e09cde54d43b007f5ca5c3"
+    path: docs/allarme-debito-tecnico-e-filosofia-refactoring-3.0.md
+    line: 6
+    kind: pattern:h2
+    match: "c:…te (14 chars)"
+    reason: owner's home path in an editor link; published 2026-10-16, file since removed
+  - rev: "1d301fa86cd0f92053e09cde54d43b007f5ca5c3"
+    path: docs/allarme-debito-tecnico-e-filosofia-refactoring-3.0.md
+    line: 63
+    kind: pattern:h2
+    match: "c:…te (14 chars)"
+    reason: owner's home path in editor links (two on the line); file since removed
+  - rev: "1d301fa86cd0f92053e09cde54d43b007f5ca5c3"
+    path: docs/audit-stabilizzazione-3.0.md
+    line: 26
+    kind: pattern:h2
+    match: "c:…te (14 chars)"
+    reason: owner's home path in an editor link; file since removed
