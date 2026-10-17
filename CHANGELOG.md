@@ -10,6 +10,12 @@ of any engine release.
 
 ## [Unreleased]
 
+## [2.16.3] - 2026-10-17
+
+### Changed
+
+- The release workflow reads the tagged commit's checks with a GET: v2.16.1 and v2.16.2 were tagged but their publication stopped there. Same engine as 2.16.1 otherwise.
+
 ## [2.16.2] - 2026-10-17
 
 ### Changed
