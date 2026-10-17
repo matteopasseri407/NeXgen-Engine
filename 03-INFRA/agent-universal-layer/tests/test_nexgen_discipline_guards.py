@@ -31,6 +31,43 @@ def test_fewer_tests_or_assertions_or_a_new_skip_are_flagged(repo):
         assert cli.main(["check", "--base", base]) == 1, weakened
 
 
+def test_a_new_platform_only_test_is_not_a_weakening(repo):
+    """Una prova nuova che gira solo su Windows nasce così: marcarla non indebolisce nulla.
+
+    Il conteggio dei marcatori era un totale sul file, quindi il marcatore di un
+    test appena scritto veniva letto come un test esistente spento.
+    """
+    base = committed_tests(repo)
+    repo.write(
+        "tests/test_x.py",
+        TESTS
+        + "\n\nimport os\nimport pytest\n\n\n"
+        + '@pytest.mark.skipif(os.name != "nt", reason="a Windows-only reproduction")\n'
+        + "def test_c():\n    assert 4\n",
+    )
+    assert cli.main(["check", "--base", base]) == 0
+
+
+def test_a_new_test_that_skips_itself_is_not_a_weakening(repo):
+    base = committed_tests(repo)
+    repo.write(
+        "tests/test_x.py",
+        TESTS + "\n\nimport pytest\n\n\ndef test_c():\n    pytest.skip('only where the driver exists')\n    assert 4\n",
+    )
+    assert cli.main(["check", "--base", base]) == 0
+
+
+def test_skipping_a_test_the_base_already_had_is_still_flagged(repo):
+    base = committed_tests(repo)
+    repo.write(
+        "tests/test_x.py",
+        "import os\nimport pytest\n\n\n"
+        + '@pytest.mark.skipif(os.name != "nt", reason="qui la prova non gira")\n'
+        + "def test_a():\n    assert 1\n\n\ndef test_b():\n    assert 2\n    assert 3\n",
+    )
+    assert cli.main(["check", "--base", base]) == 1
+
+
 def test_adding_tests_is_never_flagged(repo):
     base = committed_tests(repo)
     repo.write("tests/test_x.py", TESTS + "\n\ndef test_c():\n    assert 4\n")
