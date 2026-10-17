@@ -420,3 +420,48 @@ def test_quarantine_refuses_when_git_status_cannot_answer(tmp_path: Path, monkey
     assert "unreadable" in msg
     assert _git(clone, "rev-parse", "HEAD").stdout.strip() == local_head, "HEAD non si e' mosso"
     assert not _git(clone, "branch", "--list", "quarantine/*").stdout.strip(), "nulla e' stato spostato"
+
+
+def test_quarantine_decides_on_one_status_read(tmp_path: Path, monkeypatch) -> None:
+    """MUST-19, ritocco a lettura singola: la decisione "sporco/pulito" esce
+    dalla status che la quarantena ha gia' letto. Una seconda lettura puo'
+    fallire e rispondere "pulito" sopra l'albero sporco visto dalla prima:
+    il reset --hard passerebbe sopra modifiche non committate."""
+    import nexgen_core.git_ops as git_ops
+
+    remote = tmp_path / "remote.git"
+    subprocess.run(["git", "init", "--bare", "-b", "main", str(remote)], check=True)
+    clone = tmp_path / "clone"
+    subprocess.run(["git", "clone", str(remote), str(clone)], check=True)
+    _git(clone, "config", "user.email", "test@example.com")
+    _git(clone, "config", "user.name", "Test")
+    (clone / "f.txt").write_text("base\n", encoding="utf-8")
+    _git(clone, "add", "-A")
+    _git(clone, "commit", "-m", "base")
+    _git(clone, "push", "origin", "main")
+    _git(clone, "fetch", "origin", "main")
+    (clone / "f.txt").write_text("local work\n", encoding="utf-8")
+    _git(clone, "commit", "-am", "local diverging work")
+    (clone / "f.txt").write_text("uncommitted local edit\n", encoding="utf-8")
+    head_before = _git(clone, "rev-parse", "HEAD").stdout.strip()
+
+    real_run_git = git_ops.run_git
+    status_reads: list[int] = []
+
+    def one_status_read(repo_dir, *args, **kwargs):
+        if args and args[0] == "status":
+            status_reads.append(1)
+            if len(status_reads) > 1:
+                return subprocess.CompletedProcess(args, 128, "", "fatal: .git/index.lock: unable to read tree")
+        return real_run_git(repo_dir, *args, **kwargs)
+
+    monkeypatch.setattr(git_ops, "run_git", one_status_read)
+
+    ok, q_branch, msg = git_ops.quarantine_diverged_commits(clone, remote="origin", branch="main")
+
+    assert ok is False and q_branch == "", msg
+    assert "uncommitted" in msg.lower(), msg
+    assert (clone / "f.txt").read_text(encoding="utf-8") == "uncommitted local edit\n"
+    assert _git(clone, "rev-parse", "HEAD").stdout.strip() == head_before, "HEAD non si e' mosso"
+    assert not _git(clone, "branch", "--list", "quarantine/*").stdout.strip(), "nulla e' stato spostato"
+    assert len(status_reads) == 1, "una sola lettura decide: la seconda puo' fallire e mentire"

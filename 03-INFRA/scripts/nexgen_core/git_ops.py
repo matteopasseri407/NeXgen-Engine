@@ -152,13 +152,13 @@ def _quarantine_diverged_commits_impl(
                             found=current.stdout.strip() or "detached HEAD", expected=branch)
 
     # Unsaved work first (Invariant 1): the hard reset below would flatten
-    # the working tree, and moving someone's work to a branch they did not
-    # ask for is still touching it. A status that cannot run is "I do not
-    # know", never "clean": HEAD resolved, so this is a repo.
+    # the working tree. A status that cannot run is "I do not know", never
+    # "clean", and one read decides -- a second read can fail and answer
+    # "clean" over the dirty tree the first one saw.
     status = run_git(repo_dir, "status", "--porcelain=v1", "-z", "--untracked-files=no")
     if status.returncode != 0:
         return False, "", t("Cannot quarantine: git status unreadable ({error})", error=status.stderr.strip())
-    if get_uncommitted_files(repo_dir):
+    if status.stdout.strip():
         return False, "", t("Cannot quarantine while there are uncommitted changes")
 
     # 1. Create quarantine branch at current HEAD
