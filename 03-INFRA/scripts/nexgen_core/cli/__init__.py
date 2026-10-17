@@ -49,6 +49,16 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def _run_cli(argv: list[str]) -> int:
+    # A `--lang` before the verb is the same command as without it: neither the
+    # lane nor the release flow sees this flag, and the `release` subparser
+    # here has no `func` (it exists for the help text only), so without peeling
+    # it the dispatcher printed the help and exited 0 having run nothing.
+    if argv and argv[0].startswith("--lang="):
+        set_language(argv[0].split("=", 1)[1])
+        argv = argv[1:]
+    elif len(argv) > 1 and argv[0] == "--lang":
+        set_language(argv[1])
+        argv = argv[2:]
     # The lane has its own argparse: delegating before this parser keeps its
     # flags (and its --help) intact instead of round-tripping through
     # REMAINDER, which swallows optionals.

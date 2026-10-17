@@ -119,6 +119,18 @@ def test_version_flag_prints_the_version_and_exits():
     assert "Traceback" not in res.stderr
 
 
+def test_a_lang_flag_before_release_still_runs_the_release_flow(capsys):
+    """`nexgen --lang en release ...` è lo stesso comando di `nexgen release ...`.
+
+    Il verbo `release` è registrato per l'aiuto ma non ha un `func`: con
+    `--lang` davanti, la scorciatoia che lo delega non scattava e il
+    dispatcher stampava l'aiuto uscendo 0, senza eseguire nulla.
+    """
+    assert nexgen_main(["--lang", "en", "release", "next-version", "2.16.0", "minor"]) == 0
+    out = capsys.readouterr().out
+    assert "2.17.0" in out, "il flusso release non è partito"
+
+
 def test_action_marks_distinguish_error_warning_and_success():
     """Un warning non può uscire sotto la spunta che significa 'è andato'. """
     from nexgen_core.cli.engine import _action_mark
