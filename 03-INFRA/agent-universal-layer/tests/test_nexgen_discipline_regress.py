@@ -175,3 +175,66 @@ def test_a_moved_critical_file_is_still_critical(repo):
     repo.git("mv", "src/calc.py", "lib_calc.py")
     repo.commit("tidy: move the file")
     assert any("critical code changed" in p for p in problems(repo, base))
+
+
+def test_a_comment_only_change_to_critical_code_needs_no_test(repo):
+    base = start(repo)
+    repo.write("src/calc.py", "# the maths is subtle\n" + BUGGY)
+    repo.commit("tidy the maths")
+    assert problems(repo, base) == []
+
+
+def test_a_docstring_only_change_to_critical_code_needs_no_test(repo):
+    base = start(repo)
+    repo.write("src/calc.py", '"""Add two numbers."""\n' + BUGGY)
+    repo.commit("document the maths")
+    assert problems(repo, base) == []
+
+
+def test_a_blank_line_only_change_to_critical_code_needs_no_test(repo):
+    base = start(repo)
+    repo.write("src/calc.py", BUGGY + "\n\n")
+    repo.commit("space the maths")
+    assert problems(repo, base) == []
+
+
+def test_a_real_change_beside_a_comment_still_needs_its_test(repo):
+    """The rule is about behaviour: a comment does not excuse the code beside it."""
+    base = start(repo)
+    repo.write("src/calc.py", "# a comment\n" + FIXED)
+    repo.commit("tidy the maths")
+    assert any("critical code changed" in p for p in problems(repo, base))
+
+
+def test_a_docstring_only_fix_needs_no_proof(repo):
+    """A `fix:` that only edits a docstring has no behaviour to prove."""
+    base = start(repo)
+    repo.write("src/calc.py", '"""Adds two numbers, honestly."""\n' + BUGGY)
+    repo.commit("fix: the docstring described the wrong operation")
+    assert problems(repo, base) == []
+
+
+def test_a_reformatted_file_is_the_same_code():
+    """A pure re-layout is not a code change: no test can fail on it."""
+    from nexgen_core.discipline.essence import differs_in_code
+
+    assert not differs_in_code("x = 1\n", "x = 1\n\n\n# a note\n")
+    assert differs_in_code("x = 1\n", "x = 2\n")
+
+
+def test_a_docstring_only_change_inside_a_function_is_the_same_code():
+    from nexgen_core.discipline.essence import differs_in_code
+
+    assert not differs_in_code('def f():\n    """a"""\n    return 1\n', 'def f():\n    """b"""\n    return 1\n')
+
+
+def test_a_comment_inside_a_string_is_code():
+    from nexgen_core.discipline.essence import differs_in_code
+
+    assert differs_in_code('x = "# not a comment"\n', 'x = "# still not a comment"\n')
+
+
+def test_a_shell_comment_only_change_is_not_a_code_change():
+    from nexgen_core.discipline.essence import differs_in_code
+
+    assert not differs_in_code("#!/bin/sh\necho hi\n", "#!/bin/sh\n# a note\necho hi\n")
