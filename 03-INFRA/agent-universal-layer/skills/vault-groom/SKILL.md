@@ -5,15 +5,20 @@ description: Run one Vault grooming pass (preview first, guarded apply on reques
 
 # Groom the vault
 
-Any text after the command is an optional focus hint (an area or note to
-prioritize).
+Any text after the command is the request, not an argument: a focus area or
+note to prioritize is context for you, and the command itself takes only a
+mode, `preview` (the default) or `apply`. Any other word is refused with
+exit 2.
 
 1. Start read-only, always: run `vault-groom` (bare = preview). It
-   proposes one grooming tranche and writes NOTHING -- a bare invocation
-   can never modify the vault.
+   proposes one grooming tranche and writes nothing into the vault -- a
+   bare invocation can never modify it (the only file it writes is its own
+   log in the system temp directory).
 2. Explain the proposed tranche in plain language: which notes it would
-   compress, merge, archive, or delete, and why. Flag anything that looks
-   risky (recovery notes, recent material) before the user decides.
+   compress, merge, or archive, or whose frontmatter or links it would
+   fix, and why. Deletion is not one of its actions: in doubt it archives.
+   Flag anything that looks risky (recovery notes, recent material) before
+   the user decides.
 3. Only if the user explicitly asks to proceed, run `vault-groom apply`.
    Its own guardrails stay in charge: it re-shows the tranche, requires a
    typed "yes", executes in a throwaway clone with no remote, audits the
