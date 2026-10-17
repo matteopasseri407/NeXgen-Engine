@@ -94,12 +94,34 @@ def verdict(checks: dict[str, dict], required: set[str]) -> tuple[str, list[str]
     return ("missing", waiting) if waiting else ("green", [])
 
 
+def _started(check: dict) -> str:
+    return str(check.get("started_at") or check.get("startedAt") or "")
+
+
+def by_name(checks: Sequence[dict]) -> dict[str, dict]:
+    """One check per name, the one a merge must wait for.
+
+    The same commit carries a check twice when a push run and a pull-request run
+    both test it. A copy still running wins, so a green push run never stands in
+    for the pull request's own run that has not answered; otherwise the copy
+    that started last is the answer.
+    """
+    chosen: dict[str, dict] = {}
+    for check in checks:
+        name = str(check.get("name") or check.get("context") or "?")
+        held = chosen.get(name)
+        if held is None or check_state(held) is not None and (
+                check_state(check) is None or _started(check) > _started(held)):
+            chosen[name] = check
+    return chosen
+
+
 def commit_checks(repo: Path, sha: str, run: Runner = run_command) -> dict[str, dict]:
     """Every check GitHub reports for one commit, by name; empty when it cannot be read."""
     result = run(["gh", "api", f"repos/{{owner}}/{{repo}}/commits/{sha}/check-runs", "-F", "per_page=100"], repo)
     if result.returncode != 0:
         return {}
-    return {str(check.get("name") or "?"): check for check in (_answer(result.stdout) or {}).get("check_runs") or []}
+    return by_name((_answer(result.stdout) or {}).get("check_runs") or [])
 
 
 def ci_run_passed(repo: Path, sha: str, run: Runner = run_command, workflow: str = "ci.yml") -> bool:

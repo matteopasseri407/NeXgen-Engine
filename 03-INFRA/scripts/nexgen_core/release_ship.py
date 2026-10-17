@@ -41,6 +41,7 @@ if str(SCRIPTS_DIR) not in sys.path:
 from nexgen_core.paths import resolve_engine_root  # noqa: E402
 from nexgen_core.release import bump_version_files, compute_next_version, is_semver, newer_version  # noqa: E402
 from nexgen_core.release_checks import (  # noqa: E402
+    by_name as checks_by_name,
     commit_checks,
     required_annotation,
     required_checks,
@@ -237,7 +238,7 @@ class Shipper:
         rollup = data.get("statusCheckRollup") or []
         if not rollup:
             return None
-        by_name = {str(check.get("name") or check.get("context") or "?"): check for check in rollup}
+        by_name = checks_by_name(rollup)
         required = self._required_checks()
         if required is None:
             # No branch protection to read: every check the run reports counts, and the

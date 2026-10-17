@@ -465,3 +465,18 @@ def test_the_release_workflow_refuses_with_the_rules_own_verdict():
     step = workflow.split("Refuse a commit that has not passed CI", 1)[1].split("- name:", 1)[0]
     assert "release.py ci-passed" in step
     assert "--tag" in step
+
+
+def test_a_green_push_run_never_stands_in_for_the_pull_requests_own_run():
+    """PR #126: the push run's engine-tests was green while the pull request's own run of the
+    same commit had not started; ship read the green copy and asked GitHub for a merge it refused."""
+    from nexgen_core.release_checks import by_name, verdict
+
+    push = {"name": "engine-tests", "status": "COMPLETED", "conclusion": "SUCCESS", "startedAt": "2026-10-17T19:00:00Z"}
+    pull = {"name": "engine-tests", "status": "QUEUED", "conclusion": "", "startedAt": "2026-10-17T19:01:00Z"}
+    for order in ([push, pull], [pull, push]):
+        assert verdict(by_name(order), {"engine-tests"}) == ("missing", ["engine-tests"])
+
+    later_red = {**push, "conclusion": "FAILURE", "startedAt": "2026-10-17T19:05:00Z"}
+    for order in ([push, later_red], [later_red, push]):
+        assert verdict(by_name(order), {"engine-tests"}) == ("failed", ["engine-tests"])
