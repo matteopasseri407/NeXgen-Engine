@@ -1,7 +1,7 @@
 """Whether this machine is quiet enough for an automatic engine update.
 
 One job: answer "is the machine free right now?" from the signals the engine
-already keeps, so a dev-channel auto-update never swaps the engine out while a
+already keeps, so an automatic update onto a moving channel never swaps the engine out while a
 person (or a guard cycle) is working on it. Postponing is the answer, not
 failing: the next cycle retries by itself, and an alert for "the person was
 working" would only train people to ignore alerts.
@@ -16,7 +16,7 @@ from nexgen_core.lock import LockIOError, LockTimeoutError, host_mutation
 
 logger = logging.getLogger("nexgen.update")
 
-#: How long after a guard cycle a dev auto-update still counts the machine as busy.
+#: How long after a guard cycle an automatic moving-channel update counts the machine as busy.
 BUSY_WINDOW_SECONDS = 300.0
 
 
@@ -50,7 +50,7 @@ def defer_if_busy(*, unattended: bool, channel: str, state_dir: Path) -> bool:
     """True when an automatic update onto a moving branch must wait for a quiet machine.
 
     A release keeps its existing behaviour, busy lock and all: the ceiling and
-    the accepted-release memory already cap it. A dev channel is the case this
+    the accepted-release memory already cap it. nightly and beta are the case this
     rule exists for, because it installs a branch that moves during the day.
     """
     from nexgen_core.update_channel import DEFAULT_CHANNEL

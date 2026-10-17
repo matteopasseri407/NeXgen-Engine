@@ -22,10 +22,28 @@ if str(SCRIPTS_DIR) not in sys.path:
 from nexgen_core import __version__  # noqa: E402 - sys.path shim for cloned checkout
 from nexgen_core.cli import engine, local_cmds, module_cmds, skill_cmds, stack_cmds, tool_cmds, vault_cmds  # noqa: E402 - sys.path shim for cloned checkout
 from nexgen_core.i18n import set_language, t  # noqa: E402 - sys.path shim for cloned checkout
-from nexgen_core.update_channel import version_footer  # noqa: E402 - sys.path shim for cloned checkout
+from nexgen_core.update_channel import DEFAULT_CHANNEL, read_channel, short_head  # noqa: E402 - sys.path shim for cloned checkout
 
 #: The verb groups, in the order they appear in the help text.
 GROUPS = (engine, vault_cmds, skill_cmds, stack_cmds, module_cmds, tool_cmds, local_cmds)
+
+
+def _version_footer() -> str:
+    """The channel behind `nexgen --version`, with its commit when it is a moving one.
+
+    Never raises: a version banner is not a place where a missing repository or
+    an unreadable state file can be allowed to break the command.
+    """
+    try:
+        from nexgen_core.paths import resolve_engine_root, resolve_state_dir
+
+        channel = read_channel(resolve_state_dir())
+        if channel == DEFAULT_CHANNEL:
+            return f" ({channel})"
+        sha = short_head(resolve_engine_root().parent)
+        return f" ({channel} {sha})" if sha else f" ({channel})"
+    except Exception:  # nexgen: allow reason="a version banner never fails a command: the caller gets the plain version instead"
+        return ""
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -40,7 +58,7 @@ def build_parser() -> argparse.ArgumentParser:
         help=t("Force the language of the messages (for example: it, en)"),
     )
     parser.add_argument(
-        "--version", action="version", version=f"NeXgen Engine {__version__}{version_footer()}",
+        "--version", action="version", version=f"NeXgen Engine {__version__}{_version_footer()}",
         help=t("Show the engine version and exit"),
     )
     sub = parser.add_subparsers(dest="command", metavar="command")

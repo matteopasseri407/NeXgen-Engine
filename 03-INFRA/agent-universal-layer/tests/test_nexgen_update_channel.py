@@ -1,9 +1,9 @@
-"""The dev channels: which commit they point at, and what they refuse.
+"""The moving channels (nightly, beta): which commit they point at, and what they refuse.
 
-A stable target is a version; a dev target is a commit, and the only thing that
+A stable target is a version; a moving-channel target is a commit, and the only thing that
 makes it installable is a signature the installed tree already pins (never a
-`--allow-unverified` door), plus, for `dev-verified`, a nightly CI run that
-finished green on Windows and Linux. These tests build real repositories and
+`--allow-unverified` door), plus, for nightly, the CI gates the branch itself requires and,
+for beta, a full nightly suite that finished green on Windows and Linux. These tests build real
 real ssh signatures: a faked verdict would prove nothing about the lock.
 """
 from __future__ import annotations
@@ -117,11 +117,11 @@ def _machine(tmp_path: Path, *, tip_signed: bool, extra_unsigned: bool = False, 
     _git(origin, "tag", "v0.1.0")
     _pin(origin, pub)
     if unlocked:
-        # The dev channels are closed on a fresh installation; every test that
+        # The moving channels are closed on a fresh installation; every test that
         # uses them states the unlock it depends on, so the closed default is
         # never an accident of the fixture. It travels with the repository the
         # clone is made from, exactly as a vault config would.
-        _instance_config(origin, allow=("dev", "dev-verified"))
+        _instance_config(origin, allow=("nightly", "beta"))
     _git(origin, "add", "-A")
     _git(origin, "commit", "-q", "-m", "pin the signer and the installation config")
 
@@ -154,6 +154,11 @@ def _env(machine: Machine) -> dict[str, str]:
     }
 
 
+def _gates_green(monkeypatch) -> None:
+    """Stubs the CI-gate lookup: the gate itself has its own tests below."""
+    monkeypatch.setattr(uc, "checks_missing", lambda *_a, **_k: [])
+
+
 def _with_git_identity(monkeypatch) -> None:
     """A real machine has a Git identity; a divergent merge needs one.
 
@@ -172,25 +177,25 @@ def _head(repo: Path) -> str:
 
 
 # --------------------------------------------------------------------------
-# The installation unlocks the dev channels; the public default is closed.
+# The installation unlocks the moving channels; the public default is closed.
 # --------------------------------------------------------------------------
 
-def test_a_dev_channel_is_closed_on_an_installation_that_did_not_open_it(tmp_path, capsys):
+def test_a_moving_channel_is_closed_on_an_installation_that_did_not_open_it(tmp_path, capsys):
     machine = _machine(tmp_path, tip_signed=True, unlocked=False)
     before = _head(machine.engine)
 
-    result = updater.main(["--yes", "--channel", "dev"], environ=_env(machine))
+    result = updater.main(["--yes", "--channel", "nightly"], environ=_env(machine))
 
     assert result == updater.EXIT_REFUSED
     assert _head(machine.engine) == before
     assert "not enabled on this installation" in capsys.readouterr().err
 
 
-def test_a_remembered_dev_channel_is_ignored_when_the_unlock_is_gone(tmp_path, capsys):
+def test_a_remembered_nightly_channel_is_ignored_when_the_unlock_is_gone(tmp_path, capsys):
     """Removing the private key closes the door again instead of failing every cycle."""
     machine = _machine(tmp_path, tip_signed=True, unlocked=False)
     machine.state.mkdir(parents=True, exist_ok=True)
-    (machine.state / uc.CHANNEL_FILE).write_text("dev\n", encoding="utf-8")
+    (machine.state / uc.CHANNEL_FILE).write_text("nightly\n", encoding="utf-8")
     before = _head(machine.engine)
 
     result = updater.main(["--yes"], environ=_env(machine))
@@ -202,16 +207,16 @@ def test_a_remembered_dev_channel_is_ignored_when_the_unlock_is_gone(tmp_path, c
 
 def test_the_unlock_opens_exactly_the_channels_it_names(tmp_path):
     config = tmp_path / "remotes.yaml"
-    config.write_text("schema_version: 1\nupdate:\n  allow_channels: [dev]\n", encoding="utf-8")
-    assert uc.allowed_channels(config_path=config) == frozenset({"dev"})
+    config.write_text("schema_version: 1\nupdate:\n  allow_channels: [nightly]\n", encoding="utf-8")
+    assert uc.allowed_channels(config_path=config) == frozenset({"nightly"})
     assert uc.resolve_channel(None, tmp_path, allowed=uc.allowed_channels(config_path=config)) == "stable"
-    assert uc.resolve_channel("dev", tmp_path, allowed=uc.allowed_channels(config_path=config)) == "dev"
+    assert uc.resolve_channel("nightly", tmp_path, allowed=uc.allowed_channels(config_path=config)) == "nightly"
     with pytest.raises(uc.ChannelRefused):
-        uc.resolve_channel("dev-verified", tmp_path, allowed=uc.allowed_channels(config_path=config))
+        uc.resolve_channel("beta", tmp_path, allowed=uc.allowed_channels(config_path=config))
 
 
-@pytest.mark.parametrize("body", ["", "not: [a, config\n", "- a list\n", "update: dev\n", "update:\n  allow_channels: nope\n",
-                                  "update:\n  allow_channels: [stable, dev-verified, silly]\n"])
+@pytest.mark.parametrize("body", ["", "not: [a, config\n", "- a list\n", "update: nightly\n", "update:\n  allow_channels: nope\n",
+                                  "update:\n  allow_channels: [stable, beta, silly]\n"])
 def test_a_broken_or_unknown_unlock_closes_the_door(tmp_path, body):
     config = tmp_path / "remotes.yaml"
     config.write_text(body, encoding="utf-8")
@@ -245,7 +250,7 @@ def _new_release(origin: Path, version: str, pub: Path) -> None:
          "tag", "-s", "-m", f"Release {version}", f"v{version}")
 
 
-def _new_dev_commit(origin: Path, pub: Path, text: str) -> str:
+def _advance_developer(origin: Path, pub: Path, text: str) -> str:
     """A new signed commit on origin/developer, the way the branch advances."""
     _git(origin, "checkout", "-q", "developer")
     (origin / f"{text}.txt").write_text(f"{text}\n", encoding="utf-8")
@@ -253,25 +258,27 @@ def _new_dev_commit(origin: Path, pub: Path, text: str) -> str:
 
 
 @pytest.mark.skipif(SSH_KEYGEN is None, reason="needs ssh-keygen")
-def test_the_chosen_channel_is_remembered_and_respected(tmp_path):
+def test_the_chosen_channel_is_remembered_and_respected(tmp_path, monkeypatch):
+    _gates_green(monkeypatch)
     machine = _machine(tmp_path, tip_signed=True)
 
-    assert updater.main(["--yes", "--channel", "dev"], environ=_env(machine)) == 0
-    assert uc.read_channel(machine.state) == "dev"
+    assert updater.main(["--yes", "--channel", "nightly"], environ=_env(machine)) == 0
+    assert uc.read_channel(machine.state) == "nightly"
 
     # The branch advances; a bare `nexgen update` follows the remembered channel.
-    moved = _new_dev_commit(machine.origin, machine.pub, "later dev work")
+    moved = _advance_developer(machine.origin, machine.pub, "later dev work")
     assert updater.main(["--yes"], environ=_env(machine)) == 0
 
     assert _head(machine.engine) == moved
 
 
 @pytest.mark.skipif(SSH_KEYGEN is None, reason="needs ssh-keygen")
-def test_channel_stable_brings_a_dev_machine_back_to_releases(tmp_path, monkeypatch):
+def test_channel_stable_brings_a_nightly_machine_back_to_releases(tmp_path, monkeypatch):
     _with_git_identity(monkeypatch)
+    _gates_green(monkeypatch)
     machine = _machine(tmp_path, tip_signed=True)
-    assert updater.main(["--yes", "--channel", "dev"], environ=_env(machine)) == 0
-    assert uc.read_channel(machine.state) == "dev"
+    assert updater.main(["--yes", "--channel", "nightly"], environ=_env(machine)) == 0
+    assert uc.read_channel(machine.state) == "nightly"
     _new_release(machine.origin, "0.3.0", machine.pub)
 
     assert updater.main(["--yes", "--channel", "stable"], environ=_env(machine)) == 0
@@ -284,17 +291,18 @@ def test_channel_stable_brings_a_dev_machine_back_to_releases(tmp_path, monkeypa
 def test_a_refused_switch_is_not_remembered(tmp_path):
     machine = _machine(tmp_path, tip_signed=False)
 
-    assert updater.main(["--yes", "--channel", "dev"], environ=_env(machine)) == updater.EXIT_REFUSED
+    assert updater.main(["--yes", "--channel", "nightly"], environ=_env(machine)) == updater.EXIT_REFUSED
 
     assert uc.read_channel(machine.state) == "stable"
     assert not (machine.state / uc.CHANNEL_FILE).exists()
 
 
 @pytest.mark.skipif(SSH_KEYGEN is None, reason="needs ssh-keygen")
-def test_a_check_only_run_never_changes_the_remembered_channel(tmp_path):
+def test_a_check_only_run_never_changes_the_remembered_channel(tmp_path, monkeypatch):
+    _gates_green(monkeypatch)
     machine = _machine(tmp_path, tip_signed=True)
 
-    assert updater.main(["--check", "--channel", "dev"], environ=_env(machine)) == 0
+    assert updater.main(["--check", "--channel", "nightly"], environ=_env(machine)) == 0
 
     assert uc.read_channel(machine.state) == "stable"
     assert not (machine.state / uc.CHANNEL_FILE).exists()
@@ -304,25 +312,25 @@ def test_a_check_only_run_never_changes_the_remembered_channel(tmp_path):
 # The rollback guarantee holds on every channel.
 # --------------------------------------------------------------------------
 
-def test_a_failed_post_update_check_rolls_a_dev_update_back(tmp_path, monkeypatch, capsys):
-    """A dev machine comes back to the commit it ran, not to a version number."""
+def test_a_failed_post_update_check_rolls_a_nightly_update_back(tmp_path, monkeypatch, capsys):
+    """A nightly machine comes back to the commit it ran, not to a version number."""
     from nexgen_core.release_trust import VERIFIED, TagVerdict
 
     machine = _machine(tmp_path, tip_signed=False)
-    # The rollback machinery is what this test is about, so the dev target is
+    # The rollback machinery is what this test is about, so the nightly target is
     # handed over already proved: the signature path has its own tests.
     fetched = _git(machine.engine, "fetch", "-q", "origin", "developer:refs/remotes/origin/developer")
     assert fetched.returncode == 0
     tip = _git(machine.origin, "rev-parse", "developer").stdout.strip()
-    monkeypatch.setattr(uc, "dev_target", lambda *_a, **_k: uc.ChannelTarget(
-        channel="dev", rev=tip, version="0.2.0", label=f"developer@{tip[:9]}",
+    monkeypatch.setattr(uc, "nightly_target", lambda *_a, **_k: uc.ChannelTarget(
+        channel="nightly", rev=tip, version="0.2.0", label=f"developer@{tip[:9]}",
         detail="synthetic verified signature", verdict=TagVerdict(VERIFIED, "synthetic verified signature"),
     ))
     before = _head(machine.engine)
     doctor_results = iter(((0, 0), (1, 1)))
     monkeypatch.setattr(updater, "_doctor", lambda *_args, **_kwargs: next(doctor_results))
 
-    result = updater.main(["--yes", "--channel", "dev"], environ=_env(machine))
+    result = updater.main(["--yes", "--channel", "nightly"], environ=_env(machine))
 
     assert result == 1
     assert _head(machine.engine) == before
@@ -333,13 +341,14 @@ def test_a_failed_post_update_check_rolls_a_dev_update_back(tmp_path, monkeypatc
 
 
 @pytest.mark.skipif(SSH_KEYGEN is None, reason="needs ssh-keygen")
-def test_an_unattended_dev_failure_is_rolled_back_and_remembered(tmp_path, monkeypatch, capsys):
+def test_an_unattended_nightly_failure_is_rolled_back_and_remembered(tmp_path, monkeypatch, capsys):
+    _gates_green(monkeypatch)
     machine = _machine(tmp_path, tip_signed=True)
     before = _head(machine.engine)
     doctor_results = iter(((0, 0), (1, 1)))
     monkeypatch.setattr(updater, "_doctor", lambda *_args, **_kwargs: next(doctor_results))
 
-    result = updater.main(["--unattended", "--channel", "dev"], environ=_env(machine))
+    result = updater.main(["--unattended", "--channel", "nightly"], environ=_env(machine))
 
     assert result == updater.EXIT_ROLLED_BACK
     assert _head(machine.engine) == before
@@ -363,15 +372,15 @@ def _version_line(monkeypatch, capsys, state_dir: Path, *, engine: Path | None =
     return capsys.readouterr().out.strip()
 
 
-def test_version_reports_the_channel_and_the_commit_on_dev(tmp_path, monkeypatch, capsys):
+def test_version_reports_the_channel_and_the_commit_on_nightly(tmp_path, monkeypatch, capsys):
     machine = _machine(tmp_path, tip_signed=True)
     machine.state.mkdir(parents=True, exist_ok=True)
-    (machine.state / uc.CHANNEL_FILE).write_text("dev\n", encoding="utf-8")
+    (machine.state / uc.CHANNEL_FILE).write_text("nightly\n", encoding="utf-8")
     short = _git(machine.engine, "rev-parse", "--short", "HEAD").stdout.strip()
 
     line = _version_line(monkeypatch, capsys, machine.state, engine=machine.engine)
 
-    assert line.endswith(f"(dev {short})")
+    assert line.endswith(f"(nightly {short})")
 
 
 def test_version_reports_the_stable_default(tmp_path, monkeypatch, capsys):
@@ -384,18 +393,18 @@ def test_version_keeps_the_plain_line_when_the_engine_is_not_there(tmp_path, mon
     """A banner is not a place a missing checkout can break a command."""
     state = tmp_path / "state"
     state.mkdir()
-    (state / uc.CHANNEL_FILE).write_text("dev\n", encoding="utf-8")
+    (state / uc.CHANNEL_FILE).write_text("nightly\n", encoding="utf-8")
 
     line = _version_line(monkeypatch, capsys, state, engine=tmp_path / "absent")
 
-    assert line.endswith("(dev)")
+    assert line.endswith("(nightly)")
 
 
 # --------------------------------------------------------------------------
-# An automatic dev update waits for a quiet machine.
+# An automatic update onto a moving channel waits for a quiet machine.
 # --------------------------------------------------------------------------
 
-def test_an_unattended_dev_update_waits_while_a_command_holds_the_host_lock(tmp_path, capsys):
+def test_an_unattended_nightly_update_waits_while_a_command_holds_the_host_lock(tmp_path, capsys):
     """The lock is the engine's own signal that something on this machine is running."""
     from nexgen_core.lock import host_mutation
 
@@ -405,7 +414,7 @@ def test_an_unattended_dev_update_waits_while_a_command_holds_the_host_lock(tmp_
     holder = host_mutation("someone-elses-command", state_dir=machine.state, timeout=5)
     holder.acquire()
     try:
-        result = updater.main(["--unattended", "--channel", "dev"], environ=_env(machine))
+        result = updater.main(["--unattended", "--channel", "nightly"], environ=_env(machine))
     finally:
         holder.release()
 
@@ -414,7 +423,7 @@ def test_an_unattended_dev_update_waits_while_a_command_holds_the_host_lock(tmp_
     assert "Postponed to the next cycle" in capsys.readouterr().out
 
 
-def test_an_unattended_dev_update_waits_right_after_a_guard_cycle(tmp_path, capsys):
+def test_an_unattended_nightly_update_waits_right_after_a_guard_cycle(tmp_path, capsys):
     """A liveness file written moments ago means the machine's maintenance is active."""
     from nexgen_core.beat import LIVENESS_FILE_NAME
 
@@ -423,7 +432,7 @@ def test_an_unattended_dev_update_waits_right_after_a_guard_cycle(tmp_path, caps
     machine.state.mkdir(parents=True, exist_ok=True)
     (machine.state / LIVENESS_FILE_NAME).write_text('{"warnings": 0}\n', encoding="utf-8")
 
-    result = updater.main(["--unattended", "--channel", "dev"], environ=_env(machine))
+    result = updater.main(["--unattended", "--channel", "nightly"], environ=_env(machine))
 
     assert result == 0
     assert _head(machine.engine) == before
@@ -431,11 +440,12 @@ def test_an_unattended_dev_update_waits_right_after_a_guard_cycle(tmp_path, caps
 
 
 @pytest.mark.skipif(SSH_KEYGEN is None, reason="needs ssh-keygen")
-def test_an_unattended_dev_update_runs_when_the_machine_is_quiet(tmp_path):
+def test_an_unattended_nightly_update_runs_when_the_machine_is_quiet(tmp_path, monkeypatch):
+    _gates_green(monkeypatch)
     machine = _machine(tmp_path, tip_signed=True)
     tip = _git(machine.origin, "rev-parse", "developer").stdout.strip()
 
-    result = updater.main(["--unattended", "--channel", "dev"], environ=_env(machine))
+    result = updater.main(["--unattended", "--channel", "nightly"], environ=_env(machine))
 
     assert result == 0
     assert _head(machine.engine) == tip
@@ -452,27 +462,47 @@ def test_the_quiet_window_only_applies_to_automatic_dev_updates(tmp_path):
     holder = host_mutation("someone-elses-command", state_dir=state, timeout=5)
     holder.acquire()
     try:
-        assert update_window.defer_if_busy(unattended=True, channel="dev", state_dir=state) is True
+        assert update_window.defer_if_busy(unattended=True, channel="nightly", state_dir=state) is True
         assert update_window.defer_if_busy(unattended=True, channel="stable", state_dir=state) is False
         # An interactive run is never postponed: the person asked for it now.
-        assert update_window.defer_if_busy(unattended=False, channel="dev", state_dir=state) is False
+        assert update_window.defer_if_busy(unattended=False, channel="nightly", state_dir=state) is False
     finally:
         holder.release()
 
 
 # --------------------------------------------------------------------------
-# dev: the tip of developer, and only when it is signed by a pinned key.
+# nightly: the tip of developer, signed and green on the gates developer requires.
 # --------------------------------------------------------------------------
 
 @pytest.mark.skipif(SSH_KEYGEN is None, reason="needs ssh-keygen")
-def test_dev_channel_installs_the_signed_developer_tip(tmp_path):
+def test_nightly_channel_installs_the_signed_developer_tip(tmp_path, monkeypatch):
     machine = _machine(tmp_path, tip_signed=True)
     tip = _git(machine.origin, "rev-parse", "developer").stdout.strip()
+    _gates_green(monkeypatch)
 
-    assert updater.main(["--yes", "--channel", "dev"], environ=_env(machine)) == 0
+    assert updater.main(["--yes", "--channel", "nightly"], environ=_env(machine)) == 0
 
     assert _head(machine.engine) == tip
     assert (machine.engine / "VERSION").read_text(encoding="utf-8").strip() == "0.2.0"
+
+
+def test_nightly_refuses_a_signed_tip_that_has_not_passed_the_ci_gates(tmp_path, monkeypatch):
+    """The gate lives between the signature and the merge: a red check is a refusal."""
+    from nexgen_core.release_trust import VERIFIED, TagVerdict
+
+    machine = _machine(tmp_path, tip_signed=False)
+    monkeypatch.setattr(uc, "developer_tip", lambda repo: "a" * 40)
+    monkeypatch.setattr(uc, "_signed_target", lambda *a, **k: uc.ChannelTarget(
+        channel="nightly", rev="a" * 40, version="0.2.0", label="developer@aaaaaaaaa",
+        detail="synthetic", verdict=TagVerdict(VERIFIED, "synthetic"),
+    ))
+    monkeypatch.setattr(uc, "checks_missing", lambda *_a, **_k: ["quick-windows=not finished"])
+
+    with pytest.raises(uc.ChannelRefused) as refused:
+        uc.nightly_target(machine.engine)
+
+    assert "quick-windows=not finished" in str(refused.value)
+    assert "CI gates" in str(refused.value)
 
 
 @pytest.mark.skipif(SSH_KEYGEN is None, reason="needs ssh-keygen")
@@ -481,7 +511,7 @@ def test_an_unsigned_developer_tip_is_refused_in_every_mode(tmp_path, flags, cap
     machine = _machine(tmp_path, tip_signed=False)
     before = _head(machine.engine)
 
-    result = updater.main([*flags, "--channel", "dev"], environ=_env(machine))
+    result = updater.main([*flags, "--channel", "nightly"], environ=_env(machine))
 
     assert result == updater.EXIT_REFUSED
     assert _head(machine.engine) == before
@@ -497,7 +527,7 @@ def test_a_developer_tip_signed_by_a_stranger_is_refused(tmp_path, capsys):
     _signed(machine.origin, stranger, "dev work by a stranger")
     before = _head(machine.engine)
 
-    result = updater.main(["--yes", "--channel", "dev"], environ=_env(machine))
+    result = updater.main(["--yes", "--channel", "nightly"], environ=_env(machine))
 
     assert result == updater.EXIT_REFUSED
     assert _head(machine.engine) == before
@@ -505,52 +535,52 @@ def test_a_developer_tip_signed_by_a_stranger_is_refused(tmp_path, capsys):
 
 
 # --------------------------------------------------------------------------
-# dev-verified: the newest signed commit a green nightly actually covered.
+# beta: the newest signed commit the full nightly suite proved.
 # --------------------------------------------------------------------------
 
 @pytest.mark.skipif(SSH_KEYGEN is None, reason="needs ssh-keygen")
-def test_dev_verified_takes_the_newest_signed_commit_with_a_green_nightly(tmp_path, monkeypatch):
+def test_beta_takes_the_newest_signed_commit_the_full_suite_proved(tmp_path, monkeypatch):
     machine = _machine(tmp_path, tip_signed=True, extra_unsigned=True)
     signed = _git(machine.origin, "rev-parse", "developer~1").stdout.strip()
     unsigned = _git(machine.origin, "rev-parse", "developer").stdout.strip()
-    # The newest nightly is green on an unsigned commit: the answer is the
-    # newest SIGNED one the nightly covered, never the unsigned tip.
-    monkeypatch.setattr(uc, "nightly_verified_shas", lambda **_kw: [unsigned, signed])
+    # The newest full-suite run is green on an unsigned commit: the answer is the
+    # newest SIGNED one the suite covered, never the unsigned tip.
+    monkeypatch.setattr(uc, "full_suite_shas", lambda **_kw: [unsigned, signed])
 
-    assert updater.main(["--yes", "--channel", "dev-verified"], environ=_env(machine)) == 0
+    assert updater.main(["--yes", "--channel", "beta"], environ=_env(machine)) == 0
 
     assert _head(machine.engine) == signed
 
 
 @pytest.mark.skipif(SSH_KEYGEN is None, reason="needs ssh-keygen")
-def test_dev_verified_never_installs_a_commit_without_a_green_nightly(tmp_path, monkeypatch, capsys):
+def test_beta_never_installs_a_commit_without_the_full_suite(tmp_path, monkeypatch, capsys):
     machine = _machine(tmp_path, tip_signed=True)
     before = _head(machine.engine)
-    monkeypatch.setattr(uc, "nightly_verified_shas", lambda **_kw: [])
+    monkeypatch.setattr(uc, "full_suite_shas", lambda **_kw: [])
 
-    result = updater.main(["--yes", "--channel", "dev-verified"], environ=_env(machine))
+    result = updater.main(["--yes", "--channel", "beta"], environ=_env(machine))
 
     assert result != 0
     assert _head(machine.engine) == before
-    assert "nightly" in capsys.readouterr().err
+    assert "full-suite" in capsys.readouterr().err
 
 
 @pytest.mark.skipif(SSH_KEYGEN is None, reason="needs ssh-keygen")
-def test_dev_verified_refuses_a_green_nightly_whose_commit_is_not_signed(tmp_path, monkeypatch, capsys):
+def test_beta_refuses_a_proved_commit_that_is_not_signed(tmp_path, monkeypatch, capsys):
     machine = _machine(tmp_path, tip_signed=True, extra_unsigned=True)
     unsigned = _git(machine.origin, "rev-parse", "developer").stdout.strip()
     before = _head(machine.engine)
-    monkeypatch.setattr(uc, "nightly_verified_shas", lambda **_kw: [unsigned])
+    monkeypatch.setattr(uc, "full_suite_shas", lambda **_kw: [unsigned])
 
-    result = updater.main(["--yes", "--channel", "dev-verified"], environ=_env(machine))
+    result = updater.main(["--yes", "--channel", "beta"], environ=_env(machine))
 
     assert result != 0
     assert _head(machine.engine) == before
 
 
 # --------------------------------------------------------------------------
-# The nightly proof: the `nightly` status the workflow publishes on the commit,
-# never the run's event (a schedule run is always about the default branch).
+# The proofs: the `full-suite` status the workflow publishes (beta) and the
+# branch CI gates (nightly), both read from the commit, never from the run.
 # --------------------------------------------------------------------------
 
 def _commits(*shas: str) -> dict:
@@ -561,35 +591,67 @@ def _statuses(*entries: tuple[str, str]) -> dict:
     return {"statuses": [{"context": context, "state": state} for context, state in entries]}
 
 
-def test_only_commits_with_a_green_nightly_status_are_candidates(monkeypatch):
+def _check_runs(*entries: tuple[str, str]) -> dict:
+    return {"check_runs": [{"name": name, "conclusion": conclusion} for name, conclusion in entries]}
+
+
+def test_every_required_ci_gate_must_be_green_on_the_commit(monkeypatch):
+    """nightly's gates: the leak scan, the Linux suite and the fast Windows one, on this commit."""
+    sha = "a" * 40
+    monkeypatch.setattr(uc, "_api_get", lambda path: _check_runs(
+        ("self-check", "success"), ("engine-tests", "success"), ("quick-windows", "failure"),
+    ))
+
+    assert uc.checks_missing("o/r", sha) == ["quick-windows=failure"]
+
+
+def test_a_gate_still_running_is_not_a_pass(monkeypatch):
+    monkeypatch.setattr(uc, "_api_get", lambda path: _check_runs(("quick-windows", "")))
+
+    assert uc.checks_missing("o/r", "b" * 40) == [
+        "self-check=not finished", "engine-tests=not finished", "quick-windows=not finished",
+    ]
+
+
+def test_a_rerun_that_succeeded_is_the_one_that_counts(monkeypatch):
+    """The first entry per name is the newest run; an old failure must not block a green re-run."""
+    monkeypatch.setattr(uc, "_api_get", lambda path: _check_runs(
+        ("quick-windows", "success"), ("quick-windows", "failure"),
+        ("self-check", "success"), ("engine-tests", "success"),
+    ))
+
+    assert uc.checks_missing("o/r", "c" * 40) == []
+
+
+def test_only_commits_with_a_green_full_suite_status_are_candidates(monkeypatch):
     green, red, other = "a" * 40, "b" * 40, "c" * 40
     payloads = {
         "repos/o/r/commits?sha=developer&per_page=12": _commits(green, red, other),
-        f"repos/o/r/commits/{green}/status": _statuses(("nightly", "success")),
-        f"repos/o/r/commits/{red}/status": _statuses(("nightly", "failure")),
-        # A green status in ANOTHER context proves nothing about the nightly.
+        f"repos/o/r/commits/{green}/status": _statuses(("full-suite", "success")),
+        f"repos/o/r/commits/{red}/status": _statuses(("full-suite", "failure")),
+        # A green status in ANOTHER context proves nothing about the full suite.
         f"repos/o/r/commits/{other}/status": _statuses(("ci", "success")),
     }
     monkeypatch.setattr(uc, "_api_get", lambda path: payloads[path])
 
-    assert uc.nightly_verified_shas("o/r") == [green]
+    assert uc.full_suite_shas("o/r") == [green]
 
 
 def test_a_commit_with_no_status_at_all_is_never_a_candidate(monkeypatch):
-    """A rewritten history or a nightly that never ran leaves no status: no green, no candidate."""
+    """A rewritten history or a suite that never ran leaves no status: no green, no candidate."""
     monkeypatch.setattr(uc, "_api_get", lambda path: _commits("d" * 40) if "commits?" in path else _statuses())
 
-    assert uc.nightly_verified_shas("o/r") == []
+    assert uc.full_suite_shas("o/r") == []
 
 
 def test_the_status_lookup_reads_the_commit_not_the_run_event(monkeypatch):
     """The bug this replaces: schedule runs exist only on the default branch."""
     seen: list[str] = []
     monkeypatch.setattr(uc, "_api_get", lambda path: seen.append(path) or (
-        _commits("e" * 40) if "commits?" in path else _statuses(("nightly", "success"))
+        _commits("e" * 40) if "commits?" in path else _statuses(("full-suite", "success"))
     ))
 
-    assert uc.nightly_verified_shas("o/r") == ["e" * 40]
+    assert uc.full_suite_shas("o/r") == ["e" * 40]
     assert seen[0].startswith("repos/o/r/commits?sha=developer")
     assert f"repos/o/r/commits/{'e' * 40}/status" == seen[1]
     assert not any("actions/" in path for path in seen)

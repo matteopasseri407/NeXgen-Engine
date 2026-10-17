@@ -45,7 +45,6 @@ import subprocess
 import sys
 import time
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -56,7 +55,7 @@ if str(SCRIPTS_DIR) not in sys.path:
 from nexgen_core.errors import NexgenError  # noqa: E402
 from nexgen_core.files import atomic_write_text  # noqa: E402
 from nexgen_core.i18n import t  # noqa: E402
-from nexgen_core.lock import EXIT_BUSY_MANUAL, LockIOError, LockTimeoutError, host_mutation  # noqa: E402
+from nexgen_core.lock import EXIT_BUSY_MANUAL, LockTimeoutError, host_mutation  # noqa: E402
 from nexgen_core.paths import resolve_home, resolve_state_dir  # noqa: E402
 from nexgen_core.processes import force_stop_process_tree  # noqa: E402
 from nexgen_core.release_trust import BAD, UNTRUSTED, TagVerdict, verify_release_tag  # noqa: E402
@@ -542,10 +541,10 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help=(
             "which NeXgen Engine this machine follows: stable (released tags, the default), "
-            "dev (the signed tip of developer) or dev-verified (the newest signed commit the "
-            "nightly run proved). The dev channels are closed on an installation whose private "
-            "config does not open them. The choice is remembered; without the flag the "
-            "remembered channel is used"
+            "nightly (the tip of developer, signed and green on the CI gates it "
+            "requires) or beta (the newest signed commit the full nightly suite proved). "
+            "The nightly and beta channels are closed on an installation whose private "
+            "config does not open them. The choice is remembered; without the flag the remembered channel is used"
         ),
     )
     parser.add_argument(
@@ -583,9 +582,9 @@ def _report_post_merge_error(exc: PostMergeError, pin_file: Path | None) -> int:
 
 
 def _came_from_label(current: str, previous_head: str, *, release: bool) -> str:
-    """Where a rollback goes back to: `vX.Y.Z` on stable, the short commit on dev.
+    """Where a rollback goes back to: `vX.Y.Z` on stable, the short commit on a moving channel.
 
-    `previous_label` (the parameter `_roll_back` takes) is this string: on a dev
+    `previous_label` (the parameter `_roll_back` takes) is this string: on nightly
     channel a version number would name a release the machine was not running.
     """
     if release:
@@ -714,7 +713,7 @@ def _gate_on_signature(args: argparse.Namespace, target: update_channel.TargetPl
 
 
 def _enforce_ceiling(args: argparse.Namespace, target: update_channel.TargetPlan, current: str, state_dir: Path) -> None:
-    """The ceiling caps an unattended RELEASE jump; a dev channel is a different, proved opt-in."""
+    """The ceiling caps an unattended RELEASE jump; a nightly or beta target is a proved opt-in."""
     if args.unattended and target.release:
         _assert_within_unattended_ceiling(current, target.ref, _read_ceiling(state_dir))
 
@@ -725,8 +724,8 @@ def _stop_if_settled(
     """True when there is nothing to install; remembers an explicit channel choice either way.
 
     A switch to a channel that is already installed is still an answer:
-    `--channel stable` on a dev machine that is already at the newest release
-    has to be remembered, or the next bare run would follow dev again.
+    `--channel stable` on a machine that follows nightly and is already at the release
+    has to be remembered, or the next bare run would follow nightly again.
     """
     if not _settled(engine_repo, current, target, requested=args.target):
         return False

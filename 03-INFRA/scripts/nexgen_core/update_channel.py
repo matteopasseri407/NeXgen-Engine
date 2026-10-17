@@ -1,16 +1,13 @@
-"""Which NeXgen Engine a machine follows, and why a dev target is allowed.
+"""Which NeXgen Engine a machine follows, and why a moving branch is allowed.
 
-A stable machine follows released tags. A machine on `dev` follows the tip of
-`developer`, and a machine on `dev-verified` follows the newest signed commit
-that the nightly CI run proved. The two dev channels exist because a moving
-branch is only installable when something outside the branch vouches for it:
-a signature from a key the installed tree already pins, and, for
-`dev-verified`, a schedule run of the CI workflow that finished green with the
-Windows and the Linux leg inside it. No green nightly, no candidate, ever.
+Three channels. `stable` is the default for everyone: released tags of `main`.
+`nightly` follows the tip of `developer`, and a commit enters it only with two
+proofs: a signature the installed tree already pins, and the CI gates the branch
+itself requires green on that commit. `beta` follows the newest signed commit
+the full nightly suite proved (the `full-suite` status on the commit). Neither
+is open unless the installation opens it in its own private config.
 
 One job: name the commit the chosen channel points at, and remember the choice.
-The updater owns the merge, the rollback and the doctor; this module owns the
-answer and the reasons it can refuse.
 """
 from __future__ import annotations
 
@@ -30,12 +27,12 @@ from nexgen_core.release_trust import BAD, UNTRUSTED, TagVerdict, verify_signed_
 SEMVER = re.compile(r"^v?(\d+)\.(\d+)\.(\d+)$")
 
 #: The channels a machine can follow, in the order they appear in `--help`.
-CHANNELS = ("stable", "dev", "dev-verified")
+CHANNELS = ("stable", "nightly", "beta")
 DEFAULT_CHANNEL = "stable"
 #: This machine's remembered channel, written in the engine's state directory.
 CHANNEL_FILE = "update-channel"
-#: The key in this INSTALLATION's private config that opens the dev channels:
-#: `update: {allow_channels: [dev, dev-verified]}` in sync/remotes.yaml.
+#: The key in this INSTALLATION's private config that opens the channels that
+#: are not stable: `update: {allow_channels: [nightly, beta]}` in sync/remotes.yaml.
 ALLOW_SECTION = "update"
 ALLOW_FIELD = "allow_channels"
 #: The channels an installation may unlock. stable is not a permission: it is
@@ -43,7 +40,7 @@ ALLOW_FIELD = "allow_channels"
 UNLOCKABLE = tuple(channel for channel in CHANNELS if channel != DEFAULT_CHANNEL)
 
 DEVELOPER_BRANCH = "developer"
-#: The public repository whose Actions runs prove a dev-verified candidate.
+#: The public repository whose CI proves a `nightly` or `beta` candidate.
 REPO_SLUG = "matteopasseri407/NeXgen-Engine"
 NIGHTLY_LIMIT = 12
 API_TIMEOUT_SECONDS = 20.0
@@ -167,8 +164,8 @@ def plan_target(
     if chosen == DEFAULT_CHANNEL:
         return stable_target(engine_repo, requested)
     if requested:
-        raise ChannelError("--target names a released tag; it cannot be combined with a dev channel")
-    proved = dev_target(engine_repo) if chosen == "dev" else dev_verified_target(engine_repo)
+        raise ChannelError("--target names a released tag; it cannot be combined with a moving channel")
+    proved = nightly_target(engine_repo) if chosen == "nightly" else beta_target(engine_repo)
     return TargetPlan(
         channel=chosen, ref=proved.rev, rev=proved.rev, version=proved.version,
         label=proved.label, release=False, channel_target=proved,
@@ -297,7 +294,8 @@ def _signed_target(engine_repo: Path, rev: str, *, channel: str, detail: str, tr
     if verdict.status in (BAD, UNTRUSTED):
         raise ChannelRefused(
             f"commit {rev[:9]} on {channel} is not signed by a trusted release key: {verdict.detail}. "
-            "Nothing was installed: a dev channel never takes a commit the installed keys cannot vouch for."
+            "Nothing was installed: a channel that follows a moving branch never takes a commit the "
+            "installed keys cannot vouch for."
         )
     if not verdict.ok:
         raise ChannelRefused(
@@ -310,32 +308,50 @@ def _signed_target(engine_repo: Path, rev: str, *, channel: str, detail: str, tr
     )
 
 
-def dev_target(engine_repo: Path, *, trust_dir: Path | None = None) -> ChannelTarget:
-    """The tip of `developer`, if and only if the tip itself is signed."""
+def nightly_target(
+    engine_repo: Path,
+    *,
+    trust_dir: Path | None = None,
+    checks=None,
+) -> ChannelTarget:
+    """The tip of `developer`, if it is signed and the branch's own CI gates are green.
+
+    Two proofs and no third: the pinned keys, and the gates developer requires of
+    itself (the self-check leak scan, the Linux suite and the fast Windows gate).
+    A commit that has not passed them is a commit nobody has judged yet.
+    """
     tip = developer_tip(engine_repo)
-    return _signed_target(engine_repo, tip, channel="dev", detail="tip of developer", trust_dir=trust_dir)
+    target = _signed_target(engine_repo, tip, channel="nightly", detail="tip of developer", trust_dir=trust_dir)
+    missing = (checks_missing(REPO_SLUG, tip) if checks is None else checks(tip))
+    if missing:
+        raise ChannelRefused(
+            f"commit {tip[:9]} on nightly has not passed the CI gates developer requires: "
+            f"{', '.join(missing)}. Nothing was installed; the next push that goes green opens the channel."
+        )
+    return target
 
 
-def dev_verified_target(
+def beta_target(
     engine_repo: Path,
     *,
     lookup=None,
     trust_dir: Path | None = None,
 ) -> ChannelTarget:
-    """The newest signed commit of `developer` whose `nightly` status is green.
+    """The newest signed commit of `developer` the full nightly suite has proved.
 
-    Walking the green commits newest first means an unsigned or rewritten tip is
+    Walking the proved commits newest first means an unsigned or rewritten tip is
     skipped instead of blocking the channel: the machine lands on the newest
     commit that is both signed and proved. There is no other door: a commit the
-    nightly did not run on has no status, and no status means no candidate.
+    full suite did not run on carries no `full-suite` status, and no status means
+    no candidate.
     """
-    verified = (nightly_verified_shas() if lookup is None else lookup())
+    verified = (full_suite_shas() if lookup is None else lookup())
     if not verified:
         raise ChannelError(
-            f"no commit of {DEVELOPER_BRANCH} carries a green 'nightly' status; "
-            "dev-verified never installs a commit the nightly did not prove"
+            f"no commit of {DEVELOPER_BRANCH} carries a green '{FULL_SUITE_CONTEXT}' status; "
+            "beta never installs a commit the full suite did not prove"
         )
-    # The green commits come from the remote history; fetch it before judging them.
+    # The proved commits come from the remote history; fetch it before judging them.
     developer_tip(engine_repo)
     for rev in verified:
         present = _git(engine_repo, "cat-file", "-e", f"{rev}^{{commit}}")
@@ -343,24 +359,31 @@ def dev_verified_target(
             continue  # rewritten away, or older than this clone's history
         try:
             return _signed_target(
-                engine_repo, rev, channel="dev-verified",
-                detail="nightly green on Windows and Linux", trust_dir=trust_dir,
+                engine_repo, rev, channel="beta",
+                detail=f"{FULL_SUITE_CONTEXT} green on Windows and Linux", trust_dir=trust_dir,
             )
-        except ChannelRefused:  # nexgen: allow reason="a candidate the pinned keys refuse is skipped for the next green one, never installed"
+        except ChannelRefused:  # nexgen: allow reason="a candidate the pinned keys refuse is skipped for the next proved one, never installed"
             continue
     raise ChannelError(
-        f"no commit carrying a green 'nightly' status on {DEVELOPER_BRANCH} is signed by a pinned key; "
-        "dev-verified has no candidate"
+        f"no commit carrying a green '{FULL_SUITE_CONTEXT}' status on {DEVELOPER_BRANCH} is signed by a "
+        "pinned key; beta has no candidate"
     )
 
 
 # --------------------------------------------------------------------------
-# The public API of the nightly proof: a `nightly` status on the commit itself.
+# The public API of the proofs: a `full-suite` status for beta, the branch's
+# own CI gates for nightly. Both are read from the commit, never from the run.
 # --------------------------------------------------------------------------
 
-#: The commit status the nightly workflow publishes, after both legs, on the
+#: The commit status the full-suite workflow publishes, after both legs, on the
 #: commit of `developer` it tested (see .github/workflows/ci.yml).
-NIGHTLY_CONTEXT = "nightly"
+FULL_SUITE_CONTEXT = "full-suite"
+
+#: The CI jobs a `nightly` candidate must have passed, by check-run name.
+#: `self-check` carries the leak scan, `engine-tests` is the Linux suite,
+#: `quick-windows` is the fast Windows gate: the minimum that keeps a machine
+#: from being handed a commit the branch itself would not merge.
+REQUIRED_CHECKS = ("self-check", "engine-tests", "quick-windows")
 
 
 def _parse_json(text: str) -> dict:
@@ -402,29 +425,55 @@ def _api_get(path: str) -> dict:
     return _https_api(path)
 
 
-def nightly_state(slug: str, sha: str) -> str:
-    """The state the nightly published for this commit: success, failure, pending, error, or ''.
+def full_suite_state(slug: str, sha: str) -> str:
+    """The state the full nightly suite published for this commit: success, failure, pending, or ''.
 
-    Only the `nightly` context counts. GitHub's own "Verified" badge is never
-    consulted anywhere in this module: a dev commit is trusted because the
-    install's pinned keys signed it, and proved because the nightly that ran
+    Only the `full-suite` context counts. GitHub's own "Verified" badge is never
+    consulted anywhere in this module: a moving-branch commit is trusted because
+    the install's pinned keys signed it, and proved because the suite that ran
     Windows and Linux published a green status on it.
     """
     payload = _api_get(f"repos/{slug}/commits/{sha}/status")
     statuses = payload.get("statuses")
     for status in statuses if isinstance(statuses, list) else []:
-        if isinstance(status, dict) and status.get("context") == NIGHTLY_CONTEXT:
+        if isinstance(status, dict) and status.get("context") == FULL_SUITE_CONTEXT:
             return str(status.get("state") or "")
     return ""
 
 
-def nightly_verified_shas(
+def check_run_conclusions(slug: str, sha: str) -> dict[str, str]:
+    """Latest conclusion per check-run name on this commit ('' while it is still running)."""
+    payload = _api_get(f"repos/{slug}/commits/{sha}/check-runs?per_page=100")
+    runs = payload.get("check_runs")
+    if not isinstance(runs, list):
+        raise ChannelError("the GitHub API answered without a check-run list")
+    conclusions: dict[str, str] = {}
+    for run in runs:  # newest first: the first entry per name is the run that counts
+        if not isinstance(run, dict):
+            continue
+        name = str(run.get("name") or "")
+        if name and name not in conclusions:
+            conclusions[name] = str(run.get("conclusion") or "")
+    return conclusions
+
+
+def checks_missing(slug: str, sha: str, required: tuple[str, ...] = REQUIRED_CHECKS) -> list[str]:
+    """Which required CI checks this commit has not passed, empty when it passed them all."""
+    conclusions = check_run_conclusions(slug, sha)
+    return [
+        f"{name}={conclusions.get(name) or 'not finished'}"
+        for name in required
+        if conclusions.get(name) != "success"
+    ]
+
+
+def full_suite_shas(
     slug: str = REPO_SLUG,
     *,
     branch: str = DEVELOPER_BRANCH,
     limit: int = NIGHTLY_LIMIT,
 ) -> list[str]:
-    """Commits of `branch` with a green `nightly` status, newest first.
+    """Commits of `branch` with a green `full-suite` status, newest first.
 
     The status, not the run: GitHub runs `schedule` only on the default branch,
     so reading the event would report `main` every night while the branch a
@@ -439,28 +488,12 @@ def nightly_verified_shas(
     verified: list[str] = []
     for entry in commits:
         sha = entry.get("sha") if isinstance(entry, dict) else None
-        if sha and nightly_state(slug, str(sha)) == "success":
+        if sha and full_suite_state(slug, str(sha)) == "success":
             verified.append(str(sha))
     return verified
 
 
-def version_footer(state_dir: Path | None = None) -> str:
-    """What `nexgen --version` appends: the channel, and its commit on the dev ones.
-
-    Never raises: a version banner is not a place where a missing repository
-    or an unreadable state file can be allowed to break the command.
-    """
-    try:
-        from nexgen_core.paths import resolve_state_dir
-
-        state = Path(state_dir) if state_dir is not None else resolve_state_dir()
-        channel = read_channel(state)
-        if channel == DEFAULT_CHANNEL:
-            return f" ({channel})"
-        from nexgen_core.paths import resolve_engine_root
-
-        short = _git(resolve_engine_root().parent, "rev-parse", "--short", "HEAD")
-        sha = short.stdout.strip() if short.returncode == 0 else ""
-        return f" ({channel} {sha})" if sha else f" ({channel})"
-    except Exception:  # nexgen: allow reason="a version banner never fails a command: the caller gets the plain version instead"
-        return ""
+def short_head(repo: Path) -> str:
+    """The short commit this checkout is on, or '' when there is no repository to read."""
+    shown = _git(repo, "rev-parse", "--short", "HEAD")
+    return shown.stdout.strip() if shown.returncode == 0 else ""

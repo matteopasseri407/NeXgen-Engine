@@ -61,13 +61,13 @@ def test_the_nightly_runs_on_developer_and_publishes_a_status_on_the_commit():
     """GitHub runs `schedule` only on the default branch (2026-10-17).
 
     A nightly that never checked out `developer` proved nothing about the branch
-    dev-verified follows, and a dev-verified that read the run's event would
-    look for a schedule run on a branch that can never have one. Both halves are
-    pinned here: the checkout, and the `nightly` status the commit carries.
+    the moving channels follow, and a beta that read the run's event would look
+    for a schedule run on a branch that can never have one. Both halves are
+    pinned here: the checkout, and the `full-suite` status the commit carries.
     """
     doc = workflow()
     jobs = doc["jobs"]
-    legs = ["nightly-linux", "nightly-windows"]
+    legs = ["full-suite-linux", "full-suite-windows"]
     for name in legs:
         job = jobs[name]
         gate = job["if"]
@@ -75,14 +75,14 @@ def test_the_nightly_runs_on_developer_and_publishes_a_status_on_the_commit():
         checkout = next(s for s in job["steps"] if "actions/checkout" in s.get("uses", ""))
         assert checkout["with"]["ref"] == "developer", name
 
-    status = jobs["nightly-status"]
+    status = jobs["full-suite-status"]
     assert set(status["needs"]) == set(legs)
     assert status["permissions"]["statuses"] == "write"
     assert "always()" in status["if"]
     step = next(s for s in status["steps"] if "statuses/" in s.get("run", ""))
     # The status goes on the commit the legs actually ran on, in the context
-    # dev-verified reads - never on wherever `developer` points by then.
-    assert "gh api -X POST" in step["run"] and "context=nightly" in step["run"]
+    # beta reads - never on wherever `developer` points by then.
+    assert "gh api -X POST" in step["run"] and "context=full-suite" in step["run"]
     assert "statuses/${LINUX_SHA}" in step["run"]
     assert '"$LINUX_SHA" = "$WINDOWS_SHA"' in step["run"]
     assert '"$LINUX" = success' in step["run"] and '"$WINDOWS" = success' in step["run"]
@@ -90,6 +90,25 @@ def test_the_nightly_runs_on_developer_and_publishes_a_status_on_the_commit():
         recorded = next(s for s in jobs[name]["steps"] if s.get("id") == "tested")
         assert "git rev-parse HEAD" in recorded["run"], name
         assert jobs[name]["outputs"]["sha"] == "${{ steps.tested.outputs.sha }}"
+
+
+def test_the_fast_windows_gate_is_what_nightly_needs():
+    """nightly's Windows proof: a job that runs on every push of developer, in minutes.
+
+    It is not a release gate and it must not become one: the push is never
+    blocked by it (CI is asynchronous), only the propagation of `nightly`.
+    """
+    doc = workflow()
+    job = doc["jobs"]["quick-windows"]
+    assert job["runs-on"] == "windows-latest"
+    assert job["timeout-minutes"] == 8
+    assert job["if"] == "github.ref == 'refs/heads/developer'"
+    runs = [step.get("run", "") for step in job["steps"]]
+    assert any(run.strip() == "python 03-INFRA/scripts/smoke.py" for run in runs)
+    quick = next(run for run in runs if "python -m pytest" in run)
+    for name in ("test_nexgen_command_surface.py", "test_nexgen_text_encoding.py",
+                 "test_nexgen_pathssplit_pinning.py"):
+        assert name in quick
 
 
 def test_the_windows_leg_no_longer_duplicates_the_scheduled_run():

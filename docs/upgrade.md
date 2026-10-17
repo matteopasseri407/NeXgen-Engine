@@ -41,7 +41,7 @@ available.
 ## Channels
 
 Development builds are for people who work on the engine itself; the default is `stable` (released tags of `main`).
-An installation that wants `dev` or `dev-verified` opens them in its own private config (`update.allow_channels` in `sync/remotes.yaml`) and remembers the choice afterwards with `nexgen update --channel dev`, which keeps only signed commits and, for `dev-verified`, only commits a nightly run proved.
+An installation opens `nightly` or `beta` in its own private config (`update.allow_channels: [nightly, beta]` in `sync/remotes.yaml`) and remembers the choice with `nexgen update --channel nightly`: `nightly` follows the tip of `developer` only when it is signed and its CI gates (leak scan, Linux suite, fast Windows gate) are green on that commit, and `beta` only when the full nightly suite has proved it on Windows and Linux.
 
 ## Startup notice (one prompt per day, launch-or-skip)
 
