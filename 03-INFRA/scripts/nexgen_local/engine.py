@@ -169,9 +169,16 @@ def route_task(llm: LLM, cfg: LaneConfig, task: str) -> dict[str, Any]:
 
 
 def sources_from_receipts(calls: list[Any]) -> list[str]:
-    """Machine facts for the answer: the exact sources the engine read."""
+    """Machine facts for the answer: the exact sources the engine read.
+
+    Only successful reads count, as everywhere else the receipts are read: a failed
+    read is not a source, and listing it made a later citation look invented
+    ("cita una fonte non letta").
+    """
     sources: list[str] = []
     for call in calls:
+        if not getattr(call, "ok", True):
+            continue
         args = getattr(call, "args", {}) or {}
         name = getattr(call, "name", "")
         if name in ("read_vault", "read_repo", "read_pdf") and args.get("path"):
