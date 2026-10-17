@@ -78,6 +78,12 @@ def _sha(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8", errors="replace")).hexdigest()
 
 
+def _hash_bytes(data: bytes) -> str:
+    """The proposal's hash of a file's bytes: one definition, used by the
+    proposal, the approval check and the post-apply check."""
+    return _sha(data.decode("utf-8", errors="replace"))
+
+
 def _read_text_bytes(path: Path) -> str:
     """Decode the exact bytes: ``Path.read_text`` normalises CRLF to LF, which
     would hash differently from the proposal computed over the raw bytes."""
@@ -318,7 +324,7 @@ def _check_approval(cfg: LaneConfig, proposal: Proposal) -> tuple[Path, Path]:
     if not proposal.dry_run:
         raise PatchError("il dry-run della proposta era fallito: non si applica")
     path, root = _approved_target(cfg, proposal)
-    if _sha(_read_text_bytes(path)) != proposal.original_hash:
+    if _hash_bytes(path.read_bytes()) != proposal.original_hash:
         raise PatchError("proposta stantia: il file e' cambiato dopo la proposta")
     return path, root
 
@@ -327,10 +333,10 @@ def _file_state(path: Path, expected: str) -> str:
     """`ours` while the file holds what `git apply` produced, else `changed`,
     or `unreadable` when it cannot be read at all: a file a scanner is
     holding open for a moment is not a change, and the log should not say it
-    was one."""
+    was one. Any failure counts as unreadable."""
     try:
-        return "ours" if _sha(_read_text_bytes(path)) == expected else "changed"
-    except OSError:
+        return "ours" if _hash_bytes(path.read_bytes()) == expected else "changed"
+    except (OSError, ValueError, PatchError):  # nexgen: allow reason="unreadable is left alone"
         return "unreadable"
 
 
@@ -353,14 +359,14 @@ def _keep_original(before: bytes, spare: Path) -> str:
     `written` when this call saved them, `exists` when a copy from an earlier
     failure was already there, `failed` when even that write could not land
     (a full disk, a locked directory): a refusal must never point at a file
-    that is not there.
+    that is not there. Any failure counts as failed.
     """
     if spare.exists():
         return "exists"
     try:
         secure_artifact(spare.parent)
         atomic_write_bytes(spare, before, preserve_mode=False)
-    except OSError:  # nexgen: allow reason="the outcome carries the failure; nothing else can be done"
+    except (OSError, ValueError, PatchError):  # nexgen: allow reason="the outcome carries the failure"
         return "failed"
     return "written"
 
@@ -378,9 +384,10 @@ def _restore_outcome(
     edits nobody committed, and only a copy can bring them back. `expected`
     is the content hash read right after `git apply`, or None when that read
     failed: with the applied output unknown, the known-good bytes go back on
-    purpose. A parallel apply on the same file is the one case where the
-    check and the write can still lose work: the lane locks per proposal,
-    not per file, and half a megabyte of window is not a lock.
+    purpose. Two applies on the same file are not serialised: this can only
+    check that the file still holds what the patch produced, not that the
+    patch worked on the bytes read before it, so a parallel apply that lands
+    during `git apply` can still be undone (Should Fix 24, plan 2.16).
     """
     if expected is not None:
         state = _file_state(path, expected)
@@ -393,7 +400,23 @@ def _restore_outcome(
     return "restored", "not-needed"
 
 
-def _approved_bytes_or_refuse(path: Path, proposal: Proposal) -> bytes:
+def _refuse_apply(cfg: LaneConfig, proposal: Proposal, rc: str, reason: str) -> NoReturn:
+    """Records the refusal, then raises it.
+
+    A refusal before the pen moves used to leave only the intent line in the
+    log: seen later, it is indistinguishable from a crash in the middle of
+    the application.
+    """
+    try:
+        audit_event(cfg, "apply_patch",
+                    {"file": proposal.file, "proposal": proposal.id, "phase": "result", "rc": rc},
+                    ok=False, chars=len(proposal.patch))
+    except OSError:  # nexgen: allow reason="the refusal below is what the person needs"
+        pass
+    raise PatchError(reason)
+
+
+def _approved_bytes_or_refuse(cfg: LaneConfig, path: Path, proposal: Proposal) -> bytes:
     """The file's bytes, refusing when they are not the approved ones.
 
     A second apply on the same file can slip in between the approval check
@@ -404,9 +427,11 @@ def _approved_bytes_or_refuse(path: Path, proposal: Proposal) -> bytes:
     try:
         before = path.read_bytes()
     except OSError as exc:
-        raise PatchError(f"il file non e' leggibile ({type(exc).__name__}): non applico") from exc
-    if _sha(before.decode("utf-8", errors="replace")) != proposal.original_hash:
-        raise PatchError("il file e' cambiato dopo l'approvazione: non applico, riprova la proposta")
+        _refuse_apply(cfg, proposal, "unreadable",
+                      f"il file non e' leggibile ({type(exc).__name__}): non applico")
+    if _hash_bytes(before) != proposal.original_hash:
+        _refuse_apply(cfg, proposal, "stale",
+                      "il file e' cambiato dopo l'approvazione: non applico, riprova la proposta")
     return before
 
 
@@ -415,10 +440,11 @@ def _applied_hash(path: Path) -> str | None:
 
     The caller treats an unreadable result as a mismatch: it knows the file
     is not what the proposal promised, and the pre-patch bytes can go back.
+    Any failure counts: I/O, decoding, or a refusal raised by the reader.
     """
     try:
-        return _sha(_read_text_bytes(path))
-    except OSError:  # nexgen: allow reason="the caller treats an unreadable result as a mismatch"
+        return _hash_bytes(path.read_bytes())
+    except (OSError, ValueError, PatchError):  # nexgen: allow reason="unreadable means mismatch"
         return None
 
 
@@ -468,7 +494,7 @@ def _run_apply(
                 ok=True, chars=len(proposal.patch))
 
     record_attempt(proposal, lambda: _save(cfg, proposal), PatchError)
-    before = _approved_bytes_or_refuse(path, proposal)  # a failed check puts these back
+    before = _approved_bytes_or_refuse(cfg, path, proposal)  # a failed check puts these back
     with tempfile.NamedTemporaryFile("wb", suffix=".patch", delete=False) as handle:
         handle.write(proposal.patch.encode("utf-8"))
         patch_path = Path(handle.name)

@@ -442,3 +442,33 @@ def test_when_no_copy_can_be_saved_the_refusal_does_not_promise_one(tmp_path, mo
     lines = [json.loads(line) for line in cfg.audit_path.read_text(encoding="utf-8").strip().splitlines()]
     assert lines[-1]["args"]["restore"] == "failed"
     assert lines[-1]["args"]["spare"] == "failed"
+
+
+def test_a_refused_apply_still_writes_its_result_line(tmp_path, monkeypatch):
+    """Un rifiuto prima della penna scrive comunque la riga di esito: senza,
+    nel registro resta solo l'intento e a posteriori non si distingue da un
+    crash a meta' applicazione."""
+    import json
+
+    from nexgen_local import patch as patch_mod
+
+    repo = _git_repo(tmp_path)
+    (repo / "notes.md").write_text("Questo contiente un refuso.\n", encoding="utf-8")
+    cfg = _cfg(tmp_path, repo)
+    proposal = propose_patch(PatchLLM({"old": "contiente", "new": "contiene", "why": "refuso"}),
+                             cfg, "notes.md", "correggi il refuso")
+
+    real_save = patch_mod._save
+
+    def save_and_touch(cfg_arg, prop):
+        real_save(cfg_arg, prop)
+        (repo / "notes.md").write_text("scritto da qualcun altro nel frattempo.\n", encoding="utf-8")
+
+    monkeypatch.setattr(patch_mod, "_save", save_and_touch)
+    with pytest.raises(PatchError, match="dopo l'approvazione"):
+        apply_proposal(cfg, proposal.id, yes=True)
+
+    lines = [json.loads(line) for line in cfg.audit_path.read_text(encoding="utf-8").strip().splitlines()]
+    results = [line for line in lines if line["tool"] == "apply_patch" and line["args"].get("phase") == "result"]
+    assert results and results[-1]["args"]["rc"] == "stale"
+    assert (repo / "notes.md").read_text(encoding="utf-8") == "scritto da qualcun altro nel frattempo.\n"
