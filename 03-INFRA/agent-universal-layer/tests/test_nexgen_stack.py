@@ -9,6 +9,7 @@ from __future__ import annotations
 import os
 import stat
 import sys
+import types
 from pathlib import Path
 
 import pytest
@@ -89,6 +90,32 @@ def test_workstation_env_is_regenerated_whole(tmp_path: Path):
     body = target.read_text(encoding="utf-8")
     assert "A=1" in body
     assert "B=2" not in body, "una voce tolta dallo stack deve sparire davvero"
+
+
+def test_up_for_one_service_keeps_the_other_services_variables(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """`nexgen stack up vault-library` must not wipe the variables of n8n.
+
+    The workstation file is one file for the whole stack: starting (or
+    reconfiguring) a single service may only rewrite that service's exports.
+    """
+    from nexgen_core.cli import stack_cmds
+
+    env_file = tmp_path / ".env"
+    env_file.write_text("VAULT_LIBRARY_TOKEN=abc123\n", encoding="utf-8")
+    target = tmp_path / "90-nexgen-stack.conf"
+    secrets.write_workstation_env(target, {"N8N_TUNNEL_PORT": "5678", "N8N_MCP_TOKEN": "keep-me"})
+
+    monkeypatch.setattr(stack_cmds, "resolve_engine_root", lambda: tmp_path)
+    monkeypatch.setattr(runner, "up", lambda engine_root, services: ["started"])
+    monkeypatch.setattr("nexgen_core.stack.services.env_file", lambda engine_root: env_file)
+    monkeypatch.setattr(secrets, "workstation_env_path", lambda: target)
+
+    assert stack_cmds.cmd_up(types.SimpleNamespace(services=["vault-library"])) == 0
+
+    written = secrets.read_env_file(target)
+    assert written["VAULT_LIBRARY_TOKEN"] == "abc123"
+    assert written["N8N_TUNNEL_PORT"] == "5678", "le variabili degli altri servizi sono sparite"
+    assert written["N8N_MCP_TOKEN"] == "keep-me"
 
 
 def test_unknown_service_names_the_available_ones():
