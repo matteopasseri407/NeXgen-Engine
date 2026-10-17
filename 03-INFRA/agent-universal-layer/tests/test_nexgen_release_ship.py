@@ -46,6 +46,11 @@ class FakeWorld:
         self.smoke_fails = False
         #: Where a successful `nexgen update` writes the version it installed.
         self.install_root: Path | None = None
+        #: What the updater reports and refuses with, word for word.
+        self.data_repo: Path | None = None
+        self.data_dirty = False
+        self.update_refusal = ""
+        self.update_noop = False
 
     def __call__(self, argv, cwd):
         argv = tuple(str(a) for a in argv)
@@ -67,9 +72,17 @@ class FakeWorld:
         if argv[-1].endswith("smoke.py"):
             return ("SMOKE FAILED (1)", 1) if self.smoke_fails else ("SMOKE OK (12s)", 0)
         if argv[:2] == ("nexgen", "update"):
+            folder = self.install_root or Path("?")
+            report = f"Engine: {folder / '03-INFRA'}\nData:   {self.data_repo or folder}\n"
+            if self.update_refusal:
+                return report + f"nexgen-update: ERROR: {self.update_refusal}", 1
+            if self.update_noop:
+                return report + "NeXGen Engine is already at the requested released version.", 0
             if self.install_root is not None:
                 (self.install_root / "VERSION").write_text(argv[-1] + "\n", encoding="utf-8")
-            return f"installed {argv[-1]}", 0
+            return report + f"installed {argv[-1]}", 0
+        if argv[:2] == ("git", "-C") and "status" in argv:
+            return ("?? notes.md\n" if self.data_dirty else ""), 0
         if argv[:2] == ("gh", "api"):
             url = next(arg for arg in argv[2:] if arg.startswith("repos/"))
             return self.api(url), 0
@@ -374,6 +387,56 @@ def test_the_version_probe_is_the_launchers_own(repo):
     shipper = Shipper(repo=repo, engine_root=repo / "engine", run=release_ship._default_run, log=lambda _m: None)
     assert shipper._runs_this_engine([sys.executable])
     assert not shipper._runs_this_engine([shutil.which("git") or "git"])
+
+
+def test_an_update_refused_for_a_dirty_vault_says_which_folder_and_stops(repo, tmp_path):
+    """The updater refuses before it moves the engine. That is not a rollback to retry:
+    it is one line naming the folder that has to be committed or stashed."""
+    world = FakeWorld(repo)
+    installed = installed_engine(repo, "2.13.0")
+    world.install_root = installed
+    world.data_repo = repo / "vault"
+    world.update_refusal = "data repository is dirty; commit or stash your work yourself before updating:\n?? notes.md"
+    shipper = _shipper(repo, world, install_log=tmp_path / "install.log")
+    shipper.engine_root = installed / "03-INFRA"
+    with pytest.raises(ShipStop) as stop:
+        shipper.ship("minor", install=True)
+    assert str(repo / "vault") in str(stop.value)
+    assert "uncommitted or untracked" in str(stop.value)
+    assert "rolled back" not in str(stop.value)
+    assert sum(1 for c in world.calls if c[:2] == ("nexgen", "update")) == 1
+
+
+def test_an_install_already_at_the_version_still_reports_a_dirty_vault(repo, tmp_path):
+    """`nexgen update` returns "already at the requested released version" before it
+    looks at the vault, and the release ended green on a machine whose vault cannot be
+    aligned. Ship asks the same question itself and says which folder."""
+    world = FakeWorld(repo)
+    installed = installed_engine(repo, "2.14.0")
+    vault = repo / "vault"
+    vault.mkdir()
+    world.install_root = installed
+    world.data_repo = vault
+    world.update_noop = True
+    world.data_dirty = True
+    shipper = _shipper(repo, world, install_log=tmp_path / "install.log")
+    shipper.engine_root = installed / "03-INFRA"
+    with pytest.raises(ShipStop, match="uncommitted or untracked") as stop:
+        shipper.ship("minor", install=True)
+    assert str(vault) in str(stop.value)
+    assert ("git", "-C", str(vault), "status", "--porcelain=v1", "--untracked-files=normal") in world.calls
+
+
+def test_a_clean_vault_does_not_stop_the_install(repo, tmp_path):
+    world = FakeWorld(repo)
+    installed = installed_engine(repo, "2.13.0")
+    vault = repo / "vault"
+    vault.mkdir()
+    world.install_root = installed
+    world.data_repo = vault
+    shipper = _shipper(repo, world, install_log=tmp_path / "install.log")
+    shipper.engine_root = installed / "03-INFRA"
+    assert shipper.ship("minor", install=True) == "v2.14.0"
 
 
 def test_an_update_rolled_back_by_a_colliding_timer_is_retried_once(repo, tmp_path):

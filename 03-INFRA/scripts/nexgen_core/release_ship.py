@@ -1,6 +1,10 @@
 #!/usr/bin/env python3
 """One command from `developer` to a published, signed release.
 
+One job: run the release traphila in order, from the bump to this machine's own
+install, and stop at the first step that is not green.
+nexgen: one-job reason="the release traphila in one order, every step pinned by a test"
+
 The steps were always the same and always done by hand: bump, open the
 `developer -> main` pull request, wait for its checks, merge, wait for the CI
 on the merge commit (the release workflow refuses a tag before that is green),
@@ -22,6 +26,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import shutil
 import subprocess
 import sys
@@ -45,6 +50,16 @@ IGNORED_CHECKS = ("lane-guard",)
 
 _PENDING = {"QUEUED", "IN_PROGRESS", "PENDING", "WAITING", "REQUESTED", "EXPECTED"}
 _GREEN = {"SUCCESS", "SKIPPED", "NEUTRAL"}
+
+#: The updater's own refusal when a repository it merges into is not clean
+#: (`_assert_clean` in `nexgen_core/updater.py`, same git flags here).
+DIRTY_REFUSAL = re.compile(r"(?P<label>\w+) repository is dirty")
+
+
+def _reported_folders(output: str) -> dict[str, Path]:
+    """The engine and data folders the updater prints at the start of every run."""
+    return {match.group(1).lower(): Path(match.group(2).strip())
+            for match in re.finditer(r"^(Engine|Data):\s+(\S.*?)\s*$", output, re.M)}
 
 
 class ShipStop(Exception):
@@ -392,15 +407,47 @@ class Shipper:
         raise ShipStop(self._step, f"the installed v{version} failed its smoke (output in {log}); "
                                    f"this machine is back on {previous}")
 
+    def _dirty_refusal(self, output: str) -> str | None:
+        """The updater's refusal for a repository that is not clean, in one line naming the folder.
+
+        Nothing was rolled back and nothing will be on a second try: the files a
+        person must commit or stash are the whole reason, so ship stops here.
+        """
+        match = DIRTY_REFUSAL.search(output)
+        if match is None:
+            return None
+        label = match.group("label")
+        folder = _reported_folders(output).get("data" if label == "data" else "engine")
+        return (f"the {label} checkout has uncommitted or untracked files ({folder or '?'}): "
+                "commit or stash them, then run ship --install again")
+
+    def _data_with_dirty_files(self, output: str) -> Path | None:
+        """The data folder the updater named, when it still carries uncommitted or untracked files.
+
+        `nexgen update` refuses on that before it moves the engine, but it returns
+        before looking when the engine is already at the wanted version: the release
+        ended green on a machine whose vault cannot be aligned. Ship asks the same
+        question itself, with the same git flags.
+        """
+        folder = _reported_folders(output).get("data")
+        if folder is None or not folder.is_dir():
+            return None
+        status = self.run(["git", "-C", str(folder), "status", "--porcelain=v1", "--untracked-files=normal"],
+                          self.repo)
+        return folder if status.returncode == 0 and status.stdout.strip() else None
+
     def _install(self, version: str) -> None:
         self._enter("install")
         before = self._installed_version()
         for attempt in (1, 2):
             update = self.run(["nexgen", "update", "--yes", "--target", version], self.repo)
+            output = f"{update.stdout}\n{update.stderr}"
             if update.returncode == 0:
                 break
+            if (refusal := self._dirty_refusal(output)):
+                raise ShipStop(self._step, refusal)
             log = self.install_log or Path(tempfile.gettempdir()) / "nexgen-release-ship-install.log"
-            atomic_write_text(log, f"{update.stdout}\n{update.stderr}")
+            atomic_write_text(log, output)
             # A clean rollback leaves the previous version in place. The usual
             # cause is a scheduled guard or sync cycle that started in the same
             # minute, so one more try after it has finished is worth it; a
@@ -414,6 +461,9 @@ class Shipper:
         installed = self._installed_version()
         if installed != version:
             raise ShipStop(self._step, f"this machine is still on {installed}, not {version}")
+        if (dirty := self._data_with_dirty_files(output)):
+            raise ShipStop(self._step, f"the vault {dirty} has uncommitted or untracked files: "
+                                       "commit or stash them, then run ship --install again")
         self._smoke_installed(version, before)
         doctor = self.run(["nexgen", "doctor", "--summary"], self.repo)
         if doctor.returncode != 0:
