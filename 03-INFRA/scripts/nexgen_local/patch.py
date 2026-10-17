@@ -107,6 +107,23 @@ def _run_git(repo_root: Path, args: list[str], timeout: int = 120) -> tuple[int,
         return 1, f"git non eseguibile: {exc}"
 
 
+def _verify_argv(verify: str) -> list[str]:
+    """The verify command as argv for this platform.
+
+    shlex in its non-POSIX mode keeps backslashes but also leaves the quotes
+    inside the tokens; subprocess would escape them again (list2cmdline) and
+    the program would receive them as literal characters. One matching outer
+    pair is peeled off each token; backslashes stay untouched.
+    """
+    argv = shlex.split(verify, posix=os.name != "nt")
+    if os.name != "nt":
+        return argv
+    return [
+        token[1:-1] if len(token) >= 2 and token[0] == token[-1] and token[0] in "\"'" else token
+        for token in argv
+    ]
+
+
 def _repo_file(cfg: LaneConfig, file_rel: str) -> tuple[Path, str, Path] | None:
     """Resolve a text file inside the declared repository roots, never outside."""
     cleaned = str(file_rel or "").strip().strip("`'\"")
@@ -533,7 +550,7 @@ def _run_apply(
     verify_rc: int | None = None
     if verify:
         try:
-            argv = shlex.split(verify, posix=os.name != "nt")
+            argv = _verify_argv(verify)
             proc = subprocess.run(windows_command_argv(argv), cwd=root, capture_output=True, text=True,
                                   encoding="utf-8", errors="replace", timeout=APPLY_TIMEOUT)
             verify_rc = proc.returncode

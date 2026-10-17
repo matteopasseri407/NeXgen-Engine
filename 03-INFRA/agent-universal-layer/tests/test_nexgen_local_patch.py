@@ -314,6 +314,37 @@ def test_the_verify_command_uses_windows_parsing_and_the_shim_helper(tmp_path: P
     assert result["applied"] is True and result["verified"] is False
 
 
+def test_a_quoted_windows_verify_argument_arrives_without_its_quotes(tmp_path: Path, monkeypatch) -> None:
+    """MUST-21: in modo non POSIX shlex lascia le virgolette dentro il token e
+    subprocess, con list2cmdline, le rimette con l'escape: un percorso con
+    spazi tra virgolette arriverebbe al programma con le virgolette
+    letterali. Una coppia esterna corrispondente va tolta, le barre restano."""
+    from types import SimpleNamespace
+
+    from nexgen_local import patch as patch_mod
+
+    repo = _git_repo(tmp_path)
+    (repo / "notes.md").write_text("Questo contiente un refuso.\n", encoding="utf-8")
+    cfg = _cfg(tmp_path, repo)
+    proposal = propose_patch(PatchLLM({"old": "contiente", "new": "contiene"}), cfg, "notes.md", "fix")
+
+    monkeypatch.setattr(patch_mod, "os", SimpleNamespace(name="nt"), raising=False)
+    launched: list[list[str]] = []
+    real_run = subprocess.run
+
+    def observe(argv, **kwargs):
+        if kwargs.get("timeout") == patch_mod.APPLY_TIMEOUT:
+            launched.append(list(argv))
+            raise OSError("stop: cattura e basta")
+        return real_run(argv, **kwargs)
+
+    monkeypatch.setattr(patch_mod.subprocess, "run", observe)
+
+    apply_proposal(cfg, proposal.id, yes=True, verify='runner "tests\\a b.py"')
+
+    assert launched[0] == ["runner", r"tests\a b.py"], launched[0]
+
+
 def test_same_patch_twice_gets_unique_ids(tmp_path: Path) -> None:
     """Same snippet in the same second: two artifacts, no overwrite."""
     repo = _git_repo(tmp_path)
