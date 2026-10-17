@@ -316,6 +316,14 @@ def _provision_git(deps: dict[str, Any], state_dir: Path, server: str) -> dict[s
             }))
             if final.exists():
                 shutil.rmtree(final, ignore_errors=True)
+                if final.exists():
+                    # Windows keeps a directory whose files are open in another process:
+                    # `ignore_errors=True` said nothing, and os.replace below answered with
+                    # a bare PermissionError that explained nothing.
+                    raise ProvisionError(
+                        t("cannot replace '{path}' for server '{server}': something still holds a file inside it, close it and run again.",
+                          path=final, server=server)
+                    )
             os.replace(clone, final)
         return {"DEPS_WORKSPACE": str(_run_workspace(final, deps))}
 

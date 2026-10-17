@@ -111,6 +111,39 @@ def test_git_rev_change_provisions_fresh(tmp_path):
     assert ctx["DEPS_WORKSPACE"] != workspace_path({"kind": "git", "repo": repo_uri, "rev": rev1}, state)
 
 
+def test_a_workspace_that_cannot_be_removed_is_a_clear_failure(tmp_path, monkeypatch):
+    """Su Windows un file tenuto aperto lascia la cartella al suo posto.
+
+    `rmtree(..., ignore_errors=True)` non dice se ha davvero rimosso: senza il
+    controllo, `os.replace` sollevava un PermissionError grezzo, la run restava
+    a metà e nessuno spiegava cosa tenere chiuso.
+    """
+    repo_uri, rev = _git_repo_with_commit(tmp_path)
+    deps = {"kind": "git", "repo": repo_uri, "rev": rev}
+    state = tmp_path / "state"
+    ctx, err = ensure_deps(deps, state, install=True, server="srv")
+    assert err is None, err
+    final = Path(ctx["DEPS_WORKSPACE"])
+    # Un run interrotto prima del marker: la cartella è lì, il marker no, quindi
+    # il provisioning la ricrea e deve prima toglierla di mezzo.
+    (final / provision.MARKER).unlink()
+
+    monkeypatch.setattr(provision.shutil, "rmtree", lambda *a, **k: None)  # cosa fa Windows con un file aperto
+    real_replace = provision.os.replace
+
+    def refuse_the_workspace_swap(src_path, dst_path, *args, **kwargs):
+        if Path(dst_path) == final:
+            raise PermissionError(13, "Access is denied")
+        return real_replace(src_path, dst_path, *args, **kwargs)
+
+    monkeypatch.setattr(provision.os, "replace", refuse_the_workspace_swap)
+
+    ctx2, err2 = ensure_deps(deps, state, install=True, server="srv")
+
+    assert ctx2 == {}
+    assert err2 is not None and "still holds" in err2, err2
+
+
 def test_git_subdir_and_build(tmp_path):
     repo = tmp_path / "src"
     repo.mkdir()
