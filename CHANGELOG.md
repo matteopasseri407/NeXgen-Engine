@@ -10,6 +10,8 @@ of any engine release.
 
 ## [Unreleased]
 
+## [2.16.1] - 2026-10-17
+
 ### Added
 
 - **Update channels.** `nexgen update --channel stable|nightly|beta`. `stable`
