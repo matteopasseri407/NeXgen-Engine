@@ -1179,10 +1179,10 @@ def run_seat(
         proc_token = runtime.proc_token
         if capture is not None:
             capture.cancelled.set()
-        # Release only this seat's token: the legacy single slot is no
-        # longer touched here on purpose (parallel seats overlap).
+        # Release only this seat's token: the legacy slot stays untouched here (parallel seats overlap).
         if proc_token:
-            if proc is not None and (proc.poll() is None or getattr(proc, "_council_process_group", None) is not None):
+            if proc is not None and (proc.poll() is None or os.name == "nt"
+                                     or getattr(proc, "_council_process_group", None) is not None):
                 _stop_process_tree_with_telemetry(proc, runtime.shutdown_telemetry, reason="cleanup")
             _release_proc(proc_token)
         cleanup_deadline = time.monotonic() + 5
