@@ -232,6 +232,30 @@ def test_reinstalling_the_guardrail_keeps_the_flags_the_posture_set(tmp_path):
 # ------------------------------------------------------------------ Antigravity
 
 
+def test_antigravity_registers_the_adapter_so_a_path_with_spaces_still_runs(tmp_path):
+    """Il comando dell'hook va quotato: la home di Windows contiene spesso spazi.
+
+    `node C:\\Users\\Mario Rossi\\...\\adapter.mjs` si spezza in due argomenti e
+    l'hook del guardrail non parte, mentre i tool restano non controllati.
+    """
+    from nexgen_core.paths import antigravity_settings
+
+    home = tmp_path / "home con spazi"
+    home.mkdir()
+    settings = antigravity_settings(home)
+    settings.parent.mkdir(parents=True)
+    settings.write_text("{}", encoding="utf-8")
+    rt = AntigravityRuntime()
+
+    rt.install_guardrail(home, _body(tmp_path), HOOKS)
+
+    hooks = json.loads((home / ".gemini" / "config" / "hooks.json").read_text(encoding="utf-8"))
+    command = hooks["nexgen-guardrail"]["PreToolUse"][0]["hooks"][0]["command"]
+    assert command.startswith('node "')
+    assert command.endswith('"')
+    assert rt.install_guardrail(home, _body(tmp_path), HOOKS) is None  # e si assesta
+
+
 def test_antigravity_becomes_strict_under_bypass(tmp_path):
     home = tmp_path / "home"
     settings = home / ".gemini" / "antigravity" / "settings.json"
