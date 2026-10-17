@@ -177,6 +177,30 @@ def test_cli_instruction_pointers_ok_when_aligned(tmp_path: Path, monkeypatch):
     assert codex_outcomes[0].severity == Severity.OK
 
 
+def test_cli_instruction_pointers_ok_when_the_copy_is_identical(tmp_path: Path, monkeypatch):
+    """Su Windows senza privilegi di symlink il guard lascia una copia identica.
+
+    Pretendere un symlink rendeva il doctor BROKEN per sempre su quelle
+    macchine, e `agent-sync apply` riscriveva la stessa copia.
+    """
+    vault = tmp_path / "vault"
+    home = tmp_path / "home"
+    home.mkdir()
+    canon = _write_canon(vault)
+    bin_dir = tmp_path / "bin"
+    _make_executable_stub(bin_dir, "codex")
+    monkeypatch.setenv("PATH", str(bin_dir))
+
+    pointer = home / ".codex" / "AGENTS.md"
+    pointer.parent.mkdir(parents=True)
+    pointer.write_bytes(canon.read_bytes())
+    assert not pointer.is_symlink()
+
+    outcomes = instructions_checks.check_cli_instruction_pointers(vault, home)
+    codex_outcomes = [o for o in outcomes if o.id == "instructions.codex_pointer"]
+    assert codex_outcomes[0].severity == Severity.OK, codex_outcomes[0].message
+
+
 def test_opencode_instructions_scope_file_rules(tmp_path: Path, monkeypatch):
     """V2 resolves the global scope file, never the `instructions` array:
     removing or altering the real scope file must fail the doctor,
