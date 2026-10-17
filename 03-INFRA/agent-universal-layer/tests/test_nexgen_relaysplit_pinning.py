@@ -24,6 +24,7 @@ import pytest
 
 from nexgen_local import relay as relay_module
 from nexgen_local.config import LaneConfig
+from nexgen_local.relay import RelayError
 
 
 @pytest.fixture(autouse=True)
@@ -141,6 +142,39 @@ def test_helpers_called_in_sequence() -> None:
     body = src[src.index("def run_relay") :]
     assert body.index("_build_argv(") < body.index("_isolated_env(")
     assert body.index("_isolated_env(") < body.index("_extract_result(")
+
+
+def test_a_nonzero_exit_is_a_failure_even_when_the_cli_wrote_output(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Un'uscita con codice diverso da zero e' un fallimento, anche con stdout pieno.
+
+    Il testo che la CLI lascia su stdout mentre fallisce veniva stampato come
+    risposta e la shell vedeva 0: un hand-off fallito passava per riuscito.
+    """
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    (bin_dir / "codex").write_text("finto", encoding="utf-8")
+    monkeypatch.setattr(
+        relay_module.shutil,
+        "which",
+        lambda name: str(bin_dir / name) if name == "codex" else None,
+    )
+
+    def _fake_run(argv, **kwargs):
+        out = None
+        prev = ""
+        for token in argv:
+            if prev == "-o":
+                out = token
+            prev = token
+        assert out, "il fake codex deve ricevere -o <file>"
+        Path(out).write_text("non ho potuto rispondere: quota esaurita\n", encoding="utf-8")
+        return SimpleNamespace(stdout="non ho potuto rispondere: quota esaurita\n", stderr="", returncode=1)
+
+    monkeypatch.setattr(relay_module.subprocess, "run", _fake_run)
+    with pytest.raises(RelayError, match="codice 1"):
+        relay_module.run_relay(_cfg(tmp_path), "codex", "fake-model", "domanda sintetica", timeout=5)
 
 
 def test_public_signatures_unchanged() -> None:
