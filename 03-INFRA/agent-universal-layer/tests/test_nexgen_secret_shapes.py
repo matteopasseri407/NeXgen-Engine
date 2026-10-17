@@ -87,6 +87,21 @@ def test_every_consumer_recognises_every_provider(provider, template, lazy, leak
     assert any(f.blocking for f in findings), "commit-time leak gate"
 
 
+def test_a_padded_base64_secret_is_recognised_with_its_padding():
+    """42 payload characters plus `==` is a 31-byte credential: both pads are part of it.
+
+    The padding is what the old pattern could not see: `={0,2}` was followed by `\\b`,
+    and after `=` there is no word boundary, so a padded value was either missed
+    entirely (42 characters are below the old 43) or redacted with its `==` left in place.
+    """
+    rng = random.Random(12)
+    token = "".join(rng.choice(string.ascii_letters + string.digits) for _ in range(42)) + "=="
+    text = f"the value is {token}"
+
+    assert secret_shapes.looks_like_secret_value(text)
+    assert secret_shapes.redact(text, high_entropy=True) == "the value is [redacted]"
+
+
 def test_ordinary_prose_and_diagnostics_are_left_alone():
     for text in ("invalid token: expired", "ModuleNotFoundError: No module named 'drive_server'",
                  "listening on /home/user/.cache/some-long-directory-name/another-directory/x.py",
