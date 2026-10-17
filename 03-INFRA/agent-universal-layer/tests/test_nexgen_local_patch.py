@@ -275,6 +275,45 @@ def test_apply_cli_propagates_verify_failure(tmp_path: Path, monkeypatch: pytest
     assert cli.cmd_apply(args) == 3
 
 
+def test_the_verify_command_uses_windows_parsing_and_the_shim_helper(tmp_path: Path, monkeypatch) -> None:
+    """Ricognizione 4: il passo verify usava shlex.split in modo POSIX e non
+    passava da windows_command_argv: su Windows `tests\\unit\\x.py` perdeva le
+    barre rovesciate e gli shim .cmd fallivano con FileNotFoundError. La prova
+    simula Windows sui nomi dei due moduli, cosi' gira anche nella CI Linux."""
+    from types import SimpleNamespace
+
+    from nexgen_core import processes
+    from nexgen_local import patch as patch_mod
+
+    repo = _git_repo(tmp_path)
+    (repo / "notes.md").write_text("Questo contiente un refuso.\n", encoding="utf-8")
+    cfg = _cfg(tmp_path, repo)
+    proposal = propose_patch(PatchLLM({"old": "contiente", "new": "contiene"}), cfg, "notes.md", "fix")
+
+    monkeypatch.setattr(patch_mod, "os", SimpleNamespace(name="nt"), raising=False)
+    monkeypatch.setattr(processes, "os", SimpleNamespace(name="nt"))
+    monkeypatch.setattr(processes.shutil, "which", lambda name: str(tmp_path / f"{name}.cmd"))
+
+    launched: list[list[str]] = []
+    real_run = subprocess.run
+
+    def observe(argv, **kwargs):
+        if kwargs.get("timeout") == patch_mod.APPLY_TIMEOUT:
+            launched.append(list(argv))
+            raise OSError("stop: cattura e basta")
+        return real_run(argv, **kwargs)
+
+    monkeypatch.setattr(patch_mod.subprocess, "run", observe)
+
+    result = apply_proposal(cfg, proposal.id, yes=True, verify=r"runner tests\unit\check.py")
+
+    assert launched, "il passo verify non e' passato da subprocess.run"
+    assert launched[0][:4] == ["cmd.exe", "/d", "/s", "/c"], launched[0]
+    assert launched[0][4] == str(tmp_path / "runner.cmd"), launched[0]
+    assert launched[0][5:] == [r"tests\unit\check.py"], launched[0]
+    assert result["applied"] is True and result["verified"] is False
+
+
 def test_same_patch_twice_gets_unique_ids(tmp_path: Path) -> None:
     """Same snippet in the same second: two artifacts, no overwrite."""
     repo = _git_repo(tmp_path)

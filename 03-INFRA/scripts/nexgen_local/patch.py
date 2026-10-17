@@ -16,6 +16,7 @@ from __future__ import annotations
 import difflib
 import hashlib
 import json
+import os
 import shlex
 import subprocess
 import tempfile
@@ -25,6 +26,7 @@ from pathlib import Path
 from typing import NoReturn
 
 from nexgen_core.files import atomic_write_bytes, secure_artifact, write_private_text
+from nexgen_core.processes import windows_command_argv
 
 from .config import LaneConfig
 from .llm import LLM
@@ -531,9 +533,9 @@ def _run_apply(
     verify_rc: int | None = None
     if verify:
         try:
-            proc = subprocess.run(
-                shlex.split(verify), cwd=root, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=APPLY_TIMEOUT
-            )
+            argv = shlex.split(verify, posix=os.name != "nt")
+            proc = subprocess.run(windows_command_argv(argv), cwd=root, capture_output=True, text=True,
+                                  encoding="utf-8", errors="replace", timeout=APPLY_TIMEOUT)
             verify_rc = proc.returncode
             verify_output = f"rc={proc.returncode}\n{proc.stdout[-2000:]}{proc.stderr[-1000:]}"
         except (OSError, subprocess.SubprocessError) as exc:
