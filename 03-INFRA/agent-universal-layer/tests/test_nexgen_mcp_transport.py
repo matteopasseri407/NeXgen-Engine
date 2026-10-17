@@ -19,8 +19,30 @@ import pytest
 # These tests launch and reap real subprocesses with millisecond deadlines: run
 # concurrently with the rest of the suite they lose their race to machine load
 # (verified 2026-10-17: 6 failures under `-n auto`, all green serially). The pin
-# keeps every test - it only stops this module from competing with itself.
+# keeps every test - it only stops this module from competing with itself, not
+# from sharing the machine with fifteen other workers, so every wait below is
+# derived from the deadline the test declares instead of being a fixed number.
 pytestmark = pytest.mark.xdist_group("serial")
+
+#: What the declared deadline does not cover: starting a fresh peer. Measured here
+#: during `-n auto`, a bare `python -u -c pass` costs 0.25s on 16 loaded workers,
+#: and `_exchange`'s own contract leaves provisioning outside the deadline ("this
+#: deadline starts with RPC I/O"). The rest of the budget is a margin on the
+#: deadline itself. Kept below the 30s the silent peers sleep, so a transport that
+#: ignores its deadline still fails this module instead of waiting forever.
+PEER_START_SECONDS = 10.0
+DEADLINE_MARGIN = 5.0
+
+
+def _declared_deadline(handle, method: str) -> float:
+    """The deadline the call declares, in seconds: `startup` for anything but a tool call."""
+    key = "tool" if method == "tools/call" else "startup"
+    return float((handle.spec.get("timeouts") or {})[key])
+
+
+def _budget(handle, method: str) -> float:
+    """How long one call here may take before the transport is called hung."""
+    return PEER_START_SECONDS + _declared_deadline(handle, method) * DEADLINE_MARGIN
 
 
 @pytest.fixture(scope="module")
@@ -40,17 +62,25 @@ def _stdio(proxy, code, **spec):
 
 
 def _bounded_call(handle, method="tools/call", params=None):
+    """One RPC, waited for with `_budget`: the peer to start, the deadline, its margin.
+
+    What the call proves is that the transport answers inside the deadline it
+    declares - a bounded reply, the peer reaped - never that a machine running the
+    whole suite in parallel gets there within a fixed 1.5s. A peer that answers
+    late on a loaded machine is the same result as one that never answers, which
+    is how a deadline held on an idle machine failed on a busy one.
+    """
     pool = ThreadPoolExecutor(max_workers=1)
     future = pool.submit(handle.rpc, method, params or {}, 42)
     try:
         try:
-            return future.result(timeout=1.5)
+            return future.result(timeout=_budget(handle, method))
         except TimeoutError:
             pytest.fail("RPC exceeded its declared deadline while the peer stayed alive")
     finally:
         handle.stop()
         if handle.proc:
-            handle.proc.wait(timeout=3)
+            handle.proc.wait(timeout=_budget(handle, method))
         pool.shutdown(wait=True)
 
 
@@ -103,13 +133,20 @@ def test_stdio_invalid_reply_does_not_echo_provider_payload(proxy):
 
 
 def test_stdio_reply_size_is_bounded(proxy, monkeypatch):
+    """A reply over the limit is refused, not truncated or streamed through.
+
+    The deadline here is seconds, not milliseconds: this peer has to answer for the
+    test to see anything at all, and what is bounded is the size of the reply, not
+    the time it takes. At 0.15s a loaded machine answered "RPC timeout" instead
+    (`-n auto`, 2026-10-18), which is a fact about the machine, not about the limit.
+    """
     monkeypatch.setattr(proxy, "MAX_REPLY_BYTES", 4096, raising=False)
     handle = _stdio(proxy, '''
 import sys, json
 for line in sys.stdin:
     req = json.loads(line)
     print(json.dumps({"jsonrpc": "2.0", "id": req["id"], "result": {"text": "x" * 9000}}), flush=True)
-''')
+''', timeouts={"startup": 2, "tool": 2})
     response = _bounded_call(handle)
     assert "error" in response
     assert "limit" in response["error"]["message"].lower()
