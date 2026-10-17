@@ -8,6 +8,41 @@ This file tracks the **engine** (this repo). Your own data — manifests,
 instructions, skills, secrets — lives in your KnowledgeVault and is not part
 of any engine release.
 
+## [Unreleased]
+
+### Added
+
+- **Update channels.** `nexgen update --channel stable|nightly|beta`. `stable`
+  (released tags of `main`) stays the default and the only channel a public
+  install follows; `nightly` and `beta` follow signed commits of `developer`
+  and open only when the installation's private config allows them. The chosen
+  channel is remembered, `nexgen --version` names it, and an automatic update
+  waits while the machine is busy instead of swapping the engine mid-session.
+- **A real smoke command**, `03-INFRA/scripts/smoke.py`: the read-only commands
+  and the launcher, for real, in under thirty seconds.
+
+### Changed
+
+- **`nexgen release ship` is one command that resumes.** It never opens a pull
+  request that changes nothing, waits only for the checks `main` requires,
+  records this machine's smoke on the pull request, skips a second CI run when
+  the merged tree is the one already tested, proves the install with the
+  installed engine's own smoke and rolls back if it fails, and picks up from the
+  first step not done after an interruption.
+- **CI is faster.** The Linux suite runs in parallel; the full Windows suite
+  runs on every pull request into `main` and nightly, and a short Windows job
+  guards every push to `developer`.
+- **Discipline gates are lighter.** Line ceilings are warnings feeding a split
+  queue, complexity scores and review receipts are off, comment-only changes
+  to critical code need no test, a new platform-only test is accepted, and the
+  pre-push proof judges only commits no remote has yet.
+
+### Fixed
+
+- The local lane, guardian, provisioning, doctor, MCP checks, notifications and
+  release tooling received about thirty fixes, each with a test that failed
+  before it.
+
 ## [2.16.0] - 2026-10-17
 
 Stabilization release: no new features, same behavior everywhere, smaller
