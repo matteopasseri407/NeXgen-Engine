@@ -32,7 +32,9 @@ def windows_command_argv(argv: list[str]) -> list[str]:
         return list(argv)
     if executable.casefold().endswith((".cmd", ".bat")):
         return ["cmd.exe", "/d", "/s", "/c", executable, *argv[1:]]
-    return [executable, *argv[1:]]
+    # Anything else starts by name as well as by path: keeping the caller's
+    # own argv means what a caller sees is what it asked for.
+    return list(argv)
 
 
 def no_window_kwargs() -> dict[str, Any]:
@@ -63,7 +65,10 @@ def force_stop_process_tree(
     A parent can have exited while its children still own inherited pipes.
     Windows taskkill /T handles npm shims as well as direct executables.
     """
-    if process_group is None and proc.poll() is not None:
+    # POSIX without a group has nothing left to signal; on Windows the
+    # launcher can return while its children (npm shims, workers) stay
+    # alive, so the tree kill below must still run.
+    if os.name == "posix" and process_group is None and proc.poll() is not None:
         return True
     deadline = time.monotonic() + max(0.0, timeout)
     tree_killed = False

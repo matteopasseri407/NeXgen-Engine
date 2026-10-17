@@ -26,6 +26,8 @@ def _generate(tmp_path: Path, **overrides) -> Path:
     import release_packages
 
     release_packages._pyyaml_pinned = lambda: FAKE_PYPI  # niente rete nei test
+    release_packages._pinned_sdist = lambda spec: (  # niente rete nei test
+        spec.split(">")[0].strip().lower(), FAKE_PYPI[0], FAKE_PYPI[1])
 
     argv = [
         "--version", overrides.get("version", "2.2.0"),
@@ -48,6 +50,51 @@ def test_the_formula_pins_the_release_asset_and_the_dependency(tmp_path):
     # la risorsa pinnata porta l'hash letto da PyPI, mai a mano
     assert FAKE_PYPI[0] in formula
     assert 'sha256 "' + "a" * 64 + '"' in formula
+
+
+def test_the_formula_carries_every_declared_dependency(tmp_path):
+    """`brew install` deve trovare tutte le dipendenze di pyproject.toml.
+
+    Homebrew vieta la rete durante `install`: una dipendenza non dichiarata
+    come risorsa pinnata non si installa. Con la sola PyYAML nella formula,
+    langgraph, langchain-ollama, httpx, mcp e il checkpoint restavano fuori
+    e `brew install` finiva con un import mancante.
+    """
+    import re
+    import tomllib
+
+    data = tomllib.loads((REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    declared = [*data["project"]["dependencies"], *data["build-system"]["requires"]]
+    formula = _generate(tmp_path).read_text(encoding="utf-8")
+
+    assert len(declared) > 1, "il difetto si vede solo con più dipendenze dichiarate"
+    for spec in declared:
+        name = re.split(r"[<>=!~ ]", spec, 1)[0].lower()
+        assert f'resource "{name}"' in formula, f"{name} manca dalla formula"
+
+
+def test_the_pinned_version_stays_inside_the_declared_range():
+    """La scelta della versione è pura: si prova senza toccare la rete."""
+    import sys
+
+    if str(GENERATOR.parent) not in sys.path:
+        sys.path.insert(0, str(GENERATOR.parent))
+    import release_packages
+
+    def _sdist(i: str) -> dict:
+        return {"packagetype": "sdist", "url": f"u{i}", "digests": {"sha256": "a" * 64}}
+
+    releases = {
+        "0.9.0": [_sdist("09")],
+        "1.9.0": [_sdist("19")],
+        "1.9.5": [{"packagetype": "bdist_wheel"}],
+        "2.0.0": [_sdist("20")],
+        "2.0.1rc1": [_sdist("rc")],
+    }
+    assert release_packages._choose_release("demo>=1.0,<2", releases) == (
+        "demo", "1.9.0", "u19", "a" * 64)
+    with pytest.raises(SystemExit):
+        release_packages._choose_release("demo>=3.0", releases)
 
 
 def test_no_asset_sha256_means_no_formula(tmp_path):

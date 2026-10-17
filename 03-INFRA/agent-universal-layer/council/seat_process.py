@@ -20,7 +20,7 @@ import subprocess
 import tempfile
 import threading
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from routing import _windows_command_argv
@@ -72,6 +72,11 @@ OPENCODE_ATTACHED_PROMPT = (
 
 
 class SeatRunError(RuntimeError):
+    # Optional, read-only shutdown telemetry attached by run_seat when a
+    # seat fails after at least one stop was observed. Never part of the
+    # constructor signature: raising sites are unchanged.
+    shutdown_telemetry: list[dict] | None = None
+
     def __init__(self, message: str, kind: str = "error") -> None:
         # Diagnostics are provider output too. Sanitize before console,
         # consultation transcripts or LangGraph checkpoints can retain them.
@@ -564,7 +569,7 @@ def _build_seat_command(seat: dict, prompt: str, session_dir: Path) -> SeatInvoc
       reachable through: verified safe by construction, not just by prompt.
 
     See the "Council CLI-level enforcement is asymmetric" note in
-    ``instructions/AGENTS.md`` (next to the "Council exception" paragraph)
+    ``03-INFRA/council-rules.md`` (next to the "Council exception" paragraph)
     for the user-facing version of this same finding.
     """
     cli = seat["cli"]
@@ -729,6 +734,415 @@ def _parse_claude_result(raw: str, expected_model: str) -> tuple[str, dict]:
     return result, usage
 
 
+@dataclass
+class _PreparedSeat:
+    """Everything _build_command resolves before any process is spawned."""
+
+    seat: dict
+    prompt: str
+    session_dir: Path
+    invocation: SeatInvocation
+    resolved_timeout_seconds: float
+    timeout_label: str
+    registry_epoch: int
+    model: str
+    cli: str
+
+
+@dataclass
+class _SeatRuntime:
+    """Mutable handles _run_with_timeout fills so run_seat can clean up."""
+
+    proc: subprocess.Popen | None = None
+    proc_token: str = ""
+    capture: _OutputCapture | None = None
+    stdin_writer: threading.Thread | None = None
+    stdout_reader: threading.Thread | None = None
+    stderr_reader: threading.Thread | None = None
+    text_output: io.StringIO | None = None
+    usage: dict | None = None
+    stderr_lines: list[str] | None = None
+    returncode: int | None = None
+    hung: bool = False
+    # Read-only shutdown observations, one event per process stop, in order.
+    # Filled by _stop_process_tree_with_telemetry; exposed on the run_seat
+    # result (usage["shutdown_telemetry"]) or on SeatRunError, never read
+    # for control flow.
+    shutdown_telemetry: list[dict] = field(default_factory=list)
+
+
+def _infer_stop_method(proc: subprocess.Popen) -> str:
+    """Name the stop path _force_stop_process_tree takes, without acting.
+
+    Read-only mirror of its dispatch: POSIX kills the seat's own process
+    group, Windows taskkills the PID tree, anything else falls back to
+    proc.kill(). Observing the conditions is not performing the kill.
+    """
+    if os.name == "posix" and getattr(proc, "_council_process_group", None) is not None:
+        return "killpg"
+    if os.name == "nt" and getattr(proc, "pid", None) is not None:
+        return "taskkill"
+    return "fallback"
+
+
+def _stop_process_tree_with_telemetry(
+    proc: subprocess.Popen, sink: list[dict] | None, *, reason: str
+) -> dict:
+    """Stop exactly as before; additionally record what the stop observed.
+
+    The stop call itself is byte-for-byte the old behavior. The returned
+    event only observes: the method that applied, liveness before and
+    after, the returncode, and whether an NTFS-handle retry would still be
+    needed (observed, never performed here). Observation never raises:
+    telemetry must not break a seat run.
+    """
+    try:
+        alive_before = proc.poll() is None
+    except Exception:
+        alive_before = None
+    stopped = _force_stop_process_tree(proc)
+    try:
+        survivors = proc.poll() is None
+    except Exception:
+        survivors = None
+    try:
+        returncode = proc.returncode
+    except Exception:
+        returncode = None
+    event = {
+        "reason": reason,
+        "method": _infer_stop_method(proc),
+        "platform": os.name,
+        "alive_before": alive_before,
+        "stopped": stopped,
+        "returncode": returncode,
+        "survivors_after_wait": survivors,
+        "needs_retry": bool(survivors and os.name == "nt"),
+    }
+    if sink is not None:
+        sink.append(event)
+    return event
+
+
+def _build_command(
+    seat: dict,
+    prompt: str,
+    session_dir: Path,
+    timeout_seconds: float | None = None,
+) -> _PreparedSeat:
+    """Resolve the timeout and build the vendor invocation (no spawning)."""
+    model = seat["model"]
+    cli = seat["cli"]
+    try:
+        resolved_timeout_seconds = _resolve_timeout_seconds(seat, timeout_seconds)
+    except ValueError as exc:
+        raise SeatRunError(f"[council] invalid timeout for seat '{model}': {exc}.", "invalid_timeout") from exc
+    timeout_label = _format_timeout_seconds(resolved_timeout_seconds)
+    registry_epoch = _proc_registry_epoch()
+    invocation = _build_seat_command(seat, prompt, session_dir)
+    return _PreparedSeat(
+        seat=seat,
+        prompt=prompt,
+        session_dir=session_dir,
+        invocation=invocation,
+        resolved_timeout_seconds=resolved_timeout_seconds,
+        timeout_label=timeout_label,
+        registry_epoch=registry_epoch,
+        model=model,
+        cli=cli,
+    )
+
+
+def _run_with_timeout(prepared: _PreparedSeat, runtime: _SeatRuntime) -> _SeatRuntime:
+    """Spawn the seat, stream output under the deadline, wait post-EOF.
+
+    Fills ``runtime`` in place (so run_seat's finally can clean up even when
+    this raises) and returns it. Raises the same SeatRunError diagnostics the
+    inline loop raised: output_limit, no_output_timeout, partial_timeout,
+    invocation, seat_error, cancelled. Final verdict classification lives in
+    _collect_result.
+    """
+    invocation = prepared.invocation
+    model = prepared.model
+    cli = prepared.cli
+    resolved_timeout_seconds = prepared.resolved_timeout_seconds
+    timeout_label = prepared.timeout_label
+    registry_epoch = prepared.registry_epoch
+
+    runtime.capture = _OutputCapture()
+    runtime.text_output = io.StringIO()
+    runtime.usage = {}
+    runtime.stderr_lines = []
+    runtime.hung = False
+    runtime.returncode = None
+    runtime.stdin_writer = None
+    runtime.stdout_reader = None
+    runtime.stderr_reader = None
+
+    capture = runtime.capture
+    text_output = runtime.text_output
+    usage = runtime.usage
+    stderr_lines = runtime.stderr_lines
+
+    try:
+        proc = subprocess.Popen(
+            _windows_command_argv(invocation.argv),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            stdin=subprocess.PIPE if invocation.stdin_text is not None else subprocess.DEVNULL,
+            text=True,
+            # Windows otherwise uses the active ANSI code page (commonly
+            # cp1252) for text pipes. Codex requires UTF-8 on
+            # ``codex exec -`` stdin, and every other Council seat accepts
+            # UTF-8, so keep the shared transport deterministic.
+            encoding="utf-8",
+            # None => inherit os.environ (claude, ollama, unchanged).
+            # dict => exactly that environment, nothing else (codex,
+            # agy, opencode). See _isolated_seat_env.
+            env=invocation.env,
+            cwd=invocation.cwd,
+            start_new_session=os.name == "posix",
+            **_no_window_kwargs(),
+        )
+    except OSError as e:
+        raise SeatRunError(f"[council] unable to invoke the seat: {e}", "invocation")
+    if os.name == "posix":
+        # This group belongs only to this invocation, including children
+        # that keep pipes open after their launcher exits.
+        proc._council_process_group = getattr(proc, "pid", None)
+    # Registry token, not the single slot: parallel seats overlap, and
+    # each release must free only its own process (one slot evicted the
+    # other and a finish cleared both).
+    proc_token = _register_proc(proc, registry_epoch)
+    if not proc_token:
+        raise SeatRunError(f"[council] seat '{model}' cancelled during invocation.", "cancelled")
+    runtime.proc = proc
+    runtime.proc_token = proc_token
+
+    if invocation.stdin_text is not None:
+        runtime.stdin_writer = threading.Thread(
+            target=_feed_stdin,
+            args=(proc.stdin, invocation.stdin_text),
+            daemon=True,
+        )
+        runtime.stdin_writer.start()
+
+    line_queue = capture.lines
+    activity = threading.Event()
+    runtime.stdout_reader = threading.Thread(target=_drain_lines, args=(proc.stdout, capture, activity), daemon=True)
+    runtime.stderr_reader = threading.Thread(target=_drain_text, args=(proc.stderr, stderr_lines, activity, capture), daemon=True)
+    runtime.stdout_reader.start()
+    runtime.stderr_reader.start()
+
+    deadline = time.monotonic() + resolved_timeout_seconds
+
+    while True:
+        if capture.exceeded.is_set():
+            raise _output_limit(model)
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            _stop_process_tree_with_telemetry(proc, runtime.shutdown_telemetry, reason="streaming_timeout")
+            if not activity.is_set():
+                raise SeatRunError(
+                    f"[council] seat '{model}' did not respond within {timeout_label}s "
+                    "without producing any output: the client did not provide a diagnosable cause. Verify manually "
+                    "before retrying.",
+                    "no_output_timeout",
+                )
+            raise SeatRunError(
+                f"[council] seat '{model}' started responding but did not finish within "
+                f"{timeout_label}s: timeout mid-response, no verdict for this round.",
+                "partial_timeout",
+            )
+        try:
+            line = line_queue.get(timeout=remaining)
+        except queue.Empty:
+            continue
+        if capture.exceeded.is_set():
+            raise _output_limit(model)
+        if line is None:
+            break
+        if cli == "opencode":
+            stripped = line.strip()
+            if not stripped:
+                continue
+            try:
+                event = json.loads(stripped)
+            except json.JSONDecodeError:
+                continue
+            if not isinstance(event, dict):
+                continue
+            if event.get("type") == "error":
+                _stop_process_tree_with_telemetry(proc, runtime.shutdown_telemetry, reason="seat_error")
+                raise SeatRunError(f"[council] error from seat: {event.get('error')}", "seat_error")
+            part = event.get("part") or {}
+            if not isinstance(part, dict):
+                continue
+            if event.get("type") == "text" and isinstance(part.get("text"), str):
+                text_output.write(part["text"])
+            if event.get("type") == "step_finish":
+                # Sum across steps: a step_finish carries the step's own
+                # tokens/cost, not the running total. Tokens may arrive
+                # as an int or as a breakdown dict ({input, output,
+                # total}) depending on the provider: normalize before
+                # summing (live bug found by the kimi seat, 2026-08-22).
+                usage = {
+                    "tokens": usage.get("tokens", 0) + _usage_amount(part.get("tokens")),
+                    "cost": usage.get("cost", 0) + _usage_amount(part.get("cost")),
+                }
+        else:
+            # Claude emits one JSON object; agy/codex/ollama emit plain
+            # text. For codex the authoritative answer arrives later from
+            # output_file; stdout is used only for liveness diagnostics.
+            text_output.write(line)
+
+    if capture.exceeded.is_set():
+        raise _output_limit(model)
+    # The streaming loop above is bounded by the seat timeout, but
+    # proc.wait() here is not: a seat that closed its stdout (EOF) while
+    # still running -- explicit fd close, or a child that inherited the
+    # pipe and lingers -- used to block this call forever, with no
+    # deadline and no kill. Give the wait the same remaining budget and
+    # the same kill fallback as the streaming phase (2026-08-15
+    # review, council of Opus 5).
+    #
+    # hung is raised BEFORE the kill and drives the classification:
+    # deducing the timeout from the exit code would misfire in the
+    # normal case (the post-kill wait returns -9/-15, a real POSIX
+    # signal exit, while the cause was our own timeout) and -2 would
+    # collide with SIGINT (2026-08-15 council-2, Opus 5).
+    hung = False
+    # EOF does not mean the verdict is lost: the seat may have flushed
+    # stdout and still be writing its output file (codex) or finishing
+    # up, so the post-EOF wait keeps the seat's own remaining deadline
+    # -- NOT a short fixed grace, which would kill a healthy slow seat
+    # mid-write (2026-08-15 council-4, Opus 5) -- with a realistic
+    # minimum so an already-expired deadline still gives the process a
+    # moment to finish instead of killing it instantly. A 1s floor was
+    # too tight: codex that streams until the last 0.5s and then needs
+    # ~3s to write its output file got killed mid-write, leaving a
+    # truncated file on disk (2026-08-15 council-7, Opus 5).
+    remaining = deadline - time.monotonic()
+    _POST_EOF_GRACE = 10.0
+    wait_deadline = time.monotonic() + max(remaining, _POST_EOF_GRACE)
+    try:
+        while True:
+            if capture.exceeded.is_set():
+                raise _output_limit(model)
+            wait_remaining = wait_deadline - time.monotonic()
+            if wait_remaining <= 0:
+                raise subprocess.TimeoutExpired(invocation.argv, _POST_EOF_GRACE)
+            try:
+                returncode = proc.wait(timeout=min(wait_remaining, 0.1))
+                break
+            except subprocess.TimeoutExpired:
+                continue
+    except subprocess.TimeoutExpired:
+        hung = True
+        _stop_process_tree_with_telemetry(proc, runtime.shutdown_telemetry, reason="post_eof_hung")
+        # Re-join after the kill: the fd is now at EOF, so the readers
+        # finish -- joining before building the diagnostic avoids reading
+        # stderr_lines while a live thread may still be appending to it
+        # (2026-08-15 council, Opus 5).
+        runtime.stdout_reader.join(timeout=5)
+        runtime.stderr_reader.join(timeout=5)
+        try:
+            returncode = proc.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            returncode = None  # unkillable; sentinel outside the int space
+    if returncode is not None:
+        _stop_process_tree_with_telemetry(proc, runtime.shutdown_telemetry, reason="post_wait_reap")
+    reader_deadline = time.monotonic() + 5
+    for reader in (runtime.stdout_reader, runtime.stderr_reader):
+        reader.join(timeout=max(0.0, reader_deadline - time.monotonic()))
+    runtime.usage = usage
+    runtime.returncode = returncode
+    runtime.hung = hung
+    return runtime
+
+
+def _collect_result(prepared: _PreparedSeat, runtime: _SeatRuntime) -> tuple[str, dict]:
+    """Classify the streamed run into a verdict or a SeatRunError.
+
+    Mirrors the post-wait block the inline run_seat used: hung seats with a
+    usable verdict keep it, non-zero exits become process_error, missing
+    text becomes empty_response, Claude answers are model-verified.
+    """
+    invocation = prepared.invocation
+    model = prepared.model
+    cli = prepared.cli
+    timeout_label = prepared.timeout_label
+    capture = runtime.capture
+    text_output = runtime.text_output
+    usage = runtime.usage if runtime.usage is not None else {}
+    stderr_lines = runtime.stderr_lines if runtime.stderr_lines is not None else []
+    returncode = runtime.returncode
+    hung = runtime.hung
+    if capture is not None and capture.exceeded.is_set():
+        raise _output_limit(model)
+    if hung:
+        # The seat was killed, but its complete stdout answer may have
+        # arrived before it hung (it closed stdout and lingered in
+        # teardown): throw a usable verdict away only when there is
+        # none (2026-08-15 council-7, Opus 5). read_text is guarded:
+        # the kill can leave a file truncated mid-multibyte-sequence or
+        # removed, which must degrade to the diagnostic, not explode as
+        # an unclassified UnicodeDecodeError (2026-08-15 council-8,
+        # Opus 5).
+        if invocation.output_file is not None and invocation.output_file.is_file():
+            try:
+                output_text = _read_output_file(invocation.output_file, model)
+            except SeatRunError as exc:
+                if exc.kind == "output_limit":
+                    raise
+                output_text = ""
+            if output_text.strip():
+                return output_text, usage
+        if text_output is not None and text_output.tell() and invocation.output_file is None:
+            # stdout IS the answer only for CLIs without an output file
+            # (opencode/agy/ollama). codex writes the answer to
+            # output_file; its stdout is liveness noise ("codex
+            # started"), so returning it as a verdict would hand the
+            # round a fake response instead of the diagnostic
+            # (2026-08-15 council-8, Opus 5).
+            if cli == "claude":
+                try:
+                    return _parse_claude_result(text_output.getvalue(), model)
+                except SeatRunError:
+                    # Output that does not parse as a claude verdict is
+                    # not a usable answer from a hung seat: fall through
+                    # to the partial_timeout diagnostic (2026-08-15
+                    # council-7, Opus 5).
+                    pass
+            else:
+                return text_output.getvalue(), usage
+        if returncode is None:
+            raise SeatRunError(
+                f"[council] seat '{model}' hung after closing its output and could not be "
+                f"terminated within {timeout_label}s: no verdict for this round.",
+                "partial_timeout",
+            )
+        raise SeatRunError(
+            f"[council] seat '{model}' hung after closing its output and was killed after "
+            f"{timeout_label}s with no usable verdict: no response for this round.",
+            "partial_timeout",
+        )
+    if returncode != 0:
+        raise SeatRunError(f"[council] the seat did not respond (exit {returncode}):\n{''.join(stderr_lines)}", "process_error")
+
+    if invocation.output_file is not None:
+        output_text = _read_output_file(invocation.output_file, model) if invocation.output_file.is_file() else ""
+        if not output_text.strip():
+            raise SeatRunError("[council] the seat responded but with no usable text (empty output).", "empty_response")
+        return output_text, usage
+
+    if text_output is None or not text_output.tell():
+        raise SeatRunError("[council] the seat responded but with no usable text (empty output).", "empty_response")
+    if cli == "claude":
+        return _parse_claude_result(text_output.getvalue(), model)
+    return text_output.getvalue(), usage
+
+
 def run_seat(
     seat: dict,
     prompt: str,
@@ -743,270 +1157,39 @@ def run_seat(
     it has to be read as it arrives). Output parsing varies per CLI: opencode
     emits JSONL events (`--format json`), Claude returns a single verifiable
     JSON object, the other supported CLIs print plain text."""
-    model = seat["model"]
-    cli = seat["cli"]
+    prepared = _build_command(seat, prompt, session_dir, timeout_seconds)
+    runtime = _SeatRuntime()
     try:
-        resolved_timeout_seconds = _resolve_timeout_seconds(seat, timeout_seconds)
-    except ValueError as exc:
-        raise SeatRunError(f"[council] invalid timeout for seat '{model}': {exc}.", "invalid_timeout") from exc
-    timeout_label = _format_timeout_seconds(resolved_timeout_seconds)
-    registry_epoch = _proc_registry_epoch()
-    invocation = _build_seat_command(seat, prompt, session_dir)
-    stdin_writer: threading.Thread | None = None
-    stdout_reader: threading.Thread | None = None
-    stderr_reader: threading.Thread | None = None
-    capture: _OutputCapture | None = None
-    proc_token = ""
-    try:
-        try:
-            proc = subprocess.Popen(
-                _windows_command_argv(invocation.argv),
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                stdin=subprocess.PIPE if invocation.stdin_text is not None else subprocess.DEVNULL,
-                text=True,
-                # Windows otherwise uses the active ANSI code page (commonly
-                # cp1252) for text pipes. Codex requires UTF-8 on
-                # ``codex exec -`` stdin, and every other Council seat accepts
-                # UTF-8, so keep the shared transport deterministic.
-                encoding="utf-8",
-                # None => inherit os.environ (claude, ollama, unchanged).
-                # dict => exactly that environment, nothing else (codex,
-                # agy, opencode). See _isolated_seat_env.
-                env=invocation.env,
-                cwd=invocation.cwd,
-                start_new_session=os.name == "posix",
-                **_no_window_kwargs(),
-            )
-        except OSError as e:
-            raise SeatRunError(f"[council] unable to invoke the seat: {e}", "invocation")
-        if os.name == "posix":
-            # This group belongs only to this invocation, including children
-            # that keep pipes open after their launcher exits.
-            proc._council_process_group = getattr(proc, "pid", None)
-        # Registry token, not the single slot: parallel seats overlap, and
-        # each release must free only its own process (one slot evicted the
-        # other and a finish cleared both).
-        proc_token = _register_proc(proc, registry_epoch)
-        if not proc_token:
-            raise SeatRunError(f"[council] seat '{model}' cancelled during invocation.", "cancelled")
-
-        if invocation.stdin_text is not None:
-            stdin_writer = threading.Thread(
-                target=_feed_stdin,
-                args=(proc.stdin, invocation.stdin_text),
-                daemon=True,
-            )
-            stdin_writer.start()
-
-        capture = _OutputCapture()
-        line_queue = capture.lines
-        stderr_lines: list[str] = []
-        activity = threading.Event()
-        stdout_reader = threading.Thread(target=_drain_lines, args=(proc.stdout, capture, activity), daemon=True)
-        stderr_reader = threading.Thread(target=_drain_text, args=(proc.stderr, stderr_lines, activity, capture), daemon=True)
-        stdout_reader.start()
-        stderr_reader.start()
-
-        text_output = io.StringIO()
-        usage = {}
-        deadline = time.monotonic() + resolved_timeout_seconds
-
-        while True:
-            if capture.exceeded.is_set():
-                raise _output_limit(model)
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                _force_stop_process_tree(proc)
-                if not activity.is_set():
-                    raise SeatRunError(
-                        f"[council] seat '{model}' did not respond within {timeout_label}s "
-                        "without producing any output: the client did not provide a diagnosable cause. Verify manually "
-                        "before retrying.",
-                        "no_output_timeout",
-                    )
-                raise SeatRunError(
-                    f"[council] seat '{model}' started responding but did not finish within "
-                    f"{timeout_label}s: timeout mid-response, no verdict for this round.",
-                    "partial_timeout",
-                )
-            try:
-                line = line_queue.get(timeout=remaining)
-            except queue.Empty:
-                continue
-            if capture.exceeded.is_set():
-                raise _output_limit(model)
-            if line is None:
-                break
-            if cli == "opencode":
-                stripped = line.strip()
-                if not stripped:
-                    continue
-                try:
-                    event = json.loads(stripped)
-                except json.JSONDecodeError:
-                    continue
-                if not isinstance(event, dict):
-                    continue
-                if event.get("type") == "error":
-                    _force_stop_process_tree(proc)
-                    raise SeatRunError(f"[council] error from seat: {event.get('error')}", "seat_error")
-                part = event.get("part") or {}
-                if not isinstance(part, dict):
-                    continue
-                if event.get("type") == "text" and isinstance(part.get("text"), str):
-                    text_output.write(part["text"])
-                if event.get("type") == "step_finish":
-                    # Sum across steps: a step_finish carries the step's own
-                    # tokens/cost, not the running total. Tokens may arrive
-                    # as an int or as a breakdown dict ({input, output,
-                    # total}) depending on the provider: normalize before
-                    # summing (live bug found by the kimi seat, 2026-08-22).
-                    usage = {
-                        "tokens": usage.get("tokens", 0) + _usage_amount(part.get("tokens")),
-                        "cost": usage.get("cost", 0) + _usage_amount(part.get("cost")),
-                    }
-            else:
-                # Claude emits one JSON object; agy/codex/ollama emit plain
-                # text. For codex the authoritative answer arrives later from
-                # output_file; stdout is used only for liveness diagnostics.
-                text_output.write(line)
-
-        if capture.exceeded.is_set():
-            raise _output_limit(model)
-        # The streaming loop above is bounded by the seat timeout, but
-        # proc.wait() here is not: a seat that closed its stdout (EOF) while
-        # still running -- explicit fd close, or a child that inherited the
-        # pipe and lingers -- used to block this call forever, with no
-        # deadline and no kill. Give the wait the same remaining budget and
-        # the same kill fallback as the streaming phase (2026-08-15
-        # review, council of Opus 5).
-        #
-        # hung is raised BEFORE the kill and drives the classification:
-        # deducing the timeout from the exit code would misfire in the
-        # normal case (the post-kill wait returns -9/-15, a real POSIX
-        # signal exit, while the cause was our own timeout) and -2 would
-        # collide with SIGINT (2026-08-15 council-2, Opus 5).
-        hung = False
-        # EOF does not mean the verdict is lost: the seat may have flushed
-        # stdout and still be writing its output file (codex) or finishing
-        # up, so the post-EOF wait keeps the seat's own remaining deadline
-        # -- NOT a short fixed grace, which would kill a healthy slow seat
-        # mid-write (2026-08-15 council-4, Opus 5) -- with a realistic
-        # minimum so an already-expired deadline still gives the process a
-        # moment to finish instead of killing it instantly. A 1s floor was
-        # too tight: codex that streams until the last 0.5s and then needs
-        # ~3s to write its output file got killed mid-write, leaving a
-        # truncated file on disk (2026-08-15 council-7, Opus 5).
-        remaining = deadline - time.monotonic()
-        _POST_EOF_GRACE = 10.0
-        wait_deadline = time.monotonic() + max(remaining, _POST_EOF_GRACE)
-        try:
-            while True:
-                if capture.exceeded.is_set():
-                    raise _output_limit(model)
-                wait_remaining = wait_deadline - time.monotonic()
-                if wait_remaining <= 0:
-                    raise subprocess.TimeoutExpired(invocation.argv, _POST_EOF_GRACE)
-                try:
-                    returncode = proc.wait(timeout=min(wait_remaining, 0.1))
-                    break
-                except subprocess.TimeoutExpired:
-                    continue
-        except subprocess.TimeoutExpired:
-            hung = True
-            _force_stop_process_tree(proc)
-            # Re-join after the kill: the fd is now at EOF, so the readers
-            # finish -- joining before building the diagnostic avoids reading
-            # stderr_lines while a live thread may still be appending to it
-            # (2026-08-15 council, Opus 5).
-            stdout_reader.join(timeout=5)
-            stderr_reader.join(timeout=5)
-            try:
-                returncode = proc.wait(timeout=10)
-            except subprocess.TimeoutExpired:
-                returncode = None  # unkillable; sentinel outside the int space
-        if returncode is not None:
-            _force_stop_process_tree(proc)
-        reader_deadline = time.monotonic() + 5
-        for reader in (stdout_reader, stderr_reader):
-            reader.join(timeout=max(0.0, reader_deadline - time.monotonic()))
-        if capture.exceeded.is_set():
-            raise _output_limit(model)
-        if hung:
-            # The seat was killed, but its complete stdout answer may have
-            # arrived before it hung (it closed stdout and lingered in
-            # teardown): throw a usable verdict away only when there is
-            # none (2026-08-15 council-7, Opus 5). read_text is guarded:
-            # the kill can leave a file truncated mid-multibyte-sequence or
-            # removed, which must degrade to the diagnostic, not explode as
-            # an unclassified UnicodeDecodeError (2026-08-15 council-8,
-            # Opus 5).
-            if invocation.output_file is not None and invocation.output_file.is_file():
-                try:
-                    output_text = _read_output_file(invocation.output_file, model)
-                except SeatRunError as exc:
-                    if exc.kind == "output_limit":
-                        raise
-                    output_text = ""
-                if output_text.strip():
-                    return output_text, usage
-            if text_output.tell() and invocation.output_file is None:
-                # stdout IS the answer only for CLIs without an output file
-                # (opencode/agy/ollama). codex writes the answer to
-                # output_file; its stdout is liveness noise ("codex
-                # started"), so returning it as a verdict would hand the
-                # round a fake response instead of the diagnostic
-                # (2026-08-15 council-8, Opus 5).
-                if cli == "claude":
-                    try:
-                        return _parse_claude_result(text_output.getvalue(), model)
-                    except SeatRunError:
-                        # Output that does not parse as a claude verdict is
-                        # not a usable answer from a hung seat: fall through
-                        # to the partial_timeout diagnostic (2026-08-15
-                        # council-7, Opus 5).
-                        pass
-                else:
-                    return text_output.getvalue(), usage
-            if returncode is None:
-                raise SeatRunError(
-                    f"[council] seat '{model}' hung after closing its output and could not be "
-                    f"terminated within {timeout_label}s: no verdict for this round.",
-                    "partial_timeout",
-                )
-            raise SeatRunError(
-                f"[council] seat '{model}' hung after closing its output and was killed after "
-                f"{timeout_label}s with no usable verdict: no response for this round.",
-                "partial_timeout",
-            )
-        if returncode != 0:
-            raise SeatRunError(f"[council] the seat did not respond (exit {returncode}):\n{''.join(stderr_lines)}", "process_error")
-
-        if invocation.output_file is not None:
-            output_text = _read_output_file(invocation.output_file, model) if invocation.output_file.is_file() else ""
-            if not output_text.strip():
-                raise SeatRunError("[council] the seat responded but with no usable text (empty output).", "empty_response")
-            return output_text, usage
-
-        if not text_output.tell():
-            raise SeatRunError("[council] the seat responded but with no usable text (empty output).", "empty_response")
-        if cli == "claude":
-            return _parse_claude_result(text_output.getvalue(), model)
-        return text_output.getvalue(), usage
+        _run_with_timeout(prepared, runtime)
+        answer, usage = _collect_result(prepared, runtime)
+        if runtime.shutdown_telemetry:
+            # Optional extra field only: the (verdict, usage) shape and every
+            # raising site are unchanged. Same list object, so a cleanup stop
+            # in the finally below is still visible; run_seat never mutates
+            # it after returning.
+            usage = {**usage, "shutdown_telemetry": runtime.shutdown_telemetry}
+        return answer, usage
+    except SeatRunError as exc:
+        if runtime.shutdown_telemetry and exc.shutdown_telemetry is None:
+            exc.shutdown_telemetry = runtime.shutdown_telemetry
+        raise
     finally:
+        capture = runtime.capture
+        proc = runtime.proc
+        proc_token = runtime.proc_token
         if capture is not None:
             capture.cancelled.set()
-        # Release only this seat's token: the legacy single slot is no
-        # longer touched here on purpose (parallel seats overlap).
+        # Release only this seat's token: the legacy slot stays untouched here (parallel seats overlap).
         if proc_token:
-            if proc.poll() is None or getattr(proc, "_council_process_group", None) is not None:
-                _force_stop_process_tree(proc)
+            if proc is not None and (proc.poll() is None or os.name == "nt"
+                                     or getattr(proc, "_council_process_group", None) is not None):
+                _stop_process_tree_with_telemetry(proc, runtime.shutdown_telemetry, reason="cleanup")
             _release_proc(proc_token)
         cleanup_deadline = time.monotonic() + 5
-        for worker in (stdin_writer, stdout_reader, stderr_reader):
+        for worker in (runtime.stdin_writer, runtime.stdout_reader, runtime.stderr_reader):
             if worker is not None:
                 worker.join(timeout=max(0.0, cleanup_deadline - time.monotonic()))
+        invocation = prepared.invocation
         if invocation.output_file is not None:
             invocation.output_file.unlink(missing_ok=True)
         if invocation.input_file is not None:

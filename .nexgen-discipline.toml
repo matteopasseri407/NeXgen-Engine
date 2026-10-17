@@ -1,0 +1,29 @@
+# NeXgen's CRITICAL code: where a mistake loses a user's data, opens a security hole, breaks updating or
+# switches the gate off. A bigger change here (score 4 or more: about 200 net lines, or a new file plus about
+# 100 lines) needs an independent review or the owner's recorded decision (`discipline.py approve --reason "..."`).
+# Everything else is free of paid reviews: tests and the automatic gates are enough.
+# Names end in `*` on purpose: when a big critical file is split, the new pieces keep its prefix and stay covered
+# (a split into a differently named file is the loophole to avoid). Changing this file always needs a decision.
+complexity_threshold = 4
+smoke_command = "python 03-INFRA/scripts/discipline.py gate"
+review_paths = [
+  "03-INFRA/scripts/nexgen_core/git_ops*",
+  "03-INFRA/scripts/nexgen_core/guard*",
+  "03-INFRA/scripts/nexgen_core/updater*",
+  "03-INFRA/scripts/nexgen_core/thirdparty_guard*",
+  "03-INFRA/scripts/nexgen_core/release*",
+  "03-INFRA/scripts/nexgen_core/lock*",
+  "03-INFRA/scripts/nexgen_core/files*",
+  "03-INFRA/scripts/nexgen_core/discipline*",
+  "03-INFRA/scripts/discipline.py",
+  "03-INFRA/scripts/check_engine.py",
+  "03-INFRA/scripts/nexgen_local/patch*",
+  "03-INFRA/scripts/nexgen_local/proposals*",
+  "03-INFRA/agent-universal-layer/council/proposal*",
+  "03-INFRA/agent-universal-layer/trust/*",
+  "03-INFRA/agent-universal-layer/leak-scan/*",
+  "install.sh",
+  "install.ps1",
+]
+# Translation tables grow with every new message; they are data, not logic.
+exclude = ["*/locales/*"]

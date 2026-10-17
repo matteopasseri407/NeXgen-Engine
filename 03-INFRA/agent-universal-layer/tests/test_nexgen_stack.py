@@ -6,6 +6,7 @@ in un messaggio, e che i permessi del file restino stretti.
 """
 from __future__ import annotations
 
+import os
 import stat
 import sys
 from pathlib import Path
@@ -110,3 +111,23 @@ def test_every_service_declares_a_compose_file_that_exists():
         assert compose_file(engine_root, service).is_file(), (
             f"{service.name} dichiara uno stack che non esiste nel repo"
         )
+
+
+def test_interrupted_secrets_write_keeps_previous_env_intact(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    env = tmp_path / ".env"
+    original = "ESISTENTE=valore-vecchio\nALTRO=altro\n"
+    env.write_text(original, encoding="utf-8")
+
+    def interrupted_fsync(fd: int) -> None:
+        # The process dies after a fragment reached the disk, before the rename.
+        os.ftruncate(fd, 5)
+        raise OSError("simulated interruption mid-write")
+
+    monkeypatch.setattr(os, "fsync", interrupted_fsync)
+    try:
+        secrets.ensure(env, ["ESISTENTE", "NUOVO"])
+    except OSError:
+        pass
+    # A crash must leave the old file or the new one, never a truncated file
+    # that would make the next ensure() regenerate keys already in use.
+    assert env.read_text(encoding="utf-8") == original

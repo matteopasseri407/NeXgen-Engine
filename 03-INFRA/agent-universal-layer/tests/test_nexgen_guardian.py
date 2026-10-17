@@ -200,3 +200,197 @@ def test_quoted_non_ascii_path_never_reads_as_empty_diff(tmp_path: Path):
     verdict = judge_github_skill("skill 'demo'", str(repo), pin, head, "skills/demo")
     assert verdict.verdict == HOLD
     assert any("script" in reason for reason in verdict.reasons)
+
+
+def test_a_scope_written_with_windows_backslashes_is_not_a_free_pass(tmp_path: Path):
+    """MUST-10: `skills\\demo` non trova nulla, il diff leggeva come vuoto e
+    il codice di terzi veniva promosso con un AUTO mai guadagnato."""
+    repo = _repo(tmp_path, "skill")
+    target = repo / "skills" / "demo"
+    target.mkdir(parents=True)
+    (target / "SKILL.md").write_text("# demo\n", encoding="utf-8")
+    pin = _commit(repo, "skill as pinned")
+    (target / "validate.py").write_text("print('hi')\n", encoding="utf-8")
+    head = _commit(repo, "new script inside the skill")
+
+    verdict = judge_github_skill("skill 'demo'", str(repo), pin, head, "skills\\demo")
+    assert verdict.verdict == HOLD
+    assert any("script" in reason for reason in verdict.reasons)
+
+
+def test_files_listed_outside_the_scope_hold_instead_of_auto(tmp_path: Path, monkeypatch):
+    """Il confronto dello scope è l'unica cosa fra un aggiornamento di terzi
+    e un AUTO: se il diff elenca file e nessuno cade nello scope, il verdetto
+    è HOLD, mai 'byte identici'."""
+    import nexgen_core.thirdparty_guard as guard_mod
+
+    repo = _repo(tmp_path, "skill")
+    target = repo / "skills" / "demo"
+    target.mkdir(parents=True)
+    (target / "SKILL.md").write_text("# demo\n", encoding="utf-8")
+    pin = _commit(repo, "skill as pinned")
+    (target / "validate.py").write_text("print('hi')\n", encoding="utf-8")
+    head = _commit(repo, "new script inside the skill")
+
+    monkeypatch.setattr(guard_mod, "_in_scope", lambda path, scope: False)
+    verdict = guard_mod.judge_github_skill("skill 'demo'", str(repo), pin, head, "skills/demo")
+    assert verdict.verdict == HOLD
+    assert any("scope" in reason for reason in verdict.reasons)
+
+
+def test_a_symlink_added_to_a_skill_is_held(tmp_path: Path):
+    """MUST-13: il modo 120000 non è un documento, è un rimando a un file
+    fuori dalla skill: leggeva come prosa e finiva in BATCH."""
+    repo = _repo(tmp_path, "skill")
+    (repo / "SKILL.md").write_text("# demo\n", encoding="utf-8")
+    pin = _commit(repo, "skill as pinned")
+    # Un symlink si registra anche dove il sistema non sa crearne uno:
+    # git lo tiene in indice con il modo 120000.
+    blob = subprocess.run(
+        ["git", "hash-object", "-w", "--stdin"], cwd=repo,
+        input="/etc/passwd\n", text=True, capture_output=True, check=True,
+    )
+    _git(repo, "update-index", "--add", "--cacheinfo", f"120000,{blob.stdout.strip()},notes.md")
+    _git(repo, "commit", "-m", "docs pointer")
+    head = _git(repo, "rev-parse", "HEAD")
+
+    verdict = judge_github_skill("skill 'demo'", str(repo), pin, head, ".")
+    assert verdict.verdict == HOLD
+    assert any("symlink" in reason for reason in verdict.reasons)
+
+
+def test_a_tracked_file_replaced_by_a_symlink_is_held(tmp_path: Path):
+    repo = _repo(tmp_path, "skill")
+    (repo / "SKILL.md").write_text("# demo\n", encoding="utf-8")
+    pin = _commit(repo, "skill as pinned")
+    blob = subprocess.run(
+        ["git", "hash-object", "-w", "--stdin"], cwd=repo,
+        input="../../notes.md\n", text=True, capture_output=True, check=True,
+    )
+    _git(repo, "update-index", "--cacheinfo", f"120000,{blob.stdout.strip()},SKILL.md")
+    _git(repo, "commit", "-m", "the skill file becomes a pointer")
+    head = _git(repo, "rev-parse", "HEAD")
+
+    verdict = judge_github_skill("skill 'demo'", str(repo), pin, head, ".")
+    assert verdict.verdict == HOLD
+    assert any("symlink" in reason for reason in verdict.reasons)
+
+
+def test_a_symlink_retargeted_in_place_is_held(tmp_path: Path):
+    """MUST-13, il caso che la prima correzione lasciava aperto: un symlink
+    già presente al pin e ridiretto non cambia modo, quindi nessun controllo
+    di modo lo vedeva e il file passava come prosa."""
+    repo = _repo(tmp_path, "skill")
+    (repo / "SKILL.md").write_text("# demo\n", encoding="utf-8")
+    blob = subprocess.run(
+        ["git", "hash-object", "-w", "--stdin"], cwd=repo,
+        input="../../notes.md\n", text=True, capture_output=True, check=True,
+    )
+    _git(repo, "update-index", "--add", "--cacheinfo", f"120000,{blob.stdout.strip()},notes.md")
+    _git(repo, "commit", "-m", "the skill already carries a pointer")
+    pin = _git(repo, "rev-parse", "HEAD")
+
+    redirected = subprocess.run(
+        ["git", "hash-object", "-w", "--stdin"], cwd=repo,
+        input="../../../.ssh/id_rsa\n", text=True, capture_output=True, check=True,
+    )
+    _git(repo, "update-index", "--cacheinfo", f"120000,{redirected.stdout.strip()},notes.md")
+    _git(repo, "commit", "-m", "the pointer is redirected")
+    head = _git(repo, "rev-parse", "HEAD")
+
+    verdict = judge_github_skill("skill 'demo'", str(repo), pin, head, ".")
+    assert verdict.verdict == HOLD
+    assert any("symlink" in reason for reason in verdict.reasons)
+
+
+def test_a_gitlink_planted_in_a_skill_is_held(tmp_path: Path):
+    """MUST-13: anche il modo 160000 punta a byte che nessuno ha venduto, e
+    con la sola regola del 120000 finiva in BATCH come prosa."""
+    repo = _repo(tmp_path, "skill")
+    (repo / "SKILL.md").write_text("# demo\n", encoding="utf-8")
+    pin = _commit(repo, "skill as pinned")
+    _git(repo, "update-index", "--add", "--cacheinfo", f"160000,{pin},docs.md")
+    _git(repo, "commit", "-m", "a submodule dressed as a document")
+    head = _git(repo, "rev-parse", "HEAD")
+
+    verdict = judge_github_skill("skill 'demo'", str(repo), pin, head, ".")
+    assert verdict.verdict == HOLD
+    assert any("gitlink" in reason for reason in verdict.reasons)
+
+
+def test_a_scope_written_with_a_dot_slash_still_finds_the_diff(tmp_path: Path):
+    """MUST-10: `./skills/demo` è lo stesso di `skills/demo`. Prima il diff
+    veniva letto e lo scope no, quindi ogni aggiornamento restava HOLD per
+    sempre pur essendo prosa innocua."""
+    repo = _repo(tmp_path, "skill")
+    target = repo / "skills" / "demo"
+    target.mkdir(parents=True)
+    (target / "SKILL.md").write_text("# demo\n", encoding="utf-8")
+    pin = _commit(repo, "skill as pinned")
+    (target / "SKILL.md").write_text("# demo\n\nA clearer sentence.\n", encoding="utf-8")
+    head = _commit(repo, "prose touch-up")
+
+    verdict = judge_github_skill("skill 'demo'", str(repo), pin, head, "./skills/demo")
+    assert verdict.verdict == BATCH
+
+
+def test_a_scope_of_spaces_is_read_like_the_whole_repo(tmp_path: Path):
+    """Le due letture dello scope devono dire la stessa cosa: prima il
+    pathspec rifiutava la stringa vuota e `_in_scope` la leggeva come
+    "tutto il repo", quindi lo stesso manifest dava due verdetti diversi."""
+    repo = _repo(tmp_path, "skill")
+    (repo / "SKILL.md").write_text("# demo\n", encoding="utf-8")
+    pin = _commit(repo, "skill as pinned")
+    (repo / "SKILL.md").write_text("# demo\n\nA clearer sentence.\n", encoding="utf-8")
+    head = _commit(repo, "prose touch-up")
+
+    verdict = judge_github_skill("skill 'demo'", str(repo), pin, head, "   ")
+    assert verdict.verdict == BATCH
+
+
+def test_a_scope_that_does_not_exist_is_never_identical_bytes(tmp_path: Path):
+    """MUST-10: con uno scope scritto male git non lista niente, e "nessuna
+    riga" leggeva come "byte identici": AUTO per un refuso di percorso."""
+    repo = _repo(tmp_path, "skill")
+    target = repo / "skills" / "demo"
+    target.mkdir(parents=True)
+    (target / "SKILL.md").write_text("# demo\n", encoding="utf-8")
+    pin = _commit(repo, "skill as pinned")
+    (repo / "README.md").write_text("docs\n", encoding="utf-8")
+    head = _commit(repo, "docs outside the skill")
+
+    verdict = judge_github_skill("skill 'demo'", str(repo), pin, head, "skills/typo")
+    assert verdict.verdict == HOLD
+    assert any("scope" in reason for reason in verdict.reasons)
+
+
+def test_a_scope_with_a_trailing_slash_is_the_same_scope(tmp_path: Path):
+    """La normalizzazione copre anche lo slash finale; questo test lo fissa
+    perché un manifest scritto così è normale, non un caso di scuola."""
+    repo = _repo(tmp_path, "skill")
+    target = repo / "skills" / "demo"
+    target.mkdir(parents=True)
+    (target / "SKILL.md").write_text("# demo\n", encoding="utf-8")
+    pin = _commit(repo, "skill as pinned")
+    (target / "SKILL.md").write_text("# demo\n\nA clearer sentence.\n", encoding="utf-8")
+    head = _commit(repo, "prose touch-up")
+
+    verdict = judge_github_skill("skill 'demo'", str(repo), pin, head, "skills/demo/")
+    assert verdict.verdict == BATCH
+
+
+def test_a_rename_that_gains_the_executable_bit_is_held(tmp_path: Path):
+    """Il parser delle rinomine deve restituire il percorso nuovo: se desse
+    quello vecchio, il modo non verrebbe letto e un file rinominato con +x
+    passerebbe come prosa."""
+    repo = _repo(tmp_path, "skill")
+    (repo / "notes.md").write_text("# demo\n", encoding="utf-8")
+    pin = _commit(repo, "skill as pinned")
+    _git(repo, "mv", "notes.md", "run.md")
+    _git(repo, "update-index", "--chmod=+x", "run.md")
+    _git(repo, "commit", "-m", "the note is renamed and can run")
+    head = _git(repo, "rev-parse", "HEAD")
+
+    verdict = judge_github_skill("skill 'demo'", str(repo), pin, head, ".")
+    assert verdict.verdict == HOLD
+    assert any("executable" in reason for reason in verdict.reasons)

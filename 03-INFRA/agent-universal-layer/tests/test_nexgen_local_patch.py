@@ -275,6 +275,76 @@ def test_apply_cli_propagates_verify_failure(tmp_path: Path, monkeypatch: pytest
     assert cli.cmd_apply(args) == 3
 
 
+def test_the_verify_command_uses_windows_parsing_and_the_shim_helper(tmp_path: Path, monkeypatch) -> None:
+    """Ricognizione 4: il passo verify usava shlex.split in modo POSIX e non
+    passava da windows_command_argv: su Windows `tests\\unit\\x.py` perdeva le
+    barre rovesciate e gli shim .cmd fallivano con FileNotFoundError. La prova
+    simula Windows sui nomi dei due moduli, cosi' gira anche nella CI Linux."""
+    from types import SimpleNamespace
+
+    from nexgen_core import processes
+    from nexgen_local import patch as patch_mod
+
+    repo = _git_repo(tmp_path)
+    (repo / "notes.md").write_text("Questo contiente un refuso.\n", encoding="utf-8")
+    cfg = _cfg(tmp_path, repo)
+    proposal = propose_patch(PatchLLM({"old": "contiente", "new": "contiene"}), cfg, "notes.md", "fix")
+
+    monkeypatch.setattr(patch_mod, "os", SimpleNamespace(name="nt"), raising=False)
+    monkeypatch.setattr(processes, "os", SimpleNamespace(name="nt"))
+    monkeypatch.setattr(processes.shutil, "which", lambda name: str(tmp_path / f"{name}.cmd"))
+
+    launched: list[list[str]] = []
+    real_run = subprocess.run
+
+    def observe(argv, **kwargs):
+        if kwargs.get("timeout") == patch_mod.APPLY_TIMEOUT:
+            launched.append(list(argv))
+            raise OSError("stop: cattura e basta")
+        return real_run(argv, **kwargs)
+
+    monkeypatch.setattr(patch_mod.subprocess, "run", observe)
+
+    result = apply_proposal(cfg, proposal.id, yes=True, verify=r"runner tests\unit\check.py")
+
+    assert launched, "il passo verify non e' passato da subprocess.run"
+    assert launched[0][:4] == ["cmd.exe", "/d", "/s", "/c"], launched[0]
+    assert launched[0][4] == str(tmp_path / "runner.cmd"), launched[0]
+    assert launched[0][5:] == [r"tests\unit\check.py"], launched[0]
+    assert result["applied"] is True and result["verified"] is False
+
+
+def test_a_quoted_windows_verify_argument_arrives_without_its_quotes(tmp_path: Path, monkeypatch) -> None:
+    """MUST-21: in modo non POSIX shlex lascia le virgolette dentro il token e
+    subprocess, con list2cmdline, le rimette con l'escape: un percorso con
+    spazi tra virgolette arriverebbe al programma con le virgolette
+    letterali. Una coppia esterna corrispondente va tolta, le barre restano."""
+    from types import SimpleNamespace
+
+    from nexgen_local import patch as patch_mod
+
+    repo = _git_repo(tmp_path)
+    (repo / "notes.md").write_text("Questo contiente un refuso.\n", encoding="utf-8")
+    cfg = _cfg(tmp_path, repo)
+    proposal = propose_patch(PatchLLM({"old": "contiente", "new": "contiene"}), cfg, "notes.md", "fix")
+
+    monkeypatch.setattr(patch_mod, "os", SimpleNamespace(name="nt"), raising=False)
+    launched: list[list[str]] = []
+    real_run = subprocess.run
+
+    def observe(argv, **kwargs):
+        if kwargs.get("timeout") == patch_mod.APPLY_TIMEOUT:
+            launched.append(list(argv))
+            raise OSError("stop: cattura e basta")
+        return real_run(argv, **kwargs)
+
+    monkeypatch.setattr(patch_mod.subprocess, "run", observe)
+
+    apply_proposal(cfg, proposal.id, yes=True, verify='runner "tests\\a b.py"')
+
+    assert launched[0] == ["runner", r"tests\a b.py"], launched[0]
+
+
 def test_same_patch_twice_gets_unique_ids(tmp_path: Path) -> None:
     """Same snippet in the same second: two artifacts, no overwrite."""
     repo = _git_repo(tmp_path)
@@ -285,3 +355,227 @@ def test_same_patch_twice_gets_unique_ids(tmp_path: Path) -> None:
     second = propose_patch(llm, cfg, "notes.md", "correggi il refuso")
     assert first.id != second.id
     assert load_proposal(cfg, first.id).patch == load_proposal(cfg, second.id).patch
+
+
+def test_a_post_apply_mismatch_puts_the_file_back(tmp_path: Path) -> None:
+    """MUST-16: se dopo l'applicazione il contenuto non corrisponde alla
+    proposta (a-capo diversi sotto), il file torna esattamente com'era:
+    mezze modifiche mai, e la proposta resta rifiutata."""
+    from nexgen_local import patch as patch_mod
+
+    repo = _git_repo(tmp_path)
+    original = "Questo contiente un refuso.\n"
+    (repo / "notes.md").write_text(original, encoding="utf-8")
+    cfg = _cfg(tmp_path, repo)
+    proposal = propose_patch(PatchLLM({"old": "contiente", "new": "contiene", "why": "refuso"}),
+                             cfg, "notes.md", "correggi il refuso")
+    tampered = load_proposal(cfg, proposal.id)
+    tampered.new_hash = "0" * 64
+    patch_mod._save(cfg, tampered)
+
+    with pytest.raises(PatchError, match="corrisponde alla proposta"):
+        apply_proposal(cfg, proposal.id, yes=True)
+
+    assert (repo / "notes.md").read_text(encoding="utf-8") == original
+    state = load_proposal(cfg, proposal.id)
+    assert state.attempted_at and not state.applied_at, "la proposta resta rifiutata, non applicata"
+
+
+def test_a_mismatch_is_undone_even_when_the_audit_cannot_write(tmp_path, monkeypatch):
+    """MUST-16, revisione: un registro che non si puo' scrivere non deve
+    impedire il ripristino ne' coprire il rifiuto. Su Windows il registro si
+    blocca per davvero, ed era il percorso che lasciava la modifica a meta'."""
+    import json
+
+    from nexgen_local import patch as patch_mod
+
+    repo = _git_repo(tmp_path)
+    original = "Questo contiente un refuso.\n"
+    (repo / "notes.md").write_text(original, encoding="utf-8")
+    cfg = _cfg(tmp_path, repo)
+    proposal = propose_patch(PatchLLM({"old": "contiente", "new": "contiene", "why": "refuso"}),
+                             cfg, "notes.md", "correggi il refuso")
+    tampered = load_proposal(cfg, proposal.id)
+    tampered.new_hash = "0" * 64
+    patch_mod._save(cfg, tampered)
+
+    real_audit = patch_mod.audit_event
+
+    def failing_audit(cfg_arg, kind, payload, **kwargs):
+        if payload.get("phase") == "result":
+            raise PermissionError("audit bloccato da un altro processo")
+        return real_audit(cfg_arg, kind, payload, **kwargs)
+
+    monkeypatch.setattr(patch_mod, "audit_event", failing_audit)
+    with pytest.raises(PatchError, match="tornato com'era"):
+        apply_proposal(cfg, proposal.id, yes=True)
+
+    assert (repo / "notes.md").read_text(encoding="utf-8") == original
+    lines = [json.loads(line) for line in cfg.audit_path.read_text(encoding="utf-8").strip().splitlines()]
+    apply_phases = [line["args"].get("phase") for line in lines if line["tool"] == "apply_patch"]
+    assert apply_phases == ["intent"], "il risultato non e' scrivibile, l'intento resta"
+
+
+def test_a_failed_rollback_keeps_the_original_bytes_beside_the_file(tmp_path, monkeypatch):
+    """Se il ripristino non riesce, i byte originali restano in un file
+    dell'area della lane (non nel repository) e il registro dice sia l'esito
+    sia che la copia c'e'."""
+    import json
+
+    from nexgen_local import patch as patch_mod
+
+    repo = _git_repo(tmp_path)
+    original = "Questo contiente un refuso.\n"
+    target = repo / "notes.md"
+    target.write_text(original, encoding="utf-8")
+    cfg = _cfg(tmp_path, repo)
+    proposal = propose_patch(PatchLLM({"old": "contiente", "new": "contiene", "why": "refuso"}),
+                             cfg, "notes.md", "correggi il refuso")
+    tampered = load_proposal(cfg, proposal.id)
+    tampered.new_hash = "0" * 64
+    patch_mod._save(cfg, tampered)
+
+    real_write = patch_mod.atomic_write_bytes
+
+    def failing_write(path_arg, data, **kwargs):
+        if Path(path_arg) == target:
+            raise OSError("disco pieno")
+        return real_write(path_arg, data, **kwargs)
+
+    monkeypatch.setattr(patch_mod, "atomic_write_bytes", failing_write)
+    with pytest.raises(PatchError, match="ripristino: failed"):
+        apply_proposal(cfg, proposal.id, yes=True)
+
+    spare = cfg.proposals_dir / f"{proposal.id}.pre-patch"
+    assert spare.read_text(encoding="utf-8") == original
+    assert spare.parent == cfg.proposals_dir, "la copia non vive nel repository"
+    lines = [json.loads(line) for line in cfg.audit_path.read_text(encoding="utf-8").strip().splitlines()]
+    assert lines[-1]["args"]["restore"] == "failed"
+    assert lines[-1]["args"]["spare"] == "written"
+
+
+def test_a_file_changed_meanwhile_is_never_overwritten_by_the_rollback(tmp_path, monkeypatch):
+    """Il ripristino controlla che il file sia ancora quello che la penna ha
+    prodotto: se qualcuno l'ha toccato si rifiuta, lo lascia com'e' e ne
+    conserva comunque i byte originali in una copia."""
+    import json
+
+    from nexgen_local import patch as patch_mod
+
+    repo = _git_repo(tmp_path)
+    original = "Questo contiente un refuso.\n"
+    (repo / "notes.md").write_text(original, encoding="utf-8")
+    cfg = _cfg(tmp_path, repo)
+    proposal = propose_patch(PatchLLM({"old": "contiente", "new": "contiene", "why": "refuso"}),
+                             cfg, "notes.md", "correggi il refuso")
+    tampered = load_proposal(cfg, proposal.id)
+    tampered.new_hash = "0" * 64
+    patch_mod._save(cfg, tampered)
+
+    monkeypatch.setattr(patch_mod, "_file_state", lambda path_arg, expected: "changed")
+    with pytest.raises(PatchError, match="ripristino: changed"):
+        apply_proposal(cfg, proposal.id, yes=True)
+
+    assert (repo / "notes.md").read_text(encoding="utf-8") == "Questo contiene un refuso.\n"
+    spare = cfg.proposals_dir / f"{proposal.id}.pre-patch"
+    assert spare.read_text(encoding="utf-8") == original
+    lines = [json.loads(line) for line in cfg.audit_path.read_text(encoding="utf-8").strip().splitlines()]
+    assert lines[-1]["args"]["restore"] == "changed"
+    assert lines[-1]["args"]["spare"] == "written"
+
+
+def test_when_no_copy_can_be_saved_the_refusal_does_not_promise_one(tmp_path, monkeypatch):
+    """Disco pieno fino in fondo: il file resta modificato e nessuna copia
+    esiste, quindi il rifiuto non deve indicare un percorso che non c'e'."""
+    import json
+
+    from nexgen_local import patch as patch_mod
+
+    repo = _git_repo(tmp_path)
+    (repo / "notes.md").write_text("Questo contiente un refuso.\n", encoding="utf-8")
+    cfg = _cfg(tmp_path, repo)
+    proposal = propose_patch(PatchLLM({"old": "contiente", "new": "contiene", "why": "refuso"}),
+                             cfg, "notes.md", "correggi il refuso")
+    tampered = load_proposal(cfg, proposal.id)
+    tampered.new_hash = "0" * 64
+    patch_mod._save(cfg, tampered)
+
+    def failing_write(path_arg, data, **kwargs):
+        raise OSError("disco pieno")
+
+    monkeypatch.setattr(patch_mod, "atomic_write_bytes", failing_write)
+    with pytest.raises(PatchError) as refused:
+        apply_proposal(cfg, proposal.id, yes=True)
+
+    assert "copia" in str(refused.value) and ".pre-patch" not in str(refused.value)
+    assert not (cfg.proposals_dir / f"{proposal.id}.pre-patch").exists()
+    lines = [json.loads(line) for line in cfg.audit_path.read_text(encoding="utf-8").strip().splitlines()]
+    assert lines[-1]["args"]["restore"] == "failed"
+    assert lines[-1]["args"]["spare"] == "failed"
+
+
+def test_a_refused_apply_still_writes_its_result_line(tmp_path, monkeypatch):
+    """Un rifiuto prima della penna scrive comunque la riga di esito: senza,
+    nel registro resta solo l'intento e a posteriori non si distingue da un
+    crash a meta' applicazione."""
+    import json
+
+    from nexgen_local import patch as patch_mod
+
+    repo = _git_repo(tmp_path)
+    (repo / "notes.md").write_text("Questo contiente un refuso.\n", encoding="utf-8")
+    cfg = _cfg(tmp_path, repo)
+    proposal = propose_patch(PatchLLM({"old": "contiente", "new": "contiene", "why": "refuso"}),
+                             cfg, "notes.md", "correggi il refuso")
+
+    real_save = patch_mod._save
+
+    def save_and_touch(cfg_arg, prop):
+        real_save(cfg_arg, prop)
+        (repo / "notes.md").write_text("scritto da qualcun altro nel frattempo.\n", encoding="utf-8")
+
+    monkeypatch.setattr(patch_mod, "_save", save_and_touch)
+    with pytest.raises(PatchError, match="dopo l'approvazione"):
+        apply_proposal(cfg, proposal.id, yes=True)
+
+    lines = [json.loads(line) for line in cfg.audit_path.read_text(encoding="utf-8").strip().splitlines()]
+    results = [line for line in lines if line["tool"] == "apply_patch" and line["args"].get("phase") == "result"]
+    assert results and results[-1]["args"]["rc"] == "stale"
+    assert (repo / "notes.md").read_text(encoding="utf-8") == "scritto da qualcun altro nel frattempo.\n"
+
+
+def test_the_file_identity_is_the_raw_bytes_not_a_decoded_view(tmp_path):
+    """Due contenuti che differiscono solo per byte non validi non sono lo
+    stesso file. Con l'hash calcolato sulla decodifica sostitutiva lo
+    sarebbero, e il ripristino sovrascriverebbe la modifica di qualcun altro
+    credendo che il file fosse ancora il suo."""
+    from nexgen_local import patch as patch_mod
+
+    first = tmp_path / "primo"
+    second = tmp_path / "secondo"
+    first.write_bytes(b"riga valida\n\xff finale\n")
+    second.write_bytes(b"riga valida\n\xfe finale\n")
+
+    decoded = patch_mod._sha(patch_mod._read_text_bytes(first))
+    assert decoded == patch_mod._sha(patch_mod._read_text_bytes(second)), "la vista decodificata li confonde"
+
+    identity = patch_mod._hash_bytes(first.read_bytes())
+    assert identity != patch_mod._hash_bytes(second.read_bytes())
+    assert patch_mod._file_state(second, identity) == "changed"
+
+
+def test_a_file_that_is_not_valid_utf8_is_refused_at_the_proposal(tmp_path):
+    """Un file cp1252 con un byte non ASCII lontano dal punto da correggere
+    non e' testo UTF-8: l'identita' sui byte grezzi e il testo della proposta
+    non possono coincidere, quindi si rifiuta alla proposta invece di
+    applicare e poi disfare."""
+    repo = _git_repo(tmp_path)
+    original = "perch\xe8 un refuso contiente\n".encode("cp1252")
+    (repo / "notes.md").write_bytes(original)
+
+    cfg = _cfg(tmp_path, repo)
+    with pytest.raises(PatchError, match="UTF-8"):
+        propose_patch(PatchLLM({"old": "contiente", "new": "contiene", "why": "refuso"}),
+                      cfg, "notes.md", "correggi il refuso")
+
+    assert (repo / "notes.md").read_bytes() == original

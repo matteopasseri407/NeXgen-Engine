@@ -104,6 +104,9 @@ class ClaudeRuntime(Runtime):
         return home / ".claude" / GUARDRAIL_SIDECAR_NAME
 
     def install_guardrail(self, home: Path, hook_source: Path, engine_hooks_dir: Path) -> str | None:
+        return self._install_guardrail_impl(home, hook_source, engine_hooks_dir)
+
+    def _install_guardrail_impl(self, home: Path, hook_source: Path, engine_hooks_dir: Path) -> str | None:
         from nexgen_core.runtimes.base import Runtime
 
         hook_name = hook_source.name
@@ -197,6 +200,9 @@ class ClaudeRuntime(Runtime):
         return None
 
     def install_event_sink(self, home: Path, sink_source: Path) -> str | None:
+        return self._install_event_sink_impl(home, sink_source)
+
+    def _install_event_sink_impl(self, home: Path, sink_source: Path) -> str | None:
         data = self._load_settings(home)
         if data is None:
             return None

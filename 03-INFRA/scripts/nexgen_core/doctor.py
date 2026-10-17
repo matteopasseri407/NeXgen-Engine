@@ -252,20 +252,13 @@ class Doctor:
         return report
 
 
-def main(argv: list[str] | None = None) -> int:
-    """CLI entry point for the agent-doctor command."""
-    parser = argparse.ArgumentParser(description=t("NeXgen Engine Doctor (v2) - Alignment diagnostics and verification"))
-    parser.add_argument("-v", "--verbose", action="store_true", help=t("Show every check run, including the ones that passed"))
-    parser.add_argument("--strict", action="store_true", help=t("Strict mode: treat undetermined states as non-compliant too"))
-    parser.add_argument("--json", action="store_true", help=t("Print the output in JSON format"))
-    parser.add_argument("--summary", action="store_true", help=t("Print the summary with FAIL=N OK=N counts"))
-    parser.add_argument("--fix", "--remedy", action="store_true", help=t("Apply automatic remedies for fixable problems"))
+def _run_diagnostics(doc: Doctor, apply_remedies: bool = False) -> Report:
+    """Run phase (no rendering): executes every check and returns the report."""
+    return doc.run_diagnostics(apply_remedies=apply_remedies)
 
-    args = parser.parse_args(argv)
 
-    doc = Doctor()
-    report = doc.run_diagnostics(apply_remedies=args.fix)
-
+def _render_report(report: Report, args: argparse.Namespace) -> int:
+    """Render phase (no checks): prints the report and computes the exit code."""
     if args.json:
         print(report.format_json())
     elif args.summary:
@@ -280,6 +273,23 @@ def main(argv: list[str] | None = None) -> int:
         print(safe_text(report.format_human(verbose=args.verbose)))
 
     return report.exit_code(strict=args.strict)
+
+
+def main(argv: list[str] | None = None) -> int:
+    """CLI entry point for the agent-doctor command."""
+    parser = argparse.ArgumentParser(description=t("NeXgen Engine Doctor (v2) - Alignment diagnostics and verification"))
+    parser.add_argument("-v", "--verbose", action="store_true", help=t("Show every check run, including the ones that passed"))
+    parser.add_argument("--strict", action="store_true", help=t("Strict mode: treat undetermined states as non-compliant too"))
+    parser.add_argument("--json", action="store_true", help=t("Print the output in JSON format"))
+    parser.add_argument("--summary", action="store_true", help=t("Print the summary with FAIL=N OK=N counts"))
+    parser.add_argument("--fix", "--remedy", action="store_true", help=t("Apply automatic remedies for fixable problems"))
+
+    args = parser.parse_args(argv)
+
+    doc = Doctor()
+    report = _run_diagnostics(doc, apply_remedies=args.fix)
+
+    return _render_report(report, args)
 
 
 if __name__ == "__main__":

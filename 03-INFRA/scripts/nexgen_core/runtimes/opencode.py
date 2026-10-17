@@ -143,6 +143,9 @@ class OpenCodeRuntime(Runtime):
         return None
 
     def apply_posture(self, home: Path, posture: str) -> str | None:
+        return self._apply_posture_impl(home, posture)
+
+    def _apply_posture_impl(self, home: Path, posture: str) -> str | None:
         desired = _POSTURE_RENDER.get(posture)
         if desired is None:
             return None
@@ -265,6 +268,9 @@ class OpenCodeRuntime(Runtime):
         )
 
     def install_guardrail(self, home: Path, hook_source: Path, engine_hooks_dir: Path) -> str | None:
+        return self._install_guardrail_impl(home, hook_source, engine_hooks_dir)
+
+    def _install_guardrail_impl(self, home: Path, hook_source: Path, engine_hooks_dir: Path) -> str | None:
         from nexgen_core.runtimes.base import Runtime
 
         hook_name = hook_source.name
@@ -397,6 +403,9 @@ class OpenCodeRuntime(Runtime):
         return None
 
     def install_event_sink(self, home: Path, sink_source: Path) -> str | None:
+        return self._install_event_sink_impl(home, sink_source)
+
+    def _install_event_sink_impl(self, home: Path, sink_source: Path) -> str | None:
         config_path = self._config_path(home)
         if not config_path.is_file() and not shutil.which("opencode"):
             return None

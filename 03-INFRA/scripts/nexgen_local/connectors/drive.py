@@ -160,19 +160,13 @@ def download_bytes(file_id: str, http: HttpFn | None = None) -> bytes:
     return raw
 
 
-def upload_file(
+def _stage_upload(
     data: bytes,
     name: str,
     mime_type: str = "",
     folder_id: str = "",
-    http: HttpFn | None = None,
 ) -> dict[str, Any]:
-    """Upload bytes as a new Drive file. The caller owns name and bytes.
-
-    Multipart/related to ``/upload/drive/v3/files``. Returns the provider
-    ``id`` (and name echo). Failures are lane refusals, never partial state
-    the caller could mistake for success.
-    """
+    """Validate e corpo multipart pronti. Nessun token, nessun HTTP, nessun invio."""
     name = str(name or "").strip().strip("/").split("/")[-1]
     if not name:
         raise ConnectorError("(drive: nome file mancante)")
@@ -183,10 +177,6 @@ def upload_file(
     import json
     import uuid
 
-    from . import auth as _auth
-
-    call = http or _default_http
-    token = _auth.access_token(http)
     metadata: dict[str, Any] = {"name": name}
     if mime_type:
         metadata["mimeType"] = mime_type
@@ -202,13 +192,43 @@ def upload_file(
         + bytes(data)
         + f"\r\n--{boundary}--".encode("utf-8")
     )
+    return {
+        "name": name,
+        "metadata": metadata,
+        "boundary": boundary,
+        "body": body,
+        "url": "https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart",
+    }
+
+
+def _confirm_upload(staged: dict[str, Any] | None) -> dict[str, Any]:
+    """Gate prima dell'invio: senza uno stage valido rifiuta, senza rete."""
+    if not isinstance(staged, dict) or not staged.get("body") or not staged.get("name"):
+        raise ConnectorError(
+            "(drive: nessuno stage da confermare, serve _stage_upload prima di _confirm_upload)"
+        )
+    return staged
+
+
+def _upload_file(
+    staged: dict[str, Any] | None,
+    http: HttpFn | None = None,
+) -> dict[str, Any]:
+    """Invia uno stage confermato. L'id del provider e' il gate di conferma."""
+    confirmed = _confirm_upload(staged)
+    import json
+
+    from . import auth as _auth
+
+    call = http or _default_http
+    token = _auth.access_token(http)
     req = urllib.request.Request(
-        "https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart",
-        data=body,
+        confirmed["url"],
+        data=confirmed["body"],
         method="POST",
     )
     req.add_header("Authorization", f"Bearer {token}")
-    req.add_header("Content-Type", f'multipart/related; boundary="{boundary}"')
+    req.add_header("Content-Type", f'multipart/related; boundary="{confirmed["boundary"]}"')
     try:
         result = call(req, 120)
     except OSError as exc:
@@ -223,4 +243,22 @@ def upload_file(
         raise ConnectorError("(drive: risposta illeggibile dal provider)") from exc
     if not isinstance(payload, dict) or not payload.get("id"):
         raise ConnectorError("(drive: caricamento non confermato dal provider)")
-    return {"id": str(payload["id"]), "name": str(payload.get("name", name))}
+    return {"id": str(payload["id"]), "name": str(payload.get("name", confirmed["name"]))}
+
+
+def upload_file(
+    data: bytes,
+    name: str,
+    mime_type: str = "",
+    folder_id: str = "",
+    http: HttpFn | None = None,
+) -> dict[str, Any]:
+    """Upload bytes as a new Drive file. The caller owns name and bytes.
+
+    Multipart/related to ``/upload/drive/v3/files``. Returns the provider
+    ``id`` (and name echo). Failures are lane refusals, never partial state
+    the caller could mistake for success.
+    """
+    staged = _stage_upload(data, name, mime_type, folder_id)
+    confirmed = _confirm_upload(staged)
+    return _upload_file(confirmed, http)

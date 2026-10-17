@@ -119,14 +119,13 @@ class ClaudeRunner(Runner):
     ]
     # Push isn't in this list (see also --disallowedTools below): the REAL
     # guarantee remains the `origin`-less clone, this is only a second
-    # layer.
+    # layer. The vault-library write tools are NOT here: they write to the
+    # live vault, outside the clone, and would bypass the audit/promotion step.
     WRITE_TOOLS: ClassVar[list[str]] = [
         "Read", "Edit", "Write", "Grep", "Glob",
         "Bash(python3:*)", "Bash(git:*)", "Bash(mkdir:*)", "Bash(mv:*)",
         "mcp__vault-library__semantic_search", "mcp__vault-library__search_notes",
         "mcp__vault-library__read_note", "mcp__vault-library__list_related",
-        "mcp__vault-library__update_note", "mcp__vault-library__create_note",
-        "mcp__vault-library__append_note",
     ]
 
     def run_readonly(self, prompt: str) -> RunResult:

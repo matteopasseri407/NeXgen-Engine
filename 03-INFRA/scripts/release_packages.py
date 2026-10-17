@@ -8,12 +8,12 @@ pointed at the release asset, so `brew install` and the engine share one
 source of bytes: the tagged, checksummed sdist. Nothing here runs on a
 user's machine; it runs in CI (and by hand for testing) at release time.
 
-The formula installs into its own virtualenv with a pinned PyYAML
-resource, whose URL and digest are read live from PyPI's JSON API and
-written into the formula: Homebrew forbids network access during
-`install`, so every dependency must be declared as a pinned resource,
-and a hand-copied hash is exactly the kind of quiet wrong this repo
-has been burned by before.
+The formula installs into its own virtualenv with **every runtime
+dependency declared in `pyproject.toml`** pinned as a resource: Homebrew
+forbids network access during `install`, so every dependency must be
+declared as a pinned resource, and a hand-copied hash is exactly the kind
+of quiet wrong this repo has been burned by before. Each resource's URL
+and digest are read live from PyPI's JSON API at release time.
 
 Usage (what the workflow does):
     python3 release_packages.py \
@@ -26,7 +26,13 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
+import tomllib
 import urllib.request
+from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+PYPROJECT = REPO_ROOT / "pyproject.toml"
 
 HOMEPAGE = "https://github.com/matteopasseri407/NeXgen-Engine"
 LICENSE = "PolyForm-Noncommercial-1.0.0"
@@ -43,14 +49,12 @@ class NexgenEngine < Formula
   license "{license}"
   version "{version}"
 
-  # Invariant from the engine's pyproject: PyYAML is the only runtime
-  # dependency, so the formula carries exactly one resource, pinned.
+  # Every runtime dependency pyproject declares is a pinned resource:
+  # Homebrew forbids the network during `install`, so a dependency left
+  # out here is a `brew install` that fails on a missing import.
   depends_on "python@3.12"
 
-  resource "pyyaml" do
-    url "{pyyaml_url}"
-    sha256 "{pyyaml_sha256}"
-  end
+{resources}
 
   def install
     virtualenv_install_with_resources
@@ -61,6 +65,11 @@ class NexgenEngine < Formula
   end
 end
 '''
+
+RESOURCE_TEMPLATE = '''  resource "{name}" do
+    url "{url}"
+    sha256 "{sha256}"
+  end'''
 
 
 def _pyyaml_pinned() -> tuple[str, str]:
@@ -74,16 +83,139 @@ def _pyyaml_pinned() -> tuple[str, str]:
     raise SystemExit(f"PyPI lists no sdist for PyYAML {PY_YAML_VERSION}")
 
 
+def _declared_dependencies() -> list[str]:
+    """What the package declares: runtime dependencies plus build backend.
+
+    The build backend travels too: the sdist is built from source on the
+    user's machine, and Homebrew's pip installs with dependency resolution
+    disabled, so a backend that is not in the environment fails the build.
+    """
+    data = tomllib.loads(PYPROJECT.read_text(encoding="utf-8"))
+    return [*data["project"]["dependencies"], *data.get("build-system", {}).get("requires", [])]
+
+
+_DEP_RE = re.compile(r"^\s*([A-Za-z0-9][A-Za-z0-9._-]*)\s*((?:[<>=!~]=?[^,]*)(?:,[^,]*)*)?\s*$")
+_PLAIN_VERSION_RE = re.compile(r"^v?(\d+(?:\.\d+)*)$")
+
+
+def _plain_version(text: str) -> tuple[int, ...] | None:
+    """The numeric key of a plain release, or None for everything else.
+
+    Pre-releases, post-releases and date trains are never picked: a range
+    in pyproject asks for a stable series, and pinning a `-rc` in a formula
+    would install someone's unfinished build.
+    """
+    match = _PLAIN_VERSION_RE.match(text.strip())
+    return tuple(int(p) for p in match.group(1).split(".")) if match else None
+
+
+def _numeric(text: str, spec: str) -> tuple[int, ...]:
+    key = _plain_version(text)
+    if key is None:
+        raise SystemExit(f"only plain numeric versions in {spec!r}, not {text!r}")
+    return key
+
+
+def _bounds(spec: str) -> tuple[str, tuple[int, ...], tuple[int, ...] | None, bool]:
+    """The name and the range one declared dependency states.
+
+    Only the comparators the project uses are understood (`>=`, `<`, `<=`):
+    anything else stops the release rather than generating a pin nobody
+    asked for.
+    """
+    match = _DEP_RE.match(spec)
+    if not match:
+        raise SystemExit(f"cannot read the declared dependency {spec!r}")
+    name, constraint = match.group(1), match.group(2) or ""
+    low: tuple[int, ...] = (0,)
+    high: tuple[int, ...] | None = None
+    high_inclusive = False
+    for raw in constraint.split(","):
+        part = raw.strip()
+        if not part:
+            continue
+        if part.startswith(">="):
+            low = _numeric(part[2:], spec)
+        elif part.startswith("<="):
+            high, high_inclusive = _numeric(part[2:], spec), True
+        elif part.startswith("<"):
+            high, high_inclusive = _numeric(part[1:], spec), False
+        else:
+            raise SystemExit(f"unsupported constraint in {spec!r}: {part!r}")
+    return name, low, high, high_inclusive
+
+
+def _within(
+    key: tuple[int, ...], low: tuple[int, ...],
+    high: tuple[int, ...] | None, high_inclusive: bool,
+) -> bool:
+    if key < low:
+        return False
+    if high is None:
+        return True
+    return key <= high if high_inclusive else key < high
+
+
+def _pypi_json(name: str) -> dict:
+    with urllib.request.urlopen(f"https://pypi.org/pypi/{name}/json", timeout=30) as resp:
+        return json.load(resp)
+
+
+def _choose_release(spec: str, releases: dict[str, list[dict]]) -> tuple[str, str, str, str]:
+    """(name, version, url, sha256) of the newest release the range allows.
+
+    Pure on purpose: the caller fetches PyPI's payload, this decides what to
+    pin, so the choice is tested without a network. A range that nothing in
+    the payload satisfies stops the release instead of pinning a guess.
+    """
+    name, low, high, high_inclusive = _bounds(spec)
+    eligible = [
+        (key, version)
+        for version, files in releases.items()
+        if (key := _plain_version(version)) is not None
+        and _within(key, low, high, high_inclusive)
+        and any(f.get("packagetype") == "sdist" for f in files)
+    ]
+    if not eligible:
+        raise SystemExit(f"PyPI lists no plain release of {name} inside {spec!r}")
+    _, version = max(eligible)
+    for entry in releases[version]:
+        if entry.get("packagetype") == "sdist":
+            return name.lower(), version, entry["url"], entry["digests"]["sha256"]
+    raise SystemExit(f"PyPI lists no sdist for {name} {version}")
+
+
+def _pinned_sdist(spec: str) -> tuple[str, str, str]:
+    """(resource name, sdist url, sha256) for one declared dependency.
+
+    PyYAML keeps its own pinned version through `_pyyaml_pinned`, which is
+    also the seam the tests stub. Every other dependency takes the newest
+    release its declared range allows, with the digest read from PyPI at
+    release time.
+    """
+    name = _bounds(spec)[0]
+    if name.lower() == "pyyaml":
+        url, sha256 = _pyyaml_pinned()
+        return "pyyaml", url, sha256
+    name, _version, url, sha256 = _choose_release(spec, _pypi_json(name)["releases"])
+    return name, url, sha256
+
+
+def _resources_block() -> str:
+    return "\n\n".join(
+        RESOURCE_TEMPLATE.format(name=name, url=url, sha256=sha256)
+        for name, url, sha256 in (_pinned_sdist(spec) for spec in _declared_dependencies())
+    )
+
+
 def generate_formula(*, version: str, asset_url: str, asset_sha256: str) -> str:
-    pyyaml_url, pyyaml_sha256 = _pyyaml_pinned()
     return FORMULA_TEMPLATE.format(
         homepage=HOMEPAGE,
         asset_url=asset_url,
         asset_sha256=asset_sha256,
         license=LICENSE,
         version=version,
-        pyyaml_url=pyyaml_url,
-        pyyaml_sha256=pyyaml_sha256,
+        resources=_resources_block(),
     )
 
 

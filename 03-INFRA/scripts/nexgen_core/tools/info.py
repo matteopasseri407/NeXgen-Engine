@@ -358,3 +358,171 @@ def render_info(as_json: bool = False, vault_data: Path | None = None, show_all:
     out.append("")
 
     return "\n".join(out)
+
+
+def _bootstrap_targets(home: Path) -> list[tuple[str, Path, str]]:
+    return [
+        ("claude", home / "CLAUDE.md", "pointer"),
+        ("codex", home / ".codex" / "AGENTS.md", "mirror"),
+        ("antigravity", home / ".gemini" / "config" / "AGENTS.md", "mirror"),
+        ("opencode", home / ".config" / "opencode" / "AGENTS.md", "scope"),
+    ]
+
+
+def _instruction_state(path: Path, kind: str, vault_data: Path) -> str:
+    """Says not just whether the file is there, but whether it still tells the truth.
+
+    "Present" isn't enough: a real copy that has stopped matching the
+    canonical file is exactly the case this inventory needs to catch.
+    """
+    import hashlib
+
+    from nexgen_core.paths import canonical_instructions
+
+    canon = canonical_instructions(vault_data)
+    if not path.exists() and not path.is_symlink():
+        return "absent"
+    if path.is_symlink():
+        try:
+            target = path.resolve()
+        except OSError as exc:
+            return f"unreadable ({exc})"
+        if not target.exists():
+            return f"broken link -> {target}"
+        if kind == "scope":
+            canon_file = canon.is_file()
+            same = canon_file and target == canon.resolve()
+            return f"link -> {target}" + ("" if same else " (not the canonical bootstrap)")
+        return f"link -> {target}"
+    try:
+        body = path.read_bytes()
+    except OSError as exc:
+        return f"unreadable ({exc})"
+    if kind == "scope":
+        # V2 loads this file's content as instructions. A real file here is
+        # the private identity layer's derivative until proven otherwise:
+        # census, not diagnosis -- the doctor owns the verdict.
+        if str(canon) in body.decode("utf-8", "replace"):
+            return "real file referencing the canonical bootstrap"
+        return "real file (verify it references the canonical bootstrap)"
+    if kind == "pointer":
+        return "pointer" if str(canon) in body.decode("utf-8", "replace") else "diverged: does not name the canonical file"
+    if not canon.is_file():
+        return "real copy (canonical file doesn't exist, can't compare)"
+    same = hashlib.sha256(body).hexdigest() == hashlib.sha256(canon.read_bytes()).hexdigest()
+    return "copy aligned" if same else "diverged: real copy differs from the canonical file"
+
+
+def _native_memory_report(home: Path) -> list[tuple[str, str]]:
+    """The memories each runtime keeps on its own, alongside the Vault.
+
+    This isn't a diagnosis: it's a census, because onboarding needs to be
+    able to tell the user what already exists before proposing to adopt or
+    reset it.
+    """
+    out: list[tuple[str, str]] = []
+
+    claude_memory = home / ".claude" / "memory"
+    if claude_memory.is_dir():
+        facts = sum(1 for _ in claude_memory.rglob("*.md"))
+        out.append(("claude", t("{count} durable facts in {path}", count=facts, path=claude_memory)))
+    else:
+        out.append(("claude", t("no native memory")))
+
+    for label, path in (
+        ("codex", home / ".codex" / "sessions"),
+        ("antigravity", home / ".gemini" / "tmp"),
+    ):
+        if path.is_dir():
+            count = sum(1 for _ in path.rglob("*") if _.is_file())
+            out.append((label, t(
+                "{count} transcript files in {path} (to be distilled, not structured memory)",
+                count=count, path=path,
+            )))
+        else:
+            out.append((label, t("no transcripts")))
+
+    # OpenCode V2 keeps sessions under the XDG data dir (sqlite + sidecars);
+    # the pre-V2 `~/.opencode/storage` is only a fallback for machines that
+    # never migrated. Reporting the wrong root would census an empty room.
+    for candidate in (
+        home / ".local" / "share" / "opencode",
+        home / ".opencode" / "storage",
+    ):
+        if candidate.is_dir():
+            count = sum(1 for _ in candidate.rglob("*") if _.is_file())
+            out.append(("opencode", t(
+                "{count} transcript files in {path} (to be distilled, not structured memory)",
+                count=count, path=candidate,
+            )))
+            break
+    else:
+        out.append(("opencode", t("no transcripts")))
+
+    return out
+
+
+def inventory_lines(
+    home: Path | None = None,
+    vault_data: Path | None = None,
+    engine_root: Path | None = None,
+) -> tuple[list[str], int]:
+    """The inventory rows: what is on this machine, against what should be there.
+
+    Single owner of every inventory line: `cli/engine.py` only prints what
+    this returns, without duplicating texts or formats.
+    """
+    from nexgen_core.renderer import McpRenderer
+    from nexgen_core.skills import SkillMaterializer
+
+    effective_home = resolve_home(home)
+    effective_vault = resolve_vault_data(effective_home, vault_data)
+    effective_engine = resolve_engine_root(effective_home, engine_root)
+    problems = 0
+    lines: list[str] = []
+
+    lines.append(t(">>> MCP connectors per runtime"))
+    renderer = McpRenderer(vault_data=effective_vault, engine_root=effective_engine, home=effective_home)
+    for cli_name in ("claude", "codex", "antigravity", "opencode"):
+        servers = renderer.load_resolved_servers(cli_name)
+        names = ", ".join(sorted(servers)) if servers else t("none")
+        lazy = renderer.list_lazy_servers(cli_name)
+        lazy_part = t(" — optional, not mounted: {names}", names=", ".join(lazy)) if lazy else ""
+        lines.append(f"  {cli_name}: {len(servers)} — {names}{lazy_part}")
+
+    lines.append("\n" + t(">>> Skills: manifest compared against the materialized library"))
+    mat = SkillMaterializer(vault_data=effective_vault, engine_root=effective_engine, home=effective_home)
+    declared = mat.load_manifest()
+    materialized = [p.name for p in mat.library_dir.iterdir() if p.is_dir()] if mat.library_dir.is_dir() else []
+    extras = sorted(m for m in materialized if m not in declared)
+    missing = sorted(s for s in declared if s not in materialized)
+    lines.append(t("  {materialized} materialized, {declared} declared", materialized=len(materialized), declared=len(declared)))
+    if extras:
+        lines.append(t("  outside the manifest (kept, never deleted): {names}", names=", ".join(extras)))
+    if missing:
+        lines.append(t("  declared but not materialized yet: {names}", names=", ".join(missing)))
+        problems += 1
+
+    lines.append("\n" + t(">>> Instructions per runtime"))
+    for label, path, kind in _bootstrap_targets(effective_home):
+        state = _instruction_state(path, kind, effective_vault)
+        lines.append(f"  {label}: {state}")
+        if state.startswith("diverged"):
+            problems += 1
+
+    lines.append("\n" + t(">>> Runtimes' native memories"))
+    for label, note in _native_memory_report(effective_home):
+        lines.append(f"  {label}: {note}")
+
+    lines.append("\n" + t("Read-only: nothing was modified."))
+    return lines, (2 if problems else 0)
+
+
+def render_inventory(
+    home: Path | None = None,
+    vault_data: Path | None = None,
+    engine_root: Path | None = None,
+) -> tuple[str, int]:
+    """The inventory screen as a single text, plus its exit code."""
+    lines, code = inventory_lines(home=home, vault_data=vault_data, engine_root=engine_root)
+    return "\n".join(lines), code

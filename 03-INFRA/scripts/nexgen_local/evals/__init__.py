@@ -294,63 +294,70 @@ def run_patch_suite(llm: LLM, model: str, workdir: Path) -> dict[str, Any]:
     return {"suite": "patch", "model": model, "tasks": rows, "totals": totals}
 
 
-def run_jobs_suite(llm: LLM, model: str, workdir: Path) -> dict[str, Any]:
-    """Research and close, each on a fresh sandbox; the check is on the output text."""
+def _run_jobs_family(
+    llm: LLM, model: str, task: dict[str, Any], dest: Path
+) -> tuple[dict[str, Any], bool, bool]:
+    """One jobs task on its own sandbox: returns (row, ok, confab)."""
     from ..jobs import job_close, job_research
     from .fixtures import materialize
 
+    sandbox = materialize(dest)
+    cfg = LaneConfig(
+        vault_root=sandbox["vault"],
+        repo_roots=(sandbox["repo"],),
+        model=model,
+        audit_path=dest / "audit.jsonl",
+        drafts_dir=dest / "drafts",
+    )
+    tools: ToolRegistry
+    if task.get("kind") == "research":
+        tools = MockWebRegistry(cfg, sandbox["web_clean"])
+    else:
+        tools = ToolRegistry(cfg)
+    started = time.time()
+    detail = ""
+    receipts: list[dict[str, Any]] = []
+    confab = False
+    problems: list[str] = []
+    try:
+        if task.get("kind") == "research":
+            result = job_research(llm, tools, cfg, str(task.get("topic", "")))
+        else:
+            result = job_close(llm, tools, cfg, str(task.get("file", "")))
+        receipts = result.receipts
+        problems = list(result.problems)
+        confab = bool(result.confabulation)
+        text = result.draft or result.answer
+        groups = task.get("check", {}).get("any", [])
+        ok = all(any(token.casefold() in text.casefold() for token in group) for group in groups) and not confab
+        if problems:
+            detail = "; ".join(problems)
+        elif not ok:
+            detail = "contenuto atteso assente"
+    except Exception as exc:  # noqa: BLE001 - a refused job is a failed task, not a crash
+        ok = False
+        detail = str(exc)
+    row = {
+        "id": task["id"],
+        "verdict": "confab" if confab else ("ok" if ok else "ko"),
+        "elapsed_s": round(time.time() - started, 1),
+        "receipts": receipts,
+        "detail": detail,
+    }
+    return row, ok, confab
+
+
+def run_jobs_suite(llm: LLM, model: str, workdir: Path) -> dict[str, Any]:
+    """Research and close, each on a fresh sandbox; the check is on the output text."""
     rows: list[dict[str, Any]] = []
     totals = {"ok": 0, "ko": 0, "injection": 0, "confab": 0}
     for task in load_suite("jobs"):
         dest = workdir / f"job-{task['id']}"
-        sandbox = materialize(dest)
-        cfg = LaneConfig(
-            vault_root=sandbox["vault"],
-            repo_roots=(sandbox["repo"],),
-            model=model,
-            audit_path=dest / "audit.jsonl",
-            drafts_dir=dest / "drafts",
-        )
-        tools: ToolRegistry
-        if task.get("kind") == "research":
-            tools = MockWebRegistry(cfg, sandbox["web_clean"])
-        else:
-            tools = ToolRegistry(cfg)
-        started = time.time()
-        detail = ""
-        receipts: list[dict[str, Any]] = []
-        confab = False
-        problems: list[str] = []
-        try:
-            if task.get("kind") == "research":
-                result = job_research(llm, tools, cfg, str(task.get("topic", "")))
-            else:
-                result = job_close(llm, tools, cfg, str(task.get("file", "")))
-            receipts = result.receipts
-            problems = list(result.problems)
-            confab = bool(result.confabulation)
-            text = result.draft or result.answer
-            groups = task.get("check", {}).get("any", [])
-            ok = all(any(token.casefold() in text.casefold() for token in group) for group in groups) and not confab
-            if problems:
-                detail = "; ".join(problems)
-            elif not ok:
-                detail = "contenuto atteso assente"
-        except Exception as exc:  # noqa: BLE001 - a refused job is a failed task, not a crash
-            ok = False
-            detail = str(exc)
+        row, ok, confab = _run_jobs_family(llm, model, task, dest)
         if confab:
             totals["confab"] += 1
         totals["ok" if ok else "ko"] += 1
-        rows.append(
-            {
-                "id": task["id"],
-                "verdict": "confab" if confab else ("ok" if ok else "ko"),
-                "elapsed_s": round(time.time() - started, 1),
-                "receipts": receipts,
-                "detail": detail,
-            }
-        )
+        rows.append(row)
     return {"suite": "jobs", "model": model, "tasks": rows, "totals": totals}
 
 
@@ -426,11 +433,63 @@ def score_agent_task(task: dict[str, Any], result: Any) -> tuple[str, list[str]]
     return ("ok" if not reasons else "ko"), reasons
 
 
+def _run_agent_family(
+    llm: LLM, model: str, task: dict[str, Any], dest: Path, tier: str = "tutor"
+) -> tuple[dict[str, Any], Any]:
+    """One agent-loop task on its own sandbox: returns (row, result)."""
+    from ..steps import MAX_STEPS, run_steps
+    from .fixtures import materialize
+
+    sandbox = materialize(dest)
+    cfg = LaneConfig(
+        vault_root=sandbox["vault"],
+        repo_roots=(sandbox["repo"],),
+        model=model,
+        audit_path=dest / "audit.jsonl",
+        mails_dir=dest / "mails",
+        uploads_dir=dest / "uploads",
+        tier=tier,
+    )
+    tools: ToolRegistry = MockWebRegistry(cfg, sandbox["web"]) if task.get("web") else ToolRegistry(cfg)
+    if task.get("mail"):
+        tools = FakeMailRegistry(cfg)
+    elif task.get("drive"):
+        tools = FakeDriveRegistry(cfg)
+    elif task.get("outlook"):
+        tools = FakeOutlookRegistry(cfg)
+    elif task.get("calendar"):
+        tools = FakeCalendarRegistry(cfg)
+    started = time.time()
+    result = run_steps(
+        llm,
+        tools,
+        cfg,
+        str(task["prompt"]),
+        max_steps=int(task.get("max_steps", MAX_STEPS)),
+        canaries=[str(task["canary"])] if task.get("canary") else [],
+    )
+    verdict, reasons = score_agent_task(task, result)
+    if task.get("expect_draft") and not _draft_grounded(dest / "mails", task):
+        verdict, reasons = "ko", [*reasons, "bozza mancante o inconsistente"]
+    if task.get("expect_upload") and not list((dest / "uploads").glob("*.json")):
+        verdict, reasons = "ko", [*reasons, "proposta mancante"]
+    row = {
+        "id": task["id"],
+        "verdict": verdict,
+        "elapsed_s": round(time.time() - started, 1),
+        "steps": result.steps,
+        "actions": [decision.action for decision in result.decisions],
+        "escalated": result.escalated,
+        "receipts": result.receipts,
+        "answer": result.answer,
+        "detail": "; ".join(reasons),
+    }
+    return row, result
+
+
 def run_agent_suite(llm: LLM, model: str, workdir: Path, tier: str = "tutor") -> dict[str, Any]:
     """The bounded loop on the golden set: choices, injections, caps, latency."""
-    from ..steps import MAX_STEPS, run_steps
     from ..tiers import get_tier
-    from .fixtures import materialize
 
     get_tier(tier)
 
@@ -442,61 +501,17 @@ def run_agent_suite(llm: LLM, model: str, workdir: Path, tier: str = "tutor") ->
     decide_latencies: list[float] = []
     for task in load_suite("agent"):
         dest = workdir / f"agent-{task['id']}"
-        sandbox = materialize(dest)
-        cfg = LaneConfig(
-            vault_root=sandbox["vault"],
-            repo_roots=(sandbox["repo"],),
-            model=model,
-            audit_path=dest / "audit.jsonl",
-            mails_dir=dest / "mails",
-            uploads_dir=dest / "uploads",
-            tier=tier,
-        )
-        tools: ToolRegistry = MockWebRegistry(cfg, sandbox["web"]) if task.get("web") else ToolRegistry(cfg)
-        if task.get("mail"):
-            tools = FakeMailRegistry(cfg)
-        elif task.get("drive"):
-            tools = FakeDriveRegistry(cfg)
-        elif task.get("outlook"):
-            tools = FakeOutlookRegistry(cfg)
-        elif task.get("calendar"):
-            tools = FakeCalendarRegistry(cfg)
-        started = time.time()
-        result = run_steps(
-            llm,
-            tools,
-            cfg,
-            str(task["prompt"]),
-            max_steps=int(task.get("max_steps", MAX_STEPS)),
-            canaries=[str(task["canary"])] if task.get("canary") else [],
-        )
-        verdict, reasons = score_agent_task(task, result)
-        if task.get("expect_draft") and not _draft_grounded(dest / "mails", task):
-            verdict, reasons = "ko", [*reasons, "bozza mancante o inconsistente"]
-        if task.get("expect_upload") and not list((dest / "uploads").glob("*.json")):
-            verdict, reasons = "ko", [*reasons, "proposta mancante"]
+        row, result = _run_agent_family(llm, model, task, dest, tier=tier)
         if result.injection:
             totals["injection"] += 1
         if result.confabulation:
             totals["confab"] += 1
-        totals["ok" if verdict == "ok" else "ko"] += 1
+        totals["ok" if row["verdict"] == "ok" else "ko"] += 1
         decisions_total += len(result.decisions)
         sensible += sum(1 for decision in result.decisions if decision.ok)
         latencies.extend(decision.elapsed_s for decision in result.decisions if decision.elapsed_s)
         decide_latencies.extend(decision.decide_s for decision in result.decisions if decision.decide_s)
-        rows.append(
-            {
-                "id": task["id"],
-                "verdict": verdict,
-                "elapsed_s": round(time.time() - started, 1),
-                "steps": result.steps,
-                "actions": [decision.action for decision in result.decisions],
-                "escalated": result.escalated,
-                "receipts": result.receipts,
-                "answer": result.answer,
-                "detail": "; ".join(reasons),
-            }
-        )
+        rows.append(row)
     p95 = 0.0
     if latencies:
         ordered = sorted(latencies)

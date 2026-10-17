@@ -193,3 +193,27 @@ def test_finished_seat_releases_only_itself(
     thread_a.join(timeout=15)
     thread_b.join(timeout=15)
     assert session._LIVE_PROCS == {}
+
+
+class ExitedLauncher:
+    """Launcher gia' uscito: poll() risponde, nessun gruppo di processo (Windows)."""
+
+    pid = 4242
+
+    def poll(self):
+        return 0
+
+
+def test_stop_one_proc_tree_kills_after_the_windows_launcher_exited(monkeypatch):
+    """Ricognizione 6: su Windows `_council_process_group` non esiste, quindi
+    un launcher gia' uscito faceva saltare il tree-kill e i suoi figli
+    restavano vivi (stessa famiglia di MUST-04)."""
+    import types
+
+    stopped: list = []
+    monkeypatch.setattr(session, "os", types.SimpleNamespace(name="nt"))
+    monkeypatch.setattr(session, "_force_stop_process_tree", lambda proc: stopped.append(proc))
+
+    session._stop_one_proc(ExitedLauncher())
+
+    assert stopped, "il tree-kill deve partire anche con il launcher gia' uscito"

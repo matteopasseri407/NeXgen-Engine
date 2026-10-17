@@ -26,6 +26,8 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
+from nexgen_core.processes import windows_command_argv
+
 from .config import LaneConfig
 from .tools import audit_event
 
@@ -192,7 +194,7 @@ def _inside_roots(cfg: LaneConfig, path: str) -> bool:
     return False
 
 
-def _argv(cli: str, model: str, prompt_file: Path, output_file: Path) -> tuple[list[str], str | None]:
+def _build_argv(cli: str, model: str, prompt_file: Path, output_file: Path) -> tuple[list[str], str | None]:
     """Return (argv, stdin_text); opencode takes the prompt as an attachment."""
     if cli == "claude":
         argv = [
@@ -213,7 +215,7 @@ def _argv(cli: str, model: str, prompt_file: Path, output_file: Path) -> tuple[l
     raise RelayError(f"CLI non supportato in v0: {cli} (supportati: {', '.join(RELAY_CLIS)})")
 
 
-def _extract(cli: str, stdout: str, output_file: Path) -> str:
+def _extract_result(cli: str, stdout: str, output_file: Path) -> str:
     if cli == "claude":
         try:
             payload = json.loads(stdout)
@@ -233,6 +235,11 @@ def _extract(cli: str, stdout: str, output_file: Path) -> str:
     # opencode: plain text with progress lines and ANSI escapes
     lines = [line for line in ANSI_RE.sub("", stdout).splitlines() if not line.startswith("> ")]
     return "\n".join(lines).strip()
+
+
+# Nomi storici come alias senza logica duplicata.
+_argv = _build_argv
+_extract = _extract_result
 
 
 def run_relay(
@@ -277,26 +284,22 @@ def run_relay(
         prompt_file = workdir / "prompt.txt"
         prompt_file.write_text(full_prompt, encoding="utf-8")
         output_file = workdir / "answer.txt"
-        argv, stdin_text = _argv(cli, model, prompt_file, output_file)
+        argv, stdin_text = _build_argv(cli, model, prompt_file, output_file)
 
         started = time.time()
         try:
-            proc = subprocess.run(
-                argv,
-                input=stdin_text,
-                capture_output=True,
-                text=True, encoding="utf-8", errors="replace",
-                timeout=timeout,
-                env=_isolated_env(cli, workdir),
-                cwd=workdir,
-            )
+            # A Windows .cmd shim (npx, codex) is not an executable on its own:
+            # the helper resolves it, or through cmd.exe it will not start.
+            proc = subprocess.run(windows_command_argv(argv), input=stdin_text, capture_output=True,
+                                  text=True, encoding="utf-8", errors="replace", timeout=timeout,
+                                  env=_isolated_env(cli, workdir), cwd=workdir)
         except subprocess.TimeoutExpired as exc:
             audit_event(cfg, "relay", {"cli": cli, "model": model, "timeout": timeout}, ok=False, chars=0)
             raise RelayError(f"{cli} non ha risposto entro {timeout}s") from exc
         except OSError as exc:
             raise RelayError(f"{cli} non eseguibile: {exc}") from exc
 
-        answer = _extract(cli, proc.stdout, output_file)
+        answer = _extract_result(cli, proc.stdout, output_file)
         if len(answer) > MAX_OUTPUT:
             answer = answer[:MAX_OUTPUT] + "\n[...troncato]"
             truncated = True

@@ -13,20 +13,7 @@ def _toml_key(name: str) -> str:
     return name if re.fullmatch(r"[A-Za-z0-9_-]+", name) else json.dumps(name)
 
 
-def render(renderer, write: bool = False) -> tuple[bool, str]:
-    """Generates Codex's native MCP configuration (~/.codex/config.toml).
-
-    Additive like the other three CLIs: an existing server that is not in
-    the manifest is preserved verbatim, and one that is env-gated but not
-    resolvable right now (e.g. the recurring guard running without the
-    user's shell environment) keeps the entry already on disk instead of
-    deleting it. Only `retired_servers` remove entries; manifest servers
-    are always re-emitted fresh.
-    """
-    servers = renderer.load_resolved_servers("codex")
-    cfg_file = codex_config(renderer.home)
-
-    retired = renderer.retired_server_names()
+def _managed_sets(renderer, servers, retired) -> tuple[set, set]:
     normalized: dict[str, str] = {}
     for name in list(servers):
         safe = name.replace("-", "_")
@@ -42,7 +29,10 @@ def render(renderer, write: bool = False) -> tuple[bool, str]:
         for name in renderer.unmounted_server_names(servers, "codex")
     }
     managed = {name.replace("-", "_") for name in servers} | {name.replace("-", "_") for name in retired}
+    return unmounted, managed
 
+
+def _load_previous(cfg_file, managed, unmounted):
     existing_lines: list[str] = []
     # Kept sections grouped by name, so each one can be emitted at a fixed
     # place whatever the environment resolved this time (see below).
@@ -76,7 +66,10 @@ def render(renderer, write: bool = False) -> tuple[bool, str]:
                     preserved[section].append(line)
         except (OSError, ValueError) as exc:
             raise ValueError("Cannot read or parse the Codex configuration; original preserved.") from exc
+    return existing_lines, preserved, previous
 
+
+def _build_content(renderer, servers, existing_lines, preserved):
     header = "# NeXgen Engine - Codex MCP configuration, auto-generated"
     lines: list[str] = []
     if existing_lines:
@@ -110,6 +103,10 @@ def render(renderer, write: bool = False) -> tuple[bool, str]:
 
     content = "\n".join(lines).strip() + "\n"
     generated = tomllib.loads(content)
+    return content, generated
+
+
+def _validate_unchanged(generated, previous, managed, unmounted) -> None:
     # The line-preserving edit must also preserve the parsed meaning.
     # Unusual valid TOML layouts may be refused, never silently rewritten
     # into different settings or a missing private connector.
@@ -122,6 +119,25 @@ def render(renderer, write: bool = False) -> tuple[bool, str]:
         if (key.replace("-", "_") not in managed and key.replace("-", "_") not in unmounted
                 and generated.get("mcp_servers", {}).get(key) != value):
             raise ValueError("Codex rendering would change an unmanaged connector; original preserved.")
+
+
+def render(renderer, write: bool = False) -> tuple[bool, str]:
+    """Generates Codex's native MCP configuration (~/.codex/config.toml).
+
+    Additive like the other three CLIs: an existing server that is not in
+    the manifest is preserved verbatim, and one that is env-gated but not
+    resolvable right now (e.g. the recurring guard running without the
+    user's shell environment) keeps the entry already on disk instead of
+    deleting it. Only `retired_servers` remove entries; manifest servers
+    are always re-emitted fresh.
+    """
+    servers = renderer.load_resolved_servers("codex")
+    cfg_file = codex_config(renderer.home)
+    retired = renderer.retired_server_names()
+    unmounted, managed = _managed_sets(renderer, servers, retired)
+    existing_lines, preserved, previous = _load_previous(cfg_file, managed, unmounted)
+    content, generated = _build_content(renderer, servers, existing_lines, preserved)
+    _validate_unchanged(generated, previous, managed, unmounted)
     if write:
         renderer._backup_and_write(cfg_file, content)
     return True, t("Codex configuration updated")

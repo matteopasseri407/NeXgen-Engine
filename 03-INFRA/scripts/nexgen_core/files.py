@@ -95,12 +95,18 @@ def _atomic_publish(
     try:
         opened = os.fdopen(fd, "wb") if binary else os.fdopen(fd, "w", encoding="utf-8", newline=newline)
         with opened as handle:
-            if old_mode is not None:
-                os.chmod(tmp, old_mode)
             handle.write(payload)
             handle.flush()
             os.fsync(handle.fileno())
+        # Windows refuses to replace a read-only file and refuses to delete one:
+        # the write bit is cleared for the swap and the original mode is put
+        # back on the published file, so nothing read-only stays read-only by
+        # accident (the temporary stays writable until it is gone).
+        if old_mode is not None and not old_mode & 0o200:
+            os.chmod(path, old_mode | 0o200)
         _retry_permission_error(lambda: os.link(tmp, path) if exclusive else os.replace(tmp, path))
+        if old_mode is not None:
+            os.chmod(path, old_mode)
         # Some filesystems (and Windows) do not support directory fsync.
         with contextlib.suppress(OSError):
             dir_fd = os.open(path.parent, os.O_RDONLY)
@@ -205,8 +211,8 @@ def _is_clean_vs_head(path: Path) -> bool:
         return False
 
 
-def backup_file(path: Path, *, tag: str | None = None, keep: int | None = None,
-                text: str | None = None, skip_if_committed: bool = False) -> Path | None:
+def _backup_file_impl(path: Path, *, tag: str | None = None, keep: int | None = None,
+                       text: str | None = None, skip_if_committed: bool = False) -> Path | None:
     """Timestamped copy of an EXISTING file, made BEFORE any write.
 
     Every incident that justified this package started with a config file
@@ -260,6 +266,12 @@ def backup_file(path: Path, *, tag: str | None = None, keep: int | None = None,
     return backup_path
 
 
+def backup_file(path: Path, *, tag: str | None = None, keep: int | None = None,
+                text: str | None = None, skip_if_committed: bool = False) -> Path | None:
+    """Delega a :func:`_backup_file_impl`; firma e comportamento invariati."""
+    return _backup_file_impl(path, tag=tag, keep=keep, text=text, skip_if_committed=skip_if_committed)
+
+
 def _prune_backups(path: Path, safe_tag: str | None, keep: int) -> None:
     """Drops rotated-out backups, oldest first. Runs only after the new
     content is safely on disk: pruning before a write that then fails
@@ -272,7 +284,7 @@ def _prune_backups(path: Path, safe_tag: str | None, keep: int) -> None:
         old.unlink(missing_ok=True)
 
 
-def write_text_if_changed(
+def _write_text_if_changed_impl(
     path: Path, text: str, *, tag: str | None = None, keep: int | None = None,
     skip_if_committed: bool = False,
 ) -> bool:
@@ -305,8 +317,20 @@ def write_text_if_changed(
             # Unreadable for permissions: the write below would fail too,
             # but with the original already backed up. Let it surface there.
             pass
-    backup_file(path, tag=tag, skip_if_committed=skip_if_committed)
+    # The clean-vs-HEAD proof must be taken on the file that is written
+    # (`target`), not on the link: a committed link is "clean" even while the
+    # real file it points to has uncommitted edits.
+    if not (skip_if_committed and _is_clean_vs_head(target)):
+        backup_file(path, tag=tag)
     atomic_write_text(target, text)
     if keep is not None:
         _prune_backups(path, _safe_tag(tag), keep)
     return True
+
+
+def write_text_if_changed(
+    path: Path, text: str, *, tag: str | None = None, keep: int | None = None,
+    skip_if_committed: bool = False,
+) -> bool:
+    """Delega a :func:`_write_text_if_changed_impl`; firma e comportamento invariati."""
+    return _write_text_if_changed_impl(path, text, tag=tag, keep=keep, skip_if_committed=skip_if_committed)

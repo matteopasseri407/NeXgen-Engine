@@ -18,6 +18,8 @@ from pathlib import Path
 
 import pytest
 
+from conftest import install_engine_layer
+
 REPO = Path(__file__).resolve().parents[3]
 LEAK_DIR = REPO / "03-INFRA" / "agent-universal-layer" / "leak-scan"
 
@@ -209,6 +211,33 @@ def test_vault_push_exits_nonzero_when_the_work_was_moved_to_quarantine(tmp_path
     assert "durable note" not in _git(clone, "show", "origin/main:note.md").stdout
 
 
+def test_vault_push_refuses_a_detached_head_before_committing(tmp_path, monkeypatch):
+    """A detached HEAD has no branch. Committing there made an orphan that no
+    branch points at, and the push then compared the wrong branch, skipped the
+    push and still reported success. Refuse before anything is committed."""
+    from nexgen_core.publisher import Publisher
+
+    monkeypatch.setenv("AGENT_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.delenv("KNOWLEDGE_VAULT_BRANCH", raising=False)
+    remote = tmp_path / "remote.git"
+    subprocess.run(["git", "init", "--bare", "-b", "main", str(remote)], check=True, capture_output=True)
+    clone = _configured_clone(remote, tmp_path / "clone")
+    (clone / "note.md").write_text("base\n", encoding="utf-8")
+    _git(clone, "add", "-A")
+    _git(clone, "commit", "-m", "base")
+    _git(clone, "push", "origin", "HEAD:main")
+    _git(clone, "checkout", "--detach")
+    head_before = _git(clone, "rev-parse", "HEAD").stdout.strip()
+    (clone / "note.md").write_text("work written on a detached HEAD\n", encoding="utf-8")
+
+    code, message = Publisher(vault_data=clone).publish()
+
+    assert code != 0
+    assert "HEAD is detached" in message
+    assert _git(clone, "rev-parse", "HEAD").stdout.strip() == head_before
+    assert "work written on a detached HEAD" not in _git(clone, "show", "origin/main:note.md").stdout
+
+
 # ----------------------------------------------------------------- doctor
 
 
@@ -365,6 +394,28 @@ def test_leak_scan_recognizes_the_keys_of_common_providers(provider, template):
     assert any(f.blocking for f in findings), f"{provider} slipped through in: {template}"
 
 
+def test_leak_scan_reads_an_added_line_that_starts_with_plus_signs():
+    """An added line whose content begins with '++' shows in the diff as
+    '+++...'. It is content, not a file header, so it must be scanned and
+    must advance the line counter (the finding has to name its true line)."""
+    leak_scan = _load_leak_scan()
+    patterns, allow = leak_scan.load_patterns(LEAK_DIR / "leak_patterns.yaml")
+    token = _synthetic_tokens()["anthropic"]
+    diff = (
+        "diff --git a/notes.env b/notes.env\n"
+        "new file mode 100644\n"
+        "--- /dev/null\n"
+        "+++ b/notes.env\n"
+        "@@ -0,0 +1,2 @@\n"
+        "+first line\n"
+        f"+++API_KEY={token}\n"
+    )
+    units = leak_scan.parse_added_lines(diff, "")
+    findings = leak_scan.scan_units(units, patterns, allow, [])
+    blocking = [f for f in findings if f.blocking]
+    assert [(f.label, f.lineno) for f in blocking] == [("notes.env", 2)]
+
+
 # --------------------------------------------------------------- whole cycle
 
 
@@ -374,6 +425,7 @@ def test_applying_twice_changes_nothing_but_machine_state(sandbox, monkeypatch):
     from nexgen_core.guard import GuardMode, GuardRunner
 
     monkeypatch.setenv("KNOWLEDGE_VAULT_REMOTE", "local")
+    install_engine_layer(sandbox.home)  # a real cycle needs the engine layer its modules phase reads
 
     def apply_once():
         return GuardRunner(vault_data=sandbox.vault, home=sandbox.home).run(mode=GuardMode.APPLY, allow_offline=True)

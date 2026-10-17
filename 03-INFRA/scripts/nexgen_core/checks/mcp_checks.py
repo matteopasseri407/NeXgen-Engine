@@ -28,6 +28,92 @@ from nexgen_core.report import CheckOutcome, Severity
 logger = logging.getLogger("nexgen.checks.mcp")
 
 
+# ---------------------------------------------------------------------------
+# SHARED helpers (cross-domain: executable deps and orphans allowlist)
+# ---------------------------------------------------------------------------
+
+def _command_resolves(command: str, home: Path) -> bool:
+    """Whether a CLI could actually start this command: on PATH, or a file that exists."""
+    if not command:
+        return False
+    expanded = Path(command).expanduser()
+    if expanded.is_absolute() or "/" in command or "\\" in command:
+        return expanded.is_file()
+    return shutil.which(command) is not None
+
+
+def _allowlist_from_raw(raw: dict | None, manifest_path: Path, *, coerce: bool = False) -> set[str]:
+    """Shared parsing of the manifest's own `orphans_allowlist` key.
+
+    Cross-domain helper used by both the MCP and the skills checks: an entry
+    is either a bare name (exempt everywhere) or `cli:name` (exempt on that
+    CLI only). Anything malformed is ignored, never fatal: an allowlist must
+    not become a second way to break the manifest. With `coerce=False`
+    (MCP spelling) only non-empty strings are kept and the rest is warned
+    about; with `coerce=True` (skills spelling) entries are stringified
+    first, preserving the historical skills behaviour byte for byte.
+    """
+    entries = (raw or {}).get("orphans_allowlist")
+    if not isinstance(entries, list):
+        return set()
+    allowed: set[str] = set()
+    for entry in entries:
+        if coerce:
+            text = str(entry).strip()
+            if text:
+                allowed.add(text)
+        elif isinstance(entry, str) and entry.strip():
+            allowed.add(entry.strip())
+        else:
+            logger.warning("Ignoring invalid orphans_allowlist entry in %s: %r", manifest_path, entry)
+    return allowed
+
+
+def _collect_dep_problems(
+    entries: dict | None, state_dir: Path, *, label: Callable[[str], str] | None = None
+) -> list[str]:
+    """Shared verification loop for declared `deps:` blocks.
+
+    Cross-domain helper used by both the MCP and the skills checks:
+    verification only, never installs. Each entry holding a dict `deps:`
+    is checked offline-safe via `ensure_deps(..., install=False)`; the
+    `label` maps the entry name to the `server` label `ensure_deps`
+    reports (MCP passes the bare name, skills pass `skill <name>`).
+    Returns `"<name>: <error>"` strings in manifest order.
+    """
+    from nexgen_core.provision import ensure_deps
+
+    problems: list[str] = []
+    for name, entry in (entries or {}).items():
+        deps = entry.get("deps")
+        if not isinstance(deps, dict):
+            continue
+        server = label(name) if label is not None else name
+        _, error = ensure_deps(deps, state_dir, install=False, server=server)
+        if error:
+            problems.append(f"{name}: {error}")
+    return problems
+
+
+def _orphans_allowlist(manifest_path: Path) -> set[str]:
+    """Names the user declared as legitimate outside-the-manifest entries.
+
+    Read from the manifest's own `orphans_allowlist` key, because the
+    manifest is the one canonical declaration the vault carries: an allow
+    decision belongs next to the declarations it exempts. An entry is either
+    a bare server name (exempt on every CLI) or `cli:name` (exempt on that
+    CLI only). Anything malformed is ignored with a warning, never fatal:
+    an allowlist must not become a second way to break the manifest.
+    """
+    try:
+        data = load_mcp_manifest(manifest_path)
+    except Exception:  # noqa: BLE001 - check failure is reported, never raises
+        return set()
+    return _allowlist_from_raw(data.get("raw"), manifest_path)
+
+
+# ---- Manifest validity -----------------------------------------------------
+
 def check_mcp_manifest(manifest_path: Path) -> CheckOutcome:
     """Check that mcp/manifest.yaml exists and is valid."""
     if not manifest_path.is_file():
@@ -54,6 +140,8 @@ def check_mcp_manifest(manifest_path: Path) -> CheckOutcome:
             action=t("Fix the syntax of mcp/manifest.yaml."),
         )
 
+
+# ---- Rendered-config readers (per-CLI server names) -------------------------
 
 def _rendered_names_claude_style(path: Path) -> set[str]:
     """Server names for Claude and Antigravity: both write `mcpServers`
@@ -130,6 +218,8 @@ def _expected_and_rendered(renderer: McpRenderer, cli: str, path: Path) -> tuple
         return f"{cli} (unreadable config: {exc})", expected, set()
     return None, expected, rendered
 
+
+# ---- Rendered-config drift (expected vs rendered names) ---------------------
 
 def check_mcp_configs_rendered(vault_data: Path, home: Path) -> CheckOutcome:
     """Compares, for each CLI, the set of servers expected by the manifest
@@ -228,6 +318,8 @@ def check_mcp_configs_rendered(vault_data: Path, home: Path) -> CheckOutcome:
     )
 
 
+# ---- Content-drift helpers (server tables) -----------------------------------
+
 #: Where each CLI keeps its server table inside its parsed config.
 _SERVER_TABLE_PATH: dict[str, tuple[str, ...]] = {
     "claude": ("mcpServers",),
@@ -256,6 +348,8 @@ def _changed_server_names(cli: str, old_text: str, new_text: str) -> list[str]:
     old, new = _server_table(cli, old_text), _server_table(cli, new_text)
     return sorted(name for name in old.keys() | new.keys() if old.get(name) != new.get(name))
 
+
+# ---- Antigravity fanout --------------------------------------------------------
 
 def check_antigravity_fanout(vault_data: Path, home: Path) -> CheckOutcome:
     """Every folder Antigravity reads its MCP servers from must hold the canonical file.
@@ -317,6 +411,8 @@ def check_antigravity_fanout(vault_data: Path, home: Path) -> CheckOutcome:
         remedy=remedy,
     )
 
+
+# ---- Content drift (would apply change anything) ------------------------------
 
 def check_mcp_content_drift(vault_data: Path, home: Path, engine_root: Path | None = None) -> CheckOutcome:
     """Would `apply` change what a CLI actually launches?
@@ -383,6 +479,8 @@ def check_mcp_content_drift(vault_data: Path, home: Path, engine_root: Path | No
     )
 
 
+# ---- Trials -------------------------------------------------------------------
+
 def check_mcp_trials() -> CheckOutcome:
     """Servers on trial here: fine for a day, a leftover if they are still around."""
     from nexgen_core import mcp_trials
@@ -398,6 +496,8 @@ def check_mcp_trials() -> CheckOutcome:
         action=t("Keep one with 'nexgen mcp promote <name>' or end it with 'nexgen mcp drop <name>'; they end by themselves anyway."),
     )
 
+
+# ---- Placement (static gateway check) -----------------------------------------
 
 def check_mcp_placement(vault_data: Path) -> CheckOutcome | None:
     """Is every CLI's gateway mounted where servers are routed behind it, and every `exposure` one we know?
@@ -427,15 +527,7 @@ def check_mcp_placement(vault_data: Path) -> CheckOutcome | None:
                         message=t("Every CLI's gateway is mounted where servers are routed behind it"))
 
 
-def _command_resolves(command: str, home: Path) -> bool:
-    """Whether a CLI could actually start this command: on PATH, or a file that exists."""
-    if not command:
-        return False
-    expanded = Path(command).expanduser()
-    if expanded.is_absolute() or "/" in command or "\\" in command:
-        return expanded.is_file()
-    return shutil.which(command) is not None
-
+# ---- Commands (executable programs) -------------------------------------------
 
 def check_mcp_commands(vault_data: Path, home: Path) -> CheckOutcome:
     """Does every server a CLI is told to start have a program to start?
@@ -472,6 +564,8 @@ def check_mcp_commands(vault_data: Path, home: Path) -> CheckOutcome:
     )
 
 
+# ---- Dependencies (declared deps) ------------------------------------------------
+
 def check_mcp_deps(manifest_path: Path, state_dir: Path) -> CheckOutcome:
     """Offline-safe check that every server declaring `deps:` is satisfiable.
 
@@ -489,16 +583,7 @@ def check_mcp_deps(manifest_path: Path, state_dir: Path) -> CheckOutcome:
             message=t("The MCP manifest could not be read, so declared dependencies were not checked."),
         )
 
-    from nexgen_core.provision import ensure_deps
-
-    problems: list[str] = []
-    for name, srv in (data.get("servers") or {}).items():
-        deps = srv.get("deps")
-        if not isinstance(deps, dict):
-            continue
-        _, error = ensure_deps(deps, state_dir, install=False, server=name)
-        if error:
-            problems.append(f"{name}: {error}")
+    problems = _collect_dep_problems(data.get("servers"), state_dir)
 
     if not problems:
         return CheckOutcome(
@@ -514,32 +599,7 @@ def check_mcp_deps(manifest_path: Path, state_dir: Path) -> CheckOutcome:
     )
 
 
-def _orphans_allowlist(manifest_path: Path) -> set[str]:
-    """Names the user declared as legitimate outside-the-manifest entries.
-
-    Read from the manifest's own `orphans_allowlist` key, because the
-    manifest is the one canonical declaration the vault carries: an allow
-    decision belongs next to the declarations it exempts. An entry is either
-    a bare server name (exempt on every CLI) or `cli:name` (exempt on that
-    CLI only). Anything malformed is ignored with a warning, never fatal:
-    an allowlist must not become a second way to break the manifest.
-    """
-    try:
-        data = load_mcp_manifest(manifest_path)
-    except Exception:  # noqa: BLE001 - check failure is reported, never raises
-        return set()
-    raw = data.get("raw") or {}
-    entries = raw.get("orphans_allowlist")
-    if not isinstance(entries, list):
-        return set()
-    allowed: set[str] = set()
-    for entry in entries:
-        if isinstance(entry, str) and entry.strip():
-            allowed.add(entry.strip())
-        else:
-            logger.warning("Ignoring invalid orphans_allowlist entry in %s: %r", manifest_path, entry)
-    return allowed
-
+# ---- Orphans (configured outside the manifest) -----------------------------------
 
 def check_mcp_orphans(vault_data: Path, home: Path) -> CheckOutcome:
     """Servers configured in a CLI but not declared in the manifest.
@@ -613,6 +673,8 @@ def check_mcp_orphans(vault_data: Path, home: Path) -> CheckOutcome:
     )
 
 
+# ---- Desktop allowlist ----------------------------------------------------------
+
 def check_desktop_allowlist(vault_data: Path, home: Path) -> CheckOutcome:
     """Manifest-known servers live in the Desktop app without being allowed.
 
@@ -674,6 +736,8 @@ def check_desktop_allowlist(vault_data: Path, home: Path) -> CheckOutcome:
         message=t("Every manifest server in Claude Desktop carries the Desktop allow flag"),
     )
 
+
+# ---- Unresolved secret references ------------------------------------------------
 
 _EXACT_REF_RE = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
 

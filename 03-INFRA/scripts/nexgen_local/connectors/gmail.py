@@ -13,8 +13,11 @@ never a false "no mail".
 from __future__ import annotations
 
 import base64
+import re
 import urllib.parse
 import urllib.request
+from email.message import EmailMessage
+from email.policy import SMTP
 from typing import Any
 
 from .auth import HttpFn, _default_http
@@ -23,11 +26,18 @@ from . import ConnectorError
 _API = "https://gmail.googleapis.com/gmail/v1/users/me"
 
 
-def _get(url: str, http: HttpFn, auth_http: HttpFn | None) -> Any:
+def _call_backend(
+    req: urllib.request.Request,
+    http: HttpFn,
+    auth_http: HttpFn | None,
+    *,
+    ok_statuses: tuple[int, ...],
+    failure_label: str,
+) -> bytes:
+    """Unico punto di uscita HTTP: token, chiamata singola, errori chiari."""
     from . import auth as _auth  # local import: keeps cold paths dependency-free
 
     token = _auth.access_token(auth_http)
-    req = urllib.request.Request(url, method="GET")
     req.add_header("Authorization", f"Bearer {token}")
     try:
         result = http(req, 60)
@@ -35,12 +45,21 @@ def _get(url: str, http: HttpFn, auth_http: HttpFn | None) -> Any:
         raise ConnectorError(f"(gmail non raggiungibile: {exc})") from exc
     if result.status == 401:
         raise ConnectorError("(gmail: accesso scaduto o revocato, serve un nuovo login)")
-    if result.status != 200:
-        raise ConnectorError(f"(gmail: ricerca fallita: HTTP {result.status})")
+    if result.status not in ok_statuses:
+        raise ConnectorError(f"{failure_label}: HTTP {result.status})")
+    return result.body
+
+
+# ---------------- READ: ricerca e lettura, mai invii ----------------
+
+
+def _get(url: str, http: HttpFn, auth_http: HttpFn | None) -> Any:
+    req = urllib.request.Request(url, method="GET")
+    body = _call_backend(req, http, auth_http, ok_statuses=(200,), failure_label="(gmail: ricerca fallita")
     import json
 
     try:
-        return json.loads(result.body.decode("utf-8", errors="replace"))
+        return json.loads(body.decode("utf-8", errors="replace"))
     except ValueError as exc:
         raise ConnectorError("(gmail: risposta illeggibile dal provider)") from exc
 
@@ -163,36 +182,46 @@ def get_message(mid: str, http: HttpFn | None = None) -> dict[str, Any]:
     }
 
 
-def _post(path: str, payload: dict[str, Any], http: HttpFn, auth_http: HttpFn | None) -> dict[str, Any]:
-    from . import auth as _auth
+# ---------------- SEND: invio e risposta, solo qui ----------------
 
-    token = _auth.access_token(auth_http)
+
+def _post(path: str, payload: dict[str, Any], http: HttpFn, auth_http: HttpFn | None) -> dict[str, Any]:
     import json
 
     req = urllib.request.Request(f"{_API}{path}", data=json.dumps(payload).encode("utf-8"), method="POST")
-    req.add_header("Authorization", f"Bearer {token}")
     req.add_header("Content-Type", "application/json")
+    body = _call_backend(
+        req, http, auth_http, ok_statuses=(200, 201), failure_label="(gmail: invio fallito"
+    )
     try:
-        result = http(req, 60)
-    except OSError as exc:
-        raise ConnectorError(f"(gmail non raggiungibile: {exc})") from exc
-    if result.status == 401:
-        raise ConnectorError("(gmail: accesso scaduto o revocato, serve un nuovo login)")
-    if result.status not in (200, 201):
-        raise ConnectorError(f"(gmail: invio fallito: HTTP {result.status})")
-    try:
-        data = json.loads(result.body.decode("utf-8", errors="replace"))
+        data = json.loads(body.decode("utf-8", errors="replace"))
     except ValueError as exc:
         raise ConnectorError("(gmail: risposta illeggibile dal provider)") from exc
     return data if isinstance(data, dict) else {}
 
 
-def _raw_message(to: str, subject: str, body: str, cc: str = "") -> str:
-    lines = [f"To: {to}", f"Subject: {subject}"]
+def _header_value(value: str) -> str:
+    """One header value on one line: a CR or LF would start a new header (Bcc, ...)."""
+    return re.sub(r"[\r\n]+", " ", str(value or "")).strip()
+
+
+def _raw_message(to: str, subject: str, body: str, cc: str = "", in_reply_to: str = "") -> str:
+    """RFC 2822 message, base64url as the Gmail API wants it.
+
+    EmailMessage writes MIME-Version, Content-Type and UTF-8 body, and encodes
+    non-ASCII headers. Every header value goes through _header_value first,
+    so a newline from an incoming message cannot add a header.
+    """
+    msg = EmailMessage(policy=SMTP)
+    msg["To"] = _header_value(to)
+    msg["Subject"] = _header_value(subject)
     if cc:
-        lines.append(f"Cc: {cc}")
-    lines.extend(["", body])
-    return base64.urlsafe_b64encode("\r\n".join(lines).encode("utf-8")).decode("ascii")
+        msg["Cc"] = _header_value(cc)
+    if in_reply_to:
+        msg["In-Reply-To"] = _header_value(in_reply_to)
+        msg["References"] = _header_value(in_reply_to)
+    msg.set_content(body)
+    return base64.urlsafe_b64encode(msg.as_bytes()).decode("ascii")
 
 
 def send_message(to: str, subject: str, body: str, cc: str = "", http: HttpFn | None = None) -> dict[str, Any]:
@@ -223,14 +252,9 @@ def reply_to(message_id: str, body: str, http: HttpFn | None = None) -> dict[str
         raise ConnectorError("(gmail: mittente originale illeggibile, risposta impossibile)")
     subject = original.get("subject", "") or "Re: "
     subject = subject if subject.lower().startswith("re:") else f"Re: {subject}"
-    lines = [f"To: {to}", f"Subject: {subject}"]
     thread_id = original.get("threadId", "")
     msg_id = str(original.get("message-id", ""))
-    if msg_id:
-        lines.append(f"In-Reply-To: {msg_id}")
-        lines.append(f"References: {msg_id}")
-    lines.extend(["", str(body or "")])
-    raw = base64.urlsafe_b64encode("\r\n".join(lines).encode("utf-8")).decode("ascii")
+    raw = _raw_message(to, subject, str(body or ""), in_reply_to=msg_id)
     call = http or _default_http
     payload = {"raw": raw}
     if thread_id:

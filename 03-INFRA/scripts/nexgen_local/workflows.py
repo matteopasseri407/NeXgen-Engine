@@ -135,7 +135,7 @@ def list_proposals(cfg: LaneConfig) -> list[WorkflowProposal]:
     return proposals
 
 
-def propose_run(cfg: LaneConfig, workflow: str, params: dict[str, Any] | None = None) -> WorkflowProposal:
+def _propose_run_impl(cfg: LaneConfig, workflow: str, params: dict[str, Any] | None = None) -> WorkflowProposal:
     """Stage a run of an allowlisted workflow; sends nothing."""
     name = str(workflow or "").strip()
     if not name:
@@ -168,7 +168,12 @@ def propose_run(cfg: LaneConfig, workflow: str, params: dict[str, Any] | None = 
     return proposal
 
 
-def format_gate(proposal: WorkflowProposal) -> str:
+def propose_run(cfg: LaneConfig, workflow: str, params: dict[str, Any] | None = None) -> WorkflowProposal:
+    """Stage a run of an allowlisted workflow; sends nothing."""
+    return _propose_run_impl(cfg, workflow, params)
+
+
+def _format_gate_impl(proposal: WorkflowProposal) -> str:
     """The approval screen: names the workflow, never its webhook URL."""
     lines = [
         f"Proposta {proposal.id} — fatti macchina",
@@ -178,6 +183,11 @@ def format_gate(proposal: WorkflowProposal) -> str:
         f"  Esegui con: nexgen-local wf-run {proposal.id} --yes",
     ]
     return "\n".join(lines)
+
+
+def format_gate(proposal: WorkflowProposal) -> str:
+    """The approval screen: names the workflow, never its webhook URL."""
+    return _format_gate_impl(proposal)
 
 
 def confirm_run(cfg: LaneConfig, proposal_id: str, confirm: bool, http: HttpFn | None = None) -> dict[str, Any]:

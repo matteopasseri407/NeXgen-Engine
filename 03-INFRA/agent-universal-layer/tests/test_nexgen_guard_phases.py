@@ -99,6 +99,54 @@ def test_a_crash_inside_the_permissions_phase_is_a_failed_phase_not_a_warning(tm
     assert "scheduler" in ran and "modules" in ran  # and the cycle went on
 
 
+def test_a_crash_inside_the_launchers_phase_is_a_failed_phase_not_a_warning(tmp_path, monkeypatch):
+    """MUST-02: install_shims raising was caught inside the helper and turned
+    into a WARN; the phase never reached `failed` and the guard exited 0
+    while the commands stayed broken."""
+    from nexgen_core import shims
+
+    runner, ran = _runner(tmp_path, monkeypatch)
+    monkeypatch.setattr(runner, "_phase_launchers", GuardRunner._phase_launchers.__get__(runner))
+    monkeypatch.setattr(shims, "install_shims", lambda **_kw: (_ for _ in ()).throw(OSError("shims denied")))
+
+    result = runner.run(GuardMode.APPLY)
+
+    assert result.success is False and result.exit_code == 1
+    assert runner.heartbeat.recorded_failed_phases() == ["launchers"]
+    assert "modules" in ran  # and the cycle went on
+
+
+def test_a_crash_inside_the_scheduler_phase_is_a_failed_phase_not_a_warning(tmp_path, monkeypatch):
+    """MUST-02: a scheduler that raises must fail the cycle with the phase named."""
+    from nexgen_core import guard as guard_module
+
+    runner, ran = _runner(tmp_path, monkeypatch)
+    monkeypatch.setattr(runner, "_phase_scheduler", GuardRunner._phase_scheduler.__get__(runner))
+    monkeypatch.setattr(guard_module, "install_scheduler", lambda **_kw: (_ for _ in ()).throw(OSError("schtasks denied")))
+
+    result = runner.run(GuardMode.APPLY)
+
+    assert result.success is False and result.exit_code == 1
+    assert runner.heartbeat.recorded_failed_phases() == ["scheduler"]
+    assert "modules" in ran  # and the cycle went on
+
+
+def test_a_crash_inside_the_modules_phase_is_a_failed_phase_not_a_warning(tmp_path, monkeypatch):
+    """MUST-02: modules that cannot be realigned used to be a WARN only."""
+    from nexgen_core import module_install
+
+    runner, ran = _runner(tmp_path, monkeypatch)
+    monkeypatch.setattr(runner, "_phase_modules", GuardRunner._phase_modules.__get__(runner))
+    monkeypatch.setattr(module_install, "install_declared_modules",
+                        lambda *_a, **_kw: (_ for _ in ()).throw(OSError("modules denied")))
+
+    result = runner.run(GuardMode.APPLY)
+
+    assert result.success is False and result.exit_code == 1
+    assert runner.heartbeat.recorded_failed_phases() == ["modules"]
+    assert "runtime" in ran  # and the cycle went on
+
+
 def test_warnings_are_counted_whatever_spelling_the_emitter_used(tmp_path, monkeypatch):
     """skill_sources wrote "[WARNING]" while the guard counted "[WARN]" and "[AVVISO]":
     a skill warning was not counted and the cycle was reported as a plain success."""
@@ -219,6 +267,33 @@ def test_mcp_phase_claims_success_only_when_every_cli_rendered_and_names_the_fai
     assert any(action_notes.is_warning(a) and "codex" in a and "line 3 is not valid TOML" in a for a in actions)
 
 
+def test_a_failed_mcp_render_is_a_failed_phase_not_a_warning(tmp_path, monkeypatch):
+    """Ricognizione 8: la fase MCP avvisava soltanto, quindi `failed` restava
+    vuoto e il guard usciva 0 mentre le configurazioni di una CLI restavano
+    rotte. Deve fallire come le altre fasi: nome in `failed`, exit 1."""
+    from nexgen_core import guard as guard_module
+    from nexgen_core import mcp_trials
+
+    class FailingRenderer:
+        def __init__(self, **_kw):
+            self.last_errors: dict[str, str] = {}
+
+        def render_all(self, write: bool = False) -> dict[str, bool]:
+            self.last_errors = {"codex": "line 3 is not valid TOML"}
+            return {"claude": True, "codex": False}
+
+    monkeypatch.setattr(guard_module, "McpRenderer", FailingRenderer)
+    monkeypatch.setattr(mcp_trials, "purge_expired", lambda: [])
+    runner, ran = _runner(tmp_path, monkeypatch)
+    monkeypatch.setattr(runner, "_phase_mcp", GuardRunner._phase_mcp.__get__(runner))
+
+    result = runner.run(GuardMode.APPLY)
+
+    assert result.success is False and result.exit_code == 1
+    assert runner.heartbeat.recorded_failed_phases() == ["mcp"]
+    assert "runtime" in ran  # and the cycle went on
+
+
 def test_dead_opencode_instructions_are_not_rewritten_when_their_safety_copy_fails(tmp_path, monkeypatch):
     """The backup of opencode.json was suppressed and the file rewritten anyway, so a
     failed copy removed the only record of the user's own lines. No copy, no rewrite."""
@@ -266,3 +341,30 @@ def test_claude_md_symlink_survives_the_pointer_being_rewritten(tmp_path, monkey
 
     assert (home / "CLAUDE.md").is_symlink()
     assert dotfiles.read_text(encoding="utf-8").startswith("# Claude compatibility pointer")
+
+
+def test_an_identical_copy_is_not_backed_up_again_every_cycle(tmp_path, monkeypatch):
+    """Ricognizione 18: con il symlink ripiegato su copia (Windows senza
+    Developer Mode) ogni ciclo faceva un backup e ricopiava. Se la copia è
+    già identica alla sorgente non serve né l'uno né l'altra."""
+    from nexgen_core import files
+
+    vault = tmp_path / "vault"
+    canon = vault / "03-INFRA" / "agent-universal-layer" / "instructions" / "AGENTS.md"
+    canon.parent.mkdir(parents=True)
+    canon.write_text("# canon\n", encoding="utf-8")
+    home = tmp_path / "home"
+    home.mkdir()
+    target = home / "CLAUDE.md"
+    target.write_text("# canon\n", encoding="utf-8")
+    backups: list = []
+    monkeypatch.setattr(files, "backup_file", lambda *a, **kw: backups.append(a) or None)
+    monkeypatch.setattr(files, "publish_symlink",
+                        lambda *_: (_ for _ in ()).throw(OSError("nessun privilegio di symlink")))
+    runner = GuardRunner(vault_data=vault, home=home)
+
+    changed, warning = runner._link_to_canonical(target, canon)
+
+    assert (changed, warning) == (False, None)
+    assert backups == [], "una copia identica non va salvata di nuovo"
+    assert target.read_text(encoding="utf-8") == "# canon\n"

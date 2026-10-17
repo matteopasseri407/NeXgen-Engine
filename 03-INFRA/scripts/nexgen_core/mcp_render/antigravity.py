@@ -41,8 +41,7 @@ def _servers_kept_in_copies(renderer, canonical: Path) -> dict[str, Any]:
     return kept
 
 
-def render(renderer, write: bool = False) -> tuple[bool, str]:
-    """Generates Antigravity's MCP configuration and fans it out to its consumers."""
+def _render_impl(renderer, write: bool = False) -> tuple[bool, str]:
     servers = renderer.load_resolved_servers("antigravity")
     cfg_file = antigravity_config(renderer.home)
     existing = load_json_object(cfg_file)
@@ -80,6 +79,11 @@ def render(renderer, write: bool = False) -> tuple[bool, str]:
         if not renderer.previewing:
             _fan_out_antigravity(renderer, cfg_file)
     return True, t("Antigravity configuration updated")
+
+
+def render(renderer, write: bool = False) -> tuple[bool, str]:
+    """Generates Antigravity's MCP configuration and fans it out to its consumers."""
+    return _render_impl(renderer, write)
 
 
 def _fan_out_antigravity(renderer, canonical: Path) -> None:

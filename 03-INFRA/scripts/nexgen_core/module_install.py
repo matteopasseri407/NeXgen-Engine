@@ -518,6 +518,77 @@ def uninstall_module(
     return actions
 
 
+def _uninstall_module(
+    state: ModuleState,
+    *,
+    home: Path | None = None,
+    dry_run: bool = False,
+    log: Callable[[str], None] = lambda _msg: None,
+) -> list[str] | None:
+    """Uninstall when the module is not local. None when it is local."""
+    if state.state == "local":
+        return None
+    if state.declared in ("local", "remote") and state.source == "env-gates":
+        # Declared present but gates missing: a transient
+        # environment (token not exported, timer with thin env),
+        # not a removal. Demolishing here is the flap that makes
+        # commands appear and vanish between cycles; an explicit
+        # `absent` declaration still uninstalls below.
+        log(f"{state.module.id}: declared {state.declared} but env gates missing, kept as-is (not uninstalled)")
+        return []
+    # Absent has to mean removed, or the engine keeps maintaining
+    # commands and units for something the machine has switched off.
+    try:
+        return uninstall_module(state.module, home=home, dry_run=dry_run, log=log)
+    except Exception as exc:  # noqa: BLE001 - install error is reported, never raises
+        log(f"{state.module.id}: removal failed ({exc}); will retry next cycle")
+        return []
+
+
+def _check_requirements(
+    state: ModuleState,
+    *,
+    home: Path | None = None,
+    log: Callable[[str], None] = lambda _msg: None,
+) -> list[Unmet] | None:
+    """Report requirements. None when a blocking one stops the install."""
+    unmet = check_requirements(state.module, home)
+    blocking = [u for u in unmet if u.blocks_install]
+    if blocking:
+        log(f"{state.module.id}: not installed, {'; '.join(str(u) for u in blocking)}")
+        return None
+    for pending in unmet:
+        # Installed, but it will not work until this is fixed. Saying so is
+        # the difference between "not ready yet" and "silently broken".
+        log(f"{state.module.id}: installed, but not runnable yet - {pending}")
+    if any(u.kind == "path" for u in unmet) and state.module.requires.setup:
+        # The engine installs; it does not provision. Naming the command is
+        # what keeps a missing 17 GB of model weights from looking like
+        # nothing at all.
+        log(f"{state.module.id}: to provision it, run: {state.module.requires.setup}")
+    return unmet
+
+
+def _install_module(
+    state: ModuleState,
+    *,
+    home: Path | None = None,
+    engine_root: Path | None = None,
+    dry_run: bool = False,
+    log: Callable[[str], None] = lambda _msg: None,
+) -> list[str]:
+    """Install one local module. A failure is reported, never raised."""
+    # One bad module (unreadable source, binary declared as text) must
+    # never abort its siblings: isolate failures per module.
+    try:
+        return install_module(
+            state.module, home=home, engine_root=engine_root, dry_run=dry_run, log=log
+        )
+    except Exception as exc:  # noqa: BLE001 - install error is reported, never raises
+        log(f"{state.module.id}: installation failed ({exc}); siblings continue, will retry next cycle")
+        return []
+
+
 def install_declared_modules(
     states: Sequence[ModuleState],
     *,
@@ -531,42 +602,14 @@ def install_declared_modules(
     for state in states:
         if not state.module.provides:
             continue
-        if state.state != "local":
-            if state.declared in ("local", "remote") and state.source == "env-gates":
-                # Declared present but gates missing: a transient
-                # environment (token not exported, timer with thin env),
-                # not a removal. Demolishing here is the flap that makes
-                # commands appear and vanish between cycles; an explicit
-                # `absent` declaration still uninstalls below.
-                log(f"{state.module.id}: declared {state.declared} but env gates missing, kept as-is (not uninstalled)")
-                continue
-            # Absent has to mean removed, or the engine keeps maintaining
-            # commands and units for something the machine has switched off.
-            try:
-                actions += uninstall_module(state.module, home=home, dry_run=dry_run, log=log)
-            except Exception as exc:  # noqa: BLE001 - install error is reported, never raises
-                log(f"{state.module.id}: removal failed ({exc}); will retry next cycle")
+        removed = _uninstall_module(state, home=home, dry_run=dry_run, log=log)
+        if removed is not None:
+            actions += removed
             continue
-        unmet = check_requirements(state.module, home)
-        blocking = [u for u in unmet if u.blocks_install]
-        if blocking:
-            log(f"{state.module.id}: not installed, {'; '.join(str(u) for u in blocking)}")
+        unmet = _check_requirements(state, home=home, log=log)
+        if unmet is None:
             continue
-        for pending in unmet:
-            # Installed, but it will not work until this is fixed. Saying so is
-            # the difference between "not ready yet" and "silently broken".
-            log(f"{state.module.id}: installed, but not runnable yet - {pending}")
-        if any(u.kind == "path" for u in unmet) and state.module.requires.setup:
-            # The engine installs; it does not provision. Naming the command is
-            # what keeps a missing 17 GB of model weights from looking like
-            # nothing at all.
-            log(f"{state.module.id}: to provision it, run: {state.module.requires.setup}")
-        # One bad module (unreadable source, binary declared as text) must
-        # never abort its siblings: isolate failures per module.
-        try:
-            actions += install_module(
-                state.module, home=home, engine_root=engine_root, dry_run=dry_run, log=log
-            )
-        except Exception as exc:  # noqa: BLE001 - install error is reported, never raises
-            log(f"{state.module.id}: installation failed ({exc}); siblings continue, will retry next cycle")
+        actions += _install_module(
+            state, home=home, engine_root=engine_root, dry_run=dry_run, log=log
+        )
     return actions

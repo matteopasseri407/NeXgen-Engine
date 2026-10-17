@@ -65,7 +65,7 @@ MENU_ACTIONS = [
 ]
 
 
-def render_menu() -> str:
+def _render_menu_impl() -> str:
     lines = []
     lines.append(f"  {C_EMERALD}{C_BOLD}SELECTABLE ACTIONS (Type number or command name):{C_RESET}")
     lines.append(f"  {C_DARK_SLATE}{'─' * 68}{C_RESET}")
@@ -75,6 +75,10 @@ def render_menu() -> str:
         )
     lines.append(f"  {C_DARK_SLATE}{'─' * 68}{C_RESET}")
     return "\n".join(lines)
+
+
+def render_menu() -> str:
+    return _render_menu_impl()
 
 
 class NeXgenShell(cmd.Cmd):
@@ -272,8 +276,8 @@ class NeXgenShell(cmd.Cmd):
         return [c for c in self.COMMANDS if c.startswith(text)]
 
 
-def run_shell(vault_data: Path | None = None) -> int:
-    """Launches the interactive NeXgen Shell session."""
+def _run_shell_impl(vault_data: Path | None = None) -> int:
+    """Corpo esistente della sessione interattiva, solo spostato."""
     print(safe_text(render_info(vault_data=vault_data)))
     print(safe_text(render_menu()))
     print()
@@ -284,3 +288,8 @@ def run_shell(vault_data: Path | None = None) -> int:
     except (KeyboardInterrupt, EOFError):
         print(f"\n{C_SLATE}Session ended.{C_RESET}")
         return 0
+
+
+def run_shell(vault_data: Path | None = None) -> int:
+    """Launches the interactive NeXgen Shell session."""
+    return _run_shell_impl(vault_data=vault_data)

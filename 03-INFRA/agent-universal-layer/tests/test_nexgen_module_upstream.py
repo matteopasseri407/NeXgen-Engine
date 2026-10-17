@@ -53,6 +53,11 @@ def test_a_rolling_release_can_ask_to_be_compared_by_minor_only(tmp_path):
     assert (component.compare, component.latest) == ("minor", "git-tags:firecrawl/firecrawl")
 
 
+def test_a_build_counter_release_can_ask_to_be_flagged_once_it_falls_n_builds_behind(tmp_path):
+    (component,) = load_catalog(_engine(tmp_path, [{**DOCKER, "compare": "build:100"}]))["thing"].upstream
+    assert component.compare == "build:100"
+
+
 @pytest.mark.parametrize("broken, fragment", [
     ({**DOCKER, "kind": "pip"}, "unknown kind"),
     ({**DOCKER, "surprise": 1}, "unknown fields"),
@@ -61,6 +66,8 @@ def test_a_rolling_release_can_ask_to_be_compared_by_minor_only(tmp_path):
     ({**DOCKER, "latest": "dockerhub:n8n"}, "'latest' must be"),
     ({**DOCKER, "latest": "npm:"}, "'latest' must be"),
     ({**DOCKER, "compare": "major"}, "'compare' must be"),
+    ({**DOCKER, "compare": "build:0"}, "'compare' must be"),
+    ({**DOCKER, "compare": "build:"}, "'compare' must be"),
     ({**DOCKER, "pinned_in": "/etc/hosts"}, "must stay inside"),
     ({**DOCKER, "pinned_in": "../outside.yml"}, "must stay inside"),
     ({**DOCKER, "pinned_in": "~/secrets.env"}, "must stay inside"),
@@ -148,6 +155,11 @@ def test_the_catalog_the_engine_ships_describes_files_that_exist_in_the_shape_it
     ("2.35.3", "2.42.4", "patch", True),
     ("2.42.4", "2.42.4", "patch", False),
     ("2.43.0", "2.42.4", "patch", False),
+    ("2.11.99", "2.11.198", "build:100", False),
+    ("2.11.99", "2.11.199", "build:100", True),
+    ("2.11.99", "2.11.528", "build:100", True),
+    ("2.11.528", "2.12.0", "build:100", True),
+    ("2.11.528", "2.11.99", "build:100", False),
 ])
 def test_a_rolling_release_is_only_news_on_a_new_minor(pinned, newest, compare, stale):
     assert depwatch._is_stale("docker-image", pinned, newest, compare) is stale

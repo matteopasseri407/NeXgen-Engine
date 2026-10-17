@@ -10,12 +10,121 @@ import argparse
 import json
 import os
 import sys
+import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from pathlib import Path
 from typing import Any
 
+from nexgen_core.files import atomic_write_text
 from nexgen_core.i18n import t
+
+DEFAULT_QUERY = '"Example Domain" site:example.com'
+
+
+def read_cached_success(path: Path, ttl_seconds: int, now: float) -> dict[str, Any] | None:
+    try:
+        cached = json.loads(path.read_text(encoding="utf-8"))
+        checked_at = float(cached["checked_at"])
+    except (OSError, ValueError, KeyError, TypeError, json.JSONDecodeError):  # nexgen: allow reason="an unreadable cache is a miss: the probe runs again"
+        return None
+    if cached.get("ok") is True and 0 <= now - checked_at < ttl_seconds:
+        return cached
+    return None
+
+
+def extract_urls(payload: dict[str, Any]) -> list[str]:
+    data = payload.get("data")
+    if isinstance(data, dict):
+        rows = data.get("web", [])
+    elif isinstance(data, list):
+        rows = data
+    else:
+        rows = []
+    return [
+        row["url"]
+        for row in rows
+        if isinstance(row, dict) and isinstance(row.get("url"), str)
+    ]
+
+
+def is_expected_result(url: str) -> bool:
+    try:
+        hostname = (urllib.parse.urlparse(url).hostname or "").lower()
+    except ValueError:  # nexgen: allow reason="a URL that does not parse is not the expected result"
+        return False
+    return hostname == "example.com" or hostname.endswith(".example.com")
+
+
+def write_success(path: Path, now: float, result_count: int) -> None:
+    # mkstemp makes the new file 0600, and an existing one keeps its mode.
+    atomic_write_text(path, json.dumps(
+        {"ok": True, "checked_at": now, "result_count": result_count},
+        separators=(",", ":"),
+    ) + "\n")
+
+
+def probe(api_url: str, api_key: str, timeout: float) -> tuple[bool, int, str]:
+    body = json.dumps({"query": DEFAULT_QUERY, "limit": 1}).encode("utf-8")
+    request = urllib.request.Request(
+        f"{api_url.rstrip('/')}/v2/search",
+        data=body,
+        method="POST",
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        },
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            payload = json.load(response)
+    except (urllib.error.URLError, TimeoutError, OSError, json.JSONDecodeError) as exc:
+        return False, 0, f"request failed: {type(exc).__name__}"
+
+    if not isinstance(payload, dict) or payload.get("success") is not True:
+        return False, 0, "Firecrawl returned an unsuccessful response"
+    urls = extract_urls(payload)
+    if not any(is_expected_result(url) for url in urls):
+        return False, len(urls), "search returned no result from example.com"
+    return True, len(urls), "ok"
+
+
+def run_health_check(cache: Path, url: str, ttl_seconds: int, timeout: float, force: bool) -> int:
+    now = time.time()
+    if not force:
+        cached = read_cached_success(cache, ttl_seconds, now)
+        if cached:
+            print(
+                json.dumps(
+                    {
+                        "status": "cached",
+                        "result_count": int(cached.get("result_count", 0)),
+                    },
+                    separators=(",", ":"),
+                )
+            )
+            return 0
+
+    api_key = os.environ.get("FIRECRAWL_API_KEY", "local-self-hosted")
+    ok, result_count, detail = probe(url, api_key, timeout)
+    if not ok:
+        print(
+            json.dumps(
+                {"status": "failed", "result_count": result_count, "detail": detail},
+                separators=(",", ":"),
+            )
+        )
+        return 1
+
+    write_success(cache, now, result_count)
+    print(
+        json.dumps(
+            {"status": "live", "result_count": result_count},
+            separators=(",", ":"),
+        )
+    )
+    return 0
 
 
 class FirecrawlClient:
@@ -70,7 +179,7 @@ class FirecrawlClient:
         payload = {"url": url, "formats": formats_list}
         return self._request("/v2/scrape", payload=payload)
 
-    def search(
+    def _search_impl(
         self,
         query: str,
         limit: int = 20,
@@ -89,6 +198,23 @@ class FirecrawlClient:
             payload["scrapeOptions"] = {"formats": scrape_formats or ["markdown"]}
 
         return self._request("/v2/search", payload=payload)
+
+    def search(
+        self,
+        query: str,
+        limit: int = 20,
+        sources: list[str] | None = None,
+        scrape: bool = False,
+        scrape_formats: list[str] | None = None,
+    ) -> dict[str, Any]:
+        """Runs a web search through Firecrawl."""
+        return self._search_impl(
+            query,
+            limit=limit,
+            sources=sources,
+            scrape=scrape,
+            scrape_formats=scrape_formats,
+        )
 
 
 def _format_results(res: dict[str, Any]) -> str:
@@ -109,7 +235,7 @@ def _format_results(res: dict[str, Any]) -> str:
     return "\n".join(lines) if lines else json.dumps(data, indent=2)
 
 
-def main(argv: list[str] | None = None) -> int:
+def _main_impl(argv: list[str] | None = None) -> int:
     if argv is None:
         argv = sys.argv[1:]
 
@@ -135,6 +261,17 @@ def main(argv: list[str] | None = None) -> int:
     p_search.add_argument("--scrape-formats", default="markdown", help=t("Scraping formats"))
     p_search.add_argument("--json", action="store_true", help=t("Raw JSON output"))
     p_search.add_argument("-o", "--output", help=t("Save the output to a file"))
+
+    # health (end-to-end search probe with a small success cache)
+    p_health = subparsers.add_parser("health", help=t("Verify Firecrawl search end to end"))
+    p_health.add_argument(
+        "--url",
+        default=os.environ.get("FIRECRAWL_API_URL", "http://127.0.0.1:33002"),
+    )
+    p_health.add_argument("--cache", type=Path, required=True)
+    p_health.add_argument("--ttl-seconds", type=int, default=86400)
+    p_health.add_argument("--timeout", type=float, default=20.0)
+    p_health.add_argument("--force", action="store_true")
 
     args = parser.parse_args(argv)
     client = FirecrawlClient()
@@ -184,8 +321,21 @@ def main(argv: list[str] | None = None) -> int:
             print(output_str)
         return 0 if res.get("success", True) else 1
 
+    elif args.command == "health":
+        return run_health_check(
+            cache=args.cache,
+            url=args.url,
+            ttl_seconds=args.ttl_seconds,
+            timeout=args.timeout,
+            force=args.force,
+        )
+
     parser.print_help()
     return 0
+
+
+def main(argv: list[str] | None = None) -> int:
+    return _main_impl(argv)
 
 
 if __name__ == "__main__":

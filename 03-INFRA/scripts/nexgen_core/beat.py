@@ -54,19 +54,39 @@ def auto_update_enabled(environ: Mapping[str, str] | None = None) -> bool:
     return value.strip().lower() not in _AUTO_UPDATE_OFF
 
 
+def _system_uptime_seconds() -> float | None:
+    """How long the system itself has been up, None when there is no reading.
+
+    Windows: milliseconds since the system started (`GetTickCount64`).
+    Linux: the first field of `/proc/uptime`, as before.
+    """
+    if os.name == "nt":
+        try:
+            import ctypes
+
+            tick_count = ctypes.windll.kernel32.GetTickCount64
+            # Undeclared, ctypes reads the 64-bit result as a 32-bit int:
+            # negative past 24.8 days, which reads as "just booted".
+            tick_count.restype = ctypes.c_uint64
+            return tick_count() / 1000.0
+        except (AttributeError, OSError):  # nexgen: allow reason="the reading is optional; without it alerting behaves as before"
+            return None
+    try:
+        with open("/proc/uptime", encoding="utf-8") as handle:
+            return float(handle.read().split()[0])
+    except (OSError, ValueError, IndexError):
+        return None
+
+
 def _just_booted(grace_seconds: float) -> bool:
     """True when the system itself started more recently than the grace window.
 
     Tells "guard never ran since boot" apart from "guard stalled for hours":
-    only the second deserves an alert. Linux-only signal (`/proc/uptime`);
-    anywhere else it returns False and alerting behaves as before.
+    only the second deserves an alert. Where the platform cannot report an
+    uptime, it returns False and alerting behaves as before.
     """
-    try:
-        with open("/proc/uptime", encoding="utf-8") as handle:
-            uptime = float(handle.read().split()[0])
-    except (OSError, ValueError, IndexError):
-        return False
-    return uptime < grace_seconds
+    uptime = _system_uptime_seconds()
+    return uptime is not None and uptime < grace_seconds
 
 
 class Heartbeat:
@@ -156,6 +176,9 @@ class Heartbeat:
 
     def check_liveness(self) -> tuple[bool, str]:
         """Checks whether the Guard has run within the expected window."""
+        return self._check_liveness_impl()
+
+    def _check_liveness_impl(self) -> tuple[bool, str]:
         if not self.liveness_file.is_file():
             return False, t("No guard cycle has been recorded yet")
 
@@ -210,6 +233,9 @@ class Heartbeat:
         stale ones with deterministic rules, and raises the vetted pins
         without asking. Held items never move here. Never notifies: a
         failure is missed maintenance, not a reason to stop the heartbeat."""
+        return self._run_dependency_watch_impl()
+
+    def _run_dependency_watch_impl(self) -> dict[str, Any]:
         try:
             result = run_depwatch(vault_data=self.vault_data, state_dir=self.state_dir)
             answer: dict[str, Any] = {

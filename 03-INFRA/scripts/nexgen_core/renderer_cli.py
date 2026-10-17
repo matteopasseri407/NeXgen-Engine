@@ -197,13 +197,12 @@ _USERINFO_RE = re.compile(r"(://)[^/@\s]*@")
 
 
 def _scrub_desktop_entry(entry: dict) -> dict:
-    """Strips credentials from a Desktop-adopted entry before it can reach
-    a terminal scrollback or the versioned manifest.
+    """Strips credentials from an adopted entry before it can reach a
+    terminal scrollback or the versioned manifest.
 
     Secret-shaped env values become ${NAME} references, secret-shaped args
-    become <hidden>, URL userinfo is redacted in place. Desktop is the only
-    adopter that both prints stubs during install and applies them with one
-    command, so it scrubs here, once, covering both paths.
+    become <hidden>, URL userinfo is redacted in place. Runs for every CLI:
+    the same entry feeds the printed stub and `--apply`.
     """
     from nexgen_core import secret_shapes
 
@@ -227,6 +226,8 @@ def _scrub_desktop_entry(entry: dict) -> dict:
     args = entry.get("args")
     if isinstance(args, list):
         entry["args"] = [scrub(arg, "", as_ref=False) if isinstance(arg, str) else arg for arg in args]
+    if isinstance(entry.get("url"), str):
+        entry["url"] = _USERINFO_RE.sub(r"\1<hidden>@", entry["url"])
     return entry
 
 
@@ -308,13 +309,12 @@ def _adopt_entry(cli: str, spec: dict) -> dict:
                 entry["args"] = args
             if spec.get("env"):
                 entry["env"] = spec["env"]
+    # Scrubbed for every CLI: this entry feeds the printed stub and `--apply`.
+    entry = _scrub_desktop_entry(entry)
     if cli == "claude-desktop":
         # The Desktop app never mounts by `targets` (default-deny allowlist);
         # resolution reuses the CLI's, so an adopted entry starts there and
         # the reviewer opts it in with `desktop_allow: true` when read-only.
-        # Scrubbed first: this same entry feeds the printed stub and
-        # `--apply`, and neither may carry a live credential.
-        entry = _scrub_desktop_entry(entry)
         entry["targets"] = ["claude"]
     else:
         entry["targets"] = [cli]
@@ -406,7 +406,7 @@ def _load_live(cli: str) -> dict | None:
     return {}
 
 
-def insert_server_stubs(manifest_path: Path, stubs: list[str]) -> tuple[bool, str, Path | None]:
+def _insert_server_stubs_impl(manifest_path: Path, stubs: list[str]) -> tuple[bool, str, Path | None]:
     """Appends stubs under the top-level `servers:` block: locked,
     validate-before-replace, with backup.
 
@@ -482,7 +482,11 @@ def insert_server_stubs(manifest_path: Path, stubs: list[str]) -> tuple[bool, st
         lock.release()
 
 
-def cmd_adopt(cli: str, apply: bool = False) -> int:
+def insert_server_stubs(manifest_path: Path, stubs: list[str]) -> tuple[bool, str, Path | None]:
+    return _insert_server_stubs_impl(manifest_path, stubs)
+
+
+def _cmd_adopt_impl(cli: str, apply: bool = False) -> int:
     """Finds live servers outside the manifest and proposes (or applies) their entries."""
     manifest_path = _manifest_path()
     try:
@@ -533,6 +537,10 @@ def cmd_adopt(cli: str, apply: bool = False) -> int:
         print(stub)
     print(">>> " + t("Rerun with --apply to add them under 'servers:' (backup + re-validation)."))
     return 0
+
+
+def cmd_adopt(cli: str, apply: bool = False) -> int:
+    return _cmd_adopt_impl(cli, apply)
 
 
 def cmd_inventory() -> int:

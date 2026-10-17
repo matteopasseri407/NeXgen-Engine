@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Contributor gate: the existing Ruff baseline, then sandboxed pytest.
+"""Contributor gate: the existing Ruff baseline, the discipline gate (size, shell, review receipt), then sandboxed pytest.
 
 Optional arguments are forwarded to pytest, for example a test file or -k.
 Without arguments it runs the complete suite. It does not sync or release.
@@ -38,6 +38,7 @@ def main() -> int:
     commands = [
         ([python_bin, str(root / "03-INFRA/scripts/ruff_baseline_check.py")],
          {**env, "NEXGEN_RUFF_ENTRY_DIR": str(root / "03-INFRA/scripts")}),
+        ([python_bin, str(root / "03-INFRA/scripts/discipline.py"), "gate"], env),
         ([python_bin, "-m", "pytest", *sys.argv[1:]], env),
     ]
     for command, command_env in commands:

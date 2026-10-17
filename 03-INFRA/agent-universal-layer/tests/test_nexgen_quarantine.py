@@ -158,9 +158,10 @@ def test_publish_changes_handles_conflict_via_quarantine(tmp_path: Path) -> None
     assert len(q_branches) == 1
 
 
-def test_quarantine_preserves_uncommitted_tracked_changes(tmp_path: Path) -> None:
-    """Divergence plus uncommitted tracked changes: the uncommitted work must
-    survive in the quarantine branch, not be destroyed by the hard reset."""
+def test_quarantine_refuses_with_uncommitted_tracked_changes(tmp_path: Path) -> None:
+    """Divergence plus uncommitted tracked changes: the quarantine refuses
+    before creating anything, and the in-progress work stays in the tree
+    (Invariant 1: a dirty working tree is never touched)."""
     remote = tmp_path / "remote.git"
     subprocess.run(["git", "init", "--bare", "-b", "main", str(remote)], check=True)
 
@@ -192,20 +193,19 @@ def test_quarantine_preserves_uncommitted_tracked_changes(tmp_path: Path) -> Non
     _git(clone_b, "commit", "-am", "edit from B")
     note_b = clone_b / "04-NOW" / "nota.md"
     note_b.write_text("appunti IMPORTANTI non committati\n", encoding="utf-8")
+    head_before = _git(clone_b, "rev-parse", "HEAD").stdout.strip()
 
-    success, msg = publish_changes(clone_b, branch="main", remote="origin")
-    assert success is False
-    assert "quarantine" in msg.lower()
+    ok, q_branch, msg = quarantine_diverged_commits(clone_b, remote="origin", branch="main")
 
-    # Uncommitted work must be recoverable from the quarantine branch
-    q_branches = list_quarantine_branches(clone_b)
-    assert len(q_branches) == 1
-    show = _git(clone_b, "show", f"{q_branches[0]}:04-NOW/nota.md")
-    assert show.returncode == 0
-    assert show.stdout == "appunti IMPORTANTI non committati\n"
-
-    # Working tree is aligned with origin/main (note back to its committed version)
-    assert note_b.read_text(encoding="utf-8") == "appunti base\n"
+    assert ok is False
+    assert q_branch == "" and "uncommitted" in msg.lower(), msg
+    # The in-progress edit is still there, untouched.
+    assert note_b.read_text(encoding="utf-8") == "appunti IMPORTANTI non committati\n"
+    # The committed diverging edit is still there too: nothing was reset.
+    assert f_b.read_text(encoding="utf-8") == "key: value_b\n"
+    # And nothing was created or moved.
+    assert list_quarantine_branches(clone_b) == []
+    assert _git(clone_b, "rev-parse", "HEAD").stdout.strip() == head_before
 
 
 def test_doctor_reports_quarantine_branch(tmp_path: Path) -> None:
@@ -236,9 +236,10 @@ def test_doctor_reports_quarantine_branch(tmp_path: Path) -> None:
     assert outcome_after.severity == Severity.OK
 
 
-def test_quarantine_refuses_reset_when_switch_back_fails(tmp_path: Path, monkeypatch) -> None:
-    """A failed switch back must stop before reset: resetting on the
-    quarantine branch would destroy the work just preserved."""
+def test_quarantine_keeps_the_branch_when_the_reset_fails(tmp_path: Path, monkeypatch) -> None:
+    """A failed hard reset after the branch was created must report it and
+    leave the diverged commits reachable on the quarantine branch: nothing
+    that was saved may disappear with the failure."""
     import nexgen_core.git_ops as git_ops
 
     remote = tmp_path / "remote.git"
@@ -254,18 +255,22 @@ def test_quarantine_refuses_reset_when_switch_back_fails(tmp_path: Path, monkeyp
 
     real_run_git = git_ops.run_git
 
-    def failing_switch_back(repo_dir, *args, **kwargs):
-        if tuple(args) == ("switch", "main"):
-            return subprocess.CompletedProcess(args, 1, "", "fatal: cannot switch: blocked")
+    def failing_reset(repo_dir, *args, **kwargs):
+        if tuple(args[:2]) == ("reset", "--hard"):
+            return subprocess.CompletedProcess(args, 1, "", "fatal: synthetic reset failure")
         return real_run_git(repo_dir, *args, **kwargs)
 
-    monkeypatch.setattr(git_ops, "run_git", failing_switch_back)
+    monkeypatch.setattr(git_ops, "run_git", failing_reset)
     _git(clone, "fetch", "origin", "main")
+    (clone / "f.txt").write_text("local work\n", encoding="utf-8")
+    _git(clone, "commit", "-am", "local diverging work")
     local_head = _git(clone, "rev-parse", "HEAD").stdout.strip()
+
     ok, q_branch, msg = git_ops.quarantine_diverged_commits(clone, remote="origin", branch="main")
-    assert ok is False
+
+    assert ok is False and "reset" in msg.lower()
     assert q_branch.startswith("quarantine/diverged-")
-    # The preserved work is still on the quarantine branch, not reset away.
+    # The work is still reachable: the branch holds the diverged commit.
     assert _git(clone, "rev-parse", q_branch).stdout.strip() == local_head
 
 
@@ -377,3 +382,86 @@ def test_untracked_infra_files_are_listed_not_committed(tmp_path: Path) -> None:
     found = get_untracked_infra_files(repo)
     assert "03-INFRA/new-skill.yaml" in found
     assert "scratch.md" not in found
+
+
+def test_quarantine_refuses_when_git_status_cannot_answer(tmp_path: Path, monkeypatch) -> None:
+    """MUST-19: se `git status` fallisce, "non ho potuto guardare" non e'
+    "pulito". La quarantena deve fermarsi, non azzerare il lavoro con un
+    reset --hard letto da una risposta vuota."""
+    import nexgen_core.git_ops as git_ops
+
+    remote = tmp_path / "remote.git"
+    subprocess.run(["git", "init", "--bare", "-b", "main", str(remote)], check=True)
+    clone = tmp_path / "clone"
+    subprocess.run(["git", "clone", str(remote), str(clone)], check=True)
+    _git(clone, "config", "user.email", "test@example.com")
+    _git(clone, "config", "user.name", "Test")
+    (clone / "f.txt").write_text("base\n", encoding="utf-8")
+    _git(clone, "add", "-A")
+    _git(clone, "commit", "-m", "base")
+    _git(clone, "push", "origin", "main")
+
+    real_run_git = git_ops.run_git
+
+    def failing_status(repo_dir, *args, **kwargs):
+        if args and args[0] == "status":
+            return subprocess.CompletedProcess(args, 128, "", "fatal: unable to read tree")
+        return real_run_git(repo_dir, *args, **kwargs)
+
+    monkeypatch.setattr(git_ops, "run_git", failing_status)
+    _git(clone, "fetch", "origin", "main")
+    (clone / "f.txt").write_text("local work\n", encoding="utf-8")
+    _git(clone, "commit", "-am", "local diverging work")
+    local_head = _git(clone, "rev-parse", "HEAD").stdout.strip()
+
+    ok, q_branch, msg = git_ops.quarantine_diverged_commits(clone, remote="origin", branch="main")
+
+    assert ok is False and q_branch == ""
+    assert "unreadable" in msg
+    assert _git(clone, "rev-parse", "HEAD").stdout.strip() == local_head, "HEAD non si e' mosso"
+    assert not _git(clone, "branch", "--list", "quarantine/*").stdout.strip(), "nulla e' stato spostato"
+
+
+def test_quarantine_decides_on_one_status_read(tmp_path: Path, monkeypatch) -> None:
+    """MUST-19, ritocco a lettura singola: la decisione "sporco/pulito" esce
+    dalla status che la quarantena ha gia' letto. Una seconda lettura puo'
+    fallire e rispondere "pulito" sopra l'albero sporco visto dalla prima:
+    il reset --hard passerebbe sopra modifiche non committate."""
+    import nexgen_core.git_ops as git_ops
+
+    remote = tmp_path / "remote.git"
+    subprocess.run(["git", "init", "--bare", "-b", "main", str(remote)], check=True)
+    clone = tmp_path / "clone"
+    subprocess.run(["git", "clone", str(remote), str(clone)], check=True)
+    _git(clone, "config", "user.email", "test@example.com")
+    _git(clone, "config", "user.name", "Test")
+    (clone / "f.txt").write_text("base\n", encoding="utf-8")
+    _git(clone, "add", "-A")
+    _git(clone, "commit", "-m", "base")
+    _git(clone, "push", "origin", "main")
+    _git(clone, "fetch", "origin", "main")
+    (clone / "f.txt").write_text("local work\n", encoding="utf-8")
+    _git(clone, "commit", "-am", "local diverging work")
+    (clone / "f.txt").write_text("uncommitted local edit\n", encoding="utf-8")
+    head_before = _git(clone, "rev-parse", "HEAD").stdout.strip()
+
+    real_run_git = git_ops.run_git
+    status_reads: list[int] = []
+
+    def one_status_read(repo_dir, *args, **kwargs):
+        if args and args[0] == "status":
+            status_reads.append(1)
+            if len(status_reads) > 1:
+                return subprocess.CompletedProcess(args, 128, "", "fatal: .git/index.lock: unable to read tree")
+        return real_run_git(repo_dir, *args, **kwargs)
+
+    monkeypatch.setattr(git_ops, "run_git", one_status_read)
+
+    ok, q_branch, msg = git_ops.quarantine_diverged_commits(clone, remote="origin", branch="main")
+
+    assert ok is False and q_branch == "", msg
+    assert "uncommitted" in msg.lower(), msg
+    assert (clone / "f.txt").read_text(encoding="utf-8") == "uncommitted local edit\n"
+    assert _git(clone, "rev-parse", "HEAD").stdout.strip() == head_before, "HEAD non si e' mosso"
+    assert not _git(clone, "branch", "--list", "quarantine/*").stdout.strip(), "nulla e' stato spostato"
+    assert len(status_reads) == 1, "una sola lettura decide: la seconda puo' fallire e mentire"

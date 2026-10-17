@@ -629,3 +629,19 @@ def test_skills_alone_are_not_tried(tmp_path: Path, monkeypatch):
 
     bumps, _notes, _moved = bump_mod.apply_plan([_demo_three_item()], vault, sync=True, home=tmp_path / "home", verify=must_not_run)
     assert bumps == 1
+
+
+def test_a_failed_mcp_render_after_a_bump_puts_the_pins_back(tmp_path: Path, monkeypatch):
+    import nexgen_core.renderer as renderer_mod
+    import nexgen_core.thirdparty_bump as bump_mod
+    from nexgen_core.action_notes import is_error
+
+    vault, manifest = _vault_with_mcp_pin(tmp_path)
+    skills = vault / "03-INFRA" / "agent-universal-layer" / "skills" / "skills.manifest.yaml"
+    before = (manifest.read_text(encoding="utf-8"), skills.read_text(encoding="utf-8"))
+    monkeypatch.setattr(renderer_mod.McpRenderer, "render_all", lambda self, write=False: {"claude": False})
+
+    bumps, notes, moved = bump_mod.apply_plan([_mcp_item()], vault, sync=True, home=tmp_path / "home")
+    assert bumps == 0 and moved == []
+    assert any(is_error(n) and "MCP render failed for" in n for n in notes)
+    assert (manifest.read_text(encoding="utf-8"), skills.read_text(encoding="utf-8")) == before

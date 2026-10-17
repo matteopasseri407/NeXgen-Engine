@@ -11,8 +11,7 @@ from pathlib import Path
 from nexgen_core.i18n import t
 
 
-def open_folder(path_str: str) -> int:
-    """Opens the given folder in the system's file manager."""
+def _open_folder_impl(path_str: str) -> int:
     path = Path(path_str)
     if not path.is_absolute():
         print(t("Error: an absolute path to an existing folder is required."), file=sys.stderr)
@@ -55,6 +54,11 @@ def open_folder(path_str: str) -> int:
 
     print(t("Folder opened: {resolved}", resolved=resolved))
     return 0
+
+
+def open_folder(path_str: str) -> int:
+    """Opens the given folder in the system's file manager."""
+    return _open_folder_impl(path_str)
 
 
 def main(argv: list[str] | None = None) -> int:

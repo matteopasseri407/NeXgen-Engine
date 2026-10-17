@@ -200,7 +200,9 @@ class GuardRunner:
             if target.is_symlink() and target.resolve() == canon.resolve():
                 return False, None
             target.parent.mkdir(parents=True, exist_ok=True)
-            if target.exists() or target.is_symlink():
+            # A folded copy identical to the canon is aligned: no backup, no rewrite.
+            same_copy = target.is_file() and not target.is_symlink() and target.read_bytes() == canon.read_bytes()
+            if (target.exists() or target.is_symlink()) and not same_copy:
                 # A real copy may contain hand-written lines. If the safety
                 # copy itself fails, stop here: unlinking anyway would destroy
                 # the only copy of those lines.
@@ -210,23 +212,22 @@ class GuardRunner:
                     try:
                         backup_file(target, tag="instructions")
                     except OSError as exc:
-                        return False, (WARN + t(
+                        return False, WARN + t(
                             "instruction pointer {path} left untouched: safety backup failed ({error})",
-                            path=target, error=exc,
-                        ))
+                            path=target, error=exc)
             try:
                 from nexgen_core.files import publish_symlink
 
                 publish_symlink(target, canon)
             except OSError:
+                if same_copy:
+                    return False, None
                 # Windows without symlink privileges: a copy beats nothing.
                 # publish_symlink never leaves the target missing, so a copy
                 # fallback only runs when the atomic path failed.
                 if target.is_dir() and not target.is_symlink():
-                    return False, (WARN + t(
-                        "instruction pointer {path} is a directory, left untouched",
-                        path=target,
-                    ))
+                    return False, WARN + t("instruction pointer {path} is a directory, left untouched",
+                                           path=target)
                 try:
                     if target.is_symlink() or target.is_file():
                         target.unlink()
@@ -235,9 +236,8 @@ class GuardRunner:
                 shutil.copy2(canon, target)
             return True, None
         except OSError as exc:
-            return False, (WARN + t(
-                "instruction pointer {path} not aligned ({error})", path=target, error=exc,
-            ))
+            return False, WARN + t("instruction pointer {path} not aligned ({error})",
+                                   path=target, error=exc)
 
     def _align_opencode_instructions(self, canon: Path) -> str | None:
         """Points OpenCode V2 at the canonical file through the scope file it
@@ -573,6 +573,38 @@ class GuardRunner:
                 actions_taken=actions,
             )
 
+    def _phase_align(self, actions: list[str], skip_mcp: bool) -> list[str]:
+        """First alignment block: skills + MCP rendering (moved from _run_phases)."""
+        failed: list[str] = []
+        for name, run_phase in (("skills", lambda: self._phase_skills(actions)),
+                                ("mcp", lambda: self._phase_mcp(actions, skip_mcp))):
+            try:
+                outcome = run_phase()
+            except Exception as exc:  # noqa: BLE001 - one phase failing must not stop the others
+                outcome = [str(exc)]
+            if outcome:
+                failed.append(name)
+                actions.append(ERROR + t("Phase '{phase}' failed: {error}", phase=name, error=", ".join(outcome)))
+        return failed
+
+    def _phase_run(self, actions: list[str], branch: str) -> list[str]:
+        """Remaining run phases: instructions + launchers + scheduler + modules + runtime."""
+        failed: list[str] = []
+        for name, run_phase in (
+            ("instructions", lambda: self._phase_instructions(actions)),
+            ("launchers", lambda: self._phase_launchers(actions)),
+            ("scheduler", lambda: self._phase_scheduler(actions, branch)),
+            ("modules", lambda: self._phase_modules(actions)),
+            # Last: it may spend minutes on pip, and the safety phases above do not wait for it.
+            ("runtime", lambda: self._phase_runtime(actions)),
+        ):
+            try:
+                run_phase()
+            except Exception as exc:  # noqa: BLE001 - one phase failing must not stop the others
+                failed.append(name)
+                actions.append(ERROR + t("Phase '{phase}' failed: {error}", phase=name, error=exc))
+        return failed
+
     def _run_phases(self, actions: list[str], branch: str, skip_mcp: bool) -> list[str]:
         """Runs every write phase, each isolated from the others; returns the names that failed.
 
@@ -585,24 +617,14 @@ class GuardRunner:
         result is negative, the exit code non-zero, the doctor says which
         phases), it just does not take the rest down with it.
         """
-        phases = (
-            ("skills", lambda: self._phase_skills(actions)),
-            ("mcp", lambda: self._phase_mcp(actions, skip_mcp)),
-            ("permissions", lambda: self._phase_permissions(actions)),
-            ("instructions", lambda: self._phase_instructions(actions)),
-            ("launchers", lambda: self._phase_launchers(actions)),
-            ("scheduler", lambda: self._phase_scheduler(actions, branch)),
-            ("modules", lambda: self._phase_modules(actions)),
-            # Last: it may spend minutes on pip, and the safety phases above do not wait for it.
-            ("runtime", lambda: self._phase_runtime(actions)),
-        )
         failed: list[str] = []
-        for name, run_phase in phases:
-            try:
-                run_phase()
-            except Exception as exc:  # noqa: BLE001 - one phase failing must not stop the others
-                failed.append(name)
-                actions.append(ERROR + t("Phase '{phase}' failed: {error}", phase=name, error=exc))
+        failed += self._phase_align(actions, skip_mcp)
+        try:
+            self._phase_permissions(actions)
+        except Exception as exc:  # noqa: BLE001 - one phase failing must not stop the others
+            failed.append("permissions")
+            actions.append(ERROR + t("Phase '{phase}' failed: {error}", phase="permissions", error=exc))
+        failed += self._phase_run(actions, branch)
         return failed
 
     def _phase_git(
@@ -701,11 +723,11 @@ class GuardRunner:
         if any(is_error(action) for action in skill_actions):
             raise AlignmentError(t("Skill materialization failed (see the [ERROR] lines above)."))
 
-    def _phase_mcp(self, actions: list[str], skip_mcp: bool) -> None:
-        """MCP configuration rendering for the CLIs."""
+    def _phase_mcp(self, actions: list[str], skip_mcp: bool) -> list[str]:
+        """MCP configuration rendering for the CLIs; returns the CLIs it could not write."""
         if skip_mcp:
             actions.append(t("MCP configurations not regenerated (explicitly requested)"))
-            return
+            return []
         try:
             from nexgen_core import mcp_trials
 
@@ -725,14 +747,13 @@ class GuardRunner:
         failed = sorted(cli for cli, ok in results.items() if not ok)
         if not failed:
             actions.append(t("MCP configurations regenerated for every CLI"))
-            return
+            return []
         # Success is claimed only when every target made it. The failing
         # ones are named with their error, so the line tells the user what
         # to fix rather than only that something went wrong.
-        details = ", ".join(
-            f"{cli} ({rend.last_errors[cli]})" if rend.last_errors.get(cli) else cli for cli in failed
-        )
+        details = ", ".join(f"{cli} ({rend.last_errors[cli]})" if rend.last_errors.get(cli) else cli for cli in failed)
         actions.append(WARN + t("MCP render failed for: {clis}", clis=details))
+        return failed
 
     def _phase_permissions(self, actions: list[str]) -> None:
         """Permission posture + guardrail hook per CLI."""
@@ -752,45 +773,36 @@ class GuardRunner:
         """The commands themselves. A deleted or stale launcher
         after an update is drift like any other, and fixing it
         silently is the job: asking the user to do it isn't."""
-        try:
-            from nexgen_core.shims import install_shims
+        from nexgen_core.shims import install_shims
 
-            # install_shims says what it rewrote. This used to hash every file in
-            # ~/.local/bin before and after (829 MB read, twice, every 30 minutes
-            # on a machine with three large CLIs there) to work out the same thing.
-            repaired: list[str] = []
-            install_shims(home=self.home, changed=repaired)
-            if repaired:
-                actions.append(t("Commands realigned ({count})", count=len(repaired)))
-        except Exception as exc:  # noqa: BLE001 - phase failure is recorded, never raises
-            actions.append(WARN + t("Commands not realigned: {error}", error=exc))
+        # install_shims says what it rewrote. This used to hash every file in
+        # ~/.local/bin before and after (829 MB read, twice, every 30 minutes
+        # on a machine with three large CLIs there) to work out the same thing.
+        repaired: list[str] = []
+        install_shims(home=self.home, changed=repaired)
+        if repaired:
+            actions.append(t("Commands realigned ({count})", count=len(repaired)))
 
     def _phase_scheduler(self, actions: list[str], branch: str) -> None:
         """Startup self-alignment installation (systemd / scheduled task),
         plus the update notice lanes: shell hook and boot-time check are
         drift like any other, so the guard keeps them installed."""
-        try:
-            sched_ok = install_scheduler(
-                home=self.home,
-                engine_root=self.engine_root,
-                vault_data=self.vault_data,
-                vault=self.vault_data,
-                branch=branch,
-                log=lambda msg: actions.append(msg),
-            )
-            if sched_ok:
-                actions.append(t("Startup self-alignment configured"))
-            else:
-                actions.append(WARN + t("Startup self-alignment reported no success and no error; verify with `nexgen doctor`"))
-        except Exception as exc:  # noqa: BLE001 - phase failure is recorded, never raises
-            actions.append(WARN + t("Self-alignment configuration did not succeed: {error}", error=exc))
-        try:
-            from nexgen_core.tools.update_notifier import ensure_boot_check, ensure_shell_hook
+        sched_ok = install_scheduler(
+            home=self.home,
+            engine_root=self.engine_root,
+            vault_data=self.vault_data,
+            vault=self.vault_data,
+            branch=branch,
+            log=lambda msg: actions.append(msg),
+        )
+        if sched_ok:
+            actions.append(t("Startup self-alignment configured"))
+        else:
+            actions.append(WARN + t("Startup self-alignment reported no success and no error; verify with `nexgen doctor`"))
+        from nexgen_core.tools.update_notifier import ensure_boot_check, ensure_shell_hook
 
-            actions.extend(ensure_shell_hook(self.home))
-            actions.extend(ensure_boot_check(self.home))
-        except Exception as exc:  # noqa: BLE001 - phase failure is recorded, never raises
-            actions.append(WARN + t("Update notice lanes not ensured: {error}", error=exc))
+        actions.extend(ensure_shell_hook(self.home))
+        actions.extend(ensure_boot_check(self.home))
 
     def _phase_modules(self, actions: list[str]) -> None:
         """Modules this machine declared: their commands and units
@@ -798,20 +810,17 @@ class GuardRunner:
         guard from something a module has to survive into what keeps
         it alive -- every primitive below is idempotent, so a module
         already in place costs nothing."""
-        try:
-            from nexgen_core.module_install import install_declared_modules
-            from nexgen_core.modules import modules_state
+        from nexgen_core.module_install import install_declared_modules
+        from nexgen_core.modules import modules_state
 
-            module_actions = install_declared_modules(
-                modules_state(vault_data=self.vault_data, engine_root=self.engine_root),
-                home=self.home,
-                engine_root=self.engine_root,
-                log=lambda msg: actions.append(msg),
-            )
-            if module_actions:
-                actions.append(t("Modules realigned ({count})", count=len(module_actions)))
-        except Exception as exc:  # noqa: BLE001 - phase failure is recorded, never raises
-            actions.append(WARN + t("Modules not realigned: {error}", error=exc))
+        module_actions = install_declared_modules(
+            modules_state(vault_data=self.vault_data, engine_root=self.engine_root),
+            home=self.home,
+            engine_root=self.engine_root,
+            log=lambda msg: actions.append(msg),
+        )
+        if module_actions:
+            actions.append(t("Modules realigned ({count})", count=len(module_actions)))
 
     def _phase_runtime(self, actions: list[str]) -> None:
         """The engine's own Python environment: provisioned from the checkout's

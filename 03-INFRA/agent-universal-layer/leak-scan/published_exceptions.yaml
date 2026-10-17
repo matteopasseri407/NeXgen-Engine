@@ -1,0 +1,52 @@
+# Findings that are already in the published history, pinned one by one.
+#
+# A commit-range scan re-reads every commit since the last release, so a value
+# that landed in a commit already on GitHub blocks every later release while no
+# longer being preventable. Each entry below matches ONE finding only: the exact
+# commit (rev), file, line, pattern and redacted value. The same value in any other
+# commit, file or line still blocks, and a reordered pattern file stops matching
+# (fail-closed). Add an entry only for a commit that is already public, with the
+# reason; never for a new commit, which must be fixed before it is pushed.
+exceptions:
+  - rev: "ffad3e9702df731cbe06a2f9085585faefe5f527"
+    path: 03-INFRA/agent-universal-layer/tests/test_nexgen_llmsplit_pinning.py
+    line: 160
+    kind: pattern:h9
+    match: "--…-- (27 chars)"
+    reason: fake PEM header built in a redaction test, no key material
+  - rev: "c3edf769cfb272a7f2b3e84d6b29d540763c5cce"
+    path: 03-INFRA/agent-universal-layer/tests/test_nexgen_llmsplit_pinning.py
+    line: 160
+    kind: pattern:h9
+    match: "--…-- (27 chars)"
+    reason: same fake PEM header, carried by a later commit
+  - rev: "a59842b4ee7130fdb80ddbbaffaee94110446aed"
+    path: 03-INFRA/agent-universal-layer/tests/test_nexgen_depwatchsplit_pinning.py
+    line: 21
+    kind: pattern:h4
+    match: "ab…45 (44 chars)"
+    reason: FAKE_COMMIT test constant (abc123def456... repeated), not a credential
+  - rev: "c3edf769cfb272a7f2b3e84d6b29d540763c5cce"
+    path: 03-INFRA/agent-universal-layer/tests/test_nexgen_depwatchsplit_pinning.py
+    line: 21
+    kind: pattern:h4
+    match: "ab…45 (44 chars)"
+    reason: same FAKE_COMMIT constant, carried by a later commit
+  - rev: "ff9c4a12832db9e8c9e2d7a5ed904e8034367f2e"
+    path: 03-INFRA/agent-universal-layer/tests/test_nexgen_discipline_guards.py
+    line: 26
+    kind: pattern:h3
+    match: "n@…ip (18 chars)"
+    reason: a newline followed by the pytest skip decorator in a test string, read as an e-mail address
+  - rev: "64ea1f41845e3def9ed525fa78812c14ac754b7a"
+    path: 03-INFRA/agent-universal-layer/tests/test_nexgen_discipline_guards.py
+    line: 140
+    kind: pattern:h3
+    match: "n@…ze (25 chars)"
+    reason: a newline followed by the pytest parametrize decorator in a test string, read as an e-mail address
+  - rev: "bd0c33e5a36db3012384effd718723d078c6acca"
+    path: 03-INFRA/agent-universal-layer/tests/test_nexgen_discipline_guards.py
+    line: 199
+    kind: pattern:h3
+    match: "n@…ze (25 chars)"
+    reason: a newline followed by the pytest parametrize decorator in a test string, read as an e-mail address

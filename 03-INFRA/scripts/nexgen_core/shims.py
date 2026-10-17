@@ -84,27 +84,27 @@ rem The engine's own environment, once provisioned and verified (see the POSIX l
 set "NEXGEN_RUNTIME={runtime}"
 if exist "%NEXGEN_RUNTIME%\\.provisioned" if exist "%NEXGEN_RUNTIME%\\Scripts\\python.exe" (
     "%NEXGEN_RUNTIME%\\Scripts\\python.exe" "%NEXGEN_ENTRY%" {prefix}%*
-    exit /b %ERRORLEVEL%
+    goto :nexgen_done
 )
 where py >nul 2>&1
 if %ERRORLEVEL% equ 0 (
-    py -3 -c "import sys; sys.exit(0 if sys.version_info>=(3,11) else 1)" >nul 2>&1
-    if %ERRORLEVEL% equ 0 (
+    py -3 -c "import sys; sys.exit(0 if sys.version_info>=(3,11) else 1)" >nul 2>&1 && (
         py -3 "%NEXGEN_ENTRY%" {prefix}%*
-        exit /b %ERRORLEVEL%
+        goto :nexgen_done
     )
 )
 where python >nul 2>&1
 if %ERRORLEVEL% equ 0 (
-    python -c "import sys; sys.exit(0 if sys.version_info>=(3,11) else 1)" >nul 2>&1
-    if %ERRORLEVEL% equ 0 (
+    python -c "import sys; sys.exit(0 if sys.version_info>=(3,11) else 1)" >nul 2>&1 && (
         python "%NEXGEN_ENTRY%" {prefix}%*
-        exit /b %ERRORLEVEL%
+        goto :nexgen_done
     )
 )
 echo NeXgen: Python 3.11 or newer is required but was not found on PATH. >&2
 echo NeXgen: install Python 3.11+ and rerun the command. >&2
 exit /b 1
+:nexgen_done
+exit /b %ERRORLEVEL%
 """
 
 

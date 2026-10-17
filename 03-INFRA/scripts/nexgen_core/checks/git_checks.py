@@ -204,12 +204,13 @@ def check_remotes_config(vault_data: Path) -> CheckOutcome | None:
 
 
 def check_vault_remote_privacy(vault_data: Path) -> CheckOutcome | None:
-    """No remote of the vault may be the engine's public repository.
+    """No publish path from the vault may lead to the engine's public repository.
 
-    The vault holds private notes, decisions and (never committed, but nearby) secrets; the
-    engine's repository is public. A vault clone whose `origin` was left pointing at the engine,
-    or a remote added by mistake, is one `vault push` from publishing all of it. Returns None
-    when the vault is not a git repository (nothing to say).
+    The vault holds private notes; the engine's repository is public. The
+    standard single clone keeps the public remote as a fetch-only update
+    channel while publishing goes to a private remote, which is safe and
+    must stay silent: scaring the installer about their own update channel
+    teaches them to ignore the doctor. Only a real publish path stays loud.
     """
     if not (vault_data / ".git").exists():
         return None
@@ -220,13 +221,90 @@ def check_vault_remote_privacy(vault_data: Path) -> CheckOutcome | None:
             severity=Severity.OK,
             message=t("No remote of the Vault points at the engine's public repository"),
         )
-    shown = ", ".join(f"{name} ({url})" for name, url in leaks)
+    flagged = {name for name, _ in leaks}
+    auth, mirrors = resolve_remotes(vault_data)
+    if flagged & ({auth, *mirrors} - {"local", "none"}):
+        shown = ", ".join(f"{name} ({url})" for name, url in leaks)
+        return CheckOutcome(
+            id="git.vault_remote_privacy",
+            severity=Severity.BROKEN,
+            message=t("The Vault has a remote that is the engine's public repository: {remotes}", remotes=shown),
+            action=t("Point it at your own private repository ('git remote set-url <name> <url>') or remove it ('git remote remove <name>'). Publishing is refused until then."),
+        )
+    if auth in ("local", "none"):
+        return CheckOutcome(
+            id="git.vault_remote_privacy",
+            severity=Severity.OK,
+            message=t("No remote of the Vault points at the engine's public repository"),
+        )
+    implicit = _implicit_push_remote(vault_data)
+    if implicit in flagged and not _push_disabled(vault_data, implicit):
+        shown = ", ".join(f"{name} ({url})" for name, url in leaks)
+        return CheckOutcome(
+            id="git.vault_remote_privacy",
+            severity=Severity.BROKEN,
+            message=t("The Vault has a remote that is the engine's public repository: {remotes}", remotes=shown),
+            action=t("Bare 'git push' would publish to {name}: run 'git remote set-url --push {name} DISABLED' once to keep it fetch-only.", name=implicit),
+        )
+    pushable = sorted(name for name in flagged if not _push_disabled(vault_data, name))
+    if not pushable:
+        return CheckOutcome(
+            id="git.vault_remote_privacy",
+            severity=Severity.OK,
+            message=t("No remote of the Vault points at the engine's public repository"),
+        )
+    shown = ", ".join(pushable)
+    first = pushable[0]
     return CheckOutcome(
         id="git.vault_remote_privacy",
-        severity=Severity.BROKEN,
-        message=t("The Vault has a remote that is the engine's public repository: {remotes}", remotes=shown),
-        action=t("Point it at your own private repository ('git remote set-url <name> <url>') or remove it ('git remote remove <name>'). Publishing is refused until then."),
+        severity=Severity.WARN,
+        message=t("Update channel only: {remotes} serve the engine updates and never receive your notes, which go to {auth}.", remotes=shown, auth=auth),
+        action=t("Make {name} fetch-only once: 'git remote set-url --push {name} DISABLED'. Your notes already go to {auth}.", name=first, auth=auth),
     )
+
+
+def _push_urls(repo: Path, remote: str) -> list[str] | None:
+    """Every URL git would push to for ``remote``, or None when it cannot tell.
+
+    None means a real error (corrupt config, timeout, lock), never a disabled
+    push: callers must fail safe on None, never silent.
+    """
+    proc = run_git(repo, "remote", "get-url", "--push", "--all", remote)
+    if proc.returncode != 0:
+        return None
+    return proc.stdout.splitlines()
+
+
+def _push_disabled(repo: Path, remote: str) -> bool:
+    """Whether no git push, explicit or implicit, can publish through ``remote``.
+
+    True only when every push URL is empty or set to the conventional
+    DISABLED marker. A remote git cannot resolve at all counts as pushable:
+    absence of evidence is not evidence of absence.
+    """
+    urls = _push_urls(repo, remote)
+    return urls is not None and all(url.strip() in ("", "DISABLED") for url in urls)
+
+
+def _implicit_push_remote(repo: Path) -> str | None:
+    """Where a bare `git push` (or an IDE sync button) would publish.
+
+    Follows git's own resolution: branch.<name>.pushRemote, then
+    branch.<name>.remote, then remote.pushDefault. None when nothing would
+    move without an explicit remote argument.
+    """
+    branch = run_git(repo, "rev-parse", "--abbrev-ref", "HEAD")
+    current = branch.stdout.strip()
+    if branch.returncode != 0 or current in ("", "HEAD"):
+        return None
+    for key in (f"branch.{current}.pushRemote", f"branch.{current}.remote"):
+        value = run_git(repo, "config", "--get", key)
+        if value.returncode == 0 and value.stdout.strip():
+            return value.stdout.strip()
+    default = run_git(repo, "config", "--get", "remote.pushDefault")
+    if default.returncode == 0 and default.stdout.strip():
+        return default.stdout.strip()
+    return None
 
 
 def check_quarantine_branches(vault_data: Path) -> CheckOutcome:

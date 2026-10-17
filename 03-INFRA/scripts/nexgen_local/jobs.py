@@ -98,8 +98,8 @@ def _sources(tools: ToolRegistry) -> list[str]:
     return sources
 
 
-def job_research(llm: LLM, tools: ToolRegistry, cfg: LaneConfig, topic: str) -> JobResult:
-    """Vault + web search, top sources read, one synthesis with citations."""
+def _run_research_job(llm: LLM, tools: ToolRegistry, cfg: LaneConfig, topic: str) -> JobResult:
+    """Research steps: vault + web search, top sources read, one synthesis."""
     topic = str(topic or "").strip()
     if not topic:
         raise JobError("tema vuoto")
@@ -205,6 +205,11 @@ def job_research(llm: LLM, tools: ToolRegistry, cfg: LaneConfig, topic: str) -> 
     )
 
 
+def job_research(llm: LLM, tools: ToolRegistry, cfg: LaneConfig, topic: str) -> JobResult:
+    """Vault + web search, top sources read, one synthesis with citations."""
+    return _run_research_job(llm, tools, cfg, topic)
+
+
 def _string_list(value: Any, limit: int = MAX_DRAFT_ITEMS) -> list[str]:
     if not isinstance(value, list):
         return []
@@ -236,8 +241,8 @@ def _render_draft(data: dict[str, Any], session_path: str) -> str:
     return "\n".join(lines)
 
 
-def job_close(llm: LLM, tools: ToolRegistry, cfg: LaneConfig, session_path: str, *, save: bool = False) -> JobResult:
-    """Read a session text, extract durable outcomes, render a draft."""
+def _run_close_job(llm: LLM, tools: ToolRegistry, cfg: LaneConfig, session_path: str, *, save: bool = False) -> JobResult:
+    """Close steps: read a session text, extract outcomes, render a draft."""
     from .source_selection import pinned_path
 
     found = existing_file(cfg, session_path)
@@ -281,3 +286,22 @@ def job_close(llm: LLM, tools: ToolRegistry, cfg: LaneConfig, session_path: str,
         draft=draft,
         draft_path=draft_path,
     )
+
+
+def job_close(llm: LLM, tools: ToolRegistry, cfg: LaneConfig, session_path: str, *, save: bool = False) -> JobResult:
+    """Read a session text, extract durable outcomes, render a draft."""
+    return _run_close_job(llm, tools, cfg, session_path, save=save)
+
+
+def run_job(llm: LLM, tools: ToolRegistry, cfg: LaneConfig, job: str, arg: str, *, save: bool = False) -> JobResult:
+    """Dispatch to the research and close helpers in sequence.
+
+    ``research`` runs the vault and web synthesis, ``close`` distills a
+    session into a draft. Anything else is refused with a clear error.
+    """
+    name = str(job or "").strip().casefold()
+    if name == "research":
+        return _run_research_job(llm, tools, cfg, str(arg or ""))
+    if name == "close":
+        return _run_close_job(llm, tools, cfg, str(arg or ""), save=save)
+    raise JobError(f"job sconosciuto: {job!r} (attesi: research, close)")

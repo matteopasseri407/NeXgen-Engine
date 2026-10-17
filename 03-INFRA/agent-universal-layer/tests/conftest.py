@@ -18,6 +18,8 @@ from pathlib import Path
 
 import pytest
 
+pytest_plugins = ["discipline_repo"]
+
 TESTS_DIR = Path(__file__).resolve().parent
 FIXTURES = TESTS_DIR / "fixtures"
 REAL_UL = TESTS_DIR.parent                      # .../agent-universal-layer (real source)
@@ -47,6 +49,11 @@ def isolated_runtime_overrides(monkeypatch, tmp_path_factory):
         "KNOWLEDGE_VAULT_PATH", "AGENT_SYNC_LOCK_FILE", "APPDATA", "LOCALAPPDATA",
         # A maintainer's own vault remote won over the remotes.yaml a fixture wrote.
         "KNOWLEDGE_VAULT_REMOTE", "ORACLE_SSH_HOST",
+        # A git hook exports GIT_DIR (a push from a linked worktree points it at
+        # that worktree): without clearing it, a test's `git -C <tmp> config`
+        # rewrites the real repository instead of its own scratch copy.
+        "GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR",
+        "GIT_OBJECT_DIRECTORY", "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_PREFIX",
     ):
         monkeypatch.delenv(key, raising=False)
     # The suite runs against git as CI has it: no global or system config. A
@@ -201,6 +208,20 @@ def _make_bin_stubs(sandbox: Sandbox) -> None:
         stub = sandbox.bin_stubs / cmd
         stub.write_text("#!/bin/sh\nexit 0\n")
         stub.chmod(stub.stat().st_mode | stat.S_IEXEC)
+
+
+def install_engine_layer(home: Path) -> Path:
+    """Write the minimal engine layer a guard cycle reads at its default path.
+
+    The modules phase fails closed when the catalog is missing (a broken
+    install must never pass as a silent no-op), so a test that runs a real
+    cycle gives the fake machine a layer: an empty catalog declares nothing,
+    which is what these sandboxes want.
+    """
+    layer = home / ".nexgen-engine" / "03-INFRA" / "agent-universal-layer" / "modules"
+    layer.mkdir(parents=True, exist_ok=True)
+    (layer / "modules.yaml").write_text("schema_version: 1\nmodules: {}\n", encoding="utf-8")
+    return layer
 
 
 def _copy_engine_scripts(sandbox: Sandbox) -> None:

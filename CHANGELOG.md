@@ -8,7 +8,118 @@ This file tracks the **engine** (this repo). Your own data — manifests,
 instructions, skills, secrets — lives in your KnowledgeVault and is not part
 of any engine release.
 
-## [Unreleased]
+## [2.16.0] - 2026-10-17
+
+Stabilization release: no new features, same behavior everywhere, smaller
+and duller pieces. Over seventy splits and unifications, each landed with
+behavior-pinning tests first and a green suite after. Duplicates unified
+(notifier state, firecrawl probe, required rules, mcp and skill deps,
+info and inventory). Removal candidates all overturned by proof. Five
+pre-existing Windows failures unchanged, CI green on Linux and Windows.
+On top of that, the stabilization plan
+closed 25 Must Fix and ten serious defects from a file-by-file review of
+the whole code base, each with a test that failed before the fix.
+
+### Fixed (stabilization plan)
+
+- **Windows launchers report failures.** Every `nexgen` command started from
+  a `.cmd` launcher exited 0 even when it failed, because the exit code was
+  read before the command ran. Scheduled cycles and scripts that check the
+  exit code now see real failures. Re-run `nexgen sync` once to regenerate
+  the launchers.
+- **Work is never reset away.** The divergence quarantine refuses when there
+  are uncommitted changes, or when `git status` cannot be read, instead of
+  running `reset --hard` over them. A Ctrl+C during an engine update rolls
+  the engine back instead of leaving it half-merged.
+- **A cycle that fails says so.** A phase that raises, or an MCP render that
+  fails, now marks the cycle failed (exit 1) instead of a warning with exit 0.
+  A third-party bump whose MCP render fails puts the pins back instead of
+  committing them.
+- **Writes that cannot half-happen.** The stack `.env` with the connector keys
+  is written atomically: a crash can no longer truncate it and make the next
+  start regenerate keys over encrypted data. A Local Lane patch whose result
+  does not match the proposal puts the file back byte for byte. A symlinked
+  config with uncommitted edits in its real file is backed up before it is
+  overwritten. A malformed `remotes.yaml` is refused instead of being
+  rewritten empty.
+- **Secrets stay hidden.** Adopting an MCP server from any CLI (not only
+  Claude Desktop) redacts literal tokens before they are printed or written
+  to the manifest. The leak scan now reads added lines that begin with `++`.
+  Outgoing Gmail messages are built with the standard library, so a newline
+  in a subject or in the sender of the message being answered can no longer
+  inject headers such as `Bcc`.
+- **The vault stays the vault.** The groom write pass can only edit its
+  disposable clone, never the live vault through MCP. `vault-push` refuses a
+  detached HEAD instead of committing an orphan and reporting success.
+- **The Council asks before it spends.** Without `--seat` it shows the
+  choices and stops; picking a seat on its own needs an explicit `--auto`.
+- Windows: the lock retries a file briefly held by Defender or the indexer,
+  uptime is read as 64-bit (no false "sync stuck" alarm after 24.8 days),
+  process trees are stopped even after their launcher exited (also in the
+  Council), the relay and the Local Lane verify step start `.cmd` shims and
+  keep backslashes and quoted paths intact, and a read-only file can be
+  replaced. The scheduler installs with `nexgen.cmd` alone. A lazy MCP server
+  that is stopped always closes its pipes.
+
+### Changed
+
+- The upstream watch can flag a build-counter release once a pin falls
+  behind: a module component may declare `compare: build:<N>` (a newer
+  minor, or N builds behind on the same minor). Firecrawl uses `build:100`,
+  about three weeks; `minor` alone had hidden 2.11.99 -> 2.11.528 until the
+  search API stopped matching the MCP client.
+- Updating no longer interrogates the installer about signatures: a release
+  that cannot be verified on the machine installs with one plain line, in
+  every mode including `--unattended`. A wrong signature, or one by a key
+  the installed copy does not pin, still refuses everywhere with exit 70.
+- The doctor no longer fails on the standard single clone: a public remote
+  that is fetch-only while publishing goes to a private remote stays
+  silent, and a still-pushable one is a calm warning. Only a real publish
+  path to the public repository stays a failure.
+
+### Fixed
+
+- Firecrawl search works again on a self-hosted stack: the deploy template
+  now pins the api image to `2.11.528` (was `2.11.99`) and playwright-service
+  to the matching digest. `firecrawl-mcp` 3.25 and later sends the search
+  keys `toolDetail`/`domainTools`, which images older than mid-September
+  reject with 400, so every `firecrawl_search` failed while scrape kept
+  working. An existing deploy picks the fix up with `docker compose pull`
+  and `up -d` in the firecrawl stack, or by re-running `bootstrap-vps.sh`.
+- On Windows `security.secrets_materialized` reads the canonical XDG
+  `auth.json` (`~/.local/share/opencode/`) first: a stale `%LOCALAPPDATA%`
+  copy (including one a Windows Store Python redirects into its own
+  sandbox) no longer shadows the live file, and AppData stays only as a
+  fallback when the XDG file is absent.
+
+### Added
+
+- `nexgen_core/discipline` (`python 03-INFRA/scripts/discipline.py`): mechanical engineering
+  discipline for code written by agents. Size ratchet (files over 500 lines and functions over
+  60 may not grow; limits are read from the base revision), a soft shell/PowerShell gate, a
+  complexity score, and an independent-review receipt bound to the exact file contents for
+  complex changes to declared production paths (`.nexgen-discipline.toml`); the receipt is an honesty
+  check, not a security boundary. `check_engine.py` and a CI job run it.
+- Paid reviews are the exception: required only for a bigger change to the declared critical files (`review_paths`, threshold 4: about 200 net lines, or a new file plus about 100 lines; names end in `*` so the pieces of a split critical file stay covered; the discipline engine itself is on the list) or
+  for edits to the discipline config and the CI that runs the gate; the owner can ask for one any time or record their own
+  decision for free with `discipline.py approve --reason`.
+- Per-commit proof (`discipline/regress.py`, from the Pocock skills' diagnose and TDD loop): a commit that changes critical code carries a
+  test, and a commit titled `fix...:` must show its test failing on the parent's code, so a test that passes by construction is refused.
+  The tests run on both sides (fail before, pass after), so a missing runner or `assert False` is refused too. Python tests only; fixes that touch no code are not asked for a proof.
+  Escape: `nexgen: no-test reason="..."` in the commit message. `test_command` in the config sets the runner.
+- The size rule is "one file, one job": line counts are the alarm. A file past 500 lines may declare its single job with
+  `nexgen: one-job reason="..."` (up to 1000 lines) instead of being split; functions still never grow past 60.
+- `discipline.py init`, `report` and `smoke`: any project gets a config, a decision log and local git hooks that call the
+  installed engine; a plain-Italian health report (red until the project defines a real-flow `smoke_command`); gates against
+  deleted, weakened or skipped tests and against new swallowed exceptions.
+- `03-INFRA/engineering-rules.md`, the `nexgen-discipline` skill, and `03-INFRA/writing-and-alerts.md`.
+
+### Changed
+
+- The canonical bootstrap shrinks from 37.6 KB to about 20 KB: browser steps, identity,
+  single-source detail, the Council trigger, writing voice and the garden rule moved to the
+  notes that already own them. "Operate autonomously" now means reversible steps inside the
+  request, and cross-platform means one Python implementation, never parallel `.sh`/`.ps1` pairs.
 
 ## [2.15.2] - 2026-10-15
 

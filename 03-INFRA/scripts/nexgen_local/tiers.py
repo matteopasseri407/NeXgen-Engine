@@ -85,8 +85,7 @@ ASSISTED_TOOL_NAMES = frozenset(
 )
 
 
-def get_tier(name: str | None) -> Tier:
-    """The tier by name; unknown names fail loudly instead of guessing."""
+def _get_tier_impl(name: str | None) -> Tier:
     key = str(name or "").strip().casefold()
     if key not in TIERS:
         raise ValueError(f"tier sconosciuto: {name!r} (attesi: {', '.join(TIER_ORDER)})")
@@ -95,25 +94,44 @@ def get_tier(name: str | None) -> Tier:
     return tier
 
 
-def tier_for_model(model: str | None, mapping: dict[str, Any] | None = None) -> str:
-    """The stored tier for a model; any unknown model stays on tutor.
+def get_tier(name: str | None) -> Tier:
+    """The tier by name; unknown names fail loudly instead of guessing."""
+    return _get_tier_impl(name)
 
-    Never raises: at the config boundary an unknown name must degrade to the
-    strictest tier, not abort the lane.
-    """
+
+def _tier_for_model_impl(model: str | None, mapping: dict[str, Any] | None = None) -> str:
     if not model or not str(model).strip():
         return DEFAULT_TIER
     name = str((mapping or {}).get(str(model).strip(), DEFAULT_TIER))
     return name if name in TIERS else DEFAULT_TIER
 
 
-def next_tier(name: str) -> str:
-    """The tier above `name`; the top tier promotes to itself."""
+def tier_for_model(model: str | None, mapping: dict[str, Any] | None = None) -> str:
+    """The stored tier for a model; any unknown model stays on tutor.
+
+    Never raises: at the config boundary an unknown name must degrade to the
+    strictest tier, not abort the lane.
+    """
+    return _tier_for_model_impl(model, mapping)
+
+
+def _next_tier_impl(name: str) -> str:
     key = str(name or "").strip().casefold()
     if key not in TIERS:
         return DEFAULT_TIER
     order = list(TIER_ORDER)
     return order[min(order.index(key) + 1, len(order) - 1)]
+
+
+def next_tier(name: str) -> str:
+    """The tier above `name`; the top tier promotes to itself."""
+    return _next_tier_impl(name)
+
+
+def _effective_max_steps_impl(cfg: Any, explicit: int | None = None) -> int:
+    if explicit is None:
+        return get_tier(getattr(cfg, "tier", DEFAULT_TIER) or DEFAULT_TIER).max_steps
+    return int(explicit)
 
 
 def effective_max_steps(cfg: Any, explicit: int | None = None) -> int:
@@ -123,23 +141,14 @@ def effective_max_steps(cfg: Any, explicit: int | None = None) -> int:
     None when the flag is absent, so tutor resolves to today's default while
     higher tiers get their wider budget from the same knob.
     """
-    if explicit is None:
-        return get_tier(getattr(cfg, "tier", DEFAULT_TIER) or DEFAULT_TIER).max_steps
-    return int(explicit)
+    return _effective_max_steps_impl(cfg, explicit)
 
 
 class TierInvariantError(RuntimeError):
     """A tier that would relax something no tier may relax."""
 
 
-def assert_tier_invariants(tier: Tier) -> None:
-    """Invariants no tier relaxes; run on every tier resolution.
-
-    A tier only tunes steering (context, thinking, budget, who picks the
-    tool). The read-only surface, the fail-closed audit, the receipt check and
-    the sanitised retrieval path live in the shared code below and are
-    identical for every tier.
-    """
+def _assert_tier_invariants_impl(tier: Tier) -> None:
     from .tools import READ_ONLY_TOOL_NAMES
 
     # Explicit raises, not asserts: `python -O` strips asserts, and these
@@ -161,10 +170,25 @@ def assert_tier_invariants(tier: Tier) -> None:
         raise TierInvariantError(f"tier {tier.name}: " + "; ".join(problems))
 
 
-def tiers_file(state_dir: Path | None = None) -> Path:
-    """Where the per-model tier map lives; overrideable for tests."""
+def assert_tier_invariants(tier: Tier) -> None:
+    """Invariants no tier relaxes; run on every tier resolution.
+
+    A tier only tunes steering (context, thinking, budget, who picks the
+    tool). The read-only surface, the fail-closed audit, the receipt check and
+    the sanitised retrieval path live in the shared code below and are
+    identical for every tier.
+    """
+    _assert_tier_invariants_impl(tier)
+
+
+def _tiers_file_impl(state_dir: Path | None = None) -> Path:
     if state_dir is not None:
         return Path(state_dir) / MODEL_TIERS_FILE
     from .config import lane_state_dir
 
     return lane_state_dir() / MODEL_TIERS_FILE
+
+
+def tiers_file(state_dir: Path | None = None) -> Path:
+    """Where the per-model tier map lives; overrideable for tests."""
+    return _tiers_file_impl(state_dir)

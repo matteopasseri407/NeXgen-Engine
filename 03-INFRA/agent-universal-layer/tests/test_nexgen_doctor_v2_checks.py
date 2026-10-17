@@ -641,6 +641,26 @@ def test_skills_not_materialized_and_remedy(tmp_path: Path, monkeypatch):
     assert outcome_after.severity == Severity.OK
 
 
+def test_an_upstream_skill_is_never_reported_as_missing(tmp_path: Path, monkeypatch):
+    """MUST-09: una skill `origin: upstream` è inventariata, non materializzata
+    (i byte li possiede l'installer suo): il doctor la segnalava come mancante
+    a ogni ciclo, per sempre."""
+    vault, home, engine_root = _setup_skills_vault(tmp_path)
+    monkeypatch.setenv("AGENT_ENGINE_ROOT", str(engine_root))
+    manifest = vault / "03-INFRA" / "agent-universal-layer" / "skills" / "skills.manifest.yaml"
+    manifest.write_text(_SKILLS_MANIFEST + (
+        "  uppy:\n    origin: upstream\n    exposure: manual\n"
+        "    targets: [claude]\n    deps:\n      kind: npx\n      spec: \"uppy@1.0.0\"\n"
+    ), encoding="utf-8")
+
+    first = skill_checks.check_skills_not_materialized(vault, home)
+    assert "uppy" not in (first.message or ""), first.message
+
+    skill_checks.check_skills_not_materialized(vault, home).remedy()
+    after = skill_checks.check_skills_not_materialized(vault, home)
+    assert after.severity == Severity.OK, after.message
+
+
 def test_engine_starter_views_broken_then_fixed(tmp_path: Path, monkeypatch):
     vault, home, engine_root = _setup_skills_vault(tmp_path)
     monkeypatch.setenv("AGENT_ENGINE_ROOT", str(engine_root))
@@ -839,6 +859,49 @@ def test_check_secrets_materialized(tmp_path):
     auth_json.write_text(json.dumps({"deepseek": {"type": "api", "key": "sk-new-key"}}), encoding="utf-8")
     outcome_matched = security_checks.check_secrets_materialized(home, vault)
     assert outcome_matched.severity == Severity.OK
+
+
+@pytest.mark.skipif(os.name != "nt", reason="the %LOCALAPPDATA% fallback is a Windows-only branch")
+def test_secrets_check_prefers_the_xdg_auth_over_a_stale_appdata_copy(tmp_path, monkeypatch):
+    """Su Windows una copia vecchia in %LOCALAPPDATA% non deve ombreggiare il
+    file XDG canonico, che e' quello che OpenCode riscrive; la copia in AppData
+    resta solo come fallback quando l'XDG manca.
+
+    Il ramo AppData esiste solo su Windows e qui si asserisce li' (la CI ha un
+    runner Windows) invece di forzare os.name: cambiarlo process-wide cambia il
+    flavour di pathlib per ogni Path costruito nel frattempo e avvelena pytest.
+    """
+    home = tmp_path / "home"
+    vault = tmp_path / "vault"
+    appdata = tmp_path / "appdata"
+    home.mkdir()
+    vault.mkdir()
+
+    secrets_env = home / ".config" / "nexgen" / "secrets.env"
+    secrets_env.parent.mkdir(parents=True)
+    secrets_env.write_text("export DEEPSEEK_API_KEY=sk-live-key\n", encoding="utf-8")
+    secrets_env.chmod(0o600)
+
+    xdg_auth = home / ".local" / "share" / "opencode" / "auth.json"
+    xdg_auth.parent.mkdir(parents=True)
+    xdg_auth.write_text(json.dumps({"deepseek": {"type": "api", "key": "sk-live-key"}}), encoding="utf-8")
+    xdg_auth.chmod(0o600)
+
+    stale = appdata / "opencode" / "auth.json"
+    stale.parent.mkdir(parents=True)
+    stale.write_text(json.dumps({"deepseek": {"type": "api", "key": "sk-old-stale-key"}}), encoding="utf-8")
+
+    monkeypatch.setenv("LOCALAPPDATA", str(appdata))
+
+    # La copia AppData esiste ma non e' quella viva: il check deve leggere l'XDG.
+    outcome = security_checks.check_secrets_materialized(home, vault)
+    assert outcome.severity == Severity.OK, outcome.message
+
+    # Senza il file XDG, la copia AppData resta un fallback valido.
+    xdg_auth.unlink()
+    outcome_fallback = security_checks.check_secrets_materialized(home, vault)
+    assert outcome_fallback.severity == Severity.WARN
+    assert "provider key mismatch for 'deepseek'" in outcome_fallback.message
 
 
 def test_doctor_summary_with_failures_survives_a_cp850_console(monkeypatch):

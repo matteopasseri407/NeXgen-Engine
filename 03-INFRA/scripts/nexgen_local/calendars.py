@@ -101,7 +101,7 @@ def _store_new(cfg: LaneConfig, proposal: CalendarProposal) -> CalendarProposal:
     raise CalendarError("collisione id proposta, riprova")
 
 
-def propose_event(
+def _propose_event_impl(
     cfg: LaneConfig,
     summary: str,
     start: str,
@@ -134,7 +134,20 @@ def propose_event(
     return proposal
 
 
-def propose_delete(cfg: LaneConfig, calendar_id: str = "primary", event_id: str = "") -> CalendarProposal:
+def propose_event(
+    cfg: LaneConfig,
+    summary: str,
+    start: str,
+    end: str,
+    description: str = "",
+    location: str = "",
+    calendar_id: str = "primary",
+) -> CalendarProposal:
+    """Stage an event creation on explicit fields; no model involved."""
+    return _propose_event_impl(cfg, summary, start, end, description, location, calendar_id)
+
+
+def _propose_delete_impl(cfg: LaneConfig, calendar_id: str = "primary", event_id: str = "") -> CalendarProposal:
     """Stage an event deletion; the event must exist and be shown first."""
     event_id = str(event_id or "").strip()
     if not event_id:
@@ -161,7 +174,12 @@ def propose_delete(cfg: LaneConfig, calendar_id: str = "primary", event_id: str 
     return proposal
 
 
-def format_gate(proposal: CalendarProposal) -> str:
+def propose_delete(cfg: LaneConfig, calendar_id: str = "primary", event_id: str = "") -> CalendarProposal:
+    """Stage an event deletion; the event must exist and be shown first."""
+    return _propose_delete_impl(cfg, calendar_id, event_id)
+
+
+def _format_gate_impl(proposal: CalendarProposal) -> str:
     """The approval screen: machine facts first."""
     lines = [
         f"Proposta {proposal.id} — fatti macchina",
@@ -187,6 +205,11 @@ def format_gate(proposal: CalendarProposal) -> str:
         )
     lines.append(f"  Applica con: nexgen-local cal-apply {proposal.id} --yes")
     return "\n".join(lines)
+
+
+def format_gate(proposal: CalendarProposal) -> str:
+    """The approval screen: machine facts first."""
+    return _format_gate_impl(proposal)
 
 
 def apply_proposal(cfg: LaneConfig, proposal_id: str, *, yes: bool) -> dict[str, Any]:

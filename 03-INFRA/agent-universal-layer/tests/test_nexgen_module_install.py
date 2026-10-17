@@ -82,7 +82,6 @@ def _desktop_catalog(tmp_path: Path, source: Path) -> Path:
               systemd_units: [systemd/demo.service]
               runtime_hooks: [event_sink]
             requires:
-              binaries: [sh]
               paths: ["{source.as_posix()}"]
         """)
 
@@ -698,8 +697,6 @@ def test_transient_env_gates_keep_module_instead_of_uninstalling(tmp_path: Path)
             provides:
               shims:
                 demo: "{source.as_posix()}/bin/demo-entry"
-            requires:
-              binaries: [sh]
         """)
     from nexgen_core.modules import load_catalog
 
@@ -734,8 +731,6 @@ def test_one_bad_module_does_not_abort_siblings(tmp_path: Path) -> None:
             provides:
               shims:
                 good: "{source_ok.as_posix()}/bin/demo-entry"
-            requires:
-              binaries: [sh]
           bad:
             label: Bad
             kind: feature
@@ -744,8 +739,6 @@ def test_one_bad_module_does_not_abort_siblings(tmp_path: Path) -> None:
             provides:
               shims:
                 bad: "/nonexistent-source-dir/bin/x"
-            requires:
-              binaries: [sh]
         """)
     from nexgen_core.modules import load_catalog
 

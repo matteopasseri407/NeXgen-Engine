@@ -12,6 +12,7 @@ import secrets as _secrets
 import stat
 from pathlib import Path
 
+from nexgen_core.files import atomic_write_text
 from nexgen_core.paths import resolve_home
 
 
@@ -45,13 +46,10 @@ def _restrict(path: Path) -> None:
 
 
 def _write_restricted_text(path: Path, content: str) -> None:
-    """Writes text to a file with 0600 permissions directly, avoiding world-readable race windows."""
+    """Writes text atomically: a crash leaves the old file or the new one, never a truncated file."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC
     try:
-        fd = os.open(str(path), flags, stat.S_IRUSR | stat.S_IWUSR)
-        with open(fd, "w", encoding="utf-8") as handle:
-            handle.write(content)
+        atomic_write_text(path, content, preserve_mode=False)
     except OSError as exc:
         raise OSError(f"cannot write restricted file {path} ({type(exc).__name__})") from exc
     _restrict(path)

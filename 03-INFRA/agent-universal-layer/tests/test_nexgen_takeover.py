@@ -225,6 +225,40 @@ def test_a_live_config_carrying_a_real_token_is_refused_not_swallowed():
     assert "auth" not in absent, "nessuna autenticazione non è la stessa cosa di un segreto"
 
 
+def test_adopt_scrubs_literal_secrets_for_every_cli_not_only_desktop(tmp_path, monkeypatch, capsys):
+    """Un token in chiaro nell'env o nell'URL non deve finire né nello stub
+    stampato né nel manifest scritto con --apply, qualunque sia la CLI.
+
+    Lo scrubbing era applicato solo a claude-desktop: opencode e le altre
+    stampavano e scrivevano il segreto così com'era.
+    """
+    import json
+
+    from nexgen_core import renderer_cli
+
+    token = "ghp_" + "A" * 36
+    live = tmp_path / "opencode.json"
+    live.write_text(json.dumps({"mcp": {
+        "leaky": {"command": ["npx", "server"], "environment": {"GITHUB_TOKEN": token}},
+        "remote": {"type": "remote", "url": f"https://x-access-token:{token}@example.invalid/mcp"},
+    }}), encoding="utf-8")
+    manifest = tmp_path / "manifest.yaml"
+    manifest.write_text("schema_version: 1\nservers: {}\n", encoding="utf-8")
+    monkeypatch.setattr(renderer_cli, "_cli_config_path", lambda cli: live)
+    monkeypatch.setattr(renderer_cli, "_manifest_path", lambda: manifest)
+    monkeypatch.setattr(renderer_cli, "_manifest_lock_path", lambda: tmp_path / "mcp.lock")
+
+    assert renderer_cli.cmd_adopt("opencode") == 0
+    printed = capsys.readouterr().out
+    assert token not in printed
+    assert "${GITHUB_TOKEN}" in printed
+
+    assert renderer_cli.cmd_adopt("opencode", apply=True) == 0
+    written = manifest.read_text(encoding="utf-8")
+    assert token not in written
+    assert "leaky" in written and "remote" in written
+
+
 # --- Il debito è stato saldato nella 2.3.0 ------------------------------------
 #
 # I venti involucri esistevano solo per le macchine che arrivavano dalla

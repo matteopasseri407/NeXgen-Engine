@@ -304,6 +304,12 @@ def _seat_spend_note(seat: dict, cost: str | None) -> str:
     return ""
 
 
+def _refuse_unconfirmed_payment(seat_name: str, answer: str) -> None:
+    """Hard stop for a pay-per-use seat without human confirmation."""
+    if answer not in ("y", "yes"):
+        sys.exit(f"[council] STOP: pay-per-use seat '{seat_name}' not confirmed.")
+
+
 def _confirm_pay_per_use(seat_name: str, seat: dict, cost: str | None) -> None:
     """Real-money gate: a pay-per-use seat is never invoked without the human
     confirming it, because the call spends actual money on a per-use channel.
@@ -320,8 +326,7 @@ def _confirm_pay_per_use(seat_name: str, seat: dict, cost: str | None) -> None:
         answer = input(f"Confirm pay-per-use call for seat '{seat_name}'? [y/N] ").strip().casefold()
     except EOFError:
         answer = ""
-    if answer not in ("y", "yes"):
-        sys.exit(f"[council] STOP: pay-per-use seat '{seat_name}' not confirmed.")
+    _refuse_unconfirmed_payment(seat_name, answer)
 
 
 def _confirm_seat_call(seat_name: str, seat: dict, config: dict | None = None) -> None:
@@ -430,7 +435,16 @@ def resolve_seat(
     degraded = False
     degraded_reason = None
     if not seat_name:
-        seat_name, degraded, degraded_reason = _auto_select_best_seat(args, config, seats, default_routing_role)
+        # Choosing a seat starts a real model on a real subscription: it
+        # happens only when asked (`--auto`), never because `--seat` was
+        # forgotten. The other branch exits with the menu; if it ever
+        # returned, seat_name would stay None and the check below refuses it.
+        if getattr(args, "auto", False):
+            seat_name, degraded, degraded_reason = _auto_select_best_seat(
+                args, config, seats, default_routing_role,
+            )
+        else:
+            _require_human_single_selection(args, config, seats, default_routing_role)
     if seat_name not in seats:
         sys.exit(f"[council] unknown seat: {seat_name}. Available: {', '.join(seats)}")
     seat = dict(seats[seat_name])

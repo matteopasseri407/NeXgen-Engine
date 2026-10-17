@@ -107,3 +107,90 @@ def test_the_doctor_names_the_remote_and_says_ok_otherwise(vault):
 
 def test_a_directory_that_is_not_a_repository_is_not_this_checks_business(tmp_path):
     assert check_vault_remote_privacy(tmp_path) is None
+
+
+def _write_remotes(vault, text):
+    sync_dir = vault / "03-INFRA" / "agent-universal-layer" / "sync"
+    sync_dir.mkdir(parents=True, exist_ok=True)
+    (sync_dir / "remotes.yaml").write_text(text, encoding="utf-8")
+
+
+def test_locked_single_clone_is_silent(vault, monkeypatch):
+    """Standard setup: public origin is fetch-only, publishing goes private."""
+    monkeypatch.delenv("KNOWLEDGE_VAULT_REMOTE", raising=False)
+    monkeypatch.delenv("KNOWLEDGE_VAULT_MIRRORS", raising=False)
+    _git(vault, "remote", "add", "origin", ENGINE_HTTPS)
+    _git(vault, "remote", "set-url", "--push", "origin", "DISABLED")
+    _write_remotes(vault, "authoritative_remote: vault\n")
+    assert check_vault_remote_privacy(vault).severity == Severity.OK
+
+
+def test_pushable_public_remote_is_a_calm_warning_not_a_panic(vault, monkeypatch):
+    monkeypatch.delenv("KNOWLEDGE_VAULT_REMOTE", raising=False)
+    monkeypatch.delenv("KNOWLEDGE_VAULT_MIRRORS", raising=False)
+    _git(vault, "remote", "add", "origin", ENGINE_HTTPS)
+    _write_remotes(vault, "authoritative_remote: vault\n")
+    outcome = check_vault_remote_privacy(vault)
+    assert outcome.severity == Severity.WARN
+    assert "origin" in outcome.message
+    assert "refus" not in (outcome.message + (outcome.action or "")).lower()
+
+
+def test_public_authoritative_remote_stays_broken(vault, monkeypatch):
+    monkeypatch.delenv("KNOWLEDGE_VAULT_REMOTE", raising=False)
+    monkeypatch.delenv("KNOWLEDGE_VAULT_MIRRORS", raising=False)
+    _git(vault, "remote", "add", "origin", ENGINE_HTTPS)
+    _write_remotes(vault, "authoritative_remote: origin\n")
+    assert check_vault_remote_privacy(vault).severity == Severity.BROKEN
+
+
+def test_bare_push_to_public_stays_broken_with_a_fix_that_keeps_updates(vault, monkeypatch):
+    """A clone tracking the public remote would publish on a bare push or an
+    IDE sync: loud, but the fix must keep fetching updates, not move origin."""
+    monkeypatch.delenv("KNOWLEDGE_VAULT_REMOTE", raising=False)
+    monkeypatch.delenv("KNOWLEDGE_VAULT_MIRRORS", raising=False)
+    _git(vault, "remote", "add", "origin", ENGINE_HTTPS)
+    _git(vault, "config", "branch.main.remote", "origin")
+    _write_remotes(vault, "authoritative_remote: vault\n")
+    outcome = check_vault_remote_privacy(vault)
+    assert outcome.severity == Severity.BROKEN
+    assert "DISABLED" in (outcome.action or "")
+
+
+def test_local_mode_is_silent(vault, monkeypatch):
+    monkeypatch.delenv("KNOWLEDGE_VAULT_REMOTE", raising=False)
+    monkeypatch.delenv("KNOWLEDGE_VAULT_MIRRORS", raising=False)
+    _git(vault, "remote", "add", "origin", ENGINE_HTTPS)
+    _write_remotes(vault, "authoritative_remote: local\n")
+    assert check_vault_remote_privacy(vault).severity == Severity.OK
+
+
+def test_second_push_url_is_honored(vault, monkeypatch):
+    """One DISABLED push URL is not enough when a second one stays public."""
+    monkeypatch.delenv("KNOWLEDGE_VAULT_REMOTE", raising=False)
+    monkeypatch.delenv("KNOWLEDGE_VAULT_MIRRORS", raising=False)
+    _git(vault, "remote", "add", "origin", ENGINE_HTTPS)
+    _git(vault, "remote", "set-url", "--push", "origin", "DISABLED")
+    _git(vault, "remote", "set-url", "--add", "--push", "origin",
+          "git@github.com:matteopasseri407/NeXgen-Engine.git")
+    _write_remotes(vault, "authoritative_remote: vault\n")
+    assert check_vault_remote_privacy(vault).severity == Severity.WARN
+
+
+def test_unreadable_push_config_fails_safe_to_warning(vault, monkeypatch):
+    import nexgen_core.checks.git_checks as git_checks_mod
+    from types import SimpleNamespace
+
+    monkeypatch.delenv("KNOWLEDGE_VAULT_REMOTE", raising=False)
+    monkeypatch.delenv("KNOWLEDGE_VAULT_MIRRORS", raising=False)
+    _git(vault, "remote", "add", "origin", ENGINE_HTTPS)
+    _write_remotes(vault, "authoritative_remote: vault\n")
+    real = git_checks_mod.run_git
+
+    def broken(repo, *args, **kwargs):
+        if list(args[:3]) == ["remote", "get-url", "--push"]:
+            return SimpleNamespace(returncode=128, stdout="", stderr="boom")
+        return real(repo, *args, **kwargs)
+
+    monkeypatch.setattr(git_checks_mod, "run_git", broken)
+    assert check_vault_remote_privacy(vault).severity == Severity.WARN

@@ -1,3 +1,4 @@
+# nexgen: one-job reason="judge one pinned third-party move: promote, batch or hold"
 """Deterministic third-party update guardian for NeXgen Engine v2.
 
 depwatch reports WHAT moved upstream; this module judges whether the move
@@ -56,6 +57,13 @@ PROSE_SUFFIXES = frozenset({
 #: Hook and plugin wiring is never boring: held, always.
 HOOK_NAMES = frozenset({"hooks.json", "plugin.json", "settings.json", "hooks.yaml"})
 
+#: The only tree mode a vendored skill file may have. Everything else is
+#: held: 100755 can run, a symlink (120000) points at bytes nobody vendored,
+#: a gitlink (160000) is a commit nobody vendored.
+APPROVED_MODE = "100644"
+SYMLINK_MODE = "120000"
+GITLINK_MODE = "160000"
+
 #: A batchable diff stays small enough to glance at in one go.
 BATCH_MAX_FILES = 20
 BATCH_MAX_LINES = 300
@@ -104,8 +112,122 @@ def _clone_no_checkout(repo: str, dest: Path) -> bool:
     return res.returncode == 0
 
 
+def _normalized_scope(scope: str) -> str:
+    """Git's own view of a manifest scope.
+
+    Manifest scopes arrive with Windows backslashes (`skills\\demo`), a
+    leading `./`, a trailing slash or stray spaces, and git matches none of
+    those forms against the paths it prints.
+    """
+    cleaned = scope.strip().replace("\\", "/")
+    while cleaned.startswith("./"):
+        cleaned = cleaned[2:]
+    return cleaned.rstrip("/")
+
+
+def _scope_pathspec(scope: str) -> list[str]:
+    """`-- <scope>` as a literal path.
+
+    Git's pathspecs are patterns: a scope whose name contains `*` or `[`
+    would be read as a glob by `diff` and `ls-tree` while the prefix check
+    reads it literally, and `:(literal)` makes the three readings the same
+    by construction.
+    """
+    return [] if scope in (".", "") else ["--", f":(literal){scope}"]
+
+
 def _in_scope(path: str, scope: str) -> bool:
-    return scope in (".", "") or path == scope or path.startswith(scope.rstrip("/") + "/")
+    scope = _normalized_scope(scope)
+    return scope in (".", "") or path == scope or path.startswith(scope + "/")
+
+
+def _empty_scope_verdict(entries: list[tuple[str, str]], scope: str) -> tuple[str, str, str]:
+    """The verdict when nothing in the diff falls inside the scope.
+
+    No entries at all: the vendored bytes really are identical (AUTO).
+    Entries the scope cannot place: the comparison is broken, and AUTO there
+    would wave a third-party change through unread (HOLD).
+    """
+    if entries:
+        return (
+            HOLD,
+            f"the diff lists {len(entries)} file(s), none inside scope {scope!r}",
+            "Il controllo dello scope non torna: resto ferma e faccio guardare.",
+        )
+    return (
+        AUTO,
+        "vendored bytes identical between pin and HEAD",
+        "Contenuto identico a prima: cambia solo il numero, niente di nuovo dentro.",
+    )
+
+
+def _modes_at_head(work: Path, head: str, scope: str) -> dict[str, str] | None:
+    """{path: mode} for everything the scope owns at HEAD, None if unreadable.
+
+    One recursive listing for the whole scope: asking git per file would
+    spawn a process for every file of a large skill.
+    """
+    listing = _run_git(["ls-tree", "-r", "-z", head, *_scope_pathspec(scope)], cwd=work)
+    if listing.returncode != 0:
+        return None
+    modes: dict[str, str] = {}
+    for record in listing.stdout.split("\0"):
+        meta, _, name = record.partition("\t")
+        mode = meta.split(" ", 1)[0] if meta else ""
+        if name and mode:
+            modes[name] = mode
+    return modes
+
+
+def _scope_shape_problem(
+    work: Path, head: str, scope: str, scoped: list[tuple[str, str]],
+) -> tuple[str, str] | None:
+    """The (reason, plain) that holds this scope's shape, or None.
+
+    A scope that is not a tree at HEAD cannot be compared, so "no diff" must
+    not read as "identical bytes". Every scoped path must be a plain blob at
+    HEAD: the mode is checked on all of them, not only on the new files,
+    because a symlink the pin already carried can be retargeted in place.
+    """
+    if scope not in (".", ""):
+        probe = _run_git(["cat-file", "-t", f"{head}:{scope}"], cwd=work)
+        if probe.returncode != 0 or probe.stdout.strip() != "tree":
+            return (f"scope {scope!r} is not a tree at HEAD",
+                    "Lo scope indicato non esiste in questa versione: da guardare prima.")
+    modes = _modes_at_head(work, head, scope)
+    if modes is None:
+        return ("inspection failed at ls-tree, cannot verify",
+                "Non sono riuscita a controllare bene: resta fermo, ci riprovo da sola.")
+    for _, name in scoped:
+        mode = modes.get(name)
+        if mode is None or mode == APPROVED_MODE:
+            continue  # deleted in this update, or exactly what a file should be
+        if mode == SYMLINK_MODE:
+            return (f"symlink in the skill: {name}",
+                    f"C'è un rimando a un file fuori dalla skill ({name}): da guardare prima.")
+        if mode == GITLINK_MODE:
+            return (f"gitlink in the skill: {name}",
+                    f"C'è un riferimento a un altro repository ({name}): da guardare prima.")
+        if mode.endswith("755"):
+            return (f"executable file in the skill: {name}",
+                    f"C'è un file che può partire da solo ({name}): da guardare prima.")
+        return (f"unusual mode {mode!r} on {name}",
+                f"Un file è registrato in modo strano ({name}): da guardare prima.")
+    return None
+
+
+def _added_file_violation(name: str) -> tuple[str, str] | None:
+    """The (reason, plain) that holds one added file, or None when boring.
+
+    A new file is held when it can run or when it wires a hook; the shape of
+    the bytes is the scope's business, checked on every scoped path.
+    """
+    if Path(name).suffix.lower() in SCRIPT_SUFFIXES:
+        return f"new script added: {name}", f"C'è un programma nuovo dentro ({name}): da guardare prima."
+    if Path(name).name in HOOK_NAMES or "/hooks/" in name:
+        return (f"new hook wiring added: {name}",
+                f"Tocca i collegamenti automatici ({name}): da guardare prima.")
+    return None
 
 
 def _parse_name_status_z(output: str) -> list[tuple[str, str]]:
@@ -137,6 +259,7 @@ def judge_github_skill(
 ) -> GuardFinding:
     """Verdict for one github-pinned skill, from the diff alone."""
     finding = GuardFinding(what=what, pinned=pinned, upstream=head)
+    scope = _normalized_scope(scope)
     tmp_parent = Path(tempfile.gettempdir())
     work = tmp_parent / f".nexgen-guard-{time.time_ns()}"
 
@@ -164,7 +287,7 @@ def judge_github_skill(
             finding.plain = "La storia del progetto è stata riscritta: strano, da guardare prima."
             return finding
 
-        scope_arg = [] if scope in (".", "") else ["--", scope]
+        scope_arg = _scope_pathspec(scope)
         # -z: NUL-separated paths, never C-quoted. A quoted non-ASCII
         # name ("skills/demo/\303\251vil.py") would otherwise miss the
         # scope check, read as an empty diff, and wrongly verdict AUTO.
@@ -173,13 +296,17 @@ def judge_github_skill(
             return finding
         entries = _parse_name_status_z(status.stdout)
         scoped = [(flag, name) for flag, name in entries if _in_scope(name, scope)]
+        if violation := _scope_shape_problem(work, head, scope, scoped):
+            finding.reasons.append(violation[0])
+            finding.plain = violation[1]
+            return finding
         if not scoped:
-            finding.verdict = AUTO
-            finding.reasons.append("vendored bytes identical between pin and HEAD")
-            finding.plain = "Contenuto identico a prima: cambia solo il numero, niente di nuovo dentro."
+            finding.verdict, reason, plain = _empty_scope_verdict(entries, scope)
+            finding.reasons.append(reason)
+            finding.plain = plain
             return finding
 
-        skill_md = "SKILL.md" if scope in (".", "") else f"{scope.rstrip('/')}/SKILL.md"
+        skill_md = "SKILL.md" if scope in (".", "") else f"{scope}/SKILL.md"
         tree = _run_git(["ls-tree", head, skill_md], cwd=work)
         if not _ok(tree, "ls-tree"):
             return finding
@@ -188,31 +315,11 @@ def judge_github_skill(
             finding.plain = "Sparisce il file principale della skill: da guardare prima."
             return finding
 
-        added = [name for flag, name in scoped if flag == "A"]
-        for name in added:
-            if Path(name).suffix.lower() in SCRIPT_SUFFIXES:
-                finding.reasons.append(f"new script added: {name}")
-                finding.plain = f"C'è un programma nuovo dentro ({name}): da guardare prima."
+        for name in (name for flag, name in scoped if flag == "A"):
+            if violation := _added_file_violation(name):
+                finding.reasons.append(violation[0])
+                finding.plain = violation[1]
                 return finding
-            if Path(name).name in HOOK_NAMES or "/hooks/" in name:
-                finding.reasons.append(f"new hook wiring added: {name}")
-                finding.plain = f"Tocca i collegamenti automatici ({name}): da guardare prima."
-                return finding
-            mode = _run_git(["ls-tree", head, "--", name], cwd=work)
-            if not _ok(mode, "ls-tree"):
-                return finding
-            if re.match(r"^\d*755\s", mode.stdout.strip()):
-                finding.reasons.append(f"new executable file: {name}")
-                finding.plain = f"C'è un file nuovo che può partire da solo ({name}): da guardare prima."
-                return finding
-
-        summary = _run_git(["diff", "--summary", f"{pinned}..{head}", *scope_arg], cwd=work)
-        if not _ok(summary, "diff"):
-            return finding
-        if re.search(r"mode change \d+ => \d*755 ", summary.stdout):
-            finding.reasons.append("an existing file gained the executable bit")
-            finding.plain = "Un file esistente diventa eseguibile: da guardare prima."
-            return finding
 
         touched_hooks = [
             name for _, name in scoped
@@ -255,6 +362,21 @@ def judge_github_skill(
         shutil.rmtree(work, ignore_errors=True)
 
 
+def _npm_jump_rule(
+    old_v: tuple[int, int, int], new_v: tuple[int, int, int],
+    pinned: str, latest: str,
+) -> tuple[str, str, str]:
+    """Pure jump rule, no verdict objects: moved verbatim from the judge."""
+    if new_v[0] != old_v[0]:
+        return (HOLD, f"major jump {pinned} -> {latest}: read the changelog",
+                f"Salto grosso ({pinned} -> {latest}): da guardare con calma.")
+    if new_v[1] != old_v[1]:
+        return (HOLD, f"minor jump {pinned} -> {latest}: read the changelog",
+                f"Ci sono novità dentro ({pinned} -> {latest}): da guardare prima.")
+    return (BATCH, f"patch jump {pinned} -> {latest}",
+            f"Piccolo ritocco ({pinned} -> {latest}), stessa linea: niente funzioni nuove.")
+
+
 def judge_npm_package(what: str, pinned: str, latest: str) -> GuardFinding:
     """Verdict for one npm pin: patch-only batches, the rest is held.
 
@@ -275,31 +397,38 @@ def judge_npm_package(what: str, pinned: str, latest: str) -> GuardFinding:
         finding.reasons.append("upstream is not newer")
         finding.plain = "Niente di nuovo: resta dov'è."
         return finding
-    if new_v[0] != old_v[0]:
-        finding.reasons.append(f"major jump {pinned} -> {latest}: read the changelog")
-        finding.plain = f"Salto grosso ({pinned} -> {latest}): da guardare con calma."
-        return finding
-    if new_v[1] != old_v[1]:
-        finding.reasons.append(f"minor jump {pinned} -> {latest}: read the changelog")
-        finding.plain = f"Ci sono novità dentro ({pinned} -> {latest}): da guardare prima."
-        return finding
-    finding.verdict = BATCH
-    finding.reasons.append(f"patch jump {pinned} -> {latest}")
-    finding.plain = f"Piccolo ritocco ({pinned} -> {latest}), stessa linea: niente funzioni nuove."
+    verdict, reason, plain = _npm_jump_rule(old_v, new_v, pinned, latest)
+    finding.verdict = verdict
+    finding.reasons.append(reason)
+    finding.plain = plain
     return finding
+
+
+def _finding_route(finding: PinFinding) -> str:
+    """Pure routing rule, no verdict objects: moved verbatim from the judge."""
+    if not finding.stale or finding.upstream is None:
+        return "current"
+    if finding.what.startswith("module "):
+        return "module"
+    if finding.kind == "git-commit":
+        return "git-commit"
+    if finding.kind == "npm-version":
+        return "npm-version"
+    return "unknown"
 
 
 def judge_finding(
     finding: PinFinding, skill_scopes: dict[str, str] | None = None,
 ) -> GuardFinding:
     """Routes one stale depwatch finding to the right deterministic judge."""
-    if not finding.stale or finding.upstream is None:
+    route = _finding_route(finding)
+    if route == "current":
         verdict = GuardFinding(what=finding.what, pinned=finding.pinned,
                                upstream=finding.upstream or "")
         verdict.reasons.append("nothing moved or unreachable")
         verdict.plain = "Niente di nuovo: resta dov'è."
         return verdict
-    if finding.what.startswith("module "):
+    if route == "module":
         # A module's component is a program or a patched launcher, not a pin in a manifest: it is
         # replaced where it runs, after trying it. Even a patch jump is held, because the Playwright
         # wrapper edits that exact version's files and a "small touch-up" would stop it starting.
@@ -307,7 +436,7 @@ def judge_finding(
         verdict.reasons.append("a component of a module: replaced where it runs, after trying it, never rewritten from here")
         verdict.plain = "È un componente di un modulo (un programma o un lanciatore con patch): si aggiorna a mano dopo averlo provato. Qui lo segnalo soltanto."
         return verdict
-    if finding.kind == "git-commit":
+    if route == "git-commit":
         match = re.match(r"^skill '([^']+)'", finding.what)
         name = match.group(1) if match else ""
         scope = (skill_scopes or {}).get(name, ".")
@@ -322,7 +451,7 @@ def judge_finding(
             verdict.plain = "Non capisco da dove viene: resta fermo."
             return verdict
         return judge_github_skill(finding.what, key, finding.pinned, finding.upstream, scope)
-    if finding.kind == "npm-version":
+    if route == "npm-version":
         return judge_npm_package(finding.what, finding.pinned, finding.upstream)
     verdict = GuardFinding(what=finding.what, pinned=finding.pinned,
                            upstream=finding.upstream)

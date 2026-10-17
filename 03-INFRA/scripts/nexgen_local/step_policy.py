@@ -64,8 +64,8 @@ def _pending_unread(state: LoopState) -> str:
     return ""
 
 
-def build_menu(cfg: LaneConfig, state: LoopState) -> list[Candidate]:
-    """The closed menu for this step, built from engine facts only."""
+def _build_closed_menu(cfg: LaneConfig, state: LoopState) -> list[Candidate]:
+    """Costruzione del menu chiuso dai soli fatti del motore."""
     if not state.receipts:
         menu: list[Candidate] = []
         if state.named_path:
@@ -173,6 +173,11 @@ def build_menu(cfg: LaneConfig, state: LoopState) -> list[Candidate]:
     return menu[:MAX_MENU]
 
 
+def build_menu(cfg: LaneConfig, state: LoopState) -> list[Candidate]:
+    """The closed menu for this step, built from engine facts only."""
+    return _build_closed_menu(cfg, state)
+
+
 # ----------------------------------------------------------- validation
 
 
@@ -274,8 +279,8 @@ def _check_search_query(cfg: LaneConfig, state: LoopState, action: str, arg: str
     return None
 
 
-def validate_action(cfg: LaneConfig, state: LoopState, menu: list[Candidate], action: str, arg: str) -> str | None:
-    """None when the decision is admissible; otherwise the machine reason."""
+def _validate_action(cfg: LaneConfig, state: LoopState, menu: list[Candidate], action: str, arg: str) -> str | None:
+    """Validazione della decisione contro menu e provenienza."""
     candidates = [candidate for candidate in menu if candidate.action == action]
     if not candidates:
         return f"azione fuori dal menu del passo: {action}"
@@ -318,6 +323,11 @@ def validate_action(cfg: LaneConfig, state: LoopState, menu: list[Candidate], ac
     return f"azione sconosciuta: {action}"
 
 
+def validate_action(cfg: LaneConfig, state: LoopState, menu: list[Candidate], action: str, arg: str) -> str | None:
+    """None when the decision is admissible; otherwise the machine reason."""
+    return _validate_action(cfg, state, menu, action, arg)
+
+
 #: Every read-only retrieval tool the assisted tier may pick freely. Gated
 #: propose verbs and loop verbs are offered by the menu, not picked from this
 #: catalogue: staging stays prescribed, answering stays receipt-checked.
@@ -331,17 +341,8 @@ ASSISTED_SEARCHES = (
 )
 
 
-def build_assisted_menu(cfg: LaneConfig, state: LoopState) -> list[Candidate]:
-    """The open catalogue for the assisted tier: every read-only retrieval tool.
-
-    No prescribed order and no prescribed next step: the model picks any
-    search at any time, reads what the engine found (or any file inside the
-    roots), and answers once it has receipts. Two tutor rules stay: answering
-    from zero receipts is fabrication, not autonomy, and results still unread
-    cannot be reported as missing (the pending guard in validation refuses
-    that answer). Draft and upload proposals stay prescribed by task intent,
-    like in every tier: staging is allowed, sending never is.
-    """
+def _build_assisted_menu(cfg: LaneConfig, state: LoopState) -> list[Candidate]:
+    """Costruzione del catalogo aperto per il tier assistito."""
     menu: list[Candidate] = [Candidate(search) for search in ASSISTED_SEARCHES]
     reads: list[Candidate] = []
     if not state.receipts and state.named_path:
@@ -375,6 +376,20 @@ def build_assisted_menu(cfg: LaneConfig, state: LoopState) -> list[Candidate]:
         menu.append(Candidate("answer"))
     menu.append(Candidate("escalate"))
     return menu
+
+
+def build_assisted_menu(cfg: LaneConfig, state: LoopState) -> list[Candidate]:
+    """The open catalogue for the assisted tier: every read-only retrieval tool.
+
+    No prescribed order and no prescribed next step: the model picks any
+    search at any time, reads what the engine found (or any file inside the
+    roots), and answers once it has receipts. Two tutor rules stay: answering
+    from zero receipts is fabrication, not autonomy, and results still unread
+    cannot be reported as missing (the pending guard in validation refuses
+    that answer). Draft and upload proposals stay prescribed by task intent,
+    like in every tier: staging is allowed, sending never is.
+    """
+    return _build_assisted_menu(cfg, state)
 
 
 def validate_assisted_action(

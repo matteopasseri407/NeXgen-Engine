@@ -92,6 +92,11 @@ skills:
     targets: [claude, codex, antigravity, opencode]
     exposure: core
 
+  nexgen-discipline:
+    origin: engine
+    targets: [claude, codex, antigravity, opencode]
+    exposure: core
+
   vault-groom:
     origin: engine
     targets: [claude, codex, antigravity, opencode]

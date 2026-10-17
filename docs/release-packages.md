@@ -33,8 +33,14 @@ One-time setup:
    `contents: read/write` only, and register it as the repo secret
    `HOMEBREW_TAP_TOKEN` on NeXgen-Engine.
 3. The next signed release generates the formula (via
-   `03-INFRA/scripts/release_packages.py`, which pins the PyYAML resource
-   to the digest PyPI states at build time) and pushes it.
+   `03-INFRA/scripts/release_packages.py`, which pins every dependency the
+   package declares — runtime ones and the build backend — as a Homebrew
+   resource, to the digest PyPI states at build time) and pushes it.
+4. **Declared gap:** the formula carries the declared dependencies, not
+   their transitive closure, which Homebrew normally resolves with
+   `brew update-python-resources`. The tap has never been installed from
+   (the workflow step is a skip until the token exists), so this stays a
+   stated gap rather than a claim.
 
 Then: `brew install matteopasseri407/nexgen/nexgen`.
 

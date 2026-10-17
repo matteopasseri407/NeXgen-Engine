@@ -515,6 +515,110 @@ def _uncertain_pending(state: RelayGraphState) -> dict[str, Any] | None:
     return pending
 
 
+def _validate_resume_identity(
+    session_dir: Path,
+    identity: dict,
+    brief_hash: str,
+    sequence_hash: str,
+    contract_hash: str,
+    max_seats: int,
+    continue_on_reject: bool,
+    invocation_timeout: float | None,
+) -> None:
+    """Refuse when the caller arguments no longer match the stored run."""
+    if brief_hash != identity.get("brief_hash"):
+        raise RelayError(
+            f"[council] cannot resume {session_dir.name}: the brief does not match "
+            "the stored run (question/context/diff changed). Resume is refused.",
+            kind="brief_mismatch",
+        )
+    if sequence_hash != identity.get("sequence_hash"):
+        raise RelayError(
+            f"[council] cannot resume {session_dir.name}: the sequence does not match "
+            "the stored run. Resume is refused.",
+            kind="sequence_mismatch",
+        )
+    # Older checkpoints did not record the seat contract and cannot prove
+    # who was approved. An uncertain-rerun override never bypasses this.
+    if identity.get("seat_contract_hash") != contract_hash:
+        raise RelayError(
+            f"[council] cannot resume {session_dir.name}: the approved seat contract "
+            "is missing or changed (model, CLI, effort, pool or policy). Start a new relay.",
+            kind="seat_contract_mismatch",
+        )
+    stored_flags = (identity.get("max_seats"), identity.get("continue_on_reject"), identity.get("invocation_timeout"))
+    if (max_seats, continue_on_reject, invocation_timeout) != stored_flags:
+        print(
+            "[council] note: run policy flags differ from the stored run; "
+            "the stored policy applies to the resumed relay."
+        )
+
+
+def _rebuild_remaining(
+    app: Any,
+    thread: dict,
+    session_dir: Path,
+    allow_uncertain_rerun: bool,
+) -> tuple[RelayGraphState, dict[str, Any] | None]:
+    """Reload the checkpoint; return an early summary for terminal runs.
+
+    Applies the crash-after-response guard and records the accepted
+    uncertain rerun before the caller re-invokes the graph.
+    """
+    snapshot = app.get_state(thread)
+    if not snapshot.values:
+        raise RelayError(
+            f"[council] cannot resume {session_dir.name}: no checkpoint found. "
+            "The session never started or its checkpoints were removed.",
+            kind="session_missing",
+        )
+    state = snapshot.values
+    _refuse_failed_run(state)
+    if state.get("stop_reason") in ("completed", "rejected"):
+        print(f"[council] session {session_dir.name} already {state['stop_reason']}: nothing to resume.")
+        return state, _summary(session_dir, state)
+    uncertain = _uncertain_pending(state)
+    if uncertain is not None and not allow_uncertain_rerun:
+        raise RelayError(
+            f"[council] cannot resume {session_dir.name}: stage {uncertain.get('stage_idx')} "
+            f"invoked seat '{uncertain.get('seat')}' (attempt {uncertain.get('attempt')}) but no "
+            "outcome was saved — the provider response may already exist. Re-invoking may "
+            "bill quota twice. Resume with --allow-uncertain-rerun to declare you accept that.",
+            kind="uncertain_rerun",
+        )
+    if uncertain is not None:
+        print(
+            f"[council] UNCERTAIN rerun accepted: stage {uncertain.get('stage_idx')} "
+            f"seat '{uncertain.get('seat')}' may already have responded; invoking again."
+        )
+        attempt = int(state.get("attempt", 0)) + 1
+        app.update_state(thread, {
+            "calls_made": int(state.get("calls_made", 0)) + (1 if uncertain.get("call_counted") else 2),
+            "attempt": attempt,
+            "pending": {**uncertain, "attempt": attempt, "call_counted": True},
+            "trace": state.get("trace", []) + [{
+                "stage_idx": uncertain["stage_idx"],
+                "role": state["stages"][state["index"]]["role"],
+                "seat_name": uncertain["seat"],
+                "attempt": uncertain["attempt"],
+                "pool": uncertain["pool"],
+                "outcome": "uncertain",
+                "detail": "Explicit rerun accepted; previous attempt may have consumed quota.",
+            }],
+        }, as_node="begin")
+    return state, None
+
+
+def _save_resume_state(app: Any, thread: dict, session_dir: Path) -> dict[str, Any]:
+    """Re-invoke the graph from the checkpoint and summarize the outcome."""
+    _set_active_session(session_dir, True)
+    try:
+        final = app.invoke(None, config=thread)
+        return _summary(session_dir, final)
+    finally:
+        _set_active_session(None)
+
+
 def resume_relay_session(
     *,
     session_ref: str,
@@ -562,84 +666,25 @@ def resume_relay_session(
     brief = build_brief(question, context, diff)
     egress_gate(brief)
     brief_hash, sequence_hash = identity_hashes(brief, stages)
-    if brief_hash != identity.get("brief_hash"):
-        raise RelayError(
-            f"[council] cannot resume {session_dir.name}: the brief does not match "
-            "the stored run (question/context/diff changed). Resume is refused.",
-            kind="brief_mismatch",
-        )
-    if sequence_hash != identity.get("sequence_hash"):
-        raise RelayError(
-            f"[council] cannot resume {session_dir.name}: the sequence does not match "
-            "the stored run. Resume is refused.",
-            kind="sequence_mismatch",
-        )
-    # Older checkpoints did not record the seat contract and cannot prove
-    # who was approved. An uncertain-rerun override never bypasses this.
-    if identity.get("seat_contract_hash") != seat_contract_hash(seats, stages):
-        raise RelayError(
-            f"[council] cannot resume {session_dir.name}: the approved seat contract "
-            "is missing or changed (model, CLI, effort, pool or policy). Start a new relay.",
-            kind="seat_contract_mismatch",
-        )
-    stored_flags = (identity.get("max_seats"), identity.get("continue_on_reject"), identity.get("invocation_timeout"))
-    if (max_seats, continue_on_reject, invocation_timeout) != stored_flags:
-        print(
-            "[council] note: run policy flags differ from the stored run; "
-            "the stored policy applies to the resumed relay."
-        )
+    _validate_resume_identity(
+        session_dir,
+        identity,
+        brief_hash,
+        sequence_hash,
+        seat_contract_hash(seats, stages),
+        max_seats,
+        continue_on_reject,
+        invocation_timeout,
+    )
 
     saver_cm = _open_saver(session_dir)
     with _session_run_lock(session_dir), saver_cm as saver:
         app = build_relay_app(lambda s: _NodeContext(seats, session_dir, config, s)).compile(checkpointer=saver)
         thread = {"configurable": {"thread_id": session_dir.name}}
-        snapshot = app.get_state(thread)
-        if not snapshot.values:
-            raise RelayError(
-                f"[council] cannot resume {session_dir.name}: no checkpoint found. "
-                "The session never started or its checkpoints were removed.",
-                kind="session_missing",
-            )
-        state = snapshot.values
-        _refuse_failed_run(state)
-        if state.get("stop_reason") in ("completed", "rejected"):
-            print(f"[council] session {session_dir.name} already {state['stop_reason']}: nothing to resume.")
-            return _summary(session_dir, state)
-        uncertain = _uncertain_pending(state)
-        if uncertain is not None and not allow_uncertain_rerun:
-            raise RelayError(
-                f"[council] cannot resume {session_dir.name}: stage {uncertain.get('stage_idx')} "
-                f"invoked seat '{uncertain.get('seat')}' (attempt {uncertain.get('attempt')}) but no "
-                "outcome was saved — the provider response may already exist. Re-invoking may "
-                "bill quota twice. Resume with --allow-uncertain-rerun to declare you accept that.",
-                kind="uncertain_rerun",
-            )
-        if uncertain is not None:
-            print(
-                f"[council] UNCERTAIN rerun accepted: stage {uncertain.get('stage_idx')} "
-                f"seat '{uncertain.get('seat')}' may already have responded; invoking again."
-            )
-            attempt = int(state.get("attempt", 0)) + 1
-            app.update_state(thread, {
-                "calls_made": int(state.get("calls_made", 0)) + (1 if uncertain.get("call_counted") else 2),
-                "attempt": attempt,
-                "pending": {**uncertain, "attempt": attempt, "call_counted": True},
-                "trace": state.get("trace", []) + [{
-                    "stage_idx": uncertain["stage_idx"],
-                    "role": state["stages"][state["index"]]["role"],
-                    "seat_name": uncertain["seat"],
-                    "attempt": uncertain["attempt"],
-                    "pool": uncertain["pool"],
-                    "outcome": "uncertain",
-                    "detail": "Explicit rerun accepted; previous attempt may have consumed quota.",
-                }],
-            }, as_node="begin")
-        _set_active_session(session_dir, True)
-        try:
-            final = app.invoke(None, config=thread)
-            return _summary(session_dir, final)
-        finally:
-            _set_active_session(None)
+        _, done_summary = _rebuild_remaining(app, thread, session_dir, allow_uncertain_rerun)
+        if done_summary is not None:
+            return done_summary
+        return _save_resume_state(app, thread, session_dir)
 
 
 def main(argv: list[str] | None = None) -> int:  # pragma: no cover - thin CLI probe

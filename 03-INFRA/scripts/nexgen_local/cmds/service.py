@@ -20,7 +20,8 @@ def cmd_mcp(args: argparse.Namespace) -> int:
     return run_server(_config(args), include_ask=not args.jobs_only)
 
 
-def cmd_doctor(args: argparse.Namespace) -> int:
+def _health_doctor(args: argparse.Namespace) -> int:
+    """Modulo salute dedicato: esiti doctor, nessun servizio reale qui dentro."""
     checks: list[tuple[str, bool, str, bool]] = []
 
     def add(label: str, ok: bool, detail: str = "", required: bool = True) -> None:
@@ -83,3 +84,8 @@ def cmd_doctor(args: argparse.Namespace) -> int:
             suffix = f"  ({detail})" if detail else ""
             print(f"  {mark} {label}{suffix}")
     return 1 if any(not ok and required for _, ok, _, required in checks) else 0
+
+
+def cmd_doctor(args: argparse.Namespace) -> int:
+    """Dispatcher salute: delega al modulo dedicato."""
+    return _health_doctor(args)

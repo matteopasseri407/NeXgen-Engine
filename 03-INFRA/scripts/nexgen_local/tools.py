@@ -712,31 +712,53 @@ class ToolRegistry:
         except (OSError, subprocess.SubprocessError) as exc:
             return RunResult(1, "", str(exc))
 
+    def _handle_vault(self, name: str, args: dict[str, Any]) -> str | None:
+        """Sorgente vault: ricerca e lettura note. None se non competente."""
+        if name == "search_vault":
+            return self.search_vault(str(args.get("query", "")), require_all=args.get("require_all") is True)
+        if name == "read_vault":
+            return self.read_vault(str(args.get("path", "")), self._offset(args))
+        return None
+
+    def _handle_calendar(self, name: str, args: dict[str, Any]) -> str | None:
+        """Sorgente calendario: ricerca e lettura eventi. None se non competente."""
+        if name == "search_calendar":
+            return self.search_calendar(str(args.get("query", "")))
+        if name == "read_calendar":
+            return self.read_calendar(str(args.get("id", "")), self._offset(args))
+        return None
+
+    def _handle_drive(self, name: str, args: dict[str, Any]) -> str | None:
+        """Sorgente drive: ricerca e lettura file. None se non competente."""
+        if name == "search_drive":
+            return self.search_drive(str(args.get("query", "")))
+        if name == "read_drive":
+            return self.read_drive(str(args.get("id", "")), self._offset(args))
+        return None
+
+    @staticmethod
+    def _offset(a: dict[str, Any]) -> int:
+        try:
+            return max(0, int(a.get("offset", 0) or 0))
+        except (TypeError, ValueError):
+            return 0
+
     def call(self, name: str, args: dict[str, Any]) -> str:
         """Dispatch by tool name; unknown names are refused, never guessed."""
-
-        def _offset(a: dict[str, Any]) -> int:
-            try:
-                return max(0, int(a.get("offset", 0) or 0))
-            except (TypeError, ValueError):
-                return 0
-
         if name not in READ_ONLY_TOOL_NAMES:
             return self._refuse(name, args, f"(strumento sconosciuto: {name})")
+        for handler in (self._handle_vault, self._handle_calendar, self._handle_drive):
+            handled = handler(name, args)
+            if handled is not None:
+                return handled
         table = {
-            "search_vault": lambda a: self.search_vault(str(a.get("query", "")), require_all=a.get("require_all") is True),
-            "read_vault": lambda a: self.read_vault(str(a.get("path", "")), _offset(a)),
-            "read_repo": lambda a: self.read_repo(str(a.get("path", "")), _offset(a)),
-            "read_pdf": lambda a: self.read_pdf(str(a.get("path", "")), _offset(a)),
+            "read_repo": lambda a: self.read_repo(str(a.get("path", "")), self._offset(a)),
+            "read_pdf": lambda a: self.read_pdf(str(a.get("path", "")), self._offset(a)),
             "web_search": lambda a: self.web_search(str(a.get("query", ""))),
             "search_mail": lambda a: self.search_mail(str(a.get("query", ""))),
-            "read_mail": lambda a: self.read_mail(str(a.get("id", "")), _offset(a)),
-            "search_drive": lambda a: self.search_drive(str(a.get("query", ""))),
-            "read_drive": lambda a: self.read_drive(str(a.get("id", "")), _offset(a)),
-            "search_calendar": lambda a: self.search_calendar(str(a.get("query", ""))),
-            "read_calendar": lambda a: self.read_calendar(str(a.get("id", "")), _offset(a)),
+            "read_mail": lambda a: self.read_mail(str(a.get("id", "")), self._offset(a)),
             "search_outlook": lambda a: self.search_outlook(str(a.get("query", ""))),
-            "read_outlook": lambda a: self.read_outlook(str(a.get("id", "")), _offset(a)),
+            "read_outlook": lambda a: self.read_outlook(str(a.get("id", "")), self._offset(a)),
             "engine_status": lambda a: self.engine_status(),
         }
         return table[name](args)

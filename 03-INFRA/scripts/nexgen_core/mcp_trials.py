@@ -65,7 +65,7 @@ def overlay(servers: dict[str, dict[str, Any]], now: float | None = None) -> dic
     return merged
 
 
-def start(name: str, entry: dict[str, Any], hours: float, *, manifest_names: set[str], now: float | None = None) -> float:
+def _start_impl(name: str, entry: dict[str, Any], hours: float, *, manifest_names: set[str], now: float | None = None) -> float:
     """Records a trial; returns when it expires. Raises ValueError for anything that should not start."""
     if not 0 < hours <= MAX_HOURS:
         raise ValueError(t("a trial lasts between a moment and {max:g} hours, not {hours:g}", max=MAX_HOURS, hours=hours))
@@ -77,6 +77,11 @@ def start(name: str, entry: dict[str, Any], hours: float, *, manifest_names: set
     trials[name] = {"entry": entry, "created": moment, "expires": expires}
     _save(trials)
     return expires
+
+
+def start(name: str, entry: dict[str, Any], hours: float, *, manifest_names: set[str], now: float | None = None) -> float:
+    """Records a trial; returns when it expires. Raises ValueError for anything that should not start."""
+    return _start_impl(name, entry, hours, manifest_names=manifest_names, now=now)
 
 
 def drop(name: str) -> bool:
@@ -106,8 +111,8 @@ def time_left(info: dict[str, Any], now: float | None = None) -> str:
 
 # ---------------------------------------------------------------------------------------------------- commands
 
-def cmd_try(name: str, *, targets_raw: str | None, command: str | None, args: list[str] | None, url: str | None,
-            auth_env: str | None, env_pairs: list[str] | None, readonly: bool, hours: float) -> tuple[int, str]:
+def _cmd_try_impl(name: str, *, targets_raw: str | None, command: str | None, args: list[str] | None, url: str | None,
+                  auth_env: str | None, env_pairs: list[str] | None, readonly: bool, hours: float) -> tuple[int, str]:
     from nexgen_core.config import load_mcp_manifest
     from nexgen_core.mcp_add import _manifest_path, _parse_env, build_entry, parse_targets
     from nexgen_core.paths import resolve_vault_data
@@ -131,6 +136,12 @@ def cmd_try(name: str, *, targets_raw: str | None, command: str | None, args: li
         "nothing syncs) and disappears by itself. Keep it with 'nexgen mcp promote {name}', end it with 'nexgen mcp drop {name}'.",
         name=name, hours=(expires - time.time()) / 3600,
     )
+
+
+def cmd_try(name: str, *, targets_raw: str | None, command: str | None, args: list[str] | None, url: str | None,
+            auth_env: str | None, env_pairs: list[str] | None, readonly: bool, hours: float) -> tuple[int, str]:
+    return _cmd_try_impl(name, targets_raw=targets_raw, command=command, args=args, url=url, auth_env=auth_env,
+                         env_pairs=env_pairs, readonly=readonly, hours=hours)
 
 
 def cmd_trials() -> int:

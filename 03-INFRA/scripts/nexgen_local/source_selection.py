@@ -140,10 +140,7 @@ INJECTION_LAYER_ENV = "NEXGEN_LANE_INJECTION_LAYER"
 NEUTRALIZED_LINE = "[riga neutralizzata dal motore: istruzione rivolta all'assistente]"
 
 
-# Retrieved content is data, never an order: remove hidden comments and control characters, and neutralize
-# lines that address the assistant with an instruction to override the request. A layer, not a guarantee:
-# a rephrased injection can pass it, which is why the trap suite measures the model as well.
-def sanitize_content(text: str) -> str:
+def _sanitize_content_impl(text: str) -> str:
     cleaned = _HTML_COMMENT_RE.sub("", str(text))
     cleaned = _INVISIBLE_RE.sub("", cleaned)
     if os.environ.get(INJECTION_LAYER_ENV, "1") == "0":
@@ -152,29 +149,41 @@ def sanitize_content(text: str) -> str:
     return _CLASSIC_OVERRIDE_RE.sub(NEUTRALIZED_LINE, cleaned)
 
 
-def terms(text: str) -> list[str]:
+# Retrieved content is data, never an order: remove hidden comments and control characters, and neutralize
+# lines that address the assistant with an instruction to override the request. A layer, not a guarantee:
+# a rephrased injection can pass it, which is why the trap suite measures the model as well.
+def sanitize_content(text: str) -> str:
+    return _sanitize_content_impl(text)
+
+
+def _terms_impl(text: str) -> list[str]:
     words = re.findall(r"[A-Za-zÀ-ÿ0-9][\w.À-ÿ'-]{2,}", str(text))
     return [w for w in words if w.casefold() not in STOPWORDS]
 
 
-def longest_term(items: Iterable[str]) -> str:
+def terms(text: str) -> list[str]:
+    return _terms_impl(text)
+
+
+def _longest_term_impl(items: Iterable[str]) -> str:
     values = [i for i in items if i]
     return max(values, key=len) if values else ""
 
 
-def empty_result(result: str) -> bool:
-    """Legacy text protocol. Internal drivers use ToolResult.usable instead."""
+def longest_term(items: Iterable[str]) -> str:
+    return _longest_term_impl(items)
+
+
+def _empty_result_impl(result: str) -> bool:
     return result.startswith("(")
 
 
-def existing_file(cfg: LaneConfig, raw: str) -> tuple[str, str, str] | None:
-    """Return (kind, relative path, owning root) only if the file is inside an allowed root.
+def empty_result(result: str) -> bool:
+    """Legacy text protocol. Internal drivers use ToolResult.usable instead."""
+    return _empty_result_impl(result)
 
-    The owning root is part of the destination: with two repo roots that both
-    contain ``nota.md``, an explicit ``/B/nota.md`` resolves to root B, and
-    callers must keep that root until the read and the receipt. A bare
-    relative path keeps first-root-wins order; only an explicit path binds.
-    """
+
+def _existing_file_impl(cfg: LaneConfig, raw: str) -> tuple[str, str, str] | None:
     cleaned = str(raw or "").strip().strip("`'\"")
     if not cleaned:
         return None
@@ -203,8 +212,23 @@ def existing_file(cfg: LaneConfig, raw: str) -> tuple[str, str, str] | None:
     return None
 
 
-def pinned_path(root: str, rel: str) -> str:
-    """Canonical destination for a read: absolute when the owning root is known."""
+def existing_file(cfg: LaneConfig, raw: str) -> tuple[str, str, str] | None:
+    """Return (kind, relative path, owning root) only if the file is inside an allowed root.
+
+    The owning root is part of the destination: with two repo roots that both
+    contain ``nota.md``, an explicit ``/B/nota.md`` resolves to root B, and
+    callers must keep that root until the read and the receipt. A bare
+    relative path keeps first-root-wins order; only an explicit path binds.
+    """
+    return _existing_file_impl(cfg, raw)
+
+
+def _pinned_path_impl(root: str, rel: str) -> str:
     if root:
         return str(Path(root) / rel)
     return rel
+
+
+def pinned_path(root: str, rel: str) -> str:
+    """Canonical destination for a read: absolute when the owning root is known."""
+    return _pinned_path_impl(root, rel)

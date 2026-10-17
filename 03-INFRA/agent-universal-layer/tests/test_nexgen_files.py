@@ -34,6 +34,43 @@ def test_atomic_write_preserves_mode(tmp_path: Path):
     assert target.stat().st_mode & 0o777 == 0o600
 
 
+def test_atomic_write_over_a_read_only_target_survives_windows_refusals(tmp_path: Path, monkeypatch):
+    """Ricognizione 13: su Windows un file read-only non si sostituisce e non
+    si cancella; il temporaneo read-only restava orfano e mascherava l'errore
+    originale. Il rifiuto di Windows è simulato qui, così la prova gira anche
+    su Linux."""
+    import nexgen_core.files as files_mod
+
+    target = tmp_path / "cfg.json"
+    target.write_text("old", encoding="utf-8")
+    os.chmod(target, 0o444)
+
+    real_replace = os.replace
+    real_unlink = Path.unlink
+
+    def refusing_replace(src, dst):
+        for entry in (Path(src), Path(dst)):
+            if entry.exists() and not entry.stat().st_mode & 0o200:
+                raise PermissionError(13, "Access denied: read-only", str(entry))
+        return real_replace(src, dst)
+
+    def refusing_unlink(self, *args, **kwargs):
+        if self.exists() and not self.stat().st_mode & 0o200:
+            raise PermissionError(13, "Access denied: read-only", str(self))
+        return real_unlink(self, *args, **kwargs)
+
+    monkeypatch.setattr(files_mod.os, "replace", refusing_replace)
+    monkeypatch.setattr(Path, "unlink", refusing_unlink)
+    try:
+        files_mod.atomic_write_text(target, "new")
+    finally:
+        monkeypatch.setattr(Path, "unlink", real_unlink)
+
+    assert target.read_text(encoding="utf-8") == "new"
+    assert target.stat().st_mode & 0o200 == 0, "il file pubblicato resta read-only"
+    assert list(tmp_path.rglob("*.tmp*")) == [], "il temporaneo non deve restare orfano"
+
+
 def test_backup_names_reasons_and_skips_missing(tmp_path: Path):
     assert backup_file(tmp_path / "absent.json") is None
     target = tmp_path / "cfg.json"
@@ -128,6 +165,55 @@ def test_write_if_changed_skips_identical(tmp_path: Path):
     assert write_text_if_changed(target, "new", keep=3) is True
     assert target.read_text(encoding="utf-8") == "new"
     assert len(list(tmp_path.glob("*.bak-*"))) == 1
+
+
+def test_skip_if_committed_judges_the_file_actually_written(tmp_path: Path, monkeypatch):
+    """A committed, clean symlink said "no backup needed" while the real file
+    it points to had uncommitted edits; the write then overwrote them."""
+    import shutil
+    import subprocess
+
+    import nexgen_core.files as files_mod
+
+    target = _git_repo_with_commit(tmp_path, name="real.json")
+    # link.json is a committed regular file here; the symlink is simulated by
+    # making the module's Path report it as a link to real.json. This needs no
+    # symlink privilege, so the test runs on every platform.
+    link = tmp_path / "link.json"
+    link.write_text("v1", encoding="utf-8")
+    env = dict(
+        os.environ,
+        GIT_AUTHOR_NAME="t",
+        GIT_AUTHOR_EMAIL="t@t",
+        GIT_COMMITTER_NAME="t",
+        GIT_COMMITTER_EMAIL="t@t",
+    )
+    subprocess.run(["git", "add", "link.json"], cwd=tmp_path, check=True, env=env)
+    subprocess.run(["git", "commit", "-qm", "link"], cwd=tmp_path, check=True, env=env)
+    target.write_text("v2-sporca", encoding="utf-8")
+
+    class _LinkedPath(type(Path())):
+        def is_symlink(self):
+            return self.name == "link.json" or super().is_symlink()
+
+        def resolve(self, strict=False):
+            if self.name == "link.json":
+                return target
+            return super().resolve(strict)
+
+    real_copy2 = shutil.copy2
+
+    def _copy2_following_link(src, dst, *args, **kwargs):
+        # copy2 follows a real symlink, so the backup holds the target's bytes.
+        source = target if Path(src).name == "link.json" else src
+        return real_copy2(source, dst, *args, **kwargs)
+
+    monkeypatch.setattr(files_mod, "Path", _LinkedPath)
+    monkeypatch.setattr(shutil, "copy2", _copy2_following_link)
+    assert files_mod.write_text_if_changed(link, "v3", skip_if_committed=True) is True
+    assert target.read_text(encoding="utf-8") == "v3"
+    backups = list(tmp_path.glob("link.json.bak-*"))
+    assert [b.read_text(encoding="utf-8") for b in backups] == ["v2-sporca"]
 
 
 def test_backup_of_a_loosely_moded_config_is_private(tmp_path: Path):

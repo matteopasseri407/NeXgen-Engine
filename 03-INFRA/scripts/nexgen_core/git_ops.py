@@ -123,12 +123,14 @@ def list_quarantine_branches(repo_dir: Path) -> list[str]:
     return [b.strip() for b in r.stdout.splitlines() if b.strip()]
 
 
-def quarantine_diverged_commits(
+def _quarantine_diverged_commits_impl(
     repo_dir: Path, remote: str = "origin", branch: str = "main"
 ) -> tuple[bool, str, str]:
     """Isolates diverged local commits into a quarantine branch and resets local branch to remote.
 
-    Returns: (success, quarantine_branch_name, message)
+    Refuses while tracked files have uncommitted changes: the hard reset
+    would flatten the working tree (Invariant 1). Returns: (success,
+    quarantine_branch_name, message).
     """
     try:
         assert_safe_git_refs(remote, branch)
@@ -146,65 +148,41 @@ def quarantine_diverged_commits(
     # realign: resetting any other branch would move work nobody named.
     current = run_git(repo_dir, "symbolic-ref", "--quiet", "--short", "HEAD")
     if current.returncode != 0 or current.stdout.strip() != branch:
-        return False, "", t(
-            "Refusing to quarantine: HEAD is on '{found}', not '{expected}'",
-            found=current.stdout.strip() or "detached HEAD", expected=branch,
-        )
+        return False, "", t("Refusing to quarantine: HEAD is on '{found}', not '{expected}'",
+                            found=current.stdout.strip() or "detached HEAD", expected=branch)
+
+    # Unsaved work first (Invariant 1): the hard reset below would flatten
+    # the working tree. A status that cannot run is "I do not know", never
+    # "clean", and one read decides -- a second read can fail and answer
+    # "clean" over the dirty tree the first one saw.
+    status = run_git(repo_dir, "status", "--porcelain=v1", "-z", "--untracked-files=no")
+    if status.returncode != 0:
+        return False, "", t("Cannot quarantine: git status unreadable ({error})", error=status.stderr.strip())
+    if status.stdout.strip():
+        return False, "", t("Cannot quarantine while there are uncommitted changes")
 
     # 1. Create quarantine branch at current HEAD
     b_res = run_git(repo_dir, "branch", q_branch)
     if b_res.returncode != 0:
         return False, "", t("Failed to create quarantine branch {branch}: {error}", branch=q_branch, error=b_res.stderr.strip())
 
-    # 2. Preserve any uncommitted tracked changes on the quarantine branch
-    #    before the hard reset: reset --hard would otherwise destroy them.
-    #    If preservation fails, abort: never reset over work that was not saved.
-    sw_res = run_git(repo_dir, "switch", q_branch)
-    if sw_res.returncode != 0:
-        return False, q_branch, t(
-            "Created {q_branch}, but could not switch to it: {error}",
-            q_branch=q_branch, error=sw_res.stderr.strip(),
-        )
-    dirty = get_uncommitted_files(repo_dir)
-    if dirty:
-        add_res = run_git(repo_dir, "add", "--", *dirty)
-        if add_res.returncode != 0:
-            run_git(repo_dir, "switch", branch)
-            return False, q_branch, t(
-                "Created {q_branch}, but could not stage uncommitted changes before realignment: {error}",
-                q_branch=q_branch, error=add_res.stderr.strip(),
-            )
-        c_res = run_git(repo_dir, "commit", "-m", "quarantine: preserve uncommitted changes before realignment")
-        if c_res.returncode != 0:
-            run_git(repo_dir, "switch", branch)
-            return False, q_branch, t(
-                "Created {q_branch}, but could not preserve uncommitted changes before realignment",
-                q_branch=q_branch,
-            )
-    sw_back = run_git(repo_dir, "switch", branch)
-    if sw_back.returncode != 0:
-        # The work is safe on the quarantine branch (committed above, or
-        # there was nothing dirty to lose): report the failure and STOP.
-        # Resetting here would run on the quarantine branch and destroy
-        # exactly what was just preserved.
-        return False, q_branch, t(
-            "Work preserved on {q_branch}, but could not switch back to {branch}: {error}. "
-            "No reset was performed; switch back by hand and retry.",
-            q_branch=q_branch, branch=branch, error=sw_back.stderr.strip(),
-        )
-
-    # 3. Hard reset local branch to remote/branch
+    # 2. Hard reset local branch to remote/branch
     r_res = run_git(repo_dir, "reset", "--hard", f"{remote}/{branch}")
     if r_res.returncode != 0:
-        return False, q_branch, t(
-            "Created {q_branch}, but reset to {remote}/{branch} failed: {error}",
-            q_branch=q_branch, remote=remote, branch=branch, error=r_res.stderr.strip(),
-        )
+        return False, q_branch, t("Created {q_branch}, but reset to {remote}/{branch} failed: {error}",
+                                  q_branch=q_branch, remote=remote, branch=branch, error=r_res.stderr.strip())
 
     return True, q_branch, t(
         "Diverged local commits moved to quarantine branch '{q_branch}'. Local branch reset to {remote}/{branch}.",
         q_branch=q_branch, remote=remote, branch=branch,
     )
+
+
+def quarantine_diverged_commits(
+    repo_dir: Path, remote: str = "origin", branch: str = "main"
+) -> tuple[bool, str, str]:
+    """Public wrapper: delegates to the private quarantine helper."""
+    return _quarantine_diverged_commits_impl(repo_dir, remote=remote, branch=branch)
 
 
 def fast_forward_merge(repo_dir: Path, remote: str = "origin", branch: str = "main") -> tuple[bool, str]:
@@ -555,7 +533,7 @@ def inspect_git_state(
         )
 
 
-def publish_changes(
+def _publish_changes_impl(
     repo_dir: Path,
     branch: str = "main",
     remote: str = "origin",
@@ -712,7 +690,7 @@ def publish_changes(
                         "('nexgen vault quarantine --diff <branch>'), then publish again.",
                         detail=q_msg,
                     )
-                return False, t("Data has diverged from {remote}, automatic rebase did not succeed", remote=remote)
+                return False, t("Data has diverged from {remote}: {reason}", remote=remote, reason=q_msg)
 
     # Mirror update (best effort, but reported: a silent mirror failure
     # means the backup drifts for weeks until someone diffs it by hand).
@@ -765,3 +743,22 @@ def publish_changes(
     if mirror_notes:
         return True, "; ".join(mirror_notes)
     return True, t("Nothing to publish")
+
+
+def publish_changes(
+    repo_dir: Path,
+    branch: str = "main",
+    remote: str = "origin",
+    mirrors: list[str] | None = None,
+    commit_msg: str | None = None,
+    files_to_commit: list[str] | None = None
+) -> tuple[bool, str]:
+    """Public wrapper: delegates to the private publish helper."""
+    return _publish_changes_impl(
+        repo_dir,
+        branch=branch,
+        remote=remote,
+        mirrors=mirrors,
+        commit_msg=commit_msg,
+        files_to_commit=files_to_commit,
+    )

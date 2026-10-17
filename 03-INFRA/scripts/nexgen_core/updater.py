@@ -724,13 +724,25 @@ def main(
             print("\nCheck only. No installed files or branch were changed.")
             return 0
 
-        if args.unattended and not verdict.ok:
+        if args.unattended and not verdict.ok and not verdict.no_verifier:
             raise UpdateError(
                 f"unattended update refuses {target}: its signature could not be verified "
                 f"({verdict.detail}); recover by running 'nexgen-update --target {target.removeprefix('v')}' "
                 "--allow-unverified interactively once you have checked the release"
             )
-        if not verdict.ok and not args.allow_unverified:
+        if not verdict.ok and (args.allow_unverified or verdict.no_verifier):
+            # Installing without a check happens in exactly two cases: the
+            # machine has no verifier program at all (BAD and UNTRUSTED
+            # already refused inside _release_verdict, in every mode), or the
+            # installer explicitly said so with --allow-unverified. An
+            # unsigned or otherwise unverifiable release without the flag
+            # refuses below: anyone able to publish an unsigned tag must not
+            # be able to install code on a whole fleet of unattended machines.
+            print(
+                f"\nNote: the signature of {target} could not be checked on this "
+                f"machine; installing anyway."
+            )
+        elif not verdict.ok:
             raise UpdateRefused(
                 f"release {target} could not be verified ({verdict.detail}). "
                 "Nothing was installed. Rerun with --allow-unverified only after checking the release by hand."
@@ -871,22 +883,21 @@ def main(
             "03-INFRA/deploy/README.md before redeploying it."
         )
         return 0
-    except PostMergeError as exc:
-        return _recover_failed_update(
-            exc, args=args, entry=entry, data_repo=data_repo, pin_file=pin_file,
-            state_dir=state_dir, target=target, current=current,
-        )
-    except (UpdateError, OSError, UnicodeError, subprocess.SubprocessError) as exc:
+    except (UpdateError, OSError, UnicodeError, subprocess.SubprocessError,
+            KeyboardInterrupt) as exc:
         safe_error = exc if isinstance(exc, UpdateError) else UpdateError(f"update operation failed ({type(exc).__name__})")
         if mutation_started and previous_head and engine_repo is not None:
-            interrupted = PostMergeError(
-                f"update interrupted after merge was started: {safe_error}",
+            interrupted = exc if isinstance(exc, PostMergeError) else PostMergeError(
+                f"update interrupted after the merge was started: {safe_error}",
                 previous_head=previous_head, engine_repo=engine_repo,
             )
             return _recover_failed_update(
                 interrupted, args=args, entry=entry, data_repo=data_repo, pin_file=pin_file,
                 state_dir=state_dir, target=target, current=current,
             )
+        if isinstance(exc, KeyboardInterrupt):
+            print("nexgen-update: interrupted before anything was changed.", file=sys.stderr)
+            return 130
         print(f"nexgen-update: ERROR: {safe_error}", file=sys.stderr)
         return exc.exit_code if isinstance(exc, UpdateRefused) else 1
 

@@ -28,6 +28,11 @@ HttpResult = _store.HttpResult
 HttpFn = _store.HttpFn
 
 
+# ================= AUTH =================
+# Client/tenant dai file locali, token nel machine store, refresh silente.
+# Mai browser: senza token solleva NeedsLogin.
+
+
 def _default_http(req, timeout: int) -> HttpResult:
     return _store.default_http(req, timeout)
 
@@ -119,18 +124,37 @@ def access_token(http: HttpFn | None = None) -> str:
         raise AuthError(f"(accesso non riuscito: {exc})") from exc
 
 
-def _get(url: str, http: HttpFn, auth_http: HttpFn | None) -> Any:
-    token = access_token(auth_http)
-    req = urllib.request.Request(url, method="GET")
-    req.add_header("Authorization", f"Bearer {token}")
+# Trasporto Graph condiviso da READ e SEND: un solo punto per
+# irraggiungibilita', 401/scadenze e stati HTTP inattesi.
+
+
+def _call_backend(
+    req: urllib.request.Request,
+    http: HttpFn,
+    *,
+    ok: tuple[int, ...],
+    fail_label: str,
+) -> HttpResult:
     try:
         result = http(req, 60)
     except OSError as exc:
         raise ConnectorError(f"(outlook non raggiungibile: {exc})") from exc
     if result.status == 401:
         raise ConnectorError("(outlook: accesso scaduto o revocato, serve un nuovo login)")
-    if result.status != 200:
-        raise ConnectorError(f"(outlook: ricerca fallita: HTTP {result.status})")
+    if result.status not in ok:
+        raise ConnectorError(f"(outlook: {fail_label}: HTTP {result.status})")
+    return result
+
+
+# ================= READ =================
+# Ricerca ed lettura: nutrono il giro, mai invii.
+
+
+def _get(url: str, http: HttpFn, auth_http: HttpFn | None) -> Any:
+    token = access_token(auth_http)
+    req = urllib.request.Request(url, method="GET")
+    req.add_header("Authorization", f"Bearer {token}")
+    result = _call_backend(req, http, ok=(200,), fail_label="ricerca fallita")
     try:
         return json.loads(result.body.decode("utf-8", errors="replace"))
     except ValueError as exc:
@@ -196,19 +220,16 @@ def get_message(mid: str, http: HttpFn | None = None) -> dict[str, Any]:
     }
 
 
+# ================= SEND =================
+# Invii: li richiama solo il gate di composizione, dopo approvazione umana.
+
+
 def _post(path: str, payload: dict[str, Any], http: HttpFn, auth_http: HttpFn | None) -> dict[str, Any]:
     token = access_token(auth_http)
     req = urllib.request.Request(f"{GRAPH}{path}", data=json.dumps(payload).encode("utf-8"), method="POST")
     req.add_header("Authorization", f"Bearer {token}")
     req.add_header("Content-Type", "application/json")
-    try:
-        result = http(req, 60)
-    except OSError as exc:
-        raise ConnectorError(f"(outlook non raggiungibile: {exc})") from exc
-    if result.status == 401:
-        raise ConnectorError("(outlook: accesso scaduto o revocato, serve un nuovo login)")
-    if result.status not in (200, 201, 202):
-        raise ConnectorError(f"(outlook: invio fallito: HTTP {result.status})")
+    result = _call_backend(req, http, ok=(200, 201, 202), fail_label="invio fallito")
     if not result.body.strip():
         return {}
     try:

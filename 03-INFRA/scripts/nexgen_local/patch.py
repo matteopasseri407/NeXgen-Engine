@@ -1,3 +1,4 @@
+# nexgen: one-job reason="apply one approved patch to one file without leaving it half-changed"
 """The pen, gated: patch proposals whose approval screen is machine facts only.
 
 The model never writes. It returns a snippet replacement as JSON; the engine
@@ -15,14 +16,17 @@ from __future__ import annotations
 import difflib
 import hashlib
 import json
+import os
 import shlex
 import subprocess
 import tempfile
 import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
+from typing import NoReturn
 
-from nexgen_core.files import write_private_text
+from nexgen_core.files import atomic_write_bytes, secure_artifact, write_private_text
+from nexgen_core.processes import windows_command_argv
 
 from .config import LaneConfig
 from .llm import LLM
@@ -76,6 +80,17 @@ def _sha(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8", errors="replace")).hexdigest()
 
 
+def _hash_bytes(data: bytes) -> str:
+    """The identity of a file: a hash of its bytes, never of a decoded view.
+
+    Decoding with `errors="replace"` collapses different invalid sequences
+    onto the same text, which would let the state check call someone else's
+    edit "still ours" and overwrite it. For a valid UTF-8 file this is the
+    same value the text-based proposal hashes produce.
+    """
+    return hashlib.sha256(data).hexdigest()
+
+
 def _read_text_bytes(path: Path) -> str:
     """Decode the exact bytes: ``Path.read_text`` normalises CRLF to LF, which
     would hash differently from the proposal computed over the raw bytes."""
@@ -90,6 +105,23 @@ def _run_git(repo_root: Path, args: list[str], timeout: int = 120) -> tuple[int,
         return proc.returncode, (proc.stdout + proc.stderr)
     except (OSError, subprocess.SubprocessError) as exc:
         return 1, f"git non eseguibile: {exc}"
+
+
+def _verify_argv(verify: str) -> list[str]:
+    """The verify command as argv for this platform.
+
+    shlex in its non-POSIX mode keeps backslashes but also leaves the quotes
+    inside the tokens; subprocess would escape them again (list2cmdline) and
+    the program would receive them as literal characters. One matching outer
+    pair is peeled off each token; backslashes stay untouched.
+    """
+    argv = shlex.split(verify, posix=os.name != "nt")
+    if os.name != "nt":
+        return argv
+    return [
+        token[1:-1] if len(token) >= 2 and token[0] == token[-1] and token[0] in "\"'" else token
+        for token in argv
+    ]
 
 
 def _repo_file(cfg: LaneConfig, file_rel: str) -> tuple[Path, str, Path] | None:
@@ -203,6 +235,53 @@ def list_proposals(cfg: LaneConfig) -> list[Proposal]:
     return proposals
 
 
+def _build_proposal(
+    cfg: LaneConfig,
+    rel: str,
+    root: Path,
+    instruction: str,
+    data: bytes,
+    text: str,
+    new_text: str,
+    patch: str,
+    dry_ok: bool,
+    dry_output: str,
+    why: str,
+) -> Proposal:
+    """Costruisce, memorizza e registra la proposta senza cambiarne il contenuto."""
+    proposal = Proposal(
+        id="",
+        file=rel,
+        repo_root=str(root),
+        instruction=instruction,
+        original_hash=_hash_bytes(data),
+        new_hash=_sha(new_text),
+        patch=patch,
+        dry_run=dry_ok,
+        dry_run_output=dry_output,
+        model_text=why,
+        created_at=time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+    )
+    for _ in range(5):
+        proposal.id = new_proposal_id()
+        try:
+            _create(cfg, proposal)
+            break
+        except PatchError as exc:
+            if "collisione" not in str(exc):
+                raise
+    else:
+        raise PatchError("collisione id proposta, riprova")
+    audit_event(
+        cfg,
+        "propose_patch",
+        {"file": rel, "original_hash": proposal.original_hash, "dry_run": dry_ok},
+        ok=dry_ok,
+        chars=len(patch),
+    )
+    return proposal
+
+
 def propose_patch(llm: LLM, cfg: LaneConfig, file_rel: str, instruction: str) -> Proposal:
     """Ask the model for a snippet replacement; validate, diff and dry-run it."""
     target = _repo_file(cfg, file_rel)
@@ -214,7 +293,13 @@ def propose_patch(llm: LLM, cfg: LaneConfig, file_rel: str, instruction: str) ->
     data = path.read_bytes()
     if b"\x00" in data[:4096]:
         raise PatchError("file binario, non modificabile")
-    text = data.decode("utf-8", errors="replace")
+    try:
+        text = data.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise PatchError(
+            "il file non e' testo UTF-8 valido (es. una riga in cp1252): non si modifica. "
+            "Convertilo in UTF-8 e riprova."
+        ) from exc
     if len(text) > MAX_FILE_CHARS:
         raise PatchError(f"file troppo grande per una proposta ({len(text)} caratteri)")
 
@@ -243,37 +328,7 @@ def propose_patch(llm: LLM, cfg: LaneConfig, file_rel: str, instruction: str) ->
     if not patch.strip():
         raise PatchError("diff vuoto")
     dry_ok, dry_output = _dry_run(root, patch)
-    proposal = Proposal(
-        id="",
-        file=rel,
-        repo_root=str(root),
-        instruction=instruction,
-        original_hash=_sha(text),
-        new_hash=_sha(new_text),
-        patch=patch,
-        dry_run=dry_ok,
-        dry_run_output=dry_output,
-        model_text=why,
-        created_at=time.strftime("%Y-%m-%dT%H:%M:%S%z"),
-    )
-    for _ in range(5):
-        proposal.id = new_proposal_id()
-        try:
-            _create(cfg, proposal)
-            break
-        except PatchError as exc:
-            if "collisione" not in str(exc):
-                raise
-    else:
-        raise PatchError("collisione id proposta, riprova")
-    audit_event(
-        cfg,
-        "propose_patch",
-        {"file": rel, "original_hash": proposal.original_hash, "dry_run": dry_ok},
-        ok=dry_ok,
-        chars=len(patch),
-    )
-    return proposal
+    return _build_proposal(cfg, rel, root, instruction, data, text, new_text, patch, dry_ok, dry_output, why)
 
 
 def apply_proposal(
@@ -293,27 +348,187 @@ def apply_proposal(
         return _apply_proposal(cfg, proposal_id, verify=verify)
 
 
-def _apply_proposal(cfg: LaneConfig, proposal_id: str, *, verify: str | None) -> dict:
-    proposal = load_proposal(cfg, proposal_id)
+def _check_approval(cfg: LaneConfig, proposal: Proposal) -> tuple[Path, Path]:
+    """Ricontrolla approvazione, root vincolato e freschezza hash senza scrivere."""
     if proposal.applied_at:
         raise PatchError("proposta gia' applicata")
     if not proposal.dry_run:
         raise PatchError("il dry-run della proposta era fallito: non si applica")
     path, root = _approved_target(cfg, proposal)
-    rel = proposal.file
-    if _sha(_read_text_bytes(path)) != proposal.original_hash:
+    if _hash_bytes(path.read_bytes()) != proposal.original_hash:
         raise PatchError("proposta stantia: il file e' cambiato dopo la proposta")
+    return path, root
 
-    # Write-ahead receipt: the intent is recorded before the pen moves.
-    audit_event(
-        cfg,
-        "apply_patch",
-        {"file": rel, "proposal": proposal.id, "phase": "intent"},
-        ok=True,
-        chars=len(proposal.patch),
+
+def _file_state(path: Path, expected: str) -> str:
+    """`ours` while the file holds what `git apply` produced, else `changed`,
+    or `unreadable` when it cannot be read at all: a file a scanner is
+    holding open for a moment is not a change, and the log should not say it
+    was one. Any failure counts as unreadable."""
+    try:
+        return "ours" if _hash_bytes(path.read_bytes()) == expected else "changed"
+    except (OSError, ValueError, PatchError):  # nexgen: allow reason="unreadable is left alone"
+        return "unreadable"
+
+
+def _spare_path(cfg: LaneConfig, proposal: Proposal) -> Path:
+    """Where the original bytes go whenever they cannot go back.
+
+    The lane's own directory, not the repository: a `.pre-patch` beside the
+    file would be an untracked file a commit could pick up, and each proposal
+    gets its own copy instead of one shared name. The id comes from a JSON
+    record, so a tampered one must not escape that directory.
+    """
+    if not proposal.id or ".." in proposal.id or any(sep in proposal.id for sep in "\\/:"):
+        raise PatchError(f"identificativo di proposta non valido: {proposal.id!r}")
+    return cfg.proposals_dir / f"{proposal.id}.pre-patch"
+
+
+def _keep_original(before: bytes, spare: Path) -> str:
+    """Saves the pre-patch bytes for a human and says how it went.
+
+    `written` when this call saved them, `exists` when a copy from an earlier
+    failure was already there, `failed` when even that write could not land
+    (a full disk, a locked directory): a refusal must never point at a file
+    that is not there. Any failure counts as failed.
+    """
+    try:
+        if spare.exists():
+            return "exists"
+        secure_artifact(spare.parent)
+        atomic_write_bytes(spare, before, preserve_mode=False)
+    except (OSError, ValueError, PatchError):  # nexgen: allow reason="the outcome carries the failure"
+        return "failed"
+    return "written"
+
+
+def _restore_outcome(
+    path: Path, before: bytes, expected: str | None, spare: Path,
+) -> tuple[str, str]:
+    """Puts the pre-patch bytes back when they are ours to put back.
+
+    Returns (restore, spare). `restore` is `restored`, `changed` (someone
+    else edited the file meanwhile), `unreadable` (it could not be read to
+    check) or `failed` (even the atomic write could not land); `spare` is
+    what `_keep_original` reports whenever the bytes did not go back. The
+    original bytes are kept in both non-restoring cases: the file may carry
+    edits nobody committed, and only a copy can bring them back. `expected`
+    is the content hash read right after `git apply`, or None when that read
+    failed: with the applied output unknown, the known-good bytes go back on
+    purpose. Two applies on the same file are not serialised: this can only
+    check that the file still holds what the patch produced, not that the
+    patch worked on the bytes read before it, so a parallel apply that lands
+    during `git apply` can still be undone (Should Fix 24, plan 2.16).
+    """
+    if expected is not None:
+        state = _file_state(path, expected)
+        if state != "ours":
+            return state, _keep_original(before, spare)
+    try:
+        atomic_write_bytes(path, before)
+    except (OSError, ValueError, PatchError):
+        return "failed", _keep_original(before, spare)
+    return "restored", "not-needed"
+
+
+def _refuse_apply(cfg: LaneConfig, proposal: Proposal, rc: str, reason: str) -> NoReturn:
+    """Records the refusal, then raises it.
+
+    A refusal before the pen moves used to leave only the intent line in the
+    log: seen later, it is indistinguishable from a crash in the middle of
+    the application.
+    """
+    try:
+        audit_event(cfg, "apply_patch",
+                    {"file": proposal.file, "proposal": proposal.id, "phase": "result", "rc": rc},
+                    ok=False, chars=len(proposal.patch))
+    except (OSError, ValueError, PatchError):  # nexgen: allow reason="the refusal below is what the person needs"
+        pass
+    raise PatchError(reason)
+
+
+def _approved_bytes_or_refuse(cfg: LaneConfig, path: Path, proposal: Proposal) -> tuple[bytes, Path]:
+    """The file's bytes and the spare path, refusing when they are not the
+    approved ones.
+
+    A second apply on the same file can slip in between the approval check
+    and this read: with bytes nobody approved, a rollback would erase that
+    other change. The read itself is guarded too: a file that cannot be read
+    is refused before anything is applied. The spare path is validated here,
+    before the pen moves, so a tampered proposal id cannot fail in the middle
+    of a restore.
+    """
+    try:
+        before = path.read_bytes()
+    except OSError as exc:
+        _refuse_apply(cfg, proposal, "unreadable",
+                      f"il file non e' leggibile ({type(exc).__name__}): non applico")
+    if _hash_bytes(before) != proposal.original_hash:
+        _refuse_apply(cfg, proposal, "stale",
+                      "il file e' cambiato dopo l'approvazione: non applico, riprova la proposta")
+    return before, _spare_path(cfg, proposal)
+
+
+def _applied_hash(path: Path) -> str | None:
+    """The hash of what `git apply` produced, or None when it cannot be read.
+
+    The caller treats an unreadable result as a mismatch: it knows the file
+    is not what the proposal promised, and the pre-patch bytes can go back.
+    Any failure counts: I/O, decoding, or a refusal raised by the reader.
+    """
+    try:
+        return _hash_bytes(path.read_bytes())
+    except (OSError, ValueError, PatchError):  # nexgen: allow reason="unreadable means mismatch"
+        return None
+
+
+def _settle_mismatch(
+    cfg: LaneConfig, proposal: Proposal, spare_path: Path, path: Path, before: bytes, applied: str | None,
+) -> NoReturn:
+    """The applied pen stroke does not match the proposal: put the file back.
+
+    The outcome reaches the log in every case, restored or not: the restore
+    runs first and the result line is written whatever it did, because the
+    cases where the file stays wrong are the ones where the record matters
+    most. The line also carries whether a copy of the original bytes exists,
+    so the refusal cannot promise one that is not there.
+    """
+    outcome, spare = "failed", "failed"
+    try:
+        outcome, spare = _restore_outcome(path, before, applied, spare_path)
+    finally:
+        try:
+            audit_event(cfg, "apply_patch",
+                        {"file": proposal.file, "proposal": proposal.id, "phase": "result",
+                         "rc": "hash", "restore": outcome, "spare": spare},
+                        ok=False, chars=len(proposal.patch))
+        except (OSError, ValueError, PatchError):  # nexgen: allow reason="the refusal below is what the person needs"
+            pass
+    if outcome == "restored":
+        raise PatchError("il file applicato non corrisponde alla proposta; il file e' tornato com'era")
+    if spare in ("written", "exists"):
+        raise PatchError(
+            f"il file applicato non corrisponde alla proposta (ripristino: {outcome}); "
+            f"i byte originali sono in {spare_path}"
+        )
+    raise PatchError(
+        f"il file applicato non corrisponde alla proposta (ripristino: {outcome}) e la copia "
+        "dei byte originali non e' riuscita: il file va guardato a mano"
     )
 
+
+def _run_apply(
+    cfg: LaneConfig, proposal: Proposal, path: Path, root: Path, *, verify: str | None
+) -> dict:
+    """Applica la patch gia' approvata: ricevuta d'intento, penna, esito."""
+    rel = proposal.file
+
+    # Write-ahead receipt: the intent is recorded before the pen moves.
+    audit_event(cfg, "apply_patch", {"file": rel, "proposal": proposal.id, "phase": "intent"},
+                ok=True, chars=len(proposal.patch))
+
     record_attempt(proposal, lambda: _save(cfg, proposal), PatchError)
+    before, spare = _approved_bytes_or_refuse(cfg, path, proposal)
     with tempfile.NamedTemporaryFile("wb", suffix=".patch", delete=False) as handle:
         handle.write(proposal.patch.encode("utf-8"))
         patch_path = Path(handle.name)
@@ -323,31 +538,21 @@ def _apply_proposal(cfg: LaneConfig, proposal_id: str, *, verify: str | None) ->
     finally:
         patch_path.unlink(missing_ok=True)
     if code != 0:
-        audit_event(
-            cfg,
-            "apply_patch",
-            {"file": rel, "proposal": proposal.id, "phase": "result", "rc": code},
-            ok=False,
-            chars=len(proposal.patch),
-        )
+        audit_event(cfg, "apply_patch",
+                    {"file": rel, "proposal": proposal.id, "phase": "result", "rc": code},
+                    ok=False, chars=len(proposal.patch))
         raise PatchError(f"git apply fallito: {output.strip()}")
-    if _sha(_read_text_bytes(path)) != proposal.new_hash:
-        audit_event(
-            cfg,
-            "apply_patch",
-            {"file": rel, "proposal": proposal.id, "phase": "result", "rc": "hash"},
-            ok=False,
-            chars=len(proposal.patch),
-        )
-        raise PatchError("il file applicato non corrisponde alla proposta")
+    applied = _applied_hash(path)
+    if applied != proposal.new_hash:
+        _settle_mismatch(cfg, proposal, spare, path, before, applied)
 
     verify_output = ""
     verify_rc: int | None = None
     if verify:
         try:
-            proc = subprocess.run(
-                shlex.split(verify), cwd=root, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=APPLY_TIMEOUT
-            )
+            argv = _verify_argv(verify)
+            proc = subprocess.run(windows_command_argv(argv), cwd=root, capture_output=True, text=True,
+                                  encoding="utf-8", errors="replace", timeout=APPLY_TIMEOUT)
             verify_rc = proc.returncode
             verify_output = f"rc={proc.returncode}\n{proc.stdout[-2000:]}{proc.stderr[-1000:]}"
         except (OSError, subprocess.SubprocessError) as exc:
@@ -377,6 +582,12 @@ def _apply_proposal(cfg: LaneConfig, proposal_id: str, *, verify: str | None) ->
         "verify_rc": verify_rc,
         "verify": verify_output,
     }
+
+
+def _apply_proposal(cfg: LaneConfig, proposal_id: str, *, verify: str | None) -> dict:
+    proposal = load_proposal(cfg, proposal_id)
+    path, root = _check_approval(cfg, proposal)
+    return _run_apply(cfg, proposal, path, root, verify=verify)
 
 
 def format_gate(proposal: Proposal) -> str:

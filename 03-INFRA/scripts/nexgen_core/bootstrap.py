@@ -455,7 +455,7 @@ def _materialize_best_effort(script: Path) -> bool:
         return False
 
 
-def wire_absorbed_secrets(root: Path, refs: dict[str, list[str]], masked: list[str] | None = None) -> None:
+def _wire_absorbed_secrets_impl(root: Path, refs: dict[str, list[str]], masked: list[str] | None = None) -> None:
     """Guided wiring for the ${NAME}s absorbed entries reference.
 
     Creates only: names already in the store are materialized, never
@@ -535,6 +535,11 @@ def wire_absorbed_secrets(root: Path, refs: dict[str, list[str]], masked: list[s
     _print_manual_fix(masked)
 
 
+def wire_absorbed_secrets(root: Path, refs: dict[str, list[str]], masked: list[str] | None = None) -> None:
+    """Guided wiring for the ${NAME}s absorbed entries reference."""
+    return _wire_absorbed_secrets_impl(root, refs, masked)
+
+
 def install_launchers(root: Path) -> str:
     """Generates the commands, if the engine lives in this clone.
 
@@ -606,7 +611,7 @@ def render(findings: list[Finding], title: str, stream=None) -> int:
     return missing
 
 
-def main(argv: list[str] | None = None) -> int:
+def _main_impl(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="nexgen-bootstrap",
         description=t("Checks prerequisites, prepares the vault, and says what the next step is."),
@@ -784,6 +789,11 @@ def main(argv: list[str] | None = None) -> int:
     print(safe_text("  " + t("Run 'nexgen doctor' for the whole list; most of it clears "
                    "with 'nexgen sync apply'.")))
     return 1
+
+
+def main(argv: list[str] | None = None) -> int:
+    """Checks prerequisites, prepares the vault, and says what the next step is."""
+    return _main_impl(argv)
 
 
 if __name__ == "__main__":

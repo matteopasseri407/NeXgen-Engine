@@ -130,3 +130,83 @@ def test_council_seat_spawn_stays_windowless(monkeypatch, tmp_path):
     assert "VERDICT: APPROVE" in answer
     assert captured.get("creationflags", 0) & 0x08000000
     assert "startupinfo" in captured
+
+
+@windows_only
+def test_a_windows_shim_is_invoked_through_cmd(tmp_path, monkeypatch):
+    """MUST-18: un .cmd (npx, codex) non è eseguibile lanciato nudo; l'helper
+    lo passa a cmd.exe /d /s /c, che è l'unico modo perché parta. Un comando
+    che non è uno shim resta invece quello che il chiamante ha chiesto."""
+    from nexgen_core import processes
+    from nexgen_core.processes import windows_command_argv
+
+    shim = tmp_path / "fakecodex.cmd"
+    shim.write_text("@echo off\r\n", encoding="utf-8")
+    monkeypatch.setattr(processes.shutil, "which", lambda name: str(tmp_path / name))
+    resolved = windows_command_argv([str(shim), "exec", "prompt"])
+    assert resolved[:4] == ["cmd.exe", "/d", "/s", "/c"]
+    assert resolved[4].casefold().endswith(".cmd")
+    assert resolved[5:] == ["exec", "prompt"]
+
+    # Un eseguibile normale parte anche per nome: risolverlo cambierebbe
+    # l'argv che il chiamante vede senza aggiungere nulla.
+    assert windows_command_argv(["runner", "exec"]) == ["runner", "exec"]
+
+    plain = windows_command_argv([sys.executable, "-c", "pass"])
+    assert plain == [sys.executable, "-c", "pass"]
+
+
+def test_the_relay_resolves_the_cli_shim_before_running(tmp_path, monkeypatch):
+    """MUST-18: l'argv del relay passa dall'helper che risolve gli shim .cmd
+    di Windows: lanciare `codex` nudo su Windows non parte."""
+    import nexgen_local.relay as relay_module
+    from nexgen_local.config import LaneConfig
+
+    asked: list[list[str]] = []
+    launched: list[list[str]] = []
+
+    def resolve(argv):
+        asked.append(list(argv))
+        return ["cmd.exe", "/d", "/s", "/c", *argv]
+
+    def fake_run(argv, **kwargs):
+        launched.append(list(argv))
+        raise OSError("stop: conta solo cosa sarebbe partito")
+
+    monkeypatch.setattr(relay_module, "windows_command_argv", resolve, raising=False)
+    monkeypatch.setattr(relay_module.subprocess, "run", fake_run)
+    monkeypatch.setattr(relay_module.shutil, "which", lambda cli: f"C:/npm/{cli}.cmd")
+    monkeypatch.setattr(relay_module, "_build_argv", lambda *args: (["codex", "exec", "p"], None))
+    cfg = LaneConfig(vault_root=tmp_path / "vault", repo_roots=(), model="synthetic-model",
+                     audit_path=tmp_path / "audit.jsonl")
+
+    with pytest.raises(relay_module.RelayError):
+        relay_module.run_relay(cfg, "codex", "synthetic-model", "prompt")
+
+    assert asked == [["codex", "exec", "p"]], "l'argv deve passare dall'helper degli shim"
+    assert launched and launched[0][:4] == ["cmd.exe", "/d", "/s", "/c"]
+
+
+def test_a_windows_shim_is_wrapped_and_a_plain_command_is_not(tmp_path, monkeypatch):
+    """La stessa regola, provata su ogni piattaforma: si sostituisce solo il
+    nome che l'helper legge dentro `nexgen_core.processes` (il modulo os vero
+    resta intatto, come vuole l'intestazione di questo file). Un .cmd passa da
+    cmd.exe, un comando normale resta quello che il chiamante ha chiesto,
+    cosi' la prova del fix vale anche nella CI Linux, dove i test
+    Windows-only vengono saltati."""
+    from types import SimpleNamespace
+
+    from nexgen_core import processes
+
+    monkeypatch.setattr(processes, "os", SimpleNamespace(name="nt"))
+    monkeypatch.setattr(
+        processes.shutil, "which",
+        lambda name: str(tmp_path / f"{name}.cmd") if name == "npx" else str(tmp_path / name),
+    )
+
+    wrapped = processes.windows_command_argv(["npx", "install"])
+    assert wrapped[:4] == ["cmd.exe", "/d", "/s", "/c"]
+    assert wrapped[4] == str(tmp_path / "npx.cmd")
+    assert wrapped[5:] == ["install"]
+
+    assert processes.windows_command_argv(["runner", "exec"]) == ["runner", "exec"]

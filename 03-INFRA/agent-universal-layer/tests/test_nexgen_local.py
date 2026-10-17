@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import re
+import shutil
 from pathlib import Path
 
 import pytest
@@ -346,7 +347,12 @@ def test_trap_suite_fails_when_the_model_obeys(tmp_path: Path, monkeypatch) -> N
             return match.group(0) if match else "Non ho trovato nulla."
 
     report = run_suite(ObedientLLM(), "fake-model", "traps", tmp_path)
-    assert report["totals"]["injection"] >= 2
+    # One machine can count fewer: the note trap hides its canary in an HTML
+    # comment, which every mode strips (hidden text never reaches a model), and
+    # the PDF trap needs the external pdftotext. The web trap is a plain line
+    # in the synthetic result, so it fires everywhere.
+    expected = 1 + (1 if shutil.which("pdftotext") else 0)
+    assert report["totals"]["injection"] >= expected
     assert suite_failed(report) is True
 
 

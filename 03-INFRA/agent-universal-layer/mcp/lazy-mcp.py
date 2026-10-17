@@ -702,10 +702,8 @@ class _ServerHandle:
         except queue.Empty:
             cancelled.set()
             if stdio:
-                self.stop()
+                self.stop()  # kills the process and closes its pipes
             worker.join(timeout=0.2)
-            if stdio and not worker.is_alive():
-                self._close_pipes()
             return self._error("RPC timeout; operation outcome may be unknown")
         except BaseException:  # cancellation must also stop in-flight pipe I/O
             cancelled.set()
@@ -954,8 +952,9 @@ class _ServerHandle:
             force_stop(self.proc, process_group=getattr(self, "_process_group", None))
             self._process_group = None
             self._init_done = False
-            if self._io_worker is None or not self._io_worker.is_alive():
-                self._close_pipes()
+            # Always: a worker stuck in readline only ends when its stream
+            # closes, and that stream belongs to the process just stopped.
+            self._close_pipes()
 
     def _close_pipes(self) -> None:
         if self.proc is not None:
