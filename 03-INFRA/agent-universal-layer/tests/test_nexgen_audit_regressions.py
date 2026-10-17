@@ -211,6 +211,33 @@ def test_vault_push_exits_nonzero_when_the_work_was_moved_to_quarantine(tmp_path
     assert "durable note" not in _git(clone, "show", "origin/main:note.md").stdout
 
 
+def test_vault_push_refuses_a_detached_head_before_committing(tmp_path, monkeypatch):
+    """A detached HEAD has no branch. Committing there made an orphan that no
+    branch points at, and the push then compared the wrong branch, skipped the
+    push and still reported success. Refuse before anything is committed."""
+    from nexgen_core.publisher import Publisher
+
+    monkeypatch.setenv("AGENT_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.delenv("KNOWLEDGE_VAULT_BRANCH", raising=False)
+    remote = tmp_path / "remote.git"
+    subprocess.run(["git", "init", "--bare", "-b", "main", str(remote)], check=True, capture_output=True)
+    clone = _configured_clone(remote, tmp_path / "clone")
+    (clone / "note.md").write_text("base\n", encoding="utf-8")
+    _git(clone, "add", "-A")
+    _git(clone, "commit", "-m", "base")
+    _git(clone, "push", "origin", "HEAD:main")
+    _git(clone, "checkout", "--detach")
+    head_before = _git(clone, "rev-parse", "HEAD").stdout.strip()
+    (clone / "note.md").write_text("work written on a detached HEAD\n", encoding="utf-8")
+
+    code, message = Publisher(vault_data=clone).publish()
+
+    assert code != 0
+    assert "HEAD is detached" in message
+    assert _git(clone, "rev-parse", "HEAD").stdout.strip() == head_before
+    assert "work written on a detached HEAD" not in _git(clone, "show", "origin/main:note.md").stdout
+
+
 # ----------------------------------------------------------------- doctor
 
 

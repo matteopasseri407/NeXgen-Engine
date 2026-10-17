@@ -33,7 +33,6 @@ def _resolve_branch(vault_data: Path) -> str:
     return (
         os.environ.get("KNOWLEDGE_VAULT_BRANCH")
         or get_current_branch(vault_data)
-        or "main"
     )
 
 
@@ -61,6 +60,10 @@ class Publisher:
     ) -> tuple[int, str]:
         with host_mutation("vault-push", timeout=timeout):
             auth_remote, mirrors = resolve_remotes(self.vault_data)
+            if not get_current_branch(self.vault_data):
+                # A detached HEAD commits onto a commit no branch points at, and
+                # the push then compares the wrong branch. Refuse before committing.
+                return 1, "HEAD is detached: check out a branch before publishing"
             branch = _resolve_branch(self.vault_data)
 
             success, msg = publish_changes(
