@@ -219,6 +219,30 @@ def test_run_build_handles_quoted_arguments(tmp_path: Path):
 
 
 
+def test_a_build_step_that_is_a_cmd_shim_goes_through_cmd_exe(tmp_path: Path, monkeypatch):
+    """`shutil.which("npm")` trova `npm.cmd`, che CreateProcess non esegue da solo.
+
+    `_run` lo lanciava per nome: su Windows il passo di build moriva con
+    FileNotFoundError, quindi i build NPM non partivano mai.
+    """
+    from nexgen_core.provision import _run_build
+
+    shim = r"C:\nodejs\npm.cmd"
+    monkeypatch.setattr(provision.shutil, "which", lambda name: shim if name == "npm" else None)
+    monkeypatch.setattr(provision.os, "name", "nt")
+    seen: list[list[str]] = []
+
+    def fake_run(argv, **kwargs):
+        seen.append(list(argv))
+        return subprocess.CompletedProcess(argv, 0, "", "")
+
+    monkeypatch.setattr(provision.subprocess, "run", fake_run)
+
+    _run_build([["npm", "run", "build"]], tmp_path, "test-server")
+
+    assert seen == [["cmd.exe", "/d", "/s", "/c", shim, "run", "build"]]
+
+
 def test_a_helper_process_never_inherits_the_callers_stdin():
     """The waiter provisions on a request thread while its main thread blocks reading the MCP stream.
     A child holding that same handle wedged on Windows (git waits behind the pending read: the
