@@ -13,7 +13,7 @@ SCRIPTS_DIR = Path(__file__).resolve().parents[2] / "scripts"
 if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
-from nexgen_core.release_ship import Shipper, ShipStop  # noqa: E402
+from nexgen_core.release_ship import SMOKE_CONTEXT, Shipper, ShipStop  # noqa: E402
 
 RELEASE_HEAD = "a" * 40
 MERGED = "b" * 40
@@ -325,7 +325,8 @@ def test_the_local_smoke_is_recorded_on_the_pull_request_before_the_merge(repo):
     assert smoke[0][0] == sys.executable
     published = world.statuses[0]
     assert f"repos/{{owner}}/{{repo}}/statuses/{RELEASE_HEAD}" in published
-    assert "state=success" in published and "context=smoke-windows" in published
+    # smoke-windows on the Windows desktop, smoke-local on any other machine.
+    assert "state=success" in published and f"context={SMOKE_CONTEXT}" in published
     assert any(arg.startswith("description=passed in ") and arg.endswith("s on this machine") for arg in published)
     assert world.calls.index(smoke[0]) < world.calls.index(next(c for c in world.calls if c[:3] == ("gh", "pr", "merge")))
 
