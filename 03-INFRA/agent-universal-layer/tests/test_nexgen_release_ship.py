@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -22,6 +23,15 @@ GREEN_ROLLUP = [
     {"name": "lane-guard", "status": "COMPLETED", "conclusion": "FAILURE"},
     {"context": "leak-scan", "state": "SUCCESS"},
 ]
+
+
+def command_name(argv) -> str:
+    """The command as the machine invokes it: a launcher's path is the launcher's own name.
+
+    The install talks to `~/.local/bin/nexgen.cmd` (`.cmd` on Windows only) where it
+    used to call a bare `nexgen`, and this world answers by command, not by path.
+    """
+    return Path(argv[0]).stem
 
 
 class FakeWorld:
@@ -68,8 +78,12 @@ class FakeWorld:
     def __call__(self, argv, cwd):
         argv = tuple(str(a) for a in argv)
         self.calls.append(argv)
-        out, code = self.answer(argv)
+        out, code = self.answer((command_name(argv), *argv[1:]))
         return subprocess.CompletedProcess(argv, code, out, "" if code == 0 else "boom")
+
+    def launches(self, *words: str) -> list[tuple[str, ...]]:
+        """Every recorded call whose command and arguments are exactly `words` (`nexgen update`)."""
+        return [call for call in self.calls if (command_name(call), *call[1:len(words)]) == words]
 
     def api(self, url: str) -> str:
         """GitHub's api answers: the required checks (from both places GitHub keeps them), and a commit's runs."""
@@ -186,6 +200,25 @@ def repo(tmp_path):
     (tmp_path / "VERSION").write_text("2.13.0\n", encoding="utf-8")
     (tmp_path / "CHANGELOG.md").write_text("# Changelog\n\n## [Unreleased]\n\n- shipped by one command\n\n## [2.13.0] - 2026-10-14\n", encoding="utf-8")
     return tmp_path
+
+
+@pytest.fixture(autouse=True)
+def installed_launcher(tmp_path, monkeypatch):
+    """A machine whose command is installed where the installer writes it.
+
+    The install step calls that path and never the `nexgen` on PATH, so every test
+    that installs needs one to exist. Returns it, so a test can say which one ran.
+    """
+    from nexgen_core import release_install
+    from nexgen_core.module_install import shim_path
+    from nexgen_core.shims import PRIMARY
+
+    home = tmp_path / "home"
+    launcher = shim_path(home / ".local" / "bin", PRIMARY)
+    launcher.parent.mkdir(parents=True, exist_ok=True)
+    launcher.write_text("# the installed command\n", encoding="utf-8")
+    monkeypatch.setattr(release_install, "resolve_home", lambda _home=None: home)
+    return launcher
 
 
 def installed_engine(repo: Path, version: str, *, smoke: bool = True) -> Path:
@@ -462,7 +495,7 @@ def test_a_failed_smoke_puts_the_previous_version_back_and_stops(repo, tmp_path)
     shipper.engine_root = installed / "03-INFRA"
     with pytest.raises(ShipStop, match="back on 2.13.0"):
         shipper.ship("minor", install=True)
-    assert ("nexgen", "update", "--yes", "--target", "2.13.0") in world.calls
+    assert world.launches("nexgen", "update", "--yes", "--target", "2.13.0")
     assert "SMOKE FAILED" in (tmp_path / "install.log").read_text(encoding="utf-8")
 
 
@@ -522,6 +555,44 @@ def test_the_version_probe_is_the_launchers_own(repo):
     assert not installer._runs_this_engine([shutil.which("git") or "git"])
 
 
+def test_the_install_uses_the_installed_launcher_not_the_one_on_path(repo, tmp_path, monkeypatch, installed_launcher):
+    """Ship runs in a development checkout, whose own `nexgen` is what PATH resolves.
+
+    Started from there, that command answers "already at the requested released
+    version" about the checkout: v2.16.3 updated nothing and left this machine on
+    2.16.2 with the release green. The update and the rollback go through the
+    installed launcher, which runs the engine this machine actually has.
+    """
+    world = FakeWorld(repo)
+    world.install_root = installed_engine(repo, "2.13.0")
+    checkout_bin = tmp_path / "checkout" / "bin"
+    checkout_bin.mkdir(parents=True)
+    (checkout_bin / installed_launcher.name).write_text(
+        "NeXGen Engine is already at the requested released version.\n", encoding="utf-8")
+    monkeypatch.setenv("PATH", f"{checkout_bin}{os.pathsep}{os.environ.get('PATH', '')}")
+
+    _installer(repo, world).install("2.14.0")
+
+    updates = world.launches("nexgen", "update")
+    assert updates, "the install must run the update"
+    assert {call[0] for call in updates} == {str(installed_launcher)}
+    assert all(call[0] != "nexgen" for call in world.calls), "nothing goes through the checkout's own command"
+
+
+def test_a_machine_without_its_launcher_stops_the_install(repo, tmp_path, monkeypatch):
+    """There is nothing here that runs the installed engine: ship says so and stops,
+    rather than falling back to the `nexgen` on PATH and updating another tree."""
+    from nexgen_core import release_install
+    from nexgen_core.release_install import InstallProblem
+
+    monkeypatch.setattr(release_install, "resolve_home", lambda _home=None: tmp_path / "empty-home")
+    world = FakeWorld(repo)
+    world.install_root = installed_engine(repo, "2.13.0")
+    with pytest.raises(InstallProblem, match="installed command"):
+        _installer(repo, world).install("2.14.0")
+    assert not world.launches("nexgen", "update")
+
+
 def test_an_update_refused_for_a_dirty_vault_says_which_folder_and_stops(repo, tmp_path):
     """The updater refuses before it moves the engine. That is not a rollback to retry:
     it is one line naming the folder that has to be committed or stashed."""
@@ -537,7 +608,7 @@ def test_an_update_refused_for_a_dirty_vault_says_which_folder_and_stops(repo, t
     assert str(repo / "vault") in str(stop.value)
     assert "uncommitted or untracked" in str(stop.value)
     assert "rolled back" not in str(stop.value)
-    assert sum(1 for c in world.calls if c[:2] == ("nexgen", "update")) == 1
+    assert len(world.launches("nexgen", "update")) == 1
 
 
 def test_an_install_already_at_the_version_still_reports_a_dirty_vault(repo, tmp_path):
@@ -591,7 +662,7 @@ def test_an_update_rolled_back_by_a_colliding_timer_is_retried_once(repo, tmp_pa
     shipper.engine_root = installed / "03-INFRA"
     assert shipper.ship("minor", install=True) == "v2.14.0"
     assert "Rolled back" in (tmp_path / "install.log").read_text(encoding="utf-8")
-    assert sum(1 for c in world.calls if c[:2] == ("nexgen", "update")) == 2
+    assert len(world.launches("nexgen", "update")) == 2
 
 
 def test_a_rerun_after_the_merge_does_not_open_a_second_pull_request(repo):
@@ -641,7 +712,7 @@ def test_a_rerun_after_the_tag_resumes_at_the_release_and_the_install(repo):
     assert shipper.ship("patch", install=True) == "v2.13.0"
     assert not any(c[:3] == ("gh", "pr", "create") for c in world.calls)
     assert not any(c[:3] == ("git", "tag", "-s") for c in world.calls), "the published tag is reused"
-    assert any(c[:2] == ("nexgen", "update") for c in world.calls)
+    assert world.launches("nexgen", "update")
 
 
 def test_a_tag_left_local_by_an_interrupted_run_is_verified_and_pushed(repo):
