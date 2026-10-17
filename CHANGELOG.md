@@ -8,7 +8,7 @@ This file tracks the **engine** (this repo). Your own data — manifests,
 instructions, skills, secrets — lives in your KnowledgeVault and is not part
 of any engine release.
 
-## [2.16.0] - 2026-10-16
+## [2.16.0] - 2026-10-17
 
 Stabilization release: no new features, same behavior everywhere, smaller
 and duller pieces. Over seventy splits and unifications, each landed with
@@ -16,6 +16,50 @@ behavior-pinning tests first and a green suite after. Duplicates unified
 (notifier state, firecrawl probe, required rules, mcp and skill deps,
 info and inventory). Removal candidates all overturned by proof. Five
 pre-existing Windows failures unchanged, CI green on Linux and Windows.
+On top of that, the stabilization plan (`docs/piano-stabilizzazione.md`)
+closed 25 Must Fix and ten serious defects from a file-by-file review of
+the whole code base, each with a test that failed before the fix.
+
+### Fixed (stabilization plan)
+
+- **Windows launchers report failures.** Every `nexgen` command started from
+  a `.cmd` launcher exited 0 even when it failed, because the exit code was
+  read before the command ran. Scheduled cycles and scripts that check the
+  exit code now see real failures. Re-run `nexgen sync` once to regenerate
+  the launchers.
+- **Work is never reset away.** The divergence quarantine refuses when there
+  are uncommitted changes, or when `git status` cannot be read, instead of
+  running `reset --hard` over them. A Ctrl+C during an engine update rolls
+  the engine back instead of leaving it half-merged.
+- **A cycle that fails says so.** A phase that raises, or an MCP render that
+  fails, now marks the cycle failed (exit 1) instead of a warning with exit 0.
+  A third-party bump whose MCP render fails puts the pins back instead of
+  committing them.
+- **Writes that cannot half-happen.** The stack `.env` with the connector keys
+  is written atomically: a crash can no longer truncate it and make the next
+  start regenerate keys over encrypted data. A Local Lane patch whose result
+  does not match the proposal puts the file back byte for byte. A symlinked
+  config with uncommitted edits in its real file is backed up before it is
+  overwritten. A malformed `remotes.yaml` is refused instead of being
+  rewritten empty.
+- **Secrets stay hidden.** Adopting an MCP server from any CLI (not only
+  Claude Desktop) redacts literal tokens before they are printed or written
+  to the manifest. The leak scan now reads added lines that begin with `++`.
+  Outgoing Gmail messages are built with the standard library, so a newline
+  in a subject or in the sender of the message being answered can no longer
+  inject headers such as `Bcc`.
+- **The vault stays the vault.** The groom write pass can only edit its
+  disposable clone, never the live vault through MCP. `vault-push` refuses a
+  detached HEAD instead of committing an orphan and reporting success.
+- **The Council asks before it spends.** Without `--seat` it shows the
+  choices and stops; picking a seat on its own needs an explicit `--auto`.
+- Windows: the lock retries a file briefly held by Defender or the indexer,
+  uptime is read as 64-bit (no false "sync stuck" alarm after 24.8 days),
+  process trees are stopped even after their launcher exited (also in the
+  Council), the relay and the Local Lane verify step start `.cmd` shims and
+  keep backslashes and quoted paths intact, and a read-only file can be
+  replaced. The scheduler installs with `nexgen.cmd` alone. A lazy MCP server
+  that is stopped always closes its pipes.
 
 ### Changed
 
