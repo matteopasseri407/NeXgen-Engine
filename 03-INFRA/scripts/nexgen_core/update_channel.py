@@ -461,9 +461,8 @@ def version_footer(state_dir: Path | None = None) -> str:
             return f" ({channel})"
         from nexgen_core.paths import resolve_engine_root
 
-        repo = resolve_engine_root().parent
-        short = _git(repo, "rev-parse", "--short", "HEAD")
-        sha = short.stdout.strip() if short.returncode == 0 else "unknown"
-        return f" ({channel} {sha})"
+        short = _git(resolve_engine_root().parent, "rev-parse", "--short", "HEAD")
+        sha = short.stdout.strip() if short.returncode == 0 else ""
+        return f" ({channel} {sha})" if sha else f" ({channel})"
     except Exception:  # nexgen: allow reason="a version banner never fails a command: the caller gets the plain version instead"
         return ""

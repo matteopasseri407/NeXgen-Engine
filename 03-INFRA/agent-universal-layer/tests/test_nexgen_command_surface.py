@@ -115,7 +115,10 @@ def test_the_in_process_entry_point_matches_the_subprocess_one(capsys):
 def test_version_flag_prints_the_version_and_exits():
     res = _run(["--version"])
     assert res.returncode == 0
-    assert res.stdout.strip() == f"NeXgen Engine {__version__}"
+    # The channel is part of the answer (2026-10-17): a machine that follows
+    # dev has to say so here, and this child has no state at all, so it is
+    # the stable default.
+    assert res.stdout.strip() == f"NeXgen Engine {__version__} (stable)"
     assert "Traceback" not in res.stderr
 
 

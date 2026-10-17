@@ -338,6 +338,50 @@ def test_an_unattended_dev_failure_is_rolled_back_and_remembered(tmp_path, monke
 
 
 # --------------------------------------------------------------------------
+# `nexgen --version` says which channel this machine follows.
+# --------------------------------------------------------------------------
+
+def _version_line(monkeypatch, capsys, state_dir: Path, *, engine: Path | None = None) -> str:
+    from nexgen_core.cli import main as cli_main
+
+    monkeypatch.setenv("AGENT_STATE_DIR", str(state_dir))
+    if engine is not None:
+        monkeypatch.setenv("AGENT_ENGINE_ROOT", str(engine / "03-INFRA"))
+    with pytest.raises(SystemExit) as exit_code:
+        cli_main(["--version"])
+    assert exit_code.value.code == 0
+    return capsys.readouterr().out.strip()
+
+
+def test_version_reports_the_channel_and_the_commit_on_dev(tmp_path, monkeypatch, capsys):
+    machine = _machine(tmp_path, tip_signed=True)
+    machine.state.mkdir(parents=True, exist_ok=True)
+    (machine.state / uc.CHANNEL_FILE).write_text("dev\n", encoding="utf-8")
+    short = _git(machine.engine, "rev-parse", "--short", "HEAD").stdout.strip()
+
+    line = _version_line(monkeypatch, capsys, machine.state, engine=machine.engine)
+
+    assert line.endswith(f"(dev {short})")
+
+
+def test_version_reports_the_stable_default(tmp_path, monkeypatch, capsys):
+    line = _version_line(monkeypatch, capsys, tmp_path / "state")
+
+    assert line.endswith("(stable)")
+
+
+def test_version_keeps_the_plain_line_when_the_engine_is_not_there(tmp_path, monkeypatch, capsys):
+    """A banner is not a place a missing checkout can break a command."""
+    state = tmp_path / "state"
+    state.mkdir()
+    (state / uc.CHANNEL_FILE).write_text("dev\n", encoding="utf-8")
+
+    line = _version_line(monkeypatch, capsys, state, engine=tmp_path / "absent")
+
+    assert line.endswith("(dev)")
+
+
+# --------------------------------------------------------------------------
 # dev: the tip of developer, and only when it is signed by a pinned key.
 # --------------------------------------------------------------------------
 

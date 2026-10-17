@@ -22,6 +22,7 @@ if str(SCRIPTS_DIR) not in sys.path:
 from nexgen_core import __version__  # noqa: E402 - sys.path shim for cloned checkout
 from nexgen_core.cli import engine, local_cmds, module_cmds, skill_cmds, stack_cmds, tool_cmds, vault_cmds  # noqa: E402 - sys.path shim for cloned checkout
 from nexgen_core.i18n import set_language, t  # noqa: E402 - sys.path shim for cloned checkout
+from nexgen_core.update_channel import version_footer  # noqa: E402 - sys.path shim for cloned checkout
 
 #: The verb groups, in the order they appear in the help text.
 GROUPS = (engine, vault_cmds, skill_cmds, stack_cmds, module_cmds, tool_cmds, local_cmds)
@@ -39,7 +40,7 @@ def build_parser() -> argparse.ArgumentParser:
         help=t("Force the language of the messages (for example: it, en)"),
     )
     parser.add_argument(
-        "--version", action="version", version=f"NeXgen Engine {__version__}",
+        "--version", action="version", version=f"NeXgen Engine {__version__}{version_footer()}",
         help=t("Show the engine version and exit"),
     )
     sub = parser.add_subparsers(dest="command", metavar="command")
