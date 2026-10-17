@@ -267,6 +267,33 @@ def test_mcp_phase_claims_success_only_when_every_cli_rendered_and_names_the_fai
     assert any(action_notes.is_warning(a) and "codex" in a and "line 3 is not valid TOML" in a for a in actions)
 
 
+def test_a_failed_mcp_render_is_a_failed_phase_not_a_warning(tmp_path, monkeypatch):
+    """Ricognizione 8: la fase MCP avvisava soltanto, quindi `failed` restava
+    vuoto e il guard usciva 0 mentre le configurazioni di una CLI restavano
+    rotte. Deve fallire come le altre fasi: nome in `failed`, exit 1."""
+    from nexgen_core import guard as guard_module
+    from nexgen_core import mcp_trials
+
+    class FailingRenderer:
+        def __init__(self, **_kw):
+            self.last_errors: dict[str, str] = {}
+
+        def render_all(self, write: bool = False) -> dict[str, bool]:
+            self.last_errors = {"codex": "line 3 is not valid TOML"}
+            return {"claude": True, "codex": False}
+
+    monkeypatch.setattr(guard_module, "McpRenderer", FailingRenderer)
+    monkeypatch.setattr(mcp_trials, "purge_expired", lambda: [])
+    runner, ran = _runner(tmp_path, monkeypatch)
+    monkeypatch.setattr(runner, "_phase_mcp", GuardRunner._phase_mcp.__get__(runner))
+
+    result = runner.run(GuardMode.APPLY)
+
+    assert result.success is False and result.exit_code == 1
+    assert runner.heartbeat.recorded_failed_phases() == ["mcp"]
+    assert "runtime" in ran  # and the cycle went on
+
+
 def test_dead_opencode_instructions_are_not_rewritten_when_their_safety_copy_fails(tmp_path, monkeypatch):
     """The backup of opencode.json was suppressed and the file rewritten anyway, so a
     failed copy removed the only record of the user's own lines. No copy, no rewrite."""

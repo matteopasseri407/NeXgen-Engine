@@ -576,15 +576,15 @@ class GuardRunner:
     def _phase_align(self, actions: list[str], skip_mcp: bool) -> list[str]:
         """First alignment block: skills + MCP rendering (moved from _run_phases)."""
         failed: list[str] = []
-        for name, run_phase in (
-            ("skills", lambda: self._phase_skills(actions)),
-            ("mcp", lambda: self._phase_mcp(actions, skip_mcp)),
-        ):
+        for name, run_phase in (("skills", lambda: self._phase_skills(actions)),
+                                ("mcp", lambda: self._phase_mcp(actions, skip_mcp))):
             try:
-                run_phase()
+                outcome = run_phase()
             except Exception as exc:  # noqa: BLE001 - one phase failing must not stop the others
+                outcome = [str(exc)]
+            if outcome:
                 failed.append(name)
-                actions.append(ERROR + t("Phase '{phase}' failed: {error}", phase=name, error=exc))
+                actions.append(ERROR + t("Phase '{phase}' failed: {error}", phase=name, error=", ".join(outcome)))
         return failed
 
     def _phase_run(self, actions: list[str], branch: str) -> list[str]:
@@ -723,11 +723,11 @@ class GuardRunner:
         if any(is_error(action) for action in skill_actions):
             raise AlignmentError(t("Skill materialization failed (see the [ERROR] lines above)."))
 
-    def _phase_mcp(self, actions: list[str], skip_mcp: bool) -> None:
-        """MCP configuration rendering for the CLIs."""
+    def _phase_mcp(self, actions: list[str], skip_mcp: bool) -> list[str]:
+        """MCP configuration rendering for the CLIs; returns the CLIs it could not write."""
         if skip_mcp:
             actions.append(t("MCP configurations not regenerated (explicitly requested)"))
-            return
+            return []
         try:
             from nexgen_core import mcp_trials
 
@@ -747,14 +747,13 @@ class GuardRunner:
         failed = sorted(cli for cli, ok in results.items() if not ok)
         if not failed:
             actions.append(t("MCP configurations regenerated for every CLI"))
-            return
+            return []
         # Success is claimed only when every target made it. The failing
         # ones are named with their error, so the line tells the user what
         # to fix rather than only that something went wrong.
-        details = ", ".join(
-            f"{cli} ({rend.last_errors[cli]})" if rend.last_errors.get(cli) else cli for cli in failed
-        )
+        details = ", ".join(f"{cli} ({rend.last_errors[cli]})" if rend.last_errors.get(cli) else cli for cli in failed)
         actions.append(WARN + t("MCP render failed for: {clis}", clis=details))
+        return failed
 
     def _phase_permissions(self, actions: list[str]) -> None:
         """Permission posture + guardrail hook per CLI."""
