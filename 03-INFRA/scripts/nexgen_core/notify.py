@@ -30,14 +30,27 @@ NOTIFY_TIMEOUT_SECONDS = 10
 BALLOON_SECONDS = 10
 
 
-def _run(command: list[str], timeout: int = NOTIFY_TIMEOUT_SECONDS) -> bool:
+def _run(command: list[str]) -> bool:
     try:
         result = subprocess.run(
-            command, capture_output=True, check=False, timeout=timeout
+            command, capture_output=True, check=False, timeout=_budget(command)
         )
         return result.returncode == 0
     except (OSError, subprocess.SubprocessError):
         return False
+
+
+def _budget(command: list[str]) -> int:
+    """How long this notifier may take.
+
+    The balloon script is the only one that waits on purpose (it sleeps
+    BALLOON_SECONDS with the icon still up), so its budget is the one that has to
+    outlast that pause: killed at the same instant, the send was reported as
+    failed for a balloon that was already on screen.
+    """
+    if command and command[0] == "powershell":
+        return NOTIFY_TIMEOUT_SECONDS + BALLOON_SECONDS
+    return NOTIFY_TIMEOUT_SECONDS
 
 
 def _linux(title: str, body: str) -> bool:
@@ -75,10 +88,7 @@ def _windows(title: str, body: str) -> bool:
         "[System.Windows.Forms.ToolTipIcon]::Warning); "
         f"Start-Sleep -Seconds {BALLOON_SECONDS}; $n.Dispose()"
     )
-    # The timeout must outlast the sleep: killing the script at the same instant
-    # reported "not shown" for a balloon that was already on screen.
-    return _run(["powershell", "-NoProfile", "-NonInteractive", "-Command", script],
-                timeout=NOTIFY_TIMEOUT_SECONDS + BALLOON_SECONDS)
+    return _run(["powershell", "-NoProfile", "-NonInteractive", "-Command", script])
 
 
 def desktop_is_available() -> bool:
