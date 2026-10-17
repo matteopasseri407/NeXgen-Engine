@@ -567,11 +567,19 @@ jobs:
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    #: The commit this leg tested: the status is published on THIS sha, not on
+    #: whatever `developer` points at when the last job starts.
+    outputs:
+      sha: ${{ steps.tested.outputs.sha }}
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           ref: developer
           fetch-depth: 0
+
+      - name: Record the commit this leg tested
+        id: tested
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
         with:
@@ -591,11 +599,20 @@ jobs:
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: windows-latest
     timeout-minutes: 25
+    outputs:
+      sha: ${{ steps.tested.outputs.sha }}
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           ref: developer
           fetch-depth: 0
+
+      - name: Record the commit this leg tested
+        id: tested
+        shell: pwsh
+        run: |
+          $sha = (git rev-parse HEAD)
+          "sha=$sha" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
 
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
         with:
@@ -623,29 +640,32 @@ jobs:
       contents: read
       statuses: write
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-        with:
-          ref: developer
-          fetch-depth: 1
-
-      - name: Publish the nightly status on the tested commit
+      - name: Publish the nightly status on the commit both legs tested
         env:
           GH_TOKEN: ${{ github.token }}
           LINUX: ${{ needs.nightly-linux.result }}
           WINDOWS: ${{ needs.nightly-windows.result }}
+          LINUX_SHA: ${{ needs.nightly-linux.outputs.sha }}
+          WINDOWS_SHA: ${{ needs.nightly-windows.outputs.sha }}
         run: |
           set -euo pipefail
-          sha="$(git rev-parse HEAD)"
-          if [ "$LINUX" = success ] && [ "$WINDOWS" = success ]; then
+          if [ -z "$LINUX_SHA" ]; then
+            echo "no leg reported a commit to mark (linux=$LINUX windows=$WINDOWS); nothing published"
+            exit 0
+          fi
+          if [ "$LINUX" = success ] && [ "$WINDOWS" = success ] && [ "$LINUX_SHA" = "$WINDOWS_SHA" ]; then
             state=success
             description="nightly green: linux and windows"
           else
             state=failure
-            description="nightly red: linux=$LINUX windows=$WINDOWS"
+            description="nightly red: linux=$LINUX windows=$WINDOWS shas=$LINUX_SHA/$WINDOWS_SHA"
           fi
-          gh api -X POST "repos/${GITHUB_REPOSITORY}/statuses/${sha}" \
+          # On the commit the legs RAN on: a branch that moved while they worked
+          # must not wear a green it never earned (the two shas disagreeing is a
+          # failure, not a green on the newer one).
+          gh api -X POST "repos/${GITHUB_REPOSITORY}/statuses/${LINUX_SHA}" \
             -f state="$state" -f context=nightly -f description="$description"
-          echo "published nightly=$state on $sha"
+          echo "published nightly=$state on $LINUX_SHA"
 
   release-pending:
     # Warn-only, and deliberately so: it never fails a pull request and never

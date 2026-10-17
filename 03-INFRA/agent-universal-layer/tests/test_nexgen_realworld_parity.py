@@ -67,9 +67,13 @@ def test_a3_a7_skills_no_traceback_and_safe_usage(tmp_path: Path, capsys):
 def test_a4_upgrades_command(tmp_path, monkeypatch):
     """A4: agent-sync upgrades e check_updates() funzionano senza eccezioni."""
     import nexgen_core.updater as updater_module
+    from nexgen_core import update_channel as update_channel_module
+
     monkeypatch.setattr(updater_module, "resolve_repositories", lambda env: (tmp_path, tmp_path))
     monkeypatch.setattr(updater_module, "_current_version", lambda repo: "1.0.0")
-    monkeypatch.setattr(updater_module, "_released_tags", lambda repo: ["v1.1.0"])
+    # Which tags are public releases moved into the channel module (one home for
+    # "what does this run install"); the seam follows the code.
+    monkeypatch.setattr(update_channel_module, "released_tags", lambda repo: ["v1.1.0"])
     assert EngineUpdater().check_updates() == (True, "v1.0.0", "v1.1.0")
 
 

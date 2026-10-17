@@ -80,9 +80,16 @@ def test_the_nightly_runs_on_developer_and_publishes_a_status_on_the_commit():
     assert status["permissions"]["statuses"] == "write"
     assert "always()" in status["if"]
     step = next(s for s in status["steps"] if "statuses/" in s.get("run", ""))
-    # The status goes on the commit under test, in the context dev-verified reads.
+    # The status goes on the commit the legs actually ran on, in the context
+    # dev-verified reads - never on wherever `developer` points by then.
     assert "gh api -X POST" in step["run"] and "context=nightly" in step["run"]
+    assert "statuses/${LINUX_SHA}" in step["run"]
+    assert '"$LINUX_SHA" = "$WINDOWS_SHA"' in step["run"]
     assert '"$LINUX" = success' in step["run"] and '"$WINDOWS" = success' in step["run"]
+    for name in legs:
+        recorded = next(s for s in jobs[name]["steps"] if s.get("id") == "tested")
+        assert "git rev-parse HEAD" in recorded["run"], name
+        assert jobs[name]["outputs"]["sha"] == "${{ steps.tested.outputs.sha }}"
 
 
 def test_the_windows_leg_no_longer_duplicates_the_scheduled_run():
