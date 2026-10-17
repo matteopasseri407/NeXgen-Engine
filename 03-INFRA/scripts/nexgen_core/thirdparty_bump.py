@@ -563,7 +563,7 @@ def _rematerialize(vault_data: Path, home: Path | None, skills: bool, mcp: bool)
         # Same rule as the guard: success only when every target made it.
         failed = sorted(cli for cli, ok in results.items() if not ok)
         if failed:
-            notes.append(t("MCP render failed for: {clis}", clis=", ".join(
+            notes.append(ERROR + t("MCP render failed for: {clis}", clis=", ".join(
                 f"{cli} ({rend.last_errors[cli]})" if rend.last_errors.get(cli) else cli for cli in failed
             )))
         else:
