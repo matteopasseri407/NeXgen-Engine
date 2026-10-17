@@ -382,3 +382,41 @@ def test_untracked_infra_files_are_listed_not_committed(tmp_path: Path) -> None:
     found = get_untracked_infra_files(repo)
     assert "03-INFRA/new-skill.yaml" in found
     assert "scratch.md" not in found
+
+
+def test_quarantine_refuses_when_git_status_cannot_answer(tmp_path: Path, monkeypatch) -> None:
+    """MUST-19: se `git status` fallisce, "non ho potuto guardare" non e'
+    "pulito". La quarantena deve fermarsi, non azzerare il lavoro con un
+    reset --hard letto da una risposta vuota."""
+    import nexgen_core.git_ops as git_ops
+
+    remote = tmp_path / "remote.git"
+    subprocess.run(["git", "init", "--bare", "-b", "main", str(remote)], check=True)
+    clone = tmp_path / "clone"
+    subprocess.run(["git", "clone", str(remote), str(clone)], check=True)
+    _git(clone, "config", "user.email", "test@example.com")
+    _git(clone, "config", "user.name", "Test")
+    (clone / "f.txt").write_text("base\n", encoding="utf-8")
+    _git(clone, "add", "-A")
+    _git(clone, "commit", "-m", "base")
+    _git(clone, "push", "origin", "main")
+
+    real_run_git = git_ops.run_git
+
+    def failing_status(repo_dir, *args, **kwargs):
+        if args and args[0] == "status":
+            return subprocess.CompletedProcess(args, 128, "", "fatal: unable to read tree")
+        return real_run_git(repo_dir, *args, **kwargs)
+
+    monkeypatch.setattr(git_ops, "run_git", failing_status)
+    _git(clone, "fetch", "origin", "main")
+    (clone / "f.txt").write_text("local work\n", encoding="utf-8")
+    _git(clone, "commit", "-am", "local diverging work")
+    local_head = _git(clone, "rev-parse", "HEAD").stdout.strip()
+
+    ok, q_branch, msg = git_ops.quarantine_diverged_commits(clone, remote="origin", branch="main")
+
+    assert ok is False and q_branch == ""
+    assert "unreadable" in msg
+    assert _git(clone, "rev-parse", "HEAD").stdout.strip() == local_head, "HEAD non si e' mosso"
+    assert not _git(clone, "branch", "--list", "quarantine/*").stdout.strip(), "nulla e' stato spostato"

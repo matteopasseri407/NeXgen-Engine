@@ -148,15 +148,16 @@ def _quarantine_diverged_commits_impl(
     # realign: resetting any other branch would move work nobody named.
     current = run_git(repo_dir, "symbolic-ref", "--quiet", "--short", "HEAD")
     if current.returncode != 0 or current.stdout.strip() != branch:
-        return False, "", t(
-            "Refusing to quarantine: HEAD is on '{found}', not '{expected}'",
-            found=current.stdout.strip() or "detached HEAD", expected=branch,
-        )
+        return False, "", t("Refusing to quarantine: HEAD is on '{found}', not '{expected}'",
+                            found=current.stdout.strip() or "detached HEAD", expected=branch)
 
     # Unsaved work first (Invariant 1): the hard reset below would flatten
     # the working tree, and moving someone's work to a branch they did not
-    # ask for is still touching it. Refuse before creating anything; the
-    # caller keeps its changes and resolves the divergence by hand.
+    # ask for is still touching it. A status that cannot run is "I do not
+    # know", never "clean": HEAD resolved, so this is a repo.
+    status = run_git(repo_dir, "status", "--porcelain=v1", "-z", "--untracked-files=no")
+    if status.returncode != 0:
+        return False, "", t("Cannot quarantine: git status unreadable ({error})", error=status.stderr.strip())
     if get_uncommitted_files(repo_dir):
         return False, "", t("Cannot quarantine while there are uncommitted changes")
 
@@ -168,10 +169,8 @@ def _quarantine_diverged_commits_impl(
     # 2. Hard reset local branch to remote/branch
     r_res = run_git(repo_dir, "reset", "--hard", f"{remote}/{branch}")
     if r_res.returncode != 0:
-        return False, q_branch, t(
-            "Created {q_branch}, but reset to {remote}/{branch} failed: {error}",
-            q_branch=q_branch, remote=remote, branch=branch, error=r_res.stderr.strip(),
-        )
+        return False, q_branch, t("Created {q_branch}, but reset to {remote}/{branch} failed: {error}",
+                                  q_branch=q_branch, remote=remote, branch=branch, error=r_res.stderr.strip())
 
     return True, q_branch, t(
         "Diverged local commits moved to quarantine branch '{q_branch}'. Local branch reset to {remote}/{branch}.",
