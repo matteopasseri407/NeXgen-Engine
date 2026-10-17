@@ -35,6 +35,7 @@ class FakeWorld:
         self.synced_after = 1
         self.open_prs: list[dict] = []
         self.already_merged = False
+        self.main_carries_the_branch = False
         self.developer_synced = True
 
     def __call__(self, argv, cwd):
@@ -53,6 +54,8 @@ class FakeWorld:
                 return "developer", 0
             case ("git", "status", _):
                 return "", 0
+            case ("git", "diff", "--quiet", *_):
+                return "", 0 if self.main_carries_the_branch else 1
             case ("git", "tag", "--list"):
                 return "v2.13.0\nv2.12.1", 0
             case ("git", "rev-parse", "HEAD"):
@@ -202,6 +205,19 @@ def test_a_rerun_after_the_merge_does_not_open_a_second_pull_request(repo):
     assert _shipper(repo, world).ship("minor") == "v2.14.0"
     assert not any(c[:3] in {("gh", "pr", "create"), ("gh", "pr", "merge"), ("gh", "pr", "list")} for c in world.calls)
     assert any(c[:3] == ("git", "tag", "-s") for c in world.calls)
+
+
+def test_a_branch_main_already_carries_skips_the_pull_request(repo):
+    """After sync-developer merged main back, developer is 'ahead' only by that merge:
+    a pull request would change no file, GitHub opens it anyway, and the release
+    looped on empty pull requests (#124, #125 on 2026-10-17)."""
+    (repo / "VERSION").write_text("2.14.0\n", encoding="utf-8")
+    world = FakeWorld(repo)
+    world.main_carries_the_branch = True
+    assert _shipper(repo, world).ship("minor") == "v2.14.0"
+    assert not any(c[:3] in {("gh", "pr", "create"), ("gh", "pr", "list")} for c in world.calls)
+    assert any(c[:3] == ("git", "tag", "-s") for c in world.calls)
+    assert (repo / "VERSION").read_text(encoding="utf-8") == "2.14.0\n"
 
 
 def test_a_rerun_after_the_tag_does_not_bump_a_second_time(repo):

@@ -144,14 +144,25 @@ class Shipper:
         self.log(f"   bumped {version} -> {target}")
         return target
 
-    def _already_merged(self) -> str | None:
-        """On a rerun after the merge, main already has the release commit: no second pull request."""
+    def _merge_point(self) -> str | None:
+        """Where the release continues, when there is nothing left to merge into main.
+
+        Two ways to be there. The release commit is already on main (a rerun after
+        the merge), or main already carries this branch's tree, which is what
+        sync-developer leaves behind: developer is 'ahead' only by the merge of
+        main, a pull request would change no file, GitHub opens it anyway, and the
+        release looped on empty pull requests (#124, #125 on 2026-10-17).
+        """
         self._do("git", "fetch", "origin", "main")
         head = self._do("git", "rev-parse", "HEAD")
-        if self.run(["git", "merge-base", "--is-ancestor", head, "origin/main"], self.repo).returncode != 0:
-            return None
-        self.log("   already merged into main: resuming after the merge")
-        return self._do("git", "rev-parse", "origin/main")
+        merged = self._do("git", "rev-parse", "origin/main")
+        if self.run(["git", "merge-base", "--is-ancestor", head, "origin/main"], self.repo).returncode == 0:
+            self.log("   already merged into main: resuming after the merge")
+            return merged
+        if self.run(["git", "diff", "--quiet", "origin/main", head], self.repo).returncode == 0:
+            self.log("   main already carries this branch's tree: no pull request to open")
+            return merged
+        return None
 
     def _open_pull_request(self, version: str) -> int:
         self._enter("pull request")
@@ -307,7 +318,7 @@ class Shipper:
 
     def ship(self, bump: str, notes: str = "", install: bool = False) -> str:
         version = self._prepare(bump, notes)
-        merged = self._already_merged()
+        merged = self._merge_point()
         if merged is None:
             number = self._open_pull_request(version)
             merged = self._merge(number)

@@ -30,6 +30,7 @@ It prints one `== step` line per step and ends with either `OK vX.Y.Z` or `STOP 
    If the preflight fails, the bump is undone.
    The bump is skipped when `VERSION` is already ahead of the newest tag.
 2. **pull request**: opens the `developer` to `main` pull request, or reuses the open one.
+   No pull request is opened when it would change no file: if `main` already carries the branch's tree (what `sync-developer` leaves behind) the release goes straight to the checks and the tag.
 3. **checks on the pull request**: waits for the required checks. The `lane-guard` check is ignored here, because it rejects every push that does not come from a feature lane.
 4. **merge**: merges with a merge commit.
 5. **CI on main**: waits for `ci.yml` on the merge commit.
@@ -48,6 +49,7 @@ Installed copies only accept signers they pin, so a new key takes two releases (
 
 After a stop, fix the reason and run it again; it resumes:
 a version that is already bumped is not bumped again, an open release pull request is reused,
+a pull request that would change no file is not opened at all,
 and a release commit already on `main` skips straight to the CI and the tag.
 After the tag is pushed there is nothing left to redo: a rerun while `main` is not yet back in `developer`
 stops with "still finishing" instead of bumping again. Wait for `sync-developer`, then run `nexgen update`.
