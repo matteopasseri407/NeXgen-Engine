@@ -11,6 +11,7 @@ from typing import Callable
 from .config import LaneConfig
 from .jobs import JobError, job_close, job_research
 from .llm import LLM, LLMError
+from .tiers import effective_max_steps
 from .tools import ToolRegistry
 
 
@@ -142,7 +143,10 @@ def _register_explore(server, cfg: LaneConfig, llm_factory: Callable[[], LLM]):
     )
     def lane_explore(task: str, max_steps: int = 6, session_id: str = "") -> str:
         try:
-            return tool_explore(cfg, llm_factory(), task, max_steps=max(1, min(int(max_steps), 6)), session_id=session_id or "")
+            # The ceiling is the tier's own budget (6/10/12), which is what the tool
+            # description promises: a fixed 6 threw away half of the assisted tier.
+            ceiling = effective_max_steps(cfg)
+            return tool_explore(cfg, llm_factory(), task, max_steps=max(1, min(int(max_steps), ceiling)), session_id=session_id or "")
         except (LLMError, JobError) as exc:
             return f"(rifiutato: {exc})"
 

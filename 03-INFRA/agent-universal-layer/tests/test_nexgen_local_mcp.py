@@ -5,6 +5,7 @@ con un modello finto, e che il server si costruisca con l'SDK MCP.
 """
 from __future__ import annotations
 
+import dataclasses
 from pathlib import Path
 
 import pytest
@@ -121,6 +122,44 @@ def test_build_server_jobs_only_builds(tmp_path: Path) -> None:
     pytest.importorskip("mcp")
     server = build_server(_cfg(tmp_path), llm_factory=lambda: FakeLLM(), include_ask=False)
     assert server.name == "nexgen-local-lane"
+
+
+def test_lane_explore_clamps_to_the_tier_ceiling(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Il tetto dei passi e' quello del tier (6/10/12), non un 6 fisso.
+
+    Con il clamp a 6 la descrizione del tool ("entro il tetto del tier") era
+    falsa e il tier assistito perdeva metà del suo budget.
+    """
+    from nexgen_local import mcp_server
+
+    cfg = _cfg(tmp_path)
+    cfg = dataclasses.replace(cfg, tier="assisted")
+    seen: dict = {}
+
+    def fake_explore(cfg_, llm, task, max_steps: int = 6, session_id: str = "") -> str:
+        seen["max_steps"] = max_steps
+        return "ok"
+
+    monkeypatch.setattr(mcp_server, "tool_explore", fake_explore)
+
+    class _FakeServer:
+        def __init__(self) -> None:
+            self.tools: dict = {}
+
+        def tool(self, **_kwargs):
+            def decorate(fn):
+                self.tools[fn.__name__] = fn
+                return fn
+
+            return decorate
+
+    server = _FakeServer()
+    mcp_server._register_explore(server, cfg, lambda: FakeLLM())
+
+    assert server.tools["lane_explore"]("domanda", 12) == "ok"
+    assert seen["max_steps"] == 12  # il tetto dell'assisted, non 6
+    assert server.tools["lane_explore"]("domanda", 99) == "ok"
+    assert seen["max_steps"] == 12  # e resta il tetto
 
 
 def test_tool_research_flags_invented_citations(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
