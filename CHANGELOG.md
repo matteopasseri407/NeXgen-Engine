@@ -10,6 +10,12 @@ of any engine release.
 
 ## [Unreleased]
 
+## [2.16.2] - 2026-10-17
+
+### Changed
+
+- The release workflow can read the check runs it judges: v2.16.1 was tagged but its publication stopped on a missing permission. Same code as 2.16.1 otherwise.
+
 ## [2.16.1] - 2026-10-17
 
 ### Added
