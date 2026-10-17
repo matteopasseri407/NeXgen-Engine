@@ -57,7 +57,9 @@ def collect_clone_facts(clone: Path, base: str, head: str) -> tuple[list[dict], 
         commit_hash, _, subject = line.partition("|")
         commits.append({"hash": commit_hash, "subject": subject})
 
-    status_out = git(clone, "diff", "--no-renames", "--name-status", f"{base}..{head}")
+    # quotepath=false: the default quotes a non-ASCII name (`caff\303\250.md`), and that
+    # escaped spelling reached check_coverage, which then rejected a correct tranche.
+    status_out = git(clone, "-c", "core.quotepath=false", "diff", "--no-renames", "--name-status", f"{base}..{head}")
     touched: set[str] = set()
     added: set[str] = set()
     for line in status_out.splitlines():
