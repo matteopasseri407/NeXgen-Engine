@@ -10,6 +10,12 @@ of any engine release.
 
 ## [Unreleased]
 
+## [2.16.5] - 2026-10-18
+
+### Changed
+
+- Every check main requires is judged on the tagged commit itself, the Windows leg and this machine's smoke included, and the install step runs the installed launcher. v2.16.4 was tagged but not published; 2.16.5 carries it.
+
 ## [2.16.4] - 2026-10-18
 
 ### Changed
