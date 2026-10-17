@@ -182,6 +182,39 @@ def test_run_audit_write_exit_nonzero_blocks_without_touching_vault(tmp_path: Pa
     assert (request.clone / ".GROOM_QUARANTINE.json").is_file()
 
 
+def test_a_failed_backlog_commit_after_promotion_is_reported_not_raised(tmp_path: Path, monkeypatch) -> None:
+    """Il commit della backlog puo' fallire dopo la promozione: si riporta, non si esplode.
+
+    GitCommandError non e' un OSError: sfuggiva al `except (OSError, LockTimeoutError)`
+    con la promozione gia' avvenuta, quindi il record JSON non veniva scritto e il
+    comando moriva con un traceback al posto di un esito.
+    """
+    import nexgen_core.vault.promote as promote_module
+    from nexgen_core.vault.git_utils import GitCommandError
+
+    monkeypatch.setattr(
+        promote_module, "run_publish",
+        lambda *a, **k: (_ for _ in ()).throw(AssertionError("publish non deve partire")),
+    )
+    monkeypatch.setattr(
+        promote_module, "commit_backlog",
+        lambda *a, **k: (_ for _ in ()).throw(GitCommandError("fatal: cannot commit")),
+    )
+    request, vault, base = _make_request(tmp_path, "commitfail")
+    head_before_clone = _head(request.clone)
+
+    record, exit_code = run_audit(request, output=lambda *_: None)
+
+    assert exit_code == 1
+    assert record["promoted"] is True  # la promozione era gia' avvenuta
+    assert "cannot commit" in record["blocked_reason"]
+    assert _head(vault) != base, "la promozione resta dov'era"
+    subprocess.run(
+        ["git", "-C", str(vault), "merge-base", "--is-ancestor", head_before_clone, "HEAD"],
+        check=True, capture_output=True, timeout=30,
+    )
+
+
 def test_public_signatures_unchanged() -> None:
     assert list(inspect.signature(run_audit).parameters) == ["request", "output"]
     assert [f.name for f in dc_fields(AuditRequest)] == [
