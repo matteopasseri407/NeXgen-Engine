@@ -38,6 +38,7 @@ It prints one `== step` line per step and ends with either `OK vX.Y.Z` or `STOP 
 6. **tag**: creates the tag with `git tag -s`, signed by the key this machine's git is configured to use.
    It then verifies the tag against the trust anchor of the installed copy (`trust/release-signers.txt`).
    If that copy would refuse the tag, the tag is deleted locally and nothing is pushed.
+   A tag already on the remote is reused, and a tag left here by an interrupted run is verified and pushed instead of being made again.
 7. **release workflow**: pushes the tag, waits for `release.yml`, and reruns it once if it fails.
    It then checks that the GitHub release is not a draft and has assets.
 8. **sync developer**: waits for `sync-developer` to merge `main` back into `developer`.
@@ -49,12 +50,14 @@ It prints one `== step` line per step and ends with either `OK vX.Y.Z` or `STOP 
 Every maintainer machine signs with its own key, and that key has to be listed in `trust/release-signers.txt`.
 Installed copies only accept signers they pin, so a new key takes two releases (see `SECURITY.md`).
 
-After a stop, fix the reason and run it again; it resumes:
+After a stop, fix the reason and run it again; it resumes from the first step that is not done:
 a version that is already bumped is not bumped again, an open release pull request is reused,
 a pull request that would change no file is not opened at all,
-and a release commit already on `main` skips straight to the CI and the tag.
-After the tag is pushed there is nothing left to redo: a rerun while `main` is not yet back in `developer`
-stops with "still finishing" instead of bumping again. Wait for `sync-developer`, then run `nexgen update`.
+a release commit already on `main` skips straight to the CI and the tag,
+and a tag already published goes on from there.
+A rerun while `main` is not yet back in `developer` finishes the release that is out
+(the tag is reused, the sync is awaited, `--install` installs the version it finds)
+instead of bumping a second version.
 
 ## Verification and concurrent work
 

@@ -51,6 +51,12 @@ class FakeWorld:
         self.data_dirty = False
         self.update_refusal = ""
         self.update_noop = False
+        #: What this machine and the remote have as tags, for a rerun after an interruption.
+        self.local_tags = ["v2.13.0", "v2.12.1"]
+        self.local_tag_commits: dict[str, str] = {}
+        self.remote_tags: list[str] = []
+        #: The tag this run is publishing, so the release workflow's run is reported for it.
+        self.shipping_tag = "v2.14.0"
 
     def __call__(self, argv, cwd):
         argv = tuple(str(a) for a in argv)
@@ -69,27 +75,51 @@ class FakeWorld:
         return json.dumps({"check_runs": runs})
 
     def answer(self, argv):  # noqa: C901 - a dispatch table reads best flat
+        direct = self._direct(argv)
+        return self._table(argv) if direct is None else direct
+
+    def _direct(self, argv):
+        """The answers that need the whole command line, not just its first three words."""
+        if argv[:3] == ("git", "tag", "-s"):
+            self.shipping_tag = argv[3]
+        if argv[:2] == ("git", "push") and argv[-1].startswith("v"):
+            self.shipping_tag = argv[-1]
         if argv[-1].endswith("smoke.py"):
             return ("SMOKE FAILED (1)", 1) if self.smoke_fails else ("SMOKE OK (12s)", 0)
         if argv[:2] == ("nexgen", "update"):
-            folder = self.install_root or Path("?")
-            report = f"Engine: {folder / '03-INFRA'}\nData:   {self.data_repo or folder}\n"
-            if self.update_refusal:
-                return report + f"nexgen-update: ERROR: {self.update_refusal}", 1
-            if self.update_noop:
-                return report + "NeXGen Engine is already at the requested released version.", 0
-            if self.install_root is not None:
-                (self.install_root / "VERSION").write_text(argv[-1] + "\n", encoding="utf-8")
-            return report + f"installed {argv[-1]}", 0
+            return self._update(argv)
         if argv[:2] == ("git", "-C") and "status" in argv:
             return ("?? notes.md\n" if self.data_dirty else ""), 0
         if argv[:2] == ("gh", "api"):
             url = next(arg for arg in argv[2:] if arg.startswith("repos/"))
             return self.api(url), 0
+        if argv[:3] == ("git", "ls-remote", "--tags"):
+            tag = argv[-1].removeprefix("refs/tags/")
+            self.shipping_tag = tag  # the tag ship is working on is the release being published
+            return ((("c" * 40) + "\t" + argv[-1] + "\n") if tag in self.remote_tags else ""), 0
+        if argv[:3] == ("git", "rev-parse", "--verify"):
+            tag = argv[-1].removeprefix("refs/tags/").removesuffix("^{commit}")
+            return ((self.local_tag_commits.get(tag) or MERGED) + "\n"), 0 if tag in self.local_tags else 1
         if argv[-1] == "preflight":
             return "Ready to tag.", 0
         if "release_trust.py" in " ".join(argv):
             return ("v2.14.0: verified", 0) if self.trust_ok else ("v2.14.0: untrusted: key not pinned", 1)
+        return None
+
+    def _update(self, argv):
+        """What `nexgen update` prints, and the version it installs when it installs one."""
+        folder = self.install_root or Path("?")
+        report = f"Engine: {folder / '03-INFRA'}\nData:   {self.data_repo or folder}\n"
+        if self.update_refusal:
+            return report + f"nexgen-update: ERROR: {self.update_refusal}", 1
+        if self.update_noop:
+            return report + "NeXGen Engine is already at the requested released version.", 0
+        if self.install_root is not None:
+            (self.install_root / "VERSION").write_text(argv[-1] + "\n", encoding="utf-8")
+        return report + f"installed {argv[-1]}", 0
+
+    def _table(self, argv):
+        """The short commands, by their first three words."""
         match argv[:3]:
             case ("git", "rev-parse", "--abbrev-ref"):
                 return "developer", 0
@@ -98,7 +128,7 @@ class FakeWorld:
             case ("git", "diff", "--quiet", *_):
                 return "", 0 if self.main_carries_the_branch else 1
             case ("git", "tag", "--list"):
-                return "v2.13.0\nv2.12.1", 0
+                return "\n".join(self.local_tags), 0
             case ("git", "rev-parse", "HEAD"):
                 return RELEASE_HEAD, 0
             case ("git", "rev-parse", "origin/main"):
@@ -123,7 +153,7 @@ class FakeWorld:
                 return json.dumps([{"databaseId": 5, "status": "completed", "conclusion": self.ci_on_main}]), 0
             case ("gh", "run", "list"):
                 runs = self.release_runs.pop(0) if len(self.release_runs) > 1 else self.release_runs[0]
-                return json.dumps(runs), 0
+                return json.dumps([{**run, "headBranch": self.shipping_tag} for run in runs]), 0
             case ("gh", "release", "view"):
                 return json.dumps({"isDraft": False, "assets": [1, 2, 3]}), 0
         return "", 0
@@ -484,8 +514,49 @@ def test_a_branch_main_already_carries_skips_the_pull_request(repo):
 
 
 def test_a_rerun_after_the_tag_does_not_bump_a_second_time(repo):
+    """The tag is out and main is not back in developer yet: the rerun finishes that
+    release. It must not bump a second version, which was the old stop's whole point."""
     world = FakeWorld(repo)
+    world.already_merged = True
     world.developer_synced = False
-    with pytest.raises(ShipStop, match="still finishing"):
-        _shipper(repo, world).ship("patch")
+    assert _shipper(repo, world).ship("patch") == "v2.13.0"
     assert (repo / "VERSION").read_text(encoding="utf-8") == "2.13.0\n"
+    assert not any(c[:2] == ("git", "commit") for c in world.calls)
+
+
+def test_a_rerun_after_the_tag_resumes_at_the_release_and_the_install(repo):
+    """The run used to stop with "still finishing": a rerun now finishes the release it
+    finds (release workflow, sync, install), with no pull request and no new tag."""
+    world = FakeWorld(repo)
+    world.already_merged = True
+    world.developer_synced = False
+    world.remote_tags = ["v2.13.0"]
+    installed = installed_engine(repo, "2.13.0")
+    world.install_root = installed
+    shipper = _shipper(repo, world)
+    shipper.engine_root = installed / "03-INFRA"
+    assert shipper.ship("patch", install=True) == "v2.13.0"
+    assert not any(c[:3] == ("gh", "pr", "create") for c in world.calls)
+    assert not any(c[:3] == ("git", "tag", "-s") for c in world.calls), "the published tag is reused"
+    assert any(c[:2] == ("nexgen", "update") for c in world.calls)
+
+
+def test_a_tag_left_local_by_an_interrupted_run_is_verified_and_pushed(repo):
+    world = FakeWorld(repo)
+    world.already_merged = True
+    world.developer_synced = False
+    shipper = _shipper(repo, world)
+    assert shipper.ship("patch") == "v2.13.0"
+    assert not any(c[:3] == ("git", "tag", "-s") for c in world.calls), "the local tag is reused, not remade"
+    assert any(c[:2] == ("git", "push") and c[-1] == "v2.13.0" for c in world.calls)
+    assert ("git", "tag", "-d", "v2.13.0") not in world.calls
+
+
+def test_a_local_tag_pointing_somewhere_else_is_refused(repo):
+    world = FakeWorld(repo)
+    world.already_merged = True
+    world.developer_synced = False
+    world.local_tag_commits = {"v2.13.0": "c" * 40}
+    with pytest.raises(ShipStop, match="points at"):
+        _shipper(repo, world).ship("patch")
+    assert not any(c[:2] == ("git", "push") and c[-1] == "v2.13.0" for c in world.calls)

@@ -147,14 +147,16 @@ class Shipper:
             self.log(f"   VERSION {version} is already ahead of v{newest}: not bumping again")
             return version
 
-        # VERSION equal to the newest tag is the normal start of a release, and
-        # also what a rerun after a pushed tag looks like. Only the second one
-        # has main not yet merged back into developer: bumping there would
-        # release a version nobody asked for.
+        # VERSION equal to the newest tag is both the normal start of a release and
+        # what a rerun after a pushed tag looks like. What tells them apart is whether
+        # main has come back into developer yet: while it has not, this run finishes
+        # the release that is out (release workflow, sync, install) instead of bumping
+        # a second version nobody asked for.
         self._do("git", "fetch", "origin", "main")
-        if self.run(["git", "merge-base", "--is-ancestor", "origin/main", f"origin/{self.branch}"], self.repo).returncode != 0:
-            raise ShipStop(self._step, f"v{version} is still finishing (main not yet back in {self.branch}); "
-                           "wait for sync-developer, then 'nexgen update' to install it")
+        if not self._main_is_in_developer():
+            self.log(f"   v{version} is tagged and main is not back in {self.branch} yet: "
+                     "finishing that release")
+            return version
         target = compute_next_version(version, bump)
         try:
             modified = bump_version_files(self.repo, target, notes)
@@ -309,10 +311,36 @@ class Shipper:
         if verdict.startswith("failed"):
             raise ShipStop(self._step, f"CI on main failed (run {verdict.split(':')[1]})")
 
+    def _main_is_in_developer(self) -> bool:
+        """True when origin/main is already an ancestor of origin/<branch>: the previous release came back."""
+        merged_in = self.run(["git", "merge-base", "--is-ancestor", "origin/main", f"origin/{self.branch}"], self.repo)
+        return merged_in.returncode == 0
+
+    def _published_tag(self, tag: str) -> bool:
+        """True when origin already has this tag: a rerun reuses the release, it does not remake it."""
+        return bool(self._do("git", "ls-remote", "--tags", "origin", f"refs/tags/{tag}").strip())
+
+    def _local_tag(self, tag: str) -> str | None:
+        """The commit this machine's own tag points at, or None when there is no such tag."""
+        found = self.run(["git", "rev-parse", "--verify", "-q", f"refs/tags/{tag}^{{commit}}"], self.repo)
+        return found.stdout.strip() if found.returncode == 0 and found.stdout.strip() else None
+
     def _tag(self, version: str, sha: str) -> str:
         tag = f"v{version}"
         self._enter(f"tag {tag}")
-        self._do("git", "tag", "-s", tag, "-m", f"Release {tag}", sha, what="signing the tag")
+        if self._published_tag(tag):
+            self.log(f"   {tag} is already on origin: reusing the published tag")
+            return tag
+        # A tag this machine made but never pushed (an interrupted run) is reused, not
+        # remade: `git tag -s` would refuse an existing name and the release would stop
+        # one step from the end.
+        local = self._local_tag(tag)
+        if local is not None and local != sha:
+            raise ShipStop(self._step, f"the local {tag} points at {local[:8]}, not at {sha[:8]}: "
+                                       f"delete it by hand (git tag -d {tag}) and run ship again")
+        created = local is None
+        if created:
+            self._do("git", "tag", "-s", tag, "-m", f"Release {tag}", sha, what="signing the tag")
         trust = self.engine_root / "scripts" / "nexgen_core" / "release_trust.py"
         verdict = self.run(
             [sys.executable, str(trust), tag, "--repo", str(self.repo),
@@ -320,9 +348,11 @@ class Shipper:
             self.repo,
         )
         if verdict.returncode != 0:
-            self.run(["git", "tag", "-d", tag], self.repo)
             line = (verdict.stdout or verdict.stderr).strip().splitlines()
-            raise ShipStop(self._step, f"installed copies would refuse it ({line[-1] if line else 'no verdict'}); tag deleted, nothing pushed")
+            if created:
+                self.run(["git", "tag", "-d", tag], self.repo)
+            cleanup = "tag deleted, nothing pushed" if created else f"{tag} left as it was, nothing pushed"
+            raise ShipStop(self._step, f"installed copies would refuse it ({line[-1] if line else 'no verdict'}); {cleanup}")
         self._do("git", "push", "-q", "origin", tag)
         return tag
 
