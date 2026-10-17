@@ -1,4 +1,4 @@
-﻿"""Which NeXgen Engine a machine follows, and why a dev target is allowed.
+"""Which NeXgen Engine a machine follows, and why a dev target is allowed.
 
 A stable machine follows released tags. A machine on `dev` follows the tip of
 `developer`, and a machine on `dev-verified` follows the newest signed commit
