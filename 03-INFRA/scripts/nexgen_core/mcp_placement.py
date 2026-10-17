@@ -59,9 +59,19 @@ def _oauth_only(srv: dict[str, Any]) -> bool:
     return is_http and bool(srv.get("oauth")) and not has_bearer
 
 
+def _targets(srv: dict[str, Any], key: str) -> list[str]:
+    """The CLIs a list-valued key allows. An absent key means every CLI; an empty one means none.
+
+    `srv.get(key) or list(CLIS)` read `targets: []` as "every CLI", so a server the
+    manifest keeps off every machine was mounted on all of them.
+    """
+    raw = srv.get(key)
+    return list(CLIS) if raw is None else list(raw)
+
+
 def _place_impl(srv: dict[str, Any], cli: str) -> Placement:
     """Where `srv` lives for `cli`. Environment gates (`require_env`) are the caller's: they depend on the shell."""
-    targets = srv.get("targets") or list(CLIS)
+    targets = _targets(srv, "targets")
     if cli not in targets:
         return Placement(ABSENT, "not in targets")
     if srv.get("enabled") is False:
@@ -75,7 +85,7 @@ def _place_impl(srv: dict[str, Any], cli: str) -> Placement:
         return Placement(ABSENT, f"unknown exposure {exposure!r}")
     # Legacy knobs, for a manifest that has not declared `exposure`.
     if srv.get("lazy"):
-        lazy_targets = srv.get("lazy_targets") or list(CLIS)
+        lazy_targets = _targets(srv, "lazy_targets")
         if cli in lazy_targets:
             return Placement(GATEWAY_KIND, "legacy: lazy")
     if _is_active_legacy(srv):
