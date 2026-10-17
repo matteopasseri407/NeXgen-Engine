@@ -36,6 +36,9 @@ on:
 permissions:
   contents: write
   actions: read
+  # ci-passed reads the tagged commit's check runs: without this the API
+  # answers nothing and every required check reads as "not reported" (v2.16.1).
+  checks: read
 
 jobs:
   publish:

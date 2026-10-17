@@ -178,3 +178,10 @@ def test_pytest_xdist_is_a_development_dependency_only():
     project = tomllib.loads(text)["project"]
     assert not any("xdist" in dep for dep in project["dependencies"])
     assert any("xdist" in dep for dep in project["optional-dependencies"]["dev"])
+
+
+def test_the_release_workflow_may_read_the_checks_it_judges():
+    """v2.16.1: `release.py ci-passed` reads the tagged commit's check runs, and a token
+    without `checks: read` got nothing back, so every required check read as not reported."""
+    release = yaml.safe_load((REPO / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8"))
+    assert release["permissions"].get("checks") in ("read", "write")
