@@ -109,6 +109,29 @@ def test_a_directory_that_is_not_a_repository_is_not_this_checks_business(tmp_pa
     assert check_vault_remote_privacy(tmp_path) is None
 
 
+def test_a_credential_in_a_remote_url_never_reaches_a_message(vault, monkeypatch):
+    """The doctor prints the remote address and the alert channel forwards it: a token
+    pasted into the URL stays out of both, while the address stays readable."""
+    monkeypatch.delenv("KNOWLEDGE_VAULT_REMOTE", raising=False)
+    monkeypatch.delenv("KNOWLEDGE_VAULT_MIRRORS", raising=False)
+    token = "ghp_" + "A" * 36
+    _git(vault, "remote", "add", "origin",
+         f"https://x-access-token:{token}@github.com/matteopasseri407/NeXgen-Engine.git")
+
+    outcome = check_vault_remote_privacy(vault)
+
+    assert outcome.severity == Severity.BROKEN
+    assert token not in outcome.message and "x-access-token" not in outcome.message
+    assert "github.com/matteopasseri407/nexgen-engine" in outcome.message.lower()
+
+    (vault / "note.md").write_text("# private, edited\n", encoding="utf-8")
+    ok, message = git_ops.publish_changes(
+        vault, "main", "origin", commit_msg="edit", files_to_commit=["note.md"],
+    )
+    assert ok is False
+    assert token not in message and "x-access-token" not in message
+
+
 def _write_remotes(vault, text):
     sync_dir = vault / "03-INFRA" / "agent-universal-layer" / "sync"
     sync_dir.mkdir(parents=True, exist_ok=True)

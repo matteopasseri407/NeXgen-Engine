@@ -110,6 +110,16 @@ def test_ordinary_prose_and_diagnostics_are_left_alone():
     assert not secret_shapes.looks_like_secret_value("hello world, this is not a credential")
 
 
+def test_a_url_keeps_its_plain_username_and_loses_its_credential():
+    """What the doctor prints about a remote: the address a person recognises stays,
+    the password or token pasted into its userinfo does not."""
+    assert secret_shapes.redact_url("git@github.com:o/r") == "git@github.com:o/r"
+    assert secret_shapes.redact_url("ssh://git@github.com/o/r") == "ssh://git@github.com/o/r"
+    assert secret_shapes.redact_url("https://github.com/o/r.git") == "https://github.com/o/r.git"
+    assert secret_shapes.redact_url(f"https://user:{corpus()['github classic']}@github.com/o/r") == \
+        "https://github.com/o/r"
+
+
 def test_a_labelled_value_is_hidden_but_the_label_stays(lazy):
     out = lazy._redact("api_key=abcdefghijklmnop1234", {})
     assert out == "api_key=[redacted]"
