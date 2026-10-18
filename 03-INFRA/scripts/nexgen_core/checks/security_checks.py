@@ -155,6 +155,56 @@ def check_tokens_in_env(vault_data: Path) -> CheckOutcome:
     )
 
 
+def _opencode_store_keys() -> dict[str, set[str]] | None:
+    """The API keys OpenCode 2 actually uses, per integration, or None when they cannot be read.
+
+    OpenCode 2 imports auth.json once and from then on reads only its own database, so a key
+    can match in auth.json and still be stale where OpenCode looks: on 2026-10-18 the store
+    held an expired key, auth.json the fresh one, and this check was green. `--standalone`
+    reads it without starting the background service; OpenCode 1 has no `auth export`."""
+    import json
+    import shutil
+    import subprocess
+
+    binary = shutil.which("opencode")
+    if not binary:
+        return None
+    try:
+        proc = subprocess.run([binary, "auth", "export", "--standalone"], capture_output=True, text=True,
+                              encoding="utf-8", errors="replace", timeout=30, stdin=subprocess.DEVNULL, check=False)
+        creds = json.loads(proc.stdout) if proc.returncode == 0 else None
+    except (OSError, subprocess.SubprocessError, ValueError):  # nexgen: allow reason="an unreadable store is not compared: the auth.json check still runs"
+        return None
+    if not isinstance(creds, list):
+        return None
+    keys: dict[str, set[str]] = {}
+    for cred in creds:
+        value = cred.get("value") if isinstance(cred, dict) else None
+        if isinstance(value, dict) and value.get("type") == "key" and isinstance(value.get("key"), str):
+            keys.setdefault(str(cred.get("integrationID")), set()).add(value["key"])
+    return keys
+
+
+#: secrets.env name -> OpenCode provider whose key must match it.
+OPENCODE_PROVIDER_ENV = {
+    "DEEPSEEK_API_KEY": "deepseek",
+    "NVIDIA_API_KEY": "nvidia",
+    "OPENCODE_GO_API_KEY": "opencode-go",
+    "OPENCODE_ZEN_API_KEY": "opencode",
+}
+
+
+def _opencode_store_issues(env_vars: dict[str, str]) -> list[str]:
+    if not any(env_vars.get(k) for k in OPENCODE_PROVIDER_ENV):
+        return []
+    store = _opencode_store_keys()
+    if store is None:
+        return []
+    return [f"provider key mismatch for '{provider}' between secrets.env and the OpenCode credential store"
+            for env_key, provider in OPENCODE_PROVIDER_ENV.items()
+            if env_vars.get(env_key) and env_vars[env_key] not in store.get(provider, set())]
+
+
 def check_secrets_materialized(home: Path, vault_data: Path | None = None) -> CheckOutcome:
     """Verifies that secrets.env and opencode auth.json are present, have 0600 permissions,
     and their mapped provider credentials are synchronized without drift."""
@@ -207,19 +257,15 @@ def check_secrets_materialized(home: Path, vault_data: Path | None = None) -> Ch
             if not isinstance(data, dict):
                 issues.append("opencode auth.json root is not an object")
             else:
-                provider_map = {
-                    "DEEPSEEK_API_KEY": "deepseek",
-                    "NVIDIA_API_KEY": "nvidia",
-                    "OPENCODE_GO_API_KEY": "opencode-go",
-                    "OPENCODE_ZEN_API_KEY": "opencode",
-                }
-                for env_key, provider in provider_map.items():
+                for env_key, provider in OPENCODE_PROVIDER_ENV.items():
                     if env_vars.get(env_key):
                         auth_entry = data.get(provider)
                         if not isinstance(auth_entry, dict) or auth_entry.get("key") != env_vars[env_key]:
                             issues.append(f"provider key mismatch for '{provider}' between secrets.env and auth.json")
         except (OSError, json.JSONDecodeError, UnicodeDecodeError) as exc:
             issues.append(f"opencode auth.json is not valid JSON ({exc})")
+
+    issues += _opencode_store_issues(env_vars)
 
     if issues:
         return CheckOutcome(

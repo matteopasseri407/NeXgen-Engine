@@ -736,3 +736,28 @@ def test_a_local_tag_pointing_somewhere_else_is_refused(repo):
     with pytest.raises(ShipStop, match="points at"):
         _shipper(repo, world).ship("patch")
     assert not any(c[:2] == ("git", "push") and c[-1] == "v2.13.0" for c in world.calls)
+
+
+def test_a_machine_on_nightly_updates_along_its_channel_not_to_the_tag(repo, installed_launcher):
+    """v2.16.5: the shipping machine follows nightly, whose updater refuses a named tag;
+    the install named one and was rolled back. On a moving channel it updates along the
+    channel and accepts the release or anything newer."""
+    world = FakeWorld(repo)
+    world.install_root = installed_engine(repo, "2.13.0")
+    original = world.answer
+
+    def answer(argv):
+        if argv[:2] == ("nexgen", "--version"):
+            return "NeXgen Engine 2.13.0 (nightly abc1234)", 0
+        if argv[:2] == ("nexgen", "update"):
+            if "--target" in argv:
+                return "nexgen-update: ERROR: --target names a released tag; it cannot be combined with a moving channel", 1
+            (world.install_root / "VERSION").write_text("2.14.1\n", encoding="utf-8")
+            return "installed developer@abc1234", 0
+        return original(argv)
+
+    world.answer = answer
+    _installer(repo, world).install("2.14.0")
+
+    updates = world.launches("nexgen", "update")
+    assert updates and all("--target" not in call for call in updates)

@@ -25,6 +25,7 @@ from subprocess import CompletedProcess
 from .files import atomic_write_text
 from .module_install import shim_path
 from .paths import resolve_home, resolve_runtime_dir
+from .release import newer_version
 from .shims import PRIMARY
 
 #: The updater's own refusal when a repository it merges into is not clean
@@ -63,9 +64,14 @@ class Installer:
     def install(self, version: str) -> None:
         """Bring this machine to `version`, prove it, and leave it on something that runs."""
         previous = self.installed_version()
+        self._channel = self.channel()
         output = self._update(version, previous)
         installed = self.installed_version()
-        if installed != version:
+        # A machine on stable lands on the release itself; one on nightly or beta
+        # follows its channel, whose commits already carry the release or more.
+        landed = installed == version or (self._channel != "stable" and installed != "?"
+                                           and newer_version(installed, version))
+        if not landed:
             raise InstallProblem(f"this machine is still on {installed}, not {version}")
         if (dirty := self._data_with_dirty_files(output)):
             raise InstallProblem(f"the vault {dirty} has uncommitted or untracked files: "
@@ -92,10 +98,27 @@ class Installer:
                                  "engine you want to use (it rewrites the launchers), then ship --install again")
         return launcher
 
+    def channel(self) -> str:
+        """The update channel the installed engine follows, read from its own `--version`.
+
+        `nexgen --version` prints `NeXgen Engine X.Y.Z (<channel> ...)`; anything
+        unreadable is stable, the channel a release tag belongs to.
+        """
+        answer = self.run([str(self.launcher()), "--version"], self.repo)
+        match = re.search(r"\((stable|nightly|beta)\b", answer.stdout or "")
+        return match.group(1) if match else "stable"
+
     def _update(self, version: str, previous: str) -> str:
-        """Run the updater; a rollback caused by a colliding cycle is retried once, and only once."""
+        """Run the updater; a rollback caused by a colliding cycle is retried once, and only once.
+
+        On stable the release tag is named. A machine on nightly or beta refuses a
+        named tag (v2.16.5 stopped there), so it updates along its own channel.
+        """
+        argv = [str(self.launcher()), "update", "--yes"]
+        if getattr(self, "_channel", "stable") == "stable":
+            argv += ["--target", version]
         for attempt in (1, 2):
-            update = self.run([str(self.launcher()), "update", "--yes", "--target", version], self.repo)
+            update = self.run(argv, self.repo)
             output = f"{update.stdout}\n{update.stderr}"
             if update.returncode == 0:
                 return output
@@ -131,6 +154,11 @@ class Installer:
             return
         log = self._log_path()
         atomic_write_text(log, f"{smoke.stdout}\n{smoke.stderr}")
+        if getattr(self, "_channel", "stable") != "stable":
+            # A moving channel has no release tag to go back to by name: the way back
+            # is the stable channel, which the owner chooses, not ship.
+            raise InstallProblem(f"the installed engine on {self._channel} failed its smoke (output in {log}); "
+                                 "run 'nexgen update --yes --channel stable' to go back to the last release")
         rollback = self.run([str(self.launcher()), "update", "--yes", "--target", previous], self.repo)
         if rollback.returncode != 0 or self.installed_version() != previous:
             raise InstallProblem(f"the installed v{version} failed its smoke (output in {log}) and this machine "

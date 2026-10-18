@@ -97,6 +97,9 @@ def check_launcher() -> list[str]:
 
 
 def main() -> int:
+    # A Windows console or pipe is cp1252: a child's undecodable byte must not crash the report.
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(errors="replace")
     started = time.monotonic()
     problems = check_commands() + check_launcher()
     spent = time.monotonic() - started

@@ -28,3 +28,18 @@ def test_the_smoke_proves_the_checkout_on_this_machine_under_its_budget():
     started = time.monotonic()
     assert run_smoke(REPO) == 0
     assert time.monotonic() - started < BUDGET_SECONDS
+
+
+def test_a_replacement_character_on_a_cp1252_stdout_does_not_crash_the_smoke(monkeypatch):
+    import importlib.util
+    import io
+    import sys
+
+    spec = importlib.util.spec_from_file_location("smoke_script", SMOKE)
+    smoke = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(smoke)
+    out = io.TextIOWrapper(io.BytesIO(), encoding="cp1252")
+    monkeypatch.setattr(sys, "stdout", out)
+    monkeypatch.setattr(smoke, "check_commands", lambda: [] if smoke._report("nexgen plan", True, "Raggiungibilit\ufffd") else ["x"])
+    monkeypatch.setattr(smoke, "check_launcher", lambda: [])
+    assert smoke.main() == 0

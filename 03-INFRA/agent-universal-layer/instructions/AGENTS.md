@@ -103,6 +103,8 @@ Absolute bans on the interactive lane, no exceptions: NEVER launch your own brow
 - update the non-sensitive registry (`99-SECRETS/secrets-registry.md`) with name, provider, env var, scope and rotation date — never the value
 - do it before considering the task complete
 
+When a provider answers that a key is expired, revoked or disabled (not a transient 401 or a rate limit), the key is dead: stop retrying it, do not hunt for other copies or paste it back, retire it in the machine's secret manager when one is installed, record the date in the registry, and tell the user a new key is needed. A CLI may keep its own credential store (OpenCode 2 reads its database, not `auth.json`): change the key through that CLI, not by editing a file it no longer reads.
+
 Never paste secrets into normal Vault notes, logs, tool summaries, or final responses.
 
 **Trust-plane rules (durable safety, not mechanics).**

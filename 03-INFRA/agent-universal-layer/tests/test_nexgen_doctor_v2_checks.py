@@ -867,7 +867,8 @@ def test_import_refuses_dry_run_and_apply_together(sandbox, capsys):
     assert "--dry-run and --apply" in capsys.readouterr().err
 
 
-def test_check_secrets_materialized(tmp_path):
+def test_check_secrets_materialized(tmp_path, monkeypatch):
+    monkeypatch.setattr(security_checks, "_opencode_store_keys", lambda: None)
     home = tmp_path / "home"
     vault = tmp_path / "vault"
     home.mkdir()
@@ -907,6 +908,47 @@ def test_check_secrets_materialized(tmp_path):
     assert outcome_matched.severity == Severity.OK
 
 
+def test_secrets_check_reads_the_store_opencode_2_actually_uses(tmp_path, monkeypatch):
+    """OpenCode 2 reads its own credential store, not auth.json: on 2026-10-18 the store held
+    an expired Go key while secrets.env and auth.json held the fresh one, and the check was green."""
+    home = tmp_path / "home"
+    secrets_env = home / ".config" / "nexgen" / "secrets.env"
+    secrets_env.parent.mkdir(parents=True)
+    secrets_env.write_text("export OPENCODE_GO_API_KEY=oc_sk_new\n", encoding="utf-8")
+    secrets_env.chmod(0o600)
+    auth_json = home / ".local" / "share" / "opencode" / "auth.json"
+    auth_json.parent.mkdir(parents=True)
+    auth_json.write_text(json.dumps({"opencode-go": {"type": "api", "key": "oc_sk_new"}}), encoding="utf-8")
+    auth_json.chmod(0o600)
+
+    monkeypatch.setattr(security_checks, "_opencode_store_keys", lambda: {"opencode-go": {"sk-expired"}})
+    stale = security_checks.check_secrets_materialized(home, None)
+    assert stale.severity == Severity.WARN
+    assert "'opencode-go' between secrets.env and the OpenCode credential store" in stale.message
+
+    monkeypatch.setattr(security_checks, "_opencode_store_keys", lambda: {"opencode-go": {"oc_sk_new"}})
+    assert security_checks.check_secrets_materialized(home, None).severity == Severity.OK
+
+    # No OpenCode 2 store to read (no binary, OpenCode 1): nothing to compare, no false alarm.
+    monkeypatch.setattr(security_checks, "_opencode_store_keys", lambda: None)
+    assert security_checks.check_secrets_materialized(home, None).severity == Severity.OK
+
+
+def test_opencode_store_keys_reads_only_api_keys(monkeypatch):
+    export = [
+        {"id": "a", "integrationID": "opencode-go", "value": {"type": "key", "key": "oc_sk_new"}},
+        {"id": "b", "integrationID": "github", "value": {"type": "oauth", "access": "tok"}},
+    ]
+    import shutil
+
+    monkeypatch.setattr(shutil, "which", lambda _name: "/usr/bin/opencode")
+    monkeypatch.setattr(subprocess, "run", lambda *a, **k: subprocess.CompletedProcess(a, 0, json.dumps(export), ""))
+    assert security_checks._opencode_store_keys() == {"opencode-go": {"oc_sk_new"}}
+
+    monkeypatch.setattr(subprocess, "run", lambda *a, **k: subprocess.CompletedProcess(a, 1, "", "unknown command"))
+    assert security_checks._opencode_store_keys() is None
+
+
 @pytest.mark.skipif(os.name != "nt", reason="the %LOCALAPPDATA% fallback is a Windows-only branch")
 def test_secrets_check_prefers_the_xdg_auth_over_a_stale_appdata_copy(tmp_path, monkeypatch):
     """Su Windows una copia vecchia in %LOCALAPPDATA% non deve ombreggiare il
@@ -917,6 +959,7 @@ def test_secrets_check_prefers_the_xdg_auth_over_a_stale_appdata_copy(tmp_path, 
     runner Windows) invece di forzare os.name: cambiarlo process-wide cambia il
     flavour di pathlib per ogni Path costruito nel frattempo e avvelena pytest.
     """
+    monkeypatch.setattr(security_checks, "_opencode_store_keys", lambda: None)
     home = tmp_path / "home"
     vault = tmp_path / "vault"
     appdata = tmp_path / "appdata"
