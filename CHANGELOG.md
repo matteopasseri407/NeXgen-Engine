@@ -10,6 +10,11 @@ of any engine release.
 
 ## [Unreleased]
 
+### Fixed
+
+- `security.secrets_materialized` compares secrets.env with the credential store OpenCode 2 actually reads (`opencode auth export --standalone`), not only `auth.json`. OpenCode 2 imports `auth.json` once and then reads its own database, so a rotated key could sit in `auth.json` while OpenCode kept the expired one and the check stayed green. Without OpenCode 2 nothing changes.
+- AGENTS.md: an expired or revoked key is dead. The agent stops retrying it, retires it in the machine's secret manager when one is installed and asks for a new one, and changes a CLI's key through that CLI instead of a file it no longer reads.
+
 ## [2.16.5] - 2026-10-18
 
 ### Changed
