@@ -10,6 +10,12 @@ of any engine release.
 
 ## [Unreleased]
 
+## [2.16.6] - 2026-10-18
+
+### Changed
+
+- OpenCode 2 keeps its own credential store: the doctor now checks it, and expired keys are retired instead of retried.
+
 ### Fixed
 
 - `security.secrets_materialized` compares secrets.env with the credential store OpenCode 2 actually reads (`opencode auth export --standalone`), not only `auth.json`. OpenCode 2 imports `auth.json` once and then reads its own database, so a rotated key could sit in `auth.json` while OpenCode kept the expired one and the check stayed green. Without OpenCode 2 nothing changes.
