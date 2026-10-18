@@ -144,6 +144,26 @@ def _is_stale_windows_ps1_shim(text: str) -> bool:
     )
 
 
+def _repair_launcher(launcher: Path, content: str, changed: list[str] | None) -> None:
+    """Writes `content` to `launcher` unless the file already says exactly that.
+
+    Unreadable is not "already right": a launcher saved by an editor as UTF-16 raised
+    out of the guard cycle before anything was rewritten, so the one command this is
+    here to repair stayed broken on every round. Atomic, because a crash mid-write
+    must not leave a truncated launcher on PATH: a half launcher breaks every command
+    using it.
+    """
+    try:
+        current = launcher.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        current = None
+    if current == content:
+        return
+    atomic_write_text(launcher, content)
+    if changed is not None:
+        changed.append(str(launcher))
+
+
 def install_shims(
     scripts_dir: Path | None = None,
     bin_dir: Path | None = None,
@@ -189,12 +209,7 @@ def install_shims(
     for name, prefix in [(PRIMARY, [])] + sorted(LEGACY_ALIASES.items()):
         launcher = target_bin / f"{name}{suffix}"
         content = _render(name, prefix, entry, windows, runtime_dir)
-        if not (launcher.is_file() and launcher.read_text(encoding="utf-8") == content):
-            # Atomic: a crash mid-write must not leave a truncated launcher
-            # on PATH (a half launcher breaks every command using it).
-            atomic_write_text(launcher, content)
-            if changed is not None:
-                changed.append(str(launcher))
+        _repair_launcher(launcher, content, changed)
         ensure_executable(launcher)
         installed.append(str(launcher))
 
