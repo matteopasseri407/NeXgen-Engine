@@ -385,7 +385,9 @@ def _load_live(cli: str) -> dict | None:
     path = _cli_config_path(cli)
     if not path.exists():
         return None
-    text = path.read_text("utf-8")
+    # `utf-8-sig`: a BOM left by an editor (PowerShell's `Set-Content -Encoding utf8`)
+    # is not part of the configuration the CLI wrote, and it is not a syntax error.
+    text = path.read_text("utf-8-sig")
     try:
         if cli in ("claude", "claude-desktop"):
             return json.loads(text).get("mcpServers", {})

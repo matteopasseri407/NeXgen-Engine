@@ -28,7 +28,9 @@ def _load_existing_config(cfg_file: Any) -> tuple[dict[str, Any], str]:
     existing: dict[str, Any] = {}
     raw_existing = ""
     if cfg_file.is_file():
-        raw_existing = cfg_file.read_text(encoding="utf-8")
+        # `utf-8-sig`: the BOM an editor can leave at the top is not part of the file
+        # OpenCode reads, and it made the render refuse a config that was valid.
+        raw_existing = cfg_file.read_text(encoding="utf-8-sig")
         try:
             # OpenCode reads `opencode.json` with the same comment-tolerant parser as
             # `opencode.jsonc`; a strict parse here turned a commented file that

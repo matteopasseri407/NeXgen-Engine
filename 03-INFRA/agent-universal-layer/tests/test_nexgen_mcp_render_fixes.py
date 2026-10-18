@@ -223,6 +223,38 @@ def test_opencode_empty_file_still_gets_plain_json(tmp_path):
     assert "alpha" in json.loads(cfg.read_text())["mcp"]["servers"]
 
 
+# --- Every render: a configuration file with a BOM is still that configuration --------------
+
+def test_a_bom_in_a_config_file_does_not_stop_any_render(tmp_path):
+    """An editor that writes a BOM (PowerShell's `Set-Content -Encoding utf8`) left a file
+    the render refused as invalid JSON, so the CLI's MCP configuration stopped updating
+    until someone guessed why."""
+    renderer = make_renderer(tmp_path)
+    kept = {"theme": "dark", "mcpServers": {"mine": {"command": "keep-me"}}}
+    for cli, relative in (("claude", ".claude.json"), ("antigravity", ".gemini/antigravity/mcp_config.json")):
+        path = renderer.home / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(kept), encoding="utf-8-sig")
+    opencode = renderer.home / ".config/opencode/opencode.json"
+    opencode.parent.mkdir(parents=True)
+    opencode.write_text(json.dumps({"theme": "dark", "mcp": {"servers": {
+        "mine": {"type": "local", "command": ["keep-me"], "enabled": True},
+    }}}), encoding="utf-8-sig")
+
+    renderer.render_claude(write=True)
+    renderer.render_antigravity(write=True)
+    renderer.render_opencode(write=True)
+
+    for relative in (".claude.json", ".gemini/antigravity/mcp_config.json"):
+        data = json.loads((renderer.home / relative).read_text(encoding="utf-8-sig"))
+        assert data["mcpServers"]["mine"] == {"command": "keep-me"}, relative
+        assert "alpha" in data["mcpServers"], relative
+    rendered = json.loads(opencode.read_text(encoding="utf-8-sig"))
+    assert rendered["theme"] == "dark"
+    assert rendered["mcp"]["servers"]["mine"]["command"] == ["keep-me"]
+    assert "alpha" in rendered["mcp"]["servers"]
+
+
 # --- Doctor: it asks the renderer, in preview, instead of comparing names only -----------------
 
 def _vault(tmp_path) -> Path:

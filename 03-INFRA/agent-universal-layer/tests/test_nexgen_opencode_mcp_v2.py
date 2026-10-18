@@ -106,6 +106,17 @@ def test_opencode_v2_migrates_legacy_and_preserves_unmanaged_servers(tmp_path: P
     assert cfg.read_text(encoding="utf-8") == raw
 
 
+def test_a_bom_in_the_live_config_is_still_read_for_adoption(tmp_path: Path, monkeypatch) -> None:
+    """`render.py --adopt` reads the CLI's own file directly: a BOM there stopped it with a
+    parse STOP instead of adopting a configuration that was otherwise valid."""
+    cfg = tmp_path / "live-opencode.json"
+    cfg.write_text(json.dumps({"mcp": {"servers": {"outside": {"type": "local", "command": ["x"]}}}}),
+                   encoding="utf-8-sig")
+    monkeypatch.setattr(renderer_cli, "_cli_config_path", lambda cli: cfg)
+
+    assert set(renderer_cli._load_live("opencode")) == {"outside"}
+
+
 def test_opencode_v2_preserves_native_options_and_other_cli_output(tmp_path: Path) -> None:
     renderer = _renderer(tmp_path)
     cfg = renderer.opencode_config_path()
