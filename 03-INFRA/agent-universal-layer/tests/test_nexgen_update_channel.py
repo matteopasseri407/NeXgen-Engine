@@ -8,6 +8,7 @@ real ssh signatures: a faked verdict would prove nothing about the lock.
 """
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import subprocess
@@ -408,6 +409,30 @@ def test_a_rollback_that_cannot_check_for_lost_commits_does_not_reset(tmp_path, 
     assert result == updater.EXIT_ROLLBACK_FAILED
     assert _head(machine.engine) == tip != example
     assert "cannot be proven" in capsys.readouterr().err
+
+
+def test_an_unattended_nightly_failure_is_remembered_by_the_commit_the_next_beat_plans(
+    tmp_path, monkeypatch, capsys
+):
+    """The rejected-release memory is keyed by the commit the channel installs: keyed by the
+    display label it never matched, so the beat merged, failed and rolled back every hour."""
+    _gates_green(monkeypatch)
+    machine = _machine(tmp_path, tip_signed=True)
+    before = _head(machine.engine)
+    tip = _git(machine.origin, "rev-parse", "developer").stdout.strip()
+    doctor_results = iter(((0, 0), (1, 1)))
+    monkeypatch.setattr(updater, "_doctor", lambda *_args, **_kwargs: next(doctor_results))
+
+    assert updater.main(["--unattended", "--channel", "nightly"], environ=_env(machine)) == updater.EXIT_ROLLED_BACK
+
+    rejected = json.loads((machine.state / updater.REJECTED_FILE).read_text(encoding="utf-8"))
+    assert rejected["target"] == tip
+    capsys.readouterr()
+
+    # The next beat plans the same commit, finds it rejected, and skips it.
+    assert updater.main(["--unattended", "--channel", "nightly"], environ=_env(machine)) == 0
+    assert _head(machine.engine) == before
+    assert "unattended updates skip it" in capsys.readouterr().out
 
 
 # --------------------------------------------------------------------------

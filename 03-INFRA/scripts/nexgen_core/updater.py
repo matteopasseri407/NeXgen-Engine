@@ -463,7 +463,7 @@ def _roll_back(
         if realigned.returncode != 0:
             notes.append("agent-sync apply from the restored tree also failed")
     if unattended:
-        _record_rejected(state_dir, target.label, str(exc))
+        _record_rejected(state_dir, target.ref, str(exc))
     for note in notes:
         print(f"nexgen-update: WARNING: {note}", file=sys.stderr)
     if unattended:
@@ -745,7 +745,10 @@ def _stop_if_settled(
 
 
 def _rolled_back_before(state_dir: Path, target: str) -> bool:
-    """True when an unattended update of this exact target already failed and was undone."""
+    """True when an unattended update of this exact target already failed and was undone.
+
+    `target` is the commit `_record_rejected` stores, not the moving channel's label.
+    """
     if _read_rejected(state_dir).get("target") != target:
         return False
     print(
