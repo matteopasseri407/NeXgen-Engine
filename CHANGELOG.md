@@ -10,6 +10,8 @@ of any engine release.
 
 ## [Unreleased]
 
+## [2.16.7] - 2026-10-19
+
 ### Fixed
 
 - Update rollback on nightly and beta: the check for commits made during the update asks git about the target commit, not the channel's display label, and a check git cannot answer no longer resets the engine. A failed unattended update is remembered by its commit, so it is not retried every hour.
