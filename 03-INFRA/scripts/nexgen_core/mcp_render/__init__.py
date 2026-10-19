@@ -30,7 +30,10 @@ def load_json_object(path: Path) -> dict[str, Any]:
     if not path.is_file():
         return {}
     try:
-        text = path.read_text(encoding="utf-8")
+        # `utf-8-sig`: a configuration file saved by an editor that writes a BOM
+        # (PowerShell 5.1's `Set-Content -Encoding utf8` does) is still a JSON object
+        # OpenCode reads; refusing it stopped the render on a file that was fine.
+        text = path.read_text(encoding="utf-8-sig")
         if not text.strip():
             return {}  # an empty file holds nothing worth protecting
         data = json.loads(text)

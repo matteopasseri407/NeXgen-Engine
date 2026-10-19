@@ -244,6 +244,23 @@ def test_install_shims_reports_only_what_it_rewrote(tmp_path):
     assert third == [str(victim)]
 
 
+def test_an_unreadable_launcher_is_repaired_instead_of_aborting_the_cycle(tmp_path):
+    """A launcher saved by an editor as UTF-16 is not valid UTF-8: reading it used to raise
+    out of install_shims before anything was rewritten, so the phase failed on every cycle
+    and the one command this function exists to repair stayed broken."""
+    bin_dir = tmp_path / "bin"
+    shims.install_shims(bin_dir=bin_dir, home=tmp_path)
+    victim = bin_dir / ("nexgen.cmd" if sys.platform == "win32" else "nexgen")
+    canonical = victim.read_text(encoding="utf-8")
+    victim.write_bytes(canonical.encode("utf-16"))
+
+    changed: list[str] = []
+    installed = shims.install_shims(bin_dir=bin_dir, home=tmp_path, changed=changed)
+
+    assert str(victim) in installed and changed == [str(victim)]
+    assert victim.read_text(encoding="utf-8") == canonical
+
+
 def test_a_package_install_leaves_the_package_managers_launchers_alone(tmp_path, monkeypatch):
     """pipx and uv put their own `nexgen` in ~/.local/bin; the guard used to replace it with a
     launcher that starts whatever python3 is on PATH, which has none of the tool's libraries."""

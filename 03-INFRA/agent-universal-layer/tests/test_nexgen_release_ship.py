@@ -192,6 +192,13 @@ class FakeWorld:
                 return json.dumps([{**run, "headBranch": self.shipping_tag} for run in runs]), 0
             case ("gh", "release", "view"):
                 return json.dumps({"isDraft": False, "assets": [1, 2, 3]}), 0
+            case ("nexgen", "--version"):
+                # A real machine's launcher answers with its own version banner, and the
+                # install reads the channel from it; a world that stayed silent here was
+                # standing in for a launcher that cannot start.
+                installed = self.install_root if self.install_root is not None else self.repo
+                version = (installed / "VERSION").read_text(encoding="utf-8").strip()
+                return f"NeXgen Engine {version} (stable)", 0
         return "", 0
 
 
@@ -592,6 +599,29 @@ def test_a_machine_without_its_launcher_stops_the_install(repo, tmp_path, monkey
     world.install_root = installed_engine(repo, "2.13.0")
     with pytest.raises(InstallProblem, match="installed command"):
         _installer(repo, world).install("2.14.0")
+    assert not world.launches("nexgen", "update")
+
+
+@pytest.mark.parametrize("banner,code", [
+    ("", 0),                                            # a launcher that starts but says nothing
+    ("NeXgen Engine 2.13.0", 0),                        # an older banner without the channel
+    ("Traceback (most recent call last): boom", 1),     # a launcher that does not start
+])
+def test_an_unreadable_channel_banner_stops_the_install_instead_of_guessing_stable(
+    repo, tmp_path, banner, code
+):
+    """Guessing "stable" added `--target <tag>`, which a nightly or beta machine refuses:
+    the release then stopped two minutes later blaming an update nothing had read."""
+    from nexgen_core.release_install import InstallProblem
+
+    world = FakeWorld(repo)
+    world.install_root = installed_engine(repo, "2.13.0")
+    original = world.answer
+    world.answer = lambda argv: (banner, code) if argv[:2] == ("nexgen", "--version") else original(argv)
+
+    with pytest.raises(InstallProblem, match="did not report its channel"):
+        _installer(repo, world, install_log=tmp_path / "install.log").install("2.14.0")
+
     assert not world.launches("nexgen", "update")
 
 

@@ -101,12 +101,21 @@ class Installer:
     def channel(self) -> str:
         """The update channel the installed engine follows, read from its own `--version`.
 
-        `nexgen --version` prints `NeXgen Engine X.Y.Z (<channel> ...)`; anything
-        unreadable is stable, the channel a release tag belongs to.
+        `nexgen --version` prints `NeXgen Engine X.Y.Z (<channel> ...)`. A launcher that
+        does not answer, or answers without a channel, stops this step: guessing "stable"
+        added `--target <tag>` to the update, which a nightly or beta machine refuses, and
+        the release stopped two minutes later blaming an update nothing had read.
         """
         answer = self.run([str(self.launcher()), "--version"], self.repo)
         match = re.search(r"\((stable|nightly|beta)\b", answer.stdout or "")
-        return match.group(1) if match else "stable"
+        if answer.returncode != 0 or match is None:
+            detail = (answer.stderr or answer.stdout or "").strip().splitlines()
+            raise InstallProblem(
+                f"the installed command did not report its channel: '{self.launcher()} --version' "
+                f"exited {answer.returncode}{f': {detail[-1]}' if detail else ''}; "
+                "run 'nexgen --version' by hand, fix the launcher, then ship --install again"
+            )
+        return match.group(1)
 
     def _update(self, version: str, previous: str) -> str:
         """Run the updater; a rollback caused by a colliding cycle is retried once, and only once.

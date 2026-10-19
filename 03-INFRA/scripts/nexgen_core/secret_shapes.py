@@ -70,6 +70,22 @@ _BEARER = re.compile(r"(?i)\b(bearer)\s+[A-Za-z0-9._~+/=-]{8,}")
 _LABELLED = re.compile(r"(?i)\b(token|apikey|api_key|password|secret)\b(\s*[=:]\s*)[A-Za-z0-9._~+/=-]{12,}")
 
 
+#: Credentials embedded in the userinfo of a URL (`https://user:token@host/o/r`).
+_URL_CREDENTIALS = re.compile(r"^([A-Za-z][A-Za-z0-9+.-]*://)[^/@\s]*:[^/@\s]*@")
+
+
+def redact_url(url: str) -> str:
+    """A URL that may go into a message somebody reads: no credential left in it.
+
+    A remote can carry a token in its userinfo (`https://x-access-token:ghp_...@host/o/r`),
+    and the doctor prints that text while the alert channel forwards it to a phone. The
+    credential goes; a plain username (`git@github.com:o/r`, `ssh://git@host/o/r`) is part
+    of the address a person recognises and stays. Anything secret-shaped elsewhere in the
+    URL is still caught by shape.
+    """
+    return redact(_URL_CREDENTIALS.sub(r"\1", url))
+
+
 def is_secret_name(name: str) -> bool:
     return bool(SECRET_NAME.search(name))
 

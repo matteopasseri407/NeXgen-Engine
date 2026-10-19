@@ -18,6 +18,7 @@ from nexgen_core.git_ops import (
 )
 from nexgen_core.i18n import t
 from nexgen_core.report import CheckOutcome, Severity
+from nexgen_core.secret_shapes import redact_url
 
 #: An unpublished commit older than this threshold (seconds) is a real
 #: problem nobody chose: it simply sat there because 'vault-push' never
@@ -224,7 +225,7 @@ def check_vault_remote_privacy(vault_data: Path) -> CheckOutcome | None:
     flagged = {name for name, _ in leaks}
     auth, mirrors = resolve_remotes(vault_data)
     if flagged & ({auth, *mirrors} - {"local", "none"}):
-        shown = ", ".join(f"{name} ({url})" for name, url in leaks)
+        shown = ", ".join(f"{name} ({redact_url(url)})" for name, url in leaks)
         return CheckOutcome(
             id="git.vault_remote_privacy",
             severity=Severity.BROKEN,
@@ -239,7 +240,7 @@ def check_vault_remote_privacy(vault_data: Path) -> CheckOutcome | None:
         )
     implicit = _implicit_push_remote(vault_data)
     if implicit in flagged and not _push_disabled(vault_data, implicit):
-        shown = ", ".join(f"{name} ({url})" for name, url in leaks)
+        shown = ", ".join(f"{name} ({redact_url(url)})" for name, url in leaks)
         return CheckOutcome(
             id="git.vault_remote_privacy",
             severity=Severity.BROKEN,

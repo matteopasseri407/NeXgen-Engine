@@ -19,6 +19,7 @@ from pathlib import Path
 
 import yaml
 
+from nexgen_core import secret_shapes
 from nexgen_core.i18n import t
 
 logger = logging.getLogger(__name__)
@@ -586,7 +587,7 @@ def _publish_changes_impl(
         return False, t(
             "Refusing to publish: {remote} is the engine's public repository ({url}), and the vault is private. "
             "The commit stays local; point the remote at your own private repository.",
-            remote=leaks[0][0], url=leaks[0][1],
+            remote=leaks[0][0], url=secret_shapes.redact_url(leaks[0][1]),
         )
 
     # Fetch and verify before pushing

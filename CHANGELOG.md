@@ -10,6 +10,17 @@ of any engine release.
 
 ## [Unreleased]
 
+## [2.16.7] - 2026-10-19
+
+### Fixed
+
+- Update rollback on nightly and beta: the check for commits made during the update asks git about the target commit, not the channel's display label, and a check git cannot answer no longer resets the engine. A failed unattended update is remembered by its commit, so it is not retried every hour.
+- The doctor, `--json` and alerts never show a credential embedded in a remote URL (`https://user:token@host/...`).
+- A launcher saved in another encoding (UTF-16) is rewritten instead of stopping the guard cycle on every round.
+- `release ship --install` stops with a clear message when the installed `nexgen --version` does not report its channel, instead of guessing `stable`.
+- A JSON configuration file with a BOM (PowerShell 5.1's `Set-Content -Encoding utf8`) is read by the render instead of refused as invalid.
+- The smoke no longer crashes on a Windows cp1252 console when a command prints accented text.
+
 ## [2.16.6] - 2026-10-18
 
 ### Changed

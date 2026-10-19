@@ -390,6 +390,23 @@ def _assert_mergeable(engine_repo: Path, data_repo: Path, target: str, *, split_
         _assert_merge_identity(engine_repo)
 
 
+def _lost_commits(engine_repo: Path, previous_head: str, *, target: str) -> list[str]:
+    """The non-merge commits since `previous_head` that `target` does not carry.
+
+    A listing git refuses raises instead of answering "nothing to lose": that empty
+    answer is how a reset erased what a person had committed during the update, and
+    what the moving channels got when they handed git their display label here.
+    """
+    listed = _git(engine_repo, "rev-list", "--no-merges", f"{previous_head}..HEAD", "--not", target, check=False)
+    if listed.returncode:
+        raise UpdateError(
+            "git rev-list could not answer whether commits made on the engine would be lost "
+            f"({(listed.stderr or listed.stdout).strip() or listed.returncode}); "
+            "not resetting: safety cannot be proven"
+        )
+    return listed.stdout.split()
+
+
 def _roll_back(
     exc: PostMergeError,
     *,
@@ -397,7 +414,7 @@ def _roll_back(
     data_repo: Path,
     pin_file: Path | None,
     state_dir: Path,
-    target: str,
+    target: update_channel.TargetPlan,
     previous_label: str,
     unattended: bool,
 ) -> int:
@@ -412,18 +429,11 @@ def _roll_back(
     a person who asked for it can decide to try again.
     """
     print(f"nexgen-update: ERROR: {exc}", file=sys.stderr)
-    print(f"The {'unattended ' if unattended else ''}update to {target} failed; going back to {previous_label}.", file=sys.stderr)
+    print(f"The {'unattended ' if unattended else ''}update to {target.label} failed; going back to {previous_label}.", file=sys.stderr)
     try:
         with host_mutation("nexgen-update-rollback", state_dir=state_dir, timeout=UPDATE_LOCK_WAIT_SECONDS):
             _git(exc.engine_repo, "merge", "--abort", check=False)
-            # The lock was released between the merge and the apply, so a
-            # person may have committed on the engine meanwhile. Those are
-            # the only non-merge commits since previous_head that the
-            # release does not carry: reset --hard would erase them.
-            foreign = _git(
-                exc.engine_repo, "rev-list", "--no-merges", f"{exc.previous_head}..HEAD", "--not", target,
-                check=False,
-            ).stdout.split()
+            foreign = _lost_commits(exc.engine_repo, exc.previous_head, target=target.ref)
             if foreign:
                 raise UpdateError(f"{len(foreign)} commit(s) made on the engine during the update would be lost")
             _git(exc.engine_repo, "reset", "--hard", exc.previous_head)
@@ -453,13 +463,13 @@ def _roll_back(
         if realigned.returncode != 0:
             notes.append("agent-sync apply from the restored tree also failed")
     if unattended:
-        _record_rejected(state_dir, target, str(exc))
+        _record_rejected(state_dir, target.ref, str(exc))
     for note in notes:
         print(f"nexgen-update: WARNING: {note}", file=sys.stderr)
     if unattended:
         print(
-            f"Rolled back to {previous_label}. Unattended updates will skip {target}; "
-            f"review it and run 'nexgen-update --target {target.removeprefix('v')}' to try again.",
+            f"Rolled back to {previous_label}. Unattended updates will skip {target.label}; "
+            f"review it and run 'nexgen-update --target {target.label.removeprefix('v')}' to try again.",
             file=sys.stderr,
         )
     else:
@@ -600,7 +610,7 @@ def _recover_failed_update(
     data_repo: Path,
     pin_file: Path | None,
     state_dir: Path,
-    target: str,
+    target: update_channel.TargetPlan,
     previous_label: str,
 ) -> int:
     code = _roll_back(
@@ -735,7 +745,10 @@ def _stop_if_settled(
 
 
 def _rolled_back_before(state_dir: Path, target: str) -> bool:
-    """True when an unattended update of this exact target already failed and was undone."""
+    """True when an unattended update of this exact target already failed and was undone.
+
+    `target` is the commit `_record_rejected` stores, not the moving channel's label.
+    """
     if _read_rejected(state_dir).get("target") != target:
         return False
     print(
@@ -949,7 +962,7 @@ def main(
             )
             return _recover_failed_update(
                 interrupted, args=args, entry=entry, data_repo=data_repo, pin_file=pin_file,
-                state_dir=state_dir, target=target.label,
+                state_dir=state_dir, target=target,
                 previous_label=_came_from_label(current, previous_head, release=target.release),
             )
         if isinstance(exc, KeyboardInterrupt):
