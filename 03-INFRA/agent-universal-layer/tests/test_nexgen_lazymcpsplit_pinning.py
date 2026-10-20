@@ -173,3 +173,25 @@ def test_the_machine_environment_cache_is_the_one_on_the_loaded_module(load, tmp
 
     module._MACHINE_ENV_CACHE = ((), {})
     assert module._declared_value("PIN_TOKEN") == "second"
+
+
+def test_a_cache_hit_hands_back_the_cache_and_its_values(tmp_path, monkeypatch):
+    """Una lettura in cache restituisce (cache, valori), non la cache sola.
+
+    Con `environment.d` vuota la firma è `()`: restituire la cache sola faceva
+    diventare la cache `()` e la lettura successiva cadeva su `cache[0]`
+    (IndexError), così ogni server con una credenziale dichiarata veniva ritirato.
+    Il ramo POSIX è simulato sul solo modulo sotto test, quindi gira ovunque.
+    """
+    import types
+
+    spec = importlib.util.spec_from_file_location("lazy_env_pinned", LAZY.parent / "lazy_env.py")
+    env = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(env)
+    monkeypatch.setattr(env, "os", types.SimpleNamespace(name="posix", environ=os.environ))
+    (tmp_path / "environment.d").mkdir()
+    cache = ((), {})
+    for _ in range(3):
+        cache, values = env.machine_environment(str(tmp_path), cache)
+        assert values == {}
+    assert cache == ((), {})

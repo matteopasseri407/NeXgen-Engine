@@ -58,7 +58,7 @@ def machine_environment(config_home: str, cache: tuple[tuple, dict[str, str]]) -
     except OSError:
         return cache, {}
     if signature == cache[0]:
-        return cache
+        return cache, cache[1]
     values: dict[str, str] = {}
     for path in files:
         try:
