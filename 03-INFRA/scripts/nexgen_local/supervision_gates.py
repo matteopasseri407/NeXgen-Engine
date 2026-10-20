@@ -35,9 +35,14 @@ from .supervision_worktree import BLOCKED_PUSH_URL, push_urls, refs_at, remote_u
 #: The declared budget for the executor's own verification command.
 VERIFY_TIMEOUT_S = 600.0
 #: Shell operators the verification command may not carry: it is one command, not a script.
-SHELL_OPERATORS = ("&&", "|", ";")
+SHELL_OPERATORS = ("&&", "||", "|", ";", "&")
 #: Suffixes Windows tries for a bare name, in the order the loader tries them.
 WINDOWS_EXECUTABLE_SUFFIXES = (".exe", ".cmd", ".bat", ".com")
+#: A Python interpreter by name; its `-m` would put the working directory on `sys.path`.
+PYTHON_EXECUTABLE = re.compile(r"^python(\d+(\.\d+)*)?(\.exe)?$", re.IGNORECASE)
+PYTHON_LAUNCHER = re.compile(r"^py(\.exe)?$", re.IGNORECASE)
+#: Files that decide how pytest discovers and runs, named in the package for the reviewer.
+PYTEST_CONFIG_NAMES = ("pytest.ini", "tox.ini", "setup.cfg")
 #: The budget for re-running the touched test files to see what this platform skips.
 SKIP_TIMEOUT_S = 300.0
 #: Published identity a unit may never carry, unless its own scope says otherwise.
@@ -77,6 +82,7 @@ def collect(task_id: str, unit: str) -> dict:
     clean = _clean_tree_gate(folder)
     remote = _remote_gate(folder, record, base, head)
     text = diff_text(folder, base, head)
+    surface = _pytest_surface(files)
     results = [
         _scope_gate(files, scope),
         _forbidden_gate(files, scope),
@@ -93,7 +99,7 @@ def collect(task_id: str, unit: str) -> dict:
         task_id=task_id, unit=name, branch=branch, base=base, head=head, verdict=verdict,
         results=results, cost_line=_cost_line(state.read_costs(task_id), name),
         diffstat=git(folder, "diff", "--stat", base, head).strip(), diff=text,
-        skipped=skipped, request_scan=request_scan,
+        skipped=skipped, request_scan=request_scan, pytest_surface=surface,
     )
     package_path = state.open_task(task_id) / f"40-pacchetto-{name}.md"
     raw_path = state.open_task(task_id) / f"50-gate-{name}.txt"
@@ -180,6 +186,24 @@ def _per_commit_gate(folder: Path, rules: config.Config, base: str, head: str) -
             " | ".join(str(problem) for problem in problems)[:800],
         )
     return GateResult("prova per commit", True, "ogni commit fix porta un test che fallisce prima")
+
+
+def _pytest_surface(files: list) -> list[str]:
+    """The pytest files a unit touched: a conftest, a config, or pyproject's pytest section.
+
+    These files decide what the suite collects and how. They are not a failure:
+    a unit may legitimately add a fixture. The package names them so a reviewer
+    looks at them before saying PASS.
+    """
+    found: set[str] = set()
+    for change in files:
+        for path in _touched(change):
+            name = Path(path).name
+            if name == "conftest.py" or name in PYTEST_CONFIG_NAMES:
+                found.add(path)
+            elif name == "pyproject.toml" and "[tool.pytest" in ((change.new or "") + (change.old or "")):
+                found.add(path)
+    return sorted(found)
 
 
 def _clean_tree_gate(folder: Path) -> GateResult:
@@ -273,10 +297,13 @@ def _verify_gate(folder: Path, command: str) -> GateResult:
     """The executor's declared command, run by the engine with its own launch rules.
 
     Two things are refused before anything runs. The command is one command, not
-    a shell line: `&&`, `|` and `;` are not supported, and a verifier that needs
-    several steps writes a script. And the executable must not come from the
-    unit's own copy: Windows looks in the working directory before PATH, so a
-    `pytest.bat` dropped in the copy would answer for the real runner.
+    a shell line: `&&`, `||`, `|`, `;` and `&` are not supported, and a verifier
+    that needs several steps writes a script. And the executable must not come
+    from the unit's own copy: Windows looks in the working directory before PATH,
+    so a `pytest.bat` dropped in the copy would answer for the real runner. A
+    Python interpreter is started with `-P`: without it `python -m pytest` puts
+    the working directory first on `sys.path` and imports the copy's own
+    `pytest.py`, which is the same bypass by another name.
     """
     if not command.strip():
         return GateResult(
@@ -300,7 +327,7 @@ def _verify_gate(folder: Path, command: str) -> GateResult:
         )
     try:
         done = subprocess.run(
-            windows_command_argv(argv), cwd=folder, capture_output=True, text=True,
+            windows_command_argv(_launch_argv(argv)), cwd=folder, capture_output=True, text=True,
             encoding="utf-8", errors="replace", stdin=subprocess.DEVNULL,
             timeout=VERIFY_TIMEOUT_S, check=False, **no_window_kwargs(),
         )
@@ -315,6 +342,21 @@ def _verify_gate(folder: Path, command: str) -> GateResult:
             f"`{command}` esce con {done.returncode}: {_last_line(output)}", output,
         )
     return GateResult("verifica indipendente", True, f"`{command}` esce con 0", output)
+
+
+def _launch_argv(argv: list[str]) -> list[str]:
+    """The verification argv, with `-P` when it starts a Python interpreter.
+
+    Python 3.11 answers `-P` with "do not prepend the working directory to
+    `sys.path`". The engine's own Python requirement is 3.11, so the flag is
+    always available where the engine runs.
+    """
+    if not argv:
+        return []
+    name = Path(argv[0]).name
+    if PYTHON_EXECUTABLE.match(name) or (os.name == "nt" and PYTHON_LAUNCHER.match(name)):
+        return [argv[0], "-P", *argv[1:]]
+    return list(argv)
 
 
 def _executable_inside(argv: list[str], folder: Path) -> Path | None:

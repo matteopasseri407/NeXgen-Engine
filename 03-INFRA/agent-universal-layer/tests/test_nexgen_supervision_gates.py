@@ -311,6 +311,76 @@ def test_a_verification_command_with_a_shell_operator_is_refused(task, repo, tmp
     assert result["verdict"] == "FAIL"
 
 
+@pytest.mark.parametrize("operator", ["&", "||"])
+def test_a_windows_shell_operator_in_the_verification_is_refused(tmp_path, operator):
+    """`&` and `||` join commands too: the verifier is one command, not a shell line."""
+    folder = tmp_path / "copia"
+    folder.mkdir()
+
+    result = gates._verify_gate(folder, f'"{sys.executable}" -c "print(1)" {operator} echo fatto')
+
+    assert not result.ok
+    assert operator in result.reason
+    assert "uno script o un solo comando" in result.reason
+
+
+def test_a_python_verifier_cannot_import_the_copys_own_pytest(tmp_path):
+    """`python -m pytest` puts the working directory first on `sys.path`: a local pytest.py answers."""
+    folder = tmp_path / "copia"
+    (folder / "tests").mkdir(parents=True)
+    (folder / "tests" / "test_vero.py").write_text("def test_vero():\n    assert True\n", encoding="utf-8")
+    marker = folder / "hijacked.txt"
+    (folder / "pytest.py").write_text(
+        "from pathlib import Path\n"
+        f"Path({str(marker)!r}).write_text('eseguito', encoding='utf-8')\n"
+        "raise SystemExit(0)\n",
+        encoding="utf-8",
+    )
+
+    result = gates._verify_gate(folder, f'"{sys.executable}" -m pytest -q')
+
+    assert result.ok, result.reason
+    assert "esce con 0" in result.reason
+    assert not marker.exists(), "il pytest.py della copia non deve essere eseguito"
+
+
+def test_the_package_flags_a_touched_conftest(task, repo, tmp_path):
+    """A conftest can turn tests off by changing collection: the reviewer must see it named."""
+    folder = _unit(task, repo, tmp_path, allow=["**"])
+    _commit(folder, "test: aggiunge una fixture", {
+        "tests/conftest.py": "import pytest\n\n\n" + "@pytest.fixture\ndef valore():\n    return 1\n",
+    })
+
+    result = gates.collect(task, "prova")
+
+    package = Path(result["package"]).read_text(encoding="utf-8")
+    assert "configurazione di pytest toccata" in package
+    assert "tests/conftest.py" in package
+
+
+def test_the_package_flags_a_touched_pytest_section_in_pyproject(task, repo, tmp_path):
+    folder = _unit(task, repo, tmp_path, allow=["**"])
+    _commit(folder, "chore: cambia la configurazione di pytest", {
+        "pyproject.toml": "[tool.pytest.ini_options]\ntestpaths = [\"tests\"]\n",
+    })
+
+    result = gates.collect(task, "prova")
+
+    package = Path(result["package"]).read_text(encoding="utf-8")
+    assert "configurazione di pytest toccata" in package
+    assert "pyproject.toml" in package
+
+
+def test_the_package_says_when_no_pytest_surface_was_touched(task, repo, tmp_path):
+    folder = _unit(task, repo, tmp_path)
+    _commit(folder, "docs: aggiunge una riga", {"docs/guida.md": "# guida\n\nriga.\n"})
+
+    result = gates.collect(task, "prova")
+
+    package = Path(result["package"]).read_text(encoding="utf-8")
+    assert "nessun conftest.py o file di configurazione di pytest toccato" in package
+
+
 def test_a_verification_executable_inside_the_copy_is_refused(task, repo, tmp_path):
     """Un esecutore non può fornire il proprio verificatore."""
     folder = worktree.worktree_path(task, "prova")

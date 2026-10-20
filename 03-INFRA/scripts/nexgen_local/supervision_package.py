@@ -19,9 +19,9 @@ DIFF_MAX_LINES = 400
 def package_text(
     *, task_id: str, unit: str, branch: str, base: str, head: str, verdict: str,
     results: list, cost_line: str, diffstat: str, diff: str,
-    skipped: list[str], request_scan: dict,
+    skipped: list[str], request_scan: dict, pytest_surface: list[str] = (),
 ) -> str:
-    """The file a supervisor reads: verdict, gate lines, skips, requests, diffstat, diff, cost."""
+    """The file a supervisor reads: verdict, gate lines, pytest surface, skips, requests, diffstat, diff, cost."""
     kept, cut = _truncated(diff, DIFF_MAX_LINES)
     lines = [
         f"# Pacchetto di revisione: {unit}",
@@ -39,6 +39,7 @@ def package_text(
         "|---|---|---|",
         *[f"| {result.name} | {'PASS' if result.ok else 'FAIL'} | {_cell(result.reason)} |" for result in results],
         "",
+        *_pytest_surface_section(pytest_surface),
         *_skipped_section(skipped),
         *_request_section(request_scan),
         "## Diffstat",
@@ -89,6 +90,17 @@ def _request_section(result: dict) -> list[str]:
         return lines
     lines += [f"- {hit['kind']} · «{hit['sentence']}»" for hit in result["hits"]]
     lines += ["", f"Lette in `{result['report']}`; una riga già scritta non si ripete.", ""]
+    return lines
+
+
+def _pytest_surface_section(paths: list[str]) -> list[str]:
+    """One line naming the pytest files a unit touched, so a reviewer knows to open them."""
+    lines = ["## Superficie di pytest", ""]
+    if not paths:
+        lines += ["nessun conftest.py o file di configurazione di pytest toccato.", ""]
+        return lines
+    named = ", ".join(f"`{path}`" for path in paths)
+    lines += [f"configurazione di pytest toccata: {named}. Guardala prima di approvare: cambia come gira la suite.", ""]
     return lines
 
 
