@@ -39,6 +39,16 @@ Contract with the advisory reviews (Kimi, Opus 5):
 - a child server does not inherit the secrets in the proxy's environment, and
   what it prints on stderr is kept (redacted) and shown when it fails, instead
   of the proxy answering "tool not found" and the cause being thrown away.
+
+Where the code lives, after the split: this file is the composition root. It keeps the
+state one gateway load owns — the environment cache, the machine's session, the template
+expander, the state directory and the single Waiter — and binds it to the components
+beside it: `lazy_env` (what a child may see), `lazy_manifest` (which servers this gateway
+serves and how each entry becomes spawnable), `lazy_server_handle` (one live backend),
+`lazy_waiter` (index, load, audit, idle sweep) and `lazy_frontend` (the protocol on stdin
+and stdout). The names the suite replaces on this module (`_MACHINE_ENV_CACHE`,
+`_process_helpers`, `_template_context`, `_lazy_servers`, `MAX_REPLY_BYTES`) stay here
+because a replacement must reach the component that uses it.
 """
 from __future__ import annotations
 
@@ -225,7 +235,6 @@ def served_entry(name: str) -> dict[str, Any] | None:
         name, _resolve_manifest(), _server_context(), _credentials(), _expand_templates)
 
 
-
 def _redact(text: str, env: dict[str, str]) -> str:
     """Hides, in text a child printed, the values of the secrets this proxy handed it, and the usual shapes."""
     return lazy_env.redact(text, env)
@@ -297,7 +306,6 @@ class Waiter(lazy_waiter.Waiter):
 
 
 WAITER = Waiter()
-
 
 
 
