@@ -146,6 +146,19 @@ def test_approve_is_refused_when_the_branch_moved_after_the_collection(task, rep
     assert collected["verdict"] == "PASS"
 
 
+def test_approve_is_refused_when_the_collection_has_no_head(task, repo, tmp_path):
+    """A collection without a head proves nothing: the fallback used to approve whatever was there."""
+    folder = _unit(task, repo, tmp_path)
+    _commit(folder, "docs: aggiunge una riga", {"docs/guida.md": "# guida\n\nriga.\n"})
+    assert gates.collect(task, "prova")["verdict"] == "PASS"
+    state.append_event(task, "unit_collected", unit="prova", verdict="PASS")
+
+    with pytest.raises(review.ReviewError, match="rifai `sup collect`"):
+        review.approve(task, "prova", "la raccolta è verde")
+
+    assert not list(Path(state.open_task(task)).glob("45-revisione-*.md"))
+
+
 def test_approve_refuses_a_unit_the_engine_never_collected(task, repo, tmp_path):
     _unit(task, repo, tmp_path)
 

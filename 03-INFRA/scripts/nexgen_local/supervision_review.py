@@ -96,9 +96,11 @@ def approve(task_id: str, unit: str, reason: str) -> dict:
         )
     head = _branch_head(record)
     collected = str(collection.get("head") or "")
-    registered = ""
     if not collected:
-        collected, registered = head, state.now_iso()
+        raise ReviewError(
+            f"l'ultima `sup collect` di {name} non porta la head che ha giudicato: "
+            "rifai `sup collect` prima di approvare"
+        )
     if head != collected:
         raise ReviewError(
             f"la head del ramo è cambiata dopo la raccolta: raccolta {collected[:12]}, "
@@ -109,8 +111,7 @@ def approve(task_id: str, unit: str, reason: str) -> dict:
     write_private_text(path, _review_text(task_id, name, round_no, state.APPROVED, head, collection, text))
     state.append_event(
         task_id, "unit_reviewed", unit=name, round=round_no, verdict=state.APPROVED,
-        reason=text, head=head, collected_head=collected,
-        collect_verdict=verdict, head_registered=registered,
+        reason=text, head=head, collected_head=collected, collect_verdict=verdict,
     )
     return {
         "unit": name, "round": round_no, "path": path, "verdict": state.APPROVED,
