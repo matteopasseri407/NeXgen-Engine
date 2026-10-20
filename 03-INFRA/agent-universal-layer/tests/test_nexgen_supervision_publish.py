@@ -291,9 +291,11 @@ def test_a_push_with_command_that_would_force_is_refused_before_it_runs(task, re
     "git push origin :developer",
     "git push --force-with-lease=developer origin main",
     "git push -vf origin",
+    "git push origin developer --prune",
+    "git push --prune-tags origin developer",
 ])
 def test_force_by_another_spelling_is_refused_before_it_runs(command):
-    """`+refspec`, `:refspec`, `--force-with-lease=<ref>` and bundled short flags are all force."""
+    """`+refspec`, `:refspec`, `--force-with-lease=<ref>`, bundled short flags and `--prune` are all refusals."""
     with pytest.raises(publish_module.PublishError, match="force-push: il motore non lo fa mai"):
         publish_module._refuse_force(command)
 
@@ -339,6 +341,26 @@ def test_a_declared_push_that_forces_history_is_caught_after_it_ran(task, repo, 
     event = [row for row in state.read_events(task) if row.get("event") == "unit_published"][-1]
     assert event["pushed"] is False
     assert "forzato" in event["output"]
+
+
+def test_a_declared_push_that_prunes_a_remote_branch_is_caught_after_it_ran(task, repo, tmp_path):
+    """`--prune --all` cancella i rami remoti che il repository locale non ha: guardare solo `main` lo nascondeva."""
+    _approved_unit(task, repo, tmp_path)
+    git_in(repo.path, "push", "-q", "origin", "main:refs/heads/estraneo")
+    command = _declared_script(tmp_path, "potatura.py", (
+        "import subprocess, sys\n"
+        "repo = sys.argv[1]\n"
+        "done = subprocess.run(['git', '-C', repo, 'push', '--prune', '--all', 'origin'], "
+        "capture_output=True, text=True)\n"
+        "sys.exit(done.returncode)\n"
+    ), str(repo.path))
+
+    with pytest.raises(publish_module.PublishError, match="altri rami del remoto") as caught:
+        publish_module.publish(task, "prova", repo=repo.path, branch="main", push_with=command)
+
+    assert "estraneo" in str(caught.value)
+    remote_heads = git_in(tmp_path, "ls-remote", "--heads", str(repo.bare)).stdout
+    assert "estraneo" not in remote_heads, "la potatura è arrivata al remoto e il motore l'ha vista"
 
 
 def test_a_declared_push_that_pushes_a_tag_is_caught_after_it_ran(task, repo, tmp_path):
