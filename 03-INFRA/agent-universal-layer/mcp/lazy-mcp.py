@@ -47,7 +47,6 @@ import json
 import math
 import queue
 import os
-import re
 import signal
 import subprocess
 import sys
@@ -67,6 +66,7 @@ if _HERE not in sys.path:
     sys.path.append(_HERE)
 
 import lazy_env  # noqa: E402 - resolved from the gateway's own folder, prepared just above
+import lazy_manifest  # noqa: E402 - same
 
 SERVER_NAME = "lazy-mcp"
 SERVER_VERSION = "0.2.1"
@@ -238,23 +238,8 @@ def _expand_templates(text: str) -> str:
     # entry unusable instead of spawning literal {{ }} text.
 
 
-def _with_trials(data: dict[str, Any]) -> dict[str, Any]:
-    """The manifest plus the servers on trial on this machine (never synced, they expire by themselves)."""
-    scripts = str(Path(__file__).resolve().parents[2] / "scripts")
-    if scripts not in sys.path:
-        sys.path.insert(0, scripts)
-    try:
-        from nexgen_core import mcp_trials
-
-        servers = mcp_trials.overlay(dict(data.get("servers") or {}))
-    except Exception as exc:  # noqa: BLE001 - a broken trial file must never take the gateway down
-        print(f"[lazy-mcp] trials ignored ({type(exc).__name__})", file=sys.stderr)
-        return data
-    return {**data, "servers": servers}
-
-
 def _resolve_manifest() -> dict[str, Any]:
-    return _with_trials(_read_manifest())
+    return lazy_manifest.with_trials(_read_manifest())
 
 
 def _read_manifest() -> dict[str, Any]:
@@ -284,140 +269,26 @@ def _resolve_engine_root() -> str:
     return str(here)
 
 
-def _placement_module():
-    """The engine's one placement rule (nexgen_core.mcp_placement), or None when the package is unreachable."""
-    scripts = str(Path(__file__).resolve().parents[2] / "scripts")
-    if scripts not in sys.path:
-        sys.path.insert(0, scripts)
-    try:
-        from nexgen_core import mcp_placement
-    except ImportError as exc:
-        print(f"[lazy-mcp] placement rule unavailable ({exc}); serving every lazy server", file=sys.stderr)
-        return None
-    return mcp_placement
-
-
-def served_cli() -> str:
-    """The CLI this gateway is mounted in, as the renderer told it (LAZY_MCP_CLI), or '' when it was not told."""
-    return os.environ.get("LAZY_MCP_CLI", "").strip().lower()
-
-
-def _served_by_gateway(srv: dict[str, Any], cli: str, placement) -> bool:
-    """Whether this gateway, mounted in `cli`, serves `srv`.
-
-    It used to serve every `lazy: true` server to every CLI, so a server mounted directly in a CLI was also in
-    that CLI's gateway, and `targets` and `enabled` were ignored. Now it serves exactly what the plan routes
-    behind it for the CLI it is in. A gateway that was never told its CLI (a config written before this) keeps
-    the old behaviour until the next guard cycle rewrites it.
-    """
-    if cli and placement is not None:
-        return placement.place(srv, cli).kind == placement.GATEWAY_KIND
-    return bool(srv.get("lazy")) or srv.get("exposure") == "lazy"
-
-
-_PURE_REFERENCE = re.compile(r"^\$\{([A-Za-z_][A-Za-z0-9_]*)(?::-)?\}$")
-
-
 def _server_context() -> dict[str, str]:
     vault_data = os.environ.get("AGENT_VAULT_DATA") or os.environ.get("KNOWLEDGE_VAULT_PATH") or str(Path.home() / "KnowledgeVault")
     return {"AGENT_ENGINE_ROOT": _resolve_engine_root(), "AGENT_VAULT_DATA": vault_data, "KNOWLEDGE_VAULT_PATH": vault_data}
 
 
-def _missing_credentials(srv: dict[str, Any]) -> list[str]:
-    """The variables this entry needs and this session does not have.
-
-    What counts: `require_env` (the manifest's own gate), a bearer token it declares (`auth.env`), and any
-    `env` entry that is a plain reference to a secret-looking variable. A missing one used to make a server
-    vanish from the index, or fail with a bare 401, with nothing saying why.
-    """
-    needed: list[str] = []
-    if srv.get("require_env"):
-        needed.append(str(srv["require_env"]))
-    auth = srv.get("auth")
-    if isinstance(auth, dict) and auth.get("env"):
-        needed.append(str(auth["env"]))
-    if isinstance(srv.get("env"), dict):
-        for value in srv["env"].values():
-            match = _PURE_REFERENCE.match(str(value).strip())
-            if match and lazy_env.is_secret_name(match.group(1)):
-                needed.append(match.group(1))
-    seen: list[str] = []
-    for name in needed:
-        if name not in seen and not _declared_value(name):
-            seen.append(name)
-    return seen
-
-
-def _expand_env_value(value: str, ctx: dict[str, str]) -> str:
-    """An `env` value of a server entry. A plain `${NAME}` is the credential the entry says it needs: it is looked
-    up everywhere a credential can live. Anything composed (`prefix-${NAME}`) only sees the process and the session."""
-    text = _expand_templates(value)
-    match = _PURE_REFERENCE.match(text.strip())
-    if match and match.group(1) not in ctx:
-        return _declared_value(match.group(1))
-    return _expand_placeholders(text, ctx)
-
-
-def _prepare_entry(name: str, srv: dict[str, Any], ctx: dict[str, str]) -> dict[str, Any] | None:
-    """A manifest entry ready to spawn: platform override applied, placeholders and templates expanded.
-
-    Carries `_unavailable` (why it cannot work in this session) instead of being dropped, so the index can say
-    "needs VERCEL_API_TOKEN" rather than leave the server out in silence. None when the entry is unusable.
-    """
-    entry = {k: v for k, v in srv.items()}
-    if sys.platform == "win32" and "windows" in entry:
-        win_override = entry.pop("windows")
-        if isinstance(win_override, dict):
-            entry.update(win_override)
-    entry.setdefault("readonly", False)
-    entry.setdefault("readonly_tools", [])
-    missing = _missing_credentials(entry)
-    if missing:
-        entry["_unavailable"] = "needs " + ", ".join(missing) + " in this session's environment"
-    # DEPS_WORKSPACE is a SELF-PRESERVING token here: its real value is
-    # known only at spawn time, after provisioning. Expanding it now to
-    # anything else (including '') would destroy the token before the
-    # spawn can substitute the provisioned workspace.
-    load_ctx = dict(ctx)
-    load_ctx["DEPS_WORKSPACE"] = "${DEPS_WORKSPACE}"
-    try:
-        if entry.get("command"):
-            entry["command"] = _expand_placeholders(_expand_templates(str(entry["command"])), load_ctx)
-        if isinstance(entry.get("args"), list):
-            entry["args"] = [_expand_placeholders(_expand_templates(str(a)), load_ctx) for a in entry["args"]]
-        if entry.get("url"):
-            entry["url"] = _expand_placeholders(_expand_templates(str(entry["url"])), load_ctx)
-        if isinstance(entry.get("env"), dict):
-            entry["env"] = {k: _expand_env_value(str(v), load_ctx) for k, v in entry["env"].items()}
-    except Exception as exc:
-        # Fail closed per entry: this server is withdrawn from the
-        # index with the reason on stderr, instead of spawning literal
-        # {{ }} text or taking the whole index down with it.
-        print(f"[lazy-mcp] server '{name}' withdrawn: inline template error ({exc})", file=sys.stderr)
-        return None
-    return entry
+def _credentials() -> lazy_env.Credentials:
+    """The credential chain of this load, read through this file's machine-environment cache."""
+    return lazy_env.Credentials(_machine_environment)
 
 
 def _lazy_servers() -> dict[str, dict[str, Any]]:
     """The servers behind this gateway for the CLI it serves (placeholders expanded; `_unavailable` says why one cannot work)."""
-    data = _resolve_manifest()
-    cli = served_cli()
-    placement = _placement_module() if cli else None
-    ctx = _server_context()
-    out: dict[str, dict[str, Any]] = {}
-    for name, srv in (data.get("servers") or {}).items():
-        if not isinstance(srv, dict) or name == "lazy-mcp" or not _served_by_gateway(srv, cli, placement):
-            continue
-        entry = _prepare_entry(name, srv, ctx)
-        if entry is not None:
-            out[name] = entry
-    return out
+    return lazy_manifest.lazy_servers(_resolve_manifest(), _server_context(), _credentials(), _expand_templates)
 
 
 def served_entry(name: str) -> dict[str, Any] | None:
     """One server's entry regardless of where the plan places it (the trimming shim serves a server mounted directly)."""
-    srv = (_resolve_manifest().get("servers") or {}).get(name)
-    return _prepare_entry(name, srv, _server_context()) if isinstance(srv, dict) else None
+    return lazy_manifest.served_entry(
+        name, _resolve_manifest(), _server_context(), _credentials(), _expand_templates)
+
 
 
 def _redact(text: str, env: dict[str, str]) -> str:
@@ -963,7 +834,8 @@ class Waiter:
 
     def index(self) -> dict[str, Any]:
         servers = _lazy_servers()
-        result: dict[str, Any] = {"servers": {}, "budget_tokens": INDEX_MAX_TOKENS, "cli": served_cli() or None}
+        result: dict[str, Any] = {"servers": {}, "budget_tokens": INDEX_MAX_TOKENS,
+                                  "cli": lazy_manifest.served_cli() or None}
         estimated = 0
         for name in sorted(servers):
             if servers[name].get("_unavailable"):
