@@ -1,11 +1,13 @@
-# Supervised tasks (phases 1 and 2)
+# Supervised tasks (phases 1, 2 and 3a)
 
 A supervised job is one objective carried out by harness agents that the owner
 can watch: a frontier model writes the brief, an executor works in a window of
 its own harness, and the engine keeps the files, the money and the verdict.
-This document covers **phases 1 and 2**: the task folder, the visible windows,
-the cost register, the unit's working copy, and the gates the engine runs before
-anybody reviews a diff. Nothing here publishes or approves anything.
+This document covers **phases 1, 2 and 3a**: the task folder, the visible
+windows, the cost register, the unit's working copy, the gates the engine runs
+before anybody reviews a diff, the review round, and publication. The LangGraph
+checkpoint and its resume belong to phase 3b: the state here is still the
+journal, and every step is a function the graph can wrap.
 
 ## Where a task lives
 
@@ -23,11 +25,15 @@ of the objective) with four files:
 A unit adds `20-brief-<unit>.md` (the brief as written), `22-ambiente-<unit>.md`
 (where the copy is, on which branch, inside which boundary), `40-pacchetto-<unit>.md`
 and `50-gate-<unit>.txt` (the review package and the raw gate output), plus its
-own working copy in `23-unita-<unit>/`.
+own working copy in `23-unita-<unit>/`. A review adds
+`45-revisione-<unit>-<round>.md`, and every request the engine refuses to
+execute goes to `07-richieste-proprietario.md`.
 
 The journal is the machine truth: `started`, `unit_created`, `unit_started`,
-`attached`, `unit_collected`. The Markdown files are what a person reads and
-writes; the engine never rewrites them, so an edit is not lost.
+`unit_queued`, `attached`, `unit_reworked`, `unit_collected`, `unit_reviewed`,
+`unit_published`. The Markdown files are what a person reads and writes; the
+engine never rewrites them, so an edit is not lost.
+
 
 ## The verbs
 
@@ -39,6 +45,10 @@ nexgen-local sup unit <id> <unit> --repo <checkout> --base <ref> --brief <file> 
     --allow 'docs/*.md' [--allow ...] [--verify "<command>"]
 nexgen-local sup run <id> <unit>                            # the executor's window
 nexgen-local sup collect <id> <unit>                        # the engine's gates, exit 1 on FAIL
+nexgen-local sup review <id> <unit> --approve "<why>"       # one review round, APPROVA
+nexgen-local sup review <id> <unit> --rework <file>         # one review round, RIMANDA
+nexgen-local sup publish <id> <unit> --repo <checkout> --branch <branch> \
+    [--remote origin] [--push | --push-with "<command>"]
 nexgen-local sup attach <id> <unit> --role esecutore --opencode-session <ses_...>
 nexgen-local sup costi <id>                                 # total, then by role and by unit
 nexgen-local sup window-check                               # opens a visible window and leaves it open
@@ -129,6 +139,98 @@ Linux" next to the gate table instead of a green run that proved nothing.
 
 Globs are shell-style (`fnmatch`), so `docs/*.md` and `03-INFRA/**` both work.
 
+## The review round
+
+`sup review` is the supervisor's turn, and it is a file, not a sentence in a
+terminal. Each call writes one round, numbered from 1 and never rewritten:
+`45-revisione-<unit>-<round>.md` carries the verdict, the head it judged, the
+verdict of the last collection on that head, and either the reason or the
+corrections.
+
+`--approve "<reason>"` is accepted only when the engine's last `sup collect`
+said PASS **and** the unit's branch still points at the commit that collection
+judged. A branch that moved is refused with both hashes, because an approval
+must name a commit a person could read. The round records the full head, so a
+later move is visible instead of inferred. A collection journal that predates
+the head field gets the head registered at the approval, and the event says so
+(`head_registered`).
+
+`--rework <file>` writes a RIMANDA round and sends the corrections into the
+executor's own session with the same mechanism as `sup run`: `opencode run -s
+<session>` when the session is idle, `unit_queued` with the round when it is
+busy, and a refusal when the task has no session at all. The command line
+carries a pointer to the review file, never its text. The review round is
+written before the delivery: corrections exist even when the session cannot be
+reached, and the error says so.
+
+`sup status` shows, per unit, the review round, whether it is approved, and the
+published head with its branch.
+
+## Publishing
+
+`sup publish <id> <unit> --repo <checkout> --branch <branch> [--remote origin]
+[--push | --push-with "<command>"]` is the only push in the engine, and it
+happens after every refusal that can be decided without touching anything:
+
+| refusal | when |
+|---|---|
+| `non approvata` | the last review round is not an APPROVA |
+| `cambiata dopo l'approvazione` | the unit's branch moved since the approval |
+| `checkout inesistente` / `non è un repository git` | `--repo` is not a checkout |
+| `copia dell'unità` | `--repo` is the unit's own working copy |
+| `il checkout è su …, non su <branch>` | the owner's checkout is elsewhere |
+| `checkout sporco` | uncommitted work in the owner's checkout, named |
+| `bump di versione` | a commit touches `VERSION` or `CHANGELOG.md`, **even inside the unit's boundary** |
+| `servirebbe un force-push: il motore non lo fa mai` | the fetched remote branch is not an ancestor of the owner's head |
+| `i cancelli del motore, rieseguiti ora, danno FAIL` | the gates fail on the interval, named line by line |
+| `conflitto` | a cherry-pick conflicts; the files are named and the checkout goes back |
+
+The order is deliberate: the cheap and decisive refusals come first, and the
+gates re-run on the interval before the first cherry-pick, so a failing gate
+leaves the owner's checkout exactly as it was. The forward-only question is
+asked before the cherry-pick as well, by comparing the fetched remote branch
+with the owner's current head, which is the same question for the new head.
+
+Publication replays the unit's commits one at a time, oldest first, with `git
+cherry-pick`, so the order is preserved and the signature follows the owner's
+own repository configuration: when `commit.gpgsign` is on, the published commits
+are signed because the owner's git signs them, never because the engine invents
+a key. `sup publish` prints `commit.gpgsign` and the `%G?` mark of every
+published commit, so "firmato" is a fact a reviewer reads rather than assumes.
+No tag is ever created, and no option of force exists in any code path.
+
+A conflict runs `git cherry-pick --abort` and, if the head still moved, resets
+the checkout to the commit publish found there; the refusal names the files in
+conflict and says the checkout went back. A unit already published at the same
+head is refused rather than replayed, because a second replay would double its
+commits.
+
+Without `--push` or `--push-with`, publish stops after the local cherry-pick and
+prints the one command that remains. `--push` runs `git push <remote> <branch>`.
+`--push-with "<command>"` runs the owner's own publishing command with the
+engine's launch rules (`nexgen_core.processes`, argv, no shell) inside the
+owner's checkout, and its exit code decides: a failure is reported as
+`pubblicazione dichiarata non riuscita` and the journal keeps `pushed: false`.
+A declared command containing `--force`, `--force-with-lease`, `--mirror` or
+`--delete` is refused before it runs.
+
+The push goes to the remote the checkout already shares history with, which is
+what `origin` is. A shallow checkout cannot seed a different, empty remote: git
+itself refuses (`Failed to traverse parents`, then `shallow update not allowed`),
+and that is a property of the clone, not of the engine.
+
+## What the engine refuses to execute
+
+An executor's report, a supervisor's corrections, or a command may ask for a
+force-push, a tag, a version bump or a change to an existing test. The engine
+does none of them and does not read intent: it looks for a short, declared list
+of phrases inside the report's request section (the heading of the engine's own
+template, `## Dubbi e richieste al proprietario`; the whole text when there is
+no such heading), and appends one line per unit, kind and source to
+`07-richieste-proprietario.md`. A report that only quotes the prohibition is not
+a request. `sup collect`, `sup review` and `sup publish` print the line they
+wrote, and the decision stays the owner's.
+
 ## Visible windows
 
 `supervision_windows` opens a terminal that runs a command and stays open; the
@@ -176,12 +278,15 @@ A source that does not answer still leaves a row, with `cost_usd: null` and a
 
 ## What these phases do not do
 
-- No review loop and no approval: the supervisor reads the package and decides
-  outside the engine. That cycle, and `sup publish`, belong to phase 3.
-- No LangGraph, no resume: the state is files, so a restart reads them.
+- No LangGraph graph and no `sup resume`: the review and publish steps are plain
+  functions and the state is the journal, so a restart reads what happened and
+  phase 3b can wrap the same functions without re-deciding anything.
 - No per-role permission profile: an executor runs with the owner's OpenCode
   configuration, which is why the engine never adds an auto-approval flag.
 - Only the OpenCode harness is measured. The scout (`agy`) and the supervisor
   CLI stay unmeasured and would be recorded as unavailable.
 - No cleanup of old task folders or unit copies: the retention decision (30
   days) belongs to the same rule as research sessions and is not implemented.
+- No tag and no release: `sup publish` never creates one, and a commit touching
+  `VERSION` or `CHANGELOG.md` is refused by name. A release stays
+  `nexgen release ship` from the owner's checkout.

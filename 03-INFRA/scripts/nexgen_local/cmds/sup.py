@@ -13,6 +13,7 @@ from pathlib import Path
 from .. import supervision_costs as costs
 from .. import supervision_gates as gates
 from .. import supervision_harness as harness
+from .. import supervision_publish as publish_module
 from .. import supervision_review as review
 from .. import supervision_requests as requests
 from .. import supervision_state as state
@@ -70,6 +71,7 @@ def register_sup(sub) -> None:
     collect.set_defaults(func=cmd_sup_collect)
 
     _register_review(sup_sub)
+    _register_publish(sup_sub)
 
 
 def _register_review(sup_sub) -> None:
@@ -81,6 +83,20 @@ def _register_review(sup_sub) -> None:
     choice.add_argument("--approve", metavar="MOTIVO", default=None, help="approva l'unità raccolta e scrivi il perché")
     choice.add_argument("--rework", metavar="FILE", default=None, help="manda le correzioni all'esecutore nella sua sessione")
     review_verb.set_defaults(func=cmd_sup_review)
+
+
+def _register_publish(sup_sub) -> None:
+    """The publishing verb: replay the approved commits, then optionally push forward once."""
+    publish = sup_sub.add_parser("publish", help="applica i commit approvati sul ramo del proprietario, mai con forza")
+    publish.add_argument("id", help="id del compito")
+    publish.add_argument("unit", help="nome dell'unità")
+    publish.add_argument("--repo", required=True, help="checkout del proprietario su cui applicare i commit")
+    publish.add_argument("--branch", required=True, help="ramo del checkout su cui applicare i commit")
+    publish.add_argument("--remote", default="origin", help="remoto da interrogare e su cui spingere")
+    how = publish.add_mutually_exclusive_group()
+    how.add_argument("--push", action="store_true", help="spinge il ramo in avanti dopo il cherry-pick")
+    how.add_argument("--push-with", metavar="COMANDO", default="", help="spinge con il comando dichiarato dal proprietario")
+    publish.set_defaults(func=cmd_sup_publish)
 
 
 def cmd_sup_start(args: argparse.Namespace) -> int:
@@ -262,6 +278,33 @@ def cmd_sup_review(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_sup_publish(args: argparse.Namespace) -> int:
+    """Replay the approved unit on the owner's branch and say what happened to the push."""
+    try:
+        result = publish_module.publish(
+            args.id, args.unit, repo=args.repo, branch=args.branch, remote=args.remote,
+            push=args.push, push_with=args.push_with,
+        )
+    except SupervisionError as exc:
+        print(f"nexgen-local: {exc}", file=sys.stderr)
+        return 1
+    print(f"unità {result['unit']} · {len(result['commits'])} commit su {result['branch']} in {result['repo']}")
+    for commit in result["commits"]:
+        print(f"{commit['published'][:12]} <- {commit['source'][:12]} · {commit['subject']}")
+    print(result["signing"])
+    if result["pushed"]:
+        print(f"spinta eseguita: {result['command']}")
+        return 0
+    if result["command"]:
+        print(f"pubblicazione dichiarata non riuscita: `{result['command']}` è fallito")
+        print(_tail(result["output"]))
+        return 1
+    print("nessuna spinta: i commit sono sul ramo locale, il remoto non è stato toccato")
+    print(f"resta da fare: `git push {result['remote']} {result['branch']}` dal checkout, oppure "
+          "`sup publish ... --push` (o `--push-with \"<comando>\"`)")
+    return 0
+
+
 def _delivery_line(delivery: dict) -> str:
     """Where the corrections went: into the session, into its queue, or nowhere."""
     if delivery["mode"] == "queued":
@@ -274,6 +317,11 @@ def _delivery_line(delivery: dict) -> str:
 def _request_line(hit: dict) -> str:
     """One request the engine will not execute, as it goes to the owner's file."""
     return f"{hit['kind']} · «{hit['sentence']}» (scritta in {requests.FILE})"
+
+
+def _tail(text: str, limit: int = 1200) -> str:
+    """The end of a command's output, where the reason of a failure lives."""
+    return (text or "").strip()[-limit:]
 
 
 def _list_tasks() -> int:
@@ -301,6 +349,11 @@ def _unit_line(unit: dict) -> str:
         parts.append(str(unit["verdict"]))
     parts.append(f"giro {unit.get('review_round') or 0}")
     parts.append("approvata" if unit.get("approved") else "non approvata")
+    if unit.get("published"):
+        head = str(unit.get("published_head") or "")[:8]
+        where = str(unit.get("published_branch") or "")
+        pushed = "spinta" if unit.get("published_pushed") else "solo locale"
+        parts.append(f"pubblicata {head} su {where} ({pushed})")
     cost = unit.get("cost_usd")
     parts.append(f"{cost:.4f} $" if isinstance(cost, (int, float)) else "costo non disponibile")
     return " · ".join(parts)
