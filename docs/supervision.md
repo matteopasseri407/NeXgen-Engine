@@ -75,9 +75,14 @@ own `config.worktree`. A push from the copy fails with
 keeps its real remote. Shared git hooks are never touched: they live in the
 common directory and stay exactly as the owner installed them.
 
-The refs of every remote are read with `git ls-remote` when the unit is created
-and written into the journal. `sup collect` reads them again and compares: a
-remote that moved, or one that cannot be read, is a FAIL, never an assumption.
+The fetch URL of every remote is written into the journal when the unit is
+created, and its refs are read with `git ls-remote` on that URL. `sup collect`
+asks two questions: are the creation's remotes still configured with the same
+fetch URL, and does any remote ref point at a commit of this unit's
+`base..head`? A removed or re-pointed remote is a FAIL named after it, a pushed
+commit is a FAIL named after the ref that carries it, and a remote branch that
+advanced for another reason (another unit was published) is not a failure: the
+gate looks for this unit's own commits, not for a world that stood still.
 
 Cleanup stays manual and explicit: `git worktree remove <path>` and
 `git branch -D sup/<task>/<unit>` from the repository.
@@ -122,7 +127,7 @@ not evidence; every line below is read from git or run by the engine.
 | `integrità dei test` | an existing test was deleted, shrunk or skipped (`nexgen_core/discipline/integrity.py`, reused) |
 | `prova per commit` | a `fix:` commit has no test that fails on its parent (`nexgen_core/discipline/regress.py`, reused) |
 | `verifica indipendente` | the declared command is missing, or exits non-zero, run by the engine with its own launch rules |
-| `remoto intatto` | a remote's refs differ from the creation snapshot, or cannot be read |
+| `remoto intatto` | a remote of the creation is gone or points at another fetch URL, or one of its refs carries a commit of the unit's interval (the unit pushed); a branch that advanced for another reason is not a failure |
 | `albero pulito` | the unit's copy has uncommitted work |
 
 The verdict is PASS only when every line is. The package

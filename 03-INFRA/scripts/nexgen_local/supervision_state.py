@@ -300,6 +300,7 @@ def _fold_event(record: dict, row: dict, event: str) -> None:
             "allow": [str(item) for item in row.get("allow") or []],
             "verify": str(row.get("verify") or ""),
             "remotes": dict(row.get("remotes") or {}),
+            "remote_urls": dict(row.get("remote_urls") or {}),
         })
     elif event in ("unit_started", "unit_queued"):
         record.update({

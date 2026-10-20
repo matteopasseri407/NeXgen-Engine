@@ -170,7 +170,8 @@ def test_uncommitted_work_fails(task, repo, tmp_path):
     assert result["verdict"] == "FAIL"
 
 
-def test_a_remote_that_moves_fails(task, repo, tmp_path):
+def test_a_remote_that_advanced_for_another_reason_passes(task, repo, tmp_path):
+    """Un ramo remoto che si muove per conto suo non è la prova di una spinta dell'unità."""
     folder = _unit(task, repo, tmp_path)
     _commit(folder, "docs: aggiunge una riga", {"docs/guida.md": "# guida\n\nriga.\n"})
     repo.git("push", "-q", "origin", "main:refs/heads/da-fuori")
@@ -178,8 +179,49 @@ def test_a_remote_that_moves_fails(task, repo, tmp_path):
     result = gates.collect(task, "prova")
 
     remote = _gate(result, "remoto intatto")
+    assert remote.ok, remote.reason
+    assert "nessun ref remoto porta un commit dell'unità" in remote.reason
+    assert result["verdict"] == "PASS"
+
+
+def test_a_remote_removed_from_the_copy_fails_and_is_named(task, repo, tmp_path):
+    folder = _unit(task, repo, tmp_path)
+    _commit(folder, "docs: aggiunge una riga", {"docs/guida.md": "# guida\n\nriga.\n"})
+    git_in(folder, "remote", "remove", "origin")
+
+    result = gates.collect(task, "prova")
+
+    remote = _gate(result, "remoto intatto")
     assert not remote.ok
+    assert "remoti spariti" in remote.reason
     assert "origin" in remote.reason
+    assert result["verdict"] == "FAIL"
+
+
+def test_a_remote_whose_url_changed_fails_and_names_it(task, repo, tmp_path):
+    folder = _unit(task, repo, tmp_path)
+    _commit(folder, "docs: aggiunge una riga", {"docs/guida.md": "# guida\n\nriga.\n"})
+    git_in(folder, "remote", "set-url", "origin", str(tmp_path / "altro.git"))
+
+    result = gates.collect(task, "prova")
+
+    remote = _gate(result, "remoto intatto")
+    assert not remote.ok
+    assert "URL di fetch cambiato" in remote.reason
+    assert "origin" in remote.reason
+    assert result["verdict"] == "FAIL"
+
+
+def test_a_unit_commit_that_reached_a_remote_fails_and_names_the_ref(task, repo, tmp_path):
+    folder = _unit(task, repo, tmp_path)
+    _commit(folder, "docs: aggiunge una riga", {"docs/guida.md": "# guida\n\nriga.\n"})
+    git_in(folder, "push", "-q", str(repo.bare), "HEAD:refs/heads/fuga")
+
+    result = gates.collect(task, "prova")
+
+    remote = _gate(result, "remoto intatto")
+    assert not remote.ok
+    assert "origin/fuga" in remote.reason
     assert result["verdict"] == "FAIL"
 
 

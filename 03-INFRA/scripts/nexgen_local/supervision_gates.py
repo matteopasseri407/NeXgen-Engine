@@ -28,7 +28,7 @@ from . import supervision_costs as costs
 from . import supervision_requests as requests_module
 from . import supervision_state as state
 from .supervision_state import SupervisionError
-from .supervision_worktree import remote_refs
+from .supervision_worktree import refs_at, remote_urls
 
 #: The declared budget for the executor's own verification command.
 VERIFY_TIMEOUT_S = 600.0
@@ -71,7 +71,7 @@ def collect(task_id: str, unit: str) -> dict:
     except (GitError, ConfigError) as exc:
         raise SupervisionError(f"cancelli non eseguibili su {folder}: {exc}") from exc
     clean = _clean_tree_gate(folder)
-    remote = _remote_gate(folder, record.get("remotes") or {})
+    remote = _remote_gate(folder, record, base, head)
     text = diff_text(folder, base, head)
     results = [
         _scope_gate(files, scope),
@@ -181,18 +181,54 @@ def _porcelain_path(line: str) -> str:
     return line[3:] if len(line) > 3 else line.strip()
 
 
-def _remote_gate(folder: Path, before: dict) -> GateResult:
-    """The refs the unit's base was taken from, compared with the refs now."""
-    now = remote_refs(folder)
-    if not now:
-        return GateResult("remoto intatto", True, "nessun remoto configurato")
-    unreadable = [f"{name}: {refs['error']}" for name, refs in now.items() if refs.get("error")]
+def _remote_gate(folder: Path, record: dict, base: str, head: str) -> GateResult:
+    """The remotes of the creation, and whether any of their refs carries a commit of this unit.
+
+    A remote that disappeared or changed its fetch URL is a FAIL, because that
+    is how a push is hidden. A remote branch that advanced for another reason
+    (another unit was published) is not: the question is whether *this unit's*
+    commits reached a remote, and it is asked of the URLs written at creation,
+    which a unit cannot edit by removing or rewriting its own remote config.
+    """
+    saved = {str(name): str(url) for name, url in (record.get("remote_urls") or {}).items()}
+    now = remote_urls(folder)
+    if saved:
+        missing = sorted(name for name in saved if not now.get(name))
+        if missing:
+            return GateResult("remoto intatto", False, "remoti spariti dalla copia: " + ", ".join(missing))
+        changed = sorted(name for name in saved if now.get(name) and now[name] != saved[name])
+        if changed:
+            return GateResult(
+                "remoto intatto", False,
+                "URL di fetch cambiato: " + ", ".join(f"{name} ({saved[name]} → {now[name]})" for name in changed),
+            )
+    else:
+        saved = now
+    if not saved:
+        return GateResult("remoto intatto", True, "nessun remoto configurato alla creazione")
+    mine = set(git(folder, "rev-list", f"{base}..{head}").split())
+    pushed: list[str] = []
+    unreadable: list[str] = []
+    for name in sorted(saved):
+        refs = refs_at(saved[name])
+        if "error" in refs:
+            unreadable.append(f"{name}: {refs['error']}")
+            continue
+        pushed += [
+            f"{name}/{ref.removeprefix('refs/heads/')} → {sha[:12]}"
+            for ref, sha in refs.items() if sha in mine
+        ]
     if unreadable:
         return GateResult("remoto intatto", False, "non verificabile, remoto non leggibile: " + "; ".join(unreadable))
-    if before == now:
-        return GateResult("remoto intatto", True, f"{len(now)} remoti, refs identici alla creazione")
-    moved = sorted(name for name in set(before) | set(now) if before.get(name) != now.get(name))
-    return GateResult("remoto intatto", False, "refs cambiati su: " + ", ".join(moved))
+    if pushed:
+        return GateResult(
+            "remoto intatto", False,
+            "l'unità ha spinto: " + ", ".join(sorted(pushed)),
+        )
+    return GateResult(
+        "remoto intatto", True,
+        f"{len(saved)} remoti, nessun ref remoto porta un commit dell'unità",
+    )
 
 
 def _verify_gate(folder: Path, command: str) -> GateResult:

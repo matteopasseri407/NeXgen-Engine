@@ -37,28 +37,45 @@ def worktree_path(task_id: str, unit: str) -> Path:
     return state.open_task(task_id) / f"{UNITS_DIR}-{state.slug(unit)}"
 
 
+def remote_urls(root: Path) -> dict:
+    """Every remote's fetch URL as git reports it now; one without a URL is empty, not absent.
+
+    The URL is read from the config directly: after a `git remote remove` in a
+    worktree whose per-worktree `pushurl` still exists, `git remote get-url`
+    prints the remote's own name instead of failing, which would turn a removed
+    remote into a remote that looks present.
+    """
+    return {
+        name: git(root, "config", "--get", f"remote.{name}.url", check=False).strip()
+        for name in git(root, "remote").split()
+    }
+
+
+def refs_at(url: str, *, timeout: float = REMOTE_TIMEOUT_S) -> dict:
+    """Every ref the remote at `url` advertises now; an unreachable one says why, not nothing."""
+    try:
+        done = subprocess.run(
+            ["git", "ls-remote", url],
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+            stdin=subprocess.DEVNULL, timeout=timeout, check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return {"error": type(exc).__name__}
+    if done.returncode:
+        reason = (done.stderr or "").strip().splitlines()
+        return {"error": (reason[-1] if reason else f"exit {done.returncode}")[:200]}
+    return {
+        line.split("\t")[1]: line.split("\t")[0]
+        for line in done.stdout.splitlines() if "\t" in line
+    }
+
+
 def remote_refs(root: Path, *, timeout: float = REMOTE_TIMEOUT_S) -> dict:
-    """Every remote's refs as git reports them now; an unreachable remote says why, not nothing."""
-    listing: dict = {}
-    for name in git(root, "remote").split():
-        try:
-            done = subprocess.run(
-                ["git", "-C", str(root), "ls-remote", name],
-                capture_output=True, text=True, encoding="utf-8", errors="replace",
-                stdin=subprocess.DEVNULL, timeout=timeout, check=False,
-            )
-        except (OSError, subprocess.TimeoutExpired) as exc:
-            listing[name] = {"error": type(exc).__name__}
-            continue
-        if done.returncode:
-            reason = (done.stderr or "").strip().splitlines()
-            listing[name] = {"error": (reason[-1] if reason else f"exit {done.returncode}")[:200]}
-            continue
-        listing[name] = {
-            line.split("\t")[1]: line.split("\t")[0]
-            for line in done.stdout.splitlines() if "\t" in line
-        }
-    return listing
+    """Every remote's refs as git reports them now, read through its own fetch URL."""
+    return {
+        name: refs_at(url, timeout=timeout)
+        for name, url in remote_urls(root).items()
+    }
 
 
 def create(
@@ -102,6 +119,7 @@ def create(
         "allow": scope,
         "verify": verify,
         "remotes": snapshot,
+        "remote_urls": remote_urls(root),
     }
     state.append_event(task_id, "unit_created", **record)
     return record
