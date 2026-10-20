@@ -250,8 +250,12 @@ conflict and says the checkout went back. A unit already pushed at the same
 head is refused rather than replayed, because a second replay would double its
 commits. A unit applied locally but never pushed (`pushed: false`) is the
 exception: `--push` or `--push-with` checks that the branch still contains the
-published commits and pushes, without a second cherry-pick. The same command
-without a push flag refuses with the flag to add.
+published commits and pushes, without a second cherry-pick. That push sends
+exactly the published head (`<head>:refs/heads/<branch>`), so a commit the owner
+adds to the branch afterwards stays local: the engine never publishes what it
+did not review. A branch rewritten so that it no longer contains the published
+head is refused by name. The same command without a push flag refuses with the
+flag to add.
 
 Without `--push` or `--push-with`, publish stops after the local cherry-pick and
 prints the one command that remains. `--push` runs `git push --no-follow-tags

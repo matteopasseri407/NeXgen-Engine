@@ -400,6 +400,21 @@ def test_a_local_only_publication_is_pushed_without_replaying_it(task, repo, tmp
     assert last["pushed"] is True
 
 
+def test_a_local_only_publication_pushes_the_published_head_not_a_later_commit(task, repo, tmp_path):
+    """Il motore non pubblica ciò che non ha revisionato: il commit aggiunto dopo resta locale."""
+    _approved_unit(task, repo, tmp_path)
+    publish_module.publish(task, "prova", repo=repo.path, branch="main")
+    published_head = _main_of(repo.path)
+    added = _commit(repo.path, "docs: un commit del proprietario", {"docs/dopo.md": "dopo\n"})
+
+    result = publish_module.publish(task, "prova", repo=repo.path, branch="main", push=True)
+
+    assert result["pushed"] is True
+    assert _remote_main(repo) == published_head, "il remoto riceve la head pubblicata, non quella corrente"
+    assert _main_of(repo.path) == added, "il commit aggiunto resta sul ramo locale"
+    assert "docs: un commit del proprietario" not in git_in(repo.bare, "log", "--format=%s", "main").stdout
+
+
 def test_a_local_only_publication_without_push_is_refused_with_the_hint(task, repo, tmp_path):
     _approved_unit(task, repo, tmp_path)
     publish_module.publish(task, "prova", repo=repo.path, branch="main")

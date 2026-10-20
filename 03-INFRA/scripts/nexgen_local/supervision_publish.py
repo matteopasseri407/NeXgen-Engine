@@ -103,8 +103,10 @@ def _push_local_publication(
 
     A publication that failed to push kept its commits on the owner's branch and
     recorded `pushed: false`; the CLI tells the owner to push it later. Replaying
-    it would double the commits, so this path only checks that the published
-    commits are still in the branch's history and then pushes.
+    it would double the commits, so this path checks that the published commits
+    are still in the branch's history and pushes exactly the published head: a
+    commit the owner added afterwards stays local, because the engine never
+    publishes what it did not review.
     """
     if record.get("published_pushed"):
         _refuse_republished(name, record, unit_head)
@@ -121,6 +123,9 @@ def _push_local_publication(
             + ", ".join(sha[:12] for sha in missing)
             + ". Il cherry-pick non si rifà: ripristina il ramo o riparti da una nuova approvazione"
         )
+    # The commits on the owner's branch are the cherry-picked ones, not the unit's
+    # own commits: the published tip is the last of the journal's published list.
+    published_tip = published[-1]
     applied = [
         {"source": sha, "published": sha, "subject": git(root, "log", "-1", "--format=%s", sha).strip()}
         for sha in published
@@ -132,7 +137,7 @@ def _push_local_publication(
     }
     try:
         result["pushed"], result["command"], result["output"] = _deliver(
-            root, remote, branch, push, push_with, head,
+            root, remote, branch, push, push_with, published_tip, push_source=published_tip,
         )
     except PublishError as exc:
         result["command"] = push_with
@@ -300,17 +305,24 @@ def _signing(root: Path, applied: list[dict]) -> str:
 
 def _deliver(
     root: Path, remote: str, branch: str, push: bool, push_with: str, published_head: str,
+    *, push_source: str = "",
 ) -> tuple[bool, str, str]:
-    """The only push there is: plain and forward, or the owner's own declared command, checked after."""
+    """The only push there is: plain and forward, or the owner's own declared command, checked after.
+
+    `push_source` names the commit to send instead of the branch's own head: a
+    local-only publication must send exactly the head it published, never a
+    commit the owner added to the branch afterwards.
+    """
     if push_with:
         _refuse_force(push_with)
         return _push_and_check(root, remote, branch, published_head, command=push_with)
     if not push:
         return False, "", ""
+    target = f"{push_source}:refs/heads/{branch}" if push_source else branch
     return _push_and_check(
         root, remote, branch, published_head,
-        argv=["git", "-C", str(root), "push", "--no-follow-tags", remote, branch],
-        command=f"git push --no-follow-tags {remote} {branch}",
+        argv=["git", "-C", str(root), "push", "--no-follow-tags", remote, target],
+        command=f"git push --no-follow-tags {remote} {target}",
     )
 
 
