@@ -18,4 +18,10 @@ uvicorn[standard]==0.34.0
 python-multipart==0.0.32
 rapidocr==3.9.1
 onnxruntime==1.27.0
-Pillow==12.3.0
+# Pillow 13.0.0 (2026-10-20): 12.3.0 was hit by eight CVEs published that day
+# (CVE-2026-112395/112397/112400/112404/112895/112896/112897/112899), all
+# fixed in 13.0.0. Validated in a clean Python 3.12 venv: resolves with
+# rapidocr 3.9.1, the API test suite is green, a live /ocr round-trip through
+# the real RapidOCR engine on a synthetic PNG succeeded, and pip-audit on this
+# pin set reports no known vulnerabilities.
+Pillow==13.0.0
