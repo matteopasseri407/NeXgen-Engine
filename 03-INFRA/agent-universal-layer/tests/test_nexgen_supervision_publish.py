@@ -286,6 +286,80 @@ def test_a_push_with_command_that_would_force_is_refused_before_it_runs(task, re
     assert not marker.exists(), "il comando non è stato eseguito"
 
 
+@pytest.mark.parametrize("command", [
+    "git push origin +developer",
+    "git push origin :developer",
+    "git push --force-with-lease=developer origin main",
+    "git push -vf origin",
+])
+def test_force_by_another_spelling_is_refused_before_it_runs(command):
+    """`+refspec`, `:refspec`, `--force-with-lease=<ref>` and bundled short flags are all force."""
+    with pytest.raises(publish_module.PublishError, match="force-push: il motore non lo fa mai"):
+        publish_module._refuse_force(command)
+
+
+def test_a_default_push_does_not_follow_tags(task, repo, tmp_path):
+    """`push.followTags` would send annotated tags with a plain branch push: the engine says no."""
+    _approved_unit(task, repo, tmp_path)
+    git_in(repo.path, "tag", "-a", "v-base", "-m", "un tag locale")
+    git_in(repo.path, "config", "push.followTags", "true")
+
+    result = publish_module.publish(
+        task, "prova", repo=repo.path, branch="main", remote="origin", push=True,
+    )
+
+    assert result["pushed"] is True
+    remote_tags = git_in(tmp_path, "ls-remote", "--tags", str(repo.bare)).stdout
+    assert "refs/tags/v-base" not in remote_tags, "il tag resta locale"
+
+
+def _declared_script(tmp_path, name: str, body: str, *args: str) -> str:
+    """A declared push command whose force or tag push is hidden inside a script, not in its tokens."""
+    script = tmp_path / name
+    script.write_text(body, encoding="utf-8")
+    quoted = [f'"{sys.executable}"', f'"{script}"', *[f'"{arg}"' for arg in args]]
+    return " ".join(quoted)
+
+
+def test_a_declared_push_that_forces_history_is_caught_after_it_ran(task, repo, tmp_path):
+    _approved_unit(task, repo, tmp_path)
+    command = _declared_script(tmp_path, "forza.py", (
+        "import subprocess, sys\n"
+        "repo = sys.argv[1]\n"
+        "done = subprocess.run(['git', '-C', repo, 'push', '--force', 'origin', 'HEAD~1:main'], "
+        "capture_output=True, text=True)\n"
+        "sys.exit(done.returncode)\n"
+    ), str(repo.path))
+
+    with pytest.raises(publish_module.PublishError, match="ha forzato la storia") as caught:
+        publish_module.publish(task, "prova", repo=repo.path, branch="main", push_with=command)
+
+    assert "main" in str(caught.value)
+    assert _remote_main(repo) != _main_of(repo.path), "la forzatura è arrivata al remoto e il motore l'ha vista"
+    event = [row for row in state.read_events(task) if row.get("event") == "unit_published"][-1]
+    assert event["pushed"] is False
+    assert "forzato" in event["output"]
+
+
+def test_a_declared_push_that_pushes_a_tag_is_caught_after_it_ran(task, repo, tmp_path):
+    _approved_unit(task, repo, tmp_path)
+    command = _declared_script(tmp_path, "tag.py", (
+        "import subprocess, sys\n"
+        "repo = sys.argv[1]\n"
+        "for args in (['push', 'origin', 'main'], ['tag', 'v-fuga'], ['push', 'origin', 'v-fuga']):\n"
+        "    done = subprocess.run(['git', '-C', repo, *args], capture_output=True, text=True)\n"
+        "    if done.returncode:\n"
+        "        sys.exit(done.returncode)\n"
+    ), str(repo.path))
+
+    with pytest.raises(publish_module.PublishError, match="creato o spinto tag") as caught:
+        publish_module.publish(task, "prova", repo=repo.path, branch="main", push_with=command)
+
+    assert "v-fuga" in str(caught.value)
+    remote_tags = git_in(tmp_path, "ls-remote", "--tags", str(repo.bare)).stdout
+    assert "refs/tags/v-fuga" in remote_tags
+
+
 def test_a_push_with_command_that_cannot_start_still_leaves_the_publication_on_file(task, repo, tmp_path):
     """I commit sono sul ramo anche quando la spinta non parte: il diario deve dirlo."""
     _approved_unit(task, repo, tmp_path)
@@ -324,7 +398,7 @@ def test_the_cli_prints_the_published_hashes_and_the_signature(task, repo, tmp_p
     out = capsys.readouterr().out
     assert "unità prova · 1 commit su main" in out
     assert "docs: una riga nuova" in out
-    assert "spinta eseguita: git push origin main" in out
+    assert "spinta eseguita: git push --no-follow-tags origin main" in out
     assert "commit.gpgsign = false" in out
 
 
