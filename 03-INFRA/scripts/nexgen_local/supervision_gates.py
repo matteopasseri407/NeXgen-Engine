@@ -18,6 +18,7 @@ from nexgen_core.discipline.gitutil import GitError, changes as changed_files, d
 from nexgen_core.discipline.integrity import check_test_integrity
 from nexgen_core.processes import no_window_kwargs, split_command_line, windows_command_argv
 
+from . import supervision_costs as costs
 from . import supervision_state as state
 from .supervision_state import SupervisionError
 from .supervision_worktree import remote_refs
@@ -230,8 +231,7 @@ def _package_text(
         f"- base: {base[:12]}",
         f"- head: {head[:12]}",
         f"- verdetto: {verdict}",
-        f"- costo: {_cost_line(rows, unit)}",
-        "",
+        f"- costo: {_cost_line(rows, unit)}",        "",
         "## Cancelli",
         "",
         "| cancello | esito | motivo |",
@@ -272,14 +272,40 @@ def _cell(text: str) -> str:
 
 
 def _cost_line(rows: list[dict], unit: str) -> str:
-    """What this unit cost, from the row its attach wrote; never a guessed number."""
+    """What the unit cost, measured when it is collected: the number a reviewer needs.
+
+    The attach wrote its row when the session had just started, so its cost is
+    the cost of nothing. The register keeps that event; the package asks the
+    harness again, and when it cannot answer it says so instead of showing zero.
+    """
     mine = [row for row in rows if row.get("unit") == unit]
     if not mine:
         return "nessuna sessione agganciata"
-    row = mine[-1]
-    cost = row.get("cost_usd")
-    money = f"{cost:.4f} $" if isinstance(cost, (int, float)) else f"non disponibile ({row.get('note', '')})"
+    session = str(mine[-1].get("session") or "")
+    if not session:
+        return "nessuna sessione agganciata"
+    try:
+        facts = session_facts(session)
+    except costs.CostError as exc:
+        return f"non misurato alla raccolta ({exc}) · sessione {session}"
+    cost = facts.cost_usd
+    money = f"{cost:.4f} $" if isinstance(cost, (int, float)) else "costo non disponibile"
+    duration = f"{facts.duration_s:.1f}s · " if facts.duration_s is not None else ""
     return (
-        f"{money} · sessione {row.get('session', '')} · "
-        f"{row.get('tokens_in') or 0} token in, {row.get('tokens_out') or 0} token out"
+        f"{money} ({_at_collection(rows, unit, cost)}) · sessione {session} · {duration}"
+        f"{facts.tokens_in or 0} token in, {facts.tokens_out or 0} token out"
     )
+
+
+def session_facts(session_id: str) -> costs.SessionFacts:
+    """The session as the harness reports it now; a broken source raises CostError."""
+    return costs.facts_from_export(costs.export_session(session_id))
+
+
+def _at_collection(rows: list[dict], unit: str, cost: float | None) -> str:
+    """Say whether the number grew since the attach, so nobody reads a stale figure."""
+    attached = [row.get("cost_usd") for row in rows if row.get("unit") == unit]
+    first = next((value for value in attached if isinstance(value, (int, float))), None)
+    if first is None or cost is None or first == cost:
+        return "alla raccolta"
+    return f"alla raccolta, {first:.4f} $ all'aggancio"

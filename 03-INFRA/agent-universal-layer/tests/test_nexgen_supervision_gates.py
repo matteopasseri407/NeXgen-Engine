@@ -204,20 +204,48 @@ def test_a_unit_without_a_verification_command_is_not_verified(task, repo, tmp_p
     assert "nessun comando di verifica" in verify.reason
 
 
-def test_the_package_carries_the_cost_of_the_attached_session(task, repo, tmp_path, lane):
+def test_the_package_carries_the_cost_measured_at_collection(task, repo, tmp_path, lane, monkeypatch):
     folder = _unit(task, repo, tmp_path)
     _commit(folder, "docs: aggiunge una riga", {"docs/guida.md": "# guida\n\nriga.\n"})
     state.append_jsonl(
         lane / task / state.COSTS_FILE,
-        {"unit": "prova", "role": "esecutore", "session": "ses_uno", "cost_usd": 0.25,
-         "tokens_in": 100, "tokens_out": 10},
+        {"unit": "prova", "role": "esecutore", "session": "ses_uno", "cost_usd": 0.0,
+         "tokens_in": 0, "tokens_out": 0},
+    )
+    monkeypatch.setattr(
+        gates, "session_facts",
+        lambda session: gates.costs.SessionFacts(
+            cost_usd=0.25, tokens_in=100, tokens_out=10,
+            created_ms=1_000_000, updated_ms=1_060_000,
+        ),
     )
 
     result = gates.collect(task, "prova")
 
     package = Path(result["package"]).read_text(encoding="utf-8")
-    assert "0.2500 $" in package
+    assert "0.2500 $ (alla raccolta, 0.0000 $ all'aggancio)" in package
     assert "ses_uno" in package
+    assert "60.0s" in package
+
+
+def test_a_cost_that_cannot_be_measured_at_collection_is_not_zero(task, repo, tmp_path, lane, monkeypatch):
+    folder = _unit(task, repo, tmp_path)
+    _commit(folder, "docs: aggiunge una riga", {"docs/guida.md": "# guida\n\nriga.\n"})
+    state.append_jsonl(
+        lane / task / state.COSTS_FILE,
+        {"unit": "prova", "role": "esecutore", "session": "ses_uno", "cost_usd": 0.0},
+    )
+
+    def failing(session):
+        raise gates.costs.CostError("l'export non risponde")
+
+    monkeypatch.setattr(gates, "session_facts", failing)
+
+    result = gates.collect(task, "prova")
+
+    package = Path(result["package"]).read_text(encoding="utf-8")
+    assert "non misurato alla raccolta (l'export non risponde)" in package
+    assert "0.0000 $" not in package
 
 
 def test_the_diff_in_the_package_is_cut_with_the_cut_declared(task, repo, tmp_path):
