@@ -15,6 +15,7 @@ BASE_FILES = {
     "README.md": "# prova\n",
     "docs/guida.md": "# guida\n\nprima riga.\n",
     "module.py": "def value():\n    return 1\n",
+    "pytest.ini": "[pytest]\ntestpaths = tests\npythonpath = .\n",
     "tests/test_sample.py": (
         "from module import value\n"
         "\n"

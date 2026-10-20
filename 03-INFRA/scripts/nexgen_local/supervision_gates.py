@@ -28,6 +28,7 @@ from nexgen_core.processes import no_window_kwargs, split_command_line, windows_
 
 from . import supervision_costs as costs
 from . import supervision_gitconfig as gitconfig
+from . import supervision_pytest as pytest_runs
 from . import supervision_requests as requests_module
 from . import supervision_state as state
 from .supervision_state import SupervisionError
@@ -43,8 +44,6 @@ WINDOWS_EXECUTABLE_SUFFIXES = (".exe", ".cmd", ".bat", ".com")
 #: A Python interpreter by name; its `-m` would put the working directory on `sys.path`.
 PYTHON_EXECUTABLE = re.compile(r"^python(\d+(\.\d+)*)?(\.exe)?$", re.IGNORECASE)
 PYTHON_LAUNCHER = re.compile(r"^py(\.exe)?$", re.IGNORECASE)
-#: Files that decide how pytest discovers and runs, named in the package for the reviewer.
-PYTEST_CONFIG_NAMES = ("pytest.ini", "tox.ini", "setup.cfg")
 #: The budget for re-running the touched test files to see what this platform skips.
 SKIP_TIMEOUT_S = 300.0
 #: Published identity a unit may never carry, unless its own scope says otherwise.
@@ -91,6 +90,7 @@ def collect(task_id: str, unit: str) -> dict:
         _integrity_gate(files, rules),
         _per_commit_gate(folder, rules, base, head),
         _verify_gate(folder, str(record.get("verify") or "")),
+        _collected_tests_gate(folder, base, head, files, surface),
         _git_config_gate(record, folder),
         remote,
         clean,
@@ -198,15 +198,7 @@ def _pytest_surface(files: list) -> list[str]:
     a unit may legitimately add a fixture. The package names them so a reviewer
     looks at them before saying PASS.
     """
-    found: set[str] = set()
-    for change in files:
-        for path in _touched(change):
-            name = Path(path).name
-            if name == "conftest.py" or name in PYTEST_CONFIG_NAMES:
-                found.add(path)
-            elif name == "pyproject.toml" and "[tool.pytest" in ((change.new or "") + (change.old or "")):
-                found.add(path)
-    return sorted(found)
+    return pytest_runs.surface(files)
 
 
 def _clean_tree_gate(folder: Path) -> GateResult:
@@ -358,6 +350,16 @@ def _verify_gate(folder: Path, command: str) -> GateResult:
             f"`{command}` esce con {done.returncode}: {_last_line(output)}", output,
         )
     return GateResult("verifica indipendente", True, f"`{command}` esce con 0", output)
+
+
+def _collected_tests_gate(folder: Path, base: str, head: str, files: list, surface: list[str]) -> GateResult:
+    """How many tests pytest collects now against the base: an AST count cannot see `__test__ = False`.
+
+    The count is taken in two exported copies of the interval, never in the unit's
+    own one, and both numbers are in the reason, so a FAIL says what was lost.
+    """
+    ok, reason = pytest_runs.check(folder, base, head, files, surface)
+    return GateResult("test raccolti", ok, reason)
 
 
 def _launch_argv(argv: list[str]) -> list[str]:

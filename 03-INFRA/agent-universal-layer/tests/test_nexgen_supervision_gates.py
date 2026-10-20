@@ -26,6 +26,7 @@ GATE_NAMES = (
     "integrità dei test",
     "prova per commit",
     "verifica indipendente",
+    "test raccolti",
     "configurazione git",
     "remoto intatto",
     "albero pulito",
@@ -623,3 +624,107 @@ def test_a_vanished_copy_is_refused(task, repo, tmp_path):
     with pytest.raises(state.SupervisionError, match="copia dell'unità sparita"):
         gates.collect(task, "prova")
 
+
+def test_a_module_that_turns_its_tests_off_fails_the_collected_count(task, repo, tmp_path):
+    """`__test__ = False` non tocca l'AST: i test ci sono ancora, pytest non ne raccoglie nessuno."""
+    folder = _unit(task, repo, tmp_path, allow=["**"])
+    _commit(folder, "test: spegne la raccolta", {
+        "tests/test_sample.py": (
+            "__test__ = False\n\nfrom module import value\n\n"
+            "def test_value():\n    assert value() == 1\n\n"
+            "def test_nome():\n    assert 'prova' == 'prova'\n"
+        ),
+    })
+
+    result = gates.collect(task, "prova")
+
+    gate = _gate(result, "test raccolti")
+    assert not gate.ok
+    assert "0 test" in gate.reason
+    assert "2" in gate.reason, "il motivo dice quanti test raccoglieva la base"
+    assert result["verdict"] == "FAIL"
+
+
+def test_a_test_moved_into_a_hidden_folder_fails_the_collected_count(task, repo, tmp_path):
+    """`tests/.hidden/` è un percorso di test per l'AST e una cartella che pytest salta."""
+    folder = _unit(task, repo, tmp_path, allow=["**"])
+    (folder / "tests" / ".hidden").mkdir()
+    git_in(folder, "mv", "tests/test_sample.py", "tests/.hidden/test_sample.py")
+    git_in(folder, "commit", "-q", "-m", "test: sposta in una cartella nascosta")
+
+    result = gates.collect(task, "prova")
+
+    gate = _gate(result, "test raccolti")
+    assert not gate.ok
+    assert "0 test" in gate.reason
+    assert result["verdict"] == "FAIL"
+
+
+def test_a_collect_ignore_in_a_conftest_fails_the_collected_count(task, repo, tmp_path):
+    """`collect_ignore` spegne un file senza toccarne i test: il conteggio AST non lo vede."""
+    folder = _unit(task, repo, tmp_path, allow=["**"])
+    _commit(folder, "test: ignora un file di test", {
+        "tests/conftest.py": "collect_ignore = ['test_sample.py']\n",
+    })
+
+    result = gates.collect(task, "prova")
+
+    gate = _gate(result, "test raccolti")
+    assert not gate.ok
+    assert "0 test" in gate.reason
+    assert "2" in gate.reason
+    assert result["verdict"] == "FAIL"
+
+
+def test_a_root_conftest_that_exits_fails_the_collected_count(task, repo, tmp_path):
+    """Un `conftest.py` di radice che esce con 0 non esegue niente: la raccolta non ha un numero."""
+    folder = _unit(task, repo, tmp_path, allow=["**"])
+    _commit(folder, "chore: un conftest che esce", {"conftest.py": "import sys\nsys.exit(0)\n"})
+
+    result = gates.collect(task, "prova")
+
+    gate = _gate(result, "test raccolti")
+    assert not gate.ok
+    assert "non ha risposto" in gate.reason
+    assert "2" in gate.reason, "il motivo dice quanti test raccoglieva la base"
+    assert result["verdict"] == "FAIL"
+
+
+def test_a_pytest_ini_that_prints_help_fails_the_collected_count(task, repo, tmp_path):
+    """`addopts = --help` esce con 0 senza raccogliere: il cancello della verifica lo chiamerebbe verde."""
+    folder = _unit(task, repo, tmp_path, allow=["**"])
+    _commit(folder, "chore: cambia la configurazione di pytest", {
+        "pytest.ini": "[pytest]\ntestpaths = tests\npythonpath = .\naddopts = --help\n",
+    })
+
+    result = gates.collect(task, "prova")
+
+    gate = _gate(result, "test raccolti")
+    assert not gate.ok
+    assert "non ha risposto" in gate.reason
+    assert result["verdict"] == "FAIL"
+
+
+def test_a_new_test_is_an_increase_and_does_not_fail(task, repo, tmp_path):
+    """Un test in più è normale: il cancello confronta, non impone l'uguaglianza."""
+    folder = _unit(task, repo, tmp_path, allow=["**"])
+    _commit(folder, "test: aggiunge un test", {"tests/test_nuovo.py": "def test_nuovo():\n    assert True\n"})
+
+    result = gates.collect(task, "prova")
+
+    gate = _gate(result, "test raccolti")
+    assert gate.ok, gate.reason
+    assert "3 test" in gate.reason
+    assert "2" in gate.reason
+    assert result["verdict"] == "PASS"
+
+
+def test_a_unit_that_touches_no_test_has_nothing_to_compare(task, repo, tmp_path):
+    folder = _unit(task, repo, tmp_path)
+    _commit(folder, "docs: aggiunge una riga", {"docs/guida.md": "# guida\n\nriga.\n"})
+
+    result = gates.collect(task, "prova")
+
+    gate = _gate(result, "test raccolti")
+    assert gate.ok, gate.reason
+    assert "niente da confrontare" in gate.reason
