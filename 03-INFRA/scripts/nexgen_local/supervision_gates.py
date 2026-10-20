@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import os
 import re
+import shutil
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -32,6 +33,10 @@ from .supervision_worktree import refs_at, remote_urls
 
 #: The declared budget for the executor's own verification command.
 VERIFY_TIMEOUT_S = 600.0
+#: Shell operators the verification command may not carry: it is one command, not a script.
+SHELL_OPERATORS = ("&&", "|", ";")
+#: Suffixes Windows tries for a bare name, in the order the loader tries them.
+WINDOWS_EXECUTABLE_SUFFIXES = (".exe", ".cmd", ".bat", ".com")
 #: The budget for re-running the touched test files to see what this platform skips.
 SKIP_TIMEOUT_S = 300.0
 #: The package carries at most this much diff; the cut is declared in the file.
@@ -236,17 +241,39 @@ def _remote_gate(folder: Path, record: dict, base: str, head: str) -> GateResult
 
 
 def _verify_gate(folder: Path, command: str) -> GateResult:
-    """The executor's declared command, run by the engine with its own launch rules."""
+    """The executor's declared command, run by the engine with its own launch rules.
+
+    Two things are refused before anything runs. The command is one command, not
+    a shell line: `&&`, `|` and `;` are not supported, and a verifier that needs
+    several steps writes a script. And the executable must not come from the
+    unit's own copy: Windows looks in the working directory before PATH, so a
+    `pytest.bat` dropped in the copy would answer for the real runner.
+    """
     if not command.strip():
         return GateResult(
             "verifica indipendente", False,
             "nessun comando di verifica dichiarato: senza, il motore non può dire verificato",
         )
-    argv = windows_command_argv(split_command_line(command))
+    argv = split_command_line(command)
+    shell = [token for token in argv if token in SHELL_OPERATORS]
+    if shell:
+        return GateResult(
+            "verifica indipendente", False,
+            f"il comando di verifica contiene {', '.join(shell)}: non passa da una shell. "
+            "Scrivi uno script o un solo comando",
+        )
+    inside = _executable_inside(argv, folder)
+    if inside is not None:
+        return GateResult(
+            "verifica indipendente", False,
+            f"l'eseguibile `{argv[0]}` della verifica sta dentro la copia dell'unità ({inside}): "
+            "un esecutore non può fornire il proprio verificatore. Usa un interprete o un runner fuori dalla copia",
+        )
     try:
         done = subprocess.run(
-            argv, cwd=folder, capture_output=True, text=True, encoding="utf-8", errors="replace",
-            stdin=subprocess.DEVNULL, timeout=VERIFY_TIMEOUT_S, check=False, **no_window_kwargs(),
+            windows_command_argv(argv), cwd=folder, capture_output=True, text=True,
+            encoding="utf-8", errors="replace", stdin=subprocess.DEVNULL,
+            timeout=VERIFY_TIMEOUT_S, check=False, **no_window_kwargs(),
         )
     except subprocess.TimeoutExpired:
         return GateResult("verifica indipendente", False, f"tempo massimo superato ({VERIFY_TIMEOUT_S:.0f}s)")
@@ -259,6 +286,31 @@ def _verify_gate(folder: Path, command: str) -> GateResult:
             f"`{command}` esce con {done.returncode}: {_last_line(output)}", output,
         )
     return GateResult("verifica indipendente", True, f"`{command}` esce con 0", output)
+
+
+def _executable_inside(argv: list[str], folder: Path) -> Path | None:
+    """The file the engine would run when the unit's own copy provides it, or None."""
+    if not argv:
+        return None
+    name = argv[0]
+    candidate = Path(name)
+    root = folder.resolve()
+    if candidate.is_absolute() or len(candidate.parts) > 1:
+        resolved = candidate if candidate.is_absolute() else (folder / candidate)
+        return resolved if _within(resolved, root) else None
+    local = [folder / name]
+    if os.name == "nt":
+        local += [folder / f"{name}{suffix}" for suffix in WINDOWS_EXECUTABLE_SUFFIXES]
+    for path in local:
+        if path.is_file():
+            return path
+    found = shutil.which(name)
+    return Path(found) if found and _within(Path(found), root) else None
+
+
+def _within(path: Path, root: Path) -> bool:
+    """True when `path` is inside `root`, with a different drive counting as outside."""
+    return Path(path).resolve().is_relative_to(root)
 
 
 def skipped_tests(folder: Path, files: list, *, timeout: float = SKIP_TIMEOUT_S) -> list[str]:

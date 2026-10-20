@@ -6,6 +6,7 @@ sta su PATH.
 """
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 
@@ -263,6 +264,47 @@ def test_a_unit_without_a_verification_command_is_not_verified(task, repo, tmp_p
     verify = _gate(result, "verifica indipendente")
     assert not verify.ok
     assert "nessun comando di verifica" in verify.reason
+
+
+def test_a_verification_command_with_a_shell_operator_is_refused(task, repo, tmp_path):
+    """Niente shell: `&&` non è supportato e il rifiuto arriva prima di eseguire."""
+    folder = _unit(task, repo, tmp_path, verify=f'"{sys.executable}" -c "print(1)" && echo fatto')
+    _commit(folder, "docs: aggiunge una riga", {"docs/guida.md": "# guida\n\nriga.\n"})
+
+    result = gates.collect(task, "prova")
+
+    verify = _gate(result, "verifica indipendente")
+    assert not verify.ok
+    assert "&&" in verify.reason
+    assert "uno script o un solo comando" in verify.reason
+    assert result["verdict"] == "FAIL"
+
+
+def test_a_verification_executable_inside_the_copy_is_refused(task, repo, tmp_path):
+    """Un esecutore non può fornire il proprio verificatore."""
+    folder = worktree.worktree_path(task, "prova")
+    _unit(task, repo, tmp_path, allow=["**"], verify=f'"{folder / "mio-verificatore"}" -c "print(1)"')
+    _commit(folder, "chore: aggiunge un verificatore finto", {"mio-verificatore": "print('verde')\n"})
+
+    result = gates.collect(task, "prova")
+
+    verify = _gate(result, "verifica indipendente")
+    assert not verify.ok
+    assert "dentro la copia" in verify.reason
+    assert result["verdict"] == "FAIL"
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows cerca l'eseguibile nella cartella prima del PATH")
+def test_a_batch_named_like_the_runner_inside_the_copy_is_refused(task, repo, tmp_path):
+    folder = worktree.worktree_path(task, "prova")
+    _unit(task, repo, tmp_path, allow=["**"], verify="mio-pytest -q")
+    _commit(folder, "chore: un pytest finto nella copia", {"mio-pytest.cmd": "@echo off\n"})
+
+    result = gates.collect(task, "prova")
+
+    verify = _gate(result, "verifica indipendente")
+    assert not verify.ok
+    assert "dentro la copia" in verify.reason
 
 
 def test_the_package_carries_the_cost_measured_at_collection(task, repo, tmp_path, lane, monkeypatch):

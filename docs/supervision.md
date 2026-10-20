@@ -134,7 +134,7 @@ not evidence; every line below is read from git or run by the engine.
 | `file vietati` | `VERSION`, `CHANGELOG.md` or `.github/**` changed and the boundary does not name it; both names of a rename count |
 | `integrità dei test` | an existing test was deleted, shrunk or skipped (`nexgen_core/discipline/integrity.py`, reused) |
 | `prova per commit` | a `fix:` commit has no test that fails on its parent (`nexgen_core/discipline/regress.py`, reused) |
-| `verifica indipendente` | the declared command is missing, or exits non-zero, run by the engine with its own launch rules |
+| `verifica indipendente` | the declared command is missing or exits non-zero; it is one command with no shell operator (`&&`, `|`, `;`), and its executable must come from outside the unit's copy |
 | `remoto intatto` | a remote of the creation is gone or points at another fetch URL, or one of its refs carries a commit of the unit's interval (the unit pushed); a branch that advanced for another reason is not a failure |
 | `albero pulito` | the unit's copy has uncommitted work |
 
@@ -151,6 +151,15 @@ passed on Windows exactly this way, and the reviewer now sees "non verificato su
 Linux" next to the gate table instead of a green run that proved nothing.
 
 Globs are shell-style (`fnmatch`), so `docs/*.md` and `03-INFRA/**` both work.
+
+The verification command is one command, not a shell line. The engine never
+hands it to a shell, so `&&`, `|` and `;` are refused before anything runs, with
+the advice to write a script or a single command; a `;` inside a quoted argument
+is still one token and is not mistaken for a separator. Its executable must also
+come from outside the unit's copy: Windows resolves a bare name in the working
+directory before `PATH`, so a `pytest.bat` planted in the copy would answer in
+place of the real runner, and any path that resolves inside the copy is refused
+with the file named.
 
 ## The review round
 
