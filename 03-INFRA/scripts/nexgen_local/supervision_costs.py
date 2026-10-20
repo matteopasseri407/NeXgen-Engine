@@ -1,20 +1,26 @@
-"""What a harness session cost: read its export, append the row, aggregate.
+"""What a harness session cost: read its export, its children, and aggregate.
 
 The engine never calls a model and never estimates a price: for an OpenCode
 session it reads what the harness itself reports (`opencode session export`),
-writes one row per attach to the task's `05-costi.jsonl`, and can sum those
-rows by task, role and unit.
+adds what the sessions the harness opened under it cost, writes one row per
+attach to the task's `05-costi.jsonl`, and can sum those rows by task, role and
+unit. Subagents are not in the export or in `session list`: they are read from
+the harness's own store (`opencode.db`, `parent_id`), and when that store cannot
+be read the row says `figlie non esposte` instead of pretending there are none.
 A source that cannot be read still leaves a row, with a null cost and the
 reason: a missing number is never written as zero.
 """
 from __future__ import annotations
 
 import json
+import os
 import re
 import shutil
+import sqlite3
 import subprocess
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
+from pathlib import Path
 
 from nexgen_core.processes import windows_command_argv
 
@@ -27,6 +33,9 @@ EXPORT_TIMEOUT_S = 180.0
 #: What OpenCode prints: `ses_` and alphanumerics. The shape is narrow on purpose,
 #: so nothing a command line reads (`&`, `;`, quotes, spaces) can ever get through.
 _SESSION_RE = re.compile(r"ses_[A-Za-z0-9]{1,64}")
+#: The harness's own store, and the tables that hold sessions in its two schemas.
+SESSION_TABLES = ("session", "session_v2")
+CHILDREN_MISSING = "figlie non esposte"
 
 
 class CostError(SupervisionError):
@@ -35,7 +44,7 @@ class CostError(SupervisionError):
 
 @dataclass(frozen=True)
 class SessionFacts:
-    """What one session export says about its model, tokens, time and cost."""
+    """What one session costs, children included, and how the harness reports it."""
 
     model: str = ""
     cost_usd: float | None = None
@@ -48,6 +57,10 @@ class SessionFacts:
     created_ms: int | None = None
     updated_ms: int | None = None
     idle_ms: int | None = None
+    #: Subagents the harness opened under this session, and what they cost.
+    children: int | None = None
+    children_cost_usd: float | None = None
+    children_source: str = ""
 
     @property
     def duration_s(self) -> float | None:
@@ -96,7 +109,7 @@ def record(
         "source": SOURCE,
     }
     try:
-        facts = facts_from_export(export_session(session))
+        facts = measure(session)
     except CostError as exc:
         row.update(_empty_measurements())
         row["cost_usd"] = None
@@ -105,6 +118,72 @@ def record(
         row.update(_measurements(facts))
     state.append_jsonl(folder / state.COSTS_FILE, row)
     return row
+
+
+def measure(session_id: str) -> SessionFacts:
+    """One session as the harness reports it now, with the cost of its children added."""
+    facts = facts_from_export(export_session(session_id))
+    count, child_cost, source = child_sessions(session_id)
+    total = facts.cost_usd
+    if child_cost is not None:
+        total = round((total or 0.0) + child_cost, 6)
+    return replace(facts, cost_usd=total, children=count, children_cost_usd=child_cost, children_source=source)
+
+
+def child_sessions(session_id: str, *, db: Path | None = None) -> tuple[int | None, float | None, str]:
+    """How many sessions the harness opened under this one, what they cost, and where that came from.
+
+    `session export` and `session list` do not expose subagent sessions at all:
+    the harness keeps them in its own store with a `parent_id`, and that store
+    is the only exact source. When it is missing or unreadable the answer says
+    `figlie non esposte`; it never says zero.
+    """
+    path = db or opencode_db()
+    if path is None:
+        return None, None, f"{CHILDREN_MISSING}: archivio del harness non trovato"
+    try:
+        con = sqlite3.connect(f"file:{Path(path).as_posix()}?mode=ro", uri=True)
+    except sqlite3.Error as exc:
+        return None, None, f"{CHILDREN_MISSING}: archivio non leggibile ({exc})"
+    try:
+        found, child_cost, tables = _walk_children(con, session_id)
+    except sqlite3.Error as exc:
+        return None, None, f"{CHILDREN_MISSING}: archivio non leggibile ({exc})"
+    finally:
+        con.close()
+    if not tables:
+        return None, None, f"{CHILDREN_MISSING}: nessuna tabella delle sessioni"
+    return len(found), round(child_cost, 6), f"figlie da opencode.db ({', '.join(tables)})"
+
+
+def opencode_db() -> Path | None:
+    """Where the harness keeps its sessions, or None when the store is not there."""
+    base = Path(os.environ.get("XDG_DATA_HOME") or Path.home() / ".local" / "share")
+    path = base / "opencode" / "opencode.db"
+    return path if path.is_file() else None
+
+
+def _walk_children(con: sqlite3.Connection, root: str) -> tuple[list[str], float, list[str]]:
+    """Every session under `root`, depth first, across both schemas the harness uses."""
+    tables = [name for name in SESSION_TABLES if _has_table(con, name)]
+    found: list[str] = []
+    total = 0.0
+    queue = [root]
+    while queue:
+        parent = queue.pop()
+        for table in tables:
+            for child, cost in con.execute(f"select id, cost from {table} where parent_id = ?", (parent,)):
+                if child in found:
+                    continue
+                found.append(str(child))
+                total += float(cost or 0.0)
+                queue.append(str(child))
+    return found, total, tables
+
+
+def _has_table(con: sqlite3.Connection, name: str) -> bool:
+    row = con.execute("select 1 from sqlite_master where type = 'table' and name = ?", (name,)).fetchone()
+    return row is not None
 
 
 def export_session(session_id: str, *, timeout: float = EXPORT_TIMEOUT_S) -> dict:
@@ -233,6 +312,9 @@ def _measurements(facts: SessionFacts) -> dict:
         "tokens_cache_write": facts.tokens_cache_write,
         "cost_usd": facts.cost_usd,
         "stopped": facts.stopped,
+        "children": facts.children,
+        "children_cost_usd": facts.children_cost_usd,
+        "children_source": facts.children_source,
     }
 
 
@@ -247,6 +329,9 @@ def _empty_measurements() -> dict:
         "tokens_cache_read": None,
         "tokens_cache_write": None,
         "stopped": False,
+        "children": None,
+        "children_cost_usd": None,
+        "children_source": "",
     }
 
 

@@ -7,6 +7,8 @@ from __future__ import annotations
 
 import json
 import os
+import sqlite3
+from pathlib import Path
 
 import pytest
 
@@ -204,3 +206,84 @@ def test_an_empty_task_has_no_cost_total(lane, task):
     assert data["rows"] == 0
     assert data["cost_usd"] is None
     assert data["by_role"] == {}
+
+
+def _fake_db(tmp_path, rows: list[tuple[str, str | None, float]]) -> Path:
+    """Un archivio del harness in miniatura: solo la tabella che serve."""
+    path = tmp_path / "opencode.db"
+    con = sqlite3.connect(path)
+    con.execute("create table session_v2 (id text primary key, parent_id text, cost real)")
+    con.executemany("insert into session_v2 values (?, ?, ?)", rows)
+    con.commit()
+    con.close()
+    return path
+
+
+def test_the_children_of_a_session_are_counted_and_summed(tmp_path):
+    db = _fake_db(tmp_path, [
+        ("ses_padre", None, 0.5),
+        ("ses_figlia", "ses_padre", 0.25),
+        ("ses_nipote", "ses_figlia", 0.125),
+        ("ses_altra", "ses_altro-padre", 9.0),
+    ])
+
+    count, total, source = costs.child_sessions("ses_padre", db=db)
+
+    assert count == 2
+    assert total == 0.375
+    assert "opencode.db" in source
+
+
+def test_a_missing_store_says_children_are_not_exposed(tmp_path):
+    count, total, source = costs.child_sessions("ses_padre", db=tmp_path / "manca.db")
+
+    assert count is None
+    assert total is None
+    assert "figlie non esposte" in source
+
+
+def test_a_store_without_a_session_table_says_so(tmp_path):
+    path = tmp_path / "vuoto.db"
+    con = sqlite3.connect(path)
+    con.execute("create table altra_cosa (id text)")
+    con.commit()
+    con.close()
+
+    count, total, source = costs.child_sessions("ses_padre", db=path)
+
+    assert count is None
+    assert "nessuna tabella delle sessioni" in source
+
+
+def test_measure_adds_the_children_to_the_cost(lane, monkeypatch):
+    monkeypatch.setattr(costs, "export_session", lambda session, **kwargs: EXPORT)
+    monkeypatch.setattr(costs, "child_sessions", lambda session, **kwargs: (2, 0.5, "figlie da opencode.db"))
+
+    facts = costs.measure("ses_test")
+
+    assert facts.cost_usd == 0.75, "0.25 della sessione più 0.5 delle due figlie"
+    assert facts.children == 2
+    assert facts.children_cost_usd == 0.5
+
+
+def test_the_row_carries_the_children_and_the_source(lane, task, monkeypatch):
+    monkeypatch.setattr(costs, "export_session", lambda session, **kwargs: EXPORT)
+    monkeypatch.setattr(costs, "child_sessions", lambda session, **kwargs: (1, 0.5, "figlie da opencode.db"))
+
+    row = costs.record(task, "unita-uno", "esecutore", "ses_test")
+
+    assert row["cost_usd"] == 0.75
+    assert row["children"] == 1
+    assert row["children_cost_usd"] == 0.5
+    assert row["children_source"] == "figlie da opencode.db"
+
+
+def test_a_source_that_cannot_read_children_still_writes_the_parent_cost(lane, task, monkeypatch):
+    monkeypatch.setattr(costs, "export_session", lambda session, **kwargs: EXPORT)
+    monkeypatch.setattr(costs, "child_sessions", lambda session, **kwargs: (None, None, "figlie non esposte: archivio non trovato"))
+
+    row = costs.record(task, "unita-uno", "esecutore", "ses_test")
+
+    assert row["cost_usd"] == 0.25, "senza figlie leggibili il costo noto resta quello della sessione"
+    assert row["children"] is None
+    assert "figlie non esposte" in row["children_source"]
