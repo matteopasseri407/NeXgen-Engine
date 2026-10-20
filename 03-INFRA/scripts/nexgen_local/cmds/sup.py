@@ -13,6 +13,8 @@ from pathlib import Path
 from .. import supervision_costs as costs
 from .. import supervision_gates as gates
 from .. import supervision_harness as harness
+from .. import supervision_review as review
+from .. import supervision_requests as requests
 from .. import supervision_state as state
 from .. import supervision_windows as windows
 from .. import supervision_worktree as worktree
@@ -66,6 +68,19 @@ def register_sup(sub) -> None:
     collect.add_argument("id", help="id del compito")
     collect.add_argument("unit", help="nome dell'unità")
     collect.set_defaults(func=cmd_sup_collect)
+
+    _register_review(sup_sub)
+
+
+def _register_review(sup_sub) -> None:
+    """The supervisor's verb: one round, either APPROVA or RIMANDA with corrections."""
+    review_verb = sup_sub.add_parser("review", help="il giro di revisione: approva l'unità o rimandala con le correzioni")
+    review_verb.add_argument("id", help="id del compito")
+    review_verb.add_argument("unit", help="nome dell'unità")
+    choice = review_verb.add_mutually_exclusive_group(required=True)
+    choice.add_argument("--approve", metavar="MOTIVO", default=None, help="approva l'unità raccolta e scrivi il perché")
+    choice.add_argument("--rework", metavar="FILE", default=None, help="manda le correzioni all'esecutore nella sua sessione")
+    review_verb.set_defaults(func=cmd_sup_review)
 
 
 def cmd_sup_start(args: argparse.Namespace) -> int:
@@ -220,7 +235,45 @@ def cmd_sup_collect(args: argparse.Namespace) -> int:
         print(f"{'PASS' if gate.ok else 'FAIL'} {gate.name}: {gate.reason}")
     print(f"pacchetto {result['package']}")
     print(f"grezzo {result['raw']}")
+    for hit in result.get("requests") or []:
+        print(f"richiesta al proprietario: {_request_line(hit)}")
     return 0 if result["verdict"] == "PASS" else 1
+
+
+def cmd_sup_review(args: argparse.Namespace) -> int:
+    """Approve the collected unit or send the corrections into its own session."""
+    try:
+        if args.approve is not None:
+            result = review.approve(args.id, args.unit, args.approve)
+        else:
+            result = review.rework(args.id, args.unit, args.rework)
+    except SupervisionError as exc:
+        print(f"nexgen-local: {exc}", file=sys.stderr)
+        return 1
+    print(f"unità {result['unit']} · giro {result['round']} · {result['verdict']}")
+    print(f"revisione {result['path']}")
+    print(f"head {result['head'][:12]}")
+    if result["verdict"] == state.APPROVED:
+        print(f"raccolta {result['collect_verdict']} sulla stessa head: pronta per `sup publish`")
+    else:
+        print(_delivery_line(result["delivery"]))
+    for hit in result.get("requests") or []:
+        print(f"richiesta al proprietario: {_request_line(hit)}")
+    return 0
+
+
+def _delivery_line(delivery: dict) -> str:
+    """Where the corrections went: into the session, into its queue, or nowhere."""
+    if delivery["mode"] == "queued":
+        return f"correzioni in coda: {delivery['reason']} sulla sessione {delivery['session']}"
+    if delivery["mode"] == "run":
+        return f"correzioni inviate alla sessione {delivery['session']} (pid {delivery['pid']})"
+    return f"finestra aperta per le correzioni sulla sessione {delivery.get('session')}"
+
+
+def _request_line(hit: dict) -> str:
+    """One request the engine will not execute, as it goes to the owner's file."""
+    return f"{hit['kind']} · «{hit['sentence']}» (scritta in {requests.FILE})"
 
 
 def _list_tasks() -> int:
@@ -235,7 +288,7 @@ def _list_tasks() -> int:
 
 
 def _unit_line(unit: dict) -> str:
-    """One unit as the owner reads it: who ran it, how far it got, the verdict, the cost."""
+    """One unit as the owner reads it: who ran it, how far it got, the review, the cost."""
     parts = [f"unità {unit.get('unit', '')}"]
     if unit.get("role"):
         parts.append(str(unit["role"]))
@@ -246,6 +299,8 @@ def _unit_line(unit: dict) -> str:
         parts.append(str(unit["state"]))
     if unit.get("verdict"):
         parts.append(str(unit["verdict"]))
+    parts.append(f"giro {unit.get('review_round') or 0}")
+    parts.append("approvata" if unit.get("approved") else "non approvata")
     cost = unit.get("cost_usd")
     parts.append(f"{cost:.4f} $" if isinstance(cost, (int, float)) else "costo non disponibile")
     return " · ".join(parts)

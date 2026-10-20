@@ -2,7 +2,8 @@
 
 One harness means one session per task. A unit either enters the session the
 task already has, when that session is idle, or waits in the queue while it is
-busy; a new terminal tab is opened only when the task has no session yet. The
+busy; a new terminal tab is opened only when the task has no session yet, and a
+review's corrections always go into the session that already did the work. The
 engine never pastes the brief into a command line, never picks a model, and
 never reads what the terminal prints.
 """
@@ -42,11 +43,8 @@ def run_unit(
     work goes in with `opencode run -s`; if it is busy the unit is queued and
     says so; a tab is opened only when there is no session at all.
     """
-    record = state.unit_record(task_id, unit)
+    record, folder = _unit_copy(task_id, unit)
     name = record["unit"]
-    folder = Path(record.get("worktree") or "")
-    if not folder.is_dir():
-        raise HarnessError(f"copia dell'unità sparita: {folder}")
     brief = state.open_task(task_id) / f"20-brief-{name}.md"
     if not brief.is_file():
         raise HarnessError(f"brief dell'unità sparito: {brief}")
@@ -54,7 +52,48 @@ def run_unit(
     session = state.harness_session(task_id, "opencode")
     if not session:
         return _open_first_tab(task_id, name, folder, prompt, opener or windows.open_window, lister, wait_s)
-    return _enter_the_session(task_id, name, session, folder, prompt, runner or _run_in_session, measure or costs.measure)
+    return _enter_the_session(
+        task_id, name, session, folder, prompt, runner or _run_in_session,
+        measure or costs.measure, event="unit_started", extra={},
+    )
+
+
+def send_corrections(
+    task_id: str, unit: str, review: str | Path, round_no: int, *,
+    runner=None, measure=None,
+) -> dict:
+    """Put a review round's corrections into the unit's session, or queue them while it is busy.
+
+    The corrections stay in their file: the command line carries a pointer, the
+    same way `sup run` points at the brief. Without a session there is nothing
+    to correct, and opening a window on a unit nobody ran would be a lie.
+    """
+    record, folder = _unit_copy(task_id, unit)
+    name = record["unit"]
+    path = Path(review)
+    if not path.is_file():
+        raise HarnessError(f"file di revisione sparito: {path}")
+    session = state.harness_session(task_id, "opencode")
+    if not session:
+        raise HarnessError(
+            f"nessuna sessione harness sul compito: la correzione dell'unità {name} non ha "
+            "dove arrivare (`sup run` apre la prima sessione)"
+        )
+    prompt = corrections_text(task_id, name, path, round_no)
+    return _enter_the_session(
+        task_id, name, session, folder, prompt, runner or _run_in_session,
+        measure or costs.measure, event="unit_reworked", extra={"round": round_no},
+    )
+
+
+def corrections_text(task_id: str, unit: str, review: Path, round_no: int) -> str:
+    """A pointer to the review round, never its text: the file is the one place it is read from."""
+    brief = review.parent / f"20-brief-{unit}.md"
+    return (
+        f"Sei l'esecutore dell'unità {unit} del compito {task_id}, giro di correzione {round_no}. "
+        f"Leggi le correzioni in {review} e il brief in {brief}, applica solo quelle. "
+        "Lavora in questa copia, committa sul ramo locale, aggiorna il resoconto. Niente push."
+    )
 
 
 def prompt_text(task_id: str, unit: str, brief: Path) -> str:
@@ -90,24 +129,30 @@ def find_session(
         pause(poll_s)
 
 
-def _enter_the_session(task_id: str, unit: str, session: str, folder: Path, prompt: str, runner, measure) -> dict:
-    """Send the unit's work into the task's own session, or queue it when that session is busy."""
+def _enter_the_session(
+    task_id: str, unit: str, session: str, folder: Path, prompt: str, runner, measure,
+    *, event: str, extra: dict,
+) -> dict:
+    """Send work into the task's own session, or queue it when that session is busy."""
     try:
         facts = measure(session)
     except costs.CostError as exc:
         state.append_event(
             task_id, "unit_queued", unit=unit, harness="opencode", session=session,
-            reason=f"stato della sessione non leggibile: {exc}",
+            reason=f"stato della sessione non leggibile: {exc}", **extra,
         )
         return {"unit": unit, "mode": "queued", "session": session, "reason": str(exc)}
     if not facts.stopped:
         reason = "sessione occupata"
-        state.append_event(task_id, "unit_queued", unit=unit, harness="opencode", session=session, reason=reason)
+        state.append_event(
+            task_id, "unit_queued", unit=unit, harness="opencode", session=session,
+            reason=reason, **extra,
+        )
         return {"unit": unit, "mode": "queued", "session": session, "reason": reason}
     proc = runner(session, prompt, folder)
     state.append_event(
-        task_id, "unit_started", unit=unit, harness="opencode", session=session, mode="run",
-        pid=getattr(proc, "pid", None),
+        task_id, event, unit=unit, harness="opencode", session=session, mode="run",
+        pid=getattr(proc, "pid", None), **extra,
     )
     row = costs.record(task_id, unit, "esecutore", session, window=windows.WINDOW_NAME)
     return {"unit": unit, "mode": "run", "session": session, "pid": getattr(proc, "pid", None), "row": row}
@@ -142,6 +187,15 @@ def _detach_kwargs() -> dict:
     if sys.platform.startswith(("win", "cygwin", "msys")):
         return no_window_kwargs()
     return {"start_new_session": True}
+
+
+def _unit_copy(task_id: str, unit: str) -> tuple[dict, Path]:
+    """The unit's record and the folder its executor works in, refused when it is gone."""
+    record = state.unit_record(task_id, unit)
+    folder = Path(record.get("worktree") or "")
+    if not folder.is_dir():
+        raise HarnessError(f"copia dell'unità sparita: {folder}")
+    return record, folder
 
 
 def _attach(task_id: str, unit: str, session: dict, handle: dict) -> None:
