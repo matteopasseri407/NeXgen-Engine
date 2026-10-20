@@ -311,7 +311,9 @@ def _verify_gate(folder: Path, command: str) -> GateResult:
     so a `pytest.bat` dropped in the copy would answer for the real runner. A
     Python interpreter is started with `-P`: without it `python -m pytest` puts
     the working directory first on `sys.path` and imports the copy's own
-    `pytest.py`, which is the same bypass by another name.
+    `pytest.py`, which is the same bypass by another name. `-P` does not touch
+    `PYTHONPATH`, so the environment is cleaned too: the copy decides nothing
+    about what the interpreter imports.
     """
     if not command.strip():
         return GateResult(
@@ -336,7 +338,7 @@ def _verify_gate(folder: Path, command: str) -> GateResult:
     try:
         done = subprocess.run(
             windows_command_argv(_launch_argv(argv)), cwd=folder, capture_output=True, text=True,
-            encoding="utf-8", errors="replace", stdin=subprocess.DEVNULL,
+            encoding="utf-8", errors="replace", stdin=subprocess.DEVNULL, env=pytest_runs.cleaned_environment(),
             timeout=VERIFY_TIMEOUT_S, check=False, **no_window_kwargs(),
         )
     except subprocess.TimeoutExpired:

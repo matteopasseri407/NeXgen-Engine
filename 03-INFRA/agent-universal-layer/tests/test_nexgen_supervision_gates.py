@@ -219,6 +219,26 @@ def test_a_remote_removed_from_the_copy_fails_and_is_named(task, repo, tmp_path)
     assert result["verdict"] == "FAIL"
 
 
+def test_a_pythonpath_from_the_engine_does_not_revive_the_copys_pytest(tmp_path, monkeypatch):
+    """`-P` non tocca `PYTHONPATH`: senza ripulire l'ambiente il `pytest.py` della copia torna a girare."""
+    folder = tmp_path / "copia"
+    (folder / "tests").mkdir(parents=True)
+    (folder / "tests" / "test_vero.py").write_text("def test_vero():\n    assert True\n", encoding="utf-8")
+    marker = folder / "hijacked.txt"
+    (folder / "pytest.py").write_text(
+        "from pathlib import Path\n"
+        f"Path({str(marker)!r}).write_text('eseguito', encoding='utf-8')\n"
+        "raise SystemExit(0)\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("PYTHONPATH", ".")
+
+    result = gates._verify_gate(folder, f'"{sys.executable}" -m pytest -q')
+
+    assert result.ok, result.reason
+    assert not marker.exists(), "il pytest.py della copia non deve essere eseguito"
+
+
 def test_the_creation_writes_down_the_configuration_fingerprint(task, repo, tmp_path):
     """L'impronta dei due file di configurazione è nel diario: senza, la raccolta non sa cosa confrontare."""
     _unit(task, repo, tmp_path)
