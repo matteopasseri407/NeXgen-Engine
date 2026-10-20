@@ -161,7 +161,9 @@ not evidence; every line below is read from git or run by the engine.
 | `file vietati` | `VERSION`, `CHANGELOG.md` or `.github/**` changed and the boundary does not name it; both names of a rename count |
 | `integrità dei test` | an existing test was deleted, shrunk, skipped or renamed out of discovery (`nexgen_core/discipline/integrity.py`, reused) |
 | `prova per commit` | a `fix:` commit has no test that fails on its parent (`nexgen_core/discipline/regress.py`, reused) |
-| `verifica indipendente` | the declared command is missing or exits non-zero; it is one command with no shell operator (`&&`, `\|\|`, `\|`, `;`, `&`), its executable must come from outside the unit's copy, and a Python interpreter is started with `-P` |
+| `verifica indipendente` | the declared command is missing or exits non-zero; it is one command with no shell operator (`&&`, `\|\|`, `\|`, `;`, `&`), its executable must come from outside the unit's copy, and a Python interpreter is started with `-P` and an environment cleaned of `PYTHONPATH`, `PYTHONSTARTUP`, `PYTHONHOME`, `PYTHONUSERBASE`, `PYTEST_ADDOPTS` and `PYTEST_PLUGINS`, with `PYTHONNOUSERSITE=1` |
+| `test raccolti` | pytest collects fewer tests on the head than on the base, or a collection cannot answer: both trees are exported with `git archive` (no `.git` in them), collected with `python -P -m pytest --collect-only -q` under the same cleaned environment, and each collection has a five-minute budget; an increase is normal |
+| `configurazione git` | either configuration file of the copy (the repository's shared `.git/config`, which every checkout reads, or the worktree's own `config.worktree`) changed since the unit was created, or the effective configuration carries a `url.*.insteadOf` / `url.*.pushInsteadOf` key the creation did not have; the file or the key is named |
 | `remoto intatto` | a remote of the creation is gone, added, points at another fetch URL or push URL, or one of its refs carries a commit of the unit's interval (the unit pushed); a branch that advanced for another reason is not a failure |
 | `albero pulito` | the unit's copy has uncommitted work |
 
@@ -194,7 +196,57 @@ name in the working directory before `PATH`, so a `pytest.bat` planted in the
 copy would answer in place of the real runner, and any path that resolves inside
 the copy is refused with the file named. A Python interpreter is started with
 `-P`, which keeps the working directory off `sys.path`: without it `python -m
-pytest` would import a `pytest.py` the unit dropped in the copy.
+pytest` would import a `pytest.py` the unit dropped in the copy. `-P` does not
+touch `PYTHONPATH`, so the environment is cleaned as well, and the copy decides
+nothing about what the interpreter imports.
+
+The collected count is the answer to a different question than the AST: the
+integrity gate counts the test functions a diff still contains, and a
+`__test__ = False`, a folder pytest does not walk, a `collect_ignore` or a
+`conftest.py` that exits leaves those functions exactly where they were. The
+gate runs pytest itself, on two exported trees, and compares the numbers.
+
+## What the gates guarantee, and what they do not
+
+The gates are built to catch mistakes and shortcuts, not to defeat an executor
+who is deliberately hostile and has a shell. Every check above reads a fact the
+unit cannot quietly rewrite, and every refusal names what it saw. That covers
+the ordinary failure mode of an agent under pressure: a deleted test, a test
+renamed out of collection, a weakened assertion, a verification that proves
+nothing, a push that left the copy, a git configuration edited behind the
+owner's back.
+
+It does not cover an executor who is willing to lie in code the engine must run.
+Collecting a tree imports its `conftest.py` and its test modules, and the
+declared verification runs the unit's own code: code written to print a fake
+count, to exit before the truth and then clean up, or to `git push <url>` in the
+middle of a run is a determined forger, not an accident. `git push <url>` leaves
+no reliable local trace at all, so no gate here can see it; the remote gate reads
+the remotes before the verification runs, so a push made by the verification
+itself is not what it asks about.
+
+The defence for that layer is outside the gates: the harness permission profile
+of phase 3b, which denies the executor `git push` (and the shell it would need
+to reach it), and the supervisor's own review of the diff and the report. The
+gates make that review cheap and hard to fool by accident. They do not replace
+it, and no further text check added here would.
+
+Residual limits this round leaves open:
+
+- a `url.*.insteadOf` rule is detected by its key, not by its value: changing the
+  target of a rule the creation already carried is invisible, and only a new key
+  is refused;
+- the shared `.git/config` is the owner's too: an owner who edits it while a
+  unit exists gets a FAIL naming the file, and the only way back is a new unit,
+  because the fingerprint is the creation's;
+- `--prune` is refused as a token in `--push-with`, but a declared script can
+  still run it; the post-push check catches the deletion after the fact, and the
+  branch is gone from the remote by then;
+- the collection gate compares counts, not identities: a unit that deletes one
+  test and adds another keeps the count and passes this gate (the integrity
+  gate still refuses the deletion);
+- a remote branch that another actor creates between the `before` and the
+  `after` read of a publication is reported as a change made by the command.
 
 ## The review round
 
