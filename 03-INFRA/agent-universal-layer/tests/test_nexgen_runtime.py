@@ -226,6 +226,13 @@ def test_the_windows_launcher_has_the_same_rule():
     assert text.index("NEXGEN_RUNTIME") < text.index("where py")  # tried before any system python
 
 
+def test_the_windows_launcher_prefers_active_python_on_path_over_py_launcher():
+    """CI runners (setup-python) and activated venvs put their interpreter on PATH;
+    the system `py` launcher may select an unrelated Python without dependencies."""
+    text = shims._render("nexgen", [], Path("C:/e/__init__.py"), True, Path("C:/rt"))
+    assert text.index("where python >nul") < text.index("where py >nul")
+
+
 def test_install_shims_reports_only_what_it_rewrote(tmp_path):
     bin_dir = tmp_path / "bin"
     first: list[str] = []
