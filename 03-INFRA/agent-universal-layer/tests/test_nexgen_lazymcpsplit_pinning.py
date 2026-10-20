@@ -168,7 +168,9 @@ def test_the_machine_environment_cache_is_the_one_on_the_loaded_module(load, tmp
     assert module._env_default("PIN_TOKEN") == "first"
 
     conf.write_text("PIN_TOKEN=second\n", encoding="utf-8")
-    os.utime(conf, (1_700_000_100, 1_700_000_100))
+    # Same mtime on purpose: the cache key is (path, mtime), so only an unchanged
+    # signature proves that the cache answers until the module's copy is reset.
+    os.utime(conf, (1_700_000_000, 1_700_000_000))
     assert module._declared_value("PIN_TOKEN") == "first", "the cache answers until it is reset"
 
     module._MACHINE_ENV_CACHE = ((), {})
