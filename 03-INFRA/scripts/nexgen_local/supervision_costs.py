@@ -34,6 +34,8 @@ EXPORT_TIMEOUT_S = 180.0
 #: What OpenCode prints: `ses_` and alphanumerics. The shape is narrow on purpose,
 #: so nothing a command line reads (`&`, `;`, quotes, spaces) can ever get through.
 _SESSION_RE = re.compile(r"ses_[A-Za-z0-9]{1,64}")
+#: What an export says when the session is gone, as opposed to a failed read.
+_MISSING_EVIDENCE = re.compile(r"(not found|does not exist|no such session|unknown session|non esiste)", re.IGNORECASE)
 #: The harness's own store, and the tables that hold sessions in its two schemas.
 SESSION_TABLES = ("session", "session_v2")
 CHILDREN_MISSING = "figlie non esposte"
@@ -41,6 +43,14 @@ CHILDREN_MISSING = "figlie non esposte"
 
 class CostError(SupervisionError):
     """The harness executable is missing, the export failed, or its JSON is unusable."""
+
+
+class SessionMissing(CostError):
+    """The harness itself says the session does not exist: deleted, pruned, or never there.
+
+    A timeout or a locked store is not this: it says nothing about the session,
+    and treating it as lost opened a second tab on work that was still running.
+    """
 
 
 @dataclass(frozen=True)
@@ -204,6 +214,10 @@ def export_session(session_id: str, *, timeout: float = EXPORT_TIMEOUT_S) -> dic
     except (OSError, subprocess.TimeoutExpired) as exc:
         raise CostError(f"export della sessione non riuscito ({type(exc).__name__})") from exc
     if result.returncode != 0:
+        detail = ((result.stderr or "") + (result.stdout or "")).strip()
+        if _MISSING_EVIDENCE.search(detail):
+            reason = " ".join(detail.splitlines()[-1:])[:200] if detail else f"exit {result.returncode}"
+            raise SessionMissing(f"`opencode session export {session}` non trova la sessione: {reason}")
         raise CostError(f"`opencode session export {session}` esce con {result.returncode}")
     try:
         payload = json.loads(result.stdout)

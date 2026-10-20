@@ -179,10 +179,7 @@ def _enter_the_session(
     A session the harness cannot report is not a busy session: it is gone, and
     queueing on it would leave the unit waiting on nothing for ever.
     """
-    try:
-        facts = measure(session)
-    except costs.CostError as exc:
-        raise SessionLost(session, str(exc)) from exc
+    facts = _measure_or_lost(measure, session)
     if not facts.stopped:
         reason = "sessione occupata"
         state.append_event(
@@ -197,6 +194,25 @@ def _enter_the_session(
     )
     row = costs.record(task_id, unit, "esecutore", session, window=windows.WINDOW_NAME)
     return {"unit": unit, "mode": "run", "session": session, "pid": getattr(proc, "pid", None), "row": row}
+
+
+def _measure_or_lost(measure, session: str) -> costs.SessionFacts:
+    """One session's facts, read twice at most: only "the export says it does not exist" means lost.
+
+    A timeout, a locked store or a slow harness says nothing about the session:
+    opening a new tab there left two sessions running on the same work. The
+    second attempt costs one export; after it the engine says it cannot verify
+    the session and opens nothing.
+    """
+    problem: costs.CostError | None = None
+    for _attempt in range(2):
+        try:
+            return measure(session)
+        except costs.SessionMissing as exc:
+            raise SessionLost(session, str(exc)) from exc
+        except costs.CostError as exc:
+            problem = exc
+    raise HarnessError(f"sessione {session} non verificabile, riprova: {problem}") from problem
 
 
 def _open_first_tab(

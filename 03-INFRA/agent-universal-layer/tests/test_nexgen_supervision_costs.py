@@ -298,3 +298,26 @@ def test_a_source_that_cannot_read_children_still_writes_the_parent_cost(lane, t
     assert row["cost_usd"] == 0.25, "senza figlie leggibili il costo noto resta quello della sessione"
     assert row["children"] is None
     assert "figlie non esposte" in row["children_source"]
+
+
+def test_an_export_that_says_not_found_is_a_missing_session(lane, monkeypatch):
+    monkeypatch.setattr(
+        costs.subprocess, "run",
+        lambda argv, **kwargs: costs.subprocess.CompletedProcess(argv, 1, "", "Error: Session not found"),
+    )
+
+    with pytest.raises(costs.SessionMissing, match="non trova la sessione"):
+        costs.export_session("ses_sparita")
+
+
+def test_a_timed_out_export_is_not_a_missing_session(lane, monkeypatch):
+    """Un timeout non dice che la sessione non esiste: è un errore transitorio."""
+    def timeout(*args, **kwargs):
+        raise costs.subprocess.TimeoutExpired("opencode", 1)
+
+    monkeypatch.setattr(costs.subprocess, "run", timeout)
+
+    with pytest.raises(costs.CostError) as caught:
+        costs.export_session("ses_viva")
+
+    assert not isinstance(caught.value, costs.SessionMissing)

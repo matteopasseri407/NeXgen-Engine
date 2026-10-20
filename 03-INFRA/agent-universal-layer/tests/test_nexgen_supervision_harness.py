@@ -225,14 +225,16 @@ def test_a_unit_that_entered_a_session_names_its_harness(task, unit, monkeypatch
     assert units["prova"]["state"] == "in corso"
 
 
-def test_a_session_whose_state_cannot_be_read_opens_the_one_new_tab(task, unit, monkeypatch):
+def test_a_session_the_export_says_is_gone_opens_the_one_new_tab(task, unit, monkeypatch):
     """La sessione non esiste più: si scrive nel diario e si apre la scheda, una volta sola."""
     _attached(task, "prima", "ses_sparita")
     opened: list = []
     sessions = [{"id": "ses_nuova", "directory": str(unit), "created": 10**13}]
+    calls: list[str] = []
 
     def broken(session):
-        raise harness.costs.CostError("l'export non risponde")
+        calls.append(session)
+        raise harness.costs.SessionMissing("l'export dice che non esiste")
 
     monkeypatch.setattr(harness, "_opencode_executable", lambda: "opencode-finto")
     monkeypatch.setattr(
@@ -251,6 +253,7 @@ def test_a_session_whose_state_cannot_be_read_opens_the_one_new_tab(task, unit, 
 
     assert result["mode"] == "tab"
     assert len(opened) == 1, "una scheda sola, non una per tentativo"
+    assert calls == ["ses_sparita"], "un export che dice «non esiste» non si ritenta"
     events = [row["event"] for row in state.read_events(task)]
     assert events == [
         "started", "unit_created", "attached", "harness_session_lost", "unit_started", "attached",
@@ -258,7 +261,59 @@ def test_a_session_whose_state_cannot_be_read_opens_the_one_new_tab(task, unit, 
     assert state.harness_session(task, "opencode") == "ses_nuova"
     lost = next(row for row in state.read_events(task) if row["event"] == harness.state.LOST_EVENT)
     assert lost["session"] == "ses_sparita"
-    assert "non risponde" in lost["reason"]
+    assert "non esiste" in lost["reason"]
+
+
+def test_a_transient_export_failure_is_retried_before_the_session_is_called_lost(task, unit, monkeypatch):
+    """Un timeout dell'export non dice che la sessione è sparita: si ritenta una volta."""
+    _attached(task, "prima", "ses_viva")
+    calls: list[str] = []
+    facts = SimpleNamespace(stopped=True)
+
+    def flaky(session):
+        calls.append(session)
+        if len(calls) == 1:
+            raise harness.costs.CostError("export della sessione non riuscito (TimeoutExpired)")
+        return facts
+
+    opened: list = []
+    monkeypatch.setattr(harness.costs, "record", lambda *a, **k: {"session": a[3], "cost_usd": 0.0})
+
+    result = harness.run_unit(
+        task, "prova",
+        opener=lambda *a, **k: opened.append(a) or {"title": "mai"},
+        runner=lambda *a: SimpleNamespace(pid=11),
+        measure=flaky, lister=lambda: [], wait_s=0,
+    )
+
+    assert result["mode"] == "run"
+    assert calls == ["ses_viva", "ses_viva"], "un secondo tentativo, poi si decide"
+    assert opened == [], "una sessione viva non apre schede"
+    assert not any(row["event"] == "harness_session_lost" for row in state.read_events(task))
+
+
+def test_two_transient_export_failures_open_nothing_and_say_retry(task, unit, monkeypatch):
+    """Due errori transitori: la sessione non è persa, è non verificabile, e nessuna scheda si apre."""
+    _attached(task, "prima", "ses_viva")
+    calls: list[str] = []
+
+    def broken(session):
+        calls.append(session)
+        raise harness.costs.CostError("export della sessione non riuscito (TimeoutExpired)")
+
+    monkeypatch.setattr(harness.windows, "open_window", lambda *a, **k: pytest.fail("nessuna scheda"))
+    monkeypatch.setattr(harness.costs, "record", lambda *a, **k: pytest.fail("niente aggancio"))
+
+    with pytest.raises(harness.HarnessError, match="non verificabile, riprova"):
+        harness.run_unit(
+            task, "prova",
+            opener=lambda *a, **k: pytest.fail("nessuna scheda"),
+            runner=lambda *a: pytest.fail("nessun invio"),
+            measure=broken, lister=lambda: [], wait_s=0,
+        )
+
+    assert calls == ["ses_viva", "ses_viva"]
+    assert not any(row["event"] == "harness_session_lost" for row in state.read_events(task))
 
 
 def test_corrections_with_a_lost_session_open_the_tab_and_keep_the_round(task, unit, monkeypatch):
@@ -269,7 +324,7 @@ def test_corrections_with_a_lost_session_open_the_tab_and_keep_the_round(task, u
     sessions = [{"id": "ses_nuova", "directory": str(unit), "created": 10**13}]
 
     def broken(session):
-        raise harness.costs.CostError("sessione sparita")
+        raise harness.costs.SessionMissing("sessione sparita")
 
     monkeypatch.setattr(harness, "_opencode_executable", lambda: "opencode-finto")
     monkeypatch.setattr(
