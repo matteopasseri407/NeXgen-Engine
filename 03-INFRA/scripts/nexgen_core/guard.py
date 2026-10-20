@@ -16,8 +16,6 @@ import json
 import logging
 import shutil
 import sys
-from dataclasses import dataclass, field
-from enum import Enum
 from pathlib import Path
 
 import yaml
@@ -38,6 +36,7 @@ from nexgen_core.git_ops import (
     resolve_remotes,
     run_git,
 )
+from nexgen_core.guard_result import GuardMode, GuardResult
 from nexgen_core.i18n import t
 from nexgen_core.jsonc import parse_jsonc, set_jsonc_top_level_value
 from nexgen_core.lock import LockTimeoutError, host_mutation
@@ -61,22 +60,6 @@ def _same_file(a: str, b: Path) -> bool:
         return Path(a).expanduser().resolve() == b.expanduser().resolve()
     except OSError:
         return a == str(b)
-
-
-class GuardMode(str, Enum):
-    GUARD = "guard"
-    APPLY = "apply"
-    PULL = "pull"
-    PREFLIGHT = "preflight"
-
-
-@dataclass
-class GuardResult:
-    success: bool
-    mode: GuardMode
-    message: str
-    exit_code: int = 0
-    actions_taken: list[str] = field(default_factory=list)
 
 
 class GuardRunner:
