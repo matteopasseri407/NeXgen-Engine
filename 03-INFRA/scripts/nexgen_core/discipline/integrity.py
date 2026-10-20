@@ -17,6 +17,8 @@ from .violations import CODE_EXT, TEST_PATH, Violation
 PY_SKIPS = {"pytest.mark.skip", "pytest.mark.skipif", "pytest.mark.xfail", "pytest.skip", "pytest.xfail",
             "unittest.skip", "unittest.skipIf", "unittest.skipUnless"}
 SKIP = re.compile(r"pytest\.mark\.(skip|skipif|xfail)|pytest\.(skip|xfail)\(|unittest\.skip|\b(describe|it|test)\.skip\(|\bx(it|describe|test)\(|@Ignore")
+#: The names pytest collects by default (`python_files = test_*.py *_test.py`), plus conftest.
+PYTHON_TEST_FILE = re.compile(r"(^|/)(test_[^/]*|[^/]*_test|conftest)\.py$", re.IGNORECASE)
 OTHER_TESTS = re.compile(r"\b(?:it|test)\s*\(|\bfunc Test\w+|@Test\b")
 HOW_TO_ALLOW = "If this is intended, the owner adds the path to test_removal_ok in .nexgen-discipline.toml first."
 
@@ -120,6 +122,28 @@ def _is_test(change: Change, cfg: Config) -> bool:
     return _path_is_test(change.path, cfg) or bool(change.old_path and _path_is_test(change.old_path, cfg))
 
 
+def _test_dir(path: str) -> str:
+    """The test folder a path sits in (`tests/`, `test/`, `__tests__/`), or empty for a test-named file."""
+    match = re.search(r"(^|/)(tests?|__tests__)/", path)
+    return match.group(2) if match else ""
+
+
+def _new_side_is_test(change: Change, cfg: Config) -> bool:
+    """Whether the new name still holds tests pytest would collect, not just a test-looking path.
+
+    A test renamed to `tests/disabled_a.py` stays under `tests/` and one renamed to
+    `src/test_a.py` still carries the test name, yet neither is collected by a suite
+    rooted in `tests/`. Counting the new side anyway is how such a rename hid a
+    deleted test: the file's content is unchanged, so the counts matched while
+    nothing ran. A move into a subfolder of the same test tree stays a test.
+    """
+    if not _path_is_test(change.path, cfg):
+        return False
+    if change.path.lower().endswith(".py") and not PYTHON_TEST_FILE.search(change.path):
+        return False
+    return not change.old_path or not _test_dir(change.old_path) or bool(_test_dir(change.path))
+
+
 def check_test_integrity(changes: list[Change], cfg: Config) -> list[Violation]:
     tests = [c for c in changes if _is_test(c, cfg)]
     if not tests:
@@ -128,14 +152,17 @@ def check_test_integrity(changes: list[Change], cfg: Config) -> list[Violation]:
     if sum(skip_growth(c.old, c.new, c.path) for c in tests) > 0:
         problems.append("a skip/xfail marker was added")
     py = [c for c in tests if c.path.endswith(".py") or bool(c.old_path and c.old_path.endswith(".py"))]
-    (t0, a0), (t1, a1) = (tuple(map(sum, zip(*(test_stats(getattr(c, side)) for c in py), strict=False))) or (0, 0)
-                          for side in ("old", "new"))
+    counted = [c for c in py if _new_side_is_test(c, cfg)]
+    (t0, a0), (t1, a1) = (tuple(map(sum, zip(*(test_stats(getattr(c, side)) for c in side_list), strict=False))) or (0, 0)
+                          for side, side_list in (("old", py), ("new", counted)))
     if t1 < t0:
         problems.append(f"tests went from {t0} to {t1}")
     if a1 < a0:
         problems.append(f"assertions went from {a0} to {a1}")
     others = [c for c in tests if c not in py]
-    if sum(other_language_tests(c.new) for c in others) < sum(other_language_tests(c.old) for c in others):
+    counted_others = [c for c in others if _new_side_is_test(c, cfg)]
+    if (sum(other_language_tests(c.new) for c in counted_others)
+            < sum(other_language_tests(c.old) for c in others)):
         problems.append("fewer test cases in non-Python test files")
     if not problems:
         return []
