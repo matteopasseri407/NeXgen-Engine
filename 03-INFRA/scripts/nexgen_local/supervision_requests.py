@@ -1,14 +1,18 @@
 """What the engine refuses to execute: one written line instead of a granted exception.
 
 The only source is the executor's own report, and inside it only the request
-section of the engine's template. A supervisor's brief, review or corrections are
-never read: a phrase about the bump check is the supervisor talking about the
-work, not the executor asking for a bump. Fenced code and quoted lines inside the
-section are ignored too, so pasting an output is not a request. When the section
-is absent nothing is recognised, and the package says so instead of guessing.
+section of the engine's template: the heading must say "richieste", with or
+without "dubbi". A supervisor's brief, review or corrections are never read: a
+phrase about the bump check is the supervisor talking about the work, not the
+executor asking for a bump. Inside the section every list item is a request and
+goes to the owner as written; a keyword only classifies it. Fenced code and
+quoted lines are ignored, so pasting an output is not a request. When the
+section is absent nothing is recognised, and the package says so instead of
+guessing.
 """
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 from nexgen_core.files import secure_artifact
@@ -17,8 +21,12 @@ from . import supervision_state as state
 
 #: The file the owner reads: one line per request, never rewritten.
 FILE = "07-richieste-proprietario.md"
-#: The two words the engine's own report template uses for the request section.
-REQUEST_WORDS = ("dubbi", "richieste")
+#: The word the report section must carry; "dubbi" may sit beside it or not.
+SECTION_WORD = "richieste"
+#: A list item: `- text` or `1. text`, indented or not.
+LIST_ITEM = re.compile(r"^\s*(?:-|\d+\.)\s+(.+?)\s*$")
+#: An item that says there is nothing to ask, not a request.
+NOTHING_TO_ASK = ("nessuna richiesta", "nessun dubbio")
 #: What the package says when the report has no request section at all.
 NO_SECTION = "sezione delle richieste assente nel resoconto"
 #: What the package says when the report is not written yet.
@@ -44,29 +52,25 @@ KINDS = (
 
 
 def scan(text: str) -> tuple[list[dict], bool]:
-    """The declared requests of a report, and whether it has the request section at all."""
+    """Every list item of the request section, classified when a keyword recognises it.
+
+    No keyword is required: a request written in the executor's own words must
+    reach the owner too, or the only requests that count are the ones the engine
+    already knows how to name.
+    """
     body, found = section(text)
     if not found:
         return [], False
-    spoken = speakable(body)
-    folded = spoken.casefold()
-    hits: list[dict] = []
-    for kind, phrases in KINDS:
-        for phrase in phrases:
-            at = folded.find(phrase.casefold())
-            if at < 0:
-                continue
-            hits.append({"kind": kind, "phrase": phrase, "sentence": _sentence(spoken, at)})
-            break
-    return hits, True
+    return [_hit(item) for item in items(speakable(body))], True
 
 
 def section(text: str) -> tuple[str, bool]:
-    """The body of the template's request section and whether the report has one.
+    """The body of the report's request section and whether the report has one.
 
-    The heading is the template's own: both words, in any order and case, on a
-    line that is a heading. No heading, no requests: the rest of a report is the
-    work, not a message to the owner.
+    The heading must contain "richieste", in any case: `## Richieste al
+    proprietario` is the template's own line, and `## Dubbi e richieste` is the
+    same section. No heading, no requests: the rest of a report is the work, not
+    a message to the owner.
     """
     lines = (text or "").splitlines()
     for index, line in enumerate(lines):
@@ -74,9 +78,23 @@ def section(text: str) -> tuple[str, bool]:
         if not stripped.startswith("#"):
             continue
         title = stripped.lstrip("#").strip().casefold()
-        if all(word in title for word in REQUEST_WORDS):
+        if SECTION_WORD in title:
             return "\n".join(_section_body(lines, index)), True
     return "", False
+
+
+def items(body: str) -> list[str]:
+    """The list items of the section, one line each, without the ones that say there is nothing."""
+    found: list[str] = []
+    for line in body.splitlines():
+        match = LIST_ITEM.match(line)
+        if not match:
+            continue
+        text = " ".join(match.group(1).split())
+        if not text or _says_nothing(text):
+            continue
+        found.append(text[:240])
+    return found
 
 
 def speakable(body: str) -> str:
@@ -162,14 +180,19 @@ def _section_body(lines: list[str], start: int) -> list[str]:
     return body
 
 
-def _sentence(body: str, at: int) -> str:
-    """The sentence around a match, one line and bounded, so the file stays readable."""
-    start = max(body.rfind("\n", 0, at), body.rfind(". ", 0, at)) + 1
-    end = min(
-        [value for value in (body.find("\n", at), body.find(". ", at)) if value >= 0] or [len(body)]
-    )
-    text = " ".join(body[start:end].split())
-    return (text or body[at:at + 120]).strip()[:240]
+def _hit(text: str) -> dict:
+    """One request as it goes to the owner: the item itself, classified if a keyword knows it."""
+    folded = text.casefold()
+    for kind, phrases in KINDS:
+        if any(phrase.casefold() in folded for phrase in phrases):
+            return {"kind": kind, "sentence": text}
+    return {"kind": "altro", "sentence": text}
+
+
+def _says_nothing(text: str) -> bool:
+    """`Nessuna richiesta` or `Nessun dubbio`: the owner is being told there is nothing, not asked."""
+    folded = text.casefold()
+    return any(folded.startswith(phrase) for phrase in NOTHING_TO_ASK)
 
 
 def _written(path: Path) -> set[tuple[str, str, str]]:

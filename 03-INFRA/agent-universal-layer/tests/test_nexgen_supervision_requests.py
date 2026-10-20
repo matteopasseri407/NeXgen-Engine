@@ -32,7 +32,7 @@ REPORT_WITH_REQUEST = (
     "fatto\n"
     "\n"
     f"{SECTION}\n"
-    f"{REQUEST}\n"
+    f"- {REQUEST}\n"
     "\n"
     "## Prossimo passo se bloccato\n"
     "niente\n"
@@ -113,6 +113,59 @@ def test_a_paste_or_a_quote_inside_the_section_is_not_a_request():
 
     assert found is True
     assert hits == [], "codice e citazioni dentro la sezione non contano"
+
+
+def test_the_heading_needs_only_the_word_requests():
+    """`## Richieste al proprietario` is the template's own line: "dubbi" is not required."""
+    hits, found = requests.scan(
+        "# Resoconto dell'unità prova\n"
+        "\n"
+        "## Richieste al proprietario\n"
+        "- Chiedo di cancellare i test obsoleti.\n"
+        "- Chiedo di disabilitare i test su Windows.\n"
+        "- Chiedo di rimuovere il test legacy.\n"
+    )
+
+    assert found is True
+    assert [hit["kind"] for hit in hits] == ["altro", "altro", "altro"]
+    assert "cancellare i test obsoleti" in hits[0]["sentence"]
+
+
+def test_a_negated_line_is_not_a_request():
+    """`Nessun dubbio, non serve toccare il changelog` is reassurance, not a bump request."""
+    hits, found = requests.scan(
+        "## Dubbi e richieste al proprietario\n"
+        "- Nessun dubbio, non serve toccare il changelog.\n"
+    )
+
+    assert found is True
+    assert hits == []
+
+
+def test_a_question_without_a_declared_keyword_still_reaches_the_owner():
+    hits, found = requests.scan(
+        "## Richieste al proprietario\n"
+        "1. Serve aggiornare la versione?\n"
+    )
+
+    assert found is True
+    assert len(hits) == 1
+    assert hits[0]["kind"] in ("altro", "bump")
+    assert "aggiornare la versione" in hits[0]["sentence"]
+
+
+def test_only_list_items_in_the_section_are_requests():
+    """A paragraph beside the list is the report talking, not a request to the owner."""
+    hits, found = requests.scan("## Richieste\n\nChiedo un tag firmato, per favore.\n")
+
+    assert found is True
+    assert hits == []
+
+
+def test_a_list_item_with_a_keyword_is_classified():
+    hits, _ = requests.scan("## Richieste\n- Servirebbe un force-push per riallineare il ramo.\n")
+
+    assert [hit["kind"] for hit in hits] == ["force-push"]
 
 
 def test_a_request_is_written_once_however_many_times_the_report_is_read(task, lane):
