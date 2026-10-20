@@ -135,13 +135,21 @@ def start(objective: str, *, now: float | None = None) -> dict:
 
 
 def list_tasks() -> list[dict]:
-    """Every task folder, oldest first, with the objective when it can be read."""
+    """Every task folder, oldest first, with the objective or why it cannot be read.
+
+    One damaged journal is a fact about that task, not a reason to hide the
+    others: the listing keeps every folder and says which one is unreadable.
+    """
     root = _root()
     if not root.is_dir():
         return []
     tasks = []
     for folder in sorted(path for path in root.iterdir() if path.is_dir()):
-        tasks.append({"id": folder.name, "path": folder, "objective": objective(folder.name)})
+        try:
+            text, error = objective(folder.name), ""
+        except SupervisionError as exc:
+            text, error = "", str(exc)
+        tasks.append({"id": folder.name, "path": folder, "objective": text, "error": error})
     return tasks
 
 

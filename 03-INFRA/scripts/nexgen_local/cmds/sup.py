@@ -331,6 +331,9 @@ def _list_tasks() -> int:
         print("nessun compito: `sup start \"<obiettivo>\"`")
         return 0
     for task in tasks:
+        if task.get("error"):
+            print(f"{task['id']}  (illeggibile: {task['error']})")
+            continue
         print(f"{task['id']}  {task['objective'] or '(obiettivo non leggibile)'}")
     return 0
 

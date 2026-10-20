@@ -61,6 +61,27 @@ def test_status_lists_the_tasks_without_an_id(lane, capsys):
     assert "primo compito" in capsys.readouterr().out
 
 
+def test_one_corrupted_journal_does_not_hide_the_other_tasks(lane, capsys):
+    """Un diario illeggibile è un fatto di quel compito, non un guasto dell'elenco."""
+    cli.main(["sup", "start", "compito sano"])
+    healthy = _only_task(lane)
+    cli.main(["sup", "start", "compito rotto"])
+    broken = sorted(task for task in (path.name for path in lane.iterdir()) if task != healthy)[0]
+    (lane / broken / state.JOURNAL_FILE).write_text('{"event": "started"}\nnon-json\n', encoding="utf-8")
+    capsys.readouterr()
+
+    assert cli.main(["sup", "status"]) == 0
+
+    out = capsys.readouterr().out
+    assert "compito sano" in out
+    assert f"{broken}  (illeggibile:" in out
+    assert "JSON non leggibile" in out
+
+    assert cli.main(["sup", "status", broken]) == 1
+    assert "JSON non leggibile" in capsys.readouterr().err
+    assert cli.main(["sup", "status", healthy]) == 0
+
+
 def test_start_status_attach_and_costi_end_to_end(lane, capsys):
     assert cli.main(["sup", "start", "prova fase 1"]) == 0
     task_id = _only_task(lane)
