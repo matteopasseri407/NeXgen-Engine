@@ -114,7 +114,7 @@ def export_session(session_id: str, *, timeout: float = EXPORT_TIMEOUT_S) -> dic
     resolver: on Windows `opencode` is a `.cmd`, and a bare spawn of one fails.
     """
     session = _session_id(session_id)
-    executable = _opencode_executable()
+    executable = opencode_executable()
     argv = windows_command_argv([executable, "session", "export", session])
     try:
         result = subprocess.run(
@@ -175,7 +175,8 @@ def _bucket_for(groups: dict[str, dict], name: str, row: dict) -> None:
     _add_to_bucket(groups[name], row)
 
 
-def _opencode_executable() -> str:
+def opencode_executable() -> str:
+    """Where the harness's own CLI is, resolved from PATH and never hardcoded."""
     found = shutil.which("opencode")
     if not found:
         raise CostError("`opencode` non è nel PATH: impossibile leggere la sessione")
