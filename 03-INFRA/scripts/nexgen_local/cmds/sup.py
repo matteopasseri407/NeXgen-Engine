@@ -82,6 +82,7 @@ def _register_review(sup_sub) -> None:
     choice = review_verb.add_mutually_exclusive_group(required=True)
     choice.add_argument("--approve", metavar="MOTIVO", default=None, help="approva l'unità raccolta e scrivi il perché")
     choice.add_argument("--rework", metavar="FILE", default=None, help="manda le correzioni all'esecutore nella sua sessione")
+    choice.add_argument("--resend", action="store_true", help="riconsegna l'ultimo giro non ancora consegnato")
     review_verb.set_defaults(func=cmd_sup_review)
 
 
@@ -263,6 +264,8 @@ def cmd_sup_review(args: argparse.Namespace) -> int:
     try:
         if args.approve is not None:
             result = review.approve(args.id, args.unit, args.approve)
+        elif args.resend:
+            result = review.resend(args.id, args.unit)
         else:
             result = review.rework(args.id, args.unit, args.rework)
     except SupervisionError as exc:

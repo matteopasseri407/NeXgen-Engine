@@ -71,6 +71,7 @@ def run_unit(
 def send_corrections(
     task_id: str, unit: str, review: str | Path, round_no: int, *,
     runner=None, measure=None, opener=None, lister=None, wait_s: float = SESSION_WAIT_S,
+    open_without_session: bool = False,
 ) -> dict:
     """Put a review round's corrections into the unit's session, or queue them while it is busy.
 
@@ -78,19 +79,26 @@ def send_corrections(
     same way `sup run` points at the brief. Without a session there is nothing
     to correct, and opening a window on a unit nobody ran would be a lie; a
     session that disappeared is a different thing, and gets the one new tab.
+    `open_without_session` is for `sup review --resend`: a round that never
+    reached anybody may open the first tab exactly as `sup run` does.
     """
     record, folder = _unit_copy(task_id, unit)
     name = record["unit"]
     path = Path(review)
     if not path.is_file():
         raise HarnessError(f"file di revisione sparito: {path}")
+    prompt = corrections_text(task_id, name, path, round_no)
     session = state.harness_session(task_id, "opencode")
     if not session:
-        raise HarnessError(
-            f"nessuna sessione harness sul compito: la correzione dell'unità {name} non ha "
-            "dove arrivare (`sup run` apre la prima sessione)"
+        if not open_without_session:
+            raise HarnessError(
+                f"nessuna sessione harness sul compito: la correzione dell'unità {name} non ha "
+                "dove arrivare (`sup run` apre la prima sessione)"
+            )
+        return _open_first_tab(
+            task_id, name, folder, prompt, opener or windows.open_window, lister, wait_s,
+            event="unit_reworked", extra={"round": round_no},
         )
-    prompt = corrections_text(task_id, name, path, round_no)
     return _deliver(
         task_id, name, folder, prompt, session, event="unit_reworked", extra={"round": round_no},
         opener=opener, runner=runner, lister=lister, measure=measure, wait_s=wait_s,

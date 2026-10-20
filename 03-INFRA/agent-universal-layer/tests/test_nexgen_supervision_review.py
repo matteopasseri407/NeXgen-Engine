@@ -223,6 +223,80 @@ def test_corrections_wait_in_the_queue_when_the_session_is_busy(task, repo, tmp_
     assert queued[-1]["session"] == "ses_libera"
 
 
+def test_a_round_still_in_the_queue_is_not_renumbered(task, repo, tmp_path, monkeypatch):
+    """Finché il giro non è consegnato la numerazione non avanza: si usa `--resend`."""
+    folder = _unit(task, repo, tmp_path)
+    _commit(folder, "docs: aggiunge una riga", {"docs/guida.md": "# guida\n\nriga.\n"})
+    gates.collect(task, "prova")
+    sent = _idle(monkeypatch, _fake_session(task, stopped=False))
+    first = review.rework(task, "prova", _corrections(tmp_path))
+
+    with pytest.raises(review.ReviewError, match="--resend"):
+        review.rework(task, "prova", _corrections(tmp_path, CORRECTIONS + "- ancora una riga\n"))
+
+    assert first["round"] == 1
+    assert sent == []
+    assert not (Path(state.open_task(task)) / "45-revisione-prova-2.md").exists()
+
+
+def test_resend_delivers_the_pending_round_without_a_new_number(task, repo, tmp_path, monkeypatch):
+    folder = _unit(task, repo, tmp_path)
+    _commit(folder, "docs: aggiunge una riga", {"docs/guida.md": "# guida\n\nriga.\n"})
+    gates.collect(task, "prova")
+    _idle(monkeypatch, _fake_session(task, stopped=False))
+    first = review.rework(task, "prova", _corrections(tmp_path))
+    sent = _idle(monkeypatch, _fake_session(task))
+
+    result = review.resend(task, "prova")
+
+    assert first["delivery"]["mode"] == "queued"
+    assert result["round"] == first["round"] == 1
+    assert result["delivery"]["mode"] == "run"
+    assert sent and sent[0][0] == "ses_libera"
+    assert str(result["path"]) in sent[0][1]
+    assert not (Path(state.open_task(task)) / "45-revisione-prova-2.md").exists()
+    rounds = [row["round"] for row in state.read_events(task) if row.get("event") == "unit_reworked"]
+    assert rounds == [1]
+
+
+def test_resend_opens_the_first_tab_when_the_task_has_no_session(task, repo, tmp_path, monkeypatch):
+    folder = _unit(task, repo, tmp_path)
+    _commit(folder, "docs: aggiunge una riga", {"docs/guida.md": "# guida\n\nriga.\n"})
+    gates.collect(task, "prova")
+    with pytest.raises(harness.HarnessError, match="nessuna sessione harness"):
+        review.rework(task, "prova", _corrections(tmp_path))
+    opened: list = []
+    monkeypatch.setattr(harness, "_opencode_executable", lambda: "opencode-finto")
+    monkeypatch.setattr(
+        harness.windows, "open_window",
+        lambda title, argv, *, cwd: opened.append(argv) or {"title": title, "launcher": "finto", "pid": 5},
+    )
+    monkeypatch.setattr(harness, "find_session", lambda *a, **k: None)
+
+    result = review.resend(task, "prova")
+
+    assert result["delivery"]["mode"] == "tab"
+    assert len(opened) == 1
+    assert str(result["path"]) in opened[0][3], "la scheda nuova punta al file del giro"
+
+
+def test_the_cli_resends_a_pending_round(task, repo, tmp_path, capsys, monkeypatch):
+    folder = _unit(task, repo, tmp_path)
+    _commit(folder, "docs: aggiunge una riga", {"docs/guida.md": "# guida\n\nriga.\n"})
+    gates.collect(task, "prova")
+    _idle(monkeypatch, _fake_session(task, stopped=False))
+    review.rework(task, "prova", _corrections(tmp_path))
+    sent = _idle(monkeypatch, _fake_session(task))
+    capsys.readouterr()
+
+    assert cli.main(["sup", "review", task, "prova", "--resend"]) == 0
+
+    out = capsys.readouterr().out
+    assert "giro 1" in out
+    assert "correzioni inviate alla sessione ses_libera" in out
+    assert sent
+
+
 def test_rework_refuses_a_missing_file_and_an_empty_one(task, repo, tmp_path):
     folder = _unit(task, repo, tmp_path)
     _commit(folder, "docs: aggiunge una riga", {"docs/guida.md": "# guida\n\nriga.\n"})

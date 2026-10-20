@@ -50,6 +50,34 @@ def last_collection(task_id: str, unit: str) -> dict:
     return found
 
 
+def pending_round(task_id: str, unit: str) -> int:
+    """The last RIMANDA round that never reached the executor, or 0.
+
+    A round is delivered when its `unit_reworked` event exists: that event is
+    written by a run in the session and by the tab a lost session opens.
+    """
+    name = state.slug(unit)
+    last = _last_review(task_id, name)
+    if not last or str(last.get("verdict") or "") != state.REWORKED:
+        return 0
+    round_no = int(last.get("round") or 0)
+    delivered = any(
+        row.get("event") == "unit_reworked" and row.get("unit") == name
+        and int(row.get("round") or 0) == round_no
+        for row in state.read_events(task_id)
+    )
+    return 0 if delivered else round_no
+
+
+def _last_review(task_id: str, name: str) -> dict:
+    """The unit's last review event, or an empty row when it was never reviewed."""
+    rows = [
+        row for row in state.read_events(task_id)
+        if row.get("event") == "unit_reviewed" and row.get("unit") == name
+    ]
+    return rows[-1] if rows else {}
+
+
 def approve(task_id: str, unit: str, reason: str) -> dict:
     """Accept the unit at the commit the engine last passed, and write the round that says so."""
     record = state.unit_record(task_id, unit)
@@ -100,6 +128,12 @@ def rework(task_id: str, unit: str, corrections: str | Path, *, sender=None) -> 
     text = path.read_text(encoding="utf-8")
     if not text.strip():
         raise ReviewError(f"file delle correzioni vuoto: {path}")
+    pending = pending_round(task_id, name)
+    if pending:
+        raise ReviewError(
+            f"il giro {pending} di {name} non è ancora consegnato: "
+            f"`sup review {task_id} {name} --resend` lo riconsegna. Un nuovo giro si apre solo dopo"
+        )
     head = _branch_head(record)
     collection = last_collection(task_id, name)
     round_no = next_round(task_id, name)
@@ -116,6 +150,35 @@ def rework(task_id: str, unit: str, corrections: str | Path, *, sender=None) -> 
     return {
         "unit": name, "round": round_no, "path": review, "verdict": state.REWORKED,
         "head": head, "delivery": delivery,
+    }
+
+
+def resend(task_id: str, unit: str, *, sender=None) -> dict:
+    """Deliver again the last round that never reached the executor, without a new number.
+
+    The round file is already written and the journal already knows it: this
+    only repeats the delivery, so a busy session or a missing one cannot burn a
+    round number or leave the corrections behind.
+    """
+    record = state.unit_record(task_id, unit)
+    name = record["unit"]
+    round_no = pending_round(task_id, name)
+    if not round_no:
+        raise ReviewError(
+            f"nessun giro di {name} in attesa di consegna: `sup review ... --rework <file>` apre il prossimo"
+        )
+    path = review_path(task_id, name, round_no)
+    if not path.is_file():
+        raise ReviewError(
+            f"file del giro {round_no} sparito: {path}: riscrivi le correzioni con `--rework`"
+        )
+    delivery = (sender or harness.send_corrections)(
+        task_id, name, path, round_no, open_without_session=True,
+    )
+    last = _last_review(task_id, name)
+    return {
+        "unit": name, "round": round_no, "path": path, "verdict": state.REWORKED,
+        "head": str(last.get("head") or ""), "delivery": delivery,
     }
 
 
