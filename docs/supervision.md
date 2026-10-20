@@ -74,7 +74,15 @@ Cleanup stays manual and explicit: `git worktree remove <path>` and
 
 ## The executor's window
 
-`sup run` opens OpenCode's own terminal UI in the unit's copy:
+One harness means one session per task, and the engine keeps it that way.
+
+`sup run` looks for the session the task already owns. If there is one and it
+is idle (`time.idle` at or past `time.updated` in the harness's own export),
+the unit's work goes into it with `opencode run -s <session> "<pointer>"` and
+no new tab is opened. If it is busy, the unit is **queued**: the journal records
+`unit_queued` with the reason, `sup status` shows `in coda`, and the engine says
+so instead of opening another window. A tab is opened only when the task has no
+session for that harness yet:
 
 ```
 opencode <worktree> --prompt "Sei l'esecutore dell'unità ... leggi il brief in ..."
@@ -84,13 +92,13 @@ The prompt is a pointer to `20-brief-<unit>.md`, never the brief itself, and no
 `--auto` or `--dangerously-*` flag is ever passed: the model and the permissions
 stay what the owner configured.
 
-The session that window opens is found in `opencode session list --format json`,
-which reports `id`, `created` and `directory`: the newest session whose
-`directory` is the unit's copy and whose `created` is at or after the moment
-the window was opened. When no session matches within the wait (30 seconds),
-`sup run` says so and the attach stays a manual `sup attach`: the engine never
-guesses which session belongs to which unit. The cost of the attached session
-lands in `05-costi.jsonl` like any other attach.
+The session that a new tab opens is found in `opencode session list --format
+json`, which reports `id`, `created` and `directory`: the newest session whose
+`directory` is the unit's copy and whose `created` is at or after the moment the
+tab was opened. When no session matches within the wait (30 seconds), `sup run`
+says so and the attach stays a manual `sup attach`: the engine never guesses
+which session belongs to which unit. The cost of the attached session lands in
+`05-costi.jsonl` like any other attach.
 
 ## The engine's gates
 
@@ -113,6 +121,12 @@ the diff with a declared cap (400 lines) and the cost of the attached session;
 `50-gate-<unit>.txt` carries the raw output, including what the verification
 printed. `sup collect` exits 1 on FAIL, so a script sees it.
 
+The package also names the tests this platform skipped among the test files the
+unit touched (`pytest -q -rs` on those files): a test skipped on Windows runs on
+the Linux CI, and the other way round. A POSIX-only bug of the lazy-mcp split
+passed on Windows exactly this way, and the reviewer now sees "non verificato su
+Linux" next to the gate table instead of a green run that proved nothing.
+
 Globs are shell-style (`fnmatch`), so `docs/*.md` and `03-INFRA/**` both work.
 
 ## Visible windows
@@ -121,10 +135,11 @@ Globs are shell-style (`fnmatch`), so `docs/*.md` and `03-INFRA/**` both work.
 engine never reads its output, and a window that cannot be opened raises
 instead of falling back to a hidden process.
 
-- Windows: `wt.exe` (new window, title, working directory, then `pwsh`
-  with `-NoExit`, or `powershell` when 7 is missing), otherwise a dedicated
-  console (`CREATE_NEW_CONSOLE`). A `;` in the command is escaped as `\;`,
-  because Windows Terminal chains its own subcommands on it.
+- Windows: **one** Windows Terminal window called `nexgen-sup`, and one tab per
+  session (`wt -w nexgen-sup new-tab ...`). Ten units are ten tabs, not ten
+  windows. A `;` in the command is escaped as `\;`, because Windows Terminal
+  chains its own subcommands on it. Without Windows Terminal the fallback is a
+  dedicated console (`CREATE_NEW_CONSOLE`), which has no tabs.
 - Linux: the first of `x-terminal-emulator`, `gnome-terminal`, `konsole`,
   `xterm`, each with its own flags, the shell kept alive with `; exec bash`.
   Without `DISPLAY` and without `WAYLAND_DISPLAY` it refuses: a window nobody
@@ -143,6 +158,17 @@ model, session, window, duration, tokens in and out (with reasoning and cache
 read/write), cost in dollars, and the source of the measurement. The source of
 this phase is `opencode session export <id>`, resolved through PATH and through
 the engine's Windows shim resolver.
+
+**Subagents are counted.** `opencode session export` and `session list` do not
+expose the sessions a subagent opened: `session list` lists top-level sessions
+only and the export's `info` has no parent field, so the child ids appear only
+inside the message text. The harness keeps them in its own store
+(`~/.local/share/opencode/opencode.db`, column `parent_id`, in the `session` and
+`session_v2` tables), and that store is what the engine reads, read-only, depth
+first: the row's `cost_usd` is the session plus every session under it, with
+`children`, `children_cost_usd` and `children_source` naming the parts. When the
+store is missing or unreadable the row says `figlie non esposte` and keeps the
+parent's cost: an unread source is never written as "no children".
 
 A source that does not answer still leaves a row, with `cost_usd: null` and a
 `note` naming the reason. A missing measurement is never written as zero, and

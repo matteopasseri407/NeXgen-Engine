@@ -588,8 +588,8 @@ The lane also carries the first two phases of the supervisor: `sup start`
 creates a task folder (objective, append-only journal, brief and report
 templates) under `~/.local/state/nexgen/local-lane/supervision/`, `sup unit`
 prepares a unit's git working copy on a local branch with its push blocked and
-its scope declared, `sup run` opens the executor's own terminal UI there and
-attaches the session it created, and `sup collect` runs the engine's gates
+its scope declared, `sup run` puts the unit's work into the task's own harness
+session (a new tab only when there is none) and attaches what it costs, and `sup collect` runs the engine's gates
 (boundary, forbidden files, test integrity, per-commit proof, independent
 verification, remote untouched, clean tree) and writes the review package.
 `sup attach` binds a harness session to a unit and writes its cost row
