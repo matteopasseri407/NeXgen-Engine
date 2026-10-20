@@ -59,6 +59,15 @@ import zlib
 from pathlib import Path
 from typing import Any
 
+#: The gateway is started as a script (its own folder is then sys.path[0]) and is also loaded from a file by the
+#: test suite and by mcp-trim.py, where it is not. Appended rather than inserted: this folder also holds
+#: render.py, and nothing here may shadow a module that is already on the path.
+_HERE = str(Path(__file__).resolve().parent)
+if _HERE not in sys.path:
+    sys.path.append(_HERE)
+
+import lazy_env  # noqa: E402 - resolved from the gateway's own folder, prepared just above
+
 SERVER_NAME = "lazy-mcp"
 SERVER_VERSION = "0.2.1"
 FRAMING = "headers"
@@ -143,78 +152,39 @@ def _matching_reply(raw: bytes, rid: int) -> dict[str, Any] | None:
     return reply
 
 
+#: One load of the gateway owns one cache: a test that resets `_MACHINE_ENV_CACHE` on the loaded module is
+#: resetting the only one this module uses. The parsing and the POSIX rule live in lazy_env.
 _MACHINE_ENV_CACHE: tuple[tuple, dict[str, str]] = ((), {})
 
 
 def _machine_environment() -> dict[str, str]:
     """The variables this user's machine declares for every session: `~/.config/environment.d/*.conf`.
 
-    A CLI inherits them only if it was started from the graphical session; started over SSH, from a service or
-    from some other launcher it does not, and then a server that needs one of its tokens silently went missing
-    ("Vercel is not there"). The gateway resolves the variables a manifest entry *declares* from here when the
-    process does not have them, so what a server can reach no longer depends on how the CLI happened to be
-    launched. POSIX only: Windows keeps user variables in the registry, which every process inherits.
+    A CLI started over SSH, from a service or from another launcher inherits none of them, and then a server
+    that needs one of its tokens silently went missing ("Vercel is not there"). The gateway resolves the
+    variables a manifest entry *declares* from here when the process does not have them, so what a server can
+    reach no longer depends on how the CLI happened to be launched. POSIX only: Windows keeps user variables in
+    the registry, which every process inherits. This file owns the cache and the config home; lazy_env parses.
     """
     global _MACHINE_ENV_CACHE
-    if os.name == "nt":
-        return {}
-    base = os.environ.get("XDG_CONFIG_HOME") or str(Path.home() / ".config")
-    files = sorted(Path(base, "environment.d").glob("*.conf")) if Path(base, "environment.d").is_dir() else []
-    try:
-        signature = tuple((str(f), f.stat().st_mtime_ns) for f in files)
-    except OSError:
-        return {}
-    if signature == _MACHINE_ENV_CACHE[0]:
-        return _MACHINE_ENV_CACHE[1]
-    values: dict[str, str] = {}
-    for path in files:
-        try:
-            lines = path.read_text(encoding="utf-8").splitlines()
-        except OSError:
-            continue
-        for raw in lines:
-            line = raw.strip()
-            if not line or line.startswith("#") or "=" not in line:
-                continue
-            key, _, value = line.partition("=")
-            value = value.strip()
-            if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
-                value = value[1:-1]
-            values[key.strip()] = value
-    _MACHINE_ENV_CACHE = (signature, values)
+    config_home = os.environ.get("XDG_CONFIG_HOME") or str(Path.home() / ".config")
+    _MACHINE_ENV_CACHE, values = lazy_env.machine_environment(config_home, _MACHINE_ENV_CACHE)
     return values
 
 
 def _env_default(name: str, default: str = "") -> str:
-    value = os.environ.get(name)
-    if value is None:
-        value = _machine_environment().get(name)
-    return default if value is None else value
-
-
-def _deposit_env():
-    """The shared reader of the secrets deposit's materialized file (see nexgen_core.deposit_env)."""
-    scripts = str(Path(__file__).resolve().parents[2] / "scripts")
-    if scripts not in sys.path:
-        sys.path.insert(0, scripts)
-    from nexgen_core import deposit_env
-
-    return deposit_env
+    """A variable from the process, then from the machine's session; the default only when neither has it."""
+    return lazy_env.env_default(name, default, _machine_environment())
 
 
 def _declared_value(name: str) -> str:
     """A credential a manifest entry declares it needs: the process, then the machine's session, then the deposit."""
-    value = _env_default(name)
-    return value or _deposit_env().read_deposit().get(name, "")
+    return lazy_env.declared_value(name, _machine_environment())
 
 
 def _expand_placeholders(text: str, ctx: dict[str, str]) -> str:
-    def repl(match):
-        name, default = match.group(1), ""
-        if ":-" in name:
-            name, default = name.split(":-", 1)
-        return ctx.get(name, _env_default(name, default))
-    return re.sub(r"\$\{([^}]+)\}", repl, text)
+    """`${NAME}` and `${NAME:-fallback}` against this session; the expansion itself is lazy_env's."""
+    return lazy_env.expand_placeholders(text, ctx, _env_default)
 
 
 #: The waiter expands the SAME inline dialect the renderer does (`{{ .os }}`,
@@ -369,7 +339,7 @@ def _missing_credentials(srv: dict[str, Any]) -> list[str]:
     if isinstance(srv.get("env"), dict):
         for value in srv["env"].values():
             match = _PURE_REFERENCE.match(str(value).strip())
-            if match and _is_secret_name(match.group(1)):
+            if match and lazy_env.is_secret_name(match.group(1)):
                 needed.append(match.group(1))
     seen: list[str] = []
     for name in needed:
@@ -450,59 +420,9 @@ def served_entry(name: str) -> dict[str, Any] | None:
     return _prepare_entry(name, srv, _server_context()) if isinstance(srv, dict) else None
 
 
-#: What a child server may inherit. The proxy's own environment holds every token the user's shell
-#: exports; a server that needs one declares it (`env: {NAME: "${NAME}"}` in the manifest entry) instead
-#: of getting all of them. The list is what runtimes need to start at all (`npx`, `node`, python,
-#: docker, a proxy) plus the engine's own variables; the MCP SDK's default is stricter still.
-_INHERITED_EXACT = frozenset({
-    "PATH", "HOME", "USER", "LOGNAME", "SHELL", "TERM", "LANG", "LANGUAGE", "TZ", "TMPDIR", "TMP", "TEMP",
-    "PWD", "DISPLAY", "WAYLAND_DISPLAY", "DBUS_SESSION_BUS_ADDRESS", "VIRTUAL_ENV", "PYTHONPATH",
-    "PYTHONIOENCODING", "PYTHONUTF8", "NODE_PATH", "NODE_OPTIONS", "NODE_EXTRA_CA_CERTS", "SSL_CERT_FILE",
-    "SSL_CERT_DIR", "REQUESTS_CA_BUNDLE", "CURL_CA_BUNDLE", "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY",
-    "NO_PROXY", "DOCKER_HOST", "COLORTERM", "LD_LIBRARY_PATH",
-    # Windows
-    "SYSTEMROOT", "SYSTEMDRIVE", "WINDIR", "COMSPEC", "PATHEXT", "USERPROFILE", "USERNAME", "USERDOMAIN",
-    "APPDATA", "LOCALAPPDATA", "PROGRAMDATA", "PROGRAMFILES", "PROGRAMFILES(X86)", "PROGRAMW6432",
-    "COMMONPROGRAMFILES", "HOMEDRIVE", "HOMEPATH", "ALLUSERSPROFILE", "PUBLIC", "COMPUTERNAME", "OS",
-    "NUMBER_OF_PROCESSORS", "PROCESSOR_ARCHITECTURE",
-})
-_INHERITED_PREFIXES = (
-    "LC_", "XDG_", "NEXGEN_", "AGENT_", "KNOWLEDGE_VAULT_", "NPM_CONFIG_", "NODE_", "NVM_", "VOLTA_", "UV_",
-    "PIPX_", "PYTHON", "LAZY_MCP_",
-)
-def _secret_shapes():
-    """The shared definition of what a secret looks like (see nexgen_core.secret_shapes)."""
-    scripts = str(Path(__file__).resolve().parents[2] / "scripts")
-    if scripts not in sys.path:
-        sys.path.insert(0, scripts)
-    from nexgen_core import secret_shapes
-
-    return secret_shapes
-
-
-def _is_secret_name(name: str) -> bool:
-    """A name that looks like a secret is never inherited, even under an allowed prefix."""
-    return _secret_shapes().is_secret_name(name)
-
-
-def _child_environment(declared: dict[str, str] | None = None) -> dict[str, str]:
-    """The environment a child server starts with: the allowed part of the proxy's own, then what the
-    manifest entry declared (declared means wanted, so a secret named there is passed on purpose)."""
-    inherited = {
-        name: value for name, value in os.environ.items()
-        if (name.upper() in _INHERITED_EXACT or name.upper().startswith(_INHERITED_PREFIXES))
-        and not _is_secret_name(name)
-    }
-    inherited.update(declared or {})
-    return inherited
-
-
 def _redact(text: str, env: dict[str, str]) -> str:
     """Hides, in text a child printed, the values of the secrets this proxy handed it, and the usual shapes."""
-    for name, value in env.items():
-        if _is_secret_name(name) and len(value) >= 6:
-            text = text.replace(value, "[redacted]")
-    return _secret_shapes().redact(text)
+    return lazy_env.redact(text, env)
 
 
 class _ServerHandle:
@@ -596,7 +516,7 @@ class _ServerHandle:
         if ctx:
             cmd = [_expand_placeholders(c, ctx) for c in cmd]
             declared = {k: _expand_placeholders(v, ctx) for k, v in declared.items()}
-        env = _child_environment(declared)
+        env = lazy_env.child_environment(declared)
         if ctx:
             env = {k: _expand_placeholders(v, ctx) for k, v in env.items()}
         self._child_env = env
