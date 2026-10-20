@@ -15,22 +15,12 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
-from nexgen_core import guard_instructions, guard_permissions
+from nexgen_core import guard_git, guard_instructions, guard_permissions
 from nexgen_core.action_notes import ERROR, WARN, is_error, is_warning  # noqa: E402 - sys.path shim for cloned checkout
 from nexgen_core.beat import Heartbeat
 from nexgen_core.errors import AlignmentError
 from nexgen_core.config import load_mcp_manifest, load_skills_manifest
-from nexgen_core.git_ops import (
-    GitState,
-    auto_commit_infra_files,
-    fast_forward_merge,
-    get_current_branch,
-    get_untracked_infra_files,
-    inspect_git_state,
-    quarantine_diverged_commits,
-    resolve_remotes,
-    run_git,
-)
+from nexgen_core.git_ops import get_current_branch, resolve_remotes, run_git
 from nexgen_core.guard_instructions import _same_file  # noqa: F401 - kept importable from this module
 from nexgen_core.guard_result import GuardMode, GuardResult
 from nexgen_core.i18n import t
@@ -289,68 +279,8 @@ class GuardRunner:
         branch: str,
         actions: list[str],
     ) -> GuardResult | None:
-        """Inspects data git state and converges it (fast-forward / rebase /
-        quarantine). Returns a result only when the cycle must stop here."""
-        if mode == GuardMode.PREFLIGHT:
-            return None
-        # Auto-commit any pending tracked infra files so they don't block sync
-        auto_ok, _auto_committed = auto_commit_infra_files(self.vault_data)
-        if not auto_ok:
-            # inspect_git_state below will still block fail-closed on DIRTY,
-            # but the message must name the real cause (commit failed), not
-            # just "unsaved changes".
-            actions.append(WARN + t("Infra auto-commit failed; the Git inspection below decides whether the cycle can proceed"))
-        untracked_infra = get_untracked_infra_files(self.vault_data)
-        if untracked_infra:
-            actions.append(t(
-                "New infra files never committed ({count}): stage them with vault-push, or they stay local-only.",
-                count=len(untracked_infra),
-            ))
-
-        git_status = inspect_git_state(
-            self.vault_data,
-            expected_branch=branch,
-            remote=auth_remote,
-            allow_offline=allow_offline,
-        )
-        if not git_status.allows_apply:
-            return GuardResult(
-                success=False,
-                mode=mode,
-                message=t("Operation blocked by Git: {reason}", reason=git_status.message),
-                exit_code=1,
-            )
-        if git_status.state == GitState.BEHIND:
-            ff_ok, ff_msg = fast_forward_merge(self.vault_data, remote=auth_remote, branch=branch)
-            if not ff_ok:
-                return GuardResult(
-                    success=False,
-                    mode=mode,
-                    message=t("Error during automatic update: {reason}", reason=ff_msg),
-                    exit_code=1,
-                )
-            actions.append(ff_msg)
-        elif git_status.state == GitState.DIVERGED:
-            rebase_res = run_git(self.vault_data, "rebase", f"{auth_remote}/{branch}")
-            if rebase_res.returncode == 0:
-                actions.append(t("Realigned with {remote}/{branch} via rebase", remote=auth_remote, branch=branch))
-            else:
-                run_git(self.vault_data, "rebase", "--abort")
-                q_ok, _q_branch, q_msg = quarantine_diverged_commits(self.vault_data, remote=auth_remote, branch=branch)
-                if q_ok:
-                    actions.append(q_msg)
-                else:
-                    return GuardResult(
-                        success=False,
-                        mode=mode,
-                        message=t("Error during divergence resolution: {reason}", reason=q_msg),
-                        exit_code=1,
-                    )
-        elif git_status.state == GitState.FRESH:
-            actions.append(t("Data state: {status}", status=git_status.message))
-        elif git_status.state == GitState.AHEAD:
-            actions.append(t("Data state: {status}", status=git_status.message))
-        return None
+        """Inspects data git state and converges it; a result only when it must stop."""
+        return guard_git.converge_git_phase(self, mode, allow_offline, auth_remote, branch, actions)
 
     def _phase_preflight(self, mode: GuardMode) -> GuardResult | None:
         """Read-only validation of all configuration files. In PREFLIGHT
