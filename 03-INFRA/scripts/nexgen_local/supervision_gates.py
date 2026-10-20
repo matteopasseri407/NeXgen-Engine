@@ -30,7 +30,7 @@ from . import supervision_requests as requests_module
 from . import supervision_state as state
 from .supervision_state import SupervisionError
 from .supervision_package import DIFF_MAX_LINES, package_text, raw_text  # noqa: F401  DIFF_MAX_LINES: re-exported, the gate tests read it here
-from .supervision_worktree import refs_at, remote_urls
+from .supervision_worktree import BLOCKED_PUSH_URL, push_urls, refs_at, remote_urls
 
 #: The declared budget for the executor's own verification command.
 VERIFY_TIMEOUT_S = 600.0
@@ -199,26 +199,17 @@ def _porcelain_path(line: str) -> str:
 def _remote_gate(folder: Path, record: dict, base: str, head: str) -> GateResult:
     """The remotes of the creation, and whether any of their refs carries a commit of this unit.
 
-    A remote that disappeared or changed its fetch URL is a FAIL, because that
-    is how a push is hidden. A remote branch that advanced for another reason
-    (another unit was published) is not: the question is whether *this unit's*
-    commits reached a remote, and it is asked of the URLs written at creation,
-    which a unit cannot edit by removing or rewriting its own remote config.
+    A remote that disappeared, changed its fetch URL, changed its push URL or
+    was added after creation is a FAIL, because that is how a push is hidden:
+    `remote.<name>.pushurl` wins over the fetch URL for every push, and a new
+    remote is a new way out of the copy. A remote branch that advanced for
+    another reason (another unit was published) is not a failure: the question
+    is whether *this unit's* commits reached a remote, and it is asked of the
+    URLs written at creation, which a unit cannot edit without being seen.
     """
-    saved = {str(name): str(url) for name, url in (record.get("remote_urls") or {}).items()}
-    now = remote_urls(folder)
-    if saved:
-        missing = sorted(name for name in saved if not now.get(name))
-        if missing:
-            return GateResult("remoto intatto", False, "remoti spariti dalla copia: " + ", ".join(missing))
-        changed = sorted(name for name in saved if now.get(name) and now[name] != saved[name])
-        if changed:
-            return GateResult(
-                "remoto intatto", False,
-                "URL di fetch cambiato: " + ", ".join(f"{name} ({saved[name]} → {now[name]})" for name in changed),
-            )
-    else:
-        saved = now
+    problem, saved = _remote_config_gate(record, folder)
+    if problem is not None:
+        return problem
     if not saved:
         return GateResult("remoto intatto", True, "nessun remoto configurato alla creazione")
     mine = set(git(folder, "rev-list", f"{base}..{head}").split())
@@ -244,6 +235,38 @@ def _remote_gate(folder: Path, record: dict, base: str, head: str) -> GateResult
         "remoto intatto", True,
         f"{len(saved)} remoti, nessun ref remoto porta un commit dell'unità",
     )
+
+
+def _remote_config_gate(record: dict, folder: Path) -> tuple[GateResult | None, dict]:
+    """The remote configuration is the creation's own, and returns the URLs to ask.
+
+    A remote gone, added, re-pointed for fetch or for push is a FAIL. The
+    returned dict is the creation's fetch URLs, or today's when the journal
+    predates the field: the refs are then asked of the only URLs there are.
+    """
+    saved = {str(name): str(url) for name, url in (record.get("remote_urls") or {}).items()}
+    saved_push = {str(name): str(url) for name, url in (record.get("remote_pushurls") or {}).items()}
+    now = remote_urls(folder)
+    now_push = push_urls(folder)
+    if not saved:
+        return None, now
+    missing = sorted(name for name in saved if not now.get(name))
+    if missing:
+        return GateResult("remoto intatto", False, "remoti spariti dalla copia: " + ", ".join(missing)), saved
+    added = sorted(name for name in now if name not in saved)
+    if added:
+        return GateResult("remoto intatto", False, "remoti aggiunti alla copia: " + ", ".join(added)), saved
+    changed = sorted(name for name in saved if now.get(name) and now[name] != saved[name])
+    if changed:
+        detail = ", ".join(f"{name} ({saved[name]} → {now[name]})" for name in changed)
+        return GateResult("remoto intatto", False, "URL di fetch cambiato: " + detail), saved
+    moved = sorted(name for name in saved if now_push.get(name, "") != saved_push.get(name, BLOCKED_PUSH_URL))
+    if moved:
+        detail = ", ".join(
+            f"{name} ({saved_push.get(name, BLOCKED_PUSH_URL)} → {now_push.get(name, '')})" for name in moved
+        )
+        return GateResult("remoto intatto", False, "pushurl cambiata: " + detail), saved
+    return None, saved
 
 
 def _verify_gate(folder: Path, command: str) -> GateResult:

