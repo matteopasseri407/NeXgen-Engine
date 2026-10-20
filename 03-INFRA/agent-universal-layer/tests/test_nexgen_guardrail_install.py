@@ -233,10 +233,12 @@ def test_reinstalling_the_guardrail_keeps_the_flags_the_posture_set(tmp_path):
 
 
 def test_antigravity_registers_the_adapter_so_a_path_with_spaces_still_runs(tmp_path):
-    """Il comando dell'hook va quotato: la home di Windows contiene spesso spazi.
+    """La home di Windows contiene spesso spazi: il comando non deve contenerla.
 
     `node C:\\Users\\Mario Rossi\\...\\adapter.mjs` si spezza in due argomenti e
-    l'hook del guardrail non parte, mentre i tool restano non controllati.
+    l'hook del guardrail non parte. Le virgolette non bastano: agy le passa a node
+    così come sono. agy esegue l'hook nella cartella di hooks.json, dove sta
+    l'adapter, quindi basta il suo nome.
     """
     from nexgen_core.paths import antigravity_settings
 
@@ -251,9 +253,53 @@ def test_antigravity_registers_the_adapter_so_a_path_with_spaces_still_runs(tmp_
 
     hooks = json.loads((home / ".gemini" / "config" / "hooks.json").read_text(encoding="utf-8"))
     command = hooks["nexgen-guardrail"]["PreToolUse"][0]["hooks"][0]["command"]
-    assert command.startswith('node "')
-    assert command.endswith('"')
+    assert command == "node antigravity-guardrail-adapter.mjs"
+    assert "con spazi" not in command
     assert rt.install_guardrail(home, _body(tmp_path), HOOKS) is None  # e si assesta
+
+
+def test_antigravity_registers_relative_commands_without_quotes_or_spaces(tmp_path):
+    """Antigravity runs hooks with CWD set to the hooks.json directory.
+
+    Quoting the command breaks on Windows because cmd /c passes literal quotes
+    to node, failing with 'Cannot find module'. Using an unquoted absolute path
+    breaks when the home directory contains spaces. A relative command without
+    quotes solves both.
+    """
+    from nexgen_core.paths import antigravity_settings
+
+    home = tmp_path / "home con spazi"
+    home.mkdir()
+    settings = antigravity_settings(home)
+    settings.parent.mkdir(parents=True)
+    settings.write_text("{}", encoding="utf-8")
+    rt = AntigravityRuntime()
+
+    # Guardrail: relative command without quotes or absolute paths
+    rt.install_guardrail(home, _body(tmp_path), HOOKS)
+    hooks = json.loads((home / ".gemini" / "config" / "hooks.json").read_text(encoding="utf-8"))
+    guardrail_cmd = hooks["nexgen-guardrail"]["PreToolUse"][0]["hooks"][0]["command"]
+
+    assert '"' not in guardrail_cmd
+    assert str(home) not in guardrail_cmd
+    assert not Path(guardrail_cmd.split()[1]).is_absolute()
+    assert guardrail_cmd == "node antigravity-guardrail-adapter.mjs"
+    assert rt.install_guardrail(home, _body(tmp_path), HOOKS) is None
+
+    # Event sink: relative command without quotes or absolute paths
+    sink_body = tmp_path / "nexgen-event-sink.mjs"
+    sink_body.write_text("// sink\n", encoding="utf-8")
+    rt.install_event_sink(home, sink_body)
+    hooks = json.loads((home / ".gemini" / "config" / "hooks.json").read_text(encoding="utf-8"))
+    done_cmd = hooks["nexgen-event-sink"]["Stop"][0]["command"]
+    step_cmd = hooks["nexgen-event-sink"]["PreToolUse"][0]["hooks"][0]["command"]
+
+    for cmd in (done_cmd, step_cmd):
+        assert '"' not in cmd
+        assert str(home) not in cmd
+        assert not Path(cmd.split()[1]).is_absolute()
+    assert done_cmd == "node nexgen-event-sink.mjs on_done antigravity"
+    assert step_cmd == "node nexgen-event-sink.mjs on_step antigravity"
 
 
 def test_antigravity_becomes_strict_under_bypass(tmp_path):
