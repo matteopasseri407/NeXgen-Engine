@@ -163,18 +163,39 @@ def status(task_id: str) -> dict:
         float(row["cost_usd"]) for row in rows
         if isinstance(row.get("cost_usd"), (int, float))
     ]
+    units = _units_from_events(events)
+    for record in units:
+        record["cost_usd"] = _unit_cost(rows, record["unit"])
     return {
         "id": folder.name,
         "path": folder,
         "objective": objective(task_id),
         "events": len(events),
-        "units": _units_from_events(events),
+        "units": units,
         "sessions": _sessions_from_events(events),
         "last_event": events[-1] if events else None,
         "cost_rows": len(rows),
         "cost_total_usd": round(sum(known), 6) if known else None,
         "cost_unknown_rows": len(rows) - len(known),
     }
+
+
+def unit_record(task_id: str, unit: str) -> dict:
+    """One unit's latest state as the journal describes it; a unit nobody created is an error."""
+    name = slug(unit)
+    for record in _units_from_events(read_events(task_id)):
+        if record["unit"] == name:
+            return record
+    raise SupervisionError(f"unità sconosciuta: {unit} (creala con `sup unit ...`)")
+
+
+def _unit_cost(rows: list[dict], unit: str) -> float | None:
+    """What this unit's attached sessions cost, or None when no row carries a number."""
+    known = [
+        float(row["cost_usd"]) for row in rows
+        if row.get("unit") == unit and isinstance(row.get("cost_usd"), (int, float))
+    ]
+    return round(sum(known), 6) if known else None
 
 
 def _now_iso() -> str:
@@ -204,20 +225,51 @@ def _objective_from_file(path: Path) -> str:
     return ""
 
 
+#: How far a unit has gone, from the event that says it.
+UNIT_EVENTS = {
+    "unit_created": "creata",
+    "unit_started": "in corso",
+    "attached": "in corso",
+    "unit_collected": "raccolta",
+}
+
+
 def _units_from_events(events: list[dict]) -> list[dict]:
-    """One entry per unit, from its latest attach: the harness session that ran it."""
+    """One entry per unit, folded from every event that describes it.
+
+    A unit starts with `unit_created` (copy, branch, scope), gains its harness
+    session with `attached`, and ends with `unit_collected` (the gates' verdict).
+    """
     units: dict[str, dict] = {}
     for row in events:
-        if row.get("event") != "attached" or not row.get("unit"):
+        event = str(row.get("event") or "")
+        unit = str(row.get("unit") or "")
+        if event not in UNIT_EVENTS or not unit:
             continue
-        unit = str(row["unit"])
-        units[unit] = {
-            "unit": unit,
-            "role": str(row.get("role") or ""),
-            "harness": str(row.get("harness") or ""),
-            "session": str(row.get("session") or ""),
-            "at": str(row.get("at") or ""),
-        }
+        record = units.setdefault(unit, {
+            "unit": unit, "role": "", "harness": "", "session": "", "at": "",
+            "state": "", "verdict": "",
+        })
+        record["state"] = UNIT_EVENTS[event]
+        record["at"] = str(row.get("at") or record["at"])
+        if event == "unit_created":
+            record.update({
+                "role": "esecutore",
+                "worktree": str(row.get("worktree") or ""),
+                "branch": str(row.get("branch") or ""),
+                "base": str(row.get("base") or ""),
+                "allow": [str(item) for item in row.get("allow") or []],
+                "verify": str(row.get("verify") or ""),
+                "remotes": dict(row.get("remotes") or {}),
+            })
+        elif event == "attached":
+            record.update({
+                "session": str(row.get("session") or ""),
+                "role": str(row.get("role") or record["role"]),
+                "harness": str(row.get("harness") or record["harness"]),
+            })
+        elif event == "unit_collected":
+            record["verdict"] = str(row.get("verdict") or "")
     return list(units.values())
 
 
