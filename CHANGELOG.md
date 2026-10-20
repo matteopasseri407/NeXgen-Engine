@@ -10,6 +10,8 @@ of any engine release.
 
 ## [Unreleased]
 
+## [2.17.0] - 2026-10-21
+
 ### Added
 
 - Supervision (preview): `nexgen-local sup` lets a supervising model hand work to coding agents that run in their own harness, in a visible terminal, and lets the engine judge the result. `sup start` opens a task folder; `sup unit` gives each unit its own working copy on a local branch with push blocked; `sup run` opens the agent (one window, one tab per harness session, reusing an idle session); `sup collect` runs the engine's own gates on the unit's commits (allowed files, VERSION/CHANGELOG/CI untouched, no weakened tests, the per-commit proof, an independent verification, no pushed commit, clean tree) and writes a review package with the session cost; `sup review` approves or sends numbered correction rounds back to the same session; `sup publish` replays an approved unit onto your branch, signed when your repository signs, and pushes only forward, never a force-push, a tag or a version bump. See `docs/supervision.md`, including what the gates guarantee and what they do not.
