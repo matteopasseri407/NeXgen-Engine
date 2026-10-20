@@ -1,5 +1,16 @@
 """The guard cycle (Guard) and transactional sync for NeXgen Engine v2.
 
+One job: coordinate one sync transaction. It takes the host-wide lock,
+converges the data repository's Git state, validates the configuration
+read-only, then runs every write phase isolated from the others and turns
+the outcome into a single `GuardResult`.
+
+The behaviour lives in the components this module calls: `guard_git.py`
+converges Git, `guard_instructions.py` aligns the CLI instruction pointers,
+`guard_permissions.py` applies the permission posture, and `guard_result.py`
+holds the two value types. The methods here only name the step and call it,
+so an instance patch still replaces that one step.
+
 Phases of the guard cycle (guard / apply):
 1. Host-wide lock (guard busy = exit 0, apply busy = exit 75)
 2. Git inspection (checks clean state, fetches from the authoritative remote)
