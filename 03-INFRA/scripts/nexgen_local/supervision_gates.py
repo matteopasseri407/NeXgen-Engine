@@ -14,6 +14,7 @@ from fnmatch import fnmatch
 from pathlib import Path
 
 from nexgen_core.discipline import config, regress
+from nexgen_core.discipline.config import ConfigError
 from nexgen_core.discipline.gitutil import GitError, changes as changed_files, diff_text, git
 from nexgen_core.discipline.integrity import check_test_integrity
 from nexgen_core.processes import no_window_kwargs, split_command_line, windows_command_argv
@@ -54,8 +55,11 @@ def collect(task_id: str, unit: str) -> dict:
         raise SupervisionError(f"unità {name} senza base o ramo nel diario: rifai `sup unit`")
     scope = [str(pattern) for pattern in record.get("allow") or []]
     head = _head(folder, branch)
-    files = changed_files(folder, base, head)
-    rules = config.load(folder, base)
+    try:
+        files = changed_files(folder, base, head)
+        rules = config.load(folder, base)
+    except (GitError, ConfigError) as exc:
+        raise SupervisionError(f"cancelli non eseguibili su {folder}: {exc}") from exc
     clean = _clean_tree_gate(folder)
     remote = _remote_gate(folder, record.get("remotes") or {})
     text = diff_text(folder, base, head)

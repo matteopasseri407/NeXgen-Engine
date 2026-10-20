@@ -265,6 +265,16 @@ def test_an_unknown_unit_is_refused(task, repo, tmp_path):
         gates.collect(task, "mai-creata")
 
 
+def test_a_repository_whose_rules_do_not_parse_is_refused_with_a_reason(task, repo, tmp_path):
+    repo.write(".nexgen-discipline.toml", "review_paths = [unclosed\n")
+    repo.commit("chore: rompe la configurazione")
+    repo.git("push", "-q", "origin", "main")
+    _ = _unit(task, repo, tmp_path)
+
+    with pytest.raises(state.SupervisionError, match="cancelli non eseguibili"):
+        gates.collect(task, "prova")
+
+
 def test_a_vanished_copy_is_refused(task, repo, tmp_path):
     folder = _unit(task, repo, tmp_path)
     git_in(repo.path, "worktree", "remove", "--force", str(folder))
