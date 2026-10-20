@@ -111,9 +111,13 @@ def other_language_tests(source: str | None) -> int:
     return len(OTHER_TESTS.findall(source or ""))
 
 
+def _path_is_test(path: str, cfg: Config) -> bool:
+    return (TEST_PATH.search(path) is not None and path.lower().endswith(CODE_EXT)
+            and not any(fnmatch(path, g) for g in cfg.test_removal_ok))
+
+
 def _is_test(change: Change, cfg: Config) -> bool:
-    return (TEST_PATH.search(change.path) is not None and change.path.lower().endswith(CODE_EXT)
-            and not any(fnmatch(change.path, g) for g in cfg.test_removal_ok))
+    return _path_is_test(change.path, cfg) or bool(change.old_path and _path_is_test(change.old_path, cfg))
 
 
 def check_test_integrity(changes: list[Change], cfg: Config) -> list[Violation]:
@@ -123,14 +127,14 @@ def check_test_integrity(changes: list[Change], cfg: Config) -> list[Violation]:
     problems = []
     if sum(skip_growth(c.old, c.new, c.path) for c in tests) > 0:
         problems.append("a skip/xfail marker was added")
-    py = [c for c in tests if c.path.endswith(".py")]
+    py = [c for c in tests if c.path.endswith(".py") or bool(c.old_path and c.old_path.endswith(".py"))]
     (t0, a0), (t1, a1) = (tuple(map(sum, zip(*(test_stats(getattr(c, side)) for c in py), strict=False))) or (0, 0)
                           for side in ("old", "new"))
     if t1 < t0:
         problems.append(f"tests went from {t0} to {t1}")
     if a1 < a0:
         problems.append(f"assertions went from {a0} to {a1}")
-    others = [c for c in tests if not c.path.endswith(".py")]
+    others = [c for c in tests if c not in py]
     if sum(other_language_tests(c.new) for c in others) < sum(other_language_tests(c.old) for c in others):
         problems.append("fewer test cases in non-Python test files")
     if not problems:

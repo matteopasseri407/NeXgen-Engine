@@ -4,8 +4,10 @@ import sys
 from pathlib import Path
 
 from nexgen_core.discipline import cli
-from nexgen_core.discipline.config import load
+from nexgen_core.discipline.config import Config, load
+from nexgen_core.discipline.gitutil import changes
 from nexgen_core.discipline.health import report, run_smoke
+from nexgen_core.discipline.integrity import check_test_integrity
 from nexgen_core.discipline.scaffold import init_project
 
 TESTS = "def test_a():\n    assert 1\n\n\ndef test_b():\n    assert 2\n    assert 3\n"
@@ -278,3 +280,16 @@ def test_init_in_a_non_ascii_smoke_keeps_the_config_valid_and_rerun_stays_quiet(
     assert load(repo.path, "HEAD").smoke_command == "echo ✓"
     lines, _ = init_project(repo.path, "")
     assert not any("ATTENZIONE" in line for line in lines)
+
+
+def test_renaming_a_test_to_a_non_test_name_with_fewer_tests_is_flagged(repo):
+    """A test renamed to a non-test name and weakened must not escape integrity checks."""
+    ten = "".join(f"def test_{i}():\n    assert {i}\n\n\n" for i in range(10))
+    base = committed_tests(repo, ten, "tests/test_x.py")
+    repo.git("mv", "tests/test_x.py", "disabled_x.py")
+    seven = "".join(f"def test_{i}():\n    assert {i}\n\n\n" for i in range(7))
+    repo.write("disabled_x.py", seven)
+    ch = changes(repo.path, base)
+    violations = check_test_integrity(ch, Config())
+    assert violations and any("tests weakened" in v.message for v in violations)
+
