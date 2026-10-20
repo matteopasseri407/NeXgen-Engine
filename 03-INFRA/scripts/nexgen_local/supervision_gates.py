@@ -4,7 +4,8 @@ Nobody trusts the executor's report: this module reads the commits, runs the
 declared verification itself, asks every remote whether anything moved, and
 writes one PASS/FAIL line per gate with its reason. The verdict is PASS only
 when every line is, and the package carries the diffstat, the diff and the
-cost of the attached session.
+cost of the attached session. Collecting also writes down the requests the
+engine will never execute, so the owner finds them in `07-richieste-proprietario.md`.
 """
 from __future__ import annotations
 
@@ -24,6 +25,7 @@ from nexgen_core.discipline.violations import TEST_PATH
 from nexgen_core.processes import no_window_kwargs, split_command_line, windows_command_argv
 
 from . import supervision_costs as costs
+from . import supervision_requests as requests_module
 from . import supervision_state as state
 from .supervision_state import SupervisionError
 from .supervision_worktree import remote_refs
@@ -62,7 +64,7 @@ def collect(task_id: str, unit: str) -> dict:
     if not base or not branch:
         raise SupervisionError(f"unità {name} senza base o ramo nel diario: rifai `sup unit`")
     scope = [str(pattern) for pattern in record.get("allow") or []]
-    head = _head(folder, branch)
+    head = head_of(folder, branch)
     try:
         files = changed_files(folder, base, head)
         rules = config.load(folder, base)
@@ -87,20 +89,23 @@ def collect(task_id: str, unit: str) -> dict:
     raw_path = state.open_task(task_id) / f"50-gate-{name}.txt"
     package_path.write_text(package, encoding="utf-8")
     raw_path.write_text(_raw_text(results) + _skipped_raw(skipped), encoding="utf-8")
+    requests = requests_module.scan_report(task_id, name)
     state.append_event(
         task_id, "unit_collected",
         unit=name, verdict=verdict, head=head,
         gates=[{"name": result.name, "ok": result.ok, "reason": result.reason} for result in results],
         skipped_tests=skipped,
+        requests=[hit["kind"] for hit in requests],
     )
     return {
         "unit": name, "verdict": verdict, "base": base, "head": head,
         "gates": results, "package": package_path, "raw": raw_path, "skipped": skipped,
+        "requests": requests,
     }
 
 
-def _head(folder: Path, branch: str) -> str:
-    """The commit the unit's branch points at now."""
+def head_of(folder: Path, branch: str) -> str:
+    """The commit the unit's branch points at now; a vanished branch is an error."""
     sha = git(folder, "rev-parse", "--verify", f"refs/heads/{branch}", check=False).strip()
     if not sha:
         raise SupervisionError(f"ramo dell'unità sparito: {branch}")

@@ -99,7 +99,7 @@ def read_jsonl(path: Path) -> list[dict]:
 def append_event(task_id: str, event: str, **fields) -> dict:
     """Record one event on the task's journal and return the written row."""
     folder = open_task(task_id)
-    row: dict = {"at": _now_iso(), "event": event, "task": task_id}
+    row: dict = {"at": now_iso(), "event": event, "task": task_id}
     row.update({key: value for key, value in fields.items() if value is not None})
     append_jsonl(folder / JOURNAL_FILE, row)
     return row
@@ -215,7 +215,8 @@ def _unit_cost(rows: list[dict], unit: str) -> float | None:
     return round(sum(known), 6) if known else None
 
 
-def _now_iso() -> str:
+def now_iso() -> str:
+    """The instant a journal row carries, in UTC and seconds, so rows sort as text."""
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
@@ -248,15 +249,23 @@ UNIT_EVENTS = {
     "unit_queued": "in coda",
     "unit_started": "in corso",
     "attached": "in corso",
+    "unit_reworked": "in corso",
     "unit_collected": "raccolta",
+    "unit_reviewed": "revisione",
+    "unit_published": "pubblicata",
 }
+
+#: What a review round can say. The words the supervisor writes on the file.
+APPROVED = "APPROVA"
+REWORKED = "RIMANDA"
 
 
 def _units_from_events(events: list[dict]) -> list[dict]:
     """One entry per unit, folded from every event that describes it.
 
     A unit starts with `unit_created` (copy, branch, scope), gains its harness
-    session with `attached`, and ends with `unit_collected` (the gates' verdict).
+    session with `attached`, is judged by `unit_collected`, decided by
+    `unit_reviewed` and, when approved and pushed, closed by `unit_published`.
     """
     units: dict[str, dict] = {}
     for row in events:
@@ -264,38 +273,66 @@ def _units_from_events(events: list[dict]) -> list[dict]:
         unit = str(row.get("unit") or "")
         if event not in UNIT_EVENTS or not unit:
             continue
-        record = units.setdefault(unit, {
-            "unit": unit, "role": "", "harness": "", "session": "", "at": "",
-            "state": "", "verdict": "",
-        })
+        record = units.setdefault(unit, _blank_unit(unit))
         record["state"] = UNIT_EVENTS[event]
         record["at"] = str(row.get("at") or record["at"])
-        if event == "unit_created":
-            record.update({
-                "role": "esecutore",
-                "worktree": str(row.get("worktree") or ""),
-                "branch": str(row.get("branch") or ""),
-                "base": str(row.get("base") or ""),
-                "allow": [str(item) for item in row.get("allow") or []],
-                "verify": str(row.get("verify") or ""),
-                "remotes": dict(row.get("remotes") or {}),
-            })
-        elif event in ("unit_started", "unit_queued"):
-            record.update({
-                "session": str(row.get("session") or record["session"]),
-                "harness": str(row.get("harness") or record["harness"]),
-                "mode": str(row.get("mode") or ""),
-                "reason": str(row.get("reason") or ""),
-            })
-        elif event == "attached":
-            record.update({
-                "session": str(row.get("session") or ""),
-                "role": str(row.get("role") or record["role"]),
-                "harness": str(row.get("harness") or record["harness"]),
-            })
-        elif event == "unit_collected":
-            record["verdict"] = str(row.get("verdict") or "")
+        _fold_event(record, row, event)
     return list(units.values())
+
+
+def _blank_unit(unit: str) -> dict:
+    """A unit nobody described yet: the fields every later event may fill."""
+    return {
+        "unit": unit, "role": "", "harness": "", "session": "", "at": "",
+        "state": "", "verdict": "", "collected_head": "", "review_round": 0,
+        "approved": False, "approved_head": "", "published": [],
+    }
+
+
+def _fold_event(record: dict, row: dict, event: str) -> None:
+    """What one journal row says about the unit, folded into its entry."""
+    if event == "unit_created":
+        record.update({
+            "role": "esecutore",
+            "worktree": str(row.get("worktree") or ""),
+            "branch": str(row.get("branch") or ""),
+            "base": str(row.get("base") or ""),
+            "allow": [str(item) for item in row.get("allow") or []],
+            "verify": str(row.get("verify") or ""),
+            "remotes": dict(row.get("remotes") or {}),
+        })
+    elif event in ("unit_started", "unit_queued"):
+        record.update({
+            "session": str(row.get("session") or record["session"]),
+            "harness": str(row.get("harness") or record["harness"]),
+            "mode": str(row.get("mode") or ""),
+            "reason": str(row.get("reason") or ""),
+        })
+    elif event == "attached":
+        record.update({
+            "session": str(row.get("session") or ""),
+            "role": str(row.get("role") or record["role"]),
+            "harness": str(row.get("harness") or record["harness"]),
+        })
+    elif event == "unit_collected":
+        record["verdict"] = str(row.get("verdict") or "")
+        record["collected_head"] = str(row.get("head") or "")
+    elif event == "unit_reviewed":
+        record["review_round"] = int(row.get("round") or 0)
+        record["approved"] = str(row.get("verdict") or "") == APPROVED
+        record["approved_head"] = str(row.get("head") or "") if record["approved"] else ""
+        record["review_reason"] = str(row.get("reason") or "")
+    elif event == "unit_reworked":
+        record["review_round"] = int(row.get("round") or record["review_round"])
+        record["approved"] = False
+        record["approved_head"] = ""
+    elif event == "unit_published":
+        record["published"] = [str(item) for item in row.get("commits") or []]
+        record["published_head"] = str(row.get("head") or "")
+        record["published_branch"] = str(row.get("branch") or "")
+        record["published_pushed"] = bool(row.get("pushed"))
+        if not row.get("pushed"):
+            record["state"] = "pubblicata in locale"
 
 
 def _sessions_from_events(events: list[dict]) -> list[str]:
@@ -313,7 +350,7 @@ def _objective_text(text: str, task_id: str) -> str:
         "# Obiettivo\n\n"
         f"{text}\n\n"
         f"- id: {task_id}\n"
-        f"- creato: {_now_iso()}\n"
+        f"- creato: {now_iso()}\n"
     )
 
 
