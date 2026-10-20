@@ -29,7 +29,7 @@ from . import supervision_costs as costs
 from . import supervision_requests as requests_module
 from . import supervision_state as state
 from .supervision_state import SupervisionError
-from .supervision_package import DIFF_MAX_LINES, package_text, raw_text
+from .supervision_package import DIFF_MAX_LINES, package_text, raw_text  # noqa: F401  DIFF_MAX_LINES: re-exported, the gate tests read it here
 from .supervision_worktree import refs_at, remote_urls
 
 #: The declared budget for the executor's own verification command.
@@ -40,8 +40,6 @@ SHELL_OPERATORS = ("&&", "|", ";")
 WINDOWS_EXECUTABLE_SUFFIXES = (".exe", ".cmd", ".bat", ".com")
 #: The budget for re-running the touched test files to see what this platform skips.
 SKIP_TIMEOUT_S = 300.0
-#: The package carries at most this much diff; the cut is declared in the file.
-DIFF_MAX_LINES = 400
 #: Published identity a unit may never carry, unless its own scope says otherwise.
 FORBIDDEN_FILES = ("VERSION", "CHANGELOG.md")
 FORBIDDEN_PREFIXES = (".github/",)
