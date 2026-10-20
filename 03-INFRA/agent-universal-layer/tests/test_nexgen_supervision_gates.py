@@ -128,6 +128,23 @@ def test_a_forbidden_file_declared_in_the_boundary_is_allowed(task, repo, tmp_pa
     assert _gate(result, "file vietati").ok, "il confine lo dichiara, quindi non è un furto"
 
 
+def test_a_renamed_version_file_fails_and_is_named_old_and_new(task, repo, tmp_path):
+    """`git mv VERSION altro` è una modifica a VERSION: guardare solo il nome nuovo la nasconde."""
+    repo.write("VERSION", "2.16.7\n")
+    repo.commit("chore: la base ha un VERSION")
+    repo.git("push", "-q", "origin", "main")
+    folder = _unit(task, repo, tmp_path)
+    git_in(folder, "mv", "VERSION", "versione-nascosta.txt")
+    git_in(folder, "commit", "-q", "-m", "chore: sposta la versione")
+
+    result = gates.collect(task, "prova")
+
+    forbidden = _gate(result, "file vietati")
+    assert not forbidden.ok
+    assert "VERSION" in forbidden.reason
+    assert result["verdict"] == "FAIL"
+
+
 def test_a_weakened_test_fails_even_when_the_verification_is_green(task, repo, tmp_path):
     folder = _unit(task, repo, tmp_path, allow=["**"])
     _commit(folder, "test: toglie un test", {

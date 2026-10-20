@@ -194,6 +194,25 @@ def test_a_version_bump_is_refused_by_name_even_inside_the_boundary(task, repo, 
     assert _main_of(repo.path) == before, "niente è stato applicato"
 
 
+def test_a_renamed_version_file_is_refused_as_a_bump(task, repo, tmp_path):
+    """Una rinomina non deve nascondere il file di release al controllo del bump."""
+    repo.write("VERSION", "2.16.7\n")
+    repo.commit("chore: la base ha un VERSION")
+    repo.git("push", "-q", "origin", "main")
+    folder = _unit(task, repo, tmp_path, allow=["**"])
+    git_in(folder, "mv", "VERSION", "versione-nascosta.txt")
+    git_in(folder, "commit", "-q", "-m", "chore: sposta la versione")
+    assert gates.collect(task, "prova")["verdict"] == "PASS"
+    review.approve(task, "prova", "il confine è tutto")
+    before = _main_of(repo.path)
+
+    with pytest.raises(publish_module.PublishError, match="bump di versione") as caught:
+        publish_module.publish(task, "prova", repo=repo.path, branch="main")
+
+    assert "VERSION" in str(caught.value)
+    assert _main_of(repo.path) == before
+
+
 def test_a_remote_that_moved_is_refused_with_the_name_force_push(task, repo, tmp_path):
     _approved_unit(task, repo, tmp_path)
     _advance_remote(tmp_path, repo)

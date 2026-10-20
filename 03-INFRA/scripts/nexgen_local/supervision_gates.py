@@ -131,10 +131,14 @@ def _scope_gate(files: list, scope: list[str]) -> GateResult:
 
 
 def _forbidden_gate(files: list, scope: list[str]) -> GateResult:
-    """Version, changelog and CI may move only when the boundary says so out loud."""
+    """Version, changelog and CI may move only when the boundary says so out loud.
+
+    Both names of a rename count: `git mv VERSION altro` is a change to `VERSION`
+    as much as deleting it, and looking only at the new name would hide it.
+    """
     hit = sorted({
-        change.path for change in files
-        if _is_forbidden(change.path) and not _allowed(change.path, scope)
+        path for change in files for path in _touched(change)
+        if _is_forbidden(path) and not _allowed(path, scope)
     })
     if hit:
         return GateResult("file vietati", False, "toccati fuori dal confine: " + ", ".join(hit))

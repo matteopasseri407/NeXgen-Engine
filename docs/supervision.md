@@ -123,7 +123,7 @@ not evidence; every line below is read from git or run by the engine.
 | gate | fails when |
 |---|---|
 | `confine` | a touched file (both names of a rename) is outside every `--allow` glob |
-| `file vietati` | `VERSION`, `CHANGELOG.md` or `.github/**` changed and the boundary does not name it |
+| `file vietati` | `VERSION`, `CHANGELOG.md` or `.github/**` changed and the boundary does not name it; both names of a rename count |
 | `integrità dei test` | an existing test was deleted, shrunk or skipped (`nexgen_core/discipline/integrity.py`, reused) |
 | `prova per commit` | a `fix:` commit has no test that fails on its parent (`nexgen_core/discipline/regress.py`, reused) |
 | `verifica indipendente` | the declared command is missing, or exits non-zero, run by the engine with its own launch rules |
@@ -185,7 +185,7 @@ happens after every refusal that can be decided without touching anything:
 | `copia dell'unità` | `--repo` is the unit's own working copy |
 | `il checkout è su …, non su <branch>` | the owner's checkout is elsewhere |
 | `checkout sporco` | uncommitted work in the owner's checkout, named |
-| `bump di versione` | a commit touches `VERSION` or `CHANGELOG.md`, **even inside the unit's boundary** |
+| `bump di versione` | a commit touches `VERSION` or `CHANGELOG.md`, a rename included, **even inside the unit's boundary** |
 | `servirebbe un force-push: il motore non lo fa mai` | the fetched remote branch is not an ancestor of the owner's head |
 | `i cancelli del motore, rieseguiti ora, danno FAIL` | the gates fail on the interval, named line by line |
 | `conflitto` | a cherry-pick conflicts; the files are named and the checkout goes back |

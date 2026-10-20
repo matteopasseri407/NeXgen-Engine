@@ -145,7 +145,11 @@ def _refuse_republished(name: str, record: dict, head: str) -> None:
 
 
 def _commits(copy: Path, base: str, head: str) -> list[dict]:
-    """The unit's commits oldest first, each with its subject and the files it touches."""
+    """The unit's commits oldest first, each with its subject and the files it touches.
+
+    Renames are not folded: a moved `VERSION` must appear as `VERSION` deleted
+    plus something added, or the release-file check would only see the new name.
+    """
     if not base:
         raise PublishError("unità senza base nel diario: impossibile elencare i commit da pubblicare")
     shas = git(copy, "rev-list", "--reverse", f"{base}..{head}").split()
@@ -153,7 +157,7 @@ def _commits(copy: Path, base: str, head: str) -> list[dict]:
         {
             "sha": sha,
             "subject": git(copy, "log", "-1", "--format=%s", sha).strip(),
-            "files": git(copy, "diff-tree", "--no-commit-id", "--name-only", "-r", sha).splitlines(),
+            "files": git(copy, "diff-tree", "--no-commit-id", "--name-only", "--no-renames", "-r", sha).splitlines(),
         }
         for sha in shas
     ]
