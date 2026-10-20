@@ -29,6 +29,7 @@ from . import supervision_costs as costs
 from . import supervision_requests as requests_module
 from . import supervision_state as state
 from .supervision_state import SupervisionError
+from .supervision_package import DIFF_MAX_LINES, package_text, raw_text
 from .supervision_worktree import refs_at, remote_urls
 
 #: The declared budget for the executor's own verification command.
@@ -90,13 +91,16 @@ def collect(task_id: str, unit: str) -> dict:
     verdict = "PASS" if all(result.ok for result in results) else "FAIL"
     skipped = skipped_tests(folder, files)
     request_scan = requests_module.scan_report(task_id, name)
-    package = _package_text(
-        task_id, name, branch, base, head, verdict, results, folder, text, skipped, request_scan,
+    package = package_text(
+        task_id=task_id, unit=name, branch=branch, base=base, head=head, verdict=verdict,
+        results=results, cost_line=_cost_line(state.read_costs(task_id), name),
+        diffstat=git(folder, "diff", "--stat", base, head).strip(), diff=text,
+        skipped=skipped, request_scan=request_scan,
     )
     package_path = state.open_task(task_id) / f"40-pacchetto-{name}.md"
     raw_path = state.open_task(task_id) / f"50-gate-{name}.txt"
     package_path.write_text(package, encoding="utf-8")
-    raw_path.write_text(_raw_text(results) + _skipped_raw(skipped), encoding="utf-8")
+    raw_path.write_text(raw_text(results, skipped), encoding="utf-8")
     state.append_event(
         task_id, "unit_collected",
         unit=name, verdict=verdict, head=head,
@@ -352,118 +356,9 @@ def skipped_tests(folder: Path, files: list, *, timeout: float = SKIP_TIMEOUT_S)
     return []
 
 
-def skipped_label() -> str:
-    """What "not verified here" means for the platform the engine is running on."""
-    if os.name == "nt":
-        return "non verificato su Linux: lo deve dire la CI Linux"
-    return "non verificato su questa piattaforma: lo devono dire le altre CI"
-
-
-def _skipped_section(skipped: list[str]) -> list[str]:
-    """The package section, empty-looking when nothing was skipped."""
-    if not skipped:
-        return ["## Test saltati su questa piattaforma", "", "nessun test saltato fra i file toccati.", ""]
-    lines = ["## Test saltati su questa piattaforma", ""]
-    lines += [f"- {entry}" for entry in skipped]
-    lines += ["", skipped_label() + ".", ""]
-    return lines
-
-
-def _skipped_raw(skipped: list[str]) -> str:
-    """The same list in the raw file, so a failure and its skips sit together."""
-    if not skipped:
-        return ""
-    return "\n\nSKIPPED su questa piattaforma:\n" + "\n".join(f"- {entry}" for entry in skipped) + "\n"
-
-
 def _last_line(text: str) -> str:
     lines = [line.strip() for line in text.splitlines() if line.strip()]
     return (lines[-1] if lines else "")[:200]
-
-
-def _raw_text(results: list[GateResult]) -> str:
-    """Every gate with its detail, for whoever has to read the failure in full."""
-    blocks = []
-    for result in results:
-        header = f"{'PASS' if result.ok else 'FAIL'} {result.name}: {result.reason}"
-        blocks.append(header + (f"\n\n{result.detail}" if result.detail else ""))
-    return "\n\n".join(blocks) + "\n"
-
-
-def _package_text(
-    task_id: str, unit: str, branch: str, base: str, head: str, verdict: str,
-    results: list[GateResult], folder: Path, text: str, skipped: list[str], request_scan: dict,
-) -> str:
-    """The file a supervisor reads: verdict, gate lines, skips, requests, diffstat, diff, cost."""
-    kept, cut = _truncated(text, DIFF_MAX_LINES)
-    rows = state.read_costs(task_id)
-    lines = [
-        f"# Pacchetto di revisione: {unit}",
-        "",
-        f"- compito: {task_id}",
-        f"- ramo: {branch}",
-        f"- base: {base[:12]}",
-        f"- head: {head[:12]}",
-        f"- verdetto: {verdict}",
-        f"- costo: {_cost_line(rows, unit)}",
-        "",
-        "## Cancelli",
-        "",
-        "| cancello | esito | motivo |",
-        "|---|---|---|",
-        *[f"| {r.name} | {'PASS' if r.ok else 'FAIL'} | {_cell(r.reason)} |" for r in results],
-        "",
-        *_skipped_section(skipped),
-        *_request_section(request_scan),
-        "## Diffstat",
-        "",
-        "```",
-        git(folder, "diff", "--stat", base, head).strip(),
-        "```",
-        "",
-        "## Diff",
-        "",
-        "```diff",
-        kept,
-        "```",
-        cut,
-        "",
-    ]
-    return "\n".join(lines)
-
-
-def _request_section(result: dict) -> list[str]:
-    """The requests the executor's report makes, or why none could be read."""
-    lines = ["## Richieste al proprietario", ""]
-    if not result.get("report"):
-        lines += [requests_module.NO_REPORT + ".", ""]
-        return lines
-    status = requests_module.section_status(result)
-    if status:
-        lines += [status + ".", ""]
-        return lines
-    if not result.get("hits"):
-        lines += ["nessuna richiesta al proprietario.", ""]
-        return lines
-    lines += [f"- {hit['kind']} · «{hit['sentence']}»" for hit in result["hits"]]
-    lines += ["", f"Lette in `{result['report']}`; una riga già scritta non si ripete.", ""]
-    return lines
-
-
-def _truncated(text: str, limit: int) -> tuple[str, str]:
-    """The diff up to `limit` lines, with the cut declared instead of silent."""
-    lines = text.splitlines()
-    if len(lines) <= limit:
-        return text, ""
-    return "\n".join(lines[:limit]), (
-        f"\nDiff troncato: {len(lines) - limit} righe in più su {len(lines)} "
-        f"(tetto dichiarato: {limit} righe). Il diff completo è in `git diff`."
-    )
-
-
-def _cell(text: str) -> str:
-    """One table cell: the reason keeps one line and no pipe breaks the row."""
-    return text.replace("|", "/").replace("\n", " ")[:300]
 
 
 def _cost_line(rows: list[dict], unit: str) -> str:
