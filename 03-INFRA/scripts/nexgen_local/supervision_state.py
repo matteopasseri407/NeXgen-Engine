@@ -283,6 +283,7 @@ def _units_from_events(events: list[dict]) -> list[dict]:
         elif event in ("unit_started", "unit_queued"):
             record.update({
                 "session": str(row.get("session") or record["session"]),
+                "harness": str(row.get("harness") or record["harness"]),
                 "mode": str(row.get("mode") or ""),
                 "reason": str(row.get("reason") or ""),
             })

@@ -96,17 +96,17 @@ def _enter_the_session(task_id: str, unit: str, session: str, folder: Path, prom
         facts = measure(session)
     except costs.CostError as exc:
         state.append_event(
-            task_id, "unit_queued", unit=unit, session=session,
+            task_id, "unit_queued", unit=unit, harness="opencode", session=session,
             reason=f"stato della sessione non leggibile: {exc}",
         )
         return {"unit": unit, "mode": "queued", "session": session, "reason": str(exc)}
     if not facts.stopped:
         reason = "sessione occupata"
-        state.append_event(task_id, "unit_queued", unit=unit, session=session, reason=reason)
+        state.append_event(task_id, "unit_queued", unit=unit, harness="opencode", session=session, reason=reason)
         return {"unit": unit, "mode": "queued", "session": session, "reason": reason}
     proc = runner(session, prompt, folder)
     state.append_event(
-        task_id, "unit_started", unit=unit, session=session, mode="run",
+        task_id, "unit_started", unit=unit, harness="opencode", session=session, mode="run",
         pid=getattr(proc, "pid", None),
     )
     row = costs.record(task_id, unit, "esecutore", session, window=windows.WINDOW_NAME)
@@ -117,7 +117,7 @@ def _open_first_tab(task_id: str, unit: str, folder: Path, prompt: str, opener, 
     """No session for this harness yet: open the tab and bind the session it creates."""
     started_ms = int(time.time() * 1000)
     handle = opener(f"esecutore · {unit}", [_opencode_executable(), str(folder), "--prompt", prompt], cwd=folder)
-    state.append_event(task_id, "unit_started", unit=unit, window=str(handle.get("title", "")), mode="tab")
+    state.append_event(task_id, "unit_started", unit=unit, harness="opencode", window=str(handle.get("title", "")), mode="tab")
     session = find_session(folder, started_ms, wait_s=wait_s, lister=lister)
     if session is not None:
         _attach(task_id, unit, session, handle)

@@ -207,6 +207,24 @@ def test_a_busy_session_puts_the_unit_in_the_queue(task, unit, monkeypatch):
     assert states["prova"] == "in coda"
 
 
+def test_a_unit_that_entered_a_session_names_its_harness(task, unit, monkeypatch):
+    _attached(task, "prima", "ses_libera")
+    monkeypatch.setattr(harness.costs, "record", lambda *a, **k: {"session": a[3], "cost_usd": 0.0})
+
+    harness.run_unit(
+        task, "prova",
+        opener=lambda *a, **k: pytest.fail("una sessione libera non apre schede"),
+        runner=lambda *a: SimpleNamespace(pid=1),
+        measure=lambda session: SimpleNamespace(stopped=True),
+        lister=lambda: [],
+    )
+
+    units = {record["unit"]: record for record in state.status(task)["units"]}
+    assert units["prova"]["harness"] == "opencode", "lo stato deve dire in quale harness è entrata"
+    assert units["prova"]["session"] == "ses_libera"
+    assert units["prova"]["state"] == "in corso"
+
+
 def test_a_session_whose_state_cannot_be_read_queues_with_the_reason(task, unit, monkeypatch):
     _attached(task, "prima", "ses_illeggibile")
 
