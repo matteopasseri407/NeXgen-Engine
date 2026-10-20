@@ -11,8 +11,11 @@ import sys
 from pathlib import Path
 
 from .. import supervision_costs as costs
+from .. import supervision_gates as gates
+from .. import supervision_harness as harness
 from .. import supervision_state as state
 from .. import supervision_windows as windows
+from .. import supervision_worktree as worktree
 from ..supervision_state import SupervisionError
 
 
@@ -44,6 +47,26 @@ def register_sup(sub) -> None:
     check = sup_sub.add_parser("window-check", help="apre una finestra visibile che resta aperta")
     check.set_defaults(func=cmd_sup_window_check)
 
+    unit = sup_sub.add_parser("unit", help="crea la copia di lavoro dell'unità, il ramo locale e il suo confine")
+    unit.add_argument("id", help="id del compito")
+    unit.add_argument("unit", help="nome dell'unità")
+    unit.add_argument("--repo", required=True, help="checkout da cui creare la copia di lavoro")
+    unit.add_argument("--base", required=True, help="ref da cui parte il ramo dell'unità")
+    unit.add_argument("--brief", required=True, help="file del brief da copiare nella cartella del compito")
+    unit.add_argument("--allow", action="append", default=[], help="glob di un percorso consentito (ripetibile)")
+    unit.add_argument("--verify", default="", help="comando di verifica che il motore rieseguirà")
+    unit.set_defaults(func=cmd_sup_unit)
+
+    run = sup_sub.add_parser("run", help="apre l'esecutore nella sua finestra e aggancia la sua sessione")
+    run.add_argument("id", help="id del compito")
+    run.add_argument("unit", help="nome dell'unità")
+    run.set_defaults(func=cmd_sup_run)
+
+    collect = sup_sub.add_parser("collect", help="esegue i cancelli del motore e scrive il pacchetto di revisione")
+    collect.add_argument("id", help="id del compito")
+    collect.add_argument("unit", help="nome dell'unità")
+    collect.set_defaults(func=cmd_sup_collect)
+
 
 def cmd_sup_start(args: argparse.Namespace) -> int:
     """Create the task folder and say where it is."""
@@ -72,7 +95,7 @@ def cmd_sup_status(args: argparse.Namespace) -> int:
     print(f"cartella: {data['path']}")
     if data["units"]:
         for unit in data["units"]:
-            print(f"unità {unit['unit']} · {unit['role']} · {unit['harness']} {unit['session']}")
+            print(_unit_line(unit))
     else:
         print("unità: nessuna agganciata")
     print("sessioni harness: " + (", ".join(data["sessions"]) or "nessuna"))
@@ -133,6 +156,62 @@ def cmd_sup_window_check(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_sup_unit(args: argparse.Namespace) -> int:
+    """Prepare the unit's working copy and print what the executor will work in."""
+    try:
+        record = worktree.create(
+            args.id, args.unit,
+            repo=args.repo, base=args.base, brief=args.brief,
+            allow=args.allow, verify=args.verify,
+        )
+    except SupervisionError as exc:
+        print(f"nexgen-local: {exc}", file=sys.stderr)
+        return 1
+    print(f"unità {record['unit']} · ramo {record['branch']}")
+    print(f"copia {record['worktree']}")
+    print(f"base {record['base_ref']} ({record['base'][:12]})")
+    print("confine: " + ", ".join(record["allow"]))
+    print("verifica: " + (record["verify"] or "nessuna dichiarata"))
+    broken = [name for name, refs in record["remotes"].items() if isinstance(refs, dict) and refs.get("error")]
+    remotes = ", ".join(record["remotes"]) or "nessuno"
+    print(f"remoti: {remotes} · push bloccata in questa copia"
+          + (f" · non leggibili: {', '.join(broken)}" if broken else ""))
+    return 0
+
+
+def cmd_sup_run(args: argparse.Namespace) -> int:
+    """Open the executor's window on the unit and say which session it opened."""
+    try:
+        result = harness.run_unit(args.id, args.unit)
+    except SupervisionError as exc:
+        print(f"nexgen-local: {exc}", file=sys.stderr)
+        return 1
+    handle = result["window"]
+    print(f"finestra {handle.get('launcher')} (pid {handle.get('pid')}) sulla copia dell'unità {result['unit']}")
+    session = result["session"]
+    if session is None:
+        print("sessione non determinata: agganciala a mano con "
+              f"`sup attach {args.id} {result['unit']} --opencode-session <ses_...>`")
+        return 0
+    print(f"sessione agganciata: {session.get('id')} · {session.get('title', '')}")
+    return 0
+
+
+def cmd_sup_collect(args: argparse.Namespace) -> int:
+    """Run the engine's gates on the unit and print the verdict, line by line."""
+    try:
+        result = gates.collect(args.id, args.unit)
+    except SupervisionError as exc:
+        print(f"nexgen-local: {exc}", file=sys.stderr)
+        return 1
+    print(f"unità {result['unit']} · verdetto {result['verdict']}")
+    for gate in result["gates"]:
+        print(f"{'PASS' if gate.ok else 'FAIL'} {gate.name}: {gate.reason}")
+    print(f"pacchetto {result['package']}")
+    print(f"grezzo {result['raw']}")
+    return 0 if result["verdict"] == "PASS" else 1
+
+
 def _list_tasks() -> int:
     """Every task folder, one line each: the id is what every other verb wants."""
     tasks = state.list_tasks()
@@ -142,6 +221,23 @@ def _list_tasks() -> int:
     for task in tasks:
         print(f"{task['id']}  {task['objective'] or '(obiettivo non leggibile)'}")
     return 0
+
+
+def _unit_line(unit: dict) -> str:
+    """One unit as the owner reads it: who ran it, how far it got, the verdict, the cost."""
+    parts = [f"unità {unit.get('unit', '')}"]
+    if unit.get("role"):
+        parts.append(str(unit["role"]))
+    session = f"{unit.get('harness', '')} {unit.get('session', '')}".strip()
+    if session:
+        parts.append(session)
+    if unit.get("state"):
+        parts.append(str(unit["state"]))
+    if unit.get("verdict"):
+        parts.append(str(unit["verdict"]))
+    cost = unit.get("cost_usd")
+    parts.append(f"{cost:.4f} $" if isinstance(cost, (int, float)) else "costo non disponibile")
+    return " · ".join(parts)
 
 
 def _cost_line(data: dict) -> str:
