@@ -16,6 +16,9 @@ from .cmds.patch_cmds import cmd_apply, cmd_proposals, cmd_propose
 from .cmds.relay_cmd import cmd_relay
 from .cmds.run import cmd_close, cmd_eval, cmd_explore, cmd_research, cmd_run
 from .cmds.service import cmd_doctor, cmd_mcp
+from .cmds.sup import (
+    cmd_sup_attach, cmd_sup_costi, cmd_sup_start, cmd_sup_status, cmd_sup_window_check, register_sup,
+)
 from .cmds.tier import cmd_tier_evaluate, cmd_tier_set
 from .cmds.wf import cmd_wf_propose, cmd_wf_run, cmd_wfs
 from .relay import RELAY_CLIS
@@ -50,6 +53,7 @@ __all__ = [
     "cmd_wf_propose", "cmd_wfs", "cmd_wf_run",
     "cmd_drive_propose", "cmd_drive_upload", "cmd_drive_mcp",
     "cmd_relay", "cmd_mcp", "cmd_doctor", "cmd_tier_evaluate", "cmd_tier_set", "main",
+    "cmd_sup_start", "cmd_sup_status", "cmd_sup_attach", "cmd_sup_costi", "cmd_sup_window_check",
 ]
 
 
@@ -260,6 +264,8 @@ def main(argv: list[str] | None = None) -> int:
     tier_set.add_argument("tier", choices=tuple(TIER_ORDER))
     tier_set.add_argument("--yes", action="store_true")
     tier_set.set_defaults(func=cmd_tier_set)
+
+    register_sup(sub)
 
     args = parser.parse_args(argv)
     return args.func(args)

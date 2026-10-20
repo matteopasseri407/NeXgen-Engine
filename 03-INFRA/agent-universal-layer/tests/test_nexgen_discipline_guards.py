@@ -3,9 +3,13 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 from nexgen_core.discipline import cli
-from nexgen_core.discipline.config import load
+from nexgen_core.discipline.config import Config, load
+from nexgen_core.discipline.gitutil import changes
 from nexgen_core.discipline.health import report, run_smoke
+from nexgen_core.discipline.integrity import check_test_integrity
 from nexgen_core.discipline.scaffold import init_project
 
 TESTS = "def test_a():\n    assert 1\n\n\ndef test_b():\n    assert 2\n    assert 3\n"
@@ -278,3 +282,48 @@ def test_init_in_a_non_ascii_smoke_keeps_the_config_valid_and_rerun_stays_quiet(
     assert load(repo.path, "HEAD").smoke_command == "echo ✓"
     lines, _ = init_project(repo.path, "")
     assert not any("ATTENZIONE" in line for line in lines)
+
+
+def test_renaming_a_test_to_a_non_test_name_with_fewer_tests_is_flagged(repo):
+    """A test renamed to a non-test name and weakened must not escape integrity checks."""
+    ten = "".join(f"def test_{i}():\n    assert {i}\n\n\n" for i in range(10))
+    base = committed_tests(repo, ten, "tests/test_x.py")
+    repo.git("mv", "tests/test_x.py", "disabled_x.py")
+    seven = "".join(f"def test_{i}():\n    assert {i}\n\n\n" for i in range(7))
+    repo.write("disabled_x.py", seven)
+    ch = changes(repo.path, base)
+    violations = check_test_integrity(ch, Config())
+    assert violations and any("tests weakened" in v.message for v in violations)
+
+
+@pytest.mark.parametrize("new_path", ["tests/disabled_auth.py", "tests/test_auth.txt", "src/test_auth.py"])
+def test_renaming_a_test_away_from_discovery_is_flagged_with_the_content_unchanged(repo, new_path):
+    """Identical bytes, but pytest no longer collects the file: the count must not follow the name."""
+    code = "def test_one():\n    assert True\n"
+    repo.write("tests/test_auth.py", code)
+    base = repo.commit("test: un test")
+    (repo.path / "tests/test_auth.py").unlink()
+    target = repo.path / new_path
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(code, encoding="utf-8")
+    repo.git("add", "-A")
+    repo.commit("test: sposta il test")
+
+    violations = check_test_integrity(changes(repo.path, base), Config())
+
+    assert violations and any("tests weakened" in v.message for v in violations), new_path
+
+
+def test_moving_a_test_inside_the_test_folder_is_not_a_weakening(repo):
+    """The same test in a subfolder of `tests/` is still collected, so the rename is not a loss."""
+    code = "def test_one():\n    assert True\n"
+    repo.write("tests/test_auth.py", code)
+    base = repo.commit("test: un test")
+    (repo.path / "tests/test_auth.py").unlink()
+    (repo.path / "tests" / "unit").mkdir()
+    (repo.path / "tests" / "unit" / "test_auth.py").write_text(code, encoding="utf-8")
+    repo.git("add", "-A")
+    repo.commit("test: sposta il test in una sottocartella")
+
+    assert check_test_integrity(changes(repo.path, base), Config()) == []
+

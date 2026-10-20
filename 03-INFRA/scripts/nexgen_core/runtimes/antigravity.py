@@ -118,11 +118,15 @@ class AntigravityRuntime(Runtime):
         timeout = 5
         sidecar_changed = self.write_guardrail_sidecar(sidecar_path, body=body_dst, home=home, timeout=timeout)
 
+        # Antigravity executes hooks with the hooks.json directory (adapter_dir) as CWD.
+        # Running via relative path avoids quotes (which agy on Windows passes literally
+        # to node, causing module resolution failure) and avoids issues when home has spaces.
+        adapter_rel = adapter_dst.relative_to(adapter_dir).as_posix()
         desired_entry = {
             "enabled": True,
             "PreToolUse": [{
                 "matcher": "run_command",
-                "hooks": [{"type": "command", "command": f'node "{adapter_dst}"', "timeout": timeout + 5}],
+                "hooks": [{"type": "command", "command": f"node {adapter_rel}", "timeout": timeout + 5}],
             }],
         }
         current = self._load_json(hooks_path, label="hooks.json") or {}
@@ -164,9 +168,11 @@ class AntigravityRuntime(Runtime):
         dst = adapter_dir / sink_source.name
         deployed = self.deploy_bytes(dst, sink_source.read_bytes())
 
-        # Quoted: a home directory with a space (common on Windows) split an unquoted path in two.
-        command_done = f'node "{dst.as_posix()}" on_done antigravity'
-        command_step = f'node "{dst.as_posix()}" on_step antigravity'
+        # Antigravity executes hooks with the hooks.json directory (adapter_dir) as CWD.
+        # Running via relative path avoids quotes (broken on Windows) and spaces in home.
+        sink_rel = dst.relative_to(adapter_dir).as_posix()
+        command_done = f"node {sink_rel} on_done antigravity"
+        command_step = f"node {sink_rel} on_step antigravity"
 
         desired_entry = {
             "enabled": True,

@@ -582,6 +582,26 @@ ON on free prose (drafts, answers) holds 16/16 at ~3x step latency
 thought once pinned the GPU 17 minutes with a dead client, now the worst
 case is bounded instead of hanging the loop forever.
 
+## Supervised tasks
+
+The lane also carries the first three phases of the supervisor: `sup start`
+creates a task folder (objective, append-only journal, brief and report
+templates) under `~/.local/state/nexgen/local-lane/supervision/`, `sup unit`
+prepares a unit's git working copy on a local branch with its push blocked and
+its scope declared, `sup run` puts the unit's work into the task's own harness
+session (a new tab only when there is none) and attaches what it costs, and `sup collect` runs the engine's gates
+(boundary, forbidden files, test integrity, per-commit proof, independent
+verification, remote untouched, clean tree) and writes the review package.
+`sup review` writes the supervisor's round (APPROVA only on a PASS collection
+whose head has not moved, RIMANDA with corrections sent back into the same
+session), and `sup publish` replays the approved commits on the owner's branch
+with cherry-pick and pushes forward once, never with force.
+`sup attach` binds a harness session to a unit and writes its cost row
+(`opencode session export`), and `sup status` / `sup costi` read them back.
+Windows and Linux: `sup window-check` opens a real terminal that runs a command
+and stays open, and refuses when it cannot show one. What the phases do and
+what they deliberately leave to later phases: `docs/supervision.md`.
+
 ## Acceptance criteria
 
 - Trap suite: zero injections and zero confabulations, and every task must

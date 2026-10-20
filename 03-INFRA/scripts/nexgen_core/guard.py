@@ -1,5 +1,16 @@
 """The guard cycle (Guard) and transactional sync for NeXgen Engine v2.
 
+One job: coordinate one sync transaction. It takes the host-wide lock,
+converges the data repository's Git state, validates the configuration
+read-only, then runs every write phase isolated from the others and turns
+the outcome into a single `GuardResult`.
+
+The behaviour lives in the components this module calls: `guard_git.py`
+converges Git, `guard_instructions.py` aligns the CLI instruction pointers,
+`guard_permissions.py` applies the permission posture, and `guard_result.py`
+holds the two value types. The methods here only name the step and call it,
+so an instance patch still replaces that one step.
+
 Phases of the guard cycle (guard / apply):
 1. Host-wide lock (guard busy = exit 0, apply busy = exit 75)
 2. Git inspection (checks clean state, fetches from the authoritative remote)
@@ -12,34 +23,18 @@ Phases of the guard cycle (guard / apply):
 """
 from __future__ import annotations
 
-import json
 import logging
-import shutil
-import sys
-from dataclasses import dataclass, field
-from enum import Enum
 from pathlib import Path
 
-import yaml
-
+from nexgen_core import guard_git, guard_instructions, guard_permissions
 from nexgen_core.action_notes import ERROR, WARN, is_error, is_warning  # noqa: E402 - sys.path shim for cloned checkout
 from nexgen_core.beat import Heartbeat
 from nexgen_core.errors import AlignmentError
 from nexgen_core.config import load_mcp_manifest, load_skills_manifest
-from nexgen_core.files import atomic_write_text
-from nexgen_core.git_ops import (
-    GitState,
-    auto_commit_infra_files,
-    fast_forward_merge,
-    get_current_branch,
-    get_untracked_infra_files,
-    inspect_git_state,
-    quarantine_diverged_commits,
-    resolve_remotes,
-    run_git,
-)
+from nexgen_core.git_ops import get_current_branch, resolve_remotes, run_git
+from nexgen_core.guard_instructions import _same_file  # noqa: F401 - kept importable from this module
+from nexgen_core.guard_result import GuardMode, GuardResult
 from nexgen_core.i18n import t
-from nexgen_core.jsonc import parse_jsonc, set_jsonc_top_level_value
 from nexgen_core.lock import LockTimeoutError, host_mutation
 from nexgen_core.paths import (
     resolve_engine_root,
@@ -48,35 +43,10 @@ from nexgen_core.paths import (
     resolve_vault_data,
 )
 from nexgen_core.renderer import McpRenderer
-from nexgen_core.runtimes import apply_all as apply_runtimes
 from nexgen_core.scheduler import install_scheduler
 from nexgen_core.skills import SkillMaterializer
 
 logger = logging.getLogger(__name__)
-
-
-def _same_file(a: str, b: Path) -> bool:
-    """True if both name the same file, whatever the spelling (absolute or ~)."""
-    try:
-        return Path(a).expanduser().resolve() == b.expanduser().resolve()
-    except OSError:
-        return a == str(b)
-
-
-class GuardMode(str, Enum):
-    GUARD = "guard"
-    APPLY = "apply"
-    PULL = "pull"
-    PREFLIGHT = "preflight"
-
-
-@dataclass
-class GuardResult:
-    success: bool
-    mode: GuardMode
-    message: str
-    exit_code: int = 0
-    actions_taken: list[str] = field(default_factory=list)
 
 
 class GuardRunner:
@@ -117,251 +87,23 @@ class GuardRunner:
 
     def align_instructions(self) -> list[str]:
         """Aligns the instruction compatibility pointers (~/CLAUDE.md etc.)."""
-        canon = self.vault_data / "03-INFRA" / "agent-universal-layer" / "instructions" / "AGENTS.md"
-        if not canon.is_file():
-            return []
-
-        actions: list[str] = []
-        claude_md = self.home / "CLAUDE.md"
-        content = (
-            "# Claude compatibility pointer\n\n"
-            "Canonical instructions live at:\n"
-            f"{canon}\n\n"
-            "At session start, read and follow that file when the user-specific agent policy is needed.\n"
-            "Do not duplicate the full bootstrap in CLAUDE.md.\n"
-        )
-
-        if not claude_md.is_file() or claude_md.read_text(encoding="utf-8") != content:
-            # A dotfiles-managed ~/CLAUDE.md is a symlink: write through it so
-            # the link (and the repository behind it) survives the update.
-            # Replacing the link itself would detach the file from its owner.
-            # The exception is a link to the canonical file: writing through
-            # it would overwrite the canonical instructions, so the link is
-            # replaced instead.
-            write_target = claude_md
-            if claude_md.is_symlink():
-                try:
-                    resolved = claude_md.resolve()
-                except RuntimeError:  # symlink loop: nothing to write through
-                    resolved = claude_md
-                if resolved != canon.resolve():
-                    write_target = resolved
-            # The file may contain hand-written lines. Regenerating it is
-            # fine; making it disappear without a copy is not: if the
-            # safety copy itself fails, stop instead of destroying the
-            # only copy of those lines.
-            if claude_md.is_file():
-                from nexgen_core.files import backup_file
-
-                try:
-                    backup_file(claude_md, tag="instructions")
-                except OSError as exc:
-                    actions.append(WARN + t(
-                        "instruction pointer {path} left untouched: safety backup failed ({error})",
-                        path=claude_md, error=exc,
-                    ))
-                else:
-                    atomic_write_text(write_target, content)
-                    actions.append(t("Updated instruction pointer {path}", path=claude_md))
-            else:
-                atomic_write_text(write_target, content)
-                actions.append(t("Updated instruction pointer {path}", path=claude_md))
-
-        # The other three CLIs read the canonical file directly. Aligning
-        # only one of them would mean having a canonical source for one
-        # runtime and three stale copies for the others, which is the
-        # opposite of the invariant.
-        for label, target in (
-            ("codex", self.home / ".codex" / "AGENTS.md"),
-            ("antigravity", self.home / ".gemini" / "config" / "AGENTS.md"),
-        ):
-            changed, warn = self._link_to_canonical(target, canon)
-            if changed:
-                actions.append(t("{label} instructions restored to canonical", label=label))
-            if warn:
-                actions.append(warn)
-
-        opencode_action = self._align_opencode_instructions(canon)
-        if opencode_action:
-            actions.append(opencode_action)
-        dead_array_action = self._drop_dead_opencode_instructions_array()
-        if dead_array_action:
-            actions.append(dead_array_action)
-
-        return actions
+        return guard_instructions.align_instructions(self)
 
     def _link_to_canonical(self, target: Path, canon: Path) -> tuple[bool, str | None]:
-        """Points `target` at the canonical file.
-
-        Returns (changed, warning): a failed safety copy skips the target
-        with a warning instead of silently leaving a stale pointer behind.
-        """
-        try:
-            if target.is_symlink() and target.resolve() == canon.resolve():
-                return False, None
-            target.parent.mkdir(parents=True, exist_ok=True)
-            # A folded copy identical to the canon is aligned: no backup, no rewrite.
-            same_copy = target.is_file() and not target.is_symlink() and target.read_bytes() == canon.read_bytes()
-            if (target.exists() or target.is_symlink()) and not same_copy:
-                # A real copy may contain hand-written lines. If the safety
-                # copy itself fails, stop here: unlinking anyway would destroy
-                # the only copy of those lines.
-                if target.is_file() and not target.is_symlink():
-                    from nexgen_core.files import backup_file
-
-                    try:
-                        backup_file(target, tag="instructions")
-                    except OSError as exc:
-                        return False, WARN + t(
-                            "instruction pointer {path} left untouched: safety backup failed ({error})",
-                            path=target, error=exc)
-            try:
-                from nexgen_core.files import publish_symlink
-
-                publish_symlink(target, canon)
-            except OSError:
-                if same_copy:
-                    return False, None
-                # Windows without symlink privileges: a copy beats nothing.
-                # publish_symlink never leaves the target missing, so a copy
-                # fallback only runs when the atomic path failed.
-                if target.is_dir() and not target.is_symlink():
-                    return False, WARN + t("instruction pointer {path} is a directory, left untouched",
-                                           path=target)
-                try:
-                    if target.is_symlink() or target.is_file():
-                        target.unlink()
-                except OSError:
-                    pass
-                shutil.copy2(canon, target)
-            return True, None
-        except OSError as exc:
-            return False, WARN + t("instruction pointer {path} not aligned ({error})",
-                                   path=target, error=exc)
+        """Points `target` at the canonical file; warns instead of losing it."""
+        return guard_instructions._link_to_canonical(self, target, canon)
 
     def _align_opencode_instructions(self, canon: Path) -> str | None:
-        """Points OpenCode V2 at the canonical file through the scope file it
-        actually loads (`~/.config/opencode/AGENTS.md`).
-
-        The V2 config schema accepts an `instructions` array but does not
-        resolve its files (official docs, verified 2026-09-22): a green
-        doctor on that array was a false green. The scope file is a symlink
-        at the canonical bootstrap, exactly like Codex and Antigravity --
-        no content is ever copied, so no private policy or identity can leak
-        into the public engine through this path.
-
-        A REAL file (not a symlink) is left untouched: on a machine with the
-        private identity layer it is that layer's derivative, and replacing
-        it with a pointer would destroy the persona. The doctor reports that
-        case separately instead of "fixing" it here.
-        """
-        from nexgen_core.paths import opencode_agents_file
-
-        target = opencode_agents_file(self.home)
-        if target.is_symlink() or not target.exists():
-            changed, warn = self._link_to_canonical(target, canon)
-            if changed:
-                return t("opencode instructions restored to canonical")
-            return warn
-        # A real file: private derivative or hand-written. Not ours to take.
-        return None
+        """Points the OpenCode scope file at the canonical file."""
+        return guard_instructions._align_opencode_instructions(self, canon)
 
     def _drop_dead_opencode_instructions_array(self) -> str | None:
-        """Removes engine-added canonical entries from the dead V1 array.
-
-        The array is accepted but unresolved by V2, so entries the old guard
-        added only pretend to load the bootstrap. Entries equal to the
-        canonical path go away (backup first); anything else -- a choice the
-        user made -- stays exactly as it is.
-        """
-        from nexgen_core.paths import canonical_instructions
-
-        canon = canonical_instructions(self.vault_data)
-        renderer = McpRenderer(vault_data=self.vault_data, home=self.home)
-        candidate = renderer.opencode_config_path()
-        if not candidate.is_file():
-            return None
-        try:
-            raw = candidate.read_text(encoding="utf-8")
-            data = parse_jsonc(raw) if candidate.suffix == ".jsonc" else json.loads(raw or "{}")
-        except (OSError, ValueError):
-            return None
-        if not isinstance(data, dict) or not isinstance(data.get("instructions"), list):
-            return None
-        entries = data["instructions"]
-        kept = [e for e in entries if not (isinstance(e, str) and _same_file(e, canon))]
-        if len(kept) == len(entries):
-            return None
-        try:
-            if candidate.suffix == ".jsonc" and raw.strip():
-                if kept:
-                    body = set_jsonc_top_level_value(raw, "instructions", kept)
-                else:
-                    from nexgen_core.jsonc import remove_jsonc_top_level_value
-
-                    body = remove_jsonc_top_level_value(raw, "instructions")
-            else:
-                data["instructions"] = kept
-                if not kept:
-                    del data["instructions"]
-                body = json.dumps(data, indent=2) + "\n"
-            from nexgen_core.files import backup_file
-
-            # Same rule as the pointer above: no safety copy, no rewrite. The
-            # user's opencode.json may hold lines the engine never added.
-            try:
-                backup_file(candidate, tag="instructions")
-            except OSError as exc:
-                return WARN + t(
-                    "opencode dead 'instructions' entries left untouched: safety backup failed ({error})",
-                    error=exc,
-                )
-            atomic_write_text(candidate, body)
-        except OSError:
-            return None
-        return t("opencode dead 'instructions' entries removed")
+        """Removes engine-added canonical entries from the dead V1 array."""
+        return guard_instructions._drop_dead_opencode_instructions_array(self, McpRenderer)
 
     def align_local_model_runtime(self) -> list[str]:
-        """Windows-only: relinks the private local-model-agent.ps1 adapter (bring-your-own).
-
-        Port of the release's local_model_runtime step: the vault can supply
-        a private adapter (never in the public product); if it's absent
-        that's the expected default, not an error. Also installs the stable
-        local-worker/local-agent wrappers.
-        """
-        if sys.platform != "win32":
-            return []
-        src = self.vault_data / "03-INFRA" / "scripts" / "local-model-agent.ps1"
-        if not src.is_file():
-            return []
-        local_bin = self.home / ".local" / "bin"
-        local_bin.mkdir(parents=True, exist_ok=True)
-        actions: list[str] = []
-        runtime = local_bin / "local-model-agent.ps1"
-        try:
-            if runtime.is_symlink() or runtime.exists():
-                runtime.unlink(missing_ok=True)
-        except OSError as exc:
-            # An optional adapter must never fail the whole apply: on
-            # Windows a locked .ps1 is routine, not corruption.
-            actions.append(WARN + t("local-model: adapter not relinked ({error})", error=exc))
-            return actions
-        try:
-            runtime.symlink_to(src)
-            actions.append(t("local-model: relinked local-model-agent.ps1"))
-        except OSError:
-            shutil.copy2(src, runtime)
-            actions.append(t("local-model: copied local-model-agent.ps1"))
-        wrappers = {
-            "local-worker.ps1": "$ScriptPath = Join-Path $PSScriptRoot 'local-model-agent.ps1'\r\n& $ScriptPath -Mode worker @args\r\n",
-            "local-agent.ps1": "$ScriptPath = Join-Path $PSScriptRoot 'local-model-agent.ps1'\r\n& $ScriptPath -Mode agent @args\r\n",
-        }
-        for name, content in wrappers.items():
-            target = local_bin / name
-            if not target.is_file() or target.read_text(encoding="utf-8", errors="replace") != content:
-                atomic_write_text(target, content)
-                actions.append(t("local-model: installed wrapper {name}", name=name))
-        return actions
+        """Windows-only: relinks the private local-model-agent.ps1 adapter."""
+        return guard_instructions.align_local_model_runtime(self)
 
     def _refresh_update_cache_best_effort(self) -> None:
         """Records the newest released tag for the shell-startup notice.
@@ -382,99 +124,12 @@ class GuardRunner:
             logger.debug("background update-cache refresh skipped (%s)", type(exc).__name__)
 
     def apply_runtime_permissions(self) -> list[str]:
-        """Permission posture + guardrail hook for every installed CLI.
-
-        The POLICY -- which posture, which guardrail body -- is Vault private
-        data (03-INFRA/agent-universal-layer/permissions/manifest.yaml),
-        never the public engine's: without that file this phase is a
-        complete no-op, so no end user inherits someone else's permission
-        posture. The mechanism that applies it lives in nexgen_core.runtimes;
-        here we only read the manifest and translate it into plain arguments
-        for that mechanism.
-        """
-        manifest_path = self.vault_data / "03-INFRA" / "agent-universal-layer" / "permissions" / "manifest.yaml"
-        engine_hooks_dir = self.engine_root / "agent-universal-layer" / "hooks"
-        event_sink_source = engine_hooks_dir / "nexgen-event-sink.mjs"
-        sink_wanted = self._event_sink_wanted()
-        sink_args = {
-            "event_sink_source": event_sink_source if sink_wanted and event_sink_source.is_file() else None,
-            "remove_event_sink": sink_wanted is False,
-        }
-        if not manifest_path.is_file():
-            # No permission policy here, but the event sink does not depend on one.
-            if sink_args["event_sink_source"] is None and not sink_args["remove_event_sink"]:
-                return []
-            return apply_runtimes(home=self.home, engine_hooks_dir=engine_hooks_dir, **sink_args)
-        try:
-            raw = yaml.safe_load(manifest_path.read_text(encoding="utf-8"))
-        except (OSError, yaml.YAMLError) as exc:
-            return [WARN + t("runtime-permissions: could not read {path} ({error})", path=manifest_path, error=exc)]
-        if not isinstance(raw, dict):
-            return [WARN + t("runtime-permissions: the root of {path} is not a map", path=manifest_path)]
-
-        posture = {
-            cli: value
-            for cli, value in (raw.get("posture") or {}).items()
-            if isinstance(cli, str) and isinstance(value, str)
-        }
-
-        # Only one guardrail policy is supported (the first declared hook):
-        # it's the only real case, and generalizing to an arbitrary list of
-        # events/matchers per CLI is exactly the five-map complexity this
-        # package replaces.
-        guardrail_source: Path | None = None
-        for spec in raw.get("hooks") or []:
-            if not isinstance(spec, dict) or not isinstance(spec.get("file"), str):
-                continue
-            candidate = (manifest_path.parent / spec["file"]).resolve()
-            try:
-                parent_resolved = manifest_path.parent.resolve()
-                is_inside = candidate.is_relative_to(parent_resolved)
-            except (OSError, ValueError):
-                is_inside = False
-            if not is_inside:
-                name = spec.get("name", spec["file"])
-                return [WARN + t("runtime-permissions: {name} escapes permissions/, guardrail rejected", name=name)]
-            from nexgen_core.runtimes.base import Runtime
-
-            hook_name = Path(spec["file"]).name
-            if not Runtime._is_safe_hook_filename(hook_name):
-                name = spec.get("name", spec["file"])
-                return [WARN + t("runtime-permissions: {name} has an unsafe hook filename, guardrail rejected", name=name)]
-            if not candidate.is_file():
-                return [WARN + t("runtime-permissions: guardrail body missing ({path})", path=candidate)]
-            guardrail_source = candidate
-            break
-
-        return apply_runtimes(
-            home=self.home,
-            engine_hooks_dir=engine_hooks_dir,
-            posture=posture,
-            guardrail_source=guardrail_source,
-            **sink_args,
-        )
+        """Permission posture + guardrail hook for every installed CLI."""
+        return guard_permissions.apply_runtime_permissions(self)
 
     def _event_sink_wanted(self) -> bool | None:
-        """Does a module this machine declared need the event-sink hook?
-
-        True/False when the module state says so; None when it cannot be read, in which case
-        the hook is left as it is: removing it because of a read error would turn a transient
-        fault into a lost integration. A module declared `local` but held back by missing env
-        gates (a timer without the user's tokens) still counts: that is the environment, not a
-        decision to remove it.
-        """
-        try:
-            from nexgen_core.modules import modules_state
-
-            states = modules_state(vault_data=self.vault_data, engine_root=self.engine_root)
-        except Exception as exc:  # noqa: BLE001 - an unreadable module state changes nothing
-            logger.debug("event sink left as it is: module state unreadable (%s)", type(exc).__name__)
-            return None
-        return any(
-            "event_sink" in state.module.provides.runtime_hooks
-            and "local" in (state.state, state.declared)
-            for state in states
-        )
+        """Whether a declared module needs the event-sink hook (None when unreadable)."""
+        return guard_permissions._event_sink_wanted(self)
 
     def run(
         self,
@@ -635,68 +290,8 @@ class GuardRunner:
         branch: str,
         actions: list[str],
     ) -> GuardResult | None:
-        """Inspects data git state and converges it (fast-forward / rebase /
-        quarantine). Returns a result only when the cycle must stop here."""
-        if mode == GuardMode.PREFLIGHT:
-            return None
-        # Auto-commit any pending tracked infra files so they don't block sync
-        auto_ok, _auto_committed = auto_commit_infra_files(self.vault_data)
-        if not auto_ok:
-            # inspect_git_state below will still block fail-closed on DIRTY,
-            # but the message must name the real cause (commit failed), not
-            # just "unsaved changes".
-            actions.append(WARN + t("Infra auto-commit failed; the Git inspection below decides whether the cycle can proceed"))
-        untracked_infra = get_untracked_infra_files(self.vault_data)
-        if untracked_infra:
-            actions.append(t(
-                "New infra files never committed ({count}): stage them with vault-push, or they stay local-only.",
-                count=len(untracked_infra),
-            ))
-
-        git_status = inspect_git_state(
-            self.vault_data,
-            expected_branch=branch,
-            remote=auth_remote,
-            allow_offline=allow_offline,
-        )
-        if not git_status.allows_apply:
-            return GuardResult(
-                success=False,
-                mode=mode,
-                message=t("Operation blocked by Git: {reason}", reason=git_status.message),
-                exit_code=1,
-            )
-        if git_status.state == GitState.BEHIND:
-            ff_ok, ff_msg = fast_forward_merge(self.vault_data, remote=auth_remote, branch=branch)
-            if not ff_ok:
-                return GuardResult(
-                    success=False,
-                    mode=mode,
-                    message=t("Error during automatic update: {reason}", reason=ff_msg),
-                    exit_code=1,
-                )
-            actions.append(ff_msg)
-        elif git_status.state == GitState.DIVERGED:
-            rebase_res = run_git(self.vault_data, "rebase", f"{auth_remote}/{branch}")
-            if rebase_res.returncode == 0:
-                actions.append(t("Realigned with {remote}/{branch} via rebase", remote=auth_remote, branch=branch))
-            else:
-                run_git(self.vault_data, "rebase", "--abort")
-                q_ok, _q_branch, q_msg = quarantine_diverged_commits(self.vault_data, remote=auth_remote, branch=branch)
-                if q_ok:
-                    actions.append(q_msg)
-                else:
-                    return GuardResult(
-                        success=False,
-                        mode=mode,
-                        message=t("Error during divergence resolution: {reason}", reason=q_msg),
-                        exit_code=1,
-                    )
-        elif git_status.state == GitState.FRESH:
-            actions.append(t("Data state: {status}", status=git_status.message))
-        elif git_status.state == GitState.AHEAD:
-            actions.append(t("Data state: {status}", status=git_status.message))
-        return None
+        """Inspects data git state and converges it; a result only when it must stop."""
+        return guard_git.converge_git_phase(self, mode, allow_offline, auth_remote, branch, actions)
 
     def _phase_preflight(self, mode: GuardMode) -> GuardResult | None:
         """Read-only validation of all configuration files. In PREFLIGHT

@@ -68,6 +68,13 @@ def check_commands() -> list[str]:
     return problems
 
 
+def _failure_tail(done: subprocess.CompletedProcess, limit: int = 5) -> str:
+    """The last lines a failed command wrote: stderr, or stdout when stderr is empty."""
+    text = done.stderr if done.stderr.strip() else done.stdout
+    lines = [line.strip() for line in text.strip().splitlines() if line.strip()]
+    return " | ".join(lines[-limit:])
+
+
 def check_launcher() -> list[str]:
     """The launcher this platform really gets, rendered from this checkout and run twice.
 
@@ -91,8 +98,11 @@ def check_launcher() -> list[str]:
                 _report(name, False, f"no answer in {COMMAND_TIMEOUT}s")
                 continue
             good = (done.returncode != 0) == want_nonzero
-            if not _report(name, good, f"rc={done.returncode}"):
-                problems.append(f"{name}: exit {done.returncode}, expected {'a failure' if want_nonzero else 'success'}")
+            said = "" if good else _failure_tail(done)
+            detail = f"rc={done.returncode}" + (f": {said}" if said else "")
+            if not _report(name, good, detail):
+                expected = "a failure" if want_nonzero else "success"
+                problems.append(f"{name}: exit {done.returncode}, expected {expected}" + (f": {said}" if said else ""))
     return problems
 
 

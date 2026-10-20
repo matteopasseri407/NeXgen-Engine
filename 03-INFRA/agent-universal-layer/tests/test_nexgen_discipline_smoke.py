@@ -43,3 +43,25 @@ def test_a_replacement_character_on_a_cp1252_stdout_does_not_crash_the_smoke(mon
     monkeypatch.setattr(smoke, "check_commands", lambda: [] if smoke._report("nexgen plan", True, "Raggiungibilit\ufffd") else ["x"])
     monkeypatch.setattr(smoke, "check_launcher", lambda: [])
     assert smoke.main() == 0
+
+
+def test_a_failing_launcher_shows_its_own_error(monkeypatch, capsys):
+    import importlib.util
+    import subprocess
+
+    from nexgen_core import shims
+
+    spec = importlib.util.spec_from_file_location("smoke_script_launcher", SMOKE)
+    smoke = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(smoke)
+    monkeypatch.setattr(shims, "install_shims", lambda **_: [str(REPO / "nexgen.cmd")])
+    stderr = (
+        "DIAG-LINE-1\nline two\nline three\nline four\nline five\nline six\n"
+        "ModuleNotFoundError: No module named 'yaml'\n"
+    )
+    monkeypatch.setattr(smoke, "run", lambda argv: subprocess.CompletedProcess(argv, 1, "", stderr))
+    problems = smoke.check_launcher()
+    printed = capsys.readouterr().out
+    assert "ModuleNotFoundError: No module named 'yaml'" in printed
+    assert "DIAG-LINE-1" not in printed
+    assert any("ModuleNotFoundError: No module named 'yaml'" in problem for problem in problems)

@@ -86,17 +86,17 @@ if exist "%NEXGEN_RUNTIME%\\.provisioned" if exist "%NEXGEN_RUNTIME%\\Scripts\\p
     "%NEXGEN_RUNTIME%\\Scripts\\python.exe" "%NEXGEN_ENTRY%" {prefix}%*
     goto :nexgen_done
 )
-where py >nul 2>&1
-if %ERRORLEVEL% equ 0 (
-    py -3 -c "import sys; sys.exit(0 if sys.version_info>=(3,11) else 1)" >nul 2>&1 && (
-        py -3 "%NEXGEN_ENTRY%" {prefix}%*
-        goto :nexgen_done
-    )
-)
 where python >nul 2>&1
 if %ERRORLEVEL% equ 0 (
     python -c "import sys; sys.exit(0 if sys.version_info>=(3,11) else 1)" >nul 2>&1 && (
         python "%NEXGEN_ENTRY%" {prefix}%*
+        goto :nexgen_done
+    )
+)
+where py >nul 2>&1
+if %ERRORLEVEL% equ 0 (
+    py -3 -c "import sys; sys.exit(0 if sys.version_info>=(3,11) else 1)" >nul 2>&1 && (
+        py -3 "%NEXGEN_ENTRY%" {prefix}%*
         goto :nexgen_done
     )
 )

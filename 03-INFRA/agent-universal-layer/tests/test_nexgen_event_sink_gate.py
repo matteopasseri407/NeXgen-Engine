@@ -132,8 +132,8 @@ def test_antigravity_remove_drops_only_its_own_key_and_file(tmp_path, sink_sourc
     runtime = AntigravityRuntime()
     runtime.install_event_sink(home, sink_source)
     entry = _json(hooks_path)["nexgen-event-sink"]
-    assert all(f'node "{(hooks_path.parent / "nexgen-event-sink.mjs").as_posix()}"' in c["command"]
-               for c in entry["Stop"])
+    # agy runs hooks in the hooks.json folder: the sink is named alone, no quotes, no home.
+    assert all(c["command"].startswith("node nexgen-event-sink.mjs ") for c in entry["Stop"])
     assert runtime.remove_event_sink(home)
     assert _json(hooks_path) == {"theirs": {"enabled": True}}
     assert not (hooks_path.parent / "nexgen-event-sink.mjs").exists()
