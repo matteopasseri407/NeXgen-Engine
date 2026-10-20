@@ -72,15 +72,26 @@ def _windows_window(title: str, command: list[str], folder: Path) -> tuple[str, 
     if terminal:
         argv = [
             terminal, "-w", "-1", "new-tab",
-            "--title", title,
-            "-d", str(folder),
-            shell, "-NoExit", "-Command", script,
+            "--title", _wt_value(title),
+            "-d", _wt_value(str(folder)),
+            _wt_value(shell), "-NoExit", "-Command", _wt_value(script),
         ]
         return terminal, (argv, {})
     titled = f"$Host.UI.RawUI.WindowTitle = {powershell_literal(title)}\n{script}"
     argv = [shell, "-NoExit", "-Command", titled]
     flags = getattr(subprocess, "CREATE_NEW_CONSOLE", 0x00000010)
     return shell, (argv, {"cwd": str(folder), "creationflags": flags})
+
+
+def _wt_value(text: str) -> str:
+    """A value Windows Terminal must take literally, `;` included.
+
+    wt splits its whole command line on `;` before any shell sees it, so a
+    prompt or a folder holding one would start a second subcommand instead of
+    arriving intact. `\\;` is the literal semicolon wt accepts, and it unescapes
+    it before the shell runs: verified against the real wt on 2026-10-20.
+    """
+    return text.replace(";", r"\;")
 
 
 def _powershell_executable() -> str:

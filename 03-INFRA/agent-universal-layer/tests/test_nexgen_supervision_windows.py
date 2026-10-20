@@ -49,6 +49,30 @@ def test_windows_with_windows_terminal_opens_a_dedicated_window(tmp_path, spawne
     assert handle["pid"] == 4242
 
 
+def test_windows_terminal_keeps_a_semicolon_inside_its_arguments(tmp_path, spawned, pretend_os, monkeypatch):
+    """wt tratta `;` come separatore dei suoi sottocomandi: nei valori va scritto `\\;`.
+
+    Senza escape la riga viene spezzata, il resto parte come comando a sé e la
+    finestra non esegue quello che le è stato chiesto.
+    """
+    pretend_os(windows, "nt")
+    folder = tmp_path / "compito; uno"
+    folder.mkdir()
+    monkeypatch.setattr(
+        windows.shutil, "which",
+        lambda name: {"wt.exe": r"C:\wt.exe", "pwsh": r"C:\pwsh.exe"}.get(name),
+    )
+
+    windows.open_window("prova; finestra", ["opencode", "--prompt", "prima; seconda"], cwd=folder)
+
+    argv = spawned[0][0]
+    assert argv[4:6] == ["--title", "prova\\; finestra"]
+    assert argv[6] == "-d"
+    assert argv[7].count(";") == argv[7].count("\\;"), "una cartella con un punto e virgola va protetta come il resto"
+    assert argv[7].replace("\\;", ";") == str(folder)
+    assert argv[-1] == "& 'opencode' '--prompt' 'prima\\; seconda'"
+
+
 def test_windows_without_windows_terminal_gets_its_own_console(tmp_path, spawned, pretend_os, monkeypatch):
     pretend_os(windows, "nt")
     monkeypatch.setattr(
