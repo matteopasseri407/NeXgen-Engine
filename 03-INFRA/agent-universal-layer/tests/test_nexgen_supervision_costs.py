@@ -242,6 +242,17 @@ def test_a_missing_store_says_children_are_not_exposed(tmp_path):
     assert "figlie non esposte" in source
 
 
+def test_the_harness_store_is_found_through_the_engine_home(tmp_path, monkeypatch):
+    """La casa la risolve il motore, non `Path.home()`: un NEXGEN_HOME sposta anche l'archivio."""
+    store = tmp_path / ".local" / "share" / "opencode"
+    store.mkdir(parents=True)
+    (store / "opencode.db").write_text("", encoding="utf-8")
+    monkeypatch.setenv("NEXGEN_HOME", str(tmp_path))
+    monkeypatch.delenv("XDG_DATA_HOME", raising=False)
+
+    assert costs.opencode_db() == store / "opencode.db"
+
+
 def test_a_store_without_a_session_table_says_so(tmp_path):
     path = tmp_path / "vuoto.db"
     con = sqlite3.connect(path)

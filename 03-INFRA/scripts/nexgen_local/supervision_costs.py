@@ -23,6 +23,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from nexgen_core.processes import windows_command_argv
+from nexgen_core.paths import resolve_home
 
 from . import supervision_state as state
 from .supervision_state import SupervisionError
@@ -158,7 +159,7 @@ def child_sessions(session_id: str, *, db: Path | None = None) -> tuple[int | No
 
 def opencode_db() -> Path | None:
     """Where the harness keeps its sessions, or None when the store is not there."""
-    base = Path(os.environ.get("XDG_DATA_HOME") or Path.home() / ".local" / "share")
+    base = Path(os.environ.get("XDG_DATA_HOME") or resolve_home() / ".local" / "share")
     path = base / "opencode" / "opencode.db"
     return path if path.is_file() else None
 
