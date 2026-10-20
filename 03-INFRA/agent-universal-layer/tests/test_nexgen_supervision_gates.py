@@ -86,6 +86,8 @@ def test_a_clean_unit_inside_its_boundary_passes(task, repo, tmp_path):
     assert "+seconda riga aggiunta." in package
     assert "docs/guida.md" in package
     assert "nessuna sessione agganciata" in package
+    assert "## Test saltati su questa piattaforma" in package
+    assert "nessun test saltato fra i file toccati" in package
     raw = Path(result["raw"]).read_text(encoding="utf-8")
     assert "PASS confine" in raw
     collected = [row for row in state.read_events(task) if row.get("event") == "unit_collected"]
@@ -263,6 +265,36 @@ def test_the_diff_in_the_package_is_cut_with_the_cut_declared(task, repo, tmp_pa
 def test_an_unknown_unit_is_refused(task, repo, tmp_path):
     with pytest.raises(state.SupervisionError, match="unità sconosciuta"):
         gates.collect(task, "mai-creata")
+
+
+def test_a_test_skipped_on_this_platform_is_named_in_the_package(task, repo, tmp_path):
+    """Un test che qui viene saltato non è verificato: il pacchetto lo dice, con il motivo."""
+    repo.write(
+        "tests/test_posix.py",
+        "import sys\nimport pytest\n\n"
+        "@pytest.mark.skipif(sys.platform != 'un-altra-macchina', reason='solo sull\\'altra macchina')\n"
+        "def test_solo_altrove():\n    assert False\n",
+    )
+    repo.commit("test: aggiunge un test che gira solo altrove")
+    repo.git("push", "-q", "origin", "main")
+    folder = _unit(task, repo, tmp_path, allow=["tests/*.py"])
+    _commit(folder, "test: tocca il test saltato", {"tests/test_posix.py": (
+        "import sys\nimport pytest\n\n"
+        "@pytest.mark.skipif(sys.platform != 'un-altra-macchina', reason='solo sull\\'altra macchina')\n"
+        "def test_solo_altrove():\n    assert False\n\n"
+        "def test_aggiunto():\n    assert True\n"
+    )})
+
+    result = gates.collect(task, "prova")
+
+    package = Path(result["package"]).read_text(encoding="utf-8")
+    assert "## Test saltati su questa piattaforma" in package
+    assert "tests/test_posix.py:4 (solo sull'altra macchina)" in package
+    assert "non verificato su" in package
+    raw = Path(result["raw"]).read_text(encoding="utf-8")
+    assert "SKIPPED su questa piattaforma" in raw
+    collected = [row for row in state.read_events(task) if row.get("event") == "unit_collected"]
+    assert collected[-1]["skipped_tests"], "l'elenco resta anche nel diario"
 
 
 def test_a_repository_whose_rules_do_not_parse_is_refused_with_a_reason(task, repo, tmp_path):

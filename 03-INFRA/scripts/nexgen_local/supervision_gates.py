@@ -8,7 +8,10 @@ cost of the attached session.
 """
 from __future__ import annotations
 
+import os
+import re
 import subprocess
+import sys
 from dataclasses import dataclass
 from fnmatch import fnmatch
 from pathlib import Path
@@ -17,6 +20,7 @@ from nexgen_core.discipline import config, regress
 from nexgen_core.discipline.config import ConfigError
 from nexgen_core.discipline.gitutil import GitError, changes as changed_files, diff_text, git
 from nexgen_core.discipline.integrity import check_test_integrity
+from nexgen_core.discipline.violations import TEST_PATH
 from nexgen_core.processes import no_window_kwargs, split_command_line, windows_command_argv
 
 from . import supervision_costs as costs
@@ -26,11 +30,15 @@ from .supervision_worktree import remote_refs
 
 #: The declared budget for the executor's own verification command.
 VERIFY_TIMEOUT_S = 600.0
+#: The budget for re-running the touched test files to see what this platform skips.
+SKIP_TIMEOUT_S = 300.0
 #: The package carries at most this much diff; the cut is declared in the file.
 DIFF_MAX_LINES = 400
 #: Published identity a unit may never carry, unless its own scope says otherwise.
 FORBIDDEN_FILES = ("VERSION", "CHANGELOG.md")
 FORBIDDEN_PREFIXES = (".github/",)
+_SKIP_LINE = re.compile(r"^SKIPPED \[\d+\] (.+?):(\d+): (.*)$")
+_SKIPPED_TOTAL = re.compile(r"(\d+) skipped")
 
 
 @dataclass(frozen=True)
@@ -73,19 +81,21 @@ def collect(task_id: str, unit: str) -> dict:
         clean,
     ]
     verdict = "PASS" if all(result.ok for result in results) else "FAIL"
-    package = _package_text(task_id, name, branch, base, head, verdict, results, folder, text)
+    skipped = skipped_tests(folder, files)
+    package = _package_text(task_id, name, branch, base, head, verdict, results, folder, text, skipped)
     package_path = state.open_task(task_id) / f"40-pacchetto-{name}.md"
     raw_path = state.open_task(task_id) / f"50-gate-{name}.txt"
     package_path.write_text(package, encoding="utf-8")
-    raw_path.write_text(_raw_text(results), encoding="utf-8")
+    raw_path.write_text(_raw_text(results) + _skipped_raw(skipped), encoding="utf-8")
     state.append_event(
         task_id, "unit_collected",
         unit=name, verdict=verdict, head=head,
         gates=[{"name": result.name, "ok": result.ok, "reason": result.reason} for result in results],
+        skipped_tests=skipped,
     )
     return {
         "unit": name, "verdict": verdict, "base": base, "head": head,
-        "gates": results, "package": package_path, "raw": raw_path,
+        "gates": results, "package": package_path, "raw": raw_path, "skipped": skipped,
     }
 
 
@@ -206,6 +216,65 @@ def _verify_gate(folder: Path, command: str) -> GateResult:
     return GateResult("verifica indipendente", True, f"`{command}` esce con 0", output)
 
 
+def skipped_tests(folder: Path, files: list, *, timeout: float = SKIP_TIMEOUT_S) -> list[str]:
+    """Tests this platform skipped among the test files the unit touched, with their reasons.
+
+    A test skipped on Windows runs on the Linux CI, and the other way round: a
+    POSIX-only bug of the lazy-mcp split passed here exactly this way. The
+    package names the skipped tests so a reviewer knows what was not verified.
+    """
+    touched = sorted({
+        change.path for change in files
+        if change.status != "D" and TEST_PATH.search(change.path) and change.path.endswith(".py")
+    })
+    if not touched:
+        return []
+    argv = [sys.executable, "-m", "pytest", "-q", "-rs", *touched]
+    try:
+        done = subprocess.run(
+            argv, cwd=folder, capture_output=True, text=True, encoding="utf-8", errors="replace",
+            stdin=subprocess.DEVNULL, timeout=timeout, check=False, **no_window_kwargs(),
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        # The list of skipped tests is a report, not a gate: say why it is missing.
+        return [f"non raccolti: pytest non ha risposto ({type(exc).__name__})"]
+    entries = []
+    for line in (done.stdout + done.stderr).splitlines():
+        match = _SKIP_LINE.match(line.strip())
+        if match:
+            entries.append(f"{match.group(1).replace(chr(92), '/')}:{match.group(2)} ({match.group(3)})")
+    if entries:
+        return entries
+    total = _SKIPPED_TOTAL.search(done.stdout)
+    if total and int(total.group(1)):
+        return [f"{total.group(1)} test saltati, motivi non riportati dal runner"]
+    return []
+
+
+def skipped_label() -> str:
+    """What "not verified here" means for the platform the engine is running on."""
+    if os.name == "nt":
+        return "non verificato su Linux: lo deve dire la CI Linux"
+    return "non verificato su questa piattaforma: lo devono dire le altre CI"
+
+
+def _skipped_section(skipped: list[str]) -> list[str]:
+    """The package section, empty-looking when nothing was skipped."""
+    if not skipped:
+        return ["## Test saltati su questa piattaforma", "", "nessun test saltato fra i file toccati.", ""]
+    lines = ["## Test saltati su questa piattaforma", ""]
+    lines += [f"- {entry}" for entry in skipped]
+    lines += ["", skipped_label() + ".", ""]
+    return lines
+
+
+def _skipped_raw(skipped: list[str]) -> str:
+    """The same list in the raw file, so a failure and its skips sit together."""
+    if not skipped:
+        return ""
+    return "\n\nSKIPPED su questa piattaforma:\n" + "\n".join(f"- {entry}" for entry in skipped) + "\n"
+
+
 def _last_line(text: str) -> str:
     lines = [line.strip() for line in text.splitlines() if line.strip()]
     return (lines[-1] if lines else "")[:200]
@@ -222,9 +291,9 @@ def _raw_text(results: list[GateResult]) -> str:
 
 def _package_text(
     task_id: str, unit: str, branch: str, base: str, head: str, verdict: str,
-    results: list[GateResult], folder: Path, text: str,
+    results: list[GateResult], folder: Path, text: str, skipped: list[str],
 ) -> str:
-    """The file a supervisor reads: verdict, gate lines, diffstat, diff, cost."""
+    """The file a supervisor reads: verdict, gate lines, skips, diffstat, diff, cost."""
     kept, cut = _truncated(text, DIFF_MAX_LINES)
     rows = state.read_costs(task_id)
     lines = [
@@ -235,13 +304,15 @@ def _package_text(
         f"- base: {base[:12]}",
         f"- head: {head[:12]}",
         f"- verdetto: {verdict}",
-        f"- costo: {_cost_line(rows, unit)}",        "",
+        f"- costo: {_cost_line(rows, unit)}",
+        "",
         "## Cancelli",
         "",
         "| cancello | esito | motivo |",
         "|---|---|---|",
         *[f"| {r.name} | {'PASS' if r.ok else 'FAIL'} | {_cell(r.reason)} |" for r in results],
         "",
+        *_skipped_section(skipped),
         "## Diffstat",
         "",
         "```",
@@ -295,15 +366,20 @@ def _cost_line(rows: list[dict], unit: str) -> str:
     cost = facts.cost_usd
     money = f"{cost:.4f} $" if isinstance(cost, (int, float)) else "costo non disponibile"
     duration = f"{facts.duration_s:.1f}s · " if facts.duration_s is not None else ""
+    children = ""
+    if facts.children:
+        children = f" · {facts.children} figlie ({facts.children_cost_usd or 0:.4f} $)"
+    elif facts.children is None and facts.children_source:
+        children = " · figlie non esposte"
     return (
         f"{money} ({_at_collection(rows, unit, cost)}) · sessione {session} · {duration}"
-        f"{facts.tokens_in or 0} token in, {facts.tokens_out or 0} token out"
+        f"{facts.tokens_in or 0} token in, {facts.tokens_out or 0} token out{children}"
     )
 
 
 def session_facts(session_id: str) -> costs.SessionFacts:
-    """The session as the harness reports it now; a broken source raises CostError."""
-    return costs.facts_from_export(costs.export_session(session_id))
+    """The session as the harness reports it now, children included; a broken source raises CostError."""
+    return costs.measure(session_id)
 
 
 def _at_collection(rows: list[dict], unit: str, cost: float | None) -> str:
