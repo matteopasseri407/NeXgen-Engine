@@ -9,6 +9,25 @@ before anybody reviews a diff, the review round, and publication. The LangGraph
 checkpoint and its resume belong to phase 3b: the state here is still the
 journal, and every step is a function the graph can wrap.
 
+**Status: preview.** The verbs work and are covered by tests, but the
+supervisor still drives every step, and phase 3b (spending cap, provider
+allow-list, harness permission profile, stall detection, resume) is not in yet.
+
+## What the gates guarantee, and what they do not
+
+The gates catch mistakes and shortcuts: a file outside the boundary, a touched
+VERSION or CHANGELOG, a deleted or weakened test, a fix without its failing test,
+a verification that does not pass when the engine runs it, a commit of the unit
+found on a remote, uncommitted work. They read the unit's commits and rerun its
+checks; they are not a sandbox.
+
+An executor that sets out to cheat with a shell of its own can still get past a
+reading of the diff, for example by pushing straight to a URL outside the
+configured remotes or by changing how pytest collects tests. Against that the
+defence is the harness's own permission profile (phase 3b denies the executor
+`git push`) and the supervisor's review of the diff. Treat a PASS as "nothing
+the engine checks went wrong", not as "this change is safe".
+
 ## Where a task lives
 
 `nexgen-local sup start "<objective>"` creates a folder under the lane's state
