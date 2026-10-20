@@ -243,15 +243,18 @@ and that is a property of the clone, not of the engine.
 
 ## What the engine refuses to execute
 
-An executor's report, a supervisor's corrections, or a command may ask for a
-force-push, a tag, a version bump or a change to an existing test. The engine
-does none of them and does not read intent: it looks for a short, declared list
-of phrases inside the report's request section (the heading of the engine's own
-template, `## Dubbi e richieste al proprietario`; the whole text when there is
-no such heading), and appends one line per unit, kind and source to
-`07-richieste-proprietario.md`. A report that only quotes the prohibition is not
-a request. `sup collect`, `sup review` and `sup publish` print the line they
-wrote, and the decision stays the owner's.
+An executor's report may ask for a force-push, a tag, a version bump or a change
+to an existing test. The engine does none of them and does not read intent: it
+looks for a short, declared list of phrases, and only in one place, the request
+section of the report, the heading of the engine's own template
+(`## Dubbi e richieste al proprietario`). The brief, a review and a corrections
+file are the supervisor's words and are never scanned. Inside the section,
+fenced code blocks and quoted lines (`>`) are ignored, so pasting an output is
+not a request; with no section nothing is recognised and the package says
+`sezione delle richieste assente nel resoconto`. One line per unit, kind and
+sentence goes to `07-richieste-proprietario.md`, and a sentence already on file
+is not written again, so the file cannot quote itself back as a new request.
+`sup collect` prints the lines it wrote, and the decision stays the owner's.
 
 ## Visible windows
 

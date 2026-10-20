@@ -89,23 +89,27 @@ def collect(task_id: str, unit: str) -> dict:
     ]
     verdict = "PASS" if all(result.ok for result in results) else "FAIL"
     skipped = skipped_tests(folder, files)
-    package = _package_text(task_id, name, branch, base, head, verdict, results, folder, text, skipped)
+    request_scan = requests_module.scan_report(task_id, name)
+    package = _package_text(
+        task_id, name, branch, base, head, verdict, results, folder, text, skipped, request_scan,
+    )
     package_path = state.open_task(task_id) / f"40-pacchetto-{name}.md"
     raw_path = state.open_task(task_id) / f"50-gate-{name}.txt"
     package_path.write_text(package, encoding="utf-8")
     raw_path.write_text(_raw_text(results) + _skipped_raw(skipped), encoding="utf-8")
-    requests = requests_module.scan_report(task_id, name)
     state.append_event(
         task_id, "unit_collected",
         unit=name, verdict=verdict, head=head,
         gates=[{"name": result.name, "ok": result.ok, "reason": result.reason} for result in results],
         skipped_tests=skipped,
-        requests=[hit["kind"] for hit in requests],
+        requests=[hit["kind"] for hit in request_scan["requests"]],
+        request_section=request_scan["found"],
     )
     return {
         "unit": name, "verdict": verdict, "base": base, "head": head,
         "gates": results, "package": package_path, "raw": raw_path, "skipped": skipped,
-        "requests": requests,
+        "requests": request_scan["requests"],
+        "request_section": requests_module.section_status(request_scan),
     }
 
 
@@ -388,9 +392,9 @@ def _raw_text(results: list[GateResult]) -> str:
 
 def _package_text(
     task_id: str, unit: str, branch: str, base: str, head: str, verdict: str,
-    results: list[GateResult], folder: Path, text: str, skipped: list[str],
+    results: list[GateResult], folder: Path, text: str, skipped: list[str], request_scan: dict,
 ) -> str:
-    """The file a supervisor reads: verdict, gate lines, skips, diffstat, diff, cost."""
+    """The file a supervisor reads: verdict, gate lines, skips, requests, diffstat, diff, cost."""
     kept, cut = _truncated(text, DIFF_MAX_LINES)
     rows = state.read_costs(task_id)
     lines = [
@@ -410,6 +414,7 @@ def _package_text(
         *[f"| {r.name} | {'PASS' if r.ok else 'FAIL'} | {_cell(r.reason)} |" for r in results],
         "",
         *_skipped_section(skipped),
+        *_request_section(request_scan),
         "## Diffstat",
         "",
         "```",
@@ -425,6 +430,24 @@ def _package_text(
         "",
     ]
     return "\n".join(lines)
+
+
+def _request_section(result: dict) -> list[str]:
+    """The requests the executor's report makes, or why none could be read."""
+    lines = ["## Richieste al proprietario", ""]
+    if not result.get("report"):
+        lines += [requests_module.NO_REPORT + ".", ""]
+        return lines
+    status = requests_module.section_status(result)
+    if status:
+        lines += [status + ".", ""]
+        return lines
+    if not result.get("hits"):
+        lines += ["nessuna richiesta al proprietario.", ""]
+        return lines
+    lines += [f"- {hit['kind']} · «{hit['sentence']}»" for hit in result["hits"]]
+    lines += ["", f"Lette in `{result['report']}`; una riga già scritta non si ripete.", ""]
+    return lines
 
 
 def _truncated(text: str, limit: int) -> tuple[str, str]:

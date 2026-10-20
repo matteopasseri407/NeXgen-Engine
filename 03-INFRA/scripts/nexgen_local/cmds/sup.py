@@ -253,6 +253,8 @@ def cmd_sup_collect(args: argparse.Namespace) -> int:
     print(f"grezzo {result['raw']}")
     for hit in result.get("requests") or []:
         print(f"richiesta al proprietario: {_request_line(hit)}")
+    if result.get("request_section"):
+        print(f"richieste: {result['request_section']}")
     return 0 if result["verdict"] == "PASS" else 1
 
 
@@ -273,8 +275,6 @@ def cmd_sup_review(args: argparse.Namespace) -> int:
         print(f"raccolta {result['collect_verdict']} sulla stessa head: pronta per `sup publish`")
     else:
         print(_delivery_line(result["delivery"]))
-    for hit in result.get("requests") or []:
-        print(f"richiesta al proprietario: {_request_line(hit)}")
     return 0
 
 

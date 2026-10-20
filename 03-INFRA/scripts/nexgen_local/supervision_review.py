@@ -16,7 +16,6 @@ from nexgen_core.files import write_private_text
 
 from . import supervision_gates as gates
 from . import supervision_harness as harness
-from . import supervision_requests as requests
 from . import supervision_state as state
 from .supervision_state import SupervisionError
 
@@ -80,7 +79,6 @@ def approve(task_id: str, unit: str, reason: str) -> dict:
     round_no = next_round(task_id, name)
     path = review_path(task_id, name, round_no)
     write_private_text(path, _review_text(task_id, name, round_no, state.APPROVED, head, collection, text))
-    found = requests.record(task_id, name, path.name, text)
     state.append_event(
         task_id, "unit_reviewed", unit=name, round=round_no, verdict=state.APPROVED,
         reason=text, head=head, collected_head=collected,
@@ -89,7 +87,6 @@ def approve(task_id: str, unit: str, reason: str) -> dict:
     return {
         "unit": name, "round": round_no, "path": path, "verdict": state.APPROVED,
         "head": head, "collected_head": collected, "collect_verdict": verdict,
-        "requests": found,
     }
 
 
@@ -108,7 +105,6 @@ def rework(task_id: str, unit: str, corrections: str | Path, *, sender=None) -> 
     round_no = next_round(task_id, name)
     review = review_path(task_id, name, round_no)
     write_private_text(review, _review_text(task_id, name, round_no, state.REWORKED, head, collection, text))
-    found = requests.record(task_id, name, review.name, text)
     state.append_event(
         task_id, "unit_reviewed", unit=name, round=round_no, verdict=state.REWORKED,
         reason=f"correzioni in {path.name}", head=head,
@@ -119,7 +115,7 @@ def rework(task_id: str, unit: str, corrections: str | Path, *, sender=None) -> 
     delivery = (sender or harness.send_corrections)(task_id, name, review, round_no)
     return {
         "unit": name, "round": round_no, "path": review, "verdict": state.REWORKED,
-        "head": head, "delivery": delivery, "requests": found,
+        "head": head, "delivery": delivery,
     }
 
 

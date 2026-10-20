@@ -1,9 +1,10 @@
-"""Le richieste che il motore non esegue: riconosciute, scritte, mai soddisfatte.
+"""Le richieste che il motore non esegue: lette solo nel resoconto, solo nella sua sezione.
 
-Il riconoscimento è dichiarato e corto: parole chiave nella sezione delle
-richieste del resoconto. Quello che si prova è che una richiesta finisce nel file
-del proprietario una volta sola, e che la lista delle cose vietate non è una
-richiesta.
+Il riconoscimento è dichiarato e corto: parole chiave nella sezione "Dubbi e
+richieste al proprietario" del resoconto dell'esecutore. Quello che si prova è
+che un file del supervisore non è una richiesta, che un blocco di codice o una
+citazione dentro la sezione non lo sono, che una sezione assente non inventa
+niente e che una riga già scritta non si cita da sola.
 """
 from __future__ import annotations
 
@@ -22,26 +23,41 @@ from nexgen_local import supervision_worktree as worktree
 from supervision_repo import build, git_in
 
 VERIFY_OK = f'"{sys.executable}" -c "print(1)"'
+SECTION = "## Dubbi e richieste al proprietario"
+REQUEST = "Servirebbe un force-push per riallineare il ramo, altrimenti resta indietro."
 REPORT_WITH_REQUEST = (
     "# Resoconto dell'unità prova\n"
     "\n"
     "## Stato\n"
     "fatto\n"
     "\n"
-    "## Dubbi e richieste al proprietario\n"
-    "Servirebbe un force-push per riallineare il ramo, altrimenti resta indietro.\n"
+    f"{SECTION}\n"
+    f"{REQUEST}\n"
     "\n"
     "## Prossimo passo se bloccato\n"
     "niente\n"
 )
-REPORT_WITH_PROHIBITION_ONLY = (
+REPORT_WITHOUT_SECTION = (
     "# Resoconto dell'unità prova\n"
     "\n"
-    "## Cosa non fare\n"
-    "Niente force-push, niente tag, niente bump di VERSION o CHANGELOG.md.\n"
+    "## Stato\n"
+    "fatto\n"
     "\n"
-    "## Dubbi e richieste al proprietario\n"
-    "Nessuna: il lavoro è finito.\n"
+    "## Prova reale\n"
+    "```\n"
+    "- 2026-10-20T15:02:14 · u3 · force-push · 30-resoconto-u3.md · «Servirebbe un force-push»\n"
+    "```\n"
+    "Fuori sezione, incollato: non è una richiesta.\n"
+)
+REPORT_WITH_PASTE_INSIDE = (
+    "# Resoconto dell'unità prova\n"
+    "\n"
+    f"{SECTION}\n"
+    "```\n"
+    f"{REQUEST}\n"
+    "```\n"
+    f"> {REQUEST}\n"
+    "Nessuna richiesta: il lavoro è finito.\n"
 )
 
 
@@ -78,23 +94,55 @@ def _unit(task, repo, tmp_path, *, report: str = "") -> Path:
     return folder
 
 
-def test_the_request_section_is_where_a_request_is_looked_for():
-    assert [hit["kind"] for hit in requests.scan(REPORT_WITH_REQUEST)] == ["force-push"]
-    assert requests.scan(REPORT_WITH_PROHIBITION_ONLY) == [], "la lista dei divieti non è una richiesta"
+def _package(result: dict) -> str:
+    return Path(result["package"]).read_text(encoding="utf-8")
+
+
+def test_only_the_template_section_is_read():
+    hits, found = requests.scan(REPORT_WITH_REQUEST)
+    outside, missing = requests.scan(REPORT_WITHOUT_SECTION)
+
+    assert found is True
+    assert [hit["kind"] for hit in hits] == ["force-push"]
+    assert missing is False
+    assert outside == [], "un blocco di codice fuori sezione non è una richiesta"
+
+
+def test_a_paste_or_a_quote_inside_the_section_is_not_a_request():
+    hits, found = requests.scan(REPORT_WITH_PASTE_INSIDE)
+
+    assert found is True
+    assert hits == [], "codice e citazioni dentro la sezione non contano"
 
 
 def test_a_request_is_written_once_however_many_times_the_report_is_read(task, lane):
-    first = requests.record(task, "prova", "30-resoconto-prova.md", REPORT_WITH_REQUEST)
-    second = requests.record(task, "prova", "30-resoconto-prova.md", REPORT_WITH_REQUEST)
+    hits, _ = requests.scan(REPORT_WITH_REQUEST)
+    first = requests.record(task, "prova", hits, "30-resoconto-prova.md")
+    second = requests.record(task, "prova", hits, "30-resoconto-prova.md")
 
     assert [hit["kind"] for hit in first] == ["force-push"]
     assert second == []
     lines = requests.read(task)
     assert len(lines) == 1
     assert "prova" in lines[0] and "force-push" in lines[0]
-    assert "30-resoconto-prova.md" in lines[0]
     header = (lane / task / requests.FILE).read_text(encoding="utf-8").splitlines()[0]
     assert header == "# Richieste al proprietario"
+
+
+def test_a_sentence_already_on_file_is_not_quoted_again(task, lane):
+    """Il file non deve citare sé stesso: stessa unità, stesso tipo, stessa frase."""
+    path = lane / task / requests.FILE
+    path.write_text(
+        "# Richieste al proprietario\n\n"
+        f"- 2026-10-20T09:00:00+00:00 · prova · force-push · altro.md · «{REQUEST}»\n",
+        encoding="utf-8",
+    )
+    hits, _ = requests.scan(REPORT_WITH_REQUEST)
+
+    written = requests.record(task, "prova", hits, "30-resoconto-prova.md")
+
+    assert written == []
+    assert len(requests.read(task)) == 1
 
 
 def test_collect_writes_the_owner_file_and_the_cli_says_it(task, repo, tmp_path, capsys):
@@ -112,7 +160,29 @@ def test_collect_writes_the_owner_file_and_the_cli_says_it(task, repo, tmp_path,
     assert len(requests.read(task)) == 1
 
 
-def test_a_request_in_the_corrections_lands_in_the_owner_file(task, repo, tmp_path):
+def test_a_report_without_the_section_recognises_nothing_and_the_package_says_so(task, repo, tmp_path):
+    _unit(task, repo, tmp_path, report=REPORT_WITHOUT_SECTION)
+
+    result = gates.collect(task, "prova")
+
+    assert result["requests"] == []
+    assert not (state.open_task(task) / requests.FILE).exists()
+    assert "sezione delle richieste assente nel resoconto" in _package(result)
+    assert result["verdict"] == "PASS", "la sezione non decide il verdetto"
+
+
+def test_a_paste_inside_the_section_leaves_the_file_alone(task, repo, tmp_path):
+    _unit(task, repo, tmp_path, report=REPORT_WITH_PASTE_INSIDE)
+
+    result = gates.collect(task, "prova")
+
+    assert result["requests"] == []
+    assert not (state.open_task(task) / requests.FILE).exists()
+    assert "nessuna richiesta al proprietario." in _package(result)
+
+
+def test_the_supervisor_corrections_are_never_scanned(task, repo, tmp_path):
+    """Una frase del supervisore sul bump non è una richiesta dell'esecutore."""
     _unit(task, repo, tmp_path)
     assert gates.collect(task, "prova")["verdict"] == "PASS"
     corrections = tmp_path / "correzioni.md"
@@ -126,5 +196,14 @@ def test_a_request_in_the_corrections_lands_in_the_owner_file(task, repo, tmp_pa
         sender=lambda *a: {"mode": "queued", "session": "ses_x", "reason": "sessione occupata"},
     )
 
-    assert [hit["kind"] for hit in result["requests"]] == ["bump"]
-    assert len(requests.read(task)) == 1
+    assert "requests" not in result
+    assert not (state.open_task(task) / requests.FILE).exists()
+
+
+def test_the_approve_reason_is_never_scanned(task, repo, tmp_path):
+    _unit(task, repo, tmp_path, report=REPORT_WITH_PASTE_INSIDE)
+    assert gates.collect(task, "prova")["verdict"] == "PASS"
+
+    review.approve(task, "prova", "va bene; il bump e il force-push restano fuori")
+
+    assert not (state.open_task(task) / requests.FILE).exists()
