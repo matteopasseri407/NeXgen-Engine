@@ -83,14 +83,18 @@ def cmd_sup_status(args: argparse.Namespace) -> int:
 
 
 def cmd_sup_attach(args: argparse.Namespace) -> int:
-    """Bind one harness session to a unit and write its cost row."""
+    """Bind one harness session to a unit and write its cost row.
+
+    The row comes first: it validates the id and the unit, so a refused attach
+    leaves neither a journal event nor a cost line behind.
+    """
     try:
-        state.append_event(
-            args.id, "attached",
-            unit=args.unit, role=args.role, harness="opencode", session=args.opencode_session,
-        )
         row = costs.record(
             args.id, args.unit, args.role, args.opencode_session, window=args.window,
+        )
+        state.append_event(
+            args.id, "attached",
+            unit=args.unit, role=args.role, harness="opencode", session=row["session"],
         )
     except SupervisionError as exc:
         print(f"nexgen-local: {exc}", file=sys.stderr)

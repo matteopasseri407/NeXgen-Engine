@@ -24,7 +24,9 @@ from .supervision_state import SupervisionError
 #: How the number was obtained: the only source this phase can read.
 SOURCE = "opencode session export"
 EXPORT_TIMEOUT_S = 180.0
-_SESSION_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,120}")
+#: What OpenCode prints: `ses_` and alphanumerics. The shape is narrow on purpose,
+#: so nothing a command line reads (`&`, `;`, quotes, spaces) can ever get through.
+_SESSION_RE = re.compile(r"ses_[A-Za-z0-9]{1,64}")
 
 
 class CostError(SupervisionError):
@@ -79,6 +81,7 @@ def record(
     a zero.
     """
     folder = state.open_task(task_id)
+    session = _session_id(session_id)
     name = (unit or "").strip()
     if not name:
         raise SupervisionError("unità vuota: indica a quale unità appartiene la sessione")
@@ -88,12 +91,12 @@ def record(
         "unit": name,
         "role": (role or "").strip() or "esecutore",
         "harness": harness,
-        "session": session_id,
+        "session": session,
         "window": window,
         "source": SOURCE,
     }
     try:
-        facts = facts_from_export(export_session(session_id))
+        facts = facts_from_export(export_session(session))
     except CostError as exc:
         row.update(_empty_measurements())
         row["cost_usd"] = None
@@ -110,9 +113,7 @@ def export_session(session_id: str, *, timeout: float = EXPORT_TIMEOUT_S) -> dic
     The executable comes from PATH and goes through the engine's own shim
     resolver: on Windows `opencode` is a `.cmd`, and a bare spawn of one fails.
     """
-    session = (session_id or "").strip()
-    if not _SESSION_RE.fullmatch(session):
-        raise CostError(f"identificativo di sessione non valido: {session_id!r}")
+    session = _session_id(session_id)
     executable = _opencode_executable()
     argv = windows_command_argv([executable, "session", "export", session])
     try:
@@ -179,6 +180,22 @@ def _opencode_executable() -> str:
     if not found:
         raise CostError("`opencode` non è nel PATH: impossibile leggere la sessione")
     return found
+
+
+def _session_id(session_id: str) -> str:
+    """The harness session id, or a refusal before it reaches a command line.
+
+    The id is an argument of `opencode session export`, so a `&`, a `;` or a
+    quote there would start a second command instead of naming a session. The
+    accepted shape is the one OpenCode prints: `ses_` and alphanumerics.
+    """
+    session = (session_id or "").strip()
+    if not _SESSION_RE.fullmatch(session):
+        raise CostError(
+            f"identificativo di sessione non valido: {session_id!r} "
+            "(atteso `ses_` seguito da lettere e cifre)"
+        )
+    return session
 
 
 def _now_iso(now: float | None) -> str:

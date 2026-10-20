@@ -147,6 +147,28 @@ def test_an_empty_unit_is_refused(lane, task):
         costs.record(task, "  ", "esecutore", "ses_test")
 
 
+def test_a_session_id_that_is_not_a_session_is_refused_before_any_process(lane, task, monkeypatch):
+    """L'id finisce nella riga di comando di `opencode`: `&` avvierebbe un secondo comando."""
+    launched: list[list[str]] = []
+
+    def fake_run(argv, **kwargs):
+        launched.append(list(argv))
+        return costs.subprocess.CompletedProcess(argv, 0, json.dumps(EXPORT), "")
+
+    monkeypatch.setattr(costs.subprocess, "run", fake_run)
+
+    with pytest.raises(state.SupervisionError, match="sessione non valido"):
+        costs.record(task, "unita-uno", "esecutore", "ses_x&calc")
+
+    assert launched == [], "un id rifiutato non deve arrivare a nessun processo"
+    assert not (lane / task / state.COSTS_FILE).exists(), "un rifiuto non lascia una riga di costo"
+
+
+def test_export_refuses_a_session_id_it_would_splice_into_a_command(lane):
+    with pytest.raises(costs.CostError, match="sessione non valido"):
+        costs.export_session("ses_x&calc")
+
+
 def test_an_unknown_task_is_refused(lane):
     with pytest.raises(state.SupervisionError, match="compito inesistente"):
         costs.record("20260101-000000-mai-creato", "unita-uno", "esecutore", "ses_test")

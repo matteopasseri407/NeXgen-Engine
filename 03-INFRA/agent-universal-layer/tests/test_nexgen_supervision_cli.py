@@ -118,6 +118,22 @@ def test_an_empty_objective_fails_loudly(lane, capsys):
     assert "obiettivo vuoto" in capsys.readouterr().err
 
 
+def test_attach_refuses_an_id_it_would_splice_into_a_command(lane, capsys):
+    """`ses_x&calc` non è una sessione: il verbo si ferma prima di avviare `opencode`."""
+    cli.main(["sup", "start", "prova id"])
+    task_id = _only_task(lane)
+    capsys.readouterr()
+
+    assert cli.main([
+        "sup", "attach", task_id, "prova",
+        "--role", "esecutore", "--opencode-session", "ses_x&calc",
+    ]) == 1
+
+    assert "sessione non valido" in capsys.readouterr().err
+    assert not (lane / task_id / state.COSTS_FILE).exists()
+    assert [row["event"] for row in state.read_events(task_id)] == ["started"], "niente aggancio nel diario"
+
+
 def test_the_sup_verbs_answer_for_help(lane, capsys):
     for argv in (["sup", "--help"], ["sup", "start", "--help"], ["sup", "attach", "--help"]):
         with pytest.raises(SystemExit) as exit_info:
