@@ -1,38 +1,47 @@
-"""The executor's harness: its window, its short prompt, and the session it opened.
+"""The executor's harness: one session per task, its window, its prompt, its cost.
 
-The engine never pastes the brief into a command line and never picks a model:
-it opens OpenCode's own terminal UI in the unit's copy with a pointer to the
-brief, then finds the session that appeared in that folder so the cost register
-has a source. When the session cannot be told apart, the attach stays manual.
+One harness means one session per task. A unit either enters the session the
+task already has, when that session is idle, or waits in the queue while it is
+busy; a new terminal tab is opened only when the task has no session yet. The
+engine never pastes the brief into a command line, never picks a model, and
+never reads what the terminal prints.
 """
 from __future__ import annotations
 
 import json
 import subprocess
+import sys
 import time
 from pathlib import Path
 
-from nexgen_core.processes import windows_command_argv
+from nexgen_core.processes import no_window_kwargs, windows_command_argv
 
 from . import supervision_costs as costs
 from . import supervision_state as state
 from . import supervision_windows as windows
 from .supervision_state import SupervisionError
 
-#: How long the harness gets to open its session before the attach is left manual.
+#: How long a new tab gets to open its session before the attach is left manual.
 SESSION_WAIT_S = 30.0
 POLL_S = 2.0
 #: Clock slack between this process and the harness's own timestamps.
 CREATED_SLACK_MS = 5000
 LIST_TIMEOUT_S = 120.0
 
-
 class HarnessError(SupervisionError):
     """The harness is missing, its session list is unreadable, or the unit has no copy to run in."""
 
 
-def run_unit(task_id: str, unit: str, *, opener=None, lister=None, wait_s: float = SESSION_WAIT_S) -> dict:
-    """Open the executor's window on the unit and attach the session that appears there."""
+def run_unit(
+    task_id: str, unit: str, *, opener=None, runner=None, lister=None,
+    measure=None, wait_s: float = SESSION_WAIT_S,
+) -> dict:
+    """Put the unit's work into the task's session, queue it, or open the first tab.
+
+    The task has at most one session per harness: if it exists and is idle the
+    work goes in with `opencode run -s`; if it is busy the unit is queued and
+    says so; a tab is opened only when there is no session at all.
+    """
     record = state.unit_record(task_id, unit)
     name = record["unit"]
     folder = Path(record.get("worktree") or "")
@@ -42,14 +51,10 @@ def run_unit(task_id: str, unit: str, *, opener=None, lister=None, wait_s: float
     if not brief.is_file():
         raise HarnessError(f"brief dell'unità sparito: {brief}")
     prompt = prompt_text(task_id, name, brief)
-    open_window = opener or windows.open_window
-    started_ms = int(time.time() * 1000)
-    handle = open_window(f"esecutore · {name}", [_opencode_executable(), str(folder), "--prompt", prompt], cwd=folder)
-    state.append_event(task_id, "unit_started", unit=name, window=str(handle.get("title", "")))
-    session = find_session(folder, started_ms, wait_s=wait_s, lister=lister)
-    if session is not None:
-        _attach(task_id, name, session, handle)
-    return {"unit": name, "window": handle, "session": session}
+    session = state.harness_session(task_id, "opencode")
+    if not session:
+        return _open_first_tab(task_id, name, folder, prompt, opener or windows.open_window, lister, wait_s)
+    return _enter_the_session(task_id, name, session, folder, prompt, runner or _run_in_session, measure or costs.measure)
 
 
 def prompt_text(task_id: str, unit: str, brief: Path) -> str:
@@ -85,8 +90,62 @@ def find_session(
         pause(poll_s)
 
 
+def _enter_the_session(task_id: str, unit: str, session: str, folder: Path, prompt: str, runner, measure) -> dict:
+    """Send the unit's work into the task's own session, or queue it when that session is busy."""
+    try:
+        facts = measure(session)
+    except costs.CostError as exc:
+        state.append_event(
+            task_id, "unit_queued", unit=unit, session=session,
+            reason=f"stato della sessione non leggibile: {exc}",
+        )
+        return {"unit": unit, "mode": "queued", "session": session, "reason": str(exc)}
+    if not facts.stopped:
+        reason = "sessione occupata"
+        state.append_event(task_id, "unit_queued", unit=unit, session=session, reason=reason)
+        return {"unit": unit, "mode": "queued", "session": session, "reason": reason}
+    proc = runner(session, prompt, folder)
+    state.append_event(
+        task_id, "unit_started", unit=unit, session=session, mode="run",
+        pid=getattr(proc, "pid", None),
+    )
+    row = costs.record(task_id, unit, "esecutore", session, window=windows.WINDOW_NAME)
+    return {"unit": unit, "mode": "run", "session": session, "pid": getattr(proc, "pid", None), "row": row}
+
+
+def _open_first_tab(task_id: str, unit: str, folder: Path, prompt: str, opener, lister, wait_s: float) -> dict:
+    """No session for this harness yet: open the tab and bind the session it creates."""
+    started_ms = int(time.time() * 1000)
+    handle = opener(f"esecutore · {unit}", [_opencode_executable(), str(folder), "--prompt", prompt], cwd=folder)
+    state.append_event(task_id, "unit_started", unit=unit, window=str(handle.get("title", "")), mode="tab")
+    session = find_session(folder, started_ms, wait_s=wait_s, lister=lister)
+    if session is not None:
+        _attach(task_id, unit, session, handle)
+    return {"unit": unit, "mode": "tab", "window": handle, "session": session}
+
+
+def _run_in_session(session: str, prompt: str, folder: Path):
+    """One-shot work inside the task's session; the terminal shows it, the engine does not watch."""
+    argv = windows_command_argv([_opencode_executable(), "run", "-s", session, prompt])
+    try:
+        return subprocess.Popen(
+            argv, cwd=folder,
+            stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            **(_detach_kwargs()),
+        )
+    except OSError as exc:
+        raise HarnessError(f"sessione {session} non raggiungibile: {exc}") from exc
+
+
+def _detach_kwargs() -> dict:
+    """Let the harness outlive the command that started it."""
+    if sys.platform.startswith(("win", "cygwin", "msys")):
+        return no_window_kwargs()
+    return {"start_new_session": True}
+
+
 def _attach(task_id: str, unit: str, session: dict, handle: dict) -> None:
-    """Write the cost row and the journal event for the session the window opened."""
+    """Write the cost row and the journal event for the session the tab opened."""
     session_id = str(session.get("id") or "")
     row = costs.record(task_id, unit, "esecutore", session_id, window=str(handle.get("title", "")))
     state.append_event(
@@ -119,6 +178,7 @@ def _list_sessions() -> list[dict]:
 
 def _opencode_executable() -> str:
     return costs.opencode_executable()
+
 
 def _normal(path: str | Path) -> str:
     """A folder as one comparable string, case and separators aside."""

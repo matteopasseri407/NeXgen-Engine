@@ -1,10 +1,11 @@
-"""Visible terminal windows for a supervised unit: open one, never hide it.
+"""Visible terminal windows for a supervised unit: a tab of the one supervisor window.
 
 A supervised job is only trustworthy if the owner can watch it: every harness
-gets a real window that runs its command and stays open at the end, and the
-engine never reads that window's output. When a window cannot be opened this
-module raises with the reason instead of falling back to a hidden process,
-which is exactly the silent execution it exists to prevent.
+runs in a real terminal tab that stays open at the end, and the engine never
+reads that tab's output. Windows Terminal gets one named window with a tab per
+session, so ten units are ten tabs and not ten windows. When a window cannot be
+opened this module raises with the reason instead of falling back to a hidden
+process, which is exactly the silent execution it exists to prevent.
 """
 from __future__ import annotations
 
@@ -22,6 +23,10 @@ from .supervision_state import SupervisionError
 
 class WindowError(SupervisionError):
     """No graphical session, no terminal installed, no shell to keep the window open."""
+
+
+#: Every supervised session lives as a tab of this one Windows Terminal window.
+WINDOW_NAME = "nexgen-sup"
 
 
 #: Linux terminals, first found wins; each wants the title and the command differently.
@@ -71,7 +76,7 @@ def _windows_window(title: str, command: list[str], folder: Path) -> tuple[str, 
     terminal = shutil.which("wt.exe")
     if terminal:
         argv = [
-            terminal, "-w", "-1", "new-tab",
+            terminal, "-w", WINDOW_NAME, "new-tab",
             "--title", _wt_value(title),
             "-d", _wt_value(str(folder)),
             _wt_value(shell), "-NoExit", "-Command", _wt_value(script),

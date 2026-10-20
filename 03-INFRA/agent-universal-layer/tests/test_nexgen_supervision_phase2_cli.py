@@ -123,3 +123,34 @@ def test_status_of_a_task_without_units_stays_as_before(lane, capsys):
 
     assert "unità: nessuna agganciata" in capsys.readouterr().out
     assert Path(lane / task).is_dir()
+
+
+def test_run_says_when_the_unit_waits_in_the_queue(lane, capsys, monkeypatch):
+    from nexgen_local import supervision_harness as harness
+
+    task = _task(lane)
+    monkeypatch.setattr(harness, "run_unit", lambda task_id, unit: {
+        "unit": unit, "mode": "queued", "session": "ses_occupata", "reason": "sessione occupata",
+    })
+    capsys.readouterr()
+
+    assert cli.main(["sup", "run", task, "prova"]) == 0
+    out = capsys.readouterr().out
+    assert "in coda: sessione occupata sulla sessione ses_occupata" in out
+    assert "una finestra nuova non si apre" in out
+
+
+def test_run_reports_the_work_sent_into_the_existing_session(lane, capsys, monkeypatch):
+    from nexgen_local import supervision_harness as harness
+
+    task = _task(lane)
+    monkeypatch.setattr(harness, "run_unit", lambda task_id, unit: {
+        "unit": unit, "mode": "run", "session": "ses_libera", "pid": 4321,
+        "row": {"cost_usd": 0.125},
+    })
+    capsys.readouterr()
+
+    assert cli.main(["sup", "run", task, "prova"]) == 0
+    out = capsys.readouterr().out
+    assert "lavoro inviato alla sessione ses_libera (pid 4321), nessuna scheda nuova" in out
+    assert "costo all'invio: 0.1250 $" in out

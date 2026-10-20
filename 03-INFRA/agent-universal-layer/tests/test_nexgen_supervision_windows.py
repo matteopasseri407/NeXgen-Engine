@@ -27,7 +27,8 @@ def spawned(monkeypatch):
     return calls
 
 
-def test_windows_with_windows_terminal_opens_a_dedicated_window(tmp_path, spawned, pretend_os, monkeypatch):
+def test_windows_with_windows_terminal_opens_a_tab_of_the_one_window(tmp_path, spawned, pretend_os, monkeypatch):
+    """Una sola finestra di Windows Terminal, chiamata per nome: ogni sessione è una scheda."""
     pretend_os(windows, "nt")
     monkeypatch.setattr(
         windows.shutil, "which",
@@ -39,7 +40,9 @@ def test_windows_with_windows_terminal_opens_a_dedicated_window(tmp_path, spawne
     )
 
     argv, kwargs = spawned[0]
-    assert argv[:7] == [r"C:\wt.exe", "-w", "-1", "new-tab", "--title", "supervisore · prova", "-d"]
+    assert argv[:7] == [r"C:\wt.exe", "-w", windows.WINDOW_NAME, "new-tab", "--title", "supervisore · prova", "-d"]
+    assert argv[2] == "nexgen-sup", "il nome della finestra è fisso: le schede si accumulano lì"
+    assert "-1" not in argv, "niente finestre nuove a ogni unità"
     assert argv[7] == str(tmp_path)
     assert argv[8:10] == [r"C:\pwsh.exe", "-NoExit"]
     assert argv[10] == "-Command"

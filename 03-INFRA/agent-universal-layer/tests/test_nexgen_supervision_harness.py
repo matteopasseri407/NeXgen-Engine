@@ -6,6 +6,7 @@ finisca in una riga di comando, e la ricerca della sessione per cartella e ora.
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -149,3 +150,92 @@ def test_the_prompt_names_where_the_report_goes():
     prompt = harness.prompt_text("compito", "prova", brief)
     assert "30-resoconto-prova.md" in prompt
     assert "Niente push" in prompt
+
+
+def _attached(task: str, unit: str, session: str) -> None:
+    state.append_event(task, "attached", unit=unit, role="esecutore", harness="opencode", session=session)
+
+
+def test_a_free_session_takes_the_work_without_a_new_window(task, unit, monkeypatch):
+    _attached(task, "prima", "ses_libera")
+    opened: list = []
+    runs: list = []
+
+    def fake_runner(session, prompt, folder):
+        runs.append((session, prompt, folder))
+        return SimpleNamespace(pid=777)
+
+    monkeypatch.setattr(harness.costs, "record", lambda *a, **k: {"session": a[3], "cost_usd": 0.1})
+
+    result = harness.run_unit(
+        task, "prova",
+        opener=lambda *a, **k: opened.append(a) or {"title": "mai"},
+        runner=fake_runner,
+        measure=lambda session: SimpleNamespace(stopped=True),
+        lister=lambda: [],
+    )
+
+    assert result["mode"] == "run"
+    assert runs and runs[0][0] == "ses_libera"
+    assert opened == [], "una sessione libera non deve aprire una scheda nuova"
+    assert str(unit) in runs[0][2].__str__()
+    events = [row["event"] for row in state.read_events(task)]
+    assert events == ["started", "unit_created", "attached", "unit_started"]
+
+
+def test_a_busy_session_puts_the_unit_in_the_queue(task, unit, monkeypatch):
+    _attached(task, "prima", "ses_occupata")
+    monkeypatch.setattr(harness.costs, "record", lambda *a, **k: pytest.fail("niente aggancio quando è in coda"))
+
+    def never(session, prompt, folder):
+        raise AssertionError("una sessione occupata non deve ricevere il lavoro")
+
+    result = harness.run_unit(
+        task, "prova",
+        opener=lambda *a, **k: pytest.fail("nessuna scheda nuova quando c'è già una sessione"),
+        runner=never,
+        measure=lambda session: SimpleNamespace(stopped=False),
+        lister=lambda: [],
+    )
+
+    assert result["mode"] == "queued"
+    assert result["reason"] == "sessione occupata"
+    events = state.read_events(task)
+    assert [row["event"] for row in events] == ["started", "unit_created", "attached", "unit_queued"]
+    assert events[-1]["session"] == "ses_occupata"
+    states = {unit["unit"]: unit["state"] for unit in state.status(task)["units"]}
+    assert states["prova"] == "in coda"
+
+
+def test_a_session_whose_state_cannot_be_read_queues_with_the_reason(task, unit, monkeypatch):
+    _attached(task, "prima", "ses_illeggibile")
+
+    def broken(session):
+        raise harness.costs.CostError("l'export non risponde")
+
+    result = harness.run_unit(
+        task, "prova", opener=lambda *a, **k: pytest.fail("niente schede"),
+        runner=lambda *a: pytest.fail("niente lavoro"), measure=broken, lister=lambda: [],
+    )
+
+    assert result["mode"] == "queued"
+    assert "non risponde" in result["reason"]
+
+
+def test_one_shot_runs_are_launched_detached_with_the_session(tmp_path, monkeypatch):
+    seen: dict = {}
+
+    def fake_popen(argv, **kwargs):
+        seen.update({"argv": list(argv), "kwargs": kwargs})
+        return SimpleNamespace(pid=1234)
+
+    monkeypatch.setattr(harness, "_opencode_executable", lambda: "opencode-finto")
+    monkeypatch.setattr(harness.subprocess, "Popen", fake_popen)
+
+    harness._run_in_session("ses_libera", "leggi il brief", tmp_path)
+
+    assert seen["argv"] == ["opencode-finto", "run", "-s", "ses_libera", "leggi il brief"]
+    assert "--auto" not in seen["argv"]
+    assert seen["kwargs"]["stdout"] is not None
+    assert seen["kwargs"]["stdin"] is not None
+    assert seen["kwargs"]["cwd"] == tmp_path

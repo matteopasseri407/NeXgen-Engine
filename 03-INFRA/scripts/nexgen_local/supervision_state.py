@@ -189,6 +189,23 @@ def unit_record(task_id: str, unit: str) -> dict:
     raise SupervisionError(f"unità sconosciuta: {unit} (creala con `sup unit ...`)")
 
 
+def harness_session(task_id: str, harness: str = "opencode") -> str:
+    """The session this harness already owns on the task, newest first; empty when it has none.
+
+    One harness, one session per task: a new unit asks this one to take the work
+    instead of opening another window.
+    """
+    found = ""
+    for row in read_events(task_id):
+        if row.get("event") not in ("attached", "unit_started", "unit_queued"):
+            continue
+        if str(row.get("harness") or "opencode") != harness:
+            continue
+        if row.get("session"):
+            found = str(row["session"])
+    return found
+
+
 def _unit_cost(rows: list[dict], unit: str) -> float | None:
     """What this unit's attached sessions cost, or None when no row carries a number."""
     known = [
@@ -228,6 +245,7 @@ def _objective_from_file(path: Path) -> str:
 #: How far a unit has gone, from the event that says it.
 UNIT_EVENTS = {
     "unit_created": "creata",
+    "unit_queued": "in coda",
     "unit_started": "in corso",
     "attached": "in corso",
     "unit_collected": "raccolta",
@@ -261,6 +279,12 @@ def _units_from_events(events: list[dict]) -> list[dict]:
                 "allow": [str(item) for item in row.get("allow") or []],
                 "verify": str(row.get("verify") or ""),
                 "remotes": dict(row.get("remotes") or {}),
+            })
+        elif event in ("unit_started", "unit_queued"):
+            record.update({
+                "session": str(row.get("session") or record["session"]),
+                "mode": str(row.get("mode") or ""),
+                "reason": str(row.get("reason") or ""),
             })
         elif event == "attached":
             record.update({

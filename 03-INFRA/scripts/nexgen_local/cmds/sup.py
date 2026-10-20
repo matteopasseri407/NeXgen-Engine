@@ -180,14 +180,25 @@ def cmd_sup_unit(args: argparse.Namespace) -> int:
 
 
 def cmd_sup_run(args: argparse.Namespace) -> int:
-    """Open the executor's window on the unit and say which session it opened."""
+    """Send the unit into the task's own session, or open the first tab, or queue it."""
     try:
         result = harness.run_unit(args.id, args.unit)
     except SupervisionError as exc:
         print(f"nexgen-local: {exc}", file=sys.stderr)
         return 1
+    if result["mode"] == "queued":
+        print(f"unità {result['unit']} in coda: {result['reason']} sulla sessione {result['session']}")
+        print("riprova `sup run` quando quella sessione è ferma: una finestra nuova non si apre")
+        return 0
+    if result["mode"] == "run":
+        print(f"lavoro inviato alla sessione {result['session']} (pid {result['pid']}), nessuna scheda nuova")
+        row = result["row"]
+        print(f"costo all'invio: {row['cost_usd']:.4f} $" if isinstance(row.get("cost_usd"), (int, float))
+              else "costo all'invio: non disponibile")
+        return 0
     handle = result["window"]
-    print(f"finestra {handle.get('launcher')} (pid {handle.get('pid')}) sulla copia dell'unità {result['unit']}")
+    print(f"finestra {handle.get('launcher')} (pid {handle.get('pid')}) · scheda «{handle.get('title')}» "
+          f"dell'unità {result['unit']}")
     session = result["session"]
     if session is None:
         print("sessione non determinata: agganciala a mano con "
