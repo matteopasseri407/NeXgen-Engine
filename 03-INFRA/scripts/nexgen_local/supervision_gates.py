@@ -27,6 +27,7 @@ from nexgen_core.discipline.violations import TEST_PATH
 from nexgen_core.processes import no_window_kwargs, split_command_line, windows_command_argv
 
 from . import supervision_costs as costs
+from . import supervision_gitconfig as gitconfig
 from . import supervision_requests as requests_module
 from . import supervision_state as state
 from .supervision_state import SupervisionError
@@ -90,6 +91,7 @@ def collect(task_id: str, unit: str) -> dict:
         _integrity_gate(files, rules),
         _per_commit_gate(folder, rules, base, head),
         _verify_gate(folder, str(record.get("verify") or "")),
+        _git_config_gate(record, folder),
         remote,
         clean,
     ]
@@ -219,6 +221,19 @@ def _clean_tree_gate(folder: Path) -> GateResult:
 def _porcelain_path(line: str) -> str:
     """The path of a `git status --porcelain` row, two status columns and a space first."""
     return line[3:] if len(line) > 3 else line.strip()
+
+
+def _git_config_gate(record: dict, folder: Path) -> GateResult:
+    """The copy's git configuration is the creation's own, and carries no URL rewrite added since.
+
+    `git config` run from a worktree without `--worktree` writes the owner's shared
+    `.git/config`, which every checkout of the repository reads. The two files are
+    compared by hash, so the one that changed is named, and a `url.*.insteadOf`
+    rule is refused separately because it re-points a push while every URL the copy
+    reports stays exactly the same.
+    """
+    ok, reason = gitconfig.check(folder, record)
+    return GateResult("configurazione git", ok, reason)
 
 
 def _remote_gate(folder: Path, record: dict, base: str, head: str) -> GateResult:

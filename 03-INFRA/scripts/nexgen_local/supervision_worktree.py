@@ -12,6 +12,7 @@ from pathlib import Path
 
 from nexgen_core.discipline.gitutil import GitError, git
 
+from . import supervision_gitconfig as gitconfig
 from . import supervision_state as state
 from .supervision_state import SupervisionError
 
@@ -134,6 +135,8 @@ def create(
         "remotes": snapshot,
         "remote_urls": remote_urls(root),
         "remote_pushurls": push_urls(Path(folder)),
+        "config_hashes": gitconfig.fingerprint(Path(folder)),
+        "url_override_keys": gitconfig.url_override_keys(Path(folder)),
     }
     state.append_event(task_id, "unit_created", **record)
     return record

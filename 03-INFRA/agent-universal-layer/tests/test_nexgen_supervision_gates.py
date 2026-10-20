@@ -26,6 +26,7 @@ GATE_NAMES = (
     "integrità dei test",
     "prova per commit",
     "verifica indipendente",
+    "configurazione git",
     "remoto intatto",
     "albero pulito",
 )
@@ -214,6 +215,82 @@ def test_a_remote_removed_from_the_copy_fails_and_is_named(task, repo, tmp_path)
     assert not remote.ok
     assert "remoti spariti" in remote.reason
     assert "origin" in remote.reason
+    assert result["verdict"] == "FAIL"
+
+
+def test_the_creation_writes_down_the_configuration_fingerprint(task, repo, tmp_path):
+    """L'impronta dei due file di configurazione è nel diario: senza, la raccolta non sa cosa confrontare."""
+    _unit(task, repo, tmp_path)
+
+    created = [row for row in state.read_events(task) if row.get("event") == "unit_created"][-1]
+
+    assert len(created["config_hashes"]) == 2
+    assert any(path.endswith("/.git/config") for path in created["config_hashes"])
+    assert any(path.endswith("config.worktree") for path in created["config_hashes"])
+    assert created["url_override_keys"] == []
+
+
+def test_a_shared_git_config_touched_after_creation_fails_and_names_it(task, repo, tmp_path):
+    """`git config` senza `--worktree` scrive il `.git/config` del proprietario, condiviso con ogni checkout."""
+    folder = _unit(task, repo, tmp_path)
+    _commit(folder, "docs: aggiunge una riga", {"docs/guida.md": "# guida\n\nriga.\n"})
+    git_in(folder, "config", "alias.fp", "push --force")
+
+    result = gates.collect(task, "prova")
+
+    gate = _gate(result, "configurazione git")
+    assert not gate.ok
+    assert ".git/config" in gate.reason
+    assert result["verdict"] == "FAIL"
+
+
+def test_the_worktree_config_touched_after_creation_fails_and_names_it(task, repo, tmp_path):
+    folder = _unit(task, repo, tmp_path)
+    _commit(folder, "docs: aggiunge una riga", {"docs/guida.md": "# guida\n\nriga.\n"})
+    git_in(folder, "config", "--worktree", "core.autocrlf", "false")
+
+    result = gates.collect(task, "prova")
+
+    gate = _gate(result, "configurazione git")
+    assert not gate.ok
+    assert "config.worktree" in gate.reason
+    assert result["verdict"] == "FAIL"
+
+
+def test_a_url_rewrite_added_after_creation_fails_and_names_the_key(task, repo, tmp_path):
+    """`url.<base>.insteadOf` manda la push altrove mentre ogni URL della copia resta identico."""
+    folder = _unit(task, repo, tmp_path)
+    _commit(folder, "docs: aggiunge una riga", {"docs/guida.md": "# guida\n\nriga.\n"})
+    git_in(folder, "config", "url.file:///tmp/leak.git.insteadOf", "nexgen-sup-disabled://push-blocked")
+
+    result = gates.collect(task, "prova")
+
+    gate = _gate(result, "configurazione git")
+    assert not gate.ok
+    assert "insteadof" in gate.reason.lower()
+    assert "leak.git" in gate.reason
+    assert result["verdict"] == "FAIL"
+
+
+def test_a_url_rewrite_from_the_global_config_fails_without_touching_the_copy(
+    task, repo, tmp_path, monkeypatch,
+):
+    """La regola può arrivare dal file globale: i due file della copia non cambiano e va vista lo stesso."""
+    folder = _unit(task, repo, tmp_path)
+    _commit(folder, "docs: aggiunge una riga", {"docs/guida.md": "# guida\n\nriga.\n"})
+    global_config = tmp_path / "global.gitconfig"
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(global_config))
+    global_config.write_text(
+        '[url "file:///tmp/leak.git"]\n\tinsteadOf = nexgen-sup-disabled://push-blocked\n',
+        encoding="utf-8",
+    )
+
+    result = gates.collect(task, "prova")
+
+    gate = _gate(result, "configurazione git")
+    assert not gate.ok
+    assert "leak.git" in gate.reason
+    assert "configurazione git cambiata" not in gate.reason, "i due file della copia sono intatti"
     assert result["verdict"] == "FAIL"
 
 
@@ -545,3 +622,4 @@ def test_a_vanished_copy_is_refused(task, repo, tmp_path):
 
     with pytest.raises(state.SupervisionError, match="copia dell'unità sparita"):
         gates.collect(task, "prova")
+

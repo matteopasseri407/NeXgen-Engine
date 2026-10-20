@@ -318,6 +318,8 @@ def _fold_event(record: dict, row: dict, event: str) -> None:
             "remotes": dict(row.get("remotes") or {}),
             "remote_urls": dict(row.get("remote_urls") or {}),
             "remote_pushurls": dict(row.get("remote_pushurls") or {}),
+            "config_hashes": dict(row.get("config_hashes") or {}),
+            "url_override_keys": [str(key) for key in row.get("url_override_keys") or []],
         })
     elif event in ("unit_started", "unit_queued"):
         record.update({

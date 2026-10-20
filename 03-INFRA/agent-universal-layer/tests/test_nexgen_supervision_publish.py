@@ -302,9 +302,9 @@ def test_force_by_another_spelling_is_refused_before_it_runs(command):
 
 def test_a_default_push_does_not_follow_tags(task, repo, tmp_path):
     """`push.followTags` would send annotated tags with a plain branch push: the engine says no."""
+    git_in(repo.path, "config", "push.followTags", "true")
     _approved_unit(task, repo, tmp_path)
     git_in(repo.path, "tag", "-a", "v-base", "-m", "un tag locale")
-    git_in(repo.path, "config", "push.followTags", "true")
 
     result = publish_module.publish(
         task, "prova", repo=repo.path, branch="main", remote="origin", push=True,
