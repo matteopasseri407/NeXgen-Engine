@@ -30,9 +30,10 @@ own working copy in `23-unita-<unit>/`. A review adds
 execute goes to `07-richieste-proprietario.md`.
 
 The journal is the machine truth: `started`, `unit_created`, `unit_started`,
-`unit_queued`, `attached`, `unit_reworked`, `unit_collected`, `unit_reviewed`,
-`unit_published`. The Markdown files are what a person reads and writes; the
-engine never rewrites them, so an edit is not lost.
+`unit_queued`, `attached`, `harness_session_lost`, `unit_reworked`,
+`unit_collected`, `unit_reviewed`, `unit_published`. The Markdown files are what
+a person reads and writes; the engine never rewrites them, so an edit is not
+lost.
 
 
 ## The verbs
@@ -114,6 +115,13 @@ tab was opened. When no session matches within the wait (30 seconds), `sup run`
 says so and the attach stays a manual `sup attach`: the engine never guesses
 which session belongs to which unit. The cost of the attached session lands in
 `05-costi.jsonl` like any other attach.
+
+A session the harness can no longer report (deleted, pruned, or an export that
+fails) is not a busy session: queueing on it would wait on nothing for ever. The
+journal records `harness_session_lost` with the session and the reason, that
+session stops being the task's session, and the next `sup run` or review round
+opens the one new tab. A tab is still opened once per harness, never per
+attempt.
 
 ## The engine's gates
 

@@ -225,19 +225,73 @@ def test_a_unit_that_entered_a_session_names_its_harness(task, unit, monkeypatch
     assert units["prova"]["state"] == "in corso"
 
 
-def test_a_session_whose_state_cannot_be_read_queues_with_the_reason(task, unit, monkeypatch):
-    _attached(task, "prima", "ses_illeggibile")
+def test_a_session_whose_state_cannot_be_read_opens_the_one_new_tab(task, unit, monkeypatch):
+    """La sessione non esiste più: si scrive nel diario e si apre la scheda, una volta sola."""
+    _attached(task, "prima", "ses_sparita")
+    opened: list = []
+    sessions = [{"id": "ses_nuova", "directory": str(unit), "created": 10**13}]
 
     def broken(session):
         raise harness.costs.CostError("l'export non risponde")
 
-    result = harness.run_unit(
-        task, "prova", opener=lambda *a, **k: pytest.fail("niente schede"),
-        runner=lambda *a: pytest.fail("niente lavoro"), measure=broken, lister=lambda: [],
+    monkeypatch.setattr(harness, "_opencode_executable", lambda: "opencode-finto")
+    monkeypatch.setattr(
+        harness.costs, "record",
+        lambda task_id, unit_name, role, session_id, **kwargs: {"session": session_id, "unit": unit_name, "cost_usd": 0.0},
     )
 
-    assert result["mode"] == "queued"
-    assert "non risponde" in result["reason"]
+    result = harness.run_unit(
+        task, "prova",
+        opener=lambda title, argv, *, cwd: opened.append((title, argv)) or {
+            "title": title, "launcher": "finto", "pid": 3,
+        },
+        runner=lambda *a: pytest.fail("una sessione sparita non riceve il lavoro"),
+        measure=broken, lister=lambda: sessions, wait_s=0,
+    )
+
+    assert result["mode"] == "tab"
+    assert len(opened) == 1, "una scheda sola, non una per tentativo"
+    events = [row["event"] for row in state.read_events(task)]
+    assert events == [
+        "started", "unit_created", "attached", "harness_session_lost", "unit_started", "attached",
+    ]
+    assert state.harness_session(task, "opencode") == "ses_nuova"
+    lost = next(row for row in state.read_events(task) if row["event"] == harness.state.LOST_EVENT)
+    assert lost["session"] == "ses_sparita"
+    assert "non risponde" in lost["reason"]
+
+
+def test_corrections_with_a_lost_session_open_the_tab_and_keep_the_round(task, unit, monkeypatch):
+    _attached(task, "prima", "ses_sparita")
+    review_file = unit.parent / "45-revisione-prova-2.md"
+    review_file.write_text("# Revisione\n\ncorrezioni\n", encoding="utf-8")
+    opened: list = []
+    sessions = [{"id": "ses_nuova", "directory": str(unit), "created": 10**13}]
+
+    def broken(session):
+        raise harness.costs.CostError("sessione sparita")
+
+    monkeypatch.setattr(harness, "_opencode_executable", lambda: "opencode-finto")
+    monkeypatch.setattr(
+        harness.costs, "record",
+        lambda task_id, unit_name, role, session_id, **kwargs: {"session": session_id, "unit": unit_name, "cost_usd": 0.0},
+    )
+
+    result = harness.send_corrections(
+        task, "prova", review_file, 2,
+        opener=lambda title, argv, *, cwd: opened.append(argv) or {"title": title, "launcher": "finto", "pid": 4},
+        runner=lambda *a: pytest.fail("la sessione sparita non riceve le correzioni"),
+        measure=broken, lister=lambda: sessions, wait_s=0,
+    )
+
+    assert result["mode"] == "tab"
+    assert str(review_file) in opened[0][3], "la scheda nuova punta al file di revisione"
+    events = [row["event"] for row in state.read_events(task)]
+    assert events == [
+        "started", "unit_created", "attached", "harness_session_lost", "unit_reworked", "attached",
+    ]
+    reworked = next(row for row in state.read_events(task) if row["event"] == "unit_reworked")
+    assert reworked["round"] == 2
 
 
 def test_one_shot_runs_are_launched_detached_with_the_session(tmp_path, monkeypatch):

@@ -193,15 +193,19 @@ def harness_session(task_id: str, harness: str = "opencode") -> str:
     """The session this harness already owns on the task, newest first; empty when it has none.
 
     One harness, one session per task: a new unit asks this one to take the work
-    instead of opening another window.
+    instead of opening another window. A session the harness no longer has is
+    written as `harness_session_lost`, and from that line on the task has none:
+    the next unit opens the one new tab instead of queueing on a dead session.
     """
     found = ""
     for row in read_events(task_id):
-        if row.get("event") not in ("attached", "unit_started", "unit_queued"):
+        if row.get("event") not in (*SESSION_EVENTS, LOST_EVENT):
             continue
         if str(row.get("harness") or "opencode") != harness:
             continue
-        if row.get("session"):
+        if row.get("event") == LOST_EVENT:
+            found = ""
+        elif row.get("session"):
             found = str(row["session"])
     return found
 
@@ -258,6 +262,10 @@ UNIT_EVENTS = {
 #: What a review round can say. The words the supervisor writes on the file.
 APPROVED = "APPROVA"
 REWORKED = "RIMANDA"
+
+#: Events that say which harness session a task owns, and the one that says it is gone.
+SESSION_EVENTS = ("attached", "unit_started", "unit_queued", "unit_reworked")
+LOST_EVENT = "harness_session_lost"
 
 
 def _units_from_events(events: list[dict]) -> list[dict]:

@@ -33,6 +33,15 @@ class HarnessError(SupervisionError):
     """The harness is missing, its session list is unreadable, or the unit has no copy to run in."""
 
 
+class SessionLost(HarnessError):
+    """The task's session is gone from the harness: deleted, pruned, or unreadable."""
+
+    def __init__(self, session: str, reason: str) -> None:
+        super().__init__(f"la sessione {session} non esiste più: {reason}")
+        self.session = session
+        self.reason = reason
+
+
 def run_unit(
     task_id: str, unit: str, *, opener=None, runner=None, lister=None,
     measure=None, wait_s: float = SESSION_WAIT_S,
@@ -41,7 +50,8 @@ def run_unit(
 
     The task has at most one session per harness: if it exists and is idle the
     work goes in with `opencode run -s`; if it is busy the unit is queued and
-    says so; a tab is opened only when there is no session at all.
+    says so; a tab is opened only when there is no session at all, or when the
+    session the journal names no longer exists in the harness.
     """
     record, folder = _unit_copy(task_id, unit)
     name = record["unit"]
@@ -52,21 +62,22 @@ def run_unit(
     session = state.harness_session(task_id, "opencode")
     if not session:
         return _open_first_tab(task_id, name, folder, prompt, opener or windows.open_window, lister, wait_s)
-    return _enter_the_session(
-        task_id, name, session, folder, prompt, runner or _run_in_session,
-        measure or costs.measure, event="unit_started", extra={},
+    return _deliver(
+        task_id, name, folder, prompt, session, event="unit_started", extra={},
+        opener=opener, runner=runner, lister=lister, measure=measure, wait_s=wait_s,
     )
 
 
 def send_corrections(
     task_id: str, unit: str, review: str | Path, round_no: int, *,
-    runner=None, measure=None,
+    runner=None, measure=None, opener=None, lister=None, wait_s: float = SESSION_WAIT_S,
 ) -> dict:
     """Put a review round's corrections into the unit's session, or queue them while it is busy.
 
     The corrections stay in their file: the command line carries a pointer, the
     same way `sup run` points at the brief. Without a session there is nothing
-    to correct, and opening a window on a unit nobody ran would be a lie.
+    to correct, and opening a window on a unit nobody ran would be a lie; a
+    session that disappeared is a different thing, and gets the one new tab.
     """
     record, folder = _unit_copy(task_id, unit)
     name = record["unit"]
@@ -80,10 +91,32 @@ def send_corrections(
             "dove arrivare (`sup run` apre la prima sessione)"
         )
     prompt = corrections_text(task_id, name, path, round_no)
-    return _enter_the_session(
-        task_id, name, session, folder, prompt, runner or _run_in_session,
-        measure or costs.measure, event="unit_reworked", extra={"round": round_no},
+    return _deliver(
+        task_id, name, folder, prompt, session, event="unit_reworked", extra={"round": round_no},
+        opener=opener, runner=runner, lister=lister, measure=measure, wait_s=wait_s,
     )
+
+
+def _deliver(
+    task_id: str, unit: str, folder: Path, prompt: str, session: str, *,
+    event: str, extra: dict, opener, runner, lister, measure, wait_s: float,
+) -> dict:
+    """Send into the task's session; a session the harness no longer has becomes the one new tab."""
+    try:
+        return _enter_the_session(
+            task_id, unit, session, folder, prompt, runner or _run_in_session,
+            measure or costs.measure, event=event, extra=extra,
+        )
+    except SessionLost as lost:
+        state.append_event(
+            task_id, state.LOST_EVENT, unit=unit, harness="opencode",
+            session=lost.session, reason=lost.reason,
+        )
+        return _open_first_tab(
+            task_id, unit, folder, prompt, opener or windows.open_window, lister, wait_s,
+            event=event, extra=extra,
+        )
+
 
 
 def corrections_text(task_id: str, unit: str, review: Path, round_no: int) -> str:
@@ -133,15 +166,15 @@ def _enter_the_session(
     task_id: str, unit: str, session: str, folder: Path, prompt: str, runner, measure,
     *, event: str, extra: dict,
 ) -> dict:
-    """Send work into the task's own session, or queue it when that session is busy."""
+    """Send work into the task's own session, or queue it when that session is busy.
+
+    A session the harness cannot report is not a busy session: it is gone, and
+    queueing on it would leave the unit waiting on nothing for ever.
+    """
     try:
         facts = measure(session)
     except costs.CostError as exc:
-        state.append_event(
-            task_id, "unit_queued", unit=unit, harness="opencode", session=session,
-            reason=f"stato della sessione non leggibile: {exc}", **extra,
-        )
-        return {"unit": unit, "mode": "queued", "session": session, "reason": str(exc)}
+        raise SessionLost(session, str(exc)) from exc
     if not facts.stopped:
         reason = "sessione occupata"
         state.append_event(
@@ -158,11 +191,17 @@ def _enter_the_session(
     return {"unit": unit, "mode": "run", "session": session, "pid": getattr(proc, "pid", None), "row": row}
 
 
-def _open_first_tab(task_id: str, unit: str, folder: Path, prompt: str, opener, lister, wait_s: float) -> dict:
+def _open_first_tab(
+    task_id: str, unit: str, folder: Path, prompt: str, opener, lister, wait_s: float,
+    *, event: str = "unit_started", extra: dict | None = None,
+) -> dict:
     """No session for this harness yet: open the tab and bind the session it creates."""
     started_ms = int(time.time() * 1000)
     handle = opener(f"esecutore · {unit}", [_opencode_executable(), str(folder), "--prompt", prompt], cwd=folder)
-    state.append_event(task_id, "unit_started", unit=unit, harness="opencode", window=str(handle.get("title", "")), mode="tab")
+    state.append_event(
+        task_id, event, unit=unit, harness="opencode", window=str(handle.get("title", "")),
+        mode="tab", **dict(extra or {}),
+    )
     session = find_session(folder, started_ms, wait_s=wait_s, lister=lister)
     if session is not None:
         _attach(task_id, unit, session, handle)
