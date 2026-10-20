@@ -4,9 +4,10 @@ The engine is the only thing that pushes, and it pushes nothing it did not
 approve at a commit it can still see. This module replays the unit's commits one
 by one onto the owner's branch with `git cherry-pick`, which also means the
 signature follows the owner's own `commit.gpgsign` instead of being invented
-here; it refuses a version bump, a tag and a rewrite of published history by
-name, and its only push is a plain fast-forward. A conflict takes the checkout
-back to where it was and nothing is published.
+here; it refuses a version bump and a rewrite of published history by name, and
+its only push is checked after it ran: the remote branch must be exactly the
+published head, the value read before its ancestor, and the tag list unchanged.
+A conflict takes the checkout back to where it was and nothing is published.
 """
 from __future__ import annotations
 

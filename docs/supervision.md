@@ -48,6 +48,7 @@ nexgen-local sup run <id> <unit>                            # the executor's win
 nexgen-local sup collect <id> <unit>                        # the engine's gates, exit 1 on FAIL
 nexgen-local sup review <id> <unit> --approve "<why>"       # one review round, APPROVA
 nexgen-local sup review <id> <unit> --rework <file>         # one review round, RIMANDA
+nexgen-local sup review <id> <unit> --resend                # deliver the last round that never arrived
 nexgen-local sup publish <id> <unit> --repo <checkout> --branch <branch> \
     [--remote origin] [--push | --push-with "<command>"]
 nexgen-local sup attach <id> <unit> --role esecutore --opencode-session <ses_...>
@@ -76,14 +77,17 @@ own `config.worktree`. A push from the copy fails with
 keeps its real remote. Shared git hooks are never touched: they live in the
 common directory and stay exactly as the owner installed them.
 
-The fetch URL of every remote is written into the journal when the unit is
-created, and its refs are read with `git ls-remote` on that URL. `sup collect`
-asks two questions: are the creation's remotes still configured with the same
-fetch URL, and does any remote ref point at a commit of this unit's
-`base..head`? A removed or re-pointed remote is a FAIL named after it, a pushed
-commit is a FAIL named after the ref that carries it, and a remote branch that
-advanced for another reason (another unit was published) is not a failure: the
-gate looks for this unit's own commits, not for a world that stood still.
+The fetch URL and the blocked push URL of every remote are written into the
+journal when the unit is created, and its refs are read with `git ls-remote` on
+that URL. `sup collect` asks three questions: are the creation's remotes still
+configured with the same fetch URL and the blocked push URL, did the unit add a
+remote of its own, and does any remote ref point at a commit of this unit's
+`base..head`? `remote.<name>.pushurl` wins over the fetch URL for every push, so
+re-pointing it was a push the gate could not see. A removed, added or re-pointed
+remote is a FAIL named after it, a pushed commit is a FAIL named after the ref
+that carries it, and a remote branch that advanced for another reason (another
+unit was published) is not a failure: the gate looks for this unit's own commits,
+not for a world that stood still.
 
 Cleanup stays manual and explicit: `git worktree remove <path>` and
 `git branch -D sup/<task>/<unit>` from the repository.
@@ -116,12 +120,16 @@ says so and the attach stays a manual `sup attach`: the engine never guesses
 which session belongs to which unit. The cost of the attached session lands in
 `05-costi.jsonl` like any other attach.
 
-A session the harness can no longer report (deleted, pruned, or an export that
-fails) is not a busy session: queueing on it would wait on nothing for ever. The
-journal records `harness_session_lost` with the session and the reason, that
-session stops being the task's session, and the next `sup run` or review round
-opens the one new tab. A tab is still opened once per harness, never per
-attempt.
+A session the harness reports as gone (the export says it does not exist) is
+not a busy session: queueing on it would wait on nothing for ever. The journal
+records `harness_session_lost` with the session and the reason, that session
+stops being the task's session, and the next `sup run` or review round opens
+the one new tab. A tab is still opened once per harness, never per attempt.
+
+A timeout, a locked store or any other failed read is not the same fact: the
+engine tries the export once more, and if it still cannot read the session it
+says `sessione non verificabile, riprova` and opens nothing. Treating a
+transient failure as a lost session left two sessions running on the same work.
 
 ## The engine's gates
 
@@ -132,10 +140,10 @@ not evidence; every line below is read from git or run by the engine.
 |---|---|
 | `confine` | a touched file (both names of a rename) is outside every `--allow` glob |
 | `file vietati` | `VERSION`, `CHANGELOG.md` or `.github/**` changed and the boundary does not name it; both names of a rename count |
-| `integrità dei test` | an existing test was deleted, shrunk or skipped (`nexgen_core/discipline/integrity.py`, reused) |
+| `integrità dei test` | an existing test was deleted, shrunk, skipped or renamed out of discovery (`nexgen_core/discipline/integrity.py`, reused) |
 | `prova per commit` | a `fix:` commit has no test that fails on its parent (`nexgen_core/discipline/regress.py`, reused) |
-| `verifica indipendente` | the declared command is missing or exits non-zero; it is one command with no shell operator (`&&`, `|`, `;`), and its executable must come from outside the unit's copy |
-| `remoto intatto` | a remote of the creation is gone or points at another fetch URL, or one of its refs carries a commit of the unit's interval (the unit pushed); a branch that advanced for another reason is not a failure |
+| `verifica indipendente` | the declared command is missing or exits non-zero; it is one command with no shell operator (`&&`, `\|\|`, `\|`, `;`, `&`), its executable must come from outside the unit's copy, and a Python interpreter is started with `-P` |
+| `remoto intatto` | a remote of the creation is gone, added, points at another fetch URL or push URL, or one of its refs carries a commit of the unit's interval (the unit pushed); a branch that advanced for another reason is not a failure |
 | `albero pulito` | the unit's copy has uncommitted work |
 
 The verdict is PASS only when every line is. The package
@@ -145,21 +153,29 @@ the diff with a declared cap (400 lines) and the cost of the attached session;
 printed. `sup collect` exits 1 on FAIL, so a script sees it.
 
 The package also names the tests this platform skipped among the test files the
-unit touched (`pytest -q -rs` on those files): a test skipped on Windows runs on
-the Linux CI, and the other way round. A POSIX-only bug of the lazy-mcp split
-passed on Windows exactly this way, and the reviewer now sees "non verificato su
-Linux" next to the gate table instead of a green run that proved nothing.
+unit touched (`pytest -q -rs` on those files, with `-n 4` when pytest-xdist is
+installed and a five-minute ceiling): a test skipped on Windows runs on the
+Linux CI, and the other way round. A POSIX-only bug of the lazy-mcp split passed
+on Windows exactly this way, and the reviewer now sees "non verificato su Linux"
+next to the gate table instead of a green run that proved nothing.
+
+A unit that touches `conftest.py`, `pytest.ini`, `setup.cfg`, `tox.ini` or the
+pytest section of `pyproject.toml` is named in the package under "Superficie di
+pytest". Those files change how the suite collects and runs; the gate does not
+fail over them, the reviewer looks at them before approving.
 
 Globs are shell-style (`fnmatch`), so `docs/*.md` and `03-INFRA/**` both work.
 
 The verification command is one command, not a shell line. The engine never
-hands it to a shell, so `&&`, `|` and `;` are refused before anything runs, with
-the advice to write a script or a single command; a `;` inside a quoted argument
-is still one token and is not mistaken for a separator. Its executable must also
-come from outside the unit's copy: Windows resolves a bare name in the working
-directory before `PATH`, so a `pytest.bat` planted in the copy would answer in
-place of the real runner, and any path that resolves inside the copy is refused
-with the file named.
+hands it to a shell, so `&&`, `||`, `|`, `;` and `&` are refused before anything
+runs, with the advice to write a script or a single command; a `;` inside a
+quoted argument is still one token and is not mistaken for a separator. Its
+executable must also come from outside the unit's copy: Windows resolves a bare
+name in the working directory before `PATH`, so a `pytest.bat` planted in the
+copy would answer in place of the real runner, and any path that resolves inside
+the copy is refused with the file named. A Python interpreter is started with
+`-P`, which keeps the working directory off `sys.path`: without it `python -m
+pytest` would import a `pytest.py` the unit dropped in the copy.
 
 ## The review round
 
@@ -172,10 +188,10 @@ corrections.
 `--approve "<reason>"` is accepted only when the engine's last `sup collect`
 said PASS **and** the unit's branch still points at the commit that collection
 judged. A branch that moved is refused with both hashes, because an approval
-must name a commit a person could read. The round records the full head, so a
-later move is visible instead of inferred. A collection journal that predates
-the head field gets the head registered at the approval, and the event says so
-(`head_registered`).
+must name a commit a person could read. A collection event without a head is
+refused too: "rifai `sup collect`", never an approval of whatever commit is
+there. The round records the full head, so a later move is visible instead of
+inferred.
 
 `--rework <file>` writes a RIMANDA round and sends the corrections into the
 executor's own session with the same mechanism as `sup run`: `opencode run -s
@@ -184,6 +200,13 @@ busy, and a refusal when the task has no session at all. The command line
 carries a pointer to the review file, never its text. The review round is
 written before the delivery: corrections exist even when the session cannot be
 reached, and the error says so.
+
+A round number advances only when the previous round was delivered. While a
+round is queued or was never sent, `--rework` is refused and says to use
+`--resend`: that command delivers the last undelivered round again, into the
+session if it is free, into the queue if it is busy, and through the one new
+tab when the task still has no session. The round file and its number do not
+change.
 
 `sup status` shows, per unit, the review round, whether it is approved, and the
 published head with its branch.
@@ -223,18 +246,32 @@ No tag is ever created, and no option of force exists in any code path.
 
 A conflict runs `git cherry-pick --abort` and, if the head still moved, resets
 the checkout to the commit publish found there; the refusal names the files in
-conflict and says the checkout went back. A unit already published at the same
+conflict and says the checkout went back. A unit already pushed at the same
 head is refused rather than replayed, because a second replay would double its
-commits.
+commits. A unit applied locally but never pushed (`pushed: false`) is the
+exception: `--push` or `--push-with` checks that the branch still contains the
+published commits and pushes, without a second cherry-pick. The same command
+without a push flag refuses with the flag to add.
 
 Without `--push` or `--push-with`, publish stops after the local cherry-pick and
-prints the one command that remains. `--push` runs `git push <remote> <branch>`.
+prints the one command that remains. `--push` runs `git push --no-follow-tags
+<remote> <branch>`, so a repository's `push.followTags` cannot send tags.
+
+A push is declared, then checked, never believed. Before the push the engine
+reads the remote branch and its tag list; after it, it reads both again and
+requires the branch to point exactly at the published head, the value read
+before to be an ancestor of the new one, and the tag list to be unchanged.
+Anything else is a named failure (`il comando di pubblicazione ha forzato la
+storia` or `... ha creato o spinto tag`), the journal keeps `pushed: false` and
+the command's own failure is printed.
+
 `--push-with "<command>"` runs the owner's own publishing command with the
 engine's launch rules (`nexgen_core.processes`, argv, no shell) inside the
-owner's checkout, and its exit code decides: a failure is reported as
-`pubblicazione dichiarata non riuscita` and the journal keeps `pushed: false`.
-A declared command containing `--force`, `--force-with-lease`, `--mirror` or
-`--delete` is refused before it runs.
+owner's checkout, and the same post-check applies. The declared command is
+refused before it runs when it carries a force in any spelling: `--force`,
+`-f`, a bundle of short flags containing `f`, `--force-with-lease`,
+`--force-with-lease=<ref>`, `--force-if-includes`, `--mirror`, `--delete`, a
+refspec starting with `+` (force) or `:` (delete).
 
 The push goes to the remote the checkout already shares history with, which is
 what `origin` is. A shallow checkout cannot seed a different, empty remote: git
@@ -243,18 +280,24 @@ and that is a property of the clone, not of the engine.
 
 ## What the engine refuses to execute
 
-An executor's report may ask for a force-push, a tag, a version bump or a change
-to an existing test. The engine does none of them and does not read intent: it
-looks for a short, declared list of phrases, and only in one place, the request
-section of the report, the heading of the engine's own template
-(`## Dubbi e richieste al proprietario`). The brief, a review and a corrections
-file are the supervisor's words and are never scanned. Inside the section,
-fenced code blocks and quoted lines (`>`) are ignored, so pasting an output is
-not a request; with no section nothing is recognised and the package says
-`sezione delle richieste assente nel resoconto`. One line per unit, kind and
-sentence goes to `07-richieste-proprietario.md`, and a sentence already on file
-is not written again, so the file cannot quote itself back as a new request.
-`sup collect` prints the lines it wrote, and the decision stays the owner's.
+An executor's report may ask for a force-push, a tag, a version bump or a
+change to an existing test, but it may also ask for something the engine never
+named. The only source is the request section of the report: a heading that
+contains "richieste", with or without "dubbi" (`## Richieste al proprietario`
+and `## Dubbi e richieste al proprietario` are the same section). The brief, a
+review and a corrections file are the supervisor's words and are never scanned.
+
+Inside that section every list item (`- text` or `1. text`) is a request and
+goes to the owner as written; a keyword only classifies it, and an item no
+keyword knows is filed as `altro`. An item that says "nessuna richiesta" or
+"nessun dubbio" is not a request. Fenced code blocks and quoted lines (`>`) are
+ignored, so pasting an output is not a request, and a plain paragraph beside
+the list is the report talking, not an ask. With no section nothing is
+recognised and the package says `sezione delle richieste assente nel resoconto`.
+One line per unit, kind and sentence goes to `07-richieste-proprietario.md`, and
+a sentence already on file is not written again, so the file cannot quote
+itself back as a new request. `sup collect` prints the lines it wrote, and the
+decision stays the owner's.
 
 ## Visible windows
 
