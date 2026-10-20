@@ -1,10 +1,11 @@
-# Supervised tasks (phase 1)
+# Supervised tasks (phases 1 and 2)
 
 A supervised job is one objective carried out by harness agents that the owner
 can watch: a frontier model writes the brief, an executor works in a window of
-its own harness, and the engine keeps the files and the money. This document
-covers **phase 1 only**: the task folder, the visible windows and the cost
-register. Nothing here runs an executor, executes gates or publishes.
+its own harness, and the engine keeps the files, the money and the verdict.
+This document covers **phases 1 and 2**: the task folder, the visible windows,
+the cost register, the unit's working copy, and the gates the engine runs before
+anybody reviews a diff. Nothing here publishes or approves anything.
 
 ## Where a task lives
 
@@ -19,16 +20,25 @@ of the objective) with four files:
 | `20-brief-MODELLO.md` | the supervisor | the brief fields, empty, one per unit |
 | `30-resoconto-MODELLO.md` | the executor | the report fields, empty |
 
-The journal is the machine truth: `started`, then one `attached` row per
-harness session bound to a unit. The Markdown files are what a person reads
-and writes; the engine never rewrites them, so an edit is not lost.
+A unit adds `20-brief-<unit>.md` (the brief as written), `22-ambiente-<unit>.md`
+(where the copy is, on which branch, inside which boundary), `40-pacchetto-<unit>.md`
+and `50-gate-<unit>.txt` (the review package and the raw gate output), plus its
+own working copy in `23-unita-<unit>/`.
+
+The journal is the machine truth: `started`, `unit_created`, `unit_started`,
+`attached`, `unit_collected`. The Markdown files are what a person reads and
+writes; the engine never rewrites them, so an edit is not lost.
 
 ## The verbs
 
 ```bash
-nexgen-local sup start "porta la fase 1 dentro il motore"   # id and folder
+nexgen-local sup start "porta la fase 2 dentro il motore"   # id and folder
 nexgen-local sup status                                     # every task, one line each
-nexgen-local sup status <id>                                # objective, units, sessions, last event, cost
+nexgen-local sup status <id>                                # units, states, verdicts, costs
+nexgen-local sup unit <id> <unit> --repo <checkout> --base <ref> --brief <file> \
+    --allow 'docs/*.md' [--allow ...] [--verify "<command>"]
+nexgen-local sup run <id> <unit>                            # the executor's window
+nexgen-local sup collect <id> <unit>                        # the engine's gates, exit 1 on FAIL
 nexgen-local sup attach <id> <unit> --role esecutore --opencode-session <ses_...>
 nexgen-local sup costi <id>                                 # total, then by role and by unit
 nexgen-local sup window-check                               # opens a visible window and leaves it open
@@ -38,6 +48,73 @@ nexgen-local sup window-check                               # opens a visible wi
 `sup status` and `sup costi` never compute a price of their own: they read what
 the harness reported.
 
+## The unit's working copy
+
+`sup unit` creates a git worktree from the resolved `--base` commit, on a local
+branch `sup/<task>/<unit>`, inside the task folder (`23-unita-<unit>/`). One
+folder per task means one cleanup, and nothing appears next to the owner's
+checkouts. The branch is created from a commit, not from a branch name, so a
+branch that moves later cannot change what was reviewed.
+
+The push is blocked inside that copy alone, with the one mechanism git offers
+per worktree: `extensions.worktreeConfig` (a repository-wide switch that
+changes nothing until a worktree config exists) plus
+`remote.<name>.pushurl = nexgen-sup-disabled://push-blocked` in the worktree's
+own `config.worktree`. A push from the copy fails with
+`remote helper 'nexgen-sup-disabled' aborted session`; the owner's checkout
+keeps its real remote. Shared git hooks are never touched: they live in the
+common directory and stay exactly as the owner installed them.
+
+The refs of every remote are read with `git ls-remote` when the unit is created
+and written into the journal. `sup collect` reads them again and compares: a
+remote that moved, or one that cannot be read, is a FAIL, never an assumption.
+
+Cleanup stays manual and explicit: `git worktree remove <path>` and
+`git branch -D sup/<task>/<unit>` from the repository.
+
+## The executor's window
+
+`sup run` opens OpenCode's own terminal UI in the unit's copy:
+
+```
+opencode <worktree> --prompt "Sei l'esecutore dell'unità ... leggi il brief in ..."
+```
+
+The prompt is a pointer to `20-brief-<unit>.md`, never the brief itself, and no
+`--auto` or `--dangerously-*` flag is ever passed: the model and the permissions
+stay what the owner configured.
+
+The session that window opens is found in `opencode session list --format json`,
+which reports `id`, `created` and `directory`: the newest session whose
+`directory` is the unit's copy and whose `created` is at or after the moment
+the window was opened. When no session matches within the wait (30 seconds),
+`sup run` says so and the attach stays a manual `sup attach`: the engine never
+guesses which session belongs to which unit. The cost of the attached session
+lands in `05-costi.jsonl` like any other attach.
+
+## The engine's gates
+
+`sup collect` judges the unit's `base..head` itself. The executor's report is
+not evidence; every line below is read from git or run by the engine.
+
+| gate | fails when |
+|---|---|
+| `confine` | a touched file (both names of a rename) is outside every `--allow` glob |
+| `file vietati` | `VERSION`, `CHANGELOG.md` or `.github/**` changed and the boundary does not name it |
+| `integrità dei test` | an existing test was deleted, shrunk or skipped (`nexgen_core/discipline/integrity.py`, reused) |
+| `prova per commit` | a `fix:` commit has no test that fails on its parent (`nexgen_core/discipline/regress.py`, reused) |
+| `verifica indipendente` | the declared command is missing, or exits non-zero, run by the engine with its own launch rules |
+| `remoto intatto` | a remote's refs differ from the creation snapshot, or cannot be read |
+| `albero pulito` | the unit's copy has uncommitted work |
+
+The verdict is PASS only when every line is. The package
+(`40-pacchetto-<unit>.md`) carries the verdict, the gate lines, the diffstat,
+the diff with a declared cap (400 lines) and the cost of the attached session;
+`50-gate-<unit>.txt` carries the raw output, including what the verification
+printed. `sup collect` exits 1 on FAIL, so a script sees it.
+
+Globs are shell-style (`fnmatch`), so `docs/*.md` and `03-INFRA/**` both work.
+
 ## Visible windows
 
 `supervision_windows` opens a terminal that runs a command and stays open; the
@@ -46,7 +123,8 @@ instead of falling back to a hidden process.
 
 - Windows: `wt.exe` (new window, title, working directory, then `pwsh`
   with `-NoExit`, or `powershell` when 7 is missing), otherwise a dedicated
-  console (`CREATE_NEW_CONSOLE`).
+  console (`CREATE_NEW_CONSOLE`). A `;` in the command is escaped as `\;`,
+  because Windows Terminal chains its own subcommands on it.
 - Linux: the first of `x-terminal-emulator`, `gnome-terminal`, `konsole`,
   `xterm`, each with its own flags, the shell kept alive with `; exec bash`.
   Without `DISPLAY` and without `WAYLAND_DISPLAY` it refuses: a window nobody
@@ -70,14 +148,14 @@ A source that does not answer still leaves a row, with `cost_usd: null` and a
 `note` naming the reason. A missing measurement is never written as zero, and
 `sup costi` says how many rows had no source.
 
-## What phase 1 does not do
+## What these phases do not do
 
-- No worktree, no local branch per unit, no executor profile: `sup run` and the
-  permission posture belong to phase 2.
-- No gates on a commit interval, no review package, no approval loop: phase 3.
+- No review loop and no approval: the supervisor reads the package and decides
+  outside the engine. That cycle, and `sup publish`, belong to phase 3.
 - No LangGraph, no resume: the state is files, so a restart reads them.
-- No `sup publish`: the supervisor publishes by hand until phase 3.
+- No per-role permission profile: an executor runs with the owner's OpenCode
+  configuration, which is why the engine never adds an auto-approval flag.
 - Only the OpenCode harness is measured. The scout (`agy`) and the supervisor
   CLI stay unmeasured and would be recorded as unavailable.
-- No cleanup of old task folders: the retention decision (30 days) belongs to
-  the same rule as research sessions and is not implemented here.
+- No cleanup of old task folders or unit copies: the retention decision (30
+  days) belongs to the same rule as research sessions and is not implemented.

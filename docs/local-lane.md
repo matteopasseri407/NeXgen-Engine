@@ -584,14 +584,19 @@ case is bounded instead of hanging the loop forever.
 
 ## Supervised tasks
 
-The lane also carries the first phase of the supervisor: `sup start` creates a
-task folder (objective, append-only journal, brief and report templates) under
-`~/.local/state/nexgen/local-lane/supervision/`, `sup attach` binds a harness
-session to a unit and writes its cost row (`opencode session export`), and
-`sup status` / `sup costi` read them back. Windows and Linux: `sup
-window-check` opens a real terminal that runs a command and stays open, and
-refuses when it cannot show one. What the phase does and what it deliberately
-leaves to later phases: `docs/supervision.md`.
+The lane also carries the first two phases of the supervisor: `sup start`
+creates a task folder (objective, append-only journal, brief and report
+templates) under `~/.local/state/nexgen/local-lane/supervision/`, `sup unit`
+prepares a unit's git working copy on a local branch with its push blocked and
+its scope declared, `sup run` opens the executor's own terminal UI there and
+attaches the session it created, and `sup collect` runs the engine's gates
+(boundary, forbidden files, test integrity, per-commit proof, independent
+verification, remote untouched, clean tree) and writes the review package.
+`sup attach` binds a harness session to a unit and writes its cost row
+(`opencode session export`), and `sup status` / `sup costi` read them back.
+Windows and Linux: `sup window-check` opens a real terminal that runs a command
+and stays open, and refuses when it cannot show one. What the phases do and
+what they deliberately leave to later phases: `docs/supervision.md`.
 
 ## Acceptance criteria
 
