@@ -9,6 +9,7 @@ engine will never execute, so the owner finds them in `07-richieste-proprietario
 """
 from __future__ import annotations
 
+import importlib.util
 import os
 import re
 import shutil
@@ -397,7 +398,7 @@ def skipped_tests(folder: Path, files: list, *, timeout: float = SKIP_TIMEOUT_S)
     })
     if not touched:
         return []
-    argv = [sys.executable, "-m", "pytest", "-q", "-rs", *touched]
+    argv = [sys.executable, "-m", "pytest", "-q", "-rs", *_worker_args(), *touched]
     try:
         done = subprocess.run(
             argv, cwd=folder, capture_output=True, text=True, encoding="utf-8", errors="replace",
@@ -417,6 +418,11 @@ def skipped_tests(folder: Path, files: list, *, timeout: float = SKIP_TIMEOUT_S)
     if total and int(total.group(1)):
         return [f"{total.group(1)} test saltati, motivi non riportati dal runner"]
     return []
+
+
+def _worker_args() -> list[str]:
+    """`-n 4` when pytest-xdist is installed: the same suite, four workers, inside the same budget."""
+    return ["-n", "4"] if importlib.util.find_spec("xdist") is not None else []
 
 
 def _last_line(text: str) -> str:

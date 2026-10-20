@@ -9,6 +9,7 @@ from __future__ import annotations
 import os
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -497,6 +498,35 @@ def test_a_test_skipped_on_this_platform_is_named_in_the_package(task, repo, tmp
     assert "SKIPPED su questa piattaforma" in raw
     collected = [row for row in state.read_events(task) if row.get("event") == "unit_collected"]
     assert collected[-1]["skipped_tests"], "l'elenco resta anche nel diario"
+
+
+def test_the_skip_listing_gives_pytest_a_worker_count_and_a_time_limit(monkeypatch, tmp_path):
+    """Rieseguire i test toccati non deve poter durare senza fine: -n 4 e un tetto di tempo."""
+    seen: dict = {}
+
+    def fake_run(argv, **kwargs):
+        seen.update({"argv": list(argv), "kwargs": kwargs})
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(gates, "_worker_args", lambda: ["-n", "4"])
+    monkeypatch.setattr(gates.subprocess, "run", fake_run)
+    folder = tmp_path / "copia"
+    folder.mkdir()
+
+    gates.skipped_tests(folder, [SimpleNamespace(path="tests/test_x.py", status="M")])
+
+    assert seen["argv"] == [
+        sys.executable, "-m", "pytest", "-q", "-rs", "-n", "4", "tests/test_x.py",
+    ]
+    assert seen["kwargs"]["timeout"] == gates.SKIP_TIMEOUT_S
+
+
+def test_the_worker_flags_follow_pytest_xdist(monkeypatch):
+    monkeypatch.setattr(gates.importlib.util, "find_spec", lambda name: None)
+    assert gates._worker_args() == []
+
+    monkeypatch.setattr(gates.importlib.util, "find_spec", lambda name: object())
+    assert gates._worker_args() == ["-n", "4"]
 
 
 def test_a_repository_whose_rules_do_not_parse_is_refused_with_a_reason(task, repo, tmp_path):
