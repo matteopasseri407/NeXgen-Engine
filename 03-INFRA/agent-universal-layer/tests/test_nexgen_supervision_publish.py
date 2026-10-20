@@ -361,8 +361,9 @@ def test_a_declared_push_that_pushes_a_tag_is_caught_after_it_ran(task, repo, tm
 
 
 def test_a_push_with_command_that_cannot_start_still_leaves_the_publication_on_file(task, repo, tmp_path):
-    """I commit sono sul ramo anche quando la spinta non parte: il diario deve dirlo."""
+    """I commit sono sul ramo anche quando la spinta non parte: il diario deve dirlo, e si spinge dopo."""
     _approved_unit(task, repo, tmp_path)
+    base = _main_of(repo.path)
 
     with pytest.raises(publish_module.PublishError, match="comando non avviato"):
         publish_module.publish(
@@ -372,7 +373,51 @@ def test_a_push_with_command_that_cannot_start_still_leaves_the_publication_on_f
     event = [row for row in state.read_events(task) if row.get("event") == "unit_published"][-1]
     assert event["pushed"] is False
     assert "comando non avviato" in event["output"]
-    with pytest.raises(publish_module.PublishError, match="già pubblicata"):
+
+    retry = publish_module.publish(task, "prova", repo=repo.path, branch="main", push=True)
+
+    assert retry["replayed"] is False, "la pubblicazione locale si spinge, non si rifà"
+    assert retry["pushed"] is True
+    assert _remote_main(repo) == _main_of(repo.path)
+    assert git_in(repo.path, "rev-list", "--count", f"{base}..HEAD").stdout.strip() == "1"
+
+
+def test_a_local_only_publication_is_pushed_without_replaying_it(task, repo, tmp_path):
+    _approved_unit(task, repo, tmp_path)
+    base = _main_of(repo.path)
+    first = publish_module.publish(task, "prova", repo=repo.path, branch="main")
+    local = _main_of(repo.path)
+
+    second = publish_module.publish(task, "prova", repo=repo.path, branch="main", push=True)
+
+    assert first["pushed"] is False
+    assert second["replayed"] is False
+    assert second["pushed"] is True
+    assert _main_of(repo.path) == local, "il cherry-pick non si ripete"
+    assert git_in(repo.path, "rev-list", "--count", f"{base}..HEAD").stdout.strip() == "1"
+    assert _remote_main(repo) == local
+    last = [row for row in state.read_events(task) if row.get("event") == "unit_published"][-1]
+    assert last["pushed"] is True
+
+
+def test_a_local_only_publication_without_push_is_refused_with_the_hint(task, repo, tmp_path):
+    _approved_unit(task, repo, tmp_path)
+    publish_module.publish(task, "prova", repo=repo.path, branch="main")
+    head = _main_of(repo.path)
+
+    with pytest.raises(publish_module.PublishError, match="non è stata spinta") as caught:
+        publish_module.publish(task, "prova", repo=repo.path, branch="main")
+
+    assert "--push" in str(caught.value)
+    assert _main_of(repo.path) == head
+
+
+def test_a_local_only_publication_whose_commits_left_the_branch_is_refused(task, repo, tmp_path):
+    _approved_unit(task, repo, tmp_path)
+    publish_module.publish(task, "prova", repo=repo.path, branch="main")
+    git_in(repo.path, "reset", "--hard", "HEAD~1")
+
+    with pytest.raises(publish_module.PublishError, match="non contiene più i commit pubblicati"):
         publish_module.publish(task, "prova", repo=repo.path, branch="main", push=True)
 
 

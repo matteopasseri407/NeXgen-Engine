@@ -53,19 +53,13 @@ def publish(
     files and the forward-only question all come first. The gates run again on
     the interval before the first cherry-pick, and their FAIL stops everything.
     """
-    record = state.unit_record(task_id, unit)
-    name = record["unit"]
-    approved = _approval(record)
-    copy = Path(record.get("worktree") or "")
-    if not copy.is_dir():
-        raise PublishError(f"copia dell'unità sparita: {copy}")
-    unit_head = gates.head_of(copy, str(record.get("branch") or ""))
-    if unit_head != approved:
-        raise PublishError(
-            f"la head dell'unità è cambiata dopo l'approvazione: approvata {approved[:12]}, "
-            f"ora {unit_head[:12]}: raccogli e rivedi di nuovo"
-        )
+    record, name, copy, unit_head = _unit_to_publish(task_id, unit)
     root, start = _owner_checkout(repo, branch, copy)
+    published = [str(item) for item in record.get("published") or []]
+    if published and record.get("published_head") == unit_head:
+        return _push_local_publication(
+            task_id, record, name, root, branch, remote, unit_head, push, push_with, published,
+        )
     _refuse_republished(name, record, unit_head)
     commits = _commits(copy, str(record.get("base") or ""), unit_head)
     if not commits:
@@ -84,7 +78,7 @@ def publish(
     result = {
         "unit": name, "repo": str(root), "branch": branch, "remote": remote,
         "head": unit_head, "start": start, "commits": applied, "signing": _signing(root, applied),
-        "pushed": False, "command": "", "output": "",
+        "pushed": False, "command": "", "output": "", "replayed": True,
     }
     try:
         result["pushed"], result["command"], result["output"] = _deliver(
@@ -98,6 +92,71 @@ def publish(
         raise
     _record(task_id, result)
     return result
+
+
+def _push_local_publication(
+    task_id: str, record: dict, name: str, root: Path, branch: str, remote: str,
+    unit_head: str, push: bool, push_with: str, published: list[str],
+) -> dict:
+    """Push a unit already applied locally: the cherry-pick is never replayed, the commits stay checked.
+
+    A publication that failed to push kept its commits on the owner's branch and
+    recorded `pushed: false`; the CLI tells the owner to push it later. Replaying
+    it would double the commits, so this path only checks that the published
+    commits are still in the branch's history and then pushes.
+    """
+    if record.get("published_pushed"):
+        _refuse_republished(name, record, unit_head)
+    if not push and not push_with:
+        raise PublishError(
+            f"unità {name} è già applicata sul ramo locale a {unit_head[:12]} ma non è stata spinta: "
+            "`sup publish ... --push` (o `--push-with \"<comando>\"`) spinge solo, senza rifare il cherry-pick"
+        )
+    head = git(root, "rev-parse", "HEAD").strip()
+    missing = [sha for sha in published if not is_ancestor(root, sha, "HEAD")]
+    if missing:
+        raise PublishError(
+            f"il ramo locale non contiene più i commit pubblicati di {name}: "
+            + ", ".join(sha[:12] for sha in missing)
+            + ". Il cherry-pick non si rifà: ripristina il ramo o riparti da una nuova approvazione"
+        )
+    applied = [
+        {"source": sha, "published": sha, "subject": git(root, "log", "-1", "--format=%s", sha).strip()}
+        for sha in published
+    ]
+    result = {
+        "unit": name, "repo": str(root), "branch": branch, "remote": remote,
+        "head": unit_head, "start": head, "commits": applied, "signing": _signing(root, applied),
+        "pushed": False, "command": "", "output": "", "replayed": False,
+    }
+    try:
+        result["pushed"], result["command"], result["output"] = _deliver(
+            root, remote, branch, push, push_with, head,
+        )
+    except PublishError as exc:
+        result["command"] = push_with
+        result["output"] = str(exc)
+        _record(task_id, result)
+        raise
+    _record(task_id, result)
+    return result
+
+
+def _unit_to_publish(task_id: str, unit: str) -> tuple[dict, str, Path, str]:
+    """The unit's record, name, copy and the head the supervisor approved, refused if they moved."""
+    record = state.unit_record(task_id, unit)
+    name = record["unit"]
+    approved = _approval(record)
+    copy = Path(record.get("worktree") or "")
+    if not copy.is_dir():
+        raise PublishError(f"copia dell'unità sparita: {copy}")
+    unit_head = gates.head_of(copy, str(record.get("branch") or ""))
+    if unit_head != approved:
+        raise PublishError(
+            f"la head dell'unità è cambiata dopo l'approvazione: approvata {approved[:12]}, "
+            f"ora {unit_head[:12]}: raccogli e rivedi di nuovo"
+        )
+    return record, name, copy, unit_head
 
 
 def _record(task_id: str, result: dict) -> None:

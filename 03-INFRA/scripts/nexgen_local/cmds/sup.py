@@ -288,7 +288,11 @@ def cmd_sup_publish(args: argparse.Namespace) -> int:
     except SupervisionError as exc:
         print(f"nexgen-local: {exc}", file=sys.stderr)
         return 1
-    print(f"unità {result['unit']} · {len(result['commits'])} commit su {result['branch']} in {result['repo']}")
+    if result.get("replayed", True):
+        print(f"unità {result['unit']} · {len(result['commits'])} commit su {result['branch']} in {result['repo']}")
+    else:
+        print(f"unità {result['unit']} · già applicata in locale, {len(result['commits'])} commit "
+              f"pubblicati su {result['branch']} in {result['repo']}")
     for commit in result["commits"]:
         print(f"{commit['published'][:12]} <- {commit['source'][:12]} · {commit['subject']}")
     print(result["signing"])
