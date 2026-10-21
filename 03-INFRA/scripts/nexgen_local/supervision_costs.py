@@ -375,8 +375,12 @@ def facts_from_export(payload: dict) -> SessionFacts:
 
 
 def aggregate(task_id: str) -> dict:
-    """Sum a task's cost rows by role and by unit; unknown costs stay counted as unknown."""
-    rows = state.read_costs(task_id)
+    """Sum a task's cost rows by role and by unit; unknown costs stay counted as unknown.
+
+    Every row carries the session's cumulative cost, so only the last row of each
+    session counts: adding them all would charge the same money once per attach.
+    """
+    rows = state.latest_cost_rows(state.read_costs(task_id))
     by_role: dict[str, dict] = {}
     by_unit: dict[str, dict] = {}
     for row in rows:

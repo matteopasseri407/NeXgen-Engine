@@ -168,13 +168,14 @@ def status(task_id: str) -> dict:
     folder = open_task(task_id)
     events = read_events(task_id)
     rows = read_costs(task_id)
+    snapshots = latest_cost_rows(rows)
     known = [
-        float(row["cost_usd"]) for row in rows
+        float(row["cost_usd"]) for row in snapshots
         if isinstance(row.get("cost_usd"), (int, float))
     ]
     units = _units_from_events(events)
     for record in units:
-        record["cost_usd"] = _unit_cost(rows, record["unit"])
+        record["cost_usd"] = _unit_cost(snapshots, record["unit"])
     last_cost: dict = {}
     for row in events:
         if row.get("event") == "unit_collected" and row.get("cost"):
@@ -190,7 +191,7 @@ def status(task_id: str) -> dict:
         "last_cost": last_cost,
         "cost_rows": len(rows),
         "cost_total_usd": round(sum(known), 6) if known else None,
-        "cost_unknown_rows": len(rows) - len(known),
+        "cost_unknown_rows": len(snapshots) - len(known),
     }
 
 
@@ -236,6 +237,27 @@ def harness_session(task_id: str, harness: str = "opencode") -> str:
         elif row.get("session"):
             found = str(row["session"])
     return found
+
+
+def latest_cost_rows(rows: list[dict]) -> list[dict]:
+    """One row per session: the last, because each row carries that session's cumulative cost.
+
+    Summing every row counted the same money again at every attach; the last
+    snapshot is what the session actually cost. A row nobody tied to a session
+    cannot be grouped with another, so it stands for itself.
+    """
+    by_session: dict[str, dict] = {}
+    order: list[str] = []
+    loose: list[dict] = []
+    for row in rows:
+        name = str(row.get("session") or "")
+        if not name:
+            loose.append(row)
+            continue
+        if name not in by_session:
+            order.append(name)
+        by_session[name] = row
+    return [by_session[name] for name in order] + loose
 
 
 def _unit_cost(rows: list[dict], unit: str) -> float | None:

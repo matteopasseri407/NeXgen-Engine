@@ -120,6 +120,24 @@ def test_status_reads_what_the_task_holds(lane):
     assert status["cost_unknown_rows"] == 1
 
 
+def test_the_status_counts_a_session_once_with_its_last_cost(lane):
+    """Il totale del compito e quello dell'unità leggono l'ultima riga di ogni sessione."""
+    task_id = state.start("prova costi cumulativi")["id"]
+    state.append_event(task_id, "unit_started", unit="phase3b", harness="opencode", session="ses_fase3b")
+    for value in (0.000077, 0.000077, 0.28645, 0.400083, 0.782949):
+        state.append_jsonl(
+            _folder(lane, task_id) / state.COSTS_FILE,
+            {"session": "ses_fase3b", "unit": "phase3b", "role": "esecutore", "cost_usd": value},
+        )
+
+    status = state.status(task_id)
+
+    assert status["cost_rows"] == 5, "il registro tiene tutte le righe che ha scritto"
+    assert status["cost_total_usd"] == 0.782949
+    assert status["cost_unknown_rows"] == 0
+    assert status["units"][0]["cost_usd"] == 0.782949
+
+
 def test_a_task_without_cost_rows_has_no_total(lane):
     task_id = state.start("prova senza costi")["id"]
     status = state.status(task_id)

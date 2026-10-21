@@ -201,6 +201,38 @@ def test_the_aggregate_sums_by_role_and_by_unit(lane, task):
     assert data["by_unit"]["unita-due"]["cost_usd"] == 0.5
 
 
+def test_a_session_counts_once_with_its_last_cumulative_cost(lane, task):
+    """Ogni riga è il costo cumulativo della sessione: sommarle moltiplicava la spesa."""
+    figures = (0.000077, 0.000077, 0.28645, 0.400083, 0.782949)
+    for value in figures:
+        state.append_jsonl(lane / task / state.COSTS_FILE, {
+            "session": "ses_fase3b", "unit": "phase3b", "role": "esecutore", "cost_usd": value,
+        })
+
+    data = costs.aggregate(task)
+
+    assert data["rows"] == 1, "una sessione è una riga, non cinque"
+    assert data["cost_usd"] == 0.782949
+    assert data["unknown_rows"] == 0
+    assert data["by_role"]["esecutore"]["cost_usd"] == 0.782949
+    assert data["by_unit"]["phase3b"]["cost_usd"] == 0.782949
+
+
+def test_a_session_whose_last_cost_is_unknown_stays_counted_as_unknown(lane, task):
+    """L'ultima riga è quella che vale: se è ignota, la sessione resta ignota."""
+    for row in (
+        {"session": "ses_a", "unit": "prova", "role": "esecutore", "cost_usd": 0.5},
+        {"session": "ses_a", "unit": "prova", "role": "esecutore", "cost_usd": None},
+        {"session": "ses_b", "unit": "prova", "role": "esecutore", "cost_usd": 0.25},
+    ):
+        state.append_jsonl(lane / task / state.COSTS_FILE, row)
+
+    data = costs.aggregate(task)
+
+    assert data["cost_usd"] == 0.25
+    assert data["unknown_rows"] == 1, "una riga senza fonte per sessione, non per riga del registro"
+
+
 def test_an_empty_task_has_no_cost_total(lane, task):
     data = costs.aggregate(task)
     assert data["rows"] == 0
