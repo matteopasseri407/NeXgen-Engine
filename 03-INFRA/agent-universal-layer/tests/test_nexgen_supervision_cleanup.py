@@ -97,6 +97,20 @@ def test_a_scout_tab_stays_while_its_round_is_open(lane, posix):
     assert found["keep"][0].reason == "aperto"
 
 
+def test_a_scout_tab_without_units_stays_while_its_round_is_open(lane, posix):
+    """La ricognizione parte prima della prima unità: non è una scheda da chiudere."""
+    task = _task(lane)
+    state.append_event(
+        task, "scout_opened", round=1, folder="C:/ricognizione", base="main",
+        head="a" * 40, brief="b", report="r", window="w", trusted=True,
+    )
+
+    found = cleanup.survey(table=[_tab(task, "scout")])
+
+    assert found["close"] == [], "lo scout sta lavorando: la pulizia non lo uccide"
+    assert [tab.reason for tab in found["keep"]] == ["aperto"]
+
+
 def test_a_scout_tab_of_a_closed_round_is_stale(lane, posix):
     task = _task(lane)
     _unit(task, approved=True)

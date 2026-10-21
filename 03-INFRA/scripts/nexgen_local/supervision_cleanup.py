@@ -185,11 +185,18 @@ def _parse(marker: str) -> tuple[str, str]:
 
 
 def _reason(task_id: str, role: str) -> str:
-    """Whether a task can still work in this tab: finished, gone, without units, or open."""
+    """Whether a task can still work in this tab: finished, gone, without units, or open.
+
+    The scout check comes before the unit count: a reconnaissance started right
+    after `sup start` works before the first unit exists, and calling that task
+    "senza unità" would let `sup pulizia --chiudi` kill a live round.
+    """
     try:
         data = state.status(task_id)
     except SupervisionError:  # nexgen: allow reason="un compito che la corsia non apre più è proprio quello che la pulizia deve chiudere"
         return GONE
+    if role == "scout" and _scout_running(task_id):
+        return OPEN
     units = data["units"]
     if not units:
         return EMPTY
@@ -198,8 +205,6 @@ def _reason(task_id: str, role: str) -> str:
         if not (record.get("approved") or record.get("published"))
     ]
     if open_units:
-        return OPEN
-    if role == "scout" and _scout_running(task_id):
         return OPEN
     return FINISHED
 
