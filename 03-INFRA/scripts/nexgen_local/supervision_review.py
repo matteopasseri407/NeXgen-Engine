@@ -57,7 +57,7 @@ def pending_round(task_id: str, unit: str) -> int:
     written by a run in the session and by the tab a lost session opens.
     """
     name = state.slug(unit)
-    last = _last_review(task_id, name)
+    last = last_decision(task_id, name)
     if not last or str(last.get("verdict") or "") != state.REWORKED:
         return 0
     round_no = int(last.get("round") or 0)
@@ -69,8 +69,9 @@ def pending_round(task_id: str, unit: str) -> int:
     return 0 if delivered else round_no
 
 
-def _last_review(task_id: str, name: str) -> dict:
-    """The unit's last review event, or an empty row when it was never reviewed."""
+def last_decision(task_id: str, unit: str) -> dict:
+    """The unit's last review decision, or an empty row when it was never reviewed."""
+    name = state.slug(unit)
     rows = [
         row for row in state.read_events(task_id)
         if row.get("event") == "unit_reviewed" and row.get("unit") == name
@@ -176,7 +177,7 @@ def resend(task_id: str, unit: str, *, sender=None) -> dict:
     delivery = (sender or harness.send_corrections)(
         task_id, name, path, round_no, open_without_session=True,
     )
-    last = _last_review(task_id, name)
+    last = last_decision(task_id, name)
     return {
         "unit": name, "round": round_no, "path": path, "verdict": state.REWORKED,
         "head": str(last.get("head") or ""), "delivery": delivery,

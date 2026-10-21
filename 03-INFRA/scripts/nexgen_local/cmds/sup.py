@@ -23,6 +23,7 @@ from .. import supervision_windows as windows
 from .. import supervision_worktree as worktree
 from ..supervision_state import SupervisionError
 from . import sup_permissions
+from . import sup_resume
 from . import sup_scout
 
 
@@ -79,6 +80,7 @@ def register_sup(sub) -> None:
     _register_review(sup_sub)
     _register_publish(sup_sub)
     sup_permissions.register(sup_sub)
+    sup_resume.register(sup_sub)
     sup_scout.register(sup_sub)
 
 
