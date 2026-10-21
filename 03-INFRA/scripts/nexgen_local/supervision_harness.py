@@ -79,7 +79,7 @@ def run_unit(
 def send_corrections(
     task_id: str, unit: str, review: str | Path, round_no: int, *,
     runner=None, measure=None, opener=None, lister=None, wait_s: float = SESSION_WAIT_S,
-    open_without_session: bool = False,
+    open_without_session: bool = False, model: str = "",
 ) -> dict:
     """Put a review round's corrections into the unit's session, or queue them while it is busy.
 
@@ -88,7 +88,9 @@ def send_corrections(
     to correct, and opening a window on a unit nobody ran would be a lie; a
     session that disappeared is a different thing, and gets the one new tab.
     `open_without_session` is for `sup review --resend`: a round that never
-    reached anybody may open the first tab exactly as `sup run` does.
+    reached anybody may open the first tab exactly as `sup run` does. `model`
+    replaces the configured one for this delivery only, and only on a session
+    that can be told: a tab takes the model from the owner's configuration.
     """
     record, folder = _unit_copy(task_id, unit)
     name = record["unit"]
@@ -105,37 +107,45 @@ def send_corrections(
                 f"nessuna sessione harness sul compito: la correzione dell'unità {name} non ha "
                 "dove arrivare (`sup run` apre la prima sessione)"
             )
-        return _open_first_tab(
+        opened = _open_first_tab(
             task_id, name, folder, prompt, opener or windows.open_window, lister, wait_s,
             event="unit_reworked", extra={"round": round_no}, measure=measure, allowed=allowed,
         )
+        if model:
+            opened["model_requested"] = model
+            opened["model_applied"] = False
+        return opened
     return _deliver(
         task_id, name, folder, prompt, session, event="unit_reworked", extra={"round": round_no},
         opener=opener, runner=runner, lister=lister, measure=measure, wait_s=wait_s,
-        allowed=allowed,
+        allowed=allowed, model=model,
     )
 
 
 def _deliver(
     task_id: str, unit: str, folder: Path, prompt: str, session: str, *,
     event: str, extra: dict, opener, runner, lister, measure, wait_s: float,
-    allowed: tuple[str, ...] = (),
+    allowed: tuple[str, ...] = (), model: str = "",
 ) -> dict:
     """Send into the task's session; a session the harness no longer has becomes the one new tab."""
     try:
         return _enter_the_session(
             task_id, unit, session, folder, prompt, runner or _run_in_session,
-            measure or costs.measure, event=event, extra=extra, allowed=allowed,
+            measure or costs.measure, event=event, extra=extra, allowed=allowed, model=model,
         )
     except SessionLost as lost:
         state.append_event(
             task_id, state.LOST_EVENT, unit=unit, harness="opencode",
             session=lost.session, reason=lost.reason,
         )
-        return _open_first_tab(
+        opened = _open_first_tab(
             task_id, unit, folder, prompt, opener or windows.open_window, lister, wait_s,
             event=event, extra=extra, measure=measure, allowed=allowed,
         )
+        if model:
+            opened["model_requested"] = model
+            opened["model_applied"] = False
+        return opened
 
 
 
@@ -184,7 +194,7 @@ def find_session(
 
 def _enter_the_session(
     task_id: str, unit: str, session: str, folder: Path, prompt: str, runner, measure,
-    *, event: str, extra: dict, allowed: tuple[str, ...] = (),
+    *, event: str, extra: dict, allowed: tuple[str, ...] = (), model: str = "",
 ) -> dict:
     """Send work into the task's own session, or queue it when that session is busy.
 
@@ -193,16 +203,17 @@ def _enter_the_session(
     on a model outside the owner's list is refused before anything is sent.
     """
     facts = _measure_or_lost(measure, session)
-    model = str(getattr(facts, "model", "") or "")
-    if allowed and not policy.model_allowed(model, allowed):
-        reason = policy.refusal(model, allowed)
+    running = str(getattr(facts, "model", "") or "")
+    chosen = model or running
+    if allowed and not policy.model_allowed(chosen, allowed):
+        reason = policy.refusal(chosen, allowed)
         state.append_event(
             task_id, "unit_model_refused", unit=unit, harness="opencode", session=session,
-            model=model, allowed=list(allowed), reason=reason,
+            model=chosen, allowed=list(allowed), reason=reason,
         )
         return {
             "unit": unit, "mode": "refused", "sent": False, "session": session,
-            "model": model, "reason": reason,
+            "model": chosen, "reason": reason,
         }
     if not facts.stopped:
         reason = "sessione occupata"
@@ -211,13 +222,16 @@ def _enter_the_session(
             reason=reason, **extra,
         )
         return {"unit": unit, "mode": "queued", "session": session, "reason": reason}
-    proc = runner(session, prompt, folder)
+    proc = runner(session, prompt, folder, model)
     state.append_event(
         task_id, event, unit=unit, harness="opencode", session=session, mode="run",
         pid=getattr(proc, "pid", None), **extra,
     )
     row = costs.record(task_id, unit, "esecutore", session, window=windows.WINDOW_NAME)
-    return {"unit": unit, "mode": "run", "session": session, "pid": getattr(proc, "pid", None), "row": row}
+    return {
+        "unit": unit, "mode": "run", "session": session, "pid": getattr(proc, "pid", None),
+        "row": row, "model": model, "model_applied": bool(model),
+    }
 
 
 def _measure_or_lost(measure, session: str) -> costs.SessionFacts:
@@ -290,9 +304,17 @@ def _model_of(session: dict, measure, allowed: tuple[str, ...]) -> str:
     return str(getattr(facts, "model", "") or "")
 
 
-def _run_in_session(session: str, prompt: str, folder: Path):
-    """One-shot work inside the task's session; the terminal shows it, the engine does not watch."""
-    argv = windows_command_argv([_opencode_executable(), "run", "-s", session, prompt])
+def _run_in_session(session: str, prompt: str, folder: Path, model: str = ""):
+    """One-shot work inside the task's session; the terminal shows it, the engine does not watch.
+
+    `-m` is the owner's escape from a provider that refuses the configured model;
+    `run` has no `--variant`, so the model alone is what travels.
+    """
+    argv_list = [_opencode_executable(), "run", "-s", session]
+    if model:
+        argv_list.extend(["-m", model])
+    argv_list.append(prompt)
+    argv = windows_command_argv(argv_list)
     try:
         return subprocess.Popen(
             argv, cwd=folder,

@@ -196,7 +196,7 @@ def test_a_free_session_takes_the_work_without_a_new_window(task, unit, monkeypa
     opened: list = []
     runs: list = []
 
-    def fake_runner(session, prompt, folder):
+    def fake_runner(session, prompt, folder, model=""):
         runs.append((session, prompt, folder))
         return SimpleNamespace(pid=777)
 
@@ -256,7 +256,7 @@ def test_a_session_on_an_allowed_model_takes_the_work(task, unit, monkeypatch, s
     result = harness.run_unit(
         task, "prova",
         opener=lambda *a, **k: pytest.fail("nessuna scheda nuova"),
-        runner=lambda session, prompt, folder: runs.append(session) or SimpleNamespace(pid=9),
+        runner=lambda session, prompt, folder, model="": runs.append(session) or SimpleNamespace(pid=9),
         measure=lambda session: SimpleNamespace(
             stopped=True, model="opencode-go/deepseek-v4.1-flash#max",
         ),
@@ -475,3 +475,53 @@ def test_one_shot_runs_are_launched_detached_with_the_session(tmp_path, monkeypa
     assert seen["kwargs"]["stdout"] is not None
     assert seen["kwargs"]["stdin"] is not None
     assert seen["kwargs"]["cwd"] == tmp_path
+
+
+def test_a_model_chosen_for_one_delivery_travels_on_the_command_line(tmp_path, monkeypatch):
+    """La via d'uscita da un provider che rifiuta il modello: `run -m`, e nient'altro.
+
+    `opencode run` non ha `--variant`, quindi il modello è l'unica cosa che parte.
+    """
+    seen: dict = {}
+
+    def fake_popen(argv, **kwargs):
+        seen["argv"] = list(argv)
+        return SimpleNamespace(pid=1234)
+
+    monkeypatch.setattr(harness, "_opencode_executable", lambda: "opencode-finto")
+    monkeypatch.setattr(harness.subprocess, "Popen", fake_popen)
+
+    harness._run_in_session(
+        "ses_libera", "leggi le correzioni", tmp_path, "opencode-go/deepseek-v4.1-flash",
+    )
+
+    assert seen["argv"] == [
+        "opencode-finto", "run", "-s", "ses_libera",
+        "-m", "opencode-go/deepseek-v4.1-flash", "leggi le correzioni",
+    ]
+    assert "--variant" not in seen["argv"]
+
+
+def test_corrections_can_be_resent_on_a_model_the_owner_names(task, unit, monkeypatch):
+    _attached(task, "prima", "ses_libera")
+    review_file = unit.parent / "45-revisione-prova-1.md"
+    review_file.write_text("# Revisione\n\ncorrezioni\n", encoding="utf-8")
+    seen: list = []
+    monkeypatch.setattr(
+        harness.costs, "record",
+        lambda task_id, unit_name, role, session_id, **kwargs: {
+            "session": session_id, "unit": unit_name, "cost_usd": 0.0,
+        },
+    )
+
+    result = harness.send_corrections(
+        task, "prova", review_file, 1,
+        runner=lambda session, prompt, folder, model="": seen.append(model) or SimpleNamespace(pid=7),
+        measure=lambda session: SimpleNamespace(stopped=True), lister=lambda: [],
+        model="opencode-go/deepseek-v4.1-flash",
+    )
+
+    assert seen == ["opencode-go/deepseek-v4.1-flash"]
+    assert result["model"] == "opencode-go/deepseek-v4.1-flash"
+    assert result["model_applied"] is True
+

@@ -95,6 +95,10 @@ def _register_review(sup_sub) -> None:
     choice.add_argument("--approve", metavar="MOTIVO", default=None, help="approva l'unità raccolta e scrivi il perché")
     choice.add_argument("--rework", metavar="FILE", default=None, help="manda le correzioni all'esecutore nella sua sessione")
     choice.add_argument("--resend", action="store_true", help="riconsegna l'ultimo giro non ancora consegnato")
+    review_verb.add_argument(
+        "-m", "--model", default="",
+        help="con --resend: il modello di questa consegna, quando il provider rifiuta quello configurato",
+    )
     review_verb.set_defaults(func=cmd_sup_review)
 
 
@@ -142,6 +146,9 @@ def cmd_sup_status(args: argparse.Namespace) -> int:
     if data["units"]:
         for unit in data["units"]:
             print(_unit_line(unit))
+            note = review.status_note(args.id, unit.get("unit") or "")
+            if note:
+                print(note)
     else:
         print("unità: nessuna agganciata")
     for item in stalls:
@@ -293,11 +300,14 @@ def cmd_sup_collect(args: argparse.Namespace) -> int:
 
 def cmd_sup_review(args: argparse.Namespace) -> int:
     """Approve the collected unit or send the corrections into its own session."""
+    if args.model and not args.resend:
+        print("nexgen-local: `-m` vale solo con `--resend`", file=sys.stderr)
+        return 1
     try:
         if args.approve is not None:
             result = review.approve(args.id, args.unit, args.approve)
         elif args.resend:
-            result = review.resend(args.id, args.unit)
+            result = review.resend(args.id, args.unit, model=args.model)
         else:
             result = review.rework(args.id, args.unit, args.rework)
     except SupervisionError as exc:
@@ -359,12 +369,21 @@ def _print_refusal(result: dict) -> int:
 
 
 def _delivery_line(delivery: dict) -> str:
-    """Where the corrections went: into the session, into its queue, or nowhere."""
+    """Where the corrections went, and whether the owner's model reached them."""
     if delivery["mode"] == "queued":
-        return f"correzioni in coda: {delivery['reason']} sulla sessione {delivery['session']}"
-    if delivery["mode"] == "run":
-        return f"correzioni inviate alla sessione {delivery['session']} (pid {delivery['pid']})"
-    return f"finestra aperta per le correzioni sulla sessione {delivery.get('session')}"
+        line = f"correzioni in coda: {delivery['reason']} sulla sessione {delivery['session']}"
+    elif delivery["mode"] == "run":
+        line = f"correzioni inviate alla sessione {delivery['session']} (pid {delivery['pid']})"
+    else:
+        line = f"finestra aperta per le correzioni sulla sessione {delivery.get('session')}"
+    if delivery.get("model"):
+        line += f" · modello {delivery['model']}"
+    elif delivery.get("model_requested"):
+        line += (
+            f" · modello {delivery['model_requested']} non applicato: una scheda nuova "
+            "prende il modello della configurazione del proprietario"
+        )
+    return line
 
 
 def _request_line(hit: dict) -> str:

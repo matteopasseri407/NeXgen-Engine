@@ -19,6 +19,7 @@ from nexgen_local import supervision_gates as gates
 from nexgen_local import supervision_harness as harness
 from nexgen_local import supervision_review as review
 from nexgen_local import supervision_state as state
+from nexgen_local import supervision_turns as turns
 from nexgen_local import supervision_worktree as worktree
 
 from supervision_repo import build, git_in
@@ -88,7 +89,8 @@ def _idle(monkeypatch, session: list) -> list[tuple]:
     monkeypatch.setattr(harness.costs, "measure", lambda _session: facts)
     monkeypatch.setattr(
         harness, "_run_in_session",
-        lambda session_id, prompt, folder: sent.append((session_id, prompt, folder)) or SimpleNamespace(pid=99),
+        lambda session_id, prompt, folder, model="": sent.append((session_id, prompt, folder, model))
+        or SimpleNamespace(pid=99),
     )
     monkeypatch.setattr(
         harness.costs, "record",
@@ -214,7 +216,7 @@ def test_the_second_round_is_numbered_two_and_goes_back_to_the_idle_session(task
     assert Path(second["path"]).name == "45-revisione-prova-2.md"
     assert Path(first["path"]).is_file(), "il giro 1 non si riscrive"
     assert len(sent) == 2, "ogni giro arriva nella stessa sessione"
-    assert {session for session, _prompt, _folder in sent} == {"ses_libera"}
+    assert {entry[0] for entry in sent} == {"ses_libera"}
     rounds = [row["round"] for row in state.read_events(task) if row.get("event") == "unit_reworked"]
     assert rounds == [1, 2]
     assert state.status(task)["units"][0]["review_round"] == 2
@@ -308,6 +310,106 @@ def test_the_cli_resends_a_pending_round(task, repo, tmp_path, capsys, monkeypat
     assert "giro 1" in out
     assert "correzioni inviate alla sessione ses_libera" in out
     assert sent
+
+
+#: Un turno che si chiude molto dopo la consegna: il caso di un provider che rifiuta adesso.
+FUTURE_MS = 4_000_000_000_000
+
+
+def _cut_off(monkeypatch, *, at_ms: int = FUTURE_MS) -> None:
+    """Make the session's last turn a provider error, without a harness store."""
+    monkeypatch.setattr(
+        review.turns, "last_turn",
+        lambda session: turns.Turn(
+            outcome="failed", error_type="provider.content-filter",
+            error_message="Provider blocked the response", at_ms=at_ms,
+        ),
+    )
+
+
+def test_a_round_the_provider_cut_off_stays_pending_and_can_be_resent(task, repo, tmp_path, monkeypatch):
+    """Consegnato vuol dire arrivato in fondo: il processo che parte non basta."""
+    folder = _unit(task, repo, tmp_path)
+    _commit(folder, "docs: aggiunge una riga", {"docs/guida.md": "# guida\n\nriga.\n"})
+    gates.collect(task, "prova")
+    _idle(monkeypatch, _fake_session(task))
+    first = review.rework(task, "prova", _corrections(tmp_path))
+    assert first["delivery"]["mode"] == "run"
+    assert review.pending_round(task, "prova") == 0, "senza errore il giro è consegnato"
+
+    _cut_off(monkeypatch)
+
+    assert review.pending_round(task, "prova") == 1
+    failure = review.delivery_failure(task, "prova")
+    assert failure["error_type"] == "provider.content-filter"
+    assert failure["round"] == 1
+    assert failure["session"] == "ses_libera"
+
+    sent = _idle(monkeypatch, _fake_session(task))
+    result = review.resend(task, "prova", model="opencode-go/deepseek-v4.1-flash")
+
+    assert result["round"] == 1, "la riconsegna non consuma un numero nuovo"
+    assert sent and sent[-1][3] == "opencode-go/deepseek-v4.1-flash"
+
+
+def test_a_failed_turn_older_than_the_delivery_belongs_to_the_previous_one(task, repo, tmp_path, monkeypatch):
+    """Un errore di ieri non tiene in sospeso il giro consegnato oggi."""
+    folder = _unit(task, repo, tmp_path)
+    _commit(folder, "docs: aggiunge una riga", {"docs/guida.md": "# guida\n\nriga.\n"})
+    gates.collect(task, "prova")
+    _idle(monkeypatch, _fake_session(task))
+    review.rework(task, "prova", _corrections(tmp_path))
+    _cut_off(monkeypatch, at_ms=1)
+
+    assert review.pending_round(task, "prova") == 0
+    assert review.delivery_failure(task, "prova") == {}
+
+
+def test_status_names_a_failed_delivery_once(task, repo, tmp_path, capsys, monkeypatch):
+    folder = _unit(task, repo, tmp_path)
+    _commit(folder, "docs: aggiunge una riga", {"docs/guida.md": "# guida\n\nriga.\n"})
+    gates.collect(task, "prova")
+    _idle(monkeypatch, _fake_session(task))
+    review.rework(task, "prova", _corrections(tmp_path))
+    _cut_off(monkeypatch)
+    capsys.readouterr()
+
+    assert cli.main(["sup", "status", task]) == 0
+    out = capsys.readouterr().out
+    assert "consegna fallita: provider.content-filter" in out
+    assert "giro 1" in out and "ses_libera" in out
+
+    assert cli.main(["sup", "status", task]) == 0
+    capsys.readouterr()
+    events = [row for row in state.read_events(task) if row.get("event") == "unit_delivery_failed"]
+    assert len(events) == 1, "lo stesso fatto non si riscrive a ogni lettura"
+    assert events[0]["error_type"] == "provider.content-filter"
+
+
+def test_status_says_nothing_about_a_turn_that_finished(task, repo, tmp_path, capsys, monkeypatch):
+    folder = _unit(task, repo, tmp_path)
+    _commit(folder, "docs: aggiunge una riga", {"docs/guida.md": "# guida\n\nriga.\n"})
+    gates.collect(task, "prova")
+    _idle(monkeypatch, _fake_session(task))
+    review.rework(task, "prova", _corrections(tmp_path))
+    monkeypatch.setattr(
+        review.turns, "last_turn",
+        lambda session: turns.Turn(outcome="succeeded", at_ms=FUTURE_MS),
+    )
+    capsys.readouterr()
+
+    assert cli.main(["sup", "status", task]) == 0
+
+    assert "consegna fallita" not in capsys.readouterr().out
+
+
+def test_the_model_flag_is_refused_without_a_resend(task, repo, tmp_path, capsys):
+    _unit(task, repo, tmp_path)
+    capsys.readouterr()
+
+    assert cli.main(["sup", "review", task, "prova", "--rework", "correzioni.md", "-m", "opencode-go/x"]) == 1
+
+    assert "-m" in capsys.readouterr().err
 
 
 def test_rework_refuses_a_missing_file_and_an_empty_one(task, repo, tmp_path):
