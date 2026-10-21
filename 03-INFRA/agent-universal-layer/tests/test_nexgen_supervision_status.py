@@ -56,6 +56,21 @@ def test_the_task_line_says_where_that_number_was_measured(lane):
     )
 
 
+def test_a_unit_collected_before_its_cost_was_saved_reads_the_ledger(lane):
+    """L'unità non porta il numero, ma il registro dei costi sì: si mostra, dicendo da dove."""
+    task = state.start("prova unità storica")["id"]
+    _unit(task)
+    state.append_event(task, "unit_collected", unit="prova", verdict="PASS", head="a" * 40)
+    for value in (0.000077, 0.782949):
+        state.append_jsonl(lane / task / state.COSTS_FILE, {
+            "unit": "prova", "role": "esecutore", "session": "ses_uno", "cost_usd": value,
+        })
+
+    unit = state.status(task)["units"][0]
+
+    assert "costo: unità 0.7829 $ (dal registro dei costi)" in status.unit_line(unit)
+
+
 def test_a_unit_never_collected_says_the_cost_was_not_measured(lane):
     task = state.start("prova stato senza raccolta")["id"]
     _unit(task)

@@ -37,11 +37,19 @@ def unit_line(unit: dict) -> str:
 
 
 def unit_cost(unit: dict) -> str:
-    """The cost sentence of this unit's last collection, or that it was never measured."""
+    """The cost sentence of this unit's last collection, or that it was never measured.
+
+    A unit collected before the collection saved its own number still has its
+    rows in the cost ledger: that figure is shown, and the sentence says where it
+    came from instead of pretending nobody measured it.
+    """
     recorded = _as_cost(unit.get("cost") or {})
-    if recorded is None:
-        return "costo: non misurato (nessuna raccolta)"
-    return costs.cost_text(recorded)
+    if recorded is not None:
+        return costs.cost_text(recorded)
+    measured = unit.get("cost_usd")
+    if isinstance(measured, (int, float)):
+        return f"costo: unità {float(measured):.4f} $ (dal registro dei costi)"
+    return "costo: non misurato (nessuna raccolta)"
 
 
 def task_line(data: dict) -> str:
