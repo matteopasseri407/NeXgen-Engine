@@ -432,6 +432,32 @@ def test_one_unreadable_session_does_not_zero_the_round_and_the_unit(lane):
     assert "compito 2.6000 $ noto, 1 sessione non misurata" in line
 
 
+def test_a_stopped_session_without_a_cost_still_says_it_is_stopped(lane):
+    """Senza costo la scheda si chiude lo stesso: `stopped` è il fatto della sessione."""
+    task = state.start("prova sessione ferma senza costo")["id"]
+    state.append_event(task, "unit_started", unit="prova", harness="opencode", session="ses_uno", mode="run")
+
+    price = costs.collect_cost(
+        task, "prova", facts_of=lambda session: _facts(cost_usd=None, stopped=True),
+    )
+
+    assert price.stopped is True, "la sessione è ferma anche se il harness non rendiconta il costo"
+    assert price.round_usd is None and price.unit_usd is None and price.task_usd is None
+    assert costs.cost_text(price) == "costo: non misurato (costo non riportato dal harness)"
+
+
+def test_a_running_session_without_a_cost_is_not_reported_as_stopped(lane):
+    """Una sessione al lavoro resta aperta, anche quando il costo manca."""
+    task = state.start("prova sessione al lavoro senza costo")["id"]
+    state.append_event(task, "unit_started", unit="prova", harness="opencode", session="ses_uno", mode="run")
+
+    price = costs.collect_cost(
+        task, "prova", facts_of=lambda session: _facts(cost_usd=None, stopped=False),
+    )
+
+    assert price.stopped is False
+
+
 def test_a_session_the_harness_cannot_price_is_not_zero(lane):
     task = state.start("prova prezzo illeggibile")["id"]
     state.append_event(task, "unit_started", unit="prova", harness="opencode", session="ses_uno", mode="run")

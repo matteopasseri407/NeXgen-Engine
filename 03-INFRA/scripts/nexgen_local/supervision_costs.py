@@ -107,7 +107,11 @@ def collect_cost(
     now = getattr(facts, "cost_usd", None)
     model = str(getattr(facts, "model", "") or "")
     if not isinstance(now, (int, float)):
-        return CollectCost(session=session, model=model, note="il harness non riporta il costo della sessione")
+        return CollectCost(
+            session=session, model=model,
+            stopped=bool(getattr(facts, "stopped", False)),
+            note="costo non riportato dal harness",
+        )
     rows_priced = [
         (str(row.get("at") or ""), float(row["cost_usd"]))
         for row in mine if isinstance(row.get("cost_usd"), (int, float))
