@@ -212,6 +212,11 @@ def _ignore(folder: Path, name: str) -> tuple[bool, str]:
     except OSError as exc:
         raise PermissionProfileError(f"git non eseguibile nella copia: {folder} ({exc})") from exc
     if done.returncode or not done.stdout.strip():
+        if _has_git(folder):
+            raise PermissionProfileError(
+                f"git non risolve `info/exclude` in {folder}: {name} resterebbe fuori "
+                "dall'esclusione della copia"
+            )
         return False, "cartella senza git: niente diff da proteggere"
     path = Path(done.stdout.strip())
     if not path.is_absolute():
@@ -226,6 +231,11 @@ def _ignore(folder: Path, name: str) -> tuple[bool, str]:
             handle.write("\n")
         handle.write(f"{line}\n")
     return True, str(path)
+
+
+def _has_git(folder: Path) -> bool:
+    """Whether this folder is a repository or a worktree, by the marker git itself writes."""
+    return (folder / ".git").exists()
 
 
 def _inside_glob() -> str:

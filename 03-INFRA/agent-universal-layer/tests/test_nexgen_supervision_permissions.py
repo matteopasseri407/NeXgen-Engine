@@ -180,6 +180,20 @@ def test_a_folder_without_git_still_gets_the_profile(task, tmp_path):
     assert json.loads(target.read_text(encoding="utf-8"))["permissions"]
 
 
+def test_a_git_error_in_a_real_copy_is_refused_not_swallowed(task, tmp_path, monkeypatch):
+    """Con `.git` presente un fallimento di git non è «cartella senza git»."""
+    folder = tmp_path / "copia"
+    (folder / ".git").mkdir(parents=True)
+
+    def failing(argv, **kwargs):
+        return permissions.subprocess.CompletedProcess(argv, 128, "", "fatal: not a git repository")
+
+    monkeypatch.setattr(permissions.subprocess, "run", failing)
+
+    with pytest.raises(permissions.PermissionProfileError, match="esclusione"):
+        permissions.write_profile(task, folder)
+
+
 def test_a_missing_copy_is_an_error(task, tmp_path):
     with pytest.raises(permissions.PermissionProfileError, match="inesistente"):
         permissions.write_profile(task, tmp_path / "non-c-e")
