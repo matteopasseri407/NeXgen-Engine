@@ -7,8 +7,12 @@ sessione vera viene letta e nessuna finestra aperta.
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
+import subprocess
+import sys
 import time
+from pathlib import Path
 
 import pytest
 
@@ -216,3 +220,36 @@ def test_the_sup_verbs_answer_for_help(lane, capsys):
         with pytest.raises(SystemExit) as exit_info:
             cli.main(argv)
         assert exit_info.value.code == 0
+
+
+SCRIPTS = Path(__file__).resolve().parents[2] / "scripts"
+
+
+def test_a_sup_verb_writes_utf8_even_when_the_console_starts_as_cp1252(tmp_path):
+    """`unità` e `·` arrivano in UTF-8, non nei byte della code page di partenza.
+
+    Su una console Windows non UTF-8 quei caratteri uscivano come `?` o come un
+    riquadro: la prova è che i byte catturati si decodifichino in UTF-8, cosa che
+    i byte di `cp1252` non fanno. Il verbo gira in un processo suo perché la
+    codifica di stdout si sceglie all'avvio e non si eredita da un test.
+    """
+    code = (
+        "from nexgen_local import cli, supervision_state as state;"
+        "task = state.start('prova di codifica')['id'];"
+        "raise SystemExit(cli.main(['sup', 'status', task]))"
+    )
+    env = {
+        **os.environ,
+        "NEXGEN_HOME": str(tmp_path / "home"),
+        "PYTHONIOENCODING": "cp1252",
+        "PYTHONPATH": str(SCRIPTS),
+    }
+    done = subprocess.run(
+        [sys.executable, "-c", code], capture_output=True, env=env, timeout=120, check=False,
+    )
+
+    assert done.returncode == 0, done.stderr.decode("utf-8", "replace")
+    text = done.stdout.decode("utf-8")
+    assert "unità: nessuna agganciata" in text
+    assert "\ufffd" not in text
+
