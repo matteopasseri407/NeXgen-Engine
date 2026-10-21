@@ -84,8 +84,7 @@ def collect(task_id: str, unit: str) -> dict:
     clean = _clean_tree_gate(folder)
     remote = _remote_gate(folder, record, base, head)
     text = diff_text(folder, base, head)
-    surface = _pytest_surface(files)
-    model_ok, model_reason = policy.check_session(record, policy.allowed_models())
+    surface = pytest_runs.surface(files)
     results = [
         _scope_gate(files, scope),
         _forbidden_gate(files, scope),
@@ -93,7 +92,7 @@ def collect(task_id: str, unit: str) -> dict:
         _per_commit_gate(folder, rules, base, head),
         _verify_gate(folder, str(record.get("verify") or "")),
         _collected_tests_gate(folder, base, head, files, surface),
-        GateResult("modello consentito", model_ok, model_reason),
+        _model_gate(record),
         _git_config_gate(record, folder),
         remote,
         clean,
@@ -194,16 +193,6 @@ def _per_commit_gate(folder: Path, rules: config.Config, base: str, head: str) -
     return GateResult("prova per commit", True, "ogni commit fix porta un test che fallisce prima")
 
 
-def _pytest_surface(files: list) -> list[str]:
-    """The pytest files a unit touched: a conftest, a config, or pyproject's pytest section.
-
-    These files decide what the suite collects and how. They are not a failure:
-    a unit may legitimately add a fixture. The package names them so a reviewer
-    looks at them before saying PASS.
-    """
-    return pytest_runs.surface(files)
-
-
 def _clean_tree_gate(folder: Path) -> GateResult:
     """Uncommitted work is work the unit did not deliver."""
     dirty = git(folder, "status", "--porcelain", check=False).rstrip("\r\n")
@@ -216,6 +205,12 @@ def _clean_tree_gate(folder: Path) -> GateResult:
 def _porcelain_path(line: str) -> str:
     """The path of a `git status --porcelain` row, two status columns and a space first."""
     return line[3:] if len(line) > 3 else line.strip()
+
+
+def _model_gate(record: dict) -> GateResult:
+    """The session's model is on the owner's list, when there is one."""
+    ok, reason = policy.check_session(record, policy.allowed_models())
+    return GateResult("modello consentito", ok, reason)
 
 
 def _git_config_gate(record: dict, folder: Path) -> GateResult:
