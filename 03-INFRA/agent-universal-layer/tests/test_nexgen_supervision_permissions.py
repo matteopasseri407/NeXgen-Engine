@@ -71,17 +71,49 @@ def test_the_profile_allows_the_copy_by_relative_path_and_denies_the_absolute_fo
     }
 
 
+def _absolute_edit_allowances(rules: list[dict]) -> list[str]:
+    """Le regole di modifica che nominano un percorso assoluto, in qualunque forma.
+
+    Un percorso assoluto ha una lettera di unità (`C:/...`) oppure comincia dalla
+    radice (`/tmp/...`): la prima forma è quella di Windows, la seconda quella di
+    Linux. Il filtro deve riconoscerle entrambe; le regole di diniego restano
+    fuori perché chiedono `effect == "allow"`.
+    """
+    return [
+        str(rule["resource"]) for rule in rules
+        if rule["action"] == "edit" and rule["effect"] == "allow"
+        and (str(rule["resource"]).startswith("/") or ":" in str(rule["resource"]))
+    ]
+
+
 def test_the_only_absolute_edit_allowance_is_the_task_folder(task, copy):
     """`<copia>/*` non combaciava con niente: nessun permesso torna assoluto per la copia."""
     rules = permissions.profile_rules(copy, state.open_task(task))
-    absolute = [
-        rule for rule in rules
-        if rule["action"] == "edit" and rule["effect"] == "allow" and ":" in rule["resource"]
-    ]
 
-    assert [rule["resource"] for rule in absolute] == [
+    assert _absolute_edit_allowances(rules) == [
         state.open_task(task).resolve().as_posix() + "/*",
     ]
+
+
+def test_the_absolute_allowance_is_recognized_on_a_posix_task_folder(monkeypatch):
+    """Su Linux la cartella del compito è `/tmp/.../*`: il filtro la vede come assoluta."""
+    class PosixPath:
+        """Un percorso POSIX che il sistema che esegue il test non canonicalizza."""
+
+        def __init__(self, value):
+            self.value = str(value)
+
+        def resolve(self):
+            return self
+
+        def as_posix(self):
+            return self.value
+
+    monkeypatch.setattr(permissions, "Path", PosixPath)
+
+    rules = permissions.profile_rules("/casa/copia", "/tmp/casa/compito")
+
+    assert _absolute_edit_allowances(rules) == ["/tmp/casa/compito/*"]
 
 
 def test_a_command_is_allowed_unless_it_pushes(task):
