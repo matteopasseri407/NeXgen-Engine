@@ -417,3 +417,23 @@ def test_the_linux_terminal_exports_the_marker(tmp_path, spawned, pretend_os, mo
     assert inner.startswith(f"export NEXGEN_SUP_TAB={marker};")
     assert inner.endswith("opencode; exec bash")
     assert handle["marker"] == marker
+
+
+def test_the_linux_marker_is_in_the_environment_from_the_first_exec(
+    tmp_path, spawned, pretend_os, monkeypatch,
+):
+    """`/proc/<pid>/environ` riflette solo l'ambiente di `execve`: il marcatore va lì."""
+    pretend_os(windows, "posix")
+    monkeypatch.setenv("DISPLAY", ":0")
+    monkeypatch.setattr(
+        windows.shutil, "which",
+        lambda name: "/usr/bin/gnome-terminal" if name == "gnome-terminal" else None,
+    )
+    marker = windows.tab_marker("20260101-000000-prova", "esecutore")
+
+    windows.open_window("esecutore", ["opencode"], cwd=tmp_path, marker=marker)
+
+    argv, kwargs = spawned[0]
+    assert kwargs["env"][windows.TAB_ENV] == marker
+    assert kwargs["env"]["PATH"] == os.environ["PATH"], "l'ambiente del proprietario resta quello di partenza"
+    assert f"export {windows.TAB_ENV}=" in argv[-1], "la shell finale riceve comunque l'export"

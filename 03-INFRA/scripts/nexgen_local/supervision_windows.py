@@ -270,8 +270,10 @@ def _linux_window(
 ) -> tuple[str, tuple[list[str], dict]]:
     """The first graphical terminal installed; the shell stays after the command ends.
 
-    The shell exports the marker before it runs the command, so the tab can be
-    found later in `/proc/<pid>/environ` and closed without guessing.
+    The marker goes into the environment handed to the process, because
+    `/proc/<pid>/environ` only shows what `execve()` received: an `export`
+    inside `bash -c` does not reach it while the command runs. The export stays
+    for the final shell the command leaves behind.
     """
     if not (os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY")):
         raise WindowError(
@@ -293,6 +295,8 @@ def _linux_window(
         "stdout": subprocess.DEVNULL,
         "stderr": subprocess.DEVNULL,
     }
+    if marker:
+        kwargs["env"] = {**os.environ, TAB_ENV: marker}
     return terminal, ([terminal, title_flag, title, exec_flag, *inner], kwargs)
 
 
