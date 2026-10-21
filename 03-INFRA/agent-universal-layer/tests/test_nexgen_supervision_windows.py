@@ -304,6 +304,24 @@ def test_a_process_list_that_cannot_be_read_kills_nothing(task, pretend_os):
     assert "lasciata aperta" in result["line"] and "non leggibili" in result["line"]
 
 
+def test_a_command_line_that_only_quotes_the_marker_is_not_a_shell(task, pretend_os):
+    """Un `grep`, un editor o un `cmd` che citano il marcatore non sono la scheda."""
+    pretend_os(windows, "nt")
+    marker = windows.tab_marker(task, "esecutore")
+    rows = [
+        {"pid": 500, "ppid": 1, "name": "grep.exe", "command_line": f"grep -r {marker} C:/copia"},
+        {"pid": 501, "ppid": 1, "name": "pwsh.exe", "command_line": f"pwsh -Command \"Write-Output '{marker}'\""},
+        {"pid": 502, "ppid": 1, "name": "cmd.exe", "command_line": f"cmd /c echo \"$env:NEXGEN_SUP_TAB = '{marker}'\""},
+    ]
+    killed: list = []
+
+    result = windows.close_tab(task, "esecutore", lister=lambda: rows, killer=killed.extend)
+
+    assert killed == []
+    assert "nessuna scheda" in result["line"]
+    assert not [row for row in state.read_events(task) if row.get("event") in ("tab_closed", "tab_left_open")]
+
+
 def test_the_tab_carries_the_marker_the_closer_looks_for(tmp_path, spawned, pretend_os, monkeypatch):
     pretend_os(windows, "nt")
     monkeypatch.setattr(

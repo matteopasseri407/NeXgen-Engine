@@ -117,7 +117,7 @@ def close_tab(task_id: str, role: str, *, lister=None, killer=None) -> dict:
         table = (lister or _processes)()
     except (WindowError, OSError, ValueError) as exc:
         return _tab_result(role, [], f"processi non leggibili ({exc})")
-    roots = [row for row in table if marker in str(row.get("command_line") or "")]
+    roots = [row for row in table if _is_tab_shell(row, marker)]
     if not roots:
         return _tab_result(role, [], "")
     if role == "esecutore":
@@ -180,6 +180,21 @@ def _descendants(table: list[dict], roots: list[int]) -> list[tuple[int, dict]]:
         for child in by_parent.get(pid, []):
             stack.append((child["pid"], depth + 1))
     return sorted(found, key=lambda item: item[0], reverse=True)
+
+
+def _is_tab_shell(row: dict, marker: str) -> bool:
+    """Whether this row is the shell the engine opened for this tab, and not a command citing it.
+
+    The engine writes one exact assignment into the shell's command line
+    (`$env:NEXGEN_SUP_TAB = '<marcatore>'`), so the marker alone is not enough: a
+    `grep`, an editor, or a `cmd` on a file that quotes it would otherwise be a
+    tab to kill. Only a PowerShell process carries that assignment.
+    """
+    name = Path(str(row.get("name") or "")).name.lower()
+    if name not in ("pwsh", "pwsh.exe", "powershell", "powershell.exe"):
+        return False
+    assignment = f"$env:{TAB_ENV} = {powershell_literal(marker)}"
+    return assignment in str(row.get("command_line") or "")
 
 
 def _open_units(task_id: str) -> list[str]:
