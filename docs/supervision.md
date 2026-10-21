@@ -52,7 +52,7 @@ nexgen-local sup run <id> <unit>                            # the executor's win
 nexgen-local sup collect <id> <unit>                        # the engine's gates, exit 1 on FAIL
 nexgen-local sup review <id> <unit> --approve "<why>"       # one review round, APPROVA
 nexgen-local sup review <id> <unit> --rework <file>         # one review round, RIMANDA
-nexgen-local sup review <id> <unit> --resend                # deliver the last round that never arrived
+nexgen-local sup review <id> <unit> --resend [-m <model>]        # deliver the last round that never arrived
 nexgen-local sup publish <id> <unit> --repo <checkout> --branch <branch> \
     [--remote origin] [--push | --push-with "<command>"]
 nexgen-local sup attach <id> <unit> --role esecutore --opencode-session <ses_...>
@@ -154,22 +154,38 @@ other key the owner put there (the model stays the owner's), and add the file to
 the copy's own `info/exclude`. A project that tracks `opencode.json` is refused
 instead of overwritten: the profile must not appear in a diff.
 
-The rules are an ordered list, and the last match wins:
+The rules are an ordered list, and the last match wins. OpenCode matches an edit
+**inside** the session's folder by its relative path (`docs/a.md`) and one
+**outside** it by its canonical absolute path (`C:/.../fuori/vietato.txt`), and
+`*` matches any run of characters, separators included. So the copy is the
+relative form, every absolute form is closed by its drive letter, the `..` form
+is closed for a path that leaves the folder but stays in the same project, and
+the task folder is reopened last because that is where the report goes:
 
 | action | resource | effect |
 |---|---|---|
-| `edit` | `*` | deny |
-| `edit` | `<copy>/*` | allow |
+| `edit` | `*` | allow |
+| `edit` | `?:/*` | deny |
+| `edit` | `/*` | deny |
+| `edit` | `../*` | deny |
 | `edit` | `<task>/*` | allow |
 | `shell` | `git push *` | deny |
 | `shell` | `git -C * push *` | deny |
 | `shell` | `git -c * push *` | deny |
 
-Edits are refused everywhere and then allowed in the two folders the unit needs,
-so an edit outside them stays refused. Commands are allowed except a push in its
-three spellings, and nothing is auto-approved: a request the profile did not
-pre-answer is not granted by the engine. The copy's blocked `pushurl` remains the
-hard stop behind this one, because a shell carries the user's authority.
+Edits are allowed in the copy and in the task folder, and an edit outside them is
+refused. Commands are allowed except a push in its three spellings, and nothing
+is auto-approved: a request the profile did not pre-answer is not granted by the
+engine. The copy's blocked `pushurl` remains the hard stop behind this one,
+because a shell carries the user's authority.
+
+A refused push reaches the model as `Permission denied: shell`, not as a git
+error: the tool call never runs, so the session must report it as a permission
+denial rather than as a rejected repository.
+
+`opencode.json` goes into the copy's `info/exclude`, which in a worktree is the
+**common** file of the repository: the `/opencode.json` line therefore applies in
+the owner's checkout too, and hides that name there as well when the file exists.
 
 `sup permessi <id>` lists what the task's session is waiting on
 (`opencode api session.permission.list`) without changing anything. A request
@@ -352,6 +368,23 @@ session if it is free, into the queue if it is busy, and through the one new
 tab when the task still has no session. The round file and its number do not
 change.
 
+A delivery is not the process: the harness writes its event when `opencode run`
+starts, and a provider can end that turn with an error before any work reaches
+the copy. The engine reads the session's last turn from the harness's own store
+(`session_message`, the `idle` row), and when it failed and is newer than the
+delivery, the round stays pending: `sup status` prints
+
+```
+consegna fallita: provider.content-filter (giro 1, sessione ses_...): le correzioni non sono arrivate
+```
+
+once per failure (`unit_delivery_failed` in the journal), and `--resend` offers
+it again. `--resend -m <model>` sends that one delivery to a different model
+(`opencode run -s <session> -m <model>`; `run` has no `--variant`), which is the
+way out when the provider refuses the configured one. A resend that has to open
+a new tab says the model was not applied: the tab takes the model from the
+owner's configuration.
+
 `sup status` shows, per unit, the review round, whether it is approved, and the
 published head with its branch.
 
@@ -426,14 +459,25 @@ what `origin` is. A shallow checkout cannot seed a different, empty remote: git
 itself refuses (`Failed to traverse parents`, then `shallow update not allowed`),
 and that is a property of the clone, not of the engine.
 
+Once the commits are applied, `sup publish` closes the executor's tab: the
+engine wrote a marker into that tab's shell (`NEXGEN_SUP_TAB`), finds the shell
+and its children by it, and stops them from the deepest one up to the shell, so
+the tab disappears and nothing behind it keeps running. It refuses when the tree
+holds an `opencode serve`: the first tab of the day starts the server every other
+session shares, and closing that one would stop every other worker. Then the tab
+stays, `tab_left_open` records the pid that made it unsafe, and the verb says so;
+when it closes, `tab_closed` records the pids. A tab the owner already closed is
+not an error.
+
 ## Resuming a task
 
 `sup resume <id>` walks a task through the steps the owner already runs by hand:
 `unità -> esecuzione -> raccolta -> revisione -> pubblicazione`. Every node calls
 the function the matching verb calls, so there is no second implementation of a
-step. The checkpoint is `60-ripresa.sqlite` in the task folder (LangGraph's
-`SqliteSaver`), and the identity of the run is `61-ripresa.json`: the SHA-256 of
-the task's objective and the SHA-256 of the unit's brief.
+step. The checkpoints live in `60-ripresa.sqlite` in the task folder (LangGraph's
+`SqliteSaver`), one per unit: the thread is the task and the unit, and
+`61-ripresa.json` keeps one identity record per unit with the SHA-256 of the
+task's objective and of the unit's brief.
 
 The run stops where a person is needed and says so:
 
@@ -448,11 +492,12 @@ The run stops where a person is needed and says so:
 A resume re-enters the step that stopped, not the one after it, so a wait is
 looked at again instead of skipped; a collection already done on the same head
 is not repeated, a session already attached is not sent to, and a finished run
-reruns nothing. The identity is checked before any step: a brief edited since
-the run started, a different unit, or a changed objective each refuse with their
-own reason, because continuing someone else's run is worse than stopping.
-`--riparti` throws the checkpoint away and opens a new run; it is also what a
-second unit on the same task needs, since one task holds one saved run.
+reruns nothing. The identity of a run is the task, the unit and the brief's
+hash, and it is checked before any step: a brief edited since the run started
+refuses with its own reason, because continuing a run whose instructions changed
+is worse than stopping. A different unit simply has its own checkpoint in the
+same file, so two units of one task resume independently. `--riparti` throws
+away the checkpoint of the unit it names and nothing else.
 
 The publication node does nothing unless `--repo` and `--branch` name the
 owner's checkout: approval alone stops at `waiting_publish` and prints the
@@ -501,9 +546,12 @@ write is `26-rapporto-ricognizione-<round>.md`, outside the copy. The tab runs
 this same engine in its scout role, which starts `agy --mode plan --prompt
 <pointer>`: plan mode is read-only, and the pointer keeps the brief in one file.
 At the end of the round the engine asks git whether the copy is where it started
-and holds nothing new (`git status --porcelain`, unchanged HEAD): a dirty copy or
-a moved head ends the round with exit 1 and a `scout_finished` row that lists
-what changed. The code check is the proof, not the scout's promise.
+(`git status --porcelain`, unchanged HEAD), then closes the tab it opened. A
+tracked file that changed, or a moved head, ends the round with exit 1 and a
+`scout_finished` row that lists what changed. An untracked file (a cache, a lock
+a tool left behind) is not a change to the code: it is listed in
+`scout_finished` as `untracked` and does not fail the round. The code check is
+the proof, not the scout's promise.
 
 ## What the engine refuses to execute
 
@@ -530,7 +578,12 @@ decision stays the owner's.
 
 `supervision_windows` opens a terminal that runs a command and stays open; the
 engine never reads its output, and a window that cannot be opened raises
-instead of falling back to a hidden process.
+instead of falling back to a hidden process. A tab opened by the engine carries
+a marker in its shell (`NEXGEN_SUP_TAB=nexgen-sup:<task>:<role>`), so the engine
+can close exactly that tab when the work is done: after `sup publish` for the
+executor, at the end of the round for the scout, and never when the tree holds
+the shared `opencode serve`. Closing is implemented on Windows; on Linux the tab
+stays open and the verb says so.
 
 - Windows: **one** Windows Terminal window called `nexgen-sup`, and one tab per
   session (`wt -w nexgen-sup new-tab ...`). Ten units are ten tabs, not ten
