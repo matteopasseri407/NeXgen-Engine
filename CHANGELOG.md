@@ -10,6 +10,8 @@ of any engine release.
 
 ## [Unreleased]
 
+## [2.18.0] - 2026-10-21
+
 ### Added
 
 - Supervision: every verb now says what a unit cost. `sup collect` prints the round, unit and task cost on one line and closes the executor's tab when the session has stopped; `sup status` shows the cost of every unit and of the task; `sup costi` shows the last 5 hours, 7 days and 30 days of spend. An optional allowed-models list is refused in `sup run` and failed in `sup collect`.
