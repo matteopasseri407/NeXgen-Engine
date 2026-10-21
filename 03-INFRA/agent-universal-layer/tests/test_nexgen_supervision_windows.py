@@ -7,10 +7,12 @@ test apre una finestra: quello che si verifica è l'argv e la sua piattaforma.
 """
 from __future__ import annotations
 
+import os
 from types import SimpleNamespace
 
 import pytest
 
+from nexgen_local import supervision_state as state
 from nexgen_local import supervision_windows as windows
 
 
@@ -194,3 +196,127 @@ def test_an_empty_command_is_refused(tmp_path, spawned):
     with pytest.raises(windows.WindowError, match="comando vuoto"):
         windows.open_window("supervisore", [], cwd=tmp_path)
     assert spawned == []
+
+
+# --- la scheda che si chiude quando il lavoro è finito ----------------------
+
+
+@pytest.fixture
+def lane(tmp_path, monkeypatch):
+    monkeypatch.setattr(state, "lane_state_dir", lambda: tmp_path / "lane")
+    return tmp_path / "lane" / "supervision"
+
+
+@pytest.fixture
+def task(lane):
+    return state.start("prova schede")["id"]
+
+
+def _tab_rows(marker: str, *, serve: bool = False, python: bool = False) -> list[dict]:
+    """The tree of one tab: shell, the npm shim, the harness, and what it started."""
+    rows = [
+        {
+            "pid": 100, "ppid": 1, "name": "pwsh.exe",
+            "command_line": f"pwsh.exe -NoExit -Command \"$env:NEXGEN_SUP_TAB = '{marker}'\"",
+        },
+        {"pid": 200, "ppid": 100, "name": "cmd.exe", "command_line": "opencode.CMD"},
+        {"pid": 300, "ppid": 200, "name": "opencode.exe", "command_line": "opencode.exe C:\\copia --prompt ..."},
+    ]
+    if serve:
+        rows.append({"pid": 400, "ppid": 300, "name": "opencode.exe", "command_line": "opencode.exe serve --service"})
+    if python:
+        rows.append({"pid": os.getpid(), "ppid": 300, "name": "python.exe", "command_line": "python -c ..."})
+    return rows
+
+
+def test_a_finished_tab_is_closed_from_the_harness_up_to_its_shell(task, pretend_os):
+    """Prima i figli, poi la shell: uccisa la shell la scheda sparisce, e i suoi figli no."""
+    pretend_os(windows, "nt")
+    killed: list = []
+
+    result = windows.close_tab(
+        task, "esecutore", lister=lambda: _tab_rows(windows.tab_marker(task, "esecutore")),
+        killer=killed.extend,
+    )
+
+    assert killed == [300, 200, 100]
+    assert result["closed"] == [300, 200, 100]
+    assert "scheda esecutore chiusa" in result["line"]
+    events = [row for row in state.read_events(task) if row.get("event") == "tab_closed"]
+    assert events and events[0]["role"] == "esecutore"
+    assert events[0]["pids"] == [300, 200, 100]
+
+
+def test_a_tab_holding_the_shared_server_is_left_open_and_said(task, pretend_os):
+    """La prima scheda del giorno tiene in piedi il servizio di tutti: chiuderla li spegnerebbe."""
+    pretend_os(windows, "nt")
+    killed: list = []
+
+    result = windows.close_tab(
+        task, "esecutore",
+        lister=lambda: _tab_rows(windows.tab_marker(task, "esecutore"), serve=True),
+        killer=killed.extend,
+    )
+
+    assert killed == [], "nessun processo toccato quando c'è di mezzo il servizio condiviso"
+    assert "servizio condiviso" in result["reason"] and "400" in result["reason"]
+    assert "lasciata aperta" in result["line"]
+    left = [row for row in state.read_events(task) if row.get("event") == "tab_left_open"]
+    assert left and left[0]["pids"] == [400, 300, 200, 100]
+
+
+def test_a_tab_that_is_not_there_is_not_an_error(task, pretend_os):
+    pretend_os(windows, "nt")
+    killed: list = []
+
+    result = windows.close_tab(task, "esecutore", lister=lambda: [], killer=killed.extend)
+
+    assert killed == []
+    assert "nessuna scheda" in result["line"]
+    assert not [row for row in state.read_events(task) if row.get("event") in ("tab_closed", "tab_left_open")]
+
+
+def test_the_process_asking_to_close_is_never_killed(task, pretend_os):
+    """La scheda dello scout chiude se stessa: il processo che chiede resta in vita per finire."""
+    pretend_os(windows, "nt")
+    killed: list = []
+
+    windows.close_tab(
+        task, "scout",
+        lister=lambda: _tab_rows(windows.tab_marker(task, "scout"), python=True),
+        killer=killed.extend,
+    )
+
+    assert os.getpid() not in killed
+    assert killed == [300, 200, 100]
+
+
+def test_a_process_list_that_cannot_be_read_kills_nothing(task, pretend_os):
+    pretend_os(windows, "nt")
+    killed: list = []
+
+    def broken() -> list:
+        raise windows.WindowError("PowerShell non ha risposto (TimeoutExpired)")
+
+    result = windows.close_tab(task, "esecutore", lister=broken, killer=killed.extend)
+
+    assert killed == []
+    assert "lasciata aperta" in result["line"] and "non leggibili" in result["line"]
+
+
+def test_the_tab_carries_the_marker_the_closer_looks_for(tmp_path, spawned, pretend_os, monkeypatch):
+    pretend_os(windows, "nt")
+    monkeypatch.setattr(
+        windows.shutil, "which",
+        lambda name: {"wt.exe": r"C:\wt.exe", "pwsh": r"C:\pwsh.exe"}.get(name),
+    )
+
+    handle = windows.open_window(
+        "esecutore · prova", ["opencode"], cwd=tmp_path,
+        marker=windows.tab_marker("20260101-000000-prova", "esecutore"),
+    )
+
+    script = spawned[0][0][11]
+    assert script.startswith("$env:NEXGEN_SUP_TAB = 'nexgen-sup:20260101-000000-prova:esecutore'")
+    assert "& 'opencode'" in script
+    assert handle["marker"] == "nexgen-sup:20260101-000000-prova:esecutore"

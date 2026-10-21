@@ -6,10 +6,17 @@ reads that tab's output. Windows Terminal gets one named window with a tab per
 session, so ten units are ten tabs and not ten windows. When a window cannot be
 opened this module raises with the reason instead of falling back to a hidden
 process, which is exactly the silent execution it exists to prevent.
+
+A tab is also closed from here, once its work is published, and never blindly:
+the shell carries a marker this engine wrote, the harness is found under it, and
+a tree that holds the shared `opencode serve` is left alone. Killing that server
+would close every other worker the owner has running.
 """
 from __future__ import annotations
 
+import json
 import os
+import re
 import shlex
 import shutil
 import subprocess
@@ -18,6 +25,7 @@ from typing import Sequence
 
 from nexgen_core.processes import powershell_literal
 
+from . import supervision_state as state
 from .supervision_state import SupervisionError
 
 
@@ -27,6 +35,16 @@ class WindowError(SupervisionError):
 
 #: Every supervised session lives as a tab of this one Windows Terminal window.
 WINDOW_NAME = "nexgen-sup"
+#: The variable whose value names the tab in the process table, once the shell starts.
+TAB_ENV = "NEXGEN_SUP_TAB"
+#: How long one PowerShell question about the process table may take.
+PROCESS_TIMEOUT_S = 30.0
+_LIST_PROCESSES = (
+    "Get-CimInstance Win32_Process | "
+    "Select-Object ProcessId,ParentProcessId,Name,CommandLine | ConvertTo-Json -Compress"
+)
+_KILL_PROCESSES = "Stop-Process -Id {pids} -Force -ErrorAction SilentlyContinue"
+
 
 
 #: Linux terminals, first found wins; each wants the title and the command differently.
@@ -38,11 +56,13 @@ _LINUX_TERMINALS: tuple[tuple[str, str, str], ...] = (
 )
 
 
-def open_window(title: str, argv: Sequence[str], *, cwd: str | Path) -> dict:
+def open_window(title: str, argv: Sequence[str], *, cwd: str | Path, marker: str = "") -> dict:
     """Open a visible terminal that runs `argv` and stays open; return what started.
 
     Raises ``WindowError`` when the platform cannot show one. Nothing is ever
     launched hidden: every refusing branch raises before a process starts.
+    `marker` is the tab's name in the process table, so `close_tab` can find this
+    tab later without guessing and without touching another one.
     """
     command = [str(token) for token in argv]
     if not command:
@@ -51,7 +71,7 @@ def open_window(title: str, argv: Sequence[str], *, cwd: str | Path) -> dict:
     if not folder.is_dir():
         raise WindowError(f"cartella di lavoro inesistente: {folder}")
     if os.name == "nt":
-        launcher, spawned = _windows_window(title, command, folder)
+        launcher, spawned = _windows_window(title, command, folder, marker)
     else:
         launcher, spawned = _linux_window(title, command, folder)
     try:
@@ -66,13 +86,148 @@ def open_window(title: str, argv: Sequence[str], *, cwd: str | Path) -> dict:
         "argv": spawned[0],
         "cwd": str(folder),
         "pid": getattr(proc, "pid", None),
+        "marker": marker,
     }
 
 
-def _windows_window(title: str, command: list[str], folder: Path) -> tuple[str, tuple[list[str], dict]]:
+def tab_marker(task_id: str, role: str) -> str:
+    """The one string that names a supervisor tab in the machine's process table."""
+    return f"nexgen-sup:{task_id}:{role}"
+
+
+def close_tab(task_id: str, role: str, *, lister=None, killer=None) -> dict:
+    """Close the tab that ran this role, unless closing it would kill a shared server.
+
+    The tab is a shell whose command line carries `marker`; under it are the
+    harness and whatever the harness started. Killing the shell closes the tab
+    and killing the harness ends its work, and neither happens when the tree
+    holds an `opencode serve`: the first tab of the day starts the server every
+    other session shares, so closing that one would stop them all. Then the tab
+    stays, the reason is journaled, and the owner closes it by hand. A tab that
+    is no longer there is not an error: the engine closes what it opened.
+    """
+    marker = tab_marker(task_id, role)
+    if os.name != "nt":
+        return _tab_result(role, [], "la chiusura della scheda è gestita solo su Windows")
+    try:
+        table = (lister or _processes)()
+    except (WindowError, OSError, ValueError) as exc:
+        return _tab_result(role, [], f"processi non leggibili ({exc})")
+    roots = [row for row in table if marker in str(row.get("command_line") or "")]
+    if not roots:
+        return _tab_result(role, [], "")
+    tree = _descendants(table, [row["pid"] for row in roots])
+    shared = [row for _, row in tree if _is_shared_server(row)]
+    if shared:
+        reason = (
+            f"la scheda {role} tiene in piedi il servizio condiviso del harness "
+            f"(pid {shared[0]['pid']}): non la chiudo, chiudila a mano"
+        )
+        state.append_event(
+            task_id, "tab_left_open", role=role, reason=reason,
+            pids=[row["pid"] for _, row in tree],
+        )
+        return _tab_result(role, [], reason, found=True)
+    pids = [row["pid"] for _, row in tree if row["pid"] != os.getpid()]
+    (killer or _kill)(pids)
+    state.append_event(task_id, "tab_closed", role=role, pids=pids)
+    return _tab_result(role, pids, "", found=True)
+
+
+def _tab_result(role: str, pids: list[int], reason: str, *, found: bool = False) -> dict:
+    """What happened, as one dict and one line the verb can print."""
+    if pids:
+        line = f"scheda {role} chiusa ({len(pids)} processi)"
+    elif reason:
+        line = f"scheda {role} lasciata aperta: {reason}"
+    else:
+        line = f"nessuna scheda {role} da chiudere"
+    return {"role": role, "found": found, "closed": list(pids), "reason": reason, "line": line}
+
+
+def _descendants(table: list[dict], roots: list[int]) -> list[tuple[int, dict]]:
+    """Every process under these roots with its depth, deepest first, so children die first."""
+    by_pid = {row["pid"]: row for row in table}
+    by_parent: dict[int, list[dict]] = {}
+    for row in table:
+        by_parent.setdefault(row["ppid"], []).append(row)
+    found: list[tuple[int, dict]] = []
+    seen: set[int] = set()
+    stack = [(pid, 0) for pid in roots]
+    while stack:
+        pid, depth = stack.pop()
+        if pid in seen:
+            continue
+        seen.add(pid)
+        node = by_pid.get(pid)
+        if node is not None:
+            found.append((depth, node))
+        for child in by_parent.get(pid, []):
+            stack.append((child["pid"], depth + 1))
+    return sorted(found, key=lambda item: item[0], reverse=True)
+
+
+def _is_shared_server(row: dict) -> bool:
+    """Whether this row is the `opencode serve` that every session on the machine shares."""
+    name = Path(str(row.get("name") or "")).name.lower()
+    if not name.startswith("opencode"):
+        return False
+    return re.search(r"\bserve\b", str(row.get("command_line") or "")) is not None
+
+
+def _processes() -> list[dict]:
+    """Every process on the machine, as the tab finder reads it."""
+    output = _powershell(_LIST_PROCESSES)
+    try:
+        parsed = json.loads(output or "[]")
+    except ValueError as exc:
+        raise WindowError(f"elenco dei processi illeggibile ({exc})") from exc
+    if isinstance(parsed, dict):
+        parsed = [parsed]
+    return [_process(row) for row in parsed if isinstance(row, dict)]
+
+
+def _process(row: dict) -> dict:
+    """One CIM row in the shape the rest of this module uses."""
+    return {
+        "pid": int(row.get("ProcessId") or 0),
+        "ppid": int(row.get("ParentProcessId") or 0),
+        "name": str(row.get("Name") or ""),
+        "command_line": str(row.get("CommandLine") or ""),
+    }
+
+
+def _powershell(script: str) -> str:
+    """One PowerShell question, with the reason when it cannot answer."""
+    try:
+        done = subprocess.run(
+            [_powershell_executable(), "-NoProfile", "-NonInteractive", "-Command", script],
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+            stdin=subprocess.DEVNULL, timeout=PROCESS_TIMEOUT_S, check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise WindowError(f"PowerShell non ha risposto ({type(exc).__name__})") from exc
+    if done.returncode:
+        detail = (done.stderr or "").strip()[:200]
+        raise WindowError(f"PowerShell esce con {done.returncode}: {detail}")
+    return done.stdout
+
+
+def _kill(pids: list[int]) -> None:
+    """Stop these processes; one that is already gone is not a failure."""
+    if not pids:
+        return
+    _powershell(_KILL_PROCESSES.format(pids=",".join(str(pid) for pid in pids)))
+
+
+def _windows_window(
+    title: str, command: list[str], folder: Path, marker: str = "",
+) -> tuple[str, tuple[list[str], dict]]:
     """Windows Terminal when installed, else a dedicated console; both stay open."""
     shell = _powershell_executable()
     script = _powershell_invocation(command)
+    if marker:
+        script = f"$env:{TAB_ENV} = {powershell_literal(marker)}\n{script}"
     terminal = shutil.which("wt.exe")
     if terminal:
         argv = [

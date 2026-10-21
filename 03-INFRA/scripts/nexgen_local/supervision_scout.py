@@ -53,6 +53,7 @@ def open_round(
     argv = [sys.executable, "-c", _bootstrap(task_id, round_no)]
     handle = (opener or windows.open_window)(
         f"ricognitore · {state.slug(text)}", argv, cwd=folder,
+        marker=windows.tab_marker(task_id, "scout"),
     )
     record = {
         "task": task_id, "round": round_no, "folder": str(folder), "base": base,
@@ -84,7 +85,9 @@ def run_in_tab(task_id: str, round_no: int = 0) -> int:
         subprocess.run(command, cwd=record["folder"], check=False, timeout=PRINT_TIMEOUT_S)
     except (OSError, subprocess.TimeoutExpired) as exc:
         print(f"ricognitore interrotto: {type(exc).__name__}", file=sys.stderr)
-    return _after(task_id, record, report)
+    code = _after(task_id, record, report)
+    print(windows.close_tab(task_id, "scout")["line"], flush=True)
+    return code
 
 
 def verdict(task_id: str, round_no: int = 0) -> dict:

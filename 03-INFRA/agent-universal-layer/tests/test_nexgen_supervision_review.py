@@ -284,7 +284,7 @@ def test_resend_opens_the_first_tab_when_the_task_has_no_session(task, repo, tmp
     monkeypatch.setattr(harness, "_opencode_executable", lambda: "opencode-finto")
     monkeypatch.setattr(
         harness.windows, "open_window",
-        lambda title, argv, *, cwd: opened.append(argv) or {"title": title, "launcher": "finto", "pid": 5},
+        lambda title, argv, *, cwd, marker="": opened.append(argv) or {"title": title, "launcher": "finto", "pid": 5},
     )
     monkeypatch.setattr(harness, "find_session", lambda *a, **k: None)
 

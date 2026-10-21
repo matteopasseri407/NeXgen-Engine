@@ -266,7 +266,10 @@ def _open_first_tab(
     does not send work into it.
     """
     started_ms = int(time.time() * 1000)
-    handle = opener(f"esecutore · {unit}", [_opencode_executable(), str(folder), "--prompt", prompt], cwd=folder)
+    handle = opener(
+        f"esecutore · {unit}", [_opencode_executable(), str(folder), "--prompt", prompt],
+        cwd=folder, marker=windows.tab_marker(task_id, "esecutore"),
+    )
     state.append_event(
         task_id, event, unit=unit, harness="opencode", window=str(handle.get("title", "")),
         mode="tab", **dict(extra or {}),

@@ -17,11 +17,24 @@ from nexgen_local import supervision_gates as gates
 from nexgen_local import supervision_publish as publish_module
 from nexgen_local import supervision_review as review
 from nexgen_local import supervision_state as state
+from nexgen_local import supervision_windows as windows
 from nexgen_local import supervision_worktree as worktree
 
 from supervision_repo import build, git_in
 
 VERIFY_OK = f'"{sys.executable}" -c "print(1)"'
+
+
+@pytest.fixture(autouse=True)
+def fake_tab_close(monkeypatch):
+    """Nessun test chiude una scheda vera: la chiamata si registra, e la riga è finta."""
+    closed: list = []
+    monkeypatch.setattr(
+        windows, "close_tab",
+        lambda task_id, role: closed.append((task_id, role))
+        or {"line": f"scheda {role} chiusa (finta)"},
+    )
+    return closed
 
 
 @pytest.fixture
@@ -135,6 +148,19 @@ def test_publish_without_push_stops_after_the_local_cherry_pick(task, repo, tmp_
     assert "resta da fare: `git push origin main`" in out
     assert _remote_main(repo) == before, "senza --push il remoto non si muove"
     assert _main_of(repo.path) != before, "il cherry-pick locale è stato fatto"
+
+
+def test_publish_closes_the_executors_tab(task, repo, tmp_path, capsys, fake_tab_close):
+    """Il lavoro è applicato: la scheda dell'esecutore non serve più a nessuno."""
+    _approved_unit(task, repo, tmp_path)
+    capsys.readouterr()
+
+    assert cli.main([
+        "sup", "publish", task, "prova", "--repo", str(repo.path), "--branch", "main",
+    ]) == 0
+
+    assert fake_tab_close == [(task, "esecutore")]
+    assert "scheda esecutore chiusa (finta)" in capsys.readouterr().out
 
 
 def test_publish_is_refused_when_the_unit_is_not_approved(task, repo, tmp_path):

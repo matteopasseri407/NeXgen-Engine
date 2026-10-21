@@ -45,8 +45,8 @@ def unit(task, lane, tmp_path):
 def test_run_opens_the_harness_on_the_unit_and_attaches_its_session(task, unit, monkeypatch):
     opened: dict = {}
 
-    def fake_open(title, argv, *, cwd):
-        opened.update({"title": title, "argv": list(argv), "cwd": cwd})
+    def fake_open(title, argv, *, cwd, marker=""):
+        opened.update({"title": title, "argv": list(argv), "cwd": cwd, "marker": marker})
         return {"title": title, "launcher": "finto", "pid": 4242}
 
     recorded: dict = {}
@@ -84,7 +84,7 @@ def test_run_says_so_when_no_session_can_be_told_apart(task, unit, monkeypatch):
 
     result = harness.run_unit(
         task, "prova",
-        opener=lambda title, argv, *, cwd: {"title": title, "launcher": "finto", "pid": 1},
+        opener=lambda title, argv, *, cwd, marker="": {"title": title, "launcher": "finto", "pid": 1},
         lister=lambda: [],
         wait_s=0,
     )
@@ -279,7 +279,7 @@ def test_a_first_tab_on_a_disallowed_model_is_named_and_not_attached(
 
     result = harness.run_unit(
         task, "prova",
-        opener=lambda title, argv, *, cwd: {"title": title, "launcher": "finto", "pid": 5},
+        opener=lambda title, argv, *, cwd, marker="": {"title": title, "launcher": "finto", "pid": 5},
         lister=lambda: sessions,
         measure=lambda session: SimpleNamespace(model="altro-provider/modello"),
         wait_s=0,
@@ -353,7 +353,7 @@ def test_a_session_the_export_says_is_gone_opens_the_one_new_tab(task, unit, mon
 
     result = harness.run_unit(
         task, "prova",
-        opener=lambda title, argv, *, cwd: opened.append((title, argv)) or {
+        opener=lambda title, argv, *, cwd, marker="": opened.append((title, argv)) or {
             "title": title, "launcher": "finto", "pid": 3,
         },
         runner=lambda *a: pytest.fail("una sessione sparita non riceve il lavoro"),
@@ -443,7 +443,7 @@ def test_corrections_with_a_lost_session_open_the_tab_and_keep_the_round(task, u
 
     result = harness.send_corrections(
         task, "prova", review_file, 2,
-        opener=lambda title, argv, *, cwd: opened.append(argv) or {"title": title, "launcher": "finto", "pid": 4},
+        opener=lambda title, argv, *, cwd, marker="": opened.append(argv) or {"title": title, "launcher": "finto", "pid": 4},
         runner=lambda *a: pytest.fail("la sessione sparita non riceve le correzioni"),
         measure=broken, lister=lambda: sessions, wait_s=0,
     )

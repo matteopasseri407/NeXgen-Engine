@@ -341,6 +341,7 @@ def cmd_sup_publish(args: argparse.Namespace) -> int:
     for commit in result["commits"]:
         print(f"{commit['published'][:12]} <- {commit['source'][:12]} · {commit['subject']}")
     print(result["signing"])
+    print(windows.close_tab(args.id, "esecutore")["line"])
     if result["pushed"]:
         print(f"spinta eseguita: {result['command']}")
         return 0

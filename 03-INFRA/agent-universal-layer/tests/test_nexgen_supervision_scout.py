@@ -57,8 +57,8 @@ class Opener:
     def __init__(self) -> None:
         self.calls: list[dict] = []
 
-    def __call__(self, title: str, argv, *, cwd) -> dict:
-        self.calls.append({"title": title, "argv": list(argv), "cwd": Path(cwd)})
+    def __call__(self, title: str, argv, *, cwd, marker="") -> dict:
+        self.calls.append({"title": title, "argv": list(argv), "cwd": Path(cwd), "marker": marker})
         return {"title": title, "launcher": "finto", "pid": 0, "cwd": str(cwd)}
 
     @property
@@ -247,6 +247,10 @@ def _install_explorer(monkeypatch, report: Path) -> Explorer:
     explorer = Explorer(report)
     monkeypatch.setattr(scout.shutil, "which", lambda name: "C:/finto/agy.exe" if name == "agy" else None)
     monkeypatch.setattr(scout, "subprocess", FakeSubprocess(explorer))
+    monkeypatch.setattr(
+        scout.windows, "close_tab",
+        lambda task_id, role: {"line": f"scheda {role} chiusa (finta)"},
+    )
     return explorer
 
 
@@ -285,6 +289,29 @@ def test_a_tab_that_dirtied_the_copy_ends_in_failure(task, monkeypatch):
 
     assert scout.run_in_tab(task) == 1
     assert explorer.commands
+
+
+def test_the_round_marks_its_tab_so_the_engine_can_find_it_later(task):
+    """La scheda porta il nome che la chiude: senza, il motore dovrebbe indovinare."""
+    opener = Opener()
+
+    _opened(task, opener=opener)
+
+    assert opener.last["marker"] == f"nexgen-sup:{task}:scout"
+
+
+def test_the_round_closes_its_tab_when_it_ends(task, monkeypatch):
+    _opened(task)
+    _install_explorer(monkeypatch, Path(scout._opened(task)["report"]))
+    closed: list = []
+    monkeypatch.setattr(
+        scout.windows, "close_tab",
+        lambda task_id, role: closed.append((task_id, role)) or {"line": "chiusa"},
+    )
+
+    assert scout.run_in_tab(task) == 0
+
+    assert closed == [(task, "scout")]
 
 
 def test_the_tab_bootstrap_is_valid_python(task):
