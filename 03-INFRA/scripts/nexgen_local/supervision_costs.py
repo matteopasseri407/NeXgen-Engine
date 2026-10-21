@@ -1,3 +1,4 @@
+# nexgen: one-job reason="read, record and aggregate what a harness session cost"
 """What a harness session cost: read its export, its children, and aggregate.
 
 The engine never calls a model and never estimates a price: for an OpenCode
@@ -62,6 +63,9 @@ class CollectCost:
     session: str = ""
     stopped: bool = False
     note: str = ""
+    #: What the measurable sessions add up to, when one of them has no source.
+    task_known_usd: float | None = None
+    task_unknown_sessions: int = 0
 
     @property
     def known(self) -> bool:
@@ -73,7 +77,8 @@ class CollectCost:
         return {
             "round_usd": self.round_usd, "unit_usd": self.unit_usd, "task_usd": self.task_usd,
             "model": self.model, "session": self.session, "stopped": self.stopped,
-            "note": self.note,
+            "note": self.note, "task_known_usd": self.task_known_usd,
+            "task_unknown_sessions": self.task_unknown_sessions,
         }
 
 
@@ -109,34 +114,71 @@ def collect_cost(
     ]
     unit_base = rows_priced[0][1] if rows_priced else 0.0
     round_base = _round_base(events, name, rows_priced, unit_base)
+    total = _task_total(rows, session, now)
     return CollectCost(
         round_usd=round(max(now - round_base, 0.0), 6),
         unit_usd=round(max(now - unit_base, 0.0), 6),
-        task_usd=_task_total(rows, session, now),
+        task_usd=total.usd,
         model=model,
         session=session,
         stopped=bool(getattr(facts, "stopped", False)),
+        task_known_usd=total.known_usd,
+        task_unknown_sessions=total.unknown_sessions,
     )
 
 
 def cost_text(cost: CollectCost) -> str:
-    """The one line every verb and every file uses for the cost of a collection."""
-    if not cost.known:
+    """The one line every verb and every file uses for the cost of a collection.
+
+    A round and a unit that were measured are shown even when one historical
+    session has no source: the total then says what is known and how many
+    sessions are missing, instead of hiding every number.
+    """
+    if not _any_number(cost):
         return f"costo: non misurato ({cost.note or 'dato assente'})"
     model = f"modello {cost.model}" if cost.model else "modello non dichiarato"
-    return (
-        f"costo: giro {cost.round_usd:.4f} $, unità {cost.unit_usd:.4f} $, "
-        f"compito {cost.task_usd:.4f} $ ({model})"
-    )
+    parts = []
+    if cost.round_usd is not None:
+        parts.append(f"giro {cost.round_usd:.4f} $")
+    if cost.unit_usd is not None:
+        parts.append(f"unità {cost.unit_usd:.4f} $")
+    parts.append(_task_part(cost))
+    return f"costo: {', '.join(parts)} ({model})"
 
 
 def total_text(cost: CollectCost, unit: str = "") -> str:
     """The task total alone, in the same form, saying where it was measured."""
-    if cost.task_usd is None:
-        return f"compito non misurato ({cost.note or 'dato assente'})"
     model = f"modello {cost.model}" if cost.model else "modello non dichiarato"
     where = f", misurato alla raccolta di {unit}" if unit else ""
-    return f"compito {cost.task_usd:.4f} $ ({model}{where})"
+    if cost.task_usd is not None:
+        return f"compito {cost.task_usd:.4f} $ ({model}{where})"
+    if cost.task_known_usd is not None:
+        return f"compito {_known_part(cost)} ({model}{where})"
+    return f"compito non misurato ({cost.note or 'dato assente'})"
+
+
+def _any_number(cost: CollectCost) -> bool:
+    """Whether any cost in this collection was measured at all."""
+    return any(
+        value is not None
+        for value in (cost.round_usd, cost.unit_usd, cost.task_usd, cost.task_known_usd)
+    )
+
+
+def _task_part(cost: CollectCost) -> str:
+    """The task segment of a cost line: whole, known part, or plainly missing."""
+    if cost.task_usd is not None:
+        return f"compito {cost.task_usd:.4f} $"
+    if cost.task_known_usd is not None:
+        return f"compito {_known_part(cost)}"
+    return "compito non misurato"
+
+
+def _known_part(cost: CollectCost) -> str:
+    """The sum of the measured sessions and how many were not measured."""
+    missing = cost.task_unknown_sessions
+    word = "sessione non misurata" if missing == 1 else "sessioni non misurate"
+    return f"{cost.task_known_usd:.4f} $ noto, {missing} {word}"
 
 
 def _round_base(events: list[dict], unit: str, rows_priced: list[tuple[str, float]], unit_base: float) -> float:
@@ -151,7 +193,21 @@ def _round_base(events: list[dict], unit: str, rows_priced: list[tuple[str, floa
     return rows_priced[-1][1] if rows_priced else unit_base
 
 
-def _task_total(rows: list[dict], session: str, now: float) -> float | None:
+@dataclass(frozen=True)
+class _TaskTotal:
+    """The task total, and how much of it has no source.
+
+    `usd` is the whole total only when every session was measured; `known_usd`
+    is what the measurable sessions add up to, so one unreadable historical
+    session does not erase the round and the unit that were just measured.
+    """
+
+    usd: float | None
+    known_usd: float
+    unknown_sessions: int
+
+
+def _task_total(rows: list[dict], session: str, now: float) -> _TaskTotal:
     """The live session plus the last number of every session that ended before it."""
     latest: dict[str, float | None] = {}
     for row in rows:
@@ -160,9 +216,13 @@ def _task_total(rows: list[dict], session: str, now: float) -> float | None:
             continue
         cost = row.get("cost_usd")
         latest[name] = float(cost) if isinstance(cost, (int, float)) else None
-    if any(value is None for value in latest.values()):
-        return None
-    return round(now + sum(value for value in latest.values() if value is not None), 6)
+    unknown = sum(1 for value in latest.values() if value is None)
+    known_usd = round(now + sum(value for value in latest.values() if value is not None), 6)
+    return _TaskTotal(
+        usd=None if unknown else known_usd,
+        known_usd=known_usd,
+        unknown_sessions=unknown,
+    )
 
 
 #: The events that say work was handed to a session, in the order they mean anything.

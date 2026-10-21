@@ -411,6 +411,27 @@ def test_a_task_total_with_an_unreadable_session_stays_unknown(lane):
     assert price.known is False
 
 
+def test_one_unreadable_session_does_not_zero_the_round_and_the_unit(lane):
+    """Una sessione storica senza fonte non cancella il giro e l'unità appena misurati."""
+    task = state.start("prova totale parziale")["id"]
+    rows = [
+        {"unit": "prima", "session": "ses_vecchia", "cost_usd": None},
+        {"unit": "prova", "session": "ses_uno", "cost_usd": 1.0},
+    ]
+
+    price = costs.collect_cost(task, "prova", facts_of=lambda session: _facts(cost_usd=2.6), rows=rows, events=[])
+
+    assert price.round_usd == 1.6
+    assert price.unit_usd == 1.6
+    assert price.task_usd is None, "il totale intero resta ignoto finché una sessione non ha fonte"
+    assert price.task_known_usd == 2.6, "le sessioni note si sommano lo stesso"
+    assert price.task_unknown_sessions == 1
+    line = costs.cost_text(price)
+    assert "giro 1.6000 $" in line
+    assert "unità 1.6000 $" in line
+    assert "compito 2.6000 $ noto, 1 sessione non misurata" in line
+
+
 def test_a_session_the_harness_cannot_price_is_not_zero(lane):
     task = state.start("prova prezzo illeggibile")["id"]
     state.append_event(task, "unit_started", unit="prova", harness="opencode", session="ses_uno", mode="run")

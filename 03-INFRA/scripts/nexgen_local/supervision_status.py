@@ -10,7 +10,10 @@ from __future__ import annotations
 from . import supervision_costs as costs
 
 #: The fields a recorded collection cost carries, in the order it is written.
-COST_FIELDS = ("round_usd", "unit_usd", "task_usd", "model", "session", "stopped", "note")
+COST_FIELDS = (
+    "round_usd", "unit_usd", "task_usd", "model", "session", "stopped", "note",
+    "task_known_usd", "task_unknown_sessions",
+)
 
 
 def unit_line(unit: dict) -> str:
