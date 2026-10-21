@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -26,15 +27,13 @@ VERIFY_OK = f'"{sys.executable}" -c "print(1)"'
 
 
 @pytest.fixture(autouse=True)
-def fake_tab_close(monkeypatch):
-    """Nessun test chiude una scheda vera: la chiamata si registra, e la riga è finta."""
-    closed: list = []
-    monkeypatch.setattr(
-        windows, "close_tab",
-        lambda task_id, role: closed.append((task_id, role))
-        or {"line": f"scheda {role} chiusa (finta)"},
-    )
-    return closed
+def fake_tabs(monkeypatch, pretend_os):
+    """Nessun test tocca schede vere: la tabella dei processi e l'uccisione sono finte."""
+    pretend_os(windows, "nt")
+    tabs = SimpleNamespace(rows=[], killed=[])
+    monkeypatch.setattr(windows, "_processes", lambda: tabs.rows)
+    monkeypatch.setattr(windows, "_kill", lambda pids: tabs.killed.extend(pids))
+    return tabs
 
 
 @pytest.fixture
@@ -53,11 +52,11 @@ def task(lane):
     return state.start("prova fase 3a")["id"]
 
 
-def _unit(task, repo, tmp_path, *, allow=("docs/*.md",), verify=VERIFY_OK) -> Path:
-    brief = tmp_path / "brief.md"
+def _unit(task, repo, tmp_path, *, unit="prova", allow=("docs/*.md",), verify=VERIFY_OK) -> Path:
+    brief = tmp_path / f"brief-{unit}.md"
     brief.write_text("# Brief dell'unità prova\n\nSolo fatti.\n", encoding="utf-8")
     record = worktree.create(
-        task, "prova", repo=repo.path, base="main", brief=str(brief),
+        task, unit, repo=repo.path, base="main", brief=str(brief),
         allow=list(allow), verify=verify,
     )
     return Path(record["worktree"])
@@ -150,17 +149,70 @@ def test_publish_without_push_stops_after_the_local_cherry_pick(task, repo, tmp_
     assert _main_of(repo.path) != before, "il cherry-pick locale è stato fatto"
 
 
-def test_publish_closes_the_executors_tab(task, repo, tmp_path, capsys, fake_tab_close):
-    """Il lavoro è applicato: la scheda dell'esecutore non serve più a nessuno."""
+def _executor_tab(task: str) -> list[dict]:
+    """The process tree of the executor's tab, as the engine reads it from the machine."""
+    marker = windows.tab_marker(task, "esecutore")
+    return [
+        {
+            "pid": 100, "ppid": 1, "name": "pwsh.exe",
+            "command_line": f"pwsh.exe -NoExit -Command \"$env:NEXGEN_SUP_TAB = '{marker}'\"",
+        },
+        {"pid": 200, "ppid": 100, "name": "opencode.exe", "command_line": "opencode.exe C:\\copia"},
+    ]
+
+
+def test_publish_closes_the_executors_tab(task, repo, tmp_path, capsys, fake_tabs):
+    """Il lavoro è applicato e nessun'altra unità è aperta: la scheda non serve più a nessuno."""
     _approved_unit(task, repo, tmp_path)
+    fake_tabs.rows.extend(_executor_tab(task))
     capsys.readouterr()
 
     assert cli.main([
         "sup", "publish", task, "prova", "--repo", str(repo.path), "--branch", "main",
     ]) == 0
 
-    assert fake_tab_close == [(task, "esecutore")]
-    assert "scheda esecutore chiusa (finta)" in capsys.readouterr().out
+    assert fake_tabs.killed == [200, 100]
+    assert "scheda esecutore chiusa (2 processi)" in capsys.readouterr().out
+
+
+def test_publish_leaves_the_tab_open_while_another_unit_still_works(task, repo, tmp_path, capsys, fake_tabs):
+    """Una sessione per compito: la scheda che sta lavorando per la seconda unità non si chiude."""
+    _approved_unit(task, repo, tmp_path)
+    _unit(task, repo, tmp_path, unit="seconda")
+    fake_tabs.rows.extend(_executor_tab(task))
+    capsys.readouterr()
+
+    assert cli.main([
+        "sup", "publish", task, "prova", "--repo", str(repo.path), "--branch", "main",
+    ]) == 0
+
+    out = capsys.readouterr().out
+    assert "lasciata aperta" in out and "seconda" in out
+    assert fake_tabs.killed == [], "la scheda sta ancora lavorando per la seconda unità"
+    left = [row for row in state.read_events(task) if row.get("event") == "tab_left_open"]
+    assert left and left[-1]["units"] == ["seconda"]
+
+
+def test_the_tab_closes_once_the_last_unit_of_the_task_is_published(task, repo, tmp_path, capsys, fake_tabs):
+    _approved_unit(task, repo, tmp_path)
+    second = _unit(task, repo, tmp_path, unit="seconda")
+    fake_tabs.rows.extend(_executor_tab(task))
+    capsys.readouterr()
+
+    assert cli.main([
+        "sup", "publish", task, "prova", "--repo", str(repo.path), "--branch", "main",
+    ]) == 0
+    assert fake_tabs.killed == [], "la seconda unità esiste e non è ancora approvata"
+
+    _commit(second, "docs: la seconda unità", {"docs/altra.md": "# altra\n"})
+    assert gates.collect(task, "seconda")["verdict"] == "PASS"
+    review.approve(task, "seconda", "una sola cosa, cancelli verdi")
+    assert cli.main([
+        "sup", "publish", task, "seconda", "--repo", str(repo.path), "--branch", "main",
+    ]) == 0
+
+    assert fake_tabs.killed == [200, 100], "l'ultima unità pubblicata chiude la scheda"
+    assert "scheda esecutore chiusa" in capsys.readouterr().out
 
 
 def test_publish_is_refused_when_the_unit_is_not_approved(task, repo, tmp_path):

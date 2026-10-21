@@ -96,15 +96,19 @@ def tab_marker(task_id: str, role: str) -> str:
 
 
 def close_tab(task_id: str, role: str, *, lister=None, killer=None) -> dict:
-    """Close the tab that ran this role, unless closing it would kill a shared server.
+    """Close the tab that ran this role, unless closing it would kill work still running.
 
-    The tab is a shell whose command line carries `marker`; under it are the
-    harness and whatever the harness started. Killing the shell closes the tab
-    and killing the harness ends its work, and neither happens when the tree
-    holds an `opencode serve`: the first tab of the day starts the server every
-    other session shares, so closing that one would stop them all. Then the tab
-    stays, the reason is journaled, and the owner closes it by hand. A tab that
-    is no longer there is not an error: the engine closes what it opened.
+    The tab is a shell whose command line carries the exact assignment this
+    engine wrote; under it are the harness and whatever the harness started.
+    Killing the shell closes the tab and killing the harness ends its work, and
+    nothing is killed when the tab is still needed. For the executor that means
+    another unit of the same task may still be created, queued, running or
+    waiting for a decision, and the task has one session for all of them: then
+    the tab stays, `tab_left_open` names the units, and the owner sees why. Nor
+    is a tree holding an `opencode serve` ever closed: the first tab of the day
+    starts the server every other session shares, so closing that one would stop
+    them all. A tab that is no longer there is not an error: the engine closes
+    what it opened, and nothing else.
     """
     marker = tab_marker(task_id, role)
     if os.name != "nt":
@@ -116,6 +120,17 @@ def close_tab(task_id: str, role: str, *, lister=None, killer=None) -> dict:
     roots = [row for row in table if marker in str(row.get("command_line") or "")]
     if not roots:
         return _tab_result(role, [], "")
+    if role == "esecutore":
+        still_open = _open_units(task_id)
+        if still_open:
+            reason = (
+                "altre unità del compito possono ancora lavorare nella stessa sessione "
+                f"({', '.join(still_open)}): chiudo la scheda quando sono pubblicate"
+            )
+            state.append_event(
+                task_id, "tab_left_open", role=role, reason=reason, units=still_open,
+            )
+            return _tab_result(role, [], reason, found=True)
     tree = _descendants(table, [row["pid"] for row in roots])
     shared = [row for _, row in tree if _is_shared_server(row)]
     if shared:
@@ -165,6 +180,23 @@ def _descendants(table: list[dict], roots: list[int]) -> list[tuple[int, dict]]:
         for child in by_parent.get(pid, []):
             stack.append((child["pid"], depth + 1))
     return sorted(found, key=lambda item: item[0], reverse=True)
+
+
+def _open_units(task_id: str) -> list[str]:
+    """The task's units whose executor may still put work into the one session.
+
+    A task has one executor session for all its units, so a published unit does
+    not free the tab while a second one is created, queued, running, stalled or
+    waiting for a decision: closing it would kill that unit's work. A unit that
+    is approved and published, or approved and waiting only for `sup publish`,
+    has no work left.
+    """
+    found: list[str] = []
+    for record in state.status(task_id)["units"]:
+        if record.get("approved") or record.get("published"):
+            continue
+        found.append(str(record.get("unit") or ""))
+    return found
 
 
 def _is_shared_server(row: dict) -> bool:

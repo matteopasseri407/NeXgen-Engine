@@ -461,13 +461,17 @@ and that is a property of the clone, not of the engine.
 
 Once the commits are applied, `sup publish` closes the executor's tab: the
 engine wrote a marker into that tab's shell (`NEXGEN_SUP_TAB`), finds the shell
-and its children by it, and stops them from the deepest one up to the shell, so
-the tab disappears and nothing behind it keeps running. It refuses when the tree
-holds an `opencode serve`: the first tab of the day starts the server every other
-session shares, and closing that one would stop every other worker. Then the tab
-stays, `tab_left_open` records the pid that made it unsafe, and the verb says so;
-when it closes, `tab_closed` records the pids. A tab the owner already closed is
-not an error.
+by the exact assignment it wrote, and stops it and its children from the deepest
+one up to the shell, so the tab disappears and nothing behind it keeps running.
+Two things stop it. A task has one executor session for all its units, so while
+another unit of the same task is created, queued, running, stalled or waiting
+for a decision, the tab stays, `tab_left_open` names the open units, and the verb
+says why: it closes when the last unit is approved and published. And it refuses
+when the tree holds an `opencode serve`: the first tab of the day starts the
+server every other session shares, and closing that one would stop every other
+worker. Then the tab stays, `tab_left_open` records the pid that made it unsafe,
+and the verb says so; when it closes, `tab_closed` records the pids. A tab the
+owner already closed is not an error.
 
 ## Resuming a task
 
@@ -581,9 +585,10 @@ engine never reads its output, and a window that cannot be opened raises
 instead of falling back to a hidden process. A tab opened by the engine carries
 a marker in its shell (`NEXGEN_SUP_TAB=nexgen-sup:<task>:<role>`), so the engine
 can close exactly that tab when the work is done: after `sup publish` for the
-executor, at the end of the round for the scout, and never when the tree holds
-the shared `opencode serve`. Closing is implemented on Windows; on Linux the tab
-stays open and the verb says so.
+executor, when no other unit of the task can still work, at the end of the round
+for the scout, and never when the tree holds the shared `opencode serve`.
+Closing is implemented on Windows; on Linux the tab stays open and the verb says
+so.
 
 - Windows: **one** Windows Terminal window called `nexgen-sup`, and one tab per
   session (`wt -w nexgen-sup new-tab ...`). Ten units are ten tabs, not ten
