@@ -90,9 +90,10 @@ def collect(task_id: str, unit: str) -> dict:
     verdict = "PASS" if all(result.ok for result in results) else "FAIL"
     skipped = skipped_tests(folder, files)
     request_scan = requests_module.scan_report(task_id, name)
+    price = costs.collect_cost(task_id, name, facts_of=session_facts)
     package = package_text(
         task_id=task_id, unit=name, branch=branch, base=base, head=head, verdict=verdict,
-        results=results, cost_line=_cost_line(state.read_costs(task_id), name),
+        results=results, cost_line=costs.cost_text(price),
         diffstat=git(folder, "diff", "--stat", base, head).strip(), diff=text,
         skipped=skipped, request_scan=request_scan, pytest_surface=surface,
     )
@@ -100,6 +101,22 @@ def collect(task_id: str, unit: str) -> dict:
     raw_path = state.open_task(task_id) / f"50-gate-{name}.txt"
     package_path.write_text(package, encoding="utf-8")
     raw_path.write_text(raw_text(results, skipped), encoding="utf-8")
+    _record_collection(task_id, name, verdict=verdict, head=head, results=results,
+                       skipped=skipped, request_scan=request_scan, price=price)
+    return {
+        "unit": name, "verdict": verdict, "base": base, "head": head,
+        "gates": results, "package": package_path, "raw": raw_path, "skipped": skipped,
+        "requests": request_scan["requests"],
+        "request_section": requests_module.section_status(request_scan),
+        "cost": price,
+    }
+
+
+def _record_collection(
+    task_id: str, name: str, *, verdict: str, head: str, results: list,
+    skipped: list, request_scan: dict, price: costs.CollectCost,
+) -> None:
+    """The journal row of a collection: the verdict, what was skipped, and what it cost."""
     state.append_event(
         task_id, "unit_collected",
         unit=name, verdict=verdict, head=head,
@@ -107,13 +124,8 @@ def collect(task_id: str, unit: str) -> dict:
         skipped_tests=skipped,
         requests=[hit["kind"] for hit in request_scan["requests"]],
         request_section=request_scan["found"],
+        cost=price.as_dict(),
     )
-    return {
-        "unit": name, "verdict": verdict, "base": base, "head": head,
-        "gates": results, "package": package_path, "raw": raw_path, "skipped": skipped,
-        "requests": request_scan["requests"],
-        "request_section": requests_module.section_status(request_scan),
-    }
 
 
 def _copy_of(record: dict) -> Path:
@@ -368,46 +380,6 @@ def _worker_args() -> list[str]:
     return ["-n", "4"] if importlib.util.find_spec("xdist") is not None else []
 
 
-def _cost_line(rows: list[dict], unit: str) -> str:
-    """What the unit cost, measured when it is collected: the number a reviewer needs.
-
-    The attach wrote its row when the session had just started, so its cost is
-    the cost of nothing. The register keeps that event; the package asks the
-    harness again, and when it cannot answer it says so instead of showing zero.
-    """
-    mine = [row for row in rows if row.get("unit") == unit]
-    if not mine:
-        return "nessuna sessione agganciata"
-    session = str(mine[-1].get("session") or "")
-    if not session:
-        return "nessuna sessione agganciata"
-    try:
-        facts = session_facts(session)
-    except costs.CostError as exc:
-        return f"non misurato alla raccolta ({exc}) · sessione {session}"
-    cost = facts.cost_usd
-    money = f"{cost:.4f} $" if isinstance(cost, (int, float)) else "costo non disponibile"
-    duration = f"{facts.duration_s:.1f}s · " if facts.duration_s is not None else ""
-    children = ""
-    if facts.children:
-        children = f" · {facts.children} figlie ({facts.children_cost_usd or 0:.4f} $)"
-    elif facts.children is None and facts.children_source:
-        children = " · figlie non esposte"
-    return (
-        f"{money} ({_at_collection(rows, unit, cost)}) · sessione {session} · {duration}"
-        f"{facts.tokens_in or 0} token in, {facts.tokens_out or 0} token out{children}"
-    )
-
-
 def session_facts(session_id: str) -> costs.SessionFacts:
     """The session as the harness reports it now, children included; a broken source raises CostError."""
     return costs.measure(session_id)
-
-
-def _at_collection(rows: list[dict], unit: str, cost: float | None) -> str:
-    """Say whether the number grew since the attach, so nobody reads a stale figure."""
-    attached = [row.get("cost_usd") for row in rows if row.get("unit") == unit]
-    first = next((value for value in attached if isinstance(value, (int, float))), None)
-    if first is None or cost is None or first == cost:
-        return "alla raccolta"
-    return f"alla raccolta, {first:.4f} $ all'aggancio"

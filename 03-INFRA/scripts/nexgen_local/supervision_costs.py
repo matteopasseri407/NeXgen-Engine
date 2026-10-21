@@ -45,6 +45,130 @@ class CostError(SupervisionError):
     """The harness executable is missing, the export failed, or its JSON is unusable."""
 
 
+@dataclass(frozen=True)
+class CollectCost:
+    """What one collection measures: this round, this unit, the whole task, and the model.
+
+    `round_usd` is what the round added since its delivery, `unit_usd` what the
+    unit added since it started, `task_usd` the whole session (its children
+    included) plus the sessions that came before it. A number that cannot be
+    read is None, never zero: a missing figure is a fact, a zero is a lie.
+    """
+
+    round_usd: float | None = None
+    unit_usd: float | None = None
+    task_usd: float | None = None
+    model: str = ""
+    session: str = ""
+    stopped: bool = False
+    note: str = ""
+
+    @property
+    def known(self) -> bool:
+        """Whether all three numbers were measured."""
+        return None not in (self.round_usd, self.unit_usd, self.task_usd)
+
+    def as_dict(self) -> dict:
+        """The shape the journal and the package carry, so a later reader rebuilds it."""
+        return {
+            "round_usd": self.round_usd, "unit_usd": self.unit_usd, "task_usd": self.task_usd,
+            "model": self.model, "session": self.session, "stopped": self.stopped,
+            "note": self.note,
+        }
+
+
+def collect_cost(
+    task_id: str, unit: str, *, facts_of=None, rows=None, events=None,
+) -> CollectCost:
+    """Price the collection that is happening: the round, the unit, the task.
+
+    The harness store holds a cumulative cost per session, so a share is a
+    difference: the round is what grew since the round's own delivery started,
+    the unit since its first attach, and the task is the session now plus the
+    sessions that ended before it. With no delivery in the journal the last row
+    is the baseline, which is what the ledger knows.
+    """
+    name = state.slug(unit)
+    rows = rows if rows is not None else state.read_costs(task_id)
+    events = events if events is not None else state.read_events(task_id)
+    mine = [row for row in rows if row.get("unit") == name]
+    session = str(mine[-1].get("session") or "") if mine else state.harness_session(task_id)
+    if not session:
+        return CollectCost(note="nessuna sessione agganciata")
+    try:
+        facts = (facts_of or measure)(session)
+    except CostError as exc:
+        return CollectCost(session=session, note=str(exc))
+    now = getattr(facts, "cost_usd", None)
+    model = str(getattr(facts, "model", "") or "")
+    if not isinstance(now, (int, float)):
+        return CollectCost(session=session, model=model, note="il harness non riporta il costo della sessione")
+    rows_priced = [
+        (str(row.get("at") or ""), float(row["cost_usd"]))
+        for row in mine if isinstance(row.get("cost_usd"), (int, float))
+    ]
+    unit_base = rows_priced[0][1] if rows_priced else 0.0
+    round_base = _round_base(events, name, rows_priced, unit_base)
+    return CollectCost(
+        round_usd=round(max(now - round_base, 0.0), 6),
+        unit_usd=round(max(now - unit_base, 0.0), 6),
+        task_usd=_task_total(rows, session, now),
+        model=model,
+        session=session,
+        stopped=bool(getattr(facts, "stopped", False)),
+    )
+
+
+def cost_text(cost: CollectCost) -> str:
+    """The one line every verb and every file uses for the cost of a collection."""
+    if not cost.known:
+        return f"costo: non misurato ({cost.note or 'dato assente'})"
+    model = f"modello {cost.model}" if cost.model else "modello non dichiarato"
+    return (
+        f"costo: giro {cost.round_usd:.4f} $, unità {cost.unit_usd:.4f} $, "
+        f"compito {cost.task_usd:.4f} $ ({model})"
+    )
+
+
+def total_text(cost: CollectCost, unit: str = "") -> str:
+    """The task total alone, in the same form, saying where it was measured."""
+    if cost.task_usd is None:
+        return f"compito non misurato ({cost.note or 'dato assente'})"
+    model = f"modello {cost.model}" if cost.model else "modello non dichiarato"
+    where = f", misurato alla raccolta di {unit}" if unit else ""
+    return f"compito {cost.task_usd:.4f} $ ({model}{where})"
+
+
+def _round_base(events: list[dict], unit: str, rows_priced: list[tuple[str, float]], unit_base: float) -> float:
+    """The cost when this round's delivery started, from the row written at its start."""
+    started = ""
+    for row in events:
+        if row.get("event") in DELIVERY_EVENTS and row.get("unit") == unit:
+            started = str(row.get("at") or "")
+    if started:
+        after = [value for at, value in rows_priced if at >= started]
+        return after[0] if after else unit_base
+    return rows_priced[-1][1] if rows_priced else unit_base
+
+
+def _task_total(rows: list[dict], session: str, now: float) -> float | None:
+    """The live session plus the last number of every session that ended before it."""
+    latest: dict[str, float | None] = {}
+    for row in rows:
+        name = str(row.get("session") or "")
+        if not name or name == session:
+            continue
+        cost = row.get("cost_usd")
+        latest[name] = float(cost) if isinstance(cost, (int, float)) else None
+    if any(value is None for value in latest.values()):
+        return None
+    return round(now + sum(value for value in latest.values() if value is not None), 6)
+
+
+#: The events that say work was handed to a session, in the order they mean anything.
+DELIVERY_EVENTS = ("unit_started", "unit_reworked")
+
+
 class SessionMissing(CostError):
     """The harness itself says the session does not exist: deleted, pruned, or never there.
 

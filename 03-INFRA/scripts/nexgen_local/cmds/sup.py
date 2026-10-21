@@ -293,8 +293,10 @@ def cmd_sup_collect(args: argparse.Namespace) -> int:
     print(f"unità {result['unit']} · verdetto {result['verdict']}")
     for gate in result["gates"]:
         print(f"{'PASS' if gate.ok else 'FAIL'} {gate.name}: {gate.reason}")
+    print(costs.cost_text(result["cost"]))
     print(f"pacchetto {result['package']}")
     print(f"grezzo {result['raw']}")
+    print(_collect_tab_line(args.id, result["unit"], result["cost"]))
     for note in cleanup.notes():
         print(f"nota: {note}")
     for hit in result.get("requests") or []:
@@ -302,6 +304,15 @@ def cmd_sup_collect(args: argparse.Namespace) -> int:
     if result.get("request_section"):
         print(f"richieste: {result['request_section']}")
     return 0 if result["verdict"] == "PASS" else 1
+
+
+def _collect_tab_line(task_id: str, unit: str, cost: costs.CollectCost) -> str:
+    """The collection ends the work, so its tab goes; a session still writing keeps it."""
+    if not cost.stopped:
+        why = "non misurata" if cost.note else "ancora al lavoro"
+        return f"sessione {why}: la scheda resta aperta"
+    closed = windows.close_tab(task_id, "esecutore", still_working=(unit,), stopped=True)
+    return closed["line"]
 
 
 def cmd_sup_review(args: argparse.Namespace) -> int:

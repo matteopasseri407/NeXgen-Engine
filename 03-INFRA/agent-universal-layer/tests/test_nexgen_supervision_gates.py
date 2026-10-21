@@ -596,9 +596,10 @@ def test_the_package_carries_the_cost_measured_at_collection(task, repo, tmp_pat
     result = gates.collect(task, "prova")
 
     package = Path(result["package"]).read_text(encoding="utf-8")
-    assert "0.2500 $ (alla raccolta, 0.0000 $ all'aggancio)" in package
-    assert "ses_uno" in package
-    assert "60.0s" in package
+    assert "- costo: giro 0.2500 $, unità 0.2500 $, compito 0.2500 $ (modello non dichiarato)" in package
+    assert result["cost"].round_usd == 0.25
+    assert result["cost"].unit_usd == 0.25
+    assert result["cost"].task_usd == 0.25
 
 
 def test_a_cost_that_cannot_be_measured_at_collection_is_not_zero(task, repo, tmp_path, lane, monkeypatch):
@@ -617,7 +618,7 @@ def test_a_cost_that_cannot_be_measured_at_collection_is_not_zero(task, repo, tm
     result = gates.collect(task, "prova")
 
     package = Path(result["package"]).read_text(encoding="utf-8")
-    assert "non misurato alla raccolta (l'export non risponde)" in package
+    assert "- costo: non misurato (l'export non risponde)" in package
     assert "0.0000 $" not in package
 
 
