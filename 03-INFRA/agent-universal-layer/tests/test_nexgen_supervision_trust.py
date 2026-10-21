@@ -34,6 +34,14 @@ def test_the_settings_live_under_the_home_of_whoever_runs_it(home):
     assert trust.settings_path(home) == home / ".gemini" / "antigravity-cli" / "settings.json"
 
 
+def test_without_a_home_the_engine_home_decides_where_the_settings_are(monkeypatch, tmp_path):
+    """`NEXGEN_HOME` moves engine state, so a checkout never trusts folders in the real home."""
+    engine_home = tmp_path / "motore"
+    monkeypatch.setenv("NEXGEN_HOME", str(engine_home))
+
+    assert trust.settings_path() == engine_home / ".gemini" / "antigravity-cli" / "settings.json"
+
+
 def test_a_folder_is_added_and_the_answer_says_it_was_written(tmp_path, settings):
     folder = tmp_path / "compito" / "24-ricognizione"
 

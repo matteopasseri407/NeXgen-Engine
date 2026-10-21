@@ -15,6 +15,8 @@ import shutil
 import tempfile
 from pathlib import Path
 
+from nexgen_core.paths import resolve_home
+
 from .supervision_state import SupervisionError
 
 #: The explorer's own settings, in the home of the person running it.
@@ -31,7 +33,7 @@ class TrustError(SupervisionError):
 
 def settings_path(home: str | Path | None = None) -> Path:
     """Where the explorer keeps its settings, under the home of the person running it."""
-    return (Path(home).expanduser() if home else Path.home()) / SETTINGS_RELATIVE
+    return (Path(home).expanduser() if home else resolve_home()) / SETTINGS_RELATIVE
 
 
 def ensure(folder: str | Path, *, settings: str | Path | None = None) -> dict:
