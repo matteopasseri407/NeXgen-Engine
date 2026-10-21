@@ -98,20 +98,52 @@ def _started(check: dict) -> str:
     return str(check.get("started_at") or check.get("startedAt") or "")
 
 
+#: The workflow run a check's link names: a rerun keeps it, a push run and a pull-request run do not share it.
+_RUN_ID = re.compile(r"/actions/runs/(\d+)")
+
+
+def _run_of(check: dict) -> str:
+    """The run a copy of a check belongs to, or '' when GitHub did not say."""
+    suite = (check.get("check_suite") or {}).get("id")
+    if suite:
+        return f"suite:{suite}"
+    found = _RUN_ID.search(str(check.get("details_url") or check.get("detailsUrl") or ""))
+    return f"run:{found.group(1)}" if found else ""
+
+
+def _weight(check: dict) -> int:
+    """How much one run's answer counts against another run's: running, red, green, skipped."""
+    state = check_state(check)
+    if state is None:
+        return 3
+    if state is False:
+        return 2
+    skipped = str(check.get("conclusion") or check.get("state") or "").upper() in ("SKIPPED", "NEUTRAL")
+    return 0 if skipped else 1
+
+
 def by_name(checks: Sequence[dict]) -> dict[str, dict]:
     """One check per name, the one a merge must wait for.
 
     The same commit carries a check twice when a push run and a pull-request run
-    both test it. A copy still running wins, so a green push run never stands in
-    for the pull request's own run that has not answered; otherwise the copy
-    that started last is the answer.
+    both test it. Inside one run the newest attempt is the answer (a copy still
+    running first), so a rerun of a failed job counts. Between runs a copy still
+    running wins, then a red one, then a green one, and a skipped one last: a
+    green or skipped push copy never stands in for the pull request's own red or
+    unanswered run (PR #126, PR #134).
     """
-    chosen: dict[str, dict] = {}
+    latest: dict[tuple[str, str], dict] = {}
     for check in checks:
         name = str(check.get("name") or check.get("context") or "?")
-        held = chosen.get(name)
+        key = (name, _run_of(check))
+        held = latest.get(key)
         if held is None or check_state(held) is not None and (
                 check_state(check) is None or _started(check) > _started(held)):
+            latest[key] = check
+    chosen: dict[str, dict] = {}
+    for (name, _run), check in latest.items():
+        held = chosen.get(name)
+        if held is None or (_weight(check), _started(check)) > (_weight(held), _started(held)):
             chosen[name] = check
     return chosen
 
