@@ -41,14 +41,22 @@ class PermissionProfileError(SupervisionError):
 def profile_rules(copy: str | Path, task: str | Path) -> list[dict]:
     """The ordered rules the executor runs under; the last match wins.
 
-    Edits are denied everywhere and then allowed in the two folders the unit
-    needs, so an edit outside them stays refused. Commands are allowed except
-    a push in its three spellings; the copy's own pushurl remains the hard stop
-    behind this one, because a shell carries the user's authority.
+    OpenCode matches an edit inside the session's own directory by its *relative*
+    path (`docs/a.md`, seen in a real permission request) and a path outside it
+    by its *canonical absolute* path (`C:/.../fuori/vietato.txt`, seen in
+    another); a relative path that leaves the directory but stays in the same
+    project worktree keeps its `..` form. So the rules allow the relative form,
+    deny every absolute form by its drive letter, deny the `..` form, and then
+    reopen exactly the task folder, which is where the unit writes its report.
+    A real tab proved all four outcomes; see the report. Commands are allowed
+    except a push in its three spellings; the copy's own pushurl remains the
+    hard stop behind this one, because a shell carries the user's authority.
     """
     return [
-        {"action": "edit", "resource": "*", "effect": "deny"},
-        {"action": "edit", "resource": _folder_glob(copy), "effect": "allow"},
+        {"action": "edit", "resource": _inside_glob(), "effect": "allow"},
+        {"action": "edit", "resource": _drive_glob(), "effect": "deny"},
+        {"action": "edit", "resource": _rooted_glob(), "effect": "deny"},
+        {"action": "edit", "resource": _parent_glob(), "effect": "deny"},
         {"action": "edit", "resource": _folder_glob(task), "effect": "allow"},
         {"action": "shell", "resource": "git push *", "effect": "deny"},
         {"action": "shell", "resource": "git -C * push *", "effect": "deny"},
@@ -220,6 +228,40 @@ def _ignore(folder: Path, name: str) -> tuple[bool, str]:
     return True, str(path)
 
 
-def _folder_glob(path: str | Path) -> str:
-    """An absolute folder as the slash-separated pattern the harness matches."""
-    return Path(path).resolve().as_posix() + "/*"
+def _inside_glob() -> str:
+    """Everything the session reaches by a relative path, which is the unit's copy.
+
+    A real permission request for a file in the copy asked for `docs/a.md`, never
+    for its absolute path, so `*` here is the copy and nothing else: the two
+    denies below take away the forms that leave it.
+    """
+    return "*"
+
+
+def _drive_glob() -> str:
+    """Every absolute path on a Windows drive: one letter, a colon, a slash.
+
+    A relative path cannot look like this (a colon is not a valid character in a
+    file name), so this is exactly "outside the copy, canonicalised".
+    """
+    return "?:/*"
+
+
+def _rooted_glob() -> str:
+    """Every absolute path that starts at a root, which on Windows is a UNC share."""
+    return "/*"
+
+
+def _parent_glob() -> str:
+    """A relative path that leaves the copy, which is the owner's checkout."""
+    return "../*"
+
+
+def _folder_glob(target: str | Path) -> str:
+    """One folder outside the copy, as the absolute pattern the harness matches.
+
+    The task folder sits beside the lane's state, outside the repository, so the
+    harness compares it in its canonical absolute form; the slash-separated
+    spelling is the one the permission request showed.
+    """
+    return Path(target).resolve().as_posix() + "/*"

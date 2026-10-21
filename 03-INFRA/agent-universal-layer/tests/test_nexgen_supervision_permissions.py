@@ -51,15 +51,37 @@ def copy(tmp_path):
 # --- il profilo scritto prima che la scheda si apra -------------------------
 
 
-def test_the_profile_denies_every_edit_and_allows_only_the_two_folders(task, copy):
-    rules = permissions.profile_rules(copy, state.open_task(task))
+def test_the_profile_allows_the_copy_by_relative_path_and_denies_the_absolute_forms(task, copy):
+    """La copia si raggiunge per percorso relativo; fuori restano solo le forme negate.
 
-    assert rules[0] == {"action": "edit", "resource": "*", "effect": "deny"}
-    assert rules[1] == {
-        "action": "edit", "resource": copy.resolve().as_posix() + "/*", "effect": "allow",
+    Una scheda vera ha chiesto `docs/a.md` per un file della copia e
+    `C:/.../fuori/vietato.txt` per uno fuori: due forme diverse, quindi due
+    gruppi di regole. Vince l'ultima che combacia, e la cartella del compito è
+    l'unica forma assoluta riaperta dopo le negazioni.
+    """
+    task_folder = state.open_task(task)
+    edit = [rule for rule in permissions.profile_rules(copy, task_folder) if rule["action"] == "edit"]
+
+    assert edit[0] == {"action": "edit", "resource": "*", "effect": "allow"}
+    assert edit[1] == {"action": "edit", "resource": "?:/*", "effect": "deny"}
+    assert edit[2] == {"action": "edit", "resource": "/*", "effect": "deny"}
+    assert edit[3] == {"action": "edit", "resource": "../*", "effect": "deny"}
+    assert edit[4] == {
+        "action": "edit", "resource": task_folder.resolve().as_posix() + "/*", "effect": "allow",
     }
-    assert rules[2]["effect"] == "allow"
-    assert rules[2]["resource"].startswith(str(state.open_task(task).resolve().as_posix()))
+
+
+def test_the_only_absolute_edit_allowance_is_the_task_folder(task, copy):
+    """`<copia>/*` non combaciava con niente: nessun permesso torna assoluto per la copia."""
+    rules = permissions.profile_rules(copy, state.open_task(task))
+    absolute = [
+        rule for rule in rules
+        if rule["action"] == "edit" and rule["effect"] == "allow" and ":" in rule["resource"]
+    ]
+
+    assert [rule["resource"] for rule in absolute] == [
+        state.open_task(task).resolve().as_posix() + "/*",
+    ]
 
 
 def test_a_command_is_allowed_unless_it_pushes(task):
