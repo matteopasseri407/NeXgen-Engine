@@ -1,18 +1,16 @@
-# Supervised tasks (phases 1, 2 and 3a)
+# Supervised tasks (phases 1, 2, 3a and 3b)
 
 A supervised job is one objective carried out by harness agents that the owner
 can watch: a frontier model writes the brief, an executor works in a window of
 its own harness, and the engine keeps the files, the money and the verdict.
-This document covers **phases 1, 2 and 3a**: the task folder, the visible
-windows, the cost register, the unit's working copy, the gates the engine runs
-before anybody reviews a diff, the review round, and publication. The LangGraph
-checkpoint and its resume belong to phase 3b: the state here is still the
-journal, and every step is a function the graph can wrap.
+This document covers **phases 1, 2, 3a and 3b**: the task folder, the visible
+windows, the cost register, the unit's working copy, the permissions the
+executor runs under, the gates the engine runs before anybody reviews a diff,
+the review round, publication, the resume graph, the scout and the rebase.
 
 **Status: preview.** The verbs work and are covered by tests, but the
-supervisor still drives every step, and phase 3b (harness permission profile,
-stall detection, resume, an optional allowed-models list) is not in yet. See
-"What the gates guarantee, and what they do not" below before relying on a PASS.
+supervisor still drives every step. See "What the gates guarantee, and what they
+do not" below before relying on a PASS.
 
 ## Where a task lives
 
@@ -36,9 +34,10 @@ execute goes to `07-richieste-proprietario.md`.
 
 The journal is the machine truth: `started`, `unit_created`, `unit_started`,
 `unit_queued`, `attached`, `harness_session_lost`, `unit_reworked`,
-`unit_collected`, `unit_reviewed`, `unit_published`. The Markdown files are what
-a person reads and writes; the engine never rewrites them, so an edit is not
-lost.
+`unit_model_refused`, `unit_stalled`, `unit_resumed`, `unit_rebased`,
+`unit_collected`, `unit_reviewed`, `unit_published`, and for the scout
+`scout_opened` and `scout_finished`. The Markdown files are what a person reads
+and writes; the engine never rewrites them, so an edit is not lost.
 
 
 ## The verbs
@@ -58,6 +57,13 @@ nexgen-local sup publish <id> <unit> --repo <checkout> --branch <branch> \
     [--remote origin] [--push | --push-with "<command>"]
 nexgen-local sup attach <id> <unit> --role esecutore --opencode-session <ses_...>
 nexgen-local sup costi <id>                                 # total, then by role and by unit
+nexgen-local sup costi                                     # the 5h, 7d and 30d windows
+nexgen-local sup permessi <id>                              # what the session waits on
+nexgen-local sup permessi <id> --per-profilo                # refuse everything waiting
+nexgen-local sup permessi <id> --reject <request> [--allow <request> | --always <request>]
+nexgen-local sup scout <id> "<question>"                    # the explorer, on a detached copy
+nexgen-local sup rebase <id> <unit>                          # realign on the base's current tip
+nexgen-local sup resume <id> [--repo <checkout> --branch <branch>] [--riparti]
 nexgen-local sup window-check                               # opens a visible window and leaves it open
 ```
 
@@ -114,8 +120,9 @@ opencode <worktree> --prompt "Sei l'esecutore dell'unità ... leggi il brief in 
 ```
 
 The prompt is a pointer to `20-brief-<unit>.md`, never the brief itself, and no
-`--auto` or `--dangerously-*` flag is ever passed: the model and the permissions
-stay what the owner configured.
+`--auto` or `--dangerously-*` flag is ever passed: the model stays what the owner
+configured, and the permissions are the profile described in the next section,
+written before the tab opens.
 
 The session that a new tab opens is found in `opencode session list --format
 json`, which reports `id`, `created` and `directory`: the newest session whose
@@ -136,6 +143,84 @@ engine tries the export once more, and if it still cannot read the session it
 says `sessione non verificabile, riprova` and opens nothing. Treating a
 transient failure as a lost session left two sessions running on the same work.
 
+## The executor's permissions
+
+The executor runs under a profile the engine writes before any session starts,
+because the profile is decided in advance rather than granted request by
+request. OpenCode 2 has no configuration environment variable: a project
+`opencode.json` in the working directory is the mechanism, so `sup run` and
+every review delivery write that file **inside the unit's copy**, keep every
+other key the owner put there (the model stays the owner's), and add the file to
+the copy's own `info/exclude`. A project that tracks `opencode.json` is refused
+instead of overwritten: the profile must not appear in a diff.
+
+The rules are an ordered list, and the last match wins:
+
+| action | resource | effect |
+|---|---|---|
+| `edit` | `*` | deny |
+| `edit` | `<copy>/*` | allow |
+| `edit` | `<task>/*` | allow |
+| `shell` | `git push *` | deny |
+| `shell` | `git -C * push *` | deny |
+| `shell` | `git -c * push *` | deny |
+
+Edits are refused everywhere and then allowed in the two folders the unit needs,
+so an edit outside them stays refused. Commands are allowed except a push in its
+three spellings, and nothing is auto-approved: a request the profile did not
+pre-answer is not granted by the engine. The copy's blocked `pushurl` remains the
+hard stop behind this one, because a shell carries the user's authority.
+
+`sup permessi <id>` lists what the task's session is waiting on
+(`opencode api session.permission.list`) without changing anything. A request
+can be answered one at a time with `--allow`, `--always` or `--reject`, or all at
+once with `--per-profilo`, which refuses everything: the profile already decided,
+so a question that still appears is outside it. Every answer goes into the
+journal as `permission_answered` with its decision.
+
+## Stalled sessions
+
+A session that is active and has not moved is the other way an executor
+disappears. `sup status` asks the harness for each unit still in progress, and
+calls it stalled when the session's `time.updated` is older than the lane's
+threshold **and** the unit's last journal row is older by the same amount: a
+session whose clock disagrees with this machine is not accused on that alone. A
+session the harness reports as stopped is finished, not stalled, and a session
+nobody can measure is left alone.
+
+The threshold is `supervision.stall_minutes`, twenty minutes when unwritten. One
+`unit_stalled` row is written per stillness, keyed by unit, session and the
+session's own last update, so asking again writes nothing; a session that moves
+and stalls again gets a new row, and a unit that comes back to work gets
+`unit_resumed`. The line reads:
+
+```
+unità <unit>: in stallo da 24.3 minuti (soglia 20), possibile richiesta di permesso o turno appeso
+```
+
+## The lane's settings
+
+The lane reads `~/.local/state/nexgen/local-lane/config.json` (under the
+engine's home when `NEXGEN_HOME` is set). Two keys are read today, both optional:
+
+```json
+{
+  "supervision": {
+    "allowed_models": ["provider/*", "provider/model"],
+    "stall_minutes": 20
+  }
+}
+```
+
+An empty or absent `allowed_models` means no restriction. A list that exists is
+matched against the tag the harness reports, `provider/model#variant`, with
+shell-style globs, so `provider/*` covers every model of that provider and every
+variant of each. With a list, `sup run` refuses a session outside it before
+anything is sent (`unit_model_refused`, naming the model) and `sup collect` fails
+the `modello consentito` gate on the same fact. A session nobody attached, or one
+whose model cannot be read, is not on a list that exists: "not verified" is not
+"allowed".
+
 ## The engine's gates
 
 `sup collect` judges the unit's `base..head` itself. The executor's report is
@@ -149,6 +234,7 @@ not evidence; every line below is read from git or run by the engine.
 | `prova per commit` | a `fix:` commit has no test that fails on its parent (`nexgen_core/discipline/regress.py`, reused) |
 | `verifica indipendente` | the declared command is missing or exits non-zero; it is one command with no shell operator (`&&`, `\|\|`, `\|`, `;`, `&`), its executable must come from outside the unit's copy, and a Python interpreter is started with `-P` and an environment cleaned of `PYTHONPATH`, `PYTHONSTARTUP`, `PYTHONHOME`, `PYTHONUSERBASE`, `PYTEST_ADDOPTS` and `PYTEST_PLUGINS` (the user site directory is left alone: it is outside the copy) |
 | `test raccolti` | pytest collects fewer tests on the head than on the base, or a collection cannot answer: both trees are exported with `git archive` (no `.git` in them), collected with `python -P -m pytest --collect-only -q` under the same cleaned environment, and each collection has a five-minute budget; an increase is normal |
+| `lint` | the project has `03-INFRA/scripts/ruff_baseline_check.py` and the copy adds a `(file, code)` finding group its committed baseline did not have; the copy only decides whether the gate exists and what its baseline allows, while the script that runs is the engine's own, so a unit cannot weaken the check |
 | `configurazione git` | either configuration file of the copy (the repository's shared `.git/config`, which every checkout reads, or the worktree's own `config.worktree`) changed since the unit was created, or the effective configuration carries a `url.*.insteadOf` / `url.*.pushInsteadOf` key the creation did not have; the file or the key is named |
 | `remoto intatto` | a remote of the creation is gone, added, points at another fetch URL or push URL, or one of its refs carries a commit of the unit's interval (the unit pushed); a branch that advanced for another reason is not a failure |
 | `albero pulito` | the unit's copy has uncommitted work |
@@ -212,8 +298,8 @@ the remotes before the verification runs, so a push made by the verification
 itself is not what it asks about.
 
 The defence for that layer is outside the gates: the harness permission profile
-of phase 3b, which denies the executor `git push` (and the shell it would need
-to reach it), and the supervisor's own review of the diff and the report. The
+the executor runs under, which denies `git push` (and the shell spellings that
+would reach it), and the supervisor's own review of the diff and the report. The
 gates make that review cheap and hard to fool by accident. They do not replace
 it, and no further text check added here would.
 
@@ -223,8 +309,9 @@ Residual limits this round leaves open:
   target of a rule the creation already carried is invisible, and only a new key
   is refused;
 - the shared `.git/config` is the owner's too: an owner who edits it while a
-  unit exists gets a FAIL naming the file, and the only way back is a new unit,
-  because the fingerprint is the creation's;
+  unit exists gets a FAIL naming the file. `sup rebase <id> <unit>` is the
+  explicit way to absorb that change: it re-fingerprints the configuration and
+  records it in the journal, so the next collection judges the new baseline;
 - `--prune` is refused as a token in `--push-with`, but a declared script can
   still run it; the post-push check catches the deletion after the fact, and the
   branch is gone from the remote by then;
@@ -339,6 +426,85 @@ what `origin` is. A shallow checkout cannot seed a different, empty remote: git
 itself refuses (`Failed to traverse parents`, then `shallow update not allowed`),
 and that is a property of the clone, not of the engine.
 
+## Resuming a task
+
+`sup resume <id>` walks a task through the steps the owner already runs by hand:
+`unità -> esecuzione -> raccolta -> revisione -> pubblicazione`. Every node calls
+the function the matching verb calls, so there is no second implementation of a
+step. The checkpoint is `60-ripresa.sqlite` in the task folder (LangGraph's
+`SqliteSaver`), and the identity of the run is `61-ripresa.json`: the SHA-256 of
+the task's objective and the SHA-256 of the unit's brief.
+
+The run stops where a person is needed and says so:
+
+| stop | meaning |
+|---|---|
+| `waiting_review` | collected PASS, waiting for `sup review` |
+| `waiting_session` | the task's session was busy: the unit is queued |
+| `rework` | the review sent corrections into the executor's round |
+| `waiting_publish` | approved, but no `--repo`/`--branch` named the owner's checkout |
+| `done` | the publication ran |
+
+A resume re-enters the step that stopped, not the one after it, so a wait is
+looked at again instead of skipped; a collection already done on the same head
+is not repeated, a session already attached is not sent to, and a finished run
+reruns nothing. The identity is checked before any step: a brief edited since
+the run started, a different unit, or a changed objective each refuse with their
+own reason, because continuing someone else's run is worse than stopping.
+`--riparti` throws the checkpoint away and opens a new run; it is also what a
+second unit on the same task needs, since one task holds one saved run.
+
+The publication node does nothing unless `--repo` and `--branch` name the
+owner's checkout: approval alone stops at `waiting_publish` and prints the
+command that remains. With both, it calls the same `sup publish`.
+
+## Realigning a unit
+
+`sup rebase <id> <unit>` puts the unit's branch back on the current tip of its
+base and records the new base in the journal, so `sup collect` and `sup publish`
+judge the right interval. On a base that advanced during the unit, the old base
+made collect see commits already on the remote as the unit's own; this command
+is the fix.
+
+It is a local rebase: the tip is read from the owner's checkout, and the engine
+fetches nothing. A base that was rewritten (the old base is no longer an ancestor
+of its new tip) is refused instead of replayed, because replaying it would
+publish history nobody reviewed. A published unit is refused: realigning it would
+rewrite commits the owner already has. Uncommitted work in the copy is refused
+before anything moves.
+
+A conflict runs `git rebase --abort`, leaves the copy exactly as it was, and
+names the files: a copy left half-rebased is a trap for whoever collects it
+next. On success the journal gains `unit_rebased` with the previous base, the new
+base, the head, and the refreshed fingerprint of `.git/config` and
+`config.worktree`. That fingerprint is also why the command exists beside the
+rebase: a legitimate change the owner made to the configuration is absorbed by
+one explicit command instead of forcing a new unit. A branch already on the new
+tip just records it, and a command that moves neither the base nor the
+configuration writes no row at all.
+
+## The scout
+
+`sup scout <id> "<question>"` gives the explorer (`agy`) a throwaway copy of the
+repository the task's first unit works on, at a fixed path:
+`<task>/24-ricognizione/`. The folder is recreated at every round with a plain
+clone and `checkout --detach <base>`, so the scout never inherits yesterday's
+edits and holds no branch whose work could be mistaken for the executor's.
+
+Before the tab opens, that exact path is added to `trustedWorkspaces` in
+`~/.gemini/antigravity-cli/settings.json` when it is not already there
+(atomic write, `.bak` kept, only that key touched). The path never changes, so
+one trust entry covers every round.
+
+The question goes into `25-brief-ricognizione.md`; the report the scout must
+write is `26-rapporto-ricognizione-<round>.md`, outside the copy. The tab runs
+this same engine in its scout role, which starts `agy --mode plan --prompt
+<pointer>`: plan mode is read-only, and the pointer keeps the brief in one file.
+At the end of the round the engine asks git whether the copy is where it started
+and holds nothing new (`git status --porcelain`, unchanged HEAD): a dirty copy or
+a moved head ends the round with exit 1 and a `scout_finished` row that lists
+what changed. The code check is the proof, not the scout's promise.
+
 ## What the engine refuses to execute
 
 An executor's report may ask for a force-push, a tag, a version bump or a
@@ -390,6 +556,13 @@ read/write), cost in dollars, and the source of the measurement. The source of
 this phase is `opencode session export <id>`, resolved through PATH and through
 the engine's Windows shim resolver.
 
+`sup costi` without an id shows what the harness archive says was spent in the
+last 5 hours, 7 days and 30 days: every session row in `session_v2` (or the old
+`session` table), children included, windowed by `time_updated`. The store is
+opened read-only, and a store that cannot be read makes the window unknown with
+the reason, never zero. **No budget rule lives in the engine:** the numbers are
+shown, and what to do about them stays the owner's decision.
+
 **Subagents are counted.** `opencode session export` and `session list` do not
 expose the sessions a subagent opened: `session list` lists top-level sessions
 only and the export's `info` has no parent field, so the child ids appear only
@@ -407,15 +580,10 @@ A source that does not answer still leaves a row, with `cost_usd: null` and a
 
 ## What these phases do not do
 
-- No LangGraph graph and no `sup resume`: the review and publish steps are plain
-  functions and the state is the journal, so a restart reads what happened and
-  phase 3b can wrap the same functions without re-deciding anything.
-- No per-role permission profile: an executor runs with the owner's OpenCode
-  configuration, which is why the engine never adds an auto-approval flag.
-- Only the OpenCode harness is measured. The scout (`agy`) and the supervisor
-  CLI stay unmeasured and would be recorded as unavailable.
 - No cleanup of old task folders or unit copies: the retention decision (30
   days) belongs to the same rule as research sessions and is not implemented.
+- Only the OpenCode harness is measured. The scout (`agy`) and the supervisor
+  CLI stay unmeasured and would be recorded as unavailable.
 - No tag and no release: `sup publish` never creates one, and a commit touching
   `VERSION` or `CHANGELOG.md` is refused by name. A release stays
   `nexgen release ship` from the owner's checkout.
