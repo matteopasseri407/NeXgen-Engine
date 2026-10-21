@@ -11,6 +11,7 @@ import sys
 from pathlib import Path
 
 from .. import supervision_costs as costs
+from .. import supervision_cleanup as cleanup
 from .. import supervision_gates as gates
 from .. import supervision_harness as harness
 from .. import supervision_publish as publish_module
@@ -293,6 +294,8 @@ def cmd_sup_collect(args: argparse.Namespace) -> int:
         print(f"{'PASS' if gate.ok else 'FAIL'} {gate.name}: {gate.reason}")
     print(f"pacchetto {result['package']}")
     print(f"grezzo {result['raw']}")
+    for note in cleanup.notes():
+        print(f"nota: {note}")
     for hit in result.get("requests") or []:
         print(f"richiesta al proprietario: {_request_line(hit)}")
     if result.get("request_section"):

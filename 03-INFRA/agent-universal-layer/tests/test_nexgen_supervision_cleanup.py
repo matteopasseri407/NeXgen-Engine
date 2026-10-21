@@ -212,6 +212,24 @@ def test_the_lines_do_not_invite_a_restart_while_a_session_works(lane, posix):
 # --- la riga informativa di `sup collect` e il verbo -------------------------
 
 
+def test_the_collect_note_counts_the_tabs_of_gone_tasks(lane, posix, monkeypatch):
+    rows = [_tab("20200101-000000-mai-esistito"), _tab("20200102-000000-mai-esistito", pid=101)]
+    monkeypatch.setattr(cleanup.processes, "rows", lambda: rows)
+
+    notes = cleanup.notes()
+
+    assert len(notes) == 1
+    assert "2" in notes[0] and "sup pulizia" in notes[0]
+
+
+def test_no_note_when_every_tab_belongs_to_a_task_that_is_still_there(lane, posix, monkeypatch):
+    task = _task(lane)
+    _unit(task)
+    monkeypatch.setattr(cleanup.processes, "rows", lambda: [_tab(task)])
+
+    assert cleanup.notes() == []
+
+
 def test_the_verb_lists_and_only_closes_when_asked(lane, posix, capsys, monkeypatch):
     task = _task(lane)
     _unit(task, approved=True)

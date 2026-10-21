@@ -18,6 +18,7 @@ from pathlib import Path
 from nexgen_core.files import secure_artifact, write_private_text
 
 from .config import lane_state_dir
+from .supervision_templates import brief_template, report_template
 
 #: Human-readable task files, one job each.
 OBJECTIVE_FILE = "00-obiettivo.md"
@@ -127,8 +128,8 @@ def start(objective: str, *, now: float | None = None) -> dict:
     folder = _fresh_folder(new_id(text, now=now))
     secure_artifact(folder)
     write_private_text(folder / OBJECTIVE_FILE, _objective_text(text, folder.name), exclusive=True)
-    write_private_text(folder / BRIEF_TEMPLATE, _brief_template(), exclusive=True)
-    write_private_text(folder / REPORT_TEMPLATE, _report_template(), exclusive=True)
+    write_private_text(folder / BRIEF_TEMPLATE, brief_template(), exclusive=True)
+    write_private_text(folder / REPORT_TEMPLATE, report_template(), exclusive=True)
     write_private_text(folder / JOURNAL_FILE, "", exclusive=True)
     append_event(folder.name, "started", objective=text)
     return {"id": folder.name, "path": folder, "objective": text}
@@ -417,78 +418,3 @@ def _objective_text(text: str, task_id: str) -> str:
         f"- id: {task_id}\n"
         f"- creato: {now_iso()}\n"
     )
-
-
-def _brief_template() -> str:
-    """The brief fields the supervisor must fill; every one is required."""
-    return """# Brief dell'unità <unità> — ruolo <ruolo>
-
-Chi inizia da zero, in una sessione nuova, non deve leggere altro.
-Compila ogni campo, cancella queste istruzioni.
-
-## Identificativo e ruolo
-<unità> · <ruolo>
-
-## Obiettivo
-Una riga sola.
-
-## Contesto minimo
-File e percorsi esatti, comandi, vincoli.
-
-- ...
-
-## Risultato atteso
-Il file o il commit che deve esistere alla fine.
-
-## Confine
-- File consentiti: ...
-- File vietati: ...
-
-## Verifica
-```
-<comando esatto>
-```
-
-## Fatto quando
-La condizione osservabile che chiude l'unità.
-
-## Cosa non fare
-Niente push, niente tag, niente test esistenti modificati o cancellati, niente bump di VERSION, CHANGELOG.md o .github.
-
-## Formato del resoconto atteso
-I campi di `30-resoconto-MODELLO.md`, solo fatti con la prova incollata.
-"""
-
-
-def _report_template() -> str:
-    """The report fields the executor must fill; every one is required."""
-    return """# Resoconto dell'unità <unità> — ruolo <ruolo>
-
-Solo fatti.
-Una dichiarazione senza la prova incollata non vale.
-
-## Stato
-fatto | bloccato
-
-## Commit sul ramo locale
-- <hash> <titolo>
-
-## File toccati
-| file | righe aggiunte | righe rimosse |
-|---|---|---|
-
-## Comandi eseguiti
-```
-<comando>
-<ultime righe del risultato, incollate>
-```
-
-## Test nuovi
-Quali sono e, quando l'unità è un fix, la prova che falliscono sul codice precedente.
-
-## Dubbi e richieste al proprietario
-Cosa chiedi, senza averlo eseguito in proprio.
-
-## Prossimo passo se bloccato
-Cosa serve per ripartire.
-"""

@@ -103,6 +103,25 @@ def unknown_count(*, table: list[dict] | None = None) -> int:
     return len([tab for tab in tabs(table=table) if tab.reason == GONE])
 
 
+def notes(*, table: list[dict] | None = None) -> list[str]:
+    """One informational line for `sup collect`: marked tabs of tasks the lane no longer has.
+
+    It is not a gate: a proof tab left open is noise and memory, not a defect of
+    the unit under review. Saying it once per collection is what makes it get
+    cleaned, and `sup pulizia` is the verb that does it.
+    """
+    try:
+        count = unknown_count(table=table)
+    except SupervisionError:  # nexgen: allow reason="una nota informativa che non si può calcolare non deve far fallire la raccolta"
+        return []
+    if not count:
+        return []
+    return [
+        f"schede marcate di compiti in una home temporanea ancora aperte: {count} "
+        "(`sup pulizia` le elenca e `sup pulizia --chiudi` le chiude)"
+    ]
+
+
 def lines(found: dict) -> list[str]:
     """The survey as lines a person reads, one fact each."""
     out = [f"schede da chiudere: {len(found['close'])}"]
