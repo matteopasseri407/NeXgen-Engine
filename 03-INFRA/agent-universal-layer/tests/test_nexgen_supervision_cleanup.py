@@ -209,6 +209,19 @@ def test_the_lines_do_not_invite_a_restart_while_a_session_works(lane, posix):
     assert any("non riavviare il servizio" in line for line in busy)
 
 
+def test_the_lines_do_not_invite_a_restart_while_a_worker_without_a_tab_runs(lane, posix):
+    """Anche una sessione senza scheda, come un `opencode run`, morirebbe col servizio."""
+    rows = [
+        _child(500, 1, "opencode", "opencode serve --service"),
+        _child(900, 1, "opencode.exe", "opencode run -s ses_ea2b01bd6fprova leggi il brief"),
+    ]
+
+    busy = cleanup.lines(cleanup.survey(table=rows))
+
+    assert any("non riavviare il servizio" in line for line in busy)
+    assert not any("si può riavviare" in line for line in busy)
+
+
 # --- la riga informativa di `sup collect` e il verbo -------------------------
 
 

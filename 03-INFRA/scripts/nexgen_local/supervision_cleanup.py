@@ -135,12 +135,25 @@ def lines(found: dict) -> list[str]:
             f"server condiviso: pid {item['pid']} · {item['children']} processi figli"
         )
     if found["server"]:
-        active = [tab for tab in found["keep"] if tab.reason == OPEN]
-        out.append(
-            "nessuna sessione attiva: si può riavviare il servizio" if not active
-            else f"{len(active)} sessioni del supervisore sono aperte: non riavviare il servizio ora"
-        )
+        out.append(_restart_advice(found))
     return out
+
+
+def _restart_advice(found: dict) -> str:
+    """Whether the shared server can be restarted now: only when nothing is running on it.
+
+    A session is active when a marked tab of an open task exists, or when an
+    `opencode` worker with no tab is still running: restarting the server would
+    stop either of them, and the engine does not invite an owner to do that.
+    """
+    open_tabs = [tab for tab in found["keep"] if tab.reason == OPEN]
+    workers = [
+        row for row in found["unmarked"]
+        if str(row.get("name") or "").lower().startswith("opencode")
+    ]
+    if open_tabs or workers:
+        return "sessioni ancora attive: non riavviare il servizio ora"
+    return "nessuna sessione attiva: si può riavviare il servizio"
 
 
 def closed_lines(result: dict) -> list[str]:
