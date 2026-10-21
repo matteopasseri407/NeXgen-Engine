@@ -129,11 +129,38 @@ def _requested_protocol(req: dict[str, Any]) -> str | None:
 
 _OUT_LOCK = threading.Lock()
 
+#: How many tool calls may be in flight at once (`LAZY_MCP_MAX_CONCURRENCY`). The reader takes
+#: the slot before it dispatches, so a request over the cap is refused at once instead of queued.
+_SLOTS = threading.BoundedSemaphore(MAX_CONCURRENT_REQUESTS)
+
+#: The slot the request this thread is answering owns. It is handed back before the reply leaves,
+#: not after, so "the client has read the reply" implies "that capacity is free again".
+_REQUEST_SLOT = threading.local()
+
+
+def _release_request_slot() -> None:
+    """Give this thread's request slot back, once: both the reply path and the worker's `finally`
+    call it, and only the first call does anything.
+
+    Releasing only after the handler returned let a call sent immediately after a reply find the
+    slot still taken: `test_excess_concurrent_calls_get_structured_refusals` saw the slow call
+    itself refused with -32000 in CI under `-n auto` (`assert 2 in (3, 4, 5)`). The cap counts
+    work in flight, and a request whose reply is already on the wire is not in flight any more.
+    """
+    if getattr(_REQUEST_SLOT, "held", False):
+        _REQUEST_SLOT.held = False
+        _SLOTS.release()
+
 
 def _emit(message: dict[str, Any]) -> None:
-    """Replies come from several threads now; one line must never interleave with another."""
+    """Replies come from several threads now; one line must never interleave with another.
+
+    The request's slot is given back first: its reply is the last thing its handler does, and a
+    client that can read that line must then be able to send the next call without being refused.
+    """
     line = json.dumps(message) + "\n"
     with _OUT_LOCK:
+        _release_request_slot()
         sys.stdout.write(line)
         sys.stdout.flush()
 
@@ -232,9 +259,6 @@ def _handle(req: dict[str, Any], waiter) -> None:
     _error(req_id, -32601, f"method not found: {method}")
 
 
-_SLOTS = threading.BoundedSemaphore(MAX_CONCURRENT_REQUESTS)
-
-
 def _respond_request_too_large(raw_line: str) -> None:
     """The request exceeded MAX_REQUEST_BYTES: answer instead of hanging the client."""
     try:
@@ -269,10 +293,11 @@ def _dispatch(req: dict[str, Any], waiter) -> None:
         return
 
     def run() -> None:
+        _REQUEST_SLOT.held = True
         try:
             _guarded(req, waiter)
         finally:
-            _SLOTS.release()
+            _release_request_slot()
 
     threading.Thread(target=run, daemon=True, name="lazy-mcp-request").start()
 
