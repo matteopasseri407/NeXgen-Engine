@@ -264,6 +264,7 @@ UNIT_EVENTS = {
     "unit_reworked": "in corso",
     "unit_stalled": "in stallo",
     "unit_resumed": "in corso",
+    "unit_rebased": "in corso",
     "unit_model_refused": "rifiutata",
     "unit_collected": "raccolta",
     "unit_reviewed": "revisione",
@@ -305,26 +306,33 @@ def _blank_unit(unit: str) -> dict:
         "unit": unit, "role": "", "harness": "", "session": "", "at": "",
         "state": "", "verdict": "", "collected_head": "", "review_round": 0,
         "approved": False, "approved_head": "", "published": [], "model": "",
-        "stalled_minutes": 0.0, "stall_threshold": 0.0,
+        "stalled_minutes": 0.0, "stall_threshold": 0.0, "repo": "", "base_ref": "",
     }
+
+
+def _fold_creation(record: dict, row: dict) -> None:
+    """What `unit_created` says: the copy, its branch, the base it started from and the scope it may touch."""
+    record.update({
+        "role": "esecutore",
+        "repo": str(row.get("repo") or ""),
+        "base_ref": str(row.get("base_ref") or ""),
+        "worktree": str(row.get("worktree") or ""),
+        "branch": str(row.get("branch") or ""),
+        "base": str(row.get("base") or ""),
+        "allow": [str(item) for item in row.get("allow") or []],
+        "verify": str(row.get("verify") or ""),
+        "remotes": dict(row.get("remotes") or {}),
+        "remote_urls": dict(row.get("remote_urls") or {}),
+        "remote_pushurls": dict(row.get("remote_pushurls") or {}),
+        "config_hashes": dict(row.get("config_hashes") or {}),
+        "url_override_keys": [str(key) for key in row.get("url_override_keys") or []],
+    })
 
 
 def _fold_event(record: dict, row: dict, event: str) -> None:
     """What one journal row says about the unit, folded into its entry."""
     if event == "unit_created":
-        record.update({
-            "role": "esecutore",
-            "worktree": str(row.get("worktree") or ""),
-            "branch": str(row.get("branch") or ""),
-            "base": str(row.get("base") or ""),
-            "allow": [str(item) for item in row.get("allow") or []],
-            "verify": str(row.get("verify") or ""),
-            "remotes": dict(row.get("remotes") or {}),
-            "remote_urls": dict(row.get("remote_urls") or {}),
-            "remote_pushurls": dict(row.get("remote_pushurls") or {}),
-            "config_hashes": dict(row.get("config_hashes") or {}),
-            "url_override_keys": [str(key) for key in row.get("url_override_keys") or []],
-        })
+        _fold_creation(record, row)
     elif event in ("unit_started", "unit_queued"):
         record.update({
             "session": str(row.get("session") or record["session"]),
@@ -362,6 +370,13 @@ def _fold_event(record: dict, row: dict, event: str) -> None:
     elif event == "unit_resumed":
         record["stalled_minutes"] = 0.0
         record["stall_threshold"] = 0.0
+    elif event == "unit_rebased":
+        record.update({
+            "base": str(row.get("base") or record["base"]),
+            "head": str(row.get("head") or ""),
+            "config_hashes": dict(row.get("config_hashes") or {}),
+            "url_override_keys": [str(key) for key in row.get("url_override_keys") or []],
+        })
     elif event == "unit_published":
         record["published"] = [str(item) for item in row.get("commits") or []]
         record["published_head"] = str(row.get("head") or "")
