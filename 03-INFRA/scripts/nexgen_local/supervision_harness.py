@@ -30,6 +30,8 @@ POLL_S = 2.0
 #: Clock slack between this process and the harness's own timestamps.
 CREATED_SLACK_MS = 5000
 LIST_TIMEOUT_S = 120.0
+#: The journal events that say whether the tab the engine opened is still there.
+TAB_EVENTS = ("tab_closed", "tab_left_open")
 
 class HarnessError(SupervisionError):
     """The harness is missing, its session list is unreadable, or the unit has no copy to run in."""
@@ -132,6 +134,7 @@ def _deliver(
         return _enter_the_session(
             task_id, unit, session, folder, prompt, runner or _run_in_session,
             measure or costs.measure, event=event, extra=extra, allowed=allowed, model=model,
+            opener=opener,
         )
     except SessionLost as lost:
         state.append_event(
@@ -194,13 +197,15 @@ def find_session(
 
 def _enter_the_session(
     task_id: str, unit: str, session: str, folder: Path, prompt: str, runner, measure,
-    *, event: str, extra: dict, allowed: tuple[str, ...] = (), model: str = "",
+    *, event: str, extra: dict, allowed: tuple[str, ...] = (), model: str = "", opener=None,
 ) -> dict:
     """Send work into the task's own session, or queue it when that session is busy.
 
     A session the harness cannot report is not a busy session: it is gone, and
     queueing on it would leave the unit waiting on nothing for ever. A session
-    on a model outside the owner's list is refused before anything is sent.
+    on a model outside the owner's list is refused before anything is sent. When
+    the engine closed this task's tab, the work goes into a tab again: a worker
+    the owner cannot see is what this engine exists to prevent.
     """
     facts = _measure_or_lost(measure, session)
     running = str(getattr(facts, "model", "") or "")
@@ -222,6 +227,11 @@ def _enter_the_session(
             reason=reason, **extra,
         )
         return {"unit": unit, "mode": "queued", "session": session, "reason": reason}
+    if _tab_closed(task_id):
+        return _reopen_tab(
+            task_id, unit, session, folder, prompt,
+            event=event, extra=extra, opener=opener, model=model,
+        )
     proc = runner(session, prompt, folder, model)
     state.append_event(
         task_id, event, unit=unit, harness="opencode", session=session, mode="run",
@@ -305,6 +315,51 @@ def _model_of(session: dict, measure, allowed: tuple[str, ...]) -> str:
     except costs.CostError:  # nexgen: allow reason="an export that just failed is reported as an unknown model, which a list refuses"
         return ""
     return str(getattr(facts, "model", "") or "")
+
+
+def _reopen_tab(
+    task_id: str, unit: str, session: str, folder: Path, prompt: str, *,
+    event: str, extra: dict, opener, model: str = "",
+) -> dict:
+    """The tab the engine closed is opened again on the session the task already has.
+
+    `opencode <folder> -s <session> --prompt "<pointer>"` is the TUI on an
+    existing session (verified against OpenCode 2's own `--session` flag), so
+    the owner watches the corrections arrive instead of a hidden `run`.
+    """
+    handle = (opener or windows.open_window)(
+        f"esecutore · {unit}",
+        [_opencode_executable(), str(folder), "-s", session, "--prompt", prompt],
+        cwd=folder, marker=windows.tab_marker(task_id, "esecutore"),
+    )
+    state.append_event(
+        task_id, event, unit=unit, harness="opencode", window=str(handle.get("title", "")),
+        mode="tab", session=session, reopened=True, **extra,
+    )
+    row = costs.record(task_id, unit, "esecutore", session, window=windows.WINDOW_NAME)
+    result = {
+        "unit": unit, "mode": "tab", "session": {"id": session}, "window": handle,
+        "row": row, "reopened": True,
+    }
+    if model:
+        result["model_requested"] = model
+        result["model_applied"] = False
+    return result
+
+
+def _tab_closed(task_id: str, role: str = "esecutore") -> bool:
+    """Whether the engine's own last word on this tab is that it closed it.
+
+    The journal records what the engine did: after `tab_closed` the next
+    delivery has no window to run in, and a review round must open one. A tab
+    the owner closed by hand is not in this journal, and there the engine still
+    delivers with `opencode run`: it has no way to know.
+    """
+    last = ""
+    for row in state.read_events(task_id):
+        if row.get("event") in TAB_EVENTS and str(row.get("role") or "") == role:
+            last = str(row["event"])
+    return last == "tab_closed"
 
 
 def _run_in_session(session: str, prompt: str, folder: Path, model: str = ""):

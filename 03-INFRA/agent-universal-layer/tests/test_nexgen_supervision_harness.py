@@ -525,3 +525,54 @@ def test_corrections_can_be_resent_on_a_model_the_owner_names(task, unit, monkey
     assert result["model"] == "opencode-go/deepseek-v4.1-flash"
     assert result["model_applied"] is True
 
+def test_a_delivery_after_the_engine_closed_the_tab_reopens_it_on_that_session(task, unit, monkeypatch):
+    """Dopo la chiusura il lavoro non torna invisibile: si riapre una scheda sulla stessa sessione."""
+    _attached(task, "prima", "ses_libera")
+    state.append_event(task, "tab_closed", role="esecutore", pids=[1])
+    review_file = unit.parent / "45-revisione-prova-1.md"
+    review_file.write_text("# Revisione\n\ncorrezioni\n", encoding="utf-8")
+    opened: list = []
+    monkeypatch.setattr(harness, "_opencode_executable", lambda: "opencode-finto")
+    monkeypatch.setattr(
+        harness.costs, "record",
+        lambda task_id, unit_name, role, session_id, **kwargs: {
+            "session": session_id, "unit": unit_name, "cost_usd": 0.0,
+        },
+    )
+
+    result = harness.send_corrections(
+        task, "prova", review_file, 1,
+        opener=lambda title, argv, *, cwd, marker="": opened.append(argv) or {"title": title, "pid": 6},
+        runner=lambda *a: pytest.fail("nessun `run` invisibile dopo la chiusura"),
+        measure=lambda session: SimpleNamespace(stopped=True), lister=lambda: [], wait_s=0,
+    )
+
+    assert opened[0][:5] == ["opencode-finto", str(unit), "-s", "ses_libera", "--prompt"]
+    assert str(review_file) in opened[0][5], "la scheda riapre la sessione che c'è, non ne crea una"
+    assert result["mode"] == "tab" and result["reopened"] is True
+    assert result["session"] == {"id": "ses_libera"}
+    reworked = [row for row in state.read_events(task) if row.get("event") == "unit_reworked"]
+    assert reworked[-1]["mode"] == "tab" and reworked[-1]["session"] == "ses_libera"
+
+
+def test_a_delivery_with_the_tab_still_open_stays_off_the_screen(task, unit, monkeypatch):
+    """La sessione ha già la sua scheda: le correzioni entrano con `run`, senza aprirne una seconda."""
+    _attached(task, "prima", "ses_libera")
+    review_file = unit.parent / "45-revisione-prova-1.md"
+    review_file.write_text("# Revisione\n\ncorrezioni\n", encoding="utf-8")
+    monkeypatch.setattr(
+        harness.costs, "record",
+        lambda task_id, unit_name, role, session_id, **kwargs: {
+            "session": session_id, "unit": unit_name, "cost_usd": 0.0,
+        },
+    )
+    sent: list = []
+
+    result = harness.send_corrections(
+        task, "prova", review_file, 1,
+        opener=lambda *a, **k: pytest.fail("la scheda è già aperta"),
+        runner=lambda session, prompt, folder, model="": sent.append(session) or SimpleNamespace(pid=3),
+        measure=lambda session: SimpleNamespace(stopped=True), lister=lambda: [], wait_s=0,
+    )
+
+    assert result["mode"] == "run" and sent == ["ses_libera"]

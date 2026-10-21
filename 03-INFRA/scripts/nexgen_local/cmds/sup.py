@@ -388,12 +388,14 @@ def _print_refusal(result: dict) -> int:
 
 def _delivery_line(delivery: dict) -> str:
     """Where the corrections went, and whether the owner's model reached them."""
+    session = delivery.get("session")
+    session_id = str(session.get("id") if isinstance(session, dict) else session or "")
     if delivery["mode"] == "queued":
-        line = f"correzioni in coda: {delivery['reason']} sulla sessione {delivery['session']}"
+        line = f"correzioni in coda: {delivery['reason']} sulla sessione {session_id}"
     elif delivery["mode"] == "run":
-        line = f"correzioni inviate alla sessione {delivery['session']} (pid {delivery['pid']})"
+        line = f"correzioni inviate alla sessione {session_id} (pid {delivery['pid']})"
     else:
-        line = f"finestra aperta per le correzioni sulla sessione {delivery.get('session')}"
+        line = f"finestra aperta per le correzioni sulla sessione {session_id}"
     if delivery.get("model"):
         line += f" · modello {delivery['model']}"
     elif delivery.get("model_requested"):

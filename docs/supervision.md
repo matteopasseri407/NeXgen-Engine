@@ -49,7 +49,7 @@ nexgen-local sup status <id>                                # units, states, ver
 nexgen-local sup unit <id> <unit> --repo <checkout> --base <ref> --brief <file> \
     --allow 'docs/*.md' [--allow ...] [--verify "<command>"]
 nexgen-local sup run <id> <unit>                            # the executor's window
-nexgen-local sup collect <id> <unit>                        # the engine's gates, exit 1 on FAIL
+nexgen-local sup collect <id> <unit>                        # the engine's gates, then the cost, then its tab closes
 nexgen-local sup review <id> <unit> --approve "<why>"       # one review round, APPROVA
 nexgen-local sup review <id> <unit> --rework <file>         # one review round, RIMANDA
 nexgen-local sup review <id> <unit> --resend [-m <model>]        # deliver the last round that never arrived
@@ -387,7 +387,37 @@ a new tab says the model was not applied: the tab takes the model from the
 owner's configuration.
 
 `sup status` shows, per unit, the review round, whether it is approved, and the
-published head with its branch.
+published head with its branch. It also shows the cost of the unit and of the
+task in one form, the same sentence `sup collect` prints:
+
+```
+costo: giro 0.0047 $, unità 0.0047 $, compito 0.0047 $ (modello opencode-go/…)
+```
+
+The three numbers are measured at the collection: the round is what the session
+grew since the round's own delivery started, the unit is what it grew since the
+unit's first attach, and the task is the live session plus the sessions that
+ended before it. A figure that cannot be read is said in words, never written as
+zero.
+
+## The end of a unit's work
+
+When a unit is collected the engine does the two things a finished worker owes:
+it says what the work cost and it gets out of the way. `sup collect` measures
+the session through the harness (children included), writes the same line into
+the journal (`unit_collected` carries the numbers), into `40-pacchetto-<unit>.md`
+and into its own output, and then closes the executor's tab with the rules of
+the next section: never while the session is still writing, never while another
+unit of the task can still work, never a tree that holds the shared server.
+
+After that closure a review must not run without a window. `sup review --rework`
+and `--resend` check the journal: when the engine's own last word on the tab is
+`tab_closed`, the corrections go into a visible tab opened on the session the
+task already has (`opencode <copy> -s <session> --prompt "<pointer>"`, OpenCode
+2's own resume flag), not into a hidden `opencode run`. When the tab is still
+open the delivery stays off the screen, as before. A model named with
+`--resend -m` cannot travel into a tab, and the verb says it was not applied.
+
 
 ## Publishing
 
