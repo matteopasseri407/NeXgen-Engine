@@ -15,6 +15,7 @@ from types import SimpleNamespace
 import pytest
 
 from nexgen_local import supervision_gates as gates
+from nexgen_local import supervision_lint as lint
 from nexgen_local import supervision_state as state
 from nexgen_local import supervision_worktree as worktree
 
@@ -28,6 +29,7 @@ GATE_NAMES = (
     "prova per commit",
     "verifica indipendente",
     "test raccolti",
+    "lint",
     "modello consentito",
     "configurazione git",
     "remoto intatto",
@@ -816,3 +818,92 @@ def test_a_unit_that_touches_no_test_has_nothing_to_compare(task, repo, tmp_path
     gate = _gate(result, "test raccolti")
     assert gate.ok, gate.reason
     assert "niente da confrontare" in gate.reason
+
+
+# --- il cancello lint -------------------------------------------------------
+
+#: Le codice che la baseline del progetto finto già conosce.
+BASELINE_CODES = ("F401",)
+
+#: Un ruff finto: stampa i risultati che gli sono stati dati e accetta gli argomenti veri.
+STUB_RUFF = """
+import json, sys
+from pathlib import Path
+
+findings = [
+    {"filename": str(Path.cwd() / "03-INFRA" / "scripts" / "x.py"), "code": code}
+    for code in __CODES__
+]
+print(json.dumps(findings))
+raise SystemExit(1 if findings else 0)
+"""
+
+
+def _lint_project(repo, baseline=()) -> None:
+    """Il progetto guadagna il suo cancello lint: lo script e una baseline già scritta."""
+    repo.write("03-INFRA/scripts/ruff_baseline_check.py", "# il cancello lint del progetto\n")
+    repo.write("03-INFRA/ruff-baseline.json", json.dumps([
+        {"file": "03-INFRA/scripts/x.py", "code": code, "count": 1} for code in baseline
+    ]) + "\n")
+    repo.commit("base con il cancello lint")
+
+
+def _stub_ruff(monkeypatch, tmp_path, codes) -> None:
+    stub = tmp_path / "ruff_finto.py"
+    stub.write_text(STUB_RUFF.replace("__CODES__", repr(tuple(codes))), encoding="utf-8")
+    monkeypatch.setenv("RUFF_CMD", json.dumps([sys.executable, str(stub)]))
+
+
+
+def test_a_copy_without_the_lint_gate_says_so_and_passes(task, repo, tmp_path):
+    folder = _unit(task, repo, tmp_path)
+    _commit(folder, "docs: aggiunge una riga", {"docs/guida.md": "# guida\n\nriga.\n"})
+
+    result = gates.collect(task, "prova")
+
+    gate = _gate(result, "lint")
+    assert gate.ok
+    assert "non ha 03-INFRA/scripts/ruff_baseline_check.py" in gate.reason
+    assert result["verdict"] == "PASS"
+
+
+def test_lint_debt_already_in_the_baseline_does_not_fail(task, repo, tmp_path, monkeypatch):
+    _lint_project(repo, baseline=BASELINE_CODES)
+    folder = _unit(task, repo, tmp_path)
+    _commit(folder, "docs: aggiunge una riga", {"docs/guida.md": "# guida\n\nriga.\n"})
+    _stub_ruff(monkeypatch, tmp_path, BASELINE_CODES)
+
+    result = gates.collect(task, "prova")
+
+    gate = _gate(result, "lint")
+    assert gate.ok, gate.reason
+    assert "nessuna regressione" in gate.reason
+    assert result["verdict"] == "PASS"
+
+
+def test_a_new_lint_finding_fails_the_gate_and_is_named(task, repo, tmp_path, monkeypatch):
+    _lint_project(repo)
+    folder = _unit(task, repo, tmp_path)
+    _commit(folder, "docs: aggiunge una riga", {"docs/guida.md": "# guida\n\nriga.\n"})
+    _stub_ruff(monkeypatch, tmp_path, BASELINE_CODES)
+
+    result = gates.collect(task, "prova")
+
+    gate = _gate(result, "lint")
+    assert not gate.ok
+    assert "regressione" in gate.reason
+    assert "03-INFRA/scripts/x.py" in gate.detail
+    assert result["verdict"] == "FAIL"
+
+
+def test_the_gate_runs_the_engines_script_not_the_one_in_the_copy(task, repo, tmp_path):
+    """La copia non può fornire il proprio verificatore: lo script del motore vince."""
+    _lint_project(repo)
+    folder = _unit(task, repo, tmp_path)
+
+    script = lint.script_for(folder)
+
+    assert script is not None
+    assert not script.resolve().is_relative_to(folder.resolve())
+    assert script.name == "ruff_baseline_check.py"
+

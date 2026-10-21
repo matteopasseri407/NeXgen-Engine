@@ -10,9 +10,7 @@ engine will never execute, so the owner finds them in `07-richieste-proprietario
 from __future__ import annotations
 
 import importlib.util
-import os
 import re
-import shutil
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -24,27 +22,20 @@ from nexgen_core.discipline.config import ConfigError
 from nexgen_core.discipline.gitutil import GitError, changes as changed_files, diff_text, git
 from nexgen_core.discipline.integrity import check_test_integrity
 from nexgen_core.discipline.violations import TEST_PATH
-from nexgen_core.processes import no_window_kwargs, split_command_line, windows_command_argv
+from nexgen_core.processes import no_window_kwargs
 
 from . import supervision_costs as costs
 from . import supervision_gitconfig as gitconfig
+from . import supervision_lint as lint
 from . import supervision_policy as policy
 from . import supervision_pytest as pytest_runs
 from . import supervision_requests as requests_module
 from . import supervision_state as state
+from . import supervision_verify as verify
 from .supervision_state import SupervisionError
 from .supervision_package import DIFF_MAX_LINES, package_text, raw_text  # noqa: F401  DIFF_MAX_LINES: re-exported, the gate tests read it here
 from .supervision_worktree import BLOCKED_PUSH_URL, push_urls, refs_at, remote_urls
 
-#: The declared budget for the executor's own verification command.
-VERIFY_TIMEOUT_S = 600.0
-#: Shell operators the verification command may not carry: it is one command, not a script.
-SHELL_OPERATORS = ("&&", "||", "|", ";", "&")
-#: Suffixes Windows tries for a bare name, in the order the loader tries them.
-WINDOWS_EXECUTABLE_SUFFIXES = (".exe", ".cmd", ".bat", ".com")
-#: A Python interpreter by name; its `-m` would put the working directory on `sys.path`.
-PYTHON_EXECUTABLE = re.compile(r"^python(\d+(\.\d+)*)?(\.exe)?$", re.IGNORECASE)
-PYTHON_LAUNCHER = re.compile(r"^py(\.exe)?$", re.IGNORECASE)
 #: The budget for re-running the touched test files to see what this platform skips.
 SKIP_TIMEOUT_S = 300.0
 #: Published identity a unit may never carry, unless its own scope says otherwise.
@@ -68,9 +59,7 @@ def collect(task_id: str, unit: str) -> dict:
     """Judge the unit's branch with the engine's gates and write what a reviewer reads."""
     record = state.unit_record(task_id, unit)
     name = record["unit"]
-    folder = Path(record.get("worktree") or "")
-    if not folder.is_dir():
-        raise SupervisionError(f"copia dell'unità sparita: {folder}")
+    folder = _copy_of(record)
     base, branch = str(record.get("base") or ""), str(record.get("branch") or "")
     if not base or not branch:
         raise SupervisionError(f"unità {name} senza base o ramo nel diario: rifai `sup unit`")
@@ -92,6 +81,7 @@ def collect(task_id: str, unit: str) -> dict:
         _per_commit_gate(folder, rules, base, head),
         _verify_gate(folder, str(record.get("verify") or "")),
         _collected_tests_gate(folder, base, head, files, surface),
+        _lint_gate(folder),
         _model_gate(record),
         _git_config_gate(record, folder),
         remote,
@@ -124,6 +114,14 @@ def collect(task_id: str, unit: str) -> dict:
         "requests": request_scan["requests"],
         "request_section": requests_module.section_status(request_scan),
     }
+
+
+def _copy_of(record: dict) -> Path:
+    """The unit's working copy as the journal names it; a vanished one is an error."""
+    folder = Path(record.get("worktree") or "")
+    if not folder.is_dir():
+        raise SupervisionError(f"copia dell'unità sparita: {folder}")
+    return folder
 
 
 def head_of(folder: Path, branch: str) -> str:
@@ -302,54 +300,10 @@ def _remote_config_gate(record: dict, folder: Path) -> tuple[GateResult | None, 
 def _verify_gate(folder: Path, command: str) -> GateResult:
     """The executor's declared command, run by the engine with its own launch rules.
 
-    Two things are refused before anything runs. The command is one command, not
-    a shell line: `&&`, `||`, `|`, `;` and `&` are not supported, and a verifier
-    that needs several steps writes a script. And the executable must not come
-    from the unit's own copy: Windows looks in the working directory before PATH,
-    so a `pytest.bat` dropped in the copy would answer for the real runner. A
-    Python interpreter is started with `-P`: without it `python -m pytest` puts
-    the working directory first on `sys.path` and imports the copy's own
-    `pytest.py`, which is the same bypass by another name. `-P` does not touch
-    `PYTHONPATH`, so the environment is cleaned too: the copy decides nothing
-    about what the interpreter imports.
+    The launch rules themselves live in `supervision_verify`; this is only the
+    gate's name and its place in the verdict.
     """
-    if not command.strip():
-        return GateResult(
-            "verifica indipendente", False,
-            "nessun comando di verifica dichiarato: senza, il motore non può dire verificato",
-        )
-    argv = split_command_line(command)
-    shell = [token for token in argv if token in SHELL_OPERATORS]
-    if shell:
-        return GateResult(
-            "verifica indipendente", False,
-            f"il comando di verifica contiene {', '.join(shell)}: non passa da una shell. "
-            "Scrivi uno script o un solo comando",
-        )
-    inside = _executable_inside(argv, folder)
-    if inside is not None:
-        return GateResult(
-            "verifica indipendente", False,
-            f"l'eseguibile `{argv[0]}` della verifica sta dentro la copia dell'unità ({inside}): "
-            "un esecutore non può fornire il proprio verificatore. Usa un interprete o un runner fuori dalla copia",
-        )
-    try:
-        done = subprocess.run(
-            windows_command_argv(_launch_argv(argv)), cwd=folder, capture_output=True, text=True,
-            encoding="utf-8", errors="replace", stdin=subprocess.DEVNULL, env=pytest_runs.cleaned_environment(),
-            timeout=VERIFY_TIMEOUT_S, check=False, **no_window_kwargs(),
-        )
-    except subprocess.TimeoutExpired:
-        return GateResult("verifica indipendente", False, f"tempo massimo superato ({VERIFY_TIMEOUT_S:.0f}s)")
-    except OSError as exc:
-        return GateResult("verifica indipendente", False, f"comando non avviato ({type(exc).__name__}: {exc})")
-    output = (done.stdout + done.stderr).strip()
-    if done.returncode:
-        return GateResult(
-            "verifica indipendente", False,
-            f"`{command}` esce con {done.returncode}: {_last_line(output)}", output,
-        )
-    return GateResult("verifica indipendente", True, f"`{command}` esce con 0", output)
+    return GateResult("verifica indipendente", *verify.run(folder, command))
 
 
 def _collected_tests_gate(folder: Path, base: str, head: str, files: list, surface: list[str]) -> GateResult:
@@ -362,44 +316,16 @@ def _collected_tests_gate(folder: Path, base: str, head: str, files: list, surfa
     return GateResult("test raccolti", ok, reason)
 
 
-def _launch_argv(argv: list[str]) -> list[str]:
-    """The verification argv, with `-P` when it starts a Python interpreter.
+def _lint_gate(folder: Path) -> GateResult:
+    """Ruff on the copy, against the copy's own baseline: new lint debt fails, old debt is not this gate's job.
 
-    Python 3.11 answers `-P` with "do not prepend the working directory to
-    `sys.path`". The engine's own Python requirement is 3.11, so the flag is
-    always available where the engine runs.
+    The decision and the run live in `supervision_lint`; here it is only one more
+    line in the verdict. `RUFF_CMD` is left alone: it is the lint script's own
+    documented test hook, and it comes from the engine's environment, which no
+    unit can write.
     """
-    if not argv:
-        return []
-    name = Path(argv[0]).name
-    if PYTHON_EXECUTABLE.match(name) or (os.name == "nt" and PYTHON_LAUNCHER.match(name)):
-        return [argv[0], "-P", *argv[1:]]
-    return list(argv)
-
-
-def _executable_inside(argv: list[str], folder: Path) -> Path | None:
-    """The file the engine would run when the unit's own copy provides it, or None."""
-    if not argv:
-        return None
-    name = argv[0]
-    candidate = Path(name)
-    root = folder.resolve()
-    if candidate.is_absolute() or len(candidate.parts) > 1:
-        resolved = candidate if candidate.is_absolute() else (folder / candidate)
-        return resolved if _within(resolved, root) else None
-    local = [folder / name]
-    if os.name == "nt":
-        local += [folder / f"{name}{suffix}" for suffix in WINDOWS_EXECUTABLE_SUFFIXES]
-    for path in local:
-        if path.is_file():
-            return path
-    found = shutil.which(name)
-    return Path(found) if found and _within(Path(found), root) else None
-
-
-def _within(path: Path, root: Path) -> bool:
-    """True when `path` is inside `root`, with a different drive counting as outside."""
-    return Path(path).resolve().is_relative_to(root)
+    ok, reason, detail = lint.run(folder)
+    return GateResult("lint", ok, reason, detail)
 
 
 def skipped_tests(folder: Path, files: list, *, timeout: float = SKIP_TIMEOUT_S) -> list[str]:
@@ -440,11 +366,6 @@ def skipped_tests(folder: Path, files: list, *, timeout: float = SKIP_TIMEOUT_S)
 def _worker_args() -> list[str]:
     """`-n 4` when pytest-xdist is installed: the same suite, four workers, inside the same budget."""
     return ["-n", "4"] if importlib.util.find_spec("xdist") is not None else []
-
-
-def _last_line(text: str) -> str:
-    lines = [line.strip() for line in text.splitlines() if line.strip()]
-    return (lines[-1] if lines else "")[:200]
 
 
 def _cost_line(rows: list[dict], unit: str) -> str:
