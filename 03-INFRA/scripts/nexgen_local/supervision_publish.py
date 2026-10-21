@@ -25,6 +25,8 @@ from .supervision_state import SupervisionError
 RELEASE_FILES = ("VERSION", "CHANGELOG.md")
 #: The words that mean "rewrite published history", refused in a declared push command.
 FORCE_WORDS = ("--force", "-f", "--force-with-lease", "--force-if-includes", "--mirror", "--delete")
+#: A push option that deletes every remote branch the local repository does not have.
+PRUNE_PREFIX = "--prune"
 #: A refspec that starts with one of these forces (`+branch`) or deletes (`:branch`) a remote ref.
 REFSPEC_FORCE_PREFIXES = ("+", ":")
 #: What the engine says instead of forcing, word for word, so it can be recognised.
@@ -33,10 +35,14 @@ FORCE_REFUSAL = "servirebbe un force-push: il motore non lo fa mai"
 PUSH_REWRITE = "il comando di pubblicazione ha forzato la storia"
 #: What the engine says when a push created or moved a tag.
 PUSH_TAGS = "il comando di pubblicazione ha creato o spinto tag"
+#: What the engine says when a push deleted, created or moved another remote branch.
+PUSH_BRANCHES = "il comando di pubblicazione ha toccato altri rami del remoto"
 #: Budgets: a fetch, a push, and the owner's own publishing command.
 FETCH_TIMEOUT_S = 120.0
 PUSH_TIMEOUT_S = 600.0
 PUBLISH_TIMEOUT_S = 1800.0
+#: Windows refuses a path over MAX_PATH unless each git command is told to allow it.
+LONG_PATHS = ("-c", "core.longpaths=true")
 
 
 class PublishError(SupervisionError):
@@ -269,7 +275,10 @@ def _cherry_pick(root: Path, commits: list[dict], start: str) -> list[dict]:
     """Replay each commit in order; a conflict puts the checkout back and publishes nothing."""
     applied: list[dict] = []
     for commit in commits:
-        done = _run(["git", "-C", str(root), "cherry-pick", commit["sha"]], root, PUBLISH_TIMEOUT_S)
+        done = _run(
+            ["git", *LONG_PATHS, "-C", str(root), "cherry-pick", commit["sha"]],
+            root, PUBLISH_TIMEOUT_S,
+        )
         if done.returncode:
             files = git(root, "diff", "--name-only", "--diff-filter=U", check=False).splitlines()
             _restore(root, start)
@@ -290,10 +299,10 @@ def _cherry_pick(root: Path, commits: list[dict], start: str) -> list[dict]:
 
 def _restore(root: Path, start: str) -> None:
     """Undo the sequence we started: the checkout goes back to the commit we found."""
-    git(root, "cherry-pick", "--abort", check=False)
+    git(root, *LONG_PATHS, "cherry-pick", "--abort", check=False)
     if git(root, "rev-parse", "HEAD", check=False).strip() != start:
-        git(root, "reset", "--hard", start, check=False)
-    git(root, "cherry-pick", "--quit", check=False)
+        git(root, *LONG_PATHS, "reset", "--hard", start, check=False)
+    git(root, *LONG_PATHS, "cherry-pick", "--quit", check=False)
 
 
 def _signing(root: Path, applied: list[dict]) -> str:
@@ -330,28 +339,33 @@ def _push_and_check(
     root: Path, remote: str, branch: str, published_head: str, *,
     command: str = "", argv: list[str] | None = None,
 ) -> tuple[bool, str, str]:
-    """Run one push, then prove what it did: the approved head, its ancestor, and the same tags."""
-    before = _remote_state(root, remote, branch)
+    """Run one push, then prove what it did: the approved head, its ancestor, the other branches and the tags."""
+    before = _remote_state(root, remote)
     done = _run(command or (argv or []), root, PUSH_TIMEOUT_S, shell_command=bool(command))
-    after = _remote_state(root, remote, branch)
+    after = _remote_state(root, remote)
     if done.returncode == 0 or after != before:
         _check_push(root, remote, branch, published_head, before, after)
     declared = command or " ".join(argv or [])
     return done.returncode == 0, declared, (done.stdout or "") + (done.stderr or "")
 
 
-def _remote_state(root: Path, remote: str, branch: str) -> dict:
-    """The remote's head for this branch and its whole tag list, read straight from the remote."""
-    head = _run(
-        ["git", "-C", str(root), "ls-remote", "--heads", remote, f"refs/heads/{branch}"],
-        root, FETCH_TIMEOUT_S,
-    )
+def _remote_state(root: Path, remote: str) -> dict:
+    """Every remote branch and the whole tag list, read straight from the remote, not from a local cache."""
+    heads = _run(["git", "-C", str(root), "ls-remote", "--heads", remote], root, FETCH_TIMEOUT_S)
     tags = _run(["git", "-C", str(root), "ls-remote", "--tags", remote], root, FETCH_TIMEOUT_S)
-    if head.returncode or tags.returncode:
-        reason = _last_line(head.stderr or head.stdout or tags.stderr or tags.stdout)
+    if heads.returncode or tags.returncode:
+        reason = _last_line(heads.stderr or heads.stdout or tags.stderr or tags.stdout)
         raise PublishError(f"remoto {remote} non leggibile durante la spinta: {reason}")
-    parts = head.stdout.split()
-    return {"head": parts[0] if parts else "", "tags": sorted(line for line in tags.stdout.splitlines() if line.strip())}
+    return {"heads": _refs(heads.stdout), "tags": sorted(line for line in tags.stdout.splitlines() if line.strip())}
+
+
+def _refs(text: str) -> dict[str, str]:
+    """`sha<TAB>ref` lines as a ref-to-sha mapping."""
+    return {
+        parts[1]: parts[0]
+        for line in text.splitlines()
+        if len(parts := line.split()) >= 2
+    }
 
 
 def _check_push(
@@ -361,23 +375,49 @@ def _check_push(
 
     A push is declared, not trusted: the branch must now point exactly at the head
     the engine published, the value read before must be an ancestor of it (so
-    nothing was rewritten), and no tag may have appeared or moved.
+    nothing was rewritten), no tag may have appeared or moved, and no other remote
+    branch may have appeared, moved or disappeared: `--prune` deletes a branch the
+    local repository does not have, and looking only at the published one hid it.
     """
-    if after["head"] != published_head:
+    ref = f"refs/heads/{branch}"
+    if after["heads"].get(ref, "") != published_head:
         raise PublishError(
-            f"{PUSH_REWRITE}: {remote}/{branch} è a {after['head'][:12] or 'niente'}, "
+            f"{PUSH_REWRITE}: {remote}/{branch} è a {after['heads'].get(ref, '')[:12] or 'niente'}, "
             f"non alla head pubblicata {published_head[:12]}"
         )
-    if before["head"] and not _is_ancestor_on_remote(root, remote, before["head"], after["head"]):
+    was = before["heads"].get(ref, "")
+    if was and not _is_ancestor_on_remote(root, remote, was, after["heads"][ref]):
         raise PublishError(
-            f"{PUSH_REWRITE}: {remote}/{branch} era a {before['head'][:12]} e ora è a "
-            f"{after['head'][:12]}: il valore di prima non è antenato di quello nuovo"
+            f"{PUSH_REWRITE}: {remote}/{branch} era a {was[:12]} e ora è a "
+            f"{after['heads'][ref][:12]}: il valore di prima non è antenato di quello nuovo"
         )
+    others = _other_branches(before["heads"], after["heads"], ref)
+    if others:
+        raise PublishError(f"{PUSH_BRANCHES}: " + ", ".join(others[:5]) + ". Solo il ramo pubblicato può muoversi")
     if before["tags"] != after["tags"]:
         changed = sorted(set(after["tags"]) ^ set(before["tags"]))
         raise PublishError(
             f"{PUSH_TAGS}: " + ", ".join(changed[:5]) + ". Il motore non crea e non spinge tag"
         )
+
+
+def _other_branches(before: dict[str, str], after: dict[str, str], published: str) -> list[str]:
+    """Every remote branch that appeared, moved or disappeared besides the one published, with what happened."""
+    found = [
+        f"cancellato {name.removeprefix('refs/heads/')}"
+        for name in sorted(set(before) - set(after))
+    ]
+    found += [
+        f"spostato {name.removeprefix('refs/heads/')}"
+        for name in sorted(set(before) & set(after))
+        if name != published and before[name] != after[name]
+    ]
+    found += [
+        f"creato {name.removeprefix('refs/heads/')}"
+        for name in sorted(set(after) - set(before))
+        if name != published
+    ]
+    return found
 
 
 def _is_ancestor_on_remote(root: Path, remote: str, old: str, new: str) -> bool:
@@ -391,18 +431,19 @@ def _is_ancestor_on_remote(root: Path, remote: str, old: str, new: str) -> bool:
 
 
 def _refuse_force(command: str) -> None:
-    """The owner may publish with a script of theirs, never with a rewrite of history or a tag."""
+    """The owner may publish with a script of theirs, never with a rewrite of history, a tag or a deletion."""
     refused = sorted({
         token for token in split_command_line(command)
         if token in FORCE_WORDS
         or token.startswith("--force")
+        or token.startswith(PRUNE_PREFIX)
         or token.startswith(REFSPEC_FORCE_PREFIXES)
         or _short_flag_with_force(token)
     })
     if refused:
         raise PublishError(
             f"{FORCE_REFUSAL}: il comando dichiarato contiene {' '.join(refused)}. "
-            "Nessuna opzione di forza esiste"
+            "Nessuna opzione di forza, di potatura o di cancellazione esiste"
         )
 
 

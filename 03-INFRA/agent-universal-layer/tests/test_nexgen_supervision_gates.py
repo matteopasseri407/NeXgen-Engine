@@ -6,6 +6,7 @@ sta su PATH.
 """
 from __future__ import annotations
 
+import json
 import os
 import sys
 from pathlib import Path
@@ -14,6 +15,7 @@ from types import SimpleNamespace
 import pytest
 
 from nexgen_local import supervision_gates as gates
+from nexgen_local import supervision_lint as lint
 from nexgen_local import supervision_state as state
 from nexgen_local import supervision_worktree as worktree
 
@@ -26,6 +28,10 @@ GATE_NAMES = (
     "integrità dei test",
     "prova per commit",
     "verifica indipendente",
+    "test raccolti",
+    "lint",
+    "modello consentito",
+    "configurazione git",
     "remoto intatto",
     "albero pulito",
 )
@@ -45,6 +51,17 @@ def repo(tmp_path):
 @pytest.fixture
 def task(lane):
     return state.start("prova fase 2")["id"]
+
+
+@pytest.fixture
+def settings(lane):
+    """L'elenco dei modelli consentiti, scritto dove la lane lo legge davvero."""
+    def apply(patterns) -> None:
+        (lane.parent / "config.json").write_text(
+            json.dumps({"supervision": {"allowed_models": list(patterns)}}), encoding="utf-8",
+        )
+
+    return apply
 
 
 def _unit(task, repo, tmp_path, *, allow=("docs/*.md",), verify=VERIFY_OK) -> Path:
@@ -94,6 +111,61 @@ def test_a_clean_unit_inside_its_boundary_passes(task, repo, tmp_path):
     assert "PASS confine" in raw
     collected = [row for row in state.read_events(task) if row.get("event") == "unit_collected"]
     assert collected[-1]["verdict"] == "PASS"
+
+
+def test_a_session_on_a_model_outside_the_list_fails_the_gate(task, repo, tmp_path, settings, monkeypatch):
+    """L'elenco c'è: il verdetto nomina il modello che non vi rientra."""
+    folder = _unit(task, repo, tmp_path)
+    _commit(folder, "docs: aggiunge una riga", {"docs/guida.md": "# guida\n\nriga aggiunta.\n"})
+    state.append_event(task, "attached", unit="prova", role="esecutore", harness="opencode", session="ses_finta")
+    settings(["opencode-go/*"])
+    monkeypatch.setattr(
+        gates.costs, "measure", lambda session: SimpleNamespace(model="altro-provider/modello"),
+    )
+
+    result = gates.collect(task, "prova")
+
+    assert result["verdict"] == "FAIL"
+    gate = _gate(result, "modello consentito")
+    assert not gate.ok
+    assert "altro-provider/modello" in gate.reason
+    assert "opencode-go/*" in gate.reason
+
+
+def test_a_model_inside_the_list_passes_the_gate(task, repo, tmp_path, settings, monkeypatch):
+    folder = _unit(task, repo, tmp_path)
+    _commit(folder, "docs: aggiunge una riga", {"docs/guida.md": "# guida\n\nriga aggiunta.\n"})
+    state.append_event(task, "attached", unit="prova", role="esecutore", harness="opencode", session="ses_finta")
+    settings(["opencode-go/*"])
+    monkeypatch.setattr(
+        gates.costs, "measure",
+        lambda session: SimpleNamespace(model="opencode-go/deepseek-v4.1-flash#max"),
+    )
+
+    result = gates.collect(task, "prova")
+
+    gate = _gate(result, "modello consentito")
+    assert gate.ok
+    assert "deepseek-v4.1-flash" in gate.reason
+
+
+def test_a_model_nobody_can_read_fails_the_gate(task, repo, tmp_path, settings, monkeypatch):
+    """«Non verificato» non è «consentito»: il cancello non promuove ciò che non ha letto."""
+    folder = _unit(task, repo, tmp_path)
+    _commit(folder, "docs: aggiunge una riga", {"docs/guida.md": "# guida\n\nriga aggiunta.\n"})
+    state.append_event(task, "attached", unit="prova", role="esecutore", harness="opencode", session="ses_finta")
+    settings(["opencode-go/*"])
+
+    def broken(session):
+        raise gates.costs.CostError("export della sessione non riuscito")
+
+    monkeypatch.setattr(gates.costs, "measure", broken)
+
+    result = gates.collect(task, "prova")
+
+    gate = _gate(result, "modello consentito")
+    assert not gate.ok
+    assert "non leggibile" in gate.reason
 
 
 def test_a_file_outside_the_boundary_fails_and_is_named(task, repo, tmp_path):
@@ -214,6 +286,102 @@ def test_a_remote_removed_from_the_copy_fails_and_is_named(task, repo, tmp_path)
     assert not remote.ok
     assert "remoti spariti" in remote.reason
     assert "origin" in remote.reason
+    assert result["verdict"] == "FAIL"
+
+
+def test_a_pythonpath_from_the_engine_does_not_revive_the_copys_pytest(tmp_path, monkeypatch):
+    """`-P` non tocca `PYTHONPATH`: senza ripulire l'ambiente il `pytest.py` della copia torna a girare."""
+    folder = tmp_path / "copia"
+    (folder / "tests").mkdir(parents=True)
+    (folder / "tests" / "test_vero.py").write_text("def test_vero():\n    assert True\n", encoding="utf-8")
+    marker = folder / "hijacked.txt"
+    (folder / "pytest.py").write_text(
+        "from pathlib import Path\n"
+        f"Path({str(marker)!r}).write_text('eseguito', encoding='utf-8')\n"
+        "raise SystemExit(0)\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("PYTHONPATH", ".")
+
+    result = gates._verify_gate(folder, f'"{sys.executable}" -m pytest -q')
+
+    assert result.ok, result.reason
+    assert not marker.exists(), "il pytest.py della copia non deve essere eseguito"
+
+
+def test_the_creation_writes_down_the_configuration_fingerprint(task, repo, tmp_path):
+    """L'impronta dei due file di configurazione è nel diario: senza, la raccolta non sa cosa confrontare."""
+    _unit(task, repo, tmp_path)
+
+    created = [row for row in state.read_events(task) if row.get("event") == "unit_created"][-1]
+
+    assert len(created["config_hashes"]) == 2
+    assert any(path.endswith("/.git/config") for path in created["config_hashes"])
+    assert any(path.endswith("config.worktree") for path in created["config_hashes"])
+    assert created["url_override_keys"] == []
+
+
+def test_a_shared_git_config_touched_after_creation_fails_and_names_it(task, repo, tmp_path):
+    """`git config` senza `--worktree` scrive il `.git/config` del proprietario, condiviso con ogni checkout."""
+    folder = _unit(task, repo, tmp_path)
+    _commit(folder, "docs: aggiunge una riga", {"docs/guida.md": "# guida\n\nriga.\n"})
+    git_in(folder, "config", "alias.fp", "push --force")
+
+    result = gates.collect(task, "prova")
+
+    gate = _gate(result, "configurazione git")
+    assert not gate.ok
+    assert ".git/config" in gate.reason
+    assert result["verdict"] == "FAIL"
+
+
+def test_the_worktree_config_touched_after_creation_fails_and_names_it(task, repo, tmp_path):
+    folder = _unit(task, repo, tmp_path)
+    _commit(folder, "docs: aggiunge una riga", {"docs/guida.md": "# guida\n\nriga.\n"})
+    git_in(folder, "config", "--worktree", "core.autocrlf", "false")
+
+    result = gates.collect(task, "prova")
+
+    gate = _gate(result, "configurazione git")
+    assert not gate.ok
+    assert "config.worktree" in gate.reason
+    assert result["verdict"] == "FAIL"
+
+
+def test_a_url_rewrite_added_after_creation_fails_and_names_the_key(task, repo, tmp_path):
+    """`url.<base>.insteadOf` manda la push altrove mentre ogni URL della copia resta identico."""
+    folder = _unit(task, repo, tmp_path)
+    _commit(folder, "docs: aggiunge una riga", {"docs/guida.md": "# guida\n\nriga.\n"})
+    git_in(folder, "config", "url.file:///tmp/leak.git.insteadOf", "nexgen-sup-disabled://push-blocked")
+
+    result = gates.collect(task, "prova")
+
+    gate = _gate(result, "configurazione git")
+    assert not gate.ok
+    assert "insteadof" in gate.reason.lower()
+    assert "leak.git" in gate.reason
+    assert result["verdict"] == "FAIL"
+
+
+def test_a_url_rewrite_from_the_global_config_fails_without_touching_the_copy(
+    task, repo, tmp_path, monkeypatch,
+):
+    """La regola può arrivare dal file globale: i due file della copia non cambiano e va vista lo stesso."""
+    folder = _unit(task, repo, tmp_path)
+    _commit(folder, "docs: aggiunge una riga", {"docs/guida.md": "# guida\n\nriga.\n"})
+    global_config = tmp_path / "global.gitconfig"
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(global_config))
+    global_config.write_text(
+        '[url "file:///tmp/leak.git"]\n\tinsteadOf = nexgen-sup-disabled://push-blocked\n',
+        encoding="utf-8",
+    )
+
+    result = gates.collect(task, "prova")
+
+    gate = _gate(result, "configurazione git")
+    assert not gate.ok
+    assert "leak.git" in gate.reason
+    assert "configurazione git cambiata" not in gate.reason, "i due file della copia sono intatti"
     assert result["verdict"] == "FAIL"
 
 
@@ -428,9 +596,10 @@ def test_the_package_carries_the_cost_measured_at_collection(task, repo, tmp_pat
     result = gates.collect(task, "prova")
 
     package = Path(result["package"]).read_text(encoding="utf-8")
-    assert "0.2500 $ (alla raccolta, 0.0000 $ all'aggancio)" in package
-    assert "ses_uno" in package
-    assert "60.0s" in package
+    assert "- costo: giro 0.2500 $, unità 0.2500 $, compito 0.2500 $ (modello non dichiarato)" in package
+    assert result["cost"].round_usd == 0.25
+    assert result["cost"].unit_usd == 0.25
+    assert result["cost"].task_usd == 0.25
 
 
 def test_a_cost_that_cannot_be_measured_at_collection_is_not_zero(task, repo, tmp_path, lane, monkeypatch):
@@ -449,7 +618,7 @@ def test_a_cost_that_cannot_be_measured_at_collection_is_not_zero(task, repo, tm
     result = gates.collect(task, "prova")
 
     package = Path(result["package"]).read_text(encoding="utf-8")
-    assert "non misurato alla raccolta (l'export non risponde)" in package
+    assert "- costo: non misurato (l'export non risponde)" in package
     assert "0.0000 $" not in package
 
 
@@ -545,3 +714,197 @@ def test_a_vanished_copy_is_refused(task, repo, tmp_path):
 
     with pytest.raises(state.SupervisionError, match="copia dell'unità sparita"):
         gates.collect(task, "prova")
+
+
+def test_a_module_that_turns_its_tests_off_fails_the_collected_count(task, repo, tmp_path):
+    """`__test__ = False` non tocca l'AST: i test ci sono ancora, pytest non ne raccoglie nessuno."""
+    folder = _unit(task, repo, tmp_path, allow=["**"])
+    _commit(folder, "test: spegne la raccolta", {
+        "tests/test_sample.py": (
+            "__test__ = False\n\nfrom module import value\n\n"
+            "def test_value():\n    assert value() == 1\n\n"
+            "def test_nome():\n    assert 'prova' == 'prova'\n"
+        ),
+    })
+
+    result = gates.collect(task, "prova")
+
+    gate = _gate(result, "test raccolti")
+    assert not gate.ok
+    assert "0 test" in gate.reason
+    assert "2" in gate.reason, "il motivo dice quanti test raccoglieva la base"
+    assert result["verdict"] == "FAIL"
+
+
+def test_a_test_moved_into_a_hidden_folder_fails_the_collected_count(task, repo, tmp_path):
+    """`tests/.hidden/` è un percorso di test per l'AST e una cartella che pytest salta."""
+    folder = _unit(task, repo, tmp_path, allow=["**"])
+    (folder / "tests" / ".hidden").mkdir()
+    git_in(folder, "mv", "tests/test_sample.py", "tests/.hidden/test_sample.py")
+    git_in(folder, "commit", "-q", "-m", "test: sposta in una cartella nascosta")
+
+    result = gates.collect(task, "prova")
+
+    gate = _gate(result, "test raccolti")
+    assert not gate.ok
+    assert "0 test" in gate.reason
+    assert result["verdict"] == "FAIL"
+
+
+def test_a_collect_ignore_in_a_conftest_fails_the_collected_count(task, repo, tmp_path):
+    """`collect_ignore` spegne un file senza toccarne i test: il conteggio AST non lo vede."""
+    folder = _unit(task, repo, tmp_path, allow=["**"])
+    _commit(folder, "test: ignora un file di test", {
+        "tests/conftest.py": "collect_ignore = ['test_sample.py']\n",
+    })
+
+    result = gates.collect(task, "prova")
+
+    gate = _gate(result, "test raccolti")
+    assert not gate.ok
+    assert "0 test" in gate.reason
+    assert "2" in gate.reason
+    assert result["verdict"] == "FAIL"
+
+
+def test_a_root_conftest_that_exits_fails_the_collected_count(task, repo, tmp_path):
+    """Un `conftest.py` di radice che esce con 0 non esegue niente: la raccolta non ha un numero."""
+    folder = _unit(task, repo, tmp_path, allow=["**"])
+    _commit(folder, "chore: un conftest che esce", {"conftest.py": "import sys\nsys.exit(0)\n"})
+
+    result = gates.collect(task, "prova")
+
+    gate = _gate(result, "test raccolti")
+    assert not gate.ok
+    assert "non ha risposto" in gate.reason
+    assert "2" in gate.reason, "il motivo dice quanti test raccoglieva la base"
+    assert result["verdict"] == "FAIL"
+
+
+def test_a_pytest_ini_that_prints_help_fails_the_collected_count(task, repo, tmp_path):
+    """`addopts = --help` esce con 0 senza raccogliere: il cancello della verifica lo chiamerebbe verde."""
+    folder = _unit(task, repo, tmp_path, allow=["**"])
+    _commit(folder, "chore: cambia la configurazione di pytest", {
+        "pytest.ini": "[pytest]\ntestpaths = tests\npythonpath = .\naddopts = --help\n",
+    })
+
+    result = gates.collect(task, "prova")
+
+    gate = _gate(result, "test raccolti")
+    assert not gate.ok
+    assert "non ha risposto" in gate.reason
+    assert result["verdict"] == "FAIL"
+
+
+def test_a_new_test_is_an_increase_and_does_not_fail(task, repo, tmp_path):
+    """Un test in più è normale: il cancello confronta, non impone l'uguaglianza."""
+    folder = _unit(task, repo, tmp_path, allow=["**"])
+    _commit(folder, "test: aggiunge un test", {"tests/test_nuovo.py": "def test_nuovo():\n    assert True\n"})
+
+    result = gates.collect(task, "prova")
+
+    gate = _gate(result, "test raccolti")
+    assert gate.ok, gate.reason
+    assert "3 test" in gate.reason
+    assert "2" in gate.reason
+    assert result["verdict"] == "PASS"
+
+
+def test_a_unit_that_touches_no_test_has_nothing_to_compare(task, repo, tmp_path):
+    folder = _unit(task, repo, tmp_path)
+    _commit(folder, "docs: aggiunge una riga", {"docs/guida.md": "# guida\n\nriga.\n"})
+
+    result = gates.collect(task, "prova")
+
+    gate = _gate(result, "test raccolti")
+    assert gate.ok, gate.reason
+    assert "niente da confrontare" in gate.reason
+
+
+# --- il cancello lint -------------------------------------------------------
+
+#: Le codice che la baseline del progetto finto già conosce.
+BASELINE_CODES = ("F401",)
+
+#: Un ruff finto: stampa i risultati che gli sono stati dati e accetta gli argomenti veri.
+STUB_RUFF = """
+import json, sys
+from pathlib import Path
+
+findings = [
+    {"filename": str(Path.cwd() / "03-INFRA" / "scripts" / "x.py"), "code": code}
+    for code in __CODES__
+]
+print(json.dumps(findings))
+raise SystemExit(1 if findings else 0)
+"""
+
+
+def _lint_project(repo, baseline=()) -> None:
+    """Il progetto guadagna il suo cancello lint: lo script e una baseline già scritta."""
+    repo.write("03-INFRA/scripts/ruff_baseline_check.py", "# il cancello lint del progetto\n")
+    repo.write("03-INFRA/ruff-baseline.json", json.dumps([
+        {"file": "03-INFRA/scripts/x.py", "code": code, "count": 1} for code in baseline
+    ]) + "\n")
+    repo.commit("base con il cancello lint")
+
+
+def _stub_ruff(monkeypatch, tmp_path, codes) -> None:
+    stub = tmp_path / "ruff_finto.py"
+    stub.write_text(STUB_RUFF.replace("__CODES__", repr(tuple(codes))), encoding="utf-8")
+    monkeypatch.setenv("RUFF_CMD", json.dumps([sys.executable, str(stub)]))
+
+
+
+def test_a_copy_without_the_lint_gate_says_so_and_passes(task, repo, tmp_path):
+    folder = _unit(task, repo, tmp_path)
+    _commit(folder, "docs: aggiunge una riga", {"docs/guida.md": "# guida\n\nriga.\n"})
+
+    result = gates.collect(task, "prova")
+
+    gate = _gate(result, "lint")
+    assert gate.ok
+    assert "non ha 03-INFRA/scripts/ruff_baseline_check.py" in gate.reason
+    assert result["verdict"] == "PASS"
+
+
+def test_lint_debt_already_in_the_baseline_does_not_fail(task, repo, tmp_path, monkeypatch):
+    _lint_project(repo, baseline=BASELINE_CODES)
+    folder = _unit(task, repo, tmp_path)
+    _commit(folder, "docs: aggiunge una riga", {"docs/guida.md": "# guida\n\nriga.\n"})
+    _stub_ruff(monkeypatch, tmp_path, BASELINE_CODES)
+
+    result = gates.collect(task, "prova")
+
+    gate = _gate(result, "lint")
+    assert gate.ok, gate.reason
+    assert "nessuna regressione" in gate.reason
+    assert result["verdict"] == "PASS"
+
+
+def test_a_new_lint_finding_fails_the_gate_and_is_named(task, repo, tmp_path, monkeypatch):
+    _lint_project(repo)
+    folder = _unit(task, repo, tmp_path)
+    _commit(folder, "docs: aggiunge una riga", {"docs/guida.md": "# guida\n\nriga.\n"})
+    _stub_ruff(monkeypatch, tmp_path, BASELINE_CODES)
+
+    result = gates.collect(task, "prova")
+
+    gate = _gate(result, "lint")
+    assert not gate.ok
+    assert "regressione" in gate.reason
+    assert "03-INFRA/scripts/x.py" in gate.detail
+    assert result["verdict"] == "FAIL"
+
+
+def test_the_gate_runs_the_engines_script_not_the_one_in_the_copy(task, repo, tmp_path):
+    """La copia non può fornire il proprio verificatore: lo script del motore vince."""
+    _lint_project(repo)
+    folder = _unit(task, repo, tmp_path)
+
+    script = lint.script_for(folder)
+
+    assert script is not None
+    assert not script.resolve().is_relative_to(folder.resolve())
+    assert script.name == "ruff_baseline_check.py"
+

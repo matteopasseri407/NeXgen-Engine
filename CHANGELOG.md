@@ -10,6 +10,22 @@ of any engine release.
 
 ## [Unreleased]
 
+## [2.18.0] - 2026-10-21
+
+### Added
+
+- Supervision: every verb now says what a unit cost. `sup collect` prints the round, unit and task cost on one line and closes the executor's tab when the session has stopped; `sup status` shows the cost of every unit and of the task; `sup costi` shows the last 5 hours, 7 days and 30 days of spend. An optional allowed-models list is refused in `sup run` and failed in `sup collect`.
+- Supervision: the executor's permissions are written into the unit's copy before its tab opens (edits inside the copy and the task folder, every push denied), and a stalled session is named.
+- Supervision: `sup scout` gives the explorer a fixed, detached, trusted copy and checks afterwards that it is untouched; `sup rebase` realigns a unit on its base without the network; `sup resume` restarts a task from the step it stopped on, bound to its brief; `sup permessi` answers a pending permission request; `sup pulizia` lists and closes what the engine left open, without touching the shared service of other sessions.
+- Supervision: `sup collect` fails when the copy adds lint debt the baseline did not have, when fewer tests are collected than at the base, or when the git configuration changed behind the unit.
+
+### Fixed
+
+- Supervision cost ledger: a session's rows are cumulative, so each session now counts once with its last row instead of the sum of all rows (a task could show almost twice its real cost). An unreadable session no longer hides the costs that were measured, and a unit collected before costs were saved reads them from the ledger.
+- Supervision tabs on Linux: the tab marker is in the environment the process starts with, so collect and cleanup find a working tab; a stopped session closes its tab even when the harness reports no cost; cleanup no longer closes a scout that is still working; a reused process id on Windows no longer pulls an unrelated process into the set to close.
+- Supervision: the independent verification runs in an environment the unit cannot fill and leaves the user site directory alone; `sup` verbs write UTF-8 on a non-UTF-8 console; untracked files no longer block a rebase.
+- lazy-mcp gives a request's slot back before its reply leaves.
+
 ## [2.17.0] - 2026-10-21
 
 ### Added

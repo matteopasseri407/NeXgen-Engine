@@ -18,6 +18,7 @@ from pathlib import Path
 from nexgen_core.files import secure_artifact, write_private_text
 
 from .config import lane_state_dir
+from .supervision_templates import brief_template, report_template
 
 #: Human-readable task files, one job each.
 OBJECTIVE_FILE = "00-obiettivo.md"
@@ -127,8 +128,8 @@ def start(objective: str, *, now: float | None = None) -> dict:
     folder = _fresh_folder(new_id(text, now=now))
     secure_artifact(folder)
     write_private_text(folder / OBJECTIVE_FILE, _objective_text(text, folder.name), exclusive=True)
-    write_private_text(folder / BRIEF_TEMPLATE, _brief_template(), exclusive=True)
-    write_private_text(folder / REPORT_TEMPLATE, _report_template(), exclusive=True)
+    write_private_text(folder / BRIEF_TEMPLATE, brief_template(), exclusive=True)
+    write_private_text(folder / REPORT_TEMPLATE, report_template(), exclusive=True)
     write_private_text(folder / JOURNAL_FILE, "", exclusive=True)
     append_event(folder.name, "started", objective=text)
     return {"id": folder.name, "path": folder, "objective": text}
@@ -167,13 +168,18 @@ def status(task_id: str) -> dict:
     folder = open_task(task_id)
     events = read_events(task_id)
     rows = read_costs(task_id)
+    snapshots = latest_cost_rows(rows)
     known = [
-        float(row["cost_usd"]) for row in rows
+        float(row["cost_usd"]) for row in snapshots
         if isinstance(row.get("cost_usd"), (int, float))
     ]
     units = _units_from_events(events)
     for record in units:
-        record["cost_usd"] = _unit_cost(rows, record["unit"])
+        record["cost_usd"] = _unit_cost(snapshots, record["unit"])
+    last_cost: dict = {}
+    for row in events:
+        if row.get("event") == "unit_collected" and row.get("cost"):
+            last_cost = {**dict(row["cost"]), "unit": str(row.get("unit") or "")}
     return {
         "id": folder.name,
         "path": folder,
@@ -182,10 +188,25 @@ def status(task_id: str) -> dict:
         "units": units,
         "sessions": _sessions_from_events(events),
         "last_event": events[-1] if events else None,
+        "last_cost": last_cost,
         "cost_rows": len(rows),
         "cost_total_usd": round(sum(known), 6) if known else None,
-        "cost_unknown_rows": len(rows) - len(known),
+        "cost_unknown_rows": len(snapshots) - len(known),
     }
+
+
+def tasks_lines() -> list[str]:
+    """One line per task folder, for `sup status` with no id; a folder nobody can read says so."""
+    tasks = list_tasks()
+    if not tasks:
+        return ['nessun compito: `sup start "<obiettivo>"`']
+    lines: list[str] = []
+    for task in tasks:
+        if task.get("error"):
+            lines.append(f"{task['id']}  (illeggibile: {task['error']})")
+        else:
+            lines.append(f"{task['id']}  {task['objective'] or '(obiettivo non leggibile)'}")
+    return lines
 
 
 def unit_record(task_id: str, unit: str) -> dict:
@@ -216,6 +237,27 @@ def harness_session(task_id: str, harness: str = "opencode") -> str:
         elif row.get("session"):
             found = str(row["session"])
     return found
+
+
+def latest_cost_rows(rows: list[dict]) -> list[dict]:
+    """One row per session: the last, because each row carries that session's cumulative cost.
+
+    Summing every row counted the same money again at every attach; the last
+    snapshot is what the session actually cost. A row nobody tied to a session
+    cannot be grouped with another, so it stands for itself.
+    """
+    by_session: dict[str, dict] = {}
+    order: list[str] = []
+    loose: list[dict] = []
+    for row in rows:
+        name = str(row.get("session") or "")
+        if not name:
+            loose.append(row)
+            continue
+        if name not in by_session:
+            order.append(name)
+        by_session[name] = row
+    return [by_session[name] for name in order] + loose
 
 
 def _unit_cost(rows: list[dict], unit: str) -> float | None:
@@ -262,6 +304,10 @@ UNIT_EVENTS = {
     "unit_started": "in corso",
     "attached": "in corso",
     "unit_reworked": "in corso",
+    "unit_stalled": "in stallo",
+    "unit_resumed": "in corso",
+    "unit_rebased": "in corso",
+    "unit_model_refused": "rifiutata",
     "unit_collected": "raccolta",
     "unit_reviewed": "revisione",
     "unit_published": "pubblicata",
@@ -301,24 +347,35 @@ def _blank_unit(unit: str) -> dict:
     return {
         "unit": unit, "role": "", "harness": "", "session": "", "at": "",
         "state": "", "verdict": "", "collected_head": "", "review_round": 0,
-        "approved": False, "approved_head": "", "published": [],
+        "approved": False, "approved_head": "", "published": [], "model": "",
+        "stalled_minutes": 0.0, "stall_threshold": 0.0, "repo": "", "base_ref": "",
+        "cost": {},
     }
+
+
+def _fold_creation(record: dict, row: dict) -> None:
+    """What `unit_created` says: the copy, its branch, the base it started from and the scope it may touch."""
+    record.update({
+        "role": "esecutore",
+        "repo": str(row.get("repo") or ""),
+        "base_ref": str(row.get("base_ref") or ""),
+        "worktree": str(row.get("worktree") or ""),
+        "branch": str(row.get("branch") or ""),
+        "base": str(row.get("base") or ""),
+        "allow": [str(item) for item in row.get("allow") or []],
+        "verify": str(row.get("verify") or ""),
+        "remotes": dict(row.get("remotes") or {}),
+        "remote_urls": dict(row.get("remote_urls") or {}),
+        "remote_pushurls": dict(row.get("remote_pushurls") or {}),
+        "config_hashes": dict(row.get("config_hashes") or {}),
+        "url_override_keys": [str(key) for key in row.get("url_override_keys") or []],
+    })
 
 
 def _fold_event(record: dict, row: dict, event: str) -> None:
     """What one journal row says about the unit, folded into its entry."""
     if event == "unit_created":
-        record.update({
-            "role": "esecutore",
-            "worktree": str(row.get("worktree") or ""),
-            "branch": str(row.get("branch") or ""),
-            "base": str(row.get("base") or ""),
-            "allow": [str(item) for item in row.get("allow") or []],
-            "verify": str(row.get("verify") or ""),
-            "remotes": dict(row.get("remotes") or {}),
-            "remote_urls": dict(row.get("remote_urls") or {}),
-            "remote_pushurls": dict(row.get("remote_pushurls") or {}),
-        })
+        _fold_creation(record, row)
     elif event in ("unit_started", "unit_queued"):
         record.update({
             "session": str(row.get("session") or record["session"]),
@@ -335,6 +392,7 @@ def _fold_event(record: dict, row: dict, event: str) -> None:
     elif event == "unit_collected":
         record["verdict"] = str(row.get("verdict") or "")
         record["collected_head"] = str(row.get("head") or "")
+        record["cost"] = dict(row.get("cost") or {})
     elif event == "unit_reviewed":
         record["review_round"] = int(row.get("round") or 0)
         record["approved"] = str(row.get("verdict") or "") == APPROVED
@@ -344,6 +402,25 @@ def _fold_event(record: dict, row: dict, event: str) -> None:
         record["review_round"] = int(row.get("round") or record["review_round"])
         record["approved"] = False
         record["approved_head"] = ""
+    elif event == "unit_model_refused":
+        record.update({
+            "model": str(row.get("model") or ""),
+            "allowed_models": [str(item) for item in row.get("allowed") or []],
+            "reason": str(row.get("reason") or ""),
+        })
+    elif event == "unit_stalled":
+        record["stalled_minutes"] = float(row.get("minutes") or 0.0)
+        record["stall_threshold"] = float(row.get("threshold") or 0.0)
+    elif event == "unit_resumed":
+        record["stalled_minutes"] = 0.0
+        record["stall_threshold"] = 0.0
+    elif event == "unit_rebased":
+        record.update({
+            "base": str(row.get("base") or record["base"]),
+            "head": str(row.get("head") or ""),
+            "config_hashes": dict(row.get("config_hashes") or {}),
+            "url_override_keys": [str(key) for key in row.get("url_override_keys") or []],
+        })
     elif event == "unit_published":
         record["published"] = [str(item) for item in row.get("commits") or []]
         record["published_head"] = str(row.get("head") or "")
@@ -370,78 +447,3 @@ def _objective_text(text: str, task_id: str) -> str:
         f"- id: {task_id}\n"
         f"- creato: {now_iso()}\n"
     )
-
-
-def _brief_template() -> str:
-    """The brief fields the supervisor must fill; every one is required."""
-    return """# Brief dell'unità <unità> — ruolo <ruolo>
-
-Chi inizia da zero, in una sessione nuova, non deve leggere altro.
-Compila ogni campo, cancella queste istruzioni.
-
-## Identificativo e ruolo
-<unità> · <ruolo>
-
-## Obiettivo
-Una riga sola.
-
-## Contesto minimo
-File e percorsi esatti, comandi, vincoli.
-
-- ...
-
-## Risultato atteso
-Il file o il commit che deve esistere alla fine.
-
-## Confine
-- File consentiti: ...
-- File vietati: ...
-
-## Verifica
-```
-<comando esatto>
-```
-
-## Fatto quando
-La condizione osservabile che chiude l'unità.
-
-## Cosa non fare
-Niente push, niente tag, niente test esistenti modificati o cancellati, niente bump di VERSION, CHANGELOG.md o .github.
-
-## Formato del resoconto atteso
-I campi di `30-resoconto-MODELLO.md`, solo fatti con la prova incollata.
-"""
-
-
-def _report_template() -> str:
-    """The report fields the executor must fill; every one is required."""
-    return """# Resoconto dell'unità <unità> — ruolo <ruolo>
-
-Solo fatti.
-Una dichiarazione senza la prova incollata non vale.
-
-## Stato
-fatto | bloccato
-
-## Commit sul ramo locale
-- <hash> <titolo>
-
-## File toccati
-| file | righe aggiunte | righe rimosse |
-|---|---|---|
-
-## Comandi eseguiti
-```
-<comando>
-<ultime righe del risultato, incollate>
-```
-
-## Test nuovi
-Quali sono e, quando l'unità è un fix, la prova che falliscono sul codice precedente.
-
-## Dubbi e richieste al proprietario
-Cosa chiedi, senza averlo eseguito in proprio.
-
-## Prossimo passo se bloccato
-Cosa serve per ripartire.
-"""

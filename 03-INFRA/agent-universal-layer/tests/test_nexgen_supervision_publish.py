@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -17,11 +18,22 @@ from nexgen_local import supervision_gates as gates
 from nexgen_local import supervision_publish as publish_module
 from nexgen_local import supervision_review as review
 from nexgen_local import supervision_state as state
+from nexgen_local import supervision_windows as windows
 from nexgen_local import supervision_worktree as worktree
 
 from supervision_repo import build, git_in
 
 VERIFY_OK = f'"{sys.executable}" -c "print(1)"'
+
+
+@pytest.fixture(autouse=True)
+def fake_tabs(monkeypatch, pretend_os):
+    """Nessun test tocca schede vere: la tabella dei processi e l'uccisione sono finte."""
+    pretend_os(windows, "nt")
+    tabs = SimpleNamespace(rows=[], killed=[])
+    monkeypatch.setattr(windows, "_processes", lambda: tabs.rows)
+    monkeypatch.setattr(windows, "_kill", lambda pids: tabs.killed.extend(pids))
+    return tabs
 
 
 @pytest.fixture
@@ -40,11 +52,11 @@ def task(lane):
     return state.start("prova fase 3a")["id"]
 
 
-def _unit(task, repo, tmp_path, *, allow=("docs/*.md",), verify=VERIFY_OK) -> Path:
-    brief = tmp_path / "brief.md"
+def _unit(task, repo, tmp_path, *, unit="prova", allow=("docs/*.md",), verify=VERIFY_OK) -> Path:
+    brief = tmp_path / f"brief-{unit}.md"
     brief.write_text("# Brief dell'unità prova\n\nSolo fatti.\n", encoding="utf-8")
     record = worktree.create(
-        task, "prova", repo=repo.path, base="main", brief=str(brief),
+        task, unit, repo=repo.path, base="main", brief=str(brief),
         allow=list(allow), verify=verify,
     )
     return Path(record["worktree"])
@@ -135,6 +147,72 @@ def test_publish_without_push_stops_after_the_local_cherry_pick(task, repo, tmp_
     assert "resta da fare: `git push origin main`" in out
     assert _remote_main(repo) == before, "senza --push il remoto non si muove"
     assert _main_of(repo.path) != before, "il cherry-pick locale è stato fatto"
+
+
+def _executor_tab(task: str) -> list[dict]:
+    """The process tree of the executor's tab, as the engine reads it from the machine."""
+    marker = windows.tab_marker(task, "esecutore")
+    return [
+        {
+            "pid": 100, "ppid": 1, "name": "pwsh.exe",
+            "command_line": f"pwsh.exe -NoExit -Command \"$env:NEXGEN_SUP_TAB = '{marker}'\"",
+        },
+        {"pid": 200, "ppid": 100, "name": "opencode.exe", "command_line": "opencode.exe C:\\copia"},
+    ]
+
+
+def test_publish_closes_the_executors_tab(task, repo, tmp_path, capsys, fake_tabs):
+    """Il lavoro è applicato e nessun'altra unità è aperta: la scheda non serve più a nessuno."""
+    _approved_unit(task, repo, tmp_path)
+    fake_tabs.rows.extend(_executor_tab(task))
+    capsys.readouterr()
+
+    assert cli.main([
+        "sup", "publish", task, "prova", "--repo", str(repo.path), "--branch", "main",
+    ]) == 0
+
+    assert fake_tabs.killed == [200, 100]
+    assert "scheda esecutore chiusa (2 processi)" in capsys.readouterr().out
+
+
+def test_publish_leaves_the_tab_open_while_another_unit_still_works(task, repo, tmp_path, capsys, fake_tabs):
+    """Una sessione per compito: la scheda che sta lavorando per la seconda unità non si chiude."""
+    _approved_unit(task, repo, tmp_path)
+    _unit(task, repo, tmp_path, unit="seconda")
+    fake_tabs.rows.extend(_executor_tab(task))
+    capsys.readouterr()
+
+    assert cli.main([
+        "sup", "publish", task, "prova", "--repo", str(repo.path), "--branch", "main",
+    ]) == 0
+
+    out = capsys.readouterr().out
+    assert "lasciata aperta" in out and "seconda" in out
+    assert fake_tabs.killed == [], "la scheda sta ancora lavorando per la seconda unità"
+    left = [row for row in state.read_events(task) if row.get("event") == "tab_left_open"]
+    assert left and left[-1]["units"] == ["seconda"]
+
+
+def test_the_tab_closes_once_the_last_unit_of_the_task_is_published(task, repo, tmp_path, capsys, fake_tabs):
+    _approved_unit(task, repo, tmp_path)
+    second = _unit(task, repo, tmp_path, unit="seconda")
+    fake_tabs.rows.extend(_executor_tab(task))
+    capsys.readouterr()
+
+    assert cli.main([
+        "sup", "publish", task, "prova", "--repo", str(repo.path), "--branch", "main",
+    ]) == 0
+    assert fake_tabs.killed == [], "la seconda unità esiste e non è ancora approvata"
+
+    _commit(second, "docs: la seconda unità", {"docs/altra.md": "# altra\n"})
+    assert gates.collect(task, "seconda")["verdict"] == "PASS"
+    review.approve(task, "seconda", "una sola cosa, cancelli verdi")
+    assert cli.main([
+        "sup", "publish", task, "seconda", "--repo", str(repo.path), "--branch", "main",
+    ]) == 0
+
+    assert fake_tabs.killed == [200, 100], "l'ultima unità pubblicata chiude la scheda"
+    assert "scheda esecutore chiusa" in capsys.readouterr().out
 
 
 def test_publish_is_refused_when_the_unit_is_not_approved(task, repo, tmp_path):
@@ -243,6 +321,31 @@ def test_a_cherry_pick_conflict_aborts_and_leaves_the_checkout_where_it_was(task
     assert _remote_main(repo) == remote_before, "niente è stato pubblicato"
 
 
+def test_cherry_pick_and_restore_ask_git_for_long_paths(tmp_path, monkeypatch):
+    """Il replay e il ritorno indietro scrivono l'albero: devono reggere MAX_PATH."""
+    seen: list[list[str]] = []
+
+    def fake_run(argv, cwd, timeout, **kwargs):
+        seen.append([str(part) for part in argv])
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    def fake_git(root, *args, **kwargs):
+        seen.append(["git", *[str(part) for part in args]])
+        return ""
+
+    monkeypatch.setattr(publish_module, "_run", fake_run)
+    monkeypatch.setattr(publish_module, "git", fake_git)
+    publish_module._cherry_pick(tmp_path, [{"sha": "a" * 40, "subject": "prova"}], "b" * 40)
+    publish_module._restore(tmp_path, "b" * 40)
+
+    writing = [args for args in seen if {"cherry-pick", "reset"} & set(args)]
+    assert len(writing) == 4, seen
+    assert all(
+        any(args[index:index + 2] == ["-c", "core.longpaths=true"] for index in range(len(args) - 1))
+        for args in writing
+    ), seen
+
+
 def test_a_push_with_command_that_fails_is_declared_not_done(task, repo, tmp_path, capsys):
     _approved_unit(task, repo, tmp_path)
     before = _remote_main(repo)
@@ -291,18 +394,20 @@ def test_a_push_with_command_that_would_force_is_refused_before_it_runs(task, re
     "git push origin :developer",
     "git push --force-with-lease=developer origin main",
     "git push -vf origin",
+    "git push origin developer --prune",
+    "git push --prune-tags origin developer",
 ])
 def test_force_by_another_spelling_is_refused_before_it_runs(command):
-    """`+refspec`, `:refspec`, `--force-with-lease=<ref>` and bundled short flags are all force."""
+    """`+refspec`, `:refspec`, `--force-with-lease=<ref>`, bundled short flags and `--prune` are all refusals."""
     with pytest.raises(publish_module.PublishError, match="force-push: il motore non lo fa mai"):
         publish_module._refuse_force(command)
 
 
 def test_a_default_push_does_not_follow_tags(task, repo, tmp_path):
     """`push.followTags` would send annotated tags with a plain branch push: the engine says no."""
+    git_in(repo.path, "config", "push.followTags", "true")
     _approved_unit(task, repo, tmp_path)
     git_in(repo.path, "tag", "-a", "v-base", "-m", "un tag locale")
-    git_in(repo.path, "config", "push.followTags", "true")
 
     result = publish_module.publish(
         task, "prova", repo=repo.path, branch="main", remote="origin", push=True,
@@ -339,6 +444,26 @@ def test_a_declared_push_that_forces_history_is_caught_after_it_ran(task, repo, 
     event = [row for row in state.read_events(task) if row.get("event") == "unit_published"][-1]
     assert event["pushed"] is False
     assert "forzato" in event["output"]
+
+
+def test_a_declared_push_that_prunes_a_remote_branch_is_caught_after_it_ran(task, repo, tmp_path):
+    """`--prune --all` cancella i rami remoti che il repository locale non ha: guardare solo `main` lo nascondeva."""
+    _approved_unit(task, repo, tmp_path)
+    git_in(repo.path, "push", "-q", "origin", "main:refs/heads/estraneo")
+    command = _declared_script(tmp_path, "potatura.py", (
+        "import subprocess, sys\n"
+        "repo = sys.argv[1]\n"
+        "done = subprocess.run(['git', '-C', repo, 'push', '--prune', '--all', 'origin'], "
+        "capture_output=True, text=True)\n"
+        "sys.exit(done.returncode)\n"
+    ), str(repo.path))
+
+    with pytest.raises(publish_module.PublishError, match="altri rami del remoto") as caught:
+        publish_module.publish(task, "prova", repo=repo.path, branch="main", push_with=command)
+
+    assert "estraneo" in str(caught.value)
+    remote_heads = git_in(tmp_path, "ls-remote", "--heads", str(repo.bare)).stdout
+    assert "estraneo" not in remote_heads, "la potatura è arrivata al remoto e il motore l'ha vista"
 
 
 def test_a_declared_push_that_pushes_a_tag_is_caught_after_it_ran(task, repo, tmp_path):

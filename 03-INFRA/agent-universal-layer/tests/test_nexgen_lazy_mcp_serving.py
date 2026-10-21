@@ -11,6 +11,8 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+import sys
+import threading
 import time
 from pathlib import Path
 
@@ -200,6 +202,63 @@ def test_excess_concurrent_calls_get_structured_refusals(waiter):
         assert reply["error"]["code"] == -32000
         refused.add(reply["id"])
     assert refused == {3, 4, 5}
+
+
+def test_a_reply_is_written_only_after_its_request_gave_the_slot_back():
+    """The cap counts work in flight: a client that has read a reply has finished that request,
+    so the call it sends next must not be refused because of it.
+
+    `_dispatch` released its slot in the worker's `finally`, after the handler had already
+    written the line, so a call sent immediately after a reply could find the slot still taken
+    and be answered -32000. That is the shape of the `assert 2 in (3, 4, 5)` failure seen in CI
+    under `-n auto`: the slow call itself refused at once, then the two calls behind it refused
+    once the third had taken the slot the refused one gave back.
+    """
+    mcp = Path(__file__).resolve().parents[2] / "agent-universal-layer" / "mcp"
+    before_path = sys.path[:]
+    if str(mcp) not in sys.path:
+        sys.path.insert(0, str(mcp))
+    import lazy_frontend
+
+    slots = threading.BoundedSemaphore(1)
+    free_when_written: list[bool] = []
+
+    class _RecordingStdout:
+        """Answers the question the client cannot: was the slot back when the line was written?"""
+
+        def write(self, line: str) -> int:
+            took = slots.acquire(blocking=False)
+            free_when_written.append(took)
+            if took:
+                slots.release()
+            return len(line)
+
+        def flush(self) -> None:
+            pass
+
+    class _IndexOnlyWaiter:
+        def index(self) -> dict:
+            return {"servers": {}}
+
+    real_stdout, real_slots = sys.stdout, lazy_frontend._SLOTS
+    real_cap = lazy_frontend.MAX_CONCURRENT_REQUESTS
+    sys.stdout = _RecordingStdout()
+    lazy_frontend._SLOTS, lazy_frontend.MAX_CONCURRENT_REQUESTS = slots, 1
+    try:
+        lazy_frontend._dispatch({
+            "jsonrpc": "2.0", "id": 1, "method": "tools/call",
+            "params": {"name": "lazy_list", "arguments": {}},
+        }, _IndexOnlyWaiter())
+        deadline = time.monotonic() + 5
+        while not free_when_written and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert free_when_written == [True], "the reply was written while its request still held the slot"
+        assert slots.acquire(blocking=False) is True, "the slot was not given back exactly once"
+    finally:
+        time.sleep(0.2)  # the worker's own release runs against the slot it took, before it is swapped back
+        sys.stdout = real_stdout
+        sys.path[:] = before_path
+        lazy_frontend._SLOTS, lazy_frontend.MAX_CONCURRENT_REQUESTS = real_slots, real_cap
 
 
 # ------------------------------------------------------------------ failure causes

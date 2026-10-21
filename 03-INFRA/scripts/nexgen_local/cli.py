@@ -7,6 +7,7 @@ this module keeps argument wiring (main) and re-exports every cmd_* so
 from __future__ import annotations
 
 import argparse
+import sys
 
 from .cmds import base as _base
 from .cmds.cal import cmd_cal_apply, cmd_cal_propose, cmd_cals
@@ -57,7 +58,27 @@ __all__ = [
 ]
 
 
+def _utf8_console() -> None:
+    """Make the lane's own output UTF-8, whatever code page the console started with.
+
+    The `sup` verbs print `·`, `unità` and `integrità`; on a Windows console whose
+    code page is not UTF-8 those characters reached the reader as `?` or as a
+    replacement box, and the same bytes are what a captured run shows. No other
+    engine command reconfigures its output (`smoke.py` only tolerates bad bytes),
+    so the lane does it once, at the start of every verb, and only for itself.
+    """
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is None:
+            continue
+        try:
+            reconfigure(encoding="utf-8", errors="replace")
+        except (OSError, ValueError):  # nexgen: allow reason="uno stdout già chiuso o non riconfigurabile non deve impedire al verbo di girare: resta la codifica che aveva"
+            continue
+
+
 def main(argv: list[str] | None = None) -> int:
+    _utf8_console()
     parser = argparse.ArgumentParser(
         prog="nexgen-local",
         description="Lane locale governata: sola lettura, tool decisi dal motore, ricevute su audit.",

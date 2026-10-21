@@ -112,7 +112,7 @@ def test_status_shows_the_unit_its_state_and_its_verdict(lane, repo, brief, caps
 
     out = capsys.readouterr().out
     assert "unità prova · esecutore · raccolta · PASS" in out
-    assert "costo non disponibile" in out
+    assert "costo: non misurato" in out, "un costo che nessuno ha potuto leggere si dice, non diventa zero"
 
 
 def test_status_of_a_task_without_units_stays_as_before(lane, capsys):
@@ -138,6 +138,43 @@ def test_run_says_when_the_unit_waits_in_the_queue(lane, capsys, monkeypatch):
     out = capsys.readouterr().out
     assert "in coda: sessione occupata sulla sessione ses_occupata" in out
     assert "una finestra nuova non si apre" in out
+
+
+def test_run_refuses_a_model_outside_the_list(lane, capsys, monkeypatch):
+    """Il rifiuto esce con 1 e dice quale modello e quale elenco."""
+    from nexgen_local import supervision_harness as harness
+
+    task = _task(lane)
+    monkeypatch.setattr(harness, "run_unit", lambda task_id, unit: {
+        "unit": unit, "mode": "refused", "sent": False, "session": "ses_libera",
+        "model": "altro-provider/modello",
+        "reason": "modello altro-provider/modello fuori dall'elenco consentito: opencode-go/*",
+    })
+    capsys.readouterr()
+
+    assert cli.main(["sup", "run", task, "prova"]) == 1
+
+    out = capsys.readouterr().out
+    assert "unità prova rifiutata: modello altro-provider/modello fuori dall'elenco consentito" in out
+    assert "nessun lavoro inviato" in out
+
+
+def test_run_refuses_a_first_tab_that_started_on_the_wrong_model(lane, capsys, monkeypatch):
+    from nexgen_local import supervision_harness as harness
+
+    task = _task(lane)
+    monkeypatch.setattr(harness, "run_unit", lambda task_id, unit: {
+        "unit": unit, "mode": "refused", "sent": True,
+        "session": {"id": "ses_nuova"}, "model": "altro-provider/modello",
+        "reason": "modello altro-provider/modello fuori dall'elenco consentito: opencode-go/*",
+    })
+    capsys.readouterr()
+
+    assert cli.main(["sup", "run", task, "prova"]) == 1
+
+    out = capsys.readouterr().out
+    assert "sessione ses_nuova" in out
+    assert "chiudila" in out
 
 
 def test_run_reports_the_work_sent_into_the_existing_session(lane, capsys, monkeypatch):

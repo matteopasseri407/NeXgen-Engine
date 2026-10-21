@@ -1,3 +1,4 @@
+# nexgen: one-job reason="read, record and aggregate what a harness session cost"
 """What a harness session cost: read its export, its children, and aggregate.
 
 The engine never calls a model and never estimates a price: for an OpenCode
@@ -43,6 +44,193 @@ CHILDREN_MISSING = "figlie non esposte"
 
 class CostError(SupervisionError):
     """The harness executable is missing, the export failed, or its JSON is unusable."""
+
+
+@dataclass(frozen=True)
+class CollectCost:
+    """What one collection measures: this round, this unit, the whole task, and the model.
+
+    `round_usd` is what the round added since its delivery, `unit_usd` what the
+    unit added since it started, `task_usd` the whole session (its children
+    included) plus the sessions that came before it. A number that cannot be
+    read is None, never zero: a missing figure is a fact, a zero is a lie.
+    """
+
+    round_usd: float | None = None
+    unit_usd: float | None = None
+    task_usd: float | None = None
+    model: str = ""
+    session: str = ""
+    stopped: bool = False
+    note: str = ""
+    #: What the measurable sessions add up to, when one of them has no source.
+    task_known_usd: float | None = None
+    task_unknown_sessions: int = 0
+
+    @property
+    def known(self) -> bool:
+        """Whether all three numbers were measured."""
+        return None not in (self.round_usd, self.unit_usd, self.task_usd)
+
+    def as_dict(self) -> dict:
+        """The shape the journal and the package carry, so a later reader rebuilds it."""
+        return {
+            "round_usd": self.round_usd, "unit_usd": self.unit_usd, "task_usd": self.task_usd,
+            "model": self.model, "session": self.session, "stopped": self.stopped,
+            "note": self.note, "task_known_usd": self.task_known_usd,
+            "task_unknown_sessions": self.task_unknown_sessions,
+        }
+
+
+def collect_cost(
+    task_id: str, unit: str, *, facts_of=None, rows=None, events=None,
+) -> CollectCost:
+    """Price the collection that is happening: the round, the unit, the task.
+
+    The harness store holds a cumulative cost per session, so a share is a
+    difference: the round is what grew since the round's own delivery started,
+    the unit since its first attach, and the task is the session now plus the
+    sessions that ended before it. With no delivery in the journal the last row
+    is the baseline, which is what the ledger knows.
+    """
+    name = state.slug(unit)
+    rows = rows if rows is not None else state.read_costs(task_id)
+    events = events if events is not None else state.read_events(task_id)
+    mine = [row for row in rows if row.get("unit") == name]
+    session = str(mine[-1].get("session") or "") if mine else state.harness_session(task_id)
+    if not session:
+        return CollectCost(note="nessuna sessione agganciata")
+    try:
+        facts = (facts_of or measure)(session)
+    except CostError as exc:
+        return CollectCost(session=session, note=str(exc))
+    now = getattr(facts, "cost_usd", None)
+    model = str(getattr(facts, "model", "") or "")
+    if not isinstance(now, (int, float)):
+        return CollectCost(
+            session=session, model=model,
+            stopped=bool(getattr(facts, "stopped", False)),
+            note="costo non riportato dal harness",
+        )
+    rows_priced = [
+        (str(row.get("at") or ""), float(row["cost_usd"]))
+        for row in mine if isinstance(row.get("cost_usd"), (int, float))
+    ]
+    unit_base = rows_priced[0][1] if rows_priced else 0.0
+    round_base = _round_base(events, name, rows_priced, unit_base)
+    total = _task_total(rows, session, now)
+    return CollectCost(
+        round_usd=round(max(now - round_base, 0.0), 6),
+        unit_usd=round(max(now - unit_base, 0.0), 6),
+        task_usd=total.usd,
+        model=model,
+        session=session,
+        stopped=bool(getattr(facts, "stopped", False)),
+        task_known_usd=total.known_usd,
+        task_unknown_sessions=total.unknown_sessions,
+    )
+
+
+def cost_text(cost: CollectCost) -> str:
+    """The one line every verb and every file uses for the cost of a collection.
+
+    A round and a unit that were measured are shown even when one historical
+    session has no source: the total then says what is known and how many
+    sessions are missing, instead of hiding every number.
+    """
+    if not _any_number(cost):
+        return f"costo: non misurato ({cost.note or 'dato assente'})"
+    model = f"modello {cost.model}" if cost.model else "modello non dichiarato"
+    parts = []
+    if cost.round_usd is not None:
+        parts.append(f"giro {cost.round_usd:.4f} $")
+    if cost.unit_usd is not None:
+        parts.append(f"unità {cost.unit_usd:.4f} $")
+    parts.append(_task_part(cost))
+    return f"costo: {', '.join(parts)} ({model})"
+
+
+def total_text(cost: CollectCost, unit: str = "") -> str:
+    """The task total alone, in the same form, saying where it was measured."""
+    model = f"modello {cost.model}" if cost.model else "modello non dichiarato"
+    where = f", misurato alla raccolta di {unit}" if unit else ""
+    if cost.task_usd is not None:
+        return f"compito {cost.task_usd:.4f} $ ({model}{where})"
+    if cost.task_known_usd is not None:
+        return f"compito {_known_part(cost)} ({model}{where})"
+    return f"compito non misurato ({cost.note or 'dato assente'})"
+
+
+def _any_number(cost: CollectCost) -> bool:
+    """Whether any cost in this collection was measured at all."""
+    return any(
+        value is not None
+        for value in (cost.round_usd, cost.unit_usd, cost.task_usd, cost.task_known_usd)
+    )
+
+
+def _task_part(cost: CollectCost) -> str:
+    """The task segment of a cost line: whole, known part, or plainly missing."""
+    if cost.task_usd is not None:
+        return f"compito {cost.task_usd:.4f} $"
+    if cost.task_known_usd is not None:
+        return f"compito {_known_part(cost)}"
+    return "compito non misurato"
+
+
+def _known_part(cost: CollectCost) -> str:
+    """The sum of the measured sessions and how many were not measured."""
+    missing = cost.task_unknown_sessions
+    word = "sessione non misurata" if missing == 1 else "sessioni non misurate"
+    return f"{cost.task_known_usd:.4f} $ noto, {missing} {word}"
+
+
+def _round_base(events: list[dict], unit: str, rows_priced: list[tuple[str, float]], unit_base: float) -> float:
+    """The cost when this round's delivery started, from the row written at its start."""
+    started = ""
+    for row in events:
+        if row.get("event") in DELIVERY_EVENTS and row.get("unit") == unit:
+            started = str(row.get("at") or "")
+    if started:
+        after = [value for at, value in rows_priced if at >= started]
+        return after[0] if after else unit_base
+    return rows_priced[-1][1] if rows_priced else unit_base
+
+
+@dataclass(frozen=True)
+class _TaskTotal:
+    """The task total, and how much of it has no source.
+
+    `usd` is the whole total only when every session was measured; `known_usd`
+    is what the measurable sessions add up to, so one unreadable historical
+    session does not erase the round and the unit that were just measured.
+    """
+
+    usd: float | None
+    known_usd: float
+    unknown_sessions: int
+
+
+def _task_total(rows: list[dict], session: str, now: float) -> _TaskTotal:
+    """The live session plus the last number of every session that ended before it."""
+    latest: dict[str, float | None] = {}
+    for row in rows:
+        name = str(row.get("session") or "")
+        if not name or name == session:
+            continue
+        cost = row.get("cost_usd")
+        latest[name] = float(cost) if isinstance(cost, (int, float)) else None
+    unknown = sum(1 for value in latest.values() if value is None)
+    known_usd = round(now + sum(value for value in latest.values() if value is not None), 6)
+    return _TaskTotal(
+        usd=None if unknown else known_usd,
+        known_usd=known_usd,
+        unknown_sessions=unknown,
+    )
+
+
+#: The events that say work was handed to a session, in the order they mean anything.
+DELIVERY_EVENTS = ("unit_started", "unit_reworked")
 
 
 class SessionMissing(CostError):
@@ -110,7 +298,7 @@ def record(
     if not name:
         raise SupervisionError("unità vuota: indica a quale unità appartiene la sessione")
     row: dict = {
-        "at": _now_iso(now),
+        "at": now_iso(now),
         "task": task_id,
         "unit": name,
         "role": (role or "").strip() or "esecutore",
@@ -251,8 +439,12 @@ def facts_from_export(payload: dict) -> SessionFacts:
 
 
 def aggregate(task_id: str) -> dict:
-    """Sum a task's cost rows by role and by unit; unknown costs stay counted as unknown."""
-    rows = state.read_costs(task_id)
+    """Sum a task's cost rows by role and by unit; unknown costs stay counted as unknown.
+
+    Every row carries the session's cumulative cost, so only the last row of each
+    session counts: adding them all would charge the same money once per attach.
+    """
+    rows = state.latest_cost_rows(state.read_costs(task_id))
     by_role: dict[str, dict] = {}
     by_unit: dict[str, dict] = {}
     for row in rows:
@@ -293,7 +485,7 @@ def _session_id(session_id: str) -> str:
     return session
 
 
-def _now_iso(now: float | None) -> str:
+def now_iso(now: float | None) -> str:
     moment = datetime.fromtimestamp(now, timezone.utc) if now is not None else datetime.now(timezone.utc)
     return moment.isoformat(timespec="seconds")
 

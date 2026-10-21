@@ -5,12 +5,14 @@ finisca in una riga di comando, e la ricerca della sessione per cartella e ora.
 """
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
 from nexgen_local import supervision_harness as harness
+from nexgen_local import supervision_policy as policy
 from nexgen_local import supervision_state as state
 
 
@@ -43,8 +45,8 @@ def unit(task, lane, tmp_path):
 def test_run_opens_the_harness_on_the_unit_and_attaches_its_session(task, unit, monkeypatch):
     opened: dict = {}
 
-    def fake_open(title, argv, *, cwd):
-        opened.update({"title": title, "argv": list(argv), "cwd": cwd})
+    def fake_open(title, argv, *, cwd, marker=""):
+        opened.update({"title": title, "argv": list(argv), "cwd": cwd, "marker": marker})
         return {"title": title, "launcher": "finto", "pid": 4242}
 
     recorded: dict = {}
@@ -82,7 +84,7 @@ def test_run_says_so_when_no_session_can_be_told_apart(task, unit, monkeypatch):
 
     result = harness.run_unit(
         task, "prova",
-        opener=lambda title, argv, *, cwd: {"title": title, "launcher": "finto", "pid": 1},
+        opener=lambda title, argv, *, cwd, marker="": {"title": title, "launcher": "finto", "pid": 1},
         lister=lambda: [],
         wait_s=0,
     )
@@ -96,6 +98,28 @@ def test_run_refuses_a_unit_whose_copy_is_gone(task, unit, monkeypatch):
     harness_unit.rmdir()
     with pytest.raises(harness.HarnessError, match="copia dell'unità sparita"):
         harness.run_unit(task, "prova", opener=lambda *a, **k: None, lister=lambda: [], wait_s=0)
+
+
+def test_the_session_list_is_asked_from_the_copys_own_project(tmp_path, monkeypatch):
+    """Il harness elenca le sessioni del progetto in cui gira: la domanda si fa dalla copia.
+
+    Una copia che viene da un altro repository non comparirebbe mai nell'elenco del
+    progetto del motore, e `sup run` direbbe «sessione non determinata» per sempre.
+    """
+    folder = tmp_path / "copia"
+    folder.mkdir()
+    seen: dict = {}
+
+    def fake_run(argv, **kwargs):
+        seen.update({"argv": list(argv), "cwd": kwargs.get("cwd")})
+        return SimpleNamespace(returncode=0, stdout="[]", stderr="")
+
+    monkeypatch.setattr(harness, "_opencode_executable", lambda: "opencode-finto")
+    monkeypatch.setattr(harness.subprocess, "run", fake_run)
+
+    assert harness._list_sessions(folder) == []
+    assert seen["cwd"] == str(folder)
+    assert "session" in seen["argv"] and "list" in seen["argv"]
 
 
 def test_find_session_takes_the_newest_session_in_that_folder(tmp_path):
@@ -156,12 +180,23 @@ def _attached(task: str, unit: str, session: str) -> None:
     state.append_event(task, "attached", unit=unit, role="esecutore", harness="opencode", session=session)
 
 
+@pytest.fixture
+def settings(lane):
+    """L'elenco dei modelli consentiti, scritto dove la lane lo legge davvero."""
+    def apply(patterns) -> None:
+        (lane.parent / policy.CONFIG_FILE).write_text(
+            json.dumps({"supervision": {"allowed_models": list(patterns)}}), encoding="utf-8",
+        )
+
+    return apply
+
+
 def test_a_free_session_takes_the_work_without_a_new_window(task, unit, monkeypatch):
     _attached(task, "prima", "ses_libera")
     opened: list = []
     runs: list = []
 
-    def fake_runner(session, prompt, folder):
+    def fake_runner(session, prompt, folder, model=""):
         runs.append((session, prompt, folder))
         return SimpleNamespace(pid=777)
 
@@ -181,6 +216,80 @@ def test_a_free_session_takes_the_work_without_a_new_window(task, unit, monkeypa
     assert str(unit) in runs[0][2].__str__()
     events = [row["event"] for row in state.read_events(task)]
     assert events == ["started", "unit_created", "attached", "unit_started"]
+
+
+def test_a_session_on_a_model_outside_the_list_is_refused_before_any_work(
+    task, unit, monkeypatch, settings,
+):
+    """Con un elenco configurato, la sessione sbagliata non riceve niente e il diario la nomina."""
+    settings(["opencode-go/*"])
+    _attached(task, "prima", "ses_libera")
+    monkeypatch.setattr(harness.costs, "record", lambda *a, **k: pytest.fail("un rifiuto non aggancia"))
+
+    result = harness.run_unit(
+        task, "prova",
+        opener=lambda *a, **k: pytest.fail("nessuna scheda nuova"),
+        runner=lambda *a: pytest.fail("nessun lavoro alla sessione sbagliata"),
+        measure=lambda session: SimpleNamespace(stopped=True, model="altro-provider/modello"),
+        lister=lambda: [],
+    )
+
+    assert result["mode"] == "refused"
+    assert result["sent"] is False
+    assert "altro-provider/modello" in result["reason"]
+    assert "opencode-go/*" in result["reason"]
+    events = state.read_events(task)
+    assert events[-1]["event"] == "unit_model_refused"
+    assert events[-1]["model"] == "altro-provider/modello"
+    assert not any(row["event"] == "unit_started" for row in events)
+    unit_record = next(item for item in state.status(task)["units"] if item["unit"] == "prova")
+    assert unit_record["state"] == "rifiutata"
+    assert unit_record["model"] == "altro-provider/modello"
+
+
+def test_a_session_on_an_allowed_model_takes_the_work(task, unit, monkeypatch, settings):
+    settings(["opencode-go/*"])
+    _attached(task, "prima", "ses_libera")
+    runs: list = []
+    monkeypatch.setattr(harness.costs, "record", lambda *a, **k: {"session": a[3], "cost_usd": 0.1})
+
+    result = harness.run_unit(
+        task, "prova",
+        opener=lambda *a, **k: pytest.fail("nessuna scheda nuova"),
+        runner=lambda session, prompt, folder, model="": runs.append(session) or SimpleNamespace(pid=9),
+        measure=lambda session: SimpleNamespace(
+            stopped=True, model="opencode-go/deepseek-v4.1-flash#max",
+        ),
+        lister=lambda: [],
+    )
+
+    assert result["mode"] == "run"
+    assert runs == ["ses_libera"]
+    assert not any(row["event"] == "unit_model_refused" for row in state.read_events(task))
+
+
+def test_a_first_tab_on_a_disallowed_model_is_named_and_not_attached(
+    task, unit, monkeypatch, settings,
+):
+    """La scheda appena aperta si legge prima di agganciarla: il modello sbagliato resta fuori dal compito."""
+    settings(["opencode-go/*"])
+    sessions = [{"id": "ses_nuova", "directory": str(unit), "created": 10**13}]
+    monkeypatch.setattr(harness, "_opencode_executable", lambda: "opencode-finto")
+    monkeypatch.setattr(harness.costs, "record", lambda *a, **k: pytest.fail("non deve agganciare"))
+
+    result = harness.run_unit(
+        task, "prova",
+        opener=lambda title, argv, *, cwd, marker="": {"title": title, "launcher": "finto", "pid": 5},
+        lister=lambda: sessions,
+        measure=lambda session: SimpleNamespace(model="altro-provider/modello"),
+        wait_s=0,
+    )
+
+    assert result["mode"] == "refused"
+    assert result["sent"] is True
+    assert "altro-provider/modello" in result["reason"]
+    assert state.harness_session(task, "opencode") == "", "una scheda rifiutata non diventa la sessione del compito"
+    assert [row["event"] for row in state.read_events(task)][-1] == "unit_model_refused"
 
 
 def test_a_busy_session_puts_the_unit_in_the_queue(task, unit, monkeypatch):
@@ -244,7 +353,7 @@ def test_a_session_the_export_says_is_gone_opens_the_one_new_tab(task, unit, mon
 
     result = harness.run_unit(
         task, "prova",
-        opener=lambda title, argv, *, cwd: opened.append((title, argv)) or {
+        opener=lambda title, argv, *, cwd, marker="": opened.append((title, argv)) or {
             "title": title, "launcher": "finto", "pid": 3,
         },
         runner=lambda *a: pytest.fail("una sessione sparita non riceve il lavoro"),
@@ -334,7 +443,7 @@ def test_corrections_with_a_lost_session_open_the_tab_and_keep_the_round(task, u
 
     result = harness.send_corrections(
         task, "prova", review_file, 2,
-        opener=lambda title, argv, *, cwd: opened.append(argv) or {"title": title, "launcher": "finto", "pid": 4},
+        opener=lambda title, argv, *, cwd, marker="": opened.append(argv) or {"title": title, "launcher": "finto", "pid": 4},
         runner=lambda *a: pytest.fail("la sessione sparita non riceve le correzioni"),
         measure=broken, lister=lambda: sessions, wait_s=0,
     )
@@ -366,3 +475,104 @@ def test_one_shot_runs_are_launched_detached_with_the_session(tmp_path, monkeypa
     assert seen["kwargs"]["stdout"] is not None
     assert seen["kwargs"]["stdin"] is not None
     assert seen["kwargs"]["cwd"] == tmp_path
+
+
+def test_a_model_chosen_for_one_delivery_travels_on_the_command_line(tmp_path, monkeypatch):
+    """La via d'uscita da un provider che rifiuta il modello: `run -m`, e nient'altro.
+
+    `opencode run` non ha `--variant`, quindi il modello è l'unica cosa che parte.
+    """
+    seen: dict = {}
+
+    def fake_popen(argv, **kwargs):
+        seen["argv"] = list(argv)
+        return SimpleNamespace(pid=1234)
+
+    monkeypatch.setattr(harness, "_opencode_executable", lambda: "opencode-finto")
+    monkeypatch.setattr(harness.subprocess, "Popen", fake_popen)
+
+    harness._run_in_session(
+        "ses_libera", "leggi le correzioni", tmp_path, "opencode-go/deepseek-v4.1-flash",
+    )
+
+    assert seen["argv"] == [
+        "opencode-finto", "run", "-s", "ses_libera",
+        "-m", "opencode-go/deepseek-v4.1-flash", "leggi le correzioni",
+    ]
+    assert "--variant" not in seen["argv"]
+
+
+def test_corrections_can_be_resent_on_a_model_the_owner_names(task, unit, monkeypatch):
+    _attached(task, "prima", "ses_libera")
+    review_file = unit.parent / "45-revisione-prova-1.md"
+    review_file.write_text("# Revisione\n\ncorrezioni\n", encoding="utf-8")
+    seen: list = []
+    monkeypatch.setattr(
+        harness.costs, "record",
+        lambda task_id, unit_name, role, session_id, **kwargs: {
+            "session": session_id, "unit": unit_name, "cost_usd": 0.0,
+        },
+    )
+
+    result = harness.send_corrections(
+        task, "prova", review_file, 1,
+        runner=lambda session, prompt, folder, model="": seen.append(model) or SimpleNamespace(pid=7),
+        measure=lambda session: SimpleNamespace(stopped=True), lister=lambda: [],
+        model="opencode-go/deepseek-v4.1-flash",
+    )
+
+    assert seen == ["opencode-go/deepseek-v4.1-flash"]
+    assert result["model"] == "opencode-go/deepseek-v4.1-flash"
+    assert result["model_applied"] is True
+
+def test_a_delivery_after_the_engine_closed_the_tab_reopens_it_on_that_session(task, unit, monkeypatch):
+    """Dopo la chiusura il lavoro non torna invisibile: si riapre una scheda sulla stessa sessione."""
+    _attached(task, "prima", "ses_libera")
+    state.append_event(task, "tab_closed", role="esecutore", pids=[1])
+    review_file = unit.parent / "45-revisione-prova-1.md"
+    review_file.write_text("# Revisione\n\ncorrezioni\n", encoding="utf-8")
+    opened: list = []
+    monkeypatch.setattr(harness, "_opencode_executable", lambda: "opencode-finto")
+    monkeypatch.setattr(
+        harness.costs, "record",
+        lambda task_id, unit_name, role, session_id, **kwargs: {
+            "session": session_id, "unit": unit_name, "cost_usd": 0.0,
+        },
+    )
+
+    result = harness.send_corrections(
+        task, "prova", review_file, 1,
+        opener=lambda title, argv, *, cwd, marker="": opened.append(argv) or {"title": title, "pid": 6},
+        runner=lambda *a: pytest.fail("nessun `run` invisibile dopo la chiusura"),
+        measure=lambda session: SimpleNamespace(stopped=True), lister=lambda: [], wait_s=0,
+    )
+
+    assert opened[0][:5] == ["opencode-finto", str(unit), "-s", "ses_libera", "--prompt"]
+    assert str(review_file) in opened[0][5], "la scheda riapre la sessione che c'è, non ne crea una"
+    assert result["mode"] == "tab" and result["reopened"] is True
+    assert result["session"] == {"id": "ses_libera"}
+    reworked = [row for row in state.read_events(task) if row.get("event") == "unit_reworked"]
+    assert reworked[-1]["mode"] == "tab" and reworked[-1]["session"] == "ses_libera"
+
+
+def test_a_delivery_with_the_tab_still_open_stays_off_the_screen(task, unit, monkeypatch):
+    """La sessione ha già la sua scheda: le correzioni entrano con `run`, senza aprirne una seconda."""
+    _attached(task, "prima", "ses_libera")
+    review_file = unit.parent / "45-revisione-prova-1.md"
+    review_file.write_text("# Revisione\n\ncorrezioni\n", encoding="utf-8")
+    monkeypatch.setattr(
+        harness.costs, "record",
+        lambda task_id, unit_name, role, session_id, **kwargs: {
+            "session": session_id, "unit": unit_name, "cost_usd": 0.0,
+        },
+    )
+    sent: list = []
+
+    result = harness.send_corrections(
+        task, "prova", review_file, 1,
+        opener=lambda *a, **k: pytest.fail("la scheda è già aperta"),
+        runner=lambda session, prompt, folder, model="": sent.append(session) or SimpleNamespace(pid=3),
+        measure=lambda session: SimpleNamespace(stopped=True), lister=lambda: [], wait_s=0,
+    )
+
+    assert result["mode"] == "run" and sent == ["ses_libera"]

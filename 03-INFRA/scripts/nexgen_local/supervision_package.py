@@ -31,7 +31,7 @@ def package_text(
         f"- base: {base[:12]}",
         f"- head: {head[:12]}",
         f"- verdetto: {verdict}",
-        f"- costo: {cost_line}",
+        f"- {cost_line}",
         "",
         "## Cancelli",
         "",

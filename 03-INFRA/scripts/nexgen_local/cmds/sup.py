@@ -11,15 +11,24 @@ import sys
 from pathlib import Path
 
 from .. import supervision_costs as costs
+from .. import supervision_cleanup as cleanup
 from .. import supervision_gates as gates
 from .. import supervision_harness as harness
 from .. import supervision_publish as publish_module
 from .. import supervision_review as review
 from .. import supervision_requests as requests
+from .. import supervision_spend as spend
+from .. import supervision_stall as stall
 from .. import supervision_state as state
+from ..supervision_status import row_count, task_line, unit_line
 from .. import supervision_windows as windows
 from .. import supervision_worktree as worktree
 from ..supervision_state import SupervisionError
+from . import sup_permissions
+from . import sup_rebase
+from . import sup_cleanup
+from . import sup_resume
+from . import sup_scout
 
 
 def register_sup(sub) -> None:
@@ -43,8 +52,10 @@ def register_sup(sub) -> None:
     attach.add_argument("--window", default="", help="titolo della finestra in cui gira la sessione")
     attach.set_defaults(func=cmd_sup_attach)
 
-    costi = sup_sub.add_parser("costi", help="costi del compito, per ruolo e per unità")
-    costi.add_argument("id")
+    costi = sup_sub.add_parser(
+        "costi", help="spesa delle sessioni nelle ultime 5 ore, 7 e 30 giorni; con un id, anche i costi del compito",
+    )
+    costi.add_argument("id", nargs="?", default="", help="id del compito (senza: solo la spesa delle sessioni)")
     costi.set_defaults(func=cmd_sup_costi)
 
     check = sup_sub.add_parser("window-check", help="apre una finestra visibile che resta aperta")
@@ -72,6 +83,11 @@ def register_sup(sub) -> None:
 
     _register_review(sup_sub)
     _register_publish(sup_sub)
+    sup_permissions.register(sup_sub)
+    sup_rebase.register(sup_sub)
+    sup_resume.register(sup_sub)
+    sup_scout.register(sup_sub)
+    sup_cleanup.register(sup_sub)
 
 
 def _register_review(sup_sub) -> None:
@@ -83,6 +99,10 @@ def _register_review(sup_sub) -> None:
     choice.add_argument("--approve", metavar="MOTIVO", default=None, help="approva l'unità raccolta e scrivi il perché")
     choice.add_argument("--rework", metavar="FILE", default=None, help="manda le correzioni all'esecutore nella sua sessione")
     choice.add_argument("--resend", action="store_true", help="riconsegna l'ultimo giro non ancora consegnato")
+    review_verb.add_argument(
+        "-m", "--model", default="",
+        help="con --resend: il modello di questa consegna, quando il provider rifiuta quello configurato",
+    )
     review_verb.set_defaults(func=cmd_sup_review)
 
 
@@ -122,19 +142,38 @@ def cmd_sup_status(args: argparse.Namespace) -> int:
     except SupervisionError as exc:
         print(f"nexgen-local: {exc}", file=sys.stderr)
         return 1
+    stalls, stall_problem = _stalls(args.id)
+    data = state.status(args.id)
     print(f"compito {data['id']}")
     print(f"obiettivo: {data['objective'] or '(non leggibile)'}")
     print(f"cartella: {data['path']}")
     if data["units"]:
         for unit in data["units"]:
-            print(_unit_line(unit))
+            print(unit_line(unit))
+            note = review.status_note(args.id, unit.get("unit") or "")
+            if note:
+                print(note)
     else:
         print("unità: nessuna agganciata")
+    for item in stalls:
+        print(stall.line(item))
+    if stalls:
+        print(f"per rispondere a una richiesta di permesso: `sup permessi {args.id}`")
+    if stall_problem:
+        print(f"stallo: non verificabile ({stall_problem})")
     print("sessioni harness: " + (", ".join(data["sessions"]) or "nessuna"))
     last = data["last_event"] or {}
     print("ultimo evento: " + (f"{last.get('event', '')} {last.get('at', '')}".strip() or "nessuno"))
-    print("costi: " + _cost_line(data))
+    print(task_line(data))
     return 0
+
+
+def _stalls(task_id: str) -> tuple[list[dict], str]:
+    """The stalls found now and, when the check cannot run, the one line saying why."""
+    try:
+        return stall.check(task_id), ""
+    except SupervisionError as exc:
+        return [], str(exc)
 
 
 def cmd_sup_attach(args: argparse.Namespace) -> int:
@@ -164,13 +203,15 @@ def cmd_sup_attach(args: argparse.Namespace) -> int:
 
 
 def cmd_sup_costi(args: argparse.Namespace) -> int:
-    """Print the task's cost rows summed by role and by unit."""
-    try:
-        data = costs.aggregate(args.id)
-    except SupervisionError as exc:
-        print(f"nexgen-local: {exc}", file=sys.stderr)
-        return 1
-    print(_format_aggregate(data))
+    """Print the spend windows, then the task's cost rows by role and by unit when an id is given."""
+    if args.id:
+        try:
+            data = costs.aggregate(args.id)
+        except SupervisionError as exc:
+            print(f"nexgen-local: {exc}", file=sys.stderr)
+            return 1
+        print(_format_aggregate(data))
+    print("\n".join(_spend_lines(spend.spend_windows())))
     return 0
 
 
@@ -218,6 +259,8 @@ def cmd_sup_run(args: argparse.Namespace) -> int:
     except SupervisionError as exc:
         print(f"nexgen-local: {exc}", file=sys.stderr)
         return 1
+    if result["mode"] == "refused":
+        return _print_refusal(result)
     if result["mode"] == "queued":
         print(f"unità {result['unit']} in coda: {result['reason']} sulla sessione {result['session']}")
         print("riprova `sup run` quando quella sessione è ferma: una finestra nuova non si apre")
@@ -241,7 +284,7 @@ def cmd_sup_run(args: argparse.Namespace) -> int:
 
 
 def cmd_sup_collect(args: argparse.Namespace) -> int:
-    """Run the engine's gates on the unit and print the verdict, line by line."""
+    """Run the engine's gates on the unit, print the verdict and the cost, then close its tab."""
     try:
         result = gates.collect(args.id, args.unit)
     except SupervisionError as exc:
@@ -250,8 +293,12 @@ def cmd_sup_collect(args: argparse.Namespace) -> int:
     print(f"unità {result['unit']} · verdetto {result['verdict']}")
     for gate in result["gates"]:
         print(f"{'PASS' if gate.ok else 'FAIL'} {gate.name}: {gate.reason}")
+    print(costs.cost_text(result["cost"]))
     print(f"pacchetto {result['package']}")
     print(f"grezzo {result['raw']}")
+    print(_collect_tab_line(args.id, result["unit"], result["cost"]))
+    for note in cleanup.notes():
+        print(f"nota: {note}")
     for hit in result.get("requests") or []:
         print(f"richiesta al proprietario: {_request_line(hit)}")
     if result.get("request_section"):
@@ -259,13 +306,25 @@ def cmd_sup_collect(args: argparse.Namespace) -> int:
     return 0 if result["verdict"] == "PASS" else 1
 
 
+def _collect_tab_line(task_id: str, unit: str, cost: costs.CollectCost) -> str:
+    """The collection ends the work, so its tab goes; a session still writing keeps it."""
+    if not cost.stopped:
+        why = "non misurata" if cost.note else "ancora al lavoro"
+        return f"sessione {why}: la scheda resta aperta"
+    closed = windows.close_tab(task_id, "esecutore", still_working=(unit,), stopped=True)
+    return closed["line"]
+
+
 def cmd_sup_review(args: argparse.Namespace) -> int:
     """Approve the collected unit or send the corrections into its own session."""
+    if args.model and not args.resend:
+        print("nexgen-local: `-m` vale solo con `--resend`", file=sys.stderr)
+        return 1
     try:
         if args.approve is not None:
             result = review.approve(args.id, args.unit, args.approve)
         elif args.resend:
-            result = review.resend(args.id, args.unit)
+            result = review.resend(args.id, args.unit, model=args.model)
         else:
             result = review.rework(args.id, args.unit, args.rework)
     except SupervisionError as exc:
@@ -299,6 +358,7 @@ def cmd_sup_publish(args: argparse.Namespace) -> int:
     for commit in result["commits"]:
         print(f"{commit['published'][:12]} <- {commit['source'][:12]} · {commit['subject']}")
     print(result["signing"])
+    print(windows.close_tab(args.id, "esecutore")["line"])
     if result["pushed"]:
         print(f"spinta eseguita: {result['command']}")
         return 0
@@ -312,13 +372,38 @@ def cmd_sup_publish(args: argparse.Namespace) -> int:
     return 0
 
 
+def _print_refusal(result: dict) -> int:
+    """One refused run: name the model, say whether any work was sent, and exit 1."""
+    session = result.get("session")
+    session_id = str(session.get("id") if isinstance(session, dict) else session or "")
+    print(f"unità {result['unit']} rifiutata: {result['reason']}")
+    if result.get("sent"):
+        print(f"sessione {session_id}: la scheda si è appena aperta e il brief le è già arrivato; "
+              "chiudila, apri la sessione su un modello consentito e riprova")
+    else:
+        print(f"sessione {session_id}: nessun lavoro inviato; cambia il modello della sessione "
+              "o l'elenco in config.json, poi riprova")
+    return 1
+
+
 def _delivery_line(delivery: dict) -> str:
-    """Where the corrections went: into the session, into its queue, or nowhere."""
+    """Where the corrections went, and whether the owner's model reached them."""
+    session = delivery.get("session")
+    session_id = str(session.get("id") if isinstance(session, dict) else session or "")
     if delivery["mode"] == "queued":
-        return f"correzioni in coda: {delivery['reason']} sulla sessione {delivery['session']}"
-    if delivery["mode"] == "run":
-        return f"correzioni inviate alla sessione {delivery['session']} (pid {delivery['pid']})"
-    return f"finestra aperta per le correzioni sulla sessione {delivery.get('session')}"
+        line = f"correzioni in coda: {delivery['reason']} sulla sessione {session_id}"
+    elif delivery["mode"] == "run":
+        line = f"correzioni inviate alla sessione {session_id} (pid {delivery['pid']})"
+    else:
+        line = f"finestra aperta per le correzioni sulla sessione {session_id}"
+    if delivery.get("model"):
+        line += f" · modello {delivery['model']}"
+    elif delivery.get("model_requested"):
+        line += (
+            f" · modello {delivery['model_requested']} non applicato: una scheda nuova "
+            "prende il modello della configurazione del proprietario"
+        )
+    return line
 
 
 def _request_line(hit: dict) -> str:
@@ -333,53 +418,8 @@ def _tail(text: str, limit: int = 1200) -> str:
 
 def _list_tasks() -> int:
     """Every task folder, one line each: the id is what every other verb wants."""
-    tasks = state.list_tasks()
-    if not tasks:
-        print("nessun compito: `sup start \"<obiettivo>\"`")
-        return 0
-    for task in tasks:
-        if task.get("error"):
-            print(f"{task['id']}  (illeggibile: {task['error']})")
-            continue
-        print(f"{task['id']}  {task['objective'] or '(obiettivo non leggibile)'}")
+    print("\n".join(state.tasks_lines()))
     return 0
-
-
-def _unit_line(unit: dict) -> str:
-    """One unit as the owner reads it: who ran it, how far it got, the review, the cost."""
-    parts = [f"unità {unit.get('unit', '')}"]
-    if unit.get("role"):
-        parts.append(str(unit["role"]))
-    session = f"{unit.get('harness', '')} {unit.get('session', '')}".strip()
-    if session:
-        parts.append(session)
-    if unit.get("state"):
-        parts.append(str(unit["state"]))
-    if unit.get("verdict"):
-        parts.append(str(unit["verdict"]))
-    parts.append(f"giro {unit.get('review_round') or 0}")
-    parts.append("approvata" if unit.get("approved") else "non approvata")
-    if unit.get("published"):
-        head = str(unit.get("published_head") or "")[:8]
-        where = str(unit.get("published_branch") or "")
-        pushed = "spinta" if unit.get("published_pushed") else "solo locale"
-        parts.append(f"pubblicata {head} su {where} ({pushed})")
-    cost = unit.get("cost_usd")
-    parts.append(f"{cost:.4f} $" if isinstance(cost, (int, float)) else "costo non disponibile")
-    return " · ".join(parts)
-
-
-def _cost_line(data: dict) -> str:
-    """The total with its unknowns said out loud, never a zero nobody measured."""
-    total = data.get("cost_total_usd")
-    rows = data.get("cost_rows") or 0
-    unknown = data.get("cost_unknown_rows") or 0
-    if not rows:
-        return "nessuna riga (nessuna sessione agganciata)"
-    if total is None:
-        return f"non disponibile ({_row_count(rows)}, {unknown} senza fonte)"
-    missing = f", {unknown} senza fonte" if unknown else ""
-    return f"{total:.4f} $ ({_row_count(rows)}{missing})"
 
 
 def _format_aggregate(data: dict) -> str:
@@ -396,6 +436,26 @@ def _format_aggregate(data: dict) -> str:
     return "\n".join(lines)
 
 
+#: How each spend window is printed, in the order the owner reads them.
+SPEND_LABELS = (("5h", "ultime 5 ore"), ("7d", "ultimi 7 giorni"), ("30d", "ultimi 30 giorni"))
+
+
+def _spend_lines(data: dict) -> list[str]:
+    """The three windows, or one line saying why the archive would not answer."""
+    if data["note"]:
+        return [f"spesa delle sessioni: non disponibile ({data['note']})"]
+    lines = [f"spesa delle sessioni ({data['source']}, figlie comprese) alle {data['read_at']}:"]
+    for key, label in SPEND_LABELS:
+        window = data["windows"][key]
+        lines.append(f"  {label}: {window['cost_usd']:.4f} $ ({_session_count(window['sessions'])})")
+    return lines
+
+
+def _session_count(count: int) -> str:
+    """One session, two sessions: a window counts sessions, not rows of the register."""
+    return f"{count} sessione" if count == 1 else f"{count} sessioni"
+
+
 def _bucket_line(name: str, bucket: dict) -> str:
     """One aggregate line: rows, money or its absence, unknowns, tokens."""
     cost = bucket.get("cost_usd")
@@ -403,11 +463,6 @@ def _bucket_line(name: str, bucket: dict) -> str:
     unknown = bucket.get("unknown_rows") or 0
     unknown_text = f", {unknown} senza fonte" if unknown else ""
     return (
-        f"{name}: {_row_count(bucket.get('rows', 0))}, {money}{unknown_text}, "
+        f"{name}: {row_count(bucket.get('rows', 0))}, {money}{unknown_text}, "
         f"{bucket.get('tokens_in', 0)} token in, {bucket.get('tokens_out', 0)} token out"
     )
-
-
-def _row_count(count: int) -> str:
-    """One row, two rows: the owner reads these lines."""
-    return f"{count} riga" if count == 1 else f"{count} righe"

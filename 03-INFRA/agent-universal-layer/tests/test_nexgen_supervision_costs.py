@@ -201,6 +201,38 @@ def test_the_aggregate_sums_by_role_and_by_unit(lane, task):
     assert data["by_unit"]["unita-due"]["cost_usd"] == 0.5
 
 
+def test_a_session_counts_once_with_its_last_cumulative_cost(lane, task):
+    """Ogni riga è il costo cumulativo della sessione: sommarle moltiplicava la spesa."""
+    figures = (0.000077, 0.000077, 0.28645, 0.400083, 0.782949)
+    for value in figures:
+        state.append_jsonl(lane / task / state.COSTS_FILE, {
+            "session": "ses_fase3b", "unit": "phase3b", "role": "esecutore", "cost_usd": value,
+        })
+
+    data = costs.aggregate(task)
+
+    assert data["rows"] == 1, "una sessione è una riga, non cinque"
+    assert data["cost_usd"] == 0.782949
+    assert data["unknown_rows"] == 0
+    assert data["by_role"]["esecutore"]["cost_usd"] == 0.782949
+    assert data["by_unit"]["phase3b"]["cost_usd"] == 0.782949
+
+
+def test_a_session_whose_last_cost_is_unknown_stays_counted_as_unknown(lane, task):
+    """L'ultima riga è quella che vale: se è ignota, la sessione resta ignota."""
+    for row in (
+        {"session": "ses_a", "unit": "prova", "role": "esecutore", "cost_usd": 0.5},
+        {"session": "ses_a", "unit": "prova", "role": "esecutore", "cost_usd": None},
+        {"session": "ses_b", "unit": "prova", "role": "esecutore", "cost_usd": 0.25},
+    ):
+        state.append_jsonl(lane / task / state.COSTS_FILE, row)
+
+    data = costs.aggregate(task)
+
+    assert data["cost_usd"] == 0.25
+    assert data["unknown_rows"] == 1, "una riga senza fonte per sessione, non per riga del registro"
+
+
 def test_an_empty_task_has_no_cost_total(lane, task):
     data = costs.aggregate(task)
     assert data["rows"] == 0
@@ -321,3 +353,143 @@ def test_a_timed_out_export_is_not_a_missing_session(lane, monkeypatch):
         costs.export_session("ses_viva")
 
     assert not isinstance(caught.value, costs.SessionMissing)
+
+# --- il costo di una raccolta: giro, unità, compito --------------------------
+
+
+def _facts(*, cost_usd=2.6, model="opencode-go/x", stopped=True):
+    """La sessione come la riporta il harness: ferma vuol dire idle dopo l'ultimo aggiornamento."""
+    return costs.SessionFacts(
+        model=model, cost_usd=cost_usd, created_ms=1_000, updated_ms=2_000,
+        idle_ms=2_000 if stopped else 0,
+    )
+
+
+def test_a_collection_prices_the_round_the_unit_and_the_task(lane):
+    task = state.start("prova costi di raccolta")["id"]
+    state.append_event(task, "unit_started", unit="prova", harness="opencode", session="ses_uno", mode="run")
+    events = state.read_events(task)
+    started = events[-1]["at"]
+    rows = [
+        {"at": "2000-01-01T00:00:00+00:00", "unit": "prova", "session": "ses_uno", "cost_usd": 1.0},
+        {"at": started, "unit": "prova", "session": "ses_uno", "cost_usd": 2.0},
+    ]
+
+    price = costs.collect_cost(task, "prova", facts_of=lambda session: _facts(), rows=rows, events=events)
+
+    assert price.round_usd == 0.6, "dal costo scritto quando il giro è partito"
+    assert price.unit_usd == 1.6, "dall'aggancio dell'unità"
+    assert price.task_usd == 2.6, "la sessione intera, figlie comprese"
+    assert price.model == "opencode-go/x"
+    assert price.stopped is True
+    assert price.known is True
+
+
+def test_the_task_total_adds_the_sessions_that_ended_before(lane):
+    task = state.start("prova due sessioni")["id"]
+    rows = [
+        {"unit": "prima", "session": "ses_vecchia", "cost_usd": 0.5},
+        {"unit": "prima", "session": "ses_vecchia", "cost_usd": 0.9},
+        {"unit": "prova", "session": "ses_uno", "cost_usd": 1.0},
+    ]
+
+    price = costs.collect_cost(task, "prova", facts_of=lambda session: _facts(cost_usd=2.6), rows=rows, events=[])
+
+    assert price.task_usd == 3.5, "l'ultimo numero della sessione vecchia, più quella viva"
+
+
+def test_a_task_total_with_an_unreadable_session_stays_unknown(lane):
+    task = state.start("prova sessione senza costo")["id"]
+    rows = [
+        {"unit": "prima", "session": "ses_vecchia", "cost_usd": None},
+        {"unit": "prova", "session": "ses_uno", "cost_usd": 1.0},
+    ]
+
+    price = costs.collect_cost(task, "prova", facts_of=lambda session: _facts(cost_usd=2.6), rows=rows, events=[])
+
+    assert price.task_usd is None, "un numero che manca non diventa zero"
+    assert price.known is False
+
+
+def test_one_unreadable_session_does_not_zero_the_round_and_the_unit(lane):
+    """Una sessione storica senza fonte non cancella il giro e l'unità appena misurati."""
+    task = state.start("prova totale parziale")["id"]
+    rows = [
+        {"unit": "prima", "session": "ses_vecchia", "cost_usd": None},
+        {"unit": "prova", "session": "ses_uno", "cost_usd": 1.0},
+    ]
+
+    price = costs.collect_cost(task, "prova", facts_of=lambda session: _facts(cost_usd=2.6), rows=rows, events=[])
+
+    assert price.round_usd == 1.6
+    assert price.unit_usd == 1.6
+    assert price.task_usd is None, "il totale intero resta ignoto finché una sessione non ha fonte"
+    assert price.task_known_usd == 2.6, "le sessioni note si sommano lo stesso"
+    assert price.task_unknown_sessions == 1
+    line = costs.cost_text(price)
+    assert "giro 1.6000 $" in line
+    assert "unità 1.6000 $" in line
+    assert "compito 2.6000 $ noto, 1 sessione non misurata" in line
+
+
+def test_a_stopped_session_without_a_cost_still_says_it_is_stopped(lane):
+    """Senza costo la scheda si chiude lo stesso: `stopped` è il fatto della sessione."""
+    task = state.start("prova sessione ferma senza costo")["id"]
+    state.append_event(task, "unit_started", unit="prova", harness="opencode", session="ses_uno", mode="run")
+
+    price = costs.collect_cost(
+        task, "prova", facts_of=lambda session: _facts(cost_usd=None, stopped=True),
+    )
+
+    assert price.stopped is True, "la sessione è ferma anche se il harness non rendiconta il costo"
+    assert price.round_usd is None and price.unit_usd is None and price.task_usd is None
+    assert costs.cost_text(price) == "costo: non misurato (costo non riportato dal harness)"
+
+
+def test_a_running_session_without_a_cost_is_not_reported_as_stopped(lane):
+    """Una sessione al lavoro resta aperta, anche quando il costo manca."""
+    task = state.start("prova sessione al lavoro senza costo")["id"]
+    state.append_event(task, "unit_started", unit="prova", harness="opencode", session="ses_uno", mode="run")
+
+    price = costs.collect_cost(
+        task, "prova", facts_of=lambda session: _facts(cost_usd=None, stopped=False),
+    )
+
+    assert price.stopped is False
+
+
+def test_a_session_the_harness_cannot_price_is_not_zero(lane):
+    task = state.start("prova prezzo illeggibile")["id"]
+    state.append_event(task, "unit_started", unit="prova", harness="opencode", session="ses_uno", mode="run")
+
+    def broken(session):
+        raise costs.CostError("l'export non risponde")
+
+    price = costs.collect_cost(task, "prova", facts_of=broken)
+
+    assert price.known is False
+    assert "l'export non risponde" in price.note
+    assert price.round_usd is None and price.unit_usd is None and price.task_usd is None
+
+
+def test_a_task_without_a_session_says_so(lane):
+    task = state.start("prova senza sessione")["id"]
+
+    price = costs.collect_cost(task, "prova", facts_of=lambda session: _facts())
+
+    assert price.known is False
+    assert "nessuna sessione" in price.note
+
+
+def test_the_line_is_the_same_sentence_everywhere():
+    price = costs.CollectCost(
+        round_usd=0.125, unit_usd=0.5, task_usd=0.75, model="opencode-go/x", session="ses_uno",
+    )
+
+    assert costs.cost_text(price) == "costo: giro 0.1250 $, unità 0.5000 $, compito 0.7500 $ (modello opencode-go/x)"
+
+
+def test_the_line_of_an_unreadable_cost_names_the_reason():
+    price = costs.CollectCost(note="l'export non risponde")
+
+    assert costs.cost_text(price) == "costo: non misurato (l'export non risponde)"
