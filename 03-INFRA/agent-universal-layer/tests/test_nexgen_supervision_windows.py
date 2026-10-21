@@ -338,3 +338,82 @@ def test_the_tab_carries_the_marker_the_closer_looks_for(tmp_path, spawned, pret
     assert script.startswith("$env:NEXGEN_SUP_TAB = 'nexgen-sup:20260101-000000-prova:esecutore'")
     assert "& 'opencode'" in script
     assert handle["marker"] == "nexgen-sup:20260101-000000-prova:esecutore"
+
+
+# --- la stessa scheda su Linux ----------------------------------------------
+
+
+def _linux_rows(marker: str, *, serve: bool = False) -> list[dict]:
+    """The tree of one Linux tab: the shell exports the marker, the harness inherits it."""
+    rows = [
+        {
+            "pid": 100, "ppid": 1, "name": "bash",
+            "command_line": f"bash -c export NEXGEN_SUP_TAB={marker}; opencode /copia; exec bash",
+            "environ": f"HOME=/tmp/casa\0NEXGEN_SUP_TAB={marker}\0",
+        },
+        {"pid": 200, "ppid": 100, "name": "opencode", "command_line": "opencode /copia", "environ": ""},
+    ]
+    if serve:
+        rows.append({
+            "pid": 300, "ppid": 200, "name": "opencode",
+            "command_line": "opencode serve --service", "environ": "",
+        })
+    return rows
+
+
+def test_a_linux_tab_is_found_by_the_exported_marker(task, pretend_os):
+    pretend_os(windows, "posix")
+    marker = windows.tab_marker(task, "esecutore")
+    killed: list = []
+
+    result = windows.close_tab(task, "esecutore", lister=lambda: _linux_rows(marker), killer=killed.extend)
+
+    assert killed == [200, 100], "la finestra segue la sua shell: prima i figli"
+    assert "scheda esecutore chiusa" in result["line"]
+
+
+def test_a_linux_command_that_merely_names_the_marker_is_not_a_tab(task, pretend_os):
+    pretend_os(windows, "posix")
+    marker = windows.tab_marker(task, "esecutore")
+    rows = [{
+        "pid": 100, "ppid": 1, "name": "bash",
+        "command_line": f"bash -c grep {marker} /copia",
+        "environ": "HOME=/tmp/casa\0",
+    }]
+    killed: list = []
+
+    result = windows.close_tab(task, "esecutore", lister=lambda: rows, killer=killed.extend)
+
+    assert killed == []
+    assert "nessuna scheda" in result["line"]
+
+
+def test_a_linux_tab_that_holds_the_shared_server_is_left_alone(task, pretend_os):
+    pretend_os(windows, "posix")
+    marker = windows.tab_marker(task, "esecutore")
+    killed: list = []
+
+    result = windows.close_tab(
+        task, "esecutore", lister=lambda: _linux_rows(marker, serve=True), killer=killed.extend,
+    )
+
+    assert killed == []
+    assert "servizio condiviso" in result["reason"]
+
+
+def test_the_linux_terminal_exports_the_marker(tmp_path, spawned, pretend_os, monkeypatch):
+    """La finestra su Linux è la shell: il marcatore va nel suo ambiente, non solo nella riga."""
+    pretend_os(windows, "posix")
+    monkeypatch.setenv("DISPLAY", ":0")
+    monkeypatch.setattr(
+        windows.shutil, "which",
+        lambda name: "/usr/bin/gnome-terminal" if name == "gnome-terminal" else None,
+    )
+    marker = windows.tab_marker("20260101-000000-prova", "scout")
+
+    handle = windows.open_window("ricognitore", ["opencode"], cwd=tmp_path, marker=marker)
+
+    inner = spawned[0][0][-1]
+    assert inner.startswith(f"export NEXGEN_SUP_TAB={marker};")
+    assert inner.endswith("opencode; exec bash")
+    assert handle["marker"] == marker
