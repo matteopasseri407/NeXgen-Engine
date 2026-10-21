@@ -54,13 +54,16 @@ def cleaned_environment() -> dict[str, str]:
     `-P` keeps the working directory off `sys.path` but does not touch `PYTHONPATH`,
     so a `PYTHONPATH=.` inherited from the parent puts the copy back at the top of
     `sys.path` and its own `pytest.py` runs again. `PYTEST_ADDOPTS` and
-    `PYTEST_PLUGINS` are the same idea one layer out, and a package in the user
-    site directory is not the engine's either.
+    `PYTEST_PLUGINS` are the same idea one layer out.
+
+    The user site directory is left alone: it lives outside the unit's copy, so the
+    unit cannot fill it, and the interpreters a test suite starts may rely on it.
+    Forcing `PYTHONNOUSERSITE=1` made a project's own tests fail under the engine
+    when a child Python took a package from there.
     """
     environment = dict(os.environ)
     for key in UNTRUSTED_ENV:
         environment.pop(key, None)
-    environment["PYTHONNOUSERSITE"] = "1"
     return environment
 
 

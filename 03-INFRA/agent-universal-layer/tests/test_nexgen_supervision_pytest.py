@@ -21,11 +21,13 @@ def _change(path: str, old_path: str | None = None, new: str = "", old: str = ""
 def test_the_cleaned_environment_drops_what_a_unit_could_fill(monkeypatch):
     for key in pytest_runs.UNTRUSTED_ENV:
         monkeypatch.setenv(key, "valore")
+    monkeypatch.delenv("PYTHONNOUSERSITE", raising=False)
 
     environment = pytest_runs.cleaned_environment()
 
     assert all(key not in environment for key in pytest_runs.UNTRUSTED_ENV)
-    assert environment["PYTHONNOUSERSITE"] == "1"
+    # The user site is outside the copy: forcing it off broke a project's own tests.
+    assert "PYTHONNOUSERSITE" not in environment
 
 
 def test_the_touched_tests_name_the_test_folder_that_holds_them():
