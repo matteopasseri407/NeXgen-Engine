@@ -110,7 +110,7 @@ def record(
     if not name:
         raise SupervisionError("unità vuota: indica a quale unità appartiene la sessione")
     row: dict = {
-        "at": _now_iso(now),
+        "at": now_iso(now),
         "task": task_id,
         "unit": name,
         "role": (role or "").strip() or "esecutore",
@@ -293,7 +293,7 @@ def _session_id(session_id: str) -> str:
     return session
 
 
-def _now_iso(now: float | None) -> str:
+def now_iso(now: float | None) -> str:
     moment = datetime.fromtimestamp(now, timezone.utc) if now is not None else datetime.now(timezone.utc)
     return moment.isoformat(timespec="seconds")
 

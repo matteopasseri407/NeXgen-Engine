@@ -16,6 +16,7 @@ from .. import supervision_harness as harness
 from .. import supervision_publish as publish_module
 from .. import supervision_review as review
 from .. import supervision_requests as requests
+from .. import supervision_spend as spend
 from .. import supervision_state as state
 from .. import supervision_windows as windows
 from .. import supervision_worktree as worktree
@@ -43,8 +44,10 @@ def register_sup(sub) -> None:
     attach.add_argument("--window", default="", help="titolo della finestra in cui gira la sessione")
     attach.set_defaults(func=cmd_sup_attach)
 
-    costi = sup_sub.add_parser("costi", help="costi del compito, per ruolo e per unità")
-    costi.add_argument("id")
+    costi = sup_sub.add_parser(
+        "costi", help="spesa delle sessioni nelle ultime 5 ore, 7 e 30 giorni; con un id, anche i costi del compito",
+    )
+    costi.add_argument("id", nargs="?", default="", help="id del compito (senza: solo la spesa delle sessioni)")
     costi.set_defaults(func=cmd_sup_costi)
 
     check = sup_sub.add_parser("window-check", help="apre una finestra visibile che resta aperta")
@@ -164,13 +167,15 @@ def cmd_sup_attach(args: argparse.Namespace) -> int:
 
 
 def cmd_sup_costi(args: argparse.Namespace) -> int:
-    """Print the task's cost rows summed by role and by unit."""
-    try:
-        data = costs.aggregate(args.id)
-    except SupervisionError as exc:
-        print(f"nexgen-local: {exc}", file=sys.stderr)
-        return 1
-    print(_format_aggregate(data))
+    """Print the spend windows, then the task's cost rows by role and by unit when an id is given."""
+    if args.id:
+        try:
+            data = costs.aggregate(args.id)
+        except SupervisionError as exc:
+            print(f"nexgen-local: {exc}", file=sys.stderr)
+            return 1
+        print(_format_aggregate(data))
+    print("\n".join(_spend_lines(spend.spend_windows())))
     return 0
 
 
@@ -394,6 +399,26 @@ def _format_aggregate(data: dict) -> str:
         for name, bucket in sorted(groups.items()):
             lines.append("  " + _bucket_line(name, bucket))
     return "\n".join(lines)
+
+
+#: How each spend window is printed, in the order the owner reads them.
+SPEND_LABELS = (("5h", "ultime 5 ore"), ("7d", "ultimi 7 giorni"), ("30d", "ultimi 30 giorni"))
+
+
+def _spend_lines(data: dict) -> list[str]:
+    """The three windows, or one line saying why the archive would not answer."""
+    if data["note"]:
+        return [f"spesa delle sessioni: non disponibile ({data['note']})"]
+    lines = [f"spesa delle sessioni ({data['source']}, figlie comprese) alle {data['read_at']}:"]
+    for key, label in SPEND_LABELS:
+        window = data["windows"][key]
+        lines.append(f"  {label}: {window['cost_usd']:.4f} $ ({_session_count(window['sessions'])})")
+    return lines
+
+
+def _session_count(count: int) -> str:
+    """One session, two sessions: a window counts sessions, not rows of the register."""
+    return f"{count} sessione" if count == 1 else f"{count} sessioni"
 
 
 def _bucket_line(name: str, bucket: dict) -> str:

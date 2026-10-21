@@ -7,6 +7,8 @@ sessione vera viene letta e nessuna finestra aperta.
 from __future__ import annotations
 
 import json
+import sqlite3
+import time
 
 import pytest
 
@@ -31,6 +33,8 @@ def lane(tmp_path, monkeypatch):
     """Lane temporanea e harness finto: i verbi girano senza toccare il mondo vero."""
     monkeypatch.setattr(state, "lane_state_dir", lambda: tmp_path / "lane")
     monkeypatch.setattr(costs.shutil, "which", lambda name: r"C:\fake\opencode.cmd")
+    # L'archivio delle sessioni vive in una casa temporanea: mai quello vero.
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "xdg"))
     monkeypatch.setattr(
         costs.subprocess, "run",
         lambda argv, **kwargs: costs.subprocess.CompletedProcess(argv, 0, json.dumps(EXPORT), ""),
@@ -40,6 +44,26 @@ def lane(tmp_path, monkeypatch):
 
 def _only_task(lane) -> str:
     return sorted(path.name for path in lane.iterdir() if path.is_dir())[0]
+
+
+@pytest.fixture
+def archive(tmp_path, monkeypatch):
+    """L'archivio del harness in una casa temporanea: nessuna spesa vera viene letta."""
+    store = tmp_path / "xdg" / "opencode"
+    store.mkdir(parents=True)
+    path = store / "opencode.db"
+    now_ms = int(time.time() * 1000)
+    con = sqlite3.connect(path)
+    con.execute("create table session_v2 (id text primary key, parent_id text, cost real, time_updated integer)")
+    con.executemany("insert into session_v2 values (?, ?, ?, ?)", [
+        ("ses_oggi", None, 0.5, now_ms - 3_600_000),
+        ("ses_settimana", None, 2.0, now_ms - 3 * 86_400_000),
+        ("ses_mese", None, 4.0, now_ms - 20 * 86_400_000),
+    ])
+    con.commit()
+    con.close()
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "xdg"))
+    return path
 
 
 def test_start_prints_the_id_and_the_folder(lane, capsys):
@@ -107,6 +131,38 @@ def test_start_status_attach_and_costi_end_to_end(lane, capsys):
     assert "unità prova · esecutore · opencode ses_cli" in status
     assert "sessioni harness: ses_cli" in status
     assert "costi: 0.2500 $ (1 riga)" in status
+
+
+def test_costi_without_an_id_shows_the_three_windows(lane, archive, capsys):
+    """Senza id `sup costi` mostra la spesa delle sessioni, non un errore."""
+
+    assert cli.main(["sup", "costi"]) == 0
+
+    out = capsys.readouterr().out
+    assert "spesa delle sessioni (opencode.db (session_v2), figlie comprese)" in out
+    assert "ultime 5 ore: 0.5000 $ (1 sessione)" in out
+    assert "ultimi 7 giorni: 2.5000 $ (2 sessioni)" in out
+    assert "ultimi 30 giorni: 6.5000 $ (3 sessioni)" in out
+
+
+def test_costi_prints_the_task_rows_and_then_the_windows(lane, archive, capsys):
+    cli.main(["sup", "start", "prova costi con finestre"])
+    task_id = _only_task(lane)
+    capsys.readouterr()
+
+    assert cli.main(["sup", "costi", task_id]) == 0
+
+    out = capsys.readouterr().out
+    assert f"compito {task_id}" in out
+    assert "ultime 5 ore: 0.5000 $" in out
+
+
+def test_costi_says_when_the_archive_would_not_answer(lane, capsys):
+    """Un archivio che non c'è è una spesa non misurata, non zero, e `sup costi` non fallisce."""
+
+    assert cli.main(["sup", "costi"]) == 0
+
+    assert "spesa delle sessioni: non disponibile (archivio del harness non trovato)" in capsys.readouterr().out
 
 
 def test_status_names_a_cost_it_could_not_measure(lane, capsys, monkeypatch):
