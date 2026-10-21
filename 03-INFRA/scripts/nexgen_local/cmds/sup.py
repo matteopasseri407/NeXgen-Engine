@@ -223,6 +223,8 @@ def cmd_sup_run(args: argparse.Namespace) -> int:
     except SupervisionError as exc:
         print(f"nexgen-local: {exc}", file=sys.stderr)
         return 1
+    if result["mode"] == "refused":
+        return _print_refusal(result)
     if result["mode"] == "queued":
         print(f"unità {result['unit']} in coda: {result['reason']} sulla sessione {result['session']}")
         print("riprova `sup run` quando quella sessione è ferma: una finestra nuova non si apre")
@@ -315,6 +317,20 @@ def cmd_sup_publish(args: argparse.Namespace) -> int:
     print(f"resta da fare: `git push {result['remote']} {result['branch']}` dal checkout, oppure "
           "`sup publish ... --push` (o `--push-with \"<comando>\"`)")
     return 0
+
+
+def _print_refusal(result: dict) -> int:
+    """One refused run: name the model, say whether any work was sent, and exit 1."""
+    session = result.get("session")
+    session_id = str(session.get("id") if isinstance(session, dict) else session or "")
+    print(f"unità {result['unit']} rifiutata: {result['reason']}")
+    if result.get("sent"):
+        print(f"sessione {session_id}: la scheda si è appena aperta e il brief le è già arrivato; "
+              "chiudila, apri la sessione su un modello consentito e riprova")
+    else:
+        print(f"sessione {session_id}: nessun lavoro inviato; cambia il modello della sessione "
+              "o l'elenco in config.json, poi riprova")
+    return 1
 
 
 def _delivery_line(delivery: dict) -> str:

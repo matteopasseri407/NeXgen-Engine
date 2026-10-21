@@ -262,6 +262,7 @@ UNIT_EVENTS = {
     "unit_started": "in corso",
     "attached": "in corso",
     "unit_reworked": "in corso",
+    "unit_model_refused": "rifiutata",
     "unit_collected": "raccolta",
     "unit_reviewed": "revisione",
     "unit_published": "pubblicata",
@@ -301,7 +302,7 @@ def _blank_unit(unit: str) -> dict:
     return {
         "unit": unit, "role": "", "harness": "", "session": "", "at": "",
         "state": "", "verdict": "", "collected_head": "", "review_round": 0,
-        "approved": False, "approved_head": "", "published": [],
+        "approved": False, "approved_head": "", "published": [], "model": "",
     }
 
 
@@ -346,6 +347,12 @@ def _fold_event(record: dict, row: dict, event: str) -> None:
         record["review_round"] = int(row.get("round") or record["review_round"])
         record["approved"] = False
         record["approved_head"] = ""
+    elif event == "unit_model_refused":
+        record.update({
+            "model": str(row.get("model") or ""),
+            "allowed_models": [str(item) for item in row.get("allowed") or []],
+            "reason": str(row.get("reason") or ""),
+        })
     elif event == "unit_published":
         record["published"] = [str(item) for item in row.get("commits") or []]
         record["published_head"] = str(row.get("head") or "")

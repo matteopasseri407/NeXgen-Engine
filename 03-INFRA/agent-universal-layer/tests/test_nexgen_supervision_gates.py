@@ -6,6 +6,7 @@ sta su PATH.
 """
 from __future__ import annotations
 
+import json
 import os
 import sys
 from pathlib import Path
@@ -27,6 +28,7 @@ GATE_NAMES = (
     "prova per commit",
     "verifica indipendente",
     "test raccolti",
+    "modello consentito",
     "configurazione git",
     "remoto intatto",
     "albero pulito",
@@ -47,6 +49,17 @@ def repo(tmp_path):
 @pytest.fixture
 def task(lane):
     return state.start("prova fase 2")["id"]
+
+
+@pytest.fixture
+def settings(lane):
+    """L'elenco dei modelli consentiti, scritto dove la lane lo legge davvero."""
+    def apply(patterns) -> None:
+        (lane.parent / "config.json").write_text(
+            json.dumps({"supervision": {"allowed_models": list(patterns)}}), encoding="utf-8",
+        )
+
+    return apply
 
 
 def _unit(task, repo, tmp_path, *, allow=("docs/*.md",), verify=VERIFY_OK) -> Path:
@@ -96,6 +109,61 @@ def test_a_clean_unit_inside_its_boundary_passes(task, repo, tmp_path):
     assert "PASS confine" in raw
     collected = [row for row in state.read_events(task) if row.get("event") == "unit_collected"]
     assert collected[-1]["verdict"] == "PASS"
+
+
+def test_a_session_on_a_model_outside_the_list_fails_the_gate(task, repo, tmp_path, settings, monkeypatch):
+    """L'elenco c'è: il verdetto nomina il modello che non vi rientra."""
+    folder = _unit(task, repo, tmp_path)
+    _commit(folder, "docs: aggiunge una riga", {"docs/guida.md": "# guida\n\nriga aggiunta.\n"})
+    state.append_event(task, "attached", unit="prova", role="esecutore", harness="opencode", session="ses_finta")
+    settings(["opencode-go/*"])
+    monkeypatch.setattr(
+        gates.costs, "measure", lambda session: SimpleNamespace(model="altro-provider/modello"),
+    )
+
+    result = gates.collect(task, "prova")
+
+    assert result["verdict"] == "FAIL"
+    gate = _gate(result, "modello consentito")
+    assert not gate.ok
+    assert "altro-provider/modello" in gate.reason
+    assert "opencode-go/*" in gate.reason
+
+
+def test_a_model_inside_the_list_passes_the_gate(task, repo, tmp_path, settings, monkeypatch):
+    folder = _unit(task, repo, tmp_path)
+    _commit(folder, "docs: aggiunge una riga", {"docs/guida.md": "# guida\n\nriga aggiunta.\n"})
+    state.append_event(task, "attached", unit="prova", role="esecutore", harness="opencode", session="ses_finta")
+    settings(["opencode-go/*"])
+    monkeypatch.setattr(
+        gates.costs, "measure",
+        lambda session: SimpleNamespace(model="opencode-go/deepseek-v4.1-flash#max"),
+    )
+
+    result = gates.collect(task, "prova")
+
+    gate = _gate(result, "modello consentito")
+    assert gate.ok
+    assert "deepseek-v4.1-flash" in gate.reason
+
+
+def test_a_model_nobody_can_read_fails_the_gate(task, repo, tmp_path, settings, monkeypatch):
+    """«Non verificato» non è «consentito»: il cancello non promuove ciò che non ha letto."""
+    folder = _unit(task, repo, tmp_path)
+    _commit(folder, "docs: aggiunge una riga", {"docs/guida.md": "# guida\n\nriga aggiunta.\n"})
+    state.append_event(task, "attached", unit="prova", role="esecutore", harness="opencode", session="ses_finta")
+    settings(["opencode-go/*"])
+
+    def broken(session):
+        raise gates.costs.CostError("export della sessione non riuscito")
+
+    monkeypatch.setattr(gates.costs, "measure", broken)
+
+    result = gates.collect(task, "prova")
+
+    gate = _gate(result, "modello consentito")
+    assert not gate.ok
+    assert "non leggibile" in gate.reason
 
 
 def test_a_file_outside_the_boundary_fails_and_is_named(task, repo, tmp_path):

@@ -18,6 +18,7 @@ from pathlib import Path
 from nexgen_core.processes import no_window_kwargs, windows_command_argv
 
 from . import supervision_costs as costs
+from . import supervision_policy as policy
 from . import supervision_state as state
 from . import supervision_windows as windows
 from .supervision_state import SupervisionError
@@ -59,12 +60,17 @@ def run_unit(
     if not brief.is_file():
         raise HarnessError(f"brief dell'unità sparito: {brief}")
     prompt = prompt_text(task_id, name, brief)
+    allowed = policy.allowed_models()
     session = state.harness_session(task_id, "opencode")
     if not session:
-        return _open_first_tab(task_id, name, folder, prompt, opener or windows.open_window, lister, wait_s)
+        return _open_first_tab(
+            task_id, name, folder, prompt, opener or windows.open_window, lister, wait_s,
+            measure=measure, allowed=allowed,
+        )
     return _deliver(
         task_id, name, folder, prompt, session, event="unit_started", extra={},
         opener=opener, runner=runner, lister=lister, measure=measure, wait_s=wait_s,
+        allowed=allowed,
     )
 
 
@@ -88,6 +94,7 @@ def send_corrections(
     if not path.is_file():
         raise HarnessError(f"file di revisione sparito: {path}")
     prompt = corrections_text(task_id, name, path, round_no)
+    allowed = policy.allowed_models()
     session = state.harness_session(task_id, "opencode")
     if not session:
         if not open_without_session:
@@ -97,23 +104,25 @@ def send_corrections(
             )
         return _open_first_tab(
             task_id, name, folder, prompt, opener or windows.open_window, lister, wait_s,
-            event="unit_reworked", extra={"round": round_no},
+            event="unit_reworked", extra={"round": round_no}, measure=measure, allowed=allowed,
         )
     return _deliver(
         task_id, name, folder, prompt, session, event="unit_reworked", extra={"round": round_no},
         opener=opener, runner=runner, lister=lister, measure=measure, wait_s=wait_s,
+        allowed=allowed,
     )
 
 
 def _deliver(
     task_id: str, unit: str, folder: Path, prompt: str, session: str, *,
     event: str, extra: dict, opener, runner, lister, measure, wait_s: float,
+    allowed: tuple[str, ...] = (),
 ) -> dict:
     """Send into the task's session; a session the harness no longer has becomes the one new tab."""
     try:
         return _enter_the_session(
             task_id, unit, session, folder, prompt, runner or _run_in_session,
-            measure or costs.measure, event=event, extra=extra,
+            measure or costs.measure, event=event, extra=extra, allowed=allowed,
         )
     except SessionLost as lost:
         state.append_event(
@@ -122,7 +131,7 @@ def _deliver(
         )
         return _open_first_tab(
             task_id, unit, folder, prompt, opener or windows.open_window, lister, wait_s,
-            event=event, extra=extra,
+            event=event, extra=extra, measure=measure, allowed=allowed,
         )
 
 
@@ -172,14 +181,26 @@ def find_session(
 
 def _enter_the_session(
     task_id: str, unit: str, session: str, folder: Path, prompt: str, runner, measure,
-    *, event: str, extra: dict,
+    *, event: str, extra: dict, allowed: tuple[str, ...] = (),
 ) -> dict:
     """Send work into the task's own session, or queue it when that session is busy.
 
     A session the harness cannot report is not a busy session: it is gone, and
-    queueing on it would leave the unit waiting on nothing for ever.
+    queueing on it would leave the unit waiting on nothing for ever. A session
+    on a model outside the owner's list is refused before anything is sent.
     """
     facts = _measure_or_lost(measure, session)
+    model = str(getattr(facts, "model", "") or "")
+    if allowed and not policy.model_allowed(model, allowed):
+        reason = policy.refusal(model, allowed)
+        state.append_event(
+            task_id, "unit_model_refused", unit=unit, harness="opencode", session=session,
+            model=model, allowed=list(allowed), reason=reason,
+        )
+        return {
+            "unit": unit, "mode": "refused", "sent": False, "session": session,
+            "model": model, "reason": reason,
+        }
     if not facts.stopped:
         reason = "sessione occupata"
         state.append_event(
@@ -218,8 +239,15 @@ def _measure_or_lost(measure, session: str) -> costs.SessionFacts:
 def _open_first_tab(
     task_id: str, unit: str, folder: Path, prompt: str, opener, lister, wait_s: float,
     *, event: str = "unit_started", extra: dict | None = None,
+    measure=None, allowed: tuple[str, ...] = (),
 ) -> dict:
-    """No session for this harness yet: open the tab and bind the session it creates."""
+    """No session for this harness yet: open the tab and bind the session it creates.
+
+    The model of a session the tab has just opened is read back before the
+    session is attached to the task: with a list configured, a tab that came up
+    on a model outside it is named and left unattached, so the next `sup run`
+    does not send work into it.
+    """
     started_ms = int(time.time() * 1000)
     handle = opener(f"esecutore · {unit}", [_opencode_executable(), str(folder), "--prompt", prompt], cwd=folder)
     state.append_event(
@@ -227,9 +255,36 @@ def _open_first_tab(
         mode="tab", **dict(extra or {}),
     )
     session = find_session(folder, started_ms, wait_s=wait_s, lister=lister)
-    if session is not None:
-        _attach(task_id, unit, session, handle)
+    if session is None:
+        return {"unit": unit, "mode": "tab", "window": handle, "session": None}
+    model = _model_of(session, measure, allowed)
+    if allowed and not policy.model_allowed(model, allowed):
+        reason = policy.refusal(model, allowed)
+        state.append_event(
+            task_id, "unit_model_refused", unit=unit, harness="opencode",
+            session=str(session.get("id") or ""), model=model, allowed=list(allowed), reason=reason,
+        )
+        return {
+            "unit": unit, "mode": "refused", "sent": True, "window": handle,
+            "session": session, "model": model, "reason": reason,
+        }
+    _attach(task_id, unit, session, handle)
     return {"unit": unit, "mode": "tab", "window": handle, "session": session}
+
+
+def _model_of(session: dict, measure, allowed: tuple[str, ...]) -> str:
+    """The model this session runs on; nothing is read when no list exists.
+
+    A model that cannot be read stays empty, which a list refuses: a session the
+    engine cannot check is not a session it may send work to.
+    """
+    if not allowed:
+        return ""
+    try:
+        facts = (measure or costs.measure)(str(session.get("id") or ""))
+    except costs.CostError:  # nexgen: allow reason="an export that just failed is reported as an unknown model, which a list refuses"
+        return ""
+    return str(getattr(facts, "model", "") or "")
 
 
 def _run_in_session(session: str, prompt: str, folder: Path):

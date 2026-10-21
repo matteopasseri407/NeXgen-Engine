@@ -28,6 +28,7 @@ from nexgen_core.processes import no_window_kwargs, split_command_line, windows_
 
 from . import supervision_costs as costs
 from . import supervision_gitconfig as gitconfig
+from . import supervision_policy as policy
 from . import supervision_pytest as pytest_runs
 from . import supervision_requests as requests_module
 from . import supervision_state as state
@@ -84,6 +85,7 @@ def collect(task_id: str, unit: str) -> dict:
     remote = _remote_gate(folder, record, base, head)
     text = diff_text(folder, base, head)
     surface = _pytest_surface(files)
+    model_ok, model_reason = policy.check_session(record, policy.allowed_models())
     results = [
         _scope_gate(files, scope),
         _forbidden_gate(files, scope),
@@ -91,6 +93,7 @@ def collect(task_id: str, unit: str) -> dict:
         _per_commit_gate(folder, rules, base, head),
         _verify_gate(folder, str(record.get("verify") or "")),
         _collected_tests_gate(folder, base, head, files, surface),
+        GateResult("modello consentito", model_ok, model_reason),
         _git_config_gate(record, folder),
         remote,
         clean,

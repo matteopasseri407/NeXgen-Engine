@@ -5,12 +5,14 @@ finisca in una riga di comando, e la ricerca della sessione per cartella e ora.
 """
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
 from nexgen_local import supervision_harness as harness
+from nexgen_local import supervision_policy as policy
 from nexgen_local import supervision_state as state
 
 
@@ -156,6 +158,17 @@ def _attached(task: str, unit: str, session: str) -> None:
     state.append_event(task, "attached", unit=unit, role="esecutore", harness="opencode", session=session)
 
 
+@pytest.fixture
+def settings(lane):
+    """L'elenco dei modelli consentiti, scritto dove la lane lo legge davvero."""
+    def apply(patterns) -> None:
+        (lane.parent / policy.CONFIG_FILE).write_text(
+            json.dumps({"supervision": {"allowed_models": list(patterns)}}), encoding="utf-8",
+        )
+
+    return apply
+
+
 def test_a_free_session_takes_the_work_without_a_new_window(task, unit, monkeypatch):
     _attached(task, "prima", "ses_libera")
     opened: list = []
@@ -181,6 +194,80 @@ def test_a_free_session_takes_the_work_without_a_new_window(task, unit, monkeypa
     assert str(unit) in runs[0][2].__str__()
     events = [row["event"] for row in state.read_events(task)]
     assert events == ["started", "unit_created", "attached", "unit_started"]
+
+
+def test_a_session_on_a_model_outside_the_list_is_refused_before_any_work(
+    task, unit, monkeypatch, settings,
+):
+    """Con un elenco configurato, la sessione sbagliata non riceve niente e il diario la nomina."""
+    settings(["opencode-go/*"])
+    _attached(task, "prima", "ses_libera")
+    monkeypatch.setattr(harness.costs, "record", lambda *a, **k: pytest.fail("un rifiuto non aggancia"))
+
+    result = harness.run_unit(
+        task, "prova",
+        opener=lambda *a, **k: pytest.fail("nessuna scheda nuova"),
+        runner=lambda *a: pytest.fail("nessun lavoro alla sessione sbagliata"),
+        measure=lambda session: SimpleNamespace(stopped=True, model="altro-provider/modello"),
+        lister=lambda: [],
+    )
+
+    assert result["mode"] == "refused"
+    assert result["sent"] is False
+    assert "altro-provider/modello" in result["reason"]
+    assert "opencode-go/*" in result["reason"]
+    events = state.read_events(task)
+    assert events[-1]["event"] == "unit_model_refused"
+    assert events[-1]["model"] == "altro-provider/modello"
+    assert not any(row["event"] == "unit_started" for row in events)
+    unit_record = next(item for item in state.status(task)["units"] if item["unit"] == "prova")
+    assert unit_record["state"] == "rifiutata"
+    assert unit_record["model"] == "altro-provider/modello"
+
+
+def test_a_session_on_an_allowed_model_takes_the_work(task, unit, monkeypatch, settings):
+    settings(["opencode-go/*"])
+    _attached(task, "prima", "ses_libera")
+    runs: list = []
+    monkeypatch.setattr(harness.costs, "record", lambda *a, **k: {"session": a[3], "cost_usd": 0.1})
+
+    result = harness.run_unit(
+        task, "prova",
+        opener=lambda *a, **k: pytest.fail("nessuna scheda nuova"),
+        runner=lambda session, prompt, folder: runs.append(session) or SimpleNamespace(pid=9),
+        measure=lambda session: SimpleNamespace(
+            stopped=True, model="opencode-go/deepseek-v4.1-flash#max",
+        ),
+        lister=lambda: [],
+    )
+
+    assert result["mode"] == "run"
+    assert runs == ["ses_libera"]
+    assert not any(row["event"] == "unit_model_refused" for row in state.read_events(task))
+
+
+def test_a_first_tab_on_a_disallowed_model_is_named_and_not_attached(
+    task, unit, monkeypatch, settings,
+):
+    """La scheda appena aperta si legge prima di agganciarla: il modello sbagliato resta fuori dal compito."""
+    settings(["opencode-go/*"])
+    sessions = [{"id": "ses_nuova", "directory": str(unit), "created": 10**13}]
+    monkeypatch.setattr(harness, "_opencode_executable", lambda: "opencode-finto")
+    monkeypatch.setattr(harness.costs, "record", lambda *a, **k: pytest.fail("non deve agganciare"))
+
+    result = harness.run_unit(
+        task, "prova",
+        opener=lambda title, argv, *, cwd: {"title": title, "launcher": "finto", "pid": 5},
+        lister=lambda: sessions,
+        measure=lambda session: SimpleNamespace(model="altro-provider/modello"),
+        wait_s=0,
+    )
+
+    assert result["mode"] == "refused"
+    assert result["sent"] is True
+    assert "altro-provider/modello" in result["reason"]
+    assert state.harness_session(task, "opencode") == "", "una scheda rifiutata non diventa la sessione del compito"
+    assert [row["event"] for row in state.read_events(task)][-1] == "unit_model_refused"
 
 
 def test_a_busy_session_puts_the_unit_in_the_queue(task, unit, monkeypatch):
