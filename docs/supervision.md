@@ -64,6 +64,7 @@ nexgen-local sup permessi <id> --reject <request> [--allow <request> | --always 
 nexgen-local sup scout <id> "<question>"                    # the explorer, on a detached copy
 nexgen-local sup rebase <id> <unit>                          # realign on the base's current tip
 nexgen-local sup resume <id> [--repo <checkout> --branch <branch>] [--riparti]
+nexgen-local sup pulizia [--chiudi]                          # ciò che il motore ha lasciato aperto
 nexgen-local sup window-check                               # opens a visible window and leaves it open
 ```
 
@@ -583,14 +584,32 @@ decision stays the owner's.
 `supervision_windows` opens a terminal that runs a command and stays open; the
 engine never reads its output, and a window that cannot be opened raises
 instead of falling back to a hidden process. A tab opened by the engine carries
-one exact assignment in its shell's command line
-(`$env:NEXGEN_SUP_TAB=nexgen-sup:<task>:<role>`), and only a PowerShell process
-is looked at: a `grep` or an editor that merely quotes the marker is not a tab
-and is never touched. The engine closes exactly that tab when the work is done:
-after `sup publish` for the executor, when no other unit of the task can still
-work, at the end of the round for the scout, and never when the tree holds the
-shared `opencode serve`. Closing is implemented on Windows; on Linux the tab
-stays open and the verb says so.
+its marker in one exact place, and only a shell is looked at: on Windows the
+assignment in the command line (`$env:NEXGEN_SUP_TAB=nexgen-sup:<task>:<role>`),
+on Linux the exported variable in `/proc/<pid>/environ`. A `grep` or an editor
+that merely quotes the marker is not a tab and is never touched. The engine
+closes exactly that tab when the work is done: after `sup publish` for the
+executor, when no other unit of the task can still work, at the end of the round
+for the scout, and never when the tree holds the shared `opencode serve`.
+
+On Linux the tab is a terminal window whose shell is the tab: the tree is read
+from `/proc` (stat, cmdline, environ) and stopped deepest first, and the window
+follows its shell. The same rule about the shared server applies, so a machine
+where the terminal started `opencode serve` keeps that window.
+
+`sup pulizia` is the verb for what the engine left behind. It lists every marked
+tab whose task is finished, has no units, or can no longer be opened by this lane
+(a proof in a temporary `NEXGEN_HOME` whose folder was deleted), and with
+`--chiudi` closes them with the same deepest-first rule and the same refusal
+around the shared server. It also lists, without touching them, the `opencode`
+and `agy` processes that no tab holds, and the number of processes hanging under
+`opencode serve`: those are the MCP servers of sessions that are already closed,
+which is how OpenCode behaves, so the line says whether the service can be
+restarted now.
+
+`sup collect` prints the same fact as a note, not a gate: marked tabs of tasks
+this lane no longer has stay open after the collection, and that is noise and
+memory, not a defect of the unit under review.
 
 - Windows: **one** Windows Terminal window called `nexgen-sup`, and one tab per
   session (`wt -w nexgen-sup new-tab ...`). Ten units are ten tabs, not ten

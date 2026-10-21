@@ -24,6 +24,7 @@ from .. import supervision_worktree as worktree
 from ..supervision_state import SupervisionError
 from . import sup_permissions
 from . import sup_rebase
+from . import sup_cleanup
 from . import sup_resume
 from . import sup_scout
 
@@ -84,6 +85,7 @@ def register_sup(sub) -> None:
     sup_rebase.register(sup_sub)
     sup_resume.register(sup_sub)
     sup_scout.register(sup_sub)
+    sup_cleanup.register(sup_sub)
 
 
 def _register_review(sup_sub) -> None:
@@ -399,15 +401,7 @@ def _tail(text: str, limit: int = 1200) -> str:
 
 def _list_tasks() -> int:
     """Every task folder, one line each: the id is what every other verb wants."""
-    tasks = state.list_tasks()
-    if not tasks:
-        print("nessun compito: `sup start \"<obiettivo>\"`")
-        return 0
-    for task in tasks:
-        if task.get("error"):
-            print(f"{task['id']}  (illeggibile: {task['error']})")
-            continue
-        print(f"{task['id']}  {task['objective'] or '(obiettivo non leggibile)'}")
+    print("\n".join(state.tasks_lines()))
     return 0
 
 

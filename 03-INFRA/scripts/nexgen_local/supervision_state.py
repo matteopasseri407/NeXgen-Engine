@@ -188,6 +188,20 @@ def status(task_id: str) -> dict:
     }
 
 
+def tasks_lines() -> list[str]:
+    """One line per task folder, for `sup status` with no id; a folder nobody can read says so."""
+    tasks = list_tasks()
+    if not tasks:
+        return ['nessun compito: `sup start "<obiettivo>"`']
+    lines: list[str] = []
+    for task in tasks:
+        if task.get("error"):
+            lines.append(f"{task['id']}  (illeggibile: {task['error']})")
+        else:
+            lines.append(f"{task['id']}  {task['objective'] or '(obiettivo non leggibile)'}")
+    return lines
+
+
 def unit_record(task_id: str, unit: str) -> dict:
     """One unit's latest state as the journal describes it; a unit nobody created is an error."""
     name = slug(unit)
