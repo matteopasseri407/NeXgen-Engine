@@ -134,7 +134,7 @@ def test_start_status_attach_and_costi_end_to_end(lane, capsys):
     assert "obiettivo: prova fase 1" in status
     assert "unità prova · esecutore · opencode ses_cli" in status
     assert "sessioni harness: ses_cli" in status
-    assert "costi: 0.2500 $ (1 riga)" in status
+    assert "costi: compito 0.2500 $ (1 riga)" in status
 
 
 def test_costi_without_an_id_shows_the_three_windows(lane, archive, capsys):

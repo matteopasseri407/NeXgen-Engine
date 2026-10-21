@@ -175,6 +175,10 @@ def status(task_id: str) -> dict:
     units = _units_from_events(events)
     for record in units:
         record["cost_usd"] = _unit_cost(rows, record["unit"])
+    last_cost: dict = {}
+    for row in events:
+        if row.get("event") == "unit_collected" and row.get("cost"):
+            last_cost = {**dict(row["cost"]), "unit": str(row.get("unit") or "")}
     return {
         "id": folder.name,
         "path": folder,
@@ -183,6 +187,7 @@ def status(task_id: str) -> dict:
         "units": units,
         "sessions": _sessions_from_events(events),
         "last_event": events[-1] if events else None,
+        "last_cost": last_cost,
         "cost_rows": len(rows),
         "cost_total_usd": round(sum(known), 6) if known else None,
         "cost_unknown_rows": len(rows) - len(known),
@@ -322,6 +327,7 @@ def _blank_unit(unit: str) -> dict:
         "state": "", "verdict": "", "collected_head": "", "review_round": 0,
         "approved": False, "approved_head": "", "published": [], "model": "",
         "stalled_minutes": 0.0, "stall_threshold": 0.0, "repo": "", "base_ref": "",
+        "cost": {},
     }
 
 
@@ -364,6 +370,7 @@ def _fold_event(record: dict, row: dict, event: str) -> None:
     elif event == "unit_collected":
         record["verdict"] = str(row.get("verdict") or "")
         record["collected_head"] = str(row.get("head") or "")
+        record["cost"] = dict(row.get("cost") or {})
     elif event == "unit_reviewed":
         record["review_round"] = int(row.get("round") or 0)
         record["approved"] = str(row.get("verdict") or "") == APPROVED

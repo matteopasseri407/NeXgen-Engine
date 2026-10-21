@@ -112,7 +112,7 @@ def test_status_shows_the_unit_its_state_and_its_verdict(lane, repo, brief, caps
 
     out = capsys.readouterr().out
     assert "unità prova · esecutore · raccolta · PASS" in out
-    assert "costo non disponibile" in out
+    assert "costo: non misurato" in out, "un costo che nessuno ha potuto leggere si dice, non diventa zero"
 
 
 def test_status_of_a_task_without_units_stays_as_before(lane, capsys):

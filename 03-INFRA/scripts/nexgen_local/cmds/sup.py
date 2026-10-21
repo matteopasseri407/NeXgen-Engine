@@ -20,6 +20,7 @@ from .. import supervision_requests as requests
 from .. import supervision_spend as spend
 from .. import supervision_stall as stall
 from .. import supervision_state as state
+from ..supervision_status import row_count, task_line, unit_line
 from .. import supervision_windows as windows
 from .. import supervision_worktree as worktree
 from ..supervision_state import SupervisionError
@@ -148,7 +149,7 @@ def cmd_sup_status(args: argparse.Namespace) -> int:
     print(f"cartella: {data['path']}")
     if data["units"]:
         for unit in data["units"]:
-            print(_unit_line(unit))
+            print(unit_line(unit))
             note = review.status_note(args.id, unit.get("unit") or "")
             if note:
                 print(note)
@@ -163,7 +164,7 @@ def cmd_sup_status(args: argparse.Namespace) -> int:
     print("sessioni harness: " + (", ".join(data["sessions"]) or "nessuna"))
     last = data["last_event"] or {}
     print("ultimo evento: " + (f"{last.get('event', '')} {last.get('at', '')}".strip() or "nessuno"))
-    print("costi: " + _cost_line(data))
+    print(task_line(data))
     return 0
 
 
@@ -283,7 +284,7 @@ def cmd_sup_run(args: argparse.Namespace) -> int:
 
 
 def cmd_sup_collect(args: argparse.Namespace) -> int:
-    """Run the engine's gates on the unit and print the verdict, line by line."""
+    """Run the engine's gates on the unit, print the verdict and the cost, then close its tab."""
     try:
         result = gates.collect(args.id, args.unit)
     except SupervisionError as exc:
@@ -408,43 +409,6 @@ def _list_tasks() -> int:
     return 0
 
 
-def _unit_line(unit: dict) -> str:
-    """One unit as the owner reads it: who ran it, how far it got, the review, the cost."""
-    parts = [f"unità {unit.get('unit', '')}"]
-    if unit.get("role"):
-        parts.append(str(unit["role"]))
-    session = f"{unit.get('harness', '')} {unit.get('session', '')}".strip()
-    if session:
-        parts.append(session)
-    if unit.get("state"):
-        parts.append(str(unit["state"]))
-    if unit.get("verdict"):
-        parts.append(str(unit["verdict"]))
-    parts.append(f"giro {unit.get('review_round') or 0}")
-    parts.append("approvata" if unit.get("approved") else "non approvata")
-    if unit.get("published"):
-        head = str(unit.get("published_head") or "")[:8]
-        where = str(unit.get("published_branch") or "")
-        pushed = "spinta" if unit.get("published_pushed") else "solo locale"
-        parts.append(f"pubblicata {head} su {where} ({pushed})")
-    cost = unit.get("cost_usd")
-    parts.append(f"{cost:.4f} $" if isinstance(cost, (int, float)) else "costo non disponibile")
-    return " · ".join(parts)
-
-
-def _cost_line(data: dict) -> str:
-    """The total with its unknowns said out loud, never a zero nobody measured."""
-    total = data.get("cost_total_usd")
-    rows = data.get("cost_rows") or 0
-    unknown = data.get("cost_unknown_rows") or 0
-    if not rows:
-        return "nessuna riga (nessuna sessione agganciata)"
-    if total is None:
-        return f"non disponibile ({_row_count(rows)}, {unknown} senza fonte)"
-    missing = f", {unknown} senza fonte" if unknown else ""
-    return f"{total:.4f} $ ({_row_count(rows)}{missing})"
-
-
 def _format_aggregate(data: dict) -> str:
     """The aggregate as a short block: task total, then role and unit lines."""
     lines = [_bucket_line("compito " + str(data.get("task", "")), data)]
@@ -486,11 +450,6 @@ def _bucket_line(name: str, bucket: dict) -> str:
     unknown = bucket.get("unknown_rows") or 0
     unknown_text = f", {unknown} senza fonte" if unknown else ""
     return (
-        f"{name}: {_row_count(bucket.get('rows', 0))}, {money}{unknown_text}, "
+        f"{name}: {row_count(bucket.get('rows', 0))}, {money}{unknown_text}, "
         f"{bucket.get('tokens_in', 0)} token in, {bucket.get('tokens_out', 0)} token out"
     )
-
-
-def _row_count(count: int) -> str:
-    """One row, two rows: the owner reads these lines."""
-    return f"{count} riga" if count == 1 else f"{count} righe"
