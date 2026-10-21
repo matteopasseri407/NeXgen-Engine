@@ -4,7 +4,10 @@ One job: give `agy` a throwaway copy of the unit's repository at a fixed,
 already-trusted path, point it at a brief file, and check afterwards that the
 copy came back exactly as it was. The copy is recreated at every round, so the
 scout never inherits yesterday's edits, and it is detached: there is no branch
-whose work could later be mistaken for the executor's.
+whose work could later be mistaken for the executor's. A tracked file that
+changed, or a HEAD that moved, fails the round; an untracked file is named in
+the journal and ignored, because what matters is the code, not the caches a tool
+leaves behind.
 """
 from __future__ import annotations
 
@@ -106,26 +109,36 @@ def _after(task_id: str, record: dict, report: Path) -> int:
     print(f"copia {found['folder']}: {'pulita' if found['clean'] else 'SPORCA'}")
     for line in found["changes"]:
         print(f"  {line}")
+    for line in found.get("untracked") or []:
+        print(f"  non tracciato, ignorato: {line}")
     print(f"rapporto: {'scritto' if found['report_written'] else 'NON scritto'} ({found['report']})")
     return 0 if found["clean"] else 1
 
 
 def _check(record: dict, report: Path) -> dict:
-    """Whether the copy is where it started and holds nothing new, and whether the report exists."""
+    """Whether the copy is where it started and holds nothing new, and whether the report exists.
+
+    An untracked file is named and not counted: the scout writes nothing, but a
+    cache or a lock the explorer leaves behind is not a change to the code. A
+    tracked file that changed, or a HEAD that moved, is dirty and fails the round.
+    """
     folder = Path(record["folder"])
     try:
-        changes = [line for line in git(folder, "status", "--porcelain").splitlines() if line.strip()]
+        status = [line for line in git(folder, "status", "--porcelain").splitlines() if line.strip()]
         head = _head(folder)
     except (GitError, OSError) as exc:
         return {
             "folder": str(folder), "clean": False, "changes": [f"git non leggibile ({exc})"],
-            "head": "", "report": str(report), "report_written": report.is_file(),
+            "untracked": [], "head": "", "report": str(report), "report_written": report.is_file(),
         }
+    changes = [line for line in status if not line.startswith("??")]
+    untracked = [line[3:] for line in status if line.startswith("??")]
     moved = head != record["head"]
     return {
         "folder": str(folder),
         "clean": not changes and not moved,
         "changes": changes + ([f"HEAD {record['head'][:12]} -> {head[:12]}"] if moved else []),
+        "untracked": untracked,
         "head": head,
         "report": str(report),
         "report_written": report.is_file() and bool(report.read_text(encoding="utf-8").strip()),

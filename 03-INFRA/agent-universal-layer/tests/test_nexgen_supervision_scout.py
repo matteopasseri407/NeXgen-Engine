@@ -144,6 +144,31 @@ def test_an_untouched_copy_comes_back_clean(task):
     assert found["report_written"] is False
 
 
+def test_an_untracked_file_is_named_and_does_not_dirty_the_copy(task):
+    """Una cache lasciata da uno strumento non è una modifica al codice, ma si dice."""
+    record = _opened(task)
+    (Path(record["folder"]) / "cache.tmp").write_text("x\n", encoding="utf-8")
+
+    found = scout.verdict(task)
+
+    assert found["clean"] is True
+    assert found["changes"] == []
+    assert found["untracked"] == ["cache.tmp"]
+
+
+def test_the_untracked_file_reaches_the_journal_and_the_line(task, monkeypatch, capsys):
+    record = _opened(task)
+    _install_explorer(monkeypatch, Path(record["report"]))
+    (Path(record["folder"]) / "cache.tmp").write_text("x\n", encoding="utf-8")
+
+    assert scout.run_in_tab(task) == 0
+
+    done = [row for row in state.read_events(task) if row.get("event") == "scout_finished"][-1]
+    assert done["clean"] is True
+    assert done["untracked"] == ["cache.tmp"]
+    assert "non tracciato, ignorato: cache.tmp" in capsys.readouterr().out
+
+
 def test_a_changed_file_makes_the_copy_dirty(task):
     record = _opened(task)
     (Path(record["folder"]) / "README.md").write_text("# altro\n", encoding="utf-8")
