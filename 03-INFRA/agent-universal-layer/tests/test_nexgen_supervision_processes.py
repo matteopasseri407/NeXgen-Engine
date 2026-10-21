@@ -79,6 +79,47 @@ def test_the_subtree_comes_back_deepest_first():
     assert [row["pid"] for _depth, row in tree] == [30, 20, 10]
 
 
+def test_the_linux_start_time_is_field_22(tmp_path):
+    """Il campo 22 di `/proc/<pid>/stat` è l'ora di avvio, in tick dall'accensione."""
+    folder = tmp_path / "100"
+    folder.mkdir()
+    fields = ["S", "1", *(["0"] * 17), "1234"]
+    (folder / "stat").write_text(f"100 (bash) {' '.join(fields)}\n", encoding="utf-8")
+    (folder / "cmdline").write_bytes(b"bash\0")
+    (folder / "environ").write_bytes(b"")
+
+    rows = processes._posix_rows(tmp_path)
+
+    assert rows[0]["created"] == 1234.0
+
+
+def test_a_windows_row_carries_the_creation_time_when_cim_gives_it():
+    row = processes._windows_row({
+        "ProcessId": 10, "ParentProcessId": 1, "Name": "bash.exe",
+        "CommandLine": "bash", "Created": 1234,
+    })
+    unknown = processes._windows_row({
+        "ProcessId": 11, "ParentProcessId": 1, "Name": "bash.exe",
+        "CommandLine": "bash", "Created": 0,
+    })
+
+    assert row["created"] == 1234.0
+    assert "created" not in unknown, "un'ora che CIM non dà non diventa zero"
+
+
+def test_a_child_created_before_its_presumed_parent_is_not_followed():
+    """Un pid riusato lascia `ParentProcessId` puntato al nuovo proprietario."""
+    table = [
+        {"pid": 10, "ppid": 1, "name": "bash", "command_line": "", "environ": "", "created": 200.0},
+        {"pid": 20, "ppid": 10, "name": "opencode", "command_line": "", "environ": "", "created": 100.0},
+        {"pid": 30, "ppid": 10, "name": "python", "command_line": "", "environ": "", "created": 300.0},
+    ]
+
+    tree = processes.subtree(table, [10])
+
+    assert [row["pid"] for _depth, row in tree] == [30, 10], "il figlio nato prima del padre non è suo"
+
+
 def test_the_shared_server_is_the_one_running_serve():
     server = {"name": "opencode.exe", "command_line": "opencode.exe serve --service"}
     tab = {"name": "opencode.exe", "command_line": "opencode.exe C:\\copia --prompt \"read the serve notes\""}

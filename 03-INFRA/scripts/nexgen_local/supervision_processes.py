@@ -35,7 +35,10 @@ SHELL_NAMES = frozenset({
 })
 _LIST_WINDOWS = (
     "Get-CimInstance Win32_Process | "
-    "Select-Object ProcessId,ParentProcessId,Name,CommandLine | ConvertTo-Json -Compress"
+    "Select-Object ProcessId,ParentProcessId,Name,CommandLine,"
+    "@{Name='Created';Expression={if ($_.CreationDate) {"
+    "[int64]([System.DateTimeOffset]$_.CreationDate).ToUnixTimeSeconds()} else {0}}} | "
+    "ConvertTo-Json -Compress"
 )
 _KILL_WINDOWS = "Stop-Process -Id {pids} -Force -ErrorAction SilentlyContinue"
 
@@ -72,9 +75,26 @@ def subtree(table: list[dict], roots: list[int]) -> list[tuple[int, dict]]:
         node = by_pid.get(pid)
         if node is not None:
             found.append((depth, node))
+        started = (node or {}).get("created")
         for child in by_parent.get(pid, []):
+            if _created_before(child, started):
+                continue
             stack.append((child["pid"], depth + 1))
     return sorted(found, key=lambda item: item[0], reverse=True)
+
+
+def _created_before(child: dict, parent_created: float | None) -> bool:
+    """Whether this child was born before its presumed parent: a reused pid, not a child.
+
+    Windows keeps `ParentProcessId` of a dead parent even after the pid is
+    assigned to another process, so the parent link alone can pull an unrelated
+    tree into the kill set. A child cannot predate its parent; when either
+    creation time is unknown the link is kept rather than guessed away.
+    """
+    started = child.get("created")
+    if not isinstance(started, (int, float)) or not isinstance(parent_created, (int, float)):
+        return False
+    return started < parent_created
 
 
 def is_shared_server(row: dict) -> bool:
@@ -134,13 +154,24 @@ def _windows_rows() -> list[dict]:
 
 def _windows_row(row: dict) -> dict:
     """One CIM row in the shape the rest of the engine uses."""
-    return {
+    found = {
         "pid": int(row.get("ProcessId") or 0),
         "ppid": int(row.get("ParentProcessId") or 0),
         "name": str(row.get("Name") or ""),
         "command_line": str(row.get("CommandLine") or ""),
         "environ": "",
     }
+    created = _created_or_none(row.get("Created"))
+    if created is not None:
+        found["created"] = created
+    return found
+
+
+def _created_or_none(value) -> float | None:
+    """A creation time as a number; a missing or zero one is not evidence."""
+    if isinstance(value, (int, float)) and value > 0:
+        return float(value)
+    return None
 
 
 def _windows_kill(pids: list[int]) -> None:
@@ -189,13 +220,17 @@ def _posix_row(entry: Path, pid: int) -> dict | None:
     except OSError:  # nexgen: allow reason="un processo che esce mentre lo si legge non è un errore: si salta"
         return None
     parts = [part.decode("utf-8", "replace") for part in cmdline.split(b"\0") if part]
-    return {
+    row = {
         "pid": pid,
         "ppid": _ppid_from_stat(stat),
         "name": Path(parts[0]).name if parts else _comm_from_stat(stat),
         "command_line": " ".join(parts),
         "environ": environ.decode("utf-8", "replace"),
     }
+    created = _starttime_from_stat(stat)
+    if created is not None:
+        row["created"] = created
+    return row
 
 
 def _ppid_from_stat(stat: str) -> int:
@@ -209,6 +244,18 @@ def _comm_from_stat(stat: str) -> str:
     opening = stat.find("(")
     closing = stat.rfind(")")
     return stat[opening + 1:closing] if 0 <= opening < closing else ""
+
+
+def _starttime_from_stat(stat: str) -> float | None:
+    """Field 22 of `/proc/<pid>/stat`: when it started, in clock ticks since boot.
+
+    The number is only compared inside one table, where every row shares the
+    same boot and the same clock, so the ticks need no conversion.
+    """
+    after = stat.rsplit(")", 1)[-1].split()
+    if len(after) <= 19 or not after[19].isdigit():
+        return None
+    return float(after[19])
 
 
 def _posix_kill(pids: list[int]) -> None:
