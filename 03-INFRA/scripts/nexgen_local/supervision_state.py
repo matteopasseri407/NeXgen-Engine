@@ -262,6 +262,8 @@ UNIT_EVENTS = {
     "unit_started": "in corso",
     "attached": "in corso",
     "unit_reworked": "in corso",
+    "unit_stalled": "in stallo",
+    "unit_resumed": "in corso",
     "unit_model_refused": "rifiutata",
     "unit_collected": "raccolta",
     "unit_reviewed": "revisione",
@@ -303,6 +305,7 @@ def _blank_unit(unit: str) -> dict:
         "unit": unit, "role": "", "harness": "", "session": "", "at": "",
         "state": "", "verdict": "", "collected_head": "", "review_round": 0,
         "approved": False, "approved_head": "", "published": [], "model": "",
+        "stalled_minutes": 0.0, "stall_threshold": 0.0,
     }
 
 
@@ -353,6 +356,12 @@ def _fold_event(record: dict, row: dict, event: str) -> None:
             "allowed_models": [str(item) for item in row.get("allowed") or []],
             "reason": str(row.get("reason") or ""),
         })
+    elif event == "unit_stalled":
+        record["stalled_minutes"] = float(row.get("minutes") or 0.0)
+        record["stall_threshold"] = float(row.get("threshold") or 0.0)
+    elif event == "unit_resumed":
+        record["stalled_minutes"] = 0.0
+        record["stall_threshold"] = 0.0
     elif event == "unit_published":
         record["published"] = [str(item) for item in row.get("commits") or []]
         record["published_head"] = str(row.get("head") or "")

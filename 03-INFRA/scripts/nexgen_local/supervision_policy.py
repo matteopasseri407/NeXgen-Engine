@@ -1,8 +1,9 @@
-"""The lane's supervision policy: the optional list of models an executor may run on.
+"""The lane's supervision settings: the model list and the stall threshold.
 
-One job: answer whether a model tag is on the owner's list. An empty or absent
-list means no restriction, and the engine imposes nothing on somebody who wrote
-nothing. A list that exists is matched against the tag the harness reports,
+One job: read the owner's `supervision` section and answer the two questions the
+rest of the engine asks of it. An empty or absent model list means no
+restriction, and the engine imposes nothing on somebody who wrote nothing. A
+list that exists is matched against the tag the harness reports,
 `provider/model#variant`, with the shell's own glob rule, so `provider/*` covers
 every model of that provider and every variant of each. The values live in the
 lane's config file, never in this module.
@@ -22,6 +23,9 @@ CONFIG_FILE = "config.json"
 #: The section and the key the list lives under, as the owner writes them.
 SECTION = "supervision"
 KEY = "allowed_models"
+#: How long an active session may stand still before it is called stalled.
+STALL_KEY = "stall_minutes"
+DEFAULT_STALL_MINUTES = 20.0
 
 
 class PolicyError(SupervisionError):
@@ -40,11 +44,31 @@ def allowed_models(path: str | Path | None = None) -> tuple[str, ...]:
     strings, is an error: reading it as "no restriction" would silently allow
     exactly what the list was written to stop.
     """
+    target, section = _section(path)
+    listed = section.get(KEY, [])
+    if not isinstance(listed, list) or not all(isinstance(item, str) for item in listed):
+        raise PolicyError(f"`{SECTION}.{KEY}` deve essere un elenco di schemi: {target}")
+    return tuple(item.strip() for item in listed if item.strip())
+
+
+def stall_minutes(path: str | Path | None = None) -> float:
+    """How many minutes a session may stand still before `sup status` calls it stalled."""
+    _target, section = _section(path)
+    value = section.get(STALL_KEY, DEFAULT_STALL_MINUTES)
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or value <= 0:
+        raise PolicyError(
+            f"`{SECTION}.{STALL_KEY}` deve essere un numero di minuti maggiore di zero: {value!r}"
+        )
+    return float(value)
+
+
+def _section(path: str | Path | None = None) -> tuple[Path, dict]:
+    """The `supervision` section as written, or an empty one when there is no file."""
     target = Path(path).expanduser() if path else config_path()
     try:
         raw = target.read_text(encoding="utf-8")
-    except FileNotFoundError:  # nexgen: allow reason="nessun file significa nessun elenco, che è il default dichiarato"
-        return ()
+    except FileNotFoundError:  # nexgen: allow reason="nessun file significa nessuna impostazione, che è il default dichiarato"
+        return target, {}
     except OSError as exc:
         raise PolicyError(f"configurazione della lane non leggibile: {target} ({exc})") from exc
     try:
@@ -56,10 +80,7 @@ def allowed_models(path: str | Path | None = None) -> tuple[str, ...]:
     section = parsed.get(SECTION, {})
     if not isinstance(section, dict):
         raise PolicyError(f"`{SECTION}` nella configurazione della lane non è un oggetto: {target}")
-    listed = section.get(KEY, [])
-    if not isinstance(listed, list) or not all(isinstance(item, str) for item in listed):
-        raise PolicyError(f"`{SECTION}.{KEY}` deve essere un elenco di schemi: {target}")
-    return tuple(item.strip() for item in listed if item.strip())
+    return target, section
 
 
 def model_allowed(model: str, allowed: tuple[str, ...] | list[str] | None = None) -> bool:

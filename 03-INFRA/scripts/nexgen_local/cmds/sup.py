@@ -17,10 +17,12 @@ from .. import supervision_publish as publish_module
 from .. import supervision_review as review
 from .. import supervision_requests as requests
 from .. import supervision_spend as spend
+from .. import supervision_stall as stall
 from .. import supervision_state as state
 from .. import supervision_windows as windows
 from .. import supervision_worktree as worktree
 from ..supervision_state import SupervisionError
+from . import sup_permissions
 
 
 def register_sup(sub) -> None:
@@ -75,6 +77,7 @@ def register_sup(sub) -> None:
 
     _register_review(sup_sub)
     _register_publish(sup_sub)
+    sup_permissions.register(sup_sub)
 
 
 def _register_review(sup_sub) -> None:
@@ -125,6 +128,8 @@ def cmd_sup_status(args: argparse.Namespace) -> int:
     except SupervisionError as exc:
         print(f"nexgen-local: {exc}", file=sys.stderr)
         return 1
+    stalls, stall_problem = _stalls(args.id)
+    data = state.status(args.id)
     print(f"compito {data['id']}")
     print(f"obiettivo: {data['objective'] or '(non leggibile)'}")
     print(f"cartella: {data['path']}")
@@ -133,11 +138,25 @@ def cmd_sup_status(args: argparse.Namespace) -> int:
             print(_unit_line(unit))
     else:
         print("unità: nessuna agganciata")
+    for item in stalls:
+        print(stall.line(item))
+    if stalls:
+        print(f"per rispondere a una richiesta di permesso: `sup permessi {args.id}`")
+    if stall_problem:
+        print(f"stallo: non verificabile ({stall_problem})")
     print("sessioni harness: " + (", ".join(data["sessions"]) or "nessuna"))
     last = data["last_event"] or {}
     print("ultimo evento: " + (f"{last.get('event', '')} {last.get('at', '')}".strip() or "nessuno"))
     print("costi: " + _cost_line(data))
     return 0
+
+
+def _stalls(task_id: str) -> tuple[list[dict], str]:
+    """The stalls found now and, when the check cannot run, the one line saying why."""
+    try:
+        return stall.check(task_id), ""
+    except SupervisionError as exc:
+        return [], str(exc)
 
 
 def cmd_sup_attach(args: argparse.Namespace) -> int:

@@ -18,6 +18,7 @@ from pathlib import Path
 from nexgen_core.processes import no_window_kwargs, windows_command_argv
 
 from . import supervision_costs as costs
+from . import supervision_permissions as permissions
 from . import supervision_policy as policy
 from . import supervision_state as state
 from . import supervision_windows as windows
@@ -59,6 +60,7 @@ def run_unit(
     brief = state.open_task(task_id) / f"20-brief-{name}.md"
     if not brief.is_file():
         raise HarnessError(f"brief dell'unità sparito: {brief}")
+    permissions.write_profile(task_id, folder)
     prompt = prompt_text(task_id, name, brief)
     allowed = policy.allowed_models()
     session = state.harness_session(task_id, "opencode")
@@ -93,6 +95,7 @@ def send_corrections(
     path = Path(review)
     if not path.is_file():
         raise HarnessError(f"file di revisione sparito: {path}")
+    permissions.write_profile(task_id, folder)
     prompt = corrections_text(task_id, name, path, round_no)
     allowed = policy.allowed_models()
     session = state.harness_session(task_id, "opencode")
