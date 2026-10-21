@@ -7,6 +7,7 @@ del giro è quella vera, hash compresi.
 """
 from __future__ import annotations
 
+import contextlib
 import json
 from pathlib import Path
 
@@ -133,9 +134,10 @@ def test_the_checkpoint_and_the_identity_live_in_the_task_folder(task, unit, ste
     folder = state.open_task(task)
     assert (folder / graph.CHECKPOINT_FILE).is_file()
     identity = json.loads((folder / graph.IDENTITY_FILE).read_text(encoding="utf-8"))
-    assert identity["unit"] == "prova"
-    assert identity["objective_hash"] == graph.identity(task, "prova")["objective_hash"]
-    assert identity["brief_hash"] == graph.identity(task, "prova")["brief_hash"]
+    saved = identity["units"]["prova"]
+    assert saved["unit"] == "prova"
+    assert saved["objective_hash"] == graph.identity(task, "prova")["objective_hash"]
+    assert saved["brief_hash"] == graph.identity(task, "prova")["brief_hash"]
 
 
 # --- i rifiuti dell'identità ------------------------------------------------
@@ -154,19 +156,65 @@ def test_a_changed_brief_is_refused_before_any_step_runs(task, unit, steps):
     assert (len(steps.run_calls), len(steps.collect_calls)) == before
 
 
-def test_a_different_unit_is_refused_instead_of_continuing_the_saved_one(task, unit, repo, tmp_path, steps):
-    graph.resume(task)
+def _second_unit(task, repo, tmp_path) -> str:
+    """The second unit of the same task: its own brief, its own copy, its own run."""
     brief = tmp_path / "seconda.md"
     brief.write_text("# Brief della seconda unità\n", encoding="utf-8")
     worktree.create(
         task, "seconda", repo=repo.path, base="main", brief=str(brief),
         allow=["docs/*.md"], verify=f'"{_python()}" -c "print(1)"',
     )
+    return "seconda"
 
-    with pytest.raises(graph.GraphError) as exc:
-        graph.resume(task, unit="seconda")
 
-    assert exc.value.kind == "unit_mismatch"
+def _threads(task: str) -> set[str]:
+    """The threads the task's one checkpoint file holds."""
+    import sqlite3
+
+    con = sqlite3.connect(state.open_task(task) / graph.CHECKPOINT_FILE)
+    try:
+        return {row[0] for row in con.execute("select distinct thread_id from checkpoints")}
+    finally:
+        con.close()
+
+
+def test_a_second_unit_gets_its_own_checkpoint_in_the_same_file(task, unit, repo, tmp_path, steps):
+    """Un'unità per checkpoint, un file solo: la seconda non prende il posto della prima."""
+    graph.resume(task)
+    _second_unit(task, repo, tmp_path)
+
+    result = graph.resume(task, unit="seconda")
+
+    assert _steps_of(result)[0] == "unità"
+    assert result["stop_reason"] == "waiting_review"
+    folder = state.open_task(task)
+    assert _threads(task) == {f"{folder.name}::prova", f"{folder.name}::seconda"}
+    identity = json.loads((folder / graph.IDENTITY_FILE).read_text(encoding="utf-8"))
+    assert set(identity["units"]) == {"prova", "seconda"}
+    assert identity["units"]["prova"]["brief_hash"] == graph.identity(task, "prova")["brief_hash"]
+
+
+def test_riparti_throws_away_only_the_named_units_checkpoint(task, unit, repo, tmp_path, steps, monkeypatch):
+    graph.resume(task)
+    _second_unit(task, repo, tmp_path)
+    graph.resume(task, unit="seconda")
+    deleted: list = []
+    real_open = graph._open_saver
+
+    @contextlib.contextmanager
+    def recorded(folder):
+        with real_open(folder) as saver:
+            original = saver.delete_thread
+            saver.delete_thread = lambda thread: deleted.append(thread) or original(thread)
+            yield saver
+
+    monkeypatch.setattr(graph, "_open_saver", recorded)
+
+    graph.resume(task, unit="prova", restart=True)
+
+    assert deleted == [f"{state.open_task(task).name}::prova"], "solo il checkpoint dell'unità indicata"
+    identity = json.loads((state.open_task(task) / graph.IDENTITY_FILE).read_text(encoding="utf-8"))
+    assert set(identity["units"]) == {"prova", "seconda"}, "le altre unità restano salvate"
 
 
 def test_a_task_without_a_unit_has_nothing_to_resume(task, steps):

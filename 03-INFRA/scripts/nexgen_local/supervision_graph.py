@@ -4,9 +4,10 @@ One job: walk a task through the steps the owner already runs by hand (unità,
 esecuzione, raccolta, revisione, pubblicazione), checkpointing after each one in
 a SQLite file inside the task folder, so an interruption costs the step that was
 running and nothing else. The steps are not reimplemented here: every node calls
-the function the matching `sup` verb calls. The identity of the run is the
-objective and the unit's brief; a changed brief, or a different unit, makes
-resume refuse instead of silently continuing someone else's run.
+the function the matching `sup` verb calls. There is one checkpoint per unit in
+that one file, and the identity of a run is the task, the unit and the hash of
+its brief: a changed brief makes resume refuse, and a different unit simply has
+its own checkpoint, which `--riparti` alone throws away.
 """
 from __future__ import annotations
 
@@ -66,16 +67,28 @@ def resume(
     task_id: str, *, unit: str = "", repo: str = "", branch: str = "", remote: str = "origin",
     push: bool = False, push_with: str = "", restart: bool = False,
 ) -> dict:
-    """Continue the saved run, or start the first one; refuse when the brief no longer matches."""
+    """Continue the saved run, or start the first one; refuse when the brief no longer matches.
+
+    One checkpoint per unit, in the task's one file: the thread is the task and
+    the unit, and the identity is that pair plus the brief's hash. `restart`
+    throws away this unit's checkpoint and nothing else, so `--riparti` on one
+    unit leaves the other units' runs where they were.
+    """
     folder = state.open_task(task_id)
-    stored = {} if restart else _read_identity(folder)
-    chosen = _chosen_unit(task_id, unit or str(stored.get("unit") or ""))
+    chosen = _chosen_unit(task_id, unit)
+    saved = _read_identity(folder)
+    if restart:
+        saved = {"units": {name: entry for name, entry in saved["units"].items() if name != chosen}}
     current = identity(task_id, chosen)
-    _settle_identity(folder, stored, current, restart)
+    _check_identity(saved["units"].get(chosen, {}), current)
+    thread_id = _thread_id(folder, chosen)
     ctx = _Context(task_id, chosen, repo=repo, branch=branch, remote=remote, push=push, push_with=push_with)
     with _open_saver(folder) as saver:
+        if restart:
+            saver.delete_thread(thread_id)
+        _remember(folder, saved, current)
         app = build_app(ctx).compile(checkpointer=saver)
-        thread = {"configurable": {"thread_id": folder.name}}
+        thread = {"configurable": {"thread_id": thread_id}}
         snapshot = app.get_state(thread)
         final = _continue(app, thread, snapshot.values) if snapshot.values else app.invoke(
             _initial(current), config=thread,
@@ -295,45 +308,57 @@ def _chosen_unit(task_id: str, wanted: str) -> str:
 
 
 def _read_identity(folder: Path) -> dict:
-    """The identity of the saved run, or an empty one when this task never ran one."""
+    """The identity records of this task's runs, one per unit, or none at all.
+
+    A file written before checkpoints became one per unit holds a single record
+    with its `unit` at the top: it is read as that unit's record, so a run saved
+    by the previous version is still resumable instead of being refused.
+    """
     target = folder / IDENTITY_FILE
     if not target.is_file():
-        return {}
+        return {"units": {}}
     try:
         parsed = json.loads(target.read_text(encoding="utf-8"))
     except (OSError, ValueError) as exc:
         raise GraphError(f"identità del giro non leggibile ({target}): {exc}", kind="identity_unreadable") from exc
     if not isinstance(parsed, dict):
         raise GraphError(f"identità del giro non è un oggetto: {target}", kind="identity_unreadable")
-    return parsed
+    if "units" not in parsed and parsed.get("unit"):
+        return {"units": {str(parsed["unit"]): parsed}}
+    units = parsed.get("units")
+    if not isinstance(units, dict):
+        raise GraphError(f"identità del giro senza unità: {target}", kind="identity_unreadable")
+    return {"units": units}
 
 
-def _settle_identity(folder: Path, stored: dict, current: dict, restart: bool) -> None:
-    """Write the identity of a first run, and refuse to continue a different one."""
-    if restart or not stored:
-        if restart:
-            (folder / CHECKPOINT_FILE).unlink(missing_ok=True)
-        (folder / IDENTITY_FILE).write_text(
-            json.dumps({**current, "created_at": state.now_iso()}, indent=1) + "\n", encoding="utf-8",
-        )
+def _check_identity(stored: dict, current: dict) -> None:
+    """Refuse to continue a run whose brief changed: the run is the task, the unit and the brief."""
+    if not stored:
         return
-    if str(stored.get("unit") or "") != current["unit"]:
-        raise GraphError(
-            f"la ripresa riguarda l'unità {stored.get('unit')}: `--unita {current['unit']}` aprirebbe "
-            f"un altro giro. Chiudi quello salvato, o riparti con `--riparti`",
-            kind="unit_mismatch",
-        )
     if str(stored.get("brief_hash") or "") != current["brief_hash"]:
         raise GraphError(
             "il brief dell'unità è cambiato da quando il giro è iniziato: la ripresa è rifiutata. "
             "Rimetti il brief com'era, o riparti con `--riparti`",
             kind="brief_mismatch",
         )
-    if str(stored.get("objective_hash") or "") != current["objective_hash"]:
-        raise GraphError(
-            "l'obiettivo del compito è cambiato da quando il giro è iniziato: la ripresa è rifiutata",
-            kind="objective_mismatch",
-        )
+
+
+def _remember(folder: Path, saved: dict, current: dict) -> None:
+    """Write this unit's identity and leave the other units' records exactly as they are."""
+    units = dict(saved.get("units") or {})
+    previous = units.get(current["unit"]) or {}
+    units[current["unit"]] = {
+        **current,
+        "created_at": str(previous.get("created_at") or state.now_iso()),
+    }
+    (folder / IDENTITY_FILE).write_text(
+        json.dumps({"units": units}, indent=1) + "\n", encoding="utf-8",
+    )
+
+
+def _thread_id(folder: Path, unit: str) -> str:
+    """The one checkpoint of this unit inside the task's one file."""
+    return f"{folder.name}::{unit}"
 
 
 def _require_langgraph():
