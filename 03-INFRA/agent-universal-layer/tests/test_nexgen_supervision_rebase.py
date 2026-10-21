@@ -145,6 +145,19 @@ def test_uncommitted_work_is_refused_before_anything_moves(task, repo, folder):
     assert not _events(task, "unit_rebased")
 
 
+def test_an_untracked_file_does_not_block_the_rebase(task, repo, folder):
+    """Un artefatto non tracciato non è lavoro da committare: git rebase lo lascia dov'è."""
+    _commit(folder, "docs: una riga dell'unità", {"docs/guida.md": "# guida\n\nriga unità.\n"})
+    new_base = _advance_main(repo, "docs: avanti", {"docs/nuovo.md": "# nuovo\n"})
+    (folder / "appunto.txt").write_text("non tracciato\n", encoding="utf-8")
+
+    result = rebase.rebase(task, "prova")
+
+    assert result["changed"] is True
+    assert result["base"] == new_base
+    assert (folder / "appunto.txt").is_file(), "il file non tracciato resta dov'era"
+
+
 def test_a_rewritten_base_is_refused_instead_of_replayed(task, repo, folder):
     _commit(folder, "docs: una riga dell'unità", {"docs/guida.md": "# guida\n\nriga unità.\n"})
     git_in(repo.path, "checkout", "-q", "--orphan", "riscritta")

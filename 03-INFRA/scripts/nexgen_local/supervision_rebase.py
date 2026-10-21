@@ -80,8 +80,12 @@ def _tip(repo: Path, base_ref: str) -> str:
 
 
 def _refuse_dirty(folder: Path, name: str) -> None:
-    """A rebase over uncommitted work either loses it or leaves a copy nobody can collect."""
-    dirty = git(folder, "status", "--porcelain", check=False).strip()
+    """A rebase over uncommitted work either loses it or leaves a copy nobody can collect.
+
+    Untracked files stay out of the question: `git rebase` leaves them alone, so
+    an artefact in the copy is not a reason to refuse the realignment.
+    """
+    dirty = git(folder, "status", "--porcelain", "--untracked-files=no", check=False).strip()
     if dirty:
         first = ", ".join(line[3:] if len(line) > 3 else line for line in dirty.splitlines()[:5])
         raise RebaseError(
