@@ -6,7 +6,9 @@ right interval, and re-fingerprint the copy's git configuration so a change the
 owner made on purpose stops failing the fourth gate. It is a local rebase: the
 engine fetches nothing, so the base moves when the owner moves it. A conflict
 stops the whole thing and leaves the unit exactly as it was, because a copy left
-half-rebased is a trap for whoever collects it next.
+half-rebased is a trap for whoever collects it next. Every command that walks or
+writes the copy opts into Windows long paths, because the task folder plus the
+worktree's rebase state can pass MAX_PATH on a normal owner machine.
 """
 from __future__ import annotations
 
@@ -18,6 +20,10 @@ from nexgen_core.discipline.gitutil import GitError, git
 from . import supervision_gitconfig as gitconfig
 from . import supervision_state as state
 from .supervision_state import SupervisionError
+
+
+#: Windows refuses a path over MAX_PATH unless each git command is told to allow it.
+LONG_PATHS = ("-c", "core.longpaths=true")
 
 
 class RebaseError(SupervisionError):
@@ -85,7 +91,7 @@ def _refuse_dirty(folder: Path, name: str) -> None:
     Untracked files stay out of the question: `git rebase` leaves them alone, so
     an artefact in the copy is not a reason to refuse the realignment.
     """
-    dirty = git(folder, "status", "--porcelain", "--untracked-files=no", check=False).strip()
+    dirty = git(folder, *LONG_PATHS, "status", "--porcelain", "--untracked-files=no", check=False).strip()
     if dirty:
         first = ", ".join(line[3:] if len(line) > 3 else line for line in dirty.splitlines()[:5])
         raise RebaseError(
@@ -104,10 +110,10 @@ def _move(folder: Path, name: str, old_base: str, tip: str, branch: str) -> bool
             "è stata riscritta, e il riallineamento automatico non è sicuro. Rifai l'unità sulla base nuova"
         )
     try:
-        git(folder, "rebase", "--onto", tip, old_base, branch)
+        git(folder, *LONG_PATHS, "rebase", "--onto", tip, old_base, branch)
     except GitError as exc:
         conflicts = _conflicts(folder)
-        git(folder, "rebase", "--abort", check=False)
+        git(folder, *LONG_PATHS, "rebase", "--abort", check=False)
         detail = ", ".join(conflicts) or str(exc)
         raise RebaseError(
             f"unità {name}: il riallineamento si ferma su un conflitto ({detail}); la copia è tornata "
@@ -127,7 +133,7 @@ def _ancestor(folder: Path, older: str, newer: str) -> bool:
 
 def _conflicts(folder: Path) -> list[str]:
     """The files git could not merge, as the rebase left them."""
-    listed = git(folder, "diff", "--name-only", "--diff-filter=U", check=False)
+    listed = git(folder, *LONG_PATHS, "diff", "--name-only", "--diff-filter=U", check=False)
     return [line.strip() for line in listed.splitlines() if line.strip()]
 
 

@@ -321,6 +321,31 @@ def test_a_cherry_pick_conflict_aborts_and_leaves_the_checkout_where_it_was(task
     assert _remote_main(repo) == remote_before, "niente è stato pubblicato"
 
 
+def test_cherry_pick_and_restore_ask_git_for_long_paths(tmp_path, monkeypatch):
+    """Il replay e il ritorno indietro scrivono l'albero: devono reggere MAX_PATH."""
+    seen: list[list[str]] = []
+
+    def fake_run(argv, cwd, timeout, **kwargs):
+        seen.append([str(part) for part in argv])
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    def fake_git(root, *args, **kwargs):
+        seen.append(["git", *[str(part) for part in args]])
+        return ""
+
+    monkeypatch.setattr(publish_module, "_run", fake_run)
+    monkeypatch.setattr(publish_module, "git", fake_git)
+    publish_module._cherry_pick(tmp_path, [{"sha": "a" * 40, "subject": "prova"}], "b" * 40)
+    publish_module._restore(tmp_path, "b" * 40)
+
+    writing = [args for args in seen if {"cherry-pick", "reset"} & set(args)]
+    assert len(writing) == 4, seen
+    assert all(
+        any(args[index:index + 2] == ["-c", "core.longpaths=true"] for index in range(len(args) - 1))
+        for args in writing
+    ), seen
+
+
 def test_a_push_with_command_that_fails_is_declared_not_done(task, repo, tmp_path, capsys):
     _approved_unit(task, repo, tmp_path)
     before = _remote_main(repo)

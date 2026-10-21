@@ -29,10 +29,15 @@ BASE_FILES = {
 
 
 def git_in(folder: str | Path, *args: str, check: bool = True) -> subprocess.CompletedProcess:
-    """One git command in a real folder, captured, with the engine's encoding."""
+    """One git command in a real folder, captured, with the engine's encoding.
+
+    The long-path switch is on: a test's temporary folder can be deep enough to
+    pass MAX_PATH on Windows, and the scaffolding has to reach the same copy the
+    production code does. The switch is inert on POSIX.
+    """
     return subprocess.run(
-        ["git", "-C", str(folder), *args], capture_output=True, text=True,
-        encoding="utf-8", errors="replace", check=check,
+        ["git", "-c", "core.longpaths=true", "-C", str(folder), *args],
+        capture_output=True, text=True, encoding="utf-8", errors="replace", check=check,
     )
 
 

@@ -22,6 +22,8 @@ UNITS_DIR = "23-unita"
 BLOCKED_PUSH_URL = "nexgen-sup-disabled://push-blocked"
 #: A remote that does not answer within this budget is reported as unreadable, never as unchanged.
 REMOTE_TIMEOUT_S = 30.0
+#: Windows refuses a path over MAX_PATH unless each git command is told to allow it.
+LONG_PATHS = ("-c", "core.longpaths=true")
 
 
 class WorktreeError(SupervisionError):
@@ -175,7 +177,7 @@ def _brief_text(brief: str | Path) -> str:
 def _add_worktree(root: Path, folder: Path, branch: str, base_sha: str) -> None:
     """Create the copy on its own new branch from the base commit."""
     try:
-        git(root, "worktree", "add", "-b", branch, str(folder), base_sha)
+        git(root, *LONG_PATHS, "worktree", "add", "-b", branch, str(folder), base_sha)
     except GitError as exc:
         raise WorktreeError(f"copia di lavoro non creata: {exc}") from exc
 
@@ -195,7 +197,7 @@ def _block_push(root: Path, worktree: Path) -> None:
 
 def _discard(root: Path, folder: Path, branch: str) -> None:
     """Undo a half-made unit: the copy and its branch go, the repository stays."""
-    git(root, "worktree", "remove", "--force", str(folder), check=False)
+    git(root, *LONG_PATHS, "worktree", "remove", "--force", str(folder), check=False)
     git(root, "branch", "-D", branch, check=False)
 
 

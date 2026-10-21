@@ -145,6 +145,27 @@ def test_an_unknown_task_is_refused(repo, tmp_path, lane):
         )
 
 
+def test_creating_and_removing_the_copy_ask_git_for_long_paths(tmp_path, monkeypatch):
+    """Le operazioni che scrivono o cancellano l'albero della copia reggono MAX_PATH."""
+    seen: list[list[str]] = []
+
+    def fake_git(root, *args, **kwargs):
+        seen.append([str(part) for part in args])
+        return ""
+
+    monkeypatch.setattr(worktree, "git", fake_git)
+    folder = tmp_path / "copia"
+    worktree._add_worktree(tmp_path, folder, "sup/prova", "a" * 40)
+    worktree._discard(tmp_path, folder, "sup/prova")
+
+    writing = [args for args in seen if "worktree" in args and {"add", "remove"} & set(args)]
+    assert len(writing) == 2, seen
+    assert all(
+        any(args[index:index + 2] == ["-c", "core.longpaths=true"] for index in range(len(args) - 1))
+        for args in writing
+    ), seen
+
+
 def test_the_created_unit_shows_up_in_the_status(task, repo, tmp_path):
     record = _create(task, repo, tmp_path)
     status = state.status(task)

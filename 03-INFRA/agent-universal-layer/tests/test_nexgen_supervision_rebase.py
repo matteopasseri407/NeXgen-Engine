@@ -7,10 +7,13 @@ sapere quali commit sono dell'unità.
 """
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 
 import pytest
+
+from nexgen_core.discipline.gitutil import GitError
 
 from nexgen_local import cli
 from nexgen_local import supervision_gitconfig as gitconfig
@@ -69,6 +72,11 @@ def _advance_main(repo, message: str, files: dict[str, str]) -> str:
 
 def _events(task: str, name: str) -> list[dict]:
     return [row for row in state.read_events(task) if row.get("event") == name]
+
+
+def _asks_for_long_paths(argv: list[str]) -> bool:
+    """Whether this git command carries the switch that lets Windows pass MAX_PATH."""
+    return any(argv[index:index + 2] == ["-c", "core.longpaths=true"] for index in range(len(argv) - 1))
 
 
 # --- la base che avanza -----------------------------------------------------
@@ -224,3 +232,54 @@ def test_the_verb_exits_non_zero_on_a_conflict(task, repo, folder, capsys):
     assert cli.main(["sup", "rebase", task, "prova"]) == 1
 
     assert "conflitto" in capsys.readouterr().err
+
+
+# --- i percorsi lunghi di Windows -------------------------------------------
+
+
+def test_the_rebase_commands_ask_git_for_long_paths(task, repo, folder, monkeypatch):
+    """Ogni comando che legge o scrive l'albero del rebase porta `core.longpaths=true`."""
+    _commit(folder, "docs: una riga dell'unità", {"docs/guida.md": "# guida\n\nriga unità.\n"})
+    new_base = _advance_main(repo, "docs: avanti", {"docs/nuovo.md": "# nuovo\n"})
+    record = state.unit_record(task, "prova")
+    seen: list[list[str]] = []
+
+    def fake_git(root, *args, check=True):
+        seen.append([str(part) for part in args])
+        if "rebase" in args and "--onto" in args and check:
+            raise GitError("fatal: failed to stat: Filename too long")
+        return ""
+
+    monkeypatch.setattr(rebase, "git", fake_git)
+    rebase._refuse_dirty(folder, "prova")
+    with pytest.raises(rebase.RebaseError, match="conflitto"):
+        rebase._move(folder, "prova", record["base"], new_base, record["branch"])
+
+    touching = [args for args in seen if {"status", "rebase", "diff"} & set(args)]
+    assert touching, seen
+    assert all(_asks_for_long_paths(args) for args in touching), seen
+
+
+@pytest.mark.skipif(os.name != "nt", reason="MAX_PATH è un limite di Windows: su POSIX la stessa copia ci sta")
+def test_a_long_unit_copy_path_still_rebases(tmp_path, monkeypatch):
+    """La copia del proprietario può superare MAX_PATH: `worktree add` e rebase devono reggere."""
+    padding = 140 - len(str(tmp_path)) - 1
+    root = tmp_path / ("p" * padding) if padding > 0 else tmp_path
+    root.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr(state, "lane_state_dir", lambda: root / "lane")
+    repo = build(root / "sandbox")
+    brief = root / "brief.md"
+    brief.write_text("# Brief dell'unità\n\nSolo fatti.\n", encoding="utf-8")
+    task = state.start("prova percorso lungo")["id"]
+    record = worktree.create(
+        task, "prova", repo=repo.path, base="main", brief=str(brief),
+        allow=["**"], verify=f'"{sys.executable}" -c "print(1)"',
+    )
+    folder = Path(record["worktree"])
+    _commit(folder, "docs: una riga dell'unità", {"docs/guida.md": "# guida\n\nriga unità.\n"})
+    new_base = _advance_main(repo, "docs: avanti", {"docs/nuovo.md": "# nuovo\n"})
+
+    result = rebase.rebase(task, "prova")
+
+    assert result["base"] == new_base
+    assert (folder / "docs" / "nuovo.md").is_file()

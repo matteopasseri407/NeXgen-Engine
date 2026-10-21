@@ -41,6 +41,8 @@ PUSH_BRANCHES = "il comando di pubblicazione ha toccato altri rami del remoto"
 FETCH_TIMEOUT_S = 120.0
 PUSH_TIMEOUT_S = 600.0
 PUBLISH_TIMEOUT_S = 1800.0
+#: Windows refuses a path over MAX_PATH unless each git command is told to allow it.
+LONG_PATHS = ("-c", "core.longpaths=true")
 
 
 class PublishError(SupervisionError):
@@ -273,7 +275,10 @@ def _cherry_pick(root: Path, commits: list[dict], start: str) -> list[dict]:
     """Replay each commit in order; a conflict puts the checkout back and publishes nothing."""
     applied: list[dict] = []
     for commit in commits:
-        done = _run(["git", "-C", str(root), "cherry-pick", commit["sha"]], root, PUBLISH_TIMEOUT_S)
+        done = _run(
+            ["git", *LONG_PATHS, "-C", str(root), "cherry-pick", commit["sha"]],
+            root, PUBLISH_TIMEOUT_S,
+        )
         if done.returncode:
             files = git(root, "diff", "--name-only", "--diff-filter=U", check=False).splitlines()
             _restore(root, start)
@@ -294,10 +299,10 @@ def _cherry_pick(root: Path, commits: list[dict], start: str) -> list[dict]:
 
 def _restore(root: Path, start: str) -> None:
     """Undo the sequence we started: the checkout goes back to the commit we found."""
-    git(root, "cherry-pick", "--abort", check=False)
+    git(root, *LONG_PATHS, "cherry-pick", "--abort", check=False)
     if git(root, "rev-parse", "HEAD", check=False).strip() != start:
-        git(root, "reset", "--hard", start, check=False)
-    git(root, "cherry-pick", "--quit", check=False)
+        git(root, *LONG_PATHS, "reset", "--hard", start, check=False)
+    git(root, *LONG_PATHS, "cherry-pick", "--quit", check=False)
 
 
 def _signing(root: Path, applied: list[dict]) -> str:
