@@ -100,6 +100,28 @@ def test_run_refuses_a_unit_whose_copy_is_gone(task, unit, monkeypatch):
         harness.run_unit(task, "prova", opener=lambda *a, **k: None, lister=lambda: [], wait_s=0)
 
 
+def test_the_session_list_is_asked_from_the_copys_own_project(tmp_path, monkeypatch):
+    """Il harness elenca le sessioni del progetto in cui gira: la domanda si fa dalla copia.
+
+    Una copia che viene da un altro repository non comparirebbe mai nell'elenco del
+    progetto del motore, e `sup run` direbbe «sessione non determinata» per sempre.
+    """
+    folder = tmp_path / "copia"
+    folder.mkdir()
+    seen: dict = {}
+
+    def fake_run(argv, **kwargs):
+        seen.update({"argv": list(argv), "cwd": kwargs.get("cwd")})
+        return SimpleNamespace(returncode=0, stdout="[]", stderr="")
+
+    monkeypatch.setattr(harness, "_opencode_executable", lambda: "opencode-finto")
+    monkeypatch.setattr(harness.subprocess, "run", fake_run)
+
+    assert harness._list_sessions(folder) == []
+    assert seen["cwd"] == str(folder)
+    assert "session" in seen["argv"] and "list" in seen["argv"]
+
+
 def test_find_session_takes_the_newest_session_in_that_folder(tmp_path):
     folder = tmp_path / "copia"
     folder.mkdir()

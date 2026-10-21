@@ -166,7 +166,7 @@ def find_session(
 ) -> dict | None:
     """The newest session opened in `folder` at or after `since_ms`, or None when none appears."""
     wanted = _normal(folder)
-    list_sessions = lister or _list_sessions
+    list_sessions = lister or (lambda: _list_sessions(folder))
     now, pause = clock or time.monotonic, sleep or time.sleep
     deadline = now() + wait_s
     while True:
@@ -329,14 +329,19 @@ def _attach(task_id: str, unit: str, session: dict, handle: dict) -> None:
     )
 
 
-def _list_sessions() -> list[dict]:
-    """Every session the harness knows, newest first, as the harness reports it."""
+def _list_sessions(folder: str | Path) -> list[dict]:
+    """Every session the harness knows for this folder's project, newest first.
+
+    The harness lists the sessions of the project it is run in, so the question
+    is asked from the copy: a unit whose repository is not the one the engine
+    was started in still reports its own new session.
+    """
     executable = _opencode_executable()
     argv = windows_command_argv([executable, "session", "list", "--format", "json", "-n", "100"])
     try:
         done = subprocess.run(
             argv, capture_output=True, text=True, encoding="utf-8", errors="replace",
-            stdin=subprocess.DEVNULL, timeout=LIST_TIMEOUT_S, check=False,
+            stdin=subprocess.DEVNULL, timeout=LIST_TIMEOUT_S, check=False, cwd=str(folder),
         )
     except (OSError, subprocess.TimeoutExpired) as exc:
         raise HarnessError(f"`opencode session list` non eseguibile ({type(exc).__name__})") from exc
