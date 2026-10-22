@@ -74,14 +74,14 @@ def test_survey_lists_a_closed_units_copy_and_branch(task, tmp_path):
     assert any("copie e rami di unità finite ancora sul disco: 1" in line for line in printed)
 
 
-def test_close_leftovers_names_a_commit_no_repository_has(task, tmp_path):
+def test_close_leftovers_refuses_when_the_published_repository_is_gone(task, tmp_path):
     _unit(task, tmp_path, published=True)
 
     result = cleanup.close_leftovers(cleanup.leftovers())
 
     assert result["closed"] == []
     assert len(result["problems"]) == 1
-    assert "non sono in nessuno dei repository noti" in result["problems"][0]
+    assert "il diario non dice su quale ramo di quale repository" in result["problems"][0]
     assert (tmp_path / "copia-prova").is_dir(), "una chiusura rifiutata non cancella niente"
 
 
