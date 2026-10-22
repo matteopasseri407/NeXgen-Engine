@@ -349,6 +349,7 @@ def _run_unit(args: argparse.Namespace) -> dict:
 def cmd_sup_collect(args: argparse.Namespace) -> int:
     """Run the engine's gates on the unit, print the verdict and the cost, then close its tab."""
     try:
+        early_close = _close_stopped_tab(args.id, args.unit)
         result = gates.collect(args.id, args.unit)
     except SupervisionError as exc:
         print(f"nexgen-local: {exc}", file=sys.stderr)
@@ -361,7 +362,7 @@ def cmd_sup_collect(args: argparse.Namespace) -> int:
     print(costs.cost_text(result["cost"]))
     print(f"pacchetto {result['package']}")
     print(f"grezzo {result['raw']}")
-    print(_collect_tab_line(args.id, result["unit"], result["cost"]))
+    print(_collect_tab_line(args.id, result["unit"], result["cost"]) or early_close)
     for note in result.get("local_notes") or []:
         print(f"nota: {note}")
     for note in cleanup.notes():
@@ -371,6 +372,25 @@ def cmd_sup_collect(args: argparse.Namespace) -> int:
     if result.get("request_section"):
         print(f"richieste: {result['request_section']}")
     return 0 if result["verdict"] == "PASS" else 1
+
+
+def _close_stopped_tab(task_id: str, unit: str) -> str:
+    """Close the executor's tab before the gates read its report, and say what happened.
+
+    A sandboxed harness can keep its files unreadable to the engine while its tab
+    is alive: Codex on Windows writes the report as a separate sandbox user and
+    releases it only when the tab exits. The session's own state says whether the
+    turn is over; only then is the tab closed, and a task with another unit still
+    working keeps it open.
+    """
+    record = state.unit_record(task_id, unit)
+    name = str(record.get("unit") or unit)
+    chosen = str(record.get("harness") or "opencode")
+    price = costs.collect_cost(task_id, name, harness=chosen)
+    if not price.stopped:
+        return ""
+    closed = windows.close_tab(task_id, "esecutore", still_working=(name,), stopped=True)
+    return str(closed.get("line") or "")
 
 
 def _collect_tab_line(task_id: str, unit: str, cost: costs.CollectCost) -> str:
