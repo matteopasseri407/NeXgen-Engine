@@ -416,18 +416,53 @@ def test_codex_opens_the_sandbox_and_declares_how_the_push_is_stopped(tmp_path):
     adapter = codex.CodexAdapter()
     argv = adapter.tab_argv("codex", tmp_path, "leggi il brief")
     assert argv == [
-        "codex", "-C", str(tmp_path), "-s", "workspace-write", "-a", "never", "leggi il brief",
+        "codex", "-C", str(tmp_path), "-s", "workspace-write", "-a", "never",
+        "--add-dir", str(tmp_path.parent), "leggi il brief",
     ]
     assert adapter.tab_argv("codex", tmp_path, "p", session="t1")[-3:] == ["resume", "t1", "p"]
     assert adapter.send_argv("codex", "t1", "correggi") == [
-        "codex", "exec", "-s", "workspace-write", "-a", "never", "resume", "t1", "correggi",
+        "codex", "exec", "-s", "workspace-write", "resume", "t1", "correggi",
     ]
     assert adapter.scout_argv("codex", "guarda") == [
-        "codex", "exec", "-s", "read-only", "-a", "never", "guarda",
+        "codex", "exec", "-s", "read-only", "guarda",
     ]
     assert "sandbox" in adapter.capabilities.deny_push
     assert adapter.capabilities.has("cost") is False
     assert adapter.capabilities.has("tokens") is True
+
+
+def test_codex_adds_the_task_folder_and_the_git_dir_as_writable_roots(tmp_path, monkeypatch):
+    """La copia è un worktree: brief, resoconto e oggetti git stanno fuori dal suo workspace."""
+    copy = tmp_path / "task" / "23-unita-prova"
+    copy.mkdir(parents=True)
+    repo = tmp_path / "repo"
+    (repo / ".git" / "worktrees" / "prova").mkdir(parents=True)
+    (copy / ".git").write_text(f"gitdir: {repo / '.git' / 'worktrees' / 'prova'}\n", encoding="utf-8")
+    home = tmp_path / "codex"
+    _codex_store(home, [{"id": "t1", "cwd": str(copy)}], [])
+    monkeypatch.setenv("CODEX_HOME", str(home))
+
+    adapter = codex.CodexAdapter()
+    tab = adapter.tab_argv("codex", copy, "p")
+    assert tab == [
+        "codex", "-C", str(copy), "-s", "workspace-write", "-a", "never",
+        "--add-dir", str(copy.parent),
+        "--add-dir", str(repo / ".git" / "worktrees" / "prova"),
+        "--add-dir", str(repo / ".git"), "p",
+    ]
+
+    send = adapter.send_argv("codex", "t1", "correggi")
+    roots = json.dumps([
+        str(copy.parent),
+        str(repo / ".git" / "worktrees" / "prova"),
+        str(repo / ".git"),
+    ])
+    assert send == [
+        "codex", "exec", "-s", "workspace-write",
+        "-c", "sandbox_workspace_write.writable_roots=" + roots,
+        "resume", "t1", "correggi",
+    ]
+    assert "-a" not in send
 
 
 def test_codex_reads_threads_tokens_and_the_last_turn(tmp_path, monkeypatch):

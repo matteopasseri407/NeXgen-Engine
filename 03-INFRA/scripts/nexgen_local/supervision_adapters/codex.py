@@ -47,16 +47,36 @@ class CodexAdapter(base.Adapter):
     )
 
     def tab_argv(self, executable: str, folder: Path, prompt: str, *, session: str = "") -> list[str]:
-        """`codex -C <folder> -s workspace-write -a never <pointer>`: a visible tab."""
+        """`codex -C <folder> -s workspace-write -a never <pointer>`: a visible tab.
+
+        The unit's brief and report live in the task folder, and a worktree keeps
+        its git objects in the checkout: both are outside the copy Codex takes as
+        its workspace, so they are added as writable roots. Without them the model
+        cannot read the brief, cannot write the report, and cannot commit.
+        """
         argv = [executable, "-C", str(folder), "-s", SANDBOX, "-a", APPROVAL]
+        for root in _extra_roots(folder):
+            argv.extend(["--add-dir", str(root)])
         if session:
             argv.extend(["resume", session])
         argv.append(prompt)
         return argv
 
     def send_argv(self, executable: str, session: str, prompt: str, *, model: str = "") -> list[str]:
-        """`codex exec -s workspace-write -a never resume <id> <pointer>`: one turn, no tab."""
-        argv = [executable, "exec", "-s", SANDBOX, "-a", APPROVAL]
+        """`codex exec -s workspace-write resume <id> <pointer>`: one turn, no tab.
+
+        `codex exec` has no approval policy to set, and a resumed thread keeps the
+        same folder: its task folder and git dir are added as writable roots, read
+        from the thread index, exactly as the tab does.
+        """
+        argv = [executable, "exec", "-s", SANDBOX]
+        roots = self._roots(session)
+        if roots:
+            argv.extend([
+                "-c",
+                "sandbox_workspace_write.writable_roots="
+                + json.dumps([str(root) for root in roots]),
+            ])
         if model:
             argv.extend(["-m", model])
         argv.extend(["resume", session, prompt])
@@ -158,7 +178,15 @@ class CodexAdapter(base.Adapter):
 
     def scout_argv(self, executable: str, prompt: str) -> list[str]:
         """A reconnaissance round in the read-only sandbox, non-interactive."""
-        return [executable, "exec", "-s", "read-only", "-a", APPROVAL, prompt]
+        return [executable, "exec", "-s", "read-only", prompt]
+
+    def _roots(self, session: str) -> list[Path]:
+        """The roots a resumed thread needs, read from its own folder; none if the store cannot say."""
+        try:
+            folder = Path(str(self._thread(session).get("folder") or ""))
+        except SupervisionError:  # nexgen: allow reason="un thread sparito non aggiunge radici, il turno resta quello che era"
+            return []
+        return _extra_roots(folder) if str(folder) else []
 
     def _thread(self, session: str) -> dict:
         """One thread's index row, or a refusal that says the store lost it."""
@@ -208,6 +236,31 @@ class CodexAdapter(base.Adapter):
             "status": str(row[0] or ""), "error_type": error[0], "error_message": error[1],
             "started_ms": int(row[2] or 0) * 1000, "completed_ms": int(row[3] or 0) * 1000,
         }
+
+
+def _extra_roots(folder: Path) -> list[Path]:
+    """The task folder and the checkout's git dir: a worktree keeps both outside the copy.
+
+    The brief and the report live one level above the copy, and the objects of a
+    worktree live in the checkout it was cut from. Codex takes the copy as its
+    workspace, so without these roots it refuses the brief and the commit.
+    """
+    roots = [folder.parent]
+    marker = folder / ".git"
+    try:
+        text = marker.read_text(encoding="utf-8").strip()
+    except OSError:  # nexgen: allow reason="una copia senza .git leggibile non aggiunge altre radici"
+        return roots
+    if not text.startswith("gitdir:"):
+        return roots
+    gitdir = Path(text.split(":", 1)[1].strip())
+    if not gitdir.is_absolute():
+        gitdir = (folder / gitdir).resolve()
+    roots.append(gitdir)
+    parts = gitdir.parts
+    if "worktrees" in parts:
+        roots.append(Path(*parts[:parts.index("worktrees")]))
+    return roots
 
 
 def _error(raw) -> tuple[str, str]:
