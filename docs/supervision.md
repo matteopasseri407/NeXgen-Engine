@@ -52,7 +52,7 @@ nexgen-local sup status <id>                                # units, states, ver
 nexgen-local sup unit <id> <unit> --repo <checkout> --base <ref> --brief <file> \
     --allow 'docs/*.md' [--allow ...] [--verify "<command>"]
 nexgen-local sup run <id> <unit> [--harness <name>]         # the executor's window
-nexgen-local sup collect <id> <unit>                        # the engine's gates, then the cost, then its tab closes
+nexgen-local sup collect <id> <unit>                        # the tab closes when the turn is over, then the gates and the cost
 nexgen-local sup review <id> <unit> --approve "<why>" [--close]  # one review round, APPROVA
 nexgen-local sup review <id> <unit> --rework <file>         # one review round, RIMANDA
 nexgen-local sup review <id> <unit> --resend [-m <model>]        # deliver the last round that never arrived
@@ -270,7 +270,11 @@ gets a blanket bypass:
   the workspace and no approval prompt can turn into a yes. Its ability to deny a
   push is declared as weaker than OpenCode's: the sandbox has no network, so a
   push fails, but the copy's blocked `pushurl` is the stop that does not depend on
-  the harness.
+  the harness. On Windows the sandbox writes as a separate user
+  (`CodexSandboxUsers`): the owner cannot read or delete the report and the copy,
+  so Codex opens a tab, finds its thread and reports tokens, but the work product
+  cannot be collected. The limit is declared in `Capabilities.limits`; on Linux
+  the sandbox does not use a separate user.
 - **agy** has no project permission profile the engine can write. It is a scout,
   its plan mode is read-only, and the copy's blocked `pushurl` is the only stop.
 
@@ -420,7 +424,10 @@ in the output and in the journal (`report_relocated`); this is the local
 executor's habit the 2026-10-21 run exposed, where the report stayed an untracked
 file, failed `albero pulito`, and never reached the reviewer. A report committed
 to the branch is part of the unit's diff and is not moved: the gates must judge
-what it says.
+what it says. When the session's own last turn is over, `sup collect` closes the
+executor's tab **before** reading that report: a sandboxed harness can keep the
+files it wrote unreadable to the engine while its process is alive. If the
+session is still working, the tab stays open and the output says so.
 
 The package also names the tests this platform skipped among the test files the
 unit touched (`pytest -q -rs` on those files, with `-n 4` when pytest-xdist is

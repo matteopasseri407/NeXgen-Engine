@@ -44,6 +44,7 @@ class CodexAdapter(base.Adapter):
         tokens=True, write_permissions=False, resume=True, scout=True,
         session_model=True, last_turn=True,
         deny_push="sandbox workspace-write senza rete, nessuna approvazione, pushurl bloccata della copia",
+        limits="su Windows il sandbox scrive come un utente separato: il motore non legge né cancella il lavoro, quindi l'esecutore non è utilizzabile end-to-end",
     )
 
     def tab_argv(self, executable: str, folder: Path, prompt: str, *, session: str = "") -> list[str]:

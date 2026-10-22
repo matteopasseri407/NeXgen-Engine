@@ -427,6 +427,8 @@ def test_codex_opens_the_sandbox_and_declares_how_the_push_is_stopped(tmp_path):
         "codex", "exec", "-s", "read-only", "guarda",
     ]
     assert "sandbox" in adapter.capabilities.deny_push
+    assert "utente separato" in adapter.capabilities.limits
+    assert "limite:" in adapter.capabilities.line()
     assert adapter.capabilities.has("cost") is False
     assert adapter.capabilities.has("tokens") is True
 

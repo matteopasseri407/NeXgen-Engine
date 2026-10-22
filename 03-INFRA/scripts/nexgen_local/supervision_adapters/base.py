@@ -60,6 +60,7 @@ class Capabilities:
     session_model: bool = False
     last_turn: bool = False
     deny_push: str = ""
+    limits: str = ""
 
     def has(self, operation: str) -> bool:
         """Whether this harness declares the operation."""
@@ -74,7 +75,8 @@ class Capabilities:
         missing = self.missing()
         absent = ", ".join(missing) if missing else "niente"
         push = self.deny_push or "nessuna regola"
-        return f"sa: {', '.join(name for name in OPERATIONS if self.has(name))} · manca: {absent} · push: {push}"
+        limit = f" · limite: {self.limits}" if self.limits else ""
+        return f"sa: {', '.join(name for name in OPERATIONS if self.has(name))} · manca: {absent} · push: {push}{limit}"
 
 
 @dataclass(frozen=True)
