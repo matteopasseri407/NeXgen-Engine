@@ -153,14 +153,25 @@ def test_opencode_finds_the_newest_session_of_this_folder_only(tmp_path):
     ) is None
 
 
+def _api(answer):
+    """One `opencode api` fake: `answer(argv)` decides what the server said."""
+    def run(argv, **kwargs):
+        return answer(list(argv))
+    return run
+
+
 def test_opencode_disposes_the_shared_servers_of_one_folder(tmp_path, monkeypatch):
     seen: dict = {}
 
-    def ok(argv, **kwargs):
-        seen["argv"] = list(argv)
+    def answer(argv):
+        if "/api/info" in argv:
+            return SimpleNamespace(returncode=0, stdout=json.dumps({"pid": 4242}), stderr="")
+        seen["argv"] = argv
         return SimpleNamespace(returncode=0, stdout="", stderr="")
 
-    monkeypatch.setattr(opencode.subprocess, "run", ok)
+    monkeypatch.setattr(opencode.subprocess, "run", _api(answer))
+    monkeypatch.setattr(opencode, "DISPOSE_WAIT_S", 0)
+    monkeypatch.setattr(opencode.proces, "rows", lambda: [])
 
     worked, reason = opencode.OpenCodeAdapter().dispose_location(tmp_path)
 
@@ -168,6 +179,7 @@ def test_opencode_disposes_the_shared_servers_of_one_folder(tmp_path, monkeypatc
     assert str(tmp_path) in reason
     assert "debug.location.evict" in seen["argv"]
     assert f"x-opencode-directory:{tmp_path}" in seen["argv"]
+    assert f"location[directory]={tmp_path}" in seen["argv"]
 
 
 def test_opencode_says_when_the_eviction_is_refused(tmp_path, monkeypatch):
@@ -180,6 +192,73 @@ def test_opencode_says_when_the_eviction_is_refused(tmp_path, monkeypatch):
 
     assert worked is False
     assert "esce con 3" in reason and "busy" in reason
+
+
+def test_opencode_stops_the_children_the_service_kept_for_the_copy(tmp_path, monkeypatch):
+    table = [
+        {"pid": 4242, "ppid": 1, "name": "opencode.exe"},
+        {"pid": 11, "ppid": 4242, "name": "python.exe"},
+        {"pid": 12, "ppid": 4242, "name": "node.exe"},
+    ]
+    alive = {"yes": True}
+    seen: dict = {}
+
+    def answer(argv):
+        if "/api/info" in argv:
+            return SimpleNamespace(returncode=0, stdout=json.dumps({"pid": 4242}), stderr="")
+        if "/api/session/active" in argv:
+            return SimpleNamespace(returncode=0, stdout=json.dumps({"data": {}}), stderr="")
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    def stop(pids):
+        seen["killed"] = pids
+        alive["yes"] = False
+
+    monkeypatch.setattr(opencode, "DISPOSE_WAIT_S", 0)
+    monkeypatch.setattr(opencode.subprocess, "run", _api(answer))
+    monkeypatch.setattr(opencode.proces, "rows", lambda: list(table) if alive["yes"] else [])
+    monkeypatch.setattr(opencode.proces, "cwd", lambda pid: tmp_path if pid in (11, 12) else None)
+    monkeypatch.setattr(opencode.proces, "kill", stop)
+
+    worked, reason = opencode.OpenCodeAdapter().dispose_location(tmp_path)
+
+    assert worked is True
+    assert set(seen["killed"]) == {11, 12}
+    assert "204" in reason and "fermati 2" in reason
+
+
+def test_opencode_never_stops_the_children_of_an_active_session(tmp_path, monkeypatch):
+    table = [
+        {"pid": 4242, "ppid": 1, "name": "opencode.exe"},
+        {"pid": 11, "ppid": 4242, "name": "python.exe"},
+    ]
+
+    def answer(argv):
+        joined = " ".join(argv)
+        if "/api/info" in joined:
+            return SimpleNamespace(returncode=0, stdout=json.dumps({"pid": 4242}), stderr="")
+        if "/api/session/active" in joined:
+            return SimpleNamespace(returncode=0, stdout=json.dumps({"data": {"ses_x": {"type": "running"}}}), stderr="")
+        if "/api/session/ses_x" in joined:
+            return SimpleNamespace(
+                returncode=0,
+                stdout=json.dumps({"location": {"directory": str(tmp_path)}}), stderr="",
+            )
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    def refuse(pids):
+        raise AssertionError("nessun processo va fermato quando la sessione è attiva")
+
+    monkeypatch.setattr(opencode, "DISPOSE_WAIT_S", 0)
+    monkeypatch.setattr(opencode.subprocess, "run", _api(answer))
+    monkeypatch.setattr(opencode.proces, "rows", lambda: list(table))
+    monkeypatch.setattr(opencode.proces, "cwd", lambda pid: tmp_path if pid == 11 else None)
+    monkeypatch.setattr(opencode.proces, "kill", refuse)
+
+    worked, reason = opencode.OpenCodeAdapter().dispose_location(tmp_path)
+
+    assert worked is False
+    assert "sessione attiva ses_x" in reason
 
 
 def test_opencode_reads_the_folders_the_server_holds(tmp_path, monkeypatch):
