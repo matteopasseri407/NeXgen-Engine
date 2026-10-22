@@ -10,6 +10,8 @@ of any engine release.
 
 ## [Unreleased]
 
+## [2.19.0] - 2026-10-22
+
 ### Added
 
 - Supervision: harnesses are interchangeable in every role. OpenCode, Antigravity (`agy`), Claude Code, Codex and a local model served by `llama-server` are adapters behind one contract (open a tab, find the session, send a turn, read state, cost and tokens, write the permission profile, resume, free a folder), and each declares what it cannot do instead of pretending. `supervision.roles` in the lane configuration picks the executor and the scout (defaults: OpenCode and agy), and `--harness` on `sup run` and `sup scout` overrides it for one round. The supervisor is whoever runs the `sup` verbs: a person, a Claude Code session or an OpenCode session. See "Chi fa cosa" in `docs/supervision.md`.
