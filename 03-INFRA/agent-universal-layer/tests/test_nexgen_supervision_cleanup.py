@@ -239,6 +239,53 @@ def test_the_lines_do_not_invite_a_restart_while_a_worker_without_a_tab_runs(lan
 # --- la riga informativa di `sup collect` e il verbo -------------------------
 
 
+def test_collect_closes_a_stopped_tab_before_the_report_is_read(monkeypatch):
+    """Codex su Windows tiene il resoconto illeggibile finché la scheda è viva."""
+    from nexgen_local import supervision_costs as costs
+    from nexgen_local.cmds import sup as sup_cmd
+
+    monkeypatch.setattr(
+        sup_cmd.state, "unit_record",
+        lambda task, unit: {"unit": "prova", "harness": "codex"},
+    )
+    monkeypatch.setattr(
+        sup_cmd.costs, "collect_cost",
+        lambda task, unit, harness: costs.CollectCost(stopped=True),
+    )
+    calls = []
+    monkeypatch.setattr(
+        sup_cmd.windows, "close_tab",
+        lambda task, role, **kw: calls.append((task, role, kw)) or {"line": "scheda chiusa"},
+    )
+
+    line = sup_cmd._close_stopped_tab("t1", "prova")
+
+    assert line == "scheda chiusa"
+    assert calls == [("t1", "esecutore", {"still_working": ("prova",), "stopped": True})]
+
+
+def test_collect_leaves_a_working_tab_alone(monkeypatch):
+    from nexgen_local import supervision_costs as costs
+    from nexgen_local.cmds import sup as sup_cmd
+
+    monkeypatch.setattr(
+        sup_cmd.state, "unit_record",
+        lambda task, unit: {"unit": "prova", "harness": "codex"},
+    )
+    monkeypatch.setattr(
+        sup_cmd.costs, "collect_cost",
+        lambda task, unit, harness: costs.CollectCost(stopped=False),
+    )
+    calls = []
+    monkeypatch.setattr(
+        sup_cmd.windows, "close_tab",
+        lambda *a, **kw: calls.append(a) or {"line": "non doveva chiudere"},
+    )
+
+    assert sup_cmd._close_stopped_tab("t1", "prova") == ""
+    assert calls == []
+
+
 def test_the_collect_note_counts_the_tabs_of_gone_tasks(lane, posix, monkeypatch):
     rows = [_tab("20200101-000000-mai-esistito"), _tab("20200102-000000-mai-esistito", pid=101)]
     monkeypatch.setattr(cleanup.processes, "rows", lambda: rows)

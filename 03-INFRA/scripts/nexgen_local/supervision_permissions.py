@@ -64,27 +64,47 @@ def profile_rules(copy: str | Path, task: str | Path) -> list[dict]:
     ]
 
 
-def write_profile(task_id: str, copy: str | Path) -> Path:
+def write_profile(
+    task_id: str, copy: str | Path, *, model: str = "",
+    models: dict[str, dict[str, dict]] | None = None,
+) -> Path:
     """Write the executor's profile into the unit's copy and keep it out of git.
 
-    The owner's other keys are preserved: the model of the copy stays the one
-    the owner chose. A config that is tracked by the project is refused instead
-    of overwritten, because changing it would put a foreign file in the review.
+    The owner's other keys are preserved: without a `model` argument the model of
+    the copy stays the one the owner chose. A config that is tracked by the
+    project is refused instead of overwritten, because changing it would put a
+    foreign file in the review. `model` is how a local unit pins the lane's own
+    model in the copy it works in, and `models` declares that model under its
+    provider: a pin the harness does not know falls back to the provider's first
+    model, which would make the journal name a model that never ran.
     """
     folder = Path(copy)
     if not folder.is_dir():
         raise PermissionProfileError(f"copia dell'unità inesistente: {folder}")
     target = folder / CONFIG_FILE
-    if _tracked(folder, target.name):
+    if tracked(folder, target.name):
         raise PermissionProfileError(
             f"il progetto traccia {target.name}: il profilo dell'esecutore non può stare lì "
             "senza sporcare il diff (togli il file dal progetto o usa un'altra copia)"
         )
-    current = _read_config(target)
+    current = read_config(target)
     current["permissions"] = profile_rules(folder, state.open_task(task_id))
+    if model:
+        current["model"] = model
+    if models:
+        providers = current.setdefault("provider", {})
+        if isinstance(providers, dict):
+            for provider, entries in models.items():
+                declared = providers.setdefault(provider, {})
+                if not isinstance(declared, dict):
+                    continue
+                known = declared.setdefault("models", {})
+                if isinstance(known, dict):
+                    for name, body in entries.items():
+                        known.setdefault(name, body)
     current.setdefault("$schema", "https://opencode.ai/config.json")
-    _atomic_json(target, current)
-    _ignore(folder, target.name)
+    atomic_json(target, current)
+    ignore(folder, target.name)
     return target
 
 
@@ -156,7 +176,7 @@ def _api(operation: str, params: list[str], *, data: dict | None = None) -> dict
     return payload
 
 
-def _read_config(path: Path) -> dict:
+def read_config(path: Path) -> dict:
     """The config as it is, or an empty one; a file that does not parse is never overwritten."""
     try:
         raw = path.read_text(encoding="utf-8")
@@ -177,7 +197,7 @@ def _read_config(path: Path) -> dict:
     return parsed
 
 
-def _atomic_json(path: Path, payload: dict) -> None:
+def atomic_json(path: Path, payload: dict) -> None:
     """Replace the file in one step, so a reader never sees half a profile."""
     handle, name = tempfile.mkstemp(prefix=f".{path.name}.", dir=str(path.parent))
     try:
@@ -190,7 +210,7 @@ def _atomic_json(path: Path, payload: dict) -> None:
         raise
 
 
-def _tracked(folder: Path, name: str) -> bool:
+def tracked(folder: Path, name: str) -> bool:
     """Whether git already tracks this file in the copy."""
     try:
         done = subprocess.run(
@@ -202,7 +222,7 @@ def _tracked(folder: Path, name: str) -> bool:
     return done.returncode == 0
 
 
-def _ignore(folder: Path, name: str) -> tuple[bool, str]:
+def ignore(folder: Path, name: str) -> tuple[bool, str]:
     """Add the profile to the copy's exclude file, exactly once; say where it went."""
     try:
         done = subprocess.run(

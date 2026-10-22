@@ -139,6 +139,17 @@ def test_the_file_is_written_and_the_owner_keys_are_kept(task, copy):
     assert payload["permissions"] == permissions.profile_rules(copy, state.open_task(task))
 
 
+def test_a_declared_local_model_is_written_under_its_provider(task, copy):
+    target = permissions.write_profile(
+        task, copy, model="locale/qwen3.6-35b-a3b",
+        models={"locale": {"qwen3.6-35b-a3b": {"name": "qwen (locale)", "tool_call": True}}},
+    )
+
+    payload = json.loads(target.read_text(encoding="utf-8"))
+    assert payload["model"] == "locale/qwen3.6-35b-a3b"
+    assert payload["provider"]["locale"]["models"]["qwen3.6-35b-a3b"]["tool_call"] is True
+
+
 def test_the_file_never_reaches_a_commit_and_is_ignored_once(task, copy):
     permissions.write_profile(task, copy)
     permissions.write_profile(task, copy)

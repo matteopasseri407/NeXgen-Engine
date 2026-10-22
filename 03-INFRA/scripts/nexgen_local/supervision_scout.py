@@ -18,6 +18,8 @@ from pathlib import Path
 
 from nexgen_core.discipline.gitutil import GitError, git
 
+from . import supervision_adapters as adapters
+from . import supervision_policy as policy
 from . import supervision_state as state
 from . import supervision_trust as trust
 from . import supervision_windows as windows
@@ -40,11 +42,18 @@ class ScoutError(SupervisionError):
 
 def open_round(
     task_id: str, question: str, *, opener=None, settings: str | Path | None = None,
+    harness: str = "",
 ) -> dict:
-    """Recreate the fixed copy, write the brief, trust the folder, open the round in a tab."""
+    """Recreate the fixed copy, write the brief, trust the folder, open the round in a tab.
+
+    The harness is the one the lane gives the scout role, unless the owner names
+    one for this round. It is resolved before the copy is made: a harness that
+    cannot scout must not leave a folder and a brief behind.
+    """
     text = (question or "").strip()
     if not text:
         raise ScoutError("brief vuoto: scrivi in una riga cosa deve guardare il ricognitore")
+    chosen = _scout_harness(harness)
     repo, base = _source(task_id)
     folder = _folder(task_id)
     _recreate(repo, base, folder)
@@ -62,28 +71,49 @@ def open_round(
         "task": task_id, "round": round_no, "folder": str(folder), "base": base,
         "head": _head(folder), "brief": str(brief), "report": str(report),
         "window": str(handle.get("title", "")), "trusted": bool(trusted["added"]),
+        "harness": chosen,
     }
     state.append_event(task_id, "scout_opened", **record)
     return record
 
 
+def _scout_harness(chosen: str) -> str:
+    """The adapter this round runs on, refused with its declared absence instead of opening nothing."""
+    name = (chosen or "").strip() or policy.harness_for("ricognitore")
+    try:
+        adapter = adapters.get(name)
+    except adapters.base.AdapterError as exc:
+        raise ScoutError(str(exc)) from exc
+    try:
+        adapter.require("scout", "un ricognitore che non sa leggere non apre nessun giro")
+    except adapters.base.AdapterError as exc:
+        raise ScoutError(str(exc)) from exc
+    return adapter.name
+
+
 def run_in_tab(task_id: str, round_no: int = 0) -> int:
-    """The tab side: run the explorer in plan mode, then say whether the copy stayed clean."""
+    """The tab side: run the scout's harness in plan mode, then say whether the copy stayed clean."""
     record = _opened(task_id, round_no)
     report = Path(record["report"])
-    executable = shutil.which("agy")
-    if not executable:
-        print("ricognitore non installato: `agy` non è nel PATH", file=sys.stderr)
+    name = str(record.get("harness") or "agy")
+    try:
+        adapter = adapters.get(name)
+    except adapters.base.AdapterError as exc:
+        print(f"ricognitore non identificato: {exc}", file=sys.stderr)
         return 1
-    print(f"ricognitore, giro {record['round']}: {record['folder']}")
+    executable = shutil.which(adapter.executable)
+    if not executable:
+        print(f"ricognitore non installato: `{adapter.executable}` non è nel PATH", file=sys.stderr)
+        return 1
+    print(f"ricognitore ({adapter.name}), giro {record['round']}: {record['folder']}")
     print(f"brief {record['brief']}")
     print(f"rapporto atteso {report}")
     print("-" * 60, flush=True)
-    command = [
-        executable, "--mode", "plan", "--prompt",
+    command = adapter.scout_argv(
+        executable,
         f"Leggi il brief in {record['brief']} e segui solo quello. "
         f"Scrivi il rapporto in {report}. Non modificare nessun file di codice.",
-    ]
+    )
     try:
         subprocess.run(command, cwd=record["folder"], check=False, timeout=PRINT_TIMEOUT_S)
     except (OSError, subprocess.TimeoutExpired) as exc:

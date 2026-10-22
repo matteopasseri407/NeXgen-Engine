@@ -26,6 +26,11 @@ KEY = "allowed_models"
 #: How long an active session may stand still before it is called stalled.
 STALL_KEY = "stall_minutes"
 DEFAULT_STALL_MINUTES = 20.0
+#: Which harness takes which role, when the owner writes nothing.
+ROLES_KEY = "roles"
+DEFAULT_ROLES = {"esecutore": "opencode", "ricognitore": "agy"}
+#: The local model a `local` unit runs on, and the server that serves it.
+LOCAL_KEY = "local_model"
 
 
 class PolicyError(SupervisionError):
@@ -60,6 +65,56 @@ def stall_minutes(path: str | Path | None = None) -> float:
             f"`{SECTION}.{STALL_KEY}` deve essere un numero di minuti maggiore di zero: {value!r}"
         )
     return float(value)
+
+
+def roles(path: str | Path | None = None) -> dict[str, str]:
+    """Which harness takes each role: the defaults, with the owner's entries over them.
+
+    A name nobody registered is refused here, before a tab opens: a typo in the
+    lane's file must not become a task whose executor nobody can find.
+    """
+    from . import supervision_adapters as adapters
+
+    target, section = _section(path)
+    raw = section.get(ROLES_KEY, {})
+    if not isinstance(raw, dict):
+        raise PolicyError(f"`{SECTION}.{ROLES_KEY}` deve essere un oggetto: {target}")
+    chosen = dict(DEFAULT_ROLES)
+    for role, name in raw.items():
+        if not isinstance(name, str) or not name.strip():
+            raise PolicyError(
+                f"`{SECTION}.{ROLES_KEY}.{role}` deve essere il nome di un harness: {name!r}"
+            )
+        chosen[str(role)] = name.strip()
+    for role, name in chosen.items():
+        try:
+            adapters.resolve(name)
+        except adapters.base.AdapterError as exc:
+            raise PolicyError(f"`{SECTION}.{ROLES_KEY}.{role}`: {exc}") from exc
+    return chosen
+
+
+def harness_for(role: str, path: str | Path | None = None) -> str:
+    """The harness this role runs on, or the default when nobody configured it."""
+    return roles(path).get(role, DEFAULT_ROLES.get(role, ""))
+
+
+def local_model(path: str | Path | None = None) -> dict:
+    """The `local_model` section as written, or an empty one when the owner wrote nothing.
+
+    The shape is validated by `supervision_local_model`, which is the only reader
+    that needs every field: here the engine only carries what the lane says.
+    """
+    target, section = _section(path)
+    raw = section.get(LOCAL_KEY, {})
+    if not isinstance(raw, dict):
+        raise PolicyError(f"`{SECTION}.{LOCAL_KEY}` deve essere un oggetto: {target}")
+    return dict(raw)
+
+
+def local_model_id(path: str | Path | None = None) -> str:
+    """The model a local unit pins, or an empty string when the lane names none."""
+    return str(local_model(path).get("model") or "").strip()
 
 
 def _section(path: str | Path | None = None) -> tuple[Path, dict]:
@@ -121,8 +176,9 @@ def check_session(record: dict, allowed: tuple[str, ...], measure=None) -> tuple
     session = str(record.get("session") or "")
     if not session:
         return False, "nessuna sessione agganciata: il modello non è verificabile"
+    harness = str(record.get("harness") or "opencode")
     try:
-        facts = (measure or costs.measure)(session)
+        facts = (measure or (lambda value: costs.measure_for(harness, value)))(session)
     except costs.CostError as exc:
         return False, f"modello non leggibile ({exc})"
     model = str(getattr(facts, "model", "") or "")

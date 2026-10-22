@@ -137,3 +137,24 @@ def test_killing_nothing_starts_no_process(monkeypatch):
     monkeypatch.setattr(processes.subprocess, "run", forbidden)
 
     processes.kill([])
+
+
+def test_a_process_working_directory_comes_from_proc(tmp_path, monkeypatch):
+    monkeypatch.setattr(processes.os, "readlink", lambda path: f"{tmp_path}")
+
+    assert str(processes._posix_cwd(123)) == str(tmp_path)
+
+
+def test_a_deleted_working_directory_is_still_the_folder_it_names(tmp_path, monkeypatch):
+    monkeypatch.setattr(processes.os, "readlink", lambda path: f"{tmp_path} (deleted)")
+
+    assert str(processes._posix_cwd(123)) == str(tmp_path)
+
+
+def test_a_working_directory_that_cannot_be_read_is_not_guessed(monkeypatch):
+    def refuse(path):
+        raise OSError("processo sparito")
+
+    monkeypatch.setattr(processes.os, "readlink", refuse)
+
+    assert processes._posix_cwd(123) is None

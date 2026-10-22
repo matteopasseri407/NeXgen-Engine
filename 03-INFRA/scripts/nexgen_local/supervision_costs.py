@@ -35,6 +35,8 @@ EXPORT_TIMEOUT_S = 180.0
 #: What OpenCode prints: `ses_` and alphanumerics. The shape is narrow on purpose,
 #: so nothing a command line reads (`&`, `;`, quotes, spaces) can ever get through.
 _SESSION_RE = re.compile(r"ses_[A-Za-z0-9]{1,64}")
+#: The shape a harness store names its own sessions with: Codex uses a UUID.
+_THREAD_RE = re.compile(r"[A-Za-z0-9_-]{1,200}")
 #: What an export says when the session is gone, as opposed to a failed read.
 _MISSING_EVIDENCE = re.compile(r"(not found|does not exist|no such session|unknown session|non esiste)", re.IGNORECASE)
 #: The harness's own store, and the tables that hold sessions in its two schemas.
@@ -66,6 +68,10 @@ class CollectCost:
     #: What the measurable sessions add up to, when one of them has no source.
     task_known_usd: float | None = None
     task_unknown_sessions: int = 0
+    #: What a flat plan reports instead of money: the tokens, and the note saying so.
+    tokens_in: int | None = None
+    tokens_out: int | None = None
+    tokens_total: int | None = None
 
     @property
     def known(self) -> bool:
@@ -79,11 +85,13 @@ class CollectCost:
             "model": self.model, "session": self.session, "stopped": self.stopped,
             "note": self.note, "task_known_usd": self.task_known_usd,
             "task_unknown_sessions": self.task_unknown_sessions,
+            "tokens_in": self.tokens_in, "tokens_out": self.tokens_out,
+            "tokens_total": self.tokens_total,
         }
 
 
 def collect_cost(
-    task_id: str, unit: str, *, facts_of=None, rows=None, events=None,
+    task_id: str, unit: str, *, facts_of=None, rows=None, events=None, harness: str = "opencode",
 ) -> CollectCost:
     """Price the collection that is happening: the round, the unit, the task.
 
@@ -91,26 +99,31 @@ def collect_cost(
     difference: the round is what grew since the round's own delivery started,
     the unit since its first attach, and the task is the session now plus the
     sessions that ended before it. With no delivery in the journal the last row
-    is the baseline, which is what the ledger knows.
+    is the baseline, which is what the ledger knows. A harness on a flat plan
+    reports no money but does report tokens: they are carried here, so the one
+    line the owner reads says tokens instead of a zero that would be a lie.
     """
     name = state.slug(unit)
     rows = rows if rows is not None else state.read_costs(task_id)
     events = events if events is not None else state.read_events(task_id)
     mine = [row for row in rows if row.get("unit") == name]
-    session = str(mine[-1].get("session") or "") if mine else state.harness_session(task_id)
+    session = str(mine[-1].get("session") or "") if mine else state.harness_session(task_id, harness)
     if not session:
         return CollectCost(note="nessuna sessione agganciata")
+    measure = facts_of or (lambda value: measure_for(harness, value))
     try:
-        facts = (facts_of or measure)(session)
+        facts = measure(session)
     except CostError as exc:
         return CollectCost(session=session, note=str(exc))
     now = getattr(facts, "cost_usd", None)
     model = str(getattr(facts, "model", "") or "")
+    tokens = _tokens_of(facts)
     if not isinstance(now, (int, float)):
         return CollectCost(
             session=session, model=model,
             stopped=bool(getattr(facts, "stopped", False)),
-            note="costo non riportato dal harness",
+            note=str(getattr(facts, "cost_note", "") or "costo non riportato dal harness"),
+            **tokens,
         )
     rows_priced = [
         (str(row.get("at") or ""), float(row["cost_usd"]))
@@ -131,6 +144,15 @@ def collect_cost(
     )
 
 
+def _tokens_of(facts) -> dict:
+    """The token counts a flat-plan harness reports, in the names `CollectCost` carries."""
+    return {
+        "tokens_in": getattr(facts, "tokens_in", None),
+        "tokens_out": getattr(facts, "tokens_out", None),
+        "tokens_total": getattr(facts, "tokens_total", None),
+    }
+
+
 def cost_text(cost: CollectCost) -> str:
     """The one line every verb and every file uses for the cost of a collection.
 
@@ -139,7 +161,9 @@ def cost_text(cost: CollectCost) -> str:
     sessions are missing, instead of hiding every number.
     """
     if not _any_number(cost):
-        return f"costo: non misurato ({cost.note or 'dato assente'})"
+        missing = f"costo: non misurato ({cost.note or 'dato assente'})"
+        tokens = _token_line(cost)
+        return f"{missing} · {tokens}" if tokens else missing
     model = f"modello {cost.model}" if cost.model else "modello non dichiarato"
     parts = []
     if cost.round_usd is not None:
@@ -159,6 +183,15 @@ def total_text(cost: CollectCost, unit: str = "") -> str:
     if cost.task_known_usd is not None:
         return f"compito {_known_part(cost)} ({model}{where})"
     return f"compito non misurato ({cost.note or 'dato assente'})"
+
+
+def _token_line(cost: CollectCost) -> str:
+    """The tokens a flat plan reports, in the one sentence the owner reads."""
+    if cost.tokens_in is None and cost.tokens_out is None and cost.tokens_total is None:
+        return ""
+    if cost.tokens_total is not None and cost.tokens_in is None and cost.tokens_out is None:
+        return f"token totali: {cost.tokens_total}"
+    return f"token: {cost.tokens_in or 0} in, {cost.tokens_out or 0} out"
 
 
 def _any_number(cost: CollectCost) -> bool:
@@ -260,6 +293,11 @@ class SessionFacts:
     children: int | None = None
     children_cost_usd: float | None = None
     children_source: str = ""
+    #: What a harness without a cost reports instead: tokens, and why there is no money.
+    tokens_total: int | None = None
+    cost_note: str = ""
+    error_type: str = ""
+    error_message: str = ""
 
     @property
     def duration_s(self) -> float | None:
@@ -293,7 +331,8 @@ def record(
     a zero.
     """
     folder = state.open_task(task_id)
-    session = _session_id(session_id)
+    chosen = (harness or "opencode").strip().lower() or "opencode"
+    session = _session_id(session_id) if chosen in ("opencode", "local") else _thread_id(session_id)
     name = (unit or "").strip()
     if not name:
         raise SupervisionError("unità vuota: indica a quale unità appartiene la sessione")
@@ -305,10 +344,10 @@ def record(
         "harness": harness,
         "session": session,
         "window": window,
-        "source": SOURCE,
+        "source": source_for(harness),
     }
     try:
-        facts = measure(session)
+        facts = measure_for(harness, session)
     except CostError as exc:
         row.update(_empty_measurements())
         row["cost_usd"] = None
@@ -317,6 +356,27 @@ def record(
         row.update(_measurements(facts))
     state.append_jsonl(folder / state.COSTS_FILE, row)
     return row
+
+
+def measure_for(harness: str, session_id: str) -> SessionFacts:
+    """One session as its own harness reports it; no name means the harness the engine grew up with.
+
+    The import is local because the adapters import this module for the facts they
+    return: the registry is only asked at call time, when both modules exist. An
+    adapter that cannot measure this session raises its own refusal, which becomes
+    a `CostError`: the callers already know how to show a number nobody measured.
+    """
+    name = (harness or "opencode").strip() or "opencode"
+    if name in ("opencode", "local"):
+        return measure(session_id)
+    from . import supervision_adapters as adapters
+
+    try:
+        return adapters.get(name).measure(session_id)
+    except CostError:
+        raise
+    except SupervisionError as exc:
+        raise CostError(str(exc)) from exc
 
 
 def measure(session_id: str) -> SessionFacts:
@@ -469,6 +529,14 @@ def opencode_executable() -> str:
     return found
 
 
+def source_for(harness: str) -> str:
+    """Where a row's numbers came from, so an aggregate can say which store it read."""
+    name = (harness or "opencode").strip() or "opencode"
+    if name in ("opencode", "local"):
+        return SOURCE
+    return f"adattatore {name}"
+
+
 def _session_id(session_id: str) -> str:
     """The harness session id, or a refusal before it reaches a command line.
 
@@ -482,6 +550,20 @@ def _session_id(session_id: str) -> str:
             f"identificativo di sessione non valido: {session_id!r} "
             "(atteso `ses_` seguito da lettere e cifre)"
         )
+    return session
+
+
+def _thread_id(session_id: str) -> str:
+    """A session id of a harness that keeps its own store: its own shape, still one token.
+
+    Codex names a thread with a UUID and reads it from its SQLite index, so the
+    `ses_` shape OpenCode prints would refuse every Codex attach. The id is bound
+    as a query parameter, and this check only keeps a line break or a shell
+    fragment out of the ledger.
+    """
+    session = (session_id or "").strip()
+    if not _THREAD_RE.fullmatch(session):
+        raise CostError(f"identificativo di sessione non valido: {session_id!r}")
     return session
 
 
@@ -522,6 +604,7 @@ def _measurements(facts: SessionFacts) -> dict:
         "children": facts.children,
         "children_cost_usd": facts.children_cost_usd,
         "children_source": facts.children_source,
+        "tokens_total": facts.tokens_total,
     }
 
 
@@ -539,6 +622,7 @@ def _empty_measurements() -> dict:
         "children": None,
         "children_cost_usd": None,
         "children_source": "",
+        "tokens_total": None,
     }
 
 

@@ -1,12 +1,13 @@
-# Supervised tasks (phases 1, 2, 3a and 3b)
+# Supervised tasks (phases 1, 2, 3a, 3b and 3c)
 
 A supervised job is one objective carried out by harness agents that the owner
 can watch: a frontier model writes the brief, an executor works in a window of
 its own harness, and the engine keeps the files, the money and the verdict.
-This document covers **phases 1, 2, 3a and 3b**: the task folder, the visible
+This document covers **phases 1, 2, 3a, 3b and 3c**: the task folder, the visible
 windows, the cost register, the unit's working copy, the permissions the
 executor runs under, the gates the engine runs before anybody reviews a diff,
-the review round, publication, the resume graph, the scout and the rebase.
+the review round, publication, the resume graph, the scout, the rebase, the
+harness adapters, the local executor and the retirement of a finished unit.
 
 **Status: preview.** The verbs work and are covered by tests, but the
 supervisor still drives every step. See "What the gates guarantee, and what they
@@ -33,9 +34,11 @@ own working copy in `23-unita-<unit>/`. A review adds
 execute goes to `07-richieste-proprietario.md`.
 
 The journal is the machine truth: `started`, `unit_created`, `unit_started`,
-`unit_queued`, `attached`, `harness_session_lost`, `unit_reworked`,
-`unit_model_refused`, `unit_stalled`, `unit_resumed`, `unit_rebased`,
-`unit_collected`, `unit_reviewed`, `unit_published`, and for the scout
+`unit_queued`, `attached`, `harness_session_lost`, `harness_session_foreign`,
+`unit_reworked`, `unit_model_refused`, `unit_stalled`, `unit_resumed`,
+`unit_rebased`, `unit_collected`, `report_relocated`, `unit_reviewed`,
+`unit_published`, `unit_retired`, `unit_retire_failed`,
+`local_server_started`, `local_server_stopped`, and for the scout
 `scout_opened` and `scout_finished`. The Markdown files are what a person reads
 and writes; the engine never rewrites them, so an edit is not lost.
 
@@ -48,20 +51,20 @@ nexgen-local sup status                                     # every task, one li
 nexgen-local sup status <id>                                # units, states, verdicts, costs
 nexgen-local sup unit <id> <unit> --repo <checkout> --base <ref> --brief <file> \
     --allow 'docs/*.md' [--allow ...] [--verify "<command>"]
-nexgen-local sup run <id> <unit>                            # the executor's window
-nexgen-local sup collect <id> <unit>                        # the engine's gates, then the cost, then its tab closes
-nexgen-local sup review <id> <unit> --approve "<why>"       # one review round, APPROVA
+nexgen-local sup run <id> <unit> [--harness <name>]         # the executor's window
+nexgen-local sup collect <id> <unit>                        # the tab closes when the turn is over, then the gates and the cost
+nexgen-local sup review <id> <unit> --approve "<why>" [--close]  # one review round, APPROVA
 nexgen-local sup review <id> <unit> --rework <file>         # one review round, RIMANDA
 nexgen-local sup review <id> <unit> --resend [-m <model>]        # deliver the last round that never arrived
 nexgen-local sup publish <id> <unit> --repo <checkout> --branch <branch> \
     [--remote origin] [--push | --push-with "<command>"]
-nexgen-local sup attach <id> <unit> --role esecutore --opencode-session <ses_...>
+nexgen-local sup attach <id> <unit> --role esecutore --session <ses_...> [--harness <name>]
 nexgen-local sup costi <id>                                 # total, then by role and by unit
 nexgen-local sup costi                                     # the 5h, 7d and 30d windows
 nexgen-local sup permessi <id>                              # what the session waits on
 nexgen-local sup permessi <id> --per-profilo                # refuse everything waiting
 nexgen-local sup permessi <id> --reject <request> [--allow <request> | --always <request>]
-nexgen-local sup scout <id> "<question>"                    # the explorer, on a detached copy
+nexgen-local sup scout <id> "<question>" [--harness <name>]  # the explorer, on a detached copy
 nexgen-local sup rebase <id> <unit>                          # realign on the base's current tip
 nexgen-local sup resume <id> [--repo <checkout> --branch <branch>] [--riparti]
 nexgen-local sup pulizia [--chiudi]                          # ciò che il motore ha lasciato aperto
@@ -71,6 +74,52 @@ nexgen-local sup window-check                               # opens a visible wi
 `sup attach` writes the journal event **and** one row in `05-costi.jsonl`.
 `sup status` and `sup costi` never compute a price of their own: they read what
 the harness reported.
+
+## Chi fa cosa
+
+**The supervisor** is whoever can run the `sup` verbs: a person, a Claude Code
+session, an OpenCode session with its own window. The engine does not care which
+one it is, because the supervisor's authority is the verbs and the gates, not the
+model that types them. Every step the supervisor takes is a file it writes or a
+command it runs, so a later reader can reconstruct the decision.
+
+**The executors and the scout are adapters**, one module per harness under
+`supervision_adapters/`. The engine never names a harness in its orchestration:
+it asks the registry, and the adapter declares what it can do. An operation a
+harness does not support is a capability set to false, and the engine refuses
+with that name instead of pretending. A role is configured once in the lane,
+`supervision.roles`, and a single run may override it with `--harness`:
+
+```json
+{
+  "supervision": {
+    "roles": {"esecutore": "opencode", "ricognitore": "agy"}
+  }
+}
+```
+
+Those two values are the defaults when the key is absent. A name nobody
+registered is refused before a tab opens, naming the typo and the names there
+are. `sup run --harness <name>` and `sup scout --harness <name>` use that harness
+for that run only; the journal records which one actually ran the unit, so the
+review delivery goes back to the same session.
+
+| harness | opens a tab | finds the session | sends a turn | state | cost | tokens | writes permissions | resume | scout | frees a folder | stops a push |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| `opencode` | yes | yes | yes | yes | yes | yes | yes | yes | yes | yes | project profile + blocked pushurl |
+| `local` (OpenCode + local provider) | yes | yes | yes | yes | yes | yes | yes | yes | yes | yes | project profile + blocked pushurl |
+| `claude` | yes | yes | yes | yes | yes | yes | yes (`.claude/settings.json`) | yes | yes | no | project profile + blocked pushurl |
+| `codex` | yes | yes | yes | yes | no (said unreadable) | yes | no (launch sandbox) | yes | yes | no | `workspace-write` without network + blocked pushurl |
+| `agy` | yes | no | no | no | no | no | no | yes | yes | no | blocked pushurl only |
+
+The table is the answer to "can this harness do it", not a promise that every
+operation is useful. `agy` opens a tab and writes its report, but it cannot be
+asked for its session later, so it is a scout and not an executor; Codex can
+execute and resume, but its cost is not exposed in a form the engine reads, and
+the package says so instead of writing zero. The last column is the real stop
+behind the others: a harness with no project profile is still running in a copy
+whose `pushurl` points at a blocked URL.
+
 
 ## The unit's working copy
 
@@ -101,20 +150,26 @@ that carries it, and a remote branch that advanced for another reason (another
 unit was published) is not a failure: the gate looks for this unit's own commits,
 not for a world that stood still.
 
-Cleanup stays manual and explicit: `git worktree remove <path>` and
-`git branch -D sup/<task>/<unit>` from the repository.
+The copy is not meant to outlive its unit: publication and an approved unit
+closed without publication both remove it, and `sup pulizia` lists any copy or
+branch the journal already closed and the disk still has. "The end of a unit's
+work" below is the full rule; the manual `git worktree remove` is now the
+recovery step for a copy a live process is holding.
 
 ## The executor's window
 
-One harness means one session per task, and the engine keeps it that way.
+One harness means one session per task, and the session belongs to the copy it
+was born in: the engine reuses it only while the recorded folder is that unit's
+copy.
 
 `sup run` looks for the session the task already owns. If there is one and it
 is idle (`time.idle` at or past `time.updated` in the harness's own export),
 the unit's work goes into it with `opencode run -s <session> "<pointer>"` and
 no new tab is opened. If it is busy, the unit is **queued**: the journal records
 `unit_queued` with the reason, `sup status` shows `in coda`, and the engine says
-so instead of opening another window. A tab is opened only when the task has no
-session for that harness yet:
+so instead of opening another window. A tab is opened when the task has no
+session for that harness yet, or when the recorded session belongs to another
+unit's copy:
 
 ```
 opencode <worktree> --prompt "Sei l'esecutore dell'unità ... leggi il brief in ..."
@@ -123,7 +178,9 @@ opencode <worktree> --prompt "Sei l'esecutore dell'unità ... leggi il brief in 
 The prompt is a pointer to `20-brief-<unit>.md`, never the brief itself, and no
 `--auto` or `--dangerously-*` flag is ever passed: the model stays what the owner
 configured, and the permissions are the profile described in the next section,
-written before the tab opens.
+written before the tab opens. The tab's command line is the adapter's: another
+harness opens its own window with its own flags, and `sup run --harness <name>`
+chooses one for this run without changing the lane's default.
 
 The session that a new tab opens is found in `opencode session list --format
 json`, which reports `id`, `created` and `directory`: the newest session whose
@@ -131,7 +188,18 @@ json`, which reports `id`, `created` and `directory`: the newest session whose
 tab was opened. When no session matches within the wait (30 seconds), `sup run`
 says so and the attach stays a manual `sup attach`: the engine never guesses
 which session belongs to which unit. The cost of the attached session lands in
-`05-costi.jsonl` like any other attach.
+`05-costi.jsonl` like any other attach. The adapter owns the lookup: OpenCode
+lists its session store, Claude Code reads its transcript directory, Codex reads
+its thread store, and `agy` declares that it cannot be asked.
+
+The journal records the folder with the session (`attached`, `unit_started`,
+`unit_queued`, `unit_reworked`). `sup run` reuses a session only when that folder
+is the unit's own copy; when it is another unit's copy, the engine writes
+`harness_session_foreign` with both paths, opens a new tab in the right copy and
+says `sessione nata in un'altra copia`. This is the 2026-10-21 failure: the h5
+run inherited h4's idle session, whose folder had already been removed, and the
+executor saw "working directory no longer exists". A journal row written before
+the folder was recorded has no folder, and stays reusable as before.
 
 A session the harness reports as gone (the export says it does not exist) is
 not a busy session: queueing on it would wait on nothing for ever. The journal
@@ -188,12 +256,77 @@ denial rather than as a rejected repository.
 **common** file of the repository: the `/opencode.json` line therefore applies in
 the owner's checkout too, and hides that name there as well when the file exists.
 
+The other harnesses get the same decision in their own form, and none of them
+gets a blanket bypass:
+
+- **Claude Code** reads a project `.claude/settings.json`, written in the copy
+  and excluded with the same `info/exclude` line. It sets `defaultMode:
+  acceptEdits`, allows `Edit`, `Write`, `Read` and `Bash(git *)`, denies the
+  three push spellings (`Bash(git push *)`, `Bash(git -C * push *)`,
+  `Bash(git -c * push *)`), and adds the task folder to
+  `additionalDirectories` so the report can be written where it belongs.
+  `bypassPermissions` is never used.
+- **Codex** is started with `-s workspace-write -a never`: writes are confined to
+  the workspace and no approval prompt can turn into a yes. Its ability to deny a
+  push is declared as weaker than OpenCode's: the sandbox has no network, so a
+  push fails, but the copy's blocked `pushurl` is the stop that does not depend on
+  the harness. On Windows the sandbox writes as a separate user
+  (`CodexSandboxUsers`): the owner cannot read or delete the report and the copy,
+  so Codex opens a tab, finds its thread and reports tokens, but the work product
+  cannot be collected. The limit is declared in `Capabilities.limits`; on Linux
+  the sandbox does not use a separate user.
+- **agy** has no project permission profile the engine can write. It is a scout,
+  its plan mode is read-only, and the copy's blocked `pushurl` is the only stop.
+
+A harness that cannot deny a push says so in the capability table instead of
+being described as safe. `sup run` writes the profile before the tab opens and
+refuses when the profile cannot be written, because an executor without its
+profile is not the executor the owner configured.
+
 `sup permessi <id>` lists what the task's session is waiting on
 (`opencode api session.permission.list`) without changing anything. A request
 can be answered one at a time with `--allow`, `--always` or `--reject`, or all at
 once with `--per-profilo`, which refuses everything: the profile already decided,
 so a question that still appears is outside it. Every answer goes into the
 journal as `permission_answered` with its decision.
+
+## The local executor
+
+A unit can run on a model served locally by `llama-server`, through the OpenCode
+adapter with the provider the lane configured. The engine owns the server's
+lifecycle, because "start it by hand first" is the step that gets forgotten:
+
+- `sup run` starts the server when `/health` does not answer, using
+  `supervision.local_model.command`, after checking free RAM (and VRAM when the
+  lane declares a threshold). The engine records that it started the server in
+  the lane's `local-model-server.json` and in the journal.
+- `sup collect` stops a server the engine started, unless another unit of the
+  lane still needs it. A server the owner started by hand is left alone: the
+  engine only stops what it started.
+- A machine that cannot answer the memory question is refused before the model is
+  loaded. An unreadable threshold is not a free machine.
+
+A local unit's brief is a **step-by-step plan**, not a goal: the model executes,
+it does not design. The brief names each file and each edit, and it carries the
+acceptance tests already written and **red**. The unit's boundary excludes the
+test files, so the executor can only change production code until those tests
+turn green. This is the "test di un altro, codice del locale" scheme:
+
+| who | writes | the local executor may change it |
+|---|---|---|
+| the supervisor or a frontier model | the brief, the acceptance tests | no (outside `--allow`) |
+| the local model | the production code | yes, inside `--allow` |
+
+The scheme exists because of a measured run on 2026-10-21: the local model wrote
+a small production fix well, but its own tests were worthless (string searches in
+the source, or not compiling) and its report claimed "100 passed" without running
+them. Tests written by somebody else and red before the unit starts are the
+cheapest way to make the claim checkable: `sup collect` runs the same tests, and
+a green run is a fact, not a sentence.
+
+The model is named in the lane's `local_model.model`; `sup run --harness local`
+selects the local adapter for one unit, and the journal records the harness, so
+the review delivery returns to the same session.
 
 ## Stalled sessions
 
@@ -218,16 +351,33 @@ unità <unit>: in stallo da 24.3 minuti (soglia 20), possibile richiesta di perm
 ## The lane's settings
 
 The lane reads `~/.local/state/nexgen/local-lane/config.json` (under the
-engine's home when `NEXGEN_HOME` is set). Two keys are read today, both optional:
+engine's home when `NEXGEN_HOME` is set). Three groups are read today, all
+optional:
 
 ```json
 {
   "supervision": {
     "allowed_models": ["provider/*", "provider/model"],
-    "stall_minutes": 20
+    "stall_minutes": 20,
+    "roles": {"esecutore": "opencode", "ricognitore": "agy"},
+    "local_model": {
+      "model": "provider/model",
+      "command": ["llama-server", "-m", "<modello>", "--port", "8080"],
+      "port": 8080,
+      "health": "http://127.0.0.1:8080/health",
+      "ram_free_gb": 2.0,
+      "vram_free_gb": 0.0
+    }
   }
 }
 ```
+
+`roles` is described under "Chi fa cosa". `local_model` is the server a `local`
+unit runs on: `command` is the only field without a default, `port` builds the
+health URL when `health` is absent, and the two thresholds are the free memory the
+engine requires before starting it. When `vram_free_gb` is zero the VRAM check is
+skipped, because a machine with no usable `nvidia-smi` is not a machine with no
+GPU. A threshold that cannot be read is a refusal, never a pass.
 
 An empty or absent `allowed_models` means no restriction. A list that exists is
 matched against the tag the harness reports, `provider/model#variant`, with
@@ -255,12 +405,29 @@ not evidence; every line below is read from git or run by the engine.
 | `configurazione git` | either configuration file of the copy (the repository's shared `.git/config`, which every checkout reads, or the worktree's own `config.worktree`) changed since the unit was created, or the effective configuration carries a `url.*.insteadOf` / `url.*.pushInsteadOf` key the creation did not have; the file or the key is named |
 | `remoto intatto` | a remote of the creation is gone, added, points at another fetch URL or push URL, or one of its refs carries a commit of the unit's interval (the unit pushed); a branch that advanced for another reason is not a failure |
 | `albero pulito` | the unit's copy has uncommitted work |
+| `scansione fughe` | the project declares CI's anti-leak scan (a workflow names `leak_scan.py`) and the scan exits non-zero on the unit's `base..head`, or the script and its patterns are not where the workflow says; a project that declares no scan adds no line |
 
 The verdict is PASS only when every line is. The package
 (`40-pacchetto-<unit>.md`) carries the verdict, the gate lines, the diffstat,
 the diff with a declared cap (400 lines) and the cost of the attached session;
 `50-gate-<unit>.txt` carries the raw output, including what the verification
 printed. `sup collect` exits 1 on FAIL, so a script sees it.
+
+The leak line is the same scan CI runs, on the same interval, moved to the point
+where the executor can still fix it: a personal name in a fake path or a
+seven-digit number in a test used to stop the push, after the review had already
+said yes.
+
+Before judging, `sup collect` looks for a `30-resoconto-<unit>.md` left **inside
+the copy**. An untracked report is moved to the task folder and the move is said
+in the output and in the journal (`report_relocated`); this is the local
+executor's habit the 2026-10-21 run exposed, where the report stayed an untracked
+file, failed `albero pulito`, and never reached the reviewer. A report committed
+to the branch is part of the unit's diff and is not moved: the gates must judge
+what it says. When the session's own last turn is over, `sup collect` closes the
+executor's tab **before** reading that report: a sandboxed harness can keep the
+files it wrote unreadable to the engine while its process is alive. If the
+session is still working, the tab stays open and the output says so.
 
 The package also names the tests this platform skipped among the test files the
 unit touched (`pytest -q -rs` on those files, with `-n 4` when pytest-xdist is
@@ -418,6 +585,34 @@ task already has (`opencode <copy> -s <session> --prompt "<pointer>"`, OpenCode
 open the delivery stays off the screen, as before. A model named with
 `--resend -m` cannot travel into a tab, and the verb says it was not applied.
 
+Retirement is the owner's rule "a fine lavoro non resta niente", and it runs
+only when the work is somewhere permanent:
+
+- **`sup publish`** retires the unit after the commits are verified on the
+  owner's branch, including the path where the push failed and the commits stayed
+  local.
+- **`sup review <id> <unit> --approve "<why>" --close`** retires an approved unit
+  that will not be published. Before the branch goes, the engine writes the head
+  under `refs/nexgen/archive/<task>/<unit>`, so the history stays reachable; a
+  unit that is already published is refused, because `sup publish` knows which
+  commits arrived.
+
+The sequence is: ask the unit's adapter to free what the shared server holds for
+that folder (`dispose_location`; OpenCode's `debug.location.evict`), then
+`git worktree remove --force` with `core.longpaths=true`, then `git branch -D`.
+The copy goes before the branch, and a copy a live process still holds stops the
+retirement with the last line of git's own error. Nothing is deleted when the
+commits cannot be found in any known repository, or when an unpublished unit has
+no archive: the refusal names the unit and says which command closes it. The
+task folder with its Markdown files and journal is never removed: it is the
+record, not the workspace.
+
+A retirement that fails after a successful publication does not undo the
+publication: the journal records `unit_retire_failed`, the verb prints the
+reason, and `sup pulizia` offers the copy again. A published unit keeps its state
+`pubblicata` (or `pubblicata in locale` when nothing was pushed); the retirement
+is a cleanup fact, not a different outcome.
+
 
 ## Publishing
 
@@ -494,7 +689,8 @@ Once the commits are applied, `sup publish` closes the executor's tab: the
 engine wrote a marker into that tab's shell (`NEXGEN_SUP_TAB`), finds the shell
 by the exact assignment it wrote, and stops it and its children from the deepest
 one up to the shell, so the tab disappears and nothing behind it keeps running.
-Two things stop it. A task has one executor session for all its units, so while
+Then it retires the unit as described above: the copy and the `sup/*` branch go
+once the commits are verified. Two things stop the tab closure.
 another unit of the same task is created, queued, running, stalled or waiting
 for a decision, the tab stays, `tab_left_open` names the open units, and the verb
 says why: it closes when the last unit is approved and published. And it refuses
@@ -565,11 +761,12 @@ configuration writes no row at all.
 
 ## The scout
 
-`sup scout <id> "<question>"` gives the explorer (`agy`) a throwaway copy of the
-repository the task's first unit works on, at a fixed path:
-`<task>/24-ricognizione/`. The folder is recreated at every round with a plain
-clone and `checkout --detach <base>`, so the scout never inherits yesterday's
-edits and holds no branch whose work could be mistaken for the executor's.
+`sup scout <id> "<question>" [--harness <name>]` gives the explorer (`agy` by
+default, from `supervision.roles.ricognitore`) a throwaway copy of the repository
+the task's first unit works on, at a fixed path: `<task>/24-ricognizione/`. The
+folder is recreated at every round with a plain clone and `checkout --detach
+<base>`, so the scout never inherits yesterday's edits and holds no branch whose
+work could be mistaken for the executor's.
 
 Before the tab opens, that exact path is added to `trustedWorkspaces` in
 `~/.gemini/antigravity-cli/settings.json` when it is not already there
@@ -578,8 +775,10 @@ one trust entry covers every round.
 
 The question goes into `25-brief-ricognizione.md`; the report the scout must
 write is `26-rapporto-ricognizione-<round>.md`, outside the copy. The tab runs
-this same engine in its scout role, which starts `agy --mode plan --prompt
-<pointer>`: plan mode is read-only, and the pointer keeps the brief in one file.
+this same engine in its scout role, which starts the adapter's scout command: by
+default `agy --mode plan --prompt <pointer>`, and another harness supplies its
+own read-only command (`opencode run --agent plan`). Plan mode is read-only, and
+the pointer keeps the brief in one file.
 At the end of the round the engine asks git whether the copy is where it started
 (`git status --porcelain`, unchanged HEAD), then closes the tab it opened. A
 tracked file that changed, or a moved head, ends the round with exit 1 and a
@@ -637,6 +836,17 @@ and `agy` processes that no tab holds, and the number of processes hanging under
 which is how OpenCode behaves, so the line says whether the service can be
 restarted now.
 
+It also answers the rule that nothing is left behind. It lists the copies and
+branches of units whose journal says the work arrived (`pubblicata`, `pubblicata
+in locale`, `ritirata`, approved and closed) and the disk still has, and
+`--chiudi` retires them. With a deep read it asks the shared server which folders
+it still holds (`opencode api GET /api/debug/location`): a folder that no longer
+exists is listed with the start time of its oldest process, taken from the
+process table, and `--chiudi` evicts it through the same API the retirement uses.
+A folder that still exists is never in that list, so an active session and the
+owner's own server are out of reach. The local-models bench is not the engine's:
+no verb stops it except the local unit that started it.
+
 `sup collect` prints the same fact as a note, not a gate: marked tabs of tasks
 this lane no longer has stay open after the collection, and that is noise and
 memory, not a defect of the unit under review.
@@ -661,9 +871,12 @@ test: the tests substitute `Popen` and `which`, so no suite opens a window.
 
 One row per attach in `05-costi.jsonl`: instant, task, unit, role, harness,
 model, session, window, duration, tokens in and out (with reasoning and cache
-read/write), cost in dollars, and the source of the measurement. The source of
-this phase is `opencode session export <id>`, resolved through PATH and through
-the engine's Windows shim resolver.
+read/write), cost in dollars, and the source of the measurement. The source is
+the unit's own harness, through its adapter: OpenCode and the local executor
+through `opencode session export <id>`, Claude Code through its transcript under
+`~/.claude/projects/`, Codex through its store. Codex reports tokens and no
+money, and `agy` reports neither: the row says the number is unreadable instead
+of writing a zero.
 
 `sup costi` without an id shows what the harness archive says was spent in the
 last 5 hours, 7 days and 30 days: every session row in `session_v2` (or the old
@@ -689,10 +902,15 @@ A source that does not answer still leaves a row, with `cost_usd: null` and a
 
 ## What these phases do not do
 
-- No cleanup of old task folders or unit copies: the retention decision (30
-  days) belongs to the same rule as research sessions and is not implemented.
-- Only the OpenCode harness is measured. The scout (`agy`) and the supervisor
-  CLI stay unmeasured and would be recorded as unavailable.
+- No age-based retention of task folders: a unit's copy and branch are removed
+  when the unit is retired, but an old task folder and its journal stay until the
+  owner decides otherwise. The 30-day retention is the same decision as for
+  research sessions and is not implemented; `sup pulizia` is the manual cleanup
+  for what a closed unit left on disk.
+- Cost is measured only where the harness exposes it. Codex reports tokens and no
+  money; `agy` reports neither and cannot be asked for its session after the tab
+  opens, which is why it stays a scout. Claude Code's cost comes from its own
+  transcript, a file the harness may rotate.
 - No tag and no release: `sup publish` never creates one, and a commit touching
   `VERSION` or `CHANGELOG.md` is refused by name. A release stays
   `nexgen release ship` from the owner's checkout.
