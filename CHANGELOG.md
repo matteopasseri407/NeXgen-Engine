@@ -10,6 +10,22 @@ of any engine release.
 
 ## [Unreleased]
 
+### Added
+
+- Supervision: harnesses are interchangeable in every role. OpenCode, Antigravity (`agy`), Claude Code, Codex and a local model served by `llama-server` are adapters behind one contract (open a tab, find the session, send a turn, read state, cost and tokens, write the permission profile, resume, free a folder), and each declares what it cannot do instead of pretending. `supervision.roles` in the lane configuration picks the executor and the scout (defaults: OpenCode and agy), and `--harness` on `sup run` and `sup scout` overrides it for one round. The supervisor is whoever runs the `sup` verbs: a person, a Claude Code session or an OpenCode session. See "Chi fa cosa" in `docs/supervision.md`.
+- Supervision: a local model as a guided executor. `sup run --harness local` starts the configured `llama-server` when it is not running, after checking free RAM and VRAM against configurable thresholds, and `sup collect` stops it when the engine started it and no other unit uses it. The start command lives in the lane configuration, never in the code. The recommended pattern is documented: tests written by someone else, code by the local model.
+- Supervision: finished work leaves nothing behind. `sup publish` retires the unit once its commits are verified on the published branch: it frees the folder in the harness's shared service (stopping the MCP servers that work in the unit's copy), removes the copy, also with long Windows paths, and deletes the `sup/*` branch. An approved unit that is not published is retired with `sup review --approve "<reason>" --close`, after its head is archived under `refs/nexgen/archive/`. `sup pulizia` lists and, with `--chiudi`, retires what is left.
+- Supervision: `sup collect` runs the project's leak scan on the unit's range when the project declares one, so a leak fails at collection instead of at push, and moves a report the executor left inside the copy to the task folder.
+
+### Fixed
+
+- Supervision: a session is reused only by a unit working in the same copy; a session born in another copy opens a new tab in the right one.
+- `release ship`: a green or skipped copy of a check from another workflow run no longer hides the pull request's red one.
+
+### Known limits
+
+- Codex on Windows: its sandbox writes as a separate user, so the engine cannot read the report or remove the copy afterwards; collection, publication and retirement of a Codex unit do not complete there yet. The limit is declared by the adapter.
+
 ## [2.18.0] - 2026-10-21
 
 ### Added
