@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from nexgen_core.discipline.gitutil import GitError, git
+from nexgen_core.discipline.gitutil import GitError, git, is_ancestor
 
 from . import supervision_adapters as adapters
 from . import supervision_state as state
@@ -81,25 +81,32 @@ def _keep_history(
             f"unità {name} non pubblicata e nessun archivio chiesto: i suoi commit sarebbero persi. "
             "Pubblica l'unità, oppure chiudila con `sup review ... --approve \"<motivo>\" --close`"
         )
-    places = _search_repos(task_id, name, repo)
-    missing = [sha for sha in published if not any(_has_commit(place, sha) for place in places)]
+    publication = _publication(task_id, name)
+    place = Path(str(publication.get("repo") or ""))
+    branch = str(publication.get("branch") or "")
+    if not place.is_dir() or not branch:
+        raise RetireError(
+            f"il diario non dice su quale ramo di quale repository {name} è stata pubblicata: "
+            "niente è stato cancellato"
+        )
+    missing = [sha for sha in published if not is_ancestor(place, sha, branch)]
     if missing:
         raise RetireError(
-            f"i commit pubblicati di {name} non sono in nessuno dei repository noti "
-            f"({', '.join(str(place) for place in places)}): "
+            f"i commit pubblicati di {name} non sono sul ramo {branch} di {place}: "
             + ", ".join(sha[:12] for sha in missing)
             + ". Niente è stato cancellato"
         )
     return {"ref": "", "head": published[-1]}
 
 
-def _search_repos(task_id: str, unit: str, repo: Path) -> list[Path]:
-    """Every repository a publication could have written to: the unit's own and the owner's checkout."""
-    places = [repo] if repo.is_dir() else []
-    owner = owner_repo(task_id, unit)
-    if owner and str(owner) and owner.is_dir() and owner.resolve() not in {place.resolve() for place in places}:
-        places.append(owner)
-    return places
+def _publication(task_id: str, unit: str) -> dict:
+    """The last `unit_published` row: the only record of which branch actually received the work."""
+    name = state.slug(unit)
+    found: dict = {}
+    for row in state.read_events(task_id):
+        if row.get("event") == "unit_published" and row.get("unit") == name:
+            found = row
+    return found
 
 
 def _unit_head(repo: Path, branch: str) -> str:
@@ -215,9 +222,5 @@ def verified_commits(task_id: str, unit: str) -> list[str]:
 
 def owner_repo(task_id: str, unit: str) -> Path:
     """The owner's checkout the publication wrote to, or an empty path when it never published."""
-    name = state.slug(unit)
-    found = ""
-    for row in state.read_events(task_id):
-        if row.get("event") == "unit_published" and row.get("unit") == name:
-            found = str(row.get("repo") or "")
+    found = str(_publication(task_id, unit).get("repo") or "")
     return Path(found) if found else Path("")

@@ -67,9 +67,11 @@ def _prepared(task: str, repo, tmp_path: Path, *, published: bool = False) -> tu
     state.append_event(task, "unit_collected", unit="prova", verdict="PASS", head=sha)
     state.append_event(task, "unit_reviewed", unit="prova", round=1, verdict=state.APPROVED, head=sha)
     if published:
+        git_in(repo.path, "checkout", "-q", "main")
+        git_in(repo.path, "merge", "-q", "--ff-only", record["branch"])
         state.append_event(
             task, "unit_published", unit="prova", commits=[sha], head=sha,
-            branch=record["branch"], repo=str(repo.path), pushed=False,
+            branch="main", repo=str(repo.path), pushed=False,
         )
     return folder, sha
 
@@ -122,14 +124,33 @@ def test_retire_refuses_when_nothing_says_the_commits_arrived(task, repo, tmp_pa
     assert "unit_retired" not in [row["event"] for row in state.read_events(task)]
 
 
-def test_retire_refuses_a_publication_whose_commit_no_repository_has(task, repo, tmp_path):
+def test_retire_refuses_published_commits_without_a_publication_row(task, repo, tmp_path):
     folder, _ = _prepared(task, repo, tmp_path)
 
-    with pytest.raises(retire.RetireError, match="non sono in nessuno dei repository noti"):
+    with pytest.raises(retire.RetireError, match="il diario non dice"):
         retire.retire(task, "prova", why="pulizia", commits=["f" * 40])
 
     assert folder.is_dir(), "una verifica fallita non tocca la copia"
     assert _branch_exists(repo, state.unit_record(task, "prova")["branch"])
+
+
+def test_retire_refuses_a_commit_that_exists_but_never_reached_the_published_branch(
+    task, repo, tmp_path,
+):
+    folder, sha = _prepared(task, repo, tmp_path)
+    # The commit exists in the repository, on the unit's own branch, but `main`
+    # never received it: the old check only asked whether the object was there.
+    state.append_event(
+        task, "unit_published", unit="prova", commits=[sha], head=sha,
+        branch="main", repo=str(repo.path), pushed=False,
+    )
+
+    with pytest.raises(retire.RetireError, match="non sono sul ramo main"):
+        retire.retire(task, "prova", why="pulizia", commits=[sha])
+
+    assert folder.is_dir(), "la copia resta quando il commit non è arrivato"
+    assert _branch_exists(repo, state.unit_record(task, "prova")["branch"])
+    assert "unit_retired" not in [row["event"] for row in state.read_events(task)]
 
 
 def test_a_failed_removal_does_not_undo_the_publication(task, repo, tmp_path, monkeypatch):
