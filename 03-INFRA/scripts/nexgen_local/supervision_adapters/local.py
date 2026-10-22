@@ -27,11 +27,23 @@ class LocalAdapter(OpenCodeAdapter):
         return policy.local_model_id()
 
     def write_profile(self, task_id: str, folder: Path, *, model: str = "") -> None:
-        """The OpenCode profile, with `model` set to the local one."""
+        """The OpenCode profile, with `model` set to the local one and declared under its provider.
+
+        A model the harness does not find in the provider falls back to the
+        provider's first model: the requests still reach the local server, which
+        serves one model whatever name it is asked for, but the session and the
+        journal would name a model that never ran. Declaring the pin keeps the
+        recorded model equal to the one the lane started.
+        """
         pinned = model or self.model()
         if not pinned:
             raise AdapterError(
                 "nessun modello locale configurato: scrivi `supervision.local_model.model` "
                 "nel config.json della lane (provider/modello)"
             )
-        super().write_profile(task_id, folder, model=pinned)
+        provider, _, name = pinned.partition("/")
+        declared = (
+            {provider: {name: {"name": f"{name} (locale)", "tool_call": True}}}
+            if provider and name else None
+        )
+        super().write_profile(task_id, folder, model=pinned, models=declared)

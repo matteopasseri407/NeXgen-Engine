@@ -64,14 +64,19 @@ def profile_rules(copy: str | Path, task: str | Path) -> list[dict]:
     ]
 
 
-def write_profile(task_id: str, copy: str | Path, *, model: str = "") -> Path:
+def write_profile(
+    task_id: str, copy: str | Path, *, model: str = "",
+    models: dict[str, dict[str, dict]] | None = None,
+) -> Path:
     """Write the executor's profile into the unit's copy and keep it out of git.
 
     The owner's other keys are preserved: without a `model` argument the model of
     the copy stays the one the owner chose. A config that is tracked by the
     project is refused instead of overwritten, because changing it would put a
     foreign file in the review. `model` is how a local unit pins the lane's own
-    model in the copy it works in.
+    model in the copy it works in, and `models` declares that model under its
+    provider: a pin the harness does not know falls back to the provider's first
+    model, which would make the journal name a model that never ran.
     """
     folder = Path(copy)
     if not folder.is_dir():
@@ -86,6 +91,17 @@ def write_profile(task_id: str, copy: str | Path, *, model: str = "") -> Path:
     current["permissions"] = profile_rules(folder, state.open_task(task_id))
     if model:
         current["model"] = model
+    if models:
+        providers = current.setdefault("provider", {})
+        if isinstance(providers, dict):
+            for provider, entries in models.items():
+                declared = providers.setdefault(provider, {})
+                if not isinstance(declared, dict):
+                    continue
+                known = declared.setdefault("models", {})
+                if isinstance(known, dict):
+                    for name, body in entries.items():
+                        known.setdefault(name, body)
     current.setdefault("$schema", "https://opencode.ai/config.json")
     atomic_json(target, current)
     ignore(folder, target.name)

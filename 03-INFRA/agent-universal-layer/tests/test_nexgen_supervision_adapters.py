@@ -518,13 +518,16 @@ def test_local_is_opencode_with_the_model_the_lane_declares(tmp_path, monkeypatc
     seen: dict = {}
     monkeypatch.setattr(
         opencode.OpenCodeAdapter, "write_profile",
-        lambda self, task_id, folder, model="": seen.update({"task": task_id, "folder": folder, "model": model}),
+        lambda self, task_id, folder, model="", models=None: seen.update(
+            {"task": task_id, "folder": folder, "model": model, "models": models}
+        ),
     )
 
     adapter = local.LocalAdapter()
     assert adapter.model() == "ollama/qwen"
     adapter.write_profile("20261022-000000-prova", tmp_path)
     assert seen["model"] == "ollama/qwen"
+    assert seen["models"] == {"ollama": {"qwen": {"name": "qwen (locale)", "tool_call": True}}}
     assert adapter.capabilities.has("find_session") is True
 
 

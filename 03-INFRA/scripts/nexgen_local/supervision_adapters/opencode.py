@@ -129,9 +129,10 @@ class OpenCodeAdapter(base.Adapter):
         """The store's last idle message, which says which provider error closed the turn."""
         return turns.last_turn(session)
 
-    def write_profile(self, task_id: str, folder: Path, *, model: str = "") -> None:
+    def write_profile(self, task_id: str, folder: Path, *, model: str = "",
+                      models: dict[str, dict[str, dict]] | None = None) -> None:
         """`opencode.json` in the copy, with the project's other keys kept."""
-        permissions.write_profile(task_id, folder, model=model)
+        permissions.write_profile(task_id, folder, model=model, models=models)
 
     def scout_argv(self, executable: str, prompt: str) -> list[str]:
         """A read-only round through OpenCode's `plan` agent, never `--auto`."""
