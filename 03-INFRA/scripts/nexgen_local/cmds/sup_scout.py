@@ -21,6 +21,7 @@ def register(sup_sub) -> None:
     )
     verb.add_argument("id", help="id del compito")
     verb.add_argument("domanda", nargs="?", default="", help="in una riga, cosa deve guardare il ricognitore")
+    verb.add_argument("--harness", default="", help="harness di questo giro (default: quello del ruolo ricognitore nella lane)")
     verb.add_argument("--in-scheda", action="store_true", help=argparse.SUPPRESS)
     verb.add_argument("--round", type=int, default=0, help=argparse.SUPPRESS)
     verb.set_defaults(func=cmd_sup_scout)
@@ -31,7 +32,7 @@ def cmd_sup_scout(args: argparse.Namespace) -> int:
     if args.in_scheda:
         return scout.run_in_tab(args.id, args.round)
     try:
-        record = scout.open_round(args.id, args.domanda)
+        record = scout.open_round(args.id, args.domanda, harness=args.harness)
     except SupervisionError as exc:
         print(f"nexgen-local: {exc}", file=sys.stderr)
         return 1

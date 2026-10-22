@@ -1,3 +1,4 @@
+# nexgen: one-job reason="declare the sup verbs and print what each one did"
 """Domain commands: supervised tasks. The folder, the visible window, the costs.
 
 Each verb does one step and prints what a person needs to act: where the task
@@ -14,6 +15,7 @@ from .. import supervision_costs as costs
 from .. import supervision_cleanup as cleanup
 from .. import supervision_gates as gates
 from .. import supervision_harness as harness
+from .. import supervision_policy as policy
 from .. import supervision_publish as publish_module
 from .. import supervision_review as review
 from .. import supervision_requests as requests
@@ -45,12 +47,7 @@ def register_sup(sub) -> None:
     status.set_defaults(func=cmd_sup_status)
 
     attach = sup_sub.add_parser("attach", help="aggancia una sessione harness a un'unità e scrive la riga di costo")
-    attach.add_argument("id")
-    attach.add_argument("unit")
-    attach.add_argument("--role", default="esecutore", help="supervisore, esecutore, scout o tutor")
-    attach.add_argument("--opencode-session", required=True, help="identificativo della sessione harness")
-    attach.add_argument("--window", default="", help="titolo della finestra in cui gira la sessione")
-    attach.set_defaults(func=cmd_sup_attach)
+    _register_attach(attach)
 
     costi = sup_sub.add_parser(
         "costi", help="spesa delle sessioni nelle ultime 5 ore, 7 e 30 giorni; con un id, anche i costi del compito",
@@ -74,6 +71,10 @@ def register_sup(sub) -> None:
     run = sup_sub.add_parser("run", help="apre l'esecutore nella sua finestra e aggancia la sua sessione")
     run.add_argument("id", help="id del compito")
     run.add_argument("unit", help="nome dell'unità")
+    run.add_argument(
+        "--harness", default="",
+        help="harness di questa esecuzione (default: quello del ruolo esecutore nella lane)",
+    )
     run.set_defaults(func=cmd_sup_run)
 
     collect = sup_sub.add_parser("collect", help="esegue i cancelli del motore e scrive il pacchetto di revisione")
@@ -90,6 +91,20 @@ def register_sup(sub) -> None:
     sup_cleanup.register(sup_sub)
 
 
+def _register_attach(attach) -> None:
+    """The attach verb: one harness session, its role, its harness and its window."""
+    attach.add_argument("id")
+    attach.add_argument("unit")
+    attach.add_argument("--role", default="esecutore", help="supervisore, esecutore, scout o tutor")
+    attach.add_argument(
+        "--opencode-session", "--session", dest="opencode_session", required=True,
+        help="identificativo della sessione harness (`--session` è lo stesso)",
+    )
+    attach.add_argument("--harness", default="", help="harness della sessione (default: opencode)")
+    attach.add_argument("--window", default="", help="titolo della finestra in cui gira la sessione")
+    attach.set_defaults(func=cmd_sup_attach)
+
+
 def _register_review(sup_sub) -> None:
     """The supervisor's verb: one round, either APPROVA or RIMANDA with corrections."""
     review_verb = sup_sub.add_parser("review", help="il giro di revisione: approva l'unità o rimandala con le correzioni")
@@ -102,6 +117,10 @@ def _register_review(sup_sub) -> None:
     review_verb.add_argument(
         "-m", "--model", default="",
         help="con --resend: il modello di questa consegna, quando il provider rifiuta quello configurato",
+    )
+    review_verb.add_argument(
+        "--close", action="store_true",
+        help="con --approve: toglie copia e ramo di un'unità che non si pubblica, tenendone la head in un archivio",
     )
     review_verb.set_defaults(func=cmd_sup_review)
 
@@ -147,6 +166,12 @@ def cmd_sup_status(args: argparse.Namespace) -> int:
     print(f"compito {data['id']}")
     print(f"obiettivo: {data['objective'] or '(non leggibile)'}")
     print(f"cartella: {data['path']}")
+    roles_line = _roles_line()
+    if roles_line:
+        print(roles_line)
+    local_line = _local_line()
+    if local_line:
+        print(local_line)
     if data["units"]:
         for unit in data["units"]:
             print(unit_line(unit))
@@ -176,6 +201,28 @@ def _stalls(task_id: str) -> tuple[list[dict], str]:
         return [], str(exc)
 
 
+def _roles_line() -> str:
+    """Which harness takes each role: the lane's table, or the defaults it did not override."""
+    try:
+        chosen = policy.roles()
+    except SupervisionError as exc:
+        return f"ruoli: non leggibili ({exc})"
+    return "ruoli: " + " · ".join(f"{role} {name}" for role, name in chosen.items())
+
+
+def _local_line() -> str:
+    """The local server's state, printed only when the lane declares a local model."""
+    try:
+        declared = policy.local_model()
+    except SupervisionError as exc:
+        return f"modello locale: configurazione non leggibile ({exc})"
+    if not declared:
+        return ""
+    from .. import supervision_local_model as local
+
+    return local.describe()
+
+
 def cmd_sup_attach(args: argparse.Namespace) -> int:
     """Bind one harness session to a unit and write its cost row.
 
@@ -183,12 +230,13 @@ def cmd_sup_attach(args: argparse.Namespace) -> int:
     leaves neither a journal event nor a cost line behind.
     """
     try:
+        chosen = args.harness or "opencode"
         row = costs.record(
-            args.id, args.unit, args.role, args.opencode_session, window=args.window,
+            args.id, args.unit, args.role, args.opencode_session, harness=chosen, window=args.window,
         )
         state.append_event(
             args.id, "attached",
-            unit=args.unit, role=args.role, harness="opencode", session=row["session"],
+            unit=args.unit, role=args.role, harness=chosen, session=row["session"],
         )
     except SupervisionError as exc:
         print(f"nexgen-local: {exc}", file=sys.stderr)
@@ -255,10 +303,12 @@ def cmd_sup_unit(args: argparse.Namespace) -> int:
 def cmd_sup_run(args: argparse.Namespace) -> int:
     """Send the unit into the task's own session, or open the first tab, or queue it."""
     try:
-        result = harness.run_unit(args.id, args.unit)
+        result = _run_unit(args)
     except SupervisionError as exc:
         print(f"nexgen-local: {exc}", file=sys.stderr)
         return 1
+    for note in result.get("notes") or []:
+        print(f"nota: {note}")
     if result["mode"] == "refused":
         return _print_refusal(result)
     if result["mode"] == "queued":
@@ -274,13 +324,26 @@ def cmd_sup_run(args: argparse.Namespace) -> int:
     handle = result["window"]
     print(f"finestra {handle.get('launcher')} (pid {handle.get('pid')}) · scheda «{handle.get('title')}» "
           f"dell'unità {result['unit']}")
+    if result.get("reason"):
+        print(f"perché una scheda nuova: {result['reason']}")
     session = result["session"]
     if session is None:
         print("sessione non determinata: agganciala a mano con "
-              f"`sup attach {args.id} {result['unit']} --opencode-session <ses_...>`")
+              f"`sup attach {args.id} {result['unit']} --session <id>`")
         return 0
     print(f"sessione agganciata: {session.get('id')} · {session.get('title', '')}")
     return 0
+
+
+def _run_unit(args: argparse.Namespace) -> dict:
+    """Call the engine with the harness only when the owner named one.
+
+    The callers and the tests replace `run_unit` with a two-argument function; a
+    keyword nobody asked for would make that replacement unreachable.
+    """
+    if getattr(args, "harness", ""):
+        return harness.run_unit(args.id, args.unit, harness=args.harness)
+    return harness.run_unit(args.id, args.unit)
 
 
 def cmd_sup_collect(args: argparse.Namespace) -> int:
@@ -293,10 +356,14 @@ def cmd_sup_collect(args: argparse.Namespace) -> int:
     print(f"unità {result['unit']} · verdetto {result['verdict']}")
     for gate in result["gates"]:
         print(f"{'PASS' if gate.ok else 'FAIL'} {gate.name}: {gate.reason}")
+    if result.get("report_note"):
+        print(f"nota: {result['report_note']}")
     print(costs.cost_text(result["cost"]))
     print(f"pacchetto {result['package']}")
     print(f"grezzo {result['raw']}")
     print(_collect_tab_line(args.id, result["unit"], result["cost"]))
+    for note in result.get("local_notes") or []:
+        print(f"nota: {note}")
     for note in cleanup.notes():
         print(f"nota: {note}")
     for hit in result.get("requests") or []:
@@ -320,13 +387,17 @@ def cmd_sup_review(args: argparse.Namespace) -> int:
     if args.model and not args.resend:
         print("nexgen-local: `-m` vale solo con `--resend`", file=sys.stderr)
         return 1
+    if getattr(args, "close", False) and args.approve is None:
+        print("nexgen-local: `--close` vale solo con `--approve`", file=sys.stderr)
+        return 1
     try:
         if args.approve is not None:
             result = review.approve(args.id, args.unit, args.approve)
+            closing = review.close(args.id, args.unit) if args.close else None
         elif args.resend:
-            result = review.resend(args.id, args.unit, model=args.model)
+            result, closing = review.resend(args.id, args.unit, model=args.model), None
         else:
-            result = review.rework(args.id, args.unit, args.rework)
+            result, closing = review.rework(args.id, args.unit, args.rework), None
     except SupervisionError as exc:
         print(f"nexgen-local: {exc}", file=sys.stderr)
         return 1
@@ -335,9 +406,23 @@ def cmd_sup_review(args: argparse.Namespace) -> int:
     print(f"head {result['head'][:12]}")
     if result["verdict"] == state.APPROVED:
         print(f"raccolta {result['collect_verdict']} sulla stessa head: pronta per `sup publish`")
+        _print_close(closing)
     else:
         print(_delivery_line(result["delivery"]))
     return 0
+
+
+def _print_close(closing: dict | None) -> None:
+    """What closing an unpublished unit did: the archive that keeps it, and what went."""
+    if not closing:
+        return
+    if not closing.get("retired"):
+        print(f"unità non ritirata: {closing.get('reason', '')}")
+        return
+    print(f"unità chiusa senza pubblicazione · copia {closing['copy']} · ramo {closing['branch']}")
+    print(f"archivio {closing['archive'] or 'nessuno'} · head conservata {closing['head'][:12]}")
+    for note in closing.get("notes") or []:
+        print(f"nota: {note}")
 
 
 def cmd_sup_publish(args: argparse.Namespace) -> int:
@@ -359,6 +444,7 @@ def cmd_sup_publish(args: argparse.Namespace) -> int:
         print(f"{commit['published'][:12]} <- {commit['source'][:12]} · {commit['subject']}")
     print(result["signing"])
     print(windows.close_tab(args.id, "esecutore")["line"])
+    _print_retirement(result.get("retirement"))
     if result["pushed"]:
         print(f"spinta eseguita: {result['command']}")
         return 0
@@ -370,6 +456,18 @@ def cmd_sup_publish(args: argparse.Namespace) -> int:
     print(f"resta da fare: `git push {result['remote']} {result['branch']}` dal checkout, oppure "
           "`sup publish ... --push` (o `--push-with \"<comando>\"`)")
     return 0
+
+
+def _print_retirement(retirement: dict | None) -> None:
+    """Say whether the copy and the branch of the published unit are gone, or why they stayed."""
+    if not retirement:
+        return
+    if retirement.get("retired"):
+        print(f"unità ritirata: copia {retirement['copy']} e ramo {retirement['branch']} rimossi")
+        for note in retirement.get("notes") or []:
+            print(f"nota: {note}")
+        return
+    print(f"unità non ritirata: {retirement.get('reason') or retirement.get('error', '')}")
 
 
 def _print_refusal(result: dict) -> int:

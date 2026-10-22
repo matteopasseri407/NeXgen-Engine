@@ -15,8 +15,11 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass, replace
+from datetime import datetime
 
+from . import supervision_adapters as adapters
 from . import supervision_processes as processes
+from . import supervision_retire as retire
 from . import supervision_state as state
 from . import supervision_windows as windows
 from .supervision_state import SupervisionError
@@ -28,6 +31,8 @@ EMPTY = "senza unità"
 OPEN = "aperto"
 #: The scout's two events: a round that opened and did not close is still running.
 SCOUT_EVENTS = ("scout_opened", "scout_finished")
+#: The states a unit reaches when it has no more work in its copy.
+DONE_STATES = ("pubblicata", "pubblicata in locale", "ritirata")
 
 
 @dataclass(frozen=True)
@@ -70,8 +75,15 @@ def tabs(*, table: list[dict] | None = None) -> list[Tab]:
     return found
 
 
-def survey(*, table: list[dict] | None = None) -> dict:
-    """Everything the verb prints: stale tabs, kept tabs, unmarked workers, the shared server."""
+def survey(*, table: list[dict] | None = None, deep: bool = False) -> dict:
+    """Everything the verb prints: stale tabs, kept tabs, unmarked workers, the shared server.
+
+    The survey also answers the owner's rule that nothing is left behind: the
+    copies and branches of units the journal already closed, and, when `deep` is
+    asked, the folders a shared server still holds after their copy went away.
+    `deep` is off by default because answering it starts the harness's own CLI:
+    a caller that brings its own process table is not made to pay for that.
+    """
     rows = table if table is not None else processes.rows()
     found = tabs(table=rows)
     taken = {pid for tab in found for pid in tab.pids}
@@ -80,6 +92,8 @@ def survey(*, table: list[dict] | None = None) -> dict:
         "keep": [tab for tab in found if not tab.closable],
         "unmarked": _unmarked(rows, taken),
         "server": _server(rows),
+        "leftovers": leftovers(),
+        "locations": orphan_locations(table=rows) if deep else [],
     }
 
 
@@ -136,6 +150,7 @@ def lines(found: dict) -> list[str]:
         )
     if found["server"]:
         out.append(_restart_advice(found))
+    out += leftover_lines(found)
     return out
 
 
@@ -162,6 +177,155 @@ def closed_lines(result: dict) -> list[str]:
     out = [f"chiuse: {len(result['closed'])} schede ({total} processi)"]
     out += [f"  tenuta aperta: {_tab_line(tab)} (servizio condiviso)" for tab in result["kept"]]
     return out
+
+
+def leftovers() -> list[dict]:
+    """Copies and branches the journal already closed and the disk still has.
+
+    Only units whose journal says their work arrived are asked: a copy that is
+    still being worked in is not garbage, and listing it would invite the owner to
+    delete it. The copy and the branch are reported apart because either can stay
+    behind on its own.
+    """
+    found: list[dict] = []
+    for task in state.list_tasks():
+        if task.get("error"):
+            continue
+        try:
+            units = state.status(task["id"])["units"]
+        except SupervisionError:  # nexgen: allow reason="un compito che la corsia non apre più non ha copie da elencare"
+            continue
+        for record in units:
+            if not _closed_by_journal(record):
+                continue
+            row = retire.leftover(task["id"], record)
+            if row["copy"] or row["branch"]:
+                found.append(row)
+    return found
+
+
+def _closed_by_journal(record: dict) -> bool:
+    """Whether this unit's journal says the work arrived somewhere permanent."""
+    return bool(record.get("retired") or record.get("published_head")
+                or record.get("state") in DONE_STATES)
+
+
+def close_leftovers(items: list[dict]) -> dict:
+    """Finish removing the copies and branches of closed units; a refusal is named, not hidden."""
+    closed: list[dict] = []
+    problems: list[str] = []
+    for row in items:
+        commits = retire.verified_commits(row["task"], row["unit"])
+        try:
+            record = state.unit_record(row["task"], row["unit"])
+            kept = [str(record["kept_head"])] if record.get("kept_head") else []
+            result = retire.retire(
+                row["task"], row["unit"], why="pulizia",
+                commits=commits or kept or None, archive=not (commits or kept),
+            )
+        except SupervisionError as exc:
+            problems.append(f"{row['task']} · {row['unit']}: {exc}")
+            continue
+        closed.append(result)
+    return {"closed": closed, "problems": problems}
+
+
+def leftover_lines(found: dict) -> list[str]:
+    """The copy, branch and server sections of `sup pulizia`, one fact per line."""
+    out = [f"copie e rami di unità finite ancora sul disco: {len(found.get('leftovers') or [])}"]
+    out += [f"  {_leftover_line(row)}" for row in found.get("leftovers") or []]
+    out.append(f"server MCP di una copia chiusa: {len(found.get('locations') or [])}")
+    out += [f"  {_location_line(row)}" for row in found.get("locations") or []]
+    if found.get("locations"):
+        out.append("sono cartelle che non esistono più: `sup pulizia --chiudi` le smaltisce")
+    return out
+
+
+def retired_lines(result: dict) -> list[str]:
+    """What closing leftovers did, named one by one."""
+    out = [f"ritirate: {len(result['closed'])} unità"]
+    out += [
+        f"  {item['unit']}: copia {item['copy']} · ramo {item['branch']} · archivio {item['archive'] or 'nessuno'}"
+        for item in result["closed"]
+    ]
+    out += [f"  non ritirata, {problem}" for problem in result["problems"]]
+    return out
+
+
+def evict_locations(items: list[dict]) -> list[str]:
+    """Ask the shared server to drop the folders that no longer exist; active folders are never in `items`."""
+    if not items:
+        return []
+    try:
+        adapter = adapters.get("opencode")
+    except adapters.base.AdapterError as exc:
+        return [f"server del harness non identificato: {exc}"]
+    lines: list[str] = []
+    for row in items:
+        try:
+            ok, reason = adapter.dispose_location(row["directory"])
+        except adapters.base.AdapterError as exc:
+            lines.append(f"non smaltita {row['directory']}: {exc}")
+            continue
+        lines.append(("smaltita " if ok else "non smaltita ") + f"{row['directory']}: {reason}")
+    return lines
+
+
+def orphan_locations(*, lister=None, exists=None, table=None) -> list[dict]:
+    """Folders a shared server still holds although the folder is gone, with when its first process started.
+
+    The server's debug API lists the directories it holds, not when it took them;
+    the start time therefore comes from the process table, taking the oldest
+    process whose command line names that folder. A machine where neither source
+    answers lists nothing instead of inventing a row.
+    """
+    try:
+        folders = (lister or adapters.get("opencode").locations)()
+    except (SupervisionError, adapters.base.AdapterError):  # nexgen: allow reason="un servizio che non risponde non elenca cartelle: la riga manca invece di essere inventata"
+        return []
+    is_there = exists or (lambda value: os.path.isdir(value))
+    rows = table if table is not None else _safe_rows()
+    found: list[dict] = []
+    for folder in folders:
+        if not folder or is_there(folder):
+            continue
+        found.append({"directory": folder, "started": _first_start(rows, folder)})
+    return found
+
+
+def _safe_rows() -> list[dict]:
+    """The process table, or nothing when it cannot be read: the listing is a report, not a gate."""
+    try:
+        return processes.rows()
+    except SupervisionError:  # nexgen: allow reason="una tabella di processi illeggibile non impedisce di elencare le cartelle"
+        return []
+
+
+def _first_start(rows: list[dict], folder: str) -> str:
+    """When the oldest process naming this folder started, or an empty string when nobody says."""
+    moments = [
+        float(row["created"]) for row in rows
+        if folder in str(row.get("command_line") or "") and isinstance(row.get("created"), (int, float))
+    ]
+    if not moments:
+        return ""
+    return datetime.fromtimestamp(min(moments)).isoformat(timespec="seconds")
+
+
+def _leftover_line(row: dict) -> str:
+    """One closed unit still on disk: what is left, and the state the journal recorded."""
+    parts = [row["task"], row["unit"], row["state"] or "stato non letto"]
+    if row["copy"]:
+        parts.append(f"copia {row['copy']}")
+    if row["branch"]:
+        parts.append(f"ramo {row['branch']}")
+    return " · ".join(parts)
+
+
+def _location_line(row: dict) -> str:
+    """One folder the shared server holds after its copy went: where, and since when."""
+    when = row.get("started") or "ora di avvio non esposta dal server"
+    return f"{row['directory']} · {when}"
 
 
 def _tab_line(tab: Tab) -> str:

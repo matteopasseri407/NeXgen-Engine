@@ -1,3 +1,4 @@
+# nexgen: one-job reason="publish one approved unit forward on the owner's branch, then retire its copy"
 """Publishing one approved unit: cherry-pick in order, forward only, never forced.
 
 The engine is the only thing that pushes, and it pushes nothing it did not
@@ -18,6 +19,7 @@ from nexgen_core.discipline.gitutil import git, is_ancestor
 from nexgen_core.processes import no_window_kwargs, split_command_line, windows_command_argv
 
 from . import supervision_gates as gates
+from . import supervision_retire as retire_module
 from . import supervision_state as state
 from .supervision_state import SupervisionError
 
@@ -96,8 +98,10 @@ def publish(
         result["command"] = push_with
         result["output"] = str(exc)
         _record(task_id, result)
-        raise
+        _retire_after(task_id, result)
+        _raise_with_retirement(exc, result)
     _record(task_id, result)
+    _retire_after(task_id, result)
     return result
 
 
@@ -149,8 +153,10 @@ def _push_local_publication(
         result["command"] = push_with
         result["output"] = str(exc)
         _record(task_id, result)
-        raise
+        _retire_after(task_id, result)
+        _raise_with_retirement(exc, result)
     _record(task_id, result)
+    _retire_after(task_id, result)
     return result
 
 
@@ -160,6 +166,11 @@ def _unit_to_publish(task_id: str, unit: str) -> tuple[dict, str, Path, str]:
     name = record["unit"]
     approved = _approval(record)
     copy = Path(record.get("worktree") or "")
+    published = [str(item) for item in record.get("published") or []]
+    if published and record.get("published_head") == approved:
+        # The copy left with the publication: its head cannot be read any more, and
+        # the commits that already arrived are the answer, not the folder that went.
+        return record, name, copy, approved
     if not copy.is_dir():
         raise PublishError(f"copia dell'unità sparita: {copy}")
     unit_head = gates.head_of(copy, str(record.get("branch") or ""))
@@ -180,6 +191,33 @@ def _record(task_id: str, result: dict) -> None:
         sources=[item["source"] for item in result["commits"]], pushed=result["pushed"],
         command=result["command"], output=_tail(result["output"]), signing=result["signing"],
     )
+
+
+def _retire_after(task_id: str, result: dict) -> None:
+    """The owner's rule: a published unit leaves no copy and no branch behind.
+
+    The commits are already on the owner's branch and in the journal, so a copy
+    that will not go does not undo the publication: it is named, journalled and
+    left for `sup pulizia` to try again.
+    """
+    try:
+        result["retirement"] = retire_module.retire(
+            task_id, result["unit"], why="pubblicata",
+            commits=[str(item["published"]) for item in result["commits"]],
+        )
+    except SupervisionError as exc:
+        result["retirement"] = {"retired": False, "error": str(exc)}
+        state.append_event(
+            task_id, "unit_retire_failed", unit=result["unit"], why="pubblicata", reason=str(exc),
+        )
+
+
+def _raise_with_retirement(exc: SupervisionError, result: dict) -> None:
+    """Keep the push's own refusal, and add the one fact it did not know: the copy stayed."""
+    problem = (result.get("retirement") or {}).get("error")
+    if not problem:
+        raise exc
+    raise PublishError(f"{exc} · copia dell'unità non rimossa: {problem}") from exc
 
 
 def _approval(record: dict) -> str:

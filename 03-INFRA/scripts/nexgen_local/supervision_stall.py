@@ -42,8 +42,9 @@ def check(
         session = str(record.get("session") or "")
         if not session:
             continue
+        harness = str(record.get("harness") or "opencode")
         try:
-            facts = (measure or costs.measure)(session)
+            facts = (measure or (lambda value: costs.measure_for(harness, value)))(session)
         except costs.CostError:  # nexgen: allow reason="una sessione che non si legge non è una sessione ferma, e il motore non la accusa"
             continue
         if facts.stopped or facts.updated_ms is None:

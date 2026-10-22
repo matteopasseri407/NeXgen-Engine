@@ -17,6 +17,7 @@ from nexgen_core.files import write_private_text
 
 from . import supervision_gates as gates
 from . import supervision_harness as harness
+from . import supervision_retire as retire_module
 from . import supervision_state as state
 from . import supervision_turns as turns
 from .supervision_state import SupervisionError
@@ -198,6 +199,28 @@ def approve(task_id: str, unit: str, reason: str) -> dict:
         "unit": name, "round": round_no, "path": path, "verdict": state.APPROVED,
         "head": head, "collected_head": collected, "collect_verdict": verdict,
     }
+
+
+def close(task_id: str, unit: str, *, why: str = "approvata e chiusa senza pubblicazione") -> dict:
+    """Retire an approved unit that will not be published, keeping its head in an archive ref.
+
+    Approving writes the decision, not the end of the work: the owner may approve a
+    change that is applied by hand, or that is not worth a cherry-pick. The copy
+    still has to go, and the commits still have to stay reachable, so the branch's
+    head is written under `refs/nexgen/archive/...` before the branch is deleted.
+    A published unit is retired by `sup publish`, which knows the commits arrived.
+    """
+    record = state.unit_record(task_id, unit)
+    name = record["unit"]
+    if record.get("published") or record.get("published_head"):
+        raise ReviewError(
+            f"unità {name} già pubblicata: la ritira `sup publish`, che sa quali commit sono arrivati"
+        )
+    if not record.get("approved"):
+        raise ReviewError(
+            f"unità {name} non approvata: `sup review ... --approve \"<motivo>\" --close` prima di chiuderla"
+        )
+    return retire_module.retire(task_id, name, why=why, archive=True)
 
 
 def rework(task_id: str, unit: str, corrections: str | Path, *, sender=None) -> dict:

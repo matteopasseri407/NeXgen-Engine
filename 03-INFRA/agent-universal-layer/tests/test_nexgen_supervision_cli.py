@@ -199,6 +199,22 @@ def test_an_empty_objective_fails_loudly(lane, capsys):
     assert "obiettivo vuoto" in capsys.readouterr().err
 
 
+def test_attach_accepts_session_as_the_same_flag_as_opencode_session(lane, capsys):
+    """`--session` è lo stesso di `--opencode-session`: il nome nuovo non è un secondo aggancio."""
+    cli.main(["sup", "start", "prova alias"])
+    task_id = _only_task(lane)
+    capsys.readouterr()
+
+    assert cli.main([
+        "sup", "attach", task_id, "prova",
+        "--role", "esecutore", "--session", "ses_alias",
+    ]) == 0
+
+    attached = [row for row in state.read_events(task_id) if row["event"] == "attached"][-1]
+    assert attached["session"] == "ses_alias"
+    assert "opencode ses_alias" in capsys.readouterr().out
+
+
 def test_attach_refuses_an_id_it_would_splice_into_a_command(lane, capsys):
     """`ses_x&calc` non è una sessione: il verbo si ferma prima di avviare `opencode`."""
     cli.main(["sup", "start", "prova id"])

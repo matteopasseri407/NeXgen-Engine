@@ -24,9 +24,15 @@ def register(sup_sub) -> None:
 
 
 def cmd_sup_pulizia(args: argparse.Namespace) -> int:
-    """Print the survey, then close the stale tabs when the owner asked for it."""
+    """Print the survey, then close the stale tabs when the owner asked for it.
+
+    Closing is deepest first: stale tabs, then the copies and branches of closed
+    units, then the server folders whose copy no longer exists. A folder that
+    still exists is never evicted, which is what keeps an active session and the
+    owner's own server out of this verb.
+    """
     try:
-        found = cleanup.survey()
+        found = cleanup.survey(deep=True)
     except SupervisionError as exc:
         print(f"nexgen-local: {exc}", file=sys.stderr)
         return 1
@@ -39,4 +45,8 @@ def cmd_sup_pulizia(args: argparse.Namespace) -> int:
         print(f"nexgen-local: {exc}", file=sys.stderr)
         return 1
     print("\n".join(cleanup.closed_lines(result)))
+    retired = cleanup.close_leftovers(found.get("leftovers") or [])
+    print("\n".join(cleanup.retired_lines(retired)))
+    for line in cleanup.evict_locations(found.get("locations") or []):
+        print(line)
     return 0

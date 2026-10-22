@@ -221,21 +221,36 @@ def unit_record(task_id: str, unit: str) -> dict:
 def harness_session(task_id: str, harness: str = "opencode") -> str:
     """The session this harness already owns on the task, newest first; empty when it has none.
 
-    One harness, one session per task: a new unit asks this one to take the work
-    instead of opening another window. A session the harness no longer has is
-    written as `harness_session_lost`, and from that line on the task has none:
-    the next unit opens the one new tab instead of queueing on a dead session.
+    One harness, one session per task, and the session knows the folder it was
+    born in: `harness_session_record` carries both, because OpenCode and Codex
+    bind a session to its directory and reusing one after its copy moved fails
+    inside the harness. A legacy row written before the folder was recorded has
+    an empty folder and stays reusable.
     """
-    found = ""
+    record = harness_session_record(task_id, harness)
+    return record["session"] if record else ""
+
+
+def harness_session_record(task_id: str, harness: str = "opencode") -> dict | None:
+    """The session this harness owns and the folder it was born in, or None.
+
+    A session the harness no longer has is written as `harness_session_lost`,
+    and from that line on the task has none: the next unit opens the one new tab
+    instead of queueing on a dead session.
+    """
+    found: dict | None = None
     for row in read_events(task_id):
         if row.get("event") not in (*SESSION_EVENTS, LOST_EVENT):
             continue
         if str(row.get("harness") or "opencode") != harness:
             continue
         if row.get("event") == LOST_EVENT:
-            found = ""
+            found = None
         elif row.get("session"):
-            found = str(row["session"])
+            found = {
+                "session": str(row["session"]),
+                "folder": str(row.get("folder") or ""),
+            }
     return found
 
 
@@ -311,6 +326,7 @@ UNIT_EVENTS = {
     "unit_collected": "raccolta",
     "unit_reviewed": "revisione",
     "unit_published": "pubblicata",
+    "unit_retired": "ritirata",
 }
 
 #: What a review round can say. The words the supervisor writes on the file.
@@ -336,7 +352,10 @@ def _units_from_events(events: list[dict]) -> list[dict]:
         if event not in UNIT_EVENTS or not unit:
             continue
         record = units.setdefault(unit, _blank_unit(unit))
-        record["state"] = UNIT_EVENTS[event]
+        if not (event == "unit_retired" and record.get("published")):
+            # A published unit stays published after its copy goes: the retirement
+            # is a cleanup fact in `retired`, not a different outcome.
+            record["state"] = UNIT_EVENTS[event]
         record["at"] = str(row.get("at") or record["at"])
         _fold_event(record, row, event)
     return list(units.values())
@@ -349,7 +368,7 @@ def _blank_unit(unit: str) -> dict:
         "state": "", "verdict": "", "collected_head": "", "review_round": 0,
         "approved": False, "approved_head": "", "published": [], "model": "",
         "stalled_minutes": 0.0, "stall_threshold": 0.0, "repo": "", "base_ref": "",
-        "cost": {},
+        "cost": {}, "folder": "", "retired": False,
     }
 
 
@@ -380,6 +399,7 @@ def _fold_event(record: dict, row: dict, event: str) -> None:
         record.update({
             "session": str(row.get("session") or record["session"]),
             "harness": str(row.get("harness") or record["harness"]),
+            "folder": str(row.get("folder") or record["folder"]),
             "mode": str(row.get("mode") or ""),
             "reason": str(row.get("reason") or ""),
         })
@@ -388,6 +408,7 @@ def _fold_event(record: dict, row: dict, event: str) -> None:
             "session": str(row.get("session") or ""),
             "role": str(row.get("role") or record["role"]),
             "harness": str(row.get("harness") or record["harness"]),
+            "folder": str(row.get("folder") or record["folder"]),
         })
     elif event == "unit_collected":
         record["verdict"] = str(row.get("verdict") or "")
@@ -402,7 +423,25 @@ def _fold_event(record: dict, row: dict, event: str) -> None:
         record["review_round"] = int(row.get("round") or record["review_round"])
         record["approved"] = False
         record["approved_head"] = ""
-    elif event == "unit_model_refused":
+    elif event in ("unit_model_refused", "unit_stalled", "unit_resumed", "unit_rebased"):
+        _fold_progress(record, row, event)
+    elif event == "unit_published":
+        record["published"] = [str(item) for item in row.get("commits") or []]
+        record["published_head"] = str(row.get("head") or "")
+        record["published_branch"] = str(row.get("branch") or "")
+        record["published_pushed"] = bool(row.get("pushed"))
+        if not row.get("pushed"):
+            record["state"] = "pubblicata in locale"
+    elif event == "unit_retired":
+        record["retired"] = True
+        record["retired_why"] = str(row.get("why") or "")
+        record["archive"] = str(row.get("archive") or "")
+        record["kept_head"] = str(row.get("kept_head") or "")
+
+
+def _fold_progress(record: dict, row: dict, event: str) -> None:
+    """What the model refusal, the stall and the rebase rows say about a unit's work."""
+    if event == "unit_model_refused":
         record.update({
             "model": str(row.get("model") or ""),
             "allowed_models": [str(item) for item in row.get("allowed") or []],
@@ -421,13 +460,6 @@ def _fold_event(record: dict, row: dict, event: str) -> None:
             "config_hashes": dict(row.get("config_hashes") or {}),
             "url_override_keys": [str(key) for key in row.get("url_override_keys") or []],
         })
-    elif event == "unit_published":
-        record["published"] = [str(item) for item in row.get("commits") or []]
-        record["published_head"] = str(row.get("head") or "")
-        record["published_branch"] = str(row.get("branch") or "")
-        record["published_pushed"] = bool(row.get("pushed"))
-        if not row.get("pushed"):
-            record["state"] = "pubblicata in locale"
 
 
 def _sessions_from_events(events: list[dict]) -> list[str]:
