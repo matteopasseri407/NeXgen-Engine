@@ -242,9 +242,14 @@ def find_session(
     adapter = _adapter("opencode")
     try:
         found = adapter.find_session(
-            folder, since_ms, executable=_opencode_executable(), wait_s=wait_s,
-            lister=lister or (lambda: _list_sessions(folder)), poll_s=poll_s,
-            clock=clock, sleep=sleep,
+            folder,
+            since_ms,
+            executable=_opencode_executable() if lister is None else "",
+            wait_s=wait_s,
+            lister=lister or (lambda: _list_sessions(folder)),
+            poll_s=poll_s,
+            clock=clock,
+            sleep=sleep,
         )
     except adapters.base.AdapterError as exc:
         raise HarnessError(str(exc)) from exc
