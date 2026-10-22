@@ -35,6 +35,8 @@ EXPORT_TIMEOUT_S = 180.0
 #: What OpenCode prints: `ses_` and alphanumerics. The shape is narrow on purpose,
 #: so nothing a command line reads (`&`, `;`, quotes, spaces) can ever get through.
 _SESSION_RE = re.compile(r"ses_[A-Za-z0-9]{1,64}")
+#: The shape a harness store names its own sessions with: Codex uses a UUID.
+_THREAD_RE = re.compile(r"[A-Za-z0-9_-]{1,200}")
 #: What an export says when the session is gone, as opposed to a failed read.
 _MISSING_EVIDENCE = re.compile(r"(not found|does not exist|no such session|unknown session|non esiste)", re.IGNORECASE)
 #: The harness's own store, and the tables that hold sessions in its two schemas.
@@ -329,7 +331,8 @@ def record(
     a zero.
     """
     folder = state.open_task(task_id)
-    session = _session_id(session_id)
+    chosen = (harness or "opencode").strip().lower() or "opencode"
+    session = _session_id(session_id) if chosen in ("opencode", "local") else _thread_id(session_id)
     name = (unit or "").strip()
     if not name:
         raise SupervisionError("unità vuota: indica a quale unità appartiene la sessione")
@@ -547,6 +550,20 @@ def _session_id(session_id: str) -> str:
             f"identificativo di sessione non valido: {session_id!r} "
             "(atteso `ses_` seguito da lettere e cifre)"
         )
+    return session
+
+
+def _thread_id(session_id: str) -> str:
+    """A session id of a harness that keeps its own store: its own shape, still one token.
+
+    Codex names a thread with a UUID and reads it from its SQLite index, so the
+    `ses_` shape OpenCode prints would refuse every Codex attach. The id is bound
+    as a query parameter, and this check only keeps a line break or a shell
+    fragment out of the ledger.
+    """
+    session = (session_id or "").strip()
+    if not _THREAD_RE.fullmatch(session):
+        raise CostError(f"identificativo di sessione non valido: {session_id!r}")
     return session
 
 

@@ -171,6 +171,30 @@ def test_export_refuses_a_session_id_it_would_splice_into_a_command(lane):
         costs.export_session("ses_x&calc")
 
 
+def test_a_codex_thread_id_keeps_the_shape_of_its_store(lane, task, monkeypatch):
+    """Codex numera i thread con un UUID: la forma di OpenCode non deve rifiutarli."""
+    seen = {}
+
+    def fake_measure(harness, session):
+        seen["call"] = (harness, session)
+        raise costs.CostError("finto")
+
+    monkeypatch.setattr(costs, "measure_for", fake_measure)
+
+    thread = "01a161aa-7ac3-7ab0-8371-e339b5bbc783"
+    row = costs.record(task, "unita-uno", "esecutore", thread, harness="codex")
+
+    assert seen["call"] == ("codex", thread)
+    assert row["session"] == thread
+    assert row["cost_usd"] is None
+    assert row["note"] == "finto"
+
+
+def test_a_codex_thread_id_with_a_shell_fragment_is_still_refused(lane, task):
+    with pytest.raises(state.SupervisionError, match="sessione non valido"):
+        costs.record(task, "unita-uno", "esecutore", "01a&calc", harness="codex")
+
+
 def test_an_unknown_task_is_refused(lane):
     with pytest.raises(state.SupervisionError, match="compito inesistente"):
         costs.record("20260101-000000-mai-creato", "unita-uno", "esecutore", "ses_test")
