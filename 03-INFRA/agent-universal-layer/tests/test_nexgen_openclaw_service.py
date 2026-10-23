@@ -301,6 +301,56 @@ def test_a_batch_named_gateway_cmd_that_is_not_openclaw_is_not_our_gateway() -> 
     ) is True
 
 
+def test_stop_linux_waits_for_the_process_and_the_port_like_windows(fake_env) -> None:
+    """`systemctl stop` returns before the unit is gone: restarting at once raced the port."""
+    runner = RecordingRunner(default_code=0)
+    clock = FakeClock()
+    gone_at = 2.0
+    procs = [ProcessInfo(902, "node", "node /usr/lib/node_modules/openclaw/dist/index.js gateway")]
+
+    service = OpenClawService(
+        platform="linux",
+        home=fake_env["home"],
+        state_dir=fake_env["state_dir"],
+        systemd_user_dir=fake_env["systemd_user"],
+        runner=runner,
+        process_lister=lambda: procs if clock.time() < gone_at else [],
+        port_probe=lambda port, host="127.0.0.1": clock.time() < gone_at,
+        time_provider=clock.time,
+        sleeper=clock.sleep,
+    )
+
+    res = service.stop()
+
+    assert res["ok"] is True
+    assert res["remaining_pids"] == []
+    assert clock.time() >= gone_at, "stop returned while the old gateway still held the port"
+
+
+def test_stop_linux_reports_a_gateway_that_survives_systemctl(fake_env) -> None:
+    """A gateway started by hand outside systemd is not stopped by the unit."""
+    runner = RecordingRunner(default_code=0)
+    clock = FakeClock()
+    procs = [ProcessInfo(903, "node", "node /usr/lib/node_modules/openclaw/dist/index.js gateway")]
+
+    service = OpenClawService(
+        platform="linux",
+        home=fake_env["home"],
+        state_dir=fake_env["state_dir"],
+        systemd_user_dir=fake_env["systemd_user"],
+        runner=runner,
+        process_lister=lambda: procs,
+        port_probe=lambda port, host="127.0.0.1": False,
+        time_provider=clock.time,
+        sleeper=clock.sleep,
+    )
+
+    res = service.stop()
+
+    assert res["ok"] is False
+    assert res["remaining_pids"] == [903]
+
+
 def test_stop_linux_uses_systemctl(fake_env) -> None:
     runner = RecordingRunner(default_code=0)
     service = OpenClawService(

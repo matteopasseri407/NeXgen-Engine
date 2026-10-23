@@ -273,7 +273,7 @@ class OpenClawService:
                     self.runner(cmd)
 
         remaining: list[int] = []
-        if not dry_run and self.platform != "linux":
+        if not dry_run:
             remaining = self._wait_until_stopped(DEFAULT_STOP_TIMEOUT_SECONDS)
         return {
             "ok": not remaining,
