@@ -19,12 +19,14 @@ else to OpenClaw and to the person using it.
 | The configuration | `$OPENCLAW_CONFIG_PATH`, else `$OPENCLAW_STATE_DIR/openclaw.json`, else `~/.openclaw/openclaw.json` |
 | Claude | the `claude` binary on PATH and `~/.claude/.credentials.json` present. On macOS the login lives in the Keychain: the engine reports "not verifiable" and trusts the binary |
 | Codex | the `codex` binary on PATH and `auth.json` under `$CODEX_HOME`, or `~/.codex` |
-| OpenCode Go | only whether `OPENCODE_API_KEY` is set. The value is never read |
-| Ollama | `GET $OLLAMA_HOST/api/tags`, default `http://127.0.0.1:11434`, short timeout |
-| llama.cpp | `GET $NEXGEN_LLAMACPP_URL/v1/models`, default `http://127.0.0.1:8080` |
+| OpenCode Go | a key is available if `OPENCODE_API_KEY` is set, or OpenClaw already holds an `opencode-go` auth profile, or OpenCode itself is logged in for it. OpenCode's `auth.json` is read for its top-level key names only, never for a value |
+| Ollama | `GET $OLLAMA_HOST/api/tags`, default `http://127.0.0.1:11434`, then `POST /api/show` per model for its context window and capabilities, short timeouts |
+| llama.cpp | `GET $NEXGEN_LLAMACPP_URL/v1/models`, default `http://127.0.0.1:8080`, and `/props` for the context window |
 | n8n | the module declared `local` in the engine, with its environment gates set |
 
-No credential file is opened, ever: the engine asks only whether the file exists.
+No credential file is opened to read a value, ever: the engine asks whether the file exists, with one
+deliberate exception. OpenCode's `auth.json` is parsed to see which providers have a top-level key, so an
+existing `opencode-go` login can be reused; no value is copied anywhere.
 The two local backends are probed through an injectable client, so a machine without them costs one short
 timeout and no more.
 
@@ -66,11 +68,18 @@ Every local model therefore gets an entry in `tools.byProvider["<provider>/<id>"
 
 Writing tools are named `server__tool` in OpenClaw, so the deny list is derived from one table in
 `profile.py` and not scattered through the code. Today the table covers `n8n-mcp` (create, delete, update,
-publish, execute, test and the rest), `vault-library` (create, append, update, section) and `drive` (the two
-upload steps).
+publish, execute, test and the rest), `vault-library` (create, append, update, section), `drive` (the two
+upload steps) and `firecrawl` (scrape, map, extract, crawl, agent, browser, interact; search and reads stay
+allowed).
 
 Ollama ids are written exactly as `/api/tags` returns them but without the `:latest` suffix.
 With the suffix OpenClaw does not recognise the model and guesses the context window wrong.
+
+Every model block is written whole: id, name, reasoning, the input kinds, the context window and its token
+count, `maxTokens`, a zero cost and the compatibility flags.
+A block with only an id makes OpenClaw lose the context window, and it overflows; when a backend does not
+report one, the plan names the model and leaves the field out instead of inventing a number.
+A model entry already in the file keeps its fields, and the engine only adds what is missing.
 
 ## Terms of service
 
