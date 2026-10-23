@@ -61,8 +61,6 @@ def align_instructions(runner) -> list[str]:
         # the link (and the repository behind it) survives the update. The
         # exception is a link to the canonical file, which is replaced
         # instead: writing through it would overwrite the instructions.
-        from nexgen_core.files import symlink_write_target
-
         write_target = symlink_write_target(claude_md, keep=canon)
         # The file may contain hand-written lines. Regenerating it is
         # fine; making it disappear without a copy is not: if the
