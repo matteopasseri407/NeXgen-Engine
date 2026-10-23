@@ -235,6 +235,21 @@ def test_a_sidecar_without_the_job_that_reads_it_is_not_a_working_guardrail(tmp_
     assert outcomes["openclaw.parity.guardrail"].severity is Severity.WARN
 
 
+def test_a_declared_workspace_that_does_not_exist_is_a_warning(tmp_path):
+    """Skipping it silently let one aligned workspace hide an agent with no instructions."""
+    home, vault = aligned_machine(tmp_path)
+    data = json.loads(openclaw_config(home).read_text(encoding="utf-8"))
+    data["agents"]["entries"] = {
+        "main": {"workspace": str(home / "work")},
+        "missing": {"workspace": str(home / "not-created")},
+    }
+    openclaw_config(home).write_text(json.dumps(data), encoding="utf-8")
+
+    outcomes = {o.id: o for o in check_openclaw_parity(home, vault)}
+
+    assert outcomes["openclaw.parity.instructions"].severity is Severity.WARN
+
+
 def test_an_incomplete_instruction_block_is_a_warning(tmp_path):
     """Only the opening marker used to be enough to call the file aligned."""
     home, vault = aligned_machine(tmp_path)

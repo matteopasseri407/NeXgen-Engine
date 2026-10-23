@@ -147,11 +147,13 @@ def _openclaw_block_present(home: Path, config_path: Path, vault_data: Path) -> 
     from nexgen_core.guard_instructions import openclaw_file_state, openclaw_instruction_block, openclaw_workspaces
     from nexgen_core.paths import canonical_instructions
 
-    workspaces = [ws for ws in openclaw_workspaces(config_path, home) if ws.is_dir()]
+    workspaces = openclaw_workspaces(config_path, home)
     if not workspaces:
         return False
     block = openclaw_instruction_block(canonical_instructions(vault_data))
     for workspace in workspaces:
+        if not workspace.is_dir():
+            return False  # declared, not created: the agent has no instructions yet
         try:
             text = (workspace / "AGENTS.md").read_text(encoding="utf-8")
         except OSError:  # nexgen: allow reason="a workspace whose AGENTS.md cannot be read is not aligned, and instructions.openclaw reports the path"
