@@ -5,16 +5,6 @@
 # decision.
 complexity_threshold = 4  # only the size of a change `discipline.py review` puts in the brief; no gate reads it
 smoke_command = "python 03-INFRA/scripts/smoke.py"
-test_removal_ok = [
-  "*/test_event_sink.py",
-  "*/test_nexgen_event_sink_gate.py",
-  "*/test_nexgen_guardrail_install.py",
-  "*/test_nexgen_openclaw_parity.py",
-  "*/test_nexgen_openclaw_parity_plugin.py",
-  "*/test_nexgen_runtimesclaudesplit_pinning.py",
-  "*/test_nexgen_runtimesopencodesplit_pinning.py",
-  "*/test_runtimes.py",
-]
 review_paths = [
   "03-INFRA/scripts/nexgen_core/git_ops*",
   "03-INFRA/scripts/nexgen_core/guard*",
@@ -33,6 +23,23 @@ review_paths = [
   "03-INFRA/agent-universal-layer/leak-scan/*",
   "install.sh",
   "install.ps1",
+]
+# Tests the lane retirement (2026-10-24) is allowed to shrink or delete, one path per proof retired.
+# Each entry names a test file whose cases covered code that no longer exists; the report
+# `30-resoconto-ritiro-lane.md` lists them together with those proofs.
+test_removal_ok = [
+  "*/test_event_sink.py",
+  "*/test_nexgen_event_sink_gate.py",
+  "*/test_nexgen_guardrail_install.py",
+  "*/test_nexgen_openclaw_parity.py",
+  "*/test_nexgen_openclaw_parity_plugin.py",
+  "*/test_nexgen_runtimesclaudesplit_pinning.py",
+  "*/test_nexgen_runtimesopencodesplit_pinning.py",
+  "*/test_runtimes.py",
+  "03-INFRA/agent-universal-layer/tests/test_nexgen_local_relay.py",
+  "03-INFRA/agent-universal-layer/tests/test_nexgen_relaysplit_pinning.py",
+  "03-INFRA/agent-universal-layer/tests/test_nexgen_no_window.py",
+  "03-INFRA/agent-universal-layer/tests/test_nexgen_real_home.py",
 ]
 # Translation tables grow with every new message; they are data, not logic.
 exclude = ["*/locales/*"]
