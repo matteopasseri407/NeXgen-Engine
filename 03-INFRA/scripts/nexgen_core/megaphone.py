@@ -181,6 +181,7 @@ class Megaphone:
         if route is not None:
             launch, channel, target = route
             sent = self._send_openclaw(launch, channel, target, self._plain_text(title, message, action))
+        delivered_by_openclaw = sent
 
         # 1. Telegram direct: the fallback for a machine without OpenClaw, and
         #    nothing more. It does not fire behind a delivered OpenClaw alert.
@@ -189,9 +190,11 @@ class Megaphone:
         if bot_token and chat_id and not sent:
             sent = self._send_telegram(bot_token, chat_id, self._html_text(title, message, action))
 
-        # 2. Generic webhook
+        # 2. Generic webhook. It does not fire behind a delivered OpenClaw alert
+        #    either: one alert reaches one surface, and a webhook that repeats a
+        #    message the harness already carried is the same alarm arriving twice.
         webhook_url = os.environ.get("AGENT_ALERT_WEBHOOK_URL")
-        if webhook_url:
+        if webhook_url and not delivered_by_openclaw:
             sent = self._send_webhook(webhook_url, {"title": title, "message": message, "action": action}) or sent
 
         # 3. The screen in front of the person. Last, because a message that

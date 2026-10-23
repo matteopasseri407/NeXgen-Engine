@@ -264,6 +264,22 @@ def test_a_failed_openclaw_falls_back_to_the_webhook(tmp_path, monkeypatch):
     assert network.urls == ["https://example.invalid/alert"]
 
 
+def test_the_webhook_is_not_a_fallback_when_openclaw_delivered(tmp_path, monkeypatch):
+    # One alert, one surface. A webhook behind a delivered OpenClaw alert would
+    # be the same alarm arriving twice, which is what invariant 7 forbids.
+    monkeypatch.setenv("NEXGEN_ALERT_CHANNEL", "slack")
+    monkeypatch.setenv("NEXGEN_ALERT_TARGET", "channel:C1")
+    monkeypatch.setenv("AGENT_ALERT_WEBHOOK_URL", "https://example.invalid/alert")
+    network = Network()
+    monkeypatch.setattr(megaphone.urllib.request, "urlopen", network)
+    executor = Executor()
+
+    assert build(tmp_path, executor).send_alert(TITLE, HOSTILE) is True
+
+    assert len(executor.calls) == 1
+    assert network.urls == []
+
+
 def test_with_openclaw_failing_and_nothing_else_configured_the_desktop_speaks(tmp_path, monkeypatch):
     monkeypatch.setenv("NEXGEN_ALERT_CHANNEL", "telegram")
     monkeypatch.setenv("NEXGEN_ALERT_TARGET", "@owner")

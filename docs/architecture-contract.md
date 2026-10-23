@@ -96,8 +96,9 @@ all the others to fail:
    a machine without OpenClaw. It never runs behind a delivered OpenClaw alert:
    where OpenClaw owns the Telegram channel, its delivery and the Bot API are
    the same destination, and sending both is the same message twice.
-3. **A webhook**, with `AGENT_ALERT_WEBHOOK_URL`, notified in addition when
-   configured.
+3. **A webhook**, with `AGENT_ALERT_WEBHOOK_URL`, unless OpenClaw already
+   carried the alert: one alert reaches one surface, and a webhook repeating a
+   message the harness delivered is the same alarm arriving twice.
 4. **The desktop**, only when nothing before it delivered.
 
 ### The liveness beat
