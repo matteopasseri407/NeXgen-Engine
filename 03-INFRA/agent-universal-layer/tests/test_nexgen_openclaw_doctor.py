@@ -186,6 +186,28 @@ def test_a_google_subscription_is_a_failure(tmp_path):
     assert by_id(outcomes)["openclaw.plugins.google"].severity == Severity.BROKEN
 
 
+def test_the_google_api_key_plugin_is_not_a_subscription(tmp_path):
+    config = clean_config()
+    config["plugins"]["allow"].append("google")
+    outcomes = run_doctor(tmp_path, write_config(tmp_path, config))
+    assert by_id(outcomes)["openclaw.plugins.google"].severity == Severity.OK
+
+
+def test_the_gemini_cli_runtime_is_a_failure(tmp_path):
+    config = clean_config()
+    config["plugins"]["allow"].append("google")
+    config["agents"]["defaults"]["models"]["google/gemini-3-pro"] = {"agentRuntime": {"id": "google-gemini-cli"}}
+    outcomes = run_doctor(tmp_path, write_config(tmp_path, config))
+    assert by_id(outcomes)["openclaw.plugins.google"].severity == Severity.BROKEN
+
+
+def test_a_google_oauth_profile_is_a_failure(tmp_path):
+    config = clean_config()
+    config["auth"] = {"profiles": {"google-gemini-cli:me": {"provider": "google-gemini-cli", "mode": "oauth"}}}
+    outcomes = run_doctor(tmp_path, write_config(tmp_path, config))
+    assert by_id(outcomes)["openclaw.plugins.google"].severity == Severity.BROKEN
+
+
 def test_a_gemini_seat_through_acp_is_a_warning(tmp_path):
     config = clean_config()
     config["acp"] = {"allowedAgents": ["gemini"]}

@@ -23,6 +23,7 @@ from nexgen_core.openclaw.config_file import read_config
 from nexgen_core.openclaw.detect import Detection, detect
 from nexgen_core.openclaw.pin import pinned_version
 from nexgen_core.openclaw.profile import GATEWAY_PORT
+from nexgen_core.openclaw.terms import google_subscriptions
 from nexgen_core.paths import openclaw_config, resolve_home, resolve_vault_data
 from nexgen_core.report import CheckOutcome, Severity
 
@@ -288,13 +289,8 @@ def _check_gateway(config: dict[str, Any]) -> list[CheckOutcome]:
 
 
 def _check_google(config: dict[str, Any]) -> CheckOutcome:
-    """Google plans may not be used outside Google's own clients."""
-    plugins = config.get("plugins") if isinstance(config.get("plugins"), dict) else {}
-    allow = plugins.get("allow") if isinstance(plugins.get("allow"), list) else []
-    forbidden = [
-        str(entry) for entry in allow
-        if any(word in str(entry).lower() for word in ("google", "gemini", "antigravity"))
-    ]
+    """Google plans may not be used outside Google's own clients; an API key may."""
+    forbidden = google_subscriptions(config)
     if forbidden:
         return CheckOutcome(
             id="openclaw.plugins.google",
