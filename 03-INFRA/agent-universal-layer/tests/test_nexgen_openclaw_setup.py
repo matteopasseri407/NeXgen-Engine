@@ -21,7 +21,7 @@ if str(SCRIPTS_DIR) not in sys.path:
 from nexgen_core import i18n  # noqa: E402 - sys.path shim for cloned checkout
 from nexgen_core.openclaw.detect import Detection, Installation, LocalModelInfo, LocalModels, Login  # noqa: E402
 from nexgen_core.openclaw.setup import run_setup  # noqa: E402
-from nexgen_core.openclaw_service import RunResult  # noqa: E402
+from nexgen_core.openclaw_service import ProcessInfo, RunResult  # noqa: E402
 from nexgen_core.runtimes.openclaw import PLUGIN_ID  # noqa: E402
 
 TESTS_DIR = Path(__file__).resolve().parent
@@ -79,6 +79,7 @@ class FakeService:
         self.installed = installed
         self.stop_ok = stop_ok
         self.install_process_count = 0
+        self.install_grace_seconds = 0
         self.events: list[str] = []
         self.stopping = False
         self.now = 0.0
@@ -121,6 +122,9 @@ class FakeService:
 
     def port_probe(self, port: int, host: str = "127.0.0.1") -> bool:
         return self.listening
+
+    def process_lister(self):
+        return []
 
     def time_provider(self) -> float:
         return self.now
@@ -624,6 +628,56 @@ def test_the_commands_the_setup_prints_quote_a_path_with_a_space(tmp_path):
     output = machine.output()
     assert f"{npm} install" not in output
     assert f'"{npm}" install' in output or f"'{npm}' install" in output
+
+
+def test_service_step_waits_for_an_install_that_is_still_starting():
+    """A slow install must not be doubled by an immediate start: wait, bounded, first."""
+    from types import SimpleNamespace
+
+    from nexgen_core.openclaw.setup_steps import service_step
+
+    class SlowInstall(FakeService):
+        def __init__(self):
+            super().__init__(installed=False, listening=False)
+            self.install_process_count = 0
+            self.install_grace_seconds = 5
+            self.now = 0.0
+
+        def port_probe(self, port: int, host: str = "127.0.0.1") -> bool:
+            return self.now >= 3.0
+
+        def process_lister(self):
+            if self.now < 2.0:
+                return []
+            return [ProcessInfo(900, "node.exe", "node C:\\openclaw\\dist\\index.js gateway")]
+
+    service = SlowInstall()
+    lines: list[str] = []
+
+    assert service_step(SimpleNamespace(service=service, out=lines.append), restarted=False) is True
+
+    assert "start" not in service.events, "the wait found the gateway the install was bringing up"
+    assert any("the install started" in line for line in lines)
+
+
+def test_service_step_starts_the_gateway_when_the_install_only_registered_it():
+    from types import SimpleNamespace
+
+    from nexgen_core.openclaw.setup_steps import service_step
+
+    class RegisteredOnly(FakeService):
+        def __init__(self):
+            super().__init__(installed=False, listening=False)
+            self.install_process_count = 0
+            self.install_grace_seconds = 0
+
+    service = RegisteredOnly()
+    lines: list[str] = []
+
+    assert service_step(SimpleNamespace(service=service, out=lines.append), restarted=False) is True
+
+    assert "start" in service.events
+    assert any("Starting the gateway" in line for line in lines)
 
 
 def test_the_last_step_runs_the_doctor_and_reports(tmp_path):

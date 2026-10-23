@@ -373,6 +373,7 @@ def test_start_windows_with_vbs(fake_env) -> None:
     vbs_file.write_text("wscript code", encoding="utf-8")
 
     runner = RecordingRunner(default_code=1)  # schtasks fails, falls back to vbs
+    spawned: list[list[str]] = []
     service = OpenClawService(
         platform="win32",
         home=fake_env["home"],
@@ -380,13 +381,15 @@ def test_start_windows_with_vbs(fake_env) -> None:
         appdata=fake_env["appdata"],
         localappdata=fake_env["localappdata"],
         runner=runner,
+        spawner=lambda argv: spawned.append(list(argv)) or 4242,
         process_lister=lambda: [],
         port_probe=lambda port, host="127.0.0.1": False,
     )
 
     res = service.start()
     assert res["ok"] is True
-    assert ["wscript.exe", str(vbs_file)] in runner.calls
+    assert spawned == [["wscript.exe", str(vbs_file)]]
+    assert ["wscript.exe", str(vbs_file)] not in runner.calls, "the runner waits; the gateway must not"
 
 
 def test_start_windows_without_a_vbs_file_uses_the_openclaw_command(fake_env) -> None:
@@ -397,6 +400,7 @@ def test_start_windows_without_a_vbs_file_uses_the_openclaw_command(fake_env) ->
     Windows showed an error and the gateway never started.
     """
     runner = RecordingRunner(default_code=1)  # schtasks does not know the task either
+    spawned: list[list[str]] = []
     service = OpenClawService(
         platform="win32",
         home=fake_env["home"],
@@ -404,6 +408,7 @@ def test_start_windows_without_a_vbs_file_uses_the_openclaw_command(fake_env) ->
         appdata=fake_env["appdata"],
         localappdata=fake_env["localappdata"],
         runner=runner,
+        spawner=lambda argv: spawned.append(list(argv)) or 4242,
         process_lister=lambda: [],
         port_probe=lambda port, host="127.0.0.1": False,
     )
@@ -411,13 +416,41 @@ def test_start_windows_without_a_vbs_file_uses_the_openclaw_command(fake_env) ->
     res = service.start()
 
     assert res["ok"] is True
-    assert ["openclaw", "gateway", "start"] in runner.calls
-    assert not any(call and call[0] == "wscript.exe" for call in runner.calls)
+    assert spawned == [["openclaw", "gateway", "start"]]
+    assert not any(call and call[0] == "wscript.exe" for call in runner.calls + spawned)
+
+
+def test_start_windows_spawns_the_gateway_instead_of_waiting_for_it(fake_env) -> None:
+    """The .vbs runs gateway.cmd with shell.Run(..., 0, True): waiting on it hung setup."""
+    vbs_file = fake_env["startup"] / "OpenClaw Gateway.vbs"
+    vbs_file.write_text("wscript code", encoding="utf-8")
+
+    def a_runner_that_never_returns(argv):
+        raise AssertionError(f"the gateway launcher was waited on: {argv}")
+
+    spawned: list[list[str]] = []
+    service = OpenClawService(
+        platform="win32",
+        home=fake_env["home"],
+        state_dir=fake_env["state_dir"],
+        appdata=fake_env["appdata"],
+        localappdata=fake_env["localappdata"],
+        runner=a_runner_that_never_returns,
+        spawner=lambda argv: spawned.append(list(argv)) or 4242,
+        process_lister=lambda: [],
+        port_probe=lambda port, host="127.0.0.1": False,
+    )
+
+    res = service.start()
+
+    assert res["ok"] is True
+    assert spawned == [["wscript.exe", str(vbs_file)]]
 
 
 def test_start_windows_with_schtasks(fake_env) -> None:
     runner = RecordingRunner()
     runner.set_canned(["schtasks.exe", "/Query", "/TN", "OpenClaw Gateway"], code=0)
+    spawned: list[list[str]] = []
 
     service = OpenClawService(
         platform="win32",
@@ -426,13 +459,14 @@ def test_start_windows_with_schtasks(fake_env) -> None:
         appdata=fake_env["appdata"],
         localappdata=fake_env["localappdata"],
         runner=runner,
+        spawner=lambda argv: spawned.append(list(argv)) or 4242,
         process_lister=lambda: [],
         port_probe=lambda port, host="127.0.0.1": False,
     )
 
     res = service.start()
     assert res["ok"] is True
-    assert ["schtasks.exe", "/Run", "/TN", "OpenClaw Gateway"] in runner.calls
+    assert spawned == [["schtasks.exe", "/Run", "/TN", "OpenClaw Gateway"]]
 
 
 def test_start_linux_with_systemctl(fake_env) -> None:
@@ -510,10 +544,11 @@ def test_stopped_context_manager_restarts_even_after_exception(fake_env) -> None
     runner = RecordingRunner(default_code=1)
     procs = [ProcessInfo(501, "node.exe", r"node C:\openclaw\dist\index.js gateway")]
     started = []
+    spawned: list[list[str]] = []
 
     def probe(port, host="127.0.0.1"):
         # The port is held until the kill, free while stopped, open again once restarted.
-        if any(call[:1] == ["wscript.exe"] for call in runner.calls):
+        if spawned:
             started.append(True)
             return True
         return not any(call[:1] == ["taskkill.exe"] for call in runner.calls)
@@ -525,6 +560,7 @@ def test_stopped_context_manager_restarts_even_after_exception(fake_env) -> None
         appdata=fake_env["appdata"],
         localappdata=fake_env["localappdata"],
         runner=runner,
+        spawner=lambda argv: spawned.append(list(argv)) or 4242,
         process_lister=killable(procs, runner),
         port_probe=probe,
     )
@@ -534,7 +570,7 @@ def test_stopped_context_manager_restarts_even_after_exception(fake_env) -> None
             assert ["taskkill.exe", "/PID", "501", "/T", "/F"] in runner.calls
             raise ValueError("simulated failure")
 
-    assert ["wscript.exe", str(vbs_file)] in runner.calls
+    assert spawned == [["wscript.exe", str(vbs_file)]]
 
 
 def test_dry_run_executes_no_processes(fake_env) -> None:
@@ -744,6 +780,7 @@ def test_a_gateway_that_survives_the_kill_stops_the_restart(fake_env) -> None:
     vbs_file = fake_env["startup"] / "OpenClaw Gateway.vbs"
     vbs_file.write_text("vbs", encoding="utf-8")
     stubborn = [ProcessInfo(801, "node.exe", r"node C:\openclaw\dist\index.js gateway")]
+    spawned: list[list[str]] = []
 
     service = OpenClawService(
         platform="win32",
@@ -752,6 +789,7 @@ def test_a_gateway_that_survives_the_kill_stops_the_restart(fake_env) -> None:
         appdata=fake_env["appdata"],
         localappdata=fake_env["localappdata"],
         runner=runner,
+        spawner=lambda argv: spawned.append(list(argv)) or 4242,
         process_lister=lambda: stubborn,
         port_probe=lambda port, host="127.0.0.1": True,
         time_provider=clock.time,
@@ -761,4 +799,4 @@ def test_a_gateway_that_survives_the_kill_stops_the_restart(fake_env) -> None:
     res = service.restart()
     assert res["ok"] is False
     assert "801" in res["error"]
-    assert ["wscript.exe", str(vbs_file)] not in runner.calls, "never start a second gateway beside a live one"
+    assert spawned == [], "never start a second gateway beside a live one"

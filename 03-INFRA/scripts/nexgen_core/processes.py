@@ -52,6 +52,32 @@ def command_line_text(argv: list[str]) -> str:
     return subprocess.list2cmdline(tokens) if os.name == "nt" else shlex.join(tokens)
 
 
+def spawn_detached(argv: list[str]) -> int | None:
+    """Start a long-lived child without waiting for it or keeping it a child.
+
+    OpenClaw's Windows launcher is a `.vbs` whose `shell.Run(..., 0, True)`
+    waits for `gateway.cmd` to exit. Waiting on it in `setup` meant the setup
+    never reached the next step, and closing the terminal took the gateway
+    with it. A detached process with its three streams on the null device is
+    the gateway as a service, not the gateway as this command's child.
+    """
+    command = windows_command_argv(list(argv))
+    kwargs: dict[str, Any] = {
+        "stdin": subprocess.DEVNULL,
+        "stdout": subprocess.DEVNULL,
+        "stderr": subprocess.DEVNULL,
+        "close_fds": True,
+    }
+    if os.name == "nt":
+        kwargs["creationflags"] = (
+            getattr(subprocess, "DETACHED_PROCESS", 0x00000008)
+            | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0x00000200)
+        )
+    else:
+        kwargs["start_new_session"] = True
+    return subprocess.Popen(command, **kwargs).pid
+
+
 def windows_command_argv(argv: list[str]) -> list[str]:
     """Resolve npm command shims and invoke .cmd/.bat through cmd.exe."""
     if os.name != "nt" or not argv:

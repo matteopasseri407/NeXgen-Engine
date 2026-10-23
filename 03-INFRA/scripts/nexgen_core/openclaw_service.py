@@ -8,73 +8,30 @@ duplicate processes or Microsoft Store Companion app conflicts.
 from __future__ import annotations
 
 import contextlib
-import json
 import os
-import shutil
 import socket
-import subprocess
 import sys
 import time
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Iterator
 
+from nexgen_core.openclaw_processes import (
+    ProcessInfo,
+    RunResult,
+    default_linux_process_lister,
+    default_runner,
+    default_windows_process_lister,
+    is_gateway_process,
+)
 from nexgen_core.paths import openclaw_config, resolve_home
-from nexgen_core.processes import no_window_kwargs
+from nexgen_core.processes import spawn_detached
 
 DEFAULT_GATEWAY_PORT = 18789
 DEFAULT_RESTART_TIMEOUT_SECONDS = 600.0
 #: How long a killed gateway gets to let go of its port before `start` would race it.
 DEFAULT_STOP_TIMEOUT_SECONDS = 60.0
-
-
-@dataclass
-class RunResult:
-    """Execution output from a child process."""
-
-    returncode: int
-    stdout: str = ""
-    stderr: str = ""
-
-
-@dataclass
-class ProcessInfo:
-    """Descriptor for an enumerated system process."""
-
-    pid: int
-    name: str = ""
-    cmdline: str = ""
-
-
-def is_gateway_process(proc: ProcessInfo) -> bool:
-    """Check whether a running process is an OpenClaw gateway instance."""
-    name = proc.name.lower()
-    cmd = proc.cmdline.lower()
-    is_node = "node" in name
-    is_openclaw = "openclaw" in cmd
-    is_gateway = "dist/index.js gateway" in cmd or "dist\\index.js gateway" in cmd or "index.js gateway" in cmd
-    if is_node and is_openclaw and is_gateway:
-        return True
-    is_cmd = "cmd" in name
-    if is_cmd and "openclaw" in cmd and "gateway.cmd" in cmd:
-        return True
-    return False
-
-
-def default_runner(argv: list[str]) -> RunResult:
-    """Run an external command capturing stdout and stderr."""
-    executable = shutil.which(argv[0]) if argv else None
-    cmd = [executable, *argv[1:]] if executable else argv
-    proc = subprocess.run(
-        cmd,
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        check=False,
-        **no_window_kwargs(),
-    )
-    return RunResult(proc.returncode, proc.stdout, proc.stderr)
+#: How long `install` gets to show the gateway it may have launched before `start`.
+DEFAULT_INSTALL_GRACE_SECONDS = 10.0
 
 
 def default_port_probe(port: int, host: str = "127.0.0.1") -> bool:
@@ -85,51 +42,6 @@ def default_port_probe(port: int, host: str = "127.0.0.1") -> bool:
             return sock.connect_ex((host, port)) == 0
     except OSError:  # nexgen: allow reason="a failed socket probe means the port is not listening"
         return False
-
-
-def default_windows_process_lister() -> list[ProcessInfo]:
-    """Enumerate running processes on Windows using PowerShell Get-CimInstance."""
-    script = (
-        "Get-CimInstance Win32_Process | "
-        "Select-Object ProcessId, Name, CommandLine | "
-        "ConvertTo-Json -Compress"
-    )
-    res = default_runner(["powershell.exe", "-NoProfile", "-Command", script])
-    if res.returncode != 0 or not res.stdout.strip():
-        return []
-    try:
-        data = json.loads(res.stdout)
-        items = data if isinstance(data, list) else [data]
-        return [
-            ProcessInfo(
-                pid=int(item.get("ProcessId") or 0),
-                name=str(item.get("Name") or ""),
-                cmdline=str(item.get("CommandLine") or ""),
-            )
-            for item in items
-            if item.get("ProcessId")
-        ]
-    except (json.JSONDecodeError, ValueError, TypeError):  # nexgen: allow reason="unparseable process output defaults to empty list"
-        return []
-
-
-def default_linux_process_lister() -> list[ProcessInfo]:
-    """Enumerate running processes on Linux using ps."""
-    res = default_runner(["ps", "-eo", "pid,comm,args"])
-    if res.returncode != 0:
-        return []
-    procs: list[ProcessInfo] = []
-    for line in res.stdout.splitlines()[1:]:
-        parts = line.strip().split(maxsplit=2)
-        if len(parts) >= 2:
-            try:
-                pid = int(parts[0])
-                name = parts[1]
-                cmdline = parts[2] if len(parts) > 2 else name
-                procs.append(ProcessInfo(pid=pid, name=name, cmdline=cmdline))
-            except ValueError:  # nexgen: allow reason="non-integer pid line is skipped"
-                continue
-    return procs
 
 
 class OpenClawService:
@@ -145,17 +57,21 @@ class OpenClawService:
         systemd_user_dir: Path | None = None,
         port: int = DEFAULT_GATEWAY_PORT,
         runner: Callable[[list[str]], RunResult] | None = None,
+        spawner: Callable[[list[str]], Any] | None = None,
         process_lister: Callable[[], list[ProcessInfo]] | None = None,
         port_probe: Callable[[int, str], bool] | None = None,
         time_provider: Callable[[], float] | None = None,
         sleeper: Callable[[float], None] | None = None,
+        install_grace_seconds: float = DEFAULT_INSTALL_GRACE_SECONDS,
     ) -> None:
         self.platform = platform if platform is not None else sys.platform
         self.home = resolve_home(home)
         self.state_dir = state_dir or openclaw_config(self.home).parent
         self.port = port
         self.runner = runner or default_runner
+        self.spawn = spawner or spawn_detached
         self.port_probe = port_probe or default_port_probe
+        self.install_grace_seconds = install_grace_seconds
         self.time_provider = time_provider or time.monotonic
         self.sleeper = sleeper or time.sleep
 
@@ -315,13 +231,13 @@ class OpenClawService:
                 cmd = ["schtasks.exe", "/Run", "/TN", "OpenClaw Gateway"]
                 commands.append(cmd)
                 if not dry_run:
-                    self.runner(cmd)
+                    self.spawn(cmd)
             else:
                 vbs = (self.startup_dir / "OpenClaw Gateway.vbs") if self.startup_dir else None
                 cmd = ["wscript.exe", str(vbs)] if vbs and vbs.is_file() else ["openclaw", "gateway", "start"]
                 commands.append(cmd)
                 if not dry_run:
-                    self.runner(cmd)
+                    self.spawn(cmd)
 
         return {
             "ok": True,

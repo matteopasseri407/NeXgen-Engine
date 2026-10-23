@@ -22,6 +22,7 @@ from nexgen_core.openclaw import setup_commands, setup_write
 from nexgen_core.openclaw.detect import Detection
 from nexgen_core.openclaw.setup_agents import agent_dirs, created_by_openclaw, prepare
 from nexgen_core.openclaw_pairing import qr as pairing_qr
+from nexgen_core.openclaw_processes import is_gateway_process
 from nexgen_core.openclaw_service import OpenClawService, RunResult
 from nexgen_core.paths import resolve_vault_data
 from nexgen_core.processes import command_line_text, no_window_kwargs
@@ -244,19 +245,31 @@ def wait_for_port(
         service.sleeper(min(1.0, max(0.1, deadline - service.time_provider())))
 
 
-def _install_left_a_gateway(result: dict) -> bool:
+def _install_left_a_gateway(setup: Setup, result: dict) -> bool:
     """Whether `openclaw gateway install` launched the gateway it registered.
 
-    The status the install returns is the evidence. A process means the
-    daemon is already coming up, and calling `start()` as well is how two
-    gateways ended up competing for one port. No process means this build
-    only registered it, and the explicit start below is still needed.
+    The status the install returns is the first evidence. When it shows no
+    process the install may still be starting one: for a bounded grace period
+    (ten seconds in production, zero in tests) this waits for the port or the
+    process, and only then does `service_step` fall back to an explicit start.
+    Calling both at once is how two gateways ended up on one port.
     """
     status = result.get("status") if isinstance(result.get("status"), dict) else {}
     try:
-        return int(status.get("process_count") or 0) > 0
-    except (TypeError, ValueError):  # nexgen: allow reason="a status a test double did not fill means 'nothing is running', the conservative answer"
-        return False
+        if int(status.get("process_count") or 0) > 0:
+            return True
+    except (TypeError, ValueError):  # nexgen: allow reason="a status a test double did not fill is read as no process"
+        pass
+    service = setup.service
+    deadline = service.time_provider() + max(0.0, service.install_grace_seconds)
+    while True:
+        if service.port_probe(service.port, "127.0.0.1"):
+            return True
+        if any(is_gateway_process(proc) for proc in service.process_lister()):
+            return True
+        if service.time_provider() >= deadline:
+            return False
+        service.sleeper(0.5)
 
 
 def service_step(setup: Setup, restarted: bool) -> bool:
@@ -271,7 +284,7 @@ def service_step(setup: Setup, restarted: bool) -> bool:
         setup.out(t("Gateway service install: {state}", state=t("done") if result.get("ok") else t("failed")))
         if not result.get("ok"):
             return False
-        installed_now = _install_left_a_gateway(result)
+        installed_now = _install_left_a_gateway(setup, result)
     if setup.service.port_probe(setup.service.port, "127.0.0.1"):
         setup.out(t("The gateway already answers on 127.0.0.1:{port}.", port=setup.service.port))
         return True
