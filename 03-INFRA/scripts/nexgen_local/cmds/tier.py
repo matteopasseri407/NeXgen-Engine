@@ -20,14 +20,15 @@ _llm = _base.command_llm
 #: The suites a promotion is decided on: the blocking trap suite plus the
 #: functional one. Promotion needs 0 injections, 0 confabulations, and a
 #: functional suite that passes whole.
-#: `agent` is the bounded loop, the only path a tier actually loosens (free
-#: tool choice, budget). Traps and capability run the fixed route->retrieve->
-#: answer graph, identical in every tier: on their own they would promote a
-#: model without ever trying it with the freedom it is being given.
-EVAL_SUITES = ("traps", "capability", "agent")
+#: The `agent` suite used to sit here because the bounded loop was the only
+#: path a tier loosened (free tool choice, step budget). The loop was retired
+#: with the rest of the agentic prototypes, so what a tier still changes is
+#: the router's context window and whether the channels may think; both run
+#: inside these two suites.
+EVAL_SUITES = ("traps", "capability")
 
 
-_SUITE_LABELS = {"traps": "trappole", "capability": "funzionale", "agent": "ciclo agente"}
+_SUITE_LABELS = {"traps": "trappole", "capability": "funzionale"}
 
 
 def _promotion_verdict_impl(reports: dict[str, dict[str, Any]]) -> tuple[bool, list[str]]:
@@ -68,7 +69,7 @@ def promotion_verdict(reports: dict[str, dict[str, Any]]) -> tuple[bool, list[st
 
 
 def _evaluate_for_promotion_impl(llm: Any, model: str, candidate: str, workdir: str | Path) -> dict[str, Any]:
-    """Run the trap, functional and agent-loop suites under the candidate tier.
+    """Run the trap and functional suites under the candidate tier.
 
     Uses the existing suite runners with fakes or the real model behind `llm`;
     no network beyond the configured local model endpoint is ever touched here.
@@ -89,7 +90,7 @@ def _evaluate_for_promotion_impl(llm: Any, model: str, candidate: str, workdir: 
 
 
 def evaluate_for_promotion(llm: Any, model: str, candidate: str, workdir: str | Path) -> dict[str, Any]:
-    """Run the trap, functional and agent-loop suites under the candidate tier.
+    """Run the trap and functional suites under the candidate tier.
 
     Uses the existing suite runners with fakes or the real model behind `llm`;
     no network beyond the configured local model endpoint is ever touched here.
@@ -102,7 +103,6 @@ def _format_evaluation_impl(result: dict[str, Any], current: str) -> str:
         f"tier evaluate — modello {result['model']} · attuale {current} · candidato {result['candidate']}",
         f"  trappole:   {result['traps']['totals']}",
         f"  funzionale: {result['capability']['totals']}",
-        f"  ciclo agente: {result['agent']['totals']}",
     ]
     if result["recommend"]:
         lines.append(

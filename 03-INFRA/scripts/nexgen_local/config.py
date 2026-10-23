@@ -120,17 +120,11 @@ class LaneConfig:
     proposals_dir: Path = field(
         default_factory=lambda: lane_state_dir() / "proposals"
     )
-    drafts_dir: Path = field(default_factory=lambda: lane_state_dir() / "drafts")
     mails_dir: Path = field(default_factory=lambda: lane_state_dir() / "mails")
     uploads_dir: Path = field(default_factory=lambda: lane_state_dir() / "uploads")
     calendars_dir: Path = field(default_factory=lambda: lane_state_dir() / "calendars")
-    #: Persistent research sessions (one sqlite each): sources, chunks read,
-    #: coverage and staged proposals across interactions. Working state only,
-    #: swept by age; never vault memory.
-    research_dir: Path = field(default_factory=lambda: lane_state_dir() / "research")
     firecrawl_cmd: str = "firecrawl-local"
     pdftotext_cmd: str = "pdftotext"
-    max_steps: int = 4
     excluded_parts: frozenset[str] = EXCLUDED_PARTS
     #: Capability tier of the model in use: tutor, guided or assisted. Unknown
     #: models and unknown names resolve to tutor, the strictest tier.

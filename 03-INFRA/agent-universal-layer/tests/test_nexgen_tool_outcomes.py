@@ -8,9 +8,6 @@ import pytest
 from nexgen_local.config import LaneConfig
 from nexgen_local.engine import ENGINE_ABSENCE, ENGINE_ERROR, run_lane
 from nexgen_local.evidence import retrieval_outcome
-from nexgen_local.graph import run_graph
-from nexgen_local.jobs import job_research
-from nexgen_local.steps import run_steps
 from nexgen_local.tools import ToolCall, ToolError, ToolRegistry
 
 
@@ -33,17 +30,15 @@ class ScriptedLLM:
 def config(tmp_path):
     vault = tmp_path / "vault"
     vault.mkdir()
-    return LaneConfig(vault_root=vault, repo_roots=(), model="synthetic", audit_path=tmp_path / "audit.jsonl",
-                      research_dir=tmp_path / "research")
+    return LaneConfig(vault_root=vault, repo_roots=(), model="synthetic", audit_path=tmp_path / "audit.jsonl")
 
 
 @pytest.mark.parametrize("content", ["(bozza) Contenuto valido.", "(nessun risultato)", "(lettura fallita: citazione)"])
-@pytest.mark.parametrize("driver", [run_lane, run_graph, run_steps])
-def test_parenthesized_source_is_retrieved_by_every_driver(tmp_path, driver, content):
+def test_parenthesized_source_is_retrieved_by_the_lane(tmp_path, content):
     cfg = config(tmp_path)
     (cfg.vault_root / "nota.md").write_text(content, encoding="utf-8")
     llm, tools = ScriptedLLM(), ToolRegistry(cfg)
-    result = driver(llm, tools, cfg, "leggi nota.md")
+    result = run_lane(llm, tools, cfg, "leggi nota.md")
     assert llm.users and content in llm.users[-1]
     assert not result.confabulation
     assert tools.calls[-1].ok
@@ -73,12 +68,11 @@ def test_parenthesized_continuation_has_successful_receipt(tmp_path, newline):
     assert tools.calls[-1].ok
 
 
-@pytest.mark.parametrize("driver", [run_lane, run_graph, run_steps])
 @pytest.mark.parametrize("status,message,answer", [
     ("empty", "Nessuna corrispondenza.", ENGINE_ABSENCE),
     ("error", "Connection unavailable.", ENGINE_ERROR),
 ])
-def test_driver_outcome_does_not_depend_on_display_language(tmp_path, driver, status, message, answer):
+def test_driver_outcome_does_not_depend_on_display_language(tmp_path, status, message, answer):
     class Registry(ToolRegistry):
         def read_vault(self, path, offset=0):
             return self._record("read_vault", {"path": path}, message, status=status)
@@ -86,44 +80,9 @@ def test_driver_outcome_does_not_depend_on_display_language(tmp_path, driver, st
     cfg = config(tmp_path)
     (cfg.vault_root / "nota.md").write_text("Contenuto.", encoding="utf-8")
     llm = ScriptedLLM()
-    result = driver(llm, Registry(cfg), cfg, "leggi nota.md")
+    result = run_lane(llm, Registry(cfg), cfg, "leggi nota.md")
     assert result.answer == answer
     assert not llm.users
-
-
-class OfflineRegistry(ToolRegistry):
-    """Empty remote sources are explicit and never contact personal accounts."""
-    def web_search(self, query):
-        return self._record("web_search", {"query": query}, "No matches.", status="empty")
-
-    def call(self, name, args):
-        if name in ("search_mail", "search_drive", "search_calendar", "search_outlook"):
-            return self._record(name, args, "No matches.", status="empty")
-        return super().call(name, args)
-
-
-def test_research_job_retains_parenthesized_content(tmp_path):
-    cfg = config(tmp_path)
-    content = "(bozza) Contenuto valido."
-    (cfg.vault_root / "nota.md").write_text(content, encoding="utf-8")
-    llm = ScriptedLLM()
-    result = job_research(llm, OfflineRegistry(cfg), cfg, "bozza")
-    assert content in llm.users[-1]
-    assert not result.confabulation
-
-
-def test_explicit_status_survives_persistent_research_resume(tmp_path):
-    from nexgen_local.research_graph import research_task
-    cfg = config(tmp_path)
-    (cfg.vault_root / "nota.md").write_text("(bozza) Contenuto valido.", encoding="utf-8")
-    llm = ScriptedLLM()
-    first = research_task(llm, cfg, "leggi nota.md", session_id="")
-    llm.decisions = iter(({"action": "answer", "arg": ""},))
-    resumed = research_task(llm, cfg, "continua", session_id=first["session_id"])
-    assert "(bozza)" in llm.users[-1]
-    assert first["receipts"] == resumed["receipts"]
-    assert resumed["receipts"][0]["status"] == "ok"
-    assert not resumed["confabulation"]
 
 
 def test_audit_failure_cannot_leave_a_successful_receipt(tmp_path, monkeypatch):

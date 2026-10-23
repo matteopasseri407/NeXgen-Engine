@@ -70,5 +70,5 @@ def test_the_lane_follows_nexgen_home(tmp_path, monkeypatch):
     cfg = LaneConfig.from_env()
     lane = sandbox / ".local/state/nexgen/local-lane"
     assert cfg.audit_path == lane / "audit.jsonl"
-    assert cfg.proposals_dir == lane / "proposals" and cfg.research_dir == lane / "research"
+    assert cfg.proposals_dir == lane / "proposals" and cfg.uploads_dir == lane / "uploads"
     assert cfg.vault_root == (tmp_path / "vault").resolve(), "KNOWLEDGE_VAULT_PATH was ignored"

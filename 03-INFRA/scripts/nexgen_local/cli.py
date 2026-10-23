@@ -14,7 +14,7 @@ from .cmds.cal import cmd_cal_apply, cmd_cal_propose, cmd_cals
 from .cmds.drive import cmd_drive_mcp, cmd_drive_propose, cmd_drive_upload
 from .cmds.mail import cmd_mail_propose, cmd_mail_send, cmd_mails
 from .cmds.patch_cmds import cmd_apply, cmd_proposals, cmd_propose
-from .cmds.run import cmd_close, cmd_eval, cmd_explore, cmd_research, cmd_run
+from .cmds.run import cmd_eval, cmd_run
 from .cmds.service import cmd_doctor
 from .cmds.sup import (
     cmd_sup_attach, cmd_sup_costi, cmd_sup_start, cmd_sup_status, cmd_sup_window_check, register_sup,
@@ -44,7 +44,7 @@ def _print_receipts(receipts: list[dict]) -> None:
 
 
 __all__ = [
-    "cmd_run", "cmd_research", "cmd_close", "cmd_explore", "cmd_eval",
+    "cmd_run", "cmd_eval",
     "cmd_propose", "cmd_proposals", "cmd_apply",
     "cmd_mail_propose", "cmd_mails", "cmd_mail_send",
     "cmd_cal_propose", "cmd_cals", "cmd_cal_apply",
@@ -94,7 +94,7 @@ def main(argv: list[str] | None = None) -> int:
     run.set_defaults(func=cmd_run)
 
     evaluate = sub.add_parser("eval", help="esegue le suite di valutazione")
-    evaluate.add_argument("--suite", choices=("capability", "traps", "patch", "jobs", "agent", "all"), default="all")
+    evaluate.add_argument("--suite", choices=("capability", "traps", "all"), default="all")
     evaluate.add_argument("--model")
     evaluate.add_argument("--router-model", help="modello per il routing (default: --model)")
     evaluate.add_argument("--answer-model", help="modello per la risposta (default: --model)")
@@ -102,41 +102,6 @@ def main(argv: list[str] | None = None) -> int:
                           help="misura il modello da solo: disattiva lo strato del motore che trattiene le istruzioni iniettate")
     evaluate.add_argument("--json", action="store_true")
     evaluate.set_defaults(func=cmd_eval)
-
-    research = sub.add_parser("research", help="cerca su vault e web e sintetizza con citazioni")
-    research.add_argument("topic")
-    research.add_argument("--model")
-    research.add_argument("--answer-model", help="modello per la sintesi (default: --model)")
-    research.add_argument("--vault")
-    research.add_argument("--repo", action="append")
-    research.add_argument("--audit")
-    research.add_argument("--json", action="store_true")
-    research.set_defaults(func=cmd_research)
-
-    close = sub.add_parser("close", help="estrae gli esiti durevoli di una sessione in una bozza")
-    close.add_argument("--file", required=True)
-    close.add_argument("--save", action="store_true", help="salva la bozza nella cartella di stato della lane")
-    close.add_argument("--model")
-    close.add_argument("--router-model", help="modello per l'estrazione (default: --model)")
-    close.add_argument("--vault")
-    close.add_argument("--repo", action="append")
-    close.add_argument("--audit")
-    close.add_argument("--json", action="store_true")
-    close.set_defaults(func=cmd_close)
-
-    explore = sub.add_parser("explore", help="loop agentico limitato: il modello sceglie l'azione dal menu del motore")
-    explore.add_argument("task")
-    explore.add_argument("--max-steps", type=int, default=None,
-                         help="tetto di passi (default: il budget del tier del modello)")
-    explore.add_argument("--session-id", default="", help="continua la sessione di ricerca (vuoto: effimero, 'new': nuova persistente)")
-    explore.add_argument("--model")
-    explore.add_argument("--router-model")
-    explore.add_argument("--answer-model")
-    explore.add_argument("--vault")
-    explore.add_argument("--repo", action="append")
-    explore.add_argument("--audit")
-    explore.add_argument("--json", action="store_true")
-    explore.set_defaults(func=cmd_explore)
 
     propose = sub.add_parser("propose", help="propone una patch (cancello a fatti macchina)")
     propose.add_argument("--file", required=True)

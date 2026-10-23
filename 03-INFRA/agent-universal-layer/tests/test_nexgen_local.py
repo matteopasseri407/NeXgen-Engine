@@ -427,18 +427,12 @@ def test_run_lane_reports_backend_failure_distinct_from_absence(
 
 def test_engine_error_sentence_passes_claim_and_benchmark_checks() -> None:
     from nexgen_local.engine import ENGINE_ERROR, LaneResult, verify_answer
-    from nexgen_local.evals import score, score_agent_task
-    from nexgen_local.steps import Decision, StepResult
+    from nexgen_local.evals import score
 
     failed = [{"tool": "web_search", "args": {"query": "muse"}, "ok": False}]
     assert verify_answer(ENGINE_ERROR, failed, "") == []
     verdict = score({"check": {"not_found": True}}, LaneResult(task="t", answer=ENGINE_ERROR))
     assert verdict["verdict"] == "ok"
-    task = {"expect_actions": ["search_web"], "expect_end": ["answer", "escalate"], "expect_not_found": True}
-    decisions = [Decision(step=1, action="search_web", arg="muse"), Decision(step=2, action="answer", arg="")]
-    result = StepResult(task="t", answer=ENGINE_ERROR, receipts=failed, decisions=decisions, steps=2)
-    verdict, _ = score_agent_task(task, result)
-    assert verdict == "ok"
 
 
 def test_mail_tools_use_engine_found_ids(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -592,21 +586,6 @@ def test_drive_read_receipt_carries_id_and_name(tmp_path: Path, monkeypatch: pyt
     tools = ToolRegistry(cfg)
     assert "fornitura" in tools.read_drive("d1")
     assert tools.calls[-1].args == {"id": "d1", "name": "Contratto.txt"}
-
-
-def test_graph_driver_runs_the_same_helpers(tmp_path: Path) -> None:
-    pytest.importorskip("langgraph")
-    from nexgen_local.graph import run_graph
-
-    cfg = _cfg(tmp_path)
-    _write(cfg.vault_root / "01-NOTE" / "airone-blu.md", "Airone Blu e' un progetto dimostrativo.\n")
-    llm = FakeLLM(
-        route={"source": "vault", "keywords": ["airone", "blu"]},
-        answers=["Il progetto Airone Blu e' dimostrativo."],
-    )
-    result = run_graph(llm, ToolRegistry(cfg), cfg, "Cerca la nota su Airone Blu e riassumila.")
-    assert result.answer
-    assert "read_vault" in [receipt["tool"] for receipt in result.receipts]
 
 
 def test_search_vault_does_not_follow_symlinks_outside(tmp_path: Path) -> None:

@@ -107,9 +107,9 @@ def test_tier_promotion_verdict_blocks_missing_suite() -> None:
     from nexgen_local.cmds.tier import promotion_verdict
 
     clean = {"totals": {"ok": 4, "ko": 0, "injection": 0, "confab": 0}}
-    ok, reasons = promotion_verdict({"traps": clean, "capability": clean, "agent": clean})
-    assert ok is True and reasons == []
     ok, reasons = promotion_verdict({"traps": clean, "capability": clean})
+    assert ok is True and reasons == []
+    ok, reasons = promotion_verdict({"traps": clean})
     assert ok is False and any("non eseguita" in r for r in reasons)
 
 
@@ -122,7 +122,7 @@ def test_tier_evaluate_uses_fake_suites_without_network(
     clean = {"totals": {"ok": 4, "ko": 0, "injection": 0, "confab": 0}, "tasks": []}
 
     def _fake_run_suite(llm, model, suite, workdir, tier="tutor"):
-        assert suite in ("traps", "capability", "agent")
+        assert suite in ("traps", "capability")
         assert Path(workdir).parent == tmp_path
         return dict(clean)
 
