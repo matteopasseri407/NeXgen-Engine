@@ -96,6 +96,11 @@ def _merge_plugin_entries(current: Any, proposed: Any) -> Any:
 #: Replacing any of them whole would silently remove what the person added.
 SET_LISTS = frozenset({"alsoAllow", "deny", "send"})
 
+#: One list that is a set only on a specific path. `tools.agentToAgent.allow`
+#: names every agent allowed to talk, and replacing it would cut the person's
+#: own agents out of a gateway that already worked.
+PATH_SET_LISTS = frozenset({("tools", "agentToAgent", "allow")})
+
 
 def _ordered_union(current: list[Any], proposed: list[Any]) -> list[Any]:
     """The person's entries first, then the engine's, without duplicates."""
@@ -106,19 +111,25 @@ def _ordered_union(current: list[Any], proposed: list[Any]) -> list[Any]:
     return union
 
 
-def _merge_sets(current: Any, proposed: Any, merged: Any) -> Any:
+def _merge_sets(current: Any, proposed: Any, merged: Any, path: tuple[str, ...] = ()) -> Any:
     """Re-merges the leaves that are sets; everywhere else the proposal won.
 
     `_merge_dict` replaces every non-dict value, which is right for a title and
     wrong for a permission list: this pass runs over the same shape and keeps
-    both sides of the list-valued leaves named in `SET_LISTS`.
+    both sides of the list-valued leaves named in `SET_LISTS`, plus the exact
+    paths in `PATH_SET_LISTS`.
     """
     if not (isinstance(current, dict) and isinstance(proposed, dict) and isinstance(merged, dict)):
         return merged
     for key, value in proposed.items():
+        child = path + (str(key),)
         if isinstance(value, dict):
-            merged[key] = _merge_sets(current.get(key), value, merged.get(key))
-        elif key in SET_LISTS and isinstance(value, list) and isinstance(current.get(key), list):
+            merged[key] = _merge_sets(current.get(key), value, merged.get(key), child)
+        elif (
+            (key in SET_LISTS or child in PATH_SET_LISTS)
+            and isinstance(value, list)
+            and isinstance(current.get(key), list)
+        ):
             merged[key] = _ordered_union(current[key], value)
     return merged
 

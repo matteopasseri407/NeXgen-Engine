@@ -156,6 +156,16 @@ def test_an_agent_to_agent_partner_the_person_added_stays():
     assert send == ["helper", "capo"]
 
 
+def test_an_agent_the_person_added_to_the_agent_to_agent_allow_list_stays():
+    """OpenClaw needs both agents in `allow`: replacing it cuts the person's own out."""
+    current = {"tools": {"agentToAgent": {"enabled": True, "allow": ["main", "capo", "personale"]}}}
+    proposed = {"tools": {"agentToAgent": {"enabled": True, "allow": ["main", "capo", "sviluppo"]}}}
+
+    allow = setup_write.merged_document(current, proposed)["tools"]["agentToAgent"]["allow"]
+
+    assert allow == ["main", "capo", "personale", "sviluppo"]
+
+
 def test_a_list_is_still_replaced_where_the_proposal_owns_it():
     """The union is for the permission lists only: a title is not a set."""
     current = {"agents": {"entries": {"main": {"name": "old", "tags": ["a"]}}}}
