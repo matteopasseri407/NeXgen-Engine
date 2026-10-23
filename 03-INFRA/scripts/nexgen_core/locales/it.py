@@ -1295,6 +1295,8 @@ MESSAGES: dict[str, str] = {
         "L'assistente gira su Codex; vengono configurati solo i modelli che questo account ha.",
     "No local model answered. The engine never downloads one: start it yourself, for example 'ollama serve' or 'llama-server -m <model>.gguf --port 8080', then ask again.":
         "Nessun modello locale ha risposto. Il motore non ne scarica: avvialo tu, per esempio 'ollama serve' oppure 'llama-server -m <model>.gguf --port 8080', poi richiedi di nuovo.",
+    "The context window is unknown for these models and is not written: {models}":
+        "La finestra di contesto di questi modelli non è nota e non viene scritta: {models}",
     "OpenClaw {version} ({path})":
         "OpenClaw {version} ({path})",
     "OpenClaw not installed{detail}":

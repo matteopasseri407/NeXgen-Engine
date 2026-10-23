@@ -1,26 +1,30 @@
 """The configuration the engine owns, derived as a pure function.
 
-`build_config` takes what was detected and what the person chose, and returns
-ONLY the sections the engine owns. Everything else in `openclaw.json` — the MCP
-servers, the channels, the rest of OpenClaw's own settings — belongs to
-OpenClaw and to the person using it, and is never described here.
+`build_config` takes what was detected, what the person chose and the
+configuration already in force, and returns ONLY the sections the engine owns.
+Everything else in `openclaw.json` — the MCP servers, the channels, the rest of
+OpenClaw's own settings — belongs to OpenClaw and to the person using it.
 
 Nothing in this module reads a file, an environment variable or a clock: the
 same inputs always produce the same dict, which is what lets `nexgen openclaw
-plan` promise it will not write and lets B2 reuse the exact same answer.
+plan` promise it will not write and lets B2 reuse the exact same answer. The
+file in force arrives as a value (`current`), never as a path.
 
-Three rules are not preferences, and each has its reason stated where it is
-applied: no Google subscription ever enters OpenClaw (its terms forbid using a
-Google plan outside Google's own clients), a local model always comes with a
-cage around its tools, and Ollama ids are written without `:latest` (OpenClaw
-does not recognise the suffixed id and then guesses the context window wrong).
+Four rules are not preferences, and each has its reason where it is applied: no
+Google subscription ever enters OpenClaw (its terms forbid using a Google plan
+outside Google's own clients), a local model always comes with a cage around its
+tools, Ollama ids are written without `:latest` (OpenClaw fails to recognise the
+suffixed id), and a model block carries its context window (without it OpenClaw
+miscounts and overflows).
 """
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
-from nexgen_core.openclaw.detect import Detection
+from nexgen_core.i18n import detect_language
+from nexgen_core.openclaw.detect import Detection, LocalModelInfo
 
 #: The top-level sections the engine owns. Everything else in `openclaw.json` is
 #: OpenClaw's and the person's, and a plan names it as "yours, left untouched".
@@ -41,8 +45,8 @@ GO_CAPO_MODEL = "opencode-go/deepseek-v4-pro"
 
 #: The gateway's own port. Loopback by default; "lan" only for the phone app.
 GATEWAY_PORT = 18789
-#: Written as the token until `nexgen openclaw setup` (B2) generates the real one.
-#: A placeholder, never a secret: no credential value belongs in this dict.
+#: Written as the token only when the file has none: an existing token is the
+#: person's and is never replaced. A placeholder, never a secret.
 PENDING_TOKEN = "generated-by-nexgen-setup"
 
 #: What a local model may still do once caged: read the conversation, look at an
@@ -60,6 +64,8 @@ LOCAL_DENY = (
 #: MCP servers whose tools write, and the names of those tools, expressed once as
 #: data. OpenClaw names them `server__tool`, so a pattern here reads as "no
 #: workflow creation, no note writing, no upload" without enumerating every tool.
+#: `firecrawl` is here for the tools that fetch or drive a page: search and the
+#: plain reads stay allowed, scraping and browsing do not.
 WRITE_TOOL_TABLE: dict[str, tuple[str, ...]] = {
     "n8n-mcp": (
         "create_*", "delete_*", "update_*", "publish_*", "unpublish_*",
@@ -67,6 +73,16 @@ WRITE_TOOL_TABLE: dict[str, tuple[str, ...]] = {
     ),
     "vault-library": ("create_note", "append_note", "update_note", "update_section"),
     "drive": ("drive_propose_upload", "drive_confirm_upload"),
+    "firecrawl": (
+        "*scrape*", "*map*", "*extract*", "*crawl*", "*agent*", "*browser*", "*interact*",
+    ),
+}
+
+#: How each agent introduces itself, in the language the engine speaks. The id
+#: stays `main`/`capo`/`automazioni`; only the person-facing name changes.
+IDENTITY_NAMES: dict[str, dict[str, str]] = {
+    "it": {"main": "assistente", "capo": "capo", "automazioni": "automazioni"},
+    "en": {"main": "assistant", "capo": "lead", "automazioni": "automations"},
 }
 
 
@@ -78,6 +94,8 @@ class Choices:
     lan: bool = False
     #: The acpx plugin, off unless asked for.
     acpx: bool = False
+    #: The language of the agent identities; None means the engine's own.
+    lang: str | None = None
 
 
 @dataclass(frozen=True)
@@ -88,6 +106,9 @@ class LocalModel:
     model_id: str
     base_url: str
     api: str
+    context_window: int | None = None
+    vision: bool = False
+    reasoning: bool = False
 
     @property
     def ref(self) -> str:
@@ -95,15 +116,10 @@ class LocalModel:
         return f"{self.provider}/{self.model_id}"
 
 
-def _dedupe(values: list[str]) -> list[str]:
-    """Keep the first occurrence of each name, in order."""
-    seen: set[str] = set()
-    kept: list[str] = []
-    for value in values:
-        if value not in seen:
-            seen.add(value)
-            kept.append(value)
-    return kept
+def _language(chosen: Choices) -> str:
+    """`it` or `en`, from the caller or from the engine's own decision."""
+    value = (chosen.lang or detect_language() or "en").strip().lower()
+    return "it" if value.startswith("it") else "en"
 
 
 def _without_latest(name: str) -> str:
@@ -111,18 +127,31 @@ def _without_latest(name: str) -> str:
     return name.removesuffix(":latest")
 
 
+def _local_models(infos: tuple[LocalModelInfo, ...], provider: str, base_url: str, api: str) -> list[LocalModel]:
+    """One provider's models, one per id, keeping the first report of each."""
+    seen: set[str] = set()
+    models: list[LocalModel] = []
+    for info in infos:
+        name = _without_latest(info.name) if provider == "ollama" else info.name
+        if not name or name in seen:
+            continue
+        seen.add(name)
+        models.append(LocalModel(
+            provider=provider, model_id=name, base_url=base_url, api=api,
+            context_window=info.context_window, vision=info.vision, reasoning=info.reasoning,
+        ))
+    return models
+
+
 def local_models(detected: Detection) -> tuple[LocalModel, ...]:
     """Every local model, with the id OpenClaw will recognise, Ollama first."""
-    ollama = _dedupe([_without_latest(name) for name in detected.local.ollama])
-    llamacpp = _dedupe([str(name) for name in detected.local.llamacpp])
-    models = [
-        LocalModel("ollama", name, detected.local.ollama_url.rstrip("/"), "ollama")
-        for name in ollama
-    ]
-    models += [
-        LocalModel("llamacpp", name, detected.local.llamacpp_url.rstrip("/") + "/v1", "openai-completions")
-        for name in llamacpp
-    ]
+    models = _local_models(
+        detected.local.ollama, "ollama", detected.local.ollama_url.rstrip("/"), "ollama",
+    )
+    models += _local_models(
+        detected.local.llamacpp, "llamacpp",
+        detected.local.llamacpp_url.rstrip("/") + "/v1", "openai-completions",
+    )
     return tuple(models)
 
 
@@ -164,8 +193,52 @@ def _plugin_entries(detected: Detection) -> dict[str, Any]:
     return entries
 
 
-def _provider_blocks(models: tuple[LocalModel, ...]) -> dict[str, Any]:
-    """One provider per local backend, each listing the ids it reported."""
+def _existing_model(current: dict[str, Any] | None, provider: str, model_id: str) -> dict[str, Any] | None:
+    """The entry for this id already in the file, when there is one."""
+    models = current.get("models") if isinstance(current, dict) else None
+    providers = models.get("providers") if isinstance(models, dict) else None
+    block = providers.get(provider) if isinstance(providers, dict) else None
+    listed = block.get("models") if isinstance(block, dict) else None
+    if not isinstance(listed, list):
+        return None
+    for entry in listed:
+        if isinstance(entry, dict) and str(entry.get("id", "")) == model_id:
+            return entry
+    return None
+
+
+def _model_entry(model: LocalModel, current: dict[str, Any] | None) -> dict[str, Any]:
+    """One full model block, merged over what the file already says about that id.
+
+    A block with only `id` makes OpenClaw lose the context window, and it then
+    miscounts and overflows. An existing entry keeps its fields: the engine only
+    adds what is missing.
+    """
+    proposed: dict[str, Any] = {
+        "id": model.model_id,
+        "name": model.model_id,
+        "reasoning": model.reasoning,
+        "input": ["text", "image"] if model.vision else ["text"],
+        "maxTokens": 8192,
+        "cost": {"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0},
+        "compat": {
+            "supportsTools": True,
+            "supportsUsageInStreaming": True,
+            "supportsJsonSchemaResponseFormat": True,
+        },
+    }
+    if model.context_window:
+        proposed["contextWindow"] = model.context_window
+        proposed["contextTokens"] = model.context_window
+    existing = _existing_model(current, model.provider, model.model_id)
+    merged = dict(existing) if existing is not None else {}
+    for key, value in proposed.items():
+        merged.setdefault(key, value)
+    return merged
+
+
+def _provider_blocks(models: tuple[LocalModel, ...], current: dict[str, Any] | None) -> dict[str, Any]:
+    """One provider per local backend, each with the models it reported."""
     providers: dict[str, Any] = {}
     for model in models:
         block = providers.setdefault(model.provider, {
@@ -173,7 +246,7 @@ def _provider_blocks(models: tuple[LocalModel, ...]) -> dict[str, Any]:
             "api": model.api,
             "models": [],
         })
-        block["models"].append({"id": model.model_id})
+        block["models"].append(_model_entry(model, current))
     return providers
 
 
@@ -206,19 +279,43 @@ def agent_models(detected: Detection) -> dict[str, str]:
     return chosen
 
 
-def _agent_entries(models: dict[str, str]) -> dict[str, Any]:
+def _state_dir(detected: Detection) -> Path | None:
+    """OpenClaw's state folder: the folder the configuration file lives in."""
+    return Path(detected.openclaw.config_path).parent if detected.openclaw.config_path else None
+
+
+def _workspace(agent_id: str, current: dict[str, Any] | None, state_dir: Path | None) -> str | None:
+    """Where this agent's files live: the existing folder, or a new absolute one.
+
+    A relative path would anchor wherever OpenClaw happened to start, which is
+    how `assistente` ended up pointing at nothing.
+    """
+    entries = current.get("agents", {}).get("entries", {}) if isinstance(current, dict) else {}
+    existing = entries.get(agent_id) if isinstance(entries, dict) else None
+    if isinstance(existing, dict) and isinstance(existing.get("workspace"), str) and existing["workspace"].strip():
+        return existing["workspace"]
+    if state_dir is None:
+        return None
+    return str(state_dir / "workspace" if agent_id == "main" else state_dir / f"workspace-{agent_id}")
+
+
+def _agent_entries(models: dict[str, str], detected: Detection, current: dict[str, Any] | None, language: str) -> dict[str, Any]:
     """The agents to create, with only the options that belong to the model chosen."""
+    state_dir = _state_dir(detected)
     entries: dict[str, Any] = {}
-    if "main" in models:
-        entries["main"] = {"model": models["main"], "workspace": "assistente"}
-    if "capo" in models:
-        capo: dict[str, Any] = {"model": models["capo"], "workspace": "capo"}
-        if models["capo"] == CLAUDE_MODEL:
-            capo["thinkingDefault"] = "high"
-            capo["runtime"] = {"type": "embedded"}
-        entries["capo"] = capo
-    if "automazioni" in models:
-        entries["automazioni"] = {"model": models["automazioni"], "workspace": "automazioni"}
+    for agent_id, model in models.items():
+        entry: dict[str, Any] = {
+            "name": agent_id,
+            "identity": {"name": IDENTITY_NAMES[language][agent_id]},
+            "model": model,
+        }
+        workspace = _workspace(agent_id, current, state_dir)
+        if workspace:
+            entry["workspace"] = workspace
+        if agent_id == "capo" and model == CLAUDE_MODEL:
+            entry["thinkingDefault"] = "high"
+            entry["runtime"] = {"type": "embedded"}
+        entries[agent_id] = entry
     return entries
 
 
@@ -267,11 +364,39 @@ def _agent_pairs(models: dict[str, str]) -> list[list[str]]:
     return pairs
 
 
-def build_config(detected: Detection, choices: Choices | None = None) -> dict[str, Any]:
-    """The sections the engine owns, and nothing else."""
+def _gateway(chosen: Choices, current: dict[str, Any] | None) -> dict[str, Any]:
+    """The gateway block, keeping a token the file already has."""
+    gateway = current.get("gateway") if isinstance(current, dict) else None
+    auth = gateway.get("auth") if isinstance(gateway, dict) else None
+    token = auth.get("token") if isinstance(auth, dict) else None
+    return {
+        "mode": "local",
+        "port": GATEWAY_PORT,
+        "bind": "lan" if chosen.lan else "loopback",
+        "auth": {
+            "mode": "token",
+            "token": token if isinstance(token, str) and token.strip() else PENDING_TOKEN,
+        },
+        "tailscale": {"mode": "off"},
+    }
+
+
+def build_config(
+    detected: Detection,
+    choices: Choices | None = None,
+    current: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """The sections the engine owns, and nothing else.
+
+    `current` is the configuration in force, as a value. It never changes what
+    the engine wants, only what it must not overwrite: an existing gateway
+    token, an existing agent workspace, the fields of a model block that is
+    already there.
+    """
     chosen = choices or Choices()
     models = local_models(detected)
     agents = agent_models(detected)
+    language = _language(chosen)
 
     tools: dict[str, Any] = {
         # With small models, tool search fails; a fixed small list works.
@@ -295,18 +420,12 @@ def build_config(detected: Detection, choices: Choices | None = None) -> dict[st
                 # Otherwise the system jobs write to the channels continuously.
                 "heartbeat": {"every": "0m"},
             },
-            "entries": _agent_entries(agents),
+            "entries": _agent_entries(agents, detected, current, language),
         },
         "tools": tools,
-        "gateway": {
-            "mode": "local",
-            "port": GATEWAY_PORT,
-            "bind": "lan" if chosen.lan else "loopback",
-            "auth": {"mode": "token", "token": PENDING_TOKEN},
-            "tailscale": {"mode": "off"},
-        },
+        "gateway": _gateway(chosen, current),
     }
-    providers = _provider_blocks(models)
+    providers = _provider_blocks(models, current)
     if providers:
         config["models"] = {"providers": providers}
     return config

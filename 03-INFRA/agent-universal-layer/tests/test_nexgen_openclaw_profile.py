@@ -2,8 +2,10 @@
 
 `build_config` is a pure function, so these tests are about the decisions it
 encodes: which plugin is allowed, which model each agent gets, when an agent is
-not created at all, and the two rules that are not preferences — no Google
-subscription ever enters OpenClaw, and a local model is always caged.
+not created at all, what the file in force must not be overwritten on, and the
+three rules that are not preferences — no Google subscription ever enters
+OpenClaw, a local model is always caged, and every model block carries its
+context window.
 """
 from __future__ import annotations
 
@@ -15,7 +17,7 @@ SCRIPTS_DIR = Path(__file__).resolve().parents[2] / "scripts"
 if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
-from nexgen_core.openclaw.detect import Detection, Installation, LocalModels, Login  # noqa: E402 - sys.path shim for cloned checkout
+from nexgen_core.openclaw.detect import Detection, Installation, LocalModelInfo, LocalModels, Login  # noqa: E402 - sys.path shim for cloned checkout
 from nexgen_core.openclaw.profile import Choices, build_config, denied_tools  # noqa: E402 - sys.path shim for cloned checkout
 from nexgen_core.openclaw.templates import render_workspace  # noqa: E402 - sys.path shim for cloned checkout
 
@@ -24,24 +26,34 @@ BASE_PLUGINS = [
     "memory-core", "web-readability", "talk-voice", "tts-local-cli",
 ]
 
+STATE = Path("/state")
+
+
+def info(name: str, **facts) -> LocalModelInfo:
+    return LocalModelInfo(name=name, **facts)
+
 
 def machine(
     *,
     claude: bool = False,
     codex: bool = False,
     go: bool = False,
-    ollama: tuple[str, ...] = (),
-    llamacpp: tuple[str, ...] = (),
+    ollama: tuple[str | LocalModelInfo, ...] = (),
+    llamacpp: tuple[str | LocalModelInfo, ...] = (),
     n8n: bool = False,
     installed: bool = True,
+    config_path: Path = STATE / "openclaw.json",
 ) -> Detection:
     """One machine, described by the subscriptions and backends it has."""
+    def reported(values):
+        return tuple(value if isinstance(value, LocalModelInfo) else info(value) for value in values)
+
     return Detection(
-        openclaw=Installation(installed=installed, version="2026.10.6", config_path="/x/openclaw.json"),
+        openclaw=Installation(installed=installed, version="2026.10.6", config_path=str(config_path)),
         claude=Login(binary=claude, login=True if claude else None),
         codex=Login(binary=codex, login=True if codex else None),
         opencode_go=go,
-        local=LocalModels(ollama=ollama, llamacpp=llamacpp),
+        local=LocalModels(ollama=reported(ollama), llamacpp=reported(llamacpp)),
         n8n=n8n,
     )
 
@@ -83,23 +95,22 @@ def test_claude_codex_go_and_ollama_together():
 
     agents = config["agents"]["entries"]
     assert agents["main"]["model"] == "opencode-go/deepseek-v4.1-flash"
-    assert agents["capo"] == {
-        "model": "anthropic/claude-opus-5-5",
-        "workspace": "capo",
-        "thinkingDefault": "high",
-        "runtime": {"type": "embedded"},
-    }
+    assert agents["capo"]["model"] == "anthropic/claude-opus-5-5"
+    assert agents["capo"]["thinkingDefault"] == "high"
+    assert agents["capo"]["runtime"] == {"type": "embedded"}
     assert agents["automazioni"]["model"] == "opencode-go/deepseek-v4-pro"
 
 
 def test_only_a_local_llamacpp_leaves_no_agent_but_the_assistant():
     config = build_config(machine(llamacpp=("devstral-small",)))
     agents = config["agents"]["entries"]
-    assert agents == {"main": {"model": "llamacpp/devstral-small", "workspace": "assistente"}}
+    assert list(agents) == ["main"]
+    assert agents["main"]["model"] == "llamacpp/devstral-small"
+    assert Path(agents["main"]["workspace"]) == STATE / "workspace"
     provider = config["models"]["providers"]["llamacpp"]
     assert provider["api"] == "openai-completions"
     assert provider["baseUrl"].endswith("/v1")
-    assert provider["models"] == [{"id": "devstral-small"}]
+    assert provider["models"][0]["id"] == "devstral-small"
 
 
 def test_a_machine_with_no_model_creates_no_agent_and_says_nothing_it_cannot_back():
@@ -133,10 +144,50 @@ def test_the_automation_agent_needs_n8n_and_falls_back_to_claude():
 
 def test_ollama_latest_is_stripped_everywhere_and_the_provider_keeps_the_exact_id():
     config = build_config(machine(ollama=("qwen3:8b:latest",)))
-    assert config["models"]["providers"]["ollama"]["models"] == [{"id": "qwen3:8b"}]
+    assert [model["id"] for model in config["models"]["providers"]["ollama"]["models"]] == ["qwen3:8b"]
     assert config["agents"]["entries"]["main"]["model"] == "ollama/qwen3:8b"
     assert "ollama/qwen3:8b" in config["tools"]["byProvider"]
     assert not any(":latest" in ref for ref in config["tools"]["byProvider"])
+
+
+def test_an_ollama_block_carries_everything_openclaw_needs():
+    config = build_config(machine(ollama=(
+        info("qwen3-vl:8b", context_window=16384, vision=True, reasoning=True),
+    )))
+    entry = config["models"]["providers"]["ollama"]["models"][0]
+    assert entry["id"] == "qwen3-vl:8b"
+    assert entry["name"] == "qwen3-vl:8b"
+    assert entry["reasoning"] is True
+    assert entry["input"] == ["text", "image"]
+    assert entry["contextWindow"] == 16384
+    assert entry["contextTokens"] == 16384
+    assert entry["maxTokens"] == 8192
+    assert entry["cost"] == {"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0}
+    assert entry["compat"] == {
+        "supportsTools": True,
+        "supportsUsageInStreaming": True,
+        "supportsJsonSchemaResponseFormat": True,
+    }
+
+
+def test_a_text_only_model_gets_text_input_and_no_invented_window():
+    config = build_config(machine(llamacpp=("local",)))
+    entry = config["models"]["providers"]["llamacpp"]["models"][0]
+    assert entry["input"] == ["text"]
+    assert "contextWindow" not in entry
+    assert "contextTokens" not in entry
+
+
+def test_an_existing_model_block_keeps_its_fields_and_gains_the_missing_ones():
+    current = {"models": {"providers": {"ollama": {"models": [
+        {"id": "qwen3:8b", "name": "il mio nome", "contextWindow": 999},
+    ]}}}}
+    config = build_config(machine(ollama=(info("qwen3:8b", context_window=16384),)), current=current)
+    entry = config["models"]["providers"]["ollama"]["models"][0]
+    assert entry["name"] == "il mio nome"
+    assert entry["contextWindow"] == 999
+    assert entry["contextTokens"] == 16384
+    assert entry["maxTokens"] == 8192
 
 
 def test_every_local_model_carries_the_cage():
@@ -152,6 +203,15 @@ def test_every_local_model_carries_the_cage():
     for pattern in ("n8n-mcp__create_*", "n8n-mcp__delete_*", "vault-library__update_section",
                     "drive__drive_confirm_upload"):
         assert pattern in deny
+
+
+def test_firecrawl_keeps_search_and_loses_the_tools_that_fetch_or_drive_a_page():
+    deny = list(denied_tools())
+    for pattern in ("firecrawl__*scrape*", "firecrawl__*map*", "firecrawl__*extract*",
+                    "firecrawl__*crawl*", "firecrawl__*agent*", "firecrawl__*browser*",
+                    "firecrawl__*interact*"):
+        assert pattern in deny
+    assert "firecrawl__*search*" not in deny
 
 
 def test_no_google_anywhere():
@@ -175,6 +235,34 @@ def test_the_gateway_is_loopback_and_token_protected_by_default():
     assert gateway["auth"]["token"] == "generated-by-nexgen-setup"
     assert gateway["tailscale"] == {"mode": "off"}
     assert build_config(machine(go=True), Choices(lan=True))["gateway"]["bind"] == "lan"
+
+
+def test_a_token_already_in_the_file_is_never_replaced():
+    current = {"gateway": {"auth": {"mode": "token", "token": "a-real-token"}}}
+    gateway = build_config(machine(go=True), current=current)["gateway"]
+    assert gateway["auth"]["token"] == "a-real-token"
+
+
+def test_a_new_agent_gets_an_absolute_workspace_and_an_existing_one_keeps_its_own():
+    current = {"agents": {"entries": {"main": {"workspace": "C:\\mine\\assistente"}}}}
+    agents = build_config(machine(go=True, n8n=True), current=current)["agents"]["entries"]
+    assert agents["main"]["workspace"] == "C:\\mine\\assistente"
+    assert Path(agents["capo"]["workspace"]) == STATE / "workspace-capo"
+    assert Path(agents["automazioni"]["workspace"]) == STATE / "workspace-automazioni"
+
+
+def test_the_agents_are_named_and_introduced_in_the_engine_language():
+    italian = build_config(machine(go=True, n8n=True), Choices(lang="it"))["agents"]["entries"]
+    assert italian["main"]["name"] == "main"
+    assert italian["main"]["identity"] == {"name": "assistente"}
+    assert italian["capo"]["identity"] == {"name": "capo"}
+    assert italian["automazioni"]["identity"] == {"name": "automazioni"}
+    assert "agentDir" not in italian["main"]
+
+    english = build_config(machine(go=True, n8n=True), Choices(lang="en"))["agents"]["entries"]
+    assert english["main"]["identity"] == {"name": "assistant"}
+    assert english["capo"]["identity"] == {"name": "lead"}
+    assert english["automazioni"]["identity"] == {"name": "automations"}
 
 
 def test_the_agents_may_talk_only_to_the_pairs_that_exist():
