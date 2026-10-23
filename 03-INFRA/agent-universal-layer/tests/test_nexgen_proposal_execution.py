@@ -11,15 +11,14 @@ import pytest
 from nexgen_local.config import LaneConfig
 
 
-@pytest.fixture(params=["calendar", "upload", "patch"])
+@pytest.fixture(params=["upload", "patch"])
 def gate(request, tmp_path, monkeypatch):
-    from nexgen_local import calendars, drive_mcp, patch
+    from nexgen_local import drive_mcp, patch
 
     cfg = LaneConfig(
         vault_root=tmp_path / "vault", repo_roots=(tmp_path,),
         audit_path=tmp_path / "audit.jsonl",
-        calendars_dir=tmp_path / "calendars", uploads_dir=tmp_path / "uploads",
-        proposals_dir=tmp_path / "patches",
+        uploads_dir=tmp_path / "uploads", proposals_dir=tmp_path / "patches",
     )
     pid = "20261004-123000-aabbccdd"
     h = SimpleNamespace(calls=[], effect=lambda: None, restore=lambda: None)
@@ -30,13 +29,7 @@ def gate(request, tmp_path, monkeypatch):
         return {"id": "synthetic"}
 
     kind = request.param
-    if kind == "calendar":
-        mod, error = calendars, calendars.CalendarError
-        proposal = mod.CalendarProposal(pid, "create", "primary", "synthetic", "2026-10-04T12:00:00", "2026-10-04T13:00:00", "", "", "")
-        monkeypatch.setattr(mod.calendar_conn, "create_event", effect)
-        def run(yes=True):
-            return mod.apply_proposal(cfg, pid, yes=yes)
-    elif kind == "upload":
+    if kind == "upload":
         mod, error = drive_mcp, drive_mcp.DriveGateError
         source = tmp_path / "source.txt"
         source.write_bytes(b"synthetic")
@@ -59,9 +52,7 @@ def gate(request, tmp_path, monkeypatch):
         h.restore = lambda: target.write_bytes(b"old\n")
         def run(yes=True):
             return mod.apply_proposal(cfg, pid, yes=yes)
-    if kind == "calendar":
-        proposal.content_sha = mod._proposal_sha(proposal)
-    elif kind == "upload":
+    if kind == "upload":
         proposal.meta_sha = mod._meta_sha(proposal)
     mod._save(cfg, proposal)
     h.module, h.error, h.run = mod, error, run
@@ -129,7 +120,7 @@ def test_missing_approval_does_not_consume_proposal(gate):
     assert len(gate.calls) == 1
 
 
-@pytest.mark.parametrize("gate", ["calendar", "upload"], indirect=True)
+@pytest.mark.parametrize("gate", ["upload"], indirect=True)
 def test_accepted_effect_with_connector_error_refuses_second_attempt(gate):
     from nexgen_local.connectors import ConnectorError
 
@@ -145,12 +136,12 @@ def test_accepted_effect_with_connector_error_refuses_second_attempt(gate):
     assert len(gate.calls) == 1
 
 
-@pytest.mark.parametrize("gate", ["calendar", "upload"], indirect=True)
+@pytest.mark.parametrize("gate", ["upload"], indirect=True)
 def test_old_sending_marker_is_displayed_and_refused_as_uncertain(gate):
     import json
     from nexgen_local.proposals import proposal_status
 
-    directory = getattr(gate.cfg, {"calendar": "calendars_dir", "upload": "uploads_dir"}[gate.kind])
+    directory = gate.cfg.uploads_dir
     artifact = directory / f"{gate.pid}.json"
     data = json.loads(artifact.read_text())
     data.pop("attempted_at")
@@ -163,15 +154,14 @@ def test_old_sending_marker_is_displayed_and_refused_as_uncertain(gate):
     assert not gate.calls
 
 
-@pytest.mark.parametrize("gate", ["calendar", "upload"], indirect=True)
+@pytest.mark.parametrize("gate", ["upload"], indirect=True)
 def test_changed_approval_fields_refuse_before_attempt(gate):
     import json
 
-    directory = getattr(gate.cfg, {"calendar": "calendars_dir", "upload": "uploads_dir"}[gate.kind])
+    directory = gate.cfg.uploads_dir
     artifact = directory / f"{gate.pid}.json"
     data = json.loads(artifact.read_text())
-    field = {"calendar": "calendar_id", "upload": "folder_id"}[gate.kind]
-    data[field] = "synthetic changed destination"
+    data["folder_id"] = "synthetic changed destination"
     artifact.write_text(json.dumps(data))
     with pytest.raises(gate.error, match="contenuto cambiato"):
         gate.run()
@@ -189,7 +179,7 @@ def test_fingerprint_cannot_move_nul_between_approval_fields():
 
 def test_artifact_identity_cannot_redirect_attempt_storage(gate):
     import json
-    directory = getattr(gate.cfg, {"calendar": "calendars_dir", "upload": "uploads_dir", "patch": "proposals_dir"}[gate.kind])
+    directory = getattr(gate.cfg, {"upload": "uploads_dir", "patch": "proposals_dir"}[gate.kind])
     artifact = directory / f"{gate.pid}.json"
     data = json.loads(artifact.read_text())
     data["id"] = "20261004-123000-eeeeeeee"
@@ -216,7 +206,7 @@ def test_failed_record_write_preserves_previous_complete_artifact(gate, monkeypa
     import os
     from pathlib import Path
 
-    directory = getattr(gate.cfg, {"calendar": "calendars_dir", "upload": "uploads_dir", "patch": "proposals_dir"}[gate.kind])
+    directory = getattr(gate.cfg, {"upload": "uploads_dir", "patch": "proposals_dir"}[gate.kind])
     artifact = directory / f"{gate.pid}.json"
     before = artifact.read_bytes()
     fdopen = os.fdopen
@@ -252,7 +242,7 @@ def test_proposal_artifact_is_private_before_confirmation(gate):
 
     if os.name == "nt":
         pytest.skip("POSIX permission modes do not establish Windows ACLs")
-    directory = getattr(gate.cfg, {"calendar": "calendars_dir", "upload": "uploads_dir", "patch": "proposals_dir"}[gate.kind])
+    directory = getattr(gate.cfg, {"upload": "uploads_dir", "patch": "proposals_dir"}[gate.kind])
     assert stat.S_IMODE(directory.stat().st_mode) == 0o700
     assert stat.S_IMODE((directory / f"{gate.pid}.json").stat().st_mode) == 0o600
 
@@ -280,6 +270,6 @@ def test_uncertain_attempt_is_not_presented_as_ready_to_approve(gate, monkeypatc
         assert len(gate.calls) == 1
         return
     monkeypatch.setattr(cli, "_config", lambda args: gate.cfg)
-    command = {"calendar": cli.cmd_cals, "patch": cli.cmd_proposals}[gate.kind]
+    command = {"patch": cli.cmd_proposals}[gate.kind]
     assert command(argparse.Namespace(json=False)) == 0
     assert "esito da verificare" in capsys.readouterr().out

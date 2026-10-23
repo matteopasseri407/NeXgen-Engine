@@ -10,7 +10,6 @@ import argparse
 import sys
 
 from .cmds import base as _base
-from .cmds.cal import cmd_cal_apply, cmd_cal_propose, cmd_cals
 from .cmds.drive import cmd_drive_mcp, cmd_drive_propose, cmd_drive_upload
 from .cmds.patch_cmds import cmd_apply, cmd_proposals, cmd_propose
 from .cmds.run import cmd_eval, cmd_run
@@ -45,7 +44,6 @@ def _print_receipts(receipts: list[dict]) -> None:
 __all__ = [
     "cmd_run", "cmd_eval",
     "cmd_propose", "cmd_proposals", "cmd_apply",
-    "cmd_cal_propose", "cmd_cals", "cmd_cal_apply",
     "cmd_drive_propose", "cmd_drive_upload", "cmd_drive_mcp",
     "cmd_doctor", "cmd_tier_evaluate", "cmd_tier_set", "main",
     "cmd_sup_start", "cmd_sup_status", "cmd_sup_attach", "cmd_sup_costi", "cmd_sup_window_check",
@@ -120,27 +118,6 @@ def main(argv: list[str] | None = None) -> int:
     apply_cmd.add_argument("--verify", default="", help="comando di verifica dopo l'applicazione; exit 3 se fallisce")
     apply_cmd.add_argument("--json", action="store_true")
     apply_cmd.set_defaults(func=cmd_apply)
-
-    cal_propose = sub.add_parser("cal-propose", help="propone un evento o un'eliminazione (cancello)")
-    cal_propose.add_argument("--summary", default="", help="titolo dell'evento")
-    cal_propose.add_argument("--start", default="", help="inizio ISO 8601 con timezone")
-    cal_propose.add_argument("--end", default="", help="fine ISO 8601 con timezone")
-    cal_propose.add_argument("--description", default="")
-    cal_propose.add_argument("--location", default="")
-    cal_propose.add_argument("--calendar", default="primary")
-    cal_propose.add_argument("--delete", default="", help="id evento da eliminare (invece di creare)")
-    cal_propose.add_argument("--json", action="store_true")
-    cal_propose.set_defaults(func=cmd_cal_propose)
-
-    cals = sub.add_parser("cals", help="elenca le proposte calendario da approvare")
-    cals.add_argument("--json", action="store_true")
-    cals.set_defaults(func=cmd_cals)
-
-    cal_apply = sub.add_parser("cal-apply", help="applica una proposta calendario (serve --yes)")
-    cal_apply.add_argument("proposal_id")
-    cal_apply.add_argument("--yes", action="store_true")
-    cal_apply.add_argument("--json", action="store_true")
-    cal_apply.set_defaults(func=cmd_cal_apply)
 
     drive_propose = sub.add_parser("drive-propose", help="prepara un caricamento su Drive (dentro vault/repo)")
     drive_propose.add_argument("--file", required=True, help="file locale da caricare")

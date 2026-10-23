@@ -121,7 +121,6 @@ class LaneConfig:
         default_factory=lambda: lane_state_dir() / "proposals"
     )
     uploads_dir: Path = field(default_factory=lambda: lane_state_dir() / "uploads")
-    calendars_dir: Path = field(default_factory=lambda: lane_state_dir() / "calendars")
     firecrawl_cmd: str = "firecrawl-local"
     pdftotext_cmd: str = "pdftotext"
     excluded_parts: frozenset[str] = EXCLUDED_PARTS

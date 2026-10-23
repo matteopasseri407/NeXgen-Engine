@@ -1,9 +1,8 @@
 """Pinning dello split gatefams prima del refactor.
 
-Fissa il comportamento attuale (non quello desiderato) dei due file
-proposals.py e calendars.py con sole proposte e gate finti in tmp_path:
-identita e hash delle proposte, propose/apply calendario finto. MAI
-approvazioni vere, MAI rete, MAI scritture fuori tmp.
+Fissa il comportamento attuale (non quello desiderato) di proposals.py con
+sole proposte finte in tmp_path: identita, hash e stato delle proposte.
+MAI approvazioni vere, MAI rete, MAI scritture fuori tmp.
 """
 from __future__ import annotations
 
@@ -15,18 +14,6 @@ from types import SimpleNamespace
 import pytest
 
 from nexgen_local.config import LaneConfig
-
-
-def _cal_cfg(tmp_path: Path) -> LaneConfig:
-    vault = tmp_path / "vault"
-    vault.mkdir(parents=True, exist_ok=True)
-    return LaneConfig(
-        vault_root=vault,
-        repo_roots=(),
-        model="fake-model",
-        audit_path=tmp_path / "audit.jsonl",
-        calendars_dir=tmp_path / "calendars",
-    )
 
 
 # ------------------------------------------------------- proposals.py
@@ -99,46 +86,10 @@ def test_proposals_record_attempt_needs_durable_save() -> None:
     assert calls == ["saved"]
 
 
-# ------------------------------------------------------- calendars.py
-
-
-def test_calendars_propose_event_and_gate(tmp_path: Path) -> None:
-    from nexgen_local.calendars import format_gate, list_proposals, propose_event
-
-    cfg = _cal_cfg(tmp_path)
-    proposal = propose_event(
-        cfg, "Dentista", "2026-10-01T10:00:00+02:00", "2026-10-01T11:00:00+02:00",
-        location="Studio",
-    )
-    assert proposal.kind == "create"
-    assert proposal.content_sha.startswith("v1:")
-    gate = format_gate(proposal)
-    assert "Dentista" in gate and "2026-10-01T10:00:00+02:00" in gate
-    assert [item.id for item in list_proposals(cfg)] == [proposal.id]
-    with pytest.raises(Exception, match="titolo"):
-        propose_event(cfg, "", "2026-10-01T10:00:00+02:00", "2026-10-01T11:00:00+02:00")
-
-
-def test_calendars_apply_with_fake_connector(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    import nexgen_local.calendars as cal_mod
-    from nexgen_local.calendars import CalendarError, apply_proposal, propose_event
-
-    cfg = _cal_cfg(tmp_path)
-    proposal = propose_event(cfg, "Dentista", "2026-10-01T10:00:00+02:00", "2026-10-01T11:00:00+02:00")
-    with pytest.raises(CalendarError, match="--yes"):
-        apply_proposal(cfg, proposal.id, yes=False)
-    monkeypatch.setattr(cal_mod.calendar_conn, "create_event", lambda *a, **k: {"id": "e9"})
-    result = apply_proposal(cfg, proposal.id, yes=True)
-    assert result == {"id": proposal.id, "applied": True, "done_id": "e9", "kind": "create"}
-    with pytest.raises(CalendarError, match="gia' applicata"):
-        apply_proposal(cfg, proposal.id, yes=True)
-
-
 # ------------------------------------------------------- firme pubbliche
 
 
 def test_public_signatures_unchanged() -> None:
-    from nexgen_local import calendars as cal_mod
     from nexgen_local import proposals as p
 
     assert list(inspect.signature(p.valid_proposal_id).parameters) == ["proposal_id"]
@@ -150,18 +101,9 @@ def test_public_signatures_unchanged() -> None:
     assert list(inspect.signature(p.refuse_prior_attempt).parameters) == ["proposal", "error"]
     assert list(inspect.signature(p.proposal_status).parameters) == ["proposal", "completed", "pending"]
     assert list(inspect.signature(p.record_attempt).parameters) == ["proposal", "save", "error"]
-    assert list(inspect.signature(cal_mod.propose_event).parameters) == [
-        "cfg", "summary", "start", "end", "description", "location", "calendar_id",
-    ]
-    assert list(inspect.signature(cal_mod.propose_delete).parameters) == ["cfg", "calendar_id", "event_id"]
-    assert list(inspect.signature(cal_mod.format_gate).parameters) == ["proposal"]
-    assert list(inspect.signature(cal_mod.apply_proposal).parameters) == ["cfg", "proposal_id", "yes"]
-    assert list(inspect.signature(cal_mod.load_proposal).parameters) == ["cfg", "proposal_id"]
-    assert list(inspect.signature(cal_mod.list_proposals).parameters) == ["cfg"]
 
 
 def test_split_helpers_in_sequence() -> None:
-    import nexgen_local.calendars as cal_mod
     import nexgen_local.proposals as p_mod
 
     p_src = Path(p_mod.__file__).read_text(encoding="utf-8")
@@ -173,10 +115,3 @@ def test_split_helpers_in_sequence() -> None:
     sha_body = p_src[p_src.index("def content_sha"):]
     assert "_content_sha_impl(" in sha_body[: sha_body.index("\ndef ")]
 
-    cal_src = Path(cal_mod.__file__).read_text(encoding="utf-8")
-    assert "def _propose_event_impl" in cal_src
-    assert "def _propose_delete_impl" in cal_src
-    assert "def _format_gate_impl" in cal_src
-    propose_body = cal_src[cal_src.index("def propose_event"):]
-    propose_body = propose_body[: propose_body.index("\ndef ")]
-    assert "_propose_event_impl(" in propose_body

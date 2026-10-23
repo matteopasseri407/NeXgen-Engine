@@ -1,9 +1,9 @@
 """Read and write Calendar over the v3 REST API, through the same OAuth store.
 
-Reads (list/get) are plain functions. Writes (create/update/delete) exist
-here as provider calls, but the lane never calls them directly: they go
-through the calendar gate (``calendars.py``), propose first, human approval,
-exactly like mail. No write happens from a model choice, ever.
+Reads (list/get) are plain functions and feed the lane's search. Writes
+(create/update/delete) stay as provider calls with no caller since the
+calendar gate was retired: nothing in the lane writes an event. No write
+happens from a model choice, ever.
 """
 
 from __future__ import annotations
