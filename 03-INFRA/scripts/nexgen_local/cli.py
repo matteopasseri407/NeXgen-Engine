@@ -1,6 +1,6 @@
 """Command line for the optional local lane: dispatcher only.
 
-Each domain lives in nexgen_local.cmds (run/patch/mail/cal/wf/drive/relay/service);
+Each domain lives in nexgen_local.cmds (run/patch/mail/cal/wf/drive/service);
 this module keeps argument wiring (main) and re-exports every cmd_* so
 `from nexgen_local import cli` and `cli.cmd_mail_propose` keep working.
 """
@@ -14,7 +14,6 @@ from .cmds.cal import cmd_cal_apply, cmd_cal_propose, cmd_cals
 from .cmds.drive import cmd_drive_mcp, cmd_drive_propose, cmd_drive_upload
 from .cmds.mail import cmd_mail_propose, cmd_mail_send, cmd_mails
 from .cmds.patch_cmds import cmd_apply, cmd_proposals, cmd_propose
-from .cmds.relay_cmd import cmd_relay
 from .cmds.run import cmd_close, cmd_eval, cmd_explore, cmd_research, cmd_run
 from .cmds.service import cmd_doctor, cmd_mcp
 from .cmds.sup import (
@@ -22,7 +21,6 @@ from .cmds.sup import (
 )
 from .cmds.tier import cmd_tier_evaluate, cmd_tier_set
 from .cmds.wf import cmd_wf_propose, cmd_wf_run, cmd_wfs
-from .relay import RELAY_CLIS
 from .tiers import TIER_ORDER
 
 
@@ -53,7 +51,7 @@ __all__ = [
     "cmd_cal_propose", "cmd_cals", "cmd_cal_apply",
     "cmd_wf_propose", "cmd_wfs", "cmd_wf_run",
     "cmd_drive_propose", "cmd_drive_upload", "cmd_drive_mcp",
-    "cmd_relay", "cmd_mcp", "cmd_doctor", "cmd_tier_evaluate", "cmd_tier_set", "main",
+    "cmd_mcp", "cmd_doctor", "cmd_tier_evaluate", "cmd_tier_set", "main",
     "cmd_sup_start", "cmd_sup_status", "cmd_sup_attach", "cmd_sup_costi", "cmd_sup_window_check",
 ]
 
@@ -247,21 +245,6 @@ def main(argv: list[str] | None = None) -> int:
     drive_mcp.add_argument("--repo", action="append")
     drive_mcp.add_argument("--audit")
     drive_mcp.set_defaults(func=cmd_drive_mcp)
-
-    relay = sub.add_parser("relay", help="passa una domanda a un'altra CLI (sola lettura, isolata)")
-    relay.add_argument("--list", action="store_true", help="mostra i CLI supportati e installati")
-    relay.add_argument("--cli", choices=RELAY_CLIS)
-    relay.add_argument("--model")
-    relay.add_argument("--prompt")
-    relay.add_argument("--file", help="allega un file di testo al prompt (dentro vault/repo)")
-    relay.add_argument(
-        "--allow-outside-attach",
-        action="store_true",
-        help="consenti un allegato fuori dalle radici consentite (esplicito)",
-    )
-    relay.add_argument("--timeout", type=int, default=600)
-    relay.add_argument("--json", action="store_true")
-    relay.set_defaults(func=cmd_relay)
 
     doctor = sub.add_parser("doctor", help="verifica precondizioni e superficie")
     doctor.add_argument("--model")

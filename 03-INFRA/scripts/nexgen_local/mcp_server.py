@@ -109,8 +109,6 @@ def tool_close(cfg: LaneConfig, llm: LLM, file: str, save: bool = False) -> str:
 
 
 def tool_status(cfg: LaneConfig) -> str:
-    from .relay import available_clis
-
     return "\n".join(
         [
             "lane locale in sola lettura",
@@ -118,7 +116,6 @@ def tool_status(cfg: LaneConfig) -> str:
             f"answer: {cfg.answer_tag}",
             f"vault: {cfg.vault_root}",
             f"repo: {', '.join(str(root) for root in cfg.repo_roots) or 'nessuno'}",
-            f"relay disponibili: {', '.join(available_clis()) or 'nessuno'}",
         ]
     )
 

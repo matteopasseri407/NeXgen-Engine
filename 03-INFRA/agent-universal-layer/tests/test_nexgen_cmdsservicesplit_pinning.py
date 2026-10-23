@@ -58,7 +58,6 @@ def _stub_doctor_deps(monkeypatch: pytest.MonkeyPatch, cfg: LaneConfig) -> None:
 
     monkeypatch.setattr(svc_mod, "_config", lambda args: cfg)
     monkeypatch.setattr(svc_mod, "audit_writable", lambda _cfg: True)
-    monkeypatch.setattr(svc_mod, "available_clis", lambda: [])
     monkeypatch.setattr(svc_mod.shutil, "which", lambda _cmd: None)
     # Dipendenze locali finte: esito deterministico senza installazioni reali.
     for name in ("langchain_ollama", "langgraph"):

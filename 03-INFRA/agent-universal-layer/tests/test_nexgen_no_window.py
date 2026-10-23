@@ -156,37 +156,6 @@ def test_a_windows_shim_is_invoked_through_cmd(tmp_path, monkeypatch):
     assert plain == [sys.executable, "-c", "pass"]
 
 
-def test_the_relay_resolves_the_cli_shim_before_running(tmp_path, monkeypatch):
-    """MUST-18: l'argv del relay passa dall'helper che risolve gli shim .cmd
-    di Windows: lanciare `codex` nudo su Windows non parte."""
-    import nexgen_local.relay as relay_module
-    from nexgen_local.config import LaneConfig
-
-    asked: list[list[str]] = []
-    launched: list[list[str]] = []
-
-    def resolve(argv):
-        asked.append(list(argv))
-        return ["cmd.exe", "/d", "/s", "/c", *argv]
-
-    def fake_run(argv, **kwargs):
-        launched.append(list(argv))
-        raise OSError("stop: conta solo cosa sarebbe partito")
-
-    monkeypatch.setattr(relay_module, "windows_command_argv", resolve, raising=False)
-    monkeypatch.setattr(relay_module.subprocess, "run", fake_run)
-    monkeypatch.setattr(relay_module.shutil, "which", lambda cli: f"C:/npm/{cli}.cmd")
-    monkeypatch.setattr(relay_module, "_build_argv", lambda *args: (["codex", "exec", "p"], None))
-    cfg = LaneConfig(vault_root=tmp_path / "vault", repo_roots=(), model="synthetic-model",
-                     audit_path=tmp_path / "audit.jsonl")
-
-    with pytest.raises(relay_module.RelayError):
-        relay_module.run_relay(cfg, "codex", "synthetic-model", "prompt")
-
-    assert asked == [["codex", "exec", "p"]], "l'argv deve passare dall'helper degli shim"
-    assert launched and launched[0][:4] == ["cmd.exe", "/d", "/s", "/c"]
-
-
 def test_a_windows_shim_is_wrapped_and_a_plain_command_is_not(tmp_path, monkeypatch):
     """La stessa regola, provata su ogni piattaforma: si sostituisce solo il
     nome che l'helper legge dentro `nexgen_core.processes` (il modulo os vero

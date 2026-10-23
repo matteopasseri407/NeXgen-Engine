@@ -5,7 +5,6 @@ import argparse
 import json
 
 from . import base as _base
-from ..relay import available_clis
 from ..tools import audit_writable
 import shutil
 import urllib.request
@@ -65,7 +64,6 @@ def _health_doctor(args: argparse.Namespace) -> int:
     _outlook_ok, _outlook_detail = _outlook_status()
     add("outlook (connettore personale)", _outlook_ok, _outlook_detail, required=False)
     add("git (proposte patch)", bool(shutil.which("git")), "opzionale", required=False)
-    add("relay (CLI installate)", bool(available_clis()), ", ".join(available_clis()) or "nessuna", required=False)
     models_detail = f"router={cfg.router_tag} answer={cfg.answer_tag}"
     if cfg.router_tag != cfg.answer_tag:
         # Two resident models on one GPU: every switch pays a load/unload.
