@@ -95,7 +95,6 @@ def run_doctor(tmp_path: Path, config_path: Path | None = None, *, declared: boo
         env={"LOCALAPPDATA": str(tmp_path / "localappdata")},
         platform=platform,
         connect=connect or (lambda host, port, timeout: False),
-        which=lambda name: None,
     )
 
 
@@ -110,7 +109,6 @@ def test_a_machine_without_openclaw_and_without_the_module_says_nothing(tmp_path
         engine_root=tmp_path / "engine",
         env={},
         platform="linux",
-        which=lambda name: None,
     )
     assert outcomes == []
 

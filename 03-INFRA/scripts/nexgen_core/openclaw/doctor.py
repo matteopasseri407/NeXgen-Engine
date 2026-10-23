@@ -12,7 +12,6 @@ because starting or validating OpenClaw is B2's job, and never write a file.
 from __future__ import annotations
 
 import os
-import shutil
 import socket
 import sys
 from collections.abc import Callable, Mapping
@@ -62,9 +61,17 @@ def _declared(vault_data: Path | None, home: Path | None = None) -> bool:
     return states.get("openclaw") == "local"
 
 
-def _has_trace(home: Path, env: Mapping[str, str], which) -> bool:
-    """The cheap question asked before the expensive one: is OpenClaw here at all?"""
-    return which("openclaw") is not None or openclaw_config(home, env).is_file()
+def _has_trace(home: Path, env: Mapping[str, str]) -> bool:
+    """The cheap question asked before the expensive one: is there a file to judge?
+
+    Deliberately the configuration file and not the binary on PATH: a global
+    binary is a fact about the machine, while this check must answer about the
+    home it was given and must never read another one. A machine that installed
+    OpenClaw and never configured it gets silence, which is the same answer a
+    machine without it gets; the module's own declaration, when present, is what
+    makes the doctor speak.
+    """
+    return openclaw_config(home, env).is_file()
 
 
 def _pinned(engine_root: Path | None) -> str | None:
@@ -402,18 +409,16 @@ def collect(
     vault_data: Path | None = None,
     connect: Connect | None = None,
     platform: str | None = None,
-    which=None,
 ) -> list[CheckOutcome]:
     """Every OpenClaw check that applies to this machine, or nothing at all."""
     values = dict(os.environ) if env is None else {str(k): str(v) for k, v in env.items()}
     home_dir = resolve_home(home)
     system = platform or sys.platform
     declared = _declared(vault_data, home_dir)
-    probe = which or shutil.which
 
     snapshot = detected
     if snapshot is None:
-        if not declared and not _has_trace(home_dir, values, probe):
+        if not declared and not _has_trace(home_dir, values):
             return []
         snapshot = detect(
             home=home_dir, env=values, engine_root=engine_root, vault_data=vault_data, platform=system,
