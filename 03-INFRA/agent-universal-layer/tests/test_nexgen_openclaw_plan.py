@@ -16,10 +16,10 @@ SCRIPTS_DIR = Path(__file__).resolve().parents[2] / "scripts"
 if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
-from nexgen_core import i18n
-from nexgen_core.openclaw.detect import Detection, Installation, LocalModels, Login
-from nexgen_core.openclaw.plan import build_plan, render_plan
-from nexgen_core.openclaw.profile import Choices
+from nexgen_core import i18n  # noqa: E402 - sys.path shim for cloned checkout
+from nexgen_core.openclaw.detect import Detection, Installation, LocalModels, Login  # noqa: E402 - sys.path shim for cloned checkout
+from nexgen_core.openclaw.plan import build_plan, render_plan  # noqa: E402 - sys.path shim for cloned checkout
+from nexgen_core.openclaw.profile import Choices  # noqa: E402 - sys.path shim for cloned checkout
 
 
 @pytest.fixture(autouse=True)

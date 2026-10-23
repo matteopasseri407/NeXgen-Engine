@@ -15,7 +15,7 @@ SCRIPTS_DIR = Path(__file__).resolve().parents[2] / "scripts"
 if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
-from nexgen_core.openclaw.detect import (
+from nexgen_core.openclaw.detect import (  # noqa: E402 - sys.path shim for cloned checkout
     DEFAULT_LLAMACPP_URL,
     DEFAULT_OLLAMA_URL,
     detect,

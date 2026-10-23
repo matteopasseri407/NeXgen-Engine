@@ -14,9 +14,9 @@ SCRIPTS_DIR = Path(__file__).resolve().parents[2] / "scripts"
 if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
-from nexgen_core.openclaw.detect import Detection, Installation, LocalModels, Login
-from nexgen_core.openclaw.doctor import collect, exit_code
-from nexgen_core.report import Severity
+from nexgen_core.openclaw.detect import Detection, Installation, LocalModels, Login  # noqa: E402 - sys.path shim for cloned checkout
+from nexgen_core.openclaw.doctor import collect, exit_code  # noqa: E402 - sys.path shim for cloned checkout
+from nexgen_core.report import Severity  # noqa: E402 - sys.path shim for cloned checkout
 
 PINNED = "2026.10.6"
 

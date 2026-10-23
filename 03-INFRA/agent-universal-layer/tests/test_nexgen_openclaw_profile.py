@@ -15,9 +15,9 @@ SCRIPTS_DIR = Path(__file__).resolve().parents[2] / "scripts"
 if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
-from nexgen_core.openclaw.detect import Detection, Installation, LocalModels, Login
-from nexgen_core.openclaw.profile import Choices, build_config, denied_tools
-from nexgen_core.openclaw.templates import render_workspace
+from nexgen_core.openclaw.detect import Detection, Installation, LocalModels, Login  # noqa: E402 - sys.path shim for cloned checkout
+from nexgen_core.openclaw.profile import Choices, build_config, denied_tools  # noqa: E402 - sys.path shim for cloned checkout
+from nexgen_core.openclaw.templates import render_workspace  # noqa: E402 - sys.path shim for cloned checkout
 
 BASE_PLUGINS = [
     "browser", "canvas", "device-pair", "document-extract", "file-transfer",

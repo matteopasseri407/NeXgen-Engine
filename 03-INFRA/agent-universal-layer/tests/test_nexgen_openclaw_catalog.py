@@ -17,7 +17,7 @@ if str(SCRIPTS_DIR) not in sys.path:
 
 INFRA = Path(__file__).resolve().parents[2]
 
-from nexgen_core.modules import load_catalog
+from nexgen_core.modules import load_catalog  # noqa: E402 - sys.path shim for cloned checkout
 
 
 def openclaw_module():
