@@ -90,6 +90,38 @@ def _merge_plugin_entries(current: Any, proposed: Any) -> Any:
     return merged
 
 
+#: List-valued leaves that are sets, not sequences. `alsoAllow` and `deny` are
+#: one model's tool permissions; `send` is the ids one agent may message.
+#: Replacing any of them whole would silently remove what the person added.
+SET_LISTS = frozenset({"alsoAllow", "deny", "send"})
+
+
+def _ordered_union(current: list[Any], proposed: list[Any]) -> list[Any]:
+    """The person's entries first, then the engine's, without duplicates."""
+    union: list[Any] = []
+    for item in [*current, *proposed]:
+        if item not in union:
+            union.append(item)
+    return union
+
+
+def _merge_sets(current: Any, proposed: Any, merged: Any) -> Any:
+    """Re-merges the leaves that are sets; everywhere else the proposal won.
+
+    `_merge_dict` replaces every non-dict value, which is right for a title and
+    wrong for a permission list: this pass runs over the same shape and keeps
+    both sides of the list-valued leaves named in `SET_LISTS`.
+    """
+    if not (isinstance(current, dict) and isinstance(proposed, dict) and isinstance(merged, dict)):
+        return merged
+    for key, value in proposed.items():
+        if isinstance(value, dict):
+            merged[key] = _merge_sets(current.get(key), value, merged.get(key))
+        elif key in SET_LISTS and isinstance(value, list) and isinstance(current.get(key), list):
+            merged[key] = _ordered_union(current[key], value)
+    return merged
+
+
 def merged_document(current: dict[str, Any] | None, proposed: dict[str, Any]) -> dict[str, Any]:
     """The file to write: the person's keys, the engine's values.
 
@@ -98,7 +130,7 @@ def merged_document(current: dict[str, Any] | None, proposed: dict[str, Any]) ->
     modified.
     """
     base = dict(current) if isinstance(current, dict) else {}
-    merged = _merge_dict(base, proposed)
+    merged = _merge_sets(base, proposed, _merge_dict(base, proposed))
 
     if isinstance(proposed.get("plugins"), dict):
         merged["plugins"] = _merge_plugin_entries(base.get("plugins"), proposed["plugins"])

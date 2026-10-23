@@ -59,3 +59,41 @@ def test_on_windows_no_posix_mode_is_forced(tmp_path, monkeypatch, pretend_os):
     setup_write.write_document(path, "{}\n")
 
     assert calls == []
+
+
+# ------------------------------------------------------------------- merging
+
+
+def test_a_tool_the_person_added_to_a_cage_is_not_removed():
+    """`alsoAllow` and `deny` are sets: replacing them drops the person's tools."""
+    current = {"tools": {"byProvider": {"ollama/qwen3:8b": {
+        "alsoAllow": ["my_tool"], "deny": ["my_bad_tool"],
+    }}}}
+    proposed = {"tools": {"byProvider": {"ollama/qwen3:8b": {
+        "alsoAllow": ["read"], "deny": ["write"],
+    }}}}
+
+    cage = setup_write.merged_document(current, proposed)["tools"]["byProvider"]["ollama/qwen3:8b"]
+
+    assert cage["alsoAllow"] == ["my_tool", "read"]
+    assert cage["deny"] == ["my_bad_tool", "write"]
+
+
+def test_an_agent_to_agent_partner_the_person_added_stays():
+    current = {"agents": {"entries": {"main": {"tools": {"agentToAgent": {"send": ["helper"]}}}}}}
+    proposed = {"agents": {"entries": {"main": {"tools": {"agentToAgent": {"send": ["capo"]}}}}}}
+
+    send = setup_write.merged_document(current, proposed)["agents"]["entries"]["main"]["tools"]["agentToAgent"]["send"]
+
+    assert send == ["helper", "capo"]
+
+
+def test_a_list_is_still_replaced_where_the_proposal_owns_it():
+    """The union is for the permission lists only: a title is not a set."""
+    current = {"agents": {"entries": {"main": {"name": "old", "tags": ["a"]}}}}
+    proposed = {"agents": {"entries": {"main": {"name": "new", "tags": ["b"]}}}}
+
+    merged = setup_write.merged_document(current, proposed)["agents"]["entries"]["main"]
+
+    assert merged == {"name": "new", "tags": ["b"]}
+

@@ -237,6 +237,15 @@ def test_the_gateway_is_loopback_and_token_protected_by_default():
     assert build_config(machine(go=True), Choices(lan=True))["gateway"]["bind"] == "lan"
 
 
+def test_a_tailscale_the_person_turned_on_is_not_switched_off():
+    """A setup must not silently disable a remote access the person configured."""
+    current = {"gateway": {"tailscale": {"mode": "serve"}}}
+
+    gateway = build_config(machine(go=True), current=current)["gateway"]
+
+    assert gateway["tailscale"] == {"mode": "serve"}
+
+
 def test_a_token_already_in_the_file_is_never_replaced():
     current = {"gateway": {"auth": {"mode": "token", "token": "a-real-token"}}}
     gateway = build_config(machine(go=True), current=current)["gateway"]

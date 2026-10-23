@@ -403,10 +403,11 @@ def _agent_pairs(models: dict[str, str]) -> dict[str, list[str]]:
 
 
 def _gateway(chosen: Choices, current: dict[str, Any] | None) -> dict[str, Any]:
-    """The gateway block, keeping a token the file already has."""
+    """The gateway block, keeping a token and a tailscale mode the file already has."""
     gateway = current.get("gateway") if isinstance(current, dict) else None
     auth = gateway.get("auth") if isinstance(gateway, dict) else None
     token = auth.get("token") if isinstance(auth, dict) else None
+    tailscale = gateway.get("tailscale") if isinstance(gateway, dict) else None
     return {
         "mode": "local",
         "port": GATEWAY_PORT,
@@ -415,7 +416,9 @@ def _gateway(chosen: Choices, current: dict[str, Any] | None) -> dict[str, Any]:
             "mode": "token",
             "token": token if isinstance(token, str) and token.strip() else PENDING_TOKEN,
         },
-        "tailscale": {"mode": "off"},
+        # The person may have chosen Tailscale for remote access: turning it off
+        # silently would break a setup that works and was not the engine's to undo.
+        "tailscale": dict(tailscale) if isinstance(tailscale, dict) else {"mode": "off"},
     }
 
 
