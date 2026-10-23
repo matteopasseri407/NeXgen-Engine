@@ -78,6 +78,7 @@ class FakeService:
         self.starts_listening = True
         self.installed = installed
         self.stop_ok = stop_ok
+        self.install_process_count = 0
         self.events: list[str] = []
         self.stopping = False
         self.now = 0.0
@@ -90,7 +91,12 @@ class FakeService:
     def install(self, dry_run: bool = False):
         self.events.append("install")
         self.installed = True
-        return {"ok": True, "commands": [["openclaw", "gateway", "install"]], "dry_run": dry_run}
+        return {
+            "ok": True,
+            "commands": [["openclaw", "gateway", "install"]],
+            "status": {"installed": True, "mechanism": "vbs", "process_count": self.install_process_count},
+            "dry_run": dry_run,
+        }
 
     def start(self, dry_run: bool = False):
         self.events.append("start")
@@ -576,6 +582,32 @@ def test_the_module_is_declared_local_for_this_host(tmp_path):
     state = (machine.vault / "03-INFRA" / "agent-universal-layer" / "modules.state.yaml").read_text(encoding="utf-8")
     assert "openclaw: local" in state
     assert "hosts:" in state
+
+
+def test_service_step_does_not_start_a_gateway_the_install_already_launched():
+    """`openclaw gateway install` brings the daemon up: starting it again made two."""
+    from types import SimpleNamespace
+
+    from nexgen_core.openclaw.setup_steps import service_step
+
+    class InstallLaunched(FakeService):
+        def __init__(self):
+            super().__init__(installed=False, listening=False)
+            self.install_process_count = 1
+            self.probes = 0
+
+        def port_probe(self, port: int, host: str = "127.0.0.1") -> bool:
+            self.probes += 1
+            return self.probes > 2  # the daemon the install launched finishes its cold start
+
+    service = InstallLaunched()
+    lines: list[str] = []
+
+    assert service_step(SimpleNamespace(service=service, out=lines.append), restarted=False) is True
+
+    assert service.events.count("install") == 1
+    assert "start" not in service.events, "the install already started it"
+    assert any("the install started" in line for line in lines)
 
 
 def test_the_last_step_runs_the_doctor_and_reports(tmp_path):

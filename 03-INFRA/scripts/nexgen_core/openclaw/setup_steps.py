@@ -244,9 +244,25 @@ def wait_for_port(
         service.sleeper(min(1.0, max(0.1, deadline - service.time_provider())))
 
 
+def _install_left_a_gateway(result: dict) -> bool:
+    """Whether `openclaw gateway install` launched the gateway it registered.
+
+    The status the install returns is the evidence. A process means the
+    daemon is already coming up, and calling `start()` as well is how two
+    gateways ended up competing for one port. No process means this build
+    only registered it, and the explicit start below is still needed.
+    """
+    status = result.get("status") if isinstance(result.get("status"), dict) else {}
+    try:
+        return int(status.get("process_count") or 0) > 0
+    except (TypeError, ValueError):  # nexgen: allow reason="a status a test double did not fill means 'nothing is running', the conservative answer"
+        return False
+
+
 def service_step(setup: Setup, restarted: bool) -> bool:
     """Step 6: a service that is installed, and a port that answers."""
     status = setup.service.status()
+    installed_now = False
     if status.get("installed"):
         setup.out(t("The gateway is already installed as a service ({mechanism}).",
                     mechanism=status.get("mechanism") or "?"))
@@ -255,11 +271,14 @@ def service_step(setup: Setup, restarted: bool) -> bool:
         setup.out(t("Gateway service install: {state}", state=t("done") if result.get("ok") else t("failed")))
         if not result.get("ok"):
             return False
+        installed_now = _install_left_a_gateway(result)
     if setup.service.port_probe(setup.service.port, "127.0.0.1"):
         setup.out(t("The gateway already answers on 127.0.0.1:{port}.", port=setup.service.port))
         return True
     if restarted:
         setup.out(t("Waiting for the gateway the write step restarted: a cold start takes about five minutes."))
+    elif installed_now:
+        setup.out(t("Waiting for the gateway the install started: a cold start takes about five minutes."))
     else:
         setup.out(t("Starting the gateway: a cold start takes about five minutes."))
         started = setup.service.start()

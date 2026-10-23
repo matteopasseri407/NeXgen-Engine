@@ -1561,6 +1561,8 @@ MESSAGES: dict[str, str] = {
         "Avvio il gateway: un avvio a freddo dura circa cinque minuti.",
     "Waiting for the gateway the write step restarted: a cold start takes about five minutes.":
         "Aspetto il gateway riavviato dalla scrittura: un avvio a freddo dura circa cinque minuti.",
+    "Waiting for the gateway the install started: a cold start takes about five minutes.":
+        "Aspetto il gateway avviato dall'installazione: un avvio a freddo dura circa cinque minuti.",
     "OpenClaw rejected the configuration (exit {code}): the previous file was put back.":
         "OpenClaw ha rifiutato la configurazione (uscita {code}): ho rimesso il file precedente.",
     "The gateway is already installed as a service ({mechanism}).":
