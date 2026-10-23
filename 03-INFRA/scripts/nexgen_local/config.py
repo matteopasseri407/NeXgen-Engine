@@ -117,9 +117,6 @@ class LaneConfig:
     max_results: int = 5
     read_chars: int = 3000
     audit_path: Path = field(default_factory=lambda: lane_state_dir() / "audit.jsonl")
-    proposals_dir: Path = field(
-        default_factory=lambda: lane_state_dir() / "proposals"
-    )
     uploads_dir: Path = field(default_factory=lambda: lane_state_dir() / "uploads")
     firecrawl_cmd: str = "firecrawl-local"
     pdftotext_cmd: str = "pdftotext"

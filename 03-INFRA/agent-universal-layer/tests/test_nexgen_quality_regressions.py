@@ -182,7 +182,7 @@ def test_skill_failure_is_a_failed_cycle_but_no_longer_stops_the_rest(tmp_path, 
 @pytest.mark.parametrize(
     "module,directory",
     [
-        ("patch", "proposals_dir"),
+        ("drive_mcp", "uploads_dir"),
     ],
 )
 def test_proposal_update_failure_preserves_reviewed_content(tmp_path, monkeypatch, module, directory):

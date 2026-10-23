@@ -1,6 +1,6 @@
 """Command line for the optional local lane: dispatcher only.
 
-Each domain lives in nexgen_local.cmds (run/patch/mail/cal/drive/service);
+Each domain lives in nexgen_local.cmds (run/drive/service/tier/sup);
 this module keeps argument wiring (main) and re-exports every cmd_* so
 `from nexgen_local import cli` and `cli.cmd_drive_propose` keep working.
 """
@@ -11,7 +11,6 @@ import sys
 
 from .cmds import base as _base
 from .cmds.drive import cmd_drive_mcp, cmd_drive_propose, cmd_drive_upload
-from .cmds.patch_cmds import cmd_apply, cmd_proposals, cmd_propose
 from .cmds.run import cmd_eval, cmd_run
 from .cmds.service import cmd_doctor
 from .cmds.sup import (
@@ -43,7 +42,6 @@ def _print_receipts(receipts: list[dict]) -> None:
 
 __all__ = [
     "cmd_run", "cmd_eval",
-    "cmd_propose", "cmd_proposals", "cmd_apply",
     "cmd_drive_propose", "cmd_drive_upload", "cmd_drive_mcp",
     "cmd_doctor", "cmd_tier_evaluate", "cmd_tier_set", "main",
     "cmd_sup_start", "cmd_sup_status", "cmd_sup_attach", "cmd_sup_costi", "cmd_sup_window_check",
@@ -99,26 +97,6 @@ def main(argv: list[str] | None = None) -> int:
     evaluate.add_argument("--json", action="store_true")
     evaluate.set_defaults(func=cmd_eval)
 
-    propose = sub.add_parser("propose", help="propone una patch (cancello a fatti macchina)")
-    propose.add_argument("--file", required=True)
-    propose.add_argument("--instruction", required=True)
-    propose.add_argument("--model")
-    propose.add_argument("--repo", action="append")
-    propose.add_argument("--json", action="store_true")
-    propose.set_defaults(func=cmd_propose)
-
-    proposals = sub.add_parser("proposals", help="elenca le proposte")
-    proposals.add_argument("--json", action="store_true")
-    proposals.set_defaults(func=cmd_proposals)
-
-    apply_cmd = sub.add_parser("apply", help="applica una proposta (serve --yes)")
-    apply_cmd.add_argument("proposal_id")
-    apply_cmd.add_argument("--yes", action="store_true")
-    apply_cmd.add_argument("--repo", action="append", help="root del repository (deve combaciare con quello approvato)")
-    apply_cmd.add_argument("--verify", default="", help="comando di verifica dopo l'applicazione; exit 3 se fallisce")
-    apply_cmd.add_argument("--json", action="store_true")
-    apply_cmd.set_defaults(func=cmd_apply)
-
     drive_propose = sub.add_parser("drive-propose", help="prepara un caricamento su Drive (dentro vault/repo)")
     drive_propose.add_argument("--file", required=True, help="file locale da caricare")
     drive_propose.add_argument("--name", default="", help="nome su Drive (default: nome file)")
@@ -148,7 +126,7 @@ def main(argv: list[str] | None = None) -> int:
     tier = sub.add_parser("tier", help="assegna il tier di capacita' per modello, su evidenza")
     tier_sub = tier.add_subparsers(dest="tier_command", required=True)
 
-    tier_eval = tier_sub.add_parser("evaluate", help="esegue trappole, funzionale e ciclo agente sul tier candidato e raccomanda")
+    tier_eval = tier_sub.add_parser("evaluate", help="esegue trappole e funzionale sul tier candidato e raccomanda")
     tier_eval.add_argument("model", help="tag del modello da valutare")
     tier_eval.add_argument("--tier", choices=tuple(TIER_ORDER), default=None,
                            help="tier candidato (default: il successivo a quello attuale)")
