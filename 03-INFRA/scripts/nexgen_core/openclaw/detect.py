@@ -1,10 +1,15 @@
 """What this machine already has, asked in the least invasive way possible.
 
-Every credential is only asked whether it EXISTS: nothing here opens a file
-under a home except a package's own `package.json` and the configuration
-OpenClaw already wrote. The two model backends are probed with a JSON GET
-against a loopback URL through a client the caller injects, so a test answers
-without opening a socket and a machine without Ollama costs one short timeout.
+Every credential is only asked whether it EXISTS, with one deliberate
+exception: OpenCode's `auth.json`, which is read for its top-level key names
+and nothing else, to learn whether an `opencode-go` login is there. No value is
+ever returned, logged or formatted. Everything else under a home is only
+tested for existence, apart from a package's own `package.json` and the
+configuration OpenClaw already wrote.
+
+The two model backends are probed with JSON against a loopback URL through a
+client the caller injects, so a test answers without opening a socket and a
+machine without Ollama costs a handful of short timeouts.
 
 The result is the input of a pure function (`profile.build_config`), which is
 why everything is gathered here once, in one place, and never re-read there.
@@ -35,9 +40,17 @@ PROBE_TIMEOUT_SECONDS = 1.5
 #: `npm root -g` is a local read, not a network call.
 NPM_ROOT_TIMEOUT_SECONDS = 20.0
 
-HttpJson = Callable[[str, float], Any]
+#: A JSON client: `(url, timeout)` for a GET, `(url, timeout, payload)` for a POST.
+HttpJson = Callable[..., Any]
 Which = Callable[[str], "str | None"]
 Run = Callable[..., Any]
+
+
+class _Missing:
+    """A marker for "this parameter was not given", distinct from a payload of None."""
+
+
+_MISSING = _Missing()
 
 
 @dataclass(frozen=True)
@@ -70,18 +83,41 @@ class Login:
 
 
 @dataclass(frozen=True)
+class LocalModelInfo:
+    """One model a local backend serves, with the facts OpenClaw needs about it.
+
+    A provider block with only an `id` loses the context window, and OpenClaw
+    then miscounts and overflows. `context_window` is None when the backend did
+    not tell us, and the plan says so instead of inventing a number.
+    """
+
+    name: str
+    context_window: int | None = None
+    vision: bool = False
+    reasoning: bool = False
+
+
+@dataclass(frozen=True)
 class LocalModels:
     """The models this machine serves itself, by provider, exactly as reported."""
 
     ollama_url: str = DEFAULT_OLLAMA_URL
-    ollama: tuple[str, ...] = ()
+    ollama: tuple[LocalModelInfo, ...] = ()
     llamacpp_url: str = DEFAULT_LLAMACPP_URL
-    llamacpp: tuple[str, ...] = ()
+    llamacpp: tuple[LocalModelInfo, ...] = ()
     detail: str = ""
 
     @property
     def available(self) -> bool:
         return bool(self.ollama or self.llamacpp)
+
+    @property
+    def ollama_names(self) -> tuple[str, ...]:
+        return tuple(model.name for model in self.ollama)
+
+    @property
+    def llamacpp_names(self) -> tuple[str, ...]:
+        return tuple(model.name for model in self.llamacpp)
 
 
 @dataclass(frozen=True)
@@ -107,15 +143,22 @@ class Detection:
         }
 
 
-def _http_json(url: str, timeout: float) -> Any:
-    """One JSON GET against a local backend.
+def _http_json(url: str, timeout: float, data: Any = _MISSING) -> Any:
+    """One JSON call against a local backend, GET unless a payload is given.
 
     A backend that is not running is a normal answer to a capability probe, not
     an error: the caller gets None and says "not reachable" in words.
     """
     try:
-        request = urllib.request.Request(url, headers={"Accept": "application/json"})
-        with urllib.request.urlopen(request, timeout=timeout) as response:
+        if data is _MISSING:
+            request = urllib.request.Request(url, headers={"Accept": "application/json"})
+        else:
+            body = json.dumps(data).encode("utf-8")
+            request = urllib.request.Request(
+                url, data=body, method="POST",
+                headers={"Accept": "application/json", "Content-Type": "application/json"},
+            )
+        with urllib.request.urlopen(request, timeout=timeout) as response:  # noqa: S310 - loopback URL from configuration
             return json.loads(response.read().decode("utf-8", errors="replace"))
     except (OSError, ValueError):  # nexgen: allow reason="a stopped local backend is an answer to a probe, not a failure"
         return None
@@ -125,15 +168,21 @@ def _read_json(path: Path) -> Any:
     """A JSON file, or None when it is absent or unreadable."""
     try:
         return json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):  # nexgen: allow reason="an unreadable package.json means 'not installed', and the doctor names the path"
+    except (OSError, ValueError):  # nexgen: allow reason="an unreadable JSON file means 'nothing there', and the doctor names the path"
         return None
 
 
-def _npm_root(run: Run, env: dict[str, str]) -> Path | None:
-    """Where npm keeps its global packages, asked once and injectable in tests."""
+def _npm_root(npm: str, run: Run, env: dict[str, str]) -> Path | None:
+    """Where npm keeps its global packages, asked once and injectable in tests.
+
+    The command is the resolved path, not the bare name: on Windows npm is
+    `npm.cmd`, and a `.cmd` without a path is not executable by CreateProcess,
+    which turned "OpenClaw is installed" into "not installed" on the machine
+    this was written for.
+    """
     try:
         completed = run(
-            ["npm", "root", "-g"], capture_output=True, text=True, check=False,
+            [npm, "root", "-g"], capture_output=True, text=True, check=False,
             timeout=NPM_ROOT_TIMEOUT_SECONDS, env=env, encoding="utf-8", errors="replace",
         )
     except (OSError, subprocess.SubprocessError):  # nexgen: allow reason="npm missing or wedged means 'cannot locate the package', which detection reports"
@@ -142,16 +191,16 @@ def _npm_root(run: Run, env: dict[str, str]) -> Path | None:
     return Path(lines[-1]) if lines else None
 
 
-def _detect_openclaw(home: Path, env: dict[str, str], run: Run | None, which: Which) -> Installation:
+def _detect_openclaw(home: Path, env: dict[str, str], run: Run | None, which: Which, config: Path) -> Installation:
     """The package, its version from npm's own tree, and the configuration file."""
-    config = openclaw_config(home, env)
     run = run or subprocess.run
-    if which("npm") is None:
+    npm = which("npm")
+    if npm is None:
         return Installation(
             installed=False, config_path=str(config), config_present=config.is_file(),
             detail=t("npm is not on PATH, so a global OpenClaw cannot be found or installed"),
         )
-    root = _npm_root(run, env)
+    root = _npm_root(npm, run, env)
     if root is None:
         return Installation(
             installed=False, config_path=str(config), config_present=config.is_file(),
@@ -201,28 +250,149 @@ def _detect_codex(home: Path, env: dict[str, str], which: Which) -> Login:
     return Login(binary=True, login=False, detail=t("no auth.json in {home}: Codex is not logged in", home=str(codex_home)))
 
 
+def _go_profile_in_config(config: Any) -> bool:
+    """Whether OpenClaw already holds an `opencode-go` auth profile.
+
+    The file carries a reference, never the key itself, so reading it is safe.
+    """
+    auth = config.get("auth") if isinstance(config, dict) else None
+    profiles = auth.get("profiles") if isinstance(auth, dict) else None
+    if isinstance(profiles, dict):
+        items = list(profiles.values())
+    elif isinstance(profiles, list):
+        items = profiles
+    else:
+        return False
+    return any(
+        isinstance(profile, dict) and str(profile.get("provider", "")).strip().lower() == "opencode-go"
+        for profile in items
+    )
+
+
+def _go_login_in_opencode(env: dict[str, str], home: Path) -> bool:
+    """Whether OpenCode itself is logged in for `opencode-go`.
+
+    Only the top-level key names of `auth.json` are looked at. The values are
+    secrets and are never copied, returned, logged or formatted anywhere.
+    """
+    data_home = env.get("XDG_DATA_HOME")
+    base = Path(data_home).expanduser() if data_home else home / ".local" / "share"
+    loaded = _read_json(base / "opencode" / "auth.json")
+    return isinstance(loaded, dict) and "opencode-go" in loaded
+
+
+def _detect_opencode_go(home: Path, env: dict[str, str], config: Path) -> bool:
+    """The Go key is available through any of the three places it can live.
+
+    The variable is the simplest; OpenClaw may already hold the profile as a
+    reference; OpenCode may already be logged in and the key reused from there.
+    Only the presence matters, never the value.
+    """
+    if env.get("OPENCODE_API_KEY"):
+        return True
+    if _go_profile_in_config(_read_json(config)):
+        return True
+    return _go_login_in_opencode(env, home)
+
+
 def _base_url(raw: str | None, default: str) -> str:
     """A local backend URL, with the scheme Ollama's own variable usually omits."""
     value = (raw or default).strip().rstrip("/")
     return value if value.startswith(("http://", "https://")) else f"http://{value}"
 
 
-def _probe_ollama(url: str, probe: HttpJson) -> tuple[str, ...]:
-    """The model names Ollama reports, exactly as reported (a `:latest` is kept)."""
+def _as_int(value: Any) -> int | None:
+    """A positive integer, or None: a broken field is no context, not a crash."""
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value if value > 0 else None
+    if isinstance(value, str) and value.strip().isdigit():
+        return int(value.strip()) or None
+    return None
+
+
+def _ollama_context(show: dict[str, Any]) -> int | None:
+    """The context window Ollama reports: `num_ctx` first, then `context_length`."""
+    parameters = show.get("parameters")
+    if isinstance(parameters, str):
+        for line in parameters.splitlines():
+            key, _, rest = line.strip().partition(" ")
+            if key == "num_ctx":
+                found = _as_int(rest)
+                if found:
+                    return found
+    info = show.get("model_info") if isinstance(show.get("model_info"), dict) else {}
+    for key, value in info.items():
+        if key.endswith(".context_length"):
+            found = _as_int(value)
+            if found:
+                return found
+    return None
+
+
+def _capabilities(show: dict[str, Any]) -> set[str]:
+    """Ollama's own capability list, lowercased, when it reports one."""
+    listed = show.get("capabilities")
+    if not isinstance(listed, list):
+        return set()
+    return {str(item).strip().lower() for item in listed}
+
+
+def _ollama_vision(show: dict[str, Any]) -> bool:
+    """Vision is a capability first, and a truthy `model_info` flag after that."""
+    if "vision" in _capabilities(show):
+        return True
+    info = show.get("model_info") if isinstance(show.get("model_info"), dict) else {}
+    return any("vision" in str(key).lower() and bool(value) for key, value in info.items())
+
+
+def _ollama_reasoning(show: dict[str, Any]) -> bool:
+    """Ollama calls a reasoning model "thinking" in its capability list."""
+    return "thinking" in _capabilities(show)
+
+
+def _probe_ollama(url: str, probe: HttpJson) -> tuple[LocalModelInfo, ...]:
+    """The models Ollama reports, each with the facts its `/api/show` adds."""
     answer = probe(f"{url}/api/tags", PROBE_TIMEOUT_SECONDS)
     models = answer.get("models") if isinstance(answer, dict) else None
     if not isinstance(models, list):
         return ()
-    return tuple(str(item["name"]) for item in models if isinstance(item, dict) and item.get("name"))
+    found: list[LocalModelInfo] = []
+    for item in models:
+        if not isinstance(item, dict) or not item.get("name"):
+            continue
+        name = str(item["name"])
+        show = probe(f"{url}/api/show", PROBE_TIMEOUT_SECONDS, {"model": name, "name": name})
+        details = show if isinstance(show, dict) else {}
+        found.append(LocalModelInfo(
+            name=name,
+            context_window=_ollama_context(details),
+            vision=_ollama_vision(details),
+            reasoning=_ollama_reasoning(details),
+        ))
+    return tuple(found)
 
 
-def _probe_llamacpp(url: str, probe: HttpJson) -> tuple[str, ...]:
+def _llamacpp_context(url: str, probe: HttpJson) -> int | None:
+    """llama.cpp's context window, from the one place it reports it."""
+    answer = probe(f"{url}/props", PROBE_TIMEOUT_SECONDS)
+    settings = answer.get("default_generation_settings") if isinstance(answer, dict) else None
+    return _as_int(settings.get("n_ctx")) if isinstance(settings, dict) else None
+
+
+def _probe_llamacpp(url: str, probe: HttpJson) -> tuple[LocalModelInfo, ...]:
     """The model ids llama.cpp's OpenAI-compatible endpoint reports."""
     answer = probe(f"{url}/v1/models", PROBE_TIMEOUT_SECONDS)
     data = answer.get("data") if isinstance(answer, dict) else None
     if not isinstance(data, list):
         return ()
-    return tuple(str(item["id"]) for item in data if isinstance(item, dict) and item.get("id"))
+    context = _llamacpp_context(url, probe)
+    return tuple(
+        LocalModelInfo(name=str(item["id"]), context_window=context)
+        for item in data
+        if isinstance(item, dict) and item.get("id")
+    )
 
 
 def _detect_local(env: dict[str, str], probe: HttpJson) -> LocalModels:
@@ -276,12 +446,14 @@ def detect(
     system = platform or sys.platform
     engine = Path(engine_root) if engine_root is not None else resolve_engine_root(home_dir)
     vault = Path(vault_data) if vault_data is not None else resolve_vault_data(home_dir)
+    config = openclaw_config(home_dir, values)
 
     return Detection(
-        openclaw=_detect_openclaw(home_dir, values, run, resolved_which),
+        openclaw=_detect_openclaw(home_dir, values, run, resolved_which, config),
         claude=_detect_claude(home_dir, resolved_which, system),
         codex=_detect_codex(home_dir, values, resolved_which),
-        opencode_go=bool(values.get("OPENCODE_API_KEY")),
+        opencode_go=_detect_opencode_go(home_dir, values, config),
         local=_detect_local(values, probe),
-        n8n=_module_state("n8n", engine, vault, values) == "local",
+        # The owner keeps n8n on a VPS: remote is active too, not only local.
+        n8n=_module_state("n8n", engine, vault, values) in ("local", "remote"),
     )

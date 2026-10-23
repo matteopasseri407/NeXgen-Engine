@@ -14,7 +14,7 @@ SCRIPTS_DIR = Path(__file__).resolve().parents[2] / "scripts"
 if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
-from nexgen_core.openclaw.detect import Detection, Installation, LocalModels, Login  # noqa: E402 - sys.path shim for cloned checkout
+from nexgen_core.openclaw.detect import Detection, Installation, LocalModelInfo, LocalModels, Login  # noqa: E402 - sys.path shim for cloned checkout
 from nexgen_core.openclaw.doctor import collect, exit_code  # noqa: E402 - sys.path shim for cloned checkout
 from nexgen_core.report import Severity  # noqa: E402 - sys.path shim for cloned checkout
 
@@ -61,7 +61,7 @@ def machine(config_path: Path, *, version: str = PINNED, installed: bool = True,
         claude=Login(binary=claude, login=True if claude else None),
         codex=Login(binary=codex, login=True if codex else None),
         opencode_go=go,
-        local=LocalModels(ollama=ollama),
+        local=LocalModels(ollama=tuple(LocalModelInfo(name=name) for name in ollama)),
         n8n=False,
     )
 
