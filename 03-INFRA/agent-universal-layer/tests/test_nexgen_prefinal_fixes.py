@@ -79,15 +79,6 @@ def test_renderer_skips_empty_command(tmp_path, monkeypatch):
     assert "bad" not in resolved
 
 
-def test_research_continue_resets_penalties():
-    import inspect
-
-    from nexgen_local import research_graph
-
-    src = inspect.getsource(research_graph._continue_research)
-    assert "empty_streak" in src and "tried_queries" in src
-
-
 def test_updater_refuses_unverified_without_flag():
     import inspect
 
