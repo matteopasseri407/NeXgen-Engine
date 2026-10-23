@@ -10,18 +10,12 @@ from __future__ import annotations
 
 import logging
 import subprocess
-import sys
 from collections.abc import Callable
 from contextlib import nullcontext
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-
-SCRIPTS_DIR = Path(__file__).resolve().parents[2] / "scripts"
-if str(SCRIPTS_DIR) not in sys.path:
-    sys.path.insert(0, str(SCRIPTS_DIR))
-
 from nexgen_core import megaphone, notify
 from nexgen_core.i18n import set_language
 from nexgen_core.megaphone import Megaphone
