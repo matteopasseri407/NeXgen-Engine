@@ -451,6 +451,28 @@ def test_a_second_identical_setup_writes_nothing_and_restarts_nothing(tmp_path):
     assert "nothing to write" in machine.output()
 
 
+def test_a_file_that_holds_the_same_document_in_another_layout_is_untouched(tmp_path):
+    """OpenClaw may rewrite the file with its own indent: same JSON is not a change."""
+    machine = Machine(tmp_path)
+    machine.config.parent.mkdir(parents=True)
+    machine.config.write_text(json.dumps({"gateway": {"auth": {"mode": "token", "token": "t"}}}), encoding="utf-8")
+    assert machine.run() == 0
+    document = machine.config_json()
+    reordered = dict(reversed(list(document.items())))
+    machine.config.write_text(json.dumps(reordered, indent=4), encoding="utf-8")
+    before = machine.config.read_bytes()
+    machine.service = FakeService()
+    machine.runner = FakeRunner()
+    machine.runner.service = machine.service
+    machine.lines = []
+
+    assert machine.run() == 0
+
+    assert machine.config.read_bytes() == before
+    assert "stop" not in machine.service.events, "the gateway was cycled for a formatting difference"
+    assert "nothing to write" in machine.output()
+
+
 def test_a_manual_the_person_wrote_is_never_overwritten(tmp_path):
     machine = Machine(tmp_path)
     capo = machine.state_dir / "workspace-capo"

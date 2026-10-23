@@ -185,11 +185,7 @@ def write_step(setup: Setup, plan) -> str:
     if plan.current_error:
         setup.out(t("The file in force cannot be read ({error}); it is backed up before it is replaced.",
                     error=plan.current_error))
-    if (
-        plan.current_error is None
-        and setup.config_path.is_file()
-        and setup.config_path.read_text(encoding="utf-8", errors="replace") == text
-    ):
+    if plan.current_error is None and plan.current == document:
         setup.out(t("The configuration is already what the engine would write: nothing to write."))
         return "unchanged"
     with setup.service.stopped(wait=False) as stop:
