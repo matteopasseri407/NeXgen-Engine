@@ -1,10 +1,10 @@
 """Model access: a tiny interface, one LangChain implementation.
 
 The lane only ever needs three verbs from a model: fill a JSON form (routing),
-answer in text from provided content, and choose the next action from a closed
-menu (the bounded loop). Keeping the interface this small is what makes the
-framework replaceable: the graph, the loop and the engine talk to ``LLM``, not
-to LangChain.
+answer in text from provided content, and choose from a closed menu. The menu
+verb has no lane caller since the bounded loop was retired on 2026-10-24; it
+stays as a pinned primitive. Keeping the interface this small is what makes
+the framework replaceable: the engine talks to ``LLM``, not to LangChain.
 """
 from __future__ import annotations
 
@@ -154,7 +154,7 @@ class _ChatModelLLM:
     """The lane's three verbs over LangChain chat models, whatever backs them.
 
     A subclass builds `_json_model` (routing forms), `_text_model` (answers) and `_decision_model`
-    (the bounded loop's closed menu). Everything else, the deadlines that cancel a stalled request,
+    (the closed menu verb). Everything else, the deadlines that cancel a stalled request,
     the fail-closed handling of truncated or empty output, the token receipts, lives here once.
     """
 
@@ -301,7 +301,7 @@ class _ChatModelLLM:
         return None
 
     def choose(self, system: str, user: str, actions: list[str]) -> dict | None:
-        """Forced-schema decision for the bounded loop: one action from the menu."""
+        """Forced-schema decision: one action from the closed menu (no lane caller today)."""
         schema = {
             "title": "LaneDecision",
             "type": "object",
@@ -438,15 +438,15 @@ class ChatOllamaLLM(_ChatModelLLM):
             "client_kwargs": {"timeout": TEXT_TIMEOUT_SECONDS},
             **clients,
         }
-        # The loop's decision channel: the answerer's competence, the router's
-        # small context. One decision is a short forced-schema object.
+        # The menu channel: the answerer's competence, the router's small
+        # context. One decision is a short forced-schema object.
         decision_common = {
             "model": cfg.answer_tag,
             "base_url": host,
             "temperature": 0.0,
             "num_ctx": min(cfg.num_ctx, DECISION_NUM_CTX),
             # A decision is ~50 tokens of JSON; never let a ramble hang
-            # the loop.
+            # the request.
             "num_predict": 256,
             "validate_model_on_init": False,
             "client_kwargs": {"timeout": DECISION_TIMEOUT_SECONDS},

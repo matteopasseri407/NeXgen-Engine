@@ -91,8 +91,8 @@ The [sync contract](docs/sync-contract.md) describes what it manages, what it pr
 * **Deterministic modules:** 10-module catalog (`memory`, `semantic-rag`, `firecrawl`, `ocr`, `n8n`, `browser`, `council`, `local-lane`, `openclaw`, `sync`) managed with `nexgen modules list` and `nexgen modules set`.
 * **Local models (optional):** `nexgen-local` builds read-only queries and records the sources used by each answer.
   Its evaluation gate fails on any injection or unsupported answer in the trap suite.
-  Patch proposals require approval through `nexgen-local propose` / `apply`.
-  Research sessions preserve sources, receipts, and staged proposals with `nexgen-local explore --session-id new`.
+  Drive uploads are the only mutation it stages, and they need explicit approval through `nexgen-local drive-propose` / `drive-upload`.
+  Mail, calendar and Drive reads stay available to every agent through the same connectors.
   See [local-lane.md](docs/local-lane.md).
 * **Secrets store:** asymmetric `age` encryption (`99-SECRETS/secrets.yaml.age`) on machine-local keys (`0600`), isolated per-host OAuth slots, materialized `secrets.env` for shells and systemd services. No passphrase to remember or type.
 * **Operator shell:** `nexgen info` status dashboard and `nexgen shell` interactive REPL, so routine management never needs an AI assistant open.

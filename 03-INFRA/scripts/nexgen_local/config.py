@@ -28,7 +28,7 @@ def _lane_state_dir_impl() -> Path:
 
 
 def lane_state_dir() -> Path:
-    """Where the lane keeps its audit log, proposals, drafts and research sessions.
+    """Where the lane keeps its audit log, proposals and uploads.
 
     Under the engine's home (`NEXGEN_HOME` when set), the same place every other piece of engine state
     follows. These defaults used the process's real home, so a checkout run in a sandbox home beside a

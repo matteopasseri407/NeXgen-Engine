@@ -44,8 +44,8 @@ Il motore tiene separate tre fonti di configurazione:
 * **Moduli deterministici:** catalogo di 10 moduli (`memory`, `semantic-rag`, `firecrawl`, `ocr`, `n8n`, `browser`, `council`, `local-lane`, `openclaw`, `sync`) gestito con `nexgen modules list` e `nexgen modules set`.
 * **Modelli locali, opzionali:** `nexgen-local` costruisce query in sola lettura e registra le fonti di ogni risposta.
   Il gate di valutazione fallisce se la suite trappole rileva un'injection o una risposta senza riscontro.
-  Le proposte di patch richiedono approvazione tramite `nexgen-local propose` / `apply`.
-  La ricerca conserva fonti, ricevute e proposte tra sessioni con `nexgen-local explore --session-id new`.
+  Il caricamento su Drive è l'unica modifica che mette in attesa di approvazione, con `nexgen-local drive-propose` / `drive-upload`.
+  Le letture di mail, calendario e Drive restano disponibili a ogni agente tramite gli stessi connettori.
   Vedi [local-lane.md](docs/local-lane.md).
 * **Segreti:** cifratura asimmetrica `age` (`99-SECRETS/secrets.yaml.age`) su chiavi locali (`0600`), slot OAuth isolati per host e `secrets.env` generato per shell e servizi.
   Non serve una passphrase.
