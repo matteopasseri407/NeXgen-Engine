@@ -17,7 +17,6 @@ from nexgen_core.openclaw_service import RunResult
 LINGER_DIR = Path("/var/lib/systemd/linger")
 
 Run = Callable[..., RunResult]
-Which = Callable[[str], "str | None"]
 
 
 def read_node_version(run: Run, node: str, env: Mapping[str, str]) -> str | None:
