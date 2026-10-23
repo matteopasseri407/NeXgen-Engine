@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "private": true,
   "type": "module",
-  "description": "The NeXgen engine for OpenClaw: guardrail, vault briefing and lifecycle events (mechanism only: the policy is a sidecar).",
+  "description": "The NeXgen engine for OpenClaw: guardrail, vault briefing and /quota (mechanism only: the policy is a sidecar).",
   "openclaw": {
     "extensions": ["./index.mjs"]
   }

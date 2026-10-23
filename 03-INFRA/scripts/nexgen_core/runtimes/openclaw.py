@@ -1,11 +1,12 @@
 """OpenClaw adapter: one `nexgen` plugin, deposited next to its state directory.
 
 OpenClaw runs native plugins inside its gateway process, so everything the engine gives
-Claude Code reaches OpenClaw through a single plugin, split into two jobs that know nothing
-about each other (`guardrail.mjs`, `briefing.mjs`, registered by `index.mjs`):
+Claude Code reaches OpenClaw through a single plugin, split into three jobs that know nothing
+about each other (`guardrail.mjs`, `briefing.mjs`, `quota.mjs`, registered by `index.mjs`):
 
 - the **guardrail** on `before_tool_call`, the same private body the other CLIs run;
-- the **vault briefing** after a compaction, the same text Claude's checkpoint hook injects.
+- the **vault briefing** after a compaction, the same text Claude's checkpoint hook injects;
+- **`/quota`**, which runs the engine and forwards the lines it already rendered.
 
 What this adapter deliberately does NOT do: write `openclaw.json`. Changing the `plugins.*`
 block while the gateway runs breaks it, so enabling the plugin is a separate step
@@ -27,7 +28,7 @@ from typing import Any
 from nexgen_core.paths import openclaw_config
 from nexgen_core.runtimes.base import EVENT_SINK_NAME, GUARDRAIL_SIDECAR_NAME, GuardrailError, Runtime
 
-#: The engine's plugin directory (package.json + manifest + index.mjs + the two jobs),
+#: The engine's plugin directory (package.json + manifest + index.mjs + the three jobs),
 #: deployed as a whole into `<state dir>/extensions/<PLUGIN_ID>/`. The folder keeps the name it
 #: had when it held only the guardrail: it is the source of a byte-for-byte copy, never a path
 #: anyone configures.
@@ -41,6 +42,28 @@ LEGACY_PLUGIN_ID = "nexgen-guardrail"
 PLUGIN_CONFIG_NAME = "nexgen.config.json"
 #: The briefing text, shared with Claude's checkpoint hook (`hooks/vault-briefing.txt`).
 BRIEFING_NAME = "vault-briefing.txt"
+
+
+def engine_deposit() -> dict[str, str]:
+    """How the plugin runs the engine: the interpreter and the CLI module, or nothing.
+
+    Read from the engine that is running right now rather than from PATH, because the `nexgen`
+    launcher is a `.cmd` on Windows and starting it means starting `cmd.exe` -- which the plugin
+    must never do. A checkout, a venv and an installed package all answer the same two paths.
+    When either cannot be proven the map is empty, and the plugin says it is not configured
+    instead of running something else.
+    """
+    import sys
+
+    import nexgen_core
+
+    location = getattr(nexgen_core, "__file__", None)
+    if not location or not sys.executable:
+        return {}
+    entry = Path(location).resolve().parent / "cli" / "__init__.py"
+    if not entry.is_file():
+        return {}
+    return {"command": sys.executable, "entry": str(entry)}
 
 #: Neutral vocabulary -> the word the plugin reads. The mapping is the identity on purpose:
 #: OpenClaw's plugin renders the neutral posture itself, so the engine writes no dialect here.
@@ -137,8 +160,13 @@ class OpenClawRuntime(Runtime):
 
         # 6) The engine's switches. The briefing follows the same fact Claude follows: the
         #    checkpoint hook registered on SessionStart. Without it, OpenClaw would brief a
-        #    session Claude does not brief, which is exactly the divergence to avoid.
-        changed |= self._write_plugin_config(home, briefing={"enabled": self._briefing_installed(home)})
+        #    session Claude does not brief, which is exactly the divergence to avoid. The
+        #    `engine` section is how `/quota` reaches this very interpreter without a shell.
+        changed |= self._write_plugin_config(
+            home,
+            briefing={"enabled": self._briefing_installed(home)},
+            engine=engine_deposit(),
+        )
 
         if not changed and not migrated:
             return None

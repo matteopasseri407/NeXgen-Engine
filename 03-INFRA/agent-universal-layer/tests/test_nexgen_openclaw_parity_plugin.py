@@ -1,4 +1,4 @@
-"""The two jobs of the `nexgen` plugin, run the way OpenClaw runs them.
+"""The three jobs of the `nexgen` plugin, run the way OpenClaw runs them.
 
 These tests load the real plugin with node, register it against a fake `api.on` and fire the
 hooks OpenClaw documents: `after_compaction`, `session_start`, `before_prompt_build`,
@@ -38,11 +38,16 @@ BODIES = {
 }
 PREAMBLE = """
 import plugin from {uri};
+import {{ dirname, join }} from "node:path";
+import {{ fileURLToPath }} from "node:url";
+import {{ writeFileSync }} from "node:fs";
+const DIR = dirname(fileURLToPath(import.meta.url));
 const handlers = new Map();
+const commands = new Map();
 plugin.register({{ on: (name, fn) => {{
   if (!handlers.has(name)) handlers.set(name, []);
   handlers.get(name).push(fn);
-}} }});
+}}, registerCommand: (spec) => commands.set(spec.name, spec) }});
 async function call(name, event, ctx) {{
   const list = handlers.get(name) || [];
   if (!list.length) return "MISSING";
@@ -52,6 +57,11 @@ async function call(name, event, ctx) {{
     if (result !== undefined && answer === null) answer = result;
   }}
   return answer;
+}}
+async function command(name) {{
+  const spec = commands.get(name);
+  if (!spec) return "MISSING";
+  return spec.handler({{}});
 }}
 const settle = () => new Promise((resolve) => setTimeout(resolve, 300));
 """
@@ -89,11 +99,11 @@ def drive(target: Path, script: str, env: dict | None = None):
     return json.loads(done.stdout)
 
 
-# ------------------------------------------------------------- one plugin, two jobs
+# ------------------------------------------------------------ one plugin, three jobs
 
 
 @pytest.mark.skipif(NODE is None, reason="node is not installed")
-def test_the_plugin_registers_the_two_jobs_with_the_guardrail_first(tmp_path):
+def test_the_plugin_registers_the_three_jobs_with_the_guardrail_first(tmp_path):
     fired = drive(deployed(tmp_path), "console.log(JSON.stringify({id: plugin.id, order: [...handlers.keys()]}));\n")
 
     assert fired["id"] == "nexgen"
@@ -430,3 +440,94 @@ def test_file_write_asks_under_the_ask_posture(tmp_path):
         tmp_path, "ask", "allow.mjs", tool="file_write", params={"path": "/tmp/x", "data": "y"},
     )
     assert "requireApproval" in decision
+# -------------------------------------------------------------------------- /quota
+
+
+def fake_engine(target: Path, source: str) -> dict:
+    """An entry the plugin runs exactly as it runs the real one: interpreter, module, arguments."""
+    script = target / "fake-engine.mjs"
+    script.write_text(source, encoding="utf-8")
+    return {"command": NODE, "entry": str(script)}
+
+
+def a_quota_plugin(tmp_path: Path, source: str | None) -> Path:
+    """The deployed plugin plus, or without, the `engine` section the deposit writes."""
+    target = deployed(tmp_path)
+    if source is not None:
+        (target / "nexgen.config.json").write_text(
+            json.dumps({"engine": fake_engine(target, source)}), encoding="utf-8",
+        )
+    return target
+
+
+@pytest.mark.skipif(NODE is None, reason="node is not installed")
+def test_the_plugin_registers_the_quota_command(tmp_path):
+    fired = drive(deployed(tmp_path), """
+console.log(JSON.stringify([...commands.values()].map((spec) => ({name: spec.name, description: spec.description}))));
+""")
+
+    assert [spec["name"] for spec in fired] == ["quota"]
+    assert fired[0]["description"]  # a command with no description is a command nobody finds
+
+
+@pytest.mark.skipif(NODE is None, reason="node is not installed")
+def test_quota_forwards_the_lines_the_engine_already_rendered(tmp_path):
+    """The numbers are printed once, by the engine: the chat and the terminal cannot disagree."""
+    target = a_quota_plugin(tmp_path, (
+        "console.log(JSON.stringify({lines: ['Codex 59% (30d)', 'Claude Code limite non leggibile in locale']}));"
+    ))
+
+    fired = drive(target, "console.log(JSON.stringify(await command('quota')));\n")
+
+    assert fired == {"text": "Codex 59% (30d)\nClaude Code limite non leggibile in locale"}
+
+
+@pytest.mark.skipif(NODE is None, reason="node is not installed")
+def test_a_plugin_deposited_before_the_engine_section_asks_for_a_sync(tmp_path):
+    target = a_quota_plugin(tmp_path, None)
+
+    fired = drive(target, "console.log(JSON.stringify(await command('quota')));\n")
+
+    assert "the engine path is not configured yet" in fired["text"]
+
+
+@pytest.mark.skipif(NODE is None, reason="node is not installed")
+def test_an_engine_that_fails_is_a_sentence_and_never_a_stack_trace(tmp_path):
+    target = a_quota_plugin(tmp_path, 'console.error("Traceback (most recent call last):"); process.exit(1);')
+
+    fired = drive(target, "console.log(JSON.stringify(await command('quota')));\n")
+
+    assert fired["text"].startswith("quota: the engine answered with an error")
+    assert "Traceback" not in fired["text"]
+
+
+@pytest.mark.skipif(NODE is None, reason="node is not installed")
+def test_a_plain_text_answer_is_forwarded_as_it_is(tmp_path):
+    target = a_quota_plugin(tmp_path, 'console.log("quota: no reading on this machine");')
+
+    fired = drive(target, "console.log(JSON.stringify(await command('quota')));\n")
+
+    assert fired["text"] == "quota: no reading on this machine"
+
+
+@pytest.mark.skipif(NODE is None, reason="node is not installed")
+def test_json_without_lines_is_forwarded_verbatim_rather_than_invented(tmp_path):
+    """An engine that answers in some other shape still gets heard, unformatted."""
+    target = a_quota_plugin(tmp_path, 'console.log(JSON.stringify({report: "ok"}));')
+
+    fired = drive(target, "console.log(JSON.stringify(await command('quota')));\n")
+
+    assert fired["text"] == '{"report":"ok"}'
+
+
+@pytest.mark.skipif(NODE is None, reason="node is not installed")
+def test_a_hung_engine_is_abandoned_with_a_sentence(tmp_path):
+    target = a_quota_plugin(tmp_path, "setTimeout(() => {}, 60000);")
+
+    fired = drive(target, f"""
+const quota = await import({json.dumps((target / "quota.mjs").as_uri())});
+const text = await quota.quotaText(join(DIR, "nexgen.config.json"), {{ timeoutMs: 400 }});
+console.log(JSON.stringify({{ text }}));
+""")
+
+    assert fired["text"].startswith("quota: the engine did not answer in time")
