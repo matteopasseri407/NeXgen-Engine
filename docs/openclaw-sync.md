@@ -20,7 +20,8 @@ it.
 | MCP connectors | `mcp.servers` in `openclaw.json` | the MCP renderer |
 | Instructions | an `AGENTS.md` block in each agent workspace | the guard's instructions phase |
 | Skills | `~/.agents/skills/` (the shared catalog) | the skills phase |
-| Guardrail | `<state dir>/extensions/nexgen-guardrail/` | the guard's permissions phase |
+| The plugin | `<state dir>/extensions/nexgen/` | the guard's permissions phase |
+| Briefing, events, posture | `<state dir>/extensions/nexgen/nexgen.config.json` | the permissions phase and the module state |
 
 ## MCP connectors
 
@@ -66,29 +67,29 @@ that names another runtime only is not. `~/.agents/skills/INDEX.md` lists each
 skill with its targets, so "does this skill reach OpenClaw?" is readable without
 opening the manifest.
 
-## Guardrail
+## The plugin: one plugin, three jobs
 
-OpenClaw's hook is a JavaScript callback inside the gateway process, so the engine
-ships a native plugin and deposits it, byte for byte, in
-`<state dir>/extensions/nexgen-guardrail/`:
+OpenClaw's hooks are JavaScript callbacks inside the gateway process, so the engine
+ships one native plugin and deposits it, byte for byte, in
+`<state dir>/extensions/nexgen/`:
 
 ```
-extensions/nexgen-guardrail/
-  index.mjs                     the adapter
+extensions/nexgen/
+  index.mjs                     registers the three jobs; the guardrail comes first
+  guardrail.mjs                 the gate on before_tool_call
+  briefing.mjs                  the vault briefing after a compaction
+  events.mjs                    on_step / on_done on the event socket
+  engine-config.mjs             reads nexgen.config.json, once for all three
+  session.mjs                   which session a hook event belongs to
   package.json                  openclaw.extensions -> ./index.mjs
-  openclaw.plugin.json          id: nexgen-guardrail, onStartup
+  openclaw.plugin.json          id: nexgen, onStartup
   nexgen-guardrail-core.mjs     the shared core every adapter imports
-  nexgen-guardrail.config.json  which body, with what timeout, the audit file
+  nexgen-guardrail.config.json  which guardrail body, with what timeout, the audit file
+  nexgen.config.json            the engine's switches: briefing, events, posture
+  vault-briefing.txt            the briefing text, shared with Claude Code
+  nexgen-event-sink.mjs         the sink, deposited only when a module needs it
   hooks/<body>.mjs              the guardrail body (the private policy)
 ```
-
-On `before_tool_call`, a tool call that carries a shell command (`exec`,
-`process`, `terminal`, `code_execution`) is handed to the guardrail body in the
-same stdin/stdout JSON that Claude Code's own `PreToolUse` hooks use. A denial
-blocks the call with the body's reason; a question becomes an approval request for
-the person; an allow leaves the call alone. A failure never becomes an allow: a
-missing core, an unreadable sidecar or a body that crashes blocks, or asks, and
-OpenClaw itself blocks the call when the handler throws.
 
 Two things about enabling it:
 
@@ -97,20 +98,89 @@ Two things about enabling it:
   `nexgen openclaw setup` enables it with the gateway stopped. Until then
   `nexgen doctor` reports it as deposited and not enabled, which is the truth and
   not a failure of the sync.
-- **There is no posture for OpenClaw.** Command policy and exec approvals are
-  OpenClaw's own schema (`tools.exec`), and the engine has no verified rendering
-  for it. A posture the private permission manifest asks for is reported as
-  "nothing applied" rather than guessed at, and `openclaw.json` is never rewritten
-  by the permissions phase.
+- **One id.** The folder is `nexgen`; the old `nexgen-guardrail` folder is taken
+  back on the first deposit, and only when its manifest proves it is the engine's
+  own. A folder by that name that is not ours is never deleted.
+
+### Guardrail
+
+On `before_tool_call`, a tool call that carries a shell command (`exec`, `process`,
+`terminal`, `code_execution`) is handed to the guardrail body in the same
+stdin/stdout JSON that Claude Code's own `PreToolUse` hooks use. A denial blocks
+the call with the body's reason; a question becomes an approval request for the
+person; an allow leaves the call alone. A failure never becomes an allow: a missing
+core, an unreadable sidecar or a body that crashes blocks, or asks, and OpenClaw
+itself blocks the call when the handler throws.
+
+### Briefing
+
+OpenClaw's `after_compaction` and `session_start` are observations: they have no
+place to return context, so the plugin marks the session there (a `session_start`
+counts only when it carries `resumedFrom`) and injects on the first
+`before_prompt_build` that follows, once and never again for that session. The text
+is `vault-briefing.txt`, the same file Claude's `claude-vault-checkpoint.mjs`
+injects: one text, two hosts.
+
+The layer follows Claude's own fact: the briefing is switched on only when the
+checkpoint hook is registered on `SessionStart` in `~/.claude/settings.json`. The
+engine deploys no copy of that hook, so its registration is the observable
+condition. A briefing that fails is swallowed: a session that loses its briefing is
+a worse session, not a broken one.
+
+### Events
+
+Only when a module this machine declared asks for the event sink (the same
+condition the other CLIs use), the plugin emits `on_step` on `before_tool_call` and
+`on_done` on `agent_end`, on the same socket and with the same payload as
+`nexgen-event-sink.mjs`. The IPC logic is imported from the sink, never copied.
+No socket, no consumer: the emission is a silent no-op. A hard deadline bounds it,
+because a gateway must not wait on a socket before running a tool.
+
+### Posture
+
+The private permission manifest's posture travels into `nexgen.config.json` in the
+neutral vocabulary, and the plugin renders it there. `openclaw.json` is never
+rewritten by the permissions phase, because it is read at gateway start and must
+not change under a running one.
+
+| Posture | What OpenClaw does |
+|---|---|
+| `bypass` | the guardrail decides alone: what the body permits runs without a question, what it denies is blocked, a body that asks still asks |
+| `accept-edits` | like `bypass` for file writes; a shell command the body does not deny asks for approval |
+| `ask` | every shell command asks for approval, and a tool that changes files (`write`, `edit`, `apply_patch`) asks too |
+
+Without a posture in the manifest nothing is written, exactly like the other CLIs;
+the plugin then behaves as `bypass`.
+
+## Parity with Claude Code
+
+The engine puts the same seven layers in both hosts. `nexgen doctor` reports one
+`openclaw.parity.*` outcome per layer and stays silent on a machine that does not
+have both CLIs.
+
+| Layer | Claude Code | OpenClaw | Runtime `claude-cli` / `codex` |
+|---|---|---|---|
+| MCP | `mcpServers` in `~/.claude.json` | `mcp.servers` in `openclaw.json` | Claude Code / Codex use their own rendered config |
+| Instructions | `~/CLAUDE.md` points at the canonical `AGENTS.md` | the managed block in each workspace `AGENTS.md` | the agent's own runtime loads its instructions |
+| Skills | `~/.claude/skills` | `~/.agents/skills` (shared catalog) | the agent's own runtime loads its skills |
+| Guardrail | `PreToolUse` → `claude-guardrail-adapter.mjs` | `before_tool_call` in the plugin | Claude Code's / Codex's own guardrail, installed by this engine |
+| Briefing | `SessionStart` → `claude-vault-checkpoint.mjs` | plugin briefing, same `vault-briefing.txt` | Claude Code's own checkpoint hook |
+| Events | `Stop` / `PreToolUse` → `nexgen-event-sink.mjs` | plugin `agent_end` / `before_tool_call`, same sink | the event sink registered in that CLI |
+| Posture | `permissions.defaultMode` | `posture` in `nexgen.config.json` | that CLI's own posture file |
+
+An aligned layer is a PASS; a layer one host has and the other lacks is a WARN that
+names the gap. The action is almost always `nexgen sync`, the one phase that writes
+both sides. The MCP layer compares names only, never an `env` block: a token is
+never read, printed or kept.
 
 ## What this does not cover
 
-The guardrail plugin only sees calls that OpenClaw itself executes: the embedded
-runner, which is what the agents on OpenCode Go and on the local model use. An
-agent whose runtime is `claude-cli` or `codex` runs its tools inside Claude Code or
-Codex, where each CLI's own guardrail — installed by this same engine — is already
-in charge. Two guardrails on one call would mean two policies to keep in step; one
-per call is the point.
+The plugin only sees calls that OpenClaw itself executes: the embedded runner,
+which is what the agents on OpenCode Go and on the local model use. An agent whose
+runtime is `claude-cli` or `codex` runs its tools inside Claude Code or Codex, where
+each CLI's own guardrail, briefing, events and posture — installed by this same
+engine — are already in charge. Two of each on one call would mean two policies to
+keep in step; one per call is the point.
 
 `code_execution` runs Python, not a shell line. It is in the watched set so a
 `command` field on it would be judged, but its source is not fed to a body that
@@ -123,3 +193,4 @@ matches shell patterns, where it would match by accident rather than by meaning.
 | `guardrail.consulted.openclaw` | the guardrail has been called at least once since it was installed |
 | `guardrail.openclaw_plugin` | the plugin is deposited, and whether OpenClaw will load it (`plugins.allow`, `plugins.deny`, an entry switched off) |
 | `instructions.openclaw` | every agent workspace's `AGENTS.md` carries the managed block, and which workspace folders do not exist yet |
+| `openclaw.parity.*` | one line per layer above: PASS when both hosts hold it, WARN with the action when one does not |
