@@ -1423,6 +1423,14 @@ MESSAGES: dict[str, str] = {
         "Il gateway si lega a {bind}.",
     "The gateway binds to '{bind}', which is neither loopback nor the home network.":
         "Il gateway si lega a '{bind}', che non è né loopback né la rete di casa.",
+    "The gateway binds to the home network, but its token is missing or still the placeholder.":
+        "Il gateway si lega alla rete di casa, ma il suo token manca o è ancora il segnaposto.",
+    "Run 'nexgen openclaw setup' to generate a real token, or set gateway.bind to 'loopback'.":
+        "Lancia 'nexgen openclaw setup' per generare un token vero, oppure imposta gateway.bind a 'loopback'.",
+    "The gateway uses token authentication, but the token is missing or still the placeholder.":
+        "Il gateway usa l'autenticazione a token, ma il token manca o è ancora il segnaposto.",
+    "Run 'nexgen openclaw setup': it generates the token once and never prints it.":
+        "Lancia 'nexgen openclaw setup': genera il token una volta e non lo stampa mai.",
     "Set gateway.bind to 'loopback', or 'lan' if you use the phone app on your home network.":
         "Imposta gateway.bind a 'loopback', oppure 'lan' se usi l'app sul telefono nella rete di casa.",
     "The gateway asks for a token.":

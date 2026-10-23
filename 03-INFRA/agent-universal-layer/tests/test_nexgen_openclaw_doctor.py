@@ -16,6 +16,7 @@ if str(SCRIPTS_DIR) not in sys.path:
 
 from nexgen_core.openclaw.detect import Detection, Installation, LocalModelInfo, LocalModels, Login  # noqa: E402 - sys.path shim for cloned checkout
 from nexgen_core.openclaw.doctor import collect, exit_code  # noqa: E402 - sys.path shim for cloned checkout
+from nexgen_core.openclaw.profile import PENDING_TOKEN  # noqa: E402 - sys.path shim for cloned checkout
 from nexgen_core.report import Severity  # noqa: E402 - sys.path shim for cloned checkout
 
 PINNED = "2026.10.6"
@@ -47,7 +48,7 @@ def clean_config() -> dict:
         },
         "gateway": {
             "mode": "local", "port": 18789, "bind": "loopback",
-            "auth": {"mode": "token", "token": "generated-by-nexgen-setup"},
+            "auth": {"mode": "token", "token": "a-real-token-value"},
             "tailscale": {"mode": "off"},
         },
     }
@@ -177,6 +178,40 @@ def test_a_gateway_bound_past_the_home_network_or_without_a_token_is_a_failure(t
     outcomes = by_id(run_doctor(tmp_path, write_config(tmp_path, config)))
     assert outcomes["openclaw.gateway.bind"].severity == Severity.BROKEN
     assert outcomes["openclaw.gateway.auth"].severity == Severity.BROKEN
+
+
+def test_a_placeholder_token_is_a_failure_not_a_pass(tmp_path):
+    """`setup` writes the placeholder only before it generates the real token."""
+    config = clean_config()
+    config["gateway"]["auth"]["token"] = PENDING_TOKEN
+    outcomes = by_id(run_doctor(tmp_path, write_config(tmp_path, config)))
+    assert outcomes["openclaw.gateway.auth"].severity == Severity.BROKEN
+    assert "setup" in (outcomes["openclaw.gateway.auth"].action or "")
+
+
+def test_an_empty_token_is_a_failure(tmp_path):
+    config = clean_config()
+    config["gateway"]["auth"]["token"] = "   "
+    outcomes = by_id(run_doctor(tmp_path, write_config(tmp_path, config)))
+    assert outcomes["openclaw.gateway.auth"].severity == Severity.BROKEN
+
+
+def test_a_lan_bind_without_a_real_token_is_a_failure(tmp_path):
+    """A gateway on the home network with a placeholder token is an open door."""
+    config = clean_config()
+    config["gateway"]["bind"] = "lan"
+    config["gateway"]["auth"]["token"] = PENDING_TOKEN
+    outcomes = by_id(run_doctor(tmp_path, write_config(tmp_path, config)))
+    assert outcomes["openclaw.gateway.bind"].severity == Severity.BROKEN
+    assert outcomes["openclaw.gateway.auth"].severity == Severity.BROKEN
+
+
+def test_a_lan_bind_with_a_real_token_passes(tmp_path):
+    config = clean_config()
+    config["gateway"]["bind"] = "lan"
+    outcomes = by_id(run_doctor(tmp_path, write_config(tmp_path, config)))
+    assert outcomes["openclaw.gateway.bind"].severity == Severity.OK
+    assert outcomes["openclaw.gateway.auth"].severity == Severity.OK
 
 
 def test_a_google_subscription_is_a_failure(tmp_path):

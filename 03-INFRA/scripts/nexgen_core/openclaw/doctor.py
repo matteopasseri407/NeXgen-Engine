@@ -22,7 +22,7 @@ from nexgen_core.i18n import t
 from nexgen_core.openclaw.config_file import read_config
 from nexgen_core.openclaw.detect import Detection, detect
 from nexgen_core.openclaw.pin import pinned_version
-from nexgen_core.openclaw.profile import GATEWAY_PORT
+from nexgen_core.openclaw.profile import GATEWAY_PORT, PENDING_TOKEN
 from nexgen_core.openclaw.terms import google_subscriptions
 from nexgen_core.paths import openclaw_config, resolve_home, resolve_vault_data
 from nexgen_core.report import CheckOutcome, Severity
@@ -254,16 +254,31 @@ def _check_heartbeat(config: dict[str, Any]) -> CheckOutcome:
     )
 
 
+def _has_real_token(auth: dict[str, Any]) -> bool:
+    """Whether the token is a secret, not the placeholder `setup` prints first."""
+    token = auth.get("token")
+    return isinstance(token, str) and bool(token.strip()) and token != PENDING_TOKEN
+
+
 def _check_gateway(config: dict[str, Any]) -> list[CheckOutcome]:
-    """Loopback or the home network, and a token: anything else is an open door."""
+    """Loopback or the home network, and a real token: anything else is an open door."""
     gateway = config.get("gateway") if isinstance(config.get("gateway"), dict) else {}
     outcomes: list[CheckOutcome] = []
+    auth = gateway.get("auth") if isinstance(gateway.get("auth"), dict) else {}
+    real_token = _has_real_token(auth)
     bind = gateway.get("bind")
-    if bind in ("loopback", "lan"):
+    if bind == "loopback" or (bind == "lan" and real_token):
         outcomes.append(CheckOutcome(
             id="openclaw.gateway.bind",
             severity=Severity.OK,
             message=t("The gateway binds to {bind}.", bind=bind),
+        ))
+    elif bind == "lan":
+        outcomes.append(CheckOutcome(
+            id="openclaw.gateway.bind",
+            severity=Severity.BROKEN,
+            message=t("The gateway binds to the home network, but its token is missing or still the placeholder."),
+            action=t("Run 'nexgen openclaw setup' to generate a real token, or set gateway.bind to 'loopback'."),
         ))
     else:
         outcomes.append(CheckOutcome(
@@ -273,12 +288,18 @@ def _check_gateway(config: dict[str, Any]) -> list[CheckOutcome]:
                       bind=bind if isinstance(bind, str) and bind else t("(not set)")),
             action=t("Set gateway.bind to 'loopback', or 'lan' if you use the phone app on your home network."),
         ))
-    auth = gateway.get("auth") if isinstance(gateway.get("auth"), dict) else {}
-    if auth.get("mode") == "token":
+    if auth.get("mode") == "token" and real_token:
         outcomes.append(CheckOutcome(
             id="openclaw.gateway.auth",
             severity=Severity.OK,
             message=t("The gateway asks for a token."),
+        ))
+    elif auth.get("mode") == "token":
+        outcomes.append(CheckOutcome(
+            id="openclaw.gateway.auth",
+            severity=Severity.BROKEN,
+            message=t("The gateway uses token authentication, but the token is missing or still the placeholder."),
+            action=t("Run 'nexgen openclaw setup': it generates the token once and never prints it."),
         ))
     else:
         outcomes.append(CheckOutcome(
