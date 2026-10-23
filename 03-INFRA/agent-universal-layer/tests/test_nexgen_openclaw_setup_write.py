@@ -11,6 +11,8 @@ import os
 import sys
 from pathlib import Path
 
+import pytest
+
 SCRIPTS_DIR = Path(__file__).resolve().parents[2] / "scripts"
 if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
@@ -48,7 +50,11 @@ def test_the_backup_of_the_token_file_is_private_on_posix(tmp_path, monkeypatch,
     backup = setup_write.backup_file(path, "20260101-000000")
 
     assert backup is not None
-    assert calls == [(backup, 0o600)]
+    assert len(calls) == 1
+    published, mode = calls[0]
+    assert mode == 0o600
+    assert published.parent == path.parent
+    assert published.name.startswith(backup.name + "."), "the mode is set on the bytes before they are published"
 
 
 def test_on_windows_no_posix_mode_is_forced(tmp_path, monkeypatch, pretend_os):
@@ -59,6 +65,42 @@ def test_on_windows_no_posix_mode_is_forced(tmp_path, monkeypatch, pretend_os):
     setup_write.write_document(path, "{}\n")
 
     assert calls == []
+
+
+def test_a_crash_during_restore_never_truncates_the_file(tmp_path, monkeypatch):
+    """`copy2` wrote into the destination: a crash left openclaw.json half written."""
+    path = tmp_path / "openclaw.json"
+    backup = tmp_path / "openclaw.json.pre-nexgen-1"
+    path.write_text('{"current": 1}\n', encoding="utf-8")
+    backup.write_text('{"previous": 1}\n', encoding="utf-8")
+
+    def crash(*args, **kwargs):
+        raise OSError("power cut")
+
+    monkeypatch.setattr(setup_write.os, "replace", crash)
+
+    with pytest.raises(OSError):
+        setup_write.restore_file(path, backup)
+
+    assert path.read_text(encoding="utf-8") == '{"current": 1}\n'
+    assert not list(tmp_path.glob("*.tmp")), "the unpublished temp file was left behind"
+
+
+def test_a_crash_during_backup_leaves_no_partial_copy(tmp_path, monkeypatch):
+    path = tmp_path / "openclaw.json"
+    path.write_text('{"gateway": {"auth": {"token": "secret"}}}\n', encoding="utf-8")
+
+    def crash(*args, **kwargs):
+        raise OSError("power cut")
+
+    monkeypatch.setattr(setup_write.os, "replace", crash)
+
+    with pytest.raises(OSError):
+        setup_write.backup_file(path, "20260101-000000")
+
+    assert not list(tmp_path.glob("openclaw.json.pre-nexgen-*"))
+    assert not list(tmp_path.glob("*.tmp"))
+    assert "secret" in path.read_text(encoding="utf-8")
 
 
 # ------------------------------------------------------------------- merging

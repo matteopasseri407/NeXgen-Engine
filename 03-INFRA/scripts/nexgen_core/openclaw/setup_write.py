@@ -21,6 +21,7 @@ import json
 import os
 import secrets
 import shutil
+import tempfile
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -199,13 +200,34 @@ def backup_path(path: Path, stamp: str) -> Path:
     return path.with_name(f"{path.name}{BACKUP_MARKER}{stamp}")
 
 
+def _copy_private(source: Path, target: Path) -> None:
+    """Copy complete bytes beside the target, then publish them in one rename.
+
+    `shutil.copy2` writes into the destination as it reads: a crash during the
+    emergency restore left `openclaw.json` half written. The temp file is
+    fsynced and published with `os.replace`, so the destination is either the
+    old file or the new one, never a prefix of either.
+    """
+    fd, name = tempfile.mkstemp(prefix=f"{target.name}.", suffix=".tmp", dir=target.parent)
+    tmp = Path(name)
+    try:
+        with os.fdopen(fd, "wb") as out, source.open("rb") as src:
+            shutil.copyfileobj(src, out)
+            out.flush()
+            os.fsync(out.fileno())
+        _private_mode(tmp)
+        os.replace(tmp, target)
+    except BaseException:
+        tmp.unlink(missing_ok=True)
+        raise
+
+
 def backup_file(path: Path, stamp: str) -> Path | None:
     """Copy the file in force aside; None when there is nothing to protect."""
     if not path.is_file():
         return None
     target = backup_path(path, stamp)
-    shutil.copy2(path, target)
-    _private_mode(target)
+    _copy_private(path, target)
     return target
 
 
@@ -223,8 +245,7 @@ def _private_mode(path: Path) -> None:
 def restore_file(path: Path, backup: Path | None) -> None:
     """Put the previous file back, or remove the one this run created."""
     if backup is not None and backup.is_file():
-        shutil.copy2(backup, path)
-        _private_mode(path)
+        _copy_private(backup, path)
         return
     path.unlink(missing_ok=True)
 
