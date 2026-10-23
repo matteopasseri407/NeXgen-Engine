@@ -1,0 +1,22 @@
+# The ceilings this machine knows, so `nexgen quota` can show a percentage.
+#
+# Without this file the report still shows what was spent on each paid lane and
+# says the ceiling is missing. It never invents a percentage, because a number
+# divided by a guessed maximum is worse than no number at all.
+#
+# Copy it to 03-INFRA/agent-universal-layer/quota.yaml, keep the lanes you pay
+# for, and set the ceiling you actually have. One entry per provider and window:
+# the window keys are the ones the report prints (5h, 7d, 30d).
+#
+# After a plan change, edit this file: the next `nexgen quota` and the next
+# heartbeat use it, and nothing else needs restarting.
+
+limits:
+  # The flat subscription, billed per window on the provider's own dashboard.
+  opencode-go:
+    5h: 12.0
+    7d: 60.0
+    # 30d: 200.0
+  # OpenCode Zen charges per token; its free models cost zero and need no entry.
+  # opencode:
+  #   7d: 10.0

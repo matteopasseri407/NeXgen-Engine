@@ -145,6 +145,18 @@ def _register_mcp_block(sub) -> None:
 def register(sub) -> None:
     _register_utilities(sub)
     _register_mcp_block(sub)
+    _register_quota(sub)
+
+
+def _register_quota(sub) -> None:
+    """What is left of each subscription, and how old the reading is.
+
+    Its own verb because it answers a question about the person's money and
+    plans, not about the engine's tools.
+    """
+    q = sub.add_parser("quota", help=t("What is left of each subscription, and how old the reading is"))
+    q.add_argument("--json", action="store_true", help=t("Output in JSON format"))
+    q.set_defaults(func=cmd_quota)
 
 
 def _usage(parser) -> int:
@@ -250,6 +262,12 @@ def cmd_council(args) -> int:
     from nexgen_core.tools.council import main as council_main
 
     return council_main(_all(args))
+
+
+def cmd_quota(args) -> int:
+    from nexgen_core import quota
+
+    return quota.main(as_json=getattr(args, "json", False))
 
 
 def cmd_mcp_add(args) -> int:

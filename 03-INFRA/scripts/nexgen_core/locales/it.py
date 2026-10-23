@@ -1709,4 +1709,41 @@ MESSAGES: dict[str, str] = {
         "Elenca i telefoni in attesa di accoppiamento e ne approva uno",
     "Approve the request with this id":
         "Approva la richiesta con questo id",
+    # --- Quota: quanto resta di ogni abbonamento --------------------------------
+    "No Codex session on this machine: {path} does not exist.":
+        "Nessuna sessione Codex su questa macchina: {path} non esiste.",
+    "No Codex session on this machine: {path} holds no rollout.":
+        "Nessuna sessione Codex su questa macchina: {path} non contiene nessun rollout.",
+    "No rate-limit reading in the Codex sessions examined ({count}).":
+        "Nessuna lettura del limite nelle sessioni Codex esaminate ({count}).",
+    "No Claude Code transcript on this machine: {path} does not exist.":
+        "Nessun transcript di Claude Code su questa macchina: {path} non esiste.",
+    "No Claude Code message in the last {days} days.":
+        "Nessun messaggio di Claude Code negli ultimi {days} giorni.",
+    "{provider}: not measured":
+        "{provider}: non misurato",
+    "{provider}: the {window} reading is {age} old, older than the window itself":
+        "{provider}: la lettura della finestra {window} ha {age}, più della finestra stessa",
+    "{provider}: {percent} of the {window} window used ({age})":
+        "{provider}: {percent} della finestra {window} usato ({age})",
+    "read {age} ago":
+        "letto {age} fa",
+    "resets in {age}":
+        "si azzera fra {age}",
+    "{provider}: {amount} spent in the last {window}, no declared ceiling ({age})":
+        "{provider}: {amount} spesi nelle ultime {window}, nessun tetto dichiarato ({age})",
+    "{provider}: {amount} of {ceiling} in the last {window} ({percent}, {age})":
+        "{provider}: {amount} di {ceiling} nelle ultime {window} ({percent}, {age})",
+    "{provider}: {tokens} tokens in the last {window} ({age}), the limit is not readable on this machine":
+        "{provider}: {tokens} token nelle ultime {window} ({age}), il limite non è leggibile in locale",
+    "The declared limits in {path} cannot be read: {error}":
+        "I limiti dichiarati in {path} non si leggono: {error}",
+    "The declared limit for {entry} is not a positive number: ignored.":
+        "Il limite dichiarato per {entry} non è un numero positivo: lo ignoro.",
+    "OpenCode: spend is unknown, the harness archive could not be read.":
+        "OpenCode: la spesa non si sa, l'archivio del harness non si è potuto leggere.",
+    "OpenCode: the harness lane is not installed in this engine.":
+        "OpenCode: la corsia del harness non è installata in questo motore.",
+    "What is left of each subscription, and how old the reading is":
+        "Quanto resta di ogni abbonamento, e quanto è vecchia la lettura",
 }
