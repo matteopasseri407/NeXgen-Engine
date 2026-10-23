@@ -41,6 +41,8 @@ servers:
     args: ["secret.mjs"]
     env:
       DEMO_SECRET: "${DEMO_SECRET}"
+      AWS_ACCESS_KEY_ID: "${AWS_ACCESS_KEY_ID}"
+      DATABASE_URL: "${DATABASE_URL}"
       DEMO_PLAIN: plain
   path-tool:
     tier: core
@@ -89,6 +91,8 @@ def renderer(tmp_path: Path, monkeypatch) -> McpRenderer:
     monkeypatch.setenv("DEMO_URL", "https://demo.invalid")
     monkeypatch.setenv("DEMO_TOKEN", "tok-should-never-be-written")
     monkeypatch.setenv("DEMO_SECRET", "super-secret-value")
+    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "AKIA-SECRET-EXAMPLE")
+    monkeypatch.setenv("DATABASE_URL", "postgres://example.invalid/db")
     vault = tmp_path / "vault"
     manifest = vault / "03-INFRA" / "agent-universal-layer" / "mcp" / "manifest.yaml"
     manifest.parent.mkdir(parents=True)
@@ -156,6 +160,19 @@ def test_a_reference_in_a_stdio_environment_stays_a_reference(renderer) -> None:
     assert env["DEMO_SECRET"] == "${DEMO_SECRET}"
     assert env["DEMO_PLAIN"] == "plain"
     assert "super-secret-value" not in cfg.read_text(encoding="utf-8")
+
+
+def test_cloud_credentials_with_unusual_names_also_stay_references(renderer) -> None:
+    """A name heuristic let AWS keys and database URLs through; the rule is now the opposite."""
+    cfg = _install_openclaw(renderer)
+    assert renderer.render_openclaw(write=True)[0]
+
+    env = _servers(renderer)["secret-tool"]["env"]
+    assert env["AWS_ACCESS_KEY_ID"] == "${AWS_ACCESS_KEY_ID}"
+    assert env["DATABASE_URL"] == "${DATABASE_URL}"
+    rendered = cfg.read_text(encoding="utf-8")
+    assert "AKIA-SECRET-EXAMPLE" not in rendered
+    assert "example.invalid/db" not in rendered
 
 
 def test_a_non_secret_reference_is_still_resolved(renderer) -> None:

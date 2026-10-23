@@ -30,13 +30,13 @@ and nothing else in that file is touched: models, channels, gateway settings and
 servers the manifest does not declare are OpenClaw's own. A machine where OpenClaw
 was never set up has no config file, and the renderer does not invent one.
 
-In `mcp.servers.*.env`, a manifest value that is exactly `${VAR}` and whose
-variable name looks like a credential (`TOKEN`, `SECRET`, `PASSWORD`,
-`CREDENTIAL`, `API_KEY`, `..._KEY`) is written as the reference, because OpenClaw
-substitutes it itself and a secret must not be copied into the file. A path or a
-port stays resolved, because the gateway's environment is not the engine's.
-Known limit: a secret whose name carries none of those markers is written
-resolved, since the manifest does not mark secret variables explicitly yet.
+In `mcp.servers.*.env`, every `${VAR}` stays a reference in `openclaw.json`:
+OpenClaw substitutes it itself, and a credential must not be copied out of the
+environment into a file. The exception is a value whose references are all
+engine-owned paths or ports (`AGENT_VAULT_DATA`, `AGENT_ENGINE_ROOT`,
+`KNOWLEDGE_VAULT_PATH`, the tunnel ports), which is written resolved because the
+gateway's environment is not the engine's. A value that mixes the two stays a
+reference: a missing port is a better outcome than a leaked secret.
 
 ## Instructions
 

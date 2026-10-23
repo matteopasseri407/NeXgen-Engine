@@ -164,22 +164,32 @@ def _apply_servers(
         servers_table[name] = _build_entry(srv, (references or {}).get(name))
 
 
-#: An env value that is nothing but a reference: `${NAME}` or `${NAME:-default}`.
-_SECRET_REFERENCE = re.compile(r"^\$\{([A-Za-z_][A-Za-z0-9_]*)(?::-[^}]*)?\}$")
+#: The variables the engine itself resolves to a path or a port. Their value
+#: must arrive in `openclaw.json` already written: the gateway's environment is
+#: not the engine's, so an unresolved path would break the server it configures.
+ENGINE_RESOLVED_VARS = frozenset({
+    "AGENT_ENGINE_ROOT",
+    "AGENT_VAULT_DATA",
+    "KNOWLEDGE_VAULT_PATH",
+    "FIRECRAWL_TUNNEL_PORT",
+    "OCR_TUNNEL_PORT",
+    "N8N_TUNNEL_PORT",
+})
 
-#: The variable names that mean "a credential" and never "a path or a port".
-_SECRET_NAME = re.compile(r"(?i)(?:token|secret|password|credential|api[_-]?key|(?:^|_)key$)")
+#: One `${NAME}` or `${NAME:-default}` reference inside a string value.
+_REFERENCE_NAME = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)(?::-[^}]*)?\}")
 
 
 def _env_references(renderer) -> dict[str, dict[str, str]]:
-    """The manifest's own env values that are references to a credential.
+    """The manifest env values OpenClaw must receive exactly as written.
 
-    The generic renderer resolves `${VAR}` before a dialect sees the entry,
-    which is what Claude and Codex need: they take a value and nothing else.
-    OpenClaw substitutes references itself, so a credential stays a reference
-    instead of being copied out of the environment into `openclaw.json`.
-    A path or a port stays resolved: the gateway's own environment is not the
-    engine's, and an unresolved `AGENT_VAULT_DATA` would break the server.
+    Every `${VAR}` stays a reference, because OpenClaw substitutes it itself
+    and a credential must not be copied out of the environment into
+    `openclaw.json`. The exception is a value whose references are all
+    engine-owned paths or ports: those are written resolved, because the
+    gateway does not inherit the engine's environment. A value mixing the two
+    stays a reference: leaking a secret is worse than a port that may be
+    missing.
     """
     from nexgen_core.config import load_mcp_manifest
     from nexgen_core.mcp_render import IS_WINDOWS
@@ -201,11 +211,12 @@ def _env_references(renderer) -> dict[str, dict[str, str]]:
             raw = override["env"]  # the renderer replaces the whole block, it does not merge it
         kept: dict[str, str] = {}
         for key, value in raw.items():
-            if not isinstance(value, str):
+            if not isinstance(value, str) or "${" not in value or "{{" in value:
                 continue
-            match = _SECRET_REFERENCE.match(value.strip())
-            if match and _SECRET_NAME.search(match.group(1)):
-                kept[str(key)] = str(value)
+            names = set(_REFERENCE_NAME.findall(value))
+            if names and names <= ENGINE_RESOLVED_VARS:
+                continue
+            kept[str(key)] = value
         if kept:
             found[str(name)] = kept
     return found
