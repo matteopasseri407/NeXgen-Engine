@@ -415,9 +415,14 @@ def child_sessions(session_id: str, *, db: Path | None = None) -> tuple[int | No
     return len(found), round(child_cost, 6), f"figlie da opencode.db ({', '.join(tables)})"
 
 
-def opencode_db() -> Path | None:
-    """Where the harness keeps its sessions, or None when the store is not there."""
-    base = Path(os.environ.get("XDG_DATA_HOME") or resolve_home() / ".local" / "share")
+def opencode_db(home: Path | None = None) -> Path | None:
+    """Where the harness keeps its sessions, or None when the store is not there.
+
+    `home` is the home in play, not necessarily the process's: a caller reading
+    a sandbox, or a machine other than the one this process runs on, must not
+    be answered with the archive under the invoking user's home.
+    """
+    base = Path(os.environ.get("XDG_DATA_HOME") or resolve_home(home) / ".local" / "share")
     path = base / "opencode" / "opencode.db"
     return path if path.is_file() else None
 

@@ -151,3 +151,85 @@ def test_an_empty_archive_reports_zero_for_a_window_nobody_spent_in(tmp_path):
 
     assert _costs(data) == {"5h": 0.0, "7d": 0.0, "30d": 0.0}
     assert _sessions(data) == {"5h": 0, "7d": 0, "30d": 0}
+
+
+# --------------------------------------------------- la stessa spesa, per fornitore
+
+
+def _archive_with_models(tmp_path, rows, *, model_column: bool = True) -> Path:
+    """Un archivio in miniatura con la colonna `model`, righe `(id, costo, secondi fa, modello)`."""
+    path = tmp_path / "opencode.db"
+    con = sqlite3.connect(path)
+    columns = "id text primary key, cost real, time_updated integer"
+    if model_column:
+        columns += ", model text"
+    con.execute(f"create table session_v2 ({columns})")
+    for session, cost, ago, model in rows:
+        values = (session, cost, int((NOW - ago) * 1000), model) if model_column else (session, cost, int((NOW - ago) * 1000))
+        placeholders = "?, ?, ?, ?" if model_column else "?, ?, ?"
+        con.execute(f"insert into session_v2 values ({placeholders})", values)
+    con.commit()
+    con.close()
+    return path
+
+
+def _model(provider: str) -> str:
+    return '{"id":"deepseek-v4.1-flash","providerID":"%s","variant":"max"}' % provider
+
+
+def test_the_flat_subscription_and_zen_are_two_separate_invoices(tmp_path):
+    """`opencode-go` e `opencode` sono due abbonamenti diversi: sommarli risponde alla domanda sbagliata."""
+    db = _archive_with_models(tmp_path, [
+        ("ses_go", 1.5, 3600, _model("opencode-go")),
+        ("ses_zen", 0.25, 3600, _model("opencode")),
+        ("ses_go_vecchia", 4.0, 10 * 86400, _model("opencode-go")),
+    ])
+
+    data = spend.spend_by_provider(db=db, now=NOW)
+
+    assert data["note"] == ""
+    assert "session_v2" in data["source"]
+    assert data["providers"]["opencode-go"]["5h"]["cost_usd"] == 1.5
+    assert data["providers"]["opencode-go"]["30d"]["cost_usd"] == 5.5
+    assert data["providers"]["opencode"]["5h"]["cost_usd"] == 0.25
+    assert data["providers"]["opencode"]["30d"]["cost_usd"] == 0.25
+
+
+def test_a_free_model_costs_zero_and_stays_in_its_own_provider(tmp_path):
+    """I modelli `-free` costano zero: il loro fornitore resta leggibile, il totale no."""
+    db = _archive_with_models(tmp_path, [
+        ("ses_free", 0.0, 600, '{"id":"deepseek-v4.1-flash-free","providerID":"opencode"}'),
+    ])
+
+    data = spend.spend_by_provider(db=db, now=NOW)
+
+    assert data["providers"]["opencode"]["5h"] == {"cost_usd": 0.0, "sessions": 1}
+
+
+def test_a_session_without_a_provider_is_counted_not_dropped(tmp_path):
+    db = _archive_with_models(tmp_path, [
+        ("ses_muta", 2.0, 3600, None),
+        ("ses_rotta", 1.0, 3600, "non-json"),
+    ])
+
+    data = spend.spend_by_provider(db=db, now=NOW)
+
+    assert data["providers"][spend.UNKNOWN_PROVIDER]["5h"] == {"cost_usd": 3.0, "sessions": 2}
+
+
+def test_an_archive_from_before_the_model_column_still_reads(tmp_path):
+    """La colonna `model` è arrivata con la v2: un archivio vecchio non deve far fallire la lettura."""
+    db = _archive_with_models(tmp_path, [("ses_una", 1.25, 3600, None)], model_column=False)
+
+    data = spend.spend_by_provider(db=db, now=NOW)
+
+    assert data["note"] == ""
+    assert data["providers"][spend.UNKNOWN_PROVIDER]["5h"]["cost_usd"] == 1.25
+
+
+def test_an_unreadable_store_has_no_providers_at_all(tmp_path):
+    """Un archivio che non si legge non è zero speso: non ha fornitori inventati."""
+    data = spend.spend_by_provider(db=tmp_path / "manca.db", now=NOW)
+
+    assert data["note"] == "archivio del harness non trovato"
+    assert data["providers"] == {}
