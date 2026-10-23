@@ -30,6 +30,14 @@ and nothing else in that file is touched: models, channels, gateway settings and
 servers the manifest does not declare are OpenClaw's own. A machine where OpenClaw
 was never set up has no config file, and the renderer does not invent one.
 
+In `mcp.servers.*.env`, a manifest value that is exactly `${VAR}` and whose
+variable name looks like a credential (`TOKEN`, `SECRET`, `PASSWORD`,
+`CREDENTIAL`, `API_KEY`, `..._KEY`) is written as the reference, because OpenClaw
+substitutes it itself and a secret must not be copied into the file. A path or a
+port stays resolved, because the gateway's environment is not the engine's.
+Known limit: a secret whose name carries none of those markers is written
+resolved, since the manifest does not mark secret variables explicitly yet.
+
 ## Instructions
 
 OpenClaw has no pointer file. At every session it loads the `AGENTS.md` of the
