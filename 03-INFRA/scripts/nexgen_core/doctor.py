@@ -58,6 +58,7 @@ from nexgen_core.checks.mcp_checks import (  # noqa: E402 - sys.path shim for cl
 )
 from nexgen_core.checks.module_checks import check_modules_catalog, check_modules_ready  # noqa: E402 - sys.path shim for cloned checkout
 from nexgen_core.checks.openclaw_checks import check_openclaw  # noqa: E402 - sys.path shim for cloned checkout
+from nexgen_core.checks.openclaw_parity_checks import check_openclaw_parity
 from nexgen_core.checks.reachability_checks import check_mcp_reachability  # noqa: E402 - sys.path shim for cloned checkout
 from nexgen_core.checks.security_checks import (  # noqa: E402 - sys.path shim for cloned checkout
     check_leak_patterns_twin,
@@ -218,6 +219,8 @@ class Doctor:
             run("modules.ready", lambda: check_modules_ready(self.engine_root, vault))
             # The harness with the interface, when this machine chose it.
             run("openclaw", lambda: check_openclaw(self.home, self.engine_root, vault))
+            # One plugin, two hosts: every layer OpenClaw must receive from Claude Code.
+            run("openclaw.parity", lambda: check_openclaw_parity(self.home, vault))
 
             # 4. Skill checks
             run("skills.manifest", lambda: check_skills_manifest(manifest_skills))
