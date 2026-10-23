@@ -12,7 +12,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
-from nexgen_core.i18n import t
+from nexgen_core.i18n import detect_language, t
 from nexgen_core.openclaw.config_file import read_config
 from nexgen_core.openclaw.detect import Detection, detect
 from nexgen_core.openclaw.profile import (
@@ -97,6 +97,23 @@ def _agent_notes(models: dict[str, str], detected: Detection) -> list[str]:
     return notes
 
 
+def _context_notes(config: dict[str, Any]) -> list[str]:
+    """Models whose context window the backend did not report, and so is not written."""
+    providers = config.get("models", {}).get("providers")
+    if not isinstance(providers, dict):
+        return []
+    unknown: list[str] = []
+    for block in providers.values():
+        models = block.get("models") if isinstance(block, dict) else None
+        for entry in models or []:
+            if isinstance(entry, dict) and entry.get("id") and "contextWindow" not in entry:
+                unknown.append(str(entry["id"]))
+    if not unknown:
+        return []
+    return [t("The context window is unknown for these models and is not written: {models}",
+              models=", ".join(unknown))]
+
+
 def _build_notes(config: dict[str, Any], detected: Detection) -> list[str]:
     """What a person has to know that the diff cannot say by itself."""
     notes: list[str] = []
@@ -105,6 +122,7 @@ def _build_notes(config: dict[str, Any], detected: Detection) -> list[str]:
         notes.append(t("The gateway token is a placeholder: 'nexgen openclaw setup' generates the real one."))
     models = agent_models(detected)
     notes.extend(_agent_notes(models, detected))
+    notes.extend(_context_notes(config))
     if models.get("capo") == CLAUDE_MODEL:
         notes.append(t("The code agent runs Claude with high reasoning and the embedded runtime."))
     if models.get("main") == CODEX_MODEL:
@@ -130,10 +148,10 @@ def build_plan(
     snapshot = detected if detected is not None else detect(
         home=home, env=env, engine_root=engine_root, vault_data=vault_data,
     )
-    chosen = choices or Choices()
-    config = build_config(snapshot, chosen)
+    chosen = choices or Choices(lang=detect_language())
     path = openclaw_config(home, env)
     current, error = read_config(path)
+    config = build_config(snapshot, chosen, current)
 
     proposed_flat = _flatten(config)
     current_flat = _flatten(current or {})

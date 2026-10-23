@@ -17,7 +17,7 @@ if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
 from nexgen_core import i18n  # noqa: E402 - sys.path shim for cloned checkout
-from nexgen_core.openclaw.detect import Detection, Installation, LocalModels, Login  # noqa: E402 - sys.path shim for cloned checkout
+from nexgen_core.openclaw.detect import Detection, Installation, LocalModelInfo, LocalModels, Login  # noqa: E402 - sys.path shim for cloned checkout
 from nexgen_core.openclaw.plan import build_plan, render_plan  # noqa: E402 - sys.path shim for cloned checkout
 from nexgen_core.openclaw.profile import Choices  # noqa: E402 - sys.path shim for cloned checkout
 
@@ -35,7 +35,7 @@ def detected(config_path: Path) -> Detection:
         claude=Login(binary=True, login=True),
         codex=Login(binary=False),
         opencode_go=True,
-        local=LocalModels(ollama=("qwen3:8b:latest",)),
+        local=LocalModels(ollama=(LocalModelInfo(name="qwen3:8b:latest", context_window=8192),)),
         n8n=True,
     )
 
@@ -80,7 +80,9 @@ def test_the_plan_separates_what_it_adds_changes_and_leaves_alone(tmp_path):
     assert "gateway.bind" in plan.changed
     assert "agents.defaults.heartbeat.every" in plan.changed
     assert "plugins.entries.anthropic.config.sessionCatalog.enabled" in plan.added
-    assert "gateway.auth.token" in plan.changed
+    # The token is the person's: kept, and never offered as a change.
+    assert plan.config["gateway"]["auth"]["token"] == "old"
+    assert "gateway.auth.token" not in plan.changed
     assert plan.kept == ("channels", "mcp")
     assert "google" not in json.dumps(plan.to_dict()["config"]).lower()
 
@@ -119,6 +121,32 @@ def test_an_absent_file_is_a_complete_creation_not_an_error(tmp_path):
     assert plan.current_error is None
     assert plan.changed == ()
     assert "plugins.allow" in plan.added
+
+
+def test_an_existing_workspace_is_kept_and_never_offered_as_a_change(tmp_path):
+    home = tmp_path / "home"
+    current = {"agents": {"entries": {"main": {"workspace": "D:\\keep\\me"}}}}
+    path = put_config(home, current)
+    plan = build_plan(detected=detected(path), home=home, env={})
+    assert plan.config["agents"]["entries"]["main"]["workspace"] == "D:\\keep\\me"
+    assert "agents.entries.main.workspace" not in plan.changed
+    assert "agents.entries.main.workspace" not in plan.added
+
+
+def test_the_plan_says_when_a_context_window_is_unknown(tmp_path):
+    home = tmp_path / "home"
+    path = put_config(home, {})
+    machine = Detection(
+        openclaw=Installation(installed=True, version="2026.10.6", config_path=str(path), config_present=True),
+        claude=Login(binary=False),
+        codex=Login(binary=False),
+        opencode_go=False,
+        local=LocalModels(llamacpp=(LocalModelInfo(name="local-model"),)),
+        n8n=False,
+    )
+    plan = build_plan(detected=machine, home=home, env={})
+    assert "context window" in " ".join(plan.notes).lower()
+    assert "local-model" in " ".join(plan.notes)
 
 
 def test_an_unreadable_file_is_reported_in_the_plan(tmp_path):
