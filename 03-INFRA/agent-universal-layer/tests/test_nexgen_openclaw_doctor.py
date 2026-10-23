@@ -84,7 +84,7 @@ def declare(vault: Path, state: str = "local") -> Path:
 
 def run_doctor(tmp_path: Path, config_path: Path | None = None, *, declared: bool = True,
                platform: str = "linux", connect=None, detected: Detection | None = None,
-               **machine_kwargs):
+               wsl_distributions=None, **machine_kwargs):
     vault = declare(tmp_path / "vault") if declared else tmp_path / "vault"
     path = config_path or (tmp_path / "home" / ".openclaw" / "openclaw.json")
     snapshot = detected if detected is not None else machine(path, **machine_kwargs)
@@ -93,9 +93,10 @@ def run_doctor(tmp_path: Path, config_path: Path | None = None, *, declared: boo
         home=tmp_path / "home",
         vault_data=vault,
         engine_root=tmp_path / "engine",
-        env={"LOCALAPPDATA": str(tmp_path / "localappdata")},
+        env={"LOCALAPPDATA": str(tmp_path / "localappdata"), "APPDATA": str(tmp_path / "appdata")},
         platform=platform,
         connect=connect or (lambda host, port, timeout: False),
+        wsl_distributions=wsl_distributions or (lambda: []),
     )
 
 
@@ -291,6 +292,25 @@ def test_a_stopped_gateway_is_only_information(tmp_path):
     listening = by_id(outcomes)["openclaw.gateway.listening"]
     assert listening.severity == Severity.OK
     assert "18789" in listening.message
+
+
+def test_every_agent_gets_a_learned_skills_line(tmp_path):
+    outcomes = run_doctor(tmp_path, write_config(tmp_path, clean_config()))
+
+    ids = [outcome.id for outcome in outcomes]
+    assert "openclaw.workshop_skills.main" in ids
+    assert "openclaw.workshop_skills.capo" in ids
+
+
+def test_the_companion_gateway_is_a_warning_when_its_wsl_distro_exists(tmp_path):
+    outcomes = run_doctor(
+        tmp_path, write_config(tmp_path, clean_config()), platform="win32",
+        wsl_distributions=lambda: ["OpenClawGateway"],
+    )
+
+    companion = by_id(outcomes)["openclaw.companion_gateway"]
+    assert companion.severity == Severity.WARN
+    assert "Connections" in (companion.action or "")
 
 
 def test_a_second_gateway_from_the_microsoft_store_is_a_warning(tmp_path):

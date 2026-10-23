@@ -1467,6 +1467,20 @@ MESSAGES: dict[str, str] = {
         "È installato un secondo OpenClaw dal Microsoft Store ({names}): due gateway in conflitto.",
     "Remove the Microsoft Store app: the engine manages the npm one.":
         "Rimuovi l'app del Microsoft Store: il motore gestisce quello npm.",
+    "Agent {agent}: {count} learned skills created or changed in the last 24 hours.":
+        "Agente {agent}: {count} skill imparate create o cambiate nelle ultime 24 ore.",
+    "Review what {agent} learned: more than ten new procedures in a day is a lot to keep.":
+        "Rivedi cosa ha imparato {agent}: più di dieci procedure nuove in un giorno sono tante da tenere.",
+    "the app-owned WSL distribution {name}":
+        "la distribuzione WSL dell'app {name}",
+    "the app's own WSL storage":
+        "lo spazio WSL dell'app",
+    "its settings point at another local gateway":
+        "le sue impostazioni puntano a un altro gateway locale",
+    "The OpenClaw Companion manages a gateway of its own on this PC ({signals}): two gateways in conflict.":
+        "OpenClaw Companion gestisce un gateway suo su questo PC ({signals}): due gateway in conflitto.",
+    "In OpenClaw Companion open Connections and choose 'a local Gateway on this PC'.":
+        "In OpenClaw Companion apri Connections e scegli 'a local Gateway on this PC'.",
     "{passed} passed, {warned} warnings, {failed} failures":
         "{passed} superati, {warned} avvisi, {failed} errori",
     # Il comando

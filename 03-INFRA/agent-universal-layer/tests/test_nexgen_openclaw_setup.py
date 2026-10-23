@@ -32,7 +32,7 @@ PIN_FILE = TESTS_DIR.parent / "openclaw" / "pin.json"
 def _english_and_no_sockets(monkeypatch):
     """English output to assert on, and never a real TCP connect to port 18789."""
     i18n.set_language("en")
-    monkeypatch.setattr("nexgen_core.openclaw.doctor._tcp_open", lambda host, port, timeout: False)
+    monkeypatch.setattr("nexgen_core.openclaw.doctor_runtime.default_connect", lambda host, port, timeout: False)
     yield
     i18n.set_language(None)
 

@@ -12,7 +12,6 @@ because starting or validating OpenClaw is B2's job, and never write a file.
 from __future__ import annotations
 
 import os
-import socket
 import sys
 from collections.abc import Callable, Mapping
 from pathlib import Path
@@ -20,9 +19,10 @@ from typing import Any
 
 from nexgen_core.i18n import t
 from nexgen_core.openclaw.config_file import read_config
+from nexgen_core.openclaw import doctor_runtime
 from nexgen_core.openclaw.detect import Detection, detect
 from nexgen_core.openclaw.pin import pinned_version
-from nexgen_core.openclaw.profile import GATEWAY_PORT, PENDING_TOKEN
+from nexgen_core.openclaw.profile import PENDING_TOKEN
 from nexgen_core.openclaw.terms import google_subscriptions
 from nexgen_core.paths import openclaw_config, resolve_home, resolve_vault_data
 from nexgen_core.report import CheckOutcome, Severity
@@ -34,22 +34,6 @@ SUBSCRIPTION_LABELS = {
     "openai": "Codex",
     "opencode-go": "the OpenCode Go key",
 }
-
-#: Numbers that mean "no port": the check reads the gateway's own setting.
-DEFAULT_GATEWAY_PORT = GATEWAY_PORT
-LISTEN_TIMEOUT_SECONDS = 0.4
-
-Connect = Callable[[str, int, float], bool]
-
-
-def _tcp_open(host: str, port: int, timeout: float) -> bool:
-    """Whether something accepts a TCP connection there, without sending a byte."""
-    try:
-        with socket.create_connection((host, port), timeout=timeout):
-            return True
-    except OSError:  # nexgen: allow reason="a closed port is the expected answer when the gateway is stopped"
-        return False
-
 
 def _declared(vault_data: Path | None, home: Path | None = None) -> bool:
     """Whether this machine declared the OpenClaw module `local`."""
@@ -375,51 +359,6 @@ def _check_agent_models(config: dict[str, Any], snapshot: Detection) -> CheckOut
     )
 
 
-def _check_listening(config: dict[str, Any], connect: Connect) -> CheckOutcome:
-    """Informational: a gateway that is stopped is a normal state, never an error."""
-    gateway = config.get("gateway") if isinstance(config.get("gateway"), dict) else {}
-    port = gateway.get("port") if isinstance(gateway.get("port"), int) else DEFAULT_GATEWAY_PORT
-    if connect("127.0.0.1", int(port), LISTEN_TIMEOUT_SECONDS):
-        return CheckOutcome(
-            id="openclaw.gateway.listening",
-            severity=Severity.OK,
-            message=t("The gateway answers on 127.0.0.1:{port}.", port=port),
-        )
-    return CheckOutcome(
-        id="openclaw.gateway.listening",
-        severity=Severity.OK,
-        message=t("The gateway is not listening on 127.0.0.1:{port} (normal when it is stopped).", port=port),
-    )
-
-
-def _store_packages(home: Path, env: Mapping[str, str], platform: str) -> list[str]:
-    """The Microsoft Store package of OpenClaw, when Windows installed one."""
-    if not platform.startswith("win"):
-        return []
-    local_appdata = env.get("LOCALAPPDATA") or str(home / "AppData" / "Local")
-    packages = Path(local_appdata) / "Packages"
-    if not packages.is_dir():
-        return []
-    return sorted(
-        child.name for child in packages.iterdir()
-        if child.is_dir() and "openclaw" in child.name.lower()
-    )
-
-
-def _check_store_gateway(home: Path, env: Mapping[str, str], platform: str) -> CheckOutcome | None:
-    """Two gateways on the same machine fight over the same port and state."""
-    found = _store_packages(home, env, platform)
-    if not found:
-        return None
-    return CheckOutcome(
-        id="openclaw.store_gateway",
-        severity=Severity.WARN,
-        message=t("A second OpenClaw from the Microsoft Store is installed ({names}): two gateways in conflict.",
-                  names=", ".join(found)),
-        action=t("Remove the Microsoft Store app: the engine manages the npm one."),
-    )
-
-
 def collect(
     detected: Detection | None = None,
     *,
@@ -427,8 +366,9 @@ def collect(
     env: Mapping[str, str] | None = None,
     engine_root: Path | None = None,
     vault_data: Path | None = None,
-    connect: Connect | None = None,
+    connect: doctor_runtime.Connect | None = None,
     platform: str | None = None,
+    wsl_distributions: Callable[[], list[str]] | None = None,
 ) -> list[CheckOutcome]:
     """Every OpenClaw check that applies to this machine, or nothing at all."""
     values = dict(os.environ) if env is None else {str(k): str(v) for k, v in env.items()}
@@ -463,11 +403,15 @@ def collect(
             _check_google(config),
             _check_acp(config),
             _check_agent_models(config, snapshot),
-            _check_listening(config, connect or _tcp_open),
+            doctor_runtime.check_listening(config, connect or doctor_runtime.default_connect),
+            *doctor_runtime.check_workshop_skills(config, path.parent, home_dir),
         ])
-    store = _check_store_gateway(home_dir, values, system)
+    store = doctor_runtime.check_store_gateway(home_dir, values, system)
     if store is not None:
         outcomes.append(store)
+    companion = doctor_runtime.check_companion_gateway(home_dir, values, system, wsl_distributions)
+    if companion is not None:
+        outcomes.append(companion)
     return outcomes
 
 
