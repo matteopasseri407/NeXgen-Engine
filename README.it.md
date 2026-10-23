@@ -20,7 +20,7 @@
 
 **Configura le CLI di coding AI da una sola sorgente Git e verifica il risultato.**
 
-NeXgen Engine genera le configurazioni di Claude Code, Codex, OpenCode e Antigravity da un KnowledgeVault privato.
+NeXgen Engine genera le configurazioni di Claude Code, Codex, OpenCode, Antigravity e OpenClaw da un KnowledgeVault privato.
 Il Vault contiene istruzioni condivise, manifest MCP e skill, segreti cifrati e memoria in Markdown.
 
 Ogni CLI riceve il proprio formato nativo, mentre le impostazioni specifiche della macchina restano locali.
@@ -50,7 +50,7 @@ Il motore tiene separate tre fonti di configurazione:
 * **Segreti:** cifratura asimmetrica `age` (`99-SECRETS/secrets.yaml.age`) su chiavi locali (`0600`), slot OAuth isolati per host e `secrets.env` generato per shell e servizi.
   Non serve una passphrase.
 * **Shell operatore:** dashboard `nexgen info` e REPL interattiva `nexgen shell`, così la gestione ordinaria non richiede mai una CLI AI aperta.
-* **Quattro runtime più l'app Desktop:** Claude Code, Codex, OpenCode (nativo V2: istruzioni, `plugins`/`permissions`, viste skill) e Antigravity, ognuno nel suo dialetto, seggi Council inclusi. L'app Claude Desktop riceve solo server read-only esplicitamente consentiti (`desktop_allow`), dato che non ha hook guardrail.
+* **Cinque runtime più l'app Desktop:** Claude Code, Codex, OpenCode (nativo V2: istruzioni, `plugins`/`permissions`, viste skill), Antigravity e OpenClaw, ognuno nel suo dialetto, seggi Council inclusi. OpenClaw è tecnicamente la quinta CLI della sincronizzazione, ma è l'harness ufficiale di NeXgen Engine: la porta d'ingresso con interfaccia (pannello web, app sul telefono) da cui si usano gli altri harness e i tuoi abbonamenti. L'app Claude Desktop riceve solo server read-only esplicitamente consentiti (`desktop_allow`), dato che non ha hook guardrail.
 * **Diagnostica (`nexgen doctor`):** controlli automatici su allineamento Git, manifest, link, token e permessi.
   Un controllo che non riesce a verificare dichiara un esito indeterminato.
 

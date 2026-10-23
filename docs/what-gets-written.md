@@ -29,8 +29,9 @@ The four-question guided interview at the end (CLI count, machine count, where s
 | Codex | `~/.codex/AGENTS.md` | `~/.codex/config.toml` | `~/.codex/skills/`, per skill with `codex` in `targets` |
 | OpenCode v2 | `~/.config/opencode/AGENTS.md` symlinked at this repo's `AGENTS.md` (the `instructions` array is accepted but unresolved by V2, so it is no longer written; engine-added entries are removed once, user entries stay) | `mcp.servers` in `opencode.jsonc`/`opencode.json`, flat V1 layout migrated once, `plugins` + `permissions` native keys (`plugin`/`permission` migrated once, user rules never overridden) | `~/.config/opencode/skills/` native views + shared `~/.agents/skills/` catalog, per skill with `opencode` in `targets` |
 | Antigravity | `~/.gemini/config/AGENTS.md` | `~/.gemini/antigravity/mcp_config.json`\* | three folders at once — see below |
+| OpenClaw | no bootstrap pointer yet | `mcp.servers` in `~/.openclaw/openclaw.json` (or the file `OPENCLAW_CONFIG_PATH` names, or `OPENCLAW_STATE_DIR/openclaw.json`) | no native view yet |
 
-A skill only gets a native per-CLI view when its manifest entry declares `exposure: eager` or `exposure: core`; a `lazy` (the default) or `manual` skill stays discoverable only through the shared library and is never copied into a CLI-specific folder, for any of the four CLIs equally — there is no CLI-specific exception to that gate.
+A skill only gets a native per-CLI view when its manifest entry declares `exposure: eager` or `exposure: core`; a `lazy` (the default) or `manual` skill stays discoverable only through the shared library and is never copied into a CLI-specific folder, for all of them equally — there is no CLI-specific exception to that gate.
 
 Antigravity is the one CLI whose skill views fan out: a skill targeting `antigravity` is written into all three of `~/.gemini/antigravity-cli/skills/`, `~/.gemini/config/skills/`, and `~/.gemini/skills/` (the legacy root), because different ways of launching Antigravity have been observed reading different folders.
 
@@ -50,6 +51,16 @@ when it checks that Antigravity's own rendered config carries every server the
 manifest expects.
 
 These are patches to files that must already exist (each CLI creates its own default config the first time you open it). Nothing here creates a CLI's config file from scratch; if a chosen CLI has never been opened, that step is skipped for it.
+
+### OpenClaw: the three rules its file does not let you guess
+
+OpenClaw is the harness with the interface (web panel, phone app) through which the other harnesses are used, so its file is also its own: the engine writes only the `mcp.servers` table and leaves models, channels and gateway settings alone. Three rules of its schema cost a connector silently, and the renderer therefore enforces them:
+
+- **The URL is validated before `${VAR}` is substituted.** A `${VAR}` left in the `url` field is refused, so the URL is written already resolved from the variable the manifest names. If that variable is unset, the server is skipped the same way `require_env` skips one.
+- **An http server needs `"transport": "streamable-http"`.** Without it the handshake times out and nothing explains why.
+- **A Python MCP server dies with `UnicodeEncodeError` on Windows** as soon as a value carries an accent or an emoji. Every server whose command is a Python interpreter (`python`, `python3`, `py`, or a virtualenv's `.exe`) receives `PYTHONUTF8=1` and `PYTHONIOENCODING=utf-8` in its environment, on every platform.
+
+Timeouts are converted from the manifest's seconds to `connectionTimeoutMs` / `requestTimeoutMs`, and a `tools_deny` list becomes `"toolFilter": {"exclude": [...]}`. Secrets stay references (`"Authorization": "Bearer ${NAME}"`), never values.
 
 ## MULTI profile only, additional writes by the guard cycle (`nexgen sync`/`nexgen guard`, aliases `agent-sync apply`/`agent-sync guard`)
 
