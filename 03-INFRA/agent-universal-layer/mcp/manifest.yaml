@@ -3,8 +3,8 @@
 # ----------------------------------------------------------------------------
 # This file describes EVERY MCP server exactly once, in abstract form.
 # A generator (mcp/render.py) translates it into each CLI's dialect (Claude,
-# Codex, Antigravity, OpenCode) on every machine. You edit HERE; everything
-# else is generated.
+# Codex, Antigravity, OpenCode, OpenClaw) on every machine. You edit HERE;
+# everything else is generated.
 #
 # RULES:
 #  - No secrets in here. Tokens are referenced by environment variable NAME,
@@ -57,7 +57,7 @@ servers:
     # command line carries no `npx pkg@version`. That pin is declared once, by the `browser` module
     # (`upstream:` in modules/modules.yaml), which reads it from the script: a number in this
     # manifest could be rewritten by the bump without ever changing the one the wrapper uses.
-    targets: [claude, codex, antigravity, opencode]
+    targets: [claude, codex, antigravity, opencode, openclaw]
     windows:
       args: ["${AGENT_ENGINE_ROOT}\\agent-universal-layer\\mcp\\playwright-human-safe.mjs", "--cdp-endpoint", "http://localhost:9222"]
 
@@ -74,7 +74,7 @@ servers:
     env:
       FIRECRAWL_API_URL: "http://127.0.0.1:${FIRECRAWL_TUNNEL_PORT:-33002}"
     require_env: FIRECRAWL_TUNNEL_PORT
-    targets: [claude, codex, antigravity, opencode]
+    targets: [claude, codex, antigravity, opencode, openclaw]
 
   n8n-mcp:
     transport: http
@@ -83,7 +83,7 @@ servers:
     auth: { type: bearer, env: N8N_MCP_TOKEN }
     require_env: N8N_MCP_TOKEN
     timeouts: { startup: 120, tool: 600 }          # seconds; Codex and OpenCode render their native timeout fields
-    targets: [claude, codex, antigravity, opencode]
+    targets: [claude, codex, antigravity, opencode, openclaw]
 
   vault-library:
     transport: http
@@ -93,7 +93,7 @@ servers:
     auth: { type: bearer, env: VAULT_LIBRARY_TOKEN }
     require_env: VAULT_LIBRARY_URL
     timeouts: { startup: 120, tool: 120 }
-    targets: [claude, codex, antigravity, opencode]
+    targets: [claude, codex, antigravity, opencode, openclaw]
 
   vault-ocr:
     transport: stdio
@@ -104,7 +104,7 @@ servers:
       VAULT_OCR_API_URL: "http://127.0.0.1:${OCR_TUNNEL_PORT:-33003}"
     require_env: OCR_TUNNEL_PORT
     timeouts: { startup: 30, tool: 120 }           # tool 120s: RapidOCR on a 1.5-CPU VPS can exceed the 30s default
-    targets: [claude, codex, antigravity, opencode]
+    targets: [claude, codex, antigravity, opencode, openclaw]
     windows:
       command: py
       args: ["-3", "${AGENT_ENGINE_ROOT}\\deploy\\ocr\\mcp\\vault_ocr_mcp.py"]
@@ -126,7 +126,7 @@ servers:
     command: nexgen-local
     args: ["drive-mcp"]
     timeouts: { startup: 30, tool: 120 }
-    targets: [claude, codex, antigravity, opencode]
+    targets: [claude, codex, antigravity, opencode, openclaw]
 
   # ---- governed local lane: the 12B loop as a service -------------------
   # ask/explore/research/close/status. explore runs the closed-menu loop
@@ -186,4 +186,4 @@ servers:
     args: ["${AGENT_ENGINE_ROOT}/agent-universal-layer/mcp/lazy-mcp.py"]
     env:
       AGENT_VAULT_DATA: "${AGENT_VAULT_DATA}"
-    targets: [claude, codex, antigravity, opencode]
+    targets: [claude, codex, antigravity, opencode, openclaw]
