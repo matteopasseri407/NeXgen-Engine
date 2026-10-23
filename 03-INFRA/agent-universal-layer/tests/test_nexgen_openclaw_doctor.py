@@ -84,19 +84,23 @@ def declare(vault: Path, state: str = "local") -> Path:
 
 def run_doctor(tmp_path: Path, config_path: Path | None = None, *, declared: bool = True,
                platform: str = "linux", connect=None, detected: Detection | None = None,
-               wsl_distributions=None, **machine_kwargs):
+               wsl_distributions=None, node_version=None, linger_dir=None, env=None, **machine_kwargs):
     vault = declare(tmp_path / "vault") if declared else tmp_path / "vault"
     path = config_path or (tmp_path / "home" / ".openclaw" / "openclaw.json")
     snapshot = detected if detected is not None else machine(path, **machine_kwargs)
+    values = {"LOCALAPPDATA": str(tmp_path / "localappdata"), "APPDATA": str(tmp_path / "appdata")}
+    values.update(env or {})
     return collect(
         detected=snapshot,
         home=tmp_path / "home",
         vault_data=vault,
         engine_root=tmp_path / "engine",
-        env={"LOCALAPPDATA": str(tmp_path / "localappdata"), "APPDATA": str(tmp_path / "appdata")},
+        env=values,
         platform=platform,
         connect=connect or (lambda host, port, timeout: False),
         wsl_distributions=wsl_distributions or (lambda: []),
+        node_version=node_version or (lambda: "v24.22.1"),
+        linger_dir=linger_dir,
     )
 
 
@@ -240,6 +244,57 @@ def test_a_llama_cpp_model_without_its_cage_is_a_failure(tmp_path):
 
     assert outcomes["openclaw.cage"].severity == Severity.BROKEN
     assert "llama-cpp/local-model" in outcomes["openclaw.cage"].message
+
+
+def test_an_old_node_is_a_failure(tmp_path):
+    outcomes = run_doctor(
+        tmp_path, write_config(tmp_path, clean_config()), node_version=lambda: "v22.0.0",
+    )
+
+    node = by_id(outcomes)["openclaw.node"]
+    assert node.severity == Severity.BROKEN
+    assert ">=24.22.1" in node.message
+    assert "nodejs.org" in (node.action or "")
+
+
+def test_a_supported_node_passes(tmp_path):
+    outcomes = run_doctor(
+        tmp_path, write_config(tmp_path, clean_config()), node_version=lambda: "v24.22.1",
+    )
+
+    assert by_id(outcomes)["openclaw.node"].severity == Severity.OK
+
+
+def test_an_unreadable_node_version_is_a_warning(tmp_path):
+    outcomes = run_doctor(
+        tmp_path, write_config(tmp_path, clean_config()), node_version=lambda: None,
+    )
+
+    assert by_id(outcomes)["openclaw.node"].severity == Severity.WARN
+
+
+def test_lingering_off_is_a_warning_with_the_command(tmp_path):
+    outcomes = run_doctor(
+        tmp_path, write_config(tmp_path, clean_config()), platform="linux",
+        env={"USER": "matte"}, linger_dir=tmp_path / "linger",
+    )
+
+    linger = by_id(outcomes)["openclaw.linger"]
+    assert linger.severity == Severity.WARN
+    assert "loginctl enable-linger matte" in (linger.action or "")
+
+
+def test_lingering_on_passes(tmp_path):
+    linger_dir = tmp_path / "linger"
+    linger_dir.mkdir()
+    (linger_dir / "matte").write_text("", encoding="utf-8")
+
+    outcomes = run_doctor(
+        tmp_path, write_config(tmp_path, clean_config()), platform="linux",
+        env={"USER": "matte"}, linger_dir=linger_dir,
+    )
+
+    assert by_id(outcomes)["openclaw.linger"].severity == Severity.OK
 
 
 def test_a_google_subscription_is_a_failure(tmp_path):

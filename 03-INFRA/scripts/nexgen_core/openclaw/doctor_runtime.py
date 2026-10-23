@@ -17,6 +17,8 @@ from typing import Any
 from urllib.parse import urlsplit
 
 from nexgen_core.i18n import t
+from nexgen_core.openclaw import host_preflight
+from nexgen_core.openclaw.pin import node_satisfies
 from nexgen_core.openclaw.profile import GATEWAY_PORT
 from nexgen_core.report import CheckOutcome, Severity
 
@@ -57,6 +59,80 @@ def check_listening(config: dict[str, Any], connect: Connect) -> CheckOutcome:
         id="openclaw.gateway.listening",
         severity=Severity.OK,
         message=t("The gateway is not listening on 127.0.0.1:{port} (normal when it is stopped).", port=port),
+    )
+
+
+def current_node_version() -> str | None:
+    """The Node on PATH, asked for its version, or None when it cannot answer."""
+    import shutil
+    import subprocess
+
+    from nexgen_core.processes import no_window_kwargs
+
+    node = shutil.which("node")
+    if not node:
+        return None
+    try:
+        done = subprocess.run(
+            [node, "--version"],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=10,
+            check=False,
+            **no_window_kwargs(),
+        )
+    except (OSError, subprocess.SubprocessError):  # nexgen: allow reason="a Node that cannot be asked is an unknown version, not a crash"
+        return None
+    text = (done.stdout or "").strip()
+    return text.splitlines()[-1].strip() if text else None
+
+
+def check_node(requirement: str | None, version: str | None) -> CheckOutcome | None:
+    """OpenClaw declares the Node it runs on; a different major is a broken install."""
+    if not requirement:
+        return None
+    if version is None:
+        return CheckOutcome(
+            id="openclaw.node",
+            severity=Severity.WARN,
+            message=t("The Node version cannot be read, so OpenClaw's requirement ({requirement}) is unverified.",
+                      requirement=requirement),
+            action=t("Make sure 'node --version' answers in this shell, then run 'nexgen doctor' again."),
+        )
+    if node_satisfies(version, requirement):
+        return CheckOutcome(
+            id="openclaw.node",
+            severity=Severity.OK,
+            message=t("Node {version} satisfies OpenClaw's requirement ({requirement}).",
+                      version=version, requirement=requirement),
+        )
+    return CheckOutcome(
+        id="openclaw.node",
+        severity=Severity.BROKEN,
+        message=t("Node {version} does not satisfy OpenClaw's requirement ({requirement}).",
+                  version=version, requirement=requirement),
+        action=t("Install a Node release in that range from {url}, then run 'nexgen doctor' again.",
+                 url="https://nodejs.org/en/download"),
+    )
+
+
+def check_linger(platform: str, user: str | None, directory: Path | None = None) -> CheckOutcome | None:
+    """On Linux, a service without lingering dies with the last session."""
+    if not platform.startswith("linux") or not user:
+        return None
+    if host_preflight.linger_enabled(user, directory or host_preflight.LINGER_DIR):
+        return CheckOutcome(
+            id="openclaw.linger",
+            severity=Severity.OK,
+            message=t("Lingering is enabled for {user}: the gateway survives logout.", user=user),
+        )
+    return CheckOutcome(
+        id="openclaw.linger",
+        severity=Severity.WARN,
+        message=t("Lingering is off for {user}: the gateway stops when the last session closes.", user=user),
+        action=t("Run 'loginctl enable-linger {user}' once.", user=user),
     )
 
 

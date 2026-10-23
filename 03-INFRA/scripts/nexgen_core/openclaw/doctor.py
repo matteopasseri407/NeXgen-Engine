@@ -21,7 +21,7 @@ from nexgen_core.i18n import t
 from nexgen_core.openclaw.config_file import read_config
 from nexgen_core.openclaw import doctor_runtime
 from nexgen_core.openclaw.detect import Detection, detect
-from nexgen_core.openclaw.pin import pinned_version
+from nexgen_core.openclaw.pin import pinned_version, required_node_version
 from nexgen_core.openclaw.profile import PENDING_TOKEN
 from nexgen_core.openclaw.terms import google_subscriptions
 from nexgen_core.paths import openclaw_config, resolve_home, resolve_vault_data
@@ -359,6 +359,26 @@ def _check_agent_models(config: dict[str, Any], snapshot: Detection) -> CheckOut
     )
 
 
+def _host_outcomes(
+    snapshot: Detection,
+    engine_root: Path | None,
+    values: Mapping[str, str],
+    system: str,
+    node_version: Callable[[], str | None] | None,
+    linger_dir: Path | None,
+) -> list[CheckOutcome]:
+    """The checks that read the host rather than the configuration."""
+    requirement = snapshot.openclaw.node_requirement or required_node_version(engine_root)
+    outcomes: list[CheckOutcome] = []
+    node = doctor_runtime.check_node(requirement, (node_version or doctor_runtime.current_node_version)())
+    if node is not None:
+        outcomes.append(node)
+    linger = doctor_runtime.check_linger(system, values.get("USER") or values.get("LOGNAME"), linger_dir)
+    if linger is not None:
+        outcomes.append(linger)
+    return outcomes
+
+
 def collect(
     detected: Detection | None = None,
     *,
@@ -369,6 +389,8 @@ def collect(
     connect: doctor_runtime.Connect | None = None,
     platform: str | None = None,
     wsl_distributions: Callable[[], list[str]] | None = None,
+    node_version: Callable[[], str | None] | None = None,
+    linger_dir: Path | None = None,
 ) -> list[CheckOutcome]:
     """Every OpenClaw check that applies to this machine, or nothing at all."""
     values = dict(os.environ) if env is None else {str(k): str(v) for k, v in env.items()}
@@ -412,6 +434,7 @@ def collect(
     companion = doctor_runtime.check_companion_gateway(home_dir, values, system, wsl_distributions)
     if companion is not None:
         outcomes.append(companion)
+    outcomes.extend(_host_outcomes(snapshot, engine_root, values, system, node_version, linger_dir))
     return outcomes
 
 
