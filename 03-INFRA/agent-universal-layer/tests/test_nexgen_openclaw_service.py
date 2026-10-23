@@ -19,6 +19,7 @@ from nexgen_core.openclaw_service import (  # noqa: E402
     OpenClawService,
     ProcessInfo,
     RunResult,
+    is_gateway_process,
     install as service_install,
     restart as service_restart,
     start as service_start,
@@ -290,6 +291,14 @@ def test_stop_windows_kills_node_and_cmd_processes(fake_env) -> None:
     assert 403 not in res["stopped_pids"]
     assert ["taskkill.exe", "/PID", "401", "/T", "/F"] in runner.calls
     assert ["taskkill.exe", "/PID", "402", "/T", "/F"] in runner.calls
+
+
+def test_a_batch_named_gateway_cmd_that_is_not_openclaw_is_not_our_gateway() -> None:
+    """Any `cmd.exe /c ...\\gateway.cmd` used to pass, and `stop()` force-killed its tree."""
+    assert is_gateway_process(ProcessInfo(901, "cmd.exe", r"cmd.exe /c C:\build\gateway.cmd")) is False
+    assert is_gateway_process(
+        ProcessInfo(902, "cmd.exe", r"cmd.exe /c C:\openclaw\gateway.cmd")
+    ) is True
 
 
 def test_stop_linux_uses_systemctl(fake_env) -> None:

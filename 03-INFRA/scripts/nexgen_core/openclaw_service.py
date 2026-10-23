@@ -56,7 +56,7 @@ def is_gateway_process(proc: ProcessInfo) -> bool:
     if is_node and is_openclaw and is_gateway:
         return True
     is_cmd = "cmd" in name
-    if is_cmd and "gateway.cmd" in cmd:
+    if is_cmd and "openclaw" in cmd and "gateway.cmd" in cmd:
         return True
     return False
 
