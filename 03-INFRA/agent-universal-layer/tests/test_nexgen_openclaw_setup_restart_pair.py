@@ -16,7 +16,7 @@ if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
 from nexgen_core import i18n  # noqa: E402 - sys.path shim for cloned checkout
-from nexgen_core.openclaw.setup import run_pair, run_restart  # noqa: E402
+from nexgen_core.openclaw.setup import run_pair, run_restart, run_stop  # noqa: E402
 from nexgen_core.openclaw_service import RunResult  # noqa: E402
 
 
@@ -28,14 +28,22 @@ def _english():
 
 
 class FakeService:
-    """Just enough of the service controller for `restart`."""
+    """Just enough of the service controller for `restart` and `stop`."""
 
-    def __init__(self, port: int = 18789, result: dict | None = None):
+    def __init__(self, port: int = 18789, result: dict | None = None, stop_result: dict | None = None):
         self.port = port
         self.result = result or {"ok": True, "commands": [["openclaw", "gateway", "install"]], "elapsed_s": 12.4}
+        self.stop_result = stop_result or {
+            "ok": True,
+            "commands": [["systemctl", "--user", "stop", "openclaw-gateway.service"]],
+            "remaining_pids": [],
+        }
 
     def restart(self, wait: bool = True, timeout_s: float = 600.0, dry_run: bool = False):
         return dict(self.result)
+
+    def stop(self, dry_run: bool = False):
+        return dict(self.stop_result)
 
 
 class PairRunner:
@@ -53,6 +61,26 @@ class PairRunner:
         if argv[1:3] == ["devices", "approve"]:
             return RunResult(self.approve_code, "", "" if self.approve_code == 0 else "unknown id")
         return RunResult(0, "", "")
+
+
+def test_stop_reports_the_gateway_stopped():
+    lines: list[str] = []
+
+    code = run_stop(service=FakeService(), out=lines.append)
+
+    assert code == 0
+    assert any("systemctl" in line for line in lines)
+    assert any("stopped" in line for line in lines)
+
+
+def test_stop_that_leaves_a_process_alive_is_a_failure():
+    service = FakeService(stop_result={"ok": False, "commands": [], "remaining_pids": [4321]})
+    lines: list[str] = []
+
+    code = run_stop(service=service, out=lines.append)
+
+    assert code == 1
+    assert any("4321" in line for line in lines)
 
 
 def test_restart_prints_how_long_the_port_took():

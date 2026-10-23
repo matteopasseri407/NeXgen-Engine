@@ -1593,6 +1593,12 @@ MESSAGES: dict[str, str] = {
         "Per collegare il telefono, lancia questo in un tuo terminale: {command}",
     "Restarting the gateway: a cold start takes about five minutes.":
         "Riavvio il gateway: un avvio a freddo dura circa cinque minuti.",
+    "Stop the gateway before editing its file by hand":
+        "Ferma il gateway prima di modificare a mano il suo file",
+    "The gateway is stopped.":
+        "Il gateway è fermo.",
+    "The gateway did not stop: these processes are still alive ({pids}).":
+        "Il gateway non si è fermato: questi processi sono ancora vivi ({pids}).",
     "The gateway did not answer: {error}":
         "Il gateway non ha risposto: {error}",
     "no answer from the port":

@@ -2,9 +2,9 @@
 
 `plan` says what the engine would configure and what stays the person's;
 `setup` applies exactly that plan, with a backup and a way back; `doctor`
-proves a live configuration is one OpenClaw can actually use; `restart` and
-`pair` are the two operations a person needs after setup — bring the gateway
-back, and let a phone in.
+proves a live configuration is one OpenClaw can actually use; `stop`, `restart`
+and `pair` are the three operations a person needs around it — take the gateway
+down to edit its file by hand, bring it back, and let a phone in.
 
 Every verb that touches the machine lives in a module of its own; this file
 only declares the arguments and prints what comes back.
@@ -50,6 +50,9 @@ def _register(sub) -> None:
     q.add_argument("--timeout", type=float, default=None, metavar="SECONDS",
                    help=t("How long to wait for the port (default: 600)"))
     q.set_defaults(func=cmd_restart)
+
+    q = psub.add_parser("stop", help=t("Stop the gateway before editing its file by hand"))
+    q.set_defaults(func=cmd_stop)
 
     q = psub.add_parser("pair", help=t("List the phones waiting to be paired, and approve one"))
     q.add_argument("--approve", metavar="ID", default=None, help=t("Approve the request with this id"))
@@ -103,6 +106,12 @@ def cmd_restart(args) -> int:
 
     timeout = float(args.timeout) if args.timeout is not None else START_TIMEOUT_SECONDS
     return run_restart(timeout_s=timeout)
+
+
+def cmd_stop(args) -> int:
+    from nexgen_core.openclaw.setup import run_stop
+
+    return run_stop()
 
 
 def cmd_pair(args) -> int:

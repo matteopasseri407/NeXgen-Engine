@@ -153,8 +153,9 @@ before that step.
    so a manual the person edited is never overwritten. The one exception is a folder onboarding created a
    moment earlier: nothing in it can be the person's yet, so the engine's manual replaces OpenClaw's
    placeholder and its `BOOTSTRAP.md` is removed, because that first-run rite would redefine the agent.
-6. **Service.** The gateway is installed as a service when it is not one already, started, and the port is
-   awaited for up to ten minutes, with the elapsed seconds printed: a cold start takes about five minutes.
+6. **Service.** The gateway is installed as a service when it is not one already, started when the install
+   only registered it, and the port is awaited for up to ten minutes, with the elapsed seconds printed: a
+   cold start takes about five minutes.
 7. **Module.** The host declares `openclaw: local` in `modules.state.yaml`, under its own name.
 8. **Phone.** It prints `openclaw qr`, to be run in a terminal of one's own, and `nexgen openclaw pair` for
    the approval.
@@ -162,15 +163,16 @@ before that step.
 
 Everything is idempotent: a second `setup` with nothing to change writes no file and restarts no gateway.
 
-To go back, copy the backup over the file while the gateway is stopped, then restart it so the plugins are
+To go back, stop the gateway first, copy the backup over the file, then let it start again so the plugins are
 reloaded:
 
 ```bash
-nexgen openclaw restart
+nexgen openclaw stop
 cp ~/.openclaw/openclaw.json.pre-nexgen-20261023-120000 ~/.openclaw/openclaw.json
 nexgen openclaw restart
 ```
 
+`nexgen openclaw stop` stops the gateway and waits until the process and the port are gone.
 `nexgen openclaw restart [--timeout SECONDS]` stops the gateway, starts it, and waits for the port, printing
 the seconds it took; a port that never answers is a non-zero exit, never a silent success.
 On Windows this is the only thing that restarts it: OpenClaw's own `gateway restart` does not.
@@ -197,4 +199,5 @@ service, declares the module and runs the doctor. What the plan promises is what
 both are computed by the same pure function.
 
 `nexgen openclaw restart` and `nexgen openclaw pair` bring the gateway back and let a phone in; they are
-described above, with the rest of the installation.
+described above, with the rest of the installation. `nexgen openclaw stop` takes it down and waits until the
+port is free, which is what a hand edit of `openclaw.json` needs.

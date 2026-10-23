@@ -51,7 +51,7 @@ from nexgen_core.openclaw_service import OpenClawService, RunResult
 from nexgen_core.paths import openclaw_config, resolve_home
 from nexgen_core.processes import command_line_text
 
-__all__ = ["START_TIMEOUT_SECONDS", "run_pair", "run_restart", "run_setup"]
+__all__ = ["START_TIMEOUT_SECONDS", "run_pair", "run_restart", "run_setup", "run_stop"]
 
 
 def _step(emit: Emit, number: int, title: str) -> None:
@@ -254,6 +254,25 @@ def run_restart(
         return 0
     out(t("The gateway did not answer: {error}", error=result.get("error") or t("no answer from the port")))
     out(t("Waited {seconds} seconds.", seconds=int(elapsed)))
+    return 1
+
+
+def run_stop(
+    *,
+    service: OpenClawService | None = None,
+    home: Path | None = None,
+    out: Emit = print,
+) -> int:
+    """`nexgen openclaw stop`: the gateway down before a hand edit of its file."""
+    gateway = service or OpenClawService(home=home)
+    result = gateway.stop()
+    for argv in result.get("commands") or []:
+        out("$ " + command_line_text(argv))
+    if result.get("ok"):
+        out(t("The gateway is stopped."))
+        return 0
+    pids = ", ".join(str(pid) for pid in result.get("remaining_pids") or [])
+    out(t("The gateway did not stop: these processes are still alive ({pids}).", pids=pids))
     return 1
 
 
