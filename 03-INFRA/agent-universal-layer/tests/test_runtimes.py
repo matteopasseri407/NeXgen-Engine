@@ -336,7 +336,7 @@ def test_opencode_install_guardrail_takes_back_what_an_earlier_engine_registered
         (config_dir / "opencode-guardrail-plugin.mjs").as_uri(),
         (config_dir / "nexgen-guardrail-plugin.mjs").as_uri(),
         "keep-me",
-        (config_dir / "nexgen-event-sink.mjs").as_uri(),
+        (config_dir / "other-plugin.mjs").as_uri(),
     ]
     config.write_text(json.dumps(data), encoding="utf-8")
     for name in ("opencode-guardrail-plugin.mjs", "nexgen-guardrail-plugin.mjs", "nexgen-guardrail-core.mjs", "nexgen-guardrail.config.json"):
@@ -351,7 +351,7 @@ def test_opencode_install_guardrail_takes_back_what_an_earlier_engine_registered
 
     assert action is not None and "never loaded" in action
     plugins = json.loads(config.read_text(encoding="utf-8"))["plugins"]
-    assert plugins == ["keep-me", (config_dir / "nexgen-event-sink.mjs").as_uri()]
+    assert plugins == ["keep-me", (config_dir / "other-plugin.mjs").as_uri()]
     for name in ("opencode-guardrail-plugin.mjs", "nexgen-guardrail-plugin.mjs", "nexgen-guardrail-core.mjs", "nexgen-guardrail.config.json"):
         assert not (config_dir / name).exists()
     assert not (config_dir / "nexgen-guardrail-hooks").exists()
@@ -528,241 +528,10 @@ def test_guard_apply_runtime_permissions_rejects_path_traversal(tmp_path: Path):
     assert settings.read_text(encoding="utf-8") == original
 
 
-# ── Event Sink Tests ───────────────────────────────────────────────────
-
-def test_claude_install_event_sink_registers_stop_and_pretooluse(tmp_path: Path):
-    home = tmp_path / "home"
-    settings = home / ".claude" / "settings.json"
-    settings.parent.mkdir(parents=True)
-    settings.write_text("{}", encoding="utf-8")
-
-    sink_source = tmp_path / "nexgen-event-sink.mjs"
-    sink_source.write_text("// dummy sink", encoding="utf-8")
-
-    rt = ClaudeRuntime()
-    action = rt.install_event_sink(home, sink_source)
-    assert action is not None
-    assert "event sink registered" in action
-
-    data = json.loads(settings.read_text(encoding="utf-8"))
-    assert "Stop" in data["hooks"]
-    assert "PreToolUse" in data["hooks"]
-    assert (home / ".claude" / "nexgen-event-sink.mjs").is_file()
-
-    # Idempotent
-    action2 = rt.install_event_sink(home, sink_source)
-    assert action2 is None
-
-
-def test_antigravity_install_event_sink_registers_hooks_json(tmp_path: Path):
-    home = tmp_path / "home"
-    settings = home / ".gemini" / "antigravity-cli" / "settings.json"
-    settings.parent.mkdir(parents=True)
-    settings.write_text("{}", encoding="utf-8")
-
-    sink_source = tmp_path / "nexgen-event-sink.mjs"
-    sink_source.write_text("// dummy sink", encoding="utf-8")
-
-    rt = AntigravityRuntime()
-    action = rt.install_event_sink(home, sink_source)
-    assert action is not None
-
-    hooks_path = home / ".gemini" / "config" / "hooks.json"
-    assert hooks_path.is_file()
-    data = json.loads(hooks_path.read_text(encoding="utf-8"))
-    assert "nexgen-event-sink" in data
-    assert "Stop" in data["nexgen-event-sink"]
-    assert "PreToolUse" in data["nexgen-event-sink"]
-
-
-def test_codex_install_event_sink_registers_hooks_json(tmp_path: Path, monkeypatch):
-    monkeypatch.setattr("nexgen_core.runtimes.codex.shutil.which", lambda name: "/usr/bin/codex" if name == "codex" else None)
-    home = tmp_path / "home"
-
-    sink_source = tmp_path / "nexgen-event-sink.mjs"
-    sink_source.write_text("// dummy sink", encoding="utf-8")
-
-    rt = CodexRuntime()
-    action = rt.install_event_sink(home, sink_source)
-    assert action is not None
-
-    hooks_path = home / ".codex" / "hooks.json"
-    assert hooks_path.is_file()
-    data = json.loads(hooks_path.read_text(encoding="utf-8"))
-    assert "hooks" in data
-    assert "Stop" in data["hooks"]
-    assert "PreToolUse" in data["hooks"]
-    assert "nexgen-event-sink" not in data
-
-
-def test_codex_install_event_sink_purges_legacy_root_key(tmp_path: Path, monkeypatch):
-    monkeypatch.setattr("nexgen_core.runtimes.codex.shutil.which", lambda name: "/usr/bin/codex" if name == "codex" else None)
-    home = tmp_path / "home"
-    codex_dir = home / ".codex"
-    codex_dir.mkdir(parents=True)
-    hooks_path = codex_dir / "hooks.json"
-    hooks_path.write_text(json.dumps({"nexgen-event-sink": {"enabled": True}}), encoding="utf-8")
-
-    sink_source = tmp_path / "nexgen-event-sink.mjs"
-    sink_source.write_text("// dummy sink", encoding="utf-8")
-
-    rt = CodexRuntime()
-    action = rt.install_event_sink(home, sink_source)
-    assert action is not None
-
-    data = json.loads(hooks_path.read_text(encoding="utf-8"))
-    assert "nexgen-event-sink" not in data
-    assert "hooks" in data
-
-
-
-def test_opencode_install_event_sink_registers_plugin(tmp_path: Path):
-    home = tmp_path / "home"
-    config = home / ".config" / "opencode" / "opencode.jsonc"
-    config.parent.mkdir(parents=True)
-    config.write_text("{}", encoding="utf-8")
-
-    sink_source = tmp_path / "nexgen-event-sink.mjs"
-    sink_source.write_text("// dummy sink", encoding="utf-8")
-
-    rt = OpenCodeRuntime()
-    action = rt.install_event_sink(home, sink_source)
-    assert action is not None
-    assert (home / ".config" / "opencode" / "nexgen-event-sink.mjs").is_file()
-    data = json.loads(config.read_text(encoding="utf-8"))
-    assert "plugin" not in data
-    assert any("nexgen-event-sink.mjs" in p for p in data["plugins"] if isinstance(p, str))
-
-
-def test_nexgen_event_sink_script_e2e_socket_and_failsafe(tmp_path: Path):
-    """Il sink emette solo per le sessioni che il cockpit ha marcato vocali.
-
-    Il gate su COCKPIT_VOCALE e' voluto: senza, ogni terminale aperto si
-    metterebbe a parlare. Un test che non lo imposta e poi attende su accept()
-    non fallisce, si appende - e con lui l'intera suite, nascondendo anche
-    tutti i test dopo di lui. Qui ogni attesa ha una scadenza.
-    """
-    import os
-    import socket
-    import subprocess
-    import time
-
-    script_path = Path(__file__).resolve().parents[1] / "hooks" / "nexgen-event-sink.mjs"
-    if not script_path.is_file():
-        pytest.skip("nexgen-event-sink.mjs not in hooks folder")
-
-    vocal = os.environ.copy()
-    vocal["COCKPIT_VOCALE"] = "1"
-    vocal["COCKPIT_SESSION_ID"] = "voice-testrun"
-
-    # 1. Socket assente -> esce 0 subito, e non sporca mai stdout.
-    #    Il margine e' largo perche' il runner Windows avvia node a freddo.
-    sock_missing = tmp_path / "missing.sock"
-    vocal["NEXGEN_EVENT_IPC_PATH"] = str(sock_missing)
-    t0 = time.time()
-    res = subprocess.run(
-        ["node", str(script_path), "on_done", "claude", "test hello"],
-        env=vocal, capture_output=True, text=True, timeout=20,
-    )
-    assert res.returncode == 0
-    assert time.time() - t0 < 15.0
-    assert res.stdout == ""  # never pollutes stdout
-
-    if sys.platform == "win32" or not hasattr(socket, "AF_UNIX"):
-        return
-
-    # 2. Socket vivo -> il payload arriva (solo POSIX).
-    sock_live = tmp_path / "live.sock"
-    srv = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-    srv.bind(str(sock_live))
-    srv.listen(1)
-    srv.settimeout(15)
-    vocal["NEXGEN_EVENT_IPC_PATH"] = str(sock_live)
-
-    proc = subprocess.Popen(
-        ["node", str(script_path), "on_step", "codex", "analyzing code"],
-        env=vocal, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-    )
-    try:
-        conn, _ = srv.accept()
-    except socket.timeout:
-        proc.kill()
-        srv.close()
-        pytest.fail("il sink non ha emesso niente per una sessione vocale")
-    data = conn.recv(4096).decode("utf-8")
-    conn.close()
-    srv.close()
-    proc.wait(timeout=10)
-    assert proc.returncode == 0
-    assert '"event":"on_step"' in data
-    assert '"cli":"codex"' in data
-    assert '"text":"analyzing code"' in data
-
-    # 3. Sessione non marcata vocale -> silenzio. E' la garanzia per cui il
-    #    gate esiste, e prima non era coperta da nessun test.
-    sock_quiet = tmp_path / "quiet.sock"
-    srv2 = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-    srv2.bind(str(sock_quiet))
-    srv2.listen(1)
-    srv2.settimeout(3)
-    plain = os.environ.copy()
-    plain.pop("COCKPIT_VOCALE", None)
-    plain["NEXGEN_EVENT_IPC_PATH"] = str(sock_quiet)
-    res = subprocess.run(
-        ["node", str(script_path), "on_step", "codex", "non deve uscire"],
-        env=plain, capture_output=True, text=True, timeout=10,
-    )
-    assert res.returncode == 0
-    with pytest.raises(socket.timeout):
-        srv2.accept()
-    srv2.close()
-
-    # 4. Antigravity Stop hook with transcriptPath (JSONL format)
-    transcript = tmp_path / "transcript.jsonl"
-    transcript.write_text(
-        '{"step_index":0,"source":"USER_EXPLICIT","type":"USER_INPUT","content":"ciao"}\n'
-        '{"step_index":1,"source":"MODEL","type":"PLANNER_RESPONSE","content":"Risposta vocale di prova da Antigravity."}\n',
-        encoding="utf-8",
-    )
-    srv3 = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-    sock_live3 = tmp_path / "live3.sock"
-    srv3.bind(str(sock_live3))
-    srv3.listen(1)
-    srv3.settimeout(20)
-    env3 = os.environ.copy()
-    env3["COCKPIT_VOCALE"] = "1"
-    env3["NEXGEN_EVENT_IPC_PATH"] = str(sock_live3)
-
-    agy_payload = json.dumps({
-        "conversationId": "test-agy-conv-123",
-        "transcriptPath": str(transcript),
-        "terminationReason": "model_stop",
-    })
-    proc3 = subprocess.Popen(
-        ["node", str(script_path), "on_done", "antigravity"],
-        env=env3,
-        stdin=subprocess.PIPE,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-    )
-    proc3.stdin.write(agy_payload)
-    proc3.stdin.close()
-
-    conn3, _ = srv3.accept()
-    data3 = conn3.recv(4096).decode("utf-8")
-    conn3.close()
-    srv3.close()
-    proc3.wait(timeout=10)
-    assert proc3.returncode == 0
-    assert '"event":"on_done"' in data3
-    assert '"cli":"antigravity"' in data3
-    assert '"text":"Risposta vocale di prova da Antigravity."' in data3
-    assert '"session_id":"test-agy-conv-123"' in data3
-
+# ── Event Sink Cleanup Tests ───────────────────────────────────────────
 
 def test_apply_all_isolates_event_sink_failure_per_cli(tmp_path: Path, monkeypatch) -> None:
-    """A GuardrailError from one CLI's event sink must warn for that CLI,
+    """A GuardrailError from one CLI's event sink removal must warn for that CLI,
     never abort the remaining ones."""
     import nexgen_core.runtimes as runtimes
     from nexgen_core.runtimes.base import GuardrailError
@@ -773,7 +542,7 @@ def test_apply_all_isolates_event_sink_failure_per_cli(tmp_path: Path, monkeypat
         name = "broken"
         def is_installed(self, home): return True
         def install_guardrail(self, home, source, hooks_dir): return None
-        def install_event_sink(self, home, source):
+        def remove_event_sink(self, home):
             raise GuardrailError("broken: settings corrupted")
         def apply_posture(self, home, posture): return None
 
@@ -781,16 +550,15 @@ def test_apply_all_isolates_event_sink_failure_per_cli(tmp_path: Path, monkeypat
         name = "working"
         def is_installed(self, home): return True
         def install_guardrail(self, home, source, hooks_dir): return None
-        def install_event_sink(self, home, source):
+        def remove_event_sink(self, home):
             calls.append("working-sink")
-            return "working sink registered"
+            return "working sink removed"
         def apply_posture(self, home, posture): return None
 
     monkeypatch.setattr(runtimes, "REGISTRY", {"broken": BrokenSink(), "working": WorkingSink()})
     actions = runtimes.apply_all(
         home=tmp_path / "home",
         engine_hooks_dir=tmp_path / "hooks",
-        event_sink_source=tmp_path / "sink.mjs",
     )
     assert any("[WARN]" in a and "broken" in a for a in actions)
     assert calls == ["working-sink"]

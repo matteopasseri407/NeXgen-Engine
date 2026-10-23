@@ -36,14 +36,9 @@ def apply_all(
     engine_hooks_dir: Path,
     posture: dict[str, str] | None = None,
     guardrail_source: Path | None = None,
-    event_sink_source: Path | None = None,
-    remove_event_sink: bool = False,
+    remove_event_sink: bool = True,
 ) -> list[str]:
-    """Applies posture + guardrail hook to every installed CLI.
-
-    The event sink is the odd one out: it follows the modules a machine declared, not the
-    permission policy. `event_sink_source` installs it; `remove_event_sink` takes back what an
-    earlier cycle registered (no declared module needs it, and it costs a Node start per tool call).
+    """Applies posture + guardrail hook to every installed CLI and purges legacy event sink.
 
     Order per CLI, non-negotiable: guardrail FIRST, posture AFTER. A
     posture that removes prompts must never reach disk if its declared
@@ -72,19 +67,15 @@ def apply_all(
                 if result:
                     actions.append(result)
 
-        if event_sink_source is not None or remove_event_sink:
+        if remove_event_sink:
             try:
-                if event_sink_source is not None:
-                    sink_result = runtime.install_event_sink(home, event_sink_source)
-                else:
-                    sink_result = runtime.remove_event_sink(home)
+                sink_result = runtime.remove_event_sink(home)
                 if sink_result:
                     actions.append(sink_result)
             except (OSError, ValueError, TypeError, GuardrailError) as exc:
                 # Same isolation as guardrail/posture above: one corrupt CLI
                 # config must warn for its own CLI, never abort the rest.
-                what = "installation" if event_sink_source is not None else "removal"
-                actions.append(f"{WARN}{runtime.name}: event sink {what} failed ({exc})")
+                actions.append(f"{WARN}{runtime.name}: event sink removal failed ({exc})")
 
         desired_posture = posture.get(runtime.name)
         if not desired_posture:
@@ -118,7 +109,7 @@ def apply_all(
             # PATH the CLIs hold dead registrations behind a green guard.
             actions.append(
                 WARN + "hooks registered but `node` is not on PATH: "
-                "guardrail and event-sink hooks will never fire until it is installed"
+                "guardrail hooks will never fire until it is installed"
             )
 
     return actions

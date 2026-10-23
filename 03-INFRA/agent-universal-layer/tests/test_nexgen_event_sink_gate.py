@@ -1,15 +1,13 @@
-"""The event-sink hook follows the modules a machine declared, and goes away with them.
+"""Retirement of the legacy event sink: cleanup on existing machines and no reinstall.
 
-It starts a Node process on every tool call of every session to emit an event that only a
-voice cockpit listens for. It used to be registered on every machine with a permission
-policy, with no way to take it back.
+On a machine where an older version of the engine registered the event sink, the engine
+removes it once and never reinstalls it.
 """
 from __future__ import annotations
 
 import json
 import shutil
 import sys
-import textwrap
 from pathlib import Path
 
 import pytest
@@ -20,8 +18,10 @@ if str(SCRIPTS_DIR) not in sys.path:
 
 from nexgen_core.guard import GuardRunner  # noqa: E402
 from nexgen_core.runtimes.antigravity import AntigravityRuntime  # noqa: E402
+from nexgen_core.runtimes.base import EVENT_SINK_NAME  # noqa: E402
 from nexgen_core.runtimes.claude import ClaudeRuntime  # noqa: E402
 from nexgen_core.runtimes.codex import CodexRuntime  # noqa: E402
+from nexgen_core.runtimes.openclaw import OpenClawRuntime  # noqa: E402
 from nexgen_core.runtimes.opencode import OpenCodeRuntime  # noqa: E402
 
 REAL_HOOKS = Path(__file__).resolve().parents[1] / "hooks"
@@ -29,19 +29,17 @@ REAL_HOOKS = Path(__file__).resolve().parents[1] / "hooks"
 
 @pytest.fixture(autouse=True)
 def _no_ambient_binaries(monkeypatch):
-    for mod in ("claude", "codex", "opencode", "antigravity"):
+    for mod in ("claude", "codex", "opencode", "antigravity", "openclaw"):
         monkeypatch.setattr(f"nexgen_core.runtimes.{mod}.shutil.which", lambda name: "/usr/bin/x" if name == "codex" else None)
-
-
-@pytest.fixture
-def sink_source(tmp_path):
-    source = tmp_path / "nexgen-event-sink.mjs"
-    source.write_text("// the sink\n", encoding="utf-8")
-    return source
 
 
 def _json(path: Path):
     return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _json_c(path: Path):
+    from nexgen_core.jsonc import parse_jsonc
+    return parse_jsonc(path.read_text(encoding="utf-8"))
 
 
 THEIR_HOOKS = {
@@ -52,22 +50,40 @@ THEIR_HOOKS = {
 
 # --- Claude ---------------------------------------------------------------------------
 
-def test_claude_remove_gives_back_exactly_what_was_there(tmp_path, sink_source):
+def test_claude_remove_gives_back_exactly_what_was_there(tmp_path: Path):
     home = tmp_path / "home"
     settings = home / ".claude" / "settings.json"
     settings.parent.mkdir(parents=True)
-    original = {"permissions": {"allow": ["Read"]}, "hooks": json.loads(json.dumps(THEIR_HOOKS))}
-    settings.write_text(json.dumps(original), encoding="utf-8")
+    deployed = home / ".claude" / EVENT_SINK_NAME
+    deployed.write_text("// legacy sink", encoding="utf-8")
+
+    with_sink = {
+        "permissions": {"allow": ["Read"]},
+        "hooks": {
+            "Stop": [
+                {"hooks": [{"type": "command", "command": "echo their-stop"}]},
+                {"hooks": [{"type": "command", "command": f'node "{deployed}" on_done claude'}]},
+            ],
+            "PreToolUse": [
+                {"matcher": "Bash", "hooks": [{"type": "command", "command": "their-guard"}]},
+                {"matcher": "*", "hooks": [{"type": "command", "command": f'node "{deployed}" on_step claude'}]},
+            ],
+        },
+    }
+    settings.write_text(json.dumps(with_sink), encoding="utf-8")
+
     runtime = ClaudeRuntime()
-    assert runtime.install_event_sink(home, sink_source)
-    assert _json(settings) != original
-    assert runtime.remove_event_sink(home)
-    assert _json(settings) == original
-    assert not (home / ".claude" / "nexgen-event-sink.mjs").exists()
+    action = runtime.remove_event_sink(home)
+    assert action and "removed" in action
+    assert _json(settings)["hooks"] == THEIR_HOOKS
+    assert _json(settings)["permissions"] == {"allow": ["Read"]}
+    assert not deployed.exists()
+
+    # Second execution is an idempotent no-op
     assert runtime.remove_event_sink(home) is None
 
 
-def test_claude_remove_keeps_a_group_that_also_holds_someone_elses_hook(tmp_path):
+def test_claude_remove_keeps_a_group_that_also_holds_someone_elses_hook(tmp_path: Path):
     home = tmp_path / "home"
     settings = home / ".claude" / "settings.json"
     settings.parent.mkdir(parents=True)
@@ -80,88 +96,123 @@ def test_claude_remove_keeps_a_group_that_also_holds_someone_elses_hook(tmp_path
     assert _json(settings) == {"hooks": {"Stop": [{"hooks": [{"type": "command", "command": "mine"}]}]}}
 
 
-def test_claude_remove_with_no_settings_is_nothing(tmp_path):
+def test_claude_remove_with_no_settings_is_nothing(tmp_path: Path):
     assert ClaudeRuntime().remove_event_sink(tmp_path / "home") is None
 
 
 # --- Codex ----------------------------------------------------------------------------
 
-def test_codex_remove_gives_back_what_was_there_and_drops_the_legacy_key(tmp_path, sink_source):
+def test_codex_remove_gives_back_what_was_there_and_drops_the_legacy_key(tmp_path: Path):
     home = tmp_path / "home"
-    hooks_path = home / ".codex" / "hooks.json"
-    hooks_path.parent.mkdir(parents=True)
-    original = {"hooks": json.loads(json.dumps(THEIR_HOOKS))}
-    hooks_path.write_text(json.dumps(original), encoding="utf-8")
+    codex_dir = home / ".codex"
+    codex_dir.mkdir(parents=True)
+    deployed = codex_dir / EVENT_SINK_NAME
+    deployed.write_text("// legacy sink", encoding="utf-8")
+    hooks_path = codex_dir / "hooks.json"
+    with_sink = {
+        "nexgen-event-sink": {"enabled": True},
+        "hooks": {
+            "Stop": [
+                {"hooks": [{"type": "command", "command": "echo their-stop"}]},
+                {"hooks": [{"type": "command", "command": f'node "{deployed.as_posix()}" on_done codex'}]},
+            ],
+            "PreToolUse": [
+                {"matcher": "Bash", "hooks": [{"type": "command", "command": "their-guard"}]},
+                {"hooks": [{"type": "command", "command": f'node "{deployed.as_posix()}" on_step codex'}]},
+            ],
+        },
+    }
+    hooks_path.write_text(json.dumps(with_sink), encoding="utf-8")
+
     runtime = CodexRuntime()
-    runtime.install_event_sink(home, sink_source)
-    data = _json(hooks_path)
-    data["nexgen-event-sink"] = {"enabled": True}
-    hooks_path.write_text(json.dumps(data), encoding="utf-8")
-    assert runtime.remove_event_sink(home)
-    assert _json(hooks_path) == original
-    assert not (home / ".codex" / "nexgen-event-sink.mjs").exists()
+    action = runtime.remove_event_sink(home)
+    assert action and "removed" in action
+    assert _json(hooks_path)["hooks"] == THEIR_HOOKS
+    assert "nexgen-event-sink" not in _json(hooks_path)
+    assert not deployed.exists()
 
-
-def test_codex_install_quotes_the_path_and_rewrites_an_older_unquoted_entry(tmp_path, sink_source):
-    home = tmp_path / "home dir"
-    hooks_path = home / ".codex" / "hooks.json"
-    hooks_path.parent.mkdir(parents=True)
-    deployed = (home / ".codex" / "nexgen-event-sink.mjs").as_posix()
-    hooks_path.write_text(json.dumps({"hooks": {
-        "Stop": [{"hooks": [{"type": "command", "command": f"node {deployed} on_done codex", "timeout": 5}]}],
-    }}), encoding="utf-8")
-    CodexRuntime().install_event_sink(home, sink_source)
-    data = _json(hooks_path)
-    commands = [h["command"] for g in data["hooks"]["Stop"] for h in g["hooks"]]
-    assert commands == [f'node "{deployed}" on_done codex']
-    step = [h["command"] for g in data["hooks"]["PreToolUse"] for h in g["hooks"]]
-    assert step == [f'node "{deployed}" on_step codex']
-    assert CodexRuntime().install_event_sink(home, sink_source) is None
+    # Second execution is a no-op
+    assert runtime.remove_event_sink(home) is None
 
 
 # --- Antigravity ---------------------------------------------------------------------------
 
-def test_antigravity_remove_drops_only_its_own_key_and_file(tmp_path, sink_source):
+def test_antigravity_remove_drops_only_its_own_key_and_file(tmp_path: Path):
     home = tmp_path / "home dir"
     settings = home / ".gemini" / "antigravity-cli" / "settings.json"
     settings.parent.mkdir(parents=True)
     settings.write_text("{}", encoding="utf-8")
     hooks_path = home / ".gemini" / "config" / "hooks.json"
     hooks_path.parent.mkdir(parents=True)
-    hooks_path.write_text(json.dumps({"theirs": {"enabled": True}}), encoding="utf-8")
+    deployed = hooks_path.parent / EVENT_SINK_NAME
+    deployed.write_text("// legacy sink", encoding="utf-8")
+    hooks_path.write_text(json.dumps({
+        "theirs": {"enabled": True},
+        "nexgen-event-sink": {"enabled": True, "Stop": [], "PreToolUse": []},
+    }), encoding="utf-8")
+
     runtime = AntigravityRuntime()
-    runtime.install_event_sink(home, sink_source)
-    entry = _json(hooks_path)["nexgen-event-sink"]
-    # agy runs hooks in the hooks.json folder: the sink is named alone, no quotes, no home.
-    assert all(c["command"].startswith("node nexgen-event-sink.mjs ") for c in entry["Stop"])
-    assert runtime.remove_event_sink(home)
+    action = runtime.remove_event_sink(home)
+    assert action and "removed" in action
     assert _json(hooks_path) == {"theirs": {"enabled": True}}
-    assert not (hooks_path.parent / "nexgen-event-sink.mjs").exists()
+    assert not deployed.exists()
+
+    # Second execution is a no-op
+    assert runtime.remove_event_sink(home) is None
 
 
 # --- OpenCode -------------------------------------------------------------------------------
 
-def test_opencode_remove_drops_the_plugin_entry_and_keeps_the_others_and_the_comments(tmp_path, sink_source):
+def test_opencode_remove_drops_the_plugin_entry_and_keeps_the_others_and_the_comments(tmp_path: Path):
     home = tmp_path / "home"
     config = home / ".config" / "opencode" / "opencode.json"
     config.parent.mkdir(parents=True)
-    config.write_text('{\n  // mine\n  "plugins": ["file:///mine.mjs"],\n  "theme": "dark"\n}\n', encoding="utf-8")
+    deployed = config.parent / EVENT_SINK_NAME
+    deployed.write_text("// legacy sink", encoding="utf-8")
+    config.write_text(
+        '{\n  // mine\n  "plugins": ["file:///mine.mjs", "' + deployed.as_posix() + '"],\n  "theme": "dark"\n}\n',
+        encoding="utf-8",
+    )
+
     runtime = OpenCodeRuntime()
-    runtime.install_event_sink(home, sink_source)
-    assert any("nexgen-event-sink.mjs" in p for p in _json_c(config)["plugins"])
-    assert runtime.remove_event_sink(home)
+    action = runtime.remove_event_sink(home)
+    assert action and "removed" in action
+    assert _json_c(config) == {"plugins": ["file:///mine.mjs"], "theme": "dark"}
     text = config.read_text(encoding="utf-8")
     assert "// mine" in text
-    assert _json_c(config) == {"plugins": ["file:///mine.mjs"], "theme": "dark"}
-    assert not (config.parent / "nexgen-event-sink.mjs").exists()
+    assert not deployed.exists()
+
+    # Second execution is a no-op
+    assert runtime.remove_event_sink(home) is None
 
 
-def _json_c(path: Path):
-    from nexgen_core.jsonc import parse_jsonc
-    return parse_jsonc(path.read_text(encoding="utf-8"))
+# --- OpenClaw -------------------------------------------------------------------------------
+
+def test_openclaw_remove_drops_legacy_files_and_cleans_config(tmp_path: Path):
+    home = tmp_path / "home"
+    state = home / ".openclaw"
+    state.mkdir(parents=True)
+    (state / "openclaw.json").write_text("{}", encoding="utf-8")
+    plugin_dir = state / "extensions" / "nexgen"
+    plugin_dir.mkdir(parents=True)
+    (plugin_dir / "nexgen.config.json").write_text(json.dumps({"briefing": {"enabled": True}, "events": {"enabled": True}}), encoding="utf-8")
+    (plugin_dir / EVENT_SINK_NAME).write_text("// legacy sink", encoding="utf-8")
+    (plugin_dir / "events.mjs").write_text("// legacy events", encoding="utf-8")
+
+    runtime = OpenClawRuntime()
+    action = runtime.remove_event_sink(home)
+    assert action and "removed" in action
+    assert not (plugin_dir / EVENT_SINK_NAME).exists()
+    assert not (plugin_dir / "events.mjs").exists()
+    conf = json.loads((plugin_dir / "nexgen.config.json").read_text(encoding="utf-8"))
+    assert "events" not in conf
+    assert conf.get("briefing") == {"enabled": True}
+
+    # Second execution is a no-op
+    assert runtime.remove_event_sink(home) is None
 
 
-# --- The guard: install only when a declared module needs it -----------------------------
+# --- The guard: always removes legacy event sink, never installs it -----------------------
 
 def _engine(tmp_path: Path) -> Path:
     engine = tmp_path / "engine" / "03-INFRA"
@@ -170,97 +221,32 @@ def _engine(tmp_path: Path) -> Path:
     return engine
 
 
-def _voice_module(tmp_path: Path, gate: str = "") -> Path:
-    source = tmp_path / "voice"
-    source.mkdir()
-    (source / "nexgen-module.yaml").write_text(textwrap.dedent(f"""
-        schema_version: 2
-        modules:
-          voice:
-            label: "Voice"
-            kind: feature
-            states: [absent, local]
-            {gate}
-            provides:
-              runtime_hooks: [event_sink]
-        """), encoding="utf-8")
-    return source
-
-
-def _declare(vault: Path, home_host: str, source: Path | None, state: str) -> None:
-    body = {"schema_version": 2, "hosts": {home_host: {"modules": {"voice": state}}}}
-    if source is not None:
-        body["hosts"][home_host]["external"] = [str(source)]
-    import yaml
-    path = vault / "03-INFRA" / "agent-universal-layer" / "modules.state.yaml"
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(yaml.safe_dump(body), encoding="utf-8")
-
-
-@pytest.fixture
-def machine(tmp_path, monkeypatch):
+def test_guard_runner_cleans_legacy_registration_and_never_reinstalls(tmp_path: Path, monkeypatch):
     from nexgen_core import modules
 
     monkeypatch.setattr(modules, "current_host", lambda: "this-host")
     home = tmp_path / "home"
     settings = home / ".claude" / "settings.json"
     settings.parent.mkdir(parents=True)
-    settings.write_text(json.dumps({"hooks": json.loads(json.dumps(THEIR_HOOKS))}), encoding="utf-8")
+    deployed = home / ".claude" / EVENT_SINK_NAME
+    deployed.write_text("// legacy sink", encoding="utf-8")
+    settings.write_text(json.dumps({
+        "hooks": {
+            "Stop": [{"hooks": [{"type": "command", "command": f'node "{deployed}" on_done claude'}]}],
+        },
+    }), encoding="utf-8")
+
     vault = tmp_path / "vault"
     vault.mkdir()
     runner = GuardRunner(vault_data=vault, engine_root=_engine(tmp_path), home=home)
-    return runner, vault, settings, tmp_path
 
-
-def _has_sink(settings: Path) -> bool:
-    return "nexgen-event-sink.mjs" in settings.read_text(encoding="utf-8")
-
-
-def test_a_machine_with_no_voice_module_does_not_get_the_hook(machine):
-    runner, vault, settings, tmp_path = machine
-    runner.apply_runtime_permissions()
-    assert not _has_sink(settings)
-
-
-def test_a_declared_voice_module_gets_the_hook_even_without_a_permission_policy(machine):
-    runner, vault, settings, tmp_path = machine
-    _declare(vault, "this-host", _voice_module(tmp_path), "local")
     actions = runner.apply_runtime_permissions()
-    assert _has_sink(settings), actions
+    assert any("event sink removed" in a for a in actions)
+    assert not deployed.exists()
+    assert "nexgen-event-sink.mjs" not in settings.read_text(encoding="utf-8")
 
-
-def test_declaring_the_module_absent_takes_the_hook_back(machine):
-    runner, vault, settings, tmp_path = machine
-    source = _voice_module(tmp_path)
-    _declare(vault, "this-host", source, "local")
-    runner.apply_runtime_permissions()
-    assert _has_sink(settings)
-    _declare(vault, "this-host", source, "absent")
-    runner.apply_runtime_permissions()
-    assert not _has_sink(settings)
-    assert _json(settings)["hooks"] == THEIR_HOOKS
-
-
-def test_unreadable_module_state_changes_nothing(machine):
-    runner, vault, settings, tmp_path = machine
-    source = _voice_module(tmp_path)
-    _declare(vault, "this-host", source, "local")
-    runner.apply_runtime_permissions()
-    path = vault / "03-INFRA" / "agent-universal-layer" / "modules.state.yaml"
-    path.write_text("hosts: [not, a, map\n", encoding="utf-8")
-    runner.apply_runtime_permissions()
-    assert _has_sink(settings)
-
-
-def test_a_module_held_back_by_a_missing_env_gate_keeps_its_hook(machine, monkeypatch):
-    """A timer without the user's tokens sees the module as inactive; that is not a removal."""
-    runner, vault, settings, tmp_path = machine
-    monkeypatch.delenv("NEXGEN_TEST_VOICE_GATE", raising=False)
-    source = _voice_module(tmp_path, gate="env_gates: [NEXGEN_TEST_VOICE_GATE]")
-    _declare(vault, "this-host", source, "local")
-    monkeypatch.setenv("NEXGEN_TEST_VOICE_GATE", "1")
-    runner.apply_runtime_permissions()
-    assert _has_sink(settings)
-    monkeypatch.delenv("NEXGEN_TEST_VOICE_GATE")
-    runner.apply_runtime_permissions()
-    assert _has_sink(settings)
+    # Second execution does not report removal again and installs nothing
+    actions2 = runner.apply_runtime_permissions()
+    assert not any("event sink" in a for a in actions2)
+    assert not deployed.exists()
+    assert "nexgen-event-sink.mjs" not in settings.read_text(encoding="utf-8")

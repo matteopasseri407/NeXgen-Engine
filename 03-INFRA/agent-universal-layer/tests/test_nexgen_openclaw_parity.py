@@ -1,8 +1,8 @@
-"""The `nexgen` plugin: one id, one deposit, three jobs, and a parity control that proves it.
+"""The `nexgen` plugin: one id, one deposit, two jobs, and a parity control that proves it.
 
 These tests run the real adapter against a temporary home: the plugin is deposited under
 `<state dir>/extensions/nexgen/`, the old `nexgen-guardrail` folder is taken back, the
-engine-owned switches (briefing, events, posture) land in `nexgen.config.json`, and
+engine-owned switches (briefing, posture) land in `nexgen.config.json`, and
 `openclaw.json` is never written. The parity control is exercised on a machine built to be
 aligned and on one built to diverge, because a check that only ever says PASS proves nothing.
 """
@@ -79,13 +79,13 @@ def test_the_plugin_id_is_nexgen_and_the_shipped_files_agree():
     assert package["openclaw"]["extensions"] == ["./index.mjs"]
 
 
-def test_the_deposit_lands_in_the_new_folder_with_the_three_jobs(tmp_path):
+def test_the_deposit_lands_in_the_new_folder_with_the_two_jobs(tmp_path):
     home = a_home(tmp_path, OPENCLAW_JSON)
 
     action = deposit(home, tmp_path)
 
     assert action and str(plugin_dir(home)) in action
-    for name in ("index.mjs", "guardrail.mjs", "briefing.mjs", "events.mjs"):
+    for name in ("index.mjs", "guardrail.mjs", "briefing.mjs"):
         assert (plugin_dir(home) / name).read_bytes() == (PLUGIN_SOURCE / name).read_bytes(), name
 
 
@@ -222,55 +222,41 @@ def test_a_corrupt_settings_file_is_read_as_no_briefing(tmp_path):
     assert plugin_config(home)["briefing"] == {"enabled": False}
 
 
-# --------------------------------------------------------------------- events
+# ----------------------------------------------------------- event sink cleanup
 
 
-def test_the_event_sink_is_deposited_and_switched_on(tmp_path):
+def test_openclaw_cleanup_removes_legacy_event_sink_and_events_config(tmp_path):
     home = a_home(tmp_path, OPENCLAW_JSON)
     deposit(home, tmp_path)
+    pdir = plugin_dir(home)
+    (pdir / "nexgen-event-sink.mjs").write_text("// old sink", encoding="utf-8")
+    (pdir / "events.mjs").write_text("// old events", encoding="utf-8")
+    config_path = pdir / PLUGIN_CONFIG_NAME
+    config = json.loads(config_path.read_text(encoding="utf-8"))
+    config["events"] = {"enabled": True}
+    config_path.write_text(json.dumps(config, indent=2), encoding="utf-8")
 
-    action = OpenClawRuntime().install_event_sink(home, HOOKS / "nexgen-event-sink.mjs")
-
-    assert action and "event sink" in action
-    assert (plugin_dir(home) / "nexgen-event-sink.mjs").read_bytes() == (
-        HOOKS / "nexgen-event-sink.mjs"
-    ).read_bytes()
-    assert plugin_config(home)["events"] == {"enabled": True}
-
-
-def test_a_machine_whose_modules_need_no_sink_gets_it_back(tmp_path):
-    home = a_home(tmp_path, OPENCLAW_JSON)
-    deposit(home, tmp_path)
     runtime = OpenClawRuntime()
-    runtime.install_event_sink(home, HOOKS / "nexgen-event-sink.mjs")
-
     action = runtime.remove_event_sink(home)
 
     assert action and "removed" in action
-    assert not (plugin_dir(home) / "nexgen-event-sink.mjs").exists()
-    assert plugin_config(home)["events"] == {"enabled": False}
+    assert not (pdir / "nexgen-event-sink.mjs").exists()
+    assert not (pdir / "events.mjs").exists()
+    assert "events" not in plugin_config(home)
     assert runtime.remove_event_sink(home) is None
 
 
-def test_without_the_deposited_plugin_there_is_no_events_job_to_switch_on(tmp_path):
+def test_openclaw_deposit_purges_obsolete_plugin_files(tmp_path):
     home = a_home(tmp_path, OPENCLAW_JSON)
-
-    assert OpenClawRuntime().install_event_sink(home, HOOKS / "nexgen-event-sink.mjs") is None
-    assert not (plugin_dir(home) / PLUGIN_CONFIG_NAME).exists()
-
-
-def test_switching_the_events_on_keeps_the_briefing_switch(tmp_path):
-    home = a_home(tmp_path, OPENCLAW_JSON)
-    settings = claude_settings(home)
-    settings.parent.mkdir(parents=True)
-    settings.write_text(json.dumps(claude_settings_with(
-        ("SessionStart", "node claude-vault-checkpoint.mjs"),
-    )), encoding="utf-8")
     deposit(home, tmp_path)
+    pdir = plugin_dir(home)
+    (pdir / "events.mjs").write_text("// old events", encoding="utf-8")
+    (pdir / "nexgen-event-sink.mjs").write_text("// old sink", encoding="utf-8")
 
-    OpenClawRuntime().install_event_sink(home, HOOKS / "nexgen-event-sink.mjs")
-
-    assert plugin_config(home)["briefing"] == {"enabled": True}
+    # Re-depositing must purge obsolete files
+    deposit(home, tmp_path)
+    assert not (pdir / "events.mjs").exists()
+    assert not (pdir / "nexgen-event-sink.mjs").exists()
 
 
 # -------------------------------------------------------------------- posture

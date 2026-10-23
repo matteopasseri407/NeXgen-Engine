@@ -1,12 +1,11 @@
 """OpenClaw adapter: one `nexgen` plugin, deposited next to its state directory.
 
 OpenClaw runs native plugins inside its gateway process, so everything the engine gives
-Claude Code reaches OpenClaw through a single plugin, split into three jobs that know nothing
-about each other (`guardrail.mjs`, `briefing.mjs`, `events.mjs`, registered by `index.mjs`):
+Claude Code reaches OpenClaw through a single plugin, split into two jobs that know nothing
+about each other (`guardrail.mjs`, `briefing.mjs`, registered by `index.mjs`):
 
 - the **guardrail** on `before_tool_call`, the same private body the other CLIs run;
-- the **vault briefing** after a compaction, the same text Claude's checkpoint hook injects;
-- the **lifecycle events** on the same socket the event sink writes to.
+- the **vault briefing** after a compaction, the same text Claude's checkpoint hook injects.
 
 What this adapter deliberately does NOT do: write `openclaw.json`. Changing the `plugins.*`
 block while the gateway runs breaks it, so enabling the plugin is a separate step
@@ -28,7 +27,7 @@ from typing import Any
 from nexgen_core.paths import openclaw_config
 from nexgen_core.runtimes.base import EVENT_SINK_NAME, GUARDRAIL_SIDECAR_NAME, GuardrailError, Runtime
 
-#: The engine's plugin directory (package.json + manifest + index.mjs + the three jobs),
+#: The engine's plugin directory (package.json + manifest + index.mjs + the two jobs),
 #: deployed as a whole into `<state dir>/extensions/<PLUGIN_ID>/`. The folder keeps the name it
 #: had when it held only the guardrail: it is the source of a byte-for-byte copy, never a path
 #: anyone configures.
@@ -38,7 +37,7 @@ _PLUGIN_SOURCE_DIRNAME = "openclaw-guardrail-plugin"
 PLUGIN_ID = "nexgen"
 #: The name unit C deposited it under. It is removed on sight: one plugin, one id.
 LEGACY_PLUGIN_ID = "nexgen-guardrail"
-#: The engine-owned switches beside the plugin: briefing, events, posture. Never `openclaw.json`.
+#: The engine-owned switches beside the plugin: briefing, posture. Never `openclaw.json`.
 PLUGIN_CONFIG_NAME = "nexgen.config.json"
 #: The briefing text, shared with Claude's checkpoint hook (`hooks/vault-briefing.txt`).
 BRIEFING_NAME = "vault-briefing.txt"
@@ -167,42 +166,41 @@ class OpenClawRuntime(Runtime):
 
     # ---- event sink -----------------------------------------------------
 
-    def install_event_sink(self, home: Path, sink_source: Path) -> str | None:
-        """Writes the sink beside the plugin and switches the events job on.
-
-        Only when the plugin is already deposited: an events job with no plugin to carry it
-        would be a file nobody loads, and saying otherwise would be a lie to the parity
-        check. The plugin is deposited by the permissions phase, which runs right before this.
-        """
-        plugin_dir = self._plugin_dir(home)
-        if not (plugin_dir / "index.mjs").is_file():
-            return None
-        changed = self.deploy_bytes(plugin_dir / EVENT_SINK_NAME, sink_source.read_bytes())
-        changed |= self._write_plugin_config(home, events={"enabled": True})
-        if not changed:
-            return None
-        return f"openclaw: event sink enabled in {plugin_dir}"
-
     def remove_event_sink(self, home: Path) -> str | None:
         plugin_dir = self._plugin_dir(home)
         if not plugin_dir.is_dir():
             return None  # nothing was ever deposited here: no config to invent
         removed = self.remove_deployed(plugin_dir / EVENT_SINK_NAME)
-        changed = self._write_plugin_config(home, events={"enabled": False})
-        if removed or changed:
-            return f"openclaw: event sink removed from {plugin_dir} (no declared module needs it)"
+        removed |= self.remove_deployed(plugin_dir / "events.mjs")
+        config = self._read_plugin_config(home)
+        changed_config = False
+        if "events" in config:
+            config.pop("events", None)
+            path = self._plugin_config_path(home)
+            self.atomic_write(path, json.dumps(config, indent=2, sort_keys=True) + "\n")
+            changed_config = True
+        if removed or changed_config:
+            return f"openclaw: event sink removed from {plugin_dir}"
         return None
 
     # ---- plugin deposit and its config ----------------------------------
 
     @staticmethod
     def _deploy_plugin(source_dir: Path, plugin_dir: Path) -> bool:
-        """Copies the plugin's own files; True if any of them changed on disk."""
+        """Copies the plugin's own files and removes obsolete plugin files; True if any of them changed on disk."""
         changed = False
+        source_names = set()
         for source in sorted(source_dir.iterdir()):
             if not source.is_file():
                 continue
+            source_names.add(source.name)
             changed |= Runtime.deploy_bytes(plugin_dir / source.name, source.read_bytes())
+        for obsolete in (EVENT_SINK_NAME, "events.mjs"):
+            if obsolete not in source_names:
+                target = plugin_dir / obsolete
+                if target.is_file():
+                    target.unlink()
+                    changed = True
         return changed
 
     def _remove_legacy_plugin(self, home: Path) -> bool:

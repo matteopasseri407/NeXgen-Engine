@@ -131,10 +131,6 @@ class GuardRunner:
         """Permission posture + guardrail hook for every installed CLI."""
         return guard_permissions.apply_runtime_permissions(self)
 
-    def _event_sink_wanted(self) -> bool | None:
-        """Whether a declared module needs the event-sink hook (None when unreadable)."""
-        return guard_permissions._event_sink_wanted(self)
-
     def run(
         self,
         mode: GuardMode = GuardMode.APPLY,

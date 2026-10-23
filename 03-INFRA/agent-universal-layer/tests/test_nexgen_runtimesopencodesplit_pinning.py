@@ -123,11 +123,6 @@ def test_firme_pubbliche_invariate() -> None:
         "hook_source",
         "engine_hooks_dir",
     ]
-    assert list(inspect.signature(OpenCodeRuntime.install_event_sink).parameters) == [
-        "self",
-        "home",
-        "sink_source",
-    ]
     assert list(inspect.signature(OpenCodeRuntime.remove_event_sink).parameters) == ["self", "home"]
     public = {
         name
@@ -141,5 +136,4 @@ def test_firme_pubbliche_invariate() -> None:
         "guardrail_sidecar",
         "install_guardrail",
         "remove_event_sink",
-        "install_event_sink",
     }

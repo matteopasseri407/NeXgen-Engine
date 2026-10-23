@@ -496,5 +496,5 @@ def _antigravity_hooks_impl(home: Path | None = None) -> Path:
 
 
 def antigravity_hooks(home: Path | None = None) -> Path:
-    """Antigravity's event-sink hook registration file."""
+    """Antigravity's hooks registration file."""
     return _antigravity_hooks_impl(home)

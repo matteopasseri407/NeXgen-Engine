@@ -417,20 +417,3 @@ class OpenCodeRuntime(Runtime):
         if changed or removed:
             return f"opencode: event sink removed from {config_path} (no declared module needs it)"
         return None
-
-    def install_event_sink(self, home: Path, sink_source: Path) -> str | None:
-        return self._install_event_sink_impl(home, sink_source)
-
-    def _install_event_sink_impl(self, home: Path, sink_source: Path) -> str | None:
-        config_path = self._config_path(home)
-        if not config_path.is_file() and not shutil.which("opencode"):
-            return None
-        plugin_dir = config_path.parent
-        dst = plugin_dir / sink_source.name
-        deployed = self.deploy_bytes(dst, sink_source.read_bytes())
-        plugin_registered = self._register_plugin(config_path, dst)
-        if plugin_registered:
-            return f"opencode: event sink plugin registered in {config_path}"
-        if deployed:
-            return f"opencode: event sink updated in {plugin_dir}"
-        return None

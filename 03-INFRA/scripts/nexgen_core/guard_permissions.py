@@ -1,13 +1,12 @@
 """Turns the Vault's permission policy into the posture each CLI actually runs with.
 
 One job: read the private permission manifest (a posture per CLI, one
-guardrail hook body) together with the event-sink requirement the declared
-modules state, and translate them into the plain arguments
+guardrail hook body), and translate them into the plain arguments
 `nexgen_core.runtimes` applies. The mechanism lives there; this component
 only decides what to ask it for.
 
 The policy is Vault-private data, never the public engine's: without that
-manifest the phase is a complete no-op, so no end user inherits someone
+manifest the phase only runs legacy cleanup, so no end user inherits someone
 else's permission posture. It used to be a method of `GuardRunner`, beside
 the git quarantine and the instruction pointers; the coordinator keeps a
 one-line method that calls this.
@@ -39,17 +38,9 @@ def apply_runtime_permissions(runner) -> list[str]:
     """
     manifest_path = runner.vault_data / "03-INFRA" / "agent-universal-layer" / "permissions" / "manifest.yaml"
     engine_hooks_dir = runner.engine_root / "agent-universal-layer" / "hooks"
-    event_sink_source = engine_hooks_dir / "nexgen-event-sink.mjs"
-    sink_wanted = runner._event_sink_wanted()
-    sink_args = {
-        "event_sink_source": event_sink_source if sink_wanted and event_sink_source.is_file() else None,
-        "remove_event_sink": sink_wanted is False,
-    }
     if not manifest_path.is_file():
-        # No permission policy here, but the event sink does not depend on one.
-        if sink_args["event_sink_source"] is None and not sink_args["remove_event_sink"]:
-            return []
-        return apply_runtimes(home=runner.home, engine_hooks_dir=engine_hooks_dir, **sink_args)
+        # Even without a permission policy, runtimes clean up legacy hooks (like event sink).
+        return apply_runtimes(home=runner.home, engine_hooks_dir=engine_hooks_dir)
     try:
         raw = yaml.safe_load(manifest_path.read_text(encoding="utf-8"))
     except (OSError, yaml.YAMLError) as exc:
@@ -96,28 +87,4 @@ def apply_runtime_permissions(runner) -> list[str]:
         engine_hooks_dir=engine_hooks_dir,
         posture=posture,
         guardrail_source=guardrail_source,
-        **sink_args,
-    )
-
-
-def _event_sink_wanted(runner) -> bool | None:
-    """Does a module this machine declared need the event-sink hook?
-
-    True/False when the module state says so; None when it cannot be read, in which case
-    the hook is left as it is: removing it because of a read error would turn a transient
-    fault into a lost integration. A module declared `local` but held back by missing env
-    gates (a timer without the user's tokens) still counts: that is the environment, not a
-    decision to remove it.
-    """
-    try:
-        from nexgen_core.modules import modules_state
-
-        states = modules_state(vault_data=runner.vault_data, engine_root=runner.engine_root)
-    except Exception as exc:  # noqa: BLE001 - an unreadable module state changes nothing
-        logger.debug("event sink left as it is: module state unreadable (%s)", type(exc).__name__)
-        return None
-    return any(
-        "event_sink" in state.module.provides.runtime_hooks
-        and "local" in (state.state, state.declared)
-        for state in states
     )
