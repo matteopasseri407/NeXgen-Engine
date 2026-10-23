@@ -113,7 +113,12 @@ def _expected_mcp(vault_data: Path) -> tuple[set[str], set[str]] | None:
 
 
 def _expected_skills(vault_data: Path) -> set[str] | None:
-    """The manifest skills that name both CLIs, or None without a skills manifest."""
+    """The manifest skills both CLIs should hold, or None without a manifest.
+
+    OpenClaw and OpenCode read the same `~/.agents/skills` catalog, so a skill
+    targeted only at OpenCode is visible to OpenClaw too. Requiring an explicit
+    `openclaw` target counted zero on a real machine where OpenClaw saw 21.
+    """
     from nexgen_core.config import load_skills_manifest
     from nexgen_core.errors import NexgenError
     from nexgen_core.paths import skills_manifest
@@ -127,10 +132,14 @@ def _expected_skills(vault_data: Path) -> set[str] | None:
         return None
     skills = data.get("skills") if isinstance(data.get("skills"), dict) else {}
     default = ["claude", "codex", "antigravity", "opencode"]
-    return {
-        name for name, entry in skills.items()
-        if isinstance(entry, dict) and {"claude", "openclaw"} <= set(entry.get("targets", default))
-    }
+    expected: set[str] = set()
+    for name, entry in skills.items():
+        if not isinstance(entry, dict):
+            continue
+        targets = set(entry.get("targets", default))
+        if "claude" in targets and targets & {"openclaw", "opencode"}:
+            expected.add(name)
+    return expected
 
 
 def _openclaw_block_present(home: Path, config_path: Path, vault_data: Path) -> bool:

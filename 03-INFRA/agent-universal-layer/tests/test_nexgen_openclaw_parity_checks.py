@@ -157,6 +157,25 @@ def test_a_server_only_one_cli_mounts_is_a_warning_with_the_action(tmp_path):
     assert "nexgen sync" in (mcp.action or "")
 
 
+def test_a_skill_targeted_at_open_code_is_visible_to_openclaw(tmp_path):
+    """OpenClaw and OpenCode share ~/.agents/skills: the target names the reader, not a folder."""
+    home, vault = aligned_machine(tmp_path)
+    manifest = vault / "03-INFRA" / "agent-universal-layer" / "skills" / "skills.manifest.yaml"
+    manifest.write_text(
+        manifest.read_text(encoding="utf-8")
+        + "  shared:\n    origin: vault\n    exposure: lazy\n    targets: [claude, opencode]\n",
+        encoding="utf-8",
+    )
+    (home / ".claude" / "skills" / "shared").mkdir()
+    (home / ".agents" / "skills" / "shared").mkdir()
+
+    outcomes = {o.id: o for o in check_openclaw_parity(home, vault)}
+
+    skills = outcomes["openclaw.parity.skills"]
+    assert skills.severity is Severity.OK, skills.message
+    assert "2 shared skills" in skills.message
+
+
 def test_a_briefing_on_one_side_only_is_a_warning(tmp_path):
     home, vault = aligned_machine(tmp_path)
     settings = claude_settings(home)
