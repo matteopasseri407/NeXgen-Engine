@@ -1,4 +1,4 @@
-"""Domain commands: mcp server + doctor. Owned here, re-exported by nexgen_local.cli."""
+"""Domain commands: doctor. Owned here, re-exported by nexgen_local.cli."""
 from __future__ import annotations
 
 import argparse
@@ -11,12 +11,6 @@ import urllib.request
 
 
 _config = _base.command_config
-
-
-def cmd_mcp(args: argparse.Namespace) -> int:
-    from ..mcp_server import run_server
-
-    return run_server(_config(args), include_ask=not args.jobs_only)
 
 
 def _health_doctor(args: argparse.Namespace) -> int:

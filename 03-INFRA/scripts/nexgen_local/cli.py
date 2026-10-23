@@ -15,7 +15,7 @@ from .cmds.drive import cmd_drive_mcp, cmd_drive_propose, cmd_drive_upload
 from .cmds.mail import cmd_mail_propose, cmd_mail_send, cmd_mails
 from .cmds.patch_cmds import cmd_apply, cmd_proposals, cmd_propose
 from .cmds.run import cmd_close, cmd_eval, cmd_explore, cmd_research, cmd_run
-from .cmds.service import cmd_doctor, cmd_mcp
+from .cmds.service import cmd_doctor
 from .cmds.sup import (
     cmd_sup_attach, cmd_sup_costi, cmd_sup_start, cmd_sup_status, cmd_sup_window_check, register_sup,
 )
@@ -49,7 +49,7 @@ __all__ = [
     "cmd_mail_propose", "cmd_mails", "cmd_mail_send",
     "cmd_cal_propose", "cmd_cals", "cmd_cal_apply",
     "cmd_drive_propose", "cmd_drive_upload", "cmd_drive_mcp",
-    "cmd_mcp", "cmd_doctor", "cmd_tier_evaluate", "cmd_tier_set", "main",
+    "cmd_doctor", "cmd_tier_evaluate", "cmd_tier_set", "main",
     "cmd_sup_start", "cmd_sup_status", "cmd_sup_attach", "cmd_sup_costi", "cmd_sup_window_check",
 ]
 
@@ -137,16 +137,6 @@ def main(argv: list[str] | None = None) -> int:
     explore.add_argument("--audit")
     explore.add_argument("--json", action="store_true")
     explore.set_defaults(func=cmd_explore)
-
-    mcp = sub.add_parser("mcp", help="server MCP stdio: la lane come servizio per gli agenti")
-    mcp.add_argument("--jobs-only", action="store_true", help="nascondi lane_ask; restano research, close, status ed explore")
-    mcp.add_argument("--model")
-    mcp.add_argument("--router-model")
-    mcp.add_argument("--answer-model")
-    mcp.add_argument("--vault")
-    mcp.add_argument("--repo", action="append")
-    mcp.add_argument("--audit")
-    mcp.set_defaults(func=cmd_mcp)
 
     propose = sub.add_parser("propose", help="propone una patch (cancello a fatti macchina)")
     propose.add_argument("--file", required=True)

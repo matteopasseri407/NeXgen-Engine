@@ -311,27 +311,6 @@ def test_cli_persistent_confabulation_fails(tmp_path: Path, monkeypatch: pytest.
     assert "ATTENZIONE" in capsys.readouterr().err
 
 
-def test_mcp_new_starts_persistent_session(tmp_path: Path) -> None:
-    """Da MCP session_id='new' avvia una sessione, non 'inesistente'."""
-    from nexgen_local.mcp_server import tool_explore
-
-    _write_gatti(tmp_path)
-    cfg = _cfg(tmp_path)
-    llm = ScriptedLLM(
-        route={"source": "vault", "keywords": ["gatti"]},
-        decisions=[
-            {"action": "search_vault", "arg": "gatti"},
-            {"action": "read_file", "arg": "gatti.md"},
-            {"action": "answer", "arg": ""},
-        ],
-        answers=["I gatti nella nota."],
-    )
-    out = tool_explore(cfg, llm, "Leggi la nota gatti.", session_id="new")
-    assert "(rifiutato" not in out
-    assert "[sessione:" in out
-    assert list((tmp_path / "research").glob("research-*.sqlite")), "checkpoint persistito"
-
-
 def test_steps_budget_is_per_interaction(tmp_path: Path) -> None:
     """Prima interazione al tetto, ripresa con budget fresco: legge davvero."""
     _write_gatti(tmp_path)
