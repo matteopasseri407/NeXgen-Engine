@@ -191,6 +191,41 @@ def test_a_tilde_path_is_expanded_against_the_given_home_not_the_real_one(tmp_pa
     assert (home / "work" / "AGENTS.md").is_file()
 
 
+def test_a_symlinked_agents_md_is_written_through_not_replaced(tmp_path):
+    """A dotfiles-managed AGENTS.md is a link: replacing it detaches it from its owner."""
+    workspace = tmp_path / "work"
+    workspace.mkdir()
+    dotfiles = tmp_path / "dotfiles" / "AGENTS.md"
+    dotfiles.parent.mkdir()
+    dotfiles.write_text("le mie regole\n", encoding="utf-8")
+    link = workspace / "AGENTS.md"
+    link.symlink_to(dotfiles)
+    vault, home = a_machine(tmp_path, {"agents": {"defaults": {"workspace": str(workspace)}}})
+
+    aligns(vault, home)
+
+    assert link.is_symlink(), "the link was replaced by a regular file"
+    written = dotfiles.read_text(encoding="utf-8")
+    assert written.startswith(OPENCLAW_BLOCK_BEGIN)
+    assert written.endswith("le mie regole\n")
+
+
+def test_a_link_to_the_canonical_file_is_replaced_not_written_through(tmp_path):
+    """Writing through that link would put the pointer inside the file it names."""
+    workspace = tmp_path / "work"
+    workspace.mkdir()
+    vault, home = a_machine(tmp_path, {"agents": {"defaults": {"workspace": str(workspace)}}})
+    canon = vault.joinpath(*CANON_RELATIVE)
+    link = workspace / "AGENTS.md"
+    link.symlink_to(canon)
+
+    aligns(vault, home)
+
+    assert not link.is_symlink()
+    assert link.read_text(encoding="utf-8").startswith(OPENCLAW_BLOCK_BEGIN)
+    assert canon.read_text(encoding="utf-8") == "# canonical instructions\n"
+
+
 def test_crlf_line_endings_survive_a_rewrite(tmp_path):
     workspace = tmp_path / "work"
     workspace.mkdir()

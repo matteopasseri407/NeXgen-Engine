@@ -21,7 +21,7 @@ import sys
 from pathlib import Path
 
 from nexgen_core.action_notes import WARN
-from nexgen_core.files import atomic_write_text
+from nexgen_core.files import atomic_write_text, symlink_write_target
 from nexgen_core.i18n import t
 from nexgen_core.jsonc import parse_jsonc, set_jsonc_top_level_value
 
@@ -58,19 +58,12 @@ def align_instructions(runner) -> list[str]:
 
     if not claude_md.is_file() or claude_md.read_text(encoding="utf-8") != content:
         # A dotfiles-managed ~/CLAUDE.md is a symlink: write through it so
-        # the link (and the repository behind it) survives the update.
-        # Replacing the link itself would detach the file from its owner.
-        # The exception is a link to the canonical file: writing through
-        # it would overwrite the canonical instructions, so the link is
-        # replaced instead.
-        write_target = claude_md
-        if claude_md.is_symlink():
-            try:
-                resolved = claude_md.resolve()
-            except RuntimeError:  # symlink loop: nothing to write through
-                resolved = claude_md
-            if resolved != canon.resolve():
-                write_target = resolved
+        # the link (and the repository behind it) survives the update. The
+        # exception is a link to the canonical file, which is replaced
+        # instead: writing through it would overwrite the instructions.
+        from nexgen_core.files import symlink_write_target
+
+        write_target = symlink_write_target(claude_md, keep=canon)
         # The file may contain hand-written lines. Regenerating it is
         # fine; making it disappear without a copy is not: if the
         # safety copy itself fails, stop instead of destroying the
@@ -410,17 +403,22 @@ def align_openclaw_instructions(runner) -> list[str]:
     block = openclaw_instruction_block(canon)
     actions: list[str] = []
     for workspace in openclaw_workspaces(config_path, runner.home):
-        action = _align_openclaw_workspace(workspace, block)
+        action = _align_openclaw_workspace(workspace, block, canon)
         if action:
             actions.append(action)
     return actions
 
 
-def _align_openclaw_workspace(workspace: Path, block: str) -> str | None:
-    """One OpenClaw workspace: the block written, or why it was left alone."""
+def _align_openclaw_workspace(workspace: Path, block: str, canon: Path) -> str | None:
+    """One OpenClaw workspace: the block written, or why it was left alone.
+
+    A dotfiles-managed `AGENTS.md` is a symlink into its repository: it is
+    followed, not replaced, except when it points at the canonical file.
+    """
     target = workspace / "AGENTS.md"
     if not workspace.is_dir():
         return None  # the setup command creates the folder; the check reports it
+    write_target = symlink_write_target(target, keep=canon)
     try:
         # newline="": the person's line endings are read and written back as they
         # are. Text mode would turn a CRLF file into CRCRLF on a rewrite.
@@ -449,7 +447,7 @@ def _align_openclaw_workspace(workspace: Path, block: str) -> str | None:
                 "OpenClaw instructions at {path} left untouched: safety backup failed ({error})",
                 path=target, error=exc,
             )
-    atomic_write_text(target, with_openclaw_block(existing, file_block), newline="")
+    atomic_write_text(write_target, with_openclaw_block(existing, file_block), newline="")
     return t("OpenClaw instructions aligned in {path}", path=target)
 
 

@@ -11,7 +11,7 @@ SCRIPTS_DIR = Path(__file__).resolve().parents[2] / "scripts"
 if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
-from nexgen_core.files import atomic_write_text, backup_file, write_text_if_changed  # noqa: E402
+from nexgen_core.files import atomic_write_text, backup_file, symlink_write_target, write_text_if_changed  # noqa: E402
 
 
 def test_atomic_write_creates_parents_and_replaces(tmp_path: Path):
@@ -272,3 +272,17 @@ def test_a_transient_denial_is_retried_and_a_persistent_one_surfaces(monkeypatch
     with pytest.raises(PermissionError, match="still open somewhere"):
         files_mod.retry_transient_lock(still_open)
     assert clock[0] <= files_mod._RETRY_BUDGET_SECONDS
+
+
+def test_a_symlink_is_followed_and_a_link_to_the_source_is_not(tmp_path: Path):
+    """One rule, two callers: ~/CLAUDE.md and each workspace's AGENTS.md."""
+    target = tmp_path / "dotfiles" / "AGENTS.md"
+    target.parent.mkdir()
+    target.write_text("mine\n", encoding="utf-8")
+    link = tmp_path / "workspace" / "AGENTS.md"
+    link.parent.mkdir()
+    link.symlink_to(target)
+
+    assert symlink_write_target(link, keep=tmp_path / "canon.md") == target.resolve()
+    assert symlink_write_target(link, keep=target) == link
+    assert symlink_write_target(link.parent / "plain.md", keep=target) == link.parent / "plain.md"

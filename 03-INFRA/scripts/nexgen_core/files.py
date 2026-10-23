@@ -183,6 +183,23 @@ def write_private_text(path: Path, text: str, *, exclusive: bool = False) -> Non
     atomic_write_text(path, text, preserve_mode=False, exclusive=exclusive)
 
 
+def symlink_write_target(path: Path, keep: Path) -> Path:
+    """The file to write so an existing symlink survives the write.
+
+    A dotfiles-managed config is a link into its repository: replacing the link
+    detaches the file from where its owner keeps it, so the resolved file is
+    written instead. A link to `keep` itself is the exception: writing through
+    it would modify the source, so the link is the one to replace.
+    """
+    if not path.is_symlink():
+        return path
+    try:
+        resolved = path.resolve()
+    except RuntimeError:  # symlink loop: there is no target to write through
+        return path
+    return path if resolved == keep.resolve() else resolved
+
+
 def _safe_tag(tag: str | None) -> str | None:
     """A tag that cannot escape the backup filename or its rotation glob."""
     if tag is None:
