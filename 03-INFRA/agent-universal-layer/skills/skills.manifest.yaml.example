@@ -32,10 +32,10 @@
 #   targets:  the runtimes that surface the skill natively. claude, codex and
 #             antigravity each get a per-skill view: none of the three reads
 #             the shared ~/.agents/skills root, so a skill without its target
-#             here is discoverable nowhere in that CLI. Only opencode reads
-#             the shared roots (its target just verifies discoverability). Skills
-#             kept out of every eager view are still reachable through the
-#             universal `agent-skill find|show` command.
+#             here is discoverable nowhere in that CLI. Only opencode and
+#             openclaw read the shared roots (their target just verifies
+#             discoverability). Skills kept out of every eager view are still
+#             reachable through the universal `agent-skill find|show` command.
 #   exposure: manual/lazy (default — loaded on demand via the catalog) or
 #             core/eager (starter commands, showcased in ~/.agents/skills).
 #             Exposure never gates the native views: a declared skill gets a
@@ -63,6 +63,9 @@ skills:
   #                              ("/name" in the Antigravity TUI).
   #   targets: [opencode]     -> writes nothing (OpenCode reads the shared
   #                              roots); sync only verifies discoverability.
+  #   targets: [openclaw]     -> same shared catalog: OpenClaw discovers
+  #                              ~/.agents/skills itself, so this names the
+  #                              runtime without a folder of its own.
   # These are `origin: engine`: they live in the engine, not in your data, so
   # upgrading the engine upgrades them and no copy can go stale behind you.
   # Naming rule: a command that acts on YOUR MEMORY keeps the vault- prefix,

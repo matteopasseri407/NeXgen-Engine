@@ -72,6 +72,9 @@ _TARGET_VIEW_ATTRS: dict[str, tuple[str, ...]] = {
     "antigravity": ("gemini_dir", "gemini_config_dir", "gemini_legacy_dir"),
     "codex": ("codex_dir",),
     "opencode": ("active_dir", "opencode_dir", "opencode_native_dir"),
+    # OpenClaw discovers `~/.agents/skills` on its own ("agents-skills-personal"):
+    # the shared catalog is its native view, with no folder of its own.
+    "openclaw": ("active_dir",),
 }
 
 
