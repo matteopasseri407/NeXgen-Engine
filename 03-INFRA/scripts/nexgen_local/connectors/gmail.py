@@ -225,7 +225,7 @@ def _raw_message(to: str, subject: str, body: str, cc: str = "", in_reply_to: st
 
 
 def send_message(to: str, subject: str, body: str, cc: str = "", http: HttpFn | None = None) -> dict[str, Any]:
-    """Send a new message. The caller (compose gate) owns to/subject/body."""
+    """Send a new message. The caller owns to/subject/body; the lane has none."""
     to, subject, body = str(to or "").strip(), str(subject or "").strip(), str(body or "")
     if not to or "@" not in to:
         raise ConnectorError("(gmail: destinatario mancante o non valido)")

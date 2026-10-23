@@ -120,7 +120,6 @@ class LaneConfig:
     proposals_dir: Path = field(
         default_factory=lambda: lane_state_dir() / "proposals"
     )
-    mails_dir: Path = field(default_factory=lambda: lane_state_dir() / "mails")
     uploads_dir: Path = field(default_factory=lambda: lane_state_dir() / "uploads")
     calendars_dir: Path = field(default_factory=lambda: lane_state_dir() / "calendars")
     firecrawl_cmd: str = "firecrawl-local"

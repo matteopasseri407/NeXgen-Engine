@@ -2,7 +2,7 @@
 
 Each domain lives in nexgen_local.cmds (run/patch/mail/cal/drive/service);
 this module keeps argument wiring (main) and re-exports every cmd_* so
-`from nexgen_local import cli` and `cli.cmd_mail_propose` keep working.
+`from nexgen_local import cli` and `cli.cmd_drive_propose` keep working.
 """
 from __future__ import annotations
 
@@ -12,7 +12,6 @@ import sys
 from .cmds import base as _base
 from .cmds.cal import cmd_cal_apply, cmd_cal_propose, cmd_cals
 from .cmds.drive import cmd_drive_mcp, cmd_drive_propose, cmd_drive_upload
-from .cmds.mail import cmd_mail_propose, cmd_mail_send, cmd_mails
 from .cmds.patch_cmds import cmd_apply, cmd_proposals, cmd_propose
 from .cmds.run import cmd_eval, cmd_run
 from .cmds.service import cmd_doctor
@@ -46,7 +45,6 @@ def _print_receipts(receipts: list[dict]) -> None:
 __all__ = [
     "cmd_run", "cmd_eval",
     "cmd_propose", "cmd_proposals", "cmd_apply",
-    "cmd_mail_propose", "cmd_mails", "cmd_mail_send",
     "cmd_cal_propose", "cmd_cals", "cmd_cal_apply",
     "cmd_drive_propose", "cmd_drive_upload", "cmd_drive_mcp",
     "cmd_doctor", "cmd_tier_evaluate", "cmd_tier_set", "main",
@@ -122,26 +120,6 @@ def main(argv: list[str] | None = None) -> int:
     apply_cmd.add_argument("--verify", default="", help="comando di verifica dopo l'applicazione; exit 3 se fallisce")
     apply_cmd.add_argument("--json", action="store_true")
     apply_cmd.set_defaults(func=cmd_apply)
-
-    mail_propose = sub.add_parser("mail-propose", help="bozza una mail (il corpo lo scrive il modello, la busta il motore)")
-    mail_propose.add_argument("--instruction", required=True, help="cosa deve dire la mail")
-    mail_propose.add_argument("--reply", default="", help="id del messaggio a cui rispondere")
-    mail_propose.add_argument("--to", default="", help="destinatario per un nuovo messaggio")
-    mail_propose.add_argument("--subject", default="", help="oggetto per un nuovo messaggio")
-    mail_propose.add_argument("--provider", default="gmail", choices=("gmail", "outlook"))
-    mail_propose.add_argument("--model")
-    mail_propose.add_argument("--json", action="store_true")
-    mail_propose.set_defaults(func=cmd_mail_propose)
-
-    mails = sub.add_parser("mails", help="elenca le bozze mail da approvare")
-    mails.add_argument("--json", action="store_true")
-    mails.set_defaults(func=cmd_mails)
-
-    mail_send = sub.add_parser("mail-send", help="invia una bozza approvata (serve --yes)")
-    mail_send.add_argument("proposal_id")
-    mail_send.add_argument("--yes", action="store_true")
-    mail_send.add_argument("--json", action="store_true")
-    mail_send.set_defaults(func=cmd_mail_send)
 
     cal_propose = sub.add_parser("cal-propose", help="propone un evento o un'eliminazione (cancello)")
     cal_propose.add_argument("--summary", default="", help="titolo dell'evento")

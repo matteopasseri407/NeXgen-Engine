@@ -182,7 +182,6 @@ def test_skill_failure_is_a_failed_cycle_but_no_longer_stops_the_rest(tmp_path, 
 @pytest.mark.parametrize(
     "module,directory",
     [
-        ("compose", "mails_dir"),
         ("calendars", "calendars_dir"),
         ("patch", "proposals_dir"),
     ],
