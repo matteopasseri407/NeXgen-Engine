@@ -69,6 +69,7 @@ test_removal_ok = [
   "03-INFRA/agent-universal-layer/tests/test_nexgen_local_calendars.py",
   "03-INFRA/agent-universal-layer/tests/test_nexgen_local_patch.py",
   "03-INFRA/agent-universal-layer/tests/test_nexgen_patchsplit_pinning.py",
+  "03-INFRA/agent-universal-layer/tests/test_nexgen_prefinal_fixes.py",
 ]
 # Translation tables grow with every new message; they are data, not logic.
 exclude = ["*/locales/*"]
