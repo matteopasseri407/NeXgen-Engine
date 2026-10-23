@@ -14,6 +14,28 @@ from nexgen_core.openclaw_service import RunResult, default_runner
 
 SENSITIVE_KEY_SUBSTRINGS = ("token", "secret", "authkey", "private", "credential")
 
+#: A value attached to a key that names a secret: `token: x`, `authKey=x`, `password = "..."`.
+_SENSITIVE_ASSIGNMENT = re.compile(
+    r"(?i)\b([A-Za-z0-9_-]*"
+    r"(?:token|secret|authkey|private|credential|api[_-]?key|password|pairing[_-]?code)"
+    r"[A-Za-z0-9_-]*)"
+    r"(\s*[:=]\s*)"
+    r"(\"[^\"]*\"|'[^']*'|\S+)"
+)
+
+#: An HTTP bearer credential, which `devices approve` may echo.
+_BEARER = re.compile(r"(?i)\b(bearer\s+)\S+")
+
+
+def _scrub_text(text: str) -> str:
+    """The text with the value of every secret-looking key replaced by `[redacted]`.
+
+    The structured path drops whole fields; this one is for the free text a
+    CLI prints, where the token can sit on the same line as the device id.
+    """
+    scrubbed = _SENSITIVE_ASSIGNMENT.sub(r"\1\2[redacted]", text)
+    return _BEARER.sub(r"\1[redacted]", scrubbed)
+
 
 def qr() -> dict[str, str]:
     """Return the terminal command for the user to display their pairing QR code."""
@@ -32,7 +54,9 @@ def _strip_tokens(device_record: dict[str, Any]) -> dict[str, Any]:
     for key, val in device_record.items():
         if any(substr in key.lower() for substr in SENSITIVE_KEY_SUBSTRINGS):
             continue
-        if isinstance(val, dict):
+        if key == "summary" and isinstance(val, str):
+            clean[key] = _scrub_text(val)
+        elif isinstance(val, dict):
             clean[key] = _strip_tokens(val)
         elif isinstance(val, list):
             clean[key] = [_strip_tokens(x) if isinstance(x, dict) else x for x in val]
@@ -51,7 +75,7 @@ def _parse_text_devices(output: str) -> list[dict[str, Any]]:
         match_id = re.search(r"(?:ID:\s*|id[:=]\s*)([a-zA-Z0-9_\-]+)", line_clean, re.IGNORECASE)
         if match_id:
             dev_id = match_id.group(1)
-            devices.append({"id": dev_id, "summary": line_clean, "status": "pending"})
+            devices.append({"id": dev_id, "summary": _scrub_text(line_clean), "status": "pending"})
     return devices
 
 
@@ -107,6 +131,6 @@ def approve(
         "ok": res.returncode == 0,
         "commands": commands,
         "device_id": clean_id,
-        "output": res.stdout.strip(),
+        "output": _scrub_text(res.stdout.strip()),
         "dry_run": False,
     }

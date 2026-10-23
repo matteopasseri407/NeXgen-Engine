@@ -644,6 +644,35 @@ def test_pairing_pending_text_fallback() -> None:
     assert res["devices"][0]["id"] == "dev-999"
 
 
+def test_the_text_fallback_never_copies_a_token_into_the_summary() -> None:
+    """The summary used to be the raw line, and a token on it reached the screen."""
+    stdout = (
+        "Pending pairing requests:\n"
+        "  - ID: dev-999 (Pixel 8) token: oc_pair_secret_value\n"
+        "  - ID: dev-1000 (iPad) authKey=oc_auth_secret_value\n"
+    )
+    runner = RecordingRunner(default_code=0, default_stdout=stdout)
+
+    res = pairing_pending(runner=runner)
+
+    rendered = json.dumps(res)
+    assert res["devices"][0]["id"] == "dev-999"
+    assert "oc_pair_secret_value" not in rendered
+    assert "oc_auth_secret_value" not in rendered
+    assert "[redacted]" in res["devices"][0]["summary"]
+
+
+def test_the_approval_output_never_returns_a_token() -> None:
+    stdout = "Device dev-999 approved\npairing token: oc_pair_secret_value\n"
+    runner = RecordingRunner(default_code=0, default_stdout=stdout)
+
+    res = pairing_approve("dev-999", runner=runner)
+
+    assert res["ok"] is True
+    assert "oc_pair_secret_value" not in json.dumps(res)
+    assert "[redacted]" in res["output"]
+
+
 def test_pairing_approve_calls_runner() -> None:
     runner = RecordingRunner(default_code=0, default_stdout="Device dev-999 approved")
     res = pairing_approve("dev-999", runner=runner)
