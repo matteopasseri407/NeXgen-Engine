@@ -264,6 +264,39 @@ def test_the_gateway_is_loopback_and_token_protected_by_default():
     assert build_config(machine(go=True), Choices(lan=True))["gateway"]["bind"] == "lan"
 
 
+def test_a_configured_channel_gets_a_binding_to_the_main_agent():
+    """With explicit ownership a channel without a binding reaches no agent."""
+    current = {
+        "channels": {"telegram": {"accounts": {"default": {"botToken": "x"}}}},
+        "bindings": [{"agentId": "support", "match": {"channel": "discord", "accountId": "*"}}],
+    }
+
+    config = build_config(machine(go=True), current=current)
+
+    assert config["bindings"] == [
+        {"agentId": "main", "match": {"channel": "telegram", "accountId": "*"}},
+    ]
+
+
+def test_a_channel_the_person_already_bound_is_not_proposed():
+    current = {
+        "channels": {"telegram": {"accounts": {"default": {"botToken": "x"}}}},
+        "bindings": [{"agentId": "support", "match": {"channel": "telegram", "accountId": "*"}}],
+    }
+
+    config = build_config(machine(go=True), current=current)
+
+    assert "bindings" not in config
+
+
+def test_a_disabled_channel_gets_no_binding():
+    current = {"channels": {"telegram": {"enabled": False, "accounts": {}}}}
+
+    config = build_config(machine(go=True), current=current)
+
+    assert "bindings" not in config
+
+
 def test_a_tailscale_the_person_turned_on_is_not_switched_off():
     """A setup must not silently disable a remote access the person configured."""
     current = {"gateway": {"tailscale": {"mode": "serve"}}}

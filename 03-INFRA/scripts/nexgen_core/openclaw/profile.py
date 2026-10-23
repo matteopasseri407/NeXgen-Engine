@@ -32,7 +32,7 @@ from nexgen_core.openclaw.local_models import LocalModel, local_models, provider
 #: OpenClaw's and the person's, and a plan names it as "yours, left untouched".
 #: A section is owned even when this machine proposes nothing inside it today:
 #: that is how a key the engine used to write is reported instead of forgotten.
-OWNED_SECTIONS = ("plugins", "models", "agents", "tools", "gateway", "acp")
+OWNED_SECTIONS = ("plugins", "models", "agents", "tools", "gateway", "acp", "bindings")
 
 #: Plugins every OpenClaw gets: OpenClaw's own, with no subscription behind them.
 BASE_PLUGINS = (
@@ -337,6 +337,38 @@ def _gateway(chosen: Choices, current: dict[str, Any] | None) -> dict[str, Any]:
     }
 
 
+def _missing_channel_bindings(
+    current: dict[str, Any] | None, entries: dict[str, Any],
+) -> list[dict[str, Any]]:
+    """The bindings OpenClaw needs for a configured channel it cannot route.
+
+    With `agents.ownership: "explicit"` a channel without a binding reaches no
+    agent. Only missing channels are proposed, bound to `main`; a channel the
+    person already routed is never touched.
+    """
+    if not isinstance(current, dict):
+        return []
+    channels = current.get("channels") if isinstance(current.get("channels"), dict) else {}
+    if not channels or not entries:
+        return []
+    bindings = current.get("bindings") if isinstance(current.get("bindings"), list) else []
+    bound: set[str] = set()
+    for binding in bindings:
+        match = binding.get("match") if isinstance(binding, dict) else None
+        channel = match.get("channel") if isinstance(match, dict) else None
+        if isinstance(channel, str):
+            bound.add(channel)
+    agent = "main" if "main" in entries else sorted(entries, key=str)[0]
+    missing: list[dict[str, Any]] = []
+    for name, block in sorted(channels.items()):
+        if not isinstance(block, dict) or not block or block.get("enabled") is False:
+            continue
+        if str(name) in bound or "*" in bound:
+            continue
+        missing.append({"agentId": agent, "match": {"channel": str(name), "accountId": "*"}})
+    return missing
+
+
 def build_config(
     detected: Detection,
     choices: Choices | None = None,
@@ -390,4 +422,7 @@ def build_config(
     providers = provider_blocks(models, current)
     if providers:
         config["models"] = {"providers": providers}
+    bindings = _missing_channel_bindings(current, config["agents"]["entries"])
+    if bindings:
+        config["bindings"] = bindings
     return config

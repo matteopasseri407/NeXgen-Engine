@@ -1451,6 +1451,14 @@ MESSAGES: dict[str, str] = {
         "Lancia una volta 'loginctl enable-linger {user}'.",
     "Set gateway.bind to 'loopback', or 'lan' if you use the phone app on your home network.":
         "Imposta gateway.bind a 'loopback', oppure 'lan' se usi l'app sul telefono nella rete di casa.",
+    "These configured channels have no agent binding: {names}. With explicit ownership their messages reach no agent.":
+        "Questi canali configurati non hanno un binding verso un agente: {names}. Con l'ownership esplicita i loro messaggi non arrivano a nessuno.",
+    "Run 'nexgen openclaw setup': it binds them to the main agent and leaves your bindings untouched.":
+        "Lancia 'nexgen openclaw setup': li collega all'agente main e non tocca i tuoi binding.",
+    "Every configured channel has an agent binding.":
+        "Ogni canale configurato ha un binding verso un agente.",
+    "The setup adds a binding for these channels: {pairs}.":
+        "Il setup aggiunge un binding per questi canali: {pairs}.",
     "The gateway asks for a token.":
         "Il gateway chiede un token.",
     "The gateway does not use token authentication (mode: {mode}).":

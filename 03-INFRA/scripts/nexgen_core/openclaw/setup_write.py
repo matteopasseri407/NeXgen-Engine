@@ -134,6 +134,28 @@ def _merge_sets(current: Any, proposed: Any, merged: Any, path: tuple[str, ...] 
     return merged
 
 
+def _binding_key(binding: Any) -> tuple[str, str]:
+    """What makes two bindings the same entry: the agent and its match."""
+    if not isinstance(binding, dict):
+        return "", ""
+    match = binding.get("match") if isinstance(binding.get("match"), dict) else {}
+    return str(binding.get("agentId", "")), json.dumps(match, sort_keys=True, ensure_ascii=False, default=str)
+
+
+def _merge_bindings(current: Any, proposed: Any) -> list[Any]:
+    """The person's bindings first, then the ones this setup adds. Never a replacement."""
+    merged = [dict(item) for item in current if isinstance(item, dict)] if isinstance(current, list) else []
+    seen = {_binding_key(item) for item in merged}
+    for binding in proposed if isinstance(proposed, list) else []:
+        if not isinstance(binding, dict):
+            continue
+        key = _binding_key(binding)
+        if key not in seen:
+            merged.append(dict(binding))
+            seen.add(key)
+    return merged
+
+
 def merged_document(current: dict[str, Any] | None, proposed: dict[str, Any]) -> dict[str, Any]:
     """The file to write: the person's keys, the engine's values.
 
@@ -146,6 +168,9 @@ def merged_document(current: dict[str, Any] | None, proposed: dict[str, Any]) ->
 
     if isinstance(proposed.get("plugins"), dict):
         merged["plugins"] = _merge_plugin_entries(base.get("plugins"), proposed["plugins"])
+
+    if isinstance(proposed.get("bindings"), list):
+        merged["bindings"] = _merge_bindings(base.get("bindings"), proposed["bindings"])
 
     proposed_providers = proposed.get("models", {}).get("providers")
     if isinstance(proposed_providers, dict):

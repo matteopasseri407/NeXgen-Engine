@@ -166,6 +166,25 @@ def test_an_agent_the_person_added_to_the_agent_to_agent_allow_list_stays():
     assert allow == ["main", "capo", "personale", "sviluppo"]
 
 
+def test_the_persons_bindings_are_kept_and_the_new_one_added():
+    person = {"agentId": "support", "match": {"channel": "discord", "accountId": "*"}}
+    new = {"agentId": "main", "match": {"channel": "telegram", "accountId": "*"}}
+    current = {"bindings": [person]}
+    proposed = {"bindings": [new]}
+
+    merged = setup_write.merged_document(current, proposed)
+
+    assert merged["bindings"] == [person, new]
+
+
+def test_an_identical_binding_is_not_added_twice():
+    binding = {"agentId": "main", "match": {"channel": "telegram", "accountId": "*"}}
+
+    merged = setup_write.merged_document({"bindings": [binding]}, {"bindings": [dict(binding)]})
+
+    assert merged["bindings"] == [binding]
+
+
 def test_a_list_is_still_replaced_where_the_proposal_owns_it():
     """The union is for the permission lists only: a title is not a set."""
     current = {"agents": {"entries": {"main": {"name": "old", "tags": ["a"]}}}}

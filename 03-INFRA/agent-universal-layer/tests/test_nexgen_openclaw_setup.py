@@ -767,6 +767,24 @@ def test_service_step_starts_the_gateway_when_the_install_only_registered_it():
     assert any("Starting the gateway" in line for line in lines)
 
 
+def test_a_configured_channel_gets_a_binding_without_touching_the_persons(tmp_path):
+    machine = Machine(tmp_path)
+    machine.config.parent.mkdir(parents=True)
+    person = {"agentId": "support", "match": {"channel": "discord", "accountId": "*"}}
+    machine.config.write_text(json.dumps({
+        "gateway": {"auth": {"mode": "token", "token": "t"}},
+        "channels": {"telegram": {"accounts": {"default": {"botToken": "x"}}}},
+        "bindings": [person],
+    }), encoding="utf-8")
+
+    assert machine.run() == 0
+
+    bindings = machine.config_json()["bindings"]
+    assert person in bindings
+    assert {"agentId": "main", "match": {"channel": "telegram", "accountId": "*"}} in bindings
+    assert "telegram -> main" in machine.output()
+
+
 def test_the_last_step_runs_the_doctor_and_reports(tmp_path):
     machine = Machine(tmp_path)
     machine.config.parent.mkdir(parents=True)

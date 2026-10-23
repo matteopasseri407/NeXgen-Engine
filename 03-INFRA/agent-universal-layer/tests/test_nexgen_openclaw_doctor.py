@@ -297,6 +297,28 @@ def test_lingering_on_passes(tmp_path):
     assert by_id(outcomes)["openclaw.linger"].severity == Severity.OK
 
 
+def test_a_channel_without_a_binding_is_a_warning(tmp_path):
+    config = clean_config()
+    config["channels"] = {"telegram": {"accounts": {"default": {"botToken": "x"}}}}
+
+    outcomes = by_id(run_doctor(tmp_path, write_config(tmp_path, config)))
+
+    binding = outcomes["openclaw.bindings"]
+    assert binding.severity == Severity.WARN
+    assert "telegram" in binding.message
+    assert "nexgen openclaw setup" in (binding.action or "")
+
+
+def test_a_bound_channel_passes(tmp_path):
+    config = clean_config()
+    config["channels"] = {"telegram": {"accounts": {"default": {"botToken": "x"}}}}
+    config["bindings"] = [{"agentId": "main", "match": {"channel": "telegram", "accountId": "*"}}]
+
+    outcomes = by_id(run_doctor(tmp_path, write_config(tmp_path, config)))
+
+    assert outcomes["openclaw.bindings"].severity == Severity.OK
+
+
 def test_a_google_subscription_is_a_failure(tmp_path):
     config = clean_config()
     config["plugins"]["allow"].append("google-antigravity")

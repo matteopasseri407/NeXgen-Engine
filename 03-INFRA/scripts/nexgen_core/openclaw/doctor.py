@@ -428,6 +428,9 @@ def collect(
             doctor_runtime.check_listening(config, connect or doctor_runtime.default_connect),
             *doctor_runtime.check_workshop_skills(config, path.parent, home_dir),
         ])
+        bindings = doctor_runtime.check_bindings(config)
+        if bindings is not None:
+            outcomes.append(bindings)
     store = doctor_runtime.check_store_gateway(home_dir, values, system)
     if store is not None:
         outcomes.append(store)

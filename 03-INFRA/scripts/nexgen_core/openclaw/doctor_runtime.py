@@ -136,6 +136,38 @@ def check_linger(platform: str, user: str | None, directory: Path | None = None)
     )
 
 
+def check_bindings(config: dict[str, Any]) -> CheckOutcome | None:
+    """With explicit ownership, a channel without a binding reaches no agent."""
+    channels = config.get("channels") if isinstance(config.get("channels"), dict) else {}
+    configured = {
+        str(name): block for name, block in channels.items()
+        if isinstance(block, dict) and block and block.get("enabled") is not False
+    }
+    if not configured:
+        return None
+    bindings = config.get("bindings") if isinstance(config.get("bindings"), list) else []
+    bound: set[str] = set()
+    for binding in bindings:
+        match = binding.get("match") if isinstance(binding, dict) else None
+        channel = match.get("channel") if isinstance(match, dict) else None
+        if isinstance(channel, str):
+            bound.add(channel)
+    missing = sorted(name for name in configured if name not in bound and "*" not in bound)
+    if missing:
+        return CheckOutcome(
+            id="openclaw.bindings",
+            severity=Severity.WARN,
+            message=t("These configured channels have no agent binding: {names}. "
+                      "With explicit ownership their messages reach no agent.", names=", ".join(missing)),
+            action=t("Run 'nexgen openclaw setup': it binds them to the main agent and leaves your bindings untouched."),
+        )
+    return CheckOutcome(
+        id="openclaw.bindings",
+        severity=Severity.OK,
+        message=t("Every configured channel has an agent binding."),
+    )
+
+
 def store_packages(home: Path, env: Mapping[str, str], platform: str) -> list[str]:
     """The Microsoft Store package of OpenClaw, when Windows installed one."""
     if not platform.startswith("win"):

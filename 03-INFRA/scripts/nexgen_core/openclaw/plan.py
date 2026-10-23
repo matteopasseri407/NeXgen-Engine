@@ -171,6 +171,19 @@ def _build_notes(config: dict[str, Any], detected: Detection, choices: Choices |
     return notes
 
 
+def _binding_note(config: dict[str, Any]) -> str | None:
+    """Say which channels the setup binds, so the plan is not a silent config change."""
+    bindings = config.get("bindings") if isinstance(config.get("bindings"), list) else []
+    pairs = [
+        f"{binding.get('match', {}).get('channel')} -> {binding.get('agentId')}"
+        for binding in bindings
+        if isinstance(binding, dict) and isinstance(binding.get("match"), dict)
+    ]
+    if not pairs:
+        return None
+    return t("The setup adds a binding for these channels: {pairs}.", pairs=", ".join(pairs))
+
+
 def build_plan(
     detected: Detection | None = None,
     choices: Choices | None = None,
@@ -205,11 +218,15 @@ def build_plan(
         key for key in current_flat
         if key.split(".", 1)[0] in owned and key not in proposed_flat
     ))
+    notes = list(_build_notes(config, snapshot, chosen))
+    binding_note = _binding_note(config)
+    if binding_note:
+        notes.append(binding_note)
     return Plan(
         detected=snapshot, choices=chosen, config=config, path=path,
         current=current, current_error=error,
         added=added, changed=changed, kept=kept, dropped=dropped,
-        notes=tuple(_build_notes(config, snapshot, chosen)),
+        notes=tuple(notes),
     )
 
 
