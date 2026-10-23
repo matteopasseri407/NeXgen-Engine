@@ -36,10 +36,15 @@ const CONFIG_PATH = join(DIR, "nexgen.config.json");
 
 // The documented OpenClaw surfaces that execute something: `exec` is the shell,
 // `process` owns a running session, `terminal` types into an operator terminal,
-// `code_execution` runs provider-backed Python. Only a value that IS a command
-// line is judged: Python source is not a shell line, and matching it against the
-// body's shell patterns would hit by accident rather than by meaning.
-export const SHELL_TOOLS = new Set(["exec", "process", "terminal", "code_execution"]);
+// `code_execution` runs provider-backed Python. The aliases are the names other
+// runners give the same thing; missing one is a command nobody judges. Only a
+// value that IS a command line is judged: Python source is not a shell line, and
+// matching it against the body's shell patterns would hit by accident rather
+// than by meaning.
+export const SHELL_TOOLS = new Set([
+  "exec", "process", "terminal", "code_execution",
+  "bash", "sh", "powershell", "cmd", "run_command", "system",
+]);
 
 // The tools that change files. `apply_patch` keeps its targets in a patch envelope;
 // the tool name is what decides here, never a path parsed out of a payload.
@@ -51,17 +56,31 @@ export const FILE_TOOLS = new Set(["write", "edit", "apply_patch"]);
 export const POSTURES = ["bypass", "accept-edits", "ask"];
 export const DEFAULT_POSTURE = "bypass";
 
+function commandText(value) {
+  if (typeof value === "string") {
+    return value.trim();
+  }
+  if (Array.isArray(value)) {
+    // Some runners hand the command over as argv (`["rm", "-rf", "/"]`):
+    // judging the shape but not the text let it through untouched.
+    return value
+      .filter((part) => typeof part === "string" || typeof part === "number")
+      .map(String)
+      .join(" ")
+      .trim();
+  }
+  return "";
+}
+
 export function commandOfTool(toolName, params) {
-  if (!SHELL_TOOLS.has(toolName) || !params || typeof params !== "object") {
+  const name = typeof toolName === "string" ? toolName.toLowerCase() : "";
+  if (!SHELL_TOOLS.has(name) || !params || typeof params !== "object") {
     return null;
   }
-  for (const key of ["command", "cmd"]) {
-    const value = params[key];
-    if (typeof value === "string" && value.trim() !== "") {
-      return value;
-    }
-  }
-  return null;
+  const head = commandText(params.command) || commandText(params.cmd);
+  const tail = commandText(params.args);
+  const line = [head, tail].filter(Boolean).join(" ");
+  return line === "" ? null : line;
 }
 
 // The posture the engine last wrote, read per call: a changed manifest takes effect on the
@@ -85,6 +104,12 @@ async function judge(command, directory, sessionID, sidecarPath) {
     return { decision: "deny", reason: `nexgen-guardrail: the guardrail core could not load (${err && err.message})` };
   }
   const sidecar = core.loadSidecar(sidecarPath);
+  if (sidecar.missing) {
+    // This plugin only exists where the guard deposited it together with its
+    // sidecar: an absent file is a broken install, not "no guardrail here".
+    // A sidecar that IS present and lists no hooks stays a legitimate allow.
+    return { ...core.closed(`no guardrail sidecar at ${sidecarPath}`, true), autoAllow: false };
+  }
   if (sidecar.broken) {
     return { ...core.closed(sidecar.broken, sidecar.strict), autoAllow: false };
   }

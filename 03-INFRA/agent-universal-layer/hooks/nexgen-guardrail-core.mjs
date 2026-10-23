@@ -19,14 +19,19 @@ export const RANK = { allow: 0, ask: 1, deny: 2 };
 // (legitimate: allow) and "a guardrail IS configured and this cannot use it" (broken:
 // must not read as absent). A corrupt sidecar used to fail OPEN in a posture whose whole
 // point is that the guardrail is the only brake left.
+//
+// `missing` is the third state, and each adapter reads it per its own install: an
+// adapter whose registration lives in the sidecar treats absence as "nothing to run",
+// while the OpenClaw plugin, deposited only together with its sidecar, treats it as a
+// broken install and blocks.
 export function loadSidecar(configPath) {
-  const none = { hooks: [], broken: null, strict: false, autoAllow: false, auditFile: null };
+  const none = { hooks: [], broken: null, missing: false, strict: false, autoAllow: false, auditFile: null };
   let raw;
   try {
     raw = readFileSync(configPath, "utf8");
   } catch (err) {
     if (err && err.code === "ENOENT") {
-      return none;
+      return { ...none, missing: true };
     }
     return { ...none, broken: `sidecar unreadable (${err.message})` };
   }

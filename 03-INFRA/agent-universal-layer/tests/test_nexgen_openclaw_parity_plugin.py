@@ -31,6 +31,10 @@ BODIES = {
         "process.stdin.resume(); process.stdin.on('end', () => { process.stdout.write(JSON.stringify("
         "{hookSpecificOutput:{permissionDecision:'ask',permissionDecisionReason:'looks risky'}})); });"
     ),
+    "echo.mjs": (
+        "import { readFileSync, writeFileSync } from 'node:fs';"
+        "writeFileSync(process.env.GUARDRAIL_ECHO, readFileSync(0, 'utf8'));"
+    ),
 }
 PREAMBLE = """
 import plugin from {uri};
@@ -98,7 +102,8 @@ def test_the_plugin_registers_the_two_jobs_with_the_guardrail_first(tmp_path):
 
 
 @pytest.mark.skipif(NODE is None, reason="node is not installed")
-def test_the_plugin_loads_even_with_no_sidecar_and_no_config(tmp_path):
+def test_a_missing_sidecar_blocks_instead_of_allowing(tmp_path):
+    """The plugin IS the guardrail here: its sidecar missing is a broken install."""
     target = deployed(tmp_path)
     (target / "nexgen-guardrail.config.json").unlink()
 
@@ -107,7 +112,22 @@ def test_the_plugin_loads_even_with_no_sidecar_and_no_config(tmp_path):
         "{toolName: 'exec', params: {command: 'ls'}}, {sessionId: 's'})));\n"
     ))
 
-    assert fired is None  # no body, no decision: the call is left alone
+    assert fired["block"] is True
+    assert "sidecar" in fired["blockReason"]
+
+
+@pytest.mark.skipif(NODE is None, reason="node is not installed")
+def test_a_sidecar_with_no_hooks_is_no_guardrail_and_allows(tmp_path):
+    """A present, valid sidecar with an empty list is a choice, not a fault."""
+    target = deployed(tmp_path)
+    (target / "nexgen-guardrail.config.json").write_text('{"hooks": []}', encoding="utf-8")
+
+    fired = drive(target, (
+        "console.log(JSON.stringify(await call('before_tool_call', "
+        "{toolName: 'exec', params: {command: 'ls'}}, {sessionId: 's'})));\n"
+    ))
+
+    assert fired is None
 
 
 # ----------------------------------------------------------------------- briefing
@@ -242,11 +262,12 @@ def test_a_checkpoint_hook_without_its_text_file_breaks_nothing(tmp_path):
 
 
 def fire_command(tmp_path: Path, posture: str | None, body: str, tool: str = "exec",
-                 params: dict | None = None) -> dict | None:
+                 params: dict | None = None, env: dict | None = None) -> dict | None:
     config = {"posture": posture} if posture else None
     target = deployed(tmp_path, body=body, config=config)
     event = json.dumps({"toolName": tool, "params": params if params is not None else {"command": "ls"}})
-    return drive(target, f"console.log(JSON.stringify(await call('before_tool_call', {event}, {{sessionId: 's'}})));\n")
+    return drive(target, f"console.log(JSON.stringify(await call('before_tool_call', {event}, {{sessionId: 's'}})));\n",
+                 env=env)
 
 
 @pytest.mark.parametrize("posture", [None, "bypass"])
@@ -308,3 +329,35 @@ def test_ask_also_confirms_a_file_write(tmp_path):
 @pytest.mark.skipif(NODE is None, reason="node is not installed")
 def test_a_read_is_never_judged_under_any_posture(tmp_path):
     assert fire_command(tmp_path, "ask", "allow.mjs", tool="read", params={"path": "/tmp/x"}) is None
+
+
+# ------------------------------------------------- the command, however it arrives
+
+
+@pytest.mark.parametrize("tool", ["bash", "sh", "powershell", "cmd", "run_command", "Bash"])
+@pytest.mark.skipif(NODE is None, reason="node is not installed")
+def test_every_known_shell_alias_is_judged(tmp_path, tool):
+    """A tool that runs a shell under another name is still a shell."""
+    decision = fire_command(tmp_path, "bypass", "deny.mjs", tool=tool, params={"command": "rm -rf /"})
+    assert decision["block"] is True
+
+
+@pytest.mark.skipif(NODE is None, reason="node is not installed")
+def test_a_command_given_as_a_list_is_judged_as_one_line(tmp_path):
+    decision = fire_command(tmp_path, "bypass", "deny.mjs", tool="exec",
+                            params={"command": ["rm", "-rf", "/"]})
+    assert decision["block"] is True
+
+
+@pytest.mark.skipif(NODE is None, reason="node is not installed")
+def test_a_command_split_between_command_and_args_is_judged_whole(tmp_path):
+    echo = tmp_path / "payload.json"
+    decision = fire_command(
+        tmp_path, "bypass", "echo.mjs", tool="exec",
+        params={"command": "rm", "args": ["-rf", "/"]},
+        env=dict(os.environ, GUARDRAIL_ECHO=str(echo)),
+    )
+
+    assert decision is None
+    payload = json.loads(echo.read_text(encoding="utf-8"))
+    assert payload["tool_input"]["command"] == "rm -rf /"
