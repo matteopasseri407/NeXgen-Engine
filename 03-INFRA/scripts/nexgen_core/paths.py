@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import os
 import sys
+from collections.abc import Mapping
 from pathlib import Path
 
 #: Name of the data folder under the home directory, when no variable names it.
@@ -454,26 +455,29 @@ def antigravity_configs(home: Path | None = None) -> list[Path]:
     return _antigravity_configs_impl(home)
 
 
-def _openclaw_config_impl(home: Path | None = None) -> Path:
+def _openclaw_config_impl(home: Path | None = None, env: Mapping[str, str] | None = None) -> Path:
     """Implementation behind :func:`openclaw_config`."""
-    explicit = os.environ.get("OPENCLAW_CONFIG_PATH")
+    values = os.environ if env is None else env
+    explicit = values.get("OPENCLAW_CONFIG_PATH")
     if explicit:
         return Path(explicit).expanduser()
-    state_dir = os.environ.get("OPENCLAW_STATE_DIR")
+    state_dir = values.get("OPENCLAW_STATE_DIR")
     if state_dir:
         return Path(state_dir).expanduser() / "openclaw.json"
     return resolve_home(home) / ".openclaw" / "openclaw.json"
 
 
-def openclaw_config(home: Path | None = None) -> Path:
+def openclaw_config(home: Path | None = None, env: Mapping[str, str] | None = None) -> Path:
     """OpenClaw's own configuration file, which also carries its MCP servers.
 
     Precedence follows OpenClaw itself: `$OPENCLAW_CONFIG_PATH` (a file),
     then `$OPENCLAW_STATE_DIR/openclaw.json`, finally `~/.openclaw/openclaw.json`.
     The file holds everything OpenClaw knows (models, channels, gateway
     settings), so the renderer only ever touches the `mcp.servers` table.
+
+    ``env`` is the environment a caller was given: detection and its tests.
     """
-    return _openclaw_config_impl(home)
+    return _openclaw_config_impl(home, env)
 
 
 def _antigravity_settings_impl(home: Path | None = None) -> Path:

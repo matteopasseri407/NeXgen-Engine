@@ -1258,4 +1258,193 @@ MESSAGES: dict[str, str] = {
         "Esegui 'agent-sync apply' per far puntare di nuovo ogni cartella al file canonico.",
     "Antigravity's MCP configuration is the same in every folder it reads from":
         'La configurazione MCP di Antigravity è la stessa in ogni cartella da cui legge',
+    # --- OpenClaw: l'harness con l'interfaccia -----------------------------------
+    # Rilevamento
+    "npm is not on PATH, so a global OpenClaw cannot be found or installed":
+        "npm non è nel PATH, quindi un OpenClaw globale non si trova e non si installa",
+    "npm did not say where its global packages live":
+        "npm non ha detto dove tiene i pacchetti globali",
+    "no npm package named 'openclaw' under {root}":
+        "nessun pacchetto npm chiamato 'openclaw' sotto {root}",
+    "the 'claude' command is not on PATH":
+        "il comando 'claude' non è nel PATH",
+    "on macOS the login lives in the Keychain: not verifiable from here":
+        "su macOS il login sta nel Keychain: non è verificabile da qui",
+    "no ~/.claude/.credentials.json: Claude Code is not logged in":
+        "manca ~/.claude/.credentials.json: Claude Code non ha fatto il login",
+    "the 'codex' command is not on PATH":
+        "il comando 'codex' non è nel PATH",
+    "no auth.json in {home}: Codex is not logged in":
+        "manca auth.json in {home}: Codex non ha fatto il login",
+    "no local model backend answered":
+        "nessun backend di modelli locali ha risposto",
+    # Il piano
+    "The assistant is not created: no model is available for it.":
+        "L'assistente non viene creato: non c'è nessun modello disponibile per lui.",
+    "The code agent is not created: no model is available for it.":
+        "L'agente del codice non viene creato: non c'è nessun modello disponibile per lui.",
+    "The automation agent is not created: no model is available for it.":
+        "L'agente delle automazioni non viene creato: non c'è nessun modello disponibile per lui.",
+    "The automation agent is not created: the n8n module is not active on this machine.":
+        "L'agente delle automazioni non viene creato: il modulo n8n non è attivo su questa macchina.",
+    "The gateway token is a placeholder: 'nexgen openclaw setup' generates the real one.":
+        "Il token del gateway è un segnaposto: 'nexgen openclaw setup' genera quello vero.",
+    "The code agent runs Claude with high reasoning and the embedded runtime.":
+        "L'agente del codice usa Claude con ragionamento alto e il runtime incorporato.",
+    "The assistant runs on Codex; only the models this account has are configured.":
+        "L'assistente gira su Codex; vengono configurati solo i modelli che questo account ha.",
+    "No local model answered. The engine never downloads one: start it yourself, for example 'ollama serve' or 'llama-server -m <model>.gguf --port 8080', then ask again.":
+        "Nessun modello locale ha risposto. Il motore non ne scarica: avvialo tu, per esempio 'ollama serve' oppure 'llama-server -m <model>.gguf --port 8080', poi richiedi di nuovo.",
+    "OpenClaw {version} ({path})":
+        "OpenClaw {version} ({path})",
+    "OpenClaw not installed{detail}":
+        "OpenClaw non installato{detail}",
+    "Claude: {state}":
+        "Claude: {state}",
+    "Codex: {state}":
+        "Codex: {state}",
+    "OpenCode Go: {state}":
+        "OpenCode Go: {state}",
+    "key present":
+        "chiave presente",
+    "no key":
+        "nessuna chiave",
+    "Local models: Ollama {ollama}, llama.cpp {llamacpp}":
+        "Modelli locali: Ollama {ollama}, llama.cpp {llamacpp}",
+    "Local models: none ({detail})":
+        "Modelli locali: nessuno ({detail})",
+    "no backend answered":
+        "nessun backend ha risposto",
+    "n8n: {state}":
+        "n8n: {state}",
+    "not active":
+        "non attivo",
+    "not found":
+        "non trovato",
+    "logged in":
+        "login presente",
+    "installed, not logged in":
+        "installato, senza login",
+    "installed, login not verifiable":
+        "installato, login non verificabile",
+    "OpenClaw plan for {path}":
+        "Piano OpenClaw per {path}",
+    "Agents:":
+        "Agenti:",
+    "The configuration at {path} cannot be read: {error}":
+        "Non riesco a leggere la configurazione in {path}: {error}",
+    "No configuration at {path} yet: everything below would be created.":
+        "Non c'è ancora una configurazione in {path}: tutto quello che segue verrebbe creato.",
+    "Configuration in force read from {path}.":
+        "Configurazione in vigore letta da {path}.",
+    "Sections this setup would change:":
+        "Sezioni che questo setup cambierebbe:",
+    "  added: {items}":
+        "  da aggiungere: {items}",
+    "  changed: {items}":
+        "  da cambiare: {items}",
+    "  yours, left untouched: {items}":
+        "  tue, lasciate intatte: {items}",
+    "  no longer proposed, left in place: {items}":
+        "  non più proposte, lasciate al loro posto: {items}",
+    "Nothing was written. 'nexgen openclaw setup' (B2) applies this plan.":
+        "Non è stato scritto niente. 'nexgen openclaw setup' (B2) applica questo piano.",
+    # Il doctor di OpenClaw
+    "The OpenClaw module is declared on this machine but OpenClaw is not installed.":
+        "Il modulo OpenClaw è dichiarato su questa macchina ma OpenClaw non è installato.",
+    "Install the pinned release: {command}":
+        "Installa la versione fissata: {command}",
+    "OpenClaw {version} is installed, but the engine cannot read its pin.":
+        "OpenClaw {version} è installato, ma il motore non riesce a leggere la versione fissata.",
+    "Check agent-universal-layer/openclaw/pin.json: it holds the release the engine expects.":
+        "Controlla agent-universal-layer/openclaw/pin.json: contiene la versione che il motore si aspetta.",
+    "OpenClaw {version} is installed, the engine configures {pinned}.":
+        "OpenClaw {version} è installato, il motore configura {pinned}.",
+    "Align it with: {command}":
+        "Allinealo con: {command}",
+    "OpenClaw {version} is the pinned release.":
+        "OpenClaw {version} è la versione fissata.",
+    "OpenClaw is installed but this machine does not declare the module: the engine will not keep it aligned.":
+        "OpenClaw è installato ma questa macchina non dichiara il modulo: il motore non lo terrà allineato.",
+    "Declare 'openclaw: local' under this host in modules.state.yaml, or remove OpenClaw.":
+        "Dichiara 'openclaw: local' sotto questa macchina in modules.state.yaml, oppure rimuovi OpenClaw.",
+    "The configuration at {path} is valid JSON.":
+        "La configurazione in {path} è JSON valido.",
+    "Fix the file or move it aside; 'nexgen openclaw plan' shows what the engine would write.":
+        "Sistema il file o spostalo da parte; 'nexgen openclaw plan' mostra cosa scriverebbe il motore.",
+    "OpenClaw has no configuration at {path} yet.":
+        "OpenClaw non ha ancora una configurazione in {path}.",
+    "Run 'nexgen openclaw plan' to see what the engine would write.":
+        "Lancia 'nexgen openclaw plan' per vedere cosa scriverebbe il motore.",
+    "Ollama model ids carry ':latest', which OpenClaw does not recognise: {ids}":
+        "Gli id dei modelli Ollama hanno ':latest', che OpenClaw non riconosce: {ids}",
+    "Write the id without ':latest' and run 'nexgen openclaw setup' again.":
+        "Scrivi l'id senza ':latest' e rilancia 'nexgen openclaw setup'.",
+    "Every Ollama model id is written without ':latest'.":
+        "Ogni id dei modelli Ollama è scritto senza ':latest'.",
+    "This local model has no cage in tools.byProvider: {models}":
+        "Questo modello locale non ha la gabbia in tools.byProvider: {models}",
+    "Run 'nexgen openclaw plan', then setup: a local model must not write, execute or browse.":
+        "Lancia 'nexgen openclaw plan' e poi setup: un modello locale non deve scrivere, eseguire né navigare.",
+    "Every local model is caged ({count}).":
+        "Ogni modello locale è nella gabbia ({count}).",
+    "The heartbeat is off, as the engine configures it.":
+        "Il battito è spento, come lo configura il motore.",
+    "The heartbeat runs every '{every}': it starts system jobs that write to the channels.":
+        "Il battito gira ogni '{every}': avvia job di sistema che scrivono sui canali.",
+    "(not set)":
+        "(non impostato)",
+    "Set agents.defaults.heartbeat.every to '0m'.":
+        "Imposta agents.defaults.heartbeat.every a '0m'.",
+    "The gateway binds to {bind}.":
+        "Il gateway si lega a {bind}.",
+    "The gateway binds to '{bind}', which is neither loopback nor the home network.":
+        "Il gateway si lega a '{bind}', che non è né loopback né la rete di casa.",
+    "Set gateway.bind to 'loopback', or 'lan' if you use the phone app on your home network.":
+        "Imposta gateway.bind a 'loopback', oppure 'lan' se usi l'app sul telefono nella rete di casa.",
+    "The gateway asks for a token.":
+        "Il gateway chiede un token.",
+    "The gateway does not use token authentication (mode: {mode}).":
+        "Il gateway non usa l'autenticazione a token (modalità: {mode}).",
+    "Set gateway.auth.mode to 'token' and let 'nexgen openclaw setup' generate the token.":
+        "Imposta gateway.auth.mode a 'token' e lascia che 'nexgen openclaw setup' generi il token.",
+    "OpenClaw is configured with a Google subscription, which its terms do not allow: {names}":
+        "OpenClaw è configurato con un abbonamento Google, che i suoi termini non permettono: {names}",
+    "Remove it: use Claude, Codex, the OpenCode Go key or a local model.":
+        "Rimuovilo: usa Claude, Codex, la chiave OpenCode Go o un modello locale.",
+    "No Google subscription is configured in OpenClaw.":
+        "Nessun abbonamento Google è configurato in OpenClaw.",
+    "The ACP bridge allows the 'gemini' agent; its terms do not allow it outside Google's clients.":
+        "Il bridge ACP permette l'agente 'gemini'; i termini non lo permettono fuori dai client Google.",
+    "Remove 'gemini' from acp.allowedAgents.":
+        "Togli 'gemini' da acp.allowedAgents.",
+    "The ACP bridge does not allow a Google agent.":
+        "Il bridge ACP non permette nessun agente Google.",
+    "These agents use a subscription this machine does not have: {items}":
+        "Questi agenti usano un abbonamento che questa macchina non ha: {items}",
+    "Log in to the subscription, or run 'nexgen openclaw plan' to see the model the engine would choose.":
+        "Fai il login dell'abbonamento, oppure lancia 'nexgen openclaw plan' per vedere il modello che sceglierebbe il motore.",
+    "Every agent uses a model this machine can reach.":
+        "Ogni agente usa un modello che questa macchina raggiunge.",
+    "The gateway answers on 127.0.0.1:{port}.":
+        "Il gateway risponde su 127.0.0.1:{port}.",
+    "The gateway is not listening on 127.0.0.1:{port} (normal when it is stopped).":
+        "Il gateway non è in ascolto su 127.0.0.1:{port} (è normale quando è fermo).",
+    "A second OpenClaw from the Microsoft Store is installed ({names}): two gateways in conflict.":
+        "È installato un secondo OpenClaw dal Microsoft Store ({names}): due gateway in conflitto.",
+    "Remove the Microsoft Store app: the engine manages the npm one.":
+        "Rimuovi l'app del Microsoft Store: il motore gestisce quello npm.",
+    "{passed} passed, {warned} warnings, {failed} failures":
+        "{passed} superati, {warned} avvisi, {failed} errori",
+    # Il comando
+    "OpenClaw, the harness with the interface (plan and doctor)":
+        "OpenClaw, l'harness con l'interfaccia (plan e doctor)",
+    "Read-only: what the engine would configure, and what stays yours":
+        "Sola lettura: cosa configurerebbe il motore e cosa resta tuo",
+    "Also reachable from the home network (the phone app)":
+        "Raggiungibile anche dalla rete di casa (l'app sul telefono)",
+    "Allow the acpx plugin too":
+        "Permetti anche il plugin acpx",
+    "Check OpenClaw's installation and configuration":
+        "Controlla installazione e configurazione di OpenClaw",
 }

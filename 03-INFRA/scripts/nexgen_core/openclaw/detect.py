@@ -241,10 +241,10 @@ def _module_state(module_id: str, engine_root: Path, vault_data: Path, env: dict
     """What the engine says a module is here, through its own catalog API."""
     from nexgen_core.modules import derive_state, external_paths, load_catalog, load_state_file
 
-    try:  # nexgen: allow reason="an unreadable catalog means 'not active', and the doctor reports the catalog itself"
+    try:
         catalog = load_catalog(engine_root, external=external_paths(vault_data))
         states = derive_state(catalog, load_state_file(vault_data), env=env)
-    except Exception:  # noqa: BLE001 - a detection cannot fail on a broken catalog
+    except (OSError, ValueError):  # nexgen: allow reason="an unreadable catalog means 'not active', and the catalog check reports it"
         return "absent"
     for item in states:
         if item.module.id == module_id:
