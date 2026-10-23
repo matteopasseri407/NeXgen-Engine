@@ -40,6 +40,32 @@ def test_the_file_holding_the_gateway_token_is_private_on_posix(tmp_path, monkey
     assert calls == [(path, 0o600)]
 
 
+def test_the_document_never_inherits_the_previous_mode(tmp_path, monkeypatch):
+    """The old 0644 was carried across the rename: the temp must already be private."""
+    seen: dict = {}
+
+    def writer(path, text, *, preserve_mode=True, **kwargs):
+        seen["preserve_mode"] = preserve_mode
+        Path(path).write_text(text, encoding="utf-8")
+
+    monkeypatch.setattr(setup_write, "atomic_write_text", writer)
+
+    setup_write.write_document(tmp_path / "openclaw.json", "{}\n")
+
+    assert seen["preserve_mode"] is False
+
+
+@pytest.mark.skipif(os.name == "nt", reason="mode bits are a POSIX concept")
+def test_a_0644_file_becomes_0600_on_posix(tmp_path):
+    path = tmp_path / "openclaw.json"
+    path.write_text("{}\n", encoding="utf-8")
+    os.chmod(path, 0o644)
+
+    setup_write.write_document(path, "{}\n")
+
+    assert path.stat().st_mode & 0o777 == 0o600
+
+
 def test_the_backup_of_the_token_file_is_private_on_posix(tmp_path, monkeypatch, pretend_os):
     """The copy beside the file holds the same token, so it gets the same mode."""
     path = tmp_path / "openclaw.json"

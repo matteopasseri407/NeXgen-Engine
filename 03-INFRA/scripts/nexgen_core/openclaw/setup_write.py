@@ -251,11 +251,11 @@ def restore_file(path: Path, backup: Path | None) -> None:
 
 
 def write_document(path: Path, text: str) -> None:
-    """Publish the document in one atomic step (temp file, then `os.replace`).
+    """Publish the document in one atomic step, private from the first byte.
 
-    The mode is set after the rename, not before: the atomic writer carries
-    the previous file's bits across by design, which would keep a 0644 an
-    `openclaw onboard` left behind on a file that now holds the token.
+    `preserve_mode=False`: the temporary file comes from `mkstemp` at 0600,
+    and the previous file's bits are never carried across, so a 0644 left by
+    `openclaw onboard` cannot reappear on a file that now holds the token.
     """
-    atomic_write_text(path, text)
+    atomic_write_text(path, text, preserve_mode=False)
     _private_mode(path)
