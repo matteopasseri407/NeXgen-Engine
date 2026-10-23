@@ -25,6 +25,12 @@ _HOOK_TIMEOUT_SECONDS = 10
 _POSTURE_TO_CLAUDE = {"bypass": "bypassPermissions", "accept-edits": "acceptEdits", "ask": "default"}
 _CLAUDE_TO_POSTURE = {v: k for k, v in _POSTURE_TO_CLAUDE.items()}
 
+#: The hook that re-grounds a reloaded or compacted session in the vault. This package ships the
+#: script and its briefing text but deploys neither (that wiring is a manual step), so its
+#: registration in Claude's own settings is the observable fact that Claude receives a briefing.
+#: OpenClaw's plugin follows the same fact, so the two hosts brief the same sessions.
+CHECKPOINT_HOOK_NAME = "claude-vault-checkpoint.mjs"
+
 
 class ClaudeRuntime(Runtime):
     name = "claude"
@@ -253,3 +259,27 @@ class ClaudeRuntime(Runtime):
         self.backup(path_settings)
         self.atomic_write(path_settings, json.dumps(data, indent=2) + "\n")
         return f"claude: event sink registered in {path_settings}"
+
+
+def checkpoint_registered(home: Path) -> bool:
+    """Whether Claude Code already runs the vault-briefing hook on `SessionStart`.
+
+    Read-only, and tolerant by design: an unreadable or malformed settings file means "no
+    briefing", which is the same answer as a machine where nobody wired the hook. The engine
+    never writes this registration; it only lets OpenClaw's plugin follow the fact.
+    """
+    try:
+        data = json.loads(claude_settings(home).read_text(encoding="utf-8"))
+    except (OSError, ValueError):  # nexgen: allow reason="an unreadable settings file means no briefing, which is the same answer as a machine that never wired the hook"
+        return False
+    hooks = data.get("hooks") if isinstance(data, dict) else None
+    groups = hooks.get("SessionStart") if isinstance(hooks, dict) else None
+    if not isinstance(groups, list):
+        return False
+    for group in groups:
+        inner = group.get("hooks") if isinstance(group, dict) else None
+        for item in inner if isinstance(inner, list) else []:
+            command = item.get("command") if isinstance(item, dict) else None
+            if isinstance(command, str) and CHECKPOINT_HOOK_NAME in command:
+                return True
+    return False

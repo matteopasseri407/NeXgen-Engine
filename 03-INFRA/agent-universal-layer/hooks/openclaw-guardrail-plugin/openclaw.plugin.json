@@ -1,7 +1,7 @@
 {
-  "id": "nexgen-guardrail",
-  "name": "NeXgen Guardrail",
-  "description": "Runs the NeXgen guardrail before a tool call that executes a command. The policy lives in nexgen-guardrail.config.json, read on every call.",
+  "id": "nexgen",
+  "name": "NeXgen",
+  "description": "The NeXgen engine for OpenClaw: the guardrail before a tool call, the vault briefing after a compaction, and lifecycle events. The policy lives in nexgen-guardrail.config.json and nexgen.config.json, read on every call.",
   "activation": {
     "onStartup": true
   },

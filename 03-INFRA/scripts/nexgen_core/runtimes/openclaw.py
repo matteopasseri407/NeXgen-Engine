@@ -1,36 +1,51 @@
-"""OpenClaw adapter: the guardrail plugin, deposited next to its state directory.
+"""OpenClaw adapter: one `nexgen` plugin, deposited next to its state directory.
 
-OpenClaw runs native plugins inside its gateway process. Its guardrail hook is
-`api.on("before_tool_call", handler)`, a JS callback, not a command launched in a
-separate process: the static adapter at
-`agent-universal-layer/hooks/openclaw-guardrail-plugin/` (already prepared, never
-touched here) translates that callback into the same stdin/stdout JSON the
-guardrail body already speaks for Claude, Antigravity and OpenCode -- one policy,
-several CLIs, never duplicated.
+OpenClaw runs native plugins inside its gateway process, so everything the engine gives
+Claude Code reaches OpenClaw through a single plugin, split into three jobs that know nothing
+about each other (`guardrail.mjs`, `briefing.mjs`, `events.mjs`, registered by `index.mjs`):
 
-What this adapter deliberately does NOT do: write `openclaw.json`. Changing the
-`plugins.*` block while the gateway runs breaks it, so enabling the plugin is a
-separate step (`nexgen openclaw setup`, with the gateway stopped). Here the
-plugin is deposited -- byte for byte, with its sidecar -- and nothing else in
-OpenClaw's own file is touched. There is no posture either: OpenClaw's command
-policy (`tools.exec`, exec approvals) is its own schema, and this engine has no
-verified rendering for it. Asking for one is answered with "nothing applied",
-which is the truth.
+- the **guardrail** on `before_tool_call`, the same private body the other CLIs run;
+- the **vault briefing** after a compaction, the same text Claude's checkpoint hook injects;
+- the **lifecycle events** on the same socket the event sink writes to.
+
+What this adapter deliberately does NOT do: write `openclaw.json`. Changing the `plugins.*`
+block while the gateway runs breaks it, so enabling the plugin is a separate step
+(`nexgen openclaw setup`, with the gateway stopped). Here the plugin is deposited -- byte for
+byte, with its sidecars -- and nothing else in OpenClaw's own file is touched.
+
+The posture is not OpenClaw's own schema either: it is written into the engine-owned
+`nexgen.config.json` beside the plugin, in the neutral vocabulary the private manifest speaks
+(`bypass` / `accept-edits` / `ask`), and the plugin renders it. That keeps the switch off
+`openclaw.json`, which is read at gateway start and must not change under a running one.
 """
 from __future__ import annotations
 
+import json
 import shutil
 from pathlib import Path
+from typing import Any
 
 from nexgen_core.paths import openclaw_config
-from nexgen_core.runtimes.base import GUARDRAIL_SIDECAR_NAME, GuardrailError, Runtime
+from nexgen_core.runtimes.base import EVENT_SINK_NAME, GUARDRAIL_SIDECAR_NAME, GuardrailError, Runtime
 
-#: The engine's plugin directory (package.json + manifest + index.mjs), deployed as
-#: a whole into `<state dir>/extensions/nexgen-guardrail/`.
+#: The engine's plugin directory (package.json + manifest + index.mjs + the three jobs),
+#: deployed as a whole into `<state dir>/extensions/<PLUGIN_ID>/`. The folder keeps the name it
+#: had when it held only the guardrail: it is the source of a byte-for-byte copy, never a path
+#: anyone configures.
 _PLUGIN_SOURCE_DIRNAME = "openclaw-guardrail-plugin"
 #: What OpenClaw's state extensions folder calls it, and therefore the plugin id
-#: `plugins.allow` must name.
-PLUGIN_ID = "nexgen-guardrail"
+#: `plugins.allow` must name. The setup command imports this constant.
+PLUGIN_ID = "nexgen"
+#: The name unit C deposited it under. It is removed on sight: one plugin, one id.
+LEGACY_PLUGIN_ID = "nexgen-guardrail"
+#: The engine-owned switches beside the plugin: briefing, events, posture. Never `openclaw.json`.
+PLUGIN_CONFIG_NAME = "nexgen.config.json"
+#: The briefing text, shared with Claude's checkpoint hook (`hooks/vault-briefing.txt`).
+BRIEFING_NAME = "vault-briefing.txt"
+
+#: Neutral vocabulary -> the word the plugin reads. The mapping is the identity on purpose:
+#: OpenClaw's plugin renders the neutral posture itself, so the engine writes no dialect here.
+_POSTURE_RENDER = {"bypass": "bypass", "accept-edits": "accept-edits", "ask": "ask"}
 
 
 class OpenClawRuntime(Runtime):
@@ -51,23 +66,38 @@ class OpenClawRuntime(Runtime):
     def _plugin_dir(self, home: Path) -> Path:
         return self._state_dir(home) / "extensions" / PLUGIN_ID
 
+    def _plugin_config_path(self, home: Path) -> Path:
+        return self._plugin_dir(home) / PLUGIN_CONFIG_NAME
+
+    # ---- posture --------------------------------------------------------
+
     def read_posture(self, home: Path) -> str | None:
-        """No posture this engine can read: OpenClaw's exec policy is its own schema."""
-        del home
-        return None
+        """The posture the engine last wrote for the plugin, in neutral vocabulary."""
+        value = self._read_plugin_config(home).get("posture")
+        return value if isinstance(value, str) and value in _POSTURE_RENDER else None
 
     def apply_posture(self, home: Path, posture: str) -> str | None:
-        """No posture this engine can render: `openclaw.json` stays OpenClaw's file."""
-        del home, posture
-        return None
+        """Writes the posture where the plugin reads it, never into `openclaw.json`.
+
+        No plugin, no guardrail: like every other adapter, a posture with nothing to hold it
+        is nothing to apply. That is also what keeps a posture from removing prompts on a
+        machine whose guardrail failed to deposit.
+        """
+        if posture not in _POSTURE_RENDER:
+            return None
+        sidecar = self.guardrail_sidecar(home)
+        if sidecar is None or not sidecar.is_file():
+            return None
+        if self.read_posture(home) == posture:
+            return None
+        if not self._write_plugin_config(home, posture=_POSTURE_RENDER[posture]):
+            return None
+        return f"openclaw: posture '{posture}' applied in {self._plugin_config_path(home)}"
+
+    # ---- guardrail, briefing, migration ---------------------------------
 
     def guardrail_sidecar(self, home: Path) -> Path | None:
         return self._plugin_dir(home) / GUARDRAIL_SIDECAR_NAME
-
-    def install_event_sink(self, home: Path, sink_source: Path) -> str | None:
-        """Not wired for OpenClaw: a plugin here needs the same `plugins.*` enablement."""
-        del home, sink_source
-        return None
 
     def install_guardrail(self, home: Path, hook_source: Path, engine_hooks_dir: Path) -> str | None:
         hook_name = hook_source.name
@@ -80,27 +110,90 @@ class OpenClawRuntime(Runtime):
             raise GuardrailError(f"openclaw: missing engine plugin ({source_dir})")
         plugin_dir = self._plugin_dir(home)
 
+        # 0) One plugin, one id: the folder unit C left behind is this engine's own deposit,
+        #    never a folder to ask about. A folder that is not provably ours stays.
+        migrated = self._remove_legacy_plugin(home)
+
         # 1) The plugin itself: every file of the engine's directory, byte for byte.
         #    Copying the folder instead of a list of names is what keeps an added
-        #    manifest field from being silently deployed on one machine and not the
-        #    next.
+        #    job or manifest field from being silently deployed on one machine and not
+        #    the next.
         changed = self._deploy_plugin(source_dir, plugin_dir)
 
         # 2) The shared core every adapter imports, beside the plugin.
         changed |= self.deploy_guardrail_core(plugin_dir, engine_hooks_dir)
 
-        # 3) The guardrail body (the policy, private to the Vault), under hooks/.
+        # 3) The briefing text, the same file Claude's checkpoint hook injects.
+        changed |= self._deploy_briefing(plugin_dir, engine_hooks_dir)
+
+        # 4) The guardrail body (the policy, private to the Vault), under hooks/.
         body_dst = plugin_dir / "hooks" / hook_name
         changed |= self.deploy_bytes(body_dst, hook_source.read_bytes())
 
-        # 4) The sidecar: which body to run and with what timeout, read fresh on
+        # 5) The sidecar: which body to run and with what timeout, read fresh on
         #    every call, so a changed manifest takes effect without a restart.
         changed |= self.write_guardrail_sidecar(
             plugin_dir / GUARDRAIL_SIDECAR_NAME, body=body_dst, home=home,
         )
+
+        # 6) The engine's switches. The briefing follows the same fact Claude follows: the
+        #    checkpoint hook registered on SessionStart. Without it, OpenClaw would brief a
+        #    session Claude does not brief, which is exactly the divergence to avoid.
+        changed |= self._write_plugin_config(home, briefing={"enabled": self._briefing_installed(home)})
+
+        if not changed and not migrated:
+            return None
+        if migrated and not changed:
+            return f"openclaw: the old {LEGACY_PLUGIN_ID} plugin was removed from {plugin_dir.parent}"
+        return f"openclaw: plugin deposited in {plugin_dir}"
+
+    def _deploy_briefing(self, plugin_dir: Path, engine_hooks_dir: Path) -> bool:
+        source = engine_hooks_dir / BRIEFING_NAME
+        if not source.is_file():
+            raise GuardrailError(f"openclaw: missing the shared briefing text ({source})")
+        return self.deploy_bytes(plugin_dir / BRIEFING_NAME, source.read_bytes())
+
+    @staticmethod
+    def _briefing_installed(home: Path) -> bool:
+        """Does Claude Code already receive this briefing?
+
+        The engine deploys no copy of the checkpoint hook, so its registration in Claude's own
+        settings is the observable fact. OpenClaw's plugin follows that fact rather than
+        inventing its own trigger, so the two hosts brief the same sessions.
+        """
+        from nexgen_core.runtimes.claude import checkpoint_registered
+
+        return checkpoint_registered(home)
+
+    # ---- event sink -----------------------------------------------------
+
+    def install_event_sink(self, home: Path, sink_source: Path) -> str | None:
+        """Writes the sink beside the plugin and switches the events job on.
+
+        Only when the plugin is already deposited: an events job with no plugin to carry it
+        would be a file nobody loads, and saying otherwise would be a lie to the parity
+        check. The plugin is deposited by the permissions phase, which runs right before this.
+        """
+        plugin_dir = self._plugin_dir(home)
+        if not (plugin_dir / "index.mjs").is_file():
+            return None
+        changed = self.deploy_bytes(plugin_dir / EVENT_SINK_NAME, sink_source.read_bytes())
+        changed |= self._write_plugin_config(home, events={"enabled": True})
         if not changed:
             return None
-        return f"openclaw: guardrail plugin deposited in {plugin_dir}"
+        return f"openclaw: event sink enabled in {plugin_dir}"
+
+    def remove_event_sink(self, home: Path) -> str | None:
+        plugin_dir = self._plugin_dir(home)
+        if not plugin_dir.is_dir():
+            return None  # nothing was ever deposited here: no config to invent
+        removed = self.remove_deployed(plugin_dir / EVENT_SINK_NAME)
+        changed = self._write_plugin_config(home, events={"enabled": False})
+        if removed or changed:
+            return f"openclaw: event sink removed from {plugin_dir} (no declared module needs it)"
+        return None
+
+    # ---- plugin deposit and its config ----------------------------------
 
     @staticmethod
     def _deploy_plugin(source_dir: Path, plugin_dir: Path) -> bool:
@@ -111,3 +204,43 @@ class OpenClawRuntime(Runtime):
                 continue
             changed |= Runtime.deploy_bytes(plugin_dir / source.name, source.read_bytes())
         return changed
+
+    def _remove_legacy_plugin(self, home: Path) -> bool:
+        """Takes back the `nexgen-guardrail` folder, only when it is provably this engine's."""
+        legacy = self._state_dir(home) / "extensions" / LEGACY_PLUGIN_ID
+        if not legacy.is_dir():
+            return False
+        try:
+            manifest = json.loads((legacy / "openclaw.plugin.json").read_text(encoding="utf-8"))
+        except (OSError, ValueError):  # nexgen: allow reason="an unreadable legacy manifest cannot prove the folder is ours, so it is left alone"
+            return False  # cannot prove it is ours: a folder is never deleted on a guess
+        if not isinstance(manifest, dict) or manifest.get("id") != LEGACY_PLUGIN_ID:
+            return False
+        shutil.rmtree(legacy, ignore_errors=True)
+        return not legacy.exists()
+
+    def _read_plugin_config(self, home: Path) -> dict[str, Any]:
+        try:
+            data = json.loads(self._plugin_config_path(home).read_text(encoding="utf-8"))
+        except (OSError, ValueError):  # nexgen: allow reason="a missing or corrupt switch file means no switch is set, and the writers rebuild it"
+            return {}
+        return data if isinstance(data, dict) else {}
+
+    def _write_plugin_config(self, home: Path, **sections: Any) -> bool:
+        """Merges the named sections into `nexgen.config.json`; True if the file changed.
+
+        One section per job, so a change to the briefing never rewrites the posture and a
+        posture never switches the events off. A scalar replaces its key; a map is merged.
+        """
+        path = self._plugin_config_path(home)
+        current = self._read_plugin_config(home)
+        updated = dict(current)
+        for key, value in sections.items():
+            if isinstance(value, dict) and isinstance(updated.get(key), dict):
+                updated[key] = {**updated[key], **value}
+            else:
+                updated[key] = value
+        if updated == current and path.is_file():
+            return False
+        self.atomic_write(path, json.dumps(updated, indent=2, sort_keys=True) + "\n")
+        return True

@@ -219,8 +219,11 @@ def deploy(tmp_path: Path, body: str, **sidecar) -> Path:
     """The plugin, the core and the sidecar side by side, as the guard deploys them."""
     target = tmp_path / "deployed"
     target.mkdir()
-    for name in ("index.mjs", "package.json", "openclaw.plugin.json"):
-        shutil.copy2(PLUGIN_SOURCE / name, target / name)
+    # Every file of the plugin, not a list of names: the guard copies the folder, and the
+    # plugin now holds three jobs (guardrail, briefing, events) beside its index.
+    for source in sorted(PLUGIN_SOURCE.iterdir()):
+        if source.is_file():
+            shutil.copy2(source, target / source.name)
     shutil.copy2(HOOKS / "nexgen-guardrail-core.mjs", target / "nexgen-guardrail-core.mjs")
     (target / "body.mjs").write_text(BODIES[body], encoding="utf-8")
     config = {"hooks": [{"file": str(target / "body.mjs"), "timeout": sidecar.pop("timeout", 5)}], **sidecar}
