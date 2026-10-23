@@ -1746,4 +1746,12 @@ MESSAGES: dict[str, str] = {
         "OpenCode: la corsia del harness non è installata in questo motore.",
     "What is left of each subscription, and how old the reading is":
         "Quanto resta di ogni abbonamento, e quanto è vecchia la lettura",
+    "Quota at {percent}%: {provider}":
+        "Quota al {percent}%: {provider}",
+    "{provider} has used {percent}% of its {window} window; it resets in {age}.":
+        "{provider} ha usato il {percent}% della finestra {window}; si azzera fra {age}.",
+    "{provider} has used {percent}% of its {window} window.":
+        "{provider} ha usato il {percent}% della finestra {window}.",
+    "Run 'nexgen quota' to see every window.":
+        "Lancia 'nexgen quota' per vedere tutte le finestre.",
 }

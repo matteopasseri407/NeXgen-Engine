@@ -302,12 +302,15 @@ def test_beat_runs_dependency_watch_and_self_upgrade(tmp_path: Path):
     engine_root.mkdir(parents=True)
     _write_pinned_manifests(vault)
 
-    beat = Heartbeat(state_dir=state_dir, vault_data=vault, engine_root=engine_root)
+    # `home` is threaded through on purpose: without it the beat resolves the
+    # real home and reads this machine's plans and transcripts from a test.
+    beat = Heartbeat(state_dir=state_dir, vault_data=vault, engine_root=engine_root, home=tmp_path / "home")
     result = beat.run_beat()
 
     assert "liveness_ok" in result and "liveness_msg" in result
     assert "dependency_watch" in result
     assert "self_upgrade" in result
+    assert result["quota"]["judged"] == []
     # engine_root is not a git clone at all here: the self-upgrader must fail
     # closed and be reported, never raise out of run_beat().
     assert result["self_upgrade"]["ok"] is False

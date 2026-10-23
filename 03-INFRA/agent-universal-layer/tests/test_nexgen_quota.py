@@ -291,10 +291,10 @@ def test_a_window_is_labelled_the_way_a_person_reads_it():
 
 
 def test_an_age_is_short_and_never_says_zero_minutes():
-    assert quota._age(0) == "<1m"
-    assert quota._age(240) == "4m"
-    assert quota._age(3 * 3600 + 12 * 60) == "3h 12m"
-    assert quota._age(2 * 86400 + 4 * 3600) == "2d 4h"
+    assert quota.age_text(0) == "<1m"
+    assert quota.age_text(240) == "4m"
+    assert quota.age_text(3 * 3600 + 12 * 60) == "3h 12m"
+    assert quota.age_text(2 * 86400 + 4 * 3600) == "2d 4h"
 
 
 def test_a_percentage_keeps_one_decimal_only_when_it_has_one():

@@ -144,7 +144,7 @@ def render_row(row: QuotaRow, now: float) -> str:
     """One row as the sentence a person reads, in the language they read."""
     if row.state == "unknown":
         return t("{provider}: not measured", provider=row.provider)
-    age = _age(_age_seconds(row.read_at, now) or 0.0)
+    age = age_text(_age_seconds(row.read_at, now) or 0.0)
     if row.state == "stale":
         return t(
             "{provider}: the {window} reading is {age} old, older than the window itself",
@@ -156,7 +156,7 @@ def render_row(row: QuotaRow, now: float) -> str:
             provider=row.provider, percent=_percent(row.used), window=row.window, age=t("read {age} ago", age=age),
         )
         if row.resets_at:
-            return f"{line}, " + t("resets in {age}", age=_age(max(0.0, row.resets_at - now)))
+            return f"{line}, " + t("resets in {age}", age=age_text(max(0.0, row.resets_at - now)))
         return line
     if row.unit == "usd":
         amount = f"{row.used or 0.0:.2f} $"
@@ -366,7 +366,7 @@ def _age_seconds(read_at: float | None, now: float | None) -> float | None:
     return max(0.0, now - read_at)
 
 
-def _age(seconds: float) -> str:
+def age_text(seconds: float) -> str:
     """A duration as the shortest form that is still exact enough: 4m, 3h 12m."""
     total = int(max(0.0, seconds))
     if total < 60:
