@@ -154,15 +154,23 @@ def test_a_gateway_never_told_its_cli_keeps_the_old_behaviour_until_the_next_ren
 
 @pytest.mark.parametrize("cli", mp.CLIS)
 def test_the_rendered_gateway_entry_carries_its_cli_in_every_dialect(manifest, tmp_path, cli):
+    from nexgen_core.paths import openclaw_config
+
     renderer = McpRenderer(vault_data=manifest.parents[3], engine_root=tmp_path / "engine", home=tmp_path / "home")
-    renderer.render_all(write=True)
     home = tmp_path / "home"
+    if cli == "openclaw":
+        # OpenClaw's file belongs to OpenClaw: the engine patches it in place and never creates it.
+        openclaw_config(home).parent.mkdir(parents=True, exist_ok=True)
+        openclaw_config(home).write_text("{}", encoding="utf-8")
+    renderer.render_all(write=True)
     if cli == "claude":
         env = json.loads((home / ".claude.json").read_text())["mcpServers"]["lazy-mcp"]["env"]
     elif cli == "antigravity":
         env = json.loads((home / ".gemini/antigravity/mcp_config.json").read_text())["mcpServers"]["lazy-mcp"]["env"]
     elif cli == "codex":
         env = tomllib.loads((home / ".codex/config.toml").read_text())["mcp_servers"]["lazy_mcp"]["env"]
+    elif cli == "openclaw":
+        env = json.loads(openclaw_config(home).read_text())["mcp"]["servers"]["lazy-mcp"]["env"]
     else:
         from nexgen_core.jsonc import parse_jsonc
         path = renderer.opencode_config_path()
@@ -186,7 +194,7 @@ def test_the_plan_names_what_changes_for_the_gateway_and_what_is_incoherent(mani
     plan = build(manifest)
     row = {r["server"]: r for r in plan["rows"]}
     assert row["browser"]["cells"] == {c: "direct" for c in mp.CLIS}
-    assert row["mail"]["cells"] == {"claude": "gateway", "codex": "absent", "antigravity": "absent", "opencode": "direct"}
+    assert row["mail"]["cells"] == {"claude": "gateway", "codex": "absent", "antigravity": "absent", "opencode": "direct", "openclaw": "absent"}
     assert "mail" in plan["changes"]["codex"]["no_longer_served"]
     assert plan["problems"] == []
 

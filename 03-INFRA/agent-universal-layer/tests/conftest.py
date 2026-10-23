@@ -69,6 +69,7 @@ def isolated_runtime_overrides(monkeypatch, tmp_path_factory):
     """No inherited override may redirect a fixture's writes to the host."""
     for key in (
         "XDG_CONFIG_HOME", "XDG_STATE_HOME", "CODEX_HOME", "NEXGEN_HOME",
+        "OPENCLAW_CONFIG_PATH", "OPENCLAW_STATE_DIR",
         "AGENT_STATE_DIR", "AGENT_VAULT_DATA", "AGENT_ENGINE_ROOT",
         "KNOWLEDGE_VAULT_PATH", "AGENT_SYNC_LOCK_FILE", "APPDATA", "LOCALAPPDATA",
         # A maintainer's own vault remote won over the remotes.yaml a fixture wrote.
