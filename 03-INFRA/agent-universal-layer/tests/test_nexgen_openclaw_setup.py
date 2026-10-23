@@ -505,8 +505,8 @@ def test_the_opencode_agent_appears_only_with_its_command_and_its_key(tmp_path):
     assert written["plugins"]["entries"]["acpx"]["config"]["permissionMode"] == "approve-all"
     assert written["plugins"]["entries"]["acpx"]["config"]["nonInteractivePermissions"] == "deny"
     assert "opencode" in written["acp"]["allowedAgents"]
-    assert ["main", "sviluppo"] in written["tools"]["agentToAgent"]["allow"]
-    assert ["capo", "sviluppo"] in written["tools"]["agentToAgent"]["allow"]
+    assert {"main", "capo", "sviluppo"} <= set(written["tools"]["agentToAgent"]["allow"])
+    assert set(written["agents"]["entries"]["sviluppo"]["tools"]["agentToAgent"]["send"]) == {"main", "capo"}
 
     for kwargs, label in (({"opencode": False, "go": True}, "no command"),
                           ({"opencode": True, "go": False}, "no key")):

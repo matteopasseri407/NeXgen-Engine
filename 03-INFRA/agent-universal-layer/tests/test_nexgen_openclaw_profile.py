@@ -266,11 +266,14 @@ def test_the_agents_are_named_and_introduced_in_the_engine_language():
 
 
 def test_the_agents_may_talk_only_to_the_pairs_that_exist():
+    """OpenClaw wants agent ids in `allow` (a list of pairs is refused at start) and the pairs per agent in `send`."""
     config = build_config(machine(go=True, n8n=True))
-    assert config["tools"]["agentToAgent"] == {
-        "enabled": True,
-        "allow": [["main", "capo"], ["capo", "main"], ["main", "automazioni"], ["automazioni", "main"]],
-    }
+    assert config["tools"]["agentToAgent"] == {"enabled": True, "allow": ["automazioni", "capo", "main"]}
+    assert all(isinstance(item, str) for item in config["tools"]["agentToAgent"]["allow"])
+    entries = config["agents"]["entries"]
+    assert entries["main"]["tools"]["agentToAgent"]["send"] == ["capo", "automazioni"]
+    assert entries["capo"]["tools"]["agentToAgent"]["send"] == ["main"]
+    assert entries["automazioni"]["tools"]["agentToAgent"]["send"] == ["main"]
     alone = build_config(machine(llamacpp=("only",)))
     assert "agentToAgent" not in alone["tools"]
 

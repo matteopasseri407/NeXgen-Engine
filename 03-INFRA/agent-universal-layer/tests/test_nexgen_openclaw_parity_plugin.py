@@ -12,6 +12,7 @@ plugin calls it only when the engine switched it on, with the same payload shape
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import subprocess
 from pathlib import Path
@@ -276,11 +277,15 @@ def test_a_checkpoint_hook_without_its_text_file_breaks_nothing(tmp_path):
     hook_dir = tmp_path / "claude"
     hook_dir.mkdir()
     shutil.copy2(HOOKS / "claude-vault-checkpoint.mjs", hook_dir / "claude-vault-checkpoint.mjs")
+    # The hook also looks in the installed engine: a real home that carries the text would answer.
+    home = tmp_path / "home"
+    env = {k: v for k, v in os.environ.items() if k != "AGENT_ENGINE_ROOT"}
+    env.update(HOME=str(home), USERPROFILE=str(home))
 
     done = subprocess.run(
         [NODE, str(hook_dir / "claude-vault-checkpoint.mjs")],
         input=json.dumps({"hook_event_name": "SessionStart", "source": "compact"}),
-        capture_output=True, text=True, timeout=60, check=False,
+        capture_output=True, text=True, timeout=60, check=False, env=env,
     )
 
     assert done.returncode == 0 and done.stdout.strip() == ""

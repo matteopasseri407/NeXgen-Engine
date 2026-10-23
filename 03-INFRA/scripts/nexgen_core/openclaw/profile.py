@@ -381,22 +381,28 @@ def _cage(models: tuple[LocalModel, ...]) -> dict[str, Any]:
     }
 
 
-def _agent_pairs(models: dict[str, str]) -> list[list[str]]:
-    """Which agents may message which, in both directions, for the agents created.
+def _agent_pairs(models: dict[str, str]) -> dict[str, list[str]]:
+    """Which agents may message which, for the agents created: id -> the ids it may send to.
 
-    Never an empty list: without a second agent there is no conversation to
-    allow, so the whole block is left out instead of declaring an empty one.
+    OpenClaw takes the pairs in two places, not one: `tools.agentToAgent.allow` lists
+    every agent that takes part (ids, not pairs: a list of lists is refused at start),
+    and `agents.entries.<id>.tools.agentToAgent.send` narrows whom each one may reach.
+    Never an empty mapping entry: an agent with no partner is simply left out.
     """
-    pairs: list[list[str]] = []
+    edges: list[tuple[str, str]] = []
     if "main" in models and "capo" in models:
-        pairs.extend([["main", "capo"], ["capo", "main"]])
+        edges.append(("main", "capo"))
     if "main" in models and "automazioni" in models:
-        pairs.extend([["main", "automazioni"], ["automazioni", "main"]])
+        edges.append(("main", "automazioni"))
     if SVILUPPO_ID in models:
         for other in ("main", "capo"):
             if other in models:
-                pairs.extend([[other, SVILUPPO_ID], [SVILUPPO_ID, other]])
-    return pairs
+                edges.append((other, SVILUPPO_ID))
+    partners: dict[str, list[str]] = {}
+    for left, right in edges:
+        partners.setdefault(left, []).append(right)
+        partners.setdefault(right, []).append(left)
+    return partners
 
 
 def _gateway(chosen: Choices, current: dict[str, Any] | None) -> dict[str, Any]:
@@ -439,9 +445,9 @@ def build_config(
         "exec": {"security": "allowlist", "ask": "on-miss"},
         "byProvider": _cage(models),
     }
-    pairs = _agent_pairs(agents)
-    if pairs:
-        tools["agentToAgent"] = {"enabled": True, "allow": pairs}
+    partners = _agent_pairs(agents)
+    if partners:
+        tools["agentToAgent"] = {"enabled": True, "allow": sorted(partners)}
 
     config: dict[str, Any] = {
         "plugins": {
@@ -460,6 +466,9 @@ def build_config(
         "tools": tools,
         "gateway": _gateway(chosen, current),
     }
+    for agent_id, entry in config["agents"]["entries"].items():
+        if agent_id in partners:
+            entry["tools"] = {"agentToAgent": {"send": partners[agent_id]}}
     acp = acp_block(detected, sviluppo=chosen.sviluppo, acpx=chosen.acpx)
     if acp is not None:
         config["acp"] = acp
