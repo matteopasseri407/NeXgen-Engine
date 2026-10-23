@@ -108,9 +108,10 @@ def ensure_installed(setup: Setup, snapshot: Detection) -> Detection | None:
     if not _check_node(setup, snapshot):
         return None
     npm = setup.which("npm")
-    if not _check_linux_host(setup, npm):
+    needs_install = not (install.installed and setup.pinned and install.version == setup.pinned)
+    if not _check_linux_host(setup, npm, needs_install):
         return None
-    if install.installed and setup.pinned and install.version == setup.pinned:
+    if not needs_install:
         setup.out(t("OpenClaw {version} is already the pinned release.", version=install.version))
         return snapshot
     if not npm:
@@ -158,7 +159,7 @@ def _check_node(setup: Setup, snapshot: Detection) -> bool:
     return False
 
 
-def _check_linux_host(setup: Setup, npm: str | None) -> bool:
+def _check_linux_host(setup: Setup, npm: str | None, needs_install: bool) -> bool:
     """Linux only: the user bus, npm's global prefix, and lingering."""
     if (setup.platform or sys.platform) != "linux" or setup.dry_run:
         return True
@@ -166,7 +167,7 @@ def _check_linux_host(setup: Setup, npm: str | None) -> bool:
         setup.out(t("The systemd user bus is not available in this session, so the gateway service cannot be managed."))
         setup.out(t("Log in to a normal user session with systemd, or start one, then run the setup again."))
         return False
-    if npm:
+    if needs_install and npm:
         prefix = host_preflight.npm_prefix(setup.run, npm, setup.env)
         if prefix is not None and not host_preflight.is_writable(prefix):
             setup.out(t("npm installs global packages under {prefix}, which this user cannot write.", prefix=prefix))

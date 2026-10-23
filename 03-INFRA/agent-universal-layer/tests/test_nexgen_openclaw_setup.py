@@ -333,11 +333,28 @@ def test_a_non_writable_npm_prefix_stops_with_the_command(tmp_path, monkeypatch)
     machine.runner.npm_prefix = str(tmp_path / "global")
     monkeypatch.setattr("nexgen_core.openclaw.host_preflight.is_writable", lambda directory: False)
 
-    code = machine.run(platform="linux", env={"XDG_RUNTIME_DIR": "/run/user/1000"})
+    code = machine.run(
+        platform="linux", env={"XDG_RUNTIME_DIR": "/run/user/1000"},
+        detected=detection(machine.config, installed=False),
+    )
 
     assert code == 1
     assert "npm config set prefix ~/.local" in machine.output()
     assert not any(" install -g " in command for command in machine.runner.commands())
+
+
+def test_a_machine_already_on_the_pin_is_not_blocked_by_an_unwritable_npm_prefix(tmp_path, monkeypatch):
+    """No install runs, so npm's global prefix is not this setup's business."""
+    machine = Machine(tmp_path)
+    machine.config.parent.mkdir(parents=True)
+    machine.config.write_text(json.dumps({"gateway": {"auth": {"mode": "token", "token": "t"}}}), encoding="utf-8")
+    machine.runner.npm_prefix = str(tmp_path / "global")
+    monkeypatch.setattr("nexgen_core.openclaw.host_preflight.is_writable", lambda directory: False)
+
+    code = machine.run(platform="linux", env={"XDG_RUNTIME_DIR": "/run/user/1000"})
+
+    assert code == 0
+    assert "npm config set prefix" not in machine.output()
 
 
 def test_lingering_off_is_told_without_stopping(tmp_path, monkeypatch):
