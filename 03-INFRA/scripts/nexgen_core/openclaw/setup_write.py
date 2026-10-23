@@ -18,6 +18,7 @@ Three rules are not preferences:
 from __future__ import annotations
 
 import json
+import os
 import secrets
 import shutil
 from collections.abc import Callable
@@ -172,17 +173,36 @@ def backup_file(path: Path, stamp: str) -> Path | None:
         return None
     target = backup_path(path, stamp)
     shutil.copy2(path, target)
+    _private_mode(target)
     return target
+
+
+def _private_mode(path: Path) -> None:
+    """0600 on POSIX: the file holds the gateway token, and so does its backup.
+
+    `copy2` gives the backup the source's mode, which is 0644 when
+    `openclaw onboard` created it; on POSIX that is every local user reading
+    the token. Windows has no POSIX mode to set here.
+    """
+    if os.name != "nt":
+        os.chmod(path, 0o600)
 
 
 def restore_file(path: Path, backup: Path | None) -> None:
     """Put the previous file back, or remove the one this run created."""
     if backup is not None and backup.is_file():
         shutil.copy2(backup, path)
+        _private_mode(path)
         return
     path.unlink(missing_ok=True)
 
 
 def write_document(path: Path, text: str) -> None:
-    """Publish the document in one atomic step (temp file, then `os.replace`)."""
+    """Publish the document in one atomic step (temp file, then `os.replace`).
+
+    The mode is set after the rename, not before: the atomic writer carries
+    the previous file's bits across by design, which would keep a 0644 an
+    `openclaw onboard` left behind on a file that now holds the token.
+    """
     atomic_write_text(path, text)
+    _private_mode(path)
