@@ -11,7 +11,7 @@ from pathlib import Path
 
 import nexgen_local.evals as evals
 from nexgen_local.config import LaneConfig
-from nexgen_local.evals import MockWebRegistry, run_suite, suite_failed
+from nexgen_local.evals import MockWebRegistry, suite_failed
 
 
 class _DummyLLM:

@@ -13,8 +13,6 @@ from types import SimpleNamespace
 
 import pytest
 
-from nexgen_local.config import LaneConfig
-
 
 # ------------------------------------------------------- proposals.py
 
