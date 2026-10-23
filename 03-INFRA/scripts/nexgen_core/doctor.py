@@ -40,6 +40,7 @@ from nexgen_core.checks.instructions_checks import (  # noqa: E402 - sys.path sh
     check_canonical_instructions_present,
     check_claude_pointer,
     check_cli_instruction_pointers,
+    check_openclaw_instructions,
     check_opencode_instructions,
 )
 from nexgen_core.checks.mcp_checks import (  # noqa: E402 - sys.path shim for cloned checkout
@@ -76,7 +77,7 @@ from nexgen_core.checks.skill_checks import (  # noqa: E402 - sys.path shim for 
     check_skills_out_of_manifest,
     check_skills_pin_freshness,
 )
-from nexgen_core.checks.guardrail_checks import check_guardrail_consulted  # noqa: E402 - sys.path shim for cloned checkout
+from nexgen_core.checks.guardrail_checks import check_guardrail_consulted, check_openclaw_guardrail_plugin  # noqa: E402 - sys.path shim for cloned checkout
 from nexgen_core.marks import safe_mark, safe_text  # noqa: E402 - sys.path shim for cloned checkout
 from nexgen_core.checks.host_checks import check_launchers, check_timers_armed  # noqa: E402 - sys.path shim for cloned checkout
 from nexgen_core.checks.runtime_checks import check_engine_runtime  # noqa: E402 - sys.path shim for cloned checkout
@@ -180,6 +181,7 @@ class Doctor:
         run("env.vault_path", lambda: check_vault_path(vault))
         run("env.runtime", lambda: check_engine_runtime(home, self.engine_root))
         run("guardrail.consulted", lambda: check_guardrail_consulted(home))
+        run("guardrail.openclaw_plugin", lambda: check_openclaw_guardrail_plugin(home))
         run("host.timers", check_timers_armed)
         run("host.launchers", lambda: check_launchers(home))
 
@@ -244,15 +246,25 @@ class Doctor:
             run("desktop.codex_version_skew", check_codex_desktop_skew)
 
             # 7. Canonical instructions and bootstrap hygiene
-            run("instructions.canonical_present", lambda: check_canonical_instructions_present(vault))
-            run("instructions.claude_pointer", lambda: check_claude_pointer(vault, home))
-            run("instructions.cli_pointers", lambda: check_cli_instruction_pointers(vault, home))
-            run("instructions.opencode", lambda: check_opencode_instructions(vault, home))
-            run("instructions.bootstrap_size_budget", lambda: check_bootstrap_size_budget(vault))
-            run("instructions.bootstrap_notes_size", lambda: check_bootstrap_notes_size(vault))
-            run("instructions.bootstrap_pointer_integrity", lambda: check_bootstrap_pointer_integrity(vault))
+            _run_instruction_checks(run, vault, home)
 
         return report
+
+
+def _run_instruction_checks(run, vault: Path, home: Path) -> None:
+    """Every check about the canonical bootstrap and the pointers to it.
+
+    Split out of `_diagnose`: the group grows every time a CLI learns to read
+    instructions, and the coordinator is not where that belongs.
+    """
+    run("instructions.canonical_present", lambda: check_canonical_instructions_present(vault))
+    run("instructions.claude_pointer", lambda: check_claude_pointer(vault, home))
+    run("instructions.cli_pointers", lambda: check_cli_instruction_pointers(vault, home))
+    run("instructions.opencode", lambda: check_opencode_instructions(vault, home))
+    run("instructions.openclaw", lambda: check_openclaw_instructions(vault, home))
+    run("instructions.bootstrap_size_budget", lambda: check_bootstrap_size_budget(vault))
+    run("instructions.bootstrap_notes_size", lambda: check_bootstrap_notes_size(vault))
+    run("instructions.bootstrap_pointer_integrity", lambda: check_bootstrap_pointer_integrity(vault))
 
 
 def _run_diagnostics(doc: Doctor, apply_remedies: bool = False) -> Report:
