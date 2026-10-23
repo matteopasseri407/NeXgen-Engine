@@ -223,3 +223,11 @@ def test_a_second_gateway_from_the_microsoft_store_is_a_warning(tmp_path):
 def test_installed_but_undeclared_is_named_without_the_module(tmp_path):
     outcomes = run_doctor(tmp_path, write_config(tmp_path, clean_config()), declared=False)
     assert by_id(outcomes)["openclaw.declared"].severity == Severity.WARN
+
+
+def test_an_empty_report_says_why_it_is_empty():
+    from nexgen_core.openclaw.doctor import render
+
+    text = render([])
+    assert "OpenClaw" in text
+    assert "PASS" not in text

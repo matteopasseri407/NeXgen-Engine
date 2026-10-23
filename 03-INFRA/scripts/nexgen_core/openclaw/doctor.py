@@ -458,6 +458,8 @@ def _label(severity: Severity | str) -> str:
 
 def render(outcomes: list[CheckOutcome]) -> str:
     """One line per check, with the reason a person can act on."""
+    if not outcomes:
+        return t("OpenClaw is not installed here and this machine does not declare the module: nothing to check.")
     lines: list[str] = []
     for outcome in outcomes:
         lines.append(f"{_label(outcome.severity)}  {outcome.id}  {outcome.message}")

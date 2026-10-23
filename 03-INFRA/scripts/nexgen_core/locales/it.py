@@ -1447,4 +1447,6 @@ MESSAGES: dict[str, str] = {
         "Permetti anche il plugin acpx",
     "Check OpenClaw's installation and configuration":
         "Controlla installazione e configurazione di OpenClaw",
+    "OpenClaw is not installed here and this machine does not declare the module: nothing to check.":
+        "OpenClaw non è installato qui e questa macchina non dichiara il modulo: non c'è niente da controllare.",
 }
