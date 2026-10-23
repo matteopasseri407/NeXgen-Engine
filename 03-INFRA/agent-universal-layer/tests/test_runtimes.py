@@ -468,7 +468,7 @@ def test_apply_all_blocks_posture_when_guardrail_install_fails(tmp_path: Path):
 
 
 def test_registry_has_one_adapter_per_supported_cli():
-    assert set(REGISTRY) == {"claude", "codex", "opencode", "antigravity"}
+    assert set(REGISTRY) == {"claude", "codex", "opencode", "antigravity", "openclaw"}
 
 
 # ── GuardRunner.apply_runtime_permissions: il punto di integrazione ───────

@@ -1,0 +1,12 @@
+{
+  "id": "nexgen-guardrail",
+  "name": "NeXgen Guardrail",
+  "description": "Runs the NeXgen guardrail before a tool call that executes a command. The policy lives in nexgen-guardrail.config.json, read on every call.",
+  "activation": {
+    "onStartup": true
+  },
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false
+  }
+}

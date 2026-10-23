@@ -16,6 +16,7 @@ from nexgen_core.runtimes.antigravity import AntigravityRuntime
 from nexgen_core.runtimes.base import GuardrailError, Runtime
 from nexgen_core.runtimes.claude import ClaudeRuntime
 from nexgen_core.runtimes.codex import CodexRuntime
+from nexgen_core.runtimes.openclaw import OpenClawRuntime
 from nexgen_core.runtimes.opencode import OpenCodeRuntime
 
 #: name -> instance. Adding a fifth CLI means adding a
@@ -25,6 +26,7 @@ REGISTRY: dict[str, Runtime] = {
     "codex": CodexRuntime(),
     "opencode": OpenCodeRuntime(),
     "antigravity": AntigravityRuntime(),
+    "openclaw": OpenClawRuntime(),
 }
 
 

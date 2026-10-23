@@ -1,0 +1,10 @@
+{
+  "name": "nexgen-guardrail",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "NeXgen Engine guardrail for OpenClaw's tool calls (mechanism only: the policy is a sidecar).",
+  "openclaw": {
+    "extensions": ["./index.mjs"]
+  }
+}
