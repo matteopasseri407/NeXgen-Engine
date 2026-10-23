@@ -30,13 +30,20 @@ from nexgen_core import notify
 from nexgen_core.files import atomic_write_text
 from nexgen_core.i18n import t
 from nexgen_core.paths import resolve_state_dir
-from nexgen_core.processes import no_window_kwargs, windows_command_argv
+from nexgen_core.processes import no_window_kwargs
 
 STATE_FILE_NAME = "agent-healthcheck.state"
 DEFAULT_DEBOUNCE_HOURS = 4.0
 
 #: The CLI by name, not by path, so PATH decides which install speaks.
 OPENCLAW_COMMAND = "openclaw"
+
+#: The file the npm package declares as its `bin`, sitting beside the shim that
+#: npm also installs. Node runs it as a program; a `.cmd` cannot be one.
+OPENCLAW_ENTRY = "node_modules/openclaw/openclaw.mjs"
+
+#: The suffixes Windows starts only by handing the file to a command interpreter.
+SHIM_SUFFIXES = (".cmd", ".bat", ".ps1")
 
 #: A send that has not answered in twenty seconds is not going to answer. The
 #: alert then belongs to the transports after it, not to a hung child process.
@@ -55,13 +62,14 @@ logger = logging.getLogger(__name__)
 def default_run(argv: list[str], timeout: float) -> subprocess.CompletedProcess[str]:
     """Run OpenClaw's CLI: argv only, never a shell string, stdin closed.
 
-    On Windows the npm shim is `openclaw.cmd`, which CreateProcess cannot start
-    from a bare name. `windows_command_argv` is the one place in this engine
-    that knows that, and it turns the shim into a program plus arguments rather
-    than into a command line this module would have to quote.
+    The argv arrives as a program plus arguments, because `openclaw_launch` has
+    already turned npm's Windows shim into node and the package entry. Nothing
+    here may route it through `cmd.exe`: the alert text is an error message or a
+    file name from outside, and a command interpreter reads `&`, `|`, `^` and
+    `%` inside it.
     """
     return subprocess.run(
-        windows_command_argv(argv),
+        list(argv),
         stdin=subprocess.DEVNULL,
         capture_output=True,
         text=True,
@@ -71,6 +79,27 @@ def default_run(argv: list[str], timeout: float) -> subprocess.CompletedProcess[
         timeout=timeout,
         **no_window_kwargs(),
     )
+
+
+def openclaw_launch(found: str, which: Which) -> list[str] | None:
+    """The program and arguments that start OpenClaw, or None when it cannot start.
+
+    `shutil.which` answers with npm's `openclaw.cmd` on Windows, and Windows
+    starts a batch file only through `cmd.exe`, which re-reads `&`, `|`, `^` and
+    `%` in whatever it is given: with an alert that carries arbitrary text that
+    is injection, not a lost message. The package declares `openclaw.mjs` as its
+    `bin` and puts it beside the shim, so node runs it as a program with
+    arguments. When that entry or node itself is missing, OpenClaw is not a
+    transport on this machine and the next one takes the alert.
+    """
+    shim = Path(found)
+    if shim.suffix.lower() not in SHIM_SUFFIXES:
+        return [OPENCLAW_COMMAND]
+    entry = shim.parent / OPENCLAW_ENTRY
+    node = which("node")
+    if not entry.is_file() or not node:
+        return None
+    return [node, str(entry)]
 
 
 class Megaphone:
@@ -150,8 +179,8 @@ class Megaphone:
         sent = False
         route = self._openclaw_route()
         if route is not None:
-            channel, target = route
-            sent = self._send_openclaw(channel, target, self._plain_text(title, message, action))
+            launch, channel, target = route
+            sent = self._send_openclaw(launch, channel, target, self._plain_text(title, message, action))
 
         # 1. Telegram direct: the fallback for a machine without OpenClaw, and
         #    nothing more. It does not fire behind a delivered OpenClaw alert.
@@ -188,15 +217,22 @@ class Megaphone:
             text += f"\n\n{t('Action required:')} {action}"
         return text
 
-    def _openclaw_route(self) -> tuple[str, str] | None:
-        """Where OpenClaw would deliver this, or None when it cannot carry it.
+    def _openclaw_route(self) -> tuple[list[str], str, str] | None:
+        """How OpenClaw would carry this, or None when it cannot carry it.
 
         Both halves are required. A CLI that is installed but has no
         destination would fail on every alert, and a destination without the
         CLI is a setting nobody can act on. A machine that already told the
-        engine where its Telegram chat is does not have to say it twice.
+        engine where its Telegram chat is does not have to say it twice. The
+        launch prefix is resolved here as well: a Windows shim that cannot
+        become a program is as good as no OpenClaw at all, and finding that out
+        before the send is what keeps the chain moving.
         """
-        if self._which(OPENCLAW_COMMAND) is None:
+        found = self._which(OPENCLAW_COMMAND)
+        if found is None:
+            return None
+        launch = openclaw_launch(found, self._which)
+        if launch is None:
             return None
         channel = os.environ.get("NEXGEN_ALERT_CHANNEL", "").strip()
         if not channel:
@@ -206,12 +242,17 @@ class Megaphone:
             target = os.environ.get("TELEGRAM_CHAT_ID", "").strip()
         if not target:
             return None
-        return channel, target
+        return launch, channel, target
 
-    def _send_openclaw(self, channel: str, target: str, text: str) -> bool:
-        """Hands the alert to `openclaw message send`, and says whether it left."""
+    def _send_openclaw(self, launch: list[str], channel: str, target: str, text: str) -> bool:
+        """Hands the alert to `openclaw message send`, and says whether it left.
+
+        The text is one element of the list. It is never quoted into a command
+        line, because the characters that would need quoting are exactly the
+        ones an interpreter would act on.
+        """
         command = [
-            OPENCLAW_COMMAND, "message", "send",
+            *launch, "message", "send",
             "--channel", channel,
             "--target", target,
             "--message", text,

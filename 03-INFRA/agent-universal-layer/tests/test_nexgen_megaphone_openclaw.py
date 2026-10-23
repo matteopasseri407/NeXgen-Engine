@@ -11,6 +11,7 @@ from __future__ import annotations
 import logging
 import subprocess
 import sys
+from collections.abc import Callable
 from contextlib import nullcontext
 from pathlib import Path
 from types import SimpleNamespace
@@ -26,10 +27,13 @@ from nexgen_core.i18n import set_language
 from nexgen_core.megaphone import Megaphone
 
 OPENCLAW = "/usr/local/bin/openclaw"
+NODE = "/usr/local/bin/node"
 TITLE = "Backup failed"
 MESSAGE = "The disk is full"
 ACTION = "nexgen backup --clean"
 TELEGRAM_URL = "https://api.telegram.org/botsynthetic-token/sendMessage"
+#: An error message that reached an alert carrying every character cmd.exe reads.
+HOSTILE = 'backup failed & calc.exe | echo %PATH% ^ del /q "C:\\temp\\*"'
 
 
 class Executor:
@@ -63,6 +67,37 @@ def present(_name: str) -> str:
 
 def absent(_name: str) -> None:
     return None
+
+
+def npm_shim(tmp_path: Path, *, entry: bool = True) -> tuple[Path, Path]:
+    """The layout npm leaves on Windows: the `.cmd` shim beside the package.
+
+    `openclaw.cmd` is a batch file, and Windows starts a batch file only by
+    handing it to `cmd.exe`. The package's declared `bin` is `openclaw.mjs`,
+    which node runs as a program, and that is the only shape this suite accepts.
+    """
+    npm = tmp_path / "npm"
+    shim = npm / "openclaw.cmd"
+    npm.mkdir(parents=True, exist_ok=True)
+    shim.write_text('@echo off\r\nnode "%~dp0\\node_modules\\openclaw\\openclaw.mjs" %*\r\n', encoding="utf-8")
+    start = npm / "node_modules" / "openclaw" / "openclaw.mjs"
+    if entry:
+        start.parent.mkdir(parents=True, exist_ok=True)
+        start.write_text("// synthetic package entry\n", encoding="utf-8")
+    return shim, start
+
+
+def lookup(shim: Path, *, node: str | None = NODE) -> Callable[[str], str | None]:
+    """A `which` that answers for the shim and for node, and for nothing else."""
+
+    def which(name: str) -> str | None:
+        if name == "openclaw":
+            return str(shim)
+        if name == "node":
+            return node
+        return None
+
+    return which
 
 
 @pytest.fixture(autouse=True)
@@ -145,6 +180,53 @@ def test_telegram_chat_id_is_the_target_and_the_direct_call_stays_quiet(tmp_path
     assert network.urls == []
 
 
+def test_the_alert_text_reaches_openclaw_as_one_argument_and_never_a_shell(tmp_path, monkeypatch):
+    # The alert carries whatever failed, and an error message or a file name can
+    # contain `&`, `|`, `^` or `%`. Reaching a batch file would hand that text to
+    # cmd.exe, which reads those characters again: injection, not a lost message.
+    monkeypatch.setenv("NEXGEN_ALERT_CHANNEL", "telegram")
+    monkeypatch.setenv("NEXGEN_ALERT_TARGET", "@owner")
+    shim, start = npm_shim(tmp_path)
+    executor = Executor()
+
+    notifier = Megaphone(state_dir=tmp_path / "state", run=executor, which=lookup(shim))
+    assert notifier.send_alert(TITLE, HOSTILE) is True
+
+    assert len(executor.calls) == 1
+    argv, timeout = executor.calls[0]
+    assert argv == [
+        NODE, str(start),
+        "message", "send",
+        "--channel", "telegram",
+        "--target", "@owner",
+        "--message", f"🚨 {TITLE}\n\n{HOSTILE}",
+    ]
+    assert timeout == megaphone.OPENCLAW_TIMEOUT_SECONDS
+    # The text is one element of the list, exactly as it was handed over.
+    assert argv[-1].endswith(HOSTILE)
+    assert "cmd.exe" not in " ".join(argv).lower()
+    assert ".cmd" not in " ".join(argv).lower()
+
+
+@pytest.mark.parametrize("reason", ["no-entry", "no-node"], ids=["missing-package", "missing-node"])
+def test_a_shim_that_cannot_become_a_program_is_not_a_route(tmp_path, monkeypatch, reason):
+    monkeypatch.setenv("NEXGEN_ALERT_CHANNEL", "telegram")
+    monkeypatch.setenv("NEXGEN_ALERT_TARGET", "@owner")
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "synthetic-token")
+    monkeypatch.setenv("TELEGRAM_CHAT_ID", "424242")
+    network = Network()
+    monkeypatch.setattr(megaphone.urllib.request, "urlopen", network)
+    executor = Executor()
+    shim, _start = npm_shim(tmp_path, entry=reason != "no-entry")
+    which = lookup(shim, node=None if reason == "no-node" else NODE)
+
+    assert Megaphone(state_dir=tmp_path / "state", run=executor, which=which).send_alert(TITLE, MESSAGE) is True
+
+    # Never cmd.exe: the alert takes the transport after OpenClaw instead.
+    assert executor.calls == []
+    assert network.urls == [TELEGRAM_URL]
+
+
 @pytest.mark.parametrize(
     "outcome",
     [
@@ -209,6 +291,26 @@ def test_without_openclaw_the_direct_telegram_path_is_what_it_always_was(tmp_pat
 
     assert executor.calls == []
     assert network.urls == [TELEGRAM_URL]
+
+
+def test_the_default_executor_hands_the_list_over_without_a_shell(monkeypatch):
+    # Whatever reaches the real executor is a program plus arguments already:
+    # `default_run` may not turn a list into a command line for an interpreter.
+    seen: dict[str, object] = {}
+
+    def fake_run(argv, **kwargs):
+        seen["argv"] = list(argv)
+        seen["kwargs"] = kwargs
+        return SimpleNamespace(returncode=0)
+
+    monkeypatch.setattr(megaphone.subprocess, "run", fake_run)
+    argv = [NODE, "openclaw.mjs", "message", "send", "--message", HOSTILE]
+
+    assert megaphone.default_run(list(argv), 20.0).returncode == 0
+
+    assert seen["argv"] == argv
+    assert seen["kwargs"].get("shell") is None
+    assert seen["kwargs"]["stdin"] == subprocess.DEVNULL
 
 
 def test_a_channel_without_a_destination_is_not_a_route(tmp_path, monkeypatch):

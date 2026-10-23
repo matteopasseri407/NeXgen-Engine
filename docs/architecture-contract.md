@@ -85,8 +85,13 @@ all the others to fail:
    target is set, `TELEGRAM_CHAT_ID` is used as the target, so a machine that
    already knows its chat does not have to say it twice. The alert travels as
    plain text, one argv element and never a command line assembled by hand,
-   with `stdin` closed and a twenty-second ceiling. A non-zero exit, a timeout
-   or a missing binary is not an error: the next transport takes it.
+   with `stdin` closed and a twenty-second ceiling. On Windows the npm
+   `openclaw.cmd` shim is resolved to `node` plus the package's own
+   `node_modules/openclaw/openclaw.mjs`, because Windows starts a batch file
+   only through `cmd.exe`, which re-reads `&`, `|`, `^` and `%` inside an alert
+   that carries error messages and file names; when that entry or node itself
+   is missing, OpenClaw is not a transport on that machine. A non-zero exit, a
+   timeout or a missing binary is not an error: the next transport takes it.
 2. **Telegram directly**, with `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID`, for
    a machine without OpenClaw. It never runs behind a delivered OpenClaw alert:
    where OpenClaw owns the Telegram channel, its delivery and the Bot API are
