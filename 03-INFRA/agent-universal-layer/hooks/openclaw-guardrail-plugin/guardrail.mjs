@@ -48,7 +48,12 @@ export const SHELL_TOOLS = new Set([
 
 // The tools that change files. `apply_patch` keeps its targets in a patch envelope;
 // the tool name is what decides here, never a path parsed out of a payload.
-export const FILE_TOOLS = new Set(["write", "edit", "apply_patch"]);
+export const FILE_TOOLS = new Set(["write", "edit", "apply_patch", "file_write"]);
+
+// A running shell session: these actions only read it, so there is no command to
+// judge and nothing to ask about. Everything that writes into the session is.
+const READ_ONLY_SHELL_ACTIONS = new Set(["poll", "log", "list", "kill"]);
+const PROCESS_INPUT_ACTIONS = new Set(["write", "paste", "send-keys", "send_keys"]);
 
 // The neutral posture vocabulary, exactly as the private permission manifest speaks it.
 // The engine translates nothing for OpenClaw: the plugin speaks the neutral words and
@@ -72,15 +77,72 @@ function commandText(value) {
   return "";
 }
 
+function toolNameOf(toolName) {
+  return typeof toolName === "string" ? toolName.toLowerCase() : "";
+}
+
+function actionOf(params) {
+  return typeof params?.action === "string" ? params.action.toLowerCase() : "";
+}
+
+// `process` writes into a running session: `write` (data), `paste` (text),
+// `send-keys` (literal or keys). Those payloads ARE the command.
+function processInput(params) {
+  if (!PROCESS_INPUT_ACTIONS.has(actionOf(params))) {
+    return "";
+  }
+  return (
+    commandText(params.data) ||
+    commandText(params.text) ||
+    commandText(params.literal) ||
+    commandText(params.keys)
+  );
+}
+
+// `terminal` types into an operator terminal only on `action: "input"`.
+function terminalInput(params) {
+  return actionOf(params) === "input" ? commandText(params.data) || commandText(params.text) : "";
+}
+
 export function commandOfTool(toolName, params) {
-  const name = typeof toolName === "string" ? toolName.toLowerCase() : "";
+  const name = toolNameOf(toolName);
   if (!SHELL_TOOLS.has(name) || !params || typeof params !== "object") {
     return null;
+  }
+  if (name === "process") {
+    const sent = processInput(params);
+    if (sent) {
+      return sent;
+    }
+  }
+  if (name === "terminal") {
+    const typed = terminalInput(params);
+    if (typed) {
+      return typed;
+    }
   }
   const head = commandText(params.command) || commandText(params.cmd);
   const tail = commandText(params.args);
   const line = [head, tail].filter(Boolean).join(" ");
   return line === "" ? null : line;
+}
+
+// A shell call with no readable command: under `ask` and `accept-edits` it asks
+// instead of running unjudged. Reading a session (`poll`, `log`, `list`, `kill`)
+// stays free, and `terminal` actions other than `input` do not type anything.
+export function needsApprovalWithoutCommand(toolName, params) {
+  const name = toolNameOf(toolName);
+  if (!SHELL_TOOLS.has(name)) {
+    return false;
+  }
+  const action = actionOf(params);
+  if (name === "process" && READ_ONLY_SHELL_ACTIONS.has(action)) {
+    return false;
+  }
+  if (name === "terminal" && action !== "" && action !== "input") {
+    return false;
+  }
+  return true;
 }
 
 // The posture the engine last wrote, read per call: a changed manifest takes effect on the
@@ -171,11 +233,20 @@ export function decideFor(posture, verdict) {
 export function registerGuardrail(api, { sidecarPath = SIDECAR_PATH, configPath = CONFIG_PATH } = {}) {
   api.on("before_tool_call", async (event, ctx) => {
     const posture = readPosture(configPath);
-    const command = commandOfTool(event?.toolName, event?.params);
+    const toolName = toolNameOf(event?.toolName);
+    const command = commandOfTool(toolName, event?.params);
     if (command === null) {
+      // A shell call whose command cannot be read is not a silent pass under a
+      // posture that expects a person: it asks. Reading a session stays free.
+      if (needsApprovalWithoutCommand(toolName, event?.params) && (posture === "ask" || posture === "accept-edits")) {
+        return approvalFor(
+          "This tool runs commands the guardrail could not read, so it needs your approval.",
+          "Run command",
+        );
+      }
       // No command line to judge. Under `ask` a tool that changes files asks as well: the
       // posture is the CLI's own prompt, which OpenClaw has no other way to express.
-      return posture === "ask" && FILE_TOOLS.has(event?.toolName)
+      return posture === "ask" && FILE_TOOLS.has(toolName)
         ? approvalFor("The 'ask' posture asks before a tool changes files.", "Change files")
         : undefined;
     }

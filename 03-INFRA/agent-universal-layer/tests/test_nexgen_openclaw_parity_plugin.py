@@ -361,3 +361,72 @@ def test_a_command_split_between_command_and_args_is_judged_whole(tmp_path):
     assert decision is None
     payload = json.loads(echo.read_text(encoding="utf-8"))
     assert payload["tool_input"]["command"] == "rm -rf /"
+
+
+@pytest.mark.skipif(NODE is None, reason="node is not installed")
+def test_a_split_command_is_blocked_when_the_body_denies_it(tmp_path):
+    """The echo test above proves the text; this one proves the decision."""
+    decision = fire_command(
+        tmp_path, "bypass", "deny.mjs", tool="exec",
+        params={"command": "rm", "args": ["-rf", "/"]},
+    )
+    assert decision["block"] is True
+
+
+@pytest.mark.parametrize(("action", "field", "value"), [
+    ("write", "data", "rm -rf /"),
+    ("paste", "text", "rm -rf /"),
+    ("send-keys", "literal", "rm -rf /"),
+    ("send-keys", "keys", ["rm", "-rf", "/"]),
+])
+@pytest.mark.skipif(NODE is None, reason="node is not installed")
+def test_a_command_sent_into_a_shell_session_is_judged(tmp_path, action, field, value):
+    """`process` writes into a running shell; those payloads are the command."""
+    decision = fire_command(
+        tmp_path, "bypass", "deny.mjs", tool="process",
+        params={"action": action, "sessionId": "s", field: value},
+    )
+    assert decision["block"] is True
+
+
+@pytest.mark.skipif(NODE is None, reason="node is not installed")
+def test_terminal_input_is_judged(tmp_path):
+    decision = fire_command(
+        tmp_path, "bypass", "deny.mjs", tool="terminal",
+        params={"action": "input", "data": "rm -rf /\n"},
+    )
+    assert decision["block"] is True
+
+
+@pytest.mark.parametrize("action", ["poll", "log", "list", "kill"])
+@pytest.mark.skipif(NODE is None, reason="node is not installed")
+def test_a_read_only_session_action_is_not_judged_or_asked(tmp_path, action):
+    decision = fire_command(
+        tmp_path, "ask", "deny.mjs", tool="process", params={"action": action, "sessionId": "s"},
+    )
+    assert decision is None
+
+
+@pytest.mark.parametrize("posture", ["ask", "accept-edits"])
+@pytest.mark.skipif(NODE is None, reason="node is not installed")
+def test_a_shell_call_the_guardrail_cannot_read_asks_for_approval(tmp_path, posture):
+    decision = fire_command(
+        tmp_path, posture, "allow.mjs", tool="process", params={"action": "write", "sessionId": "s"},
+    )
+    assert "requireApproval" in decision
+
+
+@pytest.mark.skipif(NODE is None, reason="node is not installed")
+def test_an_unreadable_shell_call_is_left_alone_under_bypass(tmp_path):
+    decision = fire_command(
+        tmp_path, "bypass", "allow.mjs", tool="process", params={"action": "write", "sessionId": "s"},
+    )
+    assert decision is None
+
+
+@pytest.mark.skipif(NODE is None, reason="node is not installed")
+def test_file_write_asks_under_the_ask_posture(tmp_path):
+    decision = fire_command(
+        tmp_path, "ask", "allow.mjs", tool="file_write", params={"path": "/tmp/x", "data": "y"},
+    )
+    assert "requireApproval" in decision
