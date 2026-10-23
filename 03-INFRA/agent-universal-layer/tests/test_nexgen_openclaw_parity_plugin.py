@@ -1,13 +1,9 @@
-"""The three jobs of the `nexgen` plugin, run the way OpenClaw runs them.
+"""The two jobs of the `nexgen` plugin, run the way OpenClaw runs them.
 
 These tests load the real plugin with node, register it against a fake `api.on` and fire the
 hooks OpenClaw documents: `after_compaction`, `session_start`, `before_prompt_build`,
-`before_tool_call` and `agent_end`. Nothing is asserted from a reading of the source: every
+`before_tool_call`. Nothing is asserted from a reading of the source: every
 decision below is what the plugin actually answered.
-
-The event sink is replaced by a logging stub in the plugin directory. The sink's own socket
-behaviour is covered by `test_event_sink.py`; what is under test here is the wiring -- that the
-plugin calls it only when the engine switched it on, with the same payload shape.
 """
 from __future__ import annotations
 
@@ -36,39 +32,6 @@ BODIES = {
         "{hookSpecificOutput:{permissionDecision:'ask',permissionDecisionReason:'looks risky'}})); });"
     ),
 }
-
-#: A sink that records instead of speaking on a socket: same exports, no network.
-FAKE_SINK = """
-import { appendFileSync } from "node:fs";
-
-function record(entry) {
-  const path = process.env.FAKE_SINK_LOG;
-  if (path) appendFileSync(path, JSON.stringify(entry) + "\\n");
-}
-
-export function isVocal() { return true; }
-export function socketReady() { return true; }
-export function send(kind, cli, text, sessionId, done) {
-  record({ kind, cli, text: text || "", sessionId: sessionId || "" });
-  if (done) done();
-}
-export function extractFromRow(row) {
-  if (!row || typeof row !== "object") return "";
-  const content = row.content ?? (row.message && row.message.content);
-  if (typeof content === "string") return content;
-  if (Array.isArray(content)) {
-    return content
-      .filter((b) => b && (b.type === "text" || typeof b === "string"))
-      .map((b) => (typeof b === "string" ? b : b.text || ""))
-      .join("\\n");
-  }
-  return "";
-}
-export function extractProse(payload) {
-  return (payload && (payload.last_assistant_message || payload.response)) || "";
-}
-"""
-
 PREAMBLE = """
 import plugin from {uri};
 const handlers = new Map();
@@ -90,8 +53,7 @@ const settle = () => new Promise((resolve) => setTimeout(resolve, 300));
 """
 
 
-def deployed(tmp_path: Path, body: str = "allow.mjs", config: dict | None = None,
-             sink: bool = False) -> Path:
+def deployed(tmp_path: Path, body: str = "allow.mjs", config: dict | None = None) -> Path:
     """The plugin as the guard deposits it: every file, the core, the body, the sidecar."""
     target = tmp_path / "deployed"
     target.mkdir()
@@ -106,8 +68,6 @@ def deployed(tmp_path: Path, body: str = "allow.mjs", config: dict | None = None
     )
     if config is not None:
         (target / "nexgen.config.json").write_text(json.dumps(config), encoding="utf-8")
-    if sink:
-        (target / "nexgen-event-sink.mjs").write_text(FAKE_SINK, encoding="utf-8")
     return target
 
 
@@ -125,29 +85,16 @@ def drive(target: Path, script: str, env: dict | None = None):
     return json.loads(done.stdout)
 
 
-def events_env(tmp_path: Path) -> dict:
-    import os
-
-    return dict(os.environ, FAKE_SINK_LOG=str(tmp_path / "events.jsonl"))
-
-
-def events_log(tmp_path: Path) -> list[dict]:
-    path = tmp_path / "events.jsonl"
-    if not path.is_file():
-        return []
-    return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
-
-
-# ------------------------------------------------------------- one plugin, three jobs
+# ------------------------------------------------------------- one plugin, two jobs
 
 
 @pytest.mark.skipif(NODE is None, reason="node is not installed")
-def test_the_plugin_registers_the_three_jobs_with_the_guardrail_first(tmp_path):
+def test_the_plugin_registers_the_two_jobs_with_the_guardrail_first(tmp_path):
     fired = drive(deployed(tmp_path), "console.log(JSON.stringify({id: plugin.id, order: [...handlers.keys()]}));\n")
 
     assert fired["id"] == "nexgen"
     assert fired["order"][0] == "before_tool_call"
-    assert {"after_compaction", "session_start", "before_prompt_build", "agent_end"} <= set(fired["order"])
+    assert {"after_compaction", "session_start", "before_prompt_build"} <= set(fired["order"])
 
 
 @pytest.mark.skipif(NODE is None, reason="node is not installed")
@@ -289,77 +236,6 @@ def test_a_checkpoint_hook_without_its_text_file_breaks_nothing(tmp_path):
     )
 
     assert done.returncode == 0 and done.stdout.strip() == ""
-
-
-# ------------------------------------------------------------------------- events
-
-
-@pytest.mark.skipif(NODE is None, reason="node is not installed")
-def test_no_events_are_emitted_when_the_engine_did_not_ask_for_them(tmp_path):
-    target = deployed(tmp_path, sink=True, config={"events": {"enabled": False}})
-    env = events_env(tmp_path)
-
-    drive(target, """
-await call("before_tool_call", {toolName: "exec", params: {command: "rm -rf /"}}, {sessionId: "s"});
-await call("agent_end", {messages: [{role: "assistant", content: "done"}]}, {sessionId: "s"});
-console.log(JSON.stringify({ok: true}));
-""", env=env)
-
-    assert events_log(tmp_path) == []
-
-
-@pytest.mark.skipif(NODE is None, reason="node is not installed")
-def test_a_tool_call_and_the_end_of_the_turn_are_both_emitted_when_enabled(tmp_path):
-    target = deployed(tmp_path, sink=True, config={"events": {"enabled": True}})
-    env = events_env(tmp_path)
-
-    fired = drive(target, """
-const decision = await call("before_tool_call", {toolName: "exec", params: {command: "ls -la"}}, {sessionId: "s"});
-await call("agent_end", {messages: [
-  {role: "user", content: "hi"},
-  {role: "assistant", content: [{type: "text", text: "Ho finito."}]},
-]}, {sessionId: "s"});
-await settle();
-console.log(JSON.stringify({decision}));
-""", env=env)
-
-    assert fired["decision"] is None  # observing never becomes a decision
-    assert events_log(tmp_path) == [
-        {"kind": "on_step", "cli": "openclaw", "text": "ls -la", "sessionId": "s"},
-        {"kind": "on_done", "cli": "openclaw", "text": "Ho finito.", "sessionId": "s"},
-    ]
-
-
-@pytest.mark.skipif(NODE is None, reason="node is not installed")
-def test_a_silent_turn_still_reports_that_it_ended(tmp_path):
-    target = deployed(tmp_path, sink=True, config={"events": {"enabled": True}})
-    env = events_env(tmp_path)
-
-    drive(target, """
-await call("agent_end", {messages: [], success: true}, {sessionId: "s"});
-await settle();
-console.log(JSON.stringify({ok: true}));
-""", env=env)
-
-    assert events_log(tmp_path) == [
-        {"kind": "on_done", "cli": "openclaw", "text": "", "sessionId": "s"},
-    ]
-
-
-@pytest.mark.skipif(NODE is None, reason="node is not installed")
-def test_a_missing_sink_file_is_a_silent_no_op(tmp_path):
-    target = deployed(tmp_path, config={"events": {"enabled": True}})
-    env = events_env(tmp_path)
-
-    fired = drive(target, """
-const decision = await call("before_tool_call", {toolName: "exec", params: {command: "ls"}}, {sessionId: "s"});
-await call("agent_end", {messages: [{role: "assistant", content: "x"}]}, {sessionId: "s"});
-await settle();
-console.log(JSON.stringify({decision}));
-""", env=env)
-
-    assert fired["decision"] is None
-    assert events_log(tmp_path) == []
 
 
 # ------------------------------------------------------------------------ posture
