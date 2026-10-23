@@ -21,7 +21,6 @@ ALLOWED = {
     "scripts/nexgen_core/paths.py": "the resolver itself",
     "scripts/nexgen_core/tools/ruff_baseline.py": "looks for a linter in the developer's own tool directories",
     "scripts/nexgen_core/tools/notifier_boot.py": "Windows branch that is handed the home explicitly and falls back to it",
-    "scripts/nexgen_local/relay.py": "the real Codex login: another tool's credentials, read-only",
     "agent-universal-layer/council/routing.py": "the real Codex model cache: another tool's data, read-only",
     "agent-universal-layer/council/seat_process.py": "the real Codex login a seat needs a copy of",
     "agent-universal-layer/mcp/lazy-mcp.py": "a standalone proxy with its own last-resort fallbacks when the engine package is unavailable",
