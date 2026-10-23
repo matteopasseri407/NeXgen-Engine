@@ -540,7 +540,7 @@ local lane up to a frontier CLI, through `nexgen-local relay`. In opencode
 the `local` agent (pinned 12B, raw `gmail_*`/`calendar_*` denied, upload
 confirm on ask) and the `/local` command (agent + model in one shot) make the
 lane the default path whenever a session runs on local inference; `build`
-and the frontier models are untouched, and the voice cockpit stays out.
+and the frontier models are untouched.
 
 ```yaml
 # local profile only, mounted read-only through the lazy waiter

@@ -217,11 +217,10 @@ MCP proxies and bridges (lazy waiter, HTTP bridge, Playwright).
 
 ## 03-INFRA/agent-universal-layer/hooks
 
-Runtime guardrail adapters and event sink.
+Runtime guardrail adapters.
 
 - `03-INFRA/agent-universal-layer/hooks/antigravity-guardrail-adapter.mjs` — `readStdin` (function, 30), `emit` (function, 39), `main` (function, 43)
 - `03-INFRA/agent-universal-layer/hooks/claude-guardrail-adapter.mjs` — `readStdin` (function, 21), `emit` (function, 29), `main` (function, 42)
-- `03-INFRA/agent-universal-layer/hooks/nexgen-event-sink.mjs` — `isVocal` (function, 56), `socketReady` (function, 60), `payloadLine` (function, 64), `stripThinking` (function, 77), `extractFromRow` (function, 96), `lastAssistantText` (function, 138), `extractProse` (function, 176), `send` (function, 201), `getOpencodeReplyFromDb` (function, 216), `main` (function, 330)
 - `03-INFRA/agent-universal-layer/hooks/nexgen-guardrail-core.mjs` — `loadSidecar` (function, 22), `closed` (function, 54), `nodeBinary` (function, 63), `consultGuardrailBody` (function, 67), `worstOf` (function, 96), `recordAudit` (function, 111)
 - `03-INFRA/agent-universal-layer/hooks/opencode-guardrail-plugin.mjs` — `commandOfPermission` (function, 37), `commandOfShell` (function, 45), `judge` (function, 53)
 
