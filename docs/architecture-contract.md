@@ -75,6 +75,26 @@ a trigger that survives the death of whatever it is watching, because an alarm
 hosted inside the thing it monitors does not ring when that thing fails to
 start.
 
+It delivers through these transports, in this order; only the desktop waits for
+all the others to fail:
+
+1. **OpenClaw**, when `openclaw` is on `PATH` and a destination is configured:
+   `NEXGEN_ALERT_CHANNEL` (for example `telegram`) plus `NEXGEN_ALERT_TARGET`
+   (the chat id, `@username`, `channel:<id>`, and so on, in the form
+   `openclaw message send` documents). When the channel is `telegram` and no
+   target is set, `TELEGRAM_CHAT_ID` is used as the target, so a machine that
+   already knows its chat does not have to say it twice. The alert travels as
+   plain text, one argv element and never a command line assembled by hand,
+   with `stdin` closed and a twenty-second ceiling. A non-zero exit, a timeout
+   or a missing binary is not an error: the next transport takes it.
+2. **Telegram directly**, with `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID`, for
+   a machine without OpenClaw. It never runs behind a delivered OpenClaw alert:
+   where OpenClaw owns the Telegram channel, its delivery and the Bot API are
+   the same destination, and sending both is the same message twice.
+3. **A webhook**, with `AGENT_ALERT_WEBHOOK_URL`, notified in addition when
+   configured.
+4. **The desktop**, only when nothing before it delivered.
+
 ### The liveness beat
 Independent of the guard, with its own schedule and no dependency on it.
 Answers one question: did the guard reach the end recently. This exists because
