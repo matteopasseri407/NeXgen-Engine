@@ -32,7 +32,6 @@ from nexgen_core.report import CheckOutcome, Severity
 #: follows; nothing here writes it.
 CHECKPOINT = "claude-vault-checkpoint.mjs"
 GUARDRAIL_ADAPTER = "claude-guardrail-adapter.mjs"
-EVENT_SINK = "nexgen-event-sink.mjs"
 SYNC_ACTION = t("Run 'nexgen sync': it writes both sides from the same manifest.")
 
 #: `~/.agents/skills` is one folder with two readers: the engine's shared catalog, which is
@@ -233,21 +232,6 @@ def _layer_briefing(claude: dict, openclaw: dict, home: Path, vault_data: Path) 
     )
 
 
-def _layer_events(claude: dict, openclaw: dict, home: Path, vault_data: Path) -> CheckOutcome:
-    claude_ok = _has_hook(claude["settings"], "Stop", EVENT_SINK)
-    events = openclaw["plugin_config"].get("events")
-    openclaw_ok = (
-        isinstance(events, dict)
-        and events.get("enabled") is True
-        and (openclaw["plugin_dir"] / EVENT_SINK).is_file()
-    )
-    return _both_or_neither(
-        "events", claude_ok, openclaw_ok, t("lifecycle events"),
-        t("Check modules.state.yaml: the same module asks for the sink on every CLI, or on none. "
-          "OpenClaw also needs its plugin deposited, which the permissions phase does when a guardrail hook is declared."),
-    )
-
-
 def _layer_posture(claude: dict, openclaw: dict, home: Path, vault_data: Path) -> CheckOutcome:
     from nexgen_core.runtimes.claude import _CLAUDE_TO_POSTURE
 
@@ -274,7 +258,6 @@ _LAYERS = (
     _layer_skills,
     _layer_guardrail,
     _layer_briefing,
-    _layer_events,
     _layer_posture,
 )
 

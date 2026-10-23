@@ -337,7 +337,7 @@ def _loopback_port_listening(base_url: str) -> bool:
     """Whether something listens on a local seat's port, WITHOUT connecting to it on Linux.
 
     A local server may be socket-activated (MiniCPM: systemd owns the port and a connection starts
-    the model and stops the voice cockpit to free the GPU). A probe that connected would do that on
+    the model to free the GPU). A probe that connected would do that on
     every routing check, so on Linux the kernel's listen table is read instead. Elsewhere there is
     no socket activation in this setup, and a plain connect is the portable answer.
     """

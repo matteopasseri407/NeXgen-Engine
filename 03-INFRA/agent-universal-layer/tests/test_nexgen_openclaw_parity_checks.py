@@ -97,9 +97,6 @@ def aligned_machine(tmp_path: Path) -> tuple[Path, Path]:
             "SessionStart": [{"hooks": [
                 {"type": "command", "command": 'node "claude-vault-checkpoint.mjs"'},
             ]}],
-            "Stop": [{"hooks": [
-                {"type": "command", "command": 'node "nexgen-event-sink.mjs" on_done claude'},
-            ]}],
         },
     }), encoding="utf-8")
     (home / ".claude.json").write_text(json.dumps({
@@ -115,7 +112,6 @@ def aligned_machine(tmp_path: Path) -> tuple[Path, Path]:
 
     runtime = OpenClawRuntime()
     runtime.install_guardrail(home, a_body(tmp_path), HOOKS)
-    runtime.install_event_sink(home, HOOKS / "nexgen-event-sink.mjs")
     runtime.apply_posture(home, "bypass")
     return home, vault
 
@@ -138,10 +134,9 @@ def test_an_aligned_machine_is_green_on_every_layer(tmp_path):
         "openclaw.parity.skills",
         "openclaw.parity.guardrail",
         "openclaw.parity.briefing",
-        "openclaw.parity.events",
         "openclaw.parity.posture",
     ]
-    assert [o.severity for o in outcomes] == [Severity.OK] * 7, [o.message for o in outcomes]
+    assert [o.severity for o in outcomes] == [Severity.OK] * 6, [o.message for o in outcomes]
 
 
 def test_a_server_only_one_cli_mounts_is_a_warning_with_the_action(tmp_path):

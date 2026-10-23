@@ -43,8 +43,8 @@ MODULE_MANIFEST = "nexgen-module.yaml"
 
 # Where a module's declaration applies. This belongs to the module, not to the
 # person typing the command: whether a thing can run on any machine is a
-# property of the thing. A voice cockpit owns a keyboard, a microphone and a
-# GPU and would not run on a laptop; an MCP connector runs anywhere.
+# property of the thing. A hardware-bound tool owns a keyboard, a microphone and a
+# GPU and would not run on a headless server; an MCP connector runs anywhere.
 #
 # External modules default to `host`, which is the safe end: a declaration
 # that stays where it was made cannot switch on a module somewhere it was
@@ -54,7 +54,7 @@ MODULE_SCOPES = ("host", "shared")
 
 # Integrations a module can ask the CLI runtimes for. Each name maps to a
 # method the runtime adapters already implement; a module never supplies code.
-RUNTIME_HOOKS = ("event_sink", "guardrail")
+RUNTIME_HOOKS = ("guardrail",)
 
 #: How a third-party component of a module is pinned, and how the newest release is learned.
 UPSTREAM_KINDS = ("docker", "npm")

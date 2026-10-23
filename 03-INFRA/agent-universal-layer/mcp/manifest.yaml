@@ -133,7 +133,6 @@ servers:
   # (the model chooses, the engine owns menus, receipts and envelopes);
   # writes stay behind propose/approve gates with human confirmation.
   # Served lazy like drive: a small surface for locally-inferred models.
-  # Voice cockpit stays out.
   lane:
     transport: stdio
     tier: core

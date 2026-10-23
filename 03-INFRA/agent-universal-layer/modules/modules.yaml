@@ -46,7 +46,7 @@
 #                  shims:          map of command name -> executable it runs
 #                  systemd_units:  unit files, relative to `source`
 #                  runtime_hooks:  integrations into the CLI runtimes
-#                                  (event_sink, guardrail)
+#                                  (guardrail)
 #                  config_files:   map of source (relative) -> destination.
 #                                  Destinations outside the user's home are
 #                                  refused: nothing writes to /etc on a timer.

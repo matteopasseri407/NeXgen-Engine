@@ -40,6 +40,6 @@ modules:
 # hosts:
 #   my-desktop:
 #     external:
-#       - ~/dev/agent-voice-cockpit
+#       - ~/dev/my-custom-module
 #     modules:
-#       voice: local
+#       custom: local

@@ -80,7 +80,7 @@ def _desktop_catalog(tmp_path: Path, source: Path) -> Path:
               shims:
                 demo: "{source.as_posix()}/bin/demo-entry"
               systemd_units: [systemd/demo.service]
-              runtime_hooks: [event_sink]
+              runtime_hooks: [guardrail]
             requires:
               paths: ["{source.as_posix()}"]
         """)
