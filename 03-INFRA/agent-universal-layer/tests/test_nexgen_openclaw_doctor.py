@@ -214,6 +214,33 @@ def test_a_lan_bind_with_a_real_token_passes(tmp_path):
     assert outcomes["openclaw.gateway.auth"].severity == Severity.OK
 
 
+def test_a_llama_cpp_model_is_caged_like_an_ollama_one(tmp_path):
+    """OpenClaw's plugin provider is `llama-cpp`, not the old `llamacpp` id."""
+    config = clean_config()
+    config["models"]["providers"]["llama-cpp"] = {
+        "baseUrl": "http://127.0.0.1:8080/v1", "api": "openai-completions",
+        "models": [{"id": "local-model"}],
+    }
+    config["tools"]["byProvider"]["llama-cpp/local-model"] = {"profile": "messaging", "deny": ["write"]}
+
+    outcomes = by_id(run_doctor(tmp_path, write_config(tmp_path, config)))
+
+    assert outcomes["openclaw.cage"].severity == Severity.OK
+
+
+def test_a_llama_cpp_model_without_its_cage_is_a_failure(tmp_path):
+    config = clean_config()
+    config["models"]["providers"]["llama-cpp"] = {
+        "baseUrl": "http://127.0.0.1:8080/v1", "api": "openai-completions",
+        "models": [{"id": "local-model"}],
+    }
+
+    outcomes = by_id(run_doctor(tmp_path, write_config(tmp_path, config)))
+
+    assert outcomes["openclaw.cage"].severity == Severity.BROKEN
+    assert "llama-cpp/local-model" in outcomes["openclaw.cage"].message
+
+
 def test_a_google_subscription_is_a_failure(tmp_path):
     config = clean_config()
     config["plugins"]["allow"].append("google-antigravity")

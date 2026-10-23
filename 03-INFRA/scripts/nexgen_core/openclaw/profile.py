@@ -39,6 +39,13 @@ BASE_PLUGINS = (
     "memory-core", "web-readability", "talk-voice", "tts-local-cli",
 )
 
+#: Provider-level settings OpenClaw's own plugin expects, per provider id.
+#: `llama-cpp` is a plugin provider: it discovers and talks to llama-server
+#: itself, and it needs the private-network allowance for a loopback endpoint.
+PROVIDER_EXTRAS: dict[str, dict[str, Any]] = {
+    "llama-cpp": {"request": {"allowPrivateNetwork": True}},
+}
+
 CLAUDE_MODEL = "anthropic/claude-opus-5-5"
 CODEX_MODEL = "openai/gpt-6-luna"
 GO_MAIN_MODEL = "opencode-go/deepseek-v4.1-flash"
@@ -58,7 +65,7 @@ LOCAL_SAFE_TOOLS = ("read", "view_image", "pdf", "tts", "memory_search", "memory
 #: a new tool in one of them is covered before anyone has to notice it exists.
 LOCAL_DENY = (
     "group:web", "group:runtime", "group:ui", "group:nodes", "group:automation",
-    "write", "edit", "apply_patch",
+    "write", "edit", "apply_patch", "skill_workshop",
     "playwright__*", "lazy-mcp__lazy_mutate",
 )
 
@@ -147,18 +154,38 @@ def _local_models(infos: tuple[LocalModelInfo, ...], provider: str, base_url: st
 
 
 def local_models(detected: Detection) -> tuple[LocalModel, ...]:
-    """Every local model, with the id OpenClaw will recognise, Ollama first."""
+    """Every local model, with the id OpenClaw will recognise, Ollama first.
+
+    llama.cpp is reached through OpenClaw's own `llama-cpp` plugin provider,
+    so its refs are `llama-cpp/<id>` and not a generic OpenAI-compatible id.
+    """
     models = _local_models(
         detected.local.ollama, "ollama", detected.local.ollama_url.rstrip("/"), "ollama",
     )
     models += _local_models(
-        detected.local.llamacpp, "llamacpp",
+        detected.local.llamacpp, "llama-cpp",
         detected.local.llamacpp_url.rstrip("/") + "/v1", "openai-completions",
     )
     return tuple(models)
 
 
-def _plugin_allow(detected: Detection, choices: Choices) -> list[str]:
+def _llama_cpp_enabled(current: dict[str, Any] | None) -> bool:
+    """Whether the person already switched OpenClaw's llama.cpp plugin on.
+
+    The server may be off while the plugin stays on: turning it off because a
+    backend is not answering would undo a choice that is not the engine's.
+    """
+    plugins = current.get("plugins") if isinstance(current, dict) else None
+    if not isinstance(plugins, dict):
+        return False
+    allowed = plugins.get("allow") if isinstance(plugins.get("allow"), list) else []
+    entries = plugins.get("entries") if isinstance(plugins.get("entries"), dict) else {}
+    entry = entries.get("llama-cpp") if isinstance(entries.get("llama-cpp"), dict) else {}
+    named = "llama-cpp" in {str(item) for item in allowed}
+    return entry.get("enabled") is True or (named and entry.get("enabled") is not False)
+
+
+def _plugin_allow(detected: Detection, choices: Choices, current: dict[str, Any] | None = None) -> list[str]:
     """The plugins this machine can actually use, and never a Google one."""
     allow = list(BASE_PLUGINS)
     if detected.claude.available:
@@ -169,12 +196,16 @@ def _plugin_allow(detected: Detection, choices: Choices) -> list[str]:
         allow.append("opencode-go")
     if detected.local.ollama:
         allow.append("ollama")
+    if detected.local.llamacpp or _llama_cpp_enabled(current):
+        allow.append("llama-cpp")
     if choices.acpx or sviluppo_enabled(detected, choices.sviluppo):
         allow.append("acpx")
     return allow
 
 
-def _plugin_entries(detected: Detection, chosen: Choices) -> dict[str, Any]:
+def _plugin_entries(
+    detected: Detection, chosen: Choices, current: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     """Per-plugin settings: reuse the logins that already exist, invent none."""
     entries: dict[str, Any] = {}
     if detected.claude.available:
@@ -193,6 +224,8 @@ def _plugin_entries(detected: Detection, chosen: Choices) -> dict[str, Any]:
         }
     if detected.local.ollama:
         entries["ollama"] = {"enabled": True}
+    if detected.local.llamacpp or _llama_cpp_enabled(current):
+        entries["llama-cpp"] = {"enabled": True}
     if chosen.acpx or sviluppo_enabled(detected, chosen.sviluppo):
         entries["acpx"] = acpx_entry(detected)
     return entries
@@ -247,6 +280,7 @@ def _provider_blocks(models: tuple[LocalModel, ...], current: dict[str, Any] | N
     providers: dict[str, Any] = {}
     for model in models:
         block = providers.setdefault(model.provider, {
+            **PROVIDER_EXTRAS.get(model.provider, {}),
             "baseUrl": model.base_url,
             "api": model.api,
             "models": [],
@@ -451,8 +485,8 @@ def build_config(
 
     config: dict[str, Any] = {
         "plugins": {
-            "allow": _plugin_allow(detected, chosen),
-            "entries": _plugin_entries(detected, chosen),
+            "allow": _plugin_allow(detected, chosen, current),
+            "entries": _plugin_entries(detected, chosen, current),
         },
         "agents": {
             "ownership": "explicit",

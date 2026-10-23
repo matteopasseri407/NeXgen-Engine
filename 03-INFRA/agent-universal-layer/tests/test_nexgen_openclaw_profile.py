@@ -105,12 +105,29 @@ def test_only_a_local_llamacpp_leaves_no_agent_but_the_assistant():
     config = build_config(machine(llamacpp=("devstral-small",)))
     agents = config["agents"]["entries"]
     assert list(agents) == ["main"]
-    assert agents["main"]["model"] == "llamacpp/devstral-small"
+    assert agents["main"]["model"] == "llama-cpp/devstral-small"
     assert Path(agents["main"]["workspace"]) == STATE / "workspace"
-    provider = config["models"]["providers"]["llamacpp"]
+    provider = config["models"]["providers"]["llama-cpp"]
     assert provider["api"] == "openai-completions"
     assert provider["baseUrl"].endswith("/v1")
+    assert provider["request"] == {"allowPrivateNetwork": True}
     assert provider["models"][0]["id"] == "devstral-small"
+    assert "llama-cpp" in config["plugins"]["allow"]
+    assert config["plugins"]["entries"]["llama-cpp"] == {"enabled": True}
+
+
+def test_a_llama_cpp_plugin_the_person_enabled_stays_on_when_the_server_is_off():
+    """Switching a backend off is the person's choice, not the engine's."""
+    current = {"plugins": {
+        "allow": ["llama-cpp"],
+        "entries": {"llama-cpp": {"enabled": True}},
+    }}
+
+    config = build_config(machine(), current=current)
+
+    assert "llama-cpp" in config["plugins"]["allow"]
+    assert config["plugins"]["entries"]["llama-cpp"] == {"enabled": True}
+    assert "models" not in config
 
 
 def test_a_machine_with_no_model_creates_no_agent_and_says_nothing_it_cannot_back():
@@ -172,7 +189,7 @@ def test_an_ollama_block_carries_everything_openclaw_needs():
 
 def test_a_text_only_model_gets_text_input_and_no_invented_window():
     config = build_config(machine(llamacpp=("local",)))
-    entry = config["models"]["providers"]["llamacpp"]["models"][0]
+    entry = config["models"]["providers"]["llama-cpp"]["models"][0]
     assert entry["input"] == ["text"]
     assert "contextWindow" not in entry
     assert "contextTokens" not in entry
@@ -193,12 +210,12 @@ def test_an_existing_model_block_keeps_its_fields_and_gains_the_missing_ones():
 def test_every_local_model_carries_the_cage():
     config = build_config(machine(ollama=("one",), llamacpp=("two",)))
     cage = config["tools"]["byProvider"]
-    assert set(cage) == {"ollama/one", "llamacpp/two"}
+    assert set(cage) == {"ollama/one", "llama-cpp/two"}
     deny = cage["ollama/one"]["deny"]
     assert cage["ollama/one"]["profile"] == "messaging"
     assert cage["ollama/one"]["alsoAllow"] == ["read", "view_image", "pdf", "tts", "memory_search", "memory_get"]
-    for pattern in ("group:web", "group:runtime", "write", "edit", "apply_patch", "playwright__*",
-                    "lazy-mcp__lazy_mutate"):
+    for pattern in ("group:web", "group:runtime", "write", "edit", "apply_patch", "skill_workshop",
+                    "playwright__*", "lazy-mcp__lazy_mutate"):
         assert pattern in deny
     for pattern in ("n8n-mcp__create_*", "n8n-mcp__delete_*", "vault-library__update_section",
                     "drive__drive_confirm_upload"):

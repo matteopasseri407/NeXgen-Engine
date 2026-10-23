@@ -182,11 +182,11 @@ def _provider_model_ids(config: dict[str, Any], provider: str) -> list[str]:
 def _local_refs(config: dict[str, Any]) -> list[str]:
     """Every local model the configuration can actually name, provider-qualified."""
     refs: list[str] = []
-    for provider in ("ollama", "llamacpp"):
+    for provider in ("ollama", "llama-cpp"):
         refs.extend(f"{provider}/{model_id}" for model_id in _provider_model_ids(config, provider))
     refs.extend(
         ref for ref in _agent_model_refs(config).values()
-        if ref.split("/", 1)[0] in ("ollama", "llamacpp")
+        if ref.split("/", 1)[0] in ("ollama", "llama-cpp")
     )
     return sorted(set(refs))
 
