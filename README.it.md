@@ -41,7 +41,7 @@ Il motore tiene separate tre fonti di configurazione:
 ## Cosa fa
 
 * **Core unico in Python (`nexgen_core`):** gira su Linux e Windows ed è verificato dalla suite CI.
-* **Moduli deterministici:** catalogo di 9 moduli (`memory`, `semantic-rag`, `firecrawl`, `ocr`, `n8n`, `browser`, `council`, `local-lane`, `sync`) gestito con `nexgen modules list` e `nexgen modules set`.
+* **Moduli deterministici:** catalogo di 10 moduli (`memory`, `semantic-rag`, `firecrawl`, `ocr`, `n8n`, `browser`, `council`, `local-lane`, `openclaw`, `sync`) gestito con `nexgen modules list` e `nexgen modules set`.
 * **Modelli locali, opzionali:** `nexgen-local` costruisce query in sola lettura e registra le fonti di ogni risposta.
   Il gate di valutazione fallisce se la suite trappole rileva un'injection o una risposta senza riscontro.
   Le proposte di patch richiedono approvazione tramite `nexgen-local propose` / `apply`.
@@ -51,6 +51,7 @@ Il motore tiene separate tre fonti di configurazione:
   Non serve una passphrase.
 * **Shell operatore:** dashboard `nexgen info` e REPL interattiva `nexgen shell`, così la gestione ordinaria non richiede mai una CLI AI aperta.
 * **Cinque runtime più l'app Desktop:** Claude Code, Codex, OpenCode (nativo V2: istruzioni, `plugins`/`permissions`, viste skill), Antigravity e OpenClaw, ognuno nel suo dialetto, seggi Council inclusi. OpenClaw è tecnicamente la quinta CLI della sincronizzazione, ma è l'harness ufficiale di NeXgen Engine: la porta d'ingresso con interfaccia (pannello web, app sul telefono) da cui si usano gli altri harness e i tuoi abbonamenti. L'app Claude Desktop riceve solo server read-only esplicitamente consentiti (`desktop_allow`), dato che non ha hook guardrail.
+  Vedi [openclaw.md](docs/openclaw.md) per cosa rileva il motore, i tre agenti, la gabbia del modello locale e le trappole note di Windows.
 * **Diagnostica (`nexgen doctor`):** controlli automatici su allineamento Git, manifest, link, token e permessi.
   Un controllo che non riesce a verificare dichiara un esito indeterminato.
 
