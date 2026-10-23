@@ -315,6 +315,10 @@ def _as_int(value: Any) -> int | None:
 def _ollama_context(show: dict[str, Any]) -> int | None:
     """The context window Ollama reports: `num_ctx` first, then `context_length`."""
     parameters = show.get("parameters")
+    if isinstance(parameters, dict):
+        found = _as_int(parameters.get("num_ctx"))
+        if found:
+            return found
     if isinstance(parameters, str):
         for line in parameters.splitlines():
             key, _, rest = line.strip().partition(" ")
