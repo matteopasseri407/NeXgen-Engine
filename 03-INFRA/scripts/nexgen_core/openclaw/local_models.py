@@ -109,6 +109,12 @@ def _model_entry(model: LocalModel, current: dict[str, Any] | None) -> dict[str,
     if model.context_window:
         proposed["contextWindow"] = model.context_window
         proposed["contextTokens"] = model.context_window
+    if model.provider == "llama-cpp":
+        # Its chat template compiles tool arguments into GBNF, where large
+        # `pattern`/`maxLength` constraints break the build. OpenClaw's own
+        # llama-cpp provider ships this cleaner; naming the profile keeps the
+        # same guarantee if the block is read by a custom provider path.
+        proposed["compat"]["toolSchemaProfile"] = "llamacpp"
     existing = _existing_model(current, model.provider, model.model_id)
     merged = dict(existing) if existing is not None else {}
     for key, value in proposed.items():

@@ -112,8 +112,18 @@ def test_only_a_local_llamacpp_leaves_no_agent_but_the_assistant():
     assert provider["baseUrl"].endswith("/v1")
     assert provider["request"] == {"allowPrivateNetwork": True}
     assert provider["models"][0]["id"] == "devstral-small"
+    assert provider["models"][0]["compat"]["toolSchemaProfile"] == "llamacpp"
     assert "llama-cpp" in config["plugins"]["allow"]
     assert config["plugins"]["entries"]["llama-cpp"] == {"enabled": True}
+
+
+def test_an_ollama_model_does_not_get_the_llama_cpp_schema_profile():
+    """The profile exists for llama.cpp's GBNF compiler; Ollama does not use it."""
+    config = build_config(machine(ollama=("one",)))
+
+    entry = config["models"]["providers"]["ollama"]["models"][0]
+
+    assert "toolSchemaProfile" not in entry["compat"]
 
 
 def test_a_llama_cpp_plugin_the_person_enabled_stays_on_when_the_server_is_off():
