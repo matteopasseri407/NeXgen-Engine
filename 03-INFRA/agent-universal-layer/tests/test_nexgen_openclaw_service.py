@@ -307,6 +307,7 @@ def test_stop_linux_waits_for_the_process_and_the_port_like_windows(fake_env) ->
     clock = FakeClock()
     gone_at = 2.0
     procs = [ProcessInfo(902, "node", "node /usr/lib/node_modules/openclaw/dist/index.js gateway")]
+    terminated: list[int] = []
 
     service = OpenClawService(
         platform="linux",
@@ -314,6 +315,7 @@ def test_stop_linux_waits_for_the_process_and_the_port_like_windows(fake_env) ->
         state_dir=fake_env["state_dir"],
         systemd_user_dir=fake_env["systemd_user"],
         runner=runner,
+        terminator=terminated.append,
         process_lister=lambda: procs if clock.time() < gone_at else [],
         port_probe=lambda port, host="127.0.0.1": clock.time() < gone_at,
         time_provider=clock.time,
@@ -327,11 +329,15 @@ def test_stop_linux_waits_for_the_process_and_the_port_like_windows(fake_env) ->
     assert clock.time() >= gone_at, "stop returned while the old gateway still held the port"
 
 
-def test_stop_linux_reports_a_gateway_that_survives_systemctl(fake_env) -> None:
+def test_stop_linux_asks_an_orphan_gateway_to_exit_with_sigterm(fake_env) -> None:
     """A gateway started by hand outside systemd is not stopped by the unit."""
     runner = RecordingRunner(default_code=0)
+    procs = [ProcessInfo(904, "node", "node /usr/lib/node_modules/openclaw/dist/index.js gateway")]
+    terminated: list[int] = []
     clock = FakeClock()
-    procs = [ProcessInfo(903, "node", "node /usr/lib/node_modules/openclaw/dist/index.js gateway")]
+
+    def lister():
+        return procs if 904 not in terminated else []
 
     service = OpenClawService(
         platform="linux",
@@ -339,6 +345,35 @@ def test_stop_linux_reports_a_gateway_that_survives_systemctl(fake_env) -> None:
         state_dir=fake_env["state_dir"],
         systemd_user_dir=fake_env["systemd_user"],
         runner=runner,
+        terminator=lambda pid: terminated.append(pid),
+        process_lister=lister,
+        port_probe=lambda port, host="127.0.0.1": False,
+        time_provider=clock.time,
+        sleeper=clock.sleep,
+    )
+
+    res = service.stop()
+
+    assert terminated == [904]
+    assert ["kill", "-TERM", "904"] in res["commands"]
+    assert res["ok"] is True
+    assert res["remaining_pids"] == []
+
+
+def test_stop_linux_reports_a_gateway_that_ignores_sigterm(fake_env) -> None:
+    """No SIGKILL: after the grace window the pids are reported, not forced."""
+    runner = RecordingRunner(default_code=0)
+    clock = FakeClock()
+    procs = [ProcessInfo(903, "node", "node /usr/lib/node_modules/openclaw/dist/index.js gateway")]
+    terminated: list[int] = []
+
+    service = OpenClawService(
+        platform="linux",
+        home=fake_env["home"],
+        state_dir=fake_env["state_dir"],
+        systemd_user_dir=fake_env["systemd_user"],
+        runner=runner,
+        terminator=lambda pid: terminated.append(pid),
         process_lister=lambda: procs,
         port_probe=lambda port, host="127.0.0.1": False,
         time_provider=clock.time,
@@ -347,6 +382,7 @@ def test_stop_linux_reports_a_gateway_that_survives_systemctl(fake_env) -> None:
 
     res = service.stop()
 
+    assert terminated == [903]
     assert res["ok"] is False
     assert res["remaining_pids"] == [903]
 

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import contextlib
 import os
+import signal
 import socket
 import sys
 import time
@@ -44,6 +45,16 @@ def default_port_probe(port: int, host: str = "127.0.0.1") -> bool:
         return False
 
 
+def default_terminator(pid: int) -> None:
+    """Ask a gateway process to stop on Linux; never SIGKILL, never on Windows."""
+    if os.name != "posix":
+        return
+    try:
+        os.kill(pid, signal.SIGTERM)
+    except OSError:  # nexgen: allow reason="the process already exited between the list and the signal"
+        pass
+
+
 class OpenClawService:
     """Service controller for the OpenClaw gateway daemon."""
 
@@ -58,6 +69,7 @@ class OpenClawService:
         port: int = DEFAULT_GATEWAY_PORT,
         runner: Callable[[list[str]], RunResult] | None = None,
         spawner: Callable[[list[str]], Any] | None = None,
+        terminator: Callable[[int], None] | None = None,
         process_lister: Callable[[], list[ProcessInfo]] | None = None,
         port_probe: Callable[[int, str], bool] | None = None,
         time_provider: Callable[[], float] | None = None,
@@ -70,6 +82,7 @@ class OpenClawService:
         self.port = port
         self.runner = runner or default_runner
         self.spawn = spawner or spawn_detached
+        self.terminate = terminator or default_terminator
         self.port_probe = port_probe or default_port_probe
         self.install_grace_seconds = install_grace_seconds
         self.time_provider = time_provider or time.monotonic
@@ -178,6 +191,12 @@ class OpenClawService:
             commands.append(cmd)
             if not dry_run:
                 self.runner(cmd)
+                # A gateway started by hand outside systemd is untouched by the
+                # unit. Ask it to exit (SIGTERM), then wait: never SIGKILL.
+                for pid in self._gateway_pids():
+                    commands.append(["kill", "-TERM", str(pid)])
+                    stopped_pids.append(pid)
+                    self.terminate(pid)
         else:
             all_procs = self.process_lister()
             gateway_procs = [p for p in all_procs if is_gateway_process(p)]
@@ -198,6 +217,10 @@ class OpenClawService:
             "remaining_pids": remaining,
             "dry_run": dry_run,
         }
+
+    def _gateway_pids(self) -> list[int]:
+        """The pids of every running process this module recognises as our gateway."""
+        return [proc.pid for proc in self.process_lister() if is_gateway_process(proc)]
 
     def _wait_until_stopped(self, timeout_s: float) -> list[int]:
         """Waits until no gateway process is left and the port is free.
