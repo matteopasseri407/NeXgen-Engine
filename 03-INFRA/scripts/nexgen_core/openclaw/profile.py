@@ -194,7 +194,7 @@ def _plugin_entries(detected: Detection, chosen: Choices) -> dict[str, Any]:
     if detected.local.ollama:
         entries["ollama"] = {"enabled": True}
     if chosen.acpx or sviluppo_enabled(detected, chosen.sviluppo):
-        entries["acpx"] = acpx_entry()
+        entries["acpx"] = acpx_entry(detected)
     return entries
 
 
@@ -307,23 +307,20 @@ def _workspace(agent_id: str, current: dict[str, Any] | None, state_dir: Path | 
 
 
 def _sviluppo_entry(model: str, current: dict[str, Any] | None, state_dir: Path | None, language: str) -> dict[str, Any]:
-    """The OpenCode agent: a real harness launched over ACP, one to one.
+    """The OpenCode agent: a native agent on the Go key that drives real OpenCode.
 
-    `model.primary` is what selects the harness's model; without it OpenClaw
-    runs whatever the harness defaults to, which is how an agent answered with
-    the wrong model once already. `runtime.type: "acp"` is what makes the
-    harness run at all rather than OpenClaw answering in its place.
+    Not `runtime.type: "acp"`: OpenClaw routes an ACP agent to its harness only
+    inside a bound session, and in a direct chat it answered with the default
+    model (a local one) instead. The work on code still runs in OpenCode one to
+    one: the agent opens it with `sessions_spawn` (runtime `acp`, agent
+    `opencode`), as its manual says, and the session shows up in the panel.
     """
     name = SVILUPPO_NAMES[language]
     entry: dict[str, Any] = {"name": name, "identity": {"name": name}}
     workspace = _workspace(SVILUPPO_ID, current, state_dir)
     if workspace:
         entry["workspace"] = workspace
-    entry["model"] = {"primary": model}
-    entry["runtime"] = {
-        "type": "acp",
-        "acp": {"agent": "opencode", "backend": "acpx", "mode": "persistent"},
-    }
+    entry["model"] = model
     return entry
 
 

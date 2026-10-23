@@ -486,7 +486,7 @@ def test_the_opencode_agent_name_is_translated_while_its_id_stays(tmp_path):
     sviluppo = machine.config_json()["agents"]["entries"]["sviluppo"]
     assert sviluppo["name"] == "sviluppo"
     assert sviluppo["identity"] == {"name": "sviluppo"}
-    assert sviluppo["model"]["primary"] == "opencode-go/deepseek-v4.1-flash"
+    assert sviluppo["model"] == "opencode-go/deepseek-v4.1-flash"
 
 
 def test_the_opencode_agent_appears_only_with_its_command_and_its_key(tmp_path):
@@ -499,8 +499,10 @@ def test_the_opencode_agent_appears_only_with_its_command_and_its_key(tmp_path):
     sviluppo = written["agents"]["entries"]["sviluppo"]
     assert sviluppo["name"] == "developer"
     assert sviluppo["identity"] == {"name": "developer"}
-    assert sviluppo["model"] == {"primary": "opencode-go/deepseek-v4.1-flash"}
-    assert sviluppo["runtime"] == {"type": "acp", "acp": {"agent": "opencode", "backend": "acpx", "mode": "persistent"}}
+    # A direct chat with an ACP-runtime agent answers with the default model, so the agent is native
+    # and opens real OpenCode sessions over ACP; the bridge launches the installed OpenCode, not npx's V1.
+    assert sviluppo["model"] == "opencode-go/deepseek-v4.1-flash"
+    assert "runtime" not in sviluppo
     assert sviluppo["workspace"].endswith("workspace-sviluppo")
     assert written["plugins"]["entries"]["acpx"]["config"]["permissionMode"] == "approve-all"
     assert written["plugins"]["entries"]["acpx"]["config"]["nonInteractivePermissions"] == "deny"

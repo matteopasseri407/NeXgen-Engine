@@ -132,6 +132,8 @@ class Detection:
     n8n: bool
     #: OpenCode's own command on PATH: the harness the ACP agent launches.
     opencode: bool = False
+    #: The executable to hand the ACP bridge, resolved once (empty when unknown).
+    opencode_command: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         """The snapshot as JSON-safe data, for `plan --json` and the doctor."""
@@ -141,6 +143,7 @@ class Detection:
             "codex": {**asdict(self.codex), "available": self.codex.available},
             "opencode_go": self.opencode_go,
             "opencode": self.opencode,
+            "opencode_command": self.opencode_command,
             "local": {**asdict(self.local), "available": self.local.available},
             "n8n": self.n8n,
         }
@@ -465,4 +468,25 @@ def detect(
         n8n=_module_state("n8n", engine, vault, values) in ("local", "remote"),
         # The command line itself, not a login: the ACP agent launches it.
         opencode=resolved_which("opencode") is not None,
+        opencode_command=opencode_command(resolved_which("opencode")),
     )
+
+
+def opencode_command(found: str | None) -> str:
+    """The OpenCode executable to give the ACP bridge, or "" when there is none.
+
+    The bridge's own default is `npx opencode-ai acp`, which fetches the old V1
+    package: it refuses a V2 `opencode.json` and exits at once. The installed
+    OpenCode speaks ACP itself (`opencode acp`). npm puts a `.cmd` shim on PATH
+    on Windows; the real executable sits behind it, and an absolute executable
+    path is the shape the bridge takes as one argument.
+    """
+    if not found:
+        return ""
+    shim = Path(found)
+    if shim.suffix.lower() in (".cmd", ".ps1", "") and shim.parent.is_dir():
+        for name in ("opencode.exe", "opencode"):
+            candidate = shim.parent / "node_modules" / "@opencode" / "cli" / "bin" / name
+            if candidate.is_file():
+                return str(candidate)
+    return str(shim)

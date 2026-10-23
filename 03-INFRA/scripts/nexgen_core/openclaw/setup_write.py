@@ -30,6 +30,15 @@ from nexgen_core.openclaw.profile import PENDING_TOKEN
 #: The suffix a backup carries, so the file it protects is still recognisable.
 BACKUP_MARKER = ".pre-nexgen-"
 
+#: Values an earlier engine wrote and this one no longer proposes, by path. A key
+#: is removed only when it still holds exactly that value: anything the person
+#: changed by hand is theirs and stays. (2026-10-23: the OpenCode agent ran on
+#: an ACP runtime, which in a direct chat answered with the default model.)
+RETIRED_VALUES: tuple[tuple[tuple[str, ...], Any], ...] = (
+    (("agents", "entries", "sviluppo", "runtime"),
+     {"type": "acp", "acp": {"agent": "opencode", "backend": "acpx", "mode": "persistent"}}),
+)
+
 
 def _merge_dict(current: dict[str, Any], proposed: dict[str, Any]) -> dict[str, Any]:
     """A recursive merge that never deletes: proposal wins, absent keys stay."""
@@ -108,7 +117,18 @@ def merged_document(current: dict[str, Any] | None, proposed: dict[str, Any]) ->
             providers[provider] = merged_block
         merged_models["providers"] = providers
         merged["models"] = merged_models
+    _retire(merged)
     return merged
+
+
+def _retire(document: dict[str, Any]) -> None:
+    """Drops what an earlier engine wrote and no longer proposes, if still untouched."""
+    for path, value in RETIRED_VALUES:
+        parent: Any = document
+        for key in path[:-1]:
+            parent = parent.get(key) if isinstance(parent, dict) else None
+        if isinstance(parent, dict) and parent.get(path[-1]) == value:
+            del parent[path[-1]]
 
 
 def generate_token() -> str:
