@@ -44,11 +44,19 @@ def _is_python(command: str) -> bool:
     return bool(_PYTHON_COMMAND.match(Path(command).name))
 
 
-def _stdio_entry(srv: dict[str, Any]) -> dict[str, Any]:
-    """One locally launched server, in OpenClaw's stdio shape."""
+def _stdio_entry(srv: dict[str, Any], references: dict[str, str] | None = None) -> dict[str, Any]:
+    """One locally launched server, in OpenClaw's stdio shape.
+
+    `references` are the env values the manifest wrote as a bare `${VAR}`:
+    OpenClaw substitutes those itself, so writing the resolved value would put
+    a secret that lives in the environment into `openclaw.json` in plain text.
+    """
     command = str(srv.get("command") or "")
     raw_env = srv.get("env") if isinstance(srv.get("env"), dict) else {}
     env = {str(k): str(v) for k, v in raw_env.items()}
+    for key, reference in (references or {}).items():
+        if key in env:
+            env[key] = reference
     if _is_python(command):
         env["PYTHONUTF8"] = "1"
         env["PYTHONIOENCODING"] = "utf-8"
@@ -98,10 +106,10 @@ def _http_entry(srv: dict[str, Any]) -> dict[str, Any]:
     return entry
 
 
-def _build_entry(srv: dict[str, Any]) -> dict[str, Any]:
+def _build_entry(srv: dict[str, Any], references: dict[str, str] | None = None) -> dict[str, Any]:
     """One manifest server as its native OpenClaw entry."""
     is_http = srv.get("transport") == "http" or bool(srv.get("url"))
-    entry = _http_entry(srv) if is_http else _stdio_entry(srv)
+    entry = _http_entry(srv) if is_http else _stdio_entry(srv, references)
     deny = srv.get("tools_deny")
     if isinstance(deny, list) and deny:
         entry["toolFilter"] = {"exclude": [str(tool) for tool in deny]}
@@ -138,7 +146,12 @@ def _mcp_block(existing: dict[str, Any], cfg_file: Path) -> dict[str, Any]:
     return block
 
 
-def _apply_servers(renderer, servers_table: dict[str, Any], servers: dict[str, dict[str, Any]]) -> None:
+def _apply_servers(
+    renderer,
+    servers_table: dict[str, Any],
+    servers: dict[str, dict[str, Any]],
+    references: dict[str, dict[str, str]] | None = None,
+) -> None:
     """Mounts every resolved server and drops the ones this engine retired."""
     for retired in renderer.retired_server_names():
         servers_table.pop(retired, None)
@@ -148,7 +161,48 @@ def _apply_servers(renderer, servers_table: dict[str, Any], servers: dict[str, d
         if is_http and _resolved_url(srv) is None:
             logger.warning("OpenClaw connector %r has a URL this machine cannot resolve, skipped", name)
             continue
-        servers_table[name] = _build_entry(srv)
+        servers_table[name] = _build_entry(srv, (references or {}).get(name))
+
+
+#: An env value that is nothing but a reference: `${NAME}` or `${NAME:-default}`.
+_ENV_REFERENCE = re.compile(r"^\$\{[A-Za-z_][A-Za-z0-9_]*(?::-[^}]*)?\}$")
+
+
+def _env_references(renderer) -> dict[str, dict[str, str]]:
+    """The manifest's own env values that are bare references, per server.
+
+    The generic renderer resolves `${VAR}` before a dialect sees the entry,
+    which is what Claude and Codex need: they take a value and nothing else.
+    OpenClaw substitutes references itself, so the reference is written back.
+    Only a value that is exactly a reference is kept; a URL that merely
+    contains one is already resolved and stays as the engine computed it.
+    """
+    from nexgen_core.config import load_mcp_manifest
+    from nexgen_core.mcp_render import IS_WINDOWS
+
+    if not renderer.manifest_path.is_file():
+        return {}
+    try:
+        data = load_mcp_manifest(renderer.manifest_path)
+    except (OSError, ValueError):  # nexgen: allow reason="a broken manifest is reported by mcp.manifest; this render writes no reference rather than crashing"
+        return {}
+    declared = data.get("servers") if isinstance(data.get("servers"), dict) else {}
+    found: dict[str, dict[str, str]] = {}
+    for name, srv in declared.items():
+        if not isinstance(srv, dict):
+            continue
+        raw = srv.get("env") if isinstance(srv.get("env"), dict) else {}
+        override = srv.get("windows") if IS_WINDOWS else None
+        if isinstance(override, dict) and isinstance(override.get("env"), dict):
+            raw = override["env"]  # the renderer replaces the whole block, it does not merge it
+        kept = {
+            str(key): str(value)
+            for key, value in raw.items()
+            if isinstance(value, str) and _ENV_REFERENCE.match(value.strip())
+        }
+        if kept:
+            found[str(name)] = kept
+    return found
 
 
 def render(renderer, write: bool = False) -> tuple[bool, str]:
@@ -168,7 +222,7 @@ def render(renderer, write: bool = False) -> tuple[bool, str]:
     before = copy.deepcopy(existing)
     mcp_config = _mcp_block(existing, cfg_file)
     servers_table = dict(mcp_config["servers"])
-    _apply_servers(renderer, servers_table, servers)
+    _apply_servers(renderer, servers_table, servers, _env_references(renderer))
     mcp_config["servers"] = servers_table
     existing["mcp"] = mcp_config
     if write:

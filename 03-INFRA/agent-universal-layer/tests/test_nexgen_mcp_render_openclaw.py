@@ -34,6 +34,14 @@ servers:
     transport: stdio
     command: node
     args: ["server.mjs"]
+  secret-tool:
+    tier: core
+    transport: stdio
+    command: node
+    args: ["secret.mjs"]
+    env:
+      DEMO_SECRET: "${DEMO_SECRET}"
+      DEMO_PLAIN: plain
   remote:
     tier: core
     transport: http
@@ -56,6 +64,7 @@ servers:
 USER_FILE = {
     "gateway": {"port": 18789, "bind": "loopback"},
     "agents": {"main": {"model": "anthropic/claude"}},
+    "plugins": {"allow": ["browser", "nexgen"], "entries": {"nexgen": {"enabled": True}}},
     "mcp": {
         "servers": {
             "my-own-server": {"command": "node", "args": ["mine.mjs"]},
@@ -72,6 +81,7 @@ def renderer(tmp_path: Path, monkeypatch) -> McpRenderer:
     monkeypatch.delenv("OPENCLAW_STATE_DIR", raising=False)
     monkeypatch.setenv("DEMO_URL", "https://demo.invalid")
     monkeypatch.setenv("DEMO_TOKEN", "tok-should-never-be-written")
+    monkeypatch.setenv("DEMO_SECRET", "super-secret-value")
     vault = tmp_path / "vault"
     manifest = vault / "03-INFRA" / "agent-universal-layer" / "mcp" / "manifest.yaml"
     manifest.parent.mkdir(parents=True)
@@ -124,6 +134,30 @@ def test_a_secret_stays_an_environment_reference(renderer) -> None:
 
     assert _servers(renderer)["remote"]["headers"] == {"Authorization": "Bearer ${DEMO_TOKEN}"}
     assert "tok-should-never-be-written" not in cfg.read_text(encoding="utf-8")
+
+
+def test_a_reference_in_a_stdio_environment_stays_a_reference(renderer) -> None:
+    """The generic renderer expands `${VAR}`; OpenClaw substitutes it itself.
+
+    Writing the expanded value copied the secret out of the environment and
+    into `openclaw.json`, which the engine otherwise never fills with secrets.
+    """
+    cfg = _install_openclaw(renderer)
+    assert renderer.render_openclaw(write=True)[0]
+
+    env = _servers(renderer)["secret-tool"]["env"]
+    assert env["DEMO_SECRET"] == "${DEMO_SECRET}"
+    assert env["DEMO_PLAIN"] == "plain"
+    assert "super-secret-value" not in cfg.read_text(encoding="utf-8")
+
+
+def test_the_mcp_renderer_never_touches_the_plugins_block(renderer) -> None:
+    """Enabling a plugin is `nexgen openclaw setup`'s job, with the gateway stopped."""
+    cfg = _install_openclaw(renderer)
+    assert renderer.render_openclaw(write=True)[0]
+
+    data = json.loads(cfg.read_text(encoding="utf-8"))
+    assert data["plugins"] == USER_FILE["plugins"]
 
 
 def test_timeouts_become_milliseconds(renderer) -> None:
