@@ -12,14 +12,16 @@ nothing here ever touches the home or the gateway of the person running it.
 from __future__ import annotations
 
 import subprocess
+import sys
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
 from pathlib import Path
 
 from nexgen_core.i18n import t
 from nexgen_core.modules import current_host, write_state_file
-from nexgen_core.openclaw import setup_commands, setup_write
+from nexgen_core.openclaw import host_preflight, setup_commands, setup_write
 from nexgen_core.openclaw.detect import Detection
+from nexgen_core.openclaw.pin import node_satisfies, required_node_version
 from nexgen_core.openclaw.setup_agents import agent_dirs, created_by_openclaw, prepare
 from nexgen_core.openclaw_pairing import qr as pairing_qr
 from nexgen_core.openclaw_processes import is_gateway_process
@@ -99,14 +101,18 @@ def engine_plugin_path(setup: Setup) -> Path:
 def ensure_installed(setup: Setup, snapshot: Detection) -> Detection | None:
     """Step 1: the pinned release, or a clear reason why it cannot be put there."""
     install = snapshot.openclaw
-    if install.installed and setup.pinned and install.version == setup.pinned:
-        setup.out(t("OpenClaw {version} is already the pinned release.", version=install.version))
-        return snapshot
     if not setup.which("node"):
         setup.out(t("Node is not installed and OpenClaw needs it. Install it from {url}, then run the setup again.",
                     url=setup_commands.NODE_DOWNLOAD_URL))
         return None
+    if not _check_node(setup, snapshot):
+        return None
     npm = setup.which("npm")
+    if not _check_linux_host(setup, npm):
+        return None
+    if install.installed and setup.pinned and install.version == setup.pinned:
+        setup.out(t("OpenClaw {version} is already the pinned release.", version=install.version))
+        return snapshot
     if not npm:
         setup.out(t("npm is not beside Node. Install Node from {url}: it brings npm with it.",
                     url=setup_commands.NODE_DOWNLOAD_URL))
@@ -133,6 +139,45 @@ def ensure_installed(setup: Setup, snapshot: Detection) -> Detection | None:
     if setup.which("openclaw") is None:
         setup.out(t("Note: 'openclaw' is still not on PATH; a new terminal may be needed."))
     return replace(snapshot, openclaw=replace(install, installed=True, version=setup.pinned))
+
+
+def _check_node(setup: Setup, snapshot: Detection) -> bool:
+    """The Node in use must satisfy the range OpenClaw declares."""
+    if setup.dry_run:
+        return True
+    requirement = snapshot.openclaw.node_requirement or required_node_version(setup.engine_root)
+    if not requirement:
+        return True
+    version = host_preflight.read_node_version(setup.run, setup.which("node") or "node", setup.env)
+    if node_satisfies(version, requirement):
+        return True
+    setup.out(t("Node {version} does not satisfy what OpenClaw {pinned} needs ({requirement}).",
+                version=version or t("(unknown)"), pinned=setup.pinned or "?", requirement=requirement))
+    setup.out(t("Install a Node release in that range from {url}, then run the setup again.",
+                url=setup_commands.NODE_DOWNLOAD_URL))
+    return False
+
+
+def _check_linux_host(setup: Setup, npm: str | None) -> bool:
+    """Linux only: the user bus, npm's global prefix, and lingering."""
+    if (setup.platform or sys.platform) != "linux" or setup.dry_run:
+        return True
+    if host_preflight.user_bus_missing(setup.env) or host_preflight.user_bus_unreachable(setup.run, setup.env):
+        setup.out(t("The systemd user bus is not available in this session, so the gateway service cannot be managed."))
+        setup.out(t("Log in to a normal user session with systemd, or start one, then run the setup again."))
+        return False
+    if npm:
+        prefix = host_preflight.npm_prefix(setup.run, npm, setup.env)
+        if prefix is not None and not host_preflight.is_writable(prefix):
+            setup.out(t("npm installs global packages under {prefix}, which this user cannot write.", prefix=prefix))
+            setup.out(t("Run 'npm config set prefix ~/.local' once, or use a version manager for Node, "
+                        "then run the setup again."))
+            return False
+    user = setup.env.get("USER") or setup.env.get("LOGNAME") or ""
+    if user and not host_preflight.linger_enabled(user, host_preflight.LINGER_DIR):
+        setup.out(t("Lingering is off for {user}: the gateway stops when your last session closes.", user=user))
+        setup.out(t("Run 'loginctl enable-linger {user}' once, then run the setup again.", user=user))
+    return True
 
 
 def ensure_onboarded(setup: Setup) -> bool:

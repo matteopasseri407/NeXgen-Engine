@@ -48,12 +48,15 @@ def _vault(tmp_path: Path, state: str | None) -> Path:
     return vault
 
 
-def _npm_tree(tmp_path: Path, version: str | None) -> Path:
+def _npm_tree(tmp_path: Path, version: str | None, node: str | None = None) -> Path:
     """The folder `npm root -g` will name, with an OpenClaw package inside."""
     root = tmp_path / "npm-root"
     package = root / "openclaw"
     package.mkdir(parents=True, exist_ok=True)
-    (package / "package.json").write_text(json.dumps({"name": "openclaw", "version": version}), encoding="utf-8")
+    manifest = {"name": "openclaw", "version": version}
+    if node is not None:
+        manifest["engines"] = {"node": node}
+    (package / "package.json").write_text(json.dumps(manifest), encoding="utf-8")
     return root
 
 
@@ -98,6 +101,14 @@ def test_on_windows_npm_is_launched_by_its_resolved_cmd_path(tmp_path):
     found = _detect(tmp_path, which=lambda name: resolved, run=_runner(root, resolved))
     assert found.openclaw.installed is True
     assert found.openclaw.version == PINNED
+
+
+def test_the_node_requirement_comes_from_the_installed_package(tmp_path):
+    root = _npm_tree(tmp_path, PINNED, node=">=24.22.1 <25 || >=26.12.1")
+
+    found = _detect(tmp_path, which=lambda name: f"/usr/bin/{name}", run=_runner(root, "/usr/bin/npm"))
+
+    assert found.openclaw.node_requirement == ">=24.22.1 <25 || >=26.12.1"
 
 
 def test_without_npm_on_path_openclaw_is_not_installed(tmp_path):

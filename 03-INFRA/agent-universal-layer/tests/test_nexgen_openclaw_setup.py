@@ -26,6 +26,7 @@ from nexgen_core.runtimes.openclaw import PLUGIN_ID  # noqa: E402
 
 TESTS_DIR = Path(__file__).resolve().parent
 PIN_FILE = TESTS_DIR.parent / "openclaw" / "pin.json"
+ENGINE_ROOT = TESTS_DIR.parents[1]
 
 
 @pytest.fixture(autouse=True)
@@ -50,9 +51,18 @@ class FakeRunner:
         self.fail_validate = False
         self.service: FakeService | None = None
         self.validate_while_stopped: bool | None = None
+        self.node_version = "v24.22.1"
+        self.npm_prefix = ""
+        self.systemctl_error = ""
 
     def __call__(self, argv, env=None):
         self.calls.append((list(argv), dict(env or {})))
+        if argv[0].endswith("node") and argv[1:] == ["--version"]:
+            return RunResult(0, self.node_version + "\n", "")
+        if argv[1:3] == ["config", "get"]:
+            return RunResult(0, self.npm_prefix + "\n" if self.npm_prefix else "", "")
+        if argv[0] == "systemctl" and self.systemctl_error:
+            return RunResult(1, "", self.systemctl_error)
         verbs = list(argv[1:3])
         if "onboard" in verbs:
             if self.onboard is not None:
@@ -209,11 +219,11 @@ class Machine:
         self.runner.service = self.service
         self.lines: list[str] = []
 
-    def run(self, *, detected=None, which=None, yes=True, **kwargs) -> int:
+    def run(self, *, detected=None, which=None, yes=True, env=None, **kwargs) -> int:
         lookup = which if callable(which) else (which or which_map()).get
         return run_setup(
             home=self.home,
-            env={},
+            env=env if env is not None else {},
             vault_data=self.vault,
             detected=detected if detected is not None else detection(self.config),
             which=lookup,
@@ -221,6 +231,7 @@ class Machine:
             service=self.service,
             out=self.lines.append,
             stamp="20261023-120000",
+            engine_root=ENGINE_ROOT,
             yes=yes,
             **kwargs,
         )
@@ -257,7 +268,10 @@ def test_openclaw_missing_is_installed_at_the_pin(tmp_path):
     code = machine.run(detected=detection(machine.config, installed=False))
 
     assert code == 0
-    install = machine.runner.calls[0][0]
+    install = next(
+        call for call, _env in machine.runner.calls
+        if call[1:3] == ["install", "-g"]
+    )
     assert install[1:4] == ["install", "-g", f"openclaw@{pinned()}"]
     assert install[-1] == "--allow-scripts=@google/genai,esbuild,koffi,protobufjs,openclaw"
 
@@ -279,6 +293,76 @@ def test_a_machine_already_on_the_pin_runs_no_install(tmp_path):
 
     assert machine.run() == 0
     assert not any(" install -g " in command for command in machine.runner.commands())
+
+
+def test_an_old_node_stops_the_setup_before_installing(tmp_path):
+    """OpenClaw declares a Node range; a 22.x Node fails on its native modules."""
+    machine = Machine(tmp_path)
+    machine.runner.node_version = "v22.0.0"
+
+    code = machine.run(detected=detection(machine.config, installed=False))
+
+    assert code == 1
+    assert not any(" install -g " in command for command in machine.runner.commands())
+    assert ">=24.22.1" in machine.output()
+    assert "nodejs.org" in machine.output()
+
+
+def test_a_linux_session_without_the_user_bus_stops_with_an_action(tmp_path):
+    machine = Machine(tmp_path)
+
+    code = machine.run(platform="linux", env={})
+
+    assert code == 1
+    assert "systemd user bus" in machine.output()
+    assert not any(" install -g " in command for command in machine.runner.commands())
+
+
+def test_a_linux_bus_that_cannot_be_reached_is_the_same_stop(tmp_path):
+    machine = Machine(tmp_path)
+    machine.runner.systemctl_error = "Failed to connect to bus: No such file or directory"
+
+    code = machine.run(platform="linux", env={"XDG_RUNTIME_DIR": "/run/user/1000"})
+
+    assert code == 1
+    assert "systemd user bus" in machine.output()
+
+
+def test_a_non_writable_npm_prefix_stops_with_the_command(tmp_path, monkeypatch):
+    machine = Machine(tmp_path)
+    machine.runner.npm_prefix = str(tmp_path / "global")
+    monkeypatch.setattr("nexgen_core.openclaw.host_preflight.is_writable", lambda directory: False)
+
+    code = machine.run(platform="linux", env={"XDG_RUNTIME_DIR": "/run/user/1000"})
+
+    assert code == 1
+    assert "npm config set prefix ~/.local" in machine.output()
+    assert not any(" install -g " in command for command in machine.runner.commands())
+
+
+def test_lingering_off_is_told_without_stopping(tmp_path, monkeypatch):
+    monkeypatch.setattr("nexgen_core.openclaw.host_preflight.LINGER_DIR", tmp_path / "linger")
+    machine = Machine(tmp_path)
+    machine.config.parent.mkdir(parents=True)
+    machine.config.write_text(json.dumps({"gateway": {"auth": {"mode": "token", "token": "t"}}}), encoding="utf-8")
+
+    code = machine.run(platform="linux", env={"XDG_RUNTIME_DIR": "/run/user/1000", "USER": "matte"})
+
+    assert code == 0
+    assert "loginctl enable-linger matte" in machine.output()
+
+
+def test_lingering_on_says_nothing(tmp_path, monkeypatch):
+    linger = tmp_path / "linger"
+    linger.mkdir()
+    (linger / "matte").write_text("", encoding="utf-8")
+    monkeypatch.setattr("nexgen_core.openclaw.host_preflight.LINGER_DIR", linger)
+    machine = Machine(tmp_path)
+    machine.config.parent.mkdir(parents=True)
+    machine.config.write_text(json.dumps({"gateway": {"auth": {"mode": "token", "token": "t"}}}), encoding="utf-8")
+
+    assert machine.run(platform="linux", env={"XDG_RUNTIME_DIR": "/run/user/1000", "USER": "matte"}) == 0
+    assert "loginctl enable-linger" not in machine.output()
 
 
 def test_without_node_the_setup_stops_and_names_where_to_get_it(tmp_path):

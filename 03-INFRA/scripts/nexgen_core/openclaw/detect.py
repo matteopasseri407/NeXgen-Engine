@@ -62,6 +62,7 @@ class Installation:
     config_path: str = ""
     config_present: bool = False
     detail: str = ""
+    node_requirement: str | None = None
 
 
 @dataclass(frozen=True)
@@ -222,9 +223,12 @@ def _detect_openclaw(home: Path, env: dict[str, str], run: Run | None, which: Wh
     package = root / "openclaw" / "package.json"
     manifest = _read_json(package) if package.is_file() else None
     if isinstance(manifest, dict) and manifest.get("version"):
+        engines = manifest.get("engines") if isinstance(manifest.get("engines"), dict) else {}
+        requirement = engines.get("node")
         return Installation(
             installed=True, version=str(manifest["version"]),
             config_path=str(config), config_present=config.is_file(),
+            node_requirement=str(requirement) if isinstance(requirement, str) and requirement.strip() else None,
         )
     return Installation(
         installed=False, config_path=str(config), config_present=config.is_file(),

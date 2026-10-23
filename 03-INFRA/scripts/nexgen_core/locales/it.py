@@ -1433,6 +1433,22 @@ MESSAGES: dict[str, str] = {
         "Il gateway usa l'autenticazione a token, ma il token manca o è ancora il segnaposto.",
     "Run 'nexgen openclaw setup': it generates the token once and never prints it.":
         "Lancia 'nexgen openclaw setup': genera il token una volta e non lo stampa mai.",
+    "Node {version} satisfies OpenClaw's requirement ({requirement}).":
+        "Node {version} soddisfa il requisito di OpenClaw ({requirement}).",
+    "Node {version} does not satisfy OpenClaw's requirement ({requirement}).":
+        "Node {version} non soddisfa il requisito di OpenClaw ({requirement}).",
+    "Install a Node release in that range from {url}, then run 'nexgen doctor' again.":
+        "Installa una versione di Node in quell'intervallo da {url}, poi rilancia 'nexgen doctor'.",
+    "The Node version cannot be read, so OpenClaw's requirement ({requirement}) is unverified.":
+        "Non riesco a leggere la versione di Node, quindi il requisito di OpenClaw ({requirement}) resta non verificato.",
+    "Make sure 'node --version' answers in this shell, then run 'nexgen doctor' again.":
+        "Assicurati che 'node --version' risponda in questa shell, poi rilancia 'nexgen doctor'.",
+    "Lingering is enabled for {user}: the gateway survives logout.":
+        "Il lingering è attivo per {user}: il gateway sopravvive al logout.",
+    "Lingering is off for {user}: the gateway stops when the last session closes.":
+        "Il lingering è spento per {user}: il gateway si ferma quando chiudi l'ultima sessione.",
+    "Run 'loginctl enable-linger {user}' once.":
+        "Lancia una volta 'loginctl enable-linger {user}'.",
     "Set gateway.bind to 'loopback', or 'lan' if you use the phone app on your home network.":
         "Imposta gateway.bind a 'loopback', oppure 'lan' se usi l'app sul telefono nella rete di casa.",
     "The gateway asks for a token.":
@@ -1519,6 +1535,22 @@ MESSAGES: dict[str, str] = {
         "OpenClaw {version} è già la versione fissata.",
     "Node is not installed and OpenClaw needs it. Install it from {url}, then run the setup again.":
         "Node non è installato e OpenClaw ne ha bisogno. Installalo da {url}, poi rilancia il setup.",
+    "Node {version} does not satisfy what OpenClaw {pinned} needs ({requirement}).":
+        "Node {version} non soddisfa quello che OpenClaw {pinned} richiede ({requirement}).",
+    "Install a Node release in that range from {url}, then run the setup again.":
+        "Installa una versione di Node in quell'intervallo da {url}, poi rilancia il setup.",
+    "The systemd user bus is not available in this session, so the gateway service cannot be managed.":
+        "Il bus utente di systemd non è disponibile in questa sessione, quindi il servizio del gateway non si può gestire.",
+    "Log in to a normal user session with systemd, or start one, then run the setup again.":
+        "Entra in una normale sessione utente con systemd, o avviane una, poi rilancia il setup.",
+    "npm installs global packages under {prefix}, which this user cannot write.":
+        "npm installa i pacchetti globali in {prefix}, dove questo utente non può scrivere.",
+    "Run 'npm config set prefix ~/.local' once, or use a version manager for Node, then run the setup again.":
+        "Lancia una volta 'npm config set prefix ~/.local', oppure usa un version manager per Node, poi rilancia il setup.",
+    "Lingering is off for {user}: the gateway stops when your last session closes.":
+        "Il lingering è spento per {user}: il gateway si ferma quando chiudi l'ultima sessione.",
+    "Run 'loginctl enable-linger {user}' once, then run the setup again.":
+        "Lancia una volta 'loginctl enable-linger {user}', poi rilancia il setup.",
     "npm is not beside Node. Install Node from {url}: it brings npm with it.":
         "npm non è accanto a Node. Installa Node da {url}: porta npm con sé.",
     "The engine cannot read its OpenClaw pin, so it will not install an unknown release. Check agent-universal-layer/openclaw/pin.json and run the setup again.":
