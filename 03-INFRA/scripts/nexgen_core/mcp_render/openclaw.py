@@ -165,17 +165,21 @@ def _apply_servers(
 
 
 #: An env value that is nothing but a reference: `${NAME}` or `${NAME:-default}`.
-_ENV_REFERENCE = re.compile(r"^\$\{[A-Za-z_][A-Za-z0-9_]*(?::-[^}]*)?\}$")
+_SECRET_REFERENCE = re.compile(r"^\$\{([A-Za-z_][A-Za-z0-9_]*)(?::-[^}]*)?\}$")
+
+#: The variable names that mean "a credential" and never "a path or a port".
+_SECRET_NAME = re.compile(r"(?i)(?:token|secret|password|credential|api[_-]?key|(?:^|_)key$)")
 
 
 def _env_references(renderer) -> dict[str, dict[str, str]]:
-    """The manifest's own env values that are bare references, per server.
+    """The manifest's own env values that are references to a credential.
 
     The generic renderer resolves `${VAR}` before a dialect sees the entry,
     which is what Claude and Codex need: they take a value and nothing else.
-    OpenClaw substitutes references itself, so the reference is written back.
-    Only a value that is exactly a reference is kept; a URL that merely
-    contains one is already resolved and stays as the engine computed it.
+    OpenClaw substitutes references itself, so a credential stays a reference
+    instead of being copied out of the environment into `openclaw.json`.
+    A path or a port stays resolved: the gateway's own environment is not the
+    engine's, and an unresolved `AGENT_VAULT_DATA` would break the server.
     """
     from nexgen_core.config import load_mcp_manifest
     from nexgen_core.mcp_render import IS_WINDOWS
@@ -195,11 +199,13 @@ def _env_references(renderer) -> dict[str, dict[str, str]]:
         override = srv.get("windows") if IS_WINDOWS else None
         if isinstance(override, dict) and isinstance(override.get("env"), dict):
             raw = override["env"]  # the renderer replaces the whole block, it does not merge it
-        kept = {
-            str(key): str(value)
-            for key, value in raw.items()
-            if isinstance(value, str) and _ENV_REFERENCE.match(value.strip())
-        }
+        kept: dict[str, str] = {}
+        for key, value in raw.items():
+            if not isinstance(value, str):
+                continue
+            match = _SECRET_REFERENCE.match(value.strip())
+            if match and _SECRET_NAME.search(match.group(1)):
+                kept[str(key)] = str(value)
         if kept:
             found[str(name)] = kept
     return found

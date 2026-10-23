@@ -42,6 +42,13 @@ servers:
     env:
       DEMO_SECRET: "${DEMO_SECRET}"
       DEMO_PLAIN: plain
+  path-tool:
+    tier: core
+    transport: stdio
+    command: node
+    args: ["path.mjs"]
+    env:
+      VAULT_PATH: "${AGENT_VAULT_DATA}"
   remote:
     tier: core
     transport: http
@@ -149,6 +156,16 @@ def test_a_reference_in_a_stdio_environment_stays_a_reference(renderer) -> None:
     assert env["DEMO_SECRET"] == "${DEMO_SECRET}"
     assert env["DEMO_PLAIN"] == "plain"
     assert "super-secret-value" not in cfg.read_text(encoding="utf-8")
+
+
+def test_a_non_secret_reference_is_still_resolved(renderer) -> None:
+    """A path must not depend on the gateway's own environment, which is not the engine's."""
+    _install_openclaw(renderer)
+    assert renderer.render_openclaw(write=True)[0]
+
+    env = _servers(renderer)["path-tool"]["env"]
+    assert env["VAULT_PATH"] == str(renderer.vault_data)
+    assert "${" not in env["VAULT_PATH"]
 
 
 def test_the_mcp_renderer_never_touches_the_plugins_block(renderer) -> None:
