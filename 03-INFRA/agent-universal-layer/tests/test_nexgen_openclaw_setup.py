@@ -80,6 +80,7 @@ class FakeService:
         self.stop_ok = stop_ok
         self.install_process_count = 0
         self.install_grace_seconds = 0
+        self.sleeps: list[float] = []
         self.events: list[str] = []
         self.stopping = False
         self.now = 0.0
@@ -130,6 +131,7 @@ class FakeService:
         return self.now
 
     def sleeper(self, seconds: float) -> None:
+        self.sleeps.append(seconds)
         self.now += max(float(seconds), 0.5)
 
     def restart(self, wait: bool = True, timeout_s: float = 600.0, dry_run: bool = False):
@@ -657,6 +659,7 @@ def test_service_step_waits_for_an_install_that_is_still_starting():
     assert service_step(SimpleNamespace(service=service, out=lines.append), restarted=False) is True
 
     assert "start" not in service.events, "the wait found the gateway the install was bringing up"
+    assert service.sleeps[:2] == [1.0, 1.0], "the grace checks once a second, not twice"
     assert any("the install started" in line for line in lines)
 
 

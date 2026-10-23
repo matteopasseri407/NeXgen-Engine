@@ -269,7 +269,7 @@ def _install_left_a_gateway(setup: Setup, result: dict) -> bool:
             return True
         if service.time_provider() >= deadline:
             return False
-        service.sleeper(0.5)
+        service.sleeper(1.0)
 
 
 def service_step(setup: Setup, restarted: bool) -> bool:
