@@ -105,6 +105,10 @@ class GuardRunner:
         """Windows-only: relinks the private local-model-agent.ps1 adapter."""
         return guard_instructions.align_local_model_runtime(self)
 
+    def _align_openclaw_instructions(self) -> list[str]:
+        """Puts the managed block in every OpenClaw agent workspace's AGENTS.md."""
+        return guard_instructions.align_openclaw_instructions(self)
+
     def _refresh_update_cache_best_effort(self) -> None:
         """Records the newest released tag for the shell-startup notice.
 
