@@ -2,7 +2,7 @@
 
 Before this, adding a connector meant opening `mcp/manifest.yaml` by hand
 and writing YAML with exactly the right indentation, in a file whose
-mistakes surface as a failed sync on the next guard cycle — four CLIs
+mistakes surface as a failed sync on the next guard cycle — five CLIs
 blocked by a two-space slip. The manifest stays the single canonical
 source; what changes is who writes the YAML: this command does, atomically,
 with a backup and re-validation, so a bad add ends exactly where it started.

@@ -112,7 +112,7 @@ def check_mcp_reachability(
 
     renderer = McpRenderer(vault_data=vault_data, home=home)
     resolved: dict[str, dict] = {}
-    for cli in ("claude", "codex", "antigravity", "opencode"):
+    for cli in ("claude", "codex", "antigravity", "opencode", "openclaw"):
         try:
             for name, entry in renderer.load_resolved_servers(cli).items():
                 resolved.setdefault(name, entry)

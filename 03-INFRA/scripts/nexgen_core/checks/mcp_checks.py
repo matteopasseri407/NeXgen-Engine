@@ -21,6 +21,7 @@ from nexgen_core.paths import (
     claude_config,
     claude_desktop_config,
     codex_config,
+    openclaw_config,
 )
 from nexgen_core.renderer import McpRenderer
 from nexgen_core.report import CheckOutcome, Severity
@@ -168,6 +169,14 @@ def _rendered_names_codex(path: Path) -> set[str]:
     return set(servers.keys()) if isinstance(servers, dict) else set()
 
 
+def _rendered_names_openclaw(path: Path) -> set[str]:
+    """OpenClaw keeps its servers under `mcp.servers`, in the same file as its own settings."""
+    data = json.loads(path.read_text(encoding="utf-8-sig"))
+    mcp = data.get("mcp", {}) if isinstance(data, dict) else {}
+    servers = mcp.get("servers", {}) if isinstance(mcp, dict) else {}
+    return set(servers.keys()) if isinstance(servers, dict) else set()
+
+
 def _identity(name: str) -> str:
     return name
 
@@ -193,6 +202,7 @@ _CLI_RENDER_SPECS: dict[str, _CliRenderSpec] = {
     "antigravity": _CliRenderSpec(_rendered_names_claude_style, _identity),
     "codex": _CliRenderSpec(_rendered_names_codex, _codex_section_name),
     "opencode": _CliRenderSpec(_rendered_names_opencode, _identity),
+    "openclaw": _CliRenderSpec(_rendered_names_openclaw, _identity),
 }
 
 
@@ -253,6 +263,7 @@ def check_mcp_configs_rendered(vault_data: Path, home: Path) -> CheckOutcome:
         ),
         "codex": codex_config(home),
         "opencode": renderer.opencode_config_path(),
+        "openclaw": openclaw_config(home),
     }
 
     broken_parts: list[str] = []
@@ -327,6 +338,7 @@ _SERVER_TABLE_PATH: dict[str, tuple[str, ...]] = {
     "antigravity": ("mcpServers",),
     "codex": ("mcp_servers",),
     "opencode": ("mcp", "servers"),
+    "openclaw": ("mcp", "servers"),
 }
 
 
@@ -434,6 +446,7 @@ def check_mcp_content_drift(vault_data: Path, home: Path, engine_root: Path | No
         "antigravity": antigravity_config(home),
         "codex": codex_config(home),
         "opencode": renderer.opencode_config_path(),
+        "openclaw": openclaw_config(home),
     }
     drifted: list[str] = []
     skipped: list[str] = []
@@ -538,7 +551,7 @@ def check_mcp_commands(vault_data: Path, home: Path) -> CheckOutcome:
     """
     renderer = McpRenderer(vault_data=vault_data, home=home)
     missing: dict[str, set[str]] = {}
-    for cli in ("claude", "claude-desktop", "codex", "antigravity", "opencode"):
+    for cli in ("claude", "claude-desktop", "codex", "antigravity", "opencode", "openclaw"):
         try:
             servers = renderer.load_resolved_servers(cli)
         except Exception:  # noqa: BLE001 - the names check already reports an unresolvable manifest
@@ -624,6 +637,7 @@ def check_mcp_orphans(vault_data: Path, home: Path) -> CheckOutcome:
         ),
         "codex": codex_config(home),
         "opencode": renderer.opencode_config_path(),
+        "openclaw": openclaw_config(home),
     }
 
     orphan_parts: list[str] = []

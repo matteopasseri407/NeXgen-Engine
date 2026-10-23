@@ -136,7 +136,7 @@ def _register_mcp_block(sub) -> None:
     a.set_defaults(func=cmd_mcp_plan)
 
     a = msub.add_parser("check", help=t("Start each CLI's gateway as that CLI would and compare what it serves with the plan (starts the backends)"))
-    a.add_argument("--cli", choices=("claude", "codex", "antigravity", "opencode"), help=t("Only this CLI"))
+    a.add_argument("--cli", choices=("claude", "codex", "antigravity", "opencode", "openclaw"), help=t("Only this CLI"))
     a.add_argument("--timeout", type=float, default=90.0, help=t("Seconds to wait for the gateway's index (backends are started to build it)"))
     a.add_argument("--direct", action="store_true", help=t("Instead: measure the directly mounted servers (tools and weight of what a CLI loads up front)"))
     a.set_defaults(func=cmd_mcp_check)

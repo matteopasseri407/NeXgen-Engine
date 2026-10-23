@@ -29,6 +29,7 @@ from nexgen_core.paths import (  # noqa: E402 - sys.path shim for cloned checkou
     claude_config,
     claude_desktop_config,
     codex_config,
+    openclaw_config,
     opencode_config_candidates,
     resolve_home,
 )
@@ -56,6 +57,7 @@ def _cli_config_path(cli: str) -> Path:
         "codex": codex_config(HOME),
         "antigravity": antigravity_config(HOME),
         "opencode": _renderer().opencode_config_path(),
+        "openclaw": openclaw_config(HOME),
     }[cli]
 
 
@@ -117,6 +119,7 @@ def cmd_write(cli: str) -> int:
         "codex": r.render_codex,
         "antigravity": r.render_antigravity,
         "opencode": r.render_opencode,
+        "openclaw": r.render_openclaw,
     }
     try:
         ok, msg = funcs[cli](write=True)
@@ -253,7 +256,7 @@ def _adopt_entry(cli: str, spec: dict) -> dict:
     """Best-effort inverse of r_<cli>: from the live structure to a manifest stub."""
     entry: dict[str, Any] = {}
     args = spec.get("args")
-    if cli in ("claude", "claude-desktop", "opencode"):
+    if cli in ("claude", "claude-desktop", "opencode", "openclaw"):
         if spec.get("type") == "http" or "url" in spec:
             entry["transport"] = "http"
             entry["url"] = spec.get("url")
@@ -273,7 +276,7 @@ def _adopt_entry(cli: str, spec: dict) -> dict:
                 # The Desktop app keeps args separate from the command;
                 # the CLI's array form above stays the fallback.
                 entry["args"] = args
-            env = spec.get("env") if cli in ("claude", "claude-desktop") else spec.get("environment")
+            env = spec.get("env") if cli in ("claude", "claude-desktop", "openclaw") else spec.get("environment")
             if env:
                 entry["env"] = env
     elif cli == "codex":
@@ -402,6 +405,9 @@ def _load_live(cli: str) -> dict | None:
             d = parse_jsonc(text) if path.suffix == ".jsonc" else json.loads(text)
             mcp = d.get("mcp", {})
             return mcp.get("servers", mcp)
+        if cli == "openclaw":
+            mcp = json.loads(text).get("mcp", {})
+            return mcp.get("servers", {}) if isinstance(mcp, dict) else {}
     except Exception as exc:  # noqa: BLE001 - config error is reported, never raises
         print(">>> STOP: " + t("{name} is not valid JSON/TOML ({error}). Restore a .bak-* backup before retrying.", name=path.name, error=exc), file=sys.stderr)
         sys.exit(2)
@@ -548,7 +554,7 @@ def cmd_adopt(cli: str, apply: bool = False) -> int:
 def cmd_inventory() -> int:
     """Read-only scan of the MCP servers per CLI (used by agent-sync inventory)."""
     r = _renderer()
-    for cli in ("claude", "claude-desktop", "codex", "antigravity", "opencode"):
+    for cli in ("claude", "claude-desktop", "codex", "antigravity", "opencode", "openclaw"):
         servers = r.load_resolved_servers(cli)
         names = ", ".join(sorted(servers)) if servers else t("(none)")
         print(f"  {cli}: {len(servers)} server -- {names}")
