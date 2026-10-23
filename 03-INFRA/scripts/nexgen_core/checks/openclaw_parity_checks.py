@@ -134,18 +134,20 @@ def _expected_skills(vault_data: Path) -> set[str] | None:
 
 
 def _openclaw_block_present(home: Path, config_path: Path, vault_data: Path) -> bool:
-    """Does every existing agent workspace carry the engine's instructions block?"""
-    from nexgen_core.guard_instructions import OPENCLAW_BLOCK_BEGIN, openclaw_workspaces
+    """Does every existing agent workspace carry the engine's complete block?"""
+    from nexgen_core.guard_instructions import openclaw_file_state, openclaw_instruction_block, openclaw_workspaces
+    from nexgen_core.paths import canonical_instructions
 
     workspaces = [ws for ws in openclaw_workspaces(config_path, home) if ws.is_dir()]
     if not workspaces:
         return False
+    block = openclaw_instruction_block(canonical_instructions(vault_data))
     for workspace in workspaces:
         try:
             text = (workspace / "AGENTS.md").read_text(encoding="utf-8")
         except OSError:  # nexgen: allow reason="a workspace whose AGENTS.md cannot be read is not aligned, and instructions.openclaw reports the path"
             return False
-        if OPENCLAW_BLOCK_BEGIN not in text:
+        if openclaw_file_state(text, block) != "ok":
             return False
     return True
 
@@ -209,9 +211,21 @@ def _layer_skills(claude: dict, openclaw: dict, home: Path, vault_data: Path) ->
     return _outcome("skills", False, t("Skills diverge: {gaps}.", gaps="; ".join(gaps)), SYNC_ACTION)
 
 
+def _openclaw_guardrail_live(openclaw: dict) -> bool:
+    """The guardrail OpenClaw will really load: deposited whole, and enabled."""
+    from nexgen_core.checks.guardrail_checks import openclaw_plugin_disabled_reason
+    from nexgen_core.runtimes.openclaw import PLUGIN_ID
+
+    plugin_dir = openclaw["plugin_dir"]
+    for name in ("nexgen-guardrail.config.json", "index.mjs", "guardrail.mjs"):
+        if not (plugin_dir / name).is_file():
+            return False
+    return openclaw_plugin_disabled_reason(openclaw["config"], PLUGIN_ID) is None
+
+
 def _layer_guardrail(claude: dict, openclaw: dict, home: Path, vault_data: Path) -> CheckOutcome:
     claude_ok = _has_hook(claude["settings"], "PreToolUse", GUARDRAIL_ADAPTER)
-    openclaw_ok = (openclaw["plugin_dir"] / "nexgen-guardrail.config.json").is_file()
+    openclaw_ok = _openclaw_guardrail_live(openclaw)
     return _both_or_neither(
         "guardrail", claude_ok, openclaw_ok, t("the guardrail"),
         t("Run 'nexgen sync' and then 'nexgen openclaw setup' (enabling the plugin needs the gateway stopped)."),
@@ -274,6 +288,7 @@ def check_openclaw_parity(home: Path, vault_data: Path | None = None) -> list[Ch
     plugin_dir = config_path.parent / "extensions" / PLUGIN_ID
     openclaw = {
         "path": config_path,
+        "config": _read_json(config_path),
         "servers": _live_openclaw_servers(config_path),
         "plugin_dir": plugin_dir,
         "plugin_config": _read_json(plugin_dir / "nexgen.config.json"),

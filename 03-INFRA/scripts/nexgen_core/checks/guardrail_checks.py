@@ -107,7 +107,7 @@ def check_openclaw_guardrail_plugin(home: Path) -> CheckOutcome | None:
             message=t("OpenClaw's configuration could not be read, so the plugin's state is unknown: {error}", error=exc),
             action=t("Fix the JSON in OpenClaw's own configuration file, then run 'nexgen doctor' again."),
         )
-    reason = _openclaw_plugin_disabled_reason(config, PLUGIN_ID)
+    reason = openclaw_plugin_disabled_reason(config, PLUGIN_ID)
     if reason:
         return CheckOutcome(
             id="guardrail.openclaw_plugin",
@@ -125,7 +125,7 @@ def check_openclaw_guardrail_plugin(home: Path) -> CheckOutcome | None:
     )
 
 
-def _openclaw_plugin_disabled_reason(config: dict, plugin_id: str) -> str | None:
+def openclaw_plugin_disabled_reason(config: dict, plugin_id: str) -> str | None:
     """Why OpenClaw would not load `plugin_id`, or None when it would.
 
     The three gates are the ones OpenClaw documents: an explicit `deny`, an

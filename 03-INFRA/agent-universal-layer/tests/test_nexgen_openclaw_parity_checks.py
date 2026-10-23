@@ -15,12 +15,13 @@ from pathlib import Path
 
 from conftest import REAL_UL
 from nexgen_core.checks.openclaw_parity_checks import check_openclaw_parity
-from nexgen_core.guard_instructions import OPENCLAW_BLOCK_BEGIN
+from nexgen_core.guard_instructions import OPENCLAW_BLOCK_BEGIN, openclaw_instruction_block
 from nexgen_core.paths import claude_settings, openclaw_config
 from nexgen_core.report import Severity
 from nexgen_core.runtimes.openclaw import OpenClawRuntime
 
 HOOKS = REAL_UL / "hooks"
+CANON_RELATIVE = ("03-INFRA", "agent-universal-layer", "instructions", "AGENTS.md")
 
 OPENCLAW_JSON = {"agents": {}, "mcp": {"servers": {}}}
 
@@ -67,11 +68,12 @@ def a_vault(tmp_path: Path) -> Path:
     return vault
 
 
-def a_workspace(home: Path) -> Path:
+def a_workspace(home: Path, canon: Path) -> Path:
+    """The workspace as the guard leaves it: the complete managed block on top."""
     workspace = home / "work"
     workspace.mkdir(parents=True, exist_ok=True)
     (workspace / "AGENTS.md").write_text(
-        f"{OPENCLAW_BLOCK_BEGIN}\n# NeXgen Engine instructions\n{OPENCLAW_BLOCK_BEGIN}\n",
+        f"{openclaw_instruction_block(canon)}\n",
         encoding="utf-8",
     )
     return workspace
@@ -80,8 +82,10 @@ def a_workspace(home: Path) -> Path:
 def aligned_machine(tmp_path: Path) -> tuple[Path, Path]:
     """Both CLIs hold the same seven layers: the check must say PASS on every one."""
     home = a_home(tmp_path)
-    workspace = a_workspace(home)
+    vault = a_vault(tmp_path)
+    workspace = a_workspace(home, vault.joinpath(*CANON_RELATIVE))
     openclaw_config(home).write_text(json.dumps({
+        "plugins": {"allow": ["nexgen"], "entries": {"nexgen": {"enabled": True}}},
         "agents": {"defaults": {"workspace": str(workspace)}},
         "mcp": {"servers": {"alpha": {"command": "npx"}, "beta": {"command": "npx"}}},
     }), encoding="utf-8")
@@ -102,7 +106,6 @@ def aligned_machine(tmp_path: Path) -> tuple[Path, Path]:
     (home / ".claude.json").write_text(json.dumps({
         "mcpServers": {"alpha": {"command": "npx"}, "beta": {"command": "npx"}},
     }), encoding="utf-8")
-    vault = a_vault(tmp_path)
     (home / "CLAUDE.md").write_text(
         f"Read {vault / '03-INFRA' / 'agent-universal-layer' / 'instructions' / 'AGENTS.md'}\n",
         encoding="utf-8",
@@ -188,6 +191,41 @@ def test_an_undeposited_plugin_is_reported_as_a_missing_guardrail(tmp_path):
 
     assert outcomes["openclaw.parity.guardrail"].severity is Severity.WARN
     assert "openclaw setup" in (outcomes["openclaw.parity.guardrail"].action or "")
+
+
+def test_a_plugin_the_allow_list_does_not_name_is_not_a_working_guardrail(tmp_path):
+    """The sidecar alone proves nothing: OpenClaw never loads a plugin it did not allow."""
+    home, vault = aligned_machine(tmp_path)
+    data = json.loads(openclaw_config(home).read_text(encoding="utf-8"))
+    data["plugins"]["allow"] = ["browser"]
+    openclaw_config(home).write_text(json.dumps(data), encoding="utf-8")
+
+    outcomes = {o.id: o for o in check_openclaw_parity(home, vault)}
+
+    guardrail = outcomes["openclaw.parity.guardrail"]
+    assert guardrail.severity is Severity.WARN
+    assert "setup" in (guardrail.action or "")
+
+
+def test_a_sidecar_without_the_job_that_reads_it_is_not_a_working_guardrail(tmp_path):
+    home, vault = aligned_machine(tmp_path)
+    (home / ".openclaw" / "extensions" / "nexgen" / "guardrail.mjs").unlink()
+
+    outcomes = {o.id: o for o in check_openclaw_parity(home, vault)}
+
+    assert outcomes["openclaw.parity.guardrail"].severity is Severity.WARN
+
+
+def test_an_incomplete_instruction_block_is_a_warning(tmp_path):
+    """Only the opening marker used to be enough to call the file aligned."""
+    home, vault = aligned_machine(tmp_path)
+    (home / "work" / "AGENTS.md").write_text(
+        f"{OPENCLAW_BLOCK_BEGIN}\nmy own rules\n", encoding="utf-8",
+    )
+
+    outcomes = {o.id: o for o in check_openclaw_parity(home, vault)}
+
+    assert outcomes["openclaw.parity.instructions"].severity is Severity.WARN
 
 
 def test_the_parity_check_never_reads_an_mcp_env_block(tmp_path):
