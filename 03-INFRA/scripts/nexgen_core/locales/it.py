@@ -1754,4 +1754,8 @@ MESSAGES: dict[str, str] = {
         "{provider} ha usato il {percent}% della finestra {window}.",
     "Run 'nexgen quota' to see every window.":
         "Lancia 'nexgen quota' per vedere tutte le finestre.",
+    "No provider's percentage is readable on this machine.":
+        "Su questa macchina non è leggibile la percentuale di nessun fornitore.",
+    "Known quotas: {known}":
+        "Quote note: {known}",
 }

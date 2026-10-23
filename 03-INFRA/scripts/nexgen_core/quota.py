@@ -153,7 +153,7 @@ def render_row(row: QuotaRow, now: float) -> str:
     if row.unit == "percent":
         line = t(
             "{provider}: {percent} of the {window} window used ({age})",
-            provider=row.provider, percent=_percent(row.used), window=row.window, age=t("read {age} ago", age=age),
+            provider=row.provider, percent=percent_text(row.used), window=row.window, age=t("read {age} ago", age=age),
         )
         if row.resets_at:
             return f"{line}, " + t("resets in {age}", age=age_text(max(0.0, row.resets_at - now)))
@@ -169,7 +169,7 @@ def render_row(row: QuotaRow, now: float) -> str:
         return t(
             "{provider}: {amount} of {ceiling} in the last {window} ({percent}, {age})",
             provider=row.provider, amount=amount, ceiling=f"{(row.ceiling or 0.0):.2f} $", window=row.window,
-            percent=_percent(row.percent), age=t("read {age} ago", age=age),
+            percent=percent_text(row.percent), age=t("read {age} ago", age=age),
         )
     if row.unit == "tokens":
         return t(
@@ -341,7 +341,7 @@ def _expired(read_at: float | None, window_minutes: int | None, now: float) -> b
     return now - read_at > window_minutes * 60
 
 
-def _percent(value: float | None) -> str:
+def percent_text(value: float | None) -> str:
     """A percentage as a person reads it: whole numbers unless it is not one."""
     if value is None:
         return "?"

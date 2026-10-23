@@ -60,6 +60,7 @@ from nexgen_core.checks.mcp_checks import (  # noqa: E402 - sys.path shim for cl
 from nexgen_core.checks.module_checks import check_modules_catalog, check_modules_ready  # noqa: E402 - sys.path shim for cloned checkout
 from nexgen_core.checks.openclaw_checks import check_openclaw  # noqa: E402 - sys.path shim for cloned checkout
 from nexgen_core.checks.openclaw_parity_checks import check_openclaw_parity  # noqa: E402 - sys.path shim for cloned checkout
+from nexgen_core.checks.quota_checks import check_quota  # noqa: E402 - sys.path shim for cloned checkout
 from nexgen_core.checks.reachability_checks import check_mcp_reachability  # noqa: E402 - sys.path shim for cloned checkout
 from nexgen_core.checks.security_checks import (  # noqa: E402 - sys.path shim for cloned checkout
     check_leak_patterns_twin,
@@ -233,10 +234,7 @@ def _mcp_and_module_checks(run, doc: Doctor) -> None:
     # Installed is not working: a module says so itself, and only the doctor
     # asks, never the guard cycle.
     run("modules.ready", lambda: check_modules_ready(engine_root, vault))
-    # The harness with the interface, when this machine chose it.
-    run("openclaw", lambda: check_openclaw(home, engine_root, vault))
-    # One plugin, two hosts: every layer OpenClaw must receive from Claude Code.
-    run("openclaw.parity", lambda: check_openclaw_parity(home, vault))
+    _run_harness_checks(run, home, engine_root, vault)
 
 
 def _skill_checks(run, doc: Doctor) -> None:
@@ -267,6 +265,19 @@ def _identity_and_secret_checks(run, doc: Doctor) -> None:
     run("security.leak_patterns_twin", lambda: check_leak_patterns_twin(vault, engine_root))
     # Desktop apps that share a config with their CLI.
     run("desktop.codex_version_skew", check_codex_desktop_skew)
+
+
+def _run_harness_checks(run, home: Path, engine_root: Path, vault: Path) -> None:
+    """The harness with the interface, and what the plans this machine pays for say.
+
+    Split out of `_diagnose` because the group grows with every capability the
+    harness gains, and the coordinator is not where that belongs.
+    """
+    run("openclaw", lambda: check_openclaw(home, engine_root, vault))
+    # One plugin, two hosts: every layer OpenClaw must receive from Claude Code.
+    run("openclaw.parity", lambda: check_openclaw_parity(home, vault))
+    # What is left of each plan, as far as a few kilobytes can say.
+    run("quota.known", lambda: check_quota(home, vault))
 
 
 def _run_instruction_checks(run, vault: Path, home: Path) -> None:

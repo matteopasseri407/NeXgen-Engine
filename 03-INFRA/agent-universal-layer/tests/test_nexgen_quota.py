@@ -298,8 +298,8 @@ def test_an_age_is_short_and_never_says_zero_minutes():
 
 
 def test_a_percentage_keeps_one_decimal_only_when_it_has_one():
-    assert quota._percent(59.0) == "59%"
-    assert quota._percent(59.4) == "59.4%"
+    assert quota.percent_text(59.0) == "59%"
+    assert quota.percent_text(59.4) == "59.4%"
 
 
 # ------------------------------------------------------------------------- cli
