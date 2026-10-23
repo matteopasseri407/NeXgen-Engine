@@ -353,6 +353,8 @@ MESSAGES: dict[str, str] = {
     'Antigravity configuration updated': 'Configurazione Antigravity aggiornata',
     'OpenCode configuration updated': 'Configurazione OpenCode aggiornata',
     'Codex configuration updated': 'Configurazione Codex aggiornata',
+    'OpenClaw configuration updated': 'Configurazione OpenClaw aggiornata',
+    'OpenClaw configuration not present: nothing rendered for it': 'Configurazione OpenClaw assente: non ho scritto nulla per lei',
     'install Homebrew (https://brew.sh), then: brew install': 'installa Homebrew (https://brew.sh), poi: brew install',
     "your system's package manager": 'il gestore di pacchetti del tuo sistema',
     'needs Python {wanted} or later → {hint} python3': 'serve Python {wanted} o successivo → {hint} python3',

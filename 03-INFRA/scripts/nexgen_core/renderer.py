@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Generator and renderer for MCP configurations across the 4 CLIs (Claude, Codex, OpenCode, Antigravity) plus the Claude Desktop app.
+"""Generator and renderer for MCP configurations across the 5 CLIs (Claude, Codex, OpenCode, Antigravity, OpenClaw) plus the Claude Desktop app.
 
 Contract order and rules:
 1. Canonical manifest (mcp/manifest.yaml) as the single source of truth.
 2. Resolution of stdio commands (command + expanded args) and HTTP servers with env-ref tokens.
-3. Native support for the 4 CLIs: Claude, Codex (TOML), OpenCode, Antigravity (bridge); plus Claude Desktop (default-deny allowlist, see mcp_render/claude_desktop).
+3. Native support for the 5 CLIs: Claude, Codex (TOML), OpenCode, Antigravity (bridge), OpenClaw (JSON `mcp.servers`); plus Claude Desktop (default-deny allowlist, see mcp_render/claude_desktop).
 4. Additive preservation of live servers absent from the manifest, except
    those listed in `retired_servers`: that's the explicit, cross-CLI removal
    mechanism, and it always wins over additive preservation.
@@ -108,8 +108,8 @@ class McpRenderer:
         """The names of retired connectors: the explicit removal mechanism.
 
         `load_mcp_manifest` already excludes these names from the active
-        servers, but the three CLIs that additively preserve existing live
-        servers (Claude, Antigravity, OpenCode) would never drop them on
+        servers, but the four CLIs that additively preserve existing live
+        servers (Claude, Antigravity, OpenCode, OpenClaw) would never drop them on
         their own: a retired connector must disappear from every rendered
         configuration, not merely be absent from new ones. Removing it is
         not a failure and must not be reported as one.
@@ -350,6 +350,11 @@ class McpRenderer:
         from nexgen_core.mcp_render import claude_desktop
         return claude_desktop.render(self, write=write)
 
+    def render_openclaw(self, write: bool = False) -> tuple[bool, str]:
+        """Writes the connectors into OpenClaw's own config (~/.openclaw/openclaw.json)."""
+        from nexgen_core.mcp_render import openclaw
+        return openclaw.render(self, write=write)
+
     def render_all(self, write: bool = False) -> dict[str, bool]:
         """Renders for all targets, each isolated: one corrupt live config must not stall the others."""
         results: dict[str, bool] = {}
@@ -360,6 +365,7 @@ class McpRenderer:
             ("antigravity", self.render_antigravity),
             ("opencode", self.render_opencode),
             ("codex", self.render_codex),
+            ("openclaw", self.render_openclaw),
         ):
             try:
                 ok, _ = method(write=write)
