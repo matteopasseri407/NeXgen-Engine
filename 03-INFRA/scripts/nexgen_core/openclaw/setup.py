@@ -49,6 +49,7 @@ from nexgen_core.openclaw_pairing import approve as pairing_approve
 from nexgen_core.openclaw_pairing import pending as pairing_pending
 from nexgen_core.openclaw_service import OpenClawService, RunResult
 from nexgen_core.paths import openclaw_config, resolve_home
+from nexgen_core.processes import command_line_text
 
 __all__ = ["START_TIMEOUT_SECONDS", "run_pair", "run_restart", "run_setup"]
 
@@ -245,7 +246,7 @@ def run_restart(
     out(t("Restarting the gateway: a cold start takes about five minutes."))
     result = gateway.restart(timeout_s=timeout_s)
     for argv in result.get("commands") or []:
-        out("$ " + " ".join(argv))
+        out("$ " + command_line_text(argv))
     elapsed = float(result.get("elapsed_s") or 0.0)
     if result.get("ok"):
         out(t("The gateway answers on 127.0.0.1:{port} after {seconds} seconds.",

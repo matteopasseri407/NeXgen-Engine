@@ -610,6 +610,22 @@ def test_service_step_does_not_start_a_gateway_the_install_already_launched():
     assert any("the install started" in line for line in lines)
 
 
+def test_the_commands_the_setup_prints_quote_a_path_with_a_space(tmp_path):
+    """`C:\\Program Files\\nodejs\\npm.cmd` pasted unquoted fails on `C:\\Program`."""
+    machine = Machine(tmp_path)
+    machine.runner.onboard = onboard_writer(machine.config, machine.state_dir / "workspace")
+    npm = r"C:\Program Files\nodejs\npm.cmd"
+    which = which_map()
+    which["npm"] = npm
+
+    code = machine.run(dry_run=True, detected=detection(machine.config, installed=False), which=which)
+
+    assert code == 0
+    output = machine.output()
+    assert f"{npm} install" not in output
+    assert f'"{npm}" install' in output or f"'{npm}' install" in output
+
+
 def test_the_last_step_runs_the_doctor_and_reports(tmp_path):
     machine = Machine(tmp_path)
     machine.config.parent.mkdir(parents=True)

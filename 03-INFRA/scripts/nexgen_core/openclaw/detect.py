@@ -202,9 +202,16 @@ def _detect_openclaw(home: Path, env: dict[str, str], run: Run | None, which: Wh
     run = run or subprocess.run
     npm = which("npm")
     if npm is None:
+        binary = which("openclaw")
+        # Another package manager's shim may still be on PATH: claiming it is
+        # absent would send the person to install what is already there.
         return Installation(
-            installed=False, config_path=str(config), config_present=config.is_file(),
-            detail=t("npm is not on PATH, so a global OpenClaw cannot be found or installed"),
+            installed=binary is not None, version=None, config_path=str(config), config_present=config.is_file(),
+            detail=(
+                t("npm is not on PATH, so the version of {binary} cannot be read", binary=binary)
+                if binary is not None
+                else t("npm is not on PATH, so a global OpenClaw cannot be found or installed")
+            ),
         )
     root = _npm_root(npm, run, env)
     if root is None:

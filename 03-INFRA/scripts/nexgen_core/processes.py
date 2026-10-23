@@ -41,6 +41,17 @@ def split_command_line(command: str) -> list[str]:
     ]
 
 
+def command_line_text(argv: list[str]) -> str:
+    """An argv as a person would type it back: quoted where the shell needs it.
+
+    `" ".join` printed `C:\\Program Files\\nodejs\\npm.cmd install ...`, which
+    fails the moment it is pasted: the shell reads `C:\\Program` as the
+    executable. Windows gets its own quoting, POSIX gets shlex's.
+    """
+    tokens = [str(token) for token in argv]
+    return subprocess.list2cmdline(tokens) if os.name == "nt" else shlex.join(tokens)
+
+
 def windows_command_argv(argv: list[str]) -> list[str]:
     """Resolve npm command shims and invoke .cmd/.bat through cmd.exe."""
     if os.name != "nt" or not argv:

@@ -24,7 +24,7 @@ from nexgen_core.openclaw.setup_agents import agent_dirs, created_by_openclaw, p
 from nexgen_core.openclaw_pairing import qr as pairing_qr
 from nexgen_core.openclaw_service import OpenClawService, RunResult
 from nexgen_core.paths import resolve_vault_data
-from nexgen_core.processes import no_window_kwargs
+from nexgen_core.processes import command_line_text, no_window_kwargs
 from nexgen_core.runtimes.openclaw import PLUGIN_ID
 
 #: How long the gateway gets to answer. A cold start takes about five minutes;
@@ -120,7 +120,7 @@ def ensure_installed(setup: Setup, snapshot: Detection) -> Detection | None:
                     version=install.version or "?", pinned=setup.pinned))
     else:
         setup.out(t("OpenClaw is not installed: installing {pinned}.", pinned=setup.pinned))
-    setup.out("$ " + " ".join(argv))
+    setup.out("$ " + command_line_text(argv))
     if setup.dry_run:
         return replace(snapshot, openclaw=replace(install, installed=True, version=setup.pinned))
     result = setup.run(argv, setup.env)
@@ -141,7 +141,7 @@ def ensure_onboarded(setup: Setup) -> bool:
         return True
     argv = setup_commands.onboard_argv(openclaw_bin(setup))
     setup.out(t("No configuration yet: letting OpenClaw create the baseline, with no questions."))
-    setup.out("$ " + " ".join(argv))
+    setup.out("$ " + command_line_text(argv))
     if setup.dry_run:
         return True
     result = setup.run(argv, setup.env)
@@ -162,12 +162,12 @@ def planned_commands(setup: Setup, snapshot: Detection, plan) -> list[str]:
     install = snapshot.openclaw
     if not (install.installed and setup.pinned and install.version == setup.pinned):
         npm = setup.which("npm") or "npm"
-        lines.append(" ".join(setup_commands.install_argv(npm, setup.pinned or "<pin>")))
+        lines.append(command_line_text(setup_commands.install_argv(npm, setup.pinned or "<pin>")))
     if not plan.path.is_file():
-        lines.append(" ".join(setup_commands.onboard_argv(openclaw_bin(setup))))
+        lines.append(command_line_text(setup_commands.onboard_argv(openclaw_bin(setup))))
     lines.append("# " + t("the gateway service, only if it is not installed yet"))
     lines.append("openclaw gateway install")
-    lines.append(" ".join(setup_commands.validate_argv(openclaw_bin(setup))))
+    lines.append(command_line_text(setup_commands.validate_argv(openclaw_bin(setup))))
     return lines
 
 
@@ -283,7 +283,7 @@ def service_step(setup: Setup, restarted: bool) -> bool:
         setup.out(t("Starting the gateway: a cold start takes about five minutes."))
         started = setup.service.start()
         for argv in started.get("commands") or []:
-            setup.out("$ " + " ".join(argv))
+            setup.out("$ " + command_line_text(argv))
     ready, elapsed = wait_for_port(setup.service, START_TIMEOUT_SECONDS, setup.out)
     if ready:
         setup.out(t("The gateway answers on 127.0.0.1:{port} after {seconds} seconds.",

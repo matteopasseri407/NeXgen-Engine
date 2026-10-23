@@ -1283,6 +1283,8 @@ MESSAGES: dict[str, str] = {
     # Rilevamento
     "npm is not on PATH, so a global OpenClaw cannot be found or installed":
         "npm non è nel PATH, quindi un OpenClaw globale non si trova e non si installa",
+    "npm is not on PATH, so the version of {binary} cannot be read":
+        "npm non è nel PATH, quindi non posso leggere la versione di {binary}",
     "npm did not say where its global packages live":
         "npm non ha detto dove tiene i pacchetti globali",
     "no npm package named 'openclaw' under {root}":

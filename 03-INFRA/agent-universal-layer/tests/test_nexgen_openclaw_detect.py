@@ -106,6 +106,18 @@ def test_without_npm_on_path_openclaw_is_not_installed(tmp_path):
     assert "npm" in found.openclaw.detail
 
 
+def test_an_openclaw_on_path_is_installed_even_when_npm_is_missing(tmp_path):
+    """A shim installed by another package manager still means OpenClaw is here."""
+    found = _detect(
+        tmp_path,
+        which=lambda name: "/usr/bin/openclaw" if name == "openclaw" else None,
+    )
+
+    assert found.openclaw.installed is True
+    assert found.openclaw.version is None
+    assert "openclaw" in found.openclaw.detail
+
+
 def test_a_missing_package_under_npm_root_is_not_installed(tmp_path):
     found = _detect(tmp_path, which=lambda name: name, run=_runner(tmp_path / "empty-root", "npm"))
     assert found.openclaw.installed is False
