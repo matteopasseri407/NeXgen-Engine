@@ -1,12 +1,13 @@
 """`nexgen openclaw`: the harness with the interface.
 
-Unit B1 exposes the two read-only verbs. `plan` says what the engine would
-configure and what stays the person's; `doctor` proves a live configuration is
-one OpenClaw can actually use. Neither writes, installs, or starts anything.
+`plan` says what the engine would configure and what stays the person's;
+`setup` applies exactly that plan, with a backup and a way back; `doctor`
+proves a live configuration is one OpenClaw can actually use; `restart` and
+`pair` are the two operations a person needs after setup — bring the gateway
+back, and let a phone in.
 
-`setup` and `restart` belong to B2 and register on this same parser: they act on
-the same machine and must agree about the same configuration, so the place that
-declares the verbs is also the place that will declare theirs.
+Every verb that touches the machine lives in a module of its own; this file
+only declares the arguments and prints what comes back.
 """
 from __future__ import annotations
 
@@ -21,7 +22,7 @@ def _usage(parser) -> int:
 
 
 def _register(sub) -> None:
-    p = sub.add_parser("openclaw", help=t("OpenClaw, the harness with the interface (plan and doctor)"))
+    p = sub.add_parser("openclaw", help=t("OpenClaw, the harness with the interface"))
     psub = p.add_subparsers(dest="openclaw_command", metavar="verb")
 
     q = psub.add_parser("plan", help=t("Read-only: what the engine would configure, and what stays yours"))
@@ -31,9 +32,29 @@ def _register(sub) -> None:
     q.add_argument("--acpx", action="store_true", help=t("Allow the acpx plugin too"))
     q.set_defaults(func=cmd_plan)
 
+    q = psub.add_parser("setup", help=t("Install, configure, write the agent manuals and start the gateway"))
+    q.add_argument("--yes", action="store_true", help=t("Do not ask for confirmation"))
+    q.add_argument("--lan", action="store_true",
+                   help=t("Also reachable from the home network (the phone app)"))
+    q.add_argument("--dry-run", action="store_true",
+                   help=t("Print the plan and the commands, and change nothing"))
+    q.add_argument("--no-sviluppo", dest="no_sviluppo", action="store_true",
+                   help=t("Do not create the agent that runs OpenCode through ACP"))
+    q.set_defaults(func=cmd_setup)
+
     q = psub.add_parser("doctor", help=t("Check OpenClaw's installation and configuration"))
     q.add_argument("--json", action="store_true", help=t("Output in JSON format"))
     q.set_defaults(func=cmd_doctor)
+
+    q = psub.add_parser("restart", help=t("Restart the gateway and wait for its port"))
+    q.add_argument("--timeout", type=float, default=None, metavar="SECONDS",
+                   help=t("How long to wait for the port (default: 600)"))
+    q.set_defaults(func=cmd_restart)
+
+    q = psub.add_parser("pair", help=t("List the phones waiting to be paired, and approve one"))
+    q.add_argument("--approve", metavar="ID", default=None, help=t("Approve the request with this id"))
+    q.add_argument("--yes", action="store_true", help=t("Do not ask for confirmation"))
+    q.set_defaults(func=cmd_pair)
 
     p.set_defaults(func=lambda args: _usage(p))
 
@@ -55,6 +76,17 @@ def cmd_plan(args) -> int:
     return 0
 
 
+def cmd_setup(args) -> int:
+    from nexgen_core.openclaw.setup import run_setup
+
+    return run_setup(
+        yes=bool(args.yes),
+        lan=bool(args.lan),
+        dry_run=bool(args.dry_run),
+        sviluppo=not bool(args.no_sviluppo),
+    )
+
+
 def cmd_doctor(args) -> int:
     from nexgen_core.openclaw.doctor import collect, exit_code, render
 
@@ -64,3 +96,16 @@ def cmd_doctor(args) -> int:
     else:
         print(render(outcomes))
     return exit_code(outcomes)
+
+
+def cmd_restart(args) -> int:
+    from nexgen_core.openclaw.setup import START_TIMEOUT_SECONDS, run_restart
+
+    timeout = float(args.timeout) if args.timeout is not None else START_TIMEOUT_SECONDS
+    return run_restart(timeout_s=timeout)
+
+
+def cmd_pair(args) -> int:
+    from nexgen_core.openclaw.setup import run_pair
+
+    return run_pair(approve_id=args.approve, yes=bool(args.yes))

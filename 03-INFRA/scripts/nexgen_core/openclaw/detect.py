@@ -130,6 +130,8 @@ class Detection:
     opencode_go: bool
     local: LocalModels
     n8n: bool
+    #: OpenCode's own command on PATH: the harness the ACP agent launches.
+    opencode: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         """The snapshot as JSON-safe data, for `plan --json` and the doctor."""
@@ -138,6 +140,7 @@ class Detection:
             "claude": {**asdict(self.claude), "available": self.claude.available},
             "codex": {**asdict(self.codex), "available": self.codex.available},
             "opencode_go": self.opencode_go,
+            "opencode": self.opencode,
             "local": {**asdict(self.local), "available": self.local.available},
             "n8n": self.n8n,
         }
@@ -460,4 +463,6 @@ def detect(
         local=_detect_local(values, probe),
         # The owner keeps n8n on a VPS: remote is active too, not only local.
         n8n=_module_state("n8n", engine, vault, values) in ("local", "remote"),
+        # The command line itself, not a login: the ACP agent launches it.
+        opencode=resolved_which("opencode") is not None,
     )

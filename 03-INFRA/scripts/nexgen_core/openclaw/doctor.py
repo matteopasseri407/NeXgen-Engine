@@ -149,13 +149,16 @@ def _check_config(path: Path, config: dict[str, Any] | None, error: str | None) 
 
 
 def _agent_model_refs(config: dict[str, Any]) -> dict[str, str]:
-    """Every agent's model, read from either the object or the plain-string shape."""
+    """Every agent's model, read from the string, object or ACP-primary shape."""
     entries = config.get("agents", {}).get("entries") if isinstance(config.get("agents"), dict) else None
     if not isinstance(entries, dict):
         return {}
     refs: dict[str, str] = {}
     for name, entry in entries.items():
         model = entry.get("model") if isinstance(entry, dict) else entry
+        if isinstance(model, dict):
+            # An ACP agent selects its harness model through `model.primary`.
+            model = model.get("primary")
         if isinstance(model, str) and model.strip():
             refs[str(name)] = model.strip()
     return refs

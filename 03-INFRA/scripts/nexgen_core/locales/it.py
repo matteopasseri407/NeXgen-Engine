@@ -1472,4 +1472,167 @@ MESSAGES: dict[str, str] = {
         "Controlla installazione e configurazione di OpenClaw",
     "OpenClaw is not installed here and this machine does not declare the module: nothing to check.":
         "OpenClaw non è installato qui e questa macchina non dichiara il modulo: non c'è niente da controllare.",
+    # L'installazione con un comando (unità B2)
+    "Installation":
+        "Installazione",
+    "Initial configuration":
+        "Configurazione iniziale",
+    "Plan and confirmation":
+        "Piano e conferma",
+    "Safe write":
+        "Scrittura sicura",
+    "Agent workspaces":
+        "Cartelle degli agenti",
+    "Gateway service":
+        "Servizio del gateway",
+    "Module":
+        "Modulo",
+    "Phone":
+        "Telefono",
+    "Setup complete.":
+        "Installazione completata.",
+    "OpenClaw {version} is already the pinned release.":
+        "OpenClaw {version} è già la versione fissata.",
+    "Node is not installed and OpenClaw needs it. Install it from {url}, then run the setup again.":
+        "Node non è installato e OpenClaw ne ha bisogno. Installalo da {url}, poi rilancia il setup.",
+    "npm is not beside Node. Install Node from {url}: it brings npm with it.":
+        "npm non è accanto a Node. Installa Node da {url}: porta npm con sé.",
+    "The engine cannot read its OpenClaw pin, so it will not install an unknown release. Check agent-universal-layer/openclaw/pin.json and run the setup again.":
+        "Il motore non riesce a leggere il pin di OpenClaw, quindi non installa una versione sconosciuta. Controlla agent-universal-layer/openclaw/pin.json e rilancia il setup.",
+    "OpenClaw {version} is not the pinned {pinned}: installing the pin.":
+        "OpenClaw {version} non è la versione fissata {pinned}: installo quella.",
+    "OpenClaw is not installed: installing {pinned}.":
+        "OpenClaw non è installato: installo {pinned}.",
+    "The install failed (exit {code}).":
+        "L'installazione è fallita (uscita {code}).",
+    "OpenClaw {pinned} is installed.":
+        "OpenClaw {pinned} è installato.",
+    "Note: 'openclaw' is still not on PATH; a new terminal may be needed.":
+        "Nota: 'openclaw' non è ancora nel PATH; può servire un terminale nuovo.",
+    "The configuration at {path} already exists.":
+        "La configurazione in {path} esiste già.",
+    "No configuration yet: letting OpenClaw create the baseline, with no questions.":
+        "Non c'è ancora una configurazione: lascio che OpenClaw crei la base, senza domande.",
+    "Onboarding failed (exit {code}); nothing was written.":
+        "L'onboarding è fallito (uscita {code}); non è stato scritto niente.",
+    "Onboarding finished but {path} was not created.":
+        "L'onboarding è finito ma {path} non è stato creato.",
+    "OpenClaw created {path}.":
+        "OpenClaw ha creato {path}.",
+    "Write this configuration and start the gateway?":
+        "Scrivo questa configurazione e avvio il gateway?",
+    "Nothing written: the plan above was not applied.":
+        "Non ho scritto niente: il piano qui sopra non è stato applicato.",
+    "Commands this run would execute:":
+        "Comandi che questa esecuzione lancerebbe:",
+    "the gateway service, only if it is not installed yet":
+        "il servizio del gateway, solo se non è ancora installato",
+    "Dry run: nothing was written and nothing was executed.":
+        "Prova a vuoto: non ho scritto e non ho eseguito niente.",
+    "The engine plugin {plugin} is deposited and enabled.":
+        "Il plugin del motore {plugin} è depositato e abilitato.",
+    "The engine plugin {plugin} is not deposited on this machine: not enabled.":
+        "Il plugin del motore {plugin} non è depositato su questa macchina: non lo abilito.",
+    "The file in force cannot be read ({error}); it is backed up before it is replaced.":
+        "Il file in vigore non è leggibile ({error}); ne faccio una copia prima di sostituirlo.",
+    "The configuration is already what the engine would write: nothing to write.":
+        "La configurazione è già quella che scriverebbe il motore: non c'è niente da scrivere.",
+    "The gateway did not stop ({pids}); its file was left alone.":
+        "Il gateway non si è fermato ({pids}); il suo file è rimasto com'era.",
+    "The previous configuration is saved as {name}.":
+        "La configurazione precedente è salvata come {name}.",
+    "Configuration written to {path}.":
+        "Configurazione scritta in {path}.",
+    "The gateway token was generated for this machine and is not shown.":
+        "Il token del gateway è stato generato per questa macchina e non viene mostrato.",
+    "OpenClaw accepts the configuration.":
+        "OpenClaw accetta la configurazione.",
+    "The gateway starts again now, so it reads the new configuration.":
+        "Il gateway riparte adesso, così legge la nuova configurazione.",
+    "Starting the gateway: a cold start takes about five minutes.":
+        "Avvio il gateway: un avvio a freddo dura circa cinque minuti.",
+    "Waiting for the gateway the write step restarted: a cold start takes about five minutes.":
+        "Aspetto il gateway riavviato dalla scrittura: un avvio a freddo dura circa cinque minuti.",
+    "OpenClaw rejected the configuration (exit {code}): the previous file was put back.":
+        "OpenClaw ha rifiutato la configurazione (uscita {code}): ho rimesso il file precedente.",
+    "The gateway is already installed as a service ({mechanism}).":
+        "Il gateway è già installato come servizio ({mechanism}).",
+    "Gateway service install: {state}":
+        "Installazione del servizio del gateway: {state}",
+    "done":
+        "fatto",
+    "failed":
+        "fallito",
+    "The gateway already answers on 127.0.0.1:{port}.":
+        "Il gateway risponde già su 127.0.0.1:{port}.",
+    "Waiting for the gateway on 127.0.0.1:{port}: {seconds} seconds so far.":
+        "Aspetto il gateway su 127.0.0.1:{port}: {seconds} secondi finora.",
+    "The gateway answers on 127.0.0.1:{port} after {seconds} seconds.":
+        "Il gateway risponde su 127.0.0.1:{port} dopo {seconds} secondi.",
+    "The gateway did not answer on 127.0.0.1:{port} within {seconds} seconds.":
+        "Il gateway non ha risposto su 127.0.0.1:{port} entro {seconds} secondi.",
+    "This machine declares 'openclaw: local' for host {host}.":
+        "Questa macchina dichiara 'openclaw: local' per l'host {host}.",
+    "The module declaration did not land: {error}":
+        "La dichiarazione del modulo non è andata a buon fine: {error}",
+    "Then approve the request from here: 'nexgen openclaw pair' lists it, 'nexgen openclaw pair --approve <id>' approves it.":
+        "Poi approva la richiesta da qui: 'nexgen openclaw pair' la elenca, 'nexgen openclaw pair --approve <id>' la approva.",
+    "To connect the phone, run this in a terminal of yours: {command}":
+        "Per collegare il telefono, lancia questo in un tuo terminale: {command}",
+    "Restarting the gateway: a cold start takes about five minutes.":
+        "Riavvio il gateway: un avvio a freddo dura circa cinque minuti.",
+    "The gateway did not answer: {error}":
+        "Il gateway non ha risposto: {error}",
+    "no answer from the port":
+        "nessuna risposta dalla porta",
+    "Waited {seconds} seconds.":
+        "Ho aspettato {seconds} secondi.",
+    "Requests waiting for approval:":
+        "Richieste in attesa di approvazione:",
+    "No device is waiting to be paired.":
+        "Nessun dispositivo è in attesa di accoppiamento.",
+    "Approve one with 'nexgen openclaw pair --approve <id>'.":
+        "Approva una con 'nexgen openclaw pair --approve <id>'.",
+    "Approve device {id}?":
+        "Approvo il dispositivo {id}?",
+    "Nothing approved.":
+        "Non ho approvato niente.",
+    "Device {id} approved.":
+        "Dispositivo {id} approvato.",
+    "The approval failed: {error}":
+        "L'approvazione è fallita: {error}",
+    "{agent}: {path} ({written} manuals written, {bootstrap})":
+        "{agent}: {path} ({written} manuali scritti, {bootstrap})",
+    "first-run file removed":
+        "file del primo avvio rimosso",
+    "first-run file not present":
+        "file del primo avvio non presente",
+    "Would prepare the workspace for {agent}: {path}":
+        "Preparerei la cartella per {agent}: {path}",
+    "Skipping the manual for {agent}: {error}":
+        "Salto il manuale di {agent}: {error}",
+    "The OpenCode agent is not created: setup was asked to leave it out.":
+        "L'agente OpenCode non viene creato: il setup è stato chiesto di lasciarlo fuori.",
+    "The OpenCode agent is not created: the 'opencode' command is not on PATH.":
+        "L'agente OpenCode non viene creato: il comando 'opencode' non è nel PATH.",
+    "The OpenCode agent is not created: no OpenCode Go key was detected.":
+        "L'agente OpenCode non viene creato: non ho rilevato la chiave OpenCode Go.",
+    "OpenClaw, the harness with the interface":
+        "OpenClaw, l'harness con l'interfaccia",
+    "Install, configure, write the agent manuals and start the gateway":
+        "Installa, configura, scrive i manuali degli agenti e avvia il gateway",
+    "Do not ask for confirmation":
+        "Non chiedere conferma",
+    "Print the plan and the commands, and change nothing":
+        "Stampa il piano e i comandi, e non cambia niente",
+    "Do not create the agent that runs OpenCode through ACP":
+        "Non creare l'agente che fa girare OpenCode via ACP",
+    "Restart the gateway and wait for its port":
+        "Riavvia il gateway e aspetta la porta",
+    "How long to wait for the port (default: 600)":
+        "Quanto aspettare la porta (predefinito: 600)",
+    "List the phones waiting to be paired, and approve one":
+        "Elenca i telefoni in attesa di accoppiamento e ne approva uno",
+    "Approve the request with this id":
+        "Approva la richiesta con questo id",
 }

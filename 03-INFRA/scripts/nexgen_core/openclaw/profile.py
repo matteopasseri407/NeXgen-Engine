@@ -24,13 +24,14 @@ from pathlib import Path
 from typing import Any
 
 from nexgen_core.i18n import detect_language
+from nexgen_core.openclaw.acp import SVILUPPO_ID, SVILUPPO_NAMES, acp_block, acpx_entry, sviluppo_enabled
 from nexgen_core.openclaw.detect import Detection, LocalModelInfo
 
 #: The top-level sections the engine owns. Everything else in `openclaw.json` is
 #: OpenClaw's and the person's, and a plan names it as "yours, left untouched".
 #: A section is owned even when this machine proposes nothing inside it today:
 #: that is how a key the engine used to write is reported instead of forgotten.
-OWNED_SECTIONS = ("plugins", "models", "agents", "tools", "gateway")
+OWNED_SECTIONS = ("plugins", "models", "agents", "tools", "gateway", "acp")
 
 #: Plugins every OpenClaw gets: OpenClaw's own, with no subscription behind them.
 BASE_PLUGINS = (
@@ -96,6 +97,8 @@ class Choices:
     acpx: bool = False
     #: The language of the agent identities; None means the engine's own.
     lang: str | None = None
+    #: The OpenCode agent, on unless the person asked for it to be left out.
+    sviluppo: bool = True
 
 
 @dataclass(frozen=True)
@@ -166,12 +169,12 @@ def _plugin_allow(detected: Detection, choices: Choices) -> list[str]:
         allow.append("opencode-go")
     if detected.local.ollama:
         allow.append("ollama")
-    if choices.acpx:
+    if choices.acpx or sviluppo_enabled(detected, choices.sviluppo):
         allow.append("acpx")
     return allow
 
 
-def _plugin_entries(detected: Detection) -> dict[str, Any]:
+def _plugin_entries(detected: Detection, chosen: Choices) -> dict[str, Any]:
     """Per-plugin settings: reuse the logins that already exist, invent none."""
     entries: dict[str, Any] = {}
     if detected.claude.available:
@@ -190,6 +193,8 @@ def _plugin_entries(detected: Detection) -> dict[str, Any]:
         }
     if detected.local.ollama:
         entries["ollama"] = {"enabled": True}
+    if chosen.acpx or sviluppo_enabled(detected, chosen.sviluppo):
+        entries["acpx"] = acpx_entry()
     return entries
 
 
@@ -258,7 +263,7 @@ def _first_available(candidates: list[str | None]) -> str | None:
     return None
 
 
-def agent_models(detected: Detection) -> dict[str, str]:
+def agent_models(detected: Detection, choices: Choices | None = None) -> dict[str, str]:
     """The model each agent runs, in the order the engine prefers, for this machine."""
     local_refs = [model.ref for model in local_models(detected)]
     claude = CLAUDE_MODEL if detected.claude.available else None
@@ -276,6 +281,8 @@ def agent_models(detected: Detection) -> dict[str, str]:
         automazioni = _first_available([GO_CAPO_MODEL if go else None, claude])
         if automazioni:
             chosen["automazioni"] = automazioni
+    if sviluppo_enabled(detected, (choices or Choices()).sviluppo):
+        chosen[SVILUPPO_ID] = GO_MAIN_MODEL
     return chosen
 
 
@@ -299,11 +306,35 @@ def _workspace(agent_id: str, current: dict[str, Any] | None, state_dir: Path | 
     return str(state_dir / "workspace" if agent_id == "main" else state_dir / f"workspace-{agent_id}")
 
 
+def _sviluppo_entry(model: str, current: dict[str, Any] | None, state_dir: Path | None, language: str) -> dict[str, Any]:
+    """The OpenCode agent: a real harness launched over ACP, one to one.
+
+    `model.primary` is what selects the harness's model; without it OpenClaw
+    runs whatever the harness defaults to, which is how an agent answered with
+    the wrong model once already. `runtime.type: "acp"` is what makes the
+    harness run at all rather than OpenClaw answering in its place.
+    """
+    name = SVILUPPO_NAMES[language]
+    entry: dict[str, Any] = {"name": name, "identity": {"name": name}}
+    workspace = _workspace(SVILUPPO_ID, current, state_dir)
+    if workspace:
+        entry["workspace"] = workspace
+    entry["model"] = {"primary": model}
+    entry["runtime"] = {
+        "type": "acp",
+        "acp": {"agent": "opencode", "backend": "acpx", "mode": "persistent"},
+    }
+    return entry
+
+
 def _agent_entries(models: dict[str, str], detected: Detection, current: dict[str, Any] | None, language: str) -> dict[str, Any]:
     """The agents to create, with only the options that belong to the model chosen."""
     state_dir = _state_dir(detected)
     entries: dict[str, Any] = {}
     for agent_id, model in models.items():
+        if agent_id == SVILUPPO_ID:
+            entries[agent_id] = _sviluppo_entry(model, current, state_dir, language)
+            continue
         entry: dict[str, Any] = {
             "name": agent_id,
             "identity": {"name": IDENTITY_NAMES[language][agent_id]},
@@ -361,6 +392,10 @@ def _agent_pairs(models: dict[str, str]) -> list[list[str]]:
         pairs.extend([["main", "capo"], ["capo", "main"]])
     if "main" in models and "automazioni" in models:
         pairs.extend([["main", "automazioni"], ["automazioni", "main"]])
+    if SVILUPPO_ID in models:
+        for other in ("main", "capo"):
+            if other in models:
+                pairs.extend([[other, SVILUPPO_ID], [SVILUPPO_ID, other]])
     return pairs
 
 
@@ -395,7 +430,7 @@ def build_config(
     """
     chosen = choices or Choices()
     models = local_models(detected)
-    agents = agent_models(detected)
+    agents = agent_models(detected, chosen)
     language = _language(chosen)
 
     tools: dict[str, Any] = {
@@ -411,7 +446,7 @@ def build_config(
     config: dict[str, Any] = {
         "plugins": {
             "allow": _plugin_allow(detected, chosen),
-            "entries": _plugin_entries(detected),
+            "entries": _plugin_entries(detected, chosen),
         },
         "agents": {
             "ownership": "explicit",
@@ -425,6 +460,9 @@ def build_config(
         "tools": tools,
         "gateway": _gateway(chosen, current),
     }
+    acp = acp_block(detected, sviluppo=chosen.sviluppo, acpx=chosen.acpx)
+    if acp is not None:
+        config["acp"] = acp
     providers = _provider_blocks(models, current)
     if providers:
         config["models"] = {"providers": providers}
