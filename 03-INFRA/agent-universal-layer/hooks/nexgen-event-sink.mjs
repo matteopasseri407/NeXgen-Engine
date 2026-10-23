@@ -4,14 +4,20 @@
 // Antigravity, OpenCode). Consumers listen on events.sock: the voice cockpit
 // today, notifiers or supervisors tomorrow.
 //
-// Dual-mode contract:
+// Three consumers, one implementation:
 // 1. Imported as an OpenCode plugin: exports lifecycle hooks, never exits.
 // 2. Executed directly as a CLI hook (Claude/Codex/Antigravity): reads stdin/argv, emits one line, exits.
+// 3. Imported by OpenClaw's `nexgen` plugin, which maps its own hooks onto send():
+//    this module is the only place that knows the socket protocol.
 //
 // Fail-safe contract:
 // - Always exit 0: a hook must never break the CLI it is attached to.
 // - Hard wall-clock deadline (DEADLINE_MS) covering everything.
 // - Instant exit if the socket is absent: no consumer, no work.
+//
+// Importing this file must be side-effect free: an importer (OpenClaw's gateway) is a long-lived
+// process, and a `process.exit` installed here would kill it on an unrelated uncaught exception.
+// The process-level handlers therefore live in main(), which only a direct CLI invocation runs.
 //
 // Isolation: only sessions started with COCKPIT_VOCALE=1 emit. Every ordinary
 // terminal, background task and IDE process exits immediately and silently.
@@ -25,9 +31,6 @@ import { join } from "node:path";
 // An ES module has no `require`; the database fallback needs one to load node:sqlite
 // lazily (an old Node without it must not stop the hook from loading at all).
 const require = createRequire(import.meta.url);
-
-process.on("uncaughtException", () => process.exit(0));
-process.on("unhandledRejection", () => process.exit(0));
 
 const IS_WIN = platform() === "win32";
 const DEFAULT_SOCK = IS_WIN
@@ -53,11 +56,11 @@ const ENVELOPE_KEYS = [
   "workspacePaths",
 ];
 
-function isVocal() {
+export function isVocal() {
   return process.env.COCKPIT_VOCALE === "1" && process.env.NEXGEN_DISABLE_EVENT_SINK !== "1";
 }
 
-function socketReady() {
+export function socketReady() {
   return SOCK_PATH.startsWith("\\\\.\\pipe\\") || existsSync(SOCK_PATH);
 }
 
@@ -93,7 +96,7 @@ function stripThinking(str) {
  * - Antigravity: row.type === "PLANNER_RESPONSE" / row.source === "MODEL" (string or array)
  * - Codex / generic: row.role === "assistant"
  */
-function extractFromRow(row) {
+export function extractFromRow(row) {
   if (!row || typeof row !== "object") return "";
   if (row.isSidechain) return "";
 
@@ -173,7 +176,7 @@ function lastAssistantText(transcriptPath) {
 /**
  * The reply text carried by a hook payload, or "" when it carries none.
  */
-function extractProse(payload, allowTranscript) {
+export function extractProse(payload, allowTranscript) {
   if (!payload || typeof payload !== "object") return "";
 
   const isEnvelope = ENVELOPE_KEYS.some((k) => k in payload);
@@ -198,7 +201,7 @@ function extractProse(payload, allowTranscript) {
   return "";
 }
 
-function send(eventType, cliName, text, sessionId, onDone) {
+export function send(eventType, cliName, text, sessionId, onDone) {
   const finish = onDone || (() => {});
   try {
     const client = connect(SOCK_PATH, () => {
@@ -328,6 +331,11 @@ export default async function (input) {
 // --- 2. Direct CLI hook ----------------------------------------------------
 
 function main() {
+  // Only the direct CLI-hook mode may own the process: this file is also imported by a
+  // long-lived gateway, where `process.exit(0)` on an unrelated fault would be a crash.
+  process.on("uncaughtException", () => process.exit(0));
+  process.on("unhandledRejection", () => process.exit(0));
+
   if (!isVocal() || !socketReady()) process.exit(0);
 
   const deadline = setTimeout(() => process.exit(0), DEADLINE_MS);
