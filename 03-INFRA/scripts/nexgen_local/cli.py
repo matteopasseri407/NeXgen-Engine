@@ -1,6 +1,6 @@
 """Command line for the optional local lane: dispatcher only.
 
-Each domain lives in nexgen_local.cmds (run/patch/mail/cal/wf/drive/service);
+Each domain lives in nexgen_local.cmds (run/patch/mail/cal/drive/service);
 this module keeps argument wiring (main) and re-exports every cmd_* so
 `from nexgen_local import cli` and `cli.cmd_mail_propose` keep working.
 """
@@ -20,7 +20,6 @@ from .cmds.sup import (
     cmd_sup_attach, cmd_sup_costi, cmd_sup_start, cmd_sup_status, cmd_sup_window_check, register_sup,
 )
 from .cmds.tier import cmd_tier_evaluate, cmd_tier_set
-from .cmds.wf import cmd_wf_propose, cmd_wf_run, cmd_wfs
 from .tiers import TIER_ORDER
 
 
@@ -49,7 +48,6 @@ __all__ = [
     "cmd_propose", "cmd_proposals", "cmd_apply",
     "cmd_mail_propose", "cmd_mails", "cmd_mail_send",
     "cmd_cal_propose", "cmd_cals", "cmd_cal_apply",
-    "cmd_wf_propose", "cmd_wfs", "cmd_wf_run",
     "cmd_drive_propose", "cmd_drive_upload", "cmd_drive_mcp",
     "cmd_mcp", "cmd_doctor", "cmd_tier_evaluate", "cmd_tier_set", "main",
     "cmd_sup_start", "cmd_sup_status", "cmd_sup_attach", "cmd_sup_costi", "cmd_sup_window_check",
@@ -210,22 +208,6 @@ def main(argv: list[str] | None = None) -> int:
     cal_apply.add_argument("--yes", action="store_true")
     cal_apply.add_argument("--json", action="store_true")
     cal_apply.set_defaults(func=cmd_cal_apply)
-
-    wf_propose = sub.add_parser("wf-propose", help="prepara l'esecuzione di un workflow consentito")
-    wf_propose.add_argument("--workflow", required=True, help="nome in allowlist")
-    wf_propose.add_argument("--params", default="", help="oggetto JSON per il webhook")
-    wf_propose.add_argument("--json", action="store_true")
-    wf_propose.set_defaults(func=cmd_wf_propose)
-
-    wfs = sub.add_parser("wfs", help="elenca workflow consentiti e proposte")
-    wfs.add_argument("--json", action="store_true")
-    wfs.set_defaults(func=cmd_wfs)
-
-    wf_run = sub.add_parser("wf-run", help="esegue una proposta approvata (serve --yes)")
-    wf_run.add_argument("proposal_id")
-    wf_run.add_argument("--yes", action="store_true")
-    wf_run.add_argument("--json", action="store_true")
-    wf_run.set_defaults(func=cmd_wf_run)
 
     drive_propose = sub.add_parser("drive-propose", help="prepara un caricamento su Drive (dentro vault/repo)")
     drive_propose.add_argument("--file", required=True, help="file locale da caricare")

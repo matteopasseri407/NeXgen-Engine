@@ -124,7 +124,6 @@ class LaneConfig:
     mails_dir: Path = field(default_factory=lambda: lane_state_dir() / "mails")
     uploads_dir: Path = field(default_factory=lambda: lane_state_dir() / "uploads")
     calendars_dir: Path = field(default_factory=lambda: lane_state_dir() / "calendars")
-    workflows_dir: Path = field(default_factory=lambda: lane_state_dir() / "workflows")
     #: Persistent research sessions (one sqlite each): sources, chunks read,
     #: coverage and staged proposals across interactions. Working state only,
     #: swept by age; never vault memory.

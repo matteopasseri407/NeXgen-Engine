@@ -1,10 +1,9 @@
 """Pinning dello split gatefams prima del refactor.
 
-Fissa il comportamento attuale (non quello desiderato) dei tre file
-proposals.py, calendars.py e workflows.py con sole proposte e gate finti
-in tmp_path: identita e hash delle proposte, propose/apply calendario
-finto, propose/confirm workflow finto. MAI approvazioni vere, MAI rete,
-MAI scritture fuori tmp.
+Fissa il comportamento attuale (non quello desiderato) dei due file
+proposals.py e calendars.py con sole proposte e gate finti in tmp_path:
+identita e hash delle proposte, propose/apply calendario finto. MAI
+approvazioni vere, MAI rete, MAI scritture fuori tmp.
 """
 from __future__ import annotations
 
@@ -28,32 +27,6 @@ def _cal_cfg(tmp_path: Path) -> LaneConfig:
         audit_path=tmp_path / "audit.jsonl",
         calendars_dir=tmp_path / "calendars",
     )
-
-
-def _wf_cfg(tmp_path: Path) -> LaneConfig:
-    vault = tmp_path / "vault"
-    vault.mkdir(parents=True, exist_ok=True)
-    return LaneConfig(
-        vault_root=vault,
-        repo_roots=(),
-        model="fake-model",
-        audit_path=tmp_path / "audit.jsonl",
-        workflows_dir=tmp_path / "workflows",
-    )
-
-
-def _wf_allowlist(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    path = tmp_path / "allowlist.json"
-    path.write_text(
-        json.dumps(
-            {"workflows": {"telegram-send": {
-                "webhook_url": "https://n8n.example/webhook/tg",
-                "description": "Invia un file su Telegram",
-            }}}
-        ),
-        encoding="utf-8",
-    )
-    monkeypatch.setenv("NEXGEN_WORKFLOWS_ALLOWLIST", str(path))
 
 
 # ------------------------------------------------------- proposals.py
@@ -161,64 +134,12 @@ def test_calendars_apply_with_fake_connector(tmp_path: Path, monkeypatch: pytest
         apply_proposal(cfg, proposal.id, yes=True)
 
 
-# ------------------------------------------------------- workflows.py
-
-
-def test_workflows_propose_and_gate_never_prints_url(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    from nexgen_local.workflows import format_gate, list_proposals, propose_run
-
-    cfg = _wf_cfg(tmp_path)
-    _wf_allowlist(tmp_path, monkeypatch)
-    proposal = propose_run(cfg, "telegram-send", {"file": "a.txt"})
-    assert proposal.workflow == "telegram-send"
-    assert proposal.content_sha.startswith("v1:")
-    gate = format_gate(proposal)
-    assert "telegram-send" in gate
-    assert "n8n.example" not in gate
-    assert [item.id for item in list_proposals(cfg)] == [proposal.id]
-
-
-def test_workflows_confirm_with_fake_http(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    from nexgen_local.workflows import HttpResult, WorkflowError, confirm_run, propose_run
-
-    cfg = _wf_cfg(tmp_path)
-    _wf_allowlist(tmp_path, monkeypatch)
-    proposal = propose_run(cfg, "telegram-send", {"file": "a.txt"})
-    with pytest.raises(WorkflowError, match="confirm"):
-        confirm_run(cfg, proposal.id, False)
-    calls: list[tuple] = []
-
-    def _fake(url: str, payload: bytes, headers: dict, timeout: int) -> HttpResult:
-        calls.append((url, json.loads(payload.decode()), headers))
-        return HttpResult(200, b'{"ok": true}')
-
-    done = confirm_run(cfg, proposal.id, True, http=_fake)
-    assert done["ran"] is True and done["outcome"] == '{"ok": true}'
-    assert calls[0][0] == "https://n8n.example/webhook/tg"
-    assert calls[0][1] == {"file": "a.txt"}
-    with pytest.raises(WorkflowError, match="gia' eseguita"):
-        confirm_run(cfg, proposal.id, True, http=_fake)
-    assert len(calls) == 1
-
-
-def test_workflows_unknown_refused(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    from nexgen_local.workflows import WorkflowError, propose_run
-
-    cfg = _wf_cfg(tmp_path)
-    _wf_allowlist(tmp_path, monkeypatch)
-    with pytest.raises(WorkflowError, match="non consentito"):
-        propose_run(cfg, " distruggi-tutto ", {})
-
-
 # ------------------------------------------------------- firme pubbliche
 
 
 def test_public_signatures_unchanged() -> None:
     from nexgen_local import calendars as cal_mod
     from nexgen_local import proposals as p
-    from nexgen_local import workflows as wf_mod
 
     assert list(inspect.signature(p.valid_proposal_id).parameters) == ["proposal_id"]
     assert list(inspect.signature(p.new_proposal_id).parameters) == []
@@ -237,19 +158,11 @@ def test_public_signatures_unchanged() -> None:
     assert list(inspect.signature(cal_mod.apply_proposal).parameters) == ["cfg", "proposal_id", "yes"]
     assert list(inspect.signature(cal_mod.load_proposal).parameters) == ["cfg", "proposal_id"]
     assert list(inspect.signature(cal_mod.list_proposals).parameters) == ["cfg"]
-    assert list(inspect.signature(wf_mod.propose_run).parameters) == ["cfg", "workflow", "params"]
-    assert list(inspect.signature(wf_mod.format_gate).parameters) == ["proposal"]
-    assert list(inspect.signature(wf_mod.confirm_run).parameters) == ["cfg", "proposal_id", "confirm", "http"]
-    assert list(inspect.signature(wf_mod.load_proposal).parameters) == ["cfg", "proposal_id"]
-    assert list(inspect.signature(wf_mod.list_proposals).parameters) == ["cfg"]
-    assert list(inspect.signature(wf_mod.load_allowlist).parameters) == []
-    assert list(inspect.signature(wf_mod.allowlist_path).parameters) == []
 
 
 def test_split_helpers_in_sequence() -> None:
     import nexgen_local.calendars as cal_mod
     import nexgen_local.proposals as p_mod
-    import nexgen_local.workflows as wf_mod
 
     p_src = Path(p_mod.__file__).read_text(encoding="utf-8")
     assert "def _valid_proposal_id_impl" in p_src
@@ -267,11 +180,3 @@ def test_split_helpers_in_sequence() -> None:
     propose_body = cal_src[cal_src.index("def propose_event"):]
     propose_body = propose_body[: propose_body.index("\ndef ")]
     assert "_propose_event_impl(" in propose_body
-
-    wf_src = Path(wf_mod.__file__).read_text(encoding="utf-8")
-    assert "def _propose_run_impl" in wf_src
-    assert "def _format_gate_impl" in wf_src
-    assert "def _confirm_run" in wf_src
-    run_body = wf_src[wf_src.index("def propose_run"):]
-    run_body = run_body[: run_body.index("\ndef ")]
-    assert "_propose_run_impl(" in run_body

@@ -11,15 +11,15 @@ import pytest
 from nexgen_local.config import LaneConfig
 
 
-@pytest.fixture(params=["mail", "calendar", "upload", "workflow", "patch"])
+@pytest.fixture(params=["mail", "calendar", "upload", "patch"])
 def gate(request, tmp_path, monkeypatch):
-    from nexgen_local import calendars, compose, drive_mcp, patch, workflows
+    from nexgen_local import calendars, compose, drive_mcp, patch
 
     cfg = LaneConfig(
         vault_root=tmp_path / "vault", repo_roots=(tmp_path,),
         audit_path=tmp_path / "audit.jsonl", mails_dir=tmp_path / "mails",
         calendars_dir=tmp_path / "calendars", uploads_dir=tmp_path / "uploads",
-        workflows_dir=tmp_path / "workflows", proposals_dir=tmp_path / "patches",
+        proposals_dir=tmp_path / "patches",
     )
     pid = "20261004-123000-aabbccdd"
     h = SimpleNamespace(calls=[], effect=lambda: None, restore=lambda: None)
@@ -50,17 +50,6 @@ def gate(request, tmp_path, monkeypatch):
         monkeypatch.setattr(mod.drive_conn, "upload_file", effect)
         def run(yes=True):
             return mod.confirm_upload(cfg, pid, yes)
-    elif kind == "workflow":
-        mod, error = workflows, workflows.WorkflowError
-        proposal = mod.WorkflowProposal(pid, "synthetic", "synthetic", {})
-        monkeypatch.setattr(mod, "load_allowlist", lambda: {"synthetic": {"webhook_url": "https://example.invalid/never-called"}})
-
-        def http(*args):
-            effect()
-            return mod.HttpResult(200, b"synthetic")
-
-        def run(yes=True):
-            return mod.confirm_run(cfg, pid, yes, http=http)
     else:
         mod, error = patch, patch.PatchError
         target = tmp_path / "target.txt"
@@ -76,7 +65,7 @@ def gate(request, tmp_path, monkeypatch):
         h.restore = lambda: target.write_bytes(b"old\n")
         def run(yes=True):
             return mod.apply_proposal(cfg, pid, yes=yes)
-    if kind in ("mail", "calendar", "workflow"):
+    if kind in ("mail", "calendar"):
         proposal.content_sha = mod._proposal_sha(proposal)
     elif kind == "upload":
         proposal.meta_sha = mod._meta_sha(proposal)
@@ -162,24 +151,12 @@ def test_accepted_effect_with_connector_error_refuses_second_attempt(gate):
     assert len(gate.calls) == 1
 
 
-@pytest.mark.parametrize("gate", ["workflow"], indirect=True)
-def test_webhook_failure_after_acceptance_does_not_reopen_proposal(gate):
-    def http(*args):
-        gate.calls.append(1)
-        return gate.module.HttpResult(500, b"synthetic accepted then failed")
-
-    for _ in range(2):
-        with pytest.raises(gate.error):
-            gate.module.confirm_run(gate.cfg, gate.pid, True, http=http)
-    assert len(gate.calls) == 1
-
-
-@pytest.mark.parametrize("gate", ["mail", "calendar", "upload", "workflow"], indirect=True)
+@pytest.mark.parametrize("gate", ["mail", "calendar", "upload"], indirect=True)
 def test_old_sending_marker_is_displayed_and_refused_as_uncertain(gate):
     import json
     from nexgen_local.proposals import proposal_status
 
-    directory = getattr(gate.cfg, {"mail": "mails_dir", "calendar": "calendars_dir", "upload": "uploads_dir", "workflow": "workflows_dir"}[gate.kind])
+    directory = getattr(gate.cfg, {"mail": "mails_dir", "calendar": "calendars_dir", "upload": "uploads_dir"}[gate.kind])
     artifact = directory / f"{gate.pid}.json"
     data = json.loads(artifact.read_text())
     data.pop("attempted_at")
@@ -192,14 +169,14 @@ def test_old_sending_marker_is_displayed_and_refused_as_uncertain(gate):
     assert not gate.calls
 
 
-@pytest.mark.parametrize("gate", ["mail", "calendar", "upload", "workflow"], indirect=True)
+@pytest.mark.parametrize("gate", ["mail", "calendar", "upload"], indirect=True)
 def test_changed_approval_fields_refuse_before_attempt(gate):
     import json
 
-    directory = getattr(gate.cfg, {"mail": "mails_dir", "calendar": "calendars_dir", "upload": "uploads_dir", "workflow": "workflows_dir"}[gate.kind])
+    directory = getattr(gate.cfg, {"mail": "mails_dir", "calendar": "calendars_dir", "upload": "uploads_dir"}[gate.kind])
     artifact = directory / f"{gate.pid}.json"
     data = json.loads(artifact.read_text())
-    field = {"mail": "to", "calendar": "calendar_id", "upload": "folder_id", "workflow": "workflow"}[gate.kind]
+    field = {"mail": "to", "calendar": "calendar_id", "upload": "folder_id"}[gate.kind]
     data[field] = "synthetic changed destination"
     artifact.write_text(json.dumps(data))
     with pytest.raises(gate.error, match="contenuto cambiato"):
@@ -218,7 +195,7 @@ def test_fingerprint_cannot_move_nul_between_approval_fields():
 
 def test_artifact_identity_cannot_redirect_attempt_storage(gate):
     import json
-    directory = getattr(gate.cfg, {"mail": "mails_dir", "calendar": "calendars_dir", "upload": "uploads_dir", "workflow": "workflows_dir", "patch": "proposals_dir"}[gate.kind])
+    directory = getattr(gate.cfg, {"mail": "mails_dir", "calendar": "calendars_dir", "upload": "uploads_dir", "patch": "proposals_dir"}[gate.kind])
     artifact = directory / f"{gate.pid}.json"
     data = json.loads(artifact.read_text())
     data["id"] = "20261004-123000-eeeeeeee"
@@ -245,7 +222,7 @@ def test_failed_record_write_preserves_previous_complete_artifact(gate, monkeypa
     import os
     from pathlib import Path
 
-    directory = getattr(gate.cfg, {"mail": "mails_dir", "calendar": "calendars_dir", "upload": "uploads_dir", "workflow": "workflows_dir", "patch": "proposals_dir"}[gate.kind])
+    directory = getattr(gate.cfg, {"mail": "mails_dir", "calendar": "calendars_dir", "upload": "uploads_dir", "patch": "proposals_dir"}[gate.kind])
     artifact = directory / f"{gate.pid}.json"
     before = artifact.read_bytes()
     fdopen = os.fdopen
@@ -281,7 +258,7 @@ def test_proposal_artifact_is_private_before_confirmation(gate):
 
     if os.name == "nt":
         pytest.skip("POSIX permission modes do not establish Windows ACLs")
-    directory = getattr(gate.cfg, {"mail": "mails_dir", "calendar": "calendars_dir", "upload": "uploads_dir", "workflow": "workflows_dir", "patch": "proposals_dir"}[gate.kind])
+    directory = getattr(gate.cfg, {"mail": "mails_dir", "calendar": "calendars_dir", "upload": "uploads_dir", "patch": "proposals_dir"}[gate.kind])
     assert stat.S_IMODE(directory.stat().st_mode) == 0o700
     assert stat.S_IMODE((directory / f"{gate.pid}.json").stat().st_mode) == 0o600
 
@@ -309,6 +286,6 @@ def test_uncertain_attempt_is_not_presented_as_ready_to_approve(gate, monkeypatc
         assert len(gate.calls) == 1
         return
     monkeypatch.setattr(cli, "_config", lambda args: gate.cfg)
-    command = {"mail": cli.cmd_mails, "calendar": cli.cmd_cals, "workflow": cli.cmd_wfs, "patch": cli.cmd_proposals}[gate.kind]
+    command = {"mail": cli.cmd_mails, "calendar": cli.cmd_cals, "patch": cli.cmd_proposals}[gate.kind]
     assert command(argparse.Namespace(json=False)) == 0
     assert "esito da verificare" in capsys.readouterr().out
