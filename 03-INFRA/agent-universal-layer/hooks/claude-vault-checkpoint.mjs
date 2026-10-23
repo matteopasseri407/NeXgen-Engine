@@ -9,23 +9,40 @@
 //
 // The briefing TEXT is not written here: it is the data file `vault-briefing.txt` beside
 // this script, because OpenClaw's plugin injects the same briefing after a compaction.
-// One text, two hosts, so the two cannot drift apart. Deploy the .txt next to this file.
+// One text, two hosts, so the two cannot drift apart. Deploy the .txt next to this file;
+// without it the hook falls back to the copy the installed engine carries.
 //
 // The hook only injects context; the actual write still needs the model. It never blocks,
 // never writes, never prints secrets. On any error it exits 0 silently (must not break sessions).
 import { readFileSync } from "node:fs";
+import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const BRIEFING_PATH = join(dirname(fileURLToPath(import.meta.url)), "vault-briefing.txt");
+const BRIEFING_NAME = "vault-briefing.txt";
 
-// A missing or unreadable briefing is no briefing: the session goes on, unchanged.
-function briefingText() {
-  try {
-    return readFileSync(BRIEFING_PATH, "utf8").trim();
-  } catch {
-    return "";
+// Where the text can be, nearest first. A deployer that copies only this script (the old
+// vault agent-sync did) must not silence the briefing: the installed engine ships the text too.
+function briefingPaths() {
+  const paths = [join(dirname(fileURLToPath(import.meta.url)), BRIEFING_NAME)];
+  if (process.env.AGENT_ENGINE_ROOT) {
+    paths.push(join(process.env.AGENT_ENGINE_ROOT, "agent-universal-layer", "hooks", BRIEFING_NAME));
   }
+  paths.push(join(homedir(), ".nexgen-engine", "03-INFRA", "agent-universal-layer", "hooks", BRIEFING_NAME));
+  return paths;
+}
+
+// A missing or unreadable briefing everywhere is no briefing: the session goes on, unchanged.
+function briefingText() {
+  for (const path of briefingPaths()) {
+    try {
+      const text = readFileSync(path, "utf8").trim();
+      if (text) return text;
+    } catch {
+      // try the next place
+    }
+  }
+  return "";
 }
 
 process.stdin.on("error", () => process.exit(0));
