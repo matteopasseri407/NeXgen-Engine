@@ -24,6 +24,8 @@ from nexgen_core.processes import no_window_kwargs
 
 DEFAULT_GATEWAY_PORT = 18789
 DEFAULT_RESTART_TIMEOUT_SECONDS = 600.0
+#: How long a killed gateway gets to let go of its port before `start` would race it.
+DEFAULT_STOP_TIMEOUT_SECONDS = 60.0
 
 
 @dataclass
@@ -270,12 +272,33 @@ class OpenClawService:
                 if not dry_run:
                     self.runner(cmd)
 
+        remaining: list[int] = []
+        if not dry_run and self.platform != "linux":
+            remaining = self._wait_until_stopped(DEFAULT_STOP_TIMEOUT_SECONDS)
         return {
-            "ok": True,
+            "ok": not remaining,
             "commands": commands,
             "stopped_pids": stopped_pids,
+            "remaining_pids": remaining,
             "dry_run": dry_run,
         }
+
+    def _wait_until_stopped(self, timeout_s: float) -> list[int]:
+        """Waits until no gateway process is left and the port is free.
+
+        `taskkill` returns before Windows has torn the process down: starting the
+        new gateway at once lets it find the port still held, and that race is
+        how two gateways ended up running side by side. Returns the pids still
+        alive at the deadline (an empty list means stopped).
+        """
+        deadline = self.time_provider() + max(0.0, timeout_s)
+        while True:
+            alive = [p.pid for p in self.process_lister() if is_gateway_process(p)]
+            if not alive and not self.port_probe(self.port, "127.0.0.1"):
+                return []
+            if self.time_provider() >= deadline:
+                return alive
+            self.sleeper(0.5)
 
     def start(self, dry_run: bool = False) -> dict[str, Any]:
         """Launch the gateway service using the detected platform mechanism."""
@@ -335,6 +358,15 @@ class OpenClawService:
         else:
             stop_res = self.stop(dry_run=dry_run)
             commands.extend(stop_res["commands"])
+            if not stop_res["ok"]:
+                return {
+                    "ok": False,
+                    "commands": commands,
+                    "elapsed_s": 0.0,
+                    "port_listening": self.port_probe(self.port, "127.0.0.1"),
+                    "error": f"Gateway processes still alive after stop: {stop_res['remaining_pids']}",
+                    "dry_run": dry_run,
+                }
             start_res = self.start(dry_run=dry_run)
             commands.extend(start_res["commands"])
 

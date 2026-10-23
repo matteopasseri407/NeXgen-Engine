@@ -56,6 +56,14 @@ class RecordingRunner:
         return RunResult(self.default_code, self.default_stdout, self.default_stderr)
 
 
+def killable(procs: list[ProcessInfo], runner: RecordingRunner):
+    """A process list that loses a process once `taskkill` has been sent for it."""
+    def lister() -> list[ProcessInfo]:
+        killed = {call[2] for call in runner.calls if call[:2] == ["taskkill.exe", "/PID"]}
+        return [p for p in procs if str(p.pid) not in killed]
+    return lister
+
+
 class FakeClock:
     """Fake monotonic clock and sleeper for testing timeouts deterministically."""
 
@@ -271,12 +279,13 @@ def test_stop_windows_kills_node_and_cmd_processes(fake_env) -> None:
         appdata=fake_env["appdata"],
         localappdata=fake_env["localappdata"],
         runner=runner,
-        process_lister=lambda: procs,
+        process_lister=killable(procs, runner),
         port_probe=lambda port, host="127.0.0.1": False,
     )
 
     res = service.stop()
     assert res["ok"] is True
+    assert res["remaining_pids"] == []
     assert 401 in res["stopped_pids"]
     assert 402 in res["stopped_pids"]
     assert 403 not in res["stopped_pids"]
@@ -416,6 +425,14 @@ def test_stopped_context_manager_restarts_even_after_exception(fake_env) -> None
 
     runner = RecordingRunner(default_code=1)
     procs = [ProcessInfo(501, "node.exe", r"node C:\openclaw\dist\index.js gateway")]
+    started = []
+
+    def probe(port, host="127.0.0.1"):
+        # The port is held until the kill, free while stopped, open again once restarted.
+        if any(call[:1] == ["wscript.exe"] for call in runner.calls):
+            started.append(True)
+            return True
+        return not any(call[:1] == ["taskkill.exe"] for call in runner.calls)
 
     service = OpenClawService(
         platform="win32",
@@ -424,8 +441,8 @@ def test_stopped_context_manager_restarts_even_after_exception(fake_env) -> None
         appdata=fake_env["appdata"],
         localappdata=fake_env["localappdata"],
         runner=runner,
-        process_lister=lambda: procs,
-        port_probe=lambda port, host="127.0.0.1": True,
+        process_lister=killable(procs, runner),
+        port_probe=probe,
     )
 
     with pytest.raises(ValueError, match="simulated failure"):
@@ -581,3 +598,54 @@ def test_module_level_shortcuts(fake_env) -> None:
 
     uninst = service_uninstall(platform="linux", home=fake_env["home"], runner=runner, dry_run=True)
     assert uninst["dry_run"] is True
+
+
+def test_stop_waits_until_the_old_gateway_lets_go_of_the_port(fake_env) -> None:
+    """taskkill returns before Windows frees the port: starting at once raced the old gateway."""
+    runner = RecordingRunner(default_code=0)
+    clock = FakeClock()
+    procs = [ProcessInfo(701, "node.exe", r"node C:\openclaw\dist\index.js gateway --port 18789")]
+    port_free_at = 3.0
+
+    service = OpenClawService(
+        platform="win32",
+        home=fake_env["home"],
+        state_dir=fake_env["state_dir"],
+        appdata=fake_env["appdata"],
+        localappdata=fake_env["localappdata"],
+        runner=runner,
+        process_lister=killable(procs, runner),
+        port_probe=lambda port, host="127.0.0.1": clock.time() < port_free_at,
+        time_provider=clock.time,
+        sleeper=clock.sleep,
+    )
+
+    res = service.stop()
+    assert res["ok"] is True
+    assert clock.time() >= port_free_at
+
+
+def test_a_gateway_that_survives_the_kill_stops_the_restart(fake_env) -> None:
+    runner = RecordingRunner(default_code=0)
+    clock = FakeClock()
+    vbs_file = fake_env["startup"] / "OpenClaw Gateway.vbs"
+    vbs_file.write_text("vbs", encoding="utf-8")
+    stubborn = [ProcessInfo(801, "node.exe", r"node C:\openclaw\dist\index.js gateway")]
+
+    service = OpenClawService(
+        platform="win32",
+        home=fake_env["home"],
+        state_dir=fake_env["state_dir"],
+        appdata=fake_env["appdata"],
+        localappdata=fake_env["localappdata"],
+        runner=runner,
+        process_lister=lambda: stubborn,
+        port_probe=lambda port, host="127.0.0.1": True,
+        time_provider=clock.time,
+        sleeper=clock.sleep,
+    )
+
+    res = service.restart()
+    assert res["ok"] is False
+    assert "801" in res["error"]
+    assert ["wscript.exe", str(vbs_file)] not in runner.calls, "never start a second gateway beside a live one"
