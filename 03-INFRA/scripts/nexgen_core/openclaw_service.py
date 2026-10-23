@@ -317,8 +317,8 @@ class OpenClawService:
                 if not dry_run:
                     self.runner(cmd)
             else:
-                vbs_path = (self.startup_dir / "OpenClaw Gateway.vbs") if self.startup_dir else None
-                cmd = ["wscript.exe", str(vbs_path)] if vbs_path else ["openclaw", "gateway", "start"]
+                vbs = (self.startup_dir / "OpenClaw Gateway.vbs") if self.startup_dir else None
+                cmd = ["wscript.exe", str(vbs)] if vbs and vbs.is_file() else ["openclaw", "gateway", "start"]
                 commands.append(cmd)
                 if not dry_run:
                     self.runner(cmd)

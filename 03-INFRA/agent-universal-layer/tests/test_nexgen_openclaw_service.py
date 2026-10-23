@@ -339,6 +339,32 @@ def test_start_windows_with_vbs(fake_env) -> None:
     assert ["wscript.exe", str(vbs_file)] in runner.calls
 
 
+def test_start_windows_without_a_vbs_file_uses_the_openclaw_command(fake_env) -> None:
+    """The Startup folder always exists, so a VBS path was always truthy.
+
+    On a machine where neither the scheduled task nor the launcher file is
+    there, `start()` used to run `wscript.exe` on a file that does not exist:
+    Windows showed an error and the gateway never started.
+    """
+    runner = RecordingRunner(default_code=1)  # schtasks does not know the task either
+    service = OpenClawService(
+        platform="win32",
+        home=fake_env["home"],
+        state_dir=fake_env["state_dir"],
+        appdata=fake_env["appdata"],
+        localappdata=fake_env["localappdata"],
+        runner=runner,
+        process_lister=lambda: [],
+        port_probe=lambda port, host="127.0.0.1": False,
+    )
+
+    res = service.start()
+
+    assert res["ok"] is True
+    assert ["openclaw", "gateway", "start"] in runner.calls
+    assert not any(call and call[0] == "wscript.exe" for call in runner.calls)
+
+
 def test_start_windows_with_schtasks(fake_env) -> None:
     runner = RecordingRunner()
     runner.set_canned(["schtasks.exe", "/Query", "/TN", "OpenClaw Gateway"], code=0)
