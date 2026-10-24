@@ -21,11 +21,18 @@ def _usage(parser) -> int:
     parser.print_help()
     return 0
 
-
 def _register(sub) -> None:
+    """The `openclaw` verb, and the three families its arguments fall into."""
     p = sub.add_parser("openclaw", help=t("OpenClaw, the harness with the interface"))
     psub = p.add_subparsers(dest="openclaw_command", metavar="verb")
+    _register_setup(psub)
+    _register_pairing(psub)
+    _register_upkeep(psub)
+    p.set_defaults(func=lambda args: _usage(p))
 
+
+def _register_setup(psub) -> None:
+    """What the engine would configure, the setup that applies it, and the doctor that judges it."""
     q = psub.add_parser("plan", help=t("Read-only: what the engine would configure, and what stays yours"))
     q.add_argument("--json", action="store_true", help=t("Output in JSON format"))
     q.add_argument("--lan", action="store_true",
@@ -49,23 +56,9 @@ def _register(sub) -> None:
                    help=t("Also list the nodes the running gateway knows (starts OpenClaw's CLI once)"))
     q.set_defaults(func=cmd_doctor)
 
-    q = psub.add_parser("adopt", help=t("Adopt what OpenClaw created into the canonical library"))
-    q.add_argument("--skills", action="store_true", help=t("Only the skills the Skill Workshop learned"))
-    q.add_argument("--mcp", action="store_true", help=t("Only the MCP servers added in OpenClaw"))
-    q.add_argument("--dry-run", action="store_true",
-                   help=t("Show the plan and the checks, and change nothing"))
-    q.add_argument("--yes", action="store_true",
-                   help=t("Do not ask: adopt what is safe, and leave what needs a person"))
-    q.set_defaults(func=cmd_adopt)
 
-    q = psub.add_parser("restart", help=t("Restart the gateway and wait for its port"))
-    q.add_argument("--timeout", type=float, default=None, metavar="SECONDS",
-                   help=t("How long to wait for the port (default: 600)"))
-    q.set_defaults(func=cmd_restart)
-
-    q = psub.add_parser("stop", help=t("Stop the gateway before editing its file by hand"))
-    q.set_defaults(func=cmd_stop)
-
+def _register_pairing(psub) -> None:
+    """Letting a phone, or another machine, in: the two stages of pairing, and a node's commands."""
     q = psub.add_parser("pair", help=t("List the phones and the nodes waiting to be paired, and approve one"))
     q.add_argument("--approve", metavar="ID", default=None, help=t("Approve the device request with this id"))
     q.add_argument("--approve-node", dest="approve_node", metavar="ID", default=None,
@@ -82,7 +75,25 @@ def _register(sub) -> None:
                    help=t("The name the gateway shows for this machine"))
     q.set_defaults(func=cmd_node)
 
-    p.set_defaults(func=lambda args: _usage(p))
+
+def _register_upkeep(psub) -> None:
+    """What OpenClaw created and the engine adopts, and taking the gateway down and back."""
+    q = psub.add_parser("adopt", help=t("Adopt what OpenClaw created into the canonical library"))
+    q.add_argument("--skills", action="store_true", help=t("Only the skills the Skill Workshop learned"))
+    q.add_argument("--mcp", action="store_true", help=t("Only the MCP servers added in OpenClaw"))
+    q.add_argument("--dry-run", action="store_true",
+                   help=t("Show the plan and the checks, and change nothing"))
+    q.add_argument("--yes", action="store_true",
+                   help=t("Do not ask: adopt what is safe, and leave what needs a person"))
+    q.set_defaults(func=cmd_adopt)
+
+    q = psub.add_parser("restart", help=t("Restart the gateway and wait for its port"))
+    q.add_argument("--timeout", type=float, default=None, metavar="SECONDS",
+                   help=t("How long to wait for the port (default: 600)"))
+    q.set_defaults(func=cmd_restart)
+
+    q = psub.add_parser("stop", help=t("Stop the gateway before editing its file by hand"))
+    q.set_defaults(func=cmd_stop)
 
 
 def register(sub) -> None:
