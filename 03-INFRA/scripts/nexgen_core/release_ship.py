@@ -40,13 +40,8 @@ if str(SCRIPTS_DIR) not in sys.path:
 
 from nexgen_core.paths import resolve_engine_root  # noqa: E402
 from nexgen_core.release import bump_version_files, compute_next_version, is_semver, newer_version  # noqa: E402
-from nexgen_core.release_checks import (  # noqa: E402
-    by_name as checks_by_name,
-    commit_checks,
-    required_annotation,
-    required_checks,
-    verdict,
-)
+from nexgen_core.release_checks import by_name as checks_by_name, commit_checks, required_annotation, required_checks, verdict  # noqa: E402
+from nexgen_core.release_gpg import MsysGpgError, check_windows_msys_gpg as _gpg_check  # noqa: E402
 from nexgen_core.release_install import Installer, InstallProblem  # noqa: E402
 
 #: Checks that fail on purpose on this pull request and say nothing about the
@@ -132,6 +127,10 @@ class Shipper:
 
     def _prepare(self, bump: str, notes: str) -> str:
         self._enter("prepare")
+        try:
+            _gpg_check(self.run, self.repo)
+        except MsysGpgError as exc:
+            raise ShipStop(self._step, str(exc)) from None
         current_branch = self._do("git", "rev-parse", "--abbrev-ref", "HEAD")
         if current_branch != self.branch:
             raise ShipStop(self._step, f"run it from '{self.branch}', not '{current_branch}'")
