@@ -171,11 +171,56 @@ def test_a_unit_cannot_authorise_its_own_retirement(tmp_path):
 
 
 def test_the_nodes_are_what_pytest_listed():
-    """Il confronto è fra node id, non fra numeri: un test rinominato è un test perso."""
+    """Gli id elencati e la riga di riepilogo devono concordare: una riga stampata non vale da sola."""
     output = "tests/test_x.py::test_one\ntests/test_x.py::test_due[a]\n\n2 tests collected in 0.02s\n"
 
     assert pytest_runs._node_ids(output) == ("tests/test_x.py::test_one", "tests/test_x.py::test_due[a]")
     assert pytest_runs._node_ids("") is None
+
+
+# --- una rinomina non è un test perso ---------------------------------------
+
+
+def test_a_rename_that_keeps_the_count_passes(tmp_path):
+    """Stanotte una rinomina è stata letta come un test perso: il pavimento è il numero, l'id è l'estensione."""
+    repo = build(tmp_path / "sandbox")
+    base = repo.head()
+    repo.write("tests/test_sample.py", (
+        "from module import value\n"
+        "\n"
+        "def test_ancora():\n"
+        "    assert value() == 1\n"
+        "\n"
+        "def test_nome():\n"
+        "    assert 'prova' != 'prova'\n"
+    ))
+    head = repo.commit("test: rinomina un test e inverte l'aspettativa")
+
+    ok, reason = pytest_runs.check(repo.path, base, head, [_change("tests/test_sample.py")], [])
+
+    assert ok, reason
+    assert "2 test" in reason
+    assert "tests/test_sample.py::test_value" in reason, "il node id sparito si nomina, a titolo informativo"
+    assert "non c'è più" in reason
+
+
+def test_a_rename_plus_an_unauthorised_removal_fails_and_names_both(tmp_path):
+    """Il pavimento non apre la porta: se il conteggio cala, ogni node id perso deve essere autorizzato."""
+    repo = build(tmp_path / "sandbox")
+    base = repo.head()
+    repo.write("tests/test_sample.py", (
+        "from module import value\n"
+        "\n"
+        "def test_ancora():\n"
+        "    assert value() == 1\n"
+    ))
+    head = repo.commit("test: rinomina un test e ne ritira un altro")
+
+    ok, reason = pytest_runs.check(repo.path, base, head, [_change("tests/test_sample.py")], [])
+
+    assert not ok
+    assert "tests/test_sample.py::test_value" in reason
+    assert "tests/test_sample.py::test_nome" in reason
 
 
 # --- il permesso è del supervisore, e vale commit per commit ----------------
@@ -263,3 +308,45 @@ def test_a_loss_nobody_authorised_still_fails_commit_by_commit(tmp_path):
 
     assert not ok
     assert "tests/test_sample.py::test_value" in reason
+
+
+def test_a_rename_that_keeps_the_count_passes_commit_by_commit(tmp_path):
+    """Anche commit per commit il pavimento è il numero: una rinomina non chiede autorizzazione."""
+    repo, base = _retirable(tmp_path)
+    repo.write("tests/test_sample.py", (
+        "from module import value\n"
+        "\n"
+        "def test_ancora():\n"
+        "    assert value() == 1\n"
+        "\n"
+        "def test_nome():\n"
+        "    assert 'prova' == 'prova'\n"
+    ))
+    head = repo.commit("test: rinomina un test")
+
+    ok, reason = pytest_runs.check(
+        repo.path, base, head, [_change("tests/test_sample.py")], [], by_commit=True,
+    )
+
+    assert ok, reason
+    assert "tests/test_sample.py::test_value" in reason, "il node id sparito si nomina, a titolo informativo"
+
+
+def test_a_rename_plus_an_unauthorised_removal_fails_commit_by_commit(tmp_path):
+    """Con il conteggio in calo la rinomina non basta: il test perso senza autorizzazione resta un FAIL."""
+    repo, base = _retirable(tmp_path)
+    repo.write("tests/test_sample.py", (
+        "from module import value\n"
+        "\n"
+        "def test_ancora():\n"
+        "    assert value() == 1\n"
+    ))
+    head = repo.commit("test: rinomina un test e ne ritira un altro")
+
+    ok, reason = pytest_runs.check(
+        repo.path, base, head, [_change("tests/test_sample.py")], [], by_commit=True,
+    )
+
+    assert not ok
+    assert "tests/test_sample.py::test_value" in reason
+    assert "tests/test_sample.py::test_nome" in reason

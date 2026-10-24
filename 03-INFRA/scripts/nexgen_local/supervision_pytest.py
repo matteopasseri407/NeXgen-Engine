@@ -1,17 +1,21 @@
 """What pytest really collects on a unit's interval, and the environment it runs in.
 
-One job: name the tests the base collected and the head does not, and accept that
-retirement only when the base's own rules authorised those files. An AST count
-sees a deleted test function but not `__test__ = False`, a folder pytest skips
-(`tests/.hidden/`, `tests/build/`), a `collect_ignore` in a conftest or a
-`conftest.py` that exits before anything is collected: only a real
-`--collect-only` sees those, and only the node ids it lists say *which* test went.
-The owner authorises a retirement by naming the file in `test_removal_ok` on the
-base, the way `nexgen_core/discipline/integrity.py` already does; the head's own
-copy of that file is never read, because a unit does not grant itself permission.
-Both trees are exported with `git archive` and unpacked with no git metadata in
-them, so the code the collection imports has no remote to push to, and the unit's
-own copy is never run in, so the caches a suite leaves behind cannot make it dirty.
+One job: prove the head does not collect fewer tests than the base, name the node
+ids that went, and accept a drop only when the base's own rules authorised the
+files those tests lived in. An AST count sees a deleted test function but not
+`__test__ = False`, a folder pytest skips (`tests/.hidden/`, `tests/build/`), a
+`collect_ignore` in a conftest or a `conftest.py` that exits before anything is
+collected: only a real `--collect-only` sees those, and only the node ids it
+lists say *which* test went. The count is the floor and the node ids are the
+extension: a renamed test or a changed parametrisation moves an id without
+losing a test, so the ids that went are named as information until the count
+falls. The owner authorises a retirement by naming the file in
+`test_removal_ok` on the base, the way `nexgen_core/discipline/integrity.py`
+already does; the head's own copy of that file is never read, because a unit does
+not grant itself permission. Both trees are exported with `git archive` and
+unpacked with no git metadata in them, so the code the collection imports has no
+remote to push to, and the unit's own copy is never run in, so the caches a suite
+leaves behind cannot make it dirty.
 """
 from __future__ import annotations
 
@@ -84,13 +88,15 @@ def check(
     folder: Path, base: str, head: str, files: list, pytest_surface: list[str],
     *, timeout: float = COLLECT_TIMEOUT_S, by_commit: bool = False,
 ) -> tuple[bool, str]:
-    """Whether the head still collects what the base collected, and who authorised what it does not.
+    """Whether the head collects at least as many tests as the base, and who authorised a drop.
 
-    `by_commit` is the unit the supervisor let carry its own
-    `.nexgen-discipline.toml`: a lost test is then accepted only when the commit
-    that lost it inherited the authorisation from its parent, and the base's own
-    `test_removal_ok` is not consulted. Any other unit is compared with the base,
-    exactly as before, because a unit does not authorise itself.
+    The floor is the number: a head that collects at least as many tests as the
+    base passes, and the node ids that went are named as information. `by_commit`
+    is the unit the supervisor let carry its own `.nexgen-discipline.toml`: a drop
+    is then accepted only when the commit that caused it inherited the
+    authorisation from its parent, and the base's own `test_removal_ok` is not
+    consulted. Any other unit is compared with the base, because a unit does not
+    authorise itself.
     """
     whole, dirs = paths_to_collect(files, pytest_surface)
     if not whole and not dirs:
@@ -252,12 +258,14 @@ def _count(output: str) -> int | None:
 def _by_commit(
     folder: Path, base: str, head: str, whole: bool, dirs: list[str], timeout: float,
 ) -> tuple[bool, str]:
-    """The same comparison, with every lost test traced to the commit whose parent authorised it.
+    """The same comparison, with every test the head lost traced to the commit whose parent authorised it.
 
-    The base's and the head's collections give the whole loss; the commits give
-    the moment it happened and the rules that moment inherited. A test the walk
-    cannot place is a FAIL, so a collection that hides a loss under somebody
-    else's change is never read as a retirement.
+    The floor is the one the base comparison uses: a head that collects at least
+    as many tests as the base passes, and the ids that went are named as
+    information. Only a head that collects fewer sends the walk out, and only a
+    commit that lowered its own count retires anything. A test the walk cannot
+    place is a FAIL, so a collection that hides a loss under somebody else's
+    change is never read as a retirement.
     """
     before, after = counts(folder, base, head, dirs=() if whole else dirs, timeout=timeout)
     if not before.ok:
@@ -266,8 +274,8 @@ def _by_commit(
         return False, f"la raccolta della head non ha risposto ({after.reason}); la base ne raccoglieva {before.tests}"
     numbers = f"la head raccoglie {after.tests} test, la base {before.tests}"
     lost = sorted(set(before.nodes) - set(after.nodes))
-    if not lost:
-        return True, numbers
+    if after.tests >= before.tests:
+        return True, _not_fewer(numbers, lost)
     retired, refused, problems = _retirements(folder, base, head, lost, timeout)
     unplaced = [node for node in lost if node not in retired]
     if problems or unplaced:
@@ -283,7 +291,7 @@ def _by_commit(
 def _retirements(
     folder: Path, base: str, head: str, lost: list[str], timeout: float,
 ) -> tuple[dict[str, str], dict[str, str], list[str]]:
-    """Which commit lost each test, when that commit's inherited rules already allowed it.
+    """Which commit lost each of these tests while lowering its own count, when its inherited rules allowed it.
 
     Only a commit that touches a lost test's file, or a file that decides how
     pytest collects, can make a test disappear: the others cost no collection.
@@ -322,10 +330,12 @@ def _lost_in_commit(
     folder: Path, commit: str, targets: tuple[str, ...],
     cache: dict[tuple[str, tuple[str, ...]], Count], timeout: float,
 ) -> tuple[set[str], str]:
-    """The node ids this commit stopped collecting, against its parent's tree.
+    """The node ids this commit stopped collecting while its own count fell, against its parent's tree.
 
-    A collection that cannot answer proves nothing, so the commit is named in
-    the failure instead of being read as "nothing lost".
+    A commit that does not lower its own count lost no test: a rename or a
+    changed parametrisation moves an id and leaves the number alone, so there is
+    nothing for it to authorise. A collection that cannot answer proves nothing,
+    so the commit is named in the failure instead of being read as "nothing lost".
     """
     parent = own_rules.parent_of(folder, commit)
     if not parent:
@@ -335,6 +345,8 @@ def _lost_in_commit(
     for moment, count in (("prima", before), ("dopo", after)):
         if not count.ok:
             return set(), f"commit {commit[:8]}: la raccolta {moment} non ha risposto ({count.reason})"
+    if after.tests >= before.tests:
+        return set(), ""
     return set(before.nodes) - set(after.nodes), ""
 
 
@@ -363,13 +375,15 @@ def _unplaced(unplaced: list[str], refused: dict[str, str]) -> str:
 
 
 def _verdict(before: Count, after: Count, allowed: tuple[str, ...] = ()) -> tuple[bool, str]:
-    """FAIL when either collection could not answer or lost a test nobody authorised; the numbers are named.
+    """FAIL when either collection could not answer, or when the head collects fewer and nobody allowed it.
 
-    The comparison is between node ids, not between totals: `2 tests` on both
-    sides can be one test gone and another arrived, and a test that changed its
-    parametrised ids is a test the suite no longer has. A node id may go only
-    when its file matches a `test_removal_ok` glob of the base's rules, so the
-    owner's authorisation is per file and visible in the reason either way.
+    The floor is the number, as it was before the node ids arrived: a head that
+    collects at least as many tests as the base passes, and the ids that went are
+    named only as information, because a renamed test or a changed parametrisation
+    moves an id without losing a test. Only a head that collects fewer sends every
+    lost node id through the base's `test_removal_ok`: `2 tests` on both sides can
+    be one test gone and another arrived, but nothing was lost, and a retirement
+    is per file and visible in the reason.
     """
     if not before.ok:
         return False, f"la raccolta della base non ha risposto ({before.reason}): nessun numero con cui confrontare la head"
@@ -377,8 +391,8 @@ def _verdict(before: Count, after: Count, allowed: tuple[str, ...] = ()) -> tupl
         return False, f"la raccolta della head non ha risposto ({after.reason}); la base ne raccoglieva {before.tests}"
     numbers = f"la head raccoglie {after.tests} test, la base {before.tests}"
     lost = sorted(set(before.nodes) - set(after.nodes))
-    if not lost:
-        return True, numbers
+    if after.tests >= before.tests:
+        return True, _not_fewer(numbers, lost)
     refused = [node for node in lost if not _authorised_node(node, allowed)]
     if refused:
         return False, (
@@ -389,6 +403,17 @@ def _verdict(before: Count, after: Count, allowed: tuple[str, ...] = ()) -> tupl
     return True, (
         f"{numbers}: {_how_many(len(lost), 'test ritirato', 'test ritirati')} da {', '.join(files)}, "
         "autorizzati da test_removal_ok"
+    )
+
+
+def _not_fewer(numbers: str, lost: list[str]) -> str:
+    """The PASS reason of the number floor, naming the node ids that went as information only."""
+    if not lost:
+        return numbers
+    gone = _how_many(len(lost), "node id non c'è più", "node id non ci sono più")
+    return (
+        f"{numbers}: {gone}, ma il conteggio non cala "
+        f"(rinomina o parametrizzazione cambiata): {_listed(lost)}"
     )
 
 
