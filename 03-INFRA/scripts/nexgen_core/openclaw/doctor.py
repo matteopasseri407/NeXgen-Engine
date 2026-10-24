@@ -34,6 +34,7 @@ from nexgen_core.openclaw.governor import check_fallbacks
 from nexgen_core.openclaw.model_checks import check_agent_models, check_cage, check_ollama_latest
 from nexgen_core.openclaw.pin import pinned_version, required_node_version
 from nexgen_core.openclaw.profile import PENDING_TOKEN
+from nexgen_core.openclaw.server_gateway import exposure
 from nexgen_core.openclaw.terms import google_subscriptions
 from nexgen_core.paths import is_machine_home, openclaw_config, resolve_home, resolve_vault_data
 from nexgen_core.report import CheckOutcome, Severity
@@ -255,6 +256,7 @@ def _config_outcomes(
         check_cage(config),
         check_evidence(config, path),        _check_heartbeat(config),
         *_check_gateway(config),
+        exposure(config),
         _check_google(config),
         _check_acp(config),
         check_agent_models(config, snapshot),

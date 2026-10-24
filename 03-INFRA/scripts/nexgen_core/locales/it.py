@@ -1499,6 +1499,29 @@ MESSAGES: dict[str, str] = {
         "Nodi già accoppiati:",
     "Set gateway.bind to 'loopback', or 'lan' if you use the phone app on your home network.":
         "Imposta gateway.bind a 'loopback', oppure 'lan' se usi l'app sul telefono nella rete di casa.",
+    # --- Come il gateway è raggiungibile -----------------------------------------
+    "The gateway listens on loopback only: nothing outside this machine can reach it.":
+        "Il gateway ascolta solo su loopback: niente fuori da questa macchina lo raggiunge.",
+    "The gateway listens on loopback only and Tailscale Serve publishes it over HTTPS on the tailnet.":
+        "Il gateway ascolta solo su loopback e Tailscale Serve lo pubblica in HTTPS sulla tailnet.",
+    "The gateway listens on the home network ({bind}).":
+        "Il gateway ascolta sulla rete di casa ({bind}).",
+    "The gateway listens on the Tailscale address itself ({bind}), with no HTTPS in front.":
+        "Il gateway ascolta direttamente sull'indirizzo Tailscale ({bind}), senza HTTPS davanti.",
+    "Set gateway.bind to 'loopback' and gateway.tailscale.mode to 'serve' for an HTTPS address on the tailnet.":
+        "Imposta gateway.bind a 'loopback' e gateway.tailscale.mode a 'serve' per un indirizzo HTTPS sulla tailnet.",
+    "The gateway is published on the public internet through Tailscale Funnel, on {bind}.":
+        "Il gateway è pubblicato su internet con Tailscale Funnel, su {bind}.",
+    "Use gateway.tailscale.mode 'serve' unless the public URL is what you want.":
+        "Usa gateway.tailscale.mode 'serve' a meno che l'URL pubblico non sia quello che vuoi.",
+    "A gateway published through Tailscale Serve must stay on loopback: this one also listens on {bind}, so the port is reachable without the HTTPS Serve provides.":
+        "Un gateway pubblicato con Tailscale Serve deve restare su loopback: questo ascolta anche su {bind}, quindi la porta è raggiungibile senza l'HTTPS che Serve dà.",
+    "Set gateway.bind to 'loopback' and run 'nexgen openclaw setup --server' again.":
+        "Imposta gateway.bind a 'loopback' e rilancia 'nexgen openclaw setup --server'.",
+    "The gateway listens on every interface ({bind}): the network it sits on decides who reaches it.":
+        "Il gateway ascolta su tutte le interfacce ({bind}): la rete in cui si trova decide chi lo raggiunge.",
+    "Set gateway.bind to 'loopback', or to 'lan' when only the devices at home have to reach it.":
+        "Imposta gateway.bind a 'loopback', oppure a 'lan' quando solo i dispositivi di casa devono raggiungerlo.",
     "These configured channels have no agent binding: {names}. With explicit ownership their messages reach no agent.":
         "Questi canali configurati non hanno un binding verso un agente: {names}. Con l'ownership esplicita i loro messaggi non arrivano a nessuno.",
     "Run 'nexgen openclaw setup': it binds them to the main agent and leaves your bindings untouched.":

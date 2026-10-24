@@ -42,6 +42,9 @@ LOOPBACK_BINDS = frozenset({"loopback", "127.0.0.1", "::1", "localhost"})
 #: The one bind that means "the home network" and nothing wider.
 HOME_BIND = "lan"
 
+#: A direct listener on the tailnet address: private, but without HTTPS in front.
+TAILNET_BIND = "tailnet"
+
 
 @dataclass(frozen=True)
 class Tailscale:
@@ -179,6 +182,11 @@ def _say_privileges(setup: Setup, held: Privileges) -> None:
                     "that runs agents must not carry that power."))
 
 
+def _verdict(severity: Severity, message: str, action: str | None = None) -> CheckOutcome:
+    """One exposure line, in the one id the report groups it under."""
+    return CheckOutcome(id="openclaw.gateway.exposure", severity=severity, message=message, action=action)
+
+
 def exposure(config: dict[str, Any]) -> CheckOutcome:
     """How the gateway is reached, and a failure when a served one is also wide.
 
@@ -191,45 +199,51 @@ def exposure(config: dict[str, Any]) -> CheckOutcome:
     tailscale = gateway.get("tailscale") if isinstance(gateway.get("tailscale"), dict) else {}
     mode = tailscale.get("mode")
     name = bind if isinstance(bind, str) and bind else t("(not set)")
-    if mode == "serve" and bind not in LOOPBACK_BINDS:
-        return CheckOutcome(
-            id="openclaw.gateway.exposure",
-            severity=Severity.BROKEN,
-            message=t("A gateway published through Tailscale Serve must stay on loopback: this one also listens "
-                      "on {bind}, so the port is reachable without the HTTPS Serve provides.", bind=name),
-            action=t("Set gateway.bind to 'loopback' and run 'nexgen openclaw setup --server' again."),
-        )
     if mode == "serve":
-        return CheckOutcome(
-            id="openclaw.gateway.exposure",
-            severity=Severity.OK,
-            message=t("The gateway listens on loopback only and Tailscale Serve publishes it over HTTPS "
-                      "on the tailnet."),
-        )
+        return _served(bind, name)
     if mode == "funnel":
-        return CheckOutcome(
-            id="openclaw.gateway.exposure",
-            severity=Severity.WARN,
-            message=t("The gateway is published on the public internet through Tailscale Funnel, on {bind}.",
-                      bind=name),
-            action=t("Use gateway.tailscale.mode 'serve' unless the public URL is what you want."),
+        return _verdict(
+            Severity.WARN,
+            t("The gateway is published on the public internet through Tailscale Funnel, on {bind}.", bind=name),
+            t("Use gateway.tailscale.mode 'serve' unless the public URL is what you want."),
         )
+    return _listening(bind, name)
+
+
+def _served(bind: Any, name: str) -> CheckOutcome:
+    """A gateway published through Serve: safe only while it stays on loopback."""
     if bind in LOOPBACK_BINDS:
-        return CheckOutcome(
-            id="openclaw.gateway.exposure",
-            severity=Severity.OK,
-            message=t("The gateway listens on loopback only: nothing outside this machine can reach it."),
+        return _verdict(
+            Severity.OK,
+            t("The gateway listens on loopback only and Tailscale Serve publishes it over HTTPS on the tailnet."),
+        )
+    return _verdict(
+        Severity.BROKEN,
+        t("A gateway published through Tailscale Serve must stay on loopback: this one also listens on {bind}, "
+          "so the port is reachable without the HTTPS Serve provides.", bind=name),
+        t("Set gateway.bind to 'loopback' and run 'nexgen openclaw setup --server' again."),
+    )
+
+
+def _listening(bind: Any, name: str) -> CheckOutcome:
+    """A gateway with no Tailscale mode in front: where its listener stops."""
+    if bind in LOOPBACK_BINDS:
+        return _verdict(
+            Severity.OK,
+            t("The gateway listens on loopback only: nothing outside this machine can reach it."),
         )
     if bind == HOME_BIND:
-        return CheckOutcome(
-            id="openclaw.gateway.exposure",
-            severity=Severity.OK,
-            message=t("The gateway listens on the home network ({bind}).", bind=name),
+        return _verdict(Severity.OK, t("The gateway listens on the home network ({bind}).", bind=name))
+    if bind == TAILNET_BIND:
+        return _verdict(
+            Severity.WARN,
+            t("The gateway listens on the Tailscale address itself ({bind}), with no HTTPS in front.", bind=name),
+            t("Set gateway.bind to 'loopback' and gateway.tailscale.mode to 'serve' for an HTTPS address "
+              "on the tailnet."),
         )
-    return CheckOutcome(
-        id="openclaw.gateway.exposure",
-        severity=Severity.WARN,
-        message=t("The gateway listens on every interface ({bind}): the network it sits on decides who reaches it.",
-                  bind=name),
-        action=t("Set gateway.bind to 'loopback', or to 'lan' when only the devices at home have to reach it."),
+    return _verdict(
+        Severity.WARN,
+        t("The gateway listens on every interface ({bind}): the network it sits on decides who reaches it.",
+          bind=name),
+        t("Set gateway.bind to 'loopback', or to 'lan' when only the devices at home have to reach it."),
     )
