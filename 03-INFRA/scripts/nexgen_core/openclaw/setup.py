@@ -29,6 +29,7 @@ from nexgen_core.openclaw.plan import Plan, build_plan, render_plan
 from nexgen_core.openclaw.profile import GATEWAY_PORT, Choices
 from nexgen_core.openclaw.setup_agents import snapshot_dirs
 from nexgen_core.openclaw.setup_app import app_gateway_stop, app_step, device_line
+from nexgen_core.openclaw.server_gateway import server_stop
 from nexgen_core.openclaw.setup_steps import (
     START_TIMEOUT_SECONDS,
     Emit,
@@ -155,13 +156,14 @@ def _plan_phase(
     *,
     yes: bool,
     lan: bool,
+    serve: bool,
     sviluppo: bool,
     confirm: Callable[[str], bool] | None,
 ) -> _Decision:
     """Step 3: the plan, the confirmation, and the dry run that stops after it."""
     _step(setup.out, 3, t("Plan and confirmation"))
     plan = build_plan(
-        detected=installed, choices=Choices(lan=lan, sviluppo=sviluppo),
+        detected=installed, choices=Choices(lan=lan, serve=serve, sviluppo=sviluppo),
         home=setup.home, env=setup.env, engine_root=setup.engine_root, vault_data=setup.vault_data,
         platform=setup.platform,
     )
@@ -214,6 +216,8 @@ def run_setup(
     *,
     yes: bool = False,
     lan: bool = False,
+    server: bool = False,
+    yes_i_know: bool = False,
     dry_run: bool = False,
     sviluppo: bool = True,
     node_gateway: bool = False,
@@ -231,6 +235,10 @@ def run_setup(
     platform: str | None = None,
 ) -> int:
     """The nine steps, and the exit code a shell can act on."""
+    if server and lan:
+        out(t("--server and --lan are opposites: --lan opens the gateway to the network it is on, --server keeps "
+              "it on loopback and publishes it through Tailscale Serve. Choose one."))
+        return 2
     setup, snapshot = _prepare(
         home=home, env=env, detected=detected, which=which, run=run, service=service,
         dry_run=dry_run, engine_root=engine_root, vault_data=vault_data, stamp=stamp,
@@ -238,12 +246,14 @@ def run_setup(
     )
     if app_gateway_stop(setup, snapshot, node_gateway=node_gateway):
         return 1
+    if server and server_stop(setup, yes_i_know=yes_i_know):
+        return 1
     installed_phase = _install_phase(setup, snapshot)
     if installed_phase is None:
         return 1
     installed, before = installed_phase
     decision = _plan_phase(
-        setup, installed, yes=yes, lan=lan, sviluppo=sviluppo, confirm=confirm,
+        setup, installed, yes=yes, lan=lan, serve=server, sviluppo=sviluppo, confirm=confirm,
     )
     if decision.plan is None:
         return decision.code

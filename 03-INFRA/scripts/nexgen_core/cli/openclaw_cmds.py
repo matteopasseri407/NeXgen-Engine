@@ -44,6 +44,10 @@ def _register_setup(psub) -> None:
     q.add_argument("--yes", action="store_true", help=t("Do not ask for confirmation"))
     q.add_argument("--lan", action="store_true",
                    help=t("Also reachable from the home network (the phone app)"))
+    q.add_argument("--server", action="store_true",
+                   help=t("A Linux machine with no screen: loopback plus Tailscale Serve for HTTPS on the tailnet"))
+    q.add_argument("--yes-i-know", dest="yes_i_know", action="store_true",
+                   help=t("Go on even when this account holds sudo or the docker group"))
     q.add_argument("--dry-run", action="store_true",
                    help=t("Print the plan and the commands, and change nothing"))
     q.add_argument("--no-sviluppo", dest="no_sviluppo", action="store_true",
@@ -137,6 +141,8 @@ def cmd_setup(args) -> int:
     return run_setup(
         yes=bool(args.yes),
         lan=bool(args.lan),
+        server=bool(args.server),
+        yes_i_know=bool(args.yes_i_know),
         dry_run=bool(args.dry_run),
         sviluppo=not bool(args.no_sviluppo),
         node_gateway=bool(args.node_gateway),

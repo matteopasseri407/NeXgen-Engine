@@ -1708,6 +1708,43 @@ MESSAGES: dict[str, str] = {
         "Il lingering è spento per {user}: il gateway si ferma quando chiudi l'ultima sessione.",
     "Run 'loginctl enable-linger {user}' once, then run the setup again.":
         "Lancia una volta 'loginctl enable-linger {user}', poi rilancia il setup.",
+    # --- Un gateway su una macchina accesa, senza schermo ------------------------
+    "Server mode: the gateway stays on loopback and Tailscale Serve publishes it over HTTPS on the tailnet, so no port is opened.":
+        "Modo server: il gateway resta su loopback e Tailscale Serve lo pubblica in HTTPS sulla tailnet, quindi nessuna porta viene aperta.",
+    "--server is for a Linux machine with no screen, and this one runs {platform}.":
+        "--server è per una macchina Linux senza schermo, e questa gira {platform}.",
+    "Run 'nexgen openclaw setup' without --server to configure a desktop.":
+        "Lancia 'nexgen openclaw setup' senza --server per configurare un desktop.",
+    "Tailscale is not installed, and this setup never installs a system program on its own.":
+        "Tailscale non è installato, e questo setup non installa mai un programma di sistema da solo.",
+    "Install it from {url}, run 'tailscale up' and log in, then run this setup again.":
+        "Installalo da {url}, lancia 'tailscale up' e fai il login, poi rilancia il setup.",
+    "Tailscale is installed but not connected ({state}): there is no address to publish the gateway on.":
+        "Tailscale è installato ma non collegato ({state}): non c'è un indirizzo su cui pubblicare il gateway.",
+    "Run 'tailscale up' and log in, then run this setup again.":
+        "Lancia 'tailscale up' e fai il login, poi rilancia il setup.",
+    "no state reported":
+        "nessuno stato riportato",
+    "Tailscale is connected ({state}) and this account holds no root power: this machine can host the gateway.":
+        "Tailscale è collegato ({state}) e questo account non ha poteri da root: questa macchina può ospitare il gateway.",
+    "This account is root, and a gateway that runs agents must not run with root power.":
+        "Questo account è root, e un gateway che esegue agenti non deve girare con poteri da root.",
+    "This account can become root without a password ('sudo -n true' succeeds), and a gateway that runs agents must not carry that power.":
+        "Questo account può diventare root senza password ('sudo -n true' riesce), e un gateway che esegue agenti non deve portarsi quel potere.",
+    "This account is in the 'docker' group, which is root through a container, and a gateway that runs agents must not carry that power.":
+        "Questo account è nel gruppo 'docker', che è root attraverso un container, e un gateway che esegue agenti non deve portarsi quel potere.",
+    "Create the account the gateway will use without sudo and without the docker group, and run the setup from there.":
+        "Crea l'account che userà il gateway senza sudo e senza il gruppo docker, e lancia il setup da lì.",
+    "If you accept the risk, run the same command again with --yes-i-know.":
+        "Se accetti il rischio, rilancia lo stesso comando con --yes-i-know.",
+    "--yes-i-know was given: the run goes on, and this line records what the gateway keeps.":
+        "--yes-i-know è stato dato: l'esecuzione va avanti, e questa riga registra cosa si tiene il gateway.",
+    "--server and --lan are opposites: --lan opens the gateway to the network it is on, --server keeps it on loopback and publishes it through Tailscale Serve. Choose one.":
+        "--server e --lan sono opposti: --lan apre il gateway alla rete in cui si trova, --server lo tiene su loopback e lo pubblica con Tailscale Serve. Scegline uno.",
+    "A Linux machine with no screen: loopback plus Tailscale Serve for HTTPS on the tailnet":
+        "Una macchina Linux senza schermo: loopback più Tailscale Serve per l'HTTPS sulla tailnet",
+    "Go on even when this account holds sudo or the docker group":
+        "Va avanti anche se questo account ha sudo o il gruppo docker",
     "npm is not beside Node. Install Node from {url}: it brings npm with it.":
         "npm non è accanto a Node. Installa Node da {url}: porta npm con sé.",
     "The engine cannot read its OpenClaw pin, so it will not install an unknown release. Check agent-universal-layer/openclaw/pin.json and run the setup again.":
