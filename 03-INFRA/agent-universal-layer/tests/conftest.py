@@ -61,6 +61,28 @@ def pretend_os(monkeypatch):
     return apply
 
 
+@pytest.fixture
+def harness_cli(tmp_path, monkeypatch):
+    """`opencode` and `agy` in a temporary folder at the head of PATH: the machine decides nothing.
+
+    The supervision tests act on a page, a session and an argv, not on what is
+    installed where they run: with the real CLIs they passed on a developer's
+    machine and failed on every Linux runner, where neither exists. The stubs
+    only have to be found; the tests replace `open_window`, `Popen` and the
+    runners, so nothing here is ever executed.
+    """
+    bin_dir = tmp_path / "harness-cli"
+    bin_dir.mkdir()
+    for name in ("opencode", "agy"):
+        # POSIX runs the file by its own name; Windows finds it through the `.cmd` shim in PATHEXT.
+        script = bin_dir / name
+        script.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        script.chmod(0o755)
+        (bin_dir / f"{name}.cmd").write_text("@echo off\r\n", encoding="utf-8")
+    monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}")
+    return bin_dir
+
+
 @pytest.fixture(autouse=True)
 def no_ollama_probe(request, monkeypatch):
     """The lane's capability probe talks to whatever OLLAMA_HOST points at: never from a test, unless the test is about the probe."""

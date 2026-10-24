@@ -295,7 +295,7 @@ def test_resend_opens_the_first_tab_when_the_task_has_no_session(task, repo, tmp
     assert str(result["path"]) in opened[0][3], "la scheda nuova punta al file del giro"
 
 
-def test_resend_delivers_to_agy_by_reopening_interactive_tab(task, repo, tmp_path, monkeypatch):
+def test_resend_delivers_to_agy_by_reopening_interactive_tab(task, repo, tmp_path, monkeypatch, harness_cli):
     """Il resend verso agy riapre la scheda con resume_argv sulla conversazione esistente."""
     folder = _unit(task, repo, tmp_path)
     _commit(folder, "docs: aggiunge una riga", {"docs/guida.md": "# guida\n\nriga.\n"})

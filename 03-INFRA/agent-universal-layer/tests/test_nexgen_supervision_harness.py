@@ -724,7 +724,7 @@ def test_a_turn_that_dies_before_its_envelope_keeps_what_it_said(unit, monkeypat
     assert "provider ha rifiutato il modello" in log.read_text(encoding="utf-8")
 
 
-def test_open_first_tab_records_pid_in_event(task, unit, monkeypatch):
+def test_open_first_tab_records_pid_in_event(task, unit, monkeypatch, harness_cli):
     """L'apertura della scheda registra il PID dell'handle nel diario degli eventi."""
     result = harness._open_first_tab(
         task, "prova", unit, "prompt",
@@ -737,7 +737,7 @@ def test_open_first_tab_records_pid_in_event(task, unit, monkeypatch):
     assert events[0]["pid"] == 9876
 
 
-def test_agy_tab_finds_and_attaches_session_after_tab_open(task, unit, tmp_path, monkeypatch):
+def test_agy_tab_finds_and_attaches_session_after_tab_open(task, unit, tmp_path, monkeypatch, harness_cli):
     """Con agy, la conversazione nel DB sqlite viene cercata e agganciata."""
     conv_dir = tmp_path / "conversations"
     conv_dir.mkdir(parents=True, exist_ok=True)
@@ -765,7 +765,7 @@ def test_agy_tab_finds_and_attaches_session_after_tab_open(task, unit, tmp_path,
     assert rec["session"] == conv_id
 
 
-def test_rework_delivers_to_agy_by_reopening_interactive_tab(task, unit, monkeypatch):
+def test_rework_delivers_to_agy_by_reopening_interactive_tab(task, unit, monkeypatch, harness_cli):
     """Agy non sa send_turn: la consegna di correzioni riapre la scheda con resume_argv."""
     conv_id = "a544d85d-f5b3-4741-bbe2-8044c85b348f"
     state.append_event(
