@@ -901,6 +901,25 @@ def test_a_dry_run_with_only_the_app_gateway_stops_the_same_way(tmp_path):
     assert not machine.config.is_file()
 
 
+def test_isolated_native_gateway_alone_stops_before_installing_or_writing(tmp_path):
+    machine = Machine(tmp_path)
+    comp = Companion(
+        present=True, owns_local_gateway=True, port=52190,
+        signals=("the app's isolated native gateway",),
+        target="isolated",
+    )
+
+    code = machine.run(detected=detection(machine.config, installed=False, companion=comp))
+
+    assert code == 1
+    assert machine.runner.commands() == []
+    assert not machine.config.is_file()
+    assert "isolated native gateway" in machine.output()
+    assert "nothing was installed and nothing was written" in machine.output()
+    assert "use the app as it is" in machine.output()
+
+
+
 def test_both_gateways_proceed_and_the_plan_names_the_one_the_app_uses(tmp_path):
     """Case (c): the native setup runs as today, and the plan says the app is here too."""
     machine = Machine(tmp_path)

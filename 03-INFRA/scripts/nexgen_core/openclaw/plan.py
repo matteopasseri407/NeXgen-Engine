@@ -229,12 +229,22 @@ def _companion_note(detected: Detection) -> str | None:
     gateway = detected.companion
     situation = gateway.situation(detected.openclaw.installed)
     if situation == app_gateway.APP:
+        if gateway.is_isolated:
+            return t("The OpenClaw Companion app points to its own isolated native gateway ({signals}): this engine "
+                     "configures the native Node gateway, which is the road it supports, and cannot write the app's "
+                     "isolated one. To use the app with the engine, open Connections in OpenClaw Companion and "
+                     "choose 'a local Gateway on this PC'; the setup stops here until then, and runs beside the "
+                     "app's gateway only with --node-gateway.", signals=", ".join(gateway.signals))
         return t("The OpenClaw Companion app runs the gateway on this PC ({signals}): this engine configures the "
                  "native Node gateway, which is the road it supports, and cannot write the app's one. To use the "
                  "app with the engine, open Connections in OpenClaw Companion and choose 'a local Gateway on this "
                  "PC'; the setup stops here until then, and runs beside the app's gateway only with --node-gateway.",
                  signals=", ".join(gateway.signals))
     if situation == app_gateway.BOTH:
+        if gateway.is_isolated:
+            return t("The OpenClaw Companion app points to its own isolated native gateway ({signals}){uses}: the setup "
+                     "below writes the native one.", signals=", ".join(gateway.signals),
+                     uses=_app_connection(gateway.port))
         return t("The OpenClaw Companion app has a gateway of its own on this PC ({signals}){uses}: the setup "
                  "below writes the native one.", signals=", ".join(gateway.signals),
                  uses=_app_connection(gateway.port))

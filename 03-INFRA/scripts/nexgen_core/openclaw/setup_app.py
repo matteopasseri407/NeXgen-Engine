@@ -40,8 +40,12 @@ def app_gateway_stop(setup: Setup, snapshot: Detection, *, node_gateway: bool = 
         return False
     if node_gateway:
         return _app_gateway_takes_the_port(setup)
-    setup.out(t("The OpenClaw Companion app runs the gateway on this PC ({signals}) and there is no native one.",
-                signals=", ".join(gateway.signals)))
+    if gateway.is_isolated:
+        setup.out(t("The OpenClaw Companion app points to its own isolated native gateway ({signals}) and there is no native one.",
+                    signals=", ".join(gateway.signals)))
+    else:
+        setup.out(t("The OpenClaw Companion app runs the gateway on this PC ({signals}) and there is no native one.",
+                    signals=", ".join(gateway.signals)))
     setup.out(t("This version of the engine configures the native Node gateway, which is the road it supports, not "
                 "the app's one: nothing was installed and nothing was written, because a native gateway beside it "
                 "would fight over the same port."))

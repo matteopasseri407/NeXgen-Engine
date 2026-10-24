@@ -240,3 +240,37 @@ def test_the_plan_says_nothing_about_an_app_that_is_not_installed(tmp_path):
     text = render_plan(build_plan(detected=detected(path), home=home, env={}))
 
     assert "OpenClaw Companion" not in text
+
+
+def test_the_plan_names_isolated_native_gateway_when_alone(tmp_path):
+    home = tmp_path / "home"
+    path = put_config(home, {})
+    comp = Companion(
+        present=True, owns_local_gateway=True, port=52190,
+        signals=("the app's isolated native gateway",),
+        target="isolated",
+    )
+
+    text = render_plan(build_plan(
+        detected=detected(path, installed=False, companion=comp), home=home, env={},
+    ))
+
+    assert "points to its own isolated native gateway" in text
+    assert "--node-gateway" in text
+
+
+def test_the_plan_names_isolated_native_gateway_when_both_present(tmp_path):
+    home = tmp_path / "home"
+    path = put_config(home, {})
+    comp = Companion(
+        present=True, owns_local_gateway=True, port=52190,
+        signals=("the app's isolated native gateway",),
+        target="isolated",
+    )
+
+    text = render_plan(build_plan(
+        detected=detected(path, installed=True, companion=comp), home=home, env={},
+    ))
+
+    assert "points to its own isolated native gateway" in text
+    assert "setup below writes the native one" in text
