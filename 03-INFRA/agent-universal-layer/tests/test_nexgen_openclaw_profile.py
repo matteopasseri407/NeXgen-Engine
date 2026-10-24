@@ -306,6 +306,22 @@ def test_a_tailscale_the_person_turned_on_is_not_switched_off():
     assert gateway["tailscale"] == {"mode": "serve"}
 
 
+def test_a_server_keeps_loopback_and_lets_tailscale_serve_publish_it():
+    """The pair OpenClaw documents for a machine with no screen: no port is opened."""
+    gateway = build_config(machine(go=True), Choices(serve=True))["gateway"]
+
+    assert gateway["bind"] == "loopback"
+    assert gateway["tailscale"] == {"mode": "serve"}
+
+
+def test_a_server_keeps_the_rest_of_the_tailscale_section_the_person_wrote():
+    current = {"gateway": {"tailscale": {"mode": "off", "preserveFunnel": True}}}
+
+    gateway = build_config(machine(go=True), Choices(serve=True), current=current)["gateway"]
+
+    assert gateway["tailscale"] == {"mode": "serve", "preserveFunnel": True}
+
+
 def test_a_token_already_in_the_file_is_never_replaced():
     current = {"gateway": {"auth": {"mode": "token", "token": "a-real-token"}}}
     gateway = build_config(machine(go=True), current=current)["gateway"]

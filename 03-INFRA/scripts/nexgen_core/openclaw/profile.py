@@ -97,6 +97,9 @@ class Choices:
     lan: bool = False
     #: The acpx plugin, off unless asked for.
     acpx: bool = False
+    #: A machine with no screen: the gateway stays on loopback and Tailscale Serve
+    #: publishes it over HTTPS on the tailnet, so no port is ever opened.
+    serve: bool = False
     #: The language of the agent identities; None means the engine's own.
     lang: str | None = None
     #: The OpenCode agent, on unless the person asked for it to be left out.
@@ -303,6 +306,12 @@ def _gateway(chosen: Choices, current: dict[str, Any] | None) -> dict[str, Any]:
     auth = gateway.get("auth") if isinstance(gateway, dict) else None
     token = auth.get("token") if isinstance(auth, dict) else None
     tailscale = gateway.get("tailscale") if isinstance(gateway, dict) else None
+    block = dict(tailscale) if isinstance(tailscale, dict) else {"mode": "off"}
+    if chosen.serve:
+        # The pair OpenClaw documents for a machine with no screen: the listener
+        # never leaves loopback and Tailscale serves it over HTTPS on the tailnet.
+        # The rest of the section is the person's and stays: only the mode changes.
+        block["mode"] = "serve"
     return {
         "mode": "local",
         "port": GATEWAY_PORT,
@@ -313,7 +322,7 @@ def _gateway(chosen: Choices, current: dict[str, Any] | None) -> dict[str, Any]:
         },
         # The person may have chosen Tailscale for remote access: turning it off
         # silently would break a setup that works and was not the engine's to undo.
-        "tailscale": dict(tailscale) if isinstance(tailscale, dict) else {"mode": "off"},
+        "tailscale": block,
     }
 
 
