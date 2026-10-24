@@ -1,14 +1,17 @@
 """What pytest really collects on a unit's interval, and the environment it runs in.
 
-One job: prove that the unit's changes did not make pytest collect fewer tests
-than the base did, and hand the engine the one environment a unit cannot fill.
-An AST count sees a deleted test function but not `__test__ = False`, a folder
-pytest skips (`tests/.hidden/`, `tests/build/`), a `collect_ignore` in a conftest
-or a `conftest.py` that exits before anything is collected: only a real
-`--collect-only` sees those. Both trees are exported with `git archive` and
-unpacked with no git metadata in them, so the code the collection imports has no
-remote to push to, and the unit's own copy is never run in, so the caches a suite
-leaves behind cannot make it dirty.
+One job: name the tests the base collected and the head does not, and accept that
+retirement only when the base's own rules authorised those files. An AST count
+sees a deleted test function but not `__test__ = False`, a folder pytest skips
+(`tests/.hidden/`, `tests/build/`), a `collect_ignore` in a conftest or a
+`conftest.py` that exits before anything is collected: only a real
+`--collect-only` sees those, and only the node ids it lists say *which* test went.
+The owner authorises a retirement by naming the file in `test_removal_ok` on the
+base, the way `nexgen_core/discipline/integrity.py` already does; the head's own
+copy of that file is never read, because a unit does not grant itself permission.
+Both trees are exported with `git archive` and unpacked with no git metadata in
+them, so the code the collection imports has no remote to push to, and the unit's
+own copy is never run in, so the caches a suite leaves behind cannot make it dirty.
 """
 from __future__ import annotations
 
@@ -19,8 +22,11 @@ import sys
 import tarfile
 import tempfile
 from dataclasses import dataclass
+from fnmatch import fnmatch
 from pathlib import Path
 
+from nexgen_core.discipline import config
+from nexgen_core.discipline.config import ConfigError
 from nexgen_core.discipline.violations import TEST_PATH
 from nexgen_core.processes import no_window_kwargs
 
@@ -41,11 +47,16 @@ _NO_TESTS = re.compile(r"no tests collected")
 
 @dataclass(frozen=True)
 class Count:
-    """One tree's answer: how many tests pytest collected, or why it could not say."""
+    """One tree's answer: which tests pytest collected there, or why it could not say."""
 
     ok: bool
-    tests: int
+    nodes: tuple[str, ...] = ()
     reason: str = ""
+
+    @property
+    def tests(self) -> int:
+        """How many tests this tree collects."""
+        return len(self.nodes)
 
 
 def cleaned_environment() -> dict[str, str]:
@@ -71,12 +82,28 @@ def check(
     folder: Path, base: str, head: str, files: list, pytest_surface: list[str],
     *, timeout: float = COLLECT_TIMEOUT_S,
 ) -> tuple[bool, str]:
-    """Whether the head still collects what the base collected, with both numbers in the reason."""
+    """Whether the head still collects what the base collected, and who authorised what it does not."""
     whole, dirs = paths_to_collect(files, pytest_surface)
     if not whole and not dirs:
         return True, "nessun test né configurazione di pytest toccato: niente da confrontare"
+    allowed, problem = _authorised(folder, base)
+    if problem:
+        return False, problem
     before, after = counts(folder, base, head, dirs=() if whole else dirs, timeout=timeout)
-    return _verdict(before, after)
+    return _verdict(before, after, allowed)
+
+
+def _authorised(folder: Path, base: str) -> tuple[tuple[str, ...], str]:
+    """The files whose tests the owner let go, read from the base's rules, and why if unreadable.
+
+    It is the base's `.nexgen-discipline.toml`, never the head's: a unit that could
+    write its own `test_removal_ok` would authorise itself, which is the one thing
+    the owner's signature on the base is there to prevent.
+    """
+    try:
+        return tuple(config.load(folder, base).test_removal_ok), ""
+    except (ConfigError, OSError) as exc:
+        return (), f"le regole della base non si leggono, quindi nessun ritiro è autorizzato ({exc})"
 
 
 def surface(files: list) -> list[str]:
@@ -131,10 +158,10 @@ def _count_at(repo: Path, sha: str, copy: Path, dirs: list[str], timeout: float)
     """One revision exported to `copy` and collected there; a folder absent from that tree holds no test."""
     problem = _export(repo, sha, copy, timeout)
     if problem:
-        return Count(False, 0, problem)
+        return Count(False, (), problem)
     targets = [name for name in dirs if (copy / name).exists()]
     if dirs and not targets:
-        return Count(True, 0)
+        return Count(True)
     return _collect(copy, targets, timeout)
 
 
@@ -181,39 +208,87 @@ def _collect(folder: Path, targets: list[str], timeout: float) -> Count:
             stdin=subprocess.DEVNULL, timeout=timeout, env=cleaned_environment(), check=False, **no_window_kwargs(),
         )
     except subprocess.TimeoutExpired:
-        return Count(False, 0, f"tempo massimo superato ({timeout:.0f}s)")
+        return Count(False, (), f"tempo massimo superato ({timeout:.0f}s)")
     except OSError as exc:
-        return Count(False, 0, f"raccolta non avviata ({type(exc).__name__}: {exc})")
+        return Count(False, (), f"raccolta non avviata ({type(exc).__name__}: {exc})")
     output = (done.stdout or "") + (done.stderr or "")
     if done.returncode not in (0, 5):  # 5 is pytest's "no test was collected", which is a number, not a failure
-        return Count(False, 0, f"pytest --collect-only esce con {done.returncode}: {_last_line(output)}")
-    found = _count(output)
+        return Count(False, (), f"pytest --collect-only esce con {done.returncode}: {_last_line(output)}")
+    found = _node_ids(output)
     if found is None:
         detail = _last_line(output) or "nessun output"
-        return Count(False, 0, "pytest non ha detto quanti test ha raccolto: " + detail)
+        return Count(False, (), "pytest non ha detto quali test ha raccolto: " + detail)
     return Count(True, found)
 
 
-def _count(output: str) -> int | None:
-    """The tests pytest listed, cross-checked with its own summary so a printed line cannot outvote it."""
-    listed = sum(1 for line in output.splitlines() if _NODE_ID.match(line.strip()))
+def _node_ids(output: str) -> tuple[str, ...] | None:
+    """The node ids pytest listed, cross-checked with its own summary so a printed line cannot outvote it."""
+    listed = tuple(line.strip() for line in output.splitlines() if _NODE_ID.match(line.strip()))
     if _NO_TESTS.search(output):
-        return 0 if not listed else None
+        return () if not listed else None
     summary = _COLLECTED.search(output)
-    if summary is None or int(summary.group(1)) != listed:
+    if summary is None or int(summary.group(1)) != len(listed):
         return None
     return listed
 
 
-def _verdict(before: Count, after: Count) -> tuple[bool, str]:
-    """FAIL when either collection could not answer or the head lost a test; the numbers are always named."""
+def _count(output: str) -> int | None:
+    """The tests pytest listed, cross-checked with its own summary so a printed line cannot outvote it."""
+    nodes = _node_ids(output)
+    return None if nodes is None else len(nodes)
+
+
+def _verdict(before: Count, after: Count, allowed: tuple[str, ...] = ()) -> tuple[bool, str]:
+    """FAIL when either collection could not answer or lost a test nobody authorised; the numbers are named.
+
+    The comparison is between node ids, not between totals: `2 tests` on both
+    sides can be one test gone and another arrived, and a test that changed its
+    parametrised ids is a test the suite no longer has. A node id may go only
+    when its file matches a `test_removal_ok` glob of the base's rules, so the
+    owner's authorisation is per file and visible in the reason either way.
+    """
     if not before.ok:
         return False, f"la raccolta della base non ha risposto ({before.reason}): nessun numero con cui confrontare la head"
     if not after.ok:
         return False, f"la raccolta della head non ha risposto ({after.reason}); la base ne raccoglieva {before.tests}"
-    if after.tests < before.tests:
-        return False, f"la head raccoglie {after.tests} test, la base {before.tests}: la raccolta è diminuita"
-    return True, f"la head raccoglie {after.tests} test, la base {before.tests}"
+    numbers = f"la head raccoglie {after.tests} test, la base {before.tests}"
+    lost = sorted(set(before.nodes) - set(after.nodes))
+    if not lost:
+        return True, numbers
+    refused = [node for node in lost if not _authorised_node(node, allowed)]
+    if refused:
+        return False, (
+            f"{numbers}: {_how_many(len(refused), 'test perso', 'test persi')} fuori dai file autorizzati "
+            f"da test_removal_ok: {_listed(refused)}"
+        )
+    files = sorted({_file_of(node) for node in lost})
+    return True, (
+        f"{numbers}: {_how_many(len(lost), 'test ritirato', 'test ritirati')} da {', '.join(files)}, "
+        "autorizzati da test_removal_ok"
+    )
+
+
+def _authorised_node(node: str, allowed: tuple[str, ...]) -> bool:
+    """Whether the file this node id belongs to is one the owner allowed to shrink or go."""
+    path = _file_of(node)
+    return any(fnmatch(path, glob) for glob in allowed)
+
+
+def _file_of(node: str) -> str:
+    """The file a node id sits in: everything before the first `::`."""
+    return node.split("::", 1)[0]
+
+
+def _how_many(count: int, one: str, many: str) -> str:
+    """`1 test perso`, `2 test persi`: the reason is read by a person."""
+    return f"{count} {one if count == 1 else many}"
+
+
+def _listed(nodes: list[str], limit: int = 5) -> str:
+    """The first node ids, and how many more there were, so a reason stays one line."""
+    shown = ", ".join(nodes[:limit])
+    rest = len(nodes) - limit
+    return f"{shown} e altri {rest}" if rest > 0 else shown
 
 
 def _both_names(change) -> list[str]:
