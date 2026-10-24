@@ -406,7 +406,7 @@ def _close_stopped_tab(task_id: str, unit: str) -> str:
     price = costs.collect_cost(task_id, name, harness=chosen)
     if not price.stopped:
         return ""
-    closed = windows.close_tab(task_id, "esecutore", still_working=(name,), stopped=True)
+    closed = windows.close_tab(task_id, "esecutore", still_working=(name,), stopped=True, unit=name)
     return str(closed.get("line") or "")
 
 
@@ -417,7 +417,7 @@ def _collect_tab_line(task_id: str, unit: str, cost: costs.CollectCost) -> str:
         return f"sessione {why}: la scheda resta aperta"
     if _window_less(str(state.unit_record(task_id, unit).get("harness") or "opencode")):
         return "la sessione resta nel Control UI del harness, non in una scheda del motore"
-    closed = windows.close_tab(task_id, "esecutore", still_working=(unit,), stopped=True)
+    closed = windows.close_tab(task_id, "esecutore", still_working=(unit,), stopped=True, unit=unit)
     return closed["line"]
 
 
@@ -615,7 +615,7 @@ def _close_work(task_id: str, unit: str) -> str:
     name = str(record.get("unit") or unit)
     chosen = str(record.get("harness") or "opencode")
     if not _window_less(chosen):
-        return windows.close_tab(task_id, "esecutore", still_working=(name,), stopped=True)["line"]
+        return windows.close_tab(task_id, "esecutore", still_working=(name,), stopped=True, unit=name)["line"]
     session = str(record.get("session") or state.harness_session(task_id, chosen))
     if not session:
         return "nessuna sessione da chiudere"
